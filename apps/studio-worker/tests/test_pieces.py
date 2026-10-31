@@ -122,3 +122,10 @@ def test_uppercase_glb_outside_pieces_is_an_error(tmp_path):
     shutil.copy(FIXTURES / 'cap/neon_cap_male.glb', tmp_path / 'out/CAP.GLB')
     pieces, _, error = collect(tmp_path, 'wearable', {})
     assert pieces == [] and 'out/CAP.GLB' in error
+
+
+def test_grok_is_told_to_read_its_renders():
+    grok, claude = closing('wearable', ['hat'], agent='grok'), closing('wearable', ['hat'], agent='claude')
+    assert 'read_file' in grok and 'never from the preview' in grok
+    assert 'read_file' not in claude
+    assert 'read_file' in closing('emote', None, agent='grok')

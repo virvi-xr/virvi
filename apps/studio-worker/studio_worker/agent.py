@@ -47,6 +47,7 @@ class AgentRun:
     cost_usd: float | None
     wall_sec: float
     error: str | None
+    images_viewed: int = 0  # Grok only: the image files it read
 
 
 def parse_claude_result(obj: dict) -> Usage:
@@ -102,6 +103,7 @@ env_key = "CODEX_API_KEY"
 wire_api = "responses"
 """
 GROK_BASE_URL = 'http://127.0.0.1:8892/v1'
+IMAGE_EXTS = ('.png', '.webp', '.jpg', '.jpeg')
 # Grok's image tools invent renders, and search would leave the studio: neither is ever offered
 GROK_DISALLOWED = 'image_gen,image_edit,image_to_video,reference_to_video,web_search'
 
@@ -146,6 +148,7 @@ class _Stream:
         self.result: dict | None = None
         self._claude_usage: dict[str, dict] = {}  # message id -> usage; a message streams once per content block
         self._text: list[str] = []  # Grok's text tokens since its last tool call
+        self.images_viewed = 0
         self._lock = threading.Lock()  # the reader thread adds usage while the main thread prices it
 
     def feed(self, line: str) -> None:
@@ -204,7 +207,10 @@ class _Stream:
             self._flush_text()
             self._text = []
             i = e.get('rawInput') or {}
-            what = i.get('command') or ' '.join(filter(None, [e.get('toolName'), i.get('path') or i.get('pattern')]))
+            target = str(i.get('target_file') or i.get('path') or '')
+            if e.get('toolName') == 'read_file' and target.lower().endswith(IMAGE_EXTS):
+                self.images_viewed += 1
+            what = i.get('command') or ' '.join(filter(None, [e.get('toolName'), target or i.get('pattern')]))
             self.on_progress('Running: ' + str(what)[:80])
         elif kind == 'usage' and e.get('usage'):
             with self._lock:  # one event per model call
@@ -305,7 +311,18 @@ def run_agent(agent: str, model: str, prompt: str, session: str | None, before: 
         stream.session = _grok_disk_session(cwd, since=start_wall)
     return AgentRun(outcome=outcome, reply=stream.redact(stream.reply or ''), session=stream.session or session,
                     usage=usage, session_total=total, cost_usd=usage.cost_usd if usage else None, wall_sec=wall,
-                    error=error)
+                    error=error, images_viewed=stream.images_viewed)
+
+
+def then(first: AgentRun, second: AgentRun) -> AgentRun:
+    """Two runs of one prompt as one: the second's outcome, reply and session, both runs' usage and cost."""
+    usage = _add(first.usage, second.usage) if first.usage and second.usage else (second.usage or first.usage)
+    cost = None if first.cost_usd is None and second.cost_usd is None else \
+        round((first.cost_usd or 0) + (second.cost_usd or 0), 6)
+    return AgentRun(outcome=second.outcome, reply=second.reply or first.reply, session=second.session or first.session,
+                    usage=usage, session_total=second.session_total or first.session_total, cost_usd=cost,
+                    wall_sec=round(first.wall_sec + second.wall_sec, 1), error=second.error,
+                    images_viewed=first.images_viewed + second.images_viewed)
 
 
 def _hit_max_turns(agent: str, stream: '_Stream') -> bool:

@@ -214,3 +214,8 @@ def test_grok_resumed_prompt_is_not_double_subtracted(tmp_path):
 def test_grok_stopped_before_end_keeps_its_session_for_continue(tmp_path):
     r = run(tmp_path, 'grok', 'grok_runaway.jsonl')
     assert r.outcome == 'ceiling' and r.session == 'sess-grok-disk'
+
+
+def test_grok_counts_the_images_it_reads(tmp_path):
+    assert run(tmp_path, 'grok', 'grok_builds_hat_and_looks.jsonl').images_viewed == 1
+    assert run(tmp_path, 'grok', 'grok_builds_hat.jsonl').images_viewed == 0

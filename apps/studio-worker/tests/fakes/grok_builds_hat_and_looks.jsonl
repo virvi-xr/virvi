@@ -1,0 +1,19 @@
+{"type": "available_commands", "tools": ["run_terminal_command", "read_file"], "commands": []}
+{"type": "text", "data": "Let "}
+{"type": "text", "data": "me "}
+{"type": "text", "data": "build "}
+{"type": "text", "data": "the "}
+{"type": "text", "data": "cap."}
+{"type": "usage", "usage": {"input_tokens": 5000, "output_tokens": 100, "cache_read_input_tokens": 2000, "cache_creation_input_tokens": 0, "reasoning_tokens": 0}}
+{"type": "tool_call", "toolName": "run_terminal_command", "rawInput": {"command": "blender -b -P build_cap.py"}}
+{"type": "tool_call_update", "toolCallId": "t1", "status": "completed"}
+{"copy": "cap/neon_cap_male.glb", "to": "out/hat/neon_cap_male.glb"}
+{"copy": "cap/neon_cap_female.glb", "to": "out/hat/neon_cap_female.glb"}
+{"write": "out/hat/piece.json", "text": "{\"name\": \"Neon Cap\", \"description\": \"A cap with a glowing visor\", \"category\": \"hat\", \"hides\": [], \"replaces\": [], \"tags\": [\"cyberpunk\"], \"changeKind\": \"new\"}"}
+{"type": "tool_call", "toolName": "read_file", "rawInput": {"path": "out/hat/piece.json"}}
+{"type": "tool_call", "toolName": "read_file", "rawInput": {"target_file": "/work/design/review/male/male-front.png"}}
+{"type": "usage", "usage": {"input_tokens": 6000, "output_tokens": 200, "cache_read_input_tokens": 4000, "cache_creation_input_tokens": 0, "reasoning_tokens": 0}}
+{"type": "text", "data": "Built "}
+{"type": "text", "data": "a "}
+{"type": "text", "data": "cap."}
+{"type": "end", "stopReason": "end_turn", "sessionId": "sess-grok-1", "usage": {"input_tokens": 11000, "cache_read_input_tokens": 6000, "cache_creation_input_tokens": 0, "output_tokens": 300, "reasoning_tokens": 0}, "num_turns": 12, "total_cost_usd": 0.9, "modelUsage": {"grok-build-0.1": {"inputTokens": 11000, "outputTokens": 300, "costUSD": 0.9}}}

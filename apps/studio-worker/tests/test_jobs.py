@@ -255,10 +255,47 @@ def test_switch_to_grok_carries_the_conversation(api, tmp_path, skills, monkeypa
     real = jobs.run_agent
 
     def spy(agent, model, prompt, session, *a, **kw):
-        seen.update(agent=agent, prompt=prompt, session=session)
+        if not seen:  # the prompt's own run, not a look-again
+            seen.update(agent=agent, prompt=prompt, session=session)
         return real(agent, model, prompt, session, *a, **kw)
     monkeypatch.setattr(jobs, 'run_agent', spy)
     run(api, tmp_path, prompt_job(jobId='job-2', agent='grok', model='grok-build-0.1', prompt='make it pink'),
         'grok_builds_hat.jsonl')
     assert seen['agent'] == 'grok' and seen['session'] is None
     assert seen['prompt'].startswith('Conversation so far:') and 'The user now says:\nmake it pink' in seen['prompt']
+
+
+def grok_job(**kw):
+    return prompt_job(agent='grok', model='grok-build-0.1', **kw)
+
+
+def spy_on_runs(monkeypatch):
+    calls = []
+    real = jobs.run_agent
+
+    def spy(agent, model, prompt, session, *a, **kw):
+        calls.append({'prompt': prompt, 'session': session})
+        return real(agent, model, prompt, session, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    return calls
+
+
+def test_grok_that_never_looked_is_sent_back_to_look(api, tmp_path, skills, monkeypatch):
+    calls = spy_on_runs(monkeypatch)
+    result = run(api, tmp_path, grok_job(), 'grok_builds_hat.jsonl')
+    assert len(calls) == 2
+    assert calls[1]['prompt'] == jobs.LOOK_AGAIN and calls[1]['session'] == 'sess-grok-1'
+    assert result['outcome'] == 'ok', result['error']
+    assert result['costUsd'] == pytest.approx(1.8)
+
+
+def test_grok_that_looked_runs_once(api, tmp_path, skills, monkeypatch):
+    calls = spy_on_runs(monkeypatch)
+    result = run(api, tmp_path, grok_job(), 'grok_builds_hat_and_looks.jsonl')
+    assert len(calls) == 1 and result['costUsd'] == pytest.approx(0.9)
+
+
+def test_claude_is_never_sent_back(api, tmp_path, skills, monkeypatch):
+    calls = spy_on_runs(monkeypatch)
+    run(api, tmp_path, prompt_job(), 'claude_builds_hat.jsonl')
+    assert len(calls) == 1

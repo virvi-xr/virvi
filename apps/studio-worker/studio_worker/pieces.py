@@ -139,6 +139,13 @@ def glbs_outside(design: Path, since: float) -> list[Path]:
             if 'out' != g.relative_to(design).parts[0] and g.lstat().st_mtime >= since]
 
 
+def glbs_exported(design: Path, since: float) -> list[Path]:
+    """GLBs written to out/ since `since`: the pieces a run changed."""
+    design = Path(design)
+    return [g for g in _glbs_under(design)
+            if 'out' == g.relative_to(design).parts[0] and g.lstat().st_mtime >= since]
+
+
 def check(piece: Piece, kind: str) -> dict:
     scripts = config.SKILLS / 'skills'
     if kind == 'emote':
