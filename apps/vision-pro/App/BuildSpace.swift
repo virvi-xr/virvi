@@ -48,7 +48,7 @@ final class BuildSpace: ObservableObject {
     }
 
     /// An item placed from Assets, selected once the feed shows it.
-    var pendingSelect: String?
+    private var pendingSelect: String?
 
     private struct ItemDrag {
         let key: String
@@ -57,6 +57,8 @@ final class BuildSpace: ObservableObject {
 
     private var itemDrag: ItemDrag?
     private var dragIgnored = false
+    /// Where the current pinch-drag started, in the floor's space (it doesn't move with the scene).
+    private var gestureStart: SIMD3<Float>?
     private var placeDragStart: SIMD3<Float>?
     private var placeRotateStart: simd_quatf?
     private var placeGestureActive: Bool { placeDragStart != nil || placeRotateStart != nil }
@@ -88,7 +90,7 @@ final class BuildSpace: ObservableObject {
         // The selected item's entity follows the session's transform (drags, Exact, Save, and Revert back to the
         // original), looked up by its key each time: the renderer may have rebuilt it.
         edit.$selected.sink { [weak self] s in self?.selectionChanged(s) }.store(in: &subscriptions)
-        edit.$mode.sink { [weak self] m in self?.refreshGizmo(mode: m) }.store(in: &subscriptions)
+        edit.$mode.sink { [weak self] m in self?.updateTargets(mode: m); self?.refreshGizmo(mode: m) }.store(in: &subscriptions)
         edit.$lock.sink { [weak self] l in self?.refreshGizmo(lock: l) }.store(in: &subscriptions)
         updateTargets()
     }
@@ -144,6 +146,7 @@ final class BuildSpace: ObservableObject {
         if let s, let item = renderer.item(for: s.key), let e = renderer.entity(for: s.key) {
             e.transform = SceneRenderer.entityTransform(for: item, s.current)
         }
+        updateTargets(selection: s)
         refreshGizmo(selection: s)
     }
 
@@ -152,7 +155,15 @@ final class BuildSpace: ObservableObject {
         let s = selection ?? edit.selected
         let kind = s.flatMap { renderer.item(for: $0.key)?.kind }
         gizmo.show(mode: mode ?? edit.mode, lock: lock ?? edit.lock, transform: phase == .edit ? s?.current : nil,
-                   flat: kind == .image || kind == .video, handleSize: handleSize)
+                   flat: kind == .image || kind == .video, handleSize: handleSize,
+                   bounds: s.flatMap { meshBounds(key: $0.key) }, frozen: itemDrag != nil)
+    }
+
+    /// The item's mesh in metres in its own frame, on Virvi axes: its hit box times its entity's scale, z mirrored.
+    private func meshBounds(key: String) -> GizmoBounds? {
+        guard let e = renderer.entity(for: key), let b = e.components[EditableItemComponent.self]?.bounds else { return nil }
+        let lo = SIMD3<Double>(b.min * e.scale), hi = SIMD3<Double>(b.max * e.scale)
+        return GizmoBounds(min: [lo.x, lo.y, -hi.z], max: [hi.x, hi.y, -lo.z])
     }
 
     /// Called every frame: handles keep their size in view as the builder walks nearer or further.
@@ -175,6 +186,9 @@ final class BuildSpace: ObservableObject {
     /// A pinch-drag. In Place, the floor disc or outline slides the scene; in Edit, a gizmo handle drives the session
     /// under its mode and lock, and the item itself (picked if it wasn't) moves freely in Move.
     func dragChanged(on entity: Entity, start: SIMD3<Float>, now: SIMD3<Float>, parentStart: SIMD3<Float>, parentNow: SIMD3<Float>) {
+        // A gesture can end without onEnded (its entity went away): a drag that starts somewhere else is a new one.
+        if let last = gestureStart, simd_distance(last, parentStart) > 0.001 { resetDrag() }
+        gestureStart = parentStart
         if dragIgnored { return }
         if phase == .place {
             guard placeDragStart != nil || entity.components.has(PlaceHandleComponent.self) else { dragIgnored = true; return }
@@ -212,10 +226,28 @@ final class BuildSpace: ObservableObject {
 
     func dragEnded() {
         let placed = placeDragStart != nil
+        resetDrag()
+        gestureStart = nil
+        if placed { repin() }
+    }
+
+    private func resetDrag() {
+        let dragged = itemDrag != nil
         itemDrag = nil
         dragIgnored = false
         placeDragStart = nil
-        if placed { repin() }
+        if dragged { refreshGizmo() } // the layout was frozen during the drag
+    }
+
+    /// Selects an item placed from Assets: now if the feed already shows it, otherwise as soon as it does.
+    func selectWhenShown(_ key: String) {
+        if renderer.item(for: key) != nil {
+            pendingSelect = nil
+            phase = .edit
+            select(key: key)
+        } else {
+            pendingSelect = key
+        }
     }
 
     /// A look-and-pinch on an item selects it.
@@ -355,17 +387,25 @@ final class BuildSpace: ObservableObject {
     #if DEBUG
     /// DEBUG `-select`: select an item for screenshots without a pinch.
     func debugSelect(_ key: String) {
-        if renderer.item(for: key) != nil { phase = .edit; select(key: key) } else { pendingSelect = key }
+        selectWhenShown(key)
     }
     #endif
 
     // MARK: - Targets, highlight and guides
 
-    private func updateTargets() {
+    /// Place: only the floor disc and outline take pinches. Edit: items do, except the selected one in Rotate and
+    /// Resize, so a pinch near it reaches the rings and handles (in Move it stays grabbable for body drags, and the
+    /// arrows sit outside its mesh). `mode` and `selection` come from publishers that fire before the change.
+    private func updateTargets(mode: EditMode? = nil, selection: Selection?? = nil) {
         for e in guides.children { e.components[InputTargetComponent.self]?.isEnabled = phase == .place }
+        let selected = (selection ?? edit.selected)?.key, m = mode ?? edit.mode
         for e in renderer.root.children where e !== gizmo.root {
-            e.components[InputTargetComponent.self]?.isEnabled = phase == .edit
+            e.components[InputTargetComponent.self]?.isEnabled = itemTargetable(e.name, selected: selected, mode: m)
         }
+    }
+
+    private func itemTargetable(_ key: String, selected: String?, mode: EditMode) -> Bool {
+        phase == .edit && !(key == selected && mode != .move)
     }
 
     private func makeEditable(key: String, entity: Entity) {
@@ -374,11 +414,14 @@ final class BuildSpace: ObservableObject {
         let size = simd_max(b.extents, SIMD3<Float>(repeating: 0.02)) // planes get a thin box
         entity.components.set(CollisionComponent(shapes: [ShapeResource.generateBox(size: size).offsetBy(translation: b.center)]))
         var input = InputTargetComponent()
-        input.isEnabled = phase == .edit
+        input.isEnabled = itemTargetable(key, selected: edit.selected?.key, mode: edit.mode)
         entity.components.set(input)
         entity.components.set(HoverEffectComponent())
         entity.components.set(EditableItemComponent(bounds: BoundingBox(min: b.center - size / 2, max: b.center + size / 2)))
-        if key == edit.selected?.key { Self.setHighlight(true, on: entity) }
+        if key == edit.selected?.key {
+            Self.setHighlight(true, on: entity)
+            refreshGizmo() // the mesh is known now: handles move clear of it
+        }
     }
 
     private static let highlightName = "virvi-selection"

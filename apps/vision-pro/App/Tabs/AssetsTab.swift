@@ -146,7 +146,7 @@ struct AssetsTab: View {
             }
             do {
                 let placed = try await builder.assets.place(row: a, at: placement(kind: a.kind, headPosition: head.position, headYawDeg: head.yawDeg))
-                builder.space.pendingSelect = "\(placed.elementId):\(placed.instanceId)"
+                builder.space.selectWhenShown("\(placed.elementId):\(placed.instanceId)")
             } catch let e as AssetsError {
                 line = EditLine(text: e.message, error: true); return
             } catch {

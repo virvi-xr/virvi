@@ -136,6 +136,41 @@ func gizmoHandleOffset(_ s: Double) -> Double {
     max(0.3, abs(s) / 2 + 0.15)
 }
 
+/// An item's mesh bounds in its own frame (Virvi axes, before its rotation), in metres: what it really takes up.
+struct GizmoBounds: Equatable {
+    var min: SIMD3<Double>
+    var max: SIMD3<Double>
+}
+
+/// Where the handles go. `arrowOffset` is on the scene's axes (arrows and rings don't turn with the item);
+/// `handleOffset` is on the item's own axes (resize handles do).
+struct GizmoLayout: Equatable {
+    var ringRadius: Double
+    var arrowOffset: SIMD3<Double>
+    var handleOffset: SIMD3<Double>
+}
+
+/// Decentraland's layout from the scale, pushed out where the mesh is bigger than its scale says, so every handle
+/// sits clear of the item (15 cm, gizmo.ts HANDLE_GAP) and a pinch on it isn't taken by the item's hit box.
+func gizmoLayout(scale s: SIMD3<Double>, rotation: SIMD3<Double>, bounds: GizmoBounds?) -> GizmoLayout {
+    let dcl = SIMD3(gizmoHandleOffset(s.x), gizmoHandleOffset(s.y), gizmoHandleOffset(s.z))
+    var l = GizmoLayout(ringRadius: gizmoRingRadius(scale: s), arrowOffset: dcl, handleOffset: dcl)
+    guard let b = bounds else { return l }
+    let gap = 0.15
+    let q = eulerDegreesToQuat(rotation)
+    var far = 0.0
+    var reach = SIMD3<Double>(repeating: -.infinity)
+    for i in 0..<8 {
+        let c = SIMD3(i & 1 == 0 ? b.min.x : b.max.x, i & 2 == 0 ? b.min.y : b.max.y, i & 4 == 0 ? b.min.z : b.max.z)
+        far = Swift.max(far, simd_length(c))
+        reach = simd_max(reach, q.act(c))
+    }
+    l.ringRadius = Swift.max(l.ringRadius, far + gap)
+    l.arrowOffset = simd_max(dcl, reach + gap)
+    l.handleOffset = simd_max(dcl, b.max + gap)
+    return l
+}
+
 // MARK: - Decentraland's Euler degrees (packages/core/src/transform/math.ts)
 
 func eulerDegreesToQuat(_ e: SIMD3<Double>) -> simd_quatd {

@@ -49,18 +49,22 @@ final class Gizmo {
         return nil
     }
 
-    /// Shows this mode's handles at `t` (Virvi coordinates), or hides the gizmo when `t` is nil.
-    func show(mode: EditMode, lock: AxisLock, transform t: ItemTransform?, flat: Bool, handleSize: Double) {
+    /// Shows this mode's handles at `t` (Virvi coordinates), or hides the gizmo when `t` is nil. `bounds` is the
+    /// item's mesh (see `gizmoLayout`). While `frozen` (a handle or the item is being dragged) the handles are
+    /// only moved and turned, never rebuilt: rebuilding would remove the entity the drag gesture is on.
+    func show(mode: EditMode, lock: AxisLock, transform t: ItemTransform?, flat: Bool, handleSize: Double,
+              bounds: GizmoBounds?, frozen: Bool) {
         guard let t else {
             root.isEnabled = false
             return
         }
         root.isEnabled = true
         let size = (handleSize * 100).rounded() / 100 // whole centimetres, so a small head move doesn't rebuild
-        let built = "\(mode.rawValue):\(lock):\(flat):\(size):\(Self.key(t.scale))"
-        if built != builtFor {
+        let layout = gizmoLayout(scale: t.scale, rotation: t.rotation, bounds: bounds)
+        let built = "\(mode.rawValue):\(lock):\(flat):\(size):\(Self.key(layout))"
+        if built != builtFor, !(frozen && builtFor != nil) {
             builtFor = built
-            build(mode: mode, lock: lock, scale: t.scale, flat: flat, size: size)
+            build(mode: mode, lock: lock, layout: layout, flat: flat, size: size)
         }
         root.position = SIMD3<Float>(fromRealityKitPosition(t.position)) // the z mirror is its own inverse
         let r = toRealityKitTransform(position: Vec3(x: 0, y: 0, z: 0), rotation: Vec3(x: t.rotation.x, y: t.rotation.y, z: t.rotation.z),
@@ -68,28 +72,27 @@ final class Gizmo {
         itemRoot.orientation = r.orientation.float
     }
 
-    private static func key(_ v: SIMD3<Double>) -> String {
-        "\((v.x * 1000).rounded()),\((v.y * 1000).rounded()),\((v.z * 1000).rounded())"
+    private static func key(_ l: GizmoLayout) -> String {
+        let v = [l.ringRadius, l.arrowOffset.x, l.arrowOffset.y, l.arrowOffset.z, l.handleOffset.x, l.handleOffset.y, l.handleOffset.z]
+        return v.map { String(Int(($0 * 1000).rounded())) }.joined(separator: ",")
     }
 
     // MARK: - Building
 
-    private func build(mode: EditMode, lock: AxisLock, scale s: SIMD3<Double>, flat: Bool, size: Double) {
+    private func build(mode: EditMode, lock: AxisLock, layout l: GizmoLayout, flat: Bool, size: Double) {
         for c in root.children where c !== itemRoot { c.removeFromParent() }
         for c in itemRoot.children { c.removeFromParent() }
         switch mode {
         case .move:
             for axis in GizmoAxis.allCases where Self.shows(axis, lock) {
-                root.addChild(arrow(axis, from: gizmoHandleOffset(s[axis.index]), size: size))
+                root.addChild(arrow(axis, from: l.arrowOffset[axis.index], size: size))
             }
         case .rotate:
-            let r = gizmoRingRadius(scale: s)
-            for axis in GizmoAxis.allCases { root.addChild(ring(axis, radius: r, size: size)) }
+            for axis in GizmoAxis.allCases { root.addChild(ring(axis, radius: l.ringRadius, size: size)) }
         case .resize:
-            let corner = SIMD3(gizmoHandleOffset(s.x), gizmoHandleOffset(s.y), gizmoHandleOffset(s.z))
-            itemRoot.addChild(cube(.uniform, Self.uniformColor, at: corner, size: size))
+            itemRoot.addChild(cube(.uniform, Self.uniformColor, at: l.handleOffset, size: size))
             for axis in GizmoAxis.allCases where !(flat && axis == .z) {
-                itemRoot.addChild(cube(.stretch(axis), Self.color(axis), at: axis.unit * gizmoHandleOffset(s[axis.index]), size: size))
+                itemRoot.addChild(cube(.stretch(axis), Self.color(axis), at: axis.unit * l.handleOffset[axis.index], size: size))
             }
         }
     }

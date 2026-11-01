@@ -165,3 +165,37 @@ final class ExactFieldTests: XCTestCase {
         XCTAssertEqual(formatExact(2), "2")
     }
 }
+
+/// Handles sit outside the item's mesh, so a pinch on one isn't taken by the item's own hit box.
+final class GizmoLayoutTests: XCTestCase {
+    func testWithoutBoundsItIsDecentralandsLayout() {
+        let l = gizmoLayout(scale: [1, 2, 0.5], rotation: .zero, bounds: nil)
+        XCTAssertEqual(l.ringRadius, gizmoRingRadius(scale: [1, 2, 0.5]), accuracy: 1e-9)
+        XCTAssertEqual(l.arrowOffset, [gizmoHandleOffset(1), gizmoHandleOffset(2), gizmoHandleOffset(0.5)])
+        XCTAssertEqual(l.handleOffset, l.arrowOffset)
+    }
+
+    func testATallMeshPushesRingsArrowsAndHandlesOutside() {
+        // A duck-like mesh: origin at its feet, 1.6 m tall, while its scale is 1.
+        let b = GizmoBounds(min: [-0.5, 0, -0.4], max: [0.5, 1.6, 0.4])
+        let l = gizmoLayout(scale: [1, 1, 1], rotation: .zero, bounds: b)
+        let corner = (0.25 + 2.56 + 0.16).squareRoot()
+        XCTAssertEqual(l.ringRadius, corner + 0.15, accuracy: 1e-9)
+        XCTAssertEqual(l.arrowOffset.y, 1.75, accuracy: 1e-9)
+        XCTAssertEqual(l.arrowOffset.x, 0.65, accuracy: 1e-9) // Decentraland's offset already clears 0.5
+        XCTAssertEqual(l.handleOffset.y, 1.75, accuracy: 1e-9)
+    }
+
+    func testArrowsUseTheTurnedMeshOnTheScenesAxesAndHandlesTheItemsOwn() {
+        let b = GizmoBounds(min: [-1, 0, -0.2], max: [1, 0.5, 0.2])
+        let straight = gizmoLayout(scale: [1, 1, 1], rotation: .zero, bounds: b)
+        XCTAssertEqual(straight.arrowOffset.x, 1.15, accuracy: 1e-9)
+        XCTAssertEqual(straight.arrowOffset.z, 0.65, accuracy: 1e-9)
+        // Yawed 90: the long side now lies along scene z.
+        let turned = gizmoLayout(scale: [1, 1, 1], rotation: [0, 90, 0], bounds: b)
+        XCTAssertEqual(turned.arrowOffset.x, 0.65, accuracy: 1e-9)
+        XCTAssertEqual(turned.arrowOffset.z, 1.15, accuracy: 1e-9)
+        // Resize handles turn with the item: still along its own x.
+        XCTAssertEqual(turned.handleOffset.x, 1.15, accuracy: 1e-9)
+    }
+}
