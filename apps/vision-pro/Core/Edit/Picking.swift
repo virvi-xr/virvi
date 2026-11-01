@@ -52,3 +52,9 @@ func selectionLabel(placing: Bool, selectedName: String?) -> String {
     if let selectedName { return selectedName }
     return placing ? "Placing the scene: press Done placing to pick items" : "Look at an item and pinch to select it"
 }
+
+/// Items take pinches only while editing and not while placing; the selected one only in Move, so in Rotate and
+/// Resize a pinch near it reaches the rings and handles.
+func itemPickable(placing: Bool, editing: Bool, isSelected: Bool, mode: EditMode) -> Bool {
+    editing && !placing && !(isSelected && mode != .move)
+}
