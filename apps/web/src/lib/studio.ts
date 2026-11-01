@@ -35,7 +35,10 @@ export type StudioDesign = {
 
 export type Checker = { pass: boolean; failures: number; warnings: number } | null
 
-export type StudioView = { status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string }
+export type StudioView = {
+  status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string
+  pending?: boolean // an Inspect view whose whole sphere is still rendering behind its ring
+}
 
 export type FinalizedRevision = {
   revision: number
@@ -69,11 +72,26 @@ export type StudioMessage = {
   createdAt: string
 }
 
+/** A clipping fix's emote view (the server's `fixClipping`). */
+export type FixClipping = { emote: string; bodyShape: 'male' | 'female'; outfit: string }
+
+/** An emote view with every piece worn, rendered at `fps`. Its frame urls come from asking for it (`requestStudioSetRender`). */
+export type StudioSetView = { status: 'queued' | 'ready' | 'failed' | string; frames: number; fps: number | null; renderedAt: string }
+
+/** The emote step: views and checks for the pieces as they are now (`revisions`). */
+export type StudioSet = {
+  revisions: string
+  views: Record<string, StudioSetView>
+  checks: { emote: string; bodyShape: string; state: 'fine' | 'clipping' | string }[]
+  freeFixesLeft: Record<string, number>
+}
+
 export type StudioDetail = {
   design: StudioDesign
   pieces: StudioPiece[]
   messages: StudioMessage[]
-  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string } | null
+  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; fixClipping?: FixClipping | null } | null
+  set: StudioSet
   lastPrompt: { jobId: string; outcome: string | null; status: string } | null
   uploads: StudioUpload[]
 }
@@ -150,7 +168,7 @@ const FILE_TOO_LARGE = 'That file is too big: images can be up to 20 MB, 3D file
 
 /** A refused request in the page's words, keyed by the server's `code`. */
 export function refusalMessage(
-  err: { status?: number; body?: { code?: string; resetsAt?: string; categories?: string[] } },
+  err: { status?: number; body?: { code?: string; resetsAt?: string; categories?: string[]; emote?: string } },
   now: Date,
 ): Refusal {
   const b = err.body ?? {}
@@ -164,6 +182,10 @@ export function refusalMessage(
       return { text: 'The studio needs a rest for today. Come back tomorrow.' }
     case 'busy':
       return { text: 'The agent is still working on your last message.' }
+    case 'clipping_fix_limit':
+      return { text: `We’ve tried to fix the clipping in ${emoteLabel(b.emote === OWN_EMOTE ? 'emote' : 'wearable', b.emote ?? 'emote')} twice. Describe what you see in a prompt and the agent will take another look.` }
+    case 'not_seen':
+      return { text: 'Play that emote first, then report what you see.' }
     case 'open_design_limit':
       return { text: 'Your plan has room for one open design. Archive or finalize the one you have, or upgrade.', action: 'settings' }
     case 'checks_failed':
@@ -321,6 +343,78 @@ export function viewKey(kind: string, view: RenderView): string {
 }
 
 const mod = (n: number, m: number) => ((n % m) + m) % m
+
+export const EMOTES = ['idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump'] as const
+/** An emote design's emote view plays its own animation. */
+export const OWN_EMOTE = 'own'
+export const STEPS = ['design', 'inspect', 'avatar', 'emotes', 'finalize'] as const
+export type Step = typeof STEPS[number]
+export const STEP_LABELS: Record<Step, string> = { design: 'Design', inspect: 'Inspect', avatar: 'On avatar', emotes: 'Emotes', finalize: 'Finalize' }
+
+/** An emote design has nothing to inspect without the avatar. */
+export const stepsFor = (kind: string): Step[] => STEPS.filter((s) => kind !== 'emote' || s !== 'inspect')
+
+/** `the dance`, or `the emote` for an emote design's own. */
+export const emoteLabel = (kind: string, emote: string) => kind === 'emote' || emote === OWN_EMOTE ? 'the emote' : `the ${emote}`
+
+export const orbitKey = (bodyShape: string) => `orbit-${bodyShape}`
+
+/** The server's emote view key, `walk-<bodyShape>-<outfit>-<emote|own>` (apps/server/src/studio/designs.ts `setViewKey`). */
+export const setViewKey = (kind: string, view: RenderView) =>
+  `walk-${view.bodyShape}-${view.outfit}-${kind === 'emote' ? OWN_EMOTE : view.emote}`
+
+/** Inspect's grid: 24 columns round, and on screen seven rows from straight down (0°) to straight up (180°). */
+export const ORBIT_COLS = 24
+export const ORBIT_FRAMES = 122
+const ORBIT_ROWS = [90, 60, 120, 30, 150] // the worker's row order (CONTRACT.md `orbit-<bodyShape>`)
+const SCREEN_ROWS = [0, 30, 60, 90, 120, 150, 180]
+export const EYE_LEVEL_ROW = 3
+
+const gridFrame = (deg: number, col: number) => deg === 0 ? 120 : deg === 180 ? 121 : ORBIT_ROWS.indexOf(deg) * ORBIT_COLS + col
+
+/** The frame for an on-screen row and column, or the nearest row's that has rendered (with only the ring, the ring). */
+export function orbitFrame(row: number, col: number, frames: number): number {
+  const order = SCREEN_ROWS.map((_, r) => r).sort((a, b) => Math.abs(a - row) - Math.abs(b - row) || b - a)
+  for (const r of order) {
+    const i = gridFrame(SCREEN_ROWS[r], col)
+    if (i < frames) return i
+  }
+  return 0
+}
+
+/** Where a drag lands: one width is a full turn (the item turns with the cursor), one height spans top to bottom. */
+export function orbitDrag(start: { row: number; col: number }, dx: number, dy: number, width: number, height: number): { row: number; col: number } {
+  const col = width > 0 ? mod(start.col - Math.round((dx / width) * ORBIT_COLS), ORBIT_COLS) : start.col
+  const steps = height > 0 ? Math.round((dy / height) * (SCREEN_ROWS.length - 1)) : 0
+  return { row: Math.max(0, Math.min(SCREEN_ROWS.length - 1, start.row - steps)), col }
+}
+
+/** Under Inspect's frames: more angles on their way, a sphere that failed behind its ring, or nothing to say. */
+export function inspectNote(view: StudioView | undefined): 'loading' | 'retry' | null {
+  if (view?.status !== 'ready' || view.frames >= ORBIT_FRAMES) return null
+  return view.pending ? 'loading' : 'retry'
+}
+
+export type EmoteState = 'unchecked' | 'fine' | 'clipping' | 'fixing'
+
+/** The emotes a design is checked in: the base ones, or an emote design's own. */
+export const checkedEmotes = (kind: string): string[] => kind === 'emote' ? [OWN_EMOTE] : [...EMOTES]
+
+/** Where an emote stands on a body shape: being fixed, said to clip, looks fine, or not looked at yet. */
+export function emoteState(detail: StudioDetail, emote: string, bodyShape: string): EmoteState {
+  if (detail.activeJob?.type === 'prompt' && detail.activeJob.fixClipping?.emote === emote) return 'fixing'
+  const c = detail.set.checks.find((x) => x.emote === emote && x.bodyShape === bodyShape)
+  return c?.state === 'fine' || c?.state === 'clipping' ? c.state : 'unchecked'
+}
+
+/** Finalize's checklist: every emote on both body shapes, and how many the person has looked at. */
+export function emoteChecklist(detail: StudioDetail): { rows: { emote: string; bodyShape: 'male' | 'female'; state: EmoteState }[]; checkedCount: number } {
+  const rows = checkedEmotes(detail.design.kind).flatMap((emote) => (['male', 'female'] as const)
+    .map((bodyShape) => ({ emote, bodyShape, state: emoteState(detail, emote, bodyShape) })))
+  // A reported emote counts as checked while it is fixed too: the person looked at it
+  const checked = rows.filter((r) => detail.set.checks.some((c) => c.emote === r.emote && c.bodyShape === r.bodyShape))
+  return { rows, checkedCount: checked.length }
+}
 
 /** The frame a drag lands on: one stage width is one full turn, and the item turns the way the cursor moves. */
 export function frameAt(start: number, dx: number, width: number, frames: number): number {

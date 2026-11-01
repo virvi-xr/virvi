@@ -9,11 +9,13 @@ import { failJobs } from './results.js'
 import { publishStudio } from './events.js'
 import { signRenderFrame, frameUrlExpiry } from './render-urls.js'
 import { finalizedRevisions } from './payments.js'
+import type { Exec } from './quota.js'
+import { setDetail } from './sets.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
 export type Design = typeof studioDesigns.$inferSelect
-export type View = { bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: null | 'idle' | 'wave' | 'dance' | 'clap' | 'walk' }
+export type View = { bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: null | typeof BASE_EMOTES[number] }
 
 export const PROMPT_LIMITS = { timeoutSec: 1500, maxTurns: 80, costCeilingUsd: 3 }
 /** The outcomes a free Continue may follow: the agent stopped at a limit with its work in hand. */
@@ -33,17 +35,44 @@ export const START_FAILED = 'The studio machine could not start.'
 export const fixChecksText = (categories: string[]) =>
   `Fix every FAIL the checker reported for: ${categories.join(', ')}. Change nothing else.`
 
+export type FixClipping = { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit'] }
+const OUTFIT_LABELS: Record<string, string> = { default: 'default', 'outfit-2': 'outfit 2', 'outfit-3': 'outfit 3' }
+/** What the person's clipping report says in the conversation. */
+export const clippingText = (kind: string, f: FixClipping) =>
+  `It clips in the ${kind === 'emote' ? 'emote' : f.emote} (${f.bodyShape}, ${OUTFIT_LABELS[f.outfit]} outfit). Please fix it.`
+/** What the agent is told: only what passes through, nothing else. */
+export const clippingInstruction = (kind: string, f: FixClipping) => kind === 'emote'
+  ? `Fix the clipping in the emote on the ${f.bodyShape} body with the ${OUTFIT_LABELS[f.outfit]} outfit: find where the arms, hands or props pass through the body or the base outfit’s clothes, and change only the parts of the animation that do. Change nothing else.`
+  : `Fix the clipping in the ${f.emote} emote on the ${f.bodyShape} body with the ${OUTFIT_LABELS[f.outfit]} outfit: find which piece passes through the body, the base outfit’s clothes or another piece, and change only the parts that do. Change nothing else.`
+
 export const WEARABLE_CATEGORIES = [
   'eyebrows', 'eyes', 'facial_hair', 'hair', 'mouth', 'upper_body', 'lower_body', 'feet', 'earring', 'eyewear', 'hat',
   'helmet', 'mask', 'tiara', 'top_head', 'hands_wear', 'skin',
 ] as const
 export const BODY_SHAPES = ['male', 'female'] as const
 export const OUTFITS = ['default', 'outfit-2', 'outfit-3'] as const
-export const BASE_EMOTES = ['idle', 'wave', 'dance', 'clap', 'walk'] as const
+export const BASE_EMOTES = ['idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump'] as const
+/** An emote design's emote view plays its own animation. */
+export const OWN_EMOTE = 'own'
+/** Inspect's frames: the eye-level ring, then the whole sphere (CONTRACT.md, `orbit-<bodyShape>`). */
+export const ORBIT_RING = 24
+export const ORBIT_FRAMES = 122
 
 /** The contract's view key, `<mode>-<bodyShape>-<outfit>[-<emote>]`: the one place it is made. */
 export function viewKey(kind: string, view: View): string {
   return `${kind === 'emote' ? 'emote' : 'spin'}-${view.bodyShape}-${view.outfit}${view.emote ? `-${view.emote}` : ''}`
+}
+
+export const orbitKey = (bodyShape: View['bodyShape']) => `orbit-${bodyShape}`
+
+/** An emote view with every piece worn: `walk-<bodyShape>-<outfit>-<emote>`, `own` for an emote design. */
+export function setViewKey(kind: string, view: View): string {
+  return `walk-${view.bodyShape}-${view.outfit}-${kind === 'emote' ? OWN_EMOTE : view.emote}`
+}
+
+/** The set of piece revisions a design-level view belongs to: the latest revision ids, sorted and joined. */
+export function revisionsKey(pieces: { latestRevisionId: string | null }[]): string {
+  return pieces.map((p) => p.latestRevisionId).filter((x): x is string => !!x).sort().join(',')
 }
 
 export function publicDesign(d: Design) {
@@ -91,7 +120,10 @@ export async function designDetail(d: Design, now: Date) {
   const finalized = await finalizedRevisions(d.id)
   const messages = await db.select().from(studioMessages).where(eq(studioMessages.designId, d.id))
     .orderBy(asc(studioMessages.createdAt), asc(studioMessages.id))
-  const [active] = await db.select({ id: studioJobs.id, type: studioJobs.type, status: studioJobs.status }).from(studioJobs)
+  const [active] = await db.select({
+    id: studioJobs.id, type: studioJobs.type, status: studioJobs.status,
+    fixClipping: sql<FixClipping | null>`${studioJobs.payload}->'fixClipping'`,
+  }).from(studioJobs)
     .where(and(eq(studioJobs.designId, d.id), inArray(studioJobs.status, ['queued', 'taken'])))
     .orderBy(sql`CASE WHEN ${studioJobs.type} = 'prompt' THEN 0 ELSE 1 END`, asc(studioJobs.createdAt))
     .limit(1)
@@ -103,12 +135,14 @@ export async function designDetail(d: Design, now: Date) {
     design: publicDesign(d),
     pieces: pieces.map((p) => {
       const rev = revs.find((r) => r.id === p.latestRevisionId)
-      const views: Record<string, { status: string; frames: number; urls: string[]; renderedAt: Date }> = {}
+      const views: Record<string, { status: string; frames: number; urls: string[]; renderedAt: Date; pending?: boolean }> = {}
       for (const r of renders.filter((r) => r.revisionId === rev?.id)) {
         views[r.viewKey] = {
           status: r.status,
           frames: r.frames,
           renderedAt: r.createdAt,
+          // an Inspect view whose whole sphere is still rendering behind its ring
+          ...(r.viewKey.startsWith('orbit-') ? { pending: !!r.pendingJobId } : {}),
           urls: r.status === 'ready'
             ? Array.from({ length: r.frames }, (_, frame) => signRenderFrame(
               { designId: d.id, revisionId: r.revisionId, viewKey: r.viewKey, category: p.category, frame, jobId: r.jobId }, expires))
@@ -127,6 +161,7 @@ export async function designDetail(d: Design, now: Date) {
     messages: messages.map((m) => ({ id: m.id, role: m.role, agent: m.agent, text: m.text, proposal: m.proposal, jobId: m.jobId, createdAt: m.createdAt })),
     uploads: (await listUploads(d.id)).map(publicUpload),
     activeJob: active ?? null,
+    set: await setDetail(d, now),
     lastPrompt: last
       ? { jobId: last.jobId, outcome: (last.result as { outcome?: string } | null)?.outcome ?? null, status: last.status }
       : null,
@@ -150,7 +185,7 @@ export async function startWorker(designId: string, jobId: string, now: Date): P
 
 export async function queuePrompt(
   design: Design,
-  input: { text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean },
+  input: { text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping },
   now: Date,
 ): Promise<{ ok: true; jobId: string } | ({ ok: false } & Refusal)> {
   let jobId: string
@@ -181,13 +216,15 @@ export async function queuePrompt(
         if (!categories.length) throw new Refused({ status: 409, body: { error: 'nothing_to_fix', code: 'nothing_to_fix' } })
         fixText = fixChecksText(categories)
       }
-      const counted = !input.continue && !input.fixChecks
+      // A clipping report is the agent's mistake too: free, in the server's words
+      const counted = !input.continue && !input.fixChecks && !input.fixClipping
       const r = await reservePrompt(d.ownerId, now, { counted }, tx)
       if (!r.ok) {
         const s = await promptStatus(d.ownerId, now)
         throw new Refused({ status: 429, body: { error: r.reason, code: r.reason, resetsAt: s.resetsAt } })
       }
-      const text = input.continue ? CONTINUE_TEXT : fixText ?? input.text!
+      const fix = input.fixClipping
+      const text = input.continue ? CONTINUE_TEXT : fix ? clippingText(d.kind, fix) : fixText ?? input.text!
       await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text })
       const [job] = await tx.insert(studioJobs).values({
         designId: d.id,
@@ -197,12 +234,13 @@ export async function queuePrompt(
           kind: d.kind,
           agent: d.agent,
           model: modelFor(d.agent),
-          prompt: text,
+          prompt: fix ? clippingInstruction(d.kind, fix) : text,
           selectedSlots: input.selectedSlots,
           limits: promptLimits(d.agent),
           render: null,
           uploads: await uploadPaths(d.id, tx),
           check: counted, // the user's own words; Continue and fixing the checks are the server's
+          ...(fix ? { fixClipping: fix } : {}),
         },
         counted,
         countedDay: r.day,
@@ -219,6 +257,75 @@ export async function queuePrompt(
   await publishStudio(design.id, { type: 'job', jobId, status: 'queued' })
   await startWorker(design.id, jobId, now)
   return { ok: true, jobId }
+}
+
+const renderPayload = (kind: string, render: Record<string, unknown>) => ({
+  type: 'render', kind, agent: null, model: null, prompt: null, selectedSlots: null, limits: RENDER_LIMITS, render,
+})
+
+/** Queues the whole Inspect sphere behind a ring, in the background, as the job that will replace the ring's frames. */
+export async function queueFullOrbit(
+  exec: Exec, design: { id: string; kind: string }, revisionId: string, category: string, bodyShape: View['bodyShape'],
+): Promise<string> {
+  const [job] = await exec.insert(studioJobs).values({
+    designId: design.id,
+    type: 'render',
+    background: true,
+    payload: renderPayload(design.kind, { categories: [category], bodyShape, mode: 'orbit', ring: false }),
+  }).returning({ id: studioJobs.id })
+  await exec.update(studioRenders).set({ pendingJobId: job.id })
+    .where(and(eq(studioRenders.revisionId, revisionId), eq(studioRenders.viewKey, orbitKey(bodyShape))))
+  return job.id
+}
+
+/**
+ * Inspect: a piece alone from every angle. A missing view queues the eye-level ring (shown as soon as it lands) and
+ * the rest of the sphere behind it, in the background. A ring whose sphere never came gets the sphere queued again.
+ */
+export async function requestOrbit(
+  design: Design,
+  category: string,
+  bodyShape: View['bodyShape'],
+  now: Date,
+): Promise<{ status: 'ready'; frames: number; urls: string[] } | { status: 'queued' } | null> {
+  const [piece] = await db.select().from(studioPieces)
+    .where(and(eq(studioPieces.designId, design.id), eq(studioPieces.category, category)))
+  if (!piece?.latestRevisionId) return null
+  const revisionId = piece.latestRevisionId
+  const key = orbitKey(bodyShape)
+  const queued = await db.transaction(async (tx) => {
+    await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.id, design.id)).for('update')
+    const [row] = await tx.select().from(studioRenders)
+      .where(and(eq(studioRenders.revisionId, revisionId), eq(studioRenders.viewKey, key)))
+    if (row?.status === 'ready') {
+      if (row.frames < ORBIT_FRAMES && !row.pendingJobId) return { ready: row, jobId: await queueFullOrbit(tx, design, revisionId, category, bodyShape) }
+      return { ready: row }
+    }
+    if (row?.status === 'queued') return {}
+    const [ring] = await tx.insert(studioJobs).values({
+      designId: design.id,
+      type: 'render',
+      payload: renderPayload(design.kind, { categories: [category], bodyShape, mode: 'orbit', ring: true }),
+    }).returning({ id: studioJobs.id })
+    await tx.insert(studioRenders).values({ revisionId, viewKey: key, jobId: ring.id, status: 'queued', frames: 0 })
+      .onConflictDoUpdate({ target: [studioRenders.revisionId, studioRenders.viewKey], set: { jobId: ring.id, status: 'queued', frames: 0 } })
+    await queueFullOrbit(tx, design, revisionId, category, bodyShape)
+    await tx.update(studioDesigns).set({ lastJobAt: now }).where(eq(studioDesigns.id, design.id))
+    return { jobId: ring.id }
+  })
+  if (queued.jobId) {
+    await publishStudio(design.id, { type: 'job', jobId: queued.jobId, status: 'queued' })
+    await startWorker(design.id, queued.jobId, now)
+  }
+  if (!queued.ready) return { status: 'queued' }
+  const r = queued.ready
+  const expires = frameUrlExpiry(now)
+  return {
+    status: 'ready',
+    frames: r.frames,
+    urls: Array.from({ length: r.frames }, (_, frame) => signRenderFrame(
+      { designId: design.id, revisionId: r.revisionId, viewKey: r.viewKey, category, frame, jobId: r.jobId }, expires)),
+  }
 }
 
 export async function requestRender(
@@ -240,10 +347,7 @@ export async function requestRender(
     const [job] = await tx.insert(studioJobs).values({
       designId: design.id,
       type: 'render',
-      payload: {
-        type: 'render', kind: design.kind, agent: null, model: null, prompt: null, selectedSlots: null,
-        limits: RENDER_LIMITS, render: { categories: [category], ...view },
-      },
+      payload: renderPayload(design.kind, { categories: [category], ...view }),
     }).returning({ id: studioJobs.id })
     await tx.insert(studioRenders).values({ revisionId: piece.latestRevisionId!, viewKey: key, jobId: job.id, status: 'queued', frames: 0 })
       .onConflictDoUpdate({ target: [studioRenders.revisionId, studioRenders.viewKey], set: { jobId: job.id, status: 'queued', frames: 0 } })

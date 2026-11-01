@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs the network checks and one real prompt pair each for Codex and Grok on a Fly performance-4x machine, then
-# destroys it.
+# Runs the network checks and one real prompt pair each for Codex and Grok on a Fly performance-4x machine (Codex's
+# also renders the Inspect sphere, the run emote and a clipping fix, printing FRAME thumbnails), then destroys it.
 #   bash apps/studio-worker/e2e/fly.sh <image>    e.g. registry.fly.io/vlm-studio-worker:<git sha>
 # The app's secrets (ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY) must already be imported by the owner. Spends
 # about $3.
@@ -30,7 +30,7 @@ trap cleanup EXIT
 # machine keeps starting, so carry on and follow its logs
 fly machine run "$image" -a "$app" --name "$name" --region iad --vm-size performance-4x --restart no --detach \
   "${files[@]}" -- bash -c 'if bash /opt/e2e/network_checks.sh && python3 /opt/e2e/real_prompt.py --agent codex \
-    --out /tmp/out && python3 /opt/e2e/real_prompt.py --agent grok --out /tmp/out-grok; then echo E2E-""PASSED; \
+    --out /tmp/out --inspect && python3 /opt/e2e/real_prompt.py --agent grok --out /tmp/out-grok; then echo E2E-""PASSED; \
     else echo E2E-""FAILED; fi' \
   || [ -n "$(machine_id)" ] || exit 1
 

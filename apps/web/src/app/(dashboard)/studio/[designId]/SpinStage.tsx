@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { frameAt } from '@/lib/studio'
 
-const LOOP_FPS = 12
+const LOOP_FPS = 12 // an on-avatar emote spin; an emote view plays at the rate it was rendered
 
 /** Loads every frame before resolving, so a new view never replaces the old one half-drawn. */
 function preload(urls: string[]): Promise<void> {
@@ -14,10 +14,10 @@ function preload(urls: string[]): Promise<void> {
 }
 
 /**
- * A rendered view on the stage: drag to turn it (one stage width is one full turn); `loop` also plays it at 12 frames
- * a second, for an animation. The frames shown stay until the next view's frames have all loaded.
+ * A rendered view on the stage: drag to turn it (one stage width is one full turn); `loop` also plays it at `fps`
+ * (12 unless given), for an animation. The frames shown stay until the next view's frames have all loaded.
  */
-export default function SpinStage({ view, urls, loop, label }: { view: string; urls: string[]; loop: boolean; label: string }) {
+export default function SpinStage({ view, urls, loop, label, fps = LOOP_FPS }: { view: string; urls: string[]; loop: boolean; label: string; fps?: number }) {
   const [shown, setShown] = useState<string[]>([])
   const [frame, setFrame] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -44,9 +44,9 @@ export default function SpinStage({ view, urls, loop, label }: { view: string; u
     if (!loop || shown.length < 2) return
     const t = setInterval(() => {
       if (!drag.current) setFrame((f) => (f + 1) % shown.length)
-    }, 1000 / LOOP_FPS)
+    }, 1000 / fps)
     return () => clearInterval(t)
-  }, [loop, shown.length])
+  }, [loop, shown.length, fps])
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (shown.length < 2) return

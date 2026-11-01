@@ -10,7 +10,7 @@ AGENT_USER = 'agent'
 PREVIEW_URL = 'https://wearable-preview.decentraland.org/'
 # Outfit name -> wearable-preview `profile` value (a deterministic default outfit)
 OUTFITS = {'default': 'default1', 'outfit-2': 'default2', 'outfit-3': 'default3'}
-BASE_EMOTES = ('idle', 'wave', 'dance', 'clap', 'walk')
+BASE_EMOTES = ('idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump')
 
 
 def skills_sha(repo: Path = SKILLS) -> str | None:

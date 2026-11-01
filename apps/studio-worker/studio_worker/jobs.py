@@ -2,7 +2,8 @@
 STUDIO_IDLE_EXIT_SEC, then exit so the machine stops. See CONTRACT.md for the API.
 
 A prompt job runs the agent, checks and renders what changed, uploads it, saves the workspace, and only then posts
-its result. A render job renders a view of the workspace's current pieces and saves nothing. A finalize job builds
+its result. A render job renders a view of the workspace's current pieces (one piece's, or every piece worn together
+for an emote view) and saves nothing. A finalize job builds
 paid packages from Virvi's copies of the paid files (finalize.py) and saves nothing either.
 """
 import copy
@@ -100,6 +101,12 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
             result.update(outcome='off_topic', costUsd=v.cost_usd,
                           scope={'by': 'check', 'category': v.category, 'note': v.note})
             return
+    fix = job.get('fixClipping')
+    if fix:  # the agent starts from frames of the clipping, before it changes anything
+        frames_error = _clipping_frames(design, kind, fix, render_fn, as_user)
+        if frames_error:
+            result['error'] = f'could not render the clipping frames: {frames_error}'
+            return
     saved = copy.deepcopy(state)
     for answered in ('proposal.json', 'declined.json'):  # an earlier prompt's; don't read it as this one's
         if os.path.lexists(design / 'out' / answered):
@@ -107,7 +114,8 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
     totals = state.totals.get(agent)
     before = Usage(**totals) if totals else None
     uploads = fetch_uploads(job, client, design)
-    prompt = prompt_with_context(state, agent, job['prompt']) + uploads_text(uploads) + closing(kind, job.get('selectedSlots'))
+    words = job['prompt'] + (_clipping_text(design, kind, agent, fix) if fix else '')
+    prompt = prompt_with_context(state, agent, words) + uploads_text(uploads) + closing(kind, job.get('selectedSlots'))
     limits = {**DEFAULT_LIMITS, **{k: v for k, v in (job.get('limits') or {}).items() if v is not None}}
 
     _phase(client, job_id, 'building')
@@ -136,14 +144,22 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
         if changed and not proposal and not error:
             _phase(client, job_id, 'rendering')
             for p in changed:
-                view = {'bodyShape': 'male', 'outfit': 'default', 'emote': None,
-                        'mode': 'emote' if kind == 'emote' else 'spin'}
-                count, problem = _render_and_upload(client, job_id, p, view, render_fn)
+                counts, problem = {}, None
+                for view in _prompt_views(kind):
+                    count, problem = _render_and_upload(client, job_id, p, view, render_fn)
+                    if problem and view['mode'] == 'orbit':
+                        # Inspect is extra: the piece still saves, and Inspect asks for its ring when opened
+                        print(f'[worker] {p.category}: Inspect ring not rendered: {problem[-300:]}', file=sys.stderr)
+                        problem = None
+                        continue
+                    if problem:
+                        break
+                    counts.update(count)
                 if problem:  # not uploaded and not recorded: the next prompt sees it as changed and tries again
                     render_errors.append(f'{p.category}: {problem}')
                     continue
                 _upload_piece(client, job_id, p)
-                renders[p.category] = count
+                renders[p.category] = counts
                 uploaded.add(p.category)
 
         _phase(client, job_id, 'saving')
@@ -181,12 +197,56 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
         result['outcome'] = 'ok' if uploaded else 'no_change'
 
 
+def _prompt_views(kind: str) -> list[dict]:
+    """What a prompt renders for each changed piece: the on-avatar spin, and for a wearable the Inspect ring (the rest
+    of the sphere is a render job Virvi queues behind it)."""
+    if kind == 'emote':
+        return [{'bodyShape': 'male', 'outfit': 'default', 'emote': None, 'mode': 'emote'}]
+    return [{'bodyShape': 'male', 'outfit': 'default', 'emote': None, 'mode': 'spin'},
+            {'bodyShape': 'male', 'outfit': 'default', 'emote': None, 'mode': 'orbit', 'ring': True}]
+
+
+def _worn(pieces: list[Piece]) -> list[dict]:
+    return [{'category': p.category, 'glbs': glbs_by_shape(p), 'meta': p.meta} for p in pieces]
+
+
+def _clipping_frames(design, kind, fix, render_fn, as_user) -> str | None:
+    """Writes 16 frames of the reported emote, every piece worn, to review/clipping/<emote>/. Returns an error."""
+    out = design / 'review' / 'clipping' / fix['emote']
+    if out.exists():
+        shutil.rmtree(out)
+    with tempfile.TemporaryDirectory(prefix='studio-stage-') as stage:
+        pieces, _, error = collect(design, kind, {}, run_checker=False, stage=Path(stage))
+        if error or not pieces:
+            return error or 'the design has no pieces'
+        r = render_fn(_worn(pieces), {'bodyShape': fix['bodyShape'], 'outfit': fix['outfit'],
+                                      'emote': fix['emote'], 'mode': 'walk', 'sample': renderer.EMOTE_SAMPLE}, out)
+    if not r['ok']:
+        return r['error']
+    if as_user:
+        import subprocess
+        subprocess.run(['chown', '-R', as_user, str(design / 'review')], check=False)
+    return None
+
+
+def _clipping_text(design, kind, agent, fix) -> str:
+    folders = ' '.join(f'out/{d.name}' for d in sorted((design / 'out').iterdir()) if d.is_dir() and
+                       (d / 'piece.json').exists()) if (design / 'out').is_dir() else 'out/<category>'
+    opener = 'open every one with read_file' if agent == 'grok' else 'open every one'
+    return (f"\nFrames of the clipping are in review/clipping/{fix['emote']}/: {opener} before you change anything, "
+            f"and after your fix run studio-preview {folders} --emote {fix['emote']} --body {fix['bodyShape']} "
+            f"--outfit {fix['outfit']} and open those frames to check it.")
+
+
 def _render_job(job, client, design, render_fn, result):
     spec, kind = job['render'], job.get('kind', 'wearable')
     with tempfile.TemporaryDirectory(prefix='studio-stage-') as stage:
         pieces, _, error = collect(design, kind, {}, run_checker=False, stage=Path(stage))
         if error:
             result['error'] = error
+            return
+        if spec.get('set'):
+            _set_render(job, client, pieces, spec, render_fn, result)
             return
         wanted = {p.category: p for p in pieces}
         missing = [c for c in spec['categories'] if c not in wanted]
@@ -195,6 +255,8 @@ def _render_job(job, client, design, render_fn, result):
             return
         view = {'bodyShape': spec.get('bodyShape') or 'male', 'outfit': spec.get('outfit') or 'default',
                 'emote': spec.get('emote'), 'mode': 'emote' if kind == 'emote' else 'spin'}
+        if spec.get('mode') == 'orbit' and kind != 'emote':
+            view = {**view, 'outfit': 'default', 'emote': None, 'mode': 'orbit', 'ring': bool(spec.get('ring'))}
         _phase(client, job['jobId'], 'rendering')
         problems = []
         for category in spec['categories']:
@@ -205,7 +267,29 @@ def _render_job(job, client, design, render_fn, result):
     result.update(outcome='error' if problems else 'ok', error='; '.join(problems) or None)
 
 
+def _set_render(job, client, pieces, spec, render_fn, result):
+    """Every piece worn together, walking round once through the emote: renders/set/<viewKey>/."""
+    if not pieces:
+        result['error'] = 'the design has no pieces'
+        return
+    view = {'bodyShape': spec.get('bodyShape') or 'male', 'outfit': spec.get('outfit') or 'default',
+            'emote': spec.get('emote') or 'own', 'mode': 'walk'}
+    key = view_key(view)
+    _phase(client, job['jobId'], 'rendering')
+    with tempfile.TemporaryDirectory() as tmp:
+        r = render_fn(_worn(pieces), view, Path(tmp) / key)
+        if not r['ok']:
+            result['error'] = r['error']
+            return
+        for i, frame in enumerate(r['frames']):
+            client.put_file(job['jobId'], f'renders/set/{key}/{i:03d}{frame.suffix}', frame.read_bytes(),
+                            mimetypes.guess_type(frame.name)[0] or 'image/webp')
+    result.update(outcome='ok', set={'viewKey': key, 'frames': len(r['frames']), 'fps': r.get('fps')})
+
+
 def view_key(view: dict) -> str:
+    if view['mode'] == 'orbit':
+        return f"orbit-{view['bodyShape']}"
     return '-'.join([view['mode'], view['bodyShape'], view['outfit']] + ([view['emote']] if view.get('emote') else []))
 
 

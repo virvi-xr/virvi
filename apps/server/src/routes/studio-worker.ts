@@ -128,7 +128,7 @@ export default async function studioWorkerRoutes(app: FastifyInstance) {
         UPDATE studio_jobs SET status = 'taken', taken_at = now()
         WHERE id = (
           SELECT id FROM studio_jobs WHERE design_id = ${designId} AND status = 'queued'
-          ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
+          ORDER BY background, created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
         ) AND status = 'queued'
         RETURNING id, payload`)
       const job = (rows as unknown as { id: string; payload: Record<string, unknown> }[])[0]
