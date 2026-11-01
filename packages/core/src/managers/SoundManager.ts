@@ -1,6 +1,7 @@
 import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
+import { itemName } from './naming.js'
 
 // Internal tracking of element config
 interface SoundConfig {
@@ -68,6 +69,7 @@ export class SoundManager {
     if (!config || !config.audioSrc) return
 
     const entity = this.adapter.createEntity()
+    this.adapter.setName?.(entity, itemName(config.name, config.audioSrc, 'Sound'))
 
     const position = data.position || { x: 0, y: 0, z: 0 }
     const rotation = data.rotation || { x: 0, y: 0, z: 0 }
@@ -122,7 +124,12 @@ export class SoundManager {
     if (elementData.volume !== undefined) config.volume = elementData.volume / 100
     if (elementData.sourceType !== undefined) config.sourceType = elementData.sourceType
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
-    if (elementData.name !== undefined) config.name = elementData.name
+    if (elementData.name !== undefined) {
+      config.name = elementData.name
+      for (const instance of this.instances.values()) {
+        if (instance.configSk === config.sk) this.adapter.setName?.(instance.entity, itemName(config.name, config.audioSrc, 'Sound'))
+      }
+    }
 
     // Update storage
     const key = config.customId || config.sk

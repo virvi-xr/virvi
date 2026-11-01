@@ -7,3 +7,8 @@ export function topWithOther(counts: Record<string, number>, n = 8): Array<{ key
   const rest = sorted.slice(n).reduce((a, x) => a + x.value, 0)
   return [...sorted.slice(0, n), { key: 'Other', value: rest }]
 }
+
+/** What a bar shows for a key: the server's label when it sent one (e.g. an emote's name for its URN), else the key. */
+export function barLabel(key: string, labels?: Record<string, string>): string {
+  return labels?.[key] || key
+}

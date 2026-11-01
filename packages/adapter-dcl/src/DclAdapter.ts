@@ -8,6 +8,7 @@ import {
   VideoPlayer,
   AudioSource,
   GltfContainer,
+  Name,
   ColliderLayer,
   InputAction,
   PointerEvents,
@@ -233,6 +234,10 @@ export class DclAdapter implements VirviPlatformAdapter {
 
   createEntity(): EntityHandle {
     return engine.addEntity()
+  }
+
+  setName(entity: EntityHandle, name: string): void {
+    Name.createOrReplace(entity as Entity, { value: name })
   }
 
   destroyEntity(handle: EntityHandle): void {

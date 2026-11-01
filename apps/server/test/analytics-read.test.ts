@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { analyticsEvents, analyticsHeatmapDaily, analyticsPositions, analyticsRollupHourly, analyticsScenes, analyticsSessions, analyticsCopresenceDaily, sceneRoles } from '../src/db/schema.js'
 import { visitorHash } from '../src/analytics/hash.js'
+import { resetEmoteLabelCache } from '../src/analytics/labels.js'
 import { setDeleteMyDataLimiter } from '../src/routes/analytics-read.js'
 import { TokenBucketLimiter } from '../src/analytics/limiter.js'
 import { resetDb } from './helpers/db.js'
@@ -47,6 +48,48 @@ describe('analytics read API', () => {
     expect(ts.json().points).toHaveLength(2)
     const stranger = await createUser()
     expect((await get(stranger, `/api/analytics/locations/${s.id}/summary`)).statusCode).toBe(403)
+  })
+
+  it('summary labels emotes and folds pre-naming entity:<n> targets into one row', async () => {
+    const { owner, s } = await owned()
+    resetEmoteLabelCache()
+    const urn = 'urn:decentraland:matic:collections-v2:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0'
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([{ pointers: [urn], metadata: { name: 'Cool Dance' } }]), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const h = new Date(Date.now() - 2 * 3600_000)
+      h.setUTCMinutes(0, 0, 0)
+      await db.insert(analyticsRollupHourly).values([
+        { sceneId: s.id, hour: h, sessions: 1, uniqueVisitors: 1, peakConcurrency: 1, dwellAvgSec: 10, interactions: { 'entity:539': 2, Door: 1 }, emotes: { wave: 1, [urn]: 2 } },
+        { sceneId: s.id, hour: new Date(h.getTime() + 3600_000), sessions: 1, uniqueVisitors: 1, peakConcurrency: 1, dwellAvgSec: 10, interactions: { 'entity:541': 3 }, emotes: { [urn]: 1 } },
+      ])
+      const res = await get(owner, `/api/analytics/locations/${s.id}/summary`)
+      expect(res.statusCode).toBe(200)
+      expect(res.json().interactions).toEqual({ 'Unnamed objects (older data)': 5, Door: 1 })
+      expect(res.json().emotes).toEqual({ wave: 1, [urn]: 3 })
+      expect(res.json().emoteLabels).toEqual({ wave: 'Wave', [urn]: 'Cool Dance' })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('summary still answers when the catalyst is down', async () => {
+    const { owner, s } = await owned()
+    resetEmoteLabelCache()
+    const urn = 'urn:decentraland:matic:collections-v2:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0'
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('down'))))
+    try {
+      const h = new Date(Date.now() - 2 * 3600_000)
+      h.setUTCMinutes(0, 0, 0)
+      await db.insert(analyticsRollupHourly).values({ sceneId: s.id, hour: h, sessions: 1, uniqueVisitors: 1, peakConcurrency: 1, dwellAvgSec: 10, emotes: { [urn]: 2 } })
+      const res = await get(owner, `/api/analytics/locations/${s.id}/summary`)
+      expect(res.statusCode).toBe(200)
+      expect(res.json().emotes).toEqual({ [urn]: 2 })
+      expect(res.json().emoteLabels).toEqual({ [urn]: '0xaaaa…aaaa:0' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('rejects invalid date ranges', async () => {

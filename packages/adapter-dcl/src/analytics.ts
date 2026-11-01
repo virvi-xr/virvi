@@ -8,6 +8,7 @@ import {
   InputAction,
   PointerEventType,
   Name,
+  GltfContainer,
   VideoPlayer,
   VideoEvent,
   videoEventsSystem,
@@ -20,12 +21,19 @@ import { Vector3, Color4 } from '@dcl/sdk/math'
 import { Collector, createTransport, resolveApiUrl } from '@virvixr/core'
 import { PARCEL_RE, type AnalyticsProbe, type AnalyticsSceneRef, type Vec3 } from '@virvixr/shared'
 import { DclAdapter } from './DclAdapter'
+import { resolveTargetLabel } from './target-label'
 
 const SDK_VERSION = '2.0.0'
 
 function targetName(entity: number): string {
-  const n = Name.getOrNull(entity as Entity)
-  return n?.value || `entity:${entity}`
+  return resolveTargetLabel(entity, {
+    nameOf: (e) => Name.getOrNull(e as Entity)?.value,
+    parentOf: (e) => {
+      const parent = Transform.getOrNull(e as Entity)?.parent
+      return parent ? (parent as number) : undefined
+    },
+    modelSrcOf: (e) => GltfContainer.getOrNull(e as Entity)?.src,
+  })
 }
 
 function headingFromQuaternion(q: { x: number; y: number; z: number; w: number }): number {

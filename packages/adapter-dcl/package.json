@@ -18,20 +18,22 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf dist .turbo"
   },
   "peerDependencies": {
     "@dcl/sdk": ">=7.26.0",
-    "@virvixr/shared": "workspace:*",
+    "@virvixr/client": "workspace:*",
     "@virvixr/core": "workspace:*",
-    "@virvixr/client": "workspace:*"
+    "@virvixr/shared": "workspace:*"
   },
   "devDependencies": {
     "@dcl/sdk": "7.30.1",
-    "@virvixr/shared": "workspace:*",
-    "@virvixr/core": "workspace:*",
     "@virvixr/client": "workspace:*",
-    "typescript": "^5.7.0"
+    "@virvixr/core": "workspace:*",
+    "@virvixr/shared": "workspace:*",
+    "typescript": "^5.7.0",
+    "vitest": "3.2.7"
   },
   "bundledDependencies": [
     "colyseus.js"

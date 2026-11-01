@@ -31,6 +31,8 @@ export interface VirviPlatformAdapter {
 
   // --- Entity Lifecycle ---
   createEntity(): EntityHandle;
+  /** Optional: give the entity a display name, which analytics report for clicks on it. Without it, clicks on Virvi items are anonymous. */
+  setName?(entity: EntityHandle, name: string): void;
   destroyEntity(handle: EntityHandle): void;
   entityExists(handle: EntityHandle): boolean;
 

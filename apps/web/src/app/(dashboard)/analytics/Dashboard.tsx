@@ -311,7 +311,7 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
         {s && (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
             <BarList title="Interactions" counts={s.interactions} />
-            <BarList title="Emotes" counts={s.emotes} />
+            <BarList title="Emotes" counts={s.emotes} labels={s.emoteLabels} />
             <BarList title="Countries" counts={s.countries} />
             <BarList title="Platforms" counts={s.platforms} />
           </div>

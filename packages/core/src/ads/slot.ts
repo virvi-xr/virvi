@@ -8,6 +8,8 @@ export interface AdSlotSpec {
   /** Unique per space (the instance sk). */
   key: string
   elementId: string
+  /** The name the plane (and any replacement entity) shows up under in analytics. */
+  name?: string
   shape: AdShape
   formats: AdFormats
   fallbackImageSrc?: string
@@ -216,6 +218,7 @@ export class AdSlot {
   private replaceEntity(): void {
     this.adapter.destroyEntity(this.holder.entity)
     this.holder.entity = this.adapter.createEntity()
+    if (this.spec.name) this.adapter.setName?.(this.holder.entity, this.spec.name)
     this.adapter.setTransform(this.holder.entity, this.transform)
     this.hasPlane = false
     this.attach()
