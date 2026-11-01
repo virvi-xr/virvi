@@ -38,6 +38,9 @@ final class BuildSpace: ObservableObject {
     @Published private(set) var pinStatus: String
     /// True while world tracking runs, so the head pose is known.
     @Published private(set) var tracking = false
+    /// The Place row's height readout (`heightLabel`), and why Snap to floor couldn't snap.
+    @Published private(set) var heightText = ""
+    @Published private(set) var floorMessage: String?
     /// Exact panel open (EditModeBar's `exactOpen`).
     @Published var exactOpen = false
 
@@ -49,6 +52,11 @@ final class BuildSpace: ObservableObject {
     #endif
     private var session: ARKitSession?
     private var world: WorldTrackingProvider?
+    private var floorUpdates: Task<Void, Never>?
+    /// Detected floor planes' centres in the room. visionOS's own floor (the room's y = 0) can be centimetres off.
+    private var floors: [UUID: SIMD3<Float>] = [:]
+    /// The builder set the height (a nudge or Snap to floor): floors found later leave it alone.
+    private var heightSet = false
     private var pinKey: String { "virvi.pinnedWorldAnchorID.\(sceneId)" }
     private var pinnedID: UUID? {
         didSet { UserDefaults.standard.set(pinnedID?.uuidString, forKey: pinKey) }
@@ -307,8 +315,15 @@ final class BuildSpace: ObservableObject {
         }
         let session = ARKitSession()
         let world = WorldTrackingProvider()
+        var providers: [any DataProvider] = [world]
+        var planes: PlaneDetectionProvider?
+        if PlaneDetectionProvider.isSupported,
+           await session.requestAuthorization(for: [.worldSensing])[.worldSensing] == .allowed {
+            planes = PlaneDetectionProvider(alignments: [.horizontal])
+            providers.append(planes!)
+        }
         do {
-            try await session.run([world])
+            try await session.run(providers)
         } catch {
             pinStatus = "World tracking failed: \(error.localizedDescription)"
             return
@@ -316,6 +331,11 @@ final class BuildSpace: ObservableObject {
         self.session = session
         self.world = world
         tracking = true
+        if let planes {
+            floorUpdates = Task { [weak self] in
+                for await update in planes.anchorUpdates { self?.floorChanged(update) }
+            }
+        }
         if pinnedID == nil {
             placeAhead() // now that the head pose is known
         } else {
@@ -328,6 +348,7 @@ final class BuildSpace: ObservableObject {
                 guard update.anchor.isTracked, !placeGestureActive else { continue }
                 placement.setTransformMatrix(update.anchor.originFromAnchorTransform, relativeTo: nil)
                 pinStatus = "Pinned to this room"
+                refreshHeight()
             case .removed:
                 pinStatus = "Pinned spot lost · Re-place to start over"
             }
@@ -335,6 +356,9 @@ final class BuildSpace: ObservableObject {
     }
 
     func spaceClosed() {
+        floorUpdates?.cancel()
+        floorUpdates = nil
+        floors = [:]
         session?.stop()
         session = nil
         world = nil
@@ -371,11 +395,67 @@ final class BuildSpace: ObservableObject {
             if simd_length(f) > 0.01 {
                 f = simd_normalize(f)
                 position = [m.columns.3.x + 2 * f.x, 0, m.columns.3.z + 2 * f.y]
+                position.y = floorY(near: position) ?? 0
                 yaw = atan2(-f.x, -f.y)
             }
         }
         placement.setPosition(position, relativeTo: nil)
         placement.setOrientation(simd_quatf(angle: yaw, axis: [0, 1, 0]), relativeTo: nil)
+        refreshHeight()
+    }
+
+    // MARK: - Height
+
+    private func floorY(near p: SIMD3<Float>) -> Float? {
+        nearestFloorY(Array(floors.values), to: [p.x, p.z])
+    }
+
+    private var sceneCentre: SIMD3<Float> { placement.position(relativeTo: nil) }
+
+    private func refreshHeight() {
+        heightText = heightLabel(sceneY: sceneCentre.y, floorY: floorY(near: sceneCentre))
+    }
+
+    private func setHeight(_ y: Float) {
+        var p = sceneCentre
+        p.y = y
+        placement.setPosition(p, relativeTo: nil)
+    }
+
+    /// A floor plane came, changed or went. Until the builder sets the height, an unpinned scene sits on the floor
+    /// under it (a pinned one stays where it was registered).
+    private func floorChanged(_ update: AnchorUpdate<PlaneAnchor>) {
+        guard update.anchor.classification == .floor else { return }
+        let m = update.anchor.originFromAnchorTransform
+        switch update.event {
+        case .added, .updated: floors[update.anchor.id] = [m.columns.3.x, m.columns.3.y, m.columns.3.z]
+        case .removed: floors[update.anchor.id] = nil
+        }
+        if !heightSet, pinnedID == nil, !placeGestureActive, let y = floorY(near: sceneCentre) { setHeight(y) }
+        refreshHeight()
+    }
+
+    /// ▲ / ▼ in the Place row: the scene up or down, kept by the pin.
+    func nudgeHeight(_ dy: Float) {
+        heightSet = true
+        floorMessage = nil
+        setHeight(sceneCentre.y + dy)
+        refreshHeight()
+        repin()
+    }
+
+    /// The scene's floor marker down on the detected floor, kept by the pin.
+    func snapToFloor() {
+        guard let y = floorY(near: sceneCentre) else {
+            floorMessage = tracking ? "No floor found yet: look down at the floor around you, then try again"
+                                    : "Finding the floor needs a device"
+            return
+        }
+        heightSet = true
+        floorMessage = nil
+        setHeight(y)
+        refreshHeight()
+        repin()
     }
 
     /// Pinning from the bar also finishes placing, so items take pinches straight away.
@@ -405,6 +485,7 @@ final class BuildSpace: ObservableObject {
         if let old = pinnedID, let world, world.state == .running { try? await world.removeAnchor(forID: old) }
         pinnedID = nil
         pinStatus = trackingSupported ? "Not pinned" : "Pinning needs a device"
+        heightSet = false
         placeAhead()
     }
 
