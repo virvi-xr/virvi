@@ -50,7 +50,7 @@ describe('Virvi items are named for analytics', () => {
     ['images', { textureSrc: 'https://cdn/x/poster.png?v=2' }, 'poster.png'],
     ['models', { modelSrc: 'models/chair.glb' }, 'chair.glb'],
     ['sounds', { audioSrc: 'https://cdn/x/song.mp3' }, 'song.mp3'],
-    ['videos', { liveSrc: 'https://live/a.m3u8' }, 'a.m3u8'],
+    ['videos', { liveSrc: 'https://live/a.m3u8' }, 'Video screen'],
     ['adSpaces', { shape: '16:9', formats: 'both' }, 'Ad space'],
     ['videos', {}, 'Video screen'],
   ])('%s without a name falls back to %j -> %s', (key, el, expected) => {
@@ -65,6 +65,19 @@ describe('Virvi items are named for analytics', () => {
     const e = lastEntity(adapter)
     sm.handlePresetUpdate({ action: 'update', element: 'image', elementData: { sk: 'e1', name: 'Banner' } })
     expect(names.get(e)).toBe('Banner')
+  })
+
+  it.each([
+    ['images', 'image', { textureSrc: 'https://cdn/a.png' }, { textureSrc: 'https://cdn/b.png' }, 'a.png', 'b.png'],
+    ['models', 'model', { modelSrc: 'models/a.glb' }, { modelSrc: 'models/b.glb' }, 'a.glb', 'b.glb'],
+    ['sounds', 'sound', { audioSrc: 'https://cdn/a.mp3' }, { audioSrc: 'https://cdn/b.mp3' }, 'a.mp3', 'b.mp3'],
+  ])('%s: a source change refreshes a file-name fallback', (key, element, before, after, nameBefore, nameAfter) => {
+    const { sm, adapter, names } = setup()
+    init(sm, key, before)
+    const e = lastEntity(adapter)
+    expect(names.get(e)).toBe(nameBefore)
+    sm.handlePresetUpdate({ action: 'update', element, elementData: { sk: 'e1', ...after } })
+    expect(names.get(e)).toBe(nameAfter)
   })
 
   it('works on adapters without setName', () => {

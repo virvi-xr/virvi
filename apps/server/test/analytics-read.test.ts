@@ -74,6 +74,27 @@ describe('analytics read API', () => {
     }
   })
 
+  it('summary resolves names only for the 50 most used emotes', async () => {
+    const { owner, s } = await owned()
+    resetEmoteLabelCache()
+    const urn = (i: number) => `urn:decentraland:matic:collections-v2:0x${String(i).padStart(40, '0')}:0`
+    const emotes = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [urn(i), i + 1]))
+    const fetchMock = vi.fn(async (_u: string, init: RequestInit) => new Response(JSON.stringify(JSON.parse(init.body as string).pointers.map((p: string) => ({ pointers: [p], metadata: { name: 'N' } }))), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const h = new Date(Date.now() - 2 * 3600_000)
+      h.setUTCMinutes(0, 0, 0)
+      await db.insert(analyticsRollupHourly).values({ sceneId: s.id, hour: h, sessions: 1, uniqueVisitors: 1, peakConcurrency: 1, dwellAvgSec: 10, emotes })
+      const res = await get(owner, `/api/analytics/locations/${s.id}/summary`)
+      expect(res.statusCode).toBe(200)
+      const sent = fetchMock.mock.calls.flatMap((c: any) => JSON.parse(c[1].body).pointers)
+      expect(new Set(sent)).toEqual(new Set(Array.from({ length: 50 }, (_, i) => urn(i + 10))))
+      expect(Object.keys(res.json().emoteLabels)).toHaveLength(60)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('summary still answers when the catalyst is down', async () => {
     const { owner, s } = await owned()
     resetEmoteLabelCache()

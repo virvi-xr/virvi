@@ -90,6 +90,43 @@ describe('resolveEmoteLabels', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('title-cases every word of a base emote id', async () => {
+    expect(await resolveEmoteLabels(['head_explode', 'fistpump', 'hands-air'])).toEqual({ head_explode: 'Head Explode', fistpump: 'Fistpump', 'hands-air': 'Hands Air' })
+  })
+
+  it('sends only the top 50 URNs, in chunks of at most 100 pointers', async () => {
+    const fetchMock = vi.fn(async (_u: string, init: RequestInit) => json(JSON.parse(init.body as string).pointers.map((p: string) => entity(p, 'N'))))
+    vi.stubGlobal('fetch', fetchMock)
+    const urns = Array.from({ length: 200 }, (_, i) => `urn:decentraland:matic:collections-v2:0x${String(i).padStart(40, '0')}:0`)
+    const labels = await resolveEmoteLabels(urns)
+    const sent = fetchMock.mock.calls.flatMap((c: any) => JSON.parse(c[1].body).pointers)
+    expect(sent).toEqual(urns.slice(0, 50))
+    expect(labels[urns[0]]).toBe('N')
+    expect(labels[urns[150]]).toBe('0x0000…0150:0')
+    expect(Object.keys(labels)).toHaveLength(200)
+    resetEmoteLabelCache()
+    fetchMock.mockClear()
+    await resolveEmoteLabels(urns, { limit: 250 })
+    const sizes = fetchMock.mock.calls.map((c: any) => JSON.parse(c[1].body).pointers.length)
+    expect(sizes).toEqual([100, 100])
+  })
+
+  it('shares one in-flight lookup between concurrent callers', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const fetchMock = vi.fn(async () => {
+      await gate
+      return json([entity(URN_A, 'Cool Dance')])
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const a = resolveEmoteLabels([URN_A])
+    const b = resolveEmoteLabels([URN_A])
+    release()
+    expect(await a).toEqual({ [URN_A]: 'Cool Dance' })
+    expect(await b).toEqual({ [URN_A]: 'Cool Dance' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('shortens other URN shapes to their last segments', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json([])))
     const u = 'urn:decentraland:off-chain:base-avatars:kiss'

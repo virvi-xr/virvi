@@ -133,8 +133,9 @@ export class ImageManager {
     if (elementData.emission !== undefined) config.emission = elementData.emission
     if (elementData.isTransparent !== undefined) config.isTransparent = elementData.isTransparent
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
-    if (elementData.name !== undefined) {
-      config.name = elementData.name
+    if (elementData.name !== undefined) config.name = elementData.name
+    // A file-name label follows the file
+    if (elementData.name !== undefined || elementData.textureSrc !== undefined) {
       for (const instance of this.instances.values()) {
         if (instance.configSk === config.sk) this.adapter.setName?.(instance.entity, itemName(config.name, config.textureSrc, 'Image'))
       }

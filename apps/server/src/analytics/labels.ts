@@ -18,18 +18,27 @@ const OK_TTL_MS = 24 * 3_600_000
 // A failed lookup is remembered briefly so a catalyst outage doesn't add a 3 s wait to every dashboard load.
 const FAIL_TTL_MS = 5 * 60_000
 const MAX_ENTRIES = 5_000
+// The dashboard shows 8 emotes; only the most used URNs are looked up, since the list comes from clients.
+const MAX_LOOKUPS = 50
+const CHUNK = 100
 const BASE_EMOTE_RE = /^[a-z0-9_-]+$/i
 
 const cache = new Map<string, { label: string; expires: number }>()
+/** Lookups on their way, so concurrent dashboard loads share one request per URN. */
+const inflight = new Map<string, Promise<string | null | undefined>>()
 
 /** Test hook. */
 export function resetEmoteLabelCache(): void {
   cache.clear()
+  inflight.clear()
 }
 
 function titleCase(id: string): string {
-  const words = id.replace(/[_-]+/g, ' ').trim()
-  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
+  return id
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ')
 }
 
 /** The last two URN segments, with a long address cut to `0x1234…abcd`. */
@@ -57,42 +66,56 @@ async function fetchNames(urns: string[]): Promise<Map<string, string>> {
   return names
 }
 
+/** Look up one chunk; each URN's promise resolves to its name, undefined when unknown, or null when the lookup failed. */
+function lookup(urns: string[]): void {
+  const done = fetchNames(urns)
+  for (const urn of urns) {
+    const k = urn.toLowerCase()
+    const p = done.then(
+      (names) => names.get(k),
+      () => null,
+    )
+    inflight.set(k, p)
+    void p.then(() => inflight.delete(k))
+  }
+}
+
 /**
  * A readable label for each emote key: base emotes (`wave`) are title-cased; collection URNs are looked up on the
- * catalyst in one batch and cached. Any failure falls back to a short form of the URN; this never throws.
+ * catalyst and cached. `keys` should be ordered most used first: only the first `limit` URNs are looked up (in chunks
+ * of 100), the rest get a short form of the URN. Any failure falls back the same way; this never throws.
  */
 export async function resolveEmoteLabels(
   keys: string[],
-  opts: { now?: () => number; maxEntries?: number } = {},
+  opts: { now?: () => number; maxEntries?: number; limit?: number } = {},
 ): Promise<Record<string, string>> {
   const now = (opts.now ?? Date.now)()
   const out: Record<string, string> = {}
   const unknown: string[] = []
+  let urns = 0
   for (const key of keys) {
     if (BASE_EMOTE_RE.test(key)) {
       out[key] = titleCase(key)
+      continue
+    }
+    if (urns++ >= (opts.limit ?? MAX_LOOKUPS)) {
+      out[key] = shortUrn(key)
       continue
     }
     const hit = cache.get(key.toLowerCase())
     if (hit && hit.expires > now) out[key] = hit.label
     else unknown.push(key)
   }
-  if (unknown.length) {
-    let names = new Map<string, string>()
-    let ok = true
-    try {
-      names = await fetchNames(unknown)
-    } catch {
-      ok = false
-    }
-    for (const key of unknown) {
-      const name = names.get(key.toLowerCase())
-      out[key] = name ?? shortUrn(key)
-      cache.delete(key.toLowerCase())
-      cache.set(key.toLowerCase(), { label: out[key], expires: now + (ok && name ? OK_TTL_MS : FAIL_TTL_MS) })
-    }
-    const max = opts.maxEntries ?? MAX_ENTRIES
-    while (cache.size > max) cache.delete(cache.keys().next().value as string)
-  }
+  const fresh = unknown.filter((k) => !inflight.has(k.toLowerCase()))
+  for (let i = 0; i < fresh.length; i += CHUNK) lookup(fresh.slice(i, i + CHUNK))
+  const results = await Promise.all(unknown.map((k) => inflight.get(k.toLowerCase())))
+  unknown.forEach((key, i) => {
+    const name = results[i]
+    out[key] = name ?? shortUrn(key)
+    cache.delete(key.toLowerCase())
+    cache.set(key.toLowerCase(), { label: out[key], expires: now + (name ? OK_TTL_MS : FAIL_TTL_MS) })
+  })
+  const max = opts.maxEntries ?? MAX_ENTRIES
+  while (cache.size > max) cache.delete(cache.keys().next().value as string)
   return out
 }

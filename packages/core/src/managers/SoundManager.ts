@@ -124,8 +124,9 @@ export class SoundManager {
     if (elementData.volume !== undefined) config.volume = elementData.volume / 100
     if (elementData.sourceType !== undefined) config.sourceType = elementData.sourceType
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
-    if (elementData.name !== undefined) {
-      config.name = elementData.name
+    if (elementData.name !== undefined) config.name = elementData.name
+    // A file-name label follows the file
+    if (elementData.name !== undefined || elementData.audioSrc !== undefined) {
       for (const instance of this.instances.values()) {
         if (instance.configSk === config.sk) this.adapter.setName?.(instance.entity, itemName(config.name, config.audioSrc, 'Sound'))
       }

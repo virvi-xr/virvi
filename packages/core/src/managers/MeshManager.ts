@@ -155,8 +155,9 @@ export class MeshManager {
 
     if (elementData.modelSrc !== undefined) config.modelSrc = elementData.modelSrc
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
-    if (elementData.name !== undefined) {
-      config.name = elementData.name
+    if (elementData.name !== undefined) config.name = elementData.name
+    // A file-name label follows the file
+    if (elementData.name !== undefined || elementData.modelSrc !== undefined) {
       for (const instance of this.instances.values()) {
         if (instance.configSk === config.sk) this.adapter.setName?.(instance.entity, itemName(config.name, config.modelSrc, 'Model'))
       }

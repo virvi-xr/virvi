@@ -178,7 +178,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       verifiedShare: scene.verifiedSessionShare,
       interactions: mergeLegacyEntityTargets(mergeCounts(rows.map((x) => x.interactions))),
       emotes,
-      emoteLabels: await resolveEmoteLabels(Object.keys(emotes)),
+      emoteLabels: await resolveEmoteLabels(Object.keys(emotes).sort((a, b) => emotes[b] - emotes[a])),
       countries: mergeCounts(rows.map((x) => x.countries)),
       platforms: mergeCounts(rows.map((x) => x.platforms)),
     })
