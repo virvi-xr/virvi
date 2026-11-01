@@ -10,6 +10,7 @@ final class HudAlerts: ObservableObject {
 
     private var lastScene: Props?
     private var lastEditMessage: String?
+    private var lastHeldLine: String?
 
     init(log: AlertsLog = AlertsLog()) {
         self.log = log
@@ -17,11 +18,18 @@ final class HudAlerts: ObservableObject {
     }
 
     /// `EditSession.message` as it changes. Every message the session sets is a failure or a refusal (save failed,
-    /// offline, held, refused, or "Save or revert … first"); the same message republished counts once.
+    /// offline, refused, or "Save or revert … first"); the same message republished counts once.
     func editMessage(_ message: String?) {
         defer { lastEditMessage = message }
         guard let message, message != lastEditMessage else { return }
         push(message, kind: .error)
+    }
+
+    /// `EditSession.heldLine` as it changes ("being moved by <holder>"): one alert each time the item becomes held.
+    func heldLine(_ line: String?) {
+        defer { lastHeldLine = line }
+        guard let line, line != lastHeldLine else { return }
+        push(line, kind: .error)
     }
 
     /// Each new feed scene.

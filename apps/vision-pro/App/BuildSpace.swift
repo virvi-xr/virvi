@@ -90,7 +90,10 @@ final class BuildSpace: ObservableObject {
         // The selected item's entity follows the session's transform (drags, Exact, Save, and Revert back to the
         // original), looked up by its key each time: the renderer may have rebuilt it.
         edit.$selected.sink { [weak self] s in self?.selectionChanged(s) }.store(in: &subscriptions)
-        edit.$mode.sink { [weak self] m in self?.updateTargets(mode: m); self?.refreshGizmo(mode: m) }.store(in: &subscriptions)
+        edit.$mode.sink { [weak self] m in
+            self?.dropStaleDrag()
+            self?.updateTargets(mode: m); self?.refreshGizmo(mode: m)
+        }.store(in: &subscriptions)
         edit.$lock.sink { [weak self] l in self?.refreshGizmo(lock: l) }.store(in: &subscriptions)
         updateTargets()
     }
@@ -138,6 +141,7 @@ final class BuildSpace: ObservableObject {
     private var highlighted: String?
 
     private func selectionChanged(_ s: Selection?) {
+        if let d = itemDrag, d.key != s?.key { dropStaleDrag() }
         if highlighted != s?.key {
             if let old = highlighted, let e = renderer.entity(for: old) { Self.setHighlight(false, on: e) }
             highlighted = s?.key
@@ -229,6 +233,14 @@ final class BuildSpace: ObservableObject {
         resetDrag()
         gestureStart = nil
         if placed { repin() }
+    }
+
+    /// A drag whose item or mode changed under it (or whose gesture never ended) stops: the gizmo unfreezes, and
+    /// the rest of that gesture is ignored rather than restarting from a stale grab point.
+    private func dropStaleDrag() {
+        guard itemDrag != nil else { return }
+        itemDrag = nil
+        dragIgnored = true
     }
 
     private func resetDrag() {

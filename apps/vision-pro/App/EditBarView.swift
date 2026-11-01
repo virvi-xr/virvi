@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The Decentraland edit bar (packages/adapter-dcl/src/hud/EditModeBar.tsx) as an ornament under the HUD window:
 /// Move | Rotate | Resize, the selected name (or "Pinch an item to select it"), Move's axis lock, Snap, Exact,
-/// Save, Revert and Done, bound to `EditSession`; above it the held / error message, the "Save or revert" prompt
+/// Save, Revert and Done, bound to `EditSession`; above it the held line, the error message, the "Save or revert" prompt
 /// and the Exact panel. Under it, the spike's Place scene controls.
 struct EditBarView: View {
     @ObservedObject var space: BuildSpace
@@ -34,6 +34,11 @@ struct EditBarView: View {
 
     var body: some View {
         VStack(spacing: 6) {
+            // The held line stays up on its own, with the prompt or any other message beside it.
+            if let held = edit.heldLine {
+                Text(held).font(.system(size: 14)).foregroundStyle(Hud.warning)
+                    .padding(.horizontal, 16).padding(.vertical, 6).background(Hud.bg, in: RoundedRectangle(cornerRadius: 6))
+            }
             if let message = edit.message, !prompt {
                 Text(message).font(.system(size: 14)).foregroundStyle(Hud.warning)
                     .padding(.horizontal, 16).padding(.vertical, 6).background(Hud.bg, in: RoundedRectangle(cornerRadius: 6))
@@ -82,8 +87,8 @@ struct EditBarView: View {
         VStack(spacing: 8) {
             Text("Save or revert changes to \(edit.selected?.name ?? "this item") first.").font(.system(size: 15)).foregroundStyle(Hud.text)
             HStack(spacing: 6) {
-                BarButton(label: "Save", width: 100, color: Hud.accent, off: edit.saving) { Task { await edit.save() } }
-                BarButton(label: "Revert", width: 100, color: Hud.danger, off: edit.saving) { edit.revert() }
+                BarButton(label: "Save", width: 100, color: Hud.accent, off: !edit.saveEnabled) { Task { await edit.save() } }
+                BarButton(label: "Revert", width: 100, color: Hud.danger, off: !edit.revertEnabled) { edit.revert() }
             }
         }
         .padding(12).frame(width: 520).background(Hud.bg, in: RoundedRectangle(cornerRadius: 8))

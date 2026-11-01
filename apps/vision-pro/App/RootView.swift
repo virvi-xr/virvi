@@ -53,6 +53,8 @@ struct RootView: View {
             Text("Virvi Builder").font(.system(size: 34, weight: .semibold)).foregroundStyle(Hud.text)
             if auth.state == .refused {
                 Text("Pairing was refused on virvi.io").font(.system(size: 17)).foregroundStyle(Hud.danger)
+            } else if let offline = auth.pairingMessage {
+                Text(offline).font(.system(size: 17)).foregroundStyle(Hud.warning)
             } else if pairingEnded {
                 Text("Pairing didn't finish: press Pair this headset to try again").font(.system(size: 17)).foregroundStyle(Hud.textDim)
             }

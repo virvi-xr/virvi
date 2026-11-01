@@ -22,6 +22,8 @@ func formatPairingCode(_ code: String) -> String {
 @MainActor
 final class DeviceAuth: ObservableObject {
     @Published private(set) var state: AuthState = .unpaired
+    /// Why the last "Pair this headset" didn't start: the offline copy when there's no network, otherwise nil.
+    @Published private(set) var pairingMessage: String?
 
     private let api: VirviApi
     private let store: SecretStore
@@ -58,6 +60,7 @@ final class DeviceAuth: ObservableObject {
 
     func startPairing() async {
         clearKeys()
+        pairingMessage = nil
         var bytes = [UInt8](repeating: 0, count: 32)
         for i in bytes.indices { bytes[i] = UInt8.random(in: 0...255) }
         let secret = bytes.map { String(format: "%02x", $0) }.joined()
@@ -70,6 +73,7 @@ final class DeviceAuth: ObservableObject {
         } catch {
             clearKeys()
             state = .unpaired
+            if case ApiError.offline = error { pairingMessage = friendlyEditMessage(error) }
         }
     }
 
@@ -104,6 +108,7 @@ final class DeviceAuth: ObservableObject {
 
     func cancel() {
         pairingCode = nil
+        pairingMessage = nil
         clearKeys()
         state = .unpaired
     }

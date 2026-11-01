@@ -26,6 +26,32 @@ final class DeviceAuthTests: XCTestCase {
         XCTAssertEqual(auth.state, .pairing(code: "ABC123", approveUrl: URL(string: "https://virvi.io/pair/headset/ABC123")!))
     }
 
+    func testPairingOfflineShowsTheOfflineCopyUntilARetryWorks() async {
+        let t = FakeTransport()
+        let calls = Counter()
+        t.on("/api/ar/pair") { _ in
+            if calls.next() == 0 { throw URLError(.notConnectedToInternet) }
+            return (200, ["code": "ABC123", "approveUrl": "https://virvi.io/pair/headset/ABC123", "codeExpiresAt": iso(Date().addingTimeInterval(600))])
+        }
+        let (auth, store) = make(t)
+        await auth.startPairing() // first launch, offline
+        XCTAssertEqual(auth.state, .unpaired)
+        XCTAssertEqual(auth.pairingMessage, "Can't reach virvi.io: check the connection and try again")
+        XCTAssertNil(store.load("headsetSecret"))
+        await auth.startPairing() // back online
+        XCTAssertNil(auth.pairingMessage)
+        XCTAssertEqual(auth.state, .pairing(code: "ABC123", approveUrl: URL(string: "https://virvi.io/pair/headset/ABC123")!))
+    }
+
+    func testPairingFailingOnlineShowsNoOfflineCopy() async {
+        let t = FakeTransport()
+        t.on("/api/ar/pair") { _ in (500, ["error": "boom"]) }
+        let (auth, _) = make(t)
+        await auth.startPairing()
+        XCTAssertEqual(auth.state, .unpaired)
+        XCTAssertNil(auth.pairingMessage)
+    }
+
     func testClaimApprovedStoresDeviceId() async {
         let t = FakeTransport(); pairStart(t)
         t.script("/claim", [(200, ["status": "pending"]), (200, ["status": "approved", "deviceId": "dev1", "kind": "personal", "expiresAt": iso(Date())])])

@@ -51,6 +51,11 @@ final class AssetsModel: Sendable {
     static let emptyCopy = "No images or models yet"
     static let loadFailedCopy = "Couldn't load your media library"
     static let uploadFailedCopy = "Couldn't make an upload link — try again"
+    /// The upload link's error line: the offline copy without a network, otherwise `uploadFailedCopy`.
+    static func uploadLinkError(_ error: Error) -> String {
+        if case ApiError.offline = error { return friendlyEditMessage(error) }
+        return uploadFailedCopy
+    }
     private static let imageTypes: Set<String> = ["image/png", "image/jpeg", "image/webp", "image/gif"]
 
     private let api: VirviApi

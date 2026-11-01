@@ -220,7 +220,7 @@ final class EditSessionTests: XCTestCase {
         s.update(t)
         await s.idle()
         XCTAssertEqual(s.heldBy, "Sam (headset)")
-        XCTAssertEqual(s.message, "being moved by Sam (headset)")
+        XCTAssertEqual(s.heldLine, "being moved by Sam (headset)")
         XCTAssertFalse(s.saveEnabled)
         XCTAssertTrue(s.revertEnabled)
         r.clock.advance(1)
@@ -229,11 +229,95 @@ final class EditSessionTests: XCTestCase {
         XCTAssertEqual(r.transport.count("/api/ar/drafts"), 1) // no more drafts
         await s.save()
         XCTAssertEqual(r.transport.count("/api/instances/i1"), 0)
-        // Reselecting resumes drafting.
+        // Reselecting probes with a draft: still held, so it stays held.
         s.revert()
         await s.idle()
         _ = s.select(selection())
+        await s.idle()
+        XCTAssertEqual(s.heldBy, "Sam (headset)")
+    }
+
+    func testReselectingAHeldItemKeepsSaveOffUntilADraftSucceeds() async {
+        let (r, _) = rig(setup: {
+            $0.script("/api/ar/drafts", [(409, ["error": "held", "holderName": "Sam (headset)"]), (204, nil)])
+        })
+        let s = r.session
+        _ = s.select(selection())
+        s.update(start.with(x: 3))
+        await s.idle()
+        XCTAssertEqual(s.heldBy, "Sam (headset)")
+        XCTAssertTrue(s.dirty)
+        XCTAssertFalse(s.saveEnabled)
+        _ = s.select(selection()) // re-tap the same item: a probe draft goes out
+        XCTAssertEqual(s.heldBy, "Sam (headset)")
+        XCTAssertFalse(s.saveEnabled)
+        await s.save() // pressed before the probe answers
+        XCTAssertEqual(r.transport.count("/api/instances/i1"), 0) // no PUT over the other editor
+        await s.idle()
+        XCTAssertEqual(r.transport.count("/api/ar/drafts"), 2)
         XCTAssertNil(s.heldBy)
+        XCTAssertTrue(s.saveEnabled)
+    }
+
+    func testDoneWhileHeldAndDirtyKeepsTheHeldLineWithThePrompt() async {
+        let (r, _) = rig(setup: { $0.on("/api/ar/drafts") { _ in (409, ["error": "held", "holderName": "Sam (headset)"]) } })
+        let s = r.session
+        _ = s.select(selection())
+        s.update(start.with(x: 3))
+        await s.idle()
+        XCTAssertFalse(s.done())
+        XCTAssertEqual(s.message, "Save or revert changes to Crate first.")
+        XCTAssertEqual(s.heldLine, "being moved by Sam (headset)")
+        XCTAssertFalse(s.saveEnabled)
+    }
+
+    func testDraggingBackToTheOriginalEndsTheHoldOnDone() async {
+        let (r, _) = rig(); let s = r.session
+        _ = s.select(selection())
+        s.update(start.with(x: 3))
+        r.clock.advance(1)
+        s.update(start) // back where it started: not dirty
+        await s.idle()
+        XCTAssertFalse(s.dirty)
+        XCTAssertTrue(s.done())
+        await s.idle()
+        XCTAssertEqual(r.transport.count("/api/ar/drafts/end"), 1)
+        XCTAssertEqual(r.transport.bodies("/api/ar/drafts/end").last?["saved"] as? Bool, false)
+        XCTAssertEqual(r.transport.bodies("/api/ar/drafts/end").last?["sk"] as? String, "i1")
+    }
+
+    func testExactBackToTheOriginalEndsTheHoldWhenAnotherItemIsSelected() async {
+        let (r, _) = rig(); let s = r.session
+        _ = s.select(selection())
+        s.exact(.position, [5, 0, 2])
+        r.clock.advance(1)
+        s.exact(.position, start.position)
+        await s.idle()
+        XCTAssertTrue(s.select(selection("i2", name: "Lamp")))
+        await s.idle()
+        XCTAssertEqual(r.transport.bodies("/api/ar/drafts/end").map { $0["sk"] as? String }, ["i1"])
+        XCTAssertEqual(r.transport.bodies("/api/ar/drafts/end").last?["saved"] as? Bool, false)
+    }
+
+    func testEndAfterDraggingBackEndsTheHold() async {
+        let (r, _) = rig(); let s = r.session
+        _ = s.select(selection())
+        s.update(start.with(x: 3))
+        r.clock.advance(1)
+        s.update(start)
+        s.end()
+        await s.idle()
+        XCTAssertEqual(r.transport.count("/api/ar/drafts/end"), 1)
+    }
+
+    func testDoneAfterSaveSendsNoSecondEnd() async {
+        let (r, _) = rig(); let s = r.session
+        _ = s.select(selection())
+        s.update(start.with(x: 3))
+        await s.save()
+        XCTAssertTrue(s.done())
+        await s.idle()
+        XCTAssertEqual(r.transport.count("/api/ar/drafts/end"), 1)
     }
 
     func testOfflineSaveKeepsDraftAndShowsCopy() async {

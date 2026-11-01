@@ -177,7 +177,7 @@ struct AssetsTab: View {
     private func mintLink() {
         upload = UploadState()
         Task {
-            do { upload?.link = try await builder.assets.uploadLink() } catch { upload?.error = AssetsModel.uploadFailedCopy }
+            do { upload?.link = try await builder.assets.uploadLink() } catch { upload?.error = AssetsModel.uploadLinkError(error) }
             upload?.loading = false
         }
     }

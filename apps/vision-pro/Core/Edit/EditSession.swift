@@ -40,6 +40,10 @@ final class EditSession: ObservableObject {
     private let sceneId: String
     private var sender: DraftSender!
     private var ending: Task<Void, Never>?
+    /// The item a draft has gone out for since its hold was last ended. Done, selecting another item and `end()` end
+    /// that hold, even when the item was moved back to where it started (not dirty), so it doesn't linger on the
+    /// server locking other editors out.
+    private var drafted: String?
 
     init(api: VirviApi, sceneId: String, now: @escaping () -> TimeInterval = { Date().timeIntervalSinceReferenceDate },
          schedule: @escaping DraftSender.Schedule = { delay, run in
@@ -53,6 +57,9 @@ final class EditSession: ObservableObject {
         sender = DraftSender(now: now, schedule: schedule, send: { [weak self] draft in await self?.post(draft) })
     }
 
+    /// "being moved by <holder>" while someone else holds the item: shown on its own line, beside any other message
+    /// (the "Save or revert" prompt included).
+    var heldLine: String? { heldBy.map { "being moved by \($0)" } }
     var saveEnabled: Bool { dirty && !saving && heldBy == nil }
     var revertEnabled: Bool { dirty && !saving }
 
@@ -72,8 +79,18 @@ final class EditSession: ObservableObject {
             message = "Save or revert changes to \(cur.name) first."
             return false
         }
-        if selected?.sk != s.sk || selected == nil { selected = s }
         message = nil
+        if let cur = selected, cur.sk == s.sk {
+            // The same item again. If someone else held it, it stays held (Save off) until a probe draft gets through.
+            sender.resume()
+            if heldBy != nil {
+                drafted = cur.sk
+                sender.submit(DraftPayload(element: cur.kind, sk: cur.sk, transform: cur.current))
+            }
+            return true
+        }
+        if let sk = drafted { endHold(sk: sk) }
+        selected = s
         heldBy = nil
         sender.resume()
         return true
@@ -84,10 +101,12 @@ final class EditSession: ObservableObject {
             message = "Save or revert changes to \(selected.name) first."
             return false
         }
+        let sk = drafted
         selected = nil
         message = nil
         heldBy = nil
         sender.cancelPending()
+        if let sk { endHold(sk: sk) }
         return true
     }
 
@@ -95,14 +114,19 @@ final class EditSession: ObservableObject {
     /// change, cancels the draft waiting for the throttle and stops drafting. When a change had been drafted, the
     /// hold is ended (not saved) so the other editors see the item go back.
     func end() {
-        let drafted = selected.flatMap { s in dirty || saving ? s.sk : nil }
+        let sk = drafted ?? selected.flatMap { s in dirty || saving ? s.sk : nil }
         sender.cancelPending(stop: true)
         selected = nil
         dirty = false
         saving = false
         message = nil
         heldBy = nil
-        guard let sk = drafted else { return }
+        if let sk { endHold(sk: sk) }
+    }
+
+    /// Ends the hold on `sk` (not saved) once the drafts already sent are answered.
+    private func endHold(sk: String) {
+        if drafted == sk { drafted = nil }
         let previous = ending
         ending = Task { @MainActor in
             await previous?.value
@@ -133,7 +157,10 @@ final class EditSession: ObservableObject {
         selected = s
         dirty = s.current != s.original
         if message?.hasPrefix("Save or revert") == true { message = nil }
-        if dirty, heldBy == nil { sender.submit(DraftPayload(element: s.kind, sk: s.sk, transform: s.current)) }
+        if dirty, heldBy == nil {
+            drafted = s.sk
+            sender.submit(DraftPayload(element: s.kind, sk: s.sk, transform: s.current))
+        }
     }
 
     // MARK: - Save / Revert
@@ -156,6 +183,7 @@ final class EditSession: ObservableObject {
             return
         }
         saving = false
+        if drafted == s.sk { drafted = nil } // the saved end below releases the hold
         if var cur = selected, cur.sk == s.sk {
             cur.original = sent
             selected = cur
@@ -170,14 +198,9 @@ final class EditSession: ObservableObject {
         s.current = s.original
         selected = s
         dirty = false
-        // Still held by someone else: heldBy (and its message) stay until select/done.
-        message = heldBy.map { "being moved by \($0)" }
-        let previous = ending
-        ending = Task { @MainActor [sk = s.sk] in
-            await previous?.value
-            await self.sender.settle()
-            await self.endDraft(sk: sk, saved: false)
-        }
+        // Still held by someone else: heldBy (and its line) stay until a draft gets through or another item is picked.
+        message = nil
+        endHold(sk: s.sk)
     }
 
     /// Completes when every request the session started has been answered (for tests and teardown).
@@ -191,10 +214,11 @@ final class EditSession: ObservableObject {
     private func post(_ draft: DraftPayload) async {
         do {
             let _: EmptyResponse = try await api.scene(sceneId, "POST", "/api/ar/drafts", body: draft.body)
+            // Through: if the item was held, it's ours now and Save can come back on.
+            if heldBy != nil, selected?.sk == draft.sk { heldBy = nil }
         } catch ApiError.held(let holder) {
             guard selected?.sk == draft.sk else { return }
             heldBy = holder
-            message = "being moved by \(holder)"
             sender.cancelPending(stop: true)
         } catch ApiError.status(401, "device_revoked") {
             dropEverything()
@@ -228,6 +252,7 @@ final class EditSession: ObservableObject {
     /// The headset was revoked: the app is returning to pairing, so nothing is kept or sent.
     private func dropEverything() {
         sender.cancelPending(stop: true)
+        drafted = nil
         selected = nil
         dirty = false
         saving = false

@@ -50,5 +50,6 @@ func friendlyRoleError(_ error: Error) -> String {
         "host_has_no_wallet": "Link your wallet in Settings before transferring host.",
     ]
     if case ApiError.status(_, let code?) = error, let w = words[code] { return w }
+    if case ApiError.offline = error { return friendlyEditMessage(error) }
     return "Something went wrong — try again"
 }

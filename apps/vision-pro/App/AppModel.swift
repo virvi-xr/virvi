@@ -80,6 +80,7 @@ final class SceneBuilder: ObservableObject {
 
         // The spec's Alerts: edit failures and refusals, and stream changes between feed snapshots.
         edit.$message.sink { [alerts] in alerts.editMessage($0) }.store(in: &subscriptions)
+        edit.$heldBy.sink { [alerts] in alerts.heldLine($0.map { "being moved by \($0)" }) }.store(in: &subscriptions)
         feed.$scene.sink { [alerts] in alerts.scene($0) }.store(in: &subscriptions)
     }
 

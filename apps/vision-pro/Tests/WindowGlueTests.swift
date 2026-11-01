@@ -40,7 +40,7 @@ final class WindowGlueTests: XCTestCase {
         XCTAssertEqual(friendlyRoleError(ApiError.status(403, code: "Forbidden")), "Only the host and co-hosts can manage roles.")
         XCTAssertEqual(friendlyRoleError(ApiError.status(409, code: "is_host")), "That wallet is the host.")
         XCTAssertEqual(friendlyRoleError(ApiError.status(400, code: "whatever")), "Something went wrong — try again")
-        XCTAssertEqual(friendlyRoleError(ApiError.offline), "Something went wrong — try again")
+        XCTAssertEqual(friendlyRoleError(ApiError.offline), "Can't reach virvi.io: check the connection and try again")
     }
 
     func testUploadLinkAsksForImagesAndModels() async throws {
@@ -59,6 +59,25 @@ final class WindowGlueTests: XCTestCase {
         XCTAssertEqual(body?["expiresInMinutes"] as? Int, 30)
         XCTAssertEqual(AssetsModel.expiryLine(link, timeZone: TimeZone(identifier: "UTC")!), "Link expires 14:05 · 10 uploads")
         XCTAssertEqual(AssetsModel.uploadFailedCopy, "Couldn't make an upload link — try again")
+    }
+
+    func testUploadLinkErrorCopy() {
+        XCTAssertEqual(AssetsModel.uploadLinkError(ApiError.offline), "Can't reach virvi.io: check the connection and try again")
+        XCTAssertEqual(AssetsModel.uploadLinkError(ApiError.status(500, code: nil)), "Couldn't make an upload link — try again")
+    }
+
+    @MainActor
+    func testHeldLineBecomesOneAlertBesideOtherMessages() {
+        let alerts = HudAlerts(log: AlertsLog())
+        alerts.heldLine(nil)
+        alerts.heldLine("being moved by Ana")
+        alerts.editMessage("Save or revert changes to Crate first.")
+        alerts.editMessage(nil)
+        alerts.heldLine("being moved by Ana") // republished while still held: one alert
+        XCTAssertEqual(alerts.entries.map(\.text), ["Save or revert changes to Crate first.", "being moved by Ana"])
+        alerts.heldLine(nil)
+        alerts.heldLine("being moved by Ana") // held again later: a new alert
+        XCTAssertEqual(alerts.entries.count, 3)
     }
 
     @MainActor
