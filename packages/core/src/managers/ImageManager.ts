@@ -1,6 +1,7 @@
 import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
+import { itemName } from './naming.js'
 
 // Internal tracking of element config
 interface ImageConfig {
@@ -69,6 +70,7 @@ export class ImageManager {
     if (!config) return
 
     const entity = this.adapter.createEntity()
+    this.adapter.setName?.(entity, itemName(config.name, config.textureSrc, 'Image'))
 
     const position = data.position || { x: 0, y: 0, z: 0 }
     const rotation = data.rotation || { x: 0, y: 0, z: 0 }
@@ -132,6 +134,12 @@ export class ImageManager {
     if (elementData.isTransparent !== undefined) config.isTransparent = elementData.isTransparent
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
     if (elementData.name !== undefined) config.name = elementData.name
+    // A file-name label follows the file
+    if (elementData.name !== undefined || elementData.textureSrc !== undefined) {
+      for (const instance of this.instances.values()) {
+        if (instance.configSk === config.sk) this.adapter.setName?.(instance.entity, itemName(config.name, config.textureSrc, 'Image'))
+      }
+    }
 
     // Update storage
     const key = config.customId || config.sk

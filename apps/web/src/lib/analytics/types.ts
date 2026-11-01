@@ -7,7 +7,7 @@ export interface AnalyticsLocation {
 export interface AnalyticsSummary {
   sessions: number; uniqueVisitors: number; newVisitors: number; returningVisitors: number
   peakConcurrency: number; dwellAvgSec: number; verifiedShare: number
-  interactions: Record<string, number>; emotes: Record<string, number>; countries: Record<string, number>; platforms: Record<string, number>
+  interactions: Record<string, number>; emotes: Record<string, number>; emoteLabels: Record<string, string>; countries: Record<string, number>; platforms: Record<string, number>
 }
 export interface TimeseriesPoint { t: string; sessions: number; uniqueVisitors: number; peakConcurrency: number; dwellAvgSec: number }
 export interface LiveData { count: number; positions: Array<{ x: number; z: number }> }

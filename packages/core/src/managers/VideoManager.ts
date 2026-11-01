@@ -4,6 +4,7 @@ import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
 import { AdSlot } from '../ads/slot.js'
 import type { AdHost } from '../ads/host.js'
+import { itemName } from './naming.js'
 
 // Internal tracking of element config
 interface VideoConfig {
@@ -113,6 +114,7 @@ export class VideoManager {
     if (!config) return
 
     const entity = this.adapter.createEntity()
+    this.adapter.setName?.(entity, itemName(config.name, undefined, 'Video screen'))
 
     const position = data.position || { x: 0, y: 0, z: 0 }
     const rotation = data.rotation || { x: 0, y: 0, z: 0 }
@@ -211,6 +213,7 @@ export class VideoManager {
       spec: {
         key: instance.sk,
         elementId: config.sk,
+        name: itemName(config.name, undefined, 'Video screen'),
         shape: '16:9',
         formats: 'both',
         fallbackImageSrc: config.offImageSrc,
@@ -324,7 +327,12 @@ export class VideoManager {
     if (elementData.volume !== undefined) config.volume = elementData.volume / 100
     if (elementData.emission !== undefined) config.emission = elementData.emission
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
-    if (elementData.name !== undefined) config.name = elementData.name
+    if (elementData.name !== undefined) {
+      config.name = elementData.name
+      for (const instance of this.instances.values()) {
+        if (instance.configSk === config.sk) this.adapter.setName?.(instance.entity, itemName(config.name, undefined, 'Video screen'))
+      }
+    }
 
     // Update storage
     const key = config.customId || config.sk

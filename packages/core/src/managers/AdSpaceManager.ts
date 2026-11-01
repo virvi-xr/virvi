@@ -3,6 +3,7 @@ import { listTransformable } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
 import { AdSlot } from '../ads/slot.js'
 import type { AdHost } from '../ads/host.js'
+import { itemName } from './naming.js'
 
 // Internal tracking of element config
 interface AdSpaceConfig {
@@ -90,6 +91,7 @@ export class AdSpaceManager {
     if (!config) return
 
     const entity = this.adapter.createEntity()
+    this.adapter.setName?.(entity, itemName(config.name, undefined, 'Ad space'))
 
     const position = data.position || { x: 0, y: 0, z: 0 }
     const rotation = data.rotation || { x: 0, y: 0, z: 0 }
@@ -125,6 +127,7 @@ export class AdSpaceManager {
       spec: {
         key: instance.sk,
         elementId: config.sk,
+        name: itemName(config.name, undefined, 'Ad space'),
         shape: config.shape,
         formats: config.formats,
         fallbackImageSrc: config.fallbackImageSrc,
@@ -159,7 +162,12 @@ export class AdSpaceManager {
     if (elementData.formats !== undefined) config.formats = elementData.formats
     if (elementData.fallbackImageSrc !== undefined) config.fallbackImageSrc = elementData.fallbackImageSrc || undefined
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
-    if (elementData.name !== undefined) config.name = elementData.name
+    if (elementData.name !== undefined) {
+      config.name = elementData.name
+      for (const instance of this.instances.values()) {
+        if (instance.configSk === config.sk) this.adapter.setName?.(instance.entity, itemName(config.name, undefined, 'Ad space'))
+      }
+    }
 
     const key = config.customId || config.sk
     this.storage.adSpaces.configs[key] = { ...this.storage.adSpaces.configs[key], ...elementData }

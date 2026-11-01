@@ -22,6 +22,7 @@ import { verifiedWalletsOf } from '../analytics/claims.js'
 import { boundScene, fromAnalyticsLocation, isScenePass } from '../auth/scene-from.js'
 import { visitorHash } from '../analytics/hash.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
+import { mergeLegacyEntityTargets, resolveEmoteLabels } from '../analytics/labels.js'
 
 const DAY = 86_400_000
 const HOUR = 3_600_000
@@ -163,6 +164,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
         ),
       )
     const sessions = rows.reduce((a, x) => a + x.sessions, 0)
+    const emotes = mergeCounts(rows.map((x) => x.emotes))
     const [u] = rowsOf<{ n: number }>(
       await db.execute(sql`select count(distinct visitor_hash)::int as n from analytics_sessions where scene_id = ${scene.id} and started_at >= ${ts(r.from)} and started_at <= ${ts(r.to)}${startedCap(cap)}`),
     )
@@ -174,8 +176,9 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       peakConcurrency: rows.reduce((a, x) => Math.max(a, x.peakConcurrency), 0),
       dwellAvgSec: sessions ? Math.round(rows.reduce((a, x) => a + x.dwellAvgSec * x.sessions, 0) / sessions) : 0,
       verifiedShare: scene.verifiedSessionShare,
-      interactions: mergeCounts(rows.map((x) => x.interactions)),
-      emotes: mergeCounts(rows.map((x) => x.emotes)),
+      interactions: mergeLegacyEntityTargets(mergeCounts(rows.map((x) => x.interactions))),
+      emotes,
+      emoteLabels: await resolveEmoteLabels(Object.keys(emotes).sort((a, b) => emotes[b] - emotes[a])),
       countries: mergeCounts(rows.map((x) => x.countries)),
       platforms: mergeCounts(rows.map((x) => x.platforms)),
     })
