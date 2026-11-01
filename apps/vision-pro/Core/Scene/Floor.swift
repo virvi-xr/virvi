@@ -18,3 +18,18 @@ func heightLabel(sceneY: Float, floorY: Float?) -> String {
     if abs(sceneY - floorY) < 0.005 || cm == 0 { return "On the floor" }
     return cm > 0 ? "\(cm) cm above the floor" : "\(-cm) cm below the floor"
 }
+
+/// How far the marker and outline rise above the scene's centre so they stay on the floor when the scene is sunk
+/// into it (the scene's floors are often a few centimetres up in Decentraland).
+func markerLift(sceneY: Float, floorY: Float?) -> Float {
+    guard let floorY else { return 0 }
+    return max(0, floorY - sceneY)
+}
+
+/// The invisible slab under the detected floor: whatever of the scene goes below the floor is hidden behind it, as
+/// the real floor would hide it.
+let floorOccluderSize = SIMD3<Float>(200, 20, 200)
+
+func floorOccluderCenter(floorY: Float) -> SIMD3<Float> {
+    [0, floorY - floorOccluderSize.y / 2, 0]
+}

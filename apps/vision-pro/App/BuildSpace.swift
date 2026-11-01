@@ -247,7 +247,10 @@ final class BuildSpace: ObservableObject {
         let placed = placeDragStart != nil
         resetDrag()
         gestureStart = nil
-        if placed { repin() }
+        if placed {
+            refreshHeight() // the floor under the scene may be another one now
+            repin()
+        }
     }
 
     /// A drag whose item or mode changed under it (or whose gesture never ended) stops: the gizmo unfreezes, and
@@ -412,9 +415,22 @@ final class BuildSpace: ObservableObject {
 
     private var sceneCentre: SIMD3<Float> { placement.position(relativeTo: nil) }
 
+    /// The readout, the marker kept on the floor, and the occluder that hides what is sunk below the floor.
     private func refreshHeight() {
-        heightText = heightLabel(sceneY: sceneCentre.y, floorY: floorY(near: sceneCentre))
+        let centre = sceneCentre, floor = floorY(near: centre)
+        heightText = heightLabel(sceneY: centre.y, floorY: floor)
+        guides.position.y = markerLift(sceneY: centre.y, floorY: floor)
+        if let floor {
+            // In the placement's space, which only turns about up: its y offsets are the room's.
+            floorOccluder.position = floorOccluderCenter(floorY: floor - centre.y)
+            if floorOccluder.parent == nil { placement.addChild(floorOccluder) }
+        } else {
+            floorOccluder.removeFromParent()
+        }
     }
+
+    /// Hides the scene below the detected floor; a child of `placement`, so it follows slides and turns.
+    private let floorOccluder = ModelEntity(mesh: .generateBox(size: floorOccluderSize), materials: [OcclusionMaterial()])
 
     private func setHeight(_ y: Float) {
         var p = sceneCentre

@@ -18,3 +18,18 @@ final class FloorTests: XCTestCase {
         XCTAssertEqual(heightLabel(sceneY: -0.01, floorY: nil), "Height −1 cm · floor not found yet")
     }
 }
+
+final class FloorClipTests: XCTestCase {
+    /// Sunk below the floor, the scene's marker and outline stay up on the floor so they can still be grabbed.
+    func testMarkerStaysOnTheFloor() {
+        XCTAssertEqual(markerLift(sceneY: -0.05, floorY: -0.01), 0.04, accuracy: 1e-6)
+        XCTAssertEqual(markerLift(sceneY: 0.02, floorY: -0.01), 0) // above the floor it stays with the scene
+        XCTAssertEqual(markerLift(sceneY: -0.05, floorY: nil), 0)
+    }
+
+    /// The occluder's top face is the floor.
+    func testOccluderTopIsTheFloor() {
+        let c = floorOccluderCenter(floorY: -0.03)
+        XCTAssertEqual(c.y + floorOccluderSize.y / 2, -0.03, accuracy: 1e-6)
+    }
+}

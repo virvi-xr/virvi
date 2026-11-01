@@ -153,15 +153,17 @@ struct EditBarView: View {
                 BarButton(label: "Re-place", width: 100, color: Hud.bgHover) { Task { await space.replace() } }
                 if space.phase == .place {
                     // Height: visionOS's own floor can be centimetres off, so the marker can float or sink.
-                    BarButton(label: "▲", width: 44, color: Hud.bgHover) { space.nudgeHeight(0.01) }
-                    BarButton(label: "▼", width: 44, color: Hud.bgHover) { space.nudgeHeight(-0.01) }
+                    BarButton(label: "▲▲", width: 50, color: Hud.bgHover) { space.nudgeHeight(0.05) }
+                    BarButton(label: "▲", width: 40, color: Hud.bgHover) { space.nudgeHeight(0.01) }
+                    BarButton(label: "▼", width: 40, color: Hud.bgHover) { space.nudgeHeight(-0.01) }
+                    BarButton(label: "▼▼", width: 50, color: Hud.bgHover) { space.nudgeHeight(-0.05) }
                     BarButton(label: "Snap to floor", width: 130, color: Hud.bgHover) { space.snapToFloor() }
                     Text(space.heightText).font(.system(size: 13)).foregroundStyle(Hud.text).lineLimit(2)
                 }
                 Spacer(minLength: 0)
             }
             Text(space.phase == .place
-                 ? space.floorMessage ?? "Pinch and drag the floor marker or the outline to move the scene. Pinch with both hands on the marker and twist to turn it. ▲ and ▼ move it 1 cm up or down."
+                 ? space.floorMessage ?? "Pinch and drag the floor marker or the outline to move the scene. Pinch with both hands on the marker and twist to turn it. ▲ ▼ move it 1 cm, ▲▲ ▼▼ 5 cm; whatever goes below the floor is hidden."
                  : space.pinStatus)
                 .font(.system(size: 13)).foregroundStyle(space.floorMessage != nil && space.phase == .place ? Hud.warning : Hud.textDim)
                 .lineLimit(2)
