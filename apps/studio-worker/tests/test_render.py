@@ -163,6 +163,8 @@ def test_walk_schedule_without_a_length():
 
 def test_orbit_and_walk_queries():
     assert 'type=wearable' in render._query({**SPIN, 'mode': 'orbit'})
+    # with an outfit the page would show the outfit's first wearable (the eyes) instead of the item
+    assert 'profile=' not in render._query({**SPIN, 'mode': 'orbit'}) and 'emote=' not in render._query({**SPIN, 'mode': 'orbit'})
     assert 'type=wearable' not in render._query({**SPIN, 'mode': 'walk', 'emote': 'run'})
     assert 'emote=run' in render._query({**SPIN, 'mode': 'walk', 'emote': 'run'})
     assert 'emote=idle' in render._query({**SPIN, 'mode': 'walk', 'emote': 'own'})  # an emote design plays its own
@@ -193,3 +195,10 @@ def test_walk_sample_keeps_evenly_spaced_pngs(tmp_path, stub):
     assert [f.name for f in r['frames']] == [f'{j:02d}.png' for j in range(16)]
     turns = [c['params'][0]['alpha'] for c in calls if c['method'] == 'changeCameraPosition']
     assert sum(turns) == pytest.approx(2 * math.pi * 91 / 96)  # frame 90 is the last kept, after 91 turns
+
+
+def test_item_alone_loads_while_the_controller_waits_for_it(tmp_path, stub):
+    stub('alone')  # type=wearable shows nothing, and answers nothing, until the item arrives
+    r = render.render([HAT], {**SPIN, 'mode': 'orbit', 'ring': True}, tmp_path, watchdog_sec=60)
+    assert r['ok'] is True, r
+    assert len(r['frames']) == 24

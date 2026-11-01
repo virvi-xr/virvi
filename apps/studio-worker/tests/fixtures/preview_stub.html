@@ -2,11 +2,12 @@
 <!-- A stand-in for wearable-preview that speaks just its message protocol: `ready`, `load` after the first render
      and after each `update`, and `controller_response` to each `controller_request`. Every request is POSTed to
      /log so a test can see it. ?stub=hang never sends ready; ?stub=noload never changes the triangle count;
-     ?stub=fewer lowers it, as a hat hiding the hair does. -->
+     ?stub=fewer lowers it, as a hat hiding the hair does; ?stub=alone refuses every controller call until the first
+     `update`, as the page does with type=wearable and no item yet. -->
 <html><body style="margin:0"><canvas id="c" width="512" height="512"></canvas><script>
 const stub = new URLSearchParams(location.search).get('stub')
 const c = document.getElementById('c').getContext('2d')
-let triangles = 12000, turn = 0
+let triangles = 12000, turn = 0, updated = false
 function draw() {
   const g = c.createLinearGradient(0, 0, 512, 512)
   g.addColorStop(0, `hsl(${turn * 10}, 70%, 50%)`)
@@ -19,12 +20,14 @@ const post = (type, payload) => window.parent.postMessage({ type, payload }, '*'
 window.addEventListener('message', (e) => {
   const d = e.data || {}
   if (d.type === 'update') {
+    updated = true
     if (stub === 'fewer') triangles -= 800
     else if (stub !== 'noload') triangles += 1500
     setTimeout(() => post('load', { renderer: 'babylon' }), 100)
   } else if (d.type === 'controller_request') {
     const { id, namespace, method, params } = d.payload
     fetch('/log', { method: 'POST', body: JSON.stringify({ namespace, method, params }) })
+    if (stub === 'alone' && !updated) return post('controller_response', { id, ok: false, error: 'Controller not ready' })
     let result = null
     if (method === 'getMetrics') result = { triangles, materials: 4, meshes: 9, textures: 2 }
     if (method === 'getLength') result = 3.0

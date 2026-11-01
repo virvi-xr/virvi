@@ -133,11 +133,12 @@ def _clear(out: Path) -> None:
 
 def _query(view: dict) -> str:
     shape = FEMALE if view.get('bodyShape') == 'female' else MALE
+    if view.get('mode') == 'orbit':  # the item alone: with an outfit the page shows the outfit's first wearable
+        return f'bodyShape={shape}&disableAutoRotate=true&disableBackground=false&type=wearable'
     return '&'.join([f"profile={config.OUTFITS.get(view.get('outfit') or 'default', 'default1')}",
                      f'bodyShape={shape}', 'disableAutoRotate=true',
                      f"disableBackground={'true' if view.get('mode') == 'thumbnail' else 'false'}",
-                     f"emote={'idle' if view.get('emote') in (None, 'own') else view['emote']}"]
-                    + (['type=wearable'] if view.get('mode') == 'orbit' else []))
+                     f"emote={'idle' if view.get('emote') in (None, 'own') else view['emote']}"])
 
 
 def _run(spec: dict) -> dict:
@@ -265,7 +266,10 @@ def _wait(page, expression: str, seconds: float) -> bool:
 
 
 def _triangles(page) -> int:
-    metrics = page.evaluate("__studio.call('scene', 'getMetrics')") or {}
+    try:
+        metrics = page.evaluate("__studio.call('scene', 'getMetrics')") or {}
+    except Exception:  # the item-alone view (orbit) has no scene, so no controller, until the item arrives
+        return 0
     return int(metrics.get('triangles') or 0)
 
 
