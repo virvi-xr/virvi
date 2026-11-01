@@ -214,6 +214,18 @@ describe('World destination routes', () => {
       })
     })
 
+    it("connecting a World whose live scene Virvi built doesn't adopt it: Virvi still owns its scene.json", async () => {
+      const { scene } = await createScene(user)
+      const built = liveEntity('e1', ['2,2'])
+      built.metadata = { ...built.metadata, virvi: { apiUrl: 'https://virvi.io', wssUrl: 'wss://virvi.io', runtime: 3 } }
+      worlds.entities.set(WORLD, [built])
+      const loc = await createAnalyticsScene({ kind: 'world', locationKey: `world:${WORLD}`, realm: WORLD, worldName: WORLD, baseParcel: '2,2', parcels: ['2,2'] })
+      await createSetup(loc.id, scene.id)
+      const res = await req('POST', '/api/dcl/destinations', { sceneId: scene.id, world: WORLD, mode: 'sign' })
+      expect(res.statusCode).toBe(201)
+      expect(res.json().destination).toMatchObject({ lastEntityId: 'e1', adopted: false })
+    })
+
     it('adopting an empty World is refused', async () => {
       const { scene } = await createScene(user)
       const res = await req('POST', '/api/dcl/destinations', { sceneId: scene.id, world: WORLD, mode: 'sign' })

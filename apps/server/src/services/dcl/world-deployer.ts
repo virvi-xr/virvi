@@ -17,7 +17,7 @@ import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments, scenes } from '../../db/schema.js'
 import { linkWorldLocation } from '../../setup/setups.js'
 import {
-  assembleFresh, assembleRedeploy, defaultModelFetcher, modelsInScene, pendingModels, wizardSceneJson,
+  assembleFresh, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsInScene, pendingModels, wizardSceneJson,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { buildEntity, dclHash, verifyChain, virviSigner, type AuthChain, type ContentRef, type SceneMetadata } from './entity.js'
@@ -198,7 +198,14 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     return { assembled: await assembleFresh({ metadata, models, timestamp, fetch }), baseEntityId: live?.id ?? null }
   }
   if (!live) throw new DeployerError(409, 'no_live_scene', 'Your World has no scene to add models to')
-  return { assembled: await assembleRedeploy({ live, adopted: dest.adopted, models, timestamp, fetch, title: scene?.name }), baseEntityId: live.id }
+  let adopted = dest.adopted
+  if (adopted && builtByVirvi(live.metadata)) {
+    // Marked adopted by mistake (connected before connecting checked who built it): Virvi's runtime is live there,
+    // so the scene is Virvi's to rename and upgrade.
+    adopted = false
+    await db.update(dclWorldDestinations).set({ adopted: false, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
+  }
+  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name }), baseEntityId: live.id }
 }
 
 /** Path to hash for every file in the entity, read from the entity file itself. */

@@ -353,6 +353,20 @@ describe('every deploy path checks first', () => {
     expect(JSON.parse(dec(sent.files.get(sent.entityId)!)).metadata.display.title).toBe('Renamed scene')
   })
 
+  it('a World wrongly marked adopted whose live scene runs the Virvi runtime is treated as Virvi-built: a rename deploys', async () => {
+    const { user, dest } = await setup()
+    await whenSettled((await startVirviDeploy(dest.id, user.id, { fetch: fetcher })).id)
+    goLive()
+    await db.update(dclWorldDestinations).set({ adopted: true }).where(eq(dclWorldDestinations.id, dest.id))
+    await db.update(scenes).set({ name: 'Renamed scene' }).where(eq(scenes.id, dest.sceneId))
+    const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+    await whenSettled(dep.id)
+    expect((await depRow(dep.id)).status).toBe('deployed')
+    const sent = fake.deployed[1]
+    expect(JSON.parse(dec(sent.files.get(sent.entityId)!)).metadata.display.title).toBe('Renamed scene')
+    expect((await destRow(dest.id)).adopted).toBe(false) // healed, so the dashboard offers renames again
+  })
+
   it('a redeploy whose only new model is refused says which and why, and needs a look', async () => {
     const { user, preset, dest } = await setup()
     await whenSettled((await startVirviDeploy(dest.id, user.id, { fetch: fetcher })).id)
