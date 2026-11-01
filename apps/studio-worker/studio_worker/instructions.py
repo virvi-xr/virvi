@@ -8,7 +8,12 @@ LAYOUT = """Write each piece to its own folder, out/<category>/ (for example out
 Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is."""
 
 
-def closing(kind: str, selected_slots: list[str] | None) -> str:
+# Grok runs the preview but, left to itself, judges the fit from its text output without opening a single view
+GROK_LOOK = ('\nOpen each view by reading its PNG with your read_file tool: reading an image file shows it to you. Judge '
+             'shape, size and fit only from what you see in the images, never from the preview\'s text output.')
+
+
+def closing(kind: str, selected_slots: list[str] | None, agent: str | None = None) -> str:
     if kind == 'emote':
         what = 'Build one Decentraland emote. Its folder is out/emote/.'
         layout = LAYOUT % ', "loop": true | false'
@@ -25,6 +30,8 @@ def closing(kind: str, selected_slots: list[str] | None) -> str:
                 'prints (front, right, back, left) for each body shape. Fix any clipping you see, such as hair '
                 'poking through a hat; if a hat would look better hiding the hair, ask the user rather than guess.')
         check = 'Run the wearable checker (check_wearable.py) with the piece\'s category and hides, and fix every FAIL.'
+    if agent == 'grok':
+        look += GROK_LOOK
     shaping = ('' if kind == 'emote' or selected_slots else
                '\nIf the concept is not settled yet (no slots are selected and the idea could go several ways), do not '
                'build: shape it with the shaping-dcl-item-ideas skill and write out/proposal.json instead, as '

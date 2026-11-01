@@ -21,17 +21,21 @@ from typing import Callable, Mapping
 
 from . import render as renderer
 from . import scope
-from .agent import Usage, run_agent
+from .agent import Usage, run_agent, then
 from .api import Api, ApiError
 from .config import AGENT_USER, DESIGN, skills_sha
 from .finalize import Tools, finalize_job
 from .instructions import closing, uploads_text
-from .pieces import Piece, collect, glbs_by_shape, glbs_outside, new_hashes, read_declined
+from .pieces import Piece, collect, glbs_by_shape, glbs_exported, glbs_outside, new_hashes, read_declined
 from .workspace import load_state, pack, prompt_with_context, save_state, state_dir, unpack
 
 IDLE_EXIT_SEC = 600
 POLL_SEC = 2.0
 DEFAULT_LIMITS = {'timeoutSec': 1500, 'maxTurns': 80, 'costCeilingUsd': 3.0}
+# Sent to a Grok run that changed a piece without opening a single render (the reply goes to the user as usual)
+LOOK_AGAIN = ('You changed a piece without looking at it. Run `studio-preview out/<category>` for each piece you '
+              'changed and read every PNG it prints with read_file to see it. Fix whatever looks wrong: shape, size, '
+              'where it sits on the head or body, clipping. Then reply to the user again in a few plain sentences.')
 
 
 def run_job(job: dict, client: Api, design: Path, render_fn: Callable = renderer.render,
@@ -115,7 +119,8 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
     before = Usage(**totals) if totals else None
     uploads = fetch_uploads(job, client, design)
     words = job['prompt'] + (_clipping_text(design, kind, agent, fix) if fix else '')
-    prompt = prompt_with_context(state, agent, words) + uploads_text(uploads) + closing(kind, job.get('selectedSlots'))
+    prompt = prompt_with_context(state, agent, words) + uploads_text(uploads) + \
+        closing(kind, job.get('selectedSlots'), agent)
     limits = {**DEFAULT_LIMITS, **{k: v for k, v in (job.get('limits') or {}).items() if v is not None}}
 
     _phase(client, job_id, 'building')
@@ -123,6 +128,12 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
     run = run_agent(agent, job['model'], prompt, state.sessions.get(agent), before, limits,
                     lambda text: _send(client, job_id, {'type': 'progress', 'text': text}),
                     command=command, as_user=as_user, cwd=design)
+    if agent == 'grok' and run.outcome == 'ok' and not run.images_viewed and glbs_exported(design, started):
+        # It changed a piece without ever opening a render: send it back once to look, in the same session
+        again = run_agent(agent, job['model'], LOOK_AGAIN, run.session, run.session_total, limits,
+                          lambda text: _send(client, job_id, {'type': 'progress', 'text': text}),
+                          command=command, as_user=as_user, cwd=design)
+        run = then(run, again)
     usage = run.usage
     cost = None if run.cost_usd is None and check_cost is None else round((run.cost_usd or 0) + (check_cost or 0), 6)
     result.update(reply=run.reply, costUsd=cost, tokens=usage and {
