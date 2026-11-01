@@ -3,6 +3,8 @@ import Foundation
 enum ApiError: Error, Equatable {
     case offline
     case status(Int, code: String?)
+    /// 409 `held` from the draft routes: someone else is moving the item.
+    case held(holderName: String)
     case decode
 }
 
@@ -94,7 +96,9 @@ final class VirviApi: Sendable {
             throw ApiError.offline
         }
         guard (200..<300).contains(http.statusCode) else {
-            let code = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let code = json?["error"] as? String
+            if http.statusCode == 409, code == "held" { throw ApiError.held(holderName: (json?["holderName"] as? String) ?? "another editor") }
             throw ApiError.status(http.statusCode, code: code)
         }
         return data
