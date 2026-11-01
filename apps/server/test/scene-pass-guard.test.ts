@@ -43,6 +43,7 @@ const PUBLIC_EXACT = [
   'POST /api/ar/devices/:id/pass', // the headset secret is the auth
   'POST /api/ar/devices/:id/end', // the headset secret is the auth
   'POST /api/ar/devices/:id/spaces', // the headset secret is the auth
+  'POST /api/ar/devices/:id/scenes', // the headset secret is the auth
   'GET /.well-known/assetlinks.json', // public: the Android app links file, nothing of ours in it
   'POST /api/ingest', // DCL signed fetch / ingest key
   'POST /api/analytics/claims/check-signed', // DCL signed fetch

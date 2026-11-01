@@ -6,9 +6,11 @@
  * GET    /api/ar/pair/:code          — (account) What the approval page shows for a code
  * POST   /api/ar/pair/:code/approve  — (account) Approve a code as a personal or a shared headset
  * POST   /api/ar/pair/:code/claim    — (public, headset secret) Trade an approved code for the device id
- * POST   /api/ar/devices/:id/pass    — (public, headset secret) An AR pass for a space the approver can build on
+ * POST   /api/ar/devices/:id/pass    — (public, headset secret) An AR pass for a space, or (personal headsets only) a
+ *                                       whole scene, the approver can build on; body has exactly one of spaceId, sceneId
  * POST   /api/ar/devices/:id/end     — (public, headset secret) End the session (a shared headset is unpaired)
  * POST   /api/ar/devices/:id/spaces  — (public, headset secret) The spaces the approver can build on
+ * POST   /api/ar/devices/:id/scenes  — (public, headset secret) The scenes the approver can build on
  * GET    /api/ar/devices             — (account) My headsets
  * DELETE /api/ar/devices/:id         — (account) Revoke one of my headsets
  *
@@ -21,7 +23,7 @@ import { normalizePairingCode, type ArPairApprovalInfo, type ArPairStartResponse
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
-import { approveDevicePairing, claimDevicePairing, devicePairingForApproval, endDeviceSession, listDeviceSpaces, listDevices, mintArPass, revokeDevice, startDevicePairing } from '../ar/devices.js'
+import { approveDevicePairing, claimDevicePairing, devicePairingForApproval, endDeviceSession, listDeviceScenes, listDeviceSpaces, listDevices, mintArPass, mintArPassForScene, revokeDevice, startDevicePairing } from '../ar/devices.js'
 
 const SHA256_HEX = /^[0-9a-f]{64}$/i
 const MAX_NAME = 64
@@ -97,15 +99,17 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     return reply.send(result)
   })
 
-  const deviceError = (reply: FastifyReply, error: 'bad_secret' | 'device_revoked' | 'no_access' | 'not_found') =>
-    reply.status(error === 'no_access' ? 403 : error === 'not_found' ? 404 : 401).send({ error })
+  const deviceError = (reply: FastifyReply, error: 'bad_secret' | 'device_revoked' | 'no_access' | 'not_found' | 'personal_only') =>
+    reply.status(error === 'no_access' || error === 'personal_only' ? 403 : error === 'not_found' ? 404 : 401).send({ error })
 
   app.post('/api/ar/devices/:id/pass', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const secret = secretOf(request)
-    const spaceId = (request.body as { spaceId?: unknown } | undefined)?.spaceId
-    if (!secret || typeof spaceId !== 'string') return reply.status(400).send({ error: 'Missing fields: secret, spaceId' })
-    const result = await mintArPass(app, id, secret, spaceId)
+    const { spaceId, sceneId } = (request.body ?? {}) as { spaceId?: unknown; sceneId?: unknown }
+    if (!secret || (typeof spaceId === 'string') === (typeof sceneId === 'string')) {
+      return reply.status(400).send({ error: 'Missing or invalid fields: secret, and exactly one of spaceId, sceneId' })
+    }
+    const result = typeof sceneId === 'string' ? await mintArPassForScene(app, id, secret, sceneId) : await mintArPass(app, id, secret, spaceId as string)
     if (typeof result === 'string') return deviceError(reply, result)
     const res: ArPassResponse = { pass: result.pass, passExpiresAt: result.passExpiresAt.toISOString(), sceneId: result.sceneId }
     return reply.send(res)
@@ -125,6 +129,15 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     const secret = secretOf(request)
     if (!secret) return reply.status(400).send({ error: 'Missing field: secret' })
     const result = await listDeviceSpaces(id, secret)
+    if (typeof result === 'string') return deviceError(reply, result)
+    return reply.send(result)
+  })
+
+  app.post('/api/ar/devices/:id/scenes', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const secret = secretOf(request)
+    if (!secret) return reply.status(400).send({ error: 'Missing field: secret' })
+    const result = await listDeviceScenes(id, secret)
     if (typeof result === 'string') return deviceError(reply, result)
     return reply.send(result)
   })

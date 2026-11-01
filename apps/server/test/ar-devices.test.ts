@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { AR_PAIRING, DEFAULT_VENUE_RULES, VENUE_ROLE_SCOPES, ringCodeOf } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
-import { accessGrants, arDevices, arFloors, arMarkers, arSpaces, bookings, sceneCollaborators, venues } from '../src/db/schema.js'
+import { accessGrants, arDevices, arFloors, arMarkers, arSpaces, bookings, sceneCollaborators, sceneRoles, venues } from '../src/db/schema.js'
 import { redactPairingCode } from '../src/app.js'
 import { config } from '../src/config.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
@@ -289,6 +289,70 @@ describe('AR headset pairing and the AR pass', () => {
     // The headset matches the ring it sees, then mints for that ring's space.
     const seen = sorted.find((s: any) => s.markers.some((m: any) => m.code === ringB.code))
     expect((await mint(deviceId, seen.spaceId)).json().sceneId).toBe(b.scene.id)
+  })
+
+  const mintScene = (deviceId: string, body: Record<string, unknown>) =>
+    app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/pass`, payload: body })
+
+  it('mints a pass for a scene the approver can build on, with no space', async () => {
+    const owner = await createUser({ wallet: randomWallet() })
+    const { scene } = await createScene(owner, 'No space')
+    const deviceId = await pairAs(owner, 'personal')
+    const res = await mintScene(deviceId, { secret: SECRET, sceneId: scene.id })
+    expect(res.statusCode).toBe(200)
+    const { pass, passExpiresAt, sceneId } = res.json()
+    expect(sceneId).toBe(scene.id)
+    expect(new Date(passExpiresAt).getTime()).toBeGreaterThan(Date.now())
+    expect(verifySessionToken(pass)).toMatchObject({ id: owner.id, kind: 'scene', sceneId: scene.id, via: 'ar', deviceId })
+  })
+
+  it('refuses a scene pass to a shared headset', async () => {
+    const owner = await createUser()
+    const { scene } = await createScene(owner, 'S')
+    const deviceId = await pairAs(owner, 'shared')
+    const res = await mintScene(deviceId, { secret: SECRET, sceneId: scene.id })
+    expect([res.statusCode, res.json()]).toEqual([403, { error: 'personal_only' }])
+  })
+
+  it('refuses a scene pass on a scene the approver cannot build', async () => {
+    const owner = await createUser()
+    const other = await createUser()
+    const { scene } = await createScene(other, 'Theirs')
+    const deviceId = await pairAs(owner, 'personal')
+    const res = await mintScene(deviceId, { secret: SECRET, sceneId: scene.id })
+    expect([res.statusCode, res.json().error]).toEqual([403, 'no_access'])
+    const unknown = await mintScene(deviceId, { secret: SECRET, sceneId: '00000000-0000-0000-0000-000000000000' })
+    expect([unknown.statusCode, unknown.json().error]).toEqual([403, 'no_access'])
+  })
+
+  it('needs exactly one of spaceId and sceneId', async () => {
+    const owner = await createUser()
+    const a = await sceneWithSpace(owner)
+    const deviceId = await pairAs(owner, 'personal')
+    expect((await mintScene(deviceId, { secret: SECRET, sceneId: a.scene.id, spaceId: a.space.id })).statusCode).toBe(400)
+    expect((await mintScene(deviceId, { secret: SECRET })).statusCode).toBe(400)
+  })
+
+  it('lists the scenes the approver can build on', async () => {
+    const me = await createUser({ wallet: randomWallet() })
+    const other = await createUser()
+    const third = await createUser()
+    const { scene: owned } = await createScene(me, 'B owned, no space')
+    const collab = await sceneWithSpace(other, 'A collab')
+    await db.insert(sceneCollaborators).values({ sceneId: collab.scene.id, userId: me.id, role: 'editor' })
+    const { scene: roled } = await createScene(third, 'C role')
+    await db.insert(sceneRoles).values({ sceneId: roled.id, userId: me.id, walletAddress: me.wallet!.toLowerCase(), role: 'editor' } as any)
+    await createScene(third, 'D no access')
+    const deviceId = await pairAs(me, 'personal')
+    const res = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/scenes`, payload: { secret: SECRET } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual([
+      { sceneId: collab.scene.id, sceneName: 'A collab' },
+      { sceneId: owned.id, sceneName: 'B owned, no space' },
+      { sceneId: roled.id, sceneName: 'C role' },
+    ])
+    const bad = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/scenes`, payload: { secret: 'nope' } })
+    expect(bad.statusCode).toBe(401)
   })
 
   it('codes are kept out of logs', () => {
