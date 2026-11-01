@@ -142,6 +142,12 @@ function assertVirviHosted(url: string): URL {
   return u
 }
 
+/** The live scene runs Virvi's own runtime (its `virvi` block carries the runtime version), so Virvi owns its
+ *  scene.json and code. Anything else is the owner's own scene: adopted, its code and title never touched. */
+export function builtByVirvi(metadata: { virvi?: { runtime?: unknown } } | undefined): boolean {
+  return typeof metadata?.virvi?.runtime === 'number'
+}
+
 export const defaultModelFetcher: ModelFetcher = async (url) => {
   assertVirviHosted(url)
   try {

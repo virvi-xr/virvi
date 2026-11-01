@@ -59,7 +59,7 @@ import { verifiedWalletsOf } from '../analytics/claims.js'
 import { DirectoryUnavailableError, getDclDirectory } from '../analytics/dcl-directory.js'
 import { getActiveSetup } from '../setup/setups.js'
 import { config } from '../config.js'
-import { pendingModels } from '../services/dcl/assemble.js'
+import { builtByVirvi, pendingModels } from '../services/dcl/assemble.js'
 import { chainSigner, signedFetchPayload, verifyChain, virviSigner, type AuthChain } from '../services/dcl/entity.js'
 import { getWorldsClient, WorldsError, type LiveEntity, type SignedRequest } from '../services/dcl/worlds-client.js'
 import {
@@ -360,7 +360,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
         parcels: live.metadata?.scene?.parcels ?? live.pointers,
         lastEntityId: live.id,
         deployedFiles: live.content.map((c) => c.file.toLowerCase()),
-        adopted: true,
+        adopted: !builtByVirvi(live.metadata),
       }
     }
 
@@ -467,9 +467,9 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     if (!live) throw new RouteError(409, 'no_live_scene')
     await db
       .update(dclWorldDestinations)
-      // A scene without Virvi's `virvi` block is the owner's own code (rebuilt in the Creator Hub, say): adopted, never touched
+      // A scene not running Virvi's runtime is the owner's own code (rebuilt in the Creator Hub, say): adopted, never touched
       .set({
-        lastEntityId: live.id, deployedFiles: live.content.map((c) => c.file.toLowerCase()), adopted: !live.metadata?.virvi,
+        lastEntityId: live.id, deployedFiles: live.content.map((c) => c.file.toLowerCase()), adopted: !builtByVirvi(live.metadata),
         status: 'ok', statusDetail: null, updatedAt: new Date(),
       })
       .where(eq(dclWorldDestinations.id, dest.id))
