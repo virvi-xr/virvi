@@ -47,3 +47,22 @@ func quaternionYXZ(_ r: SIMD3<Double>) -> simd_quatd {
 
 /// Where the scene's middle sits in Virvi coordinates: the centre of a single 16 m parcel, at ground level.
 let VIRVI_SCENE_CENTER = Vec3(x: 8, y: 0, z: 8)
+
+// MARK: - The inverse: RealityKit to Virvi
+
+/// A position in the scene root's RealityKit frame, back in Virvi scene coordinates (z mirrored back).
+func fromRealityKitPosition(_ p: SIMD3<Double>) -> SIMD3<Double> { [p.x, p.y, -p.z] }
+
+/// Where the builder's head is in Virvi scene coordinates, and the yaw it faces in Virvi degrees (0 is north, +z;
+/// 90 is east, +x), for `placement`. `worldFromHead` is the device anchor's `originFromAnchorTransform`;
+/// `worldFromScene` is the scene root's transform (the Virvi origin, already on RealityKit axes). The head looks
+/// down its -z; looking straight down, the top of the head gives the heading instead.
+func headPoseInScene(worldFromHead: simd_double4x4, worldFromScene: simd_double4x4) -> (position: SIMD3<Double>, yawDeg: Double) {
+    let m = worldFromScene.inverse * worldFromHead
+    let position = fromRealityKitPosition(SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z))
+    var f = fromRealityKitPosition(-SIMD3(m.columns.2.x, m.columns.2.y, m.columns.2.z))
+    if simd_length(SIMD2(f.x, f.z)) < 0.01 {
+        f = fromRealityKitPosition(SIMD3(m.columns.1.x, m.columns.1.y, m.columns.1.z))
+    }
+    return (position, atan2(f.x, f.z) * 180 / .pi)
+}

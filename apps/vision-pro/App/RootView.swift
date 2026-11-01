@@ -6,6 +6,8 @@ struct RootView: View {
     @ObservedObject var auth: DeviceAuth
     @State private var startedOnce = false
     @State private var pairingEnded = false
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
+    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
 
     var body: some View {
         Group {
@@ -29,6 +31,13 @@ struct RootView: View {
         .onChange(of: auth.state) { _, state in
             if case .paired = state { pairingEnded = false; return }
             app.closeScene() // revoked, signed out or re-pairing: nothing of the old scene is kept
+        }
+        .onChange(of: app.builder.map(ObjectIdentifier.init)) { _, _ in
+            // Change scene, revoke or closing the scene: the build space belonged to the old scene.
+            if app.buildSpaceOpen { Task { await dismissImmersiveSpace() } }
+            #if DEBUG
+            if app.builder != nil, DebugLaunch.build { Task { await openImmersiveSpace(id: "build") } }
+            #endif
         }
         .task {
             guard !startedOnce else { return }

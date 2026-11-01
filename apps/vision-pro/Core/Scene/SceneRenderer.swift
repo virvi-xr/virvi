@@ -97,6 +97,23 @@ final class SceneRenderer {
         )
     }
 
+    /// The transform an item's entity shows for a local edit `t` (Virvi coordinates), as `transform(of:)` maps the
+    /// feed's: models take the scale; planes were built at the feed's width and height, so they scale relative to it.
+    static func entityTransform(for item: RenderItem, _ t: ItemTransform) -> Transform {
+        let m = toRealityKitTransform(position: Vec3(x: t.position.x, y: t.position.y, z: t.position.z),
+                                      rotation: Vec3(x: t.rotation.x, y: t.rotation.y, z: t.rotation.z),
+                                      scale: Vec3(x: t.scale.x, y: t.scale.y, z: t.scale.z))
+        let scale: SIMD3<Float>
+        switch item.kind {
+        case .model: scale = SIMD3<Float>(m.scale)
+        case .image, .video:
+            let w = abs(item.width) > 0.001 ? item.width : 1, h = abs(item.height) > 0.001 ? item.height : 1
+            scale = [Float(t.scale.x / w), Float(t.scale.y / h), 1]
+        case .audio: scale = [1, 1, 1]
+        }
+        return Transform(scale: scale, rotation: m.orientation.float, translation: SIMD3<Float>(m.position))
+    }
+
     private func rebuild() {
         let current = plan
         for item in current { remove(item.key) }

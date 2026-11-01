@@ -21,6 +21,10 @@ struct RenderItem: Equatable {
     /// The element's and the instance's `sk` (what `key` is made of).
     var elementId: String = ""
     var instanceSk: String = ""
+    /// The instance's transform as Virvi stores it (Decentraland scene-local, degrees), what an edit starts from.
+    var source = ItemTransform(position: .zero, rotation: .zero, scale: .one)
+    /// The element type the draft and save routes take: "video", "image", "model" or "sound".
+    var elementKind = ""
 }
 
 typealias Props = [String: Any]
@@ -137,6 +141,7 @@ private func planElements(_ out: inout [RenderItem], _ elements: Any?, _ kind: R
         for case let inst as Props in (el["instances"] as? [Any]) ?? [] {
             if isFalse(inst["enabled"]) { continue }
             let scale = vec(inst["scale"], 1)
+            let position = vec(inst["position"], 0), rotation = vec(inst["rotation"], 0)
             out.append(RenderItem(
                 key: "\(templateString(el["sk"])):\(templateString(inst["sk"]))",
                 name: nonEmptyString(el["name"]) ?? (URL(string: media.src)?.lastPathComponent ?? media.src),
@@ -146,10 +151,13 @@ private func planElements(_ out: inout [RenderItem], _ elements: Any?, _ kind: R
                 volume: media.kind == .image ? 0 : volume,
                 width: scale.x,
                 height: scale.y,
-                transform: toRealityKitTransform(position: vec(inst["position"], 0), rotation: vec(inst["rotation"], 0), scale: scale),
+                transform: toRealityKitTransform(position: position, rotation: rotation, scale: scale),
                 clickUrl: externalUrl(clickOf(inst, el)),
                 elementId: templateString(el["sk"]),
-                instanceSk: templateString(inst["sk"])
+                instanceSk: templateString(inst["sk"]),
+                source: ItemTransform(position: [position.x, position.y, position.z], rotation: [rotation.x, rotation.y, rotation.z],
+                                      scale: [scale.x, scale.y, scale.z]),
+                elementKind: kind == .audio ? "sound" : kind.rawValue
             ))
         }
     }

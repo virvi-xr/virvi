@@ -26,6 +26,23 @@ final class ScenePlanTests: XCTestCase {
         XCTAssertEqual(items[3].kind, .model)
     }
 
+    func testItemsCarryTheirVirviTransformAndElementType() throws {
+        let json = """
+        {"videos":[{"sk":"vid","offType":1,"offImageSrc":"https://x/off.jpg","instances":[
+            {"sk":"v1","position":{"x":1,"y":2,"z":3},"rotation":{"x":0,"y":30,"z":0},"scale":{"x":4,"y":2,"z":1}}]}],
+         "models":[{"sk":"m","modelSrc":"https://x/m.glb","instances":[{"sk":"m1"}]}],
+         "sounds":[{"sk":"s","audioSrc":"https://x/a.mp3","instances":[{"sk":"s1"}]}]}
+        """
+        let scene = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? Props)
+        let items = planScene(scene)
+        XCTAssertEqual(items[0].kind, .image) // a video showing its off image still drafts as a video
+        XCTAssertEqual(items[0].elementKind, "video")
+        XCTAssertEqual(items[0].source, ItemTransform(position: [1, 2, 3], rotation: [0, 30, 0], scale: [4, 2, 1]))
+        XCTAssertEqual(items[1].elementKind, "model")
+        XCTAssertEqual(items[1].source, ItemTransform(position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1]))
+        XCTAssertEqual(items[2].elementKind, "sound")
+    }
+
     func testDiff() {
         let a = planScene(["images": [["sk": "e", "textureSrc": "https://x/a.png", "instances": [["sk": "1"], ["sk": "2"]]]]])
         let b = planScene(["images": [["sk": "e", "textureSrc": "https://x/a.png", "instances": [["sk": "2", "scale": ["x": 2]], ["sk": "3"]]]]])

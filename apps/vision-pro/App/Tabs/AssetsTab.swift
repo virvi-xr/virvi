@@ -6,6 +6,7 @@ struct AssetsTab: View {
     let builder: SceneBuilder
     let onClose: () -> Void
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @State private var library: [LibraryItem] = []
     @State private var loaded = false
     @State private var failed = false
@@ -131,17 +132,21 @@ struct AssetsTab: View {
         }
     }
 
-    /// Places 2 m ahead of the head, as Decentraland does; models add the World's next-step line (with Publish when
-    /// the World signs).
+    /// Places 2 m ahead of the head, as Decentraland does, from the device pose in the build space (which Place
+    /// opens if it isn't); without a pose it says so and places nothing. The new item is then selected. Models add
+    /// the World's next-step line (with Publish when the World signs).
     private func place(_ a: AssetRow) {
         guard !busy else { return }
         busy = true
         line = nil
         Task {
             defer { busy = false }
-            let head = app.headPose()
+            guard let head = await headPose() else {
+                line = EditLine(text: Self.noPoseCopy, error: true); return
+            }
             do {
-                _ = try await builder.assets.place(row: a, at: placement(kind: a.kind, headPosition: head.position, headYawDeg: head.yawDeg))
+                let placed = try await builder.assets.place(row: a, at: placement(kind: a.kind, headPosition: head.position, headYawDeg: head.yawDeg))
+                builder.space.pendingSelect = "\(placed.elementId):\(placed.instanceId)"
             } catch let e as AssetsError {
                 line = EditLine(text: e.message, error: true); return
             } catch {
@@ -154,6 +159,19 @@ struct AssetsTab: View {
             line = EditLine(text: next.text, error: false, actionLabel: next.publish ? "Publish" : nil,
                             actionUrl: next.publish ? d.flatMap { URL(string: $0.publishUrl) } : nil)
         }
+    }
+
+    static let noPoseCopy = "Place needs to know where you're facing: look ahead and press Place again"
+
+    /// The head pose, opening the build space first if it isn't open and giving tracking a moment to start.
+    private func headPose() async -> (position: SIMD3<Double>, yawDeg: Double)? {
+        if let pose = builder.space.headPose() { return pose }
+        if !app.buildSpaceOpen { _ = await openImmersiveSpace(id: "build") }
+        for _ in 0..<30 {
+            try? await Task.sleep(for: .milliseconds(100))
+            if let pose = builder.space.headPose() { return pose }
+        }
+        return nil
     }
 
     private func mintLink() {

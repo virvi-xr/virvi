@@ -321,6 +321,38 @@ final class EditSessionTests: XCTestCase {
         XCTAssertNil(s.message)
         XCTAssertTrue(s.editingKeys.isEmpty)
     }
+
+    // MARK: - Teardown (Change scene, revoke, closing the scene)
+
+    func testEndDropsTheSelectionCancelsWaitingDraftsAndEndsTheHold() async {
+        let (r, _) = rig(); let s = r.session
+        _ = s.select(selection())
+        var t = start; t.position.x = 2
+        s.update(t) // sent at once
+        r.clock.advance(0.01)
+        t.position.x = 3
+        s.update(t) // waits for the throttle
+        s.end()
+        XCTAssertNil(s.selected)
+        XCTAssertFalse(s.dirty)
+        XCTAssertTrue(s.editingKeys.isEmpty)
+        r.clock.advance(1); r.clock.fire()
+        await s.idle()
+        XCTAssertEqual(r.transport.count("/api/ar/drafts"), 1)
+        XCTAssertEqual(r.transport.bodies("/api/ar/drafts/end").last?["saved"] as? Bool, false)
+        s.update(t) // nothing is selected: nothing is sent
+        await s.idle()
+        XCTAssertEqual(r.transport.count("/api/ar/drafts"), 1)
+    }
+
+    func testEndWithNothingChangedSendsNothing() async {
+        let (r, _) = rig(); let s = r.session
+        _ = s.select(selection())
+        s.end()
+        await s.idle()
+        XCTAssertNil(s.selected)
+        XCTAssertEqual(r.transport.count("/api/ar/drafts/end"), 0)
+    }
 }
 
 private extension ItemTransform {

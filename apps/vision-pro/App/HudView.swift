@@ -8,6 +8,7 @@ struct HudView: View {
     @ObservedObject var feed: SceneFeed
     @ObservedObject var alerts: HudAlerts
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @State private var active: HudTab? = DebugLaunch.tab ?? .layout
 
     private var tabs: [HudTab] { visibleTabs(role: builder.role) }
@@ -35,6 +36,11 @@ struct HudView: View {
         }
         .background(Hud.bg)
         .overlay(alignment: .bottom) { ToastView(alerts: alerts) }
+        .ornament(visibility: app.buildSpaceOpen ? .visible : .hidden, attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
+            // Done leaves the build space, as Decentraland's Done leaves edit mode.
+            EditBarView(space: builder.space, edit: builder.edit) { Task { await dismissImmersiveSpace() } }
+                .padding(.top, 12)
+        }
         .onAppear { if DebugLaunch.tab == .stats { openStats() } }
     }
 

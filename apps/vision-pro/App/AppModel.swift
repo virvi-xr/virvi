@@ -13,11 +13,9 @@ final class AppModel: ObservableObject {
     let auth: DeviceAuth
     let api: VirviApi
     @Published private(set) var builder: SceneBuilder?
-
-    /// Where the builder's head is, in Virvi scene space, and its yaw in degrees, for Assets → Place. The window has
-    /// no head tracking: until the immersive space (Task 12) supplies the WorldTrackingProvider pose, it is the
-    /// parcel's centre at eye height, facing north.
-    var headPose: () -> (position: SIMD3<Double>, yawDeg: Double) = { ([8, 1.6, 8], 0) }
+    /// The `build` immersive space is open (it shows the edit bar under the HUD). RootView dismisses it whenever the
+    /// scene changes or closes.
+    @Published var buildSpaceOpen = false
 
     init() {
         let store = KeychainStore()
@@ -63,6 +61,8 @@ final class SceneBuilder: ObservableObject {
     let stream: StreamModel
     let worlds: WorldsModel
     let roles: RolesModel
+    /// The `build` immersive space's scene, gizmo and head pose.
+    let space: BuildSpace
     private var subscriptions: Set<AnyCancellable> = []
 
     init(api: VirviApi, scene: DeviceScene) {
@@ -76,6 +76,7 @@ final class SceneBuilder: ObservableObject {
         stream = StreamModel(api: api, sceneId: scene.sceneId)
         worlds = WorldsModel(api: api, sceneId: scene.sceneId)
         roles = RolesModel(api: api, sceneId: scene.sceneId)
+        space = BuildSpace(sceneId: scene.sceneId, feed: feed, edit: edit)
 
         // The spec's Alerts: edit failures and refusals, and stream changes between feed snapshots.
         edit.$message.sink { [alerts] in alerts.editMessage($0) }.store(in: &subscriptions)
@@ -86,8 +87,12 @@ final class SceneBuilder: ObservableObject {
 
     func start() { feed.start(sceneId: sceneId) }
 
+    /// Change scene, revoke or sign-out: the feed stops, the edit session drops its selection and waiting drafts,
+    /// and the build space lets go of the scene (RootView dismisses the space itself).
     func stop() {
         feed.stop()
+        edit.end()
+        space.teardown()
         subscriptions.removeAll()
     }
 }

@@ -91,6 +91,26 @@ final class EditSession: ObservableObject {
         return true
     }
 
+    /// Teardown for leaving the scene (Change scene, revoke, the scene closing): drops the selection and any unsaved
+    /// change, cancels the draft waiting for the throttle and stops drafting. When a change had been drafted, the
+    /// hold is ended (not saved) so the other editors see the item go back.
+    func end() {
+        let drafted = selected.flatMap { s in dirty || saving ? s.sk : nil }
+        sender.cancelPending(stop: true)
+        selected = nil
+        dirty = false
+        saving = false
+        message = nil
+        heldBy = nil
+        guard let sk = drafted else { return }
+        let previous = ending
+        ending = Task { @MainActor in
+            await previous?.value
+            await self.sender.settle()
+            await self.endDraft(sk: sk, saved: false)
+        }
+    }
+
     // MARK: - Editing
 
     func update(_ t: ItemTransform) {

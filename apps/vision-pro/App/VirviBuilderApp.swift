@@ -16,7 +16,7 @@ struct VirviBuilderApp: App {
         .defaultSize(width: 1000, height: 760)
 
         ImmersiveSpace(id: "build") {
-            BuildSpacePlaceholder()
+            BuildSpaceView(app: app)
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
     }
