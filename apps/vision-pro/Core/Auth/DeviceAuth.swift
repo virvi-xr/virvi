@@ -13,6 +13,14 @@ func sha256Hex(_ s: String) -> String {
     SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
 }
 
+/// The approval page as an address to type in: a QR shown inside the headset can't be scanned.
+func pairingAddress(_ url: URL) -> String {
+    var host = url.host ?? ""
+    if host.hasPrefix("www.") { host.removeFirst(4) }
+    if let port = url.port { host += ":\(port)" }
+    return host + url.path
+}
+
 /// "ABC123" -> "ABC-123" (the Quest's PairingPanel.formatPairingCode).
 func formatPairingCode(_ code: String) -> String {
     let c = code.trimmingCharacters(in: .whitespaces).uppercased().replacingOccurrences(of: "-", with: "")

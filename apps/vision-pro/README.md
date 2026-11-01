@@ -72,13 +72,13 @@ Debug builds also read these launch arguments, which land on a screen without UI
 | `-exact YES` | Opens the Exact panel |
 | `-sceneAhead <m>` | Puts the scene's centre that far ahead instead of 2 m, so a screenshot takes in more of it |
 
-Screenshots from the fixture server are in `docs/`: `pairing.png`, `scene-picker.png`, and `tab-layout.png`, `tab-assets.png`, `tab-events.png`, `tab-stream.png`, `tab-worlds.png`, `tab-alerts.png`, `tab-roles.png`, `tab-stats.png`. The build space: `build-placed.png` (the scene put down, in Place scene), `build-selected.png` (the Duck selected, with the cyan box), `build-gizmo-rotate.png` (the rotation rings) and `build-gizmo-move-edit-bar.png` (the Move arrows on a poster, with the edit bar and the Exact panel).
+Screenshots from the fixture server are in `docs/`: `pairing.png`, `scene-picker.png`, and `tab-layout.png`, `tab-assets.png`, `tab-events.png`, `tab-stream.png`, `tab-worlds.png`, `tab-alerts.png`, `tab-roles.png`, `tab-stats.png`. The build space: `build-placed.png` (the scene put down, in Place scene), `build-selected.png` (the Duck selected; it predates the outline), `build-gizmo-rotate.png` (the rotation rings) and `build-gizmo-move-edit-bar.png` (the Move arrows on a poster, with the edit bar and the Exact panel).
 
 The simulator has no world tracking. There the scene always goes down at a fixed spot ahead of the space's origin, with no `WorldAnchor`: Pin to this room says "Pinning needs a device", and Assets → Place says it can't tell where you're facing, and places nothing.
 
 ## The window
 
-- **Pairing:** the code in large type, a QR of the approval page, and Cancel, as on the Quest.
+- **Pairing:** the code in large type, the approval page's address to type on a phone or computer (the wearer can't scan a QR shown inside the headset), a small QR for someone beside them, and Cancel.
 - **Scene picker:** "Choose a scene to build", from the headset's scene list.
 - **HUD:** the Decentraland HUD's panel, with the same tab bar (Layout, Assets, Events, Stream, Worlds, Alerts, Roles for hosts and co-hosts, Stats), panel titles, empty states and buttons, in Decentraland's colours.
   - **Edit layout** opens the `build` immersive space (below).
@@ -89,10 +89,10 @@ The simulator has no world tracking. There the scene always goes down at a fixed
 
 ## The build space
 
-- **Putting the scene down:** the AR spike's Place scene. The scene appears life-size with its centre 2 m ahead and north pointing away, with the floor disc and the parcel outline. With **Place scene** on, pinch-drag on them slides the scene and a two-hand twist turns it. **Pin to this room** saves a `WorldAnchor`, with its id in `UserDefaults` per scene, and the next launch comes back to it. **Re-place** clears the pin. Edit never moves the whole scene.
-- **Picking:** look at an item and pinch to select it. It gets the spike's cyan box.
+- **Putting the scene down:** the AR spike's Place scene. The scene appears life-size with its centre 2 m ahead and north pointing away, with the floor disc and the parcel outline. While placing (a scene's first visit starts there), pinch-drag on them slides the scene and a two-hand twist turns it, and items don't take pinches. **Done placing** (or **Pin to this room**) switches to editing items; **Move scene** goes back. **Pin to this room** saves a `WorldAnchor`, with its id in `UserDefaults` per scene, and the next launch comes back to it. **Re-place** clears the pin. Edit never moves the whole scene.
+- **Picking:** looking at an item lights it up in cyan; pinch to select it. The selected item gets a cyan outline on its box's edges, a faint fill and its name above it. Items over 1.5 m on a side catch looks only on their own surfaces, so a building or floor doesn't block what's inside or behind it; smaller items get a box at least 15 cm on each side. The Layout tab's **Select** picks an element's first copy (not a sound) and opens the build space on it.
 - **Gizmo:** Move arrows, rotation rings and resize handles in the Decentraland gizmo's colours. Each handle's hit shape is at least 6 cm across and grows with distance (5 cm per metre), so it stays easy to hit 2–5 m away. Pinch-dragging a handle moves, turns or resizes the item under the edit bar's mode and lock. Pinch-dragging the item itself moves it freely in Move.
-- **Edit bar:** an ornament under the HUD window, as Decentraland's: Move | Rotate | Resize, the selected name (or "Pinch an item to select it"), the lock (Free/X/Y/Z, which you pinch to change), **Snap**, **Exact**, **Save**, **Revert** and **Done**. Done leaves the build space. Under it are Place scene, Pin to this room and Re-place.
+- **Edit bar:** an ornament under the HUD window, as Decentraland's: Move | Rotate | Resize, the selected name (or how to pick one, which says when you are still placing), the lock (Free/X/Y/Z, which you pinch to change), **Snap**, **Exact**, **Save**, **Revert** and **Done**. Done leaves the build space. Under it are Done placing / Move scene, Pin to this room and Re-place.
 - **Placing:** Assets → **Place** takes the head pose from world tracking and puts the item 2 m ahead, facing you, then selects it. If the build space isn't open, Place opens it first. With no head pose, it says so and places nothing.
 - Leaving the scene (Change scene, revoking the headset, signing out) closes the build space and drops any unsaved change.
 

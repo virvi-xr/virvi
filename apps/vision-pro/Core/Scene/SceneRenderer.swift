@@ -66,6 +66,8 @@ final class SceneRenderer {
 
     func entity(for key: String) -> Entity? { shown[key] }
     func item(for key: String) -> RenderItem? { plan.first { $0.key == key } }
+    /// What the last snapshot shows, in plan order.
+    var items: [RenderItem] { plan }
 
     /// The item key of `entity` or of the item entity it sits inside; nil when it isn't part of an item.
     func key(of entity: Entity) -> String? {

@@ -39,6 +39,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.virvi.builder.visionos
+        # The owner's Apple team, so `xcodegen generate` keeps device signing (the simulator steps override it).
+        DEVELOPMENT_TEAM: P22YGT64VU
+        CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "7"
 
   VirviBuilderTests:

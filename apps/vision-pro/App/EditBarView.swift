@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// The Decentraland edit bar (packages/adapter-dcl/src/hud/EditModeBar.tsx) as an ornament under the HUD window:
-/// Move | Rotate | Resize, the selected name (or "Pinch an item to select it"), Move's axis lock, Snap, Exact,
+/// Move | Rotate | Resize, the selected name (or how to pick one), Move's axis lock, Snap, Exact,
 /// Save, Revert and Done, bound to `EditSession`; above it the held line, the error message, the "Save or revert" prompt
-/// and the Exact panel. Under it, the spike's Place scene controls.
+/// and the Exact panel. Under it, the Place controls (Done placing / Move scene, Pin, Re-place).
 struct EditBarView: View {
     @ObservedObject var space: BuildSpace
     @ObservedObject var edit: EditSession
@@ -60,9 +60,9 @@ struct EditBarView: View {
             ForEach([EditMode.move, .rotate, .resize], id: \.self) { m in
                 BarButton(label: m.rawValue, width: 92, color: edit.mode == m ? Hud.accent : Hud.bgHover) { edit.mode = m }
             }
-            Text(edit.selected?.name ?? "Pinch an item to select it")
+            Text(selectionLabel(placing: space.phase == .place, selectedName: edit.selected?.name))
                 .font(.system(size: 15)).foregroundStyle(edit.selected != nil ? Hud.text : Hud.textMuted)
-                .lineLimit(1).frame(width: 190).padding(.horizontal, 4)
+                .lineLimit(2).minimumScaleFactor(0.8).frame(width: 190).padding(.horizontal, 4)
             if edit.mode == .move {
                 Button { edit.cycleLock() } label: {
                     Text(Self.lockLabel(edit.lock)).font(.system(size: 16, weight: .semibold)).foregroundStyle(Self.lockColor(edit.lock))
@@ -139,7 +139,8 @@ struct EditBarView: View {
     /// The spike's Place scene controls: the floor disc and outline move the scene only while Place scene is on.
     private var placeRow: some View {
         HStack(spacing: 8) {
-            BarButton(label: "Place scene", width: 130, color: space.phase == .place ? Hud.accent : Hud.bgHover) {
+            BarButton(label: space.phase == .place ? "Done placing" : "Move scene", width: 130,
+                      color: space.phase == .place ? Hud.accent : Hud.bgHover) {
                 space.phase = space.phase == .place ? .edit : .place
             }
             BarButton(label: "Pin to this room", width: 170, color: Hud.bgHover) { Task { await space.pin() } }
