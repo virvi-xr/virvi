@@ -81,7 +81,7 @@ export type ArDeviceSpace = {
   markers: Array<{ markerId: string; floorId: string; code: string }>
 }
 /** POST /api/ar/devices/:id/scenes: one scene a personal headset can build on, with or without a space. */
-export type ArDeviceScene = { sceneId: string; sceneName: string }
+export type ArDeviceScene = { sceneId: string; sceneName: string; role: 'host' | 'cohost' | 'editor' | 'viewer' }
 /** GET /api/ar/devices */
 export type ArDeviceSummary = { id: string; deviceName: string | null; kind: ArDeviceKind | null; status: ArDeviceStatus; lastUsedAt: string | null; expiresAt: string | null }
 

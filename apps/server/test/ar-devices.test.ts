@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import { AR_PAIRING, DEFAULT_VENUE_RULES, VENUE_ROLE_SCOPES, ringCodeOf } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
 import { accessGrants, arDevices, arFloors, arMarkers, arSpaces, bookings, sceneCollaborators, sceneRoles, venues } from '../src/db/schema.js'
+import { sceneRoleOfAccess } from '../src/ar/access.js'
 import { redactPairingCode } from '../src/app.js'
 import { config } from '../src/config.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
@@ -340,17 +341,25 @@ describe('AR headset pairing and the AR pass', () => {
     await db.insert(sceneCollaborators).values({ sceneId: collab.scene.id, userId: me.id, role: 'editor' })
     const { scene: roled } = await createScene(third, 'C role')
     await db.insert(sceneRoles).values({ sceneId: roled.id, userId: me.id, walletAddress: me.wallet!.toLowerCase(), role: 'editor' } as any)
+    const { scene: coRoled } = await createScene(third, 'E cohost')
+    await db.insert(sceneRoles).values({ sceneId: coRoled.id, userId: me.id, walletAddress: me.wallet!.toLowerCase(), role: 'cohost' } as any)
     await createScene(third, 'D no access')
     const deviceId = await pairAs(me, 'personal')
     const res = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/scenes`, payload: { secret: SECRET } })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual([
-      { sceneId: collab.scene.id, sceneName: 'A collab' },
-      { sceneId: owned.id, sceneName: 'B owned, no space' },
-      { sceneId: roled.id, sceneName: 'C role' },
+      { sceneId: collab.scene.id, sceneName: 'A collab', role: 'editor' },
+      { sceneId: owned.id, sceneName: 'B owned, no space', role: 'host' },
+      { sceneId: roled.id, sceneName: 'C role', role: 'editor' },
+      { sceneId: coRoled.id, sceneName: 'E cohost', role: 'cohost' },
     ])
     const bad = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/scenes`, payload: { secret: 'nope' } })
     expect(bad.statusCode).toBe(401)
+  })
+
+  it('maps scene access to the HUD role', () => {
+    const a = (level: string) => ({ level, scopes: new Set(), booking: null }) as any
+    expect(['admin', 'owner', 'cohost', 'editor', 'grant', 'viewer'].map((l) => sceneRoleOfAccess(a(l)))).toEqual(['host', 'host', 'cohost', 'editor', 'editor', 'viewer'])
   })
 
   it('codes are kept out of logs', () => {

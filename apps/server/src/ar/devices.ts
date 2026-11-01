@@ -10,7 +10,7 @@ import { isUuid } from '../auth/scene-from.js'
 import { issueArPass } from '../auth/scene-pass.js'
 import { sameHash, sha256 } from '../auth/hash.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
-import { mayBuild, spaceScene } from './access.js'
+import { mayBuild, sceneRoleOfAccess, spaceScene } from './access.js'
 
 /**
  * Pairing an AR headset to a Virvi user: the headset sends the sha256 of a secret only it knows and gets a short code;
@@ -187,7 +187,8 @@ export async function listDeviceScenes(deviceId: string, secret: string, now = n
   const rows = await db.select({ sceneId: scenes.id, sceneName: scenes.name }).from(scenes).where(inArray(scenes.id, candidates)).orderBy(scenes.name, scenes.id)
   const out: ArDeviceScene[] = []
   for (const r of rows) {
-    if (mayBuild(await getSceneAccess(approver.actor, r.sceneId, now))) out.push(r)
+    const access = await getSceneAccess(approver.actor, r.sceneId, now)
+    if (mayBuild(access)) out.push({ ...r, role: sceneRoleOfAccess(access) })
   }
   return out
 }
