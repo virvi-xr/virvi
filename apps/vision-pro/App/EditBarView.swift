@@ -4,7 +4,8 @@ import SwiftUI
 /// Move | Rotate | Resize, the selected name (or how to pick one), Move's axis lock, Snap, Exact,
 /// Save, Revert and Done, bound to `EditSession`; above it the held line, the error message, the "Save or revert" prompt
 /// and the Exact panel. All of that shows only while editing (Done stops). Under it, always while the scene is in the
-/// room, the Place controls (Done placing / Move scene, Pin, Re-place).
+/// room, the Place controls (Done placing / Move scene, Pin, Re-place, and while placing the height: ▲ ▼ and Snap to
+/// floor).
 struct EditBarView: View {
     @ObservedObject var space: BuildSpace
     @ObservedObject var edit: EditSession
@@ -142,18 +143,28 @@ struct EditBarView: View {
 
     /// The spike's Place scene controls: the floor disc and outline move the scene only while Place scene is on.
     private var placeRow: some View {
-        HStack(spacing: 8) {
-            BarButton(label: space.phase == .place ? "Done placing" : "Move scene", width: 130,
-                      color: space.phase == .place ? Hud.accent : Hud.bgHover) {
-                space.phase = space.phase == .place ? .edit : .place
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                BarButton(label: space.phase == .place ? "Done placing" : "Move scene", width: 130,
+                          color: space.phase == .place ? Hud.accent : Hud.bgHover) {
+                    space.phase = space.phase == .place ? .edit : .place
+                }
+                BarButton(label: "Pin to this room", width: 170, color: Hud.bgHover) { Task { await space.pin() } }
+                BarButton(label: "Re-place", width: 100, color: Hud.bgHover) { Task { await space.replace() } }
+                if space.phase == .place {
+                    // Height: visionOS's own floor can be centimetres off, so the marker can float or sink.
+                    BarButton(label: "▲", width: 44, color: Hud.bgHover) { space.nudgeHeight(0.01) }
+                    BarButton(label: "▼", width: 44, color: Hud.bgHover) { space.nudgeHeight(-0.01) }
+                    BarButton(label: "Snap to floor", width: 130, color: Hud.bgHover) { space.snapToFloor() }
+                    Text(space.heightText).font(.system(size: 13)).foregroundStyle(Hud.text).lineLimit(2)
+                }
+                Spacer(minLength: 0)
             }
-            BarButton(label: "Pin to this room", width: 170, color: Hud.bgHover) { Task { await space.pin() } }
-            BarButton(label: "Re-place", width: 100, color: Hud.bgHover) { Task { await space.replace() } }
             Text(space.phase == .place
-                 ? "Pinch and drag the floor marker or the outline to move the scene. Pinch with both hands on the marker and twist to turn it."
+                 ? space.floorMessage ?? "Pinch and drag the floor marker or the outline to move the scene. Pinch with both hands on the marker and twist to turn it. ▲ and ▼ move it 1 cm up or down."
                  : space.pinStatus)
-                .font(.system(size: 13)).foregroundStyle(Hud.textDim).lineLimit(2)
-            Spacer(minLength: 0)
+                .font(.system(size: 13)).foregroundStyle(space.floorMessage != nil && space.phase == .place ? Hud.warning : Hud.textDim)
+                .lineLimit(2)
         }
         .padding(.horizontal, 8).padding(.vertical, 6)
         .background(Hud.bg.opacity(0.85), in: RoundedRectangle(cornerRadius: 8))

@@ -29,7 +29,7 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Virvi Builder
-        NSWorldSensingUsageDescription: Virvi Builder uses world tracking to pin your scene to a spot in this room.
+        NSWorldSensingUsageDescription: Virvi Builder finds your floor and uses world tracking to pin your scene to a spot in this room.
         UIApplicationSceneManifest:
           UIApplicationPreferredDefaultSceneSessionRole: UIWindowSceneSessionRoleApplication
           UIApplicationSupportsMultipleScenes: true
