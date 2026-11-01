@@ -271,11 +271,15 @@ describe('hosted Hyperfy worlds', () => {
     const f = fakes()
     await expect(createHostedWorld({ ownerId: owner.id, sceneId, name: 'Second', endsAt: null }, f.deps))
       .rejects.toMatchObject({ code: 'world_limit_reached' })
+    // The free plan hosts one world too; a second is past its limit.
     const free = await createUser()
+    await db.insert(hyperfyWorlds).values({
+      sceneId, ownerId: free.id, name: 'Free one', kind: 'hosted', slug: 'free-one', status: 'running', keyHash: 'h2', keyPrefix: 'virviw_y',
+    })
     await expect(createHostedWorld({ ownerId: free.id, sceneId, name: 'Free', endsAt: null }, f.deps))
-      .rejects.toMatchObject({ code: 'world_limit_reached', message: "Your plan doesn't include hosted worlds" })
+      .rejects.toMatchObject({ code: 'world_limit_reached', message: "You've used all 1 of your hosted worlds" })
     expect(await hostedRows(owner.id)).toHaveLength(1)
-    expect(await hostedRows(free.id)).toHaveLength(0)
+    expect(await hostedRows(free.id)).toHaveLength(1)
     expect(f.calls).toEqual([])
     expect(f.schemas.size).toBe(0)
   })

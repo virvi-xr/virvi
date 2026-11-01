@@ -700,8 +700,8 @@ export default function SettingsPage() {
                           {tier.charAt(0).toUpperCase() + tier.slice(1)}
                         </span>
                         <p className="mt-1 text-xs text-gray-400">
-                          {tier === 'creator' && 'Up to 20 scenes, 10 GB storage'}
-                          {tier === 'pro' && 'Up to 100 scenes, 50 GB storage'}
+                          {tier === 'creator' && 'Unlimited scenes, 10 GB storage'}
+                          {tier === 'pro' && 'Unlimited scenes, 50 GB storage'}
                           {tier === 'studio' && 'Unlimited scenes, 500 GB storage'}
                           {tier === 'enterprise' && 'Custom limits, dedicated support'}
                         </p>

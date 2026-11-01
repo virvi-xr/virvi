@@ -166,12 +166,11 @@ describe('connect-your-own Hyperfy world', () => {
     expect(res.json().key).toMatch(/^virviw_/)
   })
 
-  it('free plan is refused by the deployment feature gate', async () => {
+  it('the free plan can connect a Hyperfy world (no deployment feature gate)', async () => {
     config.allFeaturesUnlocked = false
     const res = await connect()
-    expect(res.statusCode).toBe(403)
-    expect(res.json()).toMatchObject({ error: 'upgrade_required', feature: 'deployment' })
-    expect(await db.select().from(hyperfyWorlds)).toHaveLength(0)
+    expect(res.statusCode).toBe(201)
+    expect(await db.select().from(hyperfyWorlds)).toHaveLength(1)
   })
 
   it('a free-plan owner can still list, rotate and delete a world', async () => {
@@ -280,9 +279,8 @@ describe('hosted Hyperfy world routes', () => {
     expect(res.json()).toMatchObject({ error: 'world_limit_reached', used: 1, limit: 1 })
     const free = await createUser()
     const freeScene = (await createScene(free, 'F')).scene.id
-    const noPlan = await create(free, {}, freeScene)
-    expect(noPlan.statusCode).toBe(403)
-    expect(noPlan.json()).toMatchObject({ error: 'upgrade_required', feature: 'deployment' })
+    const freeFirst = await create(free, {}, freeScene)
+    expect(freeFirst.statusCode).toBe(202) // the free plan hosts one world (accepted, provisioning)
   })
 
   it('GET /api/hyperfy/slots reports used, limit and availability (null when unlimited)', async () => {

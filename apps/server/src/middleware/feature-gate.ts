@@ -28,7 +28,7 @@ export type GatedFeature =
 /** Minimum tier required for each feature. */
 const FEATURE_TIERS: Record<GatedFeature, string> = {
   streaming: 'creator',
-  deployment: 'creator',
+  deployment: 'free', // the wizard (including Hyperfy worlds) is open to everyone
   cross_world_broadcast: 'studio',
   analytics_export: 'pro',
   custom_domain: 'pro',

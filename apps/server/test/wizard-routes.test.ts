@@ -170,31 +170,21 @@ describe('wizard routes', () => {
     expect([...ids]).toEqual([ok.id])
   })
 
-  it('403 scene_limit_reached at the plan limit, creating nothing more', async () => {
+  it('no plan limits scenes: a free user books a fourth', async () => {
     config.allFeaturesUnlocked = false
     const u = await createUser()
-    for (let i = 0; i < 3; i++) expect((await book(u, { name: `S${i}`, plot: plot2, spawn: { x: 1, z: 1 }, items: [] })).statusCode).toBe(201)
-    const res = await book(u, { name: 'S4', plot: plot2, spawn: { x: 1, z: 1 }, items: [] })
-    expect(res.statusCode).toBe(403)
-    expect(res.json()).toMatchObject({ error: 'scene_limit_reached', currentUsage: 3, limit: 3, tier: 'free' })
-    expect((await counts()).scenes).toBe(3)
+    for (let i = 0; i < 4; i++) expect((await book(u, { name: `S${i}`, plot: plot2, spawn: { x: 1, z: 1 }, items: [] })).statusCode).toBe(201)
+    expect((await counts()).scenes).toBe(4)
   })
 
-  it('options: hyperfy locked for a free user, open when unlocked, admin or creator tier', async () => {
+  it('options: the wizard is open to everyone: Hyperfy allowed and no scene limit on the free plan', async () => {
     config.allFeaturesUnlocked = false
     const u = await createUser()
     const get = async (user: any) => (await app.inject({ method: 'GET', url: '/api/wizard/options', headers: as(user) })).json()
-    let o = await get(u)
-    expect(o.hyperfy).toEqual({ allowed: false, requiredTier: 'creator' })
-    expect(o.scenes).toEqual({ used: 0, limit: 3 })
-    expect(o.dcl).toEqual({ virviDeploys: false, virviAddress: null })
-    expect((await get(await createUser({ role: 'admin' }))).hyperfy.allowed).toBe(true)
-    await db.insert(subscriptions).values({ userId: u.id, tier: 'creator', status: 'active' } as any)
-    expect((await get(u)).hyperfy.allowed).toBe(true)
-    config.allFeaturesUnlocked = true
-    o = await get(await createUser())
+    const o = await get(u)
     expect(o.hyperfy.allowed).toBe(true)
-    expect(o.scenes.limit).toBeNull()
+    expect(o.scenes).toEqual({ used: 0, limit: null })
+    expect(o.dcl).toEqual({ virviDeploys: false, virviAddress: null })
   })
 
   it('GET /api/assets?category matches any of the comma-separated categories', async () => {
