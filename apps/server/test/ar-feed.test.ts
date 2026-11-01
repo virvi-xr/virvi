@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createRequire } from 'node:module'
+import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { AR_FEED } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
@@ -9,7 +10,7 @@ import { issueScenePass } from '../src/auth/scene-pass.js'
 import { AR_FEED_LIMIT, setArFeedHoldMs, setArFeedLimiter } from '../src/routes/ar-feed.js'
 import { TokenBucketLimiter } from '../src/analytics/limiter.js'
 import { resetDb } from './helpers/db.js'
-import { createElement, createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
+import { createElement, createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 
 const { LocalPresence } = createRequire(import.meta.url)('colyseus') as any
 
@@ -151,5 +152,80 @@ describe('AR marker lookup and space feed', () => {
     const res = await feed()
     expect(res.statusCode).toBe(429)
     expect(res.json().error).toBe('rate_limited')
+  })
+})
+
+describe('scene draft feed for headset builders', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  let owner: TestUser
+  let sceneId: string
+  let presetId: string
+  const SECRET = 'feed-headset-secret'
+
+  beforeEach(async () => {
+    await resetDb()
+    initBus(new LocalPresence())
+    setArFeedLimiter(new TokenBucketLimiter())
+    app = await testApp()
+    owner = await createUser({ wallet: randomWallet() })
+    const { scene, preset } = await createScene(owner)
+    sceneId = scene.id
+    presetId = preset.id
+  })
+  afterEach(async () => {
+    setArFeedHoldMs(AR_FEED.holdMs)
+    await app.close()
+  })
+
+  const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
+  const sceneFeed = (id: string, since?: string, headers: Record<string, string> = {}) =>
+    app.inject({ method: 'GET', url: `/api/ar/scenes/${id}/feed${since ? `?since=${since}` : ''}`, headers })
+
+  /** Pair a personal headset to `u` and mint a pass for `forScene`. */
+  async function scenePass(u: TestUser, forScene: string) {
+    const { code } = (await app.inject({ method: 'POST', url: '/api/ar/pair', payload: { secretHash: sha256(SECRET), deviceName: 'Vision Pro' } })).json()
+    expect((await app.inject({ method: 'POST', url: `/api/ar/pair/${code}/approve`, headers: as(u), payload: { kind: 'personal' } })).statusCode).toBe(200)
+    const { deviceId } = (await app.inject({ method: 'POST', url: `/api/ar/pair/${code}/claim`, payload: { secret: SECRET } })).json()
+    const minted = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/pass`, payload: { secret: SECRET, sceneId: forScene } })
+    expect(minted.statusCode).toBe(200)
+    return { authorization: `Bearer ${minted.json().pass}` }
+  }
+
+  it('serves a scene feed to its builder with an AR pass', async () => {
+    await createElement(presetId, { type: 'image', name: 'Pic', properties: { textureSrc: 'https://x/a.png' } })
+    const pass = await scenePass(owner, sceneId)
+    for (const headers of [pass, as(owner)]) {
+      const res = await sceneFeed(sceneId, undefined, headers)
+      expect(res.statusCode).toBe(200)
+      const body = res.json()
+      expect(body.v).toBe(1)
+      expect(body.version).toMatch(/^[0-9a-f]{64}$/)
+      expect(body.scene.images).toHaveLength(1)
+      expect(body.version).toBe(createHash('sha256').update(JSON.stringify({ scene: body.scene })).digest('hex'))
+    }
+  })
+
+  it("hides a scene feed from a visitor and from another scene's pass", async () => {
+    const other = await createScene(owner, 'Other')
+    const stranger = await createUser()
+    expect((await sceneFeed(sceneId)).statusCode).toBe(404)
+    expect((await sceneFeed(sceneId, undefined, as(stranger))).statusCode).toBe(404)
+    expect((await sceneFeed(sceneId, undefined, await scenePass(owner, other.scene.id))).statusCode).toBe(403)
+  })
+
+  it('holds until the scene changes when since matches', async () => {
+    const el = await createElement(presetId, { type: 'image', name: 'Pic', properties: { textureSrc: 'https://x/a.png' } })
+    const pass = await scenePass(owner, sceneId)
+    const { version } = (await sceneFeed(sceneId, undefined, pass)).json()
+    setArFeedHoldMs(2000)
+    const started = Date.now()
+    const held = sceneFeed(sceneId, version, pass)
+    await sleep(200)
+    const edit = await app.inject({ method: 'PUT', url: `/api/elements/${el.id}`, headers: as(owner), payload: { properties: { textureSrc: 'https://x/b.png' } } })
+    expect(edit.statusCode).toBe(200)
+    const res = await held
+    expect(Date.now() - started).toBeLessThan(1500)
+    expect(res.statusCode).toBe(200)
+    expect(res.json().version).not.toBe(version)
   })
 })

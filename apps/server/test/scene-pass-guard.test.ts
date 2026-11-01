@@ -384,6 +384,7 @@ describe('scene pass guard', () => {
       'POST /api/scenes/:sceneId/library',
       'GET /api/ar/markers/by-code/:code',
       'GET /api/ar/spaces/:id/feed',
+      'GET /api/ar/scenes/:id/feed',
       'POST /api/ar/room-scans',
       'GET /api/scenes/:sceneId/ar/spaces',
       'PUT /api/ar/markers/:id/pose',

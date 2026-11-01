@@ -179,6 +179,7 @@ const CASES: Case[] = [
   { route: 'POST /api/ar/spaces/:id/analytics', url: (f) => `/api/ar/spaces/${f.arSpace.id}/analytics`, body: () => ({ v: 1, platform: 'ar-quest', events: [{ type: 'enter', playerId: 'p1', t: Date.now() }] }) },
   { route: 'POST /api/ar/spaces/:id/report', url: (f) => `/api/ar/spaces/${f.arSpace.id}/report`, body: () => ({ reason: 'spam', platform: 'ar-quest' }) },
   { route: 'GET /api/ar/spaces/:id/feed', url: (f) => `/api/ar/spaces/${f.arSpace.id}/feed` },
+  { route: 'GET /api/ar/scenes/:id/feed', url: (f) => `/api/ar/scenes/${f.scene.id}/feed` },
   // AR headsets (B's shared headset; A guesses the secret)
   { route: 'POST /api/ar/devices/:id/pass', url: (f) => `/api/ar/devices/${f.arDevice.id}/pass`, body: (f) => ({ secret: 'guess', spaceId: f.arSpace.id }) },
   { route: 'POST /api/ar/devices/:id/end', url: (f) => `/api/ar/devices/${f.arDevice.id}/end`, body: () => ({ secret: 'guess' }) },

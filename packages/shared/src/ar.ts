@@ -36,6 +36,9 @@ export type ArSpaceWire = Omit<ArSpaceView, 'sceneId'>
 
 export type ArFeedResponse = { v: 1; version: string; space: ArSpaceWire; scene: SerializedScene | null }
 
+/** A scene's draft, keyed by scene: what a headset builder polls. `version` is the SHA-256 of `{ scene }`. */
+export type ArSceneFeedResponse = { v: 1; version: string; scene: SerializedScene | null }
+
 export type ArMarkerLookup = { spaceId: string; floorId: string; markerId: string; spaceName: string; whereText: string | null }
 
 /**
