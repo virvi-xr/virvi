@@ -169,6 +169,14 @@ describe('studio worker routes', () => {
     expect(res.json().jobId).toBe(first.id)
   })
 
+  it('takes asked-for jobs before background ones', async () => {
+    const { design, token } = await setup()
+    await queueJob(design, { type: 'render', render: {} }, { background: true, createdAt: new Date(Date.now() - 1000) })
+    const asked = await queueJob(design, { type: 'render', render: {} })
+    const res = await app.inject({ method: 'GET', url: `${W}/designs/${design.id}/jobs/next`, headers: auth(token) })
+    expect(res.json().jobId).toBe(asked.id)
+  })
+
   it('file paths are checked', async () => {
     const { design, token } = await setup()
     const job = await queueJob(design)

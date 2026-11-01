@@ -1518,6 +1518,8 @@ export const studioJobs = pgTable('studio_jobs', {
   counted: boolean('counted').notNull().default(false),
   countedDay: date('counted_day', { mode: 'string' }),
   countedFrom: text('counted_from'), // allowance | gift | credit: where a counted prompt is given back to
+  // A render nobody is waiting on (the rest of an Inspect sphere): jobs/next hands these out after the others
+  background: boolean('background').notNull().default(false),
   takenAt: timestamp('taken_at', { withTimezone: true }),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1597,9 +1599,40 @@ export const studioRenders = pgTable('studio_renders', {
   jobId: uuid('job_id').notNull(), // frames are stored under this job's files
   frames: integer('frames').notNull().default(0),
   status: text('status').notNull(), // queued | ready | failed
+  // An Inspect view showing its ring while the full sphere renders: the job whose frames will replace it
+  pendingJobId: uuid('pending_job_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   viewUq: uniqueIndex('studio_renders_revision_view_uq').on(t.revisionId, t.viewKey),
+}))
+
+// An emote view with every piece of the design worn: tied to the set of piece revisions it was rendered from
+// (`revisions`, their ids sorted and comma-joined), so a change to any piece leaves it behind
+export const studioSetRenders = pgTable('studio_set_renders', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  revisions: text('revisions').notNull(),
+  viewKey: text('view_key').notNull(), // walk-<bodyShape>-<outfit>-<emote|own>
+  jobId: uuid('job_id').notNull(), // frames are stored under this job's files, at renders/set/<viewKey>/
+  frames: integer('frames').notNull().default(0),
+  fps: doublePrecision('fps'),
+  status: text('status').notNull(), // queued | ready | failed
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  viewUq: uniqueIndex('studio_set_renders_view_uq').on(t.designId, t.revisions, t.viewKey),
+}))
+
+// What the owner said about an emote on a body shape, for one set of piece revisions
+export const studioEmoteChecks = pgTable('studio_emote_checks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  revisions: text('revisions').notNull(),
+  emote: text('emote').notNull(), // a base emote, or own for an emote design
+  bodyShape: text('body_shape').notNull(),
+  state: text('state').notNull(), // fine | clipping
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  checkUq: uniqueIndex('studio_emote_checks_uq').on(t.designId, t.revisions, t.emote, t.bodyShape),
 }))
 
 export const studioUsageDays = pgTable('studio_usage_days', {

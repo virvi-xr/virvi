@@ -13,7 +13,7 @@ import { finalizedRevisions } from './payments.js'
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
 export type Design = typeof studioDesigns.$inferSelect
-export type View = { bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: null | 'idle' | 'wave' | 'dance' | 'clap' | 'walk' }
+export type View = { bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: null | typeof BASE_EMOTES[number] }
 
 export const PROMPT_LIMITS = { timeoutSec: 1500, maxTurns: 80, costCeilingUsd: 3 }
 /** The outcomes a free Continue may follow: the agent stopped at a limit with its work in hand. */
@@ -39,11 +39,28 @@ export const WEARABLE_CATEGORIES = [
 ] as const
 export const BODY_SHAPES = ['male', 'female'] as const
 export const OUTFITS = ['default', 'outfit-2', 'outfit-3'] as const
-export const BASE_EMOTES = ['idle', 'wave', 'dance', 'clap', 'walk'] as const
+export const BASE_EMOTES = ['idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump'] as const
+/** An emote design's emote view plays its own animation. */
+export const OWN_EMOTE = 'own'
+/** Inspect's frames: the eye-level ring, then the whole sphere (CONTRACT.md, `orbit-<bodyShape>`). */
+export const ORBIT_RING = 24
+export const ORBIT_FRAMES = 122
 
 /** The contract's view key, `<mode>-<bodyShape>-<outfit>[-<emote>]`: the one place it is made. */
 export function viewKey(kind: string, view: View): string {
   return `${kind === 'emote' ? 'emote' : 'spin'}-${view.bodyShape}-${view.outfit}${view.emote ? `-${view.emote}` : ''}`
+}
+
+export const orbitKey = (bodyShape: View['bodyShape']) => `orbit-${bodyShape}`
+
+/** An emote view with every piece worn: `walk-<bodyShape>-<outfit>-<emote>`, `own` for an emote design. */
+export function setViewKey(kind: string, view: View): string {
+  return `walk-${view.bodyShape}-${view.outfit}-${kind === 'emote' ? OWN_EMOTE : view.emote}`
+}
+
+/** The set of piece revisions a design-level view belongs to: the latest revision ids, sorted and joined. */
+export function revisionsKey(pieces: { latestRevisionId: string | null }[]): string {
+  return pieces.map((p) => p.latestRevisionId).filter((x): x is string => !!x).sort().join(',')
 }
 
 export function publicDesign(d: Design) {

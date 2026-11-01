@@ -13,8 +13,11 @@ import {
   studioEntitlements,
   studioMistakeReports,
   studioPromptCredits,
+  studioSetRenders,
+  studioEmoteChecks,
 } from '../src/db/schema.js'
 import { TIER_LIMITS } from '../src/integrations/stripe.js'
+import { BASE_EMOTES, orbitKey, revisionsKey, setViewKey } from '../src/studio/designs.js'
 import { resetDb } from './helpers/db.js'
 import { createUser } from './helpers/factories.js'
 
@@ -90,5 +93,29 @@ describe('design studio schema', () => {
     await expect(db.insert(studioMistakeReports).values(report)).rejects.toMatchObject({ code: '23505' })
     const [c] = await db.insert(studioPromptCredits).values({ userId: user.id }).returning()
     expect(c.balance).toBe(0)
+  })
+
+  it('builds the set key from every piece, in a stable order', () => {
+    expect(revisionsKey([{ latestRevisionId: 'b' }, { latestRevisionId: null }, { latestRevisionId: 'a' }])).toBe('a,b')
+    expect(revisionsKey([])).toBe('')
+    expect(setViewKey('emote', { bodyShape: 'female', outfit: 'default', emote: null })).toBe('walk-female-default-own')
+    expect(setViewKey('wearable', { bodyShape: 'male', outfit: 'outfit-2', emote: 'run' })).toBe('walk-male-outfit-2-run')
+    expect(orbitKey('female')).toBe('orbit-female')
+    expect(BASE_EMOTES).toEqual(['idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump'])
+  })
+
+  it('set renders and emote checks hold one row per design, revisions and view', async () => {
+    const { d } = await design()
+    const [job] = await db.insert(studioJobs).values({ designId: d.id, type: 'render', payload: {} }).returning()
+    expect(job.background).toBe(false)
+    const row = { designId: d.id, revisions: 'a,b', viewKey: 'walk-male-default-run', jobId: job.id, status: 'queued' }
+    const [r] = await db.insert(studioSetRenders).values(row).returning()
+    expect(r).toMatchObject({ frames: 0, fps: null })
+    await expect(db.insert(studioSetRenders).values(row)).rejects.toMatchObject({ code: '23505' })
+    const check = { designId: d.id, revisions: 'a,b', emote: 'run', bodyShape: 'male', state: 'fine' }
+    await db.insert(studioEmoteChecks).values(check)
+    await expect(db.insert(studioEmoteChecks).values(check)).rejects.toMatchObject({ code: '23505' })
+    await db.delete(studioDesigns).where(eq(studioDesigns.id, d.id))
+    expect(await db.select().from(studioSetRenders)).toEqual([])
   })
 })
