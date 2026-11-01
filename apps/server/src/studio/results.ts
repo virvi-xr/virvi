@@ -31,7 +31,7 @@ export type ContractPiece = {
   changed?: boolean
   changeKind?: string
   meta?: Record<string, unknown>
-  checker?: { pass: boolean; failures: number; warnings: number } | null
+  checker?: { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } | null
   files?: string[]
   renders?: Record<string, number>
   finalize?: Record<string, unknown> | null // a finalize job's check summary for the piece

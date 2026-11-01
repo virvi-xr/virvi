@@ -33,7 +33,8 @@ export type StudioDesign = {
   createdAt: string
 }
 
-export type Checker = { pass: boolean; failures: number; warnings: number } | null
+/** `triangles`: the count and Decentraland's recommended budget, when a GLB is over it (a warning, never a block). */
+export type Checker = { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } | null
 
 export type StudioView = {
   status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string
@@ -451,12 +452,22 @@ const UNLOCKS: Record<StudioKind, string> = {
   emote: 'Finalize to get the GLB, thumbnail, emote report, renders and a promo clip.',
 }
 
-/** The strip under the preview: what finalizing unlocks, its price, and the pieces the checker blocks. */
-export function finalizeStrip(quote: Quote | null, kind: StudioKind): { unlocks: string; button: string | null; blocked: string | null } {
+/** A piece over Decentraland's triangle budget: Decentraland only warns about it, so Virvi does the same. */
+export function triangleWarning(name: string, category: string, checker: Checker): string | null {
+  const over = checker?.triangles
+  if (!over) return null
+  const slot = categoryLabel(category)
+  return `${name} has ${over.count.toLocaleString('en-US')} triangles, more than the ${over.limit.toLocaleString('en-US')} Decentraland ` +
+    `recommends for ${/^[aeiou]/i.test(slot) ? 'an' : 'a'} ${slot}. You can still finalize and deploy it.`
+}
+
+/** The strip under the preview: what finalizing unlocks, its price, the pieces the checker blocks and its warnings. */
+export function finalizeStrip(quote: Quote | null, kind: StudioKind): { unlocks: string; button: string | null; blocked: string | null; warnings: string[] } {
   return {
     unlocks: UNLOCKS[kind] ?? UNLOCKS.wearable,
     button: quote && quote.lines.length > 0 ? `Finalize · ${formatCents(quote.totalCents)}` : null,
     blocked: quote?.blocked.length ? refusalMessage({ body: { code: 'checks_failed', categories: quote.blocked } }, new Date()).text : null,
+    warnings: (quote?.pieces ?? []).map((p) => triangleWarning(p.name, p.category, p.checker)).filter((w): w is string => !!w),
   }
 }
 

@@ -63,6 +63,7 @@ export default function Finalize({ designId, kind, quote, busy, onChanged, detai
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
       <p className="text-sm text-gray-300">{strip.unlocks}</p>
       {strip.blocked && <p className="mt-2 text-sm text-amber-300">{strip.blocked}</p>}
+      {strip.warnings.map((w) => <p key={w} className="mt-2 text-sm text-amber-300">{w}</p>)}
       {strip.button && (
         <PrimaryButton type="button" className="mt-3" disabled={busy} onClick={() => setOpen(true)}>{strip.button}</PrimaryButton>
       )}

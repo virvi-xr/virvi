@@ -157,9 +157,35 @@ def check(piece: Piece, kind: str) -> dict:
         hides = piece.meta.get('hides') or []
         cmd += ['--hides', ','.join(hides) if isinstance(hides, list) else str(hides)] if hides else []
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=CHECKER_TIMEOUT_SEC)
-    levels = [l.split()[0] for l in p.stdout.splitlines() if l.startswith('  ') and l.split()]
-    return {'ran': True, 'pass': p.returncode == 0, 'warnings': levels.count('WARN'), 'failures': levels.count('FAIL'),
-            'report': p.stdout + p.stderr}
+    levels = checker_levels(p.stdout)
+    over = over_triangles(p.stdout)
+    # the checker exits 1 on any FAIL, so a run whose only FAILs were triangles still passes; a crash has no rows
+    passed = p.returncode == 0 or (p.returncode == 1 and over is not None and 'FAIL' not in levels)
+    return {'ran': True, 'pass': passed, 'warnings': levels.count('WARN'), 'failures': levels.count('FAIL'),
+            'triangles': over, 'report': p.stdout + p.stderr}
+
+
+def _rows(report: str) -> list[list[str]]:
+    return [l.split() for l in report.splitlines() if l.startswith('  ') and l.split()]
+
+
+def _over_budget(row: list[str]) -> bool:
+    return row[:2] == ['FAIL', 'triangles']
+
+
+def checker_levels(report: str) -> list[str]:
+    """Each row's level, a triangle count over budget as a WARN: Decentraland warns about it but doesn't refuse it."""
+    return ['WARN' if _over_budget(r) else r[0] for r in _rows(report)]
+
+
+def over_triangles(report: str) -> dict | None:
+    """{'count', 'limit'} for the GLB furthest over its triangle budget, or None when every one is within it."""
+    over = []
+    for r in filter(_over_budget, _rows(report)):
+        numbers = [int(t) for t in r if t.isdigit()]
+        if len(numbers) >= 2:
+            over.append({'count': numbers[-2], 'limit': numbers[-1]})
+    return max(over, key=lambda o: o['count'] - o['limit']) if over else None
 
 
 def new_hashes(pieces: list[Piece]) -> dict:

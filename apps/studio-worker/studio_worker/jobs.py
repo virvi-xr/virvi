@@ -329,7 +329,7 @@ def _piece_result(p: Piece, renders: dict | None, uploaded: bool) -> dict:
     files = [f'pieces/{p.category}/{f.name}' for f in p.glbs] + [f'pieces/{p.category}/piece.json',
                                                                  f'checks/{p.category}.txt']
     return {'category': p.category, 'changed': p.changed, 'changeKind': p.meta.get('changeKind'), 'meta': p.meta,
-            'checker': {k: p.checker.get(k) for k in ('pass', 'failures', 'warnings')},
+            'checker': {k: p.checker.get(k) for k in ('pass', 'failures', 'warnings', 'triangles')},
             'files': files if uploaded else [], 'renders': renders or {}}
 
 
