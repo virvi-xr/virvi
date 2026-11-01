@@ -18,7 +18,6 @@ function tabBadge(piece: StudioPiece, detail: StudioDetail): { label: string; to
   const status = pieceTabStatus(piece, detail)
   if (status === 'building') return { label: 'Building', tone: 'info' }
   if (piece.revision?.checker?.pass === false) return { label: 'Checker found problems', tone: 'warning' }
-  if (piece.revision?.checker?.triangles) return { label: 'Over the triangle budget', tone: 'warning' }
   if (status === 'ready') return { label: 'Ready', tone: 'success' }
   return null
 }

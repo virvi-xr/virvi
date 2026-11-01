@@ -113,7 +113,7 @@ export function okResult(jobId: string, over: Record<string, unknown> = {}) {
 export async function addRevision(
   design: { id: string },
   category: string,
-  checker: { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } = { pass: true, failures: 0, warnings: 0 },
+  checker: { pass: boolean; failures: number; warnings: number } = { pass: true, failures: 0, warnings: 0 },
 ) {
   const { studioPieces, studioRevisions } = await import('../../src/db/schema.js')
   const { eq, max } = await import('drizzle-orm')

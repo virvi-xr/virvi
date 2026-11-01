@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 import fake_api
-from studio_worker import finalize, jobs
+from studio_worker import jobs
 from studio_worker.api import Api
 from studio_worker.finalize import Tools
 
@@ -254,9 +254,3 @@ def test_report_leaves_out_blender_noise(api, tmp_path):
     report = package(api, 'job-f', 'hat').read('REPORT.md').decode()
     assert '| INFO:' not in report
     assert 'CLIP GATE PASS' in report and 'Idle    0/61 frames clip' in report
-
-
-def test_too_many_triangles_alone_does_not_fail_the_checker_section():
-    over = 'cap_male.glb\n  FAIL  triangles (earring)    1408    <= 500\n  PASS  materials    2    <= 2\nSOME FAILED\n'
-    assert finalize._check_levels(over) is True
-    assert finalize._check_levels(over.replace('PASS  materials', 'FAIL  every mesh skinned')) is False

@@ -161,7 +161,7 @@ effort: one that fails to send is dropped.
       "changeKind": "new",
       "meta": {"name": "Neon Cap", "description": "...", "category": "hat", "hides": [], "replaces": [],
                "tags": ["cyberpunk"], "changeKind": "new"},
-      "checker": {"pass": true, "failures": 0, "warnings": 1, "triangles": null},
+      "checker": {"pass": true, "failures": 0, "warnings": 1},
       "files": ["pieces/hat/neon_cap_male.glb", "pieces/hat/neon_cap_female.glb", "pieces/hat/piece.json",
                 "checks/hat.txt"],
       "renders": {"spin-male-default": 36}
@@ -197,9 +197,6 @@ effort: one that fails to send is dropped.
   shown to the user. `costUsd` on any checked prompt includes the check's cost.
 - `changeKind`, from the agent: `"new"`, `"fix"` (a fix to a published piece) or `"design"` (a design change).
 - `checker.pass` false means the skills checker found a FAIL. The piece is still reported.
-- A triangle count over its budget is a FAIL in the checker's report but counts as a warning here: Decentraland warns
-  about it and doesn't refuse it. `checker.triangles` is then `{"count", "limit"}` for the GLB furthest over (else null),
-  and `pass` stays true unless something else FAILed.
 - `costUsd` and `tokens` are this prompt's share only, even when the agent resumed a session. They are null for a
   render job.
 - **The workspace is saved before the result is posted.** If the save fails, the outcome is `error` and `pieces` is

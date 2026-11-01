@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  canSend, checkoutBody, composerState, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, triangleWarning, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
+  canSend, checkoutBody, composerState, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
   type FinalizedRevision, type Quote, type QuoteLine, type StudioDetail, type StudioPiece, type StudioEvent, type StudioProposal,
 } from './studio'
 import { formatBytesShort, uploadProblem } from './studio'
@@ -317,7 +317,6 @@ describe('finalizeStrip', () => {
       unlocks: 'Finalize to get the GLBs, thumbnail, Builder settings, listing text, curation report, renders and a promo clip.',
       button: 'Finalize · $29',
       blocked: null,
-      warnings: [],
     })
     expect(finalizeStrip(quote([line({ category: 'emote', amountCents: 1500 })]), 'emote').unlocks)
       .toBe('Finalize to get the GLB, thumbnail, emote report, renders and a promo clip.')
@@ -325,15 +324,6 @@ describe('finalizeStrip', () => {
   it('has no button with nothing to pay for', () => {
     expect(finalizeStrip(quote([]), 'wearable').button).toBeNull()
     expect(finalizeStrip(null, 'wearable').button).toBeNull()
-  })
-  it('warns about a piece over its triangle budget without blocking it', () => {
-    const over = { category: 'earring', name: 'Neon Hoops', revisionNumber: 1, revisionId: 'r1', state: 'payable' as const, kind: 'first' as const,
-      checker: { pass: true, failures: 0, warnings: 1, triangles: { count: 1346, limit: 500 } } }
-    const strip = finalizeStrip(quote([line({ category: 'earring' })], { pieces: [over] }), 'wearable')
-    expect(strip.blocked).toBeNull()
-    expect(strip.button).toBe('Finalize · $29')
-    expect(strip.warnings).toEqual([
-      'Neon Hoops has 1,346 triangles, more than the 500 Decentraland recommends for an earring. You can still finalize and deploy it.'])
   })
   it('names the pieces the checker blocks', () => {
     expect(finalizeStrip(quote([], { blocked: ['feet'] }), 'wearable').blocked)
@@ -550,17 +540,5 @@ describe('giftCodeStatus', () => {
     expect(giftCodeStatus({ ...c, expiresAt: at(-MIN) }, NOW)).toBe('Expired')
     expect(giftCodeStatus({ ...c, expiresAt: at(MIN) }, NOW)).toBe('Active')
     expect(giftCodeStatus({ ...c, disabledAt: at(-MIN), uses: 2 }, NOW)).toBe('Off')
-  })
-})
-
-describe('triangleWarning', () => {
-  it('is null within the budget or without a checker', () => {
-    expect(triangleWarning('Neon Cap', 'hat', { pass: true, failures: 0, warnings: 0, triangles: null })).toBeNull()
-    expect(triangleWarning('Neon Cap', 'hat', { pass: true, failures: 0, warnings: 0 })).toBeNull()
-    expect(triangleWarning('Neon Cap', 'hat', null)).toBeNull()
-  })
-  it('names the count, the budget and the slot', () => {
-    expect(triangleWarning('Courier Jacket', 'upper_body', { pass: true, failures: 0, warnings: 1, triangles: { count: 2100, limit: 1500 } }))
-      .toBe('Courier Jacket has 2,100 triangles, more than the 1,500 Decentraland recommends for an upper body. You can still finalize and deploy it.')
   })
 })
