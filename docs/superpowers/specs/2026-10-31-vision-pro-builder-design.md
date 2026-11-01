@@ -20,7 +20,7 @@ The owner might build anywhere: in their own room, as a workshop for a scene tha
 ## Non-goals (version 1)
 
 - **Room scanning** into a building GLB. It comes right after version 1 (the owner's decision).
-- **Redeploying from the headset.** It comes right after version 1 (the owner's decision). Until then, the Worlds tab does what it does in Decentraland: it shows each World's status, and **Publish** where Decentraland shows it.
+- **Redeploying from the headset.** It comes right after version 1 (the owner's decision). Until then, the Worlds tab shows each World's status and **Publish** (see below).
 - **Lining the scene up from ring markers in a real place.** It comes after the Vision Pro ring-detection test (the owner's decision). So there's no **Everywhere / Just this place** choice in version 1, because it only applies to an AR space.
 - **Visitor mode.** This app is for builders.
 - **An iPhone version.** It can share the code later.
@@ -59,12 +59,38 @@ This is how it's built today, and the headset copies it. Paths are in the repo.
   - There's no undo beyond Revert.
 - **Saving** goes over the scene's live room. Drafts are `transform_draft` and `transform_end`, sent about every 100 ms. Save is one `scene_preset_update` that waits up to 5 s for its acknowledgement (`packages/core/src/Virvi.ts`).
 - **The other tabs:**
-  - **Events** is a list.
-  - **Stream** has **Go Live** and **Go Offline**.
-  - **Worlds** shows each World's deployment status.
-  - **Alerts** is a list.
   - **Roles** lets hosts and co-hosts manage who can edit.
   - **Stats** opens the web analytics.
+  - **Events, Stream and Worlds are unfinished in Decentraland (checked 2026-10-31).** Nothing connects them to their data, because `setHUDActionHandler` is never called. They always read "No active events", "No active streams" and "No connected worlds", and their buttons do nothing.
+  - **Alerts half works.** Toasts appear when a host joins or leaves, but the list empties after 5 seconds.
+
+### The tabs built for real on the headset (the owner's decision, 2026-10-31)
+
+The headset builds these four tabs for real. Each keeps Decentraland's title, empty-state copy and button labels. Wiring Decentraland's own tabs the same way is a follow-up, outside this design. The data choices below are **Claude's calls**:
+
+- **Stream:**
+  - The scene's video elements, each with its name and whether it's live.
+  - **Go Live** and **Go Offline** call `POST /api/elements/:id/live {enabled}`, the route Hyperfy's HUD uses. It applies the same video-control rules as the room.
+  - The empty state is "No active streams".
+  - This mirrors Hyperfy's streams model (`packages/hyperfy-app/src/hud/model.ts`).
+- **Worlds:**
+  - The scene's Decentraland World from `GET /api/scenes/:id/dcl/publish-status`: the World's name, its status, and how many models wait for a deploy (`pending`).
+  - **Publish** opens `publishUrl` in a browser window, where the wallet signs, as Decentraland's Publish does.
+  - The empty state is "No connected worlds".
+  - Redeploying from here comes after version 1.
+- **Alerts:**
+  - A list kept for the session (newest first, the last 20), not only 5 seconds.
+  - Alerts are made by comparing feed snapshots, as Hyperfy's HUD does:
+    - "Stream is live" and "Stream went offline" when a video's live state changes.
+    - Save failures and refusals.
+  - Each alert also shows as a toast.
+  - The empty state is "No notifications".
+- **Events:**
+  - The events this scene is part of: name, start and end, and whether it's on now.
+  - It uses a new scene-scoped read, `GET /api/scenes/:id/events`, because the account-wide `/api/events` routes don't take scene passes and shouldn't.
+  - Under the list, **Switch layout** picks the scene's active preset with `PUT /api/scenes/:id {activePresetId}`. That's the useful part of Decentraland's unfinished `switchPreset` button, kept to this scene.
+  - Giveaways and other cross-world event actions stay on the dashboard.
+  - The empty state is "No active events".
 
 The Quest builder (`apps/quest/app/src/main/java/io/virvi/ar/builder/`) already copies the Layout and Assets tabs and the edit bar for a headset. It's the nearest prior art for headset input and for using pairing passes.
 
