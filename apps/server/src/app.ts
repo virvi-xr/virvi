@@ -19,6 +19,7 @@ import sceneRoleRoutes from './routes/scene-roles.js'
 import sceneLibraryRoutes from './routes/scene-library.js'
 import { runStartupBackfill } from './library/scene-library.js'
 import eventRoutes from './routes/events.js'
+import sceneEventRoutes from './routes/scene-events.js'
 import giveawayRoutes from './routes/giveaways.js'
 import mediaRoutes from './routes/media.js'
 import hookRoutes from './routes/hooks.js'
@@ -184,6 +185,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(setupRoutes)
   await app.register(analyticsReadRoutes)
   await app.register(eventRoutes)
+  await app.register(sceneEventRoutes)
   await app.register(giveawayRoutes)
   await app.register(mediaRoutes)
   await app.register(hookRoutes)

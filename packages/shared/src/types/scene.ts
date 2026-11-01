@@ -57,3 +57,15 @@ export interface WidgetConfig {
   update?: (value: unknown) => void;
   delete?: () => void;
 }
+
+/** One event linked to a scene, as the headset's Events tab lists it. */
+export interface SceneEventItem {
+  id: string
+  name: string
+  startTime: string | null
+  endTime: string | null
+  live: boolean
+}
+export interface SceneEventsResponse {
+  events: SceneEventItem[]
+}

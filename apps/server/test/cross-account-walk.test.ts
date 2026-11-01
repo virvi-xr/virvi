@@ -204,6 +204,7 @@ const CASES: Case[] = [
   { route: 'GET /api/scenes/:sceneId/dcl/publish-status', url: (f) => `/api/scenes/${f.scene.id}/dcl/publish-status` },
   { route: 'GET /api/scenes/:sceneId/dcl/destinations', url: (f) => `/api/scenes/${f.scene.id}/dcl/destinations` },
   // events and command center
+  { route: 'GET /api/scenes/:sceneId/events', url: (f) => `/api/scenes/${f.scene.id}/events` },
   { route: 'GET /api/events/:eventId', url: (f) => `/api/events/${f.event.id}` },
   { route: 'PUT /api/events/:eventId', url: (f) => `/api/events/${f.event.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'DELETE /api/events/:eventId', url: (f) => `/api/events/${f.event.id}` },
