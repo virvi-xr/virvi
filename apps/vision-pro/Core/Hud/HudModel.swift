@@ -30,3 +30,25 @@ func friendlyEditMessage(_ error: Error) -> String {
     default: return "Something went wrong — try again"
     }
 }
+
+/// DclHUDRenderer's friendlyRenameError (packages/adapter-dcl/src/index.ts), for the Assets tab's Rename.
+func friendlyRenameError(_ error: Error) -> String {
+    switch error as? ApiError {
+    case .status(400, _): return "Names need 1-120 characters, without slashes"
+    case .status(409, _): return "That file isn't ready yet"
+    default: return friendlyEditMessage(error)
+    }
+}
+
+/// The adapter's friendlyRoleError, with the dashboard's Roles wording (apps/web SceneRoles.tsx). Transfer-host codes
+/// stay in the table for parity even though the headset never transfers host.
+func friendlyRoleError(_ error: Error) -> String {
+    let words = [
+        "Forbidden": "Only the host and co-hosts can manage roles.",
+        "is_host": "That wallet is the host.",
+        "not_a_signed_in_cohost": "They need to sign in to Virvi with that wallet before they can become host.",
+        "host_has_no_wallet": "Link your wallet in Settings before transferring host.",
+    ]
+    if case ApiError.status(_, let code?) = error, let w = words[code] { return w }
+    return "Something went wrong — try again"
+}

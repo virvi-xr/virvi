@@ -1,3 +1,4 @@
 VirviBuilder.xcodeproj/
 App/Info.plist
 build/
+__pycache__/

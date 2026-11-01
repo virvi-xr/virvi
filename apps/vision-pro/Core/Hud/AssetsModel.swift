@@ -27,6 +27,15 @@ struct AssetRow: Equatable {
     let error: String?
 }
 
+/// An upload token (`POST /api/upload-tokens`), as the Decentraland Upload view shows it.
+struct UploadLink: Decodable, Equatable {
+    let code: String
+    let uploadUrl: String
+    let qrUrl: String
+    let expiresAt: String
+    let maxUploads: Int
+}
+
 struct PlacedItem: Equatable {
     let elementId: String
     let instanceId: String
@@ -41,6 +50,7 @@ final class AssetsModel: Sendable {
     static let maxRows = 10
     static let emptyCopy = "No images or models yet"
     static let loadFailedCopy = "Couldn't load your media library"
+    static let uploadFailedCopy = "Couldn't make an upload link — try again"
     private static let imageTypes: Set<String> = ["image/png", "image/jpeg", "image/webp", "image/gif"]
 
     private let api: VirviApi
@@ -91,6 +101,7 @@ final class AssetsModel: Sendable {
     private struct ElementAnswer: Decodable { struct E: Decodable { let id: String }; let element: E }
     private struct InstanceAnswer: Decodable { struct I: Decodable { let id: String }; let instance: I }
     private struct TokenAnswer: Decodable { struct T: Decodable { let uploadUrl: String }; let token: T }
+    private struct LinkAnswer: Decodable { let token: UploadLink }
 
     func load() async throws -> [LibraryItem] {
         let list: LibraryList = try await api.scene(sceneId, "GET", "/api/scenes/\(sceneId)/library", body: nil)
@@ -109,6 +120,29 @@ final class AssetsModel: Sendable {
     func uploadUrl() async throws -> String {
         let a: TokenAnswer = try await api.scene(sceneId, "POST", "/api/upload-tokens", body: ["sceneId": sceneId])
         return a.token.uploadUrl
+    }
+
+    /// The Upload view's link, as the Decentraland HUD mints it (images and models, 10 uploads, 30 minutes).
+    func uploadLink() async throws -> UploadLink {
+        let a: LinkAnswer = try await api.scene(sceneId, "POST", "/api/upload-tokens", body: [
+            "sceneId": sceneId, "maxUploads": 10, "expiresInMinutes": 30, "kinds": ["image", "model"],
+        ])
+        return a.token
+    }
+
+    /// "Link expires HH:mm · N uploads" (DclHUDRenderer's UploadView), in local time.
+    static func expiryLine(_ link: UploadLink, timeZone: TimeZone = .current) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = f.date(from: link.expiresAt) ?? ISO8601DateFormatter().date(from: link.expiresAt)
+        var hhmm = ""
+        if let date {
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = timeZone
+            let c = cal.dateComponents([.hour, .minute], from: date)
+            hhmm = String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+        }
+        return "Link expires \(hhmm) · \(link.maxUploads) uploads"
     }
 
     /// The element, then its instance, as the Decentraland HUD and the Quest do; if the instance can't be made the
