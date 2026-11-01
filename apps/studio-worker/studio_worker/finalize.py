@@ -19,7 +19,7 @@ from PIL import Image
 
 from . import config
 from .api import ApiError
-from .pieces import Piece, glbs_by_shape
+from .pieces import Piece, checker_levels, glbs_by_shape
 from .render import fit_square
 
 THUMBNAIL_BLEND = Path(__file__).parent / 'thumbnail_blend.py'
@@ -135,8 +135,8 @@ def _fit(text: str, limit: int) -> str:
 
 
 def _check_levels(report: str) -> bool:
-    """A skills checker's report passes when no line is a FAIL."""
-    return not any(l.split()[:1] == ['FAIL'] for l in report.splitlines() if l.startswith('  '))
+    """A skills checker's report passes when no line is a FAIL (too many triangles is only a warning)."""
+    return 'FAIL' not in checker_levels(report)
 
 
 # Blender's own log lines (`04:00:43 | INFO: glTF import finished`), which bury a check's output

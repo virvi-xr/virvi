@@ -76,6 +76,7 @@ def test_prompt_job_end_to_end(api, tmp_path, skills):
     assert posted == result and len(api.results) == 1
     hat = posted['pieces'][0]
     assert hat['category'] == 'hat' and hat['changed'] is True and hat['checker']['pass'] is True
+    assert hat['checker']['triangles'] is None  # the cap is within a hat's budget: no warning to show
     assert hat['changeKind'] == 'new' and hat['renders'] == {'spin-male-default': 36, 'orbit-male': 24}
     assert posted['costUsd'] == pytest.approx(0.0125) and posted['reply'] == 'Built a neon cap with a glowing visor.'
 

@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 
 from conftest import FIXTURES
 from studio_worker.instructions import closing
@@ -59,12 +60,40 @@ def test_proposal_is_read(tmp_path):
     assert proposal == slots and pieces == [] and error is None
 
 
-def test_checker_fail_is_recorded(tmp_path, skills):
-    # 1346 triangles: fine for the jacket it is, over an earring's 500
+def unskinned(tmp_path):
+    """The cap with its meshes cut loose from the skeleton: a FAIL Decentraland does enforce."""
+    src = (FIXTURES / 'cap/neon_cap_male.glb').read_bytes()
+    n = struct.unpack('<I', src[12:16])[0]
+    gltf = json.loads(src[20:20 + n])
+    for node in gltf['nodes']:
+        node.pop('skin', None)
+    js = json.dumps(gltf).encode()
+    js += b' ' * (-len(js) % 4)
+    rest = src[20 + n:]
+    out = tmp_path / 'unskinned_cap.glb'
+    out.write_bytes(struct.pack('<III', 0x46546C67, 2, 20 + len(js) + len(rest)) + struct.pack('<II', len(js), 0x4E4F534A)
+                    + js + rest)
+    return out
+
+
+def test_too_many_triangles_warns_without_failing(tmp_path, skills):
+    # 1346 triangles: fine for the jacket it is, over an earring's 500. Decentraland doesn't enforce the budget
     lay_out(tmp_path, 'earring', [FIXTURES / 'jacket.glb'], {**HAT, 'category': 'earring'})
     pieces, _, error = collect(tmp_path, 'wearable', {})
     assert error is None
+    checker = pieces[0].checker
+    assert checker['pass'] is True and checker['failures'] == 0
+    assert checker['triangles'] == {'count': 1346, 'limit': 500}
+    assert checker['warnings'] >= 1
+
+
+def test_checker_fail_is_recorded(tmp_path, skills):
+    glb = unskinned(tmp_path)
+    lay_out(tmp_path / 'design', 'hat', [glb], HAT)
+    pieces, _, error = collect(tmp_path / 'design', 'wearable', {})
+    assert error is None
     assert pieces[0].checker['pass'] is False and pieces[0].checker['failures'] >= 1
+    assert pieces[0].checker['triangles'] is None
 
 
 def test_emote_checker_runs(tmp_path, skills):

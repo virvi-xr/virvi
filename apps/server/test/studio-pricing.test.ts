@@ -85,6 +85,16 @@ describe('studio finalize pricing', () => {
     expect((await caught(quoteFinalize(d, ['eyewear'], []))).code).toBe('unknown_piece')
   })
 
+  it('a piece over its triangle budget is payable, and the quote carries the warning', async () => {
+    const d = await createDesign(await createUser())
+    const triangles = { count: 1346, limit: 500 }
+    await addRevision(d, 'earring', { pass: true, failures: 0, warnings: 1, triangles })
+    const q = await quoteFinalize(d, null, [])
+    expect(q.blocked).toEqual([])
+    expect(q.lines.map((l) => l.category)).toEqual(['earring'])
+    expect(q.pieces[0]).toMatchObject({ state: 'payable', checker: { pass: true, triangles } })
+  })
+
   it('waiving a revision line removes it from the total', async () => {
     const d = await createDesign(await createUser())
     await entitle(d, await addRevision(d, 'hat'))
