@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// "Scene Layout": the active preset's elements from the feed, Hide/Show and Delete, and Edit layout for editors.
+/// Select (not in the Decentraland HUD) picks an element in the room, for things too small, far or buried to pinch.
 struct LayoutTab: View {
     let builder: SceneBuilder
     @ObservedObject var edit: EditSession
@@ -19,10 +20,7 @@ struct LayoutTab: View {
             VStack(alignment: .leading, spacing: 3) {
                 EditLineView(line: line)
                 if editable {
-                    HudButton(label: "Edit layout", color: Hud.accent, height: 40) {
-                        onClose()
-                        Task { await openImmersiveSpace(id: "build") }
-                    }
+                    HudButton(label: "Edit layout", color: Hud.accent, height: 40) { openBuildSpace() }
                     .padding(.bottom, 6)
                 }
                 if rows.isEmpty {
@@ -58,12 +56,22 @@ struct LayoutTab: View {
                 }
                 HudButton(label: "Cancel", width: 84, height: 34, fontSize: 14) { confirmDelete = nil }
             } else {
+                if el.enabled, el.typeTag != "SOU" { // a sound has nothing to look at
+                    HudButton(label: "Select", color: Hud.accent, width: 84, height: 34, fontSize: 14) {
+                        if builder.space.selectElement(el.elementId) { openBuildSpace() }
+                    }
+                }
                 HudButton(label: el.enabled ? "Hide" : "Show", color: el.enabled ? Hud.bgHover : Hud.accent, width: 84, height: 34, fontSize: 14) {
                     run { try await builder.layout.setEnabled(el.elementId, !el.enabled) }
                 }
                 HudButton(label: "Delete", color: Hud.danger, width: 84, height: 34, fontSize: 14) { confirmDelete = el.elementId }
             }
         }
+    }
+
+    private func openBuildSpace() {
+        onClose()
+        Task { await openImmersiveSpace(id: "build") }
     }
 
     /// Changes show up through the feed; a failure shows on the panel.

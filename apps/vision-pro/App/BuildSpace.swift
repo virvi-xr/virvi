@@ -145,7 +145,7 @@ final class BuildSpace: ObservableObject {
         if highlighted != s?.key {
             if let old = highlighted, let e = renderer.entity(for: old) { Self.setHighlight(false, on: e) }
             highlighted = s?.key
-            if let key = s?.key, let e = renderer.entity(for: key) { Self.setHighlight(true, on: e) }
+            if let s, let e = renderer.entity(for: s.key) { Self.setHighlight(true, on: e, name: s.name) }
         }
         if let s, let item = renderer.item(for: s.key), let e = renderer.entity(for: s.key) {
             e.transform = SceneRenderer.entityTransform(for: item, s.current)
@@ -262,6 +262,13 @@ final class BuildSpace: ObservableObject {
         }
     }
 
+    /// The Layout tab's Select: the element's first copy there is something to look at, as soon as it shows.
+    func selectElement(_ elementId: String) -> Bool {
+        guard let key = firstSelectableKey(renderer.items, elementId: elementId) else { return false }
+        selectWhenShown(key)
+        return true
+    }
+
     /// A look-and-pinch on an item selects it.
     func tapped(_ entity: Entity) {
         guard phase == .edit, gizmo.handle(of: entity) == nil, let key = renderer.key(of: entity) else { return }
@@ -363,7 +370,8 @@ final class BuildSpace: ObservableObject {
         placement.setOrientation(simd_quatf(angle: yaw, axis: [0, 1, 0]), relativeTo: nil)
     }
 
-    func pin() async {
+    /// Pinning from the bar also finishes placing, so items take pinches straight away.
+    func pin(finishPlacing: Bool = true) async {
         guard trackingSupported else {
             pinStatus = "Pinning needs a device"
             return
@@ -378,6 +386,7 @@ final class BuildSpace: ObservableObject {
             try await world.addAnchor(anchor)
             pinnedID = anchor.id
             pinStatus = "Pinned to this room"
+            if finishPlacing { phase = .edit }
         } catch {
             pinStatus = "Pin failed: \(error.localizedDescription)"
         }
@@ -393,7 +402,7 @@ final class BuildSpace: ObservableObject {
 
     /// Keeps the pin where the scene now is after it was slid or turned.
     private func repin() {
-        if pinnedID != nil, world != nil { Task { await pin() } }
+        if pinnedID != nil, world != nil { Task { await pin(finishPlacing: false) } }
     }
 
     #if DEBUG
@@ -424,30 +433,88 @@ final class BuildSpace: ObservableObject {
         var b = entity.visualBounds(recursive: true, relativeTo: entity)
         if b.isEmpty { b = BoundingBox(min: [-0.25, 0, -0.25], max: [0.25, 0.5, 0.25]) }
         let size = simd_max(b.extents, SIMD3<Float>(repeating: 0.02)) // planes get a thin box
-        entity.components.set(CollisionComponent(shapes: [ShapeResource.generateBox(size: size).offsetBy(translation: b.center)]))
+        let hover = Self.hoverHighlight()
+        switch pickShape(extents: size) {
+        case .box(let pick):
+            entity.components.set(CollisionComponent(shapes: [ShapeResource.generateBox(size: pick).offsetBy(translation: b.center)]))
+        case .mesh:
+            // The box stands in until the surfaces are ready.
+            entity.components.set(CollisionComponent(shapes: [ShapeResource.generateBox(size: size).offsetBy(translation: b.center)]))
+            Task { await Self.pickBySurfaces(entity, hover: hover) }
+        }
         var input = InputTargetComponent()
         input.isEnabled = itemTargetable(key, selected: edit.selected?.key, mode: edit.mode)
         entity.components.set(input)
-        entity.components.set(HoverEffectComponent())
+        entity.components.set(hover)
         entity.components.set(EditableItemComponent(bounds: BoundingBox(min: b.center - size / 2, max: b.center + size / 2)))
-        if key == edit.selected?.key {
-            Self.setHighlight(true, on: entity)
+        if let s = edit.selected, s.key == key {
+            Self.setHighlight(true, on: entity, name: s.name)
             refreshGizmo() // the mesh is known now: handles move clear of it
         }
     }
 
     private static let highlightName = "virvi-selection"
 
-    /// The spike's cyan selection box.
-    private static func setHighlight(_ on: Bool, on entity: Entity) {
+    private static let selectionColor = UIColor(red: 0.2, green: 0.85, blue: 1, alpha: 1)
+
+    /// Looking at an item in Edit lights the whole item up in the selection colour, so you know what a pinch takes.
+    /// One group per item, so its parts with their own surfaces light together (before visionOS 26 each part lights
+    /// on its own).
+    private static func hoverHighlight() -> HoverEffectComponent {
+        let style = HoverEffectComponent.HighlightHoverEffectStyle(color: selectionColor, strength: 2)
+        if #available(visionOS 26.0, *) { return HoverEffectComponent(.highlight(style, groupID: .init())) }
+        return HoverEffectComponent(.highlight(style))
+    }
+
+    /// A big item catches pinches only on its own surfaces: each mesh in it gets a collider, and the item's box goes.
+    /// Kept as the box if any mesh can't be turned into one.
+    private static func pickBySurfaces(_ entity: Entity, hover: HoverEffectComponent) async {
+        var parts: [(Entity, ShapeResource)] = []
+        var stack = Array(entity.children)
+        while let e = stack.popLast() {
+            guard e.name != highlightName else { continue } // the selection outline isn't part of the item
+            stack.append(contentsOf: e.children)
+            guard let mesh = e.components[ModelComponent.self]?.mesh else { continue }
+            guard let shape = try? await ShapeResource.generateStaticMesh(from: mesh) else { return }
+            parts.append((e, shape))
+        }
+        guard !parts.isEmpty, entity.parent != nil else { return }
+        for (e, shape) in parts {
+            e.components.set(CollisionComponent(shapes: [shape]))
+            e.components.set(hover)
+        }
+        entity.components.remove(CollisionComponent.self)
+    }
+
+    /// The selected item: a bright outline on its box's edges, a faint fill, and its name above it.
+    private static func setHighlight(_ on: Bool, on entity: Entity, name: String? = nil) {
         entity.findEntity(named: highlightName)?.removeFromParent()
-        guard on, let b = entity.components[EditableItemComponent.self]?.bounds else { return }
-        var mat = UnlitMaterial(color: UIColor(red: 0.2, green: 0.85, blue: 1, alpha: 1))
-        mat.blending = .transparent(opacity: 0.22)
-        let box = ModelEntity(mesh: .generateBox(size: b.extents * 1.04 + 0.03), materials: [mat])
-        box.name = highlightName
-        box.position = b.center
-        entity.addChild(box)
+        guard on, let item = entity.components[EditableItemComponent.self]?.bounds else { return }
+        let b = BoundingBox(min: item.min - 0.015, max: item.max + 0.015)
+        let mark = Entity()
+        mark.name = highlightName
+        let thickness = min(max(b.extents.max() * 0.008, 0.006), 0.03)
+        let edge = UnlitMaterial(color: selectionColor)
+        for bar in outlineBars(of: b, thickness: thickness) {
+            let e = ModelEntity(mesh: .generateBox(size: bar.size), materials: [edge])
+            e.position = bar.center
+            mark.addChild(e)
+        }
+        let fill = ModelEntity(mesh: .generateBox(size: b.extents), materials: [translucent(selectionColor, 0.08)])
+        fill.position = b.center
+        mark.addChild(fill)
+        if let name, !name.isEmpty {
+            let text = ModelEntity(mesh: .generateText(name, extrusionDepth: 0.002, font: .systemFont(ofSize: 0.09, weight: .semibold)),
+                                   materials: [edge])
+            let tb = text.visualBounds(relativeTo: text)
+            text.position = [-tb.center.x, -tb.min.y, 0]
+            let label = Entity()
+            label.position = [b.center.x, b.max.y + 0.06, b.center.z]
+            label.components.set(BillboardComponent())
+            label.addChild(text)
+            mark.addChild(label)
+        }
+        entity.addChild(mark)
     }
 
     private static func translucent(_ color: UIColor, _ opacity: Float) -> UnlitMaterial {

@@ -154,4 +154,11 @@ final class DeviceAuthTests: XCTestCase {
         XCTAssertEqual(formatPairingCode("abc-123"), "ABC-123")
         XCTAssertEqual(formatPairingCode("AB"), "AB")
     }
+
+    /// The approval address to type in, since a QR shown inside the headset can't be scanned.
+    func testPairingAddressIsShortAndTypeable() {
+        XCTAssertEqual(pairingAddress(URL(string: "https://virvi.io/pair/headset/ABC123")!), "virvi.io/pair/headset/ABC123")
+        XCTAssertEqual(pairingAddress(URL(string: "https://www.virvi.io/pair/headset/ABC123?x=1")!), "virvi.io/pair/headset/ABC123")
+        XCTAssertEqual(pairingAddress(URL(string: "http://localhost:3000/pair/headset/X")!), "localhost:3000/pair/headset/X")
+    }
 }
