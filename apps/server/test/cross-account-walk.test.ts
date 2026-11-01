@@ -179,10 +179,12 @@ const CASES: Case[] = [
   { route: 'POST /api/ar/spaces/:id/analytics', url: (f) => `/api/ar/spaces/${f.arSpace.id}/analytics`, body: () => ({ v: 1, platform: 'ar-quest', events: [{ type: 'enter', playerId: 'p1', t: Date.now() }] }) },
   { route: 'POST /api/ar/spaces/:id/report', url: (f) => `/api/ar/spaces/${f.arSpace.id}/report`, body: () => ({ reason: 'spam', platform: 'ar-quest' }) },
   { route: 'GET /api/ar/spaces/:id/feed', url: (f) => `/api/ar/spaces/${f.arSpace.id}/feed` },
+  { route: 'GET /api/ar/scenes/:id/feed', url: (f) => `/api/ar/scenes/${f.scene.id}/feed` },
   // AR headsets (B's shared headset; A guesses the secret)
   { route: 'POST /api/ar/devices/:id/pass', url: (f) => `/api/ar/devices/${f.arDevice.id}/pass`, body: (f) => ({ secret: 'guess', spaceId: f.arSpace.id }) },
   { route: 'POST /api/ar/devices/:id/end', url: (f) => `/api/ar/devices/${f.arDevice.id}/end`, body: () => ({ secret: 'guess' }) },
   { route: 'POST /api/ar/devices/:id/spaces', url: (f) => `/api/ar/devices/${f.arDevice.id}/spaces`, body: () => ({ secret: 'guess' }) },
+  { route: 'POST /api/ar/devices/:id/scenes', url: (f) => `/api/ar/devices/${f.arDevice.id}/scenes`, body: () => ({ secret: 'guess' }) },
   { route: 'DELETE /api/ar/devices/:id', url: (f) => `/api/ar/devices/${f.arDevice.id}` },
   // deploy
   { route: 'GET /api/deploy/:id', url: (f) => `/api/deploy/${f.dcl.id}` },
@@ -202,6 +204,7 @@ const CASES: Case[] = [
   { route: 'GET /api/scenes/:sceneId/dcl/publish-status', url: (f) => `/api/scenes/${f.scene.id}/dcl/publish-status` },
   { route: 'GET /api/scenes/:sceneId/dcl/destinations', url: (f) => `/api/scenes/${f.scene.id}/dcl/destinations` },
   // events and command center
+  { route: 'GET /api/scenes/:sceneId/events', url: (f) => `/api/scenes/${f.scene.id}/events` },
   { route: 'GET /api/events/:eventId', url: (f) => `/api/events/${f.event.id}` },
   { route: 'PUT /api/events/:eventId', url: (f) => `/api/events/${f.event.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'DELETE /api/events/:eventId', url: (f) => `/api/events/${f.event.id}` },

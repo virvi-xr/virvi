@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify'
 import { and, desc, eq } from 'drizzle-orm'
 import { layoutFootprint, validateLayout } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { arDevices, roomScans } from '../db/schema.js'
+import { roomScans } from '../db/schema.js'
+import { devicePersonal } from '../ar/devices.js'
 import { authenticate } from '../middleware/auth.js'
 import { boundScene, isUuid } from '../auth/scene-from.js'
 import { plotForLayout } from '../room-scan/plot.js'
@@ -26,10 +27,7 @@ export default async function roomScanRoutes(app: FastifyInstance) {
       if (typeof name !== 'string' || name.length < 1 || name.length > 120) {
         return reply.status(400).send({ error: 'invalid_name', message: 'Name must be 1 to 120 characters' })
       }
-      const [device] = request.user.deviceId
-        ? await db.select({ kind: arDevices.kind }).from(arDevices).where(eq(arDevices.id, request.user.deviceId))
-        : []
-      if (device?.kind !== 'personal') {
+      if (!(await devicePersonal(request.user.deviceId))) {
         return reply.status(403).send({ error: 'shared_device', message: SHARED_DEVICE_MESSAGE })
       }
       const checked = validateLayout(layout)

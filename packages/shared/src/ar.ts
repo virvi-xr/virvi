@@ -36,6 +36,9 @@ export type ArSpaceWire = Omit<ArSpaceView, 'sceneId'>
 
 export type ArFeedResponse = { v: 1; version: string; space: ArSpaceWire; scene: SerializedScene | null }
 
+/** A scene's draft, keyed by scene: what a headset builder polls. `version` is the SHA-256 of `{ scene }`. */
+export type ArSceneFeedResponse = { v: 1; version: string; scene: SerializedScene | null }
+
 export type ArMarkerLookup = { spaceId: string; floorId: string; markerId: string; spaceName: string; whereText: string | null }
 
 /**
@@ -77,6 +80,8 @@ export type ArDeviceSpace = {
   sceneName: string
   markers: Array<{ markerId: string; floorId: string; code: string }>
 }
+/** POST /api/ar/devices/:id/scenes: one scene a personal headset can build on, with or without a space. */
+export type ArDeviceScene = { sceneId: string; sceneName: string; role: 'host' | 'cohost' | 'editor' | 'viewer' }
 /** GET /api/ar/devices */
 export type ArDeviceSummary = { id: string; deviceName: string | null; kind: ArDeviceKind | null; status: ArDeviceStatus; lastUsedAt: string | null; expiresAt: string | null }
 

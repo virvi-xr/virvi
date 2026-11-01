@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { randomInt } from 'node:crypto'
 import { and, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm'
-import { AR_PAIRING, HYPERFY_PAIRING, type ArDeviceKind, type ArDeviceSpace, type ArDeviceStatus, type ArDeviceSummary, type ArPairClaimResponse } from '@virvixr/shared'
+import { AR_PAIRING, HYPERFY_PAIRING, type ArDeviceKind, type ArDeviceScene, type ArDeviceSpace, type ArDeviceStatus, type ArDeviceSummary, type ArPairClaimResponse } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { arDevices, arFloors, arMarkers, arSpaces, sceneCollaborators, sceneRoles, scenes, users } from '../db/schema.js'
 import { getSceneAccess } from '../auth/permissions.js'
@@ -10,7 +10,7 @@ import { isUuid } from '../auth/scene-from.js'
 import { issueArPass } from '../auth/scene-pass.js'
 import { sameHash, sha256 } from '../auth/hash.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
-import { mayBuild, spaceScene } from './access.js'
+import { mayBuild, sceneRoleOfAccess, spaceScene } from './access.js'
 
 /**
  * Pairing an AR headset to a Virvi user: the headset sends the sha256 of a secret only it knows and gets a short code;
@@ -132,6 +132,23 @@ export async function mintArPass(app: FastifyInstance, deviceId: string, secret:
   if (typeof device === 'string') return device
   const sceneId = await spaceScene(spaceId)
   if (!sceneId) return 'not_found'
+  return mintForScene(app, device, sceneId, now)
+}
+
+/**
+ * An AR pass for a whole scene (no space), when the approver can build there. Personal headsets only: a shared one is
+ * refused before any access check. Otherwise the same pass as `mintArPass`.
+ */
+export async function mintArPassForScene(app: FastifyInstance, deviceId: string, secret: string, sceneId: string, now = new Date()): Promise<{ pass: string; passExpiresAt: Date; sceneId: string } | MintError | 'personal_only'> {
+  const device = await liveDevice(deviceId, secret, now)
+  if (typeof device === 'string') return device
+  if (device.kind !== 'personal') return 'personal_only'
+  if (!isUuid(sceneId)) return 'no_access'
+  return mintForScene(app, device, sceneId, now)
+}
+
+/** The shared tail of both mints: the approver's access to the scene is checked here, then the pass is issued. */
+async function mintForScene(app: FastifyInstance, device: DeviceRow, sceneId: string, now: Date): Promise<{ pass: string; passExpiresAt: Date; sceneId: string } | MintError> {
   const approver = await approverOf(device)
   if (!approver) return 'device_revoked'
   if (!mayBuild(await getSceneAccess(approver.actor, sceneId, now))) return 'no_access'
@@ -145,6 +162,38 @@ export async function mintArPass(app: FastifyInstance, deviceId: string, secret:
   return { pass, passExpiresAt, sceneId }
 }
 
+/** Scenes the approver owns, collaborates on or holds a role in: candidates only, each still checked like a mint. */
+async function candidateSceneIds(userId: string): Promise<string[]> {
+  const wallets = await verifiedWalletsOf(userId)
+  const [owned, collabs, roles] = await Promise.all([
+    db.select({ id: scenes.id }).from(scenes).where(eq(scenes.ownerId, userId)),
+    db.select({ id: sceneCollaborators.sceneId }).from(sceneCollaborators).where(eq(sceneCollaborators.userId, userId)),
+    db
+      .select({ id: sceneRoles.sceneId })
+      .from(sceneRoles)
+      .where(and(isNull(sceneRoles.revokedAt), wallets.length ? or(eq(sceneRoles.userId, userId), inArray(sceneRoles.walletAddress, wallets)) : eq(sceneRoles.userId, userId))),
+  ])
+  return [...new Set([...owned, ...collabs, ...roles].map((r) => r.id))]
+}
+
+/** Every scene the approver can build on, by name, with or without a space: what a headset can open a pass for. */
+export async function listDeviceScenes(deviceId: string, secret: string, now = new Date()): Promise<ArDeviceScene[] | 'bad_secret' | 'device_revoked' | 'personal_only'> {
+  const device = await liveDevice(deviceId, secret, now)
+  if (typeof device === 'string') return device
+  if (device.kind !== 'personal') return 'personal_only'
+  const approver = await approverOf(device)
+  if (!approver) return 'device_revoked'
+  const candidates = await candidateSceneIds(approver.user.id)
+  if (!candidates.length) return []
+  const rows = await db.select({ sceneId: scenes.id, sceneName: scenes.name }).from(scenes).where(inArray(scenes.id, candidates)).orderBy(scenes.name, scenes.id)
+  const out: ArDeviceScene[] = []
+  for (const r of rows) {
+    const access = await getSceneAccess(approver.actor, r.sceneId, now)
+    if (mayBuild(access)) out.push({ ...r, role: sceneRoleOfAccess(access) })
+  }
+  return out
+}
+
 /**
  * Every space on a scene the approver can build on, for the headset's "pick a space" list. Candidates are the scenes
  * the approver owns, collaborates on or holds a role in; each is then checked like a mint would. Each space carries
@@ -155,17 +204,7 @@ export async function listDeviceSpaces(deviceId: string, secret: string, now = n
   if (typeof device === 'string') return device
   const approver = await approverOf(device)
   if (!approver) return 'device_revoked'
-  const userId = approver.user.id
-  const wallets = await verifiedWalletsOf(userId)
-  const [owned, collabs, roles] = await Promise.all([
-    db.select({ id: scenes.id }).from(scenes).where(eq(scenes.ownerId, userId)),
-    db.select({ id: sceneCollaborators.sceneId }).from(sceneCollaborators).where(eq(sceneCollaborators.userId, userId)),
-    db
-      .select({ id: sceneRoles.sceneId })
-      .from(sceneRoles)
-      .where(and(isNull(sceneRoles.revokedAt), wallets.length ? or(eq(sceneRoles.userId, userId), inArray(sceneRoles.walletAddress, wallets)) : eq(sceneRoles.userId, userId))),
-  ])
-  const candidates = [...new Set([...owned, ...collabs, ...roles].map((r) => r.id))]
+  const candidates = await candidateSceneIds(approver.user.id)
   if (!candidates.length) return []
   const rows = await db
     .select({ spaceId: arSpaces.id, spaceName: arSpaces.name, sceneId: scenes.id, sceneName: scenes.name })
@@ -262,6 +301,13 @@ export async function revokeDevice(id: string, userId: string): Promise<boolean>
   forget(id)
   if (rows.length) await runDeviceEndedHooks(id)
   return rows.length > 0
+}
+
+/** Is this a personal headset? Room scans and the routes marked `ar: 'personal'` need one; a shared one is refused. */
+export async function devicePersonal(deviceId: string | undefined): Promise<boolean> {
+  if (!deviceId || !isUuid(deviceId)) return false
+  const [row] = await db.select({ kind: arDevices.kind }).from(arDevices).where(eq(arDevices.id, deviceId))
+  return row?.kind === 'personal'
 }
 
 /** Is this headset still paired: claimed, not revoked, inside its lifetime? */

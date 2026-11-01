@@ -73,7 +73,7 @@ export default async function companionUploadRoutes(app: FastifyInstance) {
   // ── Create Upload Token (authenticated) ───────────────────────────────
   app.post(
     '/api/upload-tokens',
-    { preHandler: [authenticate], config: { scenePass: { sceneFrom: fromBody('sceneId') } } },
+    { preHandler: [authenticate], config: { scenePass: { sceneFrom: fromBody('sceneId'), ar: 'personal' } } },
     async (request, reply) => {
       const body = (request.body ?? {}) as {
         sceneId?: string

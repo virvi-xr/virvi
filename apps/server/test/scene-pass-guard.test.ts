@@ -43,6 +43,7 @@ const PUBLIC_EXACT = [
   'POST /api/ar/devices/:id/pass', // the headset secret is the auth
   'POST /api/ar/devices/:id/end', // the headset secret is the auth
   'POST /api/ar/devices/:id/spaces', // the headset secret is the auth
+  'POST /api/ar/devices/:id/scenes', // the headset secret is the auth
   'GET /.well-known/assetlinks.json', // public: the Android app links file, nothing of ours in it
   'POST /api/ingest', // DCL signed fetch / ingest key
   'POST /api/analytics/claims/check-signed', // DCL signed fetch
@@ -381,10 +382,21 @@ describe('scene pass guard', () => {
       'PUT /api/instances/:instanceId',
       'GET /api/scenes/:sceneId/library',
       'POST /api/scenes/:sceneId/library',
+      'PATCH /api/scenes/:sceneId/library/:id',
+      'DELETE /api/scenes/:sceneId/library/:id',
+      'POST /api/upload-tokens',
+      'GET /api/scenes/:sceneId/roles',
+      'POST /api/scenes/:sceneId/roles',
+      'DELETE /api/scenes/:sceneId/roles/:wallet',
+      'GET /api/scenes/:sceneId/dcl/publish-status',
+      'POST /api/elements/:elementId/live',
+      'PUT /api/scenes/:sceneId',
       'GET /api/ar/markers/by-code/:code',
       'GET /api/ar/spaces/:id/feed',
+      'GET /api/ar/scenes/:id/feed',
       'POST /api/ar/room-scans',
       'GET /api/scenes/:sceneId/ar/spaces',
+      'GET /api/scenes/:sceneId/events',
       'PUT /api/ar/markers/:id/pose',
       'PUT /api/ar/spaces/:id/adjustments/:instanceId',
       'DELETE /api/ar/spaces/:id/adjustments/:instanceId',
@@ -413,6 +425,23 @@ describe('scene pass guard', () => {
       const all = (app as any).registeredRoutes as Array<{ method: string; url: string; scenePass: boolean; ar: boolean }>
       expect(all.filter((r) => r.ar).map((r) => `${r.method} ${r.url}`).sort()).toEqual(AR_ROUTES)
       expect(all.filter((r) => r.ar && !r.scenePass)).toEqual([])
+    })
+
+    it('only the routes this branch opened to a headset need a personal one', async () => {
+      const all = (app as any).registeredRoutes as Array<{ method: string; url: string; arPersonal: boolean }>
+      expect(all.filter((r) => r.arPersonal).map((r) => `${r.method} ${r.url}`).sort()).toEqual([
+        'PATCH /api/scenes/:sceneId/library/:id',
+        'DELETE /api/scenes/:sceneId/library/:id',
+        'POST /api/upload-tokens',
+        'GET /api/scenes/:sceneId/roles',
+        'POST /api/scenes/:sceneId/roles',
+        'DELETE /api/scenes/:sceneId/roles/:wallet',
+        'GET /api/scenes/:sceneId/dcl/publish-status',
+        'POST /api/elements/:elementId/live',
+        'PUT /api/scenes/:sceneId',
+        'GET /api/ar/scenes/:id/feed',
+        'GET /api/scenes/:sceneId/events',
+      ].sort())
     })
 
     it('every route without the opt-in refuses an AR pass for its own scene (route walk)', async () => {

@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { AR_FEED, checkHyperfyAnalyticsBatch, type ArFeedResponse, type ArMarkerLookup } from '@virvixr/shared'
+import { AR_FEED, checkHyperfyAnalyticsBatch, type ArFeedResponse, type ArSceneFeedResponse, type ArMarkerLookup } from '@virvixr/shared'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess } from '../auth/permissions.js'
 import { fromSpace, markerByCode, markerSceneByCode, mayBuild, spaceScene } from '../ar/access.js'
+import { fromParam } from '../auth/scene-from.js'
+import { sceneSnapshot } from '../hyperfy/snapshot.js'
 import { arSpaceSnapshot } from '../ar/snapshot.js'
 import { longPoll } from '../http/long-poll.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
@@ -110,6 +113,36 @@ export default async function arFeedRoutes(app: FastifyInstance) {
           if (!snap || (!snap.space.published && !builder)) return null
           const body: ArFeedResponse = { v: AR_FEED.version, version: snap.version, space: snap.space, scene: snap.scene }
           return { version: snap.version, body }
+        },
+        'not_found',
+      )
+    },
+  )
+
+  app.get<{ Params: { id: string }; Querystring: { since?: string } }>(
+    '/api/ar/scenes/:id/feed',
+    // Shares the space feed's per-IP limit; keep polls out of per-request logs.
+    { logLevel: 'warn', config: { rateLimit: false, scenePass: { sceneFrom: fromParam('id'), ar: 'personal' } } },
+    async (request, reply) => {
+      const limit = limiter.take(`ip:${request.ip}`, 1, AR_FEED_LIMIT.capacity, AR_FEED_LIMIT.refillPerSec)
+      if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
+      if (!(await signInIfPresent(request, reply))) return
+      const sceneId = request.params.id
+      // Builders only: a visitor, or a signed-in caller who may not build, gets the same 404 as a missing scene.
+      if (!(await isBuilder(request, sceneId))) return reply.status(404).send({ error: 'not_found' })
+
+      return longPoll(
+        request,
+        reply,
+        sceneId,
+        request.query.since,
+        holdMs,
+        async () => {
+          const snap = await sceneSnapshot(sceneId)
+          if (!snap) return null
+          const version = createHash('sha256').update(JSON.stringify({ scene: snap.scene })).digest('hex')
+          const body: ArSceneFeedResponse = { v: AR_FEED.version, version, scene: snap.scene }
+          return { version, body }
         },
         'not_found',
       )

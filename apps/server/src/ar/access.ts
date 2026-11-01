@@ -1,4 +1,4 @@
-import { parseRingCode } from '@virvixr/shared'
+import { parseRingCode, type ArDeviceScene } from '@virvixr/shared'
 import { eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { arFloors, arMarkers, arSpaces } from '../db/schema.js'
@@ -8,6 +8,22 @@ import { isUuid, type SceneFrom } from '../auth/scene-from.js'
 /** Who may set up AR spaces: the scene's owner, co-hosts and editors (and admins). Booking hosts and viewers may not. */
 export const mayBuild = (access: SceneAccess): boolean =>
   access.level === 'admin' || access.level === 'owner' || access.level === 'cohost' || access.level === 'editor'
+
+/** The HUD role a scene access level shows as (the in-world HUD's host / cohost / editor / viewer). */
+export function sceneRoleOfAccess(access: SceneAccess): ArDeviceScene['role'] {
+  switch (access.level) {
+    case 'admin':
+    case 'owner':
+      return 'host'
+    case 'cohost':
+      return 'cohost'
+    case 'editor':
+    case 'grant':
+      return 'editor'
+    default:
+      return 'viewer'
+  }
+}
 
 export async function spaceScene(spaceId: string): Promise<string | null> {
   if (!isUuid(spaceId)) return null
