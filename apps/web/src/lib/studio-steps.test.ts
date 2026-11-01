@@ -73,6 +73,14 @@ describe('steps and emote checks', () => {
     expect(emoteState(detail({ set: d.set }), 'dance', 'male')).toBe('clipping')
   })
 
+  it('a reported emote still counts as checked while it is fixed', () => {
+    const d = detail({
+      activeJob: { id: 'j1', type: 'prompt', status: 'taken', fixClipping: { emote: 'dance', bodyShape: 'male', outfit: 'default' } },
+      set: { revisions: 'a', views: {}, freeFixesLeft: {}, checks: [{ emote: 'dance', bodyShape: 'male', state: 'clipping' }] },
+    })
+    expect(emoteChecklist(d).checkedCount).toBe(1)
+  })
+
   it('names the emote the way the copy does', () => {
     expect(emoteLabel('wearable', 'dance')).toBe('the dance')
     expect(emoteLabel('emote', 'own')).toBe('the emote')

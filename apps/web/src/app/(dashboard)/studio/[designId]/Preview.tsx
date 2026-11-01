@@ -1,14 +1,16 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, type Tone } from '@/components/ui'
 import {
-  categoryLabel, pieceTabStatus, refusalMessage, relativeTime, stageState, viewButtonRendering, viewKey,
-  type RenderView, type StudioDetail, type StudioPiece,
+  ORBIT_FRAMES, categoryLabel, orbitKey, pieceTabStatus, refusalMessage, relativeTime, stageState, stepsFor, viewButtonRendering, viewKey,
+  type RenderView, type Step, type StudioDetail, type StudioPiece,
 } from '@/lib/studio'
 import SpinStage from './SpinStage'
+import Steps from './Steps'
+import InspectStage from './InspectStage'
+import EmotesStep, { type EmoteTarget } from './EmotesStep'
 
-const EMOTES = [[null, 'Spin'], ['idle', 'Idle'], ['wave', 'Wave'], ['dance', 'Dance'], ['clap', 'Clap'], ['walk', 'Walk']] as const
 const SHAPES = [['male', 'Male'], ['female', 'Female']] as const
 const OUTFITS = [['default', 'Default'], ['outfit-2', 'Outfit 2'], ['outfit-3', 'Outfit 3']] as const
 
@@ -26,11 +28,20 @@ type Props = {
   category: string | null
   onSelect: (category: string) => void
   onChanged: () => Promise<void>
+  step: Step
+  onStep: (step: Step) => void
+  emoteTarget: EmoteTarget | null
+  /** What the Finalize step shows: the emote checklist. */
+  finalizeStep: React.ReactNode
   children?: React.ReactNode
 }
 
-/** The right column: the piece tabs, the stage, and the view buttons; the finalize strip and paid revisions sit under it. */
-export default function Preview({ designId, detail, category, onSelect, onChanged, children }: Props) {
+/**
+ * The right column: the steps, then the step's stage. On avatar is the piece tabs, the spin and the body and outfit
+ * buttons; Inspect turns one piece alone any way; Emotes plays every piece worn. The finalize strip and paid revisions
+ * sit under it.
+ */
+export default function Preview({ designId, detail, category, onSelect, onChanged, step, onStep, emoteTarget, finalizeStep, children }: Props) {
   const api = useApi()
   const kind = detail.design.kind
   const [view, setView] = useState<RenderView>({ bodyShape: 'male', outfit: 'default', emote: null })
@@ -39,6 +50,28 @@ export default function Preview({ designId, detail, category, onSelect, onChange
   const [lastPicked, setLastPicked] = useState<keyof RenderView | null>(null)
 
   const piece = detail.pieces.find((p) => p.category === category) ?? detail.pieces[0]
+  const [inspectShape, setInspectShape] = useState<'male' | 'female'>('male')
+  const [inspectAsked, setInspectAsked] = useState<string | null>(null)
+  const inspect = piece?.renders[orbitKey(inspectShape)]
+
+  // Inspect asks for the rest of the sphere when it isn't there, once per piece revision and body shape
+  useEffect(() => {
+    if (step !== 'inspect' || !piece?.revision || kind === 'emote') return
+    const asked = `${piece.category}/${piece.revision.number}/${inspectShape}`
+    if (inspectAsked === asked || inspect?.status === 'queued' || (inspect?.status === 'ready' && inspect.frames >= ORBIT_FRAMES)) return
+    setInspectAsked(asked)
+    api.requestStudioRender(designId, { category: piece.category, bodyShape: inspectShape, mode: 'orbit' }).then(onChanged)
+      .catch((err) => setError(refusalMessage(err as never, new Date()).text))
+  }, [step, piece?.category, piece?.revision?.number, inspectShape, inspect?.status, inspectAsked]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pickStep = (s: Step) => {
+    if (s === 'design') {
+      const box = document.getElementById('studio-prompt')
+      box?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      box?.focus({ preventScroll: true })
+    }
+    onStep(s)
+  }
   const key = viewKey(kind, view)
   const stage = stageState(piece, key, pending)
 
@@ -70,10 +103,12 @@ export default function Preview({ designId, detail, category, onSelect, onChange
     </button>
   )
 
+  const pieceTabs = detail.pieces.length > 0 && (step === 'design' || step === 'avatar' || step === 'inspect')
   return (
     <section aria-label="Preview" className="flex min-w-0 flex-col gap-4">
       <div className="rounded-lg border border-gray-800 bg-gray-900">
-        {detail.pieces.length > 0 && (
+        <Steps steps={stepsFor(kind)} current={step} onPick={pickStep} />
+        {pieceTabs && (
           <div role="tablist" aria-label="Pieces" className="flex flex-wrap gap-1 border-b border-gray-800 p-2">
             {detail.pieces.map((p) => {
               const b = tabBadge(p, detail)
@@ -89,6 +124,38 @@ export default function Preview({ designId, detail, category, onSelect, onChange
           </div>
         )}
 
+        {step === 'emotes' ? (
+          <EmotesStep designId={designId} detail={detail} target={emoteTarget} onChanged={onChanged} />
+        ) : step === 'finalize' ? (
+          finalizeStep
+        ) : step === 'inspect' ? (
+          <>
+            <div className="relative mx-auto aspect-square w-full max-w-[560px] bg-gray-950">
+              {!piece ? (
+                <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400">The agent hasn’t built anything yet. Describe what you want on the left.</p>
+              ) : inspect?.status === 'ready' && inspect.urls.length > 0 ? (
+                <InspectStage key={`${piece.category}/${inspectShape}`} urls={inspect.urls} label={`${piece.name} on its own, ${inspectShape}`} />
+              ) : inspect?.status === 'failed' ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center text-sm text-gray-400">
+                  <p>This view didn’t render.</p>
+                  <button type="button" onClick={() => setInspectAsked(null)} className="text-blue-300 underline">Try again</button>
+                </div>
+              ) : (
+                <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-400" aria-live="polite">Rendering this piece from every angle…</p>
+              )}
+            </div>
+            <div className="space-y-2 border-t border-gray-800 p-3">
+              <p className="text-xs text-gray-500">Drag sideways to turn it, up or down to look from above or underneath.</p>
+              <div className="flex flex-wrap gap-1" role="group" aria-label="Body shape">
+                {SHAPES.map(([s, label]) => (
+                  <button key={s} type="button" aria-pressed={inspectShape === s} onClick={() => setInspectShape(s)}
+                    className={`rounded px-2.5 py-1 text-sm ${inspectShape === s ? 'bg-white/[0.08] text-white' : 'text-gray-400 hover:text-white'}`}>{label}</button>
+                ))}
+              </div>
+              {error && <p className="text-sm text-amber-300" role="alert">{error}</p>}
+            </div>
+          </>
+        ) : (<>
         <div className="relative mx-auto aspect-square w-full max-w-[560px] bg-gray-950">
           {stage.kind === 'frames' ? (
             <SpinStage view={`${piece!.category}/${key}`} urls={stage.urls} loop={kind === 'emote' || !!view.emote}
@@ -110,11 +177,6 @@ export default function Preview({ designId, detail, category, onSelect, onChange
               {stage.kind === 'frames' && ` · rendered ${relativeTime(stage.renderedAt, new Date())}`}
             </p>
           )}
-          {kind === 'wearable' && (
-            <div className="flex flex-wrap gap-1" role="group" aria-label="Emote">
-              {EMOTES.map(([emote, label]) => button(label, 'emote', emote))}
-            </div>
-          )}
           <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Avatar">
             {SHAPES.map(([bodyShape, label]) => button(label, 'bodyShape', bodyShape))}
             <span className="mx-1 h-4 w-px bg-gray-800" aria-hidden="true" />
@@ -122,6 +184,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
           </div>
           {error && <p className="text-sm text-amber-300" role="alert">{error}</p>}
         </div>
+        </>)}
       </div>
       {children}
     </section>

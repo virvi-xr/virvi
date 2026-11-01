@@ -8,11 +8,12 @@ import { useStudioRoom } from '@/lib/colyseus'
 import { Badge, PageHeader, RowMenu, Skeleton } from '@/components/ui'
 import {
   designBadge, designIdFromPath, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn,
-  type Quote, type Refusal, type StudioDetail, type StudioEvent, type StudioUsage,
+  type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioUsage,
 } from '@/lib/studio'
 import Conversation from './Conversation'
 import Preview from './Preview'
-import Finalize from './Finalize'
+import Finalize, { EmoteChecklist } from './Finalize'
+import type { EmoteTarget } from './EmotesStep'
 import PaidRevisions from './PaidRevisions'
 
 /** The events kept for progress lines: enough for any one job's latest note. */
@@ -34,6 +35,9 @@ export default function StudioDesignPage() {
   const [events, setEvents] = useState<StudioEvent[]>([])
   const [notice, setNotice] = useState<Refusal | null>(null)
   const [category, setCategory] = useState<string | null>(null)
+  const [step, setStep] = useState<Step>('avatar')
+  const [emoteTarget, setEmoteTarget] = useState<EmoteTarget | null>(null)
+  const openEmote = useCallback((t: EmoteTarget) => { setEmoteTarget(t); setStep('emotes') }, [])
   const [quote, setQuote] = useState<Quote | null>(null)
   const [payment, setPayment] = useState<{ id: string; startedAt: number } | null>(null)
   const fetchedAt = useRef(0)
@@ -158,8 +162,11 @@ export default function StudioDesignPage() {
       )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Conversation designId={designId} detail={detail} usage={usage} events={events} onChanged={reload} />
-        <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}>
-          <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'} onChanged={reload} />
+        <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}
+          step={step} onStep={setStep} emoteTarget={emoteTarget}
+          finalizeStep={<div className="p-4"><EmoteChecklist designId={designId} detail={detail} onOpen={openEmote} /></div>}>
+          <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'} onChanged={reload}
+            detail={detail} onOpenEmote={openEmote} />
           <PaidRevisions designId={designId} piece={detail.pieces.find((p) => p.category === category) ?? detail.pieces[0]} onChanged={reload} />
         </Preview>
       </div>

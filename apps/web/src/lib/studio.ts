@@ -402,7 +402,9 @@ export function emoteState(detail: StudioDetail, emote: string, bodyShape: strin
 export function emoteChecklist(detail: StudioDetail): { rows: { emote: string; bodyShape: 'male' | 'female'; state: EmoteState }[]; checkedCount: number } {
   const rows = checkedEmotes(detail.design.kind).flatMap((emote) => (['male', 'female'] as const)
     .map((bodyShape) => ({ emote, bodyShape, state: emoteState(detail, emote, bodyShape) })))
-  return { rows, checkedCount: rows.filter((r) => r.state === 'fine' || r.state === 'clipping').length }
+  // A reported emote counts as checked while it is fixed too: the person looked at it
+  const checked = rows.filter((r) => detail.set.checks.some((c) => c.emote === r.emote && c.bodyShape === r.bodyShape))
+  return { rows, checkedCount: checked.length }
 }
 
 /** The frame a drag lands on: one stage width is one full turn, and the item turns the way the cursor moves. */
