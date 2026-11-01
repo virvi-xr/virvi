@@ -28,6 +28,13 @@ final class BuildSpace: ObservableObject {
     let gizmo = Gizmo()
 
     @Published var phase: BuildPhase = .edit { didSet { updateTargets(); refreshGizmo() } }
+    /// The scene shows whenever it is open; this is whether items can be picked and edited (Edit layout until Done).
+    @Published var editing = false {
+        didSet {
+            if !editing { dropStaleDrag() }
+            updateTargets(); refreshGizmo()
+        }
+    }
     @Published private(set) var pinStatus: String
     /// True while world tracking runs, so the head pose is known.
     @Published private(set) var tracking = false
@@ -158,7 +165,7 @@ final class BuildSpace: ObservableObject {
     private func refreshGizmo(mode: EditMode? = nil, lock: AxisLock? = nil, selection: Selection?? = nil) {
         let s = selection ?? edit.selected
         let kind = s.flatMap { renderer.item(for: $0.key)?.kind }
-        gizmo.show(mode: mode ?? edit.mode, lock: lock ?? edit.lock, transform: phase == .edit ? s?.current : nil,
+        gizmo.show(mode: mode ?? edit.mode, lock: lock ?? edit.lock, transform: phase == .edit && editing ? s?.current : nil,
                    flat: kind == .image || kind == .video, handleSize: handleSize,
                    bounds: s.flatMap { meshBounds(key: $0.key) }, frozen: itemDrag != nil)
     }
@@ -204,7 +211,7 @@ final class BuildSpace: ObservableObject {
         }
         let grab = fromRealityKitPosition(SIMD3<Double>(start)), here = fromRealityKitPosition(SIMD3<Double>(now))
         if itemDrag == nil {
-            guard let started = beginItemDrag(on: entity, grab: grab) else { dragIgnored = true; return }
+            guard editing, let started = beginItemDrag(on: entity, grab: grab) else { dragIgnored = true; return }
             itemDrag = started
         }
         // The selection can end mid-drag (Done, a removal, revoke): stop following the hand.
@@ -253,6 +260,7 @@ final class BuildSpace: ObservableObject {
 
     /// Selects an item placed from Assets: now if the feed already shows it, otherwise as soon as it does.
     func selectWhenShown(_ key: String) {
+        editing = true
         if renderer.item(for: key) != nil {
             pendingSelect = nil
             phase = .edit
@@ -271,7 +279,7 @@ final class BuildSpace: ObservableObject {
 
     /// A look-and-pinch on an item selects it.
     func tapped(_ entity: Entity) {
-        guard phase == .edit, gizmo.handle(of: entity) == nil, let key = renderer.key(of: entity) else { return }
+        guard phase == .edit, editing, gizmo.handle(of: entity) == nil, let key = renderer.key(of: entity) else { return }
         select(key: key)
     }
 
@@ -414,9 +422,9 @@ final class BuildSpace: ObservableObject {
 
     // MARK: - Targets, highlight and guides
 
-    /// Place: only the floor disc and outline take pinches. Edit: items do, except the selected one in Rotate and
-    /// Resize, so a pinch near it reaches the rings and handles (in Move it stays grabbable for body drags, and the
-    /// arrows sit outside its mesh). `mode` and `selection` come from publishers that fire before the change.
+    /// Place: only the floor disc and outline take pinches. Otherwise items do while editing (`itemPickable`); in
+    /// Move the selected one stays grabbable for body drags, and the arrows sit outside its mesh. `mode` and
+    /// `selection` come from publishers that fire before the change.
     private func updateTargets(mode: EditMode? = nil, selection: Selection?? = nil) {
         for e in guides.children { e.components[InputTargetComponent.self]?.isEnabled = phase == .place }
         let selected = (selection ?? edit.selected)?.key, m = mode ?? edit.mode
@@ -426,7 +434,7 @@ final class BuildSpace: ObservableObject {
     }
 
     private func itemTargetable(_ key: String, selected: String?, mode: EditMode) -> Bool {
-        phase == .edit && !(key == selected && mode != .move)
+        itemPickable(placing: phase == .place, editing: editing, isSelected: key == selected, mode: mode)
     }
 
     private func makeEditable(key: String, entity: Entity) {

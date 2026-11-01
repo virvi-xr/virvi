@@ -33,10 +33,15 @@ struct RootView: View {
             app.closeScene() // revoked, signed out or re-pairing: nothing of the old scene is kept
         }
         .onChange(of: app.builder.map(ObjectIdentifier.init)) { _, _ in
-            // Change scene, revoke or closing the scene: the build space belonged to the old scene.
-            if app.buildSpaceOpen { Task { await dismissImmersiveSpace() } }
+            // The scene shows in the room whenever one is open, for viewers and builders alike; closing it, a revoke
+            // or signing out takes it away. The space follows `app.builder`, so a new scene swaps in without a reopen.
+            guard let builder = app.builder else {
+                if app.buildSpaceOpen { Task { await dismissImmersiveSpace() } }
+                return
+            }
+            if !app.buildSpaceOpen { Task { await openImmersiveSpace(id: "build") } }
             #if DEBUG
-            if app.builder != nil, DebugLaunch.build { Task { await openImmersiveSpace(id: "build") } }
+            if DebugLaunch.build { builder.space.editing = true }
             #endif
         }
         .task {

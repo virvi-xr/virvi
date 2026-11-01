@@ -3,6 +3,7 @@ import SwiftUI
 /// "Scene Layout": the active preset's elements from the feed, Hide/Show and Delete, and Edit layout for editors.
 /// Select (not in the Decentraland HUD) picks an element in the room, for things too small, far or buried to pinch.
 struct LayoutTab: View {
+    @ObservedObject var app: AppModel
     let builder: SceneBuilder
     @ObservedObject var edit: EditSession
     @ObservedObject var feed: SceneFeed
@@ -20,7 +21,7 @@ struct LayoutTab: View {
             VStack(alignment: .leading, spacing: 3) {
                 EditLineView(line: line)
                 if editable {
-                    HudButton(label: "Edit layout", color: Hud.accent, height: 40) { openBuildSpace() }
+                    HudButton(label: "Edit layout", color: Hud.accent, height: 40) { startEditing() }
                     .padding(.bottom, 6)
                 }
                 if rows.isEmpty {
@@ -58,7 +59,7 @@ struct LayoutTab: View {
             } else {
                 if el.enabled, el.typeTag != "SOU" { // a sound has nothing to look at
                     HudButton(label: "Select", color: Hud.accent, width: 84, height: 34, fontSize: 14) {
-                        if builder.space.selectElement(el.elementId) { openBuildSpace() }
+                        if builder.space.selectElement(el.elementId) { startEditing() }
                     }
                 }
                 HudButton(label: el.enabled ? "Hide" : "Show", color: el.enabled ? Hud.bgHover : Hud.accent, width: 84, height: 34, fontSize: 14) {
@@ -69,9 +70,11 @@ struct LayoutTab: View {
         }
     }
 
-    private func openBuildSpace() {
+    /// Editing over the scene already in the room (or bringing it back if it was closed).
+    private func startEditing() {
+        builder.space.editing = true
         onClose()
-        Task { await openImmersiveSpace(id: "build") }
+        if !app.buildSpaceOpen { Task { await openImmersiveSpace(id: "build") } }
     }
 
     /// Changes show up through the feed; a failure shows on the panel.

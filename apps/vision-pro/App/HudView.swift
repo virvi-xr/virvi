@@ -8,7 +8,7 @@ struct HudView: View {
     @ObservedObject var feed: SceneFeed
     @ObservedObject var alerts: HudAlerts
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
+    @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @State private var active: HudTab? = DebugLaunch.tab ?? .layout
 
     private var tabs: [HudTab] { visibleTabs(role: builder.role) }
@@ -37,8 +37,9 @@ struct HudView: View {
         .background(Hud.bg)
         .overlay(alignment: .bottom) { ToastView(alerts: alerts) }
         .ornament(visibility: app.buildSpaceOpen ? .visible : .hidden, attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
-            // Done leaves the build space, as Decentraland's Done leaves edit mode.
-            EditBarView(space: builder.space, edit: builder.edit) { Task { await dismissImmersiveSpace() } }
+            // The Place controls whenever the scene is in the room; the edit bar too while editing. Done stops
+            // editing, as Decentraland's Done leaves edit mode, and the scene stays.
+            EditBarView(space: builder.space, edit: builder.edit)
                 .padding(.top, 12)
         }
         .onAppear { if DebugLaunch.tab == .stats { openStats() } }
@@ -52,6 +53,10 @@ struct HudView: View {
                 Text(friendlyEditMessage(ApiError.offline)).font(.system(size: 13)).foregroundStyle(Hud.warning).lineLimit(1)
             }
             Spacer()
+            if !app.buildSpaceOpen { // closed with the Digital Crown
+                Button("Show in room") { Task { await openImmersiveSpace(id: "build") } }
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Hud.virvi).buttonStyle(.plain).hoverEffect()
+            }
             Button("Change scene") { app.closeScene() }
                 .font(.system(size: 14)).foregroundStyle(Hud.textDim).buttonStyle(.plain).hoverEffect()
         }
@@ -70,7 +75,7 @@ struct HudView: View {
     @ViewBuilder private var panel: some View {
         let close = { active = nil }
         switch active {
-        case .layout: LayoutTab(builder: builder, edit: builder.edit, feed: feed, onClose: close)
+        case .layout: LayoutTab(app: app, builder: builder, edit: builder.edit, feed: feed, onClose: close)
         case .assets: AssetsTab(app: app, builder: builder, onClose: close)
         case .events: EventsTab(builder: builder, feed: feed, onClose: close)
         case .stream: StreamTab(builder: builder, feed: feed, onClose: close)

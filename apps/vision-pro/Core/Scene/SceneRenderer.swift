@@ -215,6 +215,7 @@ final class SceneRenderer {
                 let asset = try GLTFAsset(url: file)
                 guard let scene = asset.defaultScene ?? asset.scenes.first else { throw RenderError.noScene }
                 let model = GLTFRealityKitLoader.convert(scene: scene, asset: asset)
+                removeColliders(in: model, meshColliderNodes: meshColliderNodes(scene))
                 guard alive() else { return }
                 turn.addChild(model)
                 self.onVisualsReady?(item.key, group)

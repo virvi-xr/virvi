@@ -3,11 +3,11 @@ import SwiftUI
 /// The Decentraland edit bar (packages/adapter-dcl/src/hud/EditModeBar.tsx) as an ornament under the HUD window:
 /// Move | Rotate | Resize, the selected name (or how to pick one), Move's axis lock, Snap, Exact,
 /// Save, Revert and Done, bound to `EditSession`; above it the held line, the error message, the "Save or revert" prompt
-/// and the Exact panel. Under it, the Place controls (Done placing / Move scene, Pin, Re-place).
+/// and the Exact panel. All of that shows only while editing (Done stops). Under it, always while the scene is in the
+/// room, the Place controls (Done placing / Move scene, Pin, Re-place).
 struct EditBarView: View {
     @ObservedObject var space: BuildSpace
     @ObservedObject var edit: EditSession
-    let onDone: () -> Void
     @State private var typed: [Int: String] = [:]
     @State private var typedFor = ""
 
@@ -34,18 +34,7 @@ struct EditBarView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            // The held line stays up on its own, with the prompt or any other message beside it.
-            if let held = edit.heldLine {
-                Text(held).font(.system(size: 14)).foregroundStyle(Hud.warning)
-                    .padding(.horizontal, 16).padding(.vertical, 6).background(Hud.bg, in: RoundedRectangle(cornerRadius: 6))
-            }
-            if let message = edit.message, !prompt {
-                Text(message).font(.system(size: 14)).foregroundStyle(Hud.warning)
-                    .padding(.horizontal, 16).padding(.vertical, 6).background(Hud.bg, in: RoundedRectangle(cornerRadius: 6))
-            }
-            if prompt { promptPanel }
-            if space.exactOpen, edit.selected != nil { exactPanel }
-            bar
+            if space.editing { editing }
             placeRow
         }
         .frame(width: 940)
@@ -53,6 +42,21 @@ struct EditBarView: View {
             // Typed text is dropped when the selection or mode changes.
             if key != typedFor { typedFor = key; typed = [:] }
         }
+    }
+
+    @ViewBuilder private var editing: some View {
+        // The held line stays up on its own, with the prompt or any other message beside it.
+        if let held = edit.heldLine {
+            Text(held).font(.system(size: 14)).foregroundStyle(Hud.warning)
+                .padding(.horizontal, 16).padding(.vertical, 6).background(Hud.bg, in: RoundedRectangle(cornerRadius: 6))
+        }
+        if let message = edit.message, !prompt {
+            Text(message).font(.system(size: 14)).foregroundStyle(Hud.warning)
+                .padding(.horizontal, 16).padding(.vertical, 6).background(Hud.bg, in: RoundedRectangle(cornerRadius: 6))
+        }
+        if prompt { promptPanel }
+        if space.exactOpen, edit.selected != nil { exactPanel }
+        bar
     }
 
     private var bar: some View {
@@ -77,7 +81,7 @@ struct EditBarView: View {
             }
             BarButton(label: "Save", width: 70, color: Hud.accent, off: !edit.saveEnabled) { Task { await edit.save() } }
             BarButton(label: "Revert", width: 74, color: Hud.danger, off: !edit.revertEnabled) { edit.revert() }
-            BarButton(label: "Done", width: 70, color: Hud.bgHover) { if edit.done() { onDone() } }
+            BarButton(label: "Done", width: 70, color: Hud.bgHover) { if edit.done() { space.editing = false } }
         }
         .padding(.horizontal, 8).padding(.vertical, 6)
         .background(Hud.bg, in: RoundedRectangle(cornerRadius: 8))

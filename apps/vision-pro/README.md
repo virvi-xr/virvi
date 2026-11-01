@@ -66,7 +66,7 @@ Debug builds also read these launch arguments, which land on a screen without UI
 | `-screen picker` | Stays on the scene picker |
 | `-tab <Layout\|Assets\|Events\|Stream\|Worlds\|Alerts\|Roles\|Stats>` | Opens the first scene on that HUD tab (`-tab Stats` opens the analytics window; `-tab Events` shows the Switch layout list) |
 | `-scene <id>` | Opens that scene instead of the first |
-| `-build YES` | Opens the `build` immersive space once the scene is open |
+| `-build YES` | Starts editing once the scene is open (the scene itself always shows) |
 | `-select <elementId:instanceId>` | Selects that item in the build space (for example `duck:d`) |
 | `-editMode <Move\|Rotate\|Resize>` | Starts the edit bar in that mode |
 | `-exact YES` | Opens the Exact panel |
@@ -89,10 +89,12 @@ The simulator has no world tracking. There the scene always goes down at a fixed
 
 ## The build space
 
-- **Putting the scene down:** the AR spike's Place scene. The scene appears life-size with its centre 2 m ahead and north pointing away, with the floor disc and the parcel outline. While placing (a scene's first visit starts there), pinch-drag on them slides the scene and a two-hand twist turns it, and items don't take pinches. **Done placing** (or **Pin to this room**) switches to editing items; **Move scene** goes back. **Pin to this room** saves a `WorldAnchor`, with its id in `UserDefaults` per scene, and the next launch comes back to it. **Re-place** clears the pin. Edit never moves the whole scene.
+- **The scene in the room:** whenever a scene is open, for viewers and builders alike, it shows life-size in the room (the `build` immersive space); changing scene, a revoke or signing out takes it away. If it is closed with the Digital Crown, **Show in room** on the HUD brings it back.
+- **Putting the scene down:** the AR spike's Place scene. The scene appears life-size with its centre 2 m ahead and north pointing away, with the floor disc and the parcel outline. While placing (a scene's first visit starts there), pinch-drag on them slides the scene and a two-hand twist turns it, and items don't take pinches. **Done placing** (or **Pin to this room**) finishes placing; **Move scene** goes back. **Pin to this room** saves a `WorldAnchor`, with its id in `UserDefaults` per scene, and the next launch comes back to it. **Re-place** clears the pin. Edit never moves the whole scene.
 - **Picking:** looking at an item lights it up in cyan; pinch to select it. The selected item gets a cyan outline on its box's edges, a faint fill and its name above it. Items over 1.5 m on a side catch looks only on their own surfaces, so a building or floor doesn't block what's inside or behind it; smaller items get a box at least 15 cm on each side. The Layout tab's **Select** picks an element's first copy (not a sound) and opens the build space on it.
 - **Gizmo:** Move arrows, rotation rings and resize handles in the Decentraland gizmo's colours. Each handle's hit shape is at least 6 cm across and grows with distance (5 cm per metre), so it stays easy to hit 2–5 m away. Pinch-dragging a handle moves, turns or resizes the item under the edit bar's mode and lock. Pinch-dragging the item itself moves it freely in Move.
-- **Edit bar:** an ornament under the HUD window, as Decentraland's: Move | Rotate | Resize, the selected name (or how to pick one, which says when you are still placing), the lock (Free/X/Y/Z, which you pinch to change), **Snap**, **Exact**, **Save**, **Revert** and **Done**. Done leaves the build space. Under it are Done placing / Move scene, Pin to this room and Re-place.
+- **Edit bar:** an ornament under the HUD window, as Decentraland's: Move | Rotate | Resize, the selected name (or how to pick one, which says when you are still placing), the lock (Free/X/Y/Z, which you pinch to change), **Snap**, **Exact**, **Save**, **Revert** and **Done**. It shows from **Edit layout** (or Select, or placing an asset) until **Done**, which stops editing and leaves the scene showing; items take pinches only while editing. Under it, whenever the scene is in the room, are Done placing / Move scene, Pin to this room and Re-place.
+- **Decentraland colliders:** model parts whose node or mesh name contains `_collider` are collision only in Decentraland and aren't drawn.
 - **Placing:** Assets → **Place** takes the head pose from world tracking and puts the item 2 m ahead, facing you, then selects it. If the build space isn't open, Place opens it first. With no head pose, it says so and places nothing.
 - Leaving the scene (Change scene, revoking the headset, signing out) closes the build space and drops any unsaved change.
 
