@@ -1,9 +1,11 @@
-import { and, eq, inArray, max, sql } from 'drizzle-orm'
+import { and, eq, inArray, max, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPieces, studioRenders, studioRevisions } from '../db/schema.js'
+import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPieces, studioRenders, studioRevisions, studioSetRenders } from '../db/schema.js'
 import { checkFilePath, jobFileKey } from './store.js'
 import { recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
 import { publishStudio } from './events.js'
+import { ORBIT_FRAMES, orbitKey, queueFullOrbit, type FixClipping, type View } from './designs.js'
+import { requestSetRender } from './sets.js'
 import { DECLINED_NOTE, SCOPE_CATEGORIES, logScopeEvent, maybeFlag, offTopicIsFree, offTopicNote } from './scope.js'
 
 /** A worker's Result, as apps/studio-worker/CONTRACT.md defines it (only the fields Virvi reads are typed). */
@@ -21,6 +23,7 @@ export type ContractResult = {
   pieces: ContractPiece[]
   error?: string | null
   scope?: { by: 'check' | 'agent'; category: string; note: string } | null // on off_topic and declined
+  set?: { viewKey: string; frames: number; fps: number } | null // a set render job's emote view
 }
 
 export type ContractPiece = {
@@ -54,6 +57,14 @@ export function parseResult(body: unknown): { ok: true; result: ContractResult }
     if (!sc || typeof sc !== 'object' || (sc.by !== 'check' && sc.by !== 'agent')
       || typeof sc.category !== 'string' || !SCOPE_CATEGORIES.includes(sc.category) || typeof sc.note !== 'string') {
       return { ok: false, reason: 'scope is malformed' }
+    }
+  }
+  if (r.set != null) {
+    const st = r.set as Record<string, unknown>
+    if (typeof st !== 'object' || typeof st.viewKey !== 'string' || !VIEW_KEY.test(st.viewKey)
+      || !Number.isInteger(st.frames) || (st.frames as number) < 0 || (st.frames as number) > 999
+      || typeof st.fps !== 'number' || !Number.isFinite(st.fps) || st.fps <= 0 || st.fps > 60) {
+      return { ok: false, reason: 'set is malformed' }
     }
   }
   for (const p of r.pieces as unknown[]) {
@@ -163,6 +174,9 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
             .values(views.map(([viewKey, frames]) => ({ revisionId: rev.id, viewKey, jobId: job.id, frames, status: 'ready' })))
             .onConflictDoNothing()
         }
+        // The prompt rendered Inspect's ring; the rest of the sphere follows in the background
+        const ring = p.renders?.[orbitKey('male')] ?? 0
+        if (design && ring > 0 && ring < ORBIT_FRAMES) await queueFullOrbit(tx, design, rev.id, p.category, 'male')
       }
       if (design) await recordCost(design.ownerId, day, result.costUsd ?? 0, tx)
       const refunded = (job.counted || job.countedFrom === 'gift') && !!design && (result.outcome === 'error'
@@ -191,22 +205,43 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         }
       }
     } else {
-      const rows = await tx.select({ id: studioRenders.id, viewKey: studioRenders.viewKey, category: studioPieces.category })
+      const rows = await tx.select({ id: studioRenders.id, viewKey: studioRenders.viewKey, category: studioPieces.category, jobId: studioRenders.jobId })
         .from(studioRenders)
         .innerJoin(studioRevisions, eq(studioRevisions.id, studioRenders.revisionId))
         .innerJoin(studioPieces, eq(studioPieces.id, studioRevisions.pieceId))
-        .where(eq(studioRenders.jobId, job.id))
+        .where(or(eq(studioRenders.jobId, job.id), eq(studioRenders.pendingJobId, job.id)))
       for (const row of rows) {
         const frames = result.pieces.find((p) => p.category === row.category)?.renders?.[row.viewKey] ?? 0
         const ready = result.outcome !== 'error' && frames > 0
+        if (row.jobId !== job.id) {
+          // The full Inspect sphere: its frames replace the ring's, and a failure leaves the ring as it is
+          await tx.update(studioRenders).set(ready ? { jobId: job.id, frames, status: 'ready', pendingJobId: null } : { pendingJobId: null })
+            .where(eq(studioRenders.id, row.id))
+          continue
+        }
         await tx.update(studioRenders).set({ status: ready ? 'ready' : 'failed', frames: ready ? frames : 0 })
           .where(eq(studioRenders.id, row.id))
+      }
+      for (const row of await tx.select().from(studioSetRenders).where(eq(studioSetRenders.jobId, job.id))) {
+        const s = result.set
+        const ready = result.outcome !== 'error' && s?.viewKey === row.viewKey && s.frames > 0
+        await tx.update(studioSetRenders).set(ready ? { status: 'ready', frames: s!.frames, fps: s!.fps } : { status: 'failed', frames: 0 })
+          .where(eq(studioSetRenders.id, row.id))
       }
     }
     await settleDesign(job.designId, tx)
     return job
   })
   if (!job) return 'already'
+  const fix = (job.payload as { fixClipping?: FixClipping }).fixClipping
+  if (job.type === 'prompt' && fix && result.outcome === 'ok') {
+    // A clipping fix renders the emote it fixed again straight away, for the new pieces
+    const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, job.designId))
+    if (d) {
+      await requestSetRender(d, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : fix.emote } as View, now)
+        .catch((err) => console.error('[studio] fix re-render failed:', err instanceof Error ? err.message : err))
+    }
+  }
   if (result.outcome === 'off_topic' || result.outcome === 'declined') {
     const [d] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, job.designId))
     if (d) await maybeFlag(d.ownerId, now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
@@ -246,6 +281,8 @@ export async function failJobs(
         }
       } else {
         await tx.update(studioRenders).set({ status: 'failed' }).where(eq(studioRenders.jobId, job.id))
+        await tx.update(studioRenders).set({ pendingJobId: null }).where(eq(studioRenders.pendingJobId, job.id))
+        await tx.update(studioSetRenders).set({ status: 'failed' }).where(eq(studioSetRenders.jobId, job.id))
       }
       await settleDesign(job.designId, tx)
       return job

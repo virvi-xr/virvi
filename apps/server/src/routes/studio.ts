@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioJobs, studioRenders } from '../db/schema.js'
+import { studioDesigns, studioJobs, studioRenders, studioSetRenders } from '../db/schema.js'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { getSubscription } from '../integrations/stripe.js'
@@ -11,10 +11,11 @@ import { quoteFinalize, QuoteError } from '../studio/pricing.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
+import { currentRevisions, emotesFor, freeFixesLeft, queueFinalizeRenders, recordCheck, requestSetRender } from '../studio/sets.js'
 import { createFinalizeCheckout, createTopupCheckout, entitlementFor, giftsFor, queueFinalize, reportMistake, PaymentError } from '../studio/payments.js'
 import {
-  BASE_EMOTES, BODY_SHAPES, OUTFITS, WEARABLE_CATEGORIES,
-  designDetail, openDesignCount, publicDesign, queuePrompt, requestRender, usage, type Design, type View,
+  BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
+  designDetail, openDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
 } from '../studio/designs.js'
 
 /**
@@ -328,10 +329,15 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/renders', work, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { category?: unknown; bodyShape?: unknown; outfit?: unknown; emote?: unknown }
+    const b = (request.body ?? {}) as { category?: unknown; bodyShape?: unknown; outfit?: unknown; emote?: unknown; mode?: unknown }
+    if (b.mode !== undefined && (b.mode !== 'orbit' || d.kind === 'emote')) return reply.status(400).send({ error: 'unknown mode' })
     const categoryOk = d.kind === 'emote' ? b.category === 'emote' : (WEARABLE_CATEGORIES as readonly string[]).includes(b.category as string)
     if (!categoryOk) return reply.status(400).send({ error: 'unknown category' })
     if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
+    if (b.mode === 'orbit') {
+      const r = await requestOrbit(d, b.category as string, b.bodyShape as View['bodyShape'], new Date())
+      return r ?? reply.status(404).send({ error: 'piece_not_found' })
+    }
     if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return reply.status(400).send({ error: 'unknown outfit' })
     const emote = b.emote ?? null
     if (emote !== null && (d.kind === 'emote' || !(BASE_EMOTES as readonly unknown[]).includes(emote))) {
@@ -341,6 +347,72 @@ export default async function studioRoutes(app: FastifyInstance) {
     const r = await requestRender(d, b.category as string, view, new Date())
     if (!r) return reply.status(404).send({ error: 'piece_not_found' })
     return r
+  })
+
+  // An emote view with every piece worn: a base emote for a wearable design, the design's own (null) for an emote
+  app.post('/api/studio/designs/:id/set-renders', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const b = (request.body ?? {}) as { bodyShape?: unknown; outfit?: unknown; emote?: unknown }
+    if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
+    if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return reply.status(400).send({ error: 'unknown outfit' })
+    const emote = b.emote ?? null
+    if (d.kind === 'emote' ? emote !== null : !(BASE_EMOTES as readonly unknown[]).includes(emote)) {
+      return reply.status(400).send({ error: 'unknown emote' })
+    }
+    const r = await requestSetRender(d, { bodyShape: b.bodyShape, outfit: b.outfit, emote } as View, new Date())
+    if (!r) return reply.status(404).send({ error: 'piece_not_found' })
+    return r.status === 'queued' ? { status: 'queued' } : r
+  })
+
+  /** An emote named in a check or report: a base emote for a wearable design, `own` (or null) for an emote design. */
+  const checkedEmote = (d: Design, emote: unknown): string | null =>
+    d.kind === 'emote' ? (emote == null || emote === OWN_EMOTE ? OWN_EMOTE : null)
+      : emotesFor(d.kind).includes(emote as string) ? emote as string : null
+
+  app.post('/api/studio/designs/:id/emote-checks', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; state?: unknown }
+    const emote = checkedEmote(d, b.emote)
+    if (!emote) return reply.status(400).send({ error: 'unknown emote' })
+    if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
+    // Clipping is reported through /clipping, which also queues the fix
+    if (b.state !== 'fine') return reply.status(400).send({ error: 'state must be fine' })
+    const revisions = await currentRevisions(d.id)
+    if (!revisions) return reply.status(404).send({ error: 'piece_not_found' })
+    await recordCheck(d.id, revisions, emote, b.bodyShape as string, 'fine')
+    return reply.status(204).send()
+  })
+
+  // "I see clipping": a free fix in the server's words, for an emote view the person has seen
+  app.post('/api/studio/designs/:id/clipping', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; outfit?: unknown }
+    const emote = checkedEmote(d, b.emote)
+    if (!emote) return reply.status(400).send({ error: 'unknown emote' })
+    if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
+    if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return reply.status(400).send({ error: 'unknown outfit' })
+    const fix = { emote, bodyShape: b.bodyShape, outfit: b.outfit } as { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit'] }
+    const revisions = await currentRevisions(d.id)
+    const key = setViewKey(d.kind, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : emote } as View)
+    const [seen] = revisions ? await db.select({ id: studioSetRenders.id }).from(studioSetRenders).where(and(
+      eq(studioSetRenders.designId, d.id), eq(studioSetRenders.revisions, revisions), eq(studioSetRenders.viewKey, key),
+      eq(studioSetRenders.status, 'ready'))) : []
+    if (!seen) return reply.status(409).send({ error: 'not_seen', code: 'not_seen' })
+    if (await freeFixesLeft(d.id, emote) <= 0) return reply.status(409).send({ error: 'clipping_fix_limit', code: 'clipping_fix_limit' })
+    const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixClipping: fix }, new Date())
+    if (!r.ok) return reply.status(r.status).send(r.body)
+    await recordCheck(d.id, revisions, emote, fix.bodyShape, 'clipping')
+    return reply.status(202).send({ jobId: r.jobId })
+  })
+
+  // Opening Finalize: every emote on both bodies, so the checklist fills while the person looks
+  app.post('/api/studio/designs/:id/finalize-renders', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    return { queued: await queueFinalizeRenders(d, new Date()) }
   })
 
   // The signed token is the authority: no bearer. Every check failing is the same 403. A wildcard, not :token, because
@@ -353,8 +425,13 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!/^[a-z_]+$/.test(f.category) || !/^[a-z0-9-]+$/.test(f.viewKey)) return forbidden()
     const [job] = await db.select({ designId: studioJobs.designId }).from(studioJobs).where(eq(studioJobs.id, f.jobId))
     if (!job || job.designId !== f.designId) return forbidden()
-    const [render] = await db.select({ frames: studioRenders.frames }).from(studioRenders)
-      .where(and(eq(studioRenders.revisionId, f.revisionId), eq(studioRenders.viewKey, f.viewKey), eq(studioRenders.jobId, f.jobId), eq(studioRenders.status, 'ready')))
+    // An emote view's token names its set render row (the design's, not a piece revision's)
+    const [render] = f.category === 'set'
+      ? await db.select({ frames: studioSetRenders.frames }).from(studioSetRenders)
+        .where(and(eq(studioSetRenders.id, f.revisionId), eq(studioSetRenders.designId, f.designId), eq(studioSetRenders.viewKey, f.viewKey),
+          eq(studioSetRenders.jobId, f.jobId), eq(studioSetRenders.status, 'ready')))
+      : await db.select({ frames: studioRenders.frames }).from(studioRenders)
+        .where(and(eq(studioRenders.revisionId, f.revisionId), eq(studioRenders.viewKey, f.viewKey), eq(studioRenders.jobId, f.jobId), eq(studioRenders.status, 'ready')))
     if (!render || f.frame >= render.frames) return forbidden()
     const obj = await getStudioStore().get(jobFileKey(f.designId, f.jobId, framePath(f)))
     if (!obj) return reply.status(404).send({ error: 'frame_not_found' })
