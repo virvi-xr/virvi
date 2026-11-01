@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
 import { db } from '../src/db/connection.js'
-import { assetLibraryItems, catalogPacks, mediaAssets } from '../src/db/schema.js'
+import { arSpaces, assetLibraryItems, catalogPacks, mediaAssets } from '../src/db/schema.js'
 import { linkToScene } from '../src/library/scene-library.js'
 import { resetDb } from './helpers/db.js'
 import { createElement, createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -79,6 +79,43 @@ describe('the in-world HUD routes take a headset pass', () => {
     const payload = u === '/api/upload-tokens' ? { sceneId: theirs.sceneId } : body ? body() : undefined
     const res = await app.inject({ method: method as any, url: u, headers, payload: payload as any })
     expect(res.statusCode).toBe(403)
+  })
+
+  // The routes this branch opened to a headset need a personal one (as room scans do); the rest keep their behaviour.
+  const PERSONAL = new Set(['PATCH library item', 'DELETE library item', 'POST upload-tokens', 'GET roles', 'POST roles', 'DELETE roles', 'GET publish-status', 'POST element live', 'PUT scene'])
+  const extra: Array<[string, string, (i: Ids) => string, (() => unknown) | undefined, number]> = [
+    ['GET scene events', 'GET', (i) => `/api/scenes/${i.sceneId}/events`, undefined, 200],
+    ['GET scene feed', 'GET', (i) => `/api/ar/scenes/${i.sceneId}/feed`, undefined, 200],
+  ]
+  async function sharedSpacePass() {
+    const [space] = await db.insert(arSpaces).values({ sceneId: mine.sceneId, name: 'Lobby' }).returning()
+    const shared = 'headset-secret-shared'
+    const { code } = (await app.inject({ method: 'POST', url: '/api/ar/pair', payload: { secretHash: sha256(shared), deviceName: 'Lobby Vision Pro' } })).json()
+    expect((await app.inject({ method: 'POST', url: `/api/ar/pair/${code}/approve`, headers: as(owner), payload: { kind: 'shared' } })).statusCode).toBe(200)
+    const id = (await app.inject({ method: 'POST', url: `/api/ar/pair/${code}/claim`, payload: { secret: shared } })).json().deviceId
+    const res = await app.inject({ method: 'POST', url: `/api/ar/devices/${id}/pass`, payload: { secret: shared, spaceId: space.id } })
+    expect(res.statusCode).toBe(200)
+    return { authorization: `Bearer ${res.json().pass}` }
+  }
+  const send = (method: string, u: string, headers: Record<string, string>, body?: () => unknown) =>
+    app.inject({ method: method as any, url: u, headers, payload: (u === '/api/upload-tokens' ? { sceneId: mine.sceneId } : body ? body() : undefined) as any })
+
+  it.each([...routes.filter((r) => PERSONAL.has(r[0])), ...extra])('%s: a shared headset\'s space pass gets 403 personal_only', async (_l, method, url, body) => {
+    const headers = await sharedSpacePass()
+    const res = await send(method, url(mine), headers, body)
+    expect([res.statusCode, res.json().error]).toEqual([403, 'personal_only'])
+  })
+
+  it.each(routes.filter((r) => !PERSONAL.has(r[0])))('%s: a shared headset\'s space pass keeps working as before', async (_l, method, url, body, status) => {
+    const headers = await sharedSpacePass()
+    const res = await send(method, url(mine), headers, body)
+    expect(res.body).not.toContain('personal_only')
+    expect(res.statusCode).toBe(status)
+  })
+
+  it.each(extra)('%s: the owner pass from a personal headset gets the normal status', async (_l, method, url, body, status) => {
+    const res = await send(method, url(mine), await passFor(mine.sceneId), body)
+    expect(res.statusCode).toBe(status)
   })
 
   it('keeps transfer-host and the web hand-off away from a headset pass', async () => {

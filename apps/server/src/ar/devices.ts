@@ -177,9 +177,10 @@ async function candidateSceneIds(userId: string): Promise<string[]> {
 }
 
 /** Every scene the approver can build on, by name, with or without a space: what a headset can open a pass for. */
-export async function listDeviceScenes(deviceId: string, secret: string, now = new Date()): Promise<ArDeviceScene[] | 'bad_secret' | 'device_revoked'> {
+export async function listDeviceScenes(deviceId: string, secret: string, now = new Date()): Promise<ArDeviceScene[] | 'bad_secret' | 'device_revoked' | 'personal_only'> {
   const device = await liveDevice(deviceId, secret, now)
   if (typeof device === 'string') return device
+  if (device.kind !== 'personal') return 'personal_only'
   const approver = await approverOf(device)
   if (!approver) return 'device_revoked'
   const candidates = await candidateSceneIds(approver.user.id)
@@ -300,6 +301,13 @@ export async function revokeDevice(id: string, userId: string): Promise<boolean>
   forget(id)
   if (rows.length) await runDeviceEndedHooks(id)
   return rows.length > 0
+}
+
+/** Is this a personal headset? Room scans and the routes marked `ar: 'personal'` need one; a shared one is refused. */
+export async function devicePersonal(deviceId: string | undefined): Promise<boolean> {
+  if (!deviceId || !isUuid(deviceId)) return false
+  const [row] = await db.select({ kind: arDevices.kind }).from(arDevices).where(eq(arDevices.id, deviceId))
+  return row?.kind === 'personal'
 }
 
 /** Is this headset still paired: claimed, not revoked, inside its lifetime? */

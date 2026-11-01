@@ -427,6 +427,23 @@ describe('scene pass guard', () => {
       expect(all.filter((r) => r.ar && !r.scenePass)).toEqual([])
     })
 
+    it('only the routes this branch opened to a headset need a personal one', async () => {
+      const all = (app as any).registeredRoutes as Array<{ method: string; url: string; arPersonal: boolean }>
+      expect(all.filter((r) => r.arPersonal).map((r) => `${r.method} ${r.url}`).sort()).toEqual([
+        'PATCH /api/scenes/:sceneId/library/:id',
+        'DELETE /api/scenes/:sceneId/library/:id',
+        'POST /api/upload-tokens',
+        'GET /api/scenes/:sceneId/roles',
+        'POST /api/scenes/:sceneId/roles',
+        'DELETE /api/scenes/:sceneId/roles/:wallet',
+        'GET /api/scenes/:sceneId/dcl/publish-status',
+        'POST /api/elements/:elementId/live',
+        'PUT /api/scenes/:sceneId',
+        'GET /api/ar/scenes/:id/feed',
+        'GET /api/scenes/:sceneId/events',
+      ].sort())
+    })
+
     it('every route without the opt-in refuses an AR pass for its own scene (route walk)', async () => {
       const f = await fixture()
       const all = (app as any).registeredRoutes as Array<{ method: string; url: string; scenePass: boolean; ar: boolean }>

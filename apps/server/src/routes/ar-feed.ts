@@ -122,7 +122,7 @@ export default async function arFeedRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string }; Querystring: { since?: string } }>(
     '/api/ar/scenes/:id/feed',
     // Shares the space feed's per-IP limit; keep polls out of per-request logs.
-    { logLevel: 'warn', config: { rateLimit: false, scenePass: { sceneFrom: fromParam('id'), ar: true } } },
+    { logLevel: 'warn', config: { rateLimit: false, scenePass: { sceneFrom: fromParam('id'), ar: 'personal' } } },
     async (request, reply) => {
       const limit = limiter.take(`ip:${request.ip}`, 1, AR_FEED_LIMIT.capacity, AR_FEED_LIMIT.refillPerSec)
       if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })

@@ -313,6 +313,16 @@ describe('AR headset pairing and the AR pass', () => {
     expect([res.statusCode, res.json()]).toEqual([403, { error: 'personal_only' }])
   })
 
+  it("refuses a shared headset the scene list (personal headsets only)", async () => {
+    const owner = await createUser()
+    await createScene(owner, 'S')
+    const deviceId = await pairAs(owner, 'shared')
+    const res = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/scenes`, payload: { secret: SECRET } })
+    expect([res.statusCode, res.json()]).toEqual([403, { error: 'personal_only' }])
+    const bad = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/scenes`, payload: { secret: 'nope' } })
+    expect(bad.statusCode).toBe(401)
+  })
+
   it('refuses a scene pass on a scene the approver cannot build', async () => {
     const owner = await createUser()
     const other = await createUser()

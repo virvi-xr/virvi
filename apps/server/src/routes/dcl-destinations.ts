@@ -501,7 +501,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { sceneId: string } }>(
     '/api/scenes/:sceneId/dcl/publish-status',
-    { config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: true } } },
+    { config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: 'personal' } } },
     async (request, reply) => handle(reply, async () => {
       const { sceneId } = request.params
       if (!isUuid(sceneId) || !hasScope(await getSceneAccess(actorFromClaims(request.user), sceneId), 'scene.edit')) {

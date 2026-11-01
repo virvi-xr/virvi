@@ -12,7 +12,7 @@ import { fromParam } from '../auth/scene-from.js'
 export default async function sceneEventRoutes(app: FastifyInstance) {
   app.get<{ Params: { sceneId: string } }>(
     '/api/scenes/:sceneId/events',
-    { preHandler: [authenticate], config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: true as const } } },
+    { preHandler: [authenticate], config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: 'personal' as const } } },
     async (request, reply) => {
       const sceneId = await fromParam('sceneId')(request)
       if (!sceneId) return reply.status(404).send({ error: 'not_found' })

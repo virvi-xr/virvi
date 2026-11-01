@@ -5,7 +5,7 @@ import { db } from '../db/connection.js'
 import { apiKeys, users } from '../db/schema.js'
 import '../auth/scene-from.js' // FastifyContextConfig.scenePass
 import { pairingLive } from '../hyperfy/pairing.js'
-import { deviceLive } from '../ar/devices.js'
+import { deviceLive, devicePersonal } from '../ar/devices.js'
 
 export interface AuthUser {
   id: string
@@ -125,6 +125,10 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     }
     if (decoded.via === 'ar' && !request.routeOptions.config?.scenePass?.ar) {
       return reply.status(403).send({ error: 'ar_pass_not_allowed' })
+    }
+    // `ar: 'personal'` routes (the builder's own) take a personal headset's pass only, as room scans do.
+    if (decoded.via === 'ar' && request.routeOptions.config?.scenePass?.ar === 'personal' && !(await devicePersonal(decoded.deviceId))) {
+      return reply.status(403).send({ error: 'personal_only' })
     }
     if (decoded.kind === 'scene') {
       // Default deny: a scene pass works only on routes that declare how to find their scene,
