@@ -1,0 +1,62 @@
+name: VirviBuilder
+options:
+  bundleIdPrefix: io.virvi.builder
+  deploymentTarget:
+    visionOS: "2.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  GLTFKit2:
+    url: https://github.com/warrenm/GLTFKit2
+    exactVersion: 0.5.15
+
+targets:
+  VirviBuilder:
+    type: application
+    platform: visionOS
+    sources: [Core, App]
+    dependencies:
+      - package: GLTFKit2
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Virvi Builder
+        NSWorldSensingUsageDescription: Virvi Builder uses world tracking to pin your scene to a spot in this room.
+        UIApplicationSceneManifest:
+          UIApplicationPreferredDefaultSceneSessionRole: UIWindowSceneSessionRoleApplication
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations: {}
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsForMedia: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.virvi.builder.visionos
+        TARGETED_DEVICE_FAMILY: "7"
+
+  VirviBuilderTests:
+    type: bundle.unit-test
+    platform: visionOS
+    sources: [Tests, Core]
+    dependencies:
+      - target: VirviBuilder
+      - package: GLTFKit2
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.virvi.builder.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  VirviBuilder:
+    build:
+      targets:
+        VirviBuilder: all
+    test:
+      targets: [VirviBuilderTests]
