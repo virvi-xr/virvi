@@ -16,7 +16,19 @@ struct EmptyResponse: Decodable {
 struct DeviceScene: Decodable, Equatable, Identifiable {
     let sceneId: String
     let sceneName: String
+    /// The approver's role on the scene: "host", "cohost", "editor" or "viewer".
+    let role: String
     var id: String { sceneId }
+    var sceneRole: SceneRole { SceneRole(rawValue: role) ?? .viewer }
+
+    private enum CodingKeys: String, CodingKey { case sceneId, sceneName, role }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sceneId = try c.decode(String.self, forKey: .sceneId)
+        sceneName = try c.decode(String.self, forKey: .sceneName)
+        role = try c.decodeIfPresent(String.self, forKey: .role) ?? "viewer"
+    }
 }
 
 final class VirviApi: Sendable {
