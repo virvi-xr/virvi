@@ -61,11 +61,11 @@ export interface TierLimits {
 
 export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
   free: {
-    scenes: 3,
+    scenes: Infinity, // no plan limits scenes: the wizard and imports are open to everyone
     storageBytes: 500 * 1024 * 1024, // 500 MB
     deploymentsPerMonth: 0,
     customAssetUploads: 0,
-    hyperfyInstances: 0,
+    hyperfyInstances: 1, // one hosted world, so the wizard's Hyperfy option works for everyone
     streamMinutes: 0,
     apiKeys: 0,
     analyticsRetentionDays: 7,
@@ -78,7 +78,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     studioOpenDesigns: 1,
   },
   creator: {
-    scenes: 20,
+    scenes: Infinity,
     storageBytes: 10 * 1024 * 1024 * 1024, // 10 GB
     deploymentsPerMonth: 10,
     customAssetUploads: 50,
@@ -95,7 +95,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     studioOpenDesigns: Infinity,
   },
   pro: {
-    scenes: 100,
+    scenes: Infinity,
     storageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
     deploymentsPerMonth: 50,
     customAssetUploads: 500,

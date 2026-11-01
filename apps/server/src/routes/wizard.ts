@@ -16,7 +16,6 @@ import { authenticate } from '../middleware/auth.js'
 import { browsableAsset } from '../catalog/visibility.js'
 import { config } from '../config.js'
 import { getSubscription } from '../integrations/stripe.js'
-import { getTierRank } from '../middleware/feature-gate.js'
 import { virviSigner } from '../services/dcl/entity.js'
 import { sceneLimitError } from './scenes.js'
 import { plotForLayout } from '../room-scan/plot.js'
@@ -109,17 +108,13 @@ export default async function wizardRoutes(app: FastifyInstance) {
 
   app.get('/api/wizard/options', async (request, reply) => {
     const signer = virviSigner()
-    const hyperfyAllowed =
-      config.allFeaturesUnlocked ||
-      request.user.role === 'admin' ||
-      getTierRank((await getSubscription(request.user.id)).tier) >= getTierRank('creator')
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(scenes)
       .where(eq(scenes.ownerId, request.user.id))
     return reply.send({
       dcl: { virviDeploys: !!signer, virviAddress: signer?.address ?? null },
-      hyperfy: { allowed: hyperfyAllowed, requiredTier: 'creator' },
+      hyperfy: { allowed: true, requiredTier: 'free' }, // the wizard is open to everyone
       scenes: {
         used: count,
         limit: config.allFeaturesUnlocked ? null : (await getSubscription(request.user.id)).limits.scenes,

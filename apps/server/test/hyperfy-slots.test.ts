@@ -39,8 +39,8 @@ describe('hosted Hyperfy world slots', () => {
     expect(await hostedWorldSlots(owner.id)).toEqual({ used: 0, limit: Infinity })
   })
 
-  it('TIER_LIMITS hyperfyInstances are 0, 1, 3, 10 and Infinity', () => {
-    expect(TIER_LIMITS.free.hyperfyInstances).toBe(0)
+  it('TIER_LIMITS hyperfyInstances are 1, 1, 3, 10 and Infinity', () => {
+    expect(TIER_LIMITS.free.hyperfyInstances).toBe(1) // everyone can host one world from the wizard
     expect(TIER_LIMITS.creator.hyperfyInstances).toBe(1)
     expect(TIER_LIMITS.pro.hyperfyInstances).toBe(3)
     expect(TIER_LIMITS.studio.hyperfyInstances).toBe(10)
@@ -59,7 +59,7 @@ describe('hosted Hyperfy world slots', () => {
     expect(await hostedWorldSlots(owner.id)).toEqual({ used: 2, limit: 3 })
 
     const other = await createUser()
-    expect(await hostedWorldSlots(other.id)).toEqual({ used: 0, limit: 0 })
+    expect(await hostedWorldSlots(other.id)).toEqual({ used: 0, limit: 1 })
   })
 
   it('a slug can be reused once the world holding it is purged, but not while it exists', async () => {
