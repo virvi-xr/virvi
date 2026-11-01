@@ -1,6 +1,6 @@
 {
   "name": "@virvixr/dcl",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Virvi for Decentraland SDK7: analytics, in-world HUD and live scene management. Use from code or as a Creator Hub script.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
