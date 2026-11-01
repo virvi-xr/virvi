@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, type Tone } from '@/components/ui'
 import {
-  ORBIT_FRAMES, categoryLabel, orbitKey, pieceTabStatus, refusalMessage, relativeTime, stageState, stepsFor, viewButtonRendering, viewKey,
+  ORBIT_FRAMES, categoryLabel, inspectNote, orbitKey, pieceTabStatus, refusalMessage, relativeTime, stageState, stepsFor, viewButtonRendering, viewKey,
   type RenderView, type Step, type StudioDetail, type StudioPiece,
 } from '@/lib/studio'
 import SpinStage from './SpinStage'
@@ -58,7 +58,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
   useEffect(() => {
     if (step !== 'inspect' || !piece?.revision || kind === 'emote') return
     const asked = `${piece.category}/${piece.revision.number}/${inspectShape}`
-    if (inspectAsked === asked || inspect?.status === 'queued' || (inspect?.status === 'ready' && inspect.frames >= ORBIT_FRAMES)) return
+    if (inspectAsked === asked || inspect?.status === 'queued' || (inspect?.status === 'ready' && (inspect.frames >= ORBIT_FRAMES || inspect.pending))) return
     setInspectAsked(asked)
     api.requestStudioRender(designId, { category: piece.category, bodyShape: inspectShape, mode: 'orbit' }).then(onChanged)
       .catch((err) => setError(refusalMessage(err as never, new Date()).text))
@@ -134,7 +134,8 @@ export default function Preview({ designId, detail, category, onSelect, onChange
               {!piece ? (
                 <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400">The agent hasn’t built anything yet. Describe what you want on the left.</p>
               ) : inspect?.status === 'ready' && inspect.urls.length > 0 ? (
-                <InspectStage key={`${piece.category}/${inspectShape}`} urls={inspect.urls} label={`${piece.name} on its own, ${inspectShape}`} />
+                <InspectStage key={`${piece.category}/${inspectShape}`} urls={inspect.urls} label={`${piece.name} on its own, ${inspectShape}`}
+                  note={inspectNote(inspect)} onRetry={() => setInspectAsked(null)} />
               ) : inspect?.status === 'failed' ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center text-sm text-gray-400">
                   <p>This view didn’t render.</p>

@@ -75,6 +75,7 @@ describe('studio preview steps', () => {
       expect((full.payload as any).render).toEqual({ categories: ['hat'], bodyShape: 'male', mode: 'orbit', ring: false })
       const [row] = await db.select().from(studioRenders).where(eq(studioRenders.viewKey, 'orbit-male'))
       expect(row).toMatchObject({ status: 'ready', frames: 24, pendingJobId: full.id })
+      expect((await detail(u, design.id)).pieces[0].renders['orbit-male']).toMatchObject({ pending: true })
       expect((await detail(u, design.id)).pieces[0].renders['orbit-male'].urls).toHaveLength(24)
     })
 
@@ -96,6 +97,7 @@ describe('studio preview steps', () => {
       await finish(full.id, renderResult(full.id, [{ category: 'hat', renders: { 'orbit-male': 0 } }], { outcome: 'error', error: 'blank' }))
       const [row] = await db.select().from(studioRenders).where(eq(studioRenders.viewKey, 'orbit-male'))
       expect(row).toMatchObject({ status: 'ready', frames: 24, jobId, pendingJobId: null })
+      expect((await detail(u, design.id)).pieces[0].renders['orbit-male']).toMatchObject({ pending: false, frames: 24 })
     })
 
     it('asking for the female sphere queues the ring first and the rest behind it', async () => {
@@ -156,8 +158,10 @@ describe('studio preview steps', () => {
       const [job] = await db.select().from(studioJobs).where(eq(studioJobs.id, jobId))
       expect((job.payload as any).render).toEqual({ set: true, bodyShape: 'male', outfit: 'default', emote: 'run' })
       expect(job.background).toBe(false)
-      const view = (await detail(u, d.id)).set.views['walk-male-default-run']
-      expect(view).toMatchObject({ status: 'ready', frames: 96, fps: 24 })
+      // the detail says what is rendered; the frames' urls come from asking for the view
+      expect((await detail(u, d.id)).set.views['walk-male-default-run']).toEqual(expect.objectContaining({ status: 'ready', frames: 96, fps: 24 }))
+      expect((await detail(u, d.id)).set.views['walk-male-default-run'].urls).toBeUndefined()
+      const view = (await setRender(u, d.id, { bodyShape: 'male', outfit: 'default', emote: 'run' })).json()
       expect(view.urls).toHaveLength(96)
       const frame = await app.inject({ method: 'GET', url: new URL(view.urls[1]).pathname })
       expect(frame.statusCode).toBe(200)
@@ -191,7 +195,7 @@ describe('studio preview steps', () => {
       await setRender(u, d.id, { bodyShape: 'female', outfit: 'outfit-2', emote: 'dance' })
       const [row] = await db.select().from(studioSetRenders)
       await finish(row.jobId, renderResult(row.jobId, [], { outcome: 'error', error: 'blank' }))
-      expect((await detail(u, d.id)).set.views['walk-female-outfit-2-dance']).toMatchObject({ status: 'failed', urls: [] })
+      expect((await detail(u, d.id)).set.views['walk-female-outfit-2-dance']).toMatchObject({ status: 'failed' })
       expect((await setRender(u, d.id, { bodyShape: 'female', outfit: 'outfit-2', emote: 'dance' })).json()).toEqual({ status: 'queued' })
     })
 
@@ -380,6 +384,35 @@ describe('studio preview steps', () => {
       const res = await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/finalize-renders`, headers: as(u) })
       expect(res.json()).toEqual({ queued: 2 })
       expect((await db.select().from(studioSetRenders)).map((r) => r.viewKey).sort()).toEqual(['walk-female-default-own', 'walk-male-default-own'])
+    })
+  })
+  describe('a change while renders wait', () => {
+    it('a prompt that changes the pieces cancels emote renders queued for the old ones', async () => {
+      const u = await createUser()
+      const d = (await create(u)).json()
+      const first = (await prompt(u, d.id)).json().jobId
+      await finish(first, okResult(first))
+      expect((await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/finalize-renders`, headers: as(u) })).json()).toEqual({ queued: 14 })
+      const old = (await renderJobs(d.id)).filter((j) => (j.payload as any).render?.set)
+      expect((old[0].payload as any).revisions).toBe((await detail(u, d.id)).set.revisions)
+      const second = (await prompt(u, d.id, { text: 'make it pink', selectedSlots: ['hat'] })).json().jobId
+      await finish(second, okResult(second))
+      const after = await db.select().from(studioJobs).where(eq(studioJobs.designId, d.id))
+      expect(old.map((j) => after.find((a) => a.id === j.id)!.status)).toEqual(Array(14).fill('failed'))
+      expect((await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/finalize-renders`, headers: as(u) })).json()).toEqual({ queued: 14 })
+    })
+
+    it('a superseded piece’s sphere is cancelled, and the new one queued', async () => {
+      const u = await createUser()
+      const { design } = await hatWithRing(u)
+      const [oldFull] = await renderJobs(design.id)
+      const next = (await prompt(u, design.id, { text: 'make it pink', selectedSlots: ['hat'] })).json().jobId
+      const r = okResult(next)
+      r.pieces[0].renders = { 'spin-male-default': 36, 'orbit-male': 24 }
+      await finish(next, r)
+      const jobs = await renderJobs(design.id)
+      expect(jobs.find((j) => j.id === oldFull.id)!.status).toBe('failed')
+      expect(jobs.filter((j) => j.status === 'queued' && j.background)).toHaveLength(1)
     })
   })
 })

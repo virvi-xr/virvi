@@ -41,6 +41,16 @@ export default function EmotesStep({ designId, detail, target, onChanged }: Prop
   const view: RenderView = { bodyShape, outfit, emote: kind === 'emote' ? null : emote }
   const key = setViewKey(kind, view)
   const shown = detail.set.views[key]
+  // The design says which views are rendered; a rendered view's frame urls come from asking for it
+  const [frames, setFrames] = useState<{ id: string; urls: string[] } | null>(null)
+  const framesId = `${detail.set.revisions}/${key}/${shown?.renderedAt}`
+  useEffect(() => {
+    if (shown?.status !== 'ready' || frames?.id === framesId) return
+    api.requestStudioSetRender(designId, view)
+      .then((r) => { if (r.status === 'ready') setFrames({ id: framesId, urls: r.urls }) })
+      .catch((err) => setError(refusalMessage(err as never, new Date()).text))
+  }, [framesId, shown?.status]) // eslint-disable-line react-hooks/exhaustive-deps
+  const urls = frames?.id === framesId ? frames.urls : []
   const hasPieces = detail.pieces.some((p) => p.revision)
 
   // An emote renders the first time someone opens it; a failed one waits for the person to ask again
@@ -71,7 +81,7 @@ export default function EmotesStep({ designId, detail, target, onChanged }: Prop
 
   const state = emoteState(detail, emote, bodyShape)
   const busy = detail.activeJob?.type === 'prompt'
-  const ready = shown?.status === 'ready' && shown.urls.length > 0
+  const ready = shown?.status === 'ready' && urls.length > 0
   const fixes = detail.set.freeFixesLeft[emote] ?? 0
   const toggle = (on: boolean, label: string, onClick: () => void) => (
     <button key={label} type="button" aria-pressed={on} onClick={onClick}
@@ -98,7 +108,9 @@ export default function EmotesStep({ designId, detail, target, onChanged }: Prop
         {!hasPieces ? (
           <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400">The agent hasn’t built anything yet. Describe what you want on the left.</p>
         ) : ready ? (
-          <SpinStage view={key} urls={shown.urls} loop fps={shown.fps ?? undefined} label={`${emoteName(emote)}, ${bodyShape}, every piece worn`} />
+          <SpinStage view={key} urls={urls} loop fps={shown!.fps ?? undefined} label={`${emoteName(emote)}, ${bodyShape}, every piece worn`} />
+        ) : shown?.status === 'ready' ? (
+          <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-400" aria-live="polite">Loading…</p>
         ) : shown?.status === 'failed' ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center text-sm text-gray-400">
             <p>That emote didn’t render.</p>

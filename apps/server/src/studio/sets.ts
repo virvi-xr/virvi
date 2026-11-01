@@ -11,7 +11,8 @@ import type { Exec } from './quota.js'
  * rendered from, so a change to any piece (or a piece added) leaves it behind and the person sees it as not rendered.
  */
 
-export type SetView = { status: string; frames: number; fps: number | null; urls: string[]; renderedAt: Date }
+/** What the design page is told of an emote view: its frame urls come from asking for it (requestSetRender). */
+export type SetView = { status: string; frames: number; fps: number | null; renderedAt: Date }
 
 /** The set of piece revisions the design's emote views and checks belong to right now. */
 export async function currentRevisions(designId: string, exec: Exec = db): Promise<string> {
@@ -25,14 +26,14 @@ const frameUrls = (designId: string, row: typeof studioSetRenders.$inferSelect, 
       { designId, revisionId: row.id, viewKey: row.viewKey, category: 'set', frame, jobId: row.jobId }, expires))
     : []
 
-/** The design's emote views for its current pieces, keyed by view key. */
-export async function setViews(designId: string, revisions: string, now: Date, exec: Exec = db): Promise<Record<string, SetView>> {
+/**
+ * The design's emote views for its current pieces, keyed by view key, without frame urls: after Finalize there are
+ * fourteen of them, and every reload of the design would sign each frame of each.
+ */
+export async function setViews(designId: string, revisions: string, exec: Exec = db): Promise<Record<string, SetView>> {
   const rows = await exec.select().from(studioSetRenders)
     .where(and(eq(studioSetRenders.designId, designId), eq(studioSetRenders.revisions, revisions)))
-  const expires = frameUrlExpiry(now)
-  return Object.fromEntries(rows.map((r) => [r.viewKey, {
-    status: r.status, frames: r.frames, fps: r.fps, renderedAt: r.createdAt, urls: frameUrls(designId, r, expires),
-  }]))
+  return Object.fromEntries(rows.map((r) => [r.viewKey, { status: r.status, frames: r.frames, fps: r.fps, renderedAt: r.createdAt }]))
 }
 
 /**
@@ -61,6 +62,7 @@ export async function requestSetRender(
       payload: {
         type: 'render', kind: design.kind, agent: null, model: null, prompt: null, selectedSlots: null, limits: RENDER_LIMITS,
         render: { set: true, bodyShape: view.bodyShape, outfit: view.outfit, emote: design.kind === 'emote' ? OWN_EMOTE : view.emote },
+        revisions, // the pieces it is for: a change before it runs cancels it (results.ts cancelSupersededRenders)
       },
     }).returning({ id: studioJobs.id })
     await tx.insert(studioSetRenders).values({ designId: design.id, revisions, viewKey: key, jobId: job.id, status: 'queued' })
@@ -143,7 +145,7 @@ export async function setDetail(design: Design, now: Date, exec: Exec = db) {
   for (const emote of emotesFor(design.kind)) freeFixes[emote] = await freeFixesLeft(design.id, emote, exec)
   return {
     revisions,
-    views: revisions ? await setViews(design.id, revisions, now, exec) : {},
+    views: revisions ? await setViews(design.id, revisions, exec) : {},
     checks,
     freeFixesLeft: freeFixes,
   }

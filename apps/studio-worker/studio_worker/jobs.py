@@ -147,6 +147,11 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
                 counts, problem = {}, None
                 for view in _prompt_views(kind):
                     count, problem = _render_and_upload(client, job_id, p, view, render_fn)
+                    if problem and view['mode'] == 'orbit':
+                        # Inspect is extra: the piece still saves, and Inspect asks for its ring when opened
+                        print(f'[worker] {p.category}: Inspect ring not rendered: {problem[-300:]}', file=sys.stderr)
+                        problem = None
+                        continue
                     if problem:
                         break
                     counts.update(count)

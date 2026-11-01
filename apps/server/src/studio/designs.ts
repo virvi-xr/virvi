@@ -135,12 +135,14 @@ export async function designDetail(d: Design, now: Date) {
     design: publicDesign(d),
     pieces: pieces.map((p) => {
       const rev = revs.find((r) => r.id === p.latestRevisionId)
-      const views: Record<string, { status: string; frames: number; urls: string[]; renderedAt: Date }> = {}
+      const views: Record<string, { status: string; frames: number; urls: string[]; renderedAt: Date; pending?: boolean }> = {}
       for (const r of renders.filter((r) => r.revisionId === rev?.id)) {
         views[r.viewKey] = {
           status: r.status,
           frames: r.frames,
           renderedAt: r.createdAt,
+          // an Inspect view whose whole sphere is still rendering behind its ring
+          ...(r.viewKey.startsWith('orbit-') ? { pending: !!r.pendingJobId } : {}),
           urls: r.status === 'ready'
             ? Array.from({ length: r.frames }, (_, frame) => signRenderFrame(
               { designId: d.id, revisionId: r.revisionId, viewKey: r.viewKey, category: p.category, frame, jobId: r.jobId }, expires))

@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { EYE_LEVEL_ROW, ORBIT_COLS, ORBIT_FRAMES, orbitDrag, orbitFrame } from '@/lib/studio'
+import { EYE_LEVEL_ROW, ORBIT_COLS, orbitDrag, orbitFrame } from '@/lib/studio'
 
 const ROWS = 7
 
@@ -8,7 +8,7 @@ const ROWS = 7
  * Inspect: the piece alone, turned any way. Drag sideways to turn it round, up and down to look from above or below;
  * the arrow keys move one step. Until the whole sphere has rendered, tipping stops at the eye-level ring.
  */
-export default function InspectStage({ urls, label }: { urls: string[]; label: string }) {
+export default function InspectStage({ urls, label, note, onRetry }: { urls: string[]; label: string; note: 'loading' | 'retry' | null; onRetry: () => void }) {
   const [pos, setPos] = useState({ row: EYE_LEVEL_ROW, col: 0 })
   const drag = useRef<{ x: number; y: number; start: { row: number; col: number }; width: number; height: number } | null>(null)
 
@@ -44,8 +44,14 @@ export default function InspectStage({ urls, label }: { urls: string[]; label: s
         // eslint-disable-next-line @next/next/no-img-element
         <img src={urls[frame]} alt="" draggable={false} className="pointer-events-none h-full w-full object-contain" />
       )}
-      {urls.length < ORBIT_FRAMES && (
+      {note === 'loading' && (
         <span className="absolute bottom-2 right-2 rounded bg-black/60 px-2 py-0.5 text-xs text-gray-300" aria-live="polite">Loading more angles…</span>
+      )}
+      {note === 'retry' && (
+        <span className="absolute bottom-2 right-2 rounded bg-black/60 px-2 py-0.5 text-xs text-gray-300">
+          More angles didn’t render.{' '}
+          <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={onRetry} className="text-blue-300 underline">Try again</button>
+        </span>
       )}
     </div>
   )

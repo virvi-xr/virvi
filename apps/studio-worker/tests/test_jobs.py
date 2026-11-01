@@ -299,7 +299,7 @@ def test_wearable_prompt_renders_the_inspect_ring(api, tmp_path, skills):
     assert len([f for f in api.files if f.startswith('job-1/renders/hat/orbit-male/')]) == 24
 
 
-def test_a_failed_ring_holds_the_piece_back(api, tmp_path, skills):
+def test_a_failed_ring_still_saves_the_piece(api, tmp_path, skills):
     calls = []
     ok = fake_render(calls)
 
@@ -309,8 +309,10 @@ def test_a_failed_ring_holds_the_piece_back(api, tmp_path, skills):
         return ok(pieces, view, out, **kw)
     result = jobs.run_job(prompt_job(), client(api), tmp_path, render_fn=render,
                           command=fake_command('claude_builds_hat.jsonl'), as_user=None)
-    assert result['outcome'] == 'error' and 'hat: blank' in result['error']
-    assert not [f for f in api.files if '/pieces/' in f]
+    # Inspect is extra: the prompt's work is saved, and Inspect asks for the ring again when it is opened
+    assert result['outcome'] == 'ok', result
+    assert result['pieces'][0]['renders'] == {'spin-male-default': 36}
+    assert 'job-1/pieces/hat/neon_cap_male.glb' in api.files
 
 
 def test_emote_prompt_renders_no_ring():

@@ -35,7 +35,10 @@ export type StudioDesign = {
 
 export type Checker = { pass: boolean; failures: number; warnings: number } | null
 
-export type StudioView = { status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string }
+export type StudioView = {
+  status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string
+  pending?: boolean // an Inspect view whose whole sphere is still rendering behind its ring
+}
 
 export type FinalizedRevision = {
   revision: number
@@ -72,8 +75,8 @@ export type StudioMessage = {
 /** A clipping fix's emote view (the server's `fixClipping`). */
 export type FixClipping = { emote: string; bodyShape: 'male' | 'female'; outfit: string }
 
-/** An emote view with every piece worn, rendered at `fps`. */
-export type StudioSetView = StudioView & { fps: number | null }
+/** An emote view with every piece worn, rendered at `fps`. Its frame urls come from asking for it (`requestStudioSetRender`). */
+export type StudioSetView = { status: 'queued' | 'ready' | 'failed' | string; frames: number; fps: number | null; renderedAt: string }
 
 /** The emote step: views and checks for the pieces as they are now (`revisions`). */
 export type StudioSet = {
@@ -384,6 +387,12 @@ export function orbitDrag(start: { row: number; col: number }, dx: number, dy: n
   const col = width > 0 ? mod(start.col - Math.round((dx / width) * ORBIT_COLS), ORBIT_COLS) : start.col
   const steps = height > 0 ? Math.round((dy / height) * (SCREEN_ROWS.length - 1)) : 0
   return { row: Math.max(0, Math.min(SCREEN_ROWS.length - 1, start.row - steps)), col }
+}
+
+/** Under Inspect's frames: more angles on their way, a sphere that failed behind its ring, or nothing to say. */
+export function inspectNote(view: StudioView | undefined): 'loading' | 'retry' | null {
+  if (view?.status !== 'ready' || view.frames >= ORBIT_FRAMES) return null
+  return view.pending ? 'loading' : 'retry'
 }
 
 export type EmoteState = 'unchecked' | 'fine' | 'clipping' | 'fixing'

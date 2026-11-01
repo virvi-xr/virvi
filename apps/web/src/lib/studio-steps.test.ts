@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  EMOTES, emoteChecklist, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor,
+  EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor,
   type StudioDetail,
 } from './studio'
 
@@ -34,6 +34,14 @@ describe('inspect frames', () => {
     expect(orbitDrag({ row: 3, col: 0 }, 0, 100, 400, 300)).toEqual({ row: 1, col: 0 }) // drag down: look from above
     expect(orbitDrag({ row: 3, col: 0 }, 0, 900, 400, 300)).toEqual({ row: 0, col: 0 })
     expect(orbitDrag({ row: 3, col: 0 }, 0, -900, 400, 300)).toEqual({ row: 6, col: 0 })
+  })
+
+  it('says more angles are coming only while they are', () => {
+    const view = (frames: number, pending?: boolean) => ({ status: 'ready', frames, urls: [], renderedAt: '', pending })
+    expect(inspectNote(view(24, true))).toBe('loading')
+    expect(inspectNote(view(24, false))).toBe('retry') // the sphere failed behind the ring
+    expect(inspectNote(view(122, false))).toBe(null)
+    expect(inspectNote(undefined)).toBe(null)
   })
 
   it('view keys mirror the server', () => {

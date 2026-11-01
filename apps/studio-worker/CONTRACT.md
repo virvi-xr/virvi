@@ -204,7 +204,7 @@ effort: one that fails to send is dropped.
 - On a render job, `pieces` holds `{"category", "renders": {viewKey: frames}}` for each requested category. On a
   set render job `pieces` is empty and `set` is `{"viewKey", "frames", "fps"}` (absent unless the outcome is `ok`).
 - On a wearable prompt, each uploaded piece's `renders` holds `spin-male-default` (36) and the Inspect ring
-  `orbit-male` (24).
+  `orbit-male` (24). A ring that fails to render is left out and doesn't hold the piece back; only the spin does.
 
 ### Finalize result
 

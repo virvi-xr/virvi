@@ -4,7 +4,7 @@ import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPi
 import { checkFilePath, jobFileKey } from './store.js'
 import { recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
 import { publishStudio } from './events.js'
-import { ORBIT_FRAMES, orbitKey, queueFullOrbit, type FixClipping, type View } from './designs.js'
+import { ORBIT_FRAMES, orbitKey, queueFullOrbit, revisionsKey, type FixClipping, type View } from './designs.js'
 import { requestSetRender } from './sets.js'
 import { DECLINED_NOTE, SCOPE_CATEGORIES, logScopeEvent, maybeFlag, offTopicIsFree, offTopicNote } from './scope.js'
 
@@ -90,6 +90,31 @@ export function parseResult(body: unknown): { ok: true; result: ContractResult }
   return { ok: true, result: r as unknown as ContractResult }
 }
 
+const SUPERSEDED = 'superseded: the pieces changed before it ran'
+
+/**
+ * After a prompt changed pieces: renders still waiting for the old pieces would render the new ones under the old
+ * key, where nobody sees them, and hold up the current ones. Fails them before a worker takes them.
+ */
+async function cancelSupersededRenders(designId: string, superseded: string[], exec: Exec, now: Date): Promise<void> {
+  const revisions = revisionsKey(await exec.select({ latestRevisionId: studioPieces.latestRevisionId }).from(studioPieces)
+    .where(eq(studioPieces.designId, designId)))
+  const pieceJobs = superseded.length
+    ? sql`OR id IN (SELECT job_id FROM studio_renders WHERE revision_id IN (${sql.join(superseded.map((r) => sql`${r}`), sql`, `)})
+        UNION SELECT pending_job_id FROM studio_renders WHERE revision_id IN (${sql.join(superseded.map((r) => sql`${r}`), sql`, `)}))`
+    : sql``
+  const cancelled = await exec.update(studioJobs)
+    .set({ status: 'failed', result: { outcome: 'error', error: SUPERSEDED, pieces: [] }, finishedAt: now })
+    .where(and(eq(studioJobs.designId, designId), eq(studioJobs.type, 'render'), eq(studioJobs.status, 'queued'),
+      sql`((${studioJobs.payload}->'render'->>'set' = 'true' AND ${studioJobs.payload}->>'revisions' IS DISTINCT FROM ${revisions}) ${pieceJobs})`))
+    .returning({ id: studioJobs.id })
+  const ids = cancelled.map((j) => j.id)
+  if (!ids.length) return
+  await exec.update(studioRenders).set({ status: 'failed' }).where(and(inArray(studioRenders.jobId, ids), eq(studioRenders.status, 'queued')))
+  await exec.update(studioRenders).set({ pendingJobId: null }).where(inArray(studioRenders.pendingJobId, ids))
+  await exec.update(studioSetRenders).set({ status: 'failed' }).where(inArray(studioSetRenders.jobId, ids))
+}
+
 export const packagingFailedText = (name: string) => `Packaging ${name} failed. You can try again at no charge.`
 
 /** The entitlements a finalize job was packaging, with their piece names. */
@@ -151,6 +176,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
           designId: job.designId, role: 'agent', agent, text: result.reply ?? '', jobId: job.id, proposal: result.proposal ?? null,
         })
       }
+      const superseded: string[] = []
       for (const p of result.pieces) {
         if (!p.files?.length) continue
         const name = typeof p.meta?.name === 'string' && p.meta.name.trim() ? p.meta.name.trim().slice(0, 200) : p.category
@@ -167,6 +193,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
           checker: p.checker ?? null,
           files: p.files,
         }).returning()
+        if (piece.latestRevisionId) superseded.push(piece.latestRevisionId)
         await tx.update(studioPieces).set({ latestRevisionId: rev.id }).where(eq(studioPieces.id, piece.id))
         const views = Object.entries(p.renders ?? {}).filter(([, frames]) => frames > 0)
         if (views.length) {
@@ -178,6 +205,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         const ring = p.renders?.[orbitKey('male')] ?? 0
         if (design && ring > 0 && ring < ORBIT_FRAMES) await queueFullOrbit(tx, design, rev.id, p.category, 'male')
       }
+      if (result.pieces.some((p) => p.files?.length)) await cancelSupersededRenders(job.designId, superseded, tx, now)
       if (design) await recordCost(design.ownerId, day, result.costUsd ?? 0, tx)
       const refunded = (job.counted || job.countedFrom === 'gift') && !!design && (result.outcome === 'error'
         || (result.outcome === 'off_topic' && await offTopicIsFree(tx, design.ownerId, now)))
