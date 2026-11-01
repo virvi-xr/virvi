@@ -31,12 +31,12 @@ func snapValue(_ value: Double, _ step: Double) -> Double {
 private func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-6 }
 
 /// Applies snap to a transform the gizmo produced, relative to `original` (the drag's start). Position is never
-/// snapped. Rotation: each turned axis snaps to 15 degrees. Scale: one changed axis snaps its size to 0.25 (min 0.25);
+/// snapped. Rotation: each turned axis snaps its turn since the drag's start to 15 degrees. Scale: one changed axis snaps its size to 0.25 (min 0.25);
 /// all axes changed by one factor snap that factor to 0.1 (min 0.1); anything else is left as it is.
 func snapped(_ t: ItemTransform, from original: ItemTransform) -> ItemTransform {
     var out = t
     for i in 0..<3 where !close(t.rotation[i], original.rotation[i]) {
-        out.rotation[i] = snapValue(t.rotation[i], SnapStep.rotationDegrees)
+        out.rotation[i] = original.rotation[i] + snapValue(t.rotation[i] - original.rotation[i], SnapStep.rotationDegrees)
     }
     let changed = (0..<3).filter { !close(t.scale[$0], original.scale[$0]) }
     if changed.count == 1, let i = changed.first {

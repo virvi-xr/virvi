@@ -124,6 +124,7 @@ final class EditSession: ObservableObject {
         message = nil
         sender.cancelPending()
         await sender.settle()
+        guard heldBy == nil else { saving = false; return } // a draft answered 409 while we waited
         let sent = s.current
         do {
             let _: EmptyResponse = try await api.scene(sceneId, "PUT", "/api/instances/\(s.sk)", body: [
@@ -149,8 +150,8 @@ final class EditSession: ObservableObject {
         s.current = s.original
         selected = s
         dirty = false
-        message = nil
-        heldBy = nil
+        // Still held by someone else: heldBy (and its message) stay until select/done.
+        message = heldBy.map { "being moved by \($0)" }
         let previous = ending
         ending = Task { @MainActor [sk = s.sk] in
             await previous?.value
@@ -177,6 +178,8 @@ final class EditSession: ObservableObject {
             sender.cancelPending(stop: true)
         } catch ApiError.status(401, "device_revoked") {
             dropEverything()
+        } catch ApiError.offline {
+            message = friendlyEditMessage(ApiError.offline)
         } catch {
             // A draft is a live preview: a failed one is dropped, and the next update or Save carries the state.
         }
@@ -187,6 +190,8 @@ final class EditSession: ObservableObject {
             let _: EmptyResponse = try await api.scene(sceneId, "POST", "/api/ar/drafts/end", body: ["sk": sk, "saved": saved])
         } catch ApiError.status(401, "device_revoked") {
             dropEverything()
+        } catch ApiError.offline {
+            message = friendlyEditMessage(ApiError.offline)
         } catch {
             // The hold lapses by itself on the server.
         }

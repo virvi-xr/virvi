@@ -252,6 +252,61 @@ final class EditSessionTests: XCTestCase {
         XCTAssertEqual(s.editingKeys, ["e1:i1"])
     }
 
+    func testRevertKeepsHeldSoSaveStaysOff() async {
+        let (r, _) = rig(setup: { $0.on("/api/ar/drafts") { _ in (409, ["error": "held", "holderName": "Sam (headset)"]) } })
+        let s = r.session
+        _ = s.select(selection())
+        s.update(start.with(x: 3))
+        await s.idle()
+        s.revert()
+        await s.idle()
+        XCTAssertEqual(s.heldBy, "Sam (headset)")
+        s.update(start.with(x: 5))
+        await s.idle()
+        XCTAssertTrue(s.dirty)
+        XCTAssertFalse(s.saveEnabled)
+        await s.save()
+        XCTAssertEqual(r.transport.count("/api/instances/i1"), 0)
+    }
+
+    func testDraftHeldWhileSaveWaitsBlocksThePut() async {
+        let (r, gated) = rig(setup: { $0.on("/api/ar/drafts") { _ in (409, ["error": "held", "holderName": "Sam (headset)"]) } },
+                             gate: "/api/ar/drafts")
+        let s = r.session
+        _ = s.select(selection())
+        s.update(start.with(x: 3))
+        await gated!.waitUntilEntered()
+        let saving = Task { await s.save() }
+        await Task.yield()
+        await gated!.open()
+        await saving.value
+        XCTAssertEqual(r.transport.count("/api/instances/i1"), 0)
+        XCTAssertEqual(s.heldBy, "Sam (headset)")
+        XCTAssertFalse(s.saving)
+        XCTAssertFalse(s.saveEnabled)
+    }
+
+    func testRotationSnapIsRelativeToDragStart() {
+        let (r, _) = rig(); let s = r.session
+        var from = start; from.rotation = [0, 7, 0]
+        _ = s.select(Selection(elementId: "e1", sk: "i1", name: "Crate", kind: "model", transform: from))
+        s.snap = true
+        var t = from; t.rotation = [0, 29, 0]
+        s.update(t)
+        XCTAssertEqual(s.selected!.current.rotation.y, 22, accuracy: 1e-9)
+    }
+
+    func testOfflineDraftShowsCopyAndKeepsState() async {
+        let (r, _) = rig(setup: { $0.on("/api/ar/drafts") { _ in throw URLError(.notConnectedToInternet) } })
+        let s = r.session
+        _ = s.select(selection())
+        s.update(start.with(x: 3))
+        await s.idle()
+        XCTAssertEqual(s.message, "Can't reach virvi.io: check the connection and try again")
+        XCTAssertTrue(s.dirty)
+        XCTAssertTrue(s.saveEnabled)
+    }
+
     func testRevokedDeviceDropsSelectionQuietly() async {
         let (r, _) = rig(setup: {
             $0.on("/api/instances/i1") { _ in (401, ["error": "device_revoked"]) }
