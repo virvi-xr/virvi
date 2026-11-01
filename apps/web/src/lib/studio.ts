@@ -138,8 +138,11 @@ export const AGENTS: { id: StudioAgent; label: string }[] = [
 /** Preselected on a new design: the cheapest agent to run. */
 export const DEFAULT_AGENT: StudioAgent = 'codex'
 
-/** The agents a "Change agent" menu offers: all but the selected one. */
-export const otherAgents = (value: string) => AGENTS.filter((a) => a.id !== value)
+/** Kept for designs already on them, but no longer offered: Grok's results weren't good enough. */
+const RETIRED_AGENTS: StudioAgent[] = ['grok']
+
+/** The agents a "Change agent" menu offers: all but the selected one and the retired ones. */
+export const otherAgents = (value: string) => AGENTS.filter((a) => a.id !== value && !RETIRED_AGENTS.includes(a.id))
 
 export const agentLabel = (id: string | null | undefined) => AGENTS.find((a) => a.id === id)?.label ?? id ?? 'Agent'
 

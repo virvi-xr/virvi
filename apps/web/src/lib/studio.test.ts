@@ -6,7 +6,7 @@ import {
 import { formatBytesShort, uploadProblem } from './studio'
 import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudioFlag } from './studio'
 import { giftCodeStatus } from './studio'
-import { AGENTS, DEFAULT_AGENT, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, type StudioDesign, type StudioUsage } from './studio'
+import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, type StudioDesign, type StudioUsage } from './studio'
 
 const NOW = new Date('2026-10-29T21:55:00Z')
 const at = (ms: number) => new Date(NOW.getTime() + ms).toISOString()
@@ -23,8 +23,12 @@ describe('AGENTS', () => {
   })
   it('preselects Codex, the cheapest, and lists the others under Change agent', () => {
     expect(DEFAULT_AGENT).toBe('codex')
-    expect(otherAgents('codex').map((a) => a.id)).toEqual(['claude', 'grok'])
+    expect(otherAgents('codex').map((a) => a.id)).toEqual(['claude'])
+    expect(otherAgents('claude').map((a) => a.id)).toEqual(['codex'])
+  })
+  it('no longer offers Grok Build, but a design already on it keeps its name and can switch away', () => {
     expect(otherAgents('grok').map((a) => a.id)).toEqual(['claude', 'codex'])
+    expect(agentLabel('grok')).toBe('Grok Build')
   })
 })
 
