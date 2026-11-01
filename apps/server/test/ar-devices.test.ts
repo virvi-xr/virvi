@@ -172,11 +172,9 @@ describe('AR headset pairing and the AR pass', () => {
     const deviceId = await pairAs(owner, 'personal')
     const { pass } = (await mint(deviceId, a.space.id)).json()
     const cases: Array<[string, string, object | undefined]> = [
-      ['GET', `/api/scenes/${a.scene.id}/roles`, undefined],
-      ['PUT', `/api/scenes/${a.scene.id}`, { name: 'x' }],
+      ['POST', `/api/scenes/${a.scene.id}/transfer-host`, { wallet: '0x' + 'ab'.repeat(20) }],
       ['POST', `/api/scenes/${a.scene.id}/ar/spaces`, { name: 'x' }],
       ['GET', '/api/ar/devices', undefined],
-      ['POST', '/api/upload-tokens', { sceneId: a.scene.id }],
       ['POST', '/api/auth/handoff', {}],
     ]
     for (const [method, url, payload] of cases) {

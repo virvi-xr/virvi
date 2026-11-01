@@ -51,7 +51,7 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
     }
   })
 
-  app.delete<{ Params: { sceneId: string; id: string } }>('/api/scenes/:sceneId/library/:id', { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }, async (request, reply) => {
+  app.delete<{ Params: { sceneId: string; id: string } }>('/api/scenes/:sceneId/library/:id', { config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: true } } }, async (request, reply) => {
     const { sceneId, id } = request.params
     const row = await db.query.sceneLibrary.findFirst({ where: and(eq(sceneLibrary.id, id), eq(sceneLibrary.sceneId, sceneId)) })
     if (!row) return reply.status(404).send({ error: 'Not found' })
@@ -74,7 +74,7 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
 
   // Rename a file in the library (its stored filename). Editors may rename the scene's own files; a renter's
   // booking files only by full access. The extension is kept: GLB detection and the stored type key off it.
-  app.patch<{ Params: { sceneId: string; id: string }; Body: { name?: unknown } }>('/api/scenes/:sceneId/library/:id', { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }, async (request, reply) => {
+  app.patch<{ Params: { sceneId: string; id: string }; Body: { name?: unknown } }>('/api/scenes/:sceneId/library/:id', { config: { scenePass: { sceneFrom: fromParam('sceneId'), ar: true } } }, async (request, reply) => {
     const { sceneId, id } = request.params
     const raw = request.body?.name
     const trimmed = typeof raw === 'string' ? raw.trim() : ''
