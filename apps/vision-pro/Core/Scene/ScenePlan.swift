@@ -18,6 +18,9 @@ struct RenderItem: Equatable {
     var height: Double
     var transform: MappedTransform
     var clickUrl: String?
+    /// The element's and the instance's `sk` (what `key` is made of).
+    var elementId: String = ""
+    var instanceSk: String = ""
 }
 
 typealias Props = [String: Any]
@@ -144,7 +147,9 @@ private func planElements(_ out: inout [RenderItem], _ elements: Any?, _ kind: R
                 width: scale.x,
                 height: scale.y,
                 transform: toRealityKitTransform(position: vec(inst["position"], 0), rotation: vec(inst["rotation"], 0), scale: scale),
-                clickUrl: externalUrl(clickOf(inst, el))
+                clickUrl: externalUrl(clickOf(inst, el)),
+                elementId: templateString(el["sk"]),
+                instanceSk: templateString(inst["sk"])
             ))
         }
     }

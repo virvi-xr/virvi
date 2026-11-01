@@ -10,6 +10,11 @@ import UIKit
 /// RealityKit axes): its origin is the parcel's south-west corner at ground level. Like the Hyperfy app, each item
 /// gets its own entity carrying the mapped transform; planes and sounds take no scale (a plane's Virvi scale is its
 /// width and height), models take the scale and turn half a turn inside it (MODEL_TURN).
+/// Marks an item entity that can be edited locally; `bounds` is its visual bounds in its own space.
+struct EditableItemComponent: Component {
+    var bounds: BoundingBox
+}
+
 @MainActor
 final class SceneRenderer {
     let root = Entity()
@@ -28,12 +33,27 @@ final class SceneRenderer {
     private var tokens: [String: UUID] = [:]
     private var players: [String: (AVPlayer, AVPlayerLooper?)] = [:]
 
-    init() { root.name = "virvi-scene" }
+    init() {
+        root.name = "virvi-scene"
+        EditableItemComponent.registerComponent()
+    }
 
-    func apply(_ next: [RenderItem]) {
+    /// `holding` are the keys being edited: their entities keep their current transform; everything else follows
+    /// the plan.
+    func apply(_ next: [RenderItem], holding: Set<String> = []) {
         let d = diffPlans(plan, next)
         for key in d.remove { remove(key) }
         for item in d.update {
+            if holding.contains(item.key), let old = plan.first(where: { $0.key == item.key }), let entity = shown[item.key] {
+                var moved = old
+                moved.transform = item.transform
+                if moved == item { continue } // only the transform changed: leave the entity alone
+                let kept = entity.transform
+                remove(item.key)
+                add(item)
+                shown[item.key]?.transform = kept
+                continue
+            }
             remove(item.key)
             add(item)
         }
@@ -55,6 +75,12 @@ final class SceneRenderer {
             e = cur.parent
         }
         return nil
+    }
+
+    /// The element id and instance `sk` of the item `entity` belongs to; for picking.
+    func instanceKey(_ entity: Entity) -> (elementId: String, sk: String)? {
+        guard let key = key(of: entity), let item = item(for: key) else { return nil }
+        return (item.elementId, item.instanceSk)
     }
 
     /// The transform the feed gives an item's entity (what a local edit is reset to).
@@ -160,6 +186,10 @@ final class SceneRenderer {
         let turn = Entity()
         turn.orientation = quaternionYXZ(MODEL_TURN).float
         group.addChild(turn)
+        guard ["glb", "gltf"].contains(extOf(item.src)) else {
+            showPlaceholder(item, in: turn, group: group)
+            return
+        }
         Task {
             do {
                 let file = try await Downloads.shared.file(for: item.src)
@@ -173,10 +203,18 @@ final class SceneRenderer {
             } catch {
                 print("[virvi] model failed, showing placeholder: \(item.key) \(error.localizedDescription)")
                 guard alive() else { return }
-                turn.addChild(Self.placeholderBox(named: URL(string: item.src)?.lastPathComponent ?? item.src))
-                self.onVisualsReady?(item.key, group)
+                self.showPlaceholder(item, in: turn, group: group)
             }
         }
+    }
+
+    /// The pink box stands in for a model that can't be shown. It is pickable like any other item.
+    private func showPlaceholder(_ item: RenderItem, in turn: Entity, group: Entity) {
+        turn.addChild(Self.placeholderBox(named: URL(string: item.src)?.lastPathComponent ?? item.src))
+        let bounds = BoundingBox(min: [-0.25, 0, -0.25], max: [0.25, 0.5, 0.25])
+        group.components.set(CollisionComponent(shapes: [ShapeResource.generateBox(size: bounds.extents).offsetBy(translation: bounds.center)]))
+        group.components.set(EditableItemComponent(bounds: bounds))
+        onVisualsReady?(item.key, group)
     }
 
     private func addSound(_ item: RenderItem, to group: Entity, alive: @escaping () -> Bool) {
