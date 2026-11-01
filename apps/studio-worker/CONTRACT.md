@@ -59,11 +59,20 @@ workspace as an opaque blob, privately.
 | `pieces/<category>/piece.json` | the piece's settings, as below | Virvi only |
 | `checks/<category>.txt` | the skills checker's full report | Virvi only |
 | `renders/<category>/<viewKey>/<nnn>.webp` | render frames, `000` up | the browser |
+| `renders/set/<viewKey>/<nnn>.webp` | an emote view's frames, every piece worn together | the browser |
 | `final/<category>/package.zip` | a paid revision's package (finalize jobs only, and the only file they upload) | paid downloads only |
 
 Render frames are the only files the browser ever receives. A `viewKey` is `<mode>-<bodyShape>-<outfit>`, plus
 `-<emote>` when the view plays a base emote: `spin-male-default`, `spin-female-outfit-2-dance`,
-`emote-male-default`.
+`emote-male-default`. Two modes differ:
+
+- `orbit-<bodyShape>` (Inspect): the item alone, no avatar, from every angle. Frame `r * 24 + c` is column `c` (15°
+  steps round from the front) of row `r`, the rows being camera elevations 90°, 60°, 120°, 30° and 150° (90° is eye
+  level, 0° straight down). Frame 120 looks straight down and 121 straight up: 122 frames. A ring is frames 0–23
+  only.
+- `walk-<bodyShape>-<outfit>-<emote>` (an emote view, under `renders/set/`): the emote stepped through its timeline
+  at 24 frames a second while the camera turns once round, over at least 4 s (a short emote loops) and at most 120
+  frames. `<emote>` is `own` for an emote design's own animation.
 
 ## Job
 
@@ -101,8 +110,17 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   Haiku, `studio_worker/scope.py`) before anything else, and an off-topic message ends the job as `off_topic` without
   running the agent. False or missing for the server's own text (Continue, fixing the checks), which is never checked.
 - `render`, on a render job: `{"categories": ["hat"], "bodyShape": "male"|"female", "outfit": "default"|"outfit-2"|
-  "outfit-3", "emote": null|"idle"|"wave"|"dance"|"clap"|"walk"}`. A wearable view is a 36-frame spin; an emote
-  design's view is 36 frames through its animation.
+  "outfit-3", "emote": null|"idle"|"wave"|"dance"|"clap"|"walk"|"run"|"jump"}`. A wearable view is a 36-frame spin;
+  an emote design's view is 36 frames through its animation. Two more shapes:
+  - `{"categories": ["hat"], "bodyShape", "mode": "orbit", "ring": bool}`: a wearable's Inspect view, `orbit-<shape>`,
+    122 frames (24 with `ring`).
+  - `{"set": true, "bodyShape", "outfit", "emote": <base emote>|"own"}`: every current piece worn together in a
+    walk-around, uploaded to `renders/set/<viewKey>/`. The result carries `set` and an empty `pieces`.
+- `fixClipping`, on a prompt job: `{"emote": <base emote>|"own", "bodyShape", "outfit"}` when the prompt is the
+  server's free clipping fix. Before the agent runs, the worker writes 16 frames of that emote, every piece worn, to
+  `review/clipping/<emote>/NN.png`, and the prompt tells the agent to open them first and to check its fix with
+  `studio-preview <pieces> --emote <emote> --body <shape> --outfit <outfit>`. If the frames can't be rendered, the
+  job ends `error` without running the agent.
 
 - `finalize`, on a finalize job: `{"designName": str, "pieces": [{"category", "name", "revision": n, "files":
   [contract paths]}]}`. `files` are the paid revision's files (its GLBs, `piece.json` and checker report). Virvi may add
@@ -183,7 +201,10 @@ effort: one that fails to send is dropped.
   render job.
 - **The workspace is saved before the result is posted.** If the save fails, the outcome is `error` and `pieces` is
   empty: nothing claims the revision is saved.
-- On a render job, `pieces` holds `{"category", "renders": {viewKey: frames}}` for each requested category.
+- On a render job, `pieces` holds `{"category", "renders": {viewKey: frames}}` for each requested category. On a
+  set render job `pieces` is empty and `set` is `{"viewKey", "frames", "fps"}` (absent unless the outcome is `ok`).
+- On a wearable prompt, each uploaded piece's `renders` holds `spin-male-default` (36) and the Inspect ring
+  `orbit-male` (24).
 
 ### Finalize result
 

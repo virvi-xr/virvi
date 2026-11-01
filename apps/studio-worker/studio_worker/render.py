@@ -333,9 +333,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--emote', help=f"instead, 16 frames of this emote with the pieces worn: "
                                     f"{', '.join(config.BASE_EMOTES)}, or own for an emote design")
     ap.add_argument('--body', choices=('male', 'female'), default='male', help='the body shape for --emote')
+    ap.add_argument('--outfit', choices=tuple(config.OUTFITS), default='default', help='the base outfit for --emote')
     a = ap.parse_args(argv)
     if a.emote:
-        paths = look_emote(a.pieces, a.out or Path('review') / a.emote, a.emote, a.body)
+        paths = look_emote(a.pieces, a.out or Path('review') / a.emote, a.emote, a.body, a.outfit)
     else:
         paths = look(a.pieces, a.out or Path('review'))
     for p in paths:
