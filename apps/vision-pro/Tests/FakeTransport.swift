@@ -52,3 +52,34 @@ final class Counter: @unchecked Sendable {
 }
 
 func iso(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
+
+/// Holds requests whose path ends with `gating` until `open()`, so a test can act while one is in flight.
+final class GatedTransport: HttpTransport, @unchecked Sendable {
+    private let inner: HttpTransport
+    private let gating: String
+    private let gate = Gate()
+
+    init(_ inner: HttpTransport, gating: String) { self.inner = inner; self.gating = gating }
+
+    func waitUntilEntered() async { await gate.waitUntilEntered() }
+    func open() async { await gate.open() }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if request.url!.path.hasSuffix(gating) { await gate.pass() }
+        return try await inner.send(request)
+    }
+}
+
+private actor Gate {
+    private var entered = false
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func pass() async {
+        entered = true
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func open() { isOpen = true; waiters.forEach { $0.resume() }; waiters = [] }
+    func waitUntilEntered() async { while !entered { await Task.yield() } }
+}

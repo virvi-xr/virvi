@@ -33,10 +33,15 @@ actor PassProvider {
             cache[sceneId] = Cached(pass: m.pass, expiresAt: expiry)
             return m.pass
         } catch ApiError.status(401, let code) where code == "device_revoked" || code == "bad_secret" {
-            cache = [:]
-            await onRevoked()
+            await revoked()
             throw ApiError.status(401, code: "device_revoked")
         }
+    }
+
+    /// The device was revoked: drop every cached pass and tell the app to go back to pairing.
+    func revoked() async {
+        cache = [:]
+        await onRevoked()
     }
 
     private static func parse(_ s: String) -> Date? {

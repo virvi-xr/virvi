@@ -41,12 +41,20 @@ final class VirviApi: Sendable {
         guard let passes else { throw ApiError.status(401, code: "device_revoked") }
         let pass = try await passes.pass(for: sceneId)
         do {
-            return try await perform(method, path, body: body, pass: pass)
-        } catch ApiError.status(401, let code) where code != "device_revoked" {
-            let fresh = try await passes.pass(for: sceneId, forceFresh: true)
-            return try await perform(method, path, body: body, pass: fresh)
+            do {
+                return try await perform(method, path, body: body, pass: pass)
+            } catch ApiError.status(401, let code) where !Self.isRevoked(code) {
+                let fresh = try await passes.pass(for: sceneId, forceFresh: true)
+                return try await perform(method, path, body: body, pass: fresh)
+            }
+        } catch ApiError.status(401, let code) where Self.isRevoked(code) {
+            // The server saw the device revoked on a scene call: forget the passes and go back to pairing.
+            await passes.revoked()
+            throw ApiError.status(401, code: "device_revoked")
         }
     }
+
+    private static func isRevoked(_ code: String?) -> Bool { code == "device_revoked" || code == "bad_secret" }
 
     private func perform<T: Decodable>(_ method: String, _ path: String, body: [String: Any]?, pass: String?) async throws -> T {
         guard let url = URL(string: path, relativeTo: baseUrl)?.absoluteURL else { throw ApiError.decode }

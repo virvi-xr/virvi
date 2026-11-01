@@ -82,6 +82,47 @@ final class DeviceAuthTests: XCTestCase {
         XCTAssertEqual(auth.state, .unpaired)
     }
 
+    func testRevokeSeenOnSceneCallReturnsToUnpaired() async throws {
+        let t = FakeTransport()
+        t.on("/pass") { _ in (200, ["pass": "p1", "passExpiresAt": iso(Date().addingTimeInterval(600)), "sceneId": "s1"]) }
+        t.on("/api/thing") { _ in (401, ["error": "device_revoked"]) }
+        let store = MemoryStore()
+        store.save("headsetSecret", "s"); store.save("deviceId", "dev1")
+        let (auth, _) = make(t, store)
+        auth.restore()
+        let passes = PassProvider(baseUrl: base, transport: t, secrets: store, onRevoked: { await auth.onRevoked() })
+        let api = VirviApi(baseUrl: base, transport: t, passes: passes)
+        _ = try await passes.pass(for: "s1") // a valid pass is already cached
+        do {
+            let _: EmptyResponse = try await api.scene("s1", "GET", "/api/thing", body: nil)
+            XCTFail("expected throw")
+        } catch {
+            XCTAssertEqual(error as? ApiError, .status(401, code: "device_revoked"))
+        }
+        XCTAssertEqual(auth.state, .unpaired)
+        XCTAssertNil(store.load("headsetSecret"))
+        XCTAssertNil(store.load("deviceId"))
+        XCTAssertEqual(t.count("/api/thing"), 1)
+        XCTAssertEqual(t.count("/pass"), 1)
+    }
+
+    func testStaleClaimResponseDoesNotOverwriteCancel() async {
+        let fake = FakeTransport(); pairStart(fake)
+        fake.script("/claim", [(200, ["status": "approved", "deviceId": "dev1", "kind": "personal", "expiresAt": iso(Date())])])
+        let gate = GatedTransport(fake, gating: "/claim")
+        let store = MemoryStore()
+        let auth = DeviceAuth(baseUrl: base, transport: gate, store: store, sleep: { _ in })
+        await auth.startPairing()
+        let poll = Task { await auth.pollClaim() }
+        await gate.waitUntilEntered()
+        auth.cancel()
+        await gate.open()
+        await poll.value
+        XCTAssertEqual(auth.state, .unpaired)
+        XCTAssertNil(store.load("deviceId"))
+        XCTAssertNil(store.load("headsetSecret"))
+    }
+
     func testFormatPairingCode() {
         XCTAssertEqual(formatPairingCode("ABC123"), "ABC-123")
         XCTAssertEqual(formatPairingCode("abc-123"), "ABC-123")

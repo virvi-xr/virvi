@@ -80,6 +80,7 @@ final class DeviceAuth: ObservableObject {
             guard pairingCode == code, !Task.isCancelled else { return }
             do {
                 let c: Claim = try await api.device("POST", "/api/ar/pair/\(code)/claim", body: ["secret": secret])
+                guard pairingCode == code else { return } // cancelled or re-paired while this was in flight
                 switch c {
                 case .pending: continue
                 case .refused:
@@ -92,6 +93,7 @@ final class DeviceAuth: ObservableObject {
                     return
                 }
             } catch ApiError.status(let s, _) where s == 401 || s == 404 {
+                guard pairingCode == code else { return }
                 clearKeys(); pairingCode = nil; state = .unpaired // bad secret or code expired
                 return
             } catch {
