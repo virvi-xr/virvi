@@ -18,7 +18,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const DCL_RUNTIME_VERSION = 3
+export const DCL_RUNTIME_VERSION = 4
 
 const RUNTIME_ROOT = fileURLToPath(new URL('../../../dcl-runtime/', import.meta.url))
 
