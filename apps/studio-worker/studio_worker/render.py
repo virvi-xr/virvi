@@ -2,6 +2,7 @@
 SwiftShader), and the `studio-preview` command the agent uses to look at its work.
 
     studio-preview out/hat [out/eyewear ...] [--out review]
+    studio-preview out/hat [out/eyewear ...] --emote dance [--body male] [--out review/dance]
 
 Each render runs in a child process that a watchdog kills, so a hung Chrome can never hang the machine. Readiness
 comes from the preview's own messages, and the item counts as loaded only when the scene's triangle count moves
@@ -32,14 +33,48 @@ LOAD_SEC = 90  # the longest the preview may take to send `load` for the item (o
 METRICS_SEC = 10  # after `load`, how long the triangle count may take to rise
 CHROME_ARGS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
 LOOK_NAMES = ('front', 'right', 'back', 'left')
+# Inspect: the item alone over a sphere of camera elevations (beta, degrees), the eye-level ring first, 24 columns
+# round each, then one frame looking straight down (frame 120) and one looking straight up (frame 121)
+ORBIT_ROWS = (90, 60, 120, 30, 150)
+ORBIT_COLS = 24
+ORBIT_FRAMES = len(ORBIT_ROWS) * ORBIT_COLS + 2
+WALK_FPS, WALK_MIN_SEC, WALK_MAX_FRAMES = 24, 4.0, 120
+EMOTE_SAMPLE = 16  # frames studio-preview --emote keeps
+
+
+def orbit_steps(ring: bool) -> list[dict]:
+    """The camera move before each orbit frame. Moves are relative and the camera starts at the front, at eye level
+    (beta 90°); each row ends one column short of a full turn, so the next row's first move completes it."""
+    col = 2 * math.pi / ORBIT_COLS
+    steps, beta = [], 90
+    for r, row in enumerate(ORBIT_ROWS[:1] if ring else ORBIT_ROWS):
+        steps.append({} if r == 0 else {'alpha': col, 'beta': math.radians(row - beta)})
+        steps += [{'alpha': col}] * (ORBIT_COLS - 1)
+        beta = row
+    if not ring:
+        steps += [{'alpha': col, 'beta': math.radians(0 - beta)}, {'beta': math.radians(180)}]
+    return steps
+
+
+def walk_schedule(length: float) -> tuple[list[float], float]:
+    """The animation times of a walk-around's frames and the rate they play back at: 24 a second, the camera's one
+    turn spread over at least 4 s (looping a short emote), at most 120 frames."""
+    if not length or length <= 0:
+        return [0.0] * round(WALK_MIN_SEC * WALK_FPS), float(WALK_FPS)
+    total = max(length, WALK_MIN_SEC)
+    n = min(WALK_MAX_FRAMES, round(total * WALK_FPS))
+    return [(i * total / n) % length for i in range(n)], n / total
 
 
 def render(pieces: list[dict], view: dict, out: Path, frames: int = 36, size: int = 512,
            watchdog_sec: int = 300) -> dict:
     """pieces: [{'category', 'glbs': {'male'|'female'|'unisex': Path}, 'meta'}];
-    view: {'bodyShape': 'male'|'female', 'outfit', 'emote', 'mode': 'spin'|'emote'|'look'|'thumbnail'}.
-    A thumbnail is one 256 px square PNG on a transparent background (an emote paused halfway).
-    Returns {'ok', 'frames': [Path], 'error': None|'timeout'|'item_not_loaded'|'blank'|str, 'bootSec'}."""
+    view: {'bodyShape': 'male'|'female', 'outfit', 'emote', 'mode': 'spin'|'emote'|'look'|'thumbnail'|'orbit'|'walk'}.
+    A thumbnail is one 256 px square PNG on a transparent background (an emote paused halfway). An orbit is the item
+    alone from every angle (`ring` keeps the eye-level 24); a walk-around steps the emote through its timeline while
+    the camera turns once (`sample`: keep that many evenly spaced frames, as PNGs). Both ignore `frames`.
+    Returns {'ok', 'frames': [Path], 'error': None|'timeout'|'item_not_loaded'|'blank'|str, 'bootSec'}, plus
+    'fps' for a walk-around."""
     out = Path(out).absolute()  # the child process runs in another directory
     out.mkdir(parents=True, exist_ok=True)
     spec = {'pieces': [{**p, 'glbs': {k: str(Path(v).absolute()) for k, v in p['glbs'].items()}} for p in pieces],
@@ -101,7 +136,8 @@ def _query(view: dict) -> str:
     return '&'.join([f"profile={config.OUTFITS.get(view.get('outfit') or 'default', 'default1')}",
                      f'bodyShape={shape}', 'disableAutoRotate=true',
                      f"disableBackground={'true' if view.get('mode') == 'thumbnail' else 'false'}",
-                     f"emote={view.get('emote') or 'idle'}"])
+                     f"emote={'idle' if view.get('emote') in (None, 'own') else view['emote']}"]
+                    + (['type=wearable'] if view.get('mode') == 'orbit' else []))
 
 
 def _run(spec: dict) -> dict:
@@ -160,18 +196,33 @@ def _run(spec: dict) -> dict:
             fit_square(image).save(path)
             browser.close()
             return {'ok': True, 'frames': [str(path)], 'error': None, 'bootSec': boot}
+        fps, names = None, None
         if mode == 'emote':
             page.evaluate("__studio.call('emote', 'pause')")
             length = page.evaluate("__studio.call('emote', 'getLength')") or 0
             steps = [('emote', 'goTo', [i * length / frames]) for i in range(frames)]
+        elif mode == 'orbit':
+            steps = [('scene', 'changeCameraPosition', [m]) if m else None for m in orbit_steps(bool(view.get('ring')))]
+        elif mode == 'walk':
+            page.evaluate("__studio.call('emote', 'pause')")
+            times, fps = walk_schedule(page.evaluate("__studio.call('emote', 'getLength')") or 0)
+            n = len(times)
+            keep = sorted({round(j * n / view['sample']) for j in range(view['sample'])}) if view.get('sample') \
+                else list(range(n))
+            # each kept frame turns the camera on by as many steps as frames were skipped, so angles match the full run
+            steps = [[('emote', 'goTo', [times[i]]),
+                      ('scene', 'changeCameraPosition', [{'alpha': 2 * math.pi * (i - prev) / n}])]
+                     for prev, i in zip([-1] + keep, keep)]
+            if view.get('sample'):
+                names = [f'{j:02d}.png' for j in range(len(keep))]
         else:
             n = 4 if mode == 'look' else frames
             turn = ('scene', 'changeCameraPosition', [{'alpha': 2 * math.pi / n}])
             # a spin turns before each frame; a look starts at the front so its four views are named right
             steps = [None] + [turn] * (n - 1) if mode == 'look' else [turn] * n
         for i, step in enumerate(steps):
-            if step:
-                page.evaluate('([ns, m, p]) => __studio.call(ns, m, p)', list(step))
+            for call in (step if isinstance(step, list) else [step] if step else []):
+                page.evaluate('([ns, m, p]) => __studio.call(ns, m, p)', list(call))
             page.evaluate('__studio.frames()')
             image = Image.open(_png(page))
             if is_blank(image):
@@ -179,12 +230,15 @@ def _run(spec: dict) -> dict:
             if mode == 'look':
                 path = out / f"{view.get('bodyShape', 'male')}-{LOOK_NAMES[i]}.png"
                 image.save(path)
+            elif names:
+                path = out / names[i]
+                image.save(path)
             else:
                 path = out / f'{i:03d}.webp'
                 image.save(path, 'WEBP', quality=80)
             shots.append(str(path))
         browser.close()
-    return {'ok': True, 'frames': shots, 'error': None, 'bootSec': boot}
+    return {'ok': True, 'frames': shots, 'error': None, 'bootSec': boot, **({'fps': fps} if fps else {})}
 
 
 def _png(page, transparent: bool = False):
@@ -226,8 +280,7 @@ def _fail(error: str, start: float) -> dict:
     return {'ok': False, 'frames': [], 'error': error, 'bootSec': round(time.monotonic() - start, 1)}
 
 
-def look(piece_dirs: list[Path], out: Path) -> list[Path]:
-    """studio-preview: front, right, back and left views of the pieces together, on each body shape they have."""
+def _load_pieces(piece_dirs: list[Path]) -> list[dict]:
     from .pieces import Piece, glbs_by_shape
     pieces = []
     for d in piece_dirs:
@@ -238,6 +291,12 @@ def look(piece_dirs: list[Path], out: Path) -> list[Path]:
             raise SystemExit(f'{d} has no GLB')
         piece = Piece(category=meta.get('category') or d.name, glbs=glbs, meta=meta, changed=True, checker={})
         pieces.append({'category': piece.category, 'glbs': glbs_by_shape(piece), 'meta': meta})
+    return pieces
+
+
+def look(piece_dirs: list[Path], out: Path) -> list[Path]:
+    """studio-preview: front, right, back and left views of the pieces together, on each body shape they have."""
+    pieces = _load_pieces(piece_dirs)
     shapes = sorted({s for p in pieces for s in p['glbs']} - {'unisex'}) or ['male', 'female']
     paths = []
     for shape in shapes:
@@ -246,6 +305,19 @@ def look(piece_dirs: list[Path], out: Path) -> list[Path]:
             raise SystemExit(f'studio-preview failed on the {shape} body: {r["error"]}')
         paths += r['frames']
     return paths
+
+
+def look_emote(piece_dirs: list[Path], out: Path, emote: str, body: str = 'male', outfit: str = 'default',
+               pieces: list[dict] | None = None) -> list[Path]:
+    """studio-preview --emote: 16 evenly spaced frames of an emote (`own` for an emote design's own) with the pieces
+    worn together, the camera turning once round over the playthrough. Saved as out/NN.png."""
+    if emote != 'own' and emote not in config.BASE_EMOTES:
+        raise SystemExit(f"unknown emote {emote!r}: use one of {', '.join(config.BASE_EMOTES)}, or own")
+    r = render(pieces if pieces is not None else _load_pieces(piece_dirs),
+               {'bodyShape': body, 'outfit': outfit, 'emote': emote, 'mode': 'walk', 'sample': EMOTE_SAMPLE}, Path(out))
+    if not r['ok']:
+        raise SystemExit(f'studio-preview failed on the {emote} ({body}): {r["error"]}')
+    return r['frames']
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -257,9 +329,16 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog='studio-preview', description='Look at pieces on the Decentraland avatar: '
                                  'writes front, right, back and left views for each body shape and prints their paths.')
     ap.add_argument('pieces', nargs='+', type=Path, help='piece folders, such as out/hat')
-    ap.add_argument('--out', type=Path, default=Path('review'))
+    ap.add_argument('--out', type=Path, help='where to write the frames (default review, or review/<emote>)')
+    ap.add_argument('--emote', help=f"instead, 16 frames of this emote with the pieces worn: "
+                                    f"{', '.join(config.BASE_EMOTES)}, or own for an emote design")
+    ap.add_argument('--body', choices=('male', 'female'), default='male', help='the body shape for --emote')
     a = ap.parse_args(argv)
-    for p in look(a.pieces, a.out):
+    if a.emote:
+        paths = look_emote(a.pieces, a.out or Path('review') / a.emote, a.emote, a.body)
+    else:
+        paths = look(a.pieces, a.out or Path('review'))
+    for p in paths:
         print(p)
     return 0
 
