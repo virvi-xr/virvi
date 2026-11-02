@@ -11,7 +11,7 @@ import { memoryPrivateStore, setImportStore } from '../src/storage/private-store
 import { chainSigner, dclHash, virviSigner } from '../src/services/dcl/entity.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { assembleImported } from '../src/services/dcl/assemble.js'
-import { DEPLOY_WINDOW_MS, startVirviDeploy, whenSettled, type SignedBundle } from '../src/services/dcl/world-deployer.js'
+import { DEPLOY_WINDOW_MS, prepareSignedDeploy, startVirviDeploy, whenSettled, type SignedBundle } from '../src/services/dcl/world-deployer.js'
 import { setBuildRunner, setOnBuildDone, startBuild, type BuildRunner } from '../src/services/import/build-runner.js'
 import { createImport, SUPERSEDED_MESSAGE } from '../src/services/import/imports.js'
 import { deployImport } from '../src/services/import/import-deploy.js'
@@ -40,9 +40,9 @@ function sceneJson(parcels = ['0,0', '1,0'], title = 'Owner Title', world = WORL
 }
 
 /** What a build of the owner's scene leaves behind. */
-function builtFiles(extra: Record<string, Uint8Array> = {}, parcels?: string[]): Map<string, Uint8Array> {
+function builtFiles(extra: Record<string, Uint8Array> = {}, parcels?: string[], world = WORLD): Map<string, Uint8Array> {
   return new Map<string, Uint8Array>([
-    ['scene.json', enc(sceneJson(parcels))],
+    ['scene.json', enc(sceneJson(parcels, undefined, world))],
     ['bin/index.js', enc('owner code')],
     ['models/Tree.glb', enc('tree bytes')],
     ['images/virvi/hud-v.png', enc('hud icon')],
@@ -91,10 +91,10 @@ describe('deploying an imported build', () => {
   const depRow = async (id: string) => (await db.query.sceneDeployments.findFirst({ where: eq(sceneDeployments.id, id) }))!
 
   /** A built import of the World for `sceneId` (a new scene by default), its files in the store. */
-  async function built(o: { sceneId?: string; files?: Map<string, Uint8Array> } = {}) {
+  async function built(o: { sceneId?: string; files?: Map<string, Uint8Array>; world?: string } = {}) {
     const sceneId = o.sceneId ?? (await createScene(user, 'Cafe')).scene.id
     const [row] = await db.insert(sceneImports).values({
-      userId: user.id, sceneId, worldName: WORLD, kind: 'sdk7', sourceKey: 'pending', status: 'built', builtAt: new Date(),
+      userId: user.id, sceneId, worldName: o.world ?? WORLD, kind: 'sdk7', sourceKey: 'pending', status: 'built', builtAt: new Date(),
     }).returning()
     const prefix = `imports/${row.id}/built/`
     await db.update(sceneImports).set({ sourceKey: `imports/${row.id}/source.zip`, builtKeyPrefix: prefix }).where(eq(sceneImports.id, row.id))
@@ -113,16 +113,16 @@ describe('deploying an imported build', () => {
   const view = async (id: string) => (await app.inject({ method: 'GET', url: `/api/imports/${id}`, headers: auth(user) })).json().import
 
   /** An import of the World in `building`, its uploaded source stored, and the token its box holds. */
-  async function building(sceneId: string, parcels?: string[]) {
+  async function building(sceneId: string, parcels?: string[], world = WORLD) {
     const started: Record<string, string>[] = []
     const runner: BuildRunner = { async start(_id, env) { started.push(env); return { machineId: 'm1' } }, async stop() {} }
     setBuildRunner(runner)
     const [row] = await db.insert(sceneImports).values({
-      userId: user.id, sceneId, worldName: WORLD, kind: 'sdk7', sourceKey: 'pending',
+      userId: user.id, sceneId, worldName: world, kind: 'sdk7', sourceKey: 'pending',
     }).returning()
     const sourceKey = `imports/${row.id}/source.zip`
     await db.update(sceneImports).set({ sourceKey }).where(eq(sceneImports.id, row.id))
-    await store.put(sourceKey, Buffer.from(zipSync({ 'scene.json': enc(sceneJson(parcels)), 'src/index.ts': enc('main') })), 'application/zip')
+    await store.put(sourceKey, Buffer.from(zipSync({ 'scene.json': enc(sceneJson(parcels, undefined, world)), 'src/index.ts': enc('main') })), 'application/zip')
     await startBuild(row.id)
     return { id: row.id, token: started[0].BUILD_TOKEN }
   }
@@ -591,5 +591,49 @@ describe('deploying an imported build', () => {
     expect(await importRow(imp.id)).toMatchObject({ status: 'failed', errorCode: 'import_files_missing' })
     expect((await importRow(imp.id)).errorMessage).toMatch(/Upload it again/)
     expect((await view(imp.id)).canDeploy).toBe(false)
+  })
+  describe('a World name that only matches once lower-cased (the Kelvin sign folds to k)', () => {
+    const KIOSK = 'kiosk.dcl.eth'
+    const KELVIN = '\u212Aiosk.dcl.eth'
+    beforeEach(() => { worlds.deployers.set(KIOSK, { owner: user.wallet, deployers: [] }) })
+    const kelvinFiles = () => builtFiles({}, undefined, KELVIN)
+
+    it('is refused at the build result', async () => {
+      const { scene } = await createScene(user, 'Kiosk')
+      const { id, token } = await building(scene.id, undefined, KIOSK)
+      const r = await postResult(id, token, kelvinFiles())
+      expect(r.statusCode).toBe(422)
+      expect(await importRow(id)).toMatchObject({ status: 'failed', errorCode: 'build_failed' })
+    })
+
+    it('is refused when the deploy starts (builtPlot)', async () => {
+      const imp = await built({ world: KIOSK, files: kelvinFiles() })
+      const r = await post(`/api/imports/${imp.id}/deploy`)
+      expect([r.statusCode, r.json().error]).toEqual([422, 'world_changed'])
+      expect(await db.select().from(sceneDeployments)).toHaveLength(0)
+    })
+
+    it('is refused when the deployment is assembled', async () => {
+      const imp = await built({ world: KIOSK, files: kelvinFiles() })
+      const [dest] = await db.insert(dclWorldDestinations).values({
+        sceneId: imp.sceneId, ownerUserId: user.id, ownerWallet: user.wallet!, worldName: KIOSK, base: '0,0', parcels: ['0,0', '1,0'],
+        mode: 'sign', adopted: true, pendingImportId: imp.id,
+      }).returning()
+      await expect(prepareSignedDeploy(dest.id, user.id)).rejects.toMatchObject({ code: 'world_changed' })
+      expect(worlds.deployed).toHaveLength(0)
+    })
+
+    it('is refused at the signed submit', async () => {
+      const imp = await built({ world: KIOSK, files: builtFiles({}, undefined, KIOSK) })
+      const { deployment, payload } = (await post(`/api/imports/${imp.id}/deploy`)).json()
+      const dep = await depRow(deployment.id)
+      const bundle = dep.assetBundle as SignedBundle
+      const metadata = JSON.parse(bundle.metadataJson)
+      metadata.worldConfiguration.name = KELVIN
+      await db.update(sceneDeployments).set({ assetBundle: { ...bundle, metadataJson: JSON.stringify(metadata) } }).where(eq(sceneDeployments.id, dep.id))
+      const r = await post(`/api/deploy/${deployment.id}/signature`, { chain: await chainFor(owner, payload) })
+      expect([r.statusCode, r.json().error]).toEqual([422, 'world_changed'])
+      expect(worlds.deployed).toHaveLength(0)
+    })
   })
 })

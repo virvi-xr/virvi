@@ -21,7 +21,7 @@ import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
 import { linkWorldLocation } from '../../setup/setups.js'
 import { getImportStore } from '../../storage/private-store.js'
-import { ImportError } from '../import/scene-zip.js'
+import { ImportError, worldNameOf } from '../import/scene-zip.js'
 import {
   assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsInScene, pendingModels, wizardSceneJson,
   type Assembled, type ModelFetcher, type ModelNeed,
@@ -48,9 +48,8 @@ const IMPORT_FILES_GONE = "The built scene's files are gone. Upload it again."
 /** The sentence when a built scene.json names a World other than the one it is deploying to. */
 export const worldChanged = (named: string | null, world: string) =>
   `The built scene.json names the World ${named ?? '(none)'}, not ${world}. Virvi only deploys a scene to the World it was uploaded for.`
-/** The World an entity's metadata deploys to, lower-cased. */
-const metadataWorld = (m: { worldConfiguration?: { name?: unknown } } | undefined) =>
-  typeof m?.worldConfiguration?.name === 'string' ? m.worldConfiguration.name.toLowerCase() : null
+/** The World an entity's metadata deploys to (ASCII-lower-cased, see worldNameOf), or null when it names none. */
+const metadataWorld = (m: { worldConfiguration?: { name?: unknown } } | undefined) => worldNameOf(m?.worldConfiguration?.name)
 
 export type Destination = typeof dclWorldDestinations.$inferSelect
 export type Deployment = typeof sceneDeployments.$inferSelect

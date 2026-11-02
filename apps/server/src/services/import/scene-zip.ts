@@ -33,6 +33,17 @@ export function safeSegments(name: string): string[] {
 const isParcelList = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string')
 
 const WORLD_NAME = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/
+
+/**
+ * The World a scene.json's `worldConfiguration.name` names, or null when it isn't a World name. Only ASCII letters are
+ * lower-cased: `toLowerCase` folds some other characters into ASCII (the Kelvin sign becomes k), and a name like that
+ * must never match a World. Every place that compares a scene.json's World with an import's uses this.
+ */
+export function worldNameOf(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const name = raw.replace(/[A-Z]+/g, (c) => c.toLowerCase())
+  return WORLD_NAME.test(name) ? name : null
+}
 /** Dropped wherever they appear; `bin/` is dropped only at the scene root. */
 const alwaysDropped = (segs: string[]) => segs.slice(0, -1).some((s) => s !== 'bin' && DROPPED_DIRS.has(s)) || segs[segs.length - 1] === '.DS_Store'
 
@@ -114,7 +125,7 @@ export function readSceneZip(zip: Uint8Array): SceneFolder {
   const kind = files.has('assets/scene/main.composite') ? 'creator-hub' : 'sdk7'
   const wc = sceneJson.worldConfiguration as { name?: unknown } | undefined
   if (wc === undefined || wc === null) return { files, sceneJson, kind, location: { kind: 'parcels', parcels, base } }
-  const name = typeof wc.name === 'string' ? wc.name.toLowerCase() : ''
-  if (!WORLD_NAME.test(name)) throw new ImportError(422, 'bad_world_name', 'worldConfiguration.name must be a .eth name.')
+  const name = worldNameOf(wc.name)
+  if (!name) throw new ImportError(422, 'bad_world_name', 'worldConfiguration.name must be a .eth name.')
   return { files, sceneJson, kind, location: { kind: 'world', world: name, parcels, base } }
 }

@@ -4,7 +4,7 @@ import { unzipSync } from 'fflate'
 import { db } from '../db/connection.js'
 import { sceneImports } from '../db/schema.js'
 import { getImportStore } from '../storage/private-store.js'
-import { ImportError, safeSegments } from '../services/import/scene-zip.js'
+import { ImportError, safeSegments, worldNameOf } from '../services/import/scene-zip.js'
 import { buildLogKey, buildTokenMatches, builtKeyPrefix, failBuild, getOnBuildDone } from '../services/import/build-runner.js'
 
 /**
@@ -87,8 +87,7 @@ function placeOf(bytes: Uint8Array | undefined): { world: string | null; parcels
   if (!bytes) return null
   try {
     const j = JSON.parse(new TextDecoder().decode(bytes)) as { worldConfiguration?: { name?: unknown }; scene?: { parcels?: unknown; base?: unknown } }
-    const name = j?.worldConfiguration?.name
-    return { world: typeof name === 'string' ? name.toLowerCase() : null, parcels: JSON.stringify(j?.scene?.parcels ?? null), base: j?.scene?.base ?? null }
+    return { world: worldNameOf(j?.worldConfiguration?.name), parcels: JSON.stringify(j?.scene?.parcels ?? null), base: j?.scene?.base ?? null }
   } catch {
     return null
   }

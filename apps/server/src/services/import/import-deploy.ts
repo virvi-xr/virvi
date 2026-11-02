@@ -8,7 +8,7 @@ import {
   DeployerError, markFailed, prepareSignedDeploy, startVirviDeploy, worldChanged, type Deployment, type Destination,
 } from '../dcl/world-deployer.js'
 import { OWNER_ERROR_MESSAGES, type SceneImportRow } from './imports.js'
-import { ImportError } from './scene-zip.js'
+import { ImportError, worldNameOf } from './scene-zip.js'
 
 /**
  * Deploying an import's build to the World its scene.json names (Ruling R1). When the build finishes, only a World
@@ -40,8 +40,7 @@ async function builtPlot(row: SceneImportRow): Promise<{ base: string; parcels: 
   try {
     json = JSON.parse(obj.body.toString('utf8')) as typeof json
   } catch { /* checked below */ }
-  const name = json?.worldConfiguration?.name
-  const named = typeof name === 'string' ? name.toLowerCase() : null
+  const named = worldNameOf(json?.worldConfiguration?.name)
   if (named !== row.worldName) throw new ImportError(422, 'world_changed', worldChanged(named, row.worldName))
   const scene = json?.scene
   const parcels = Array.isArray(scene?.parcels) && scene.parcels.length && scene.parcels.every((p) => typeof p === 'string') ? (scene.parcels as string[]) : null

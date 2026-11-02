@@ -55,6 +55,10 @@ describe('readSceneZip', () => {
     const j = { ...world, worldConfiguration: { name: 'plain' } }
     expect(code(() => readSceneZip(zip({ 'scene.json': enc(j) })))).toEqual([422, 'bad_world_name'])
   })
+  it('refuses a world name that only becomes ASCII when lower-cased (the Kelvin sign folds to k)', () => {
+    const j = { ...world, worldConfiguration: { name: 'Kiosk.dcl.eth' } }
+    expect(code(() => readSceneZip(zip({ 'scene.json': enc(j) })))).toEqual([422, 'bad_world_name'])
+  })
   it('a parcels scene reads as kind parcels', () => {
     const s = readSceneZip(zip({ 'scene.json': enc(parcels) }))
     expect(s.location).toEqual({ kind: 'parcels', parcels: ['10,20'], base: '10,20' })
