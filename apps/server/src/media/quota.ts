@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { assetLibraryItems, mediaAssets } from '../db/schema.js'
 import { config } from '../config.js'
@@ -22,7 +22,8 @@ export async function assertStorageQuota(
   const [{ usedBytes: libraryBytes }] = await db
     .select({ usedBytes: sql<number>`coalesce(sum(${assetLibraryItems.fileSizeBytes}), 0)::bigint`.mapWith(Number) })
     .from(assetLibraryItems)
-    .where(eq(assetLibraryItems.uploadedBy, ownerId))
+    // Design Studio pieces the person paid for (sourceRef studio:…) don't count against their upload storage
+    .where(and(eq(assetLibraryItems.uploadedBy, ownerId), sql`coalesce(${assetLibraryItems.sourceRef}, '') NOT LIKE 'studio:%'`))
   const usedBytes = mediaBytes + libraryBytes
 
   if (usedBytes + addBytes > storageLimit) {

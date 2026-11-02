@@ -89,6 +89,17 @@ describe('studio library', () => {
     expect(await db.select().from(assetLibraryItems)).toHaveLength(1)
   })
 
+  it('two adds at once (the finalize result and the sweep) add one row', async () => {
+    const { entitlement } = await paidChair()
+    const slow = memoryStorage()
+    const upload = slow.storage.upload
+    slow.storage.upload = async (key, data, type) => { await new Promise((r) => setTimeout(r, 50)); return upload(key, data, type) }
+    setLibraryStorage(slow.storage)  // a big GLB still uploading when the second add starts
+    const [a, b] = await Promise.all([addToLibrary(entitlement.id, new Date()), addToLibrary(entitlement.id, new Date())])
+    expect(a).toEqual(b)
+    expect(await db.select().from(assetLibraryItems)).toHaveLength(1)
+  })
+
   it('a second revision adds a second row and leaves the first', async () => {
     const a = await paidChair()
     await addToLibrary(a.entitlement.id, new Date())
@@ -124,5 +135,26 @@ describe('glbStats visibleOnly', () => {
     const { glbStats } = await import('../src/catalog/glb-stats.js')
     expect((await glbStats(CHAIR_GLB)).triangles).toBe(48)  // 3 boxes and the collider box
     expect((await glbStats(CHAIR_GLB, { visibleOnly: true })).triangles).toBe(36)
+  })
+})
+
+describe('library storage quota', () => {
+  beforeEach(async () => {
+    await resetDb()
+    setStudioStore(memoryStudioStore())
+  })
+  it('paid scene pieces never count against the upload quota; uploads still do', async () => {
+    const { assertStorageQuota } = await import('../src/media/quota.js')
+    const unlocked = config.allFeaturesUnlocked
+    ;(config as any).allFeaturesUnlocked = false  // tests otherwise run every plan unlimited
+    const u = await createUser()
+    const big = 500 * 1024 * 1024  // a free plan's whole allowance
+    await db.insert(assetLibraryItems).values({ name: 'Paid building', storageKey: 'k1', cdnUrl: 'https://cdn.test/k1',
+      fileSizeBytes: big, isPublic: false, uploadedBy: u.id, sourceRef: 'studio:ent-1:house.glb' })
+    await expect(assertStorageQuota(u.id, 1)).resolves.not.toThrow()
+    await db.insert(assetLibraryItems).values({ name: 'An upload', storageKey: 'k2', cdnUrl: 'https://cdn.test/k2',
+      fileSizeBytes: big, isPublic: false, uploadedBy: u.id })
+    await expect(assertStorageQuota(u.id, 1)).rejects.toThrow()
+    ;(config as any).allFeaturesUnlocked = unlocked
   })
 })
