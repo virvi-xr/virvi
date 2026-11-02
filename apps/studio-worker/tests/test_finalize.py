@@ -80,7 +80,11 @@ def fake_render(calls, blank_for=()):
         out.mkdir(parents=True, exist_ok=True)
         if any(p['category'] in blank_for for p in pieces):
             return {'ok': False, 'frames': [], 'error': 'blank', 'bootSec': 1.0}
-        if view['mode'] == 'look':
+        if view.get('look'):  # a scene piece's four views
+            paths = [out / f"{pieces[0]['category']}-{v}.png" for v in ('front', 'right', 'back', 'left')]
+            for p in paths:
+                Image.new('RGB', (size, size), (90, 40, 40)).save(p)
+        elif view['mode'] == 'look':
             paths = [out / f"{view['bodyShape']}-{v}.png" for v in ('front', 'right', 'back', 'left')]
             for p in paths:
                 Image.new('RGB', (size, size), (90, 40, 40)).save(p)
@@ -254,3 +258,47 @@ def test_report_leaves_out_blender_noise(api, tmp_path):
     report = package(api, 'job-f', 'hat').read('REPORT.md').decode()
     assert '| INFO:' not in report
     assert 'CLIP GATE PASS' in report and 'Idle    0/61 frames clip' in report
+
+
+SCENE = Path(__file__).parent / 'fixtures' / 'scene'
+
+
+def scene_inputs(api, job_id, folder, extras, report):
+    meta = json.loads((SCENE / folder / 'piece.json').read_text())
+    glb = next((SCENE / folder).glob('*.glb'))
+    files = [f'pieces/{folder}/{glb.name}', f'pieces/{folder}/piece.json'] + [f'pieces/{folder}/{e}' for e in extras] + \
+        [f'checks/{folder}.txt']
+    api.inputs[f'{job_id}/pieces/{folder}/{glb.name}'] = glb.read_bytes()
+    api.inputs[f'{job_id}/pieces/{folder}/piece.json'] = json.dumps(meta).encode()
+    for e in extras:
+        api.inputs[f'{job_id}/pieces/{folder}/{e}'] = (SCENE / folder / e).read_bytes()
+    api.inputs[f'{job_id}/checks/{folder}.txt'] = report.encode()
+    return {'category': folder, 'name': meta['name'], 'revision': 1, 'files': files, 'sourceJobId': 'src-1'}
+
+
+def test_scene_package_has_its_files_and_no_wearable_ones(api, tmp_path):
+    piece = scene_inputs(api, 'job-f', 'furniture_chair', ['chair.sittables.json'], '== model check\n  PASS  colliders\n')
+    result = run(api, tmp_path, finalize_job([piece], kind='scene'))
+    assert result['outcome'] == 'ok', result
+    names = set(package(api, 'job-f', 'furniture_chair').namelist())
+    assert names == {'chair.glb', 'piece.json', 'chair.sittables.json', 'thumbnail.png', 'REPORT.md'} | \
+        {f'renders/furniture_chair-{v}.png' for v in ('front', 'right', 'back', 'left')}
+
+
+def test_scene_finalize_uploads_the_thumbnail_beside_the_package(api, tmp_path):
+    piece = scene_inputs(api, 'job-f', 'furniture_chair', ['chair.sittables.json'], '== model check\n  PASS  colliders\n')
+    result = run(api, tmp_path, finalize_job([piece], kind='scene'))
+    assert api.files['job-f/final/furniture_chair/thumbnail.png'][:8] == b'\x89PNG\r\n\x1a\n'
+    assert result['pieces'][0]['files'] == ['final/furniture_chair/package.zip', 'final/furniture_chair/thumbnail.png']
+
+
+def test_a_building_report_has_the_walk_check(api, tmp_path, skills):
+    report = '== model check\n  PASS  colliders\n== walk check\n  PASS  route  20.0 m walked\n'
+    piece = scene_inputs(api, 'job-f', 'building', ['layout.json', 'route.json'], report)
+    calls = []
+    result = run(api, tmp_path, finalize_job([piece], kind='scene'), render_calls=calls)
+    assert result['outcome'] == 'ok', result
+    z = package(api, 'job-f', 'building')
+    assert {'kiosk.glb', 'route.json', 'layout.json', 'tour.mp4', 'REPORT.md'} <= set(z.namelist())
+    assert 'walk check' in z.read('REPORT.md').decode()
+    assert any(view['mode'] == 'tour' for _, view, _, _ in calls)

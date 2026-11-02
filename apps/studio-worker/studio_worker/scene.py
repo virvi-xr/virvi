@@ -7,8 +7,9 @@ from pathlib import Path
 
 from . import config
 
-# out/building/ or out/furniture_<slug>/: lowercase letters and underscores only, as Virvi's file paths allow
-CATEGORY = re.compile(r'^(building|furniture_[a-z_]{1,32})$')
+# out/building/ or out/furniture_<slug>/: lowercase letters and underscores only, as Virvi's file paths allow, and
+# at most 32 characters in all (a finalize job's category limit)
+CATEGORY = re.compile(r'^(building|furniture_[a-z_]{1,22})$')
 MAX_FURNITURE = 12
 FOOTPRINTS = ('0.5x0.5', '1x1', '1x2', '2x2', '4x4')
 FURNITURE_KINDS = ('furniture', 'decor')
@@ -25,7 +26,7 @@ def folder_problem(name: str) -> str | None:
     if CATEGORY.match(name):
         return None
     return (f'out/{name}/ is not a scene piece folder: use out/building/ or out/furniture_<name>/ '
-            '(lowercase letters and underscores)')
+            '(<name>: up to 22 lowercase letters and underscores)')
 
 
 def validate(category: str, meta: dict, glbs: list[Path]) -> str | None:
