@@ -111,6 +111,20 @@ describe('studio payments', () => {
     expect(after.refundedCents).toBe(0)
   })
 
+  it('finalizing a building with furniture finalizes every piece (LIV-82)', async () => {
+    const u = await createUser({ role: 'admin' })
+    const d = await createDesign(u, { kind: 'scene' })
+    await addRevision(d, 'building', { pass: true, failures: 0, warnings: 0 }, { kind: 'building', footprint: '4x4' })
+    await addRevision(d, 'furniture_desk', { pass: true, failures: 0, warnings: 0 }, { kind: 'furniture' })
+    await addRevision(d, 'furniture_chair', { pass: true, failures: 0, warnings: 0 }, { kind: 'furniture' })
+    const quote = await app.inject({ method: 'GET', url: `/api/studio/designs/${d.id}/finalize`, headers: as(u) })
+    expect(quote.json().lines.map((l: any) => l.category).sort()).toEqual(['building', 'furniture_chair', 'furniture_desk'])
+    expect((await finalize(u, d.id)).statusCode).toBe(200)
+    const ents = await db.select().from(studioEntitlements)
+    expect(ents.map((e) => e.category).sort()).toEqual(['building', 'furniture_chair', 'furniture_desk'])
+    expect(await db.select().from(studioJobs).where(eq(studioJobs.type, 'finalize'))).toHaveLength(3)
+  })
+
   it('a Virvi admin finalizes free: granted at once, no Stripe, packaged like any paid piece', async () => {
     const u = await createUser({ role: 'admin' })
     const d = await createDesign(u)

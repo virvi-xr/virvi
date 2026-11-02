@@ -13,7 +13,8 @@ import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
 import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
-import { createFinalizeCheckout, createTopupCheckout, entitlementFor, giftsFor, queueFinalize, reportMistake, PaymentError } from '../studio/payments.js'
+import { createFinalizeCheckout, createTopupCheckout, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError } from '../studio/payments.js'
+import { storedZip } from '../studio/zip.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
   designDetail, openDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
@@ -46,6 +47,13 @@ function checkoutRefusal(reply: FastifyReply, err: unknown) {
 }
 
 const notFound = (reply: FastifyReply) => reply.status(404).send({ error: 'design_not_found' })
+
+/** A file-name slug of a piece's or design's name. */
+const slugOf = (name: string, fallback: string) =>
+  name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || fallback
+
+/** "Download all" holds the packages in memory while it zips them: past this, download them one by one. */
+const DOWNLOAD_ALL_MAX_BYTES = 500 * 1024 * 1024
 
 async function ownDesign(request: FastifyRequest): Promise<Design | null> {
   const id = (request.params as { id: string }).id
@@ -257,7 +265,35 @@ export default async function studioRoutes(app: FastifyInstance) {
     return { d, ...found }
   }
 
-  // The only route a model file leaves by: the paid revision's package, to its owner
+  // "Download all": every piece's newest ready package in one zip, to its owner. With the route below, the only ways
+  // a model file leaves.
+  app.get('/api/studio/designs/:id/packages', auth, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const ready = await readyPackages(d.id)
+    if (!ready.length) return reply.status(409).send({ error: 'nothing_ready', code: 'nothing_ready' })
+    const files: { name: string; data: Buffer }[] = []
+    let total = 0
+    for (const p of ready) {
+      const obj = await getStudioStore().get(p.packageKey)
+      if (!obj) return reply.status(404).send({ error: 'package_missing', code: 'package_missing' })
+      total += obj.body.length
+      if (total > DOWNLOAD_ALL_MAX_BYTES) return reply.status(413).send({ error: 'too_large', code: 'too_large' })
+      // Two pieces can share a name; the category keeps their files apart
+      const base = slugOf(p.name, p.category)
+      const name = files.some((f) => f.name.startsWith(`${base}-r`)) ? `${base}-${p.category.replace(/_/g, '-')}` : base
+      files.push({ name: `${name}-r${p.number}.zip`, data: obj.body })
+    }
+    const zip = storedZip(files)
+    return reply
+      .type('application/zip')
+      .header('Content-Length', zip.length)
+      .header('Content-Disposition', `attachment; filename="${slugOf(d.name, 'design')}.zip"`)
+      .header('Cache-Control', 'private, no-store')
+      .send(zip)
+  })
+
+  // The paid revision's package, to its owner
   app.get('/api/studio/designs/:id/pieces/:category/revisions/:number/package', auth, async (request, reply) => {
     const paid = await paidRevision(request, reply)
     if (!paid) return reply
@@ -265,7 +301,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (e.status !== 'ready' || !e.packageKey) return reply.status(409).send({ error: e.status, code: e.status })
     const obj = await getStudioStore().getStream(e.packageKey)
     if (!obj) return reply.status(404).send({ error: 'package_missing', code: 'package_missing' })
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || e.category
+    const slug = slugOf(name, e.category)
     const { number } = request.params as { number: string }
     if (obj.length !== undefined) reply.header('Content-Length', obj.length)
     return reply

@@ -229,6 +229,10 @@ export function refusalMessage(
       return { text: 'That image has more pixels than the studio can use (64 megapixels at most). Save a smaller copy and try again.' }
     case 'too_many_uploads':
       return { text: 'A design holds up to 12 files. Remove one to add another.' }
+    case 'nothing_ready':
+      return { text: 'No piece has finished packaging yet. Try again in a minute.' }
+    case 'too_large':
+      return { text: 'These files are too big to download together. Download each piece on its own.' }
     default:
       // The server's own body-size limit answers 413 without a code
       return { text: err.status === 413 ? FILE_TOO_LARGE : 'Something went wrong. Try again.' }
@@ -577,6 +581,24 @@ export function revisionActions(f: FinalizedRevision, now: Date): {
       : f.reportableUntil && new Date(f.reportableUntil).getTime() > now.getTime() ? 'open'
         : 'closed'
   return { download: f.status === 'ready', retry: f.status === 'failed', packaging: f.status === 'packaging', report }
+}
+
+/**
+ * The paid-downloads panel's header, from each paid piece's newest paid revision: how many are ready, still packaging
+ * or failed, and whether "Download all" is offered (two or more pieces ready).
+ */
+export function paidSummary(pieces: StudioPiece[]): {
+  paid: number; ready: number; packaging: number; failed: number; downloadAll: boolean; progress: string | null
+} {
+  const newest = pieces.filter((p) => p.finalized.length).map((p) => p.finalized.reduce((a, b) => (b.revision > a.revision ? b : a)))
+  const ready = newest.filter((f) => f.status === 'ready').length
+  const packaging = newest.filter((f) => f.status === 'packaging').length
+  const failed = newest.filter((f) => f.status === 'failed').length
+  return {
+    paid: newest.length, ready, packaging, failed,
+    downloadAll: ready >= 2,
+    progress: packaging > 0 ? `${packaging} still packaging…` : null,
+  }
 }
 
 /**

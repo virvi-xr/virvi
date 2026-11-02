@@ -546,9 +546,10 @@ export function useApi() {
       apiFetch<{ sessions: any[] }>(`/api/streaming/${serverId}/sessions`),
 
     // 3D Asset Library
-    getAssets: (params?: { q?: string; category?: string; tag?: string; style?: string; venue?: string; pack?: string; maxTriangles?: string; maxFileSize?: string; limit?: string; offset?: string }) => {
+    getAssets: (params?: { q?: string; category?: string; tag?: string; style?: string; venue?: string; pack?: string; mine?: string; maxTriangles?: string; maxFileSize?: string; limit?: string; offset?: string }) => {
       const query = new URLSearchParams()
       if (params?.q) query.set('q', params.q)
+      if (params?.mine) query.set('mine', params.mine)
       if (params?.style) query.set('style', params.style)
       if (params?.venue) query.set('venue', params.venue)
       if (params?.pack) query.set('pack', params.pack)
@@ -720,6 +721,17 @@ export function useApi() {
       }
       const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
       return { blob: await res.blob(), filename: m?.[1] ?? `${category}-r${n}.zip` }
+    },
+    /** Every piece's newest ready package in one zip ("Download all"), through the same kind of authenticated route. */
+    downloadStudioPackages: async (id: string): Promise<{ blob: Blob; filename: string }> => {
+      const res = await fetch(`${API_URL}/api/studio/designs/${id}/packages`, { headers: requestHeaders(token, {}) })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        dropDeadSession(res.status, err)
+        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+      }
+      const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
+      return { blob: await res.blob(), filename: m?.[1] ?? 'design.zip' }
     },
   }), [apiFetch, token, dropDeadSession])
 }

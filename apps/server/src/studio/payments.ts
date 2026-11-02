@@ -472,6 +472,24 @@ export async function entitlementFor(designId: string, category: string, revisio
   return row ?? null
 }
 
+/** Each piece's newest paid revision whose package is ready: what "Download all" bundles. */
+export async function readyPackages(designId: string) {
+  const rows = await db.select({
+    category: studioEntitlements.category, packageKey: studioEntitlements.packageKey, number: studioRevisions.number, name: studioPieces.name,
+  })
+    .from(studioEntitlements)
+    .innerJoin(studioRevisions, eq(studioRevisions.id, studioEntitlements.revisionId))
+    .innerJoin(studioPieces, eq(studioPieces.id, studioRevisions.pieceId))
+    .where(and(eq(studioEntitlements.designId, designId), eq(studioEntitlements.status, 'ready')))
+  const newest = new Map<string, { category: string; packageKey: string; number: number; name: string }>()
+  for (const r of rows) {
+    if (!r.packageKey) continue
+    const had = newest.get(r.category)
+    if (!had || r.number > had.number) newest.set(r.category, { ...r, packageKey: r.packageKey })
+  }
+  return [...newest.values()].sort((a, b) => a.category.localeCompare(b.category))
+}
+
 /** Every paid revision of a design, newest first, as the page lists them (never the package's location). */
 export async function finalizedRevisions(designId: string) {
   const rows = await db.select({

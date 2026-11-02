@@ -528,8 +528,10 @@ export default function AssetsPage() {
   const [styleFilter, setStyleFilter] = useState('')
   const [venueFilter, setVenueFilter] = useState('')
   const [packFilter, setPackFilter] = useState('')
+  // '' every asset you can use; 'all' yours; 'studio' made in the Design Studio; 'uploads' the ones you uploaded
+  const [mineFilter, setMineFilter] = useState('')
   const [packs, setPacks] = useState<CatalogPack[]>([])
-  const filtering = !!(search || categoryFilter || tagFilter || styleFilter || venueFilter || packFilter)
+  const filtering = !!(search || categoryFilter || tagFilter || styleFilter || venueFilter || packFilter || mineFilter)
 
   /** First page for the current filters, or (more) the next page appended to what's shown. */
   const fetchAssets = useCallback(async (more = false) => {
@@ -543,6 +545,7 @@ export default function AssetsPage() {
       if (styleFilter) params.style = styleFilter
       if (venueFilter) params.venue = venueFilter
       if (packFilter) params.pack = packFilter
+      if (mineFilter) params.mine = mineFilter
       const data = await api.getAssets(params)
       setAssets((prev) => (more ? [...prev, ...data.assets] : data.assets))
       setTotal(data.total)
@@ -553,7 +556,7 @@ export default function AssetsPage() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [search, categoryFilter, tagFilter, styleFilter, venueFilter, packFilter, filtering, token, assets.length])
+  }, [search, categoryFilter, tagFilter, styleFilter, venueFilter, packFilter, mineFilter, filtering, token, assets.length])
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -567,7 +570,7 @@ export default function AssetsPage() {
   useEffect(() => {
     if (!token) return
     fetchAssets()
-  }, [token, search, categoryFilter, tagFilter, styleFilter, venueFilter, packFilter])
+  }, [token, search, categoryFilter, tagFilter, styleFilter, venueFilter, packFilter, mineFilter])
 
   useEffect(() => {
     if (!token) return
@@ -615,6 +618,7 @@ export default function AssetsPage() {
     setStyleFilter('')
     setVenueFilter('')
     setPackFilter('')
+    setMineFilter('')
   }
 
   const deleteAsset = async (id: string) => {
@@ -662,7 +666,13 @@ export default function AssetsPage() {
           <ViewToggle value={view} onChange={chooseView} options={[['grid', GridIcon, 'Grid view'], ['list', ListIcon, 'List view']]} />
         </div>
       </div>
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <SelectField value={mineFilter} onChange={setMineFilter} label="Owner">
+          <option value="">All assets</option>
+          <option value="all">My assets</option>
+          <option value="studio">Made in Design Studio</option>
+          <option value="uploads">My uploads</option>
+        </SelectField>
         <SelectField value={categoryFilter} onChange={setCategoryFilter} label="Category">
           <option value="">All Categories</option>
           {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}

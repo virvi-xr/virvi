@@ -58,6 +58,27 @@ describe('asset library routes', () => {
     void eq
   })
 
+  it('GET /api/assets?mine= lists only the caller\'s assets: all, Design Studio ones, or uploads', async () => {
+    const me = await createUser(); const other = await createUser()
+    await db.insert(assetLibraryItems).values([
+      { name: 'My upload', storageKey: 'a', uploadedBy: me.id, isPublic: false },
+      { name: 'My public upload', storageKey: 'b', uploadedBy: me.id, isPublic: true, sourceRef: 'room-scan:1' },
+      { name: 'My sofa', storageKey: 'c', uploadedBy: me.id, isPublic: false, sourceRef: 'studio:ent1:sofa.glb' },
+      { name: 'Their public chair', storageKey: 'd', uploadedBy: other.id, isPublic: true },
+      { name: 'Their studio lamp', storageKey: 'e', uploadedBy: other.id, isPublic: true, sourceRef: 'studio:ent2:lamp.glb' },
+    ])
+    const list = async (mine: string, user: Awaited<ReturnType<typeof createUser>> | null = me) => {
+      const res = await app.inject({ method: 'GET', url: `/api/assets?mine=${mine}`, headers: user ? { authorization: `Bearer ${tokenFor(user)}` } : {} })
+      const ok = res.statusCode === 200
+      return { status: res.statusCode, names: ok ? res.json().assets.map((a: { name: string }) => a.name).sort() : [], total: ok ? res.json().total : null }
+    }
+    expect(await list('all')).toEqual({ status: 200, names: ['My public upload', 'My sofa', 'My upload'], total: 3 })
+    expect(await list('studio')).toEqual({ status: 200, names: ['My sofa'], total: 1 })
+    expect(await list('uploads')).toEqual({ status: 200, names: ['My public upload', 'My upload'], total: 2 })
+    expect(await list('all', null)).toEqual({ status: 200, names: [], total: 0 })
+    expect((await list('theirs')).status).toBe(400)
+  })
+
   it('GET /api/assets lists public assets plus the caller\'s own private ones', async () => {
     const owner = await createUser(); const other = await createUser(); const admin = await createUser({ role: 'admin' })
     await db.insert(assetLibraryItems).values({ name: 'Priv', storageKey: 'p', uploadedBy: owner.id, isPublic: false })

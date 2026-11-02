@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  canSend, checkoutBody, composerState, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
+  canSend, checkoutBody, composerState, paidSummary, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
   type FinalizedRevision, type Quote, type QuoteLine, type StudioDetail, type StudioPiece, type StudioEvent, type StudioProposal,
 } from './studio'
 import { formatBytesShort, uploadProblem } from './studio'
@@ -407,6 +407,30 @@ describe('paymentBanner', () => {
       revision: 1, kind: 'first', status: 'ready', amountCents: 2900, paymentId: 'pay0', paidAt: at(-20 * MIN), report: null, reportableUntil: null,
     }] })] })
     expect(paymentBanner('pay1', earlier, started, NOW)?.kind).toBe('packaging')
+  })
+})
+
+describe('paidSummary (LIV-82)', () => {
+  const paidRev = (revision: number, status: string): FinalizedRevision => ({
+    revision, kind: revision > 1 ? 'revision' : 'first', status, amountCents: 0, paymentId: 'pay1', paidAt: at(-MIN), report: null, reportableUntil: null,
+  })
+  it('counts every paid piece by its newest paid revision, whichever tab is selected', () => {
+    const pieces = [
+      piece({ category: 'building', finalized: [paidRev(2, 'ready'), paidRev(1, 'ready')] }),
+      piece({ category: 'furniture_chair', finalized: [paidRev(1, 'packaging')] }),
+      piece({ category: 'furniture_lamp', finalized: [paidRev(1, 'ready')] }),
+      piece({ category: 'furniture_sofa', finalized: [] }),
+    ]
+    expect(paidSummary(pieces)).toEqual({ paid: 3, ready: 2, packaging: 1, failed: 0, downloadAll: true, progress: '1 still packaging…' })
+  })
+  it('offers Download all only with two or more pieces ready', () => {
+    expect(paidSummary([piece({ finalized: [paidRev(1, 'ready')] })]).downloadAll).toBe(false)
+    expect(paidSummary([piece({ category: 'a', finalized: [paidRev(1, 'ready')] }), piece({ category: 'b', finalized: [paidRev(1, 'failed')] })]))
+      .toMatchObject({ downloadAll: false, failed: 1, progress: null })
+  })
+  it('explains Download all refusals', () => {
+    expect(refusalMessage({ status: 409, body: { code: 'nothing_ready' } }, NOW).text).toMatch(/finished packaging/)
+    expect(refusalMessage({ status: 413, body: { code: 'too_large' } }, NOW).text).toMatch(/each piece on its own/)
   })
 })
 

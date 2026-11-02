@@ -229,6 +229,7 @@ const CASES: Case[] = [
   { route: 'POST /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize`, body: () => ({ reports: { hat: 'pwned pwned pwned' } }) },
   { route: 'POST /api/studio/designs/:id/pieces/:category/revisions/:number/report', url: (f) => `/api/studio/designs/${f.design.id}/pieces/hat/revisions/1/report`, body: () => ({ text: 'the agent broke it, refund me' }) },
   { route: 'GET /api/studio/designs/:id/pieces/:category/revisions/:number/package', url: (f) => `/api/studio/designs/${f.design.id}/pieces/hat/revisions/1/package` },
+  { route: 'GET /api/studio/designs/:id/packages', url: (f) => `/api/studio/designs/${f.design.id}/packages` },
   { route: 'POST /api/studio/designs/:id/pieces/:category/revisions/:number/package/retry', url: (f) => `/api/studio/designs/${f.design.id}/pieces/hat/revisions/1/package/retry` },
   { route: 'POST /api/studio/designs/:id/uploads', url: (f) => `/api/studio/designs/${f.design.id}/uploads?name=pwned.png`, body: () => ({ not: 'a file' }) },
   { route: 'GET /api/studio/designs/:id/uploads/:uploadId', url: (f) => `/api/studio/designs/${f.design.id}/uploads/${f.designUpload.id}` },
