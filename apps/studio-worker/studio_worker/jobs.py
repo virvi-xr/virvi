@@ -311,6 +311,12 @@ def _render_and_upload(client, job_id, piece: Piece, view, render_fn) -> tuple[d
         r = render_fn([{'category': piece.category, 'glbs': glbs_by_shape(piece), 'meta': piece.meta}], view,
                       Path(tmp) / key)
         if not r['ok']:
+            blank = r.get('blankFrame')
+            if blank and Path(blank['path']).is_file():
+                # kept privately (only render frames reach the browser) so a blank view can be looked into
+                path = f"checks/{piece.category}/{key}-blank-{blank['index']:03d}.png"
+                client.put_file(job_id, path, Path(blank['path']).read_bytes(), 'image/png')
+                return {key: 0}, f"{r['error']} (frame {blank['index']}, kept as {path})"
             return {key: 0}, r['error']
         for i, frame in enumerate(r['frames']):
             client.put_file(job_id, f'renders/{piece.category}/{key}/{i:03d}{frame.suffix}', frame.read_bytes(),

@@ -8,6 +8,7 @@ from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from PIL import Image
 
 from conftest import FIXTURES
 from studio_worker import config, render
@@ -176,6 +177,18 @@ def test_orbit_renders_the_ring(tmp_path, stub):
     assert r['ok'] is True, r
     assert len(r['frames']) == 24 and r['frames'][23].name == '023.webp'
     assert len([c for c in calls if c['method'] == 'changeCameraPosition']) == 23
+
+
+def test_a_blank_frame_is_kept_beside_the_cleared_output(tmp_path, stub):
+    stub('blank')
+    out = tmp_path / 'orbit-male'
+    r = render.render([HAT], {**SPIN, 'mode': 'orbit', 'ring': True}, out, watchdog_sec=60)
+    assert r['ok'] is False and r['error'] == 'blank', r
+    assert r['blankFrame']['index'] == 3
+    kept = Path(r['blankFrame']['path'])
+    assert kept == tmp_path / 'orbit-male.blank-003.png' and kept.exists()
+    assert render.is_blank(Image.open(kept))
+    assert list(out.glob('*.webp')) + list(out.glob('*.png')) == []  # no frame of a failed render survives in out/
 
 
 def test_walk_steps_time_and_turns_together(tmp_path, stub):
