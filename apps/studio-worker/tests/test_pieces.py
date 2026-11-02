@@ -129,3 +129,16 @@ def test_grok_is_told_to_read_its_renders():
     assert 'read_file' in grok and 'never from the preview' in grok
     assert 'read_file' not in claude
     assert 'read_file' in closing('emote', None, agent='grok')
+
+
+def test_closing_for_a_scene_design_names_the_skills_folders_and_checks():
+    text = closing('scene', None)
+    for words in ('creating-dcl-buildings', 'creating-dcl-furnishings', 'out/building/', 'out/furniture_<name>/',
+                  'at most one building and 12 furniture', 'route.json', 'layout.json', 'sittables.json',
+                  'check_scene_model.py', 'check_walk.py', 'studio-preview', 'Blender 4.4'):
+        assert words in text, words
+    for words in ('rarity', 'check_wearable', 'proposal.json'):
+        assert words not in text, words
+    # its scope is buildings and furniture, so a cafe isn't declined as off-topic
+    assert 'buildings, furniture and decor' in text
+    assert 'wearables and emotes, and nothing else' not in text
