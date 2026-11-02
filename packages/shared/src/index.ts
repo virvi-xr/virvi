@@ -18,3 +18,4 @@ export * from './ring-marker/layout.js';
 export * from './ar.js'
 export * from './dcl-limits.js';
 export * from './room-scan.js'
+export * from './scene-import.js'

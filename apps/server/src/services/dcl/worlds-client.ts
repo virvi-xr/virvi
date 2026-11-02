@@ -6,6 +6,7 @@
  *                                      404 `{error, message}` when the World has no scene deployed.
  * - GET  /contents/{hash}           -> the content file; for an entity id, the entity JSON
  *                                      `{ version, type, pointers, timestamp, content: [{file, hash}], metadata }`.
+ * - HEAD /contents/{hash}           -> 200 (with Content-Length) when the server holds the file, 404 when it doesn't.
  * - POST /entities                  -> multipart/form-data: `entityId`, `authChain[i][type|payload|signature]`,
  *                                      then one file part per content hash. Same form dcl-catalyst-client's
  *                                      ContentClient.deploy builds; we send it ourselves so the 4xx body reaches
@@ -15,6 +16,7 @@
  *                                      (numbers are strings).
  * - Signed fetch (ADR-44) requests carry x-identity-auth-chain-N, x-identity-timestamp, x-identity-metadata.
  */
+import { DCL_MAX_FILE_BYTES } from '@virvixr/shared'
 import { config } from '../../config.js'
 import type { AuthChain, ContentRef, SceneMetadata } from './entity.js'
 
@@ -48,9 +50,17 @@ export interface WorldsClient {
   /** Never cached: callers act on the answer right away. */
   getDeployers(world: string): Promise<{ owner: string | null; deployers: string[] }>
   getWalletStats(address: string): Promise<{ maxAllowedBytes: number; usedBytes: number } | null>
+  /** Whether the server still holds the content file `hash`. */
+  hasContent(hash: string): Promise<boolean>
+  /** The content file `hash`, null when the server doesn't hold it. Not checked against the hash here. */
+  getContent(hash: string): Promise<Uint8Array | null>
+  /** The size of content file `hash` (HEAD Content-Length), null when the server doesn't hold it or doesn't say. */
+  contentSize(hash: string): Promise<number | null>
 }
 
 const READ_TIMEOUT_MS = 10_000
+/** A content file can be up to 50 MB. */
+const CONTENT_TIMEOUT_MS = 120_000
 const WRITE_TIMEOUT_MS = 120_000
 
 async function readBody(res: Response): Promise<string> {
@@ -146,6 +156,46 @@ export class HttpWorldsClient implements WorldsClient {
     const max = Number(s.maxAllowedSpace)
     if (!Number.isFinite(used) || !Number.isFinite(max)) return null
     return { maxAllowedBytes: max, usedBytes: used }
+  }
+
+  async hasContent(hash: string) {
+    const res = await request(`${this.base}/contents/${encodeURIComponent(hash)}`, { method: 'HEAD' }, READ_TIMEOUT_MS)
+    if (res.status === 404) return false
+    if (!res.ok) throw new WorldsError(res.status, '')
+    return true
+  }
+
+  async contentSize(hash: string) {
+    const res = await request(`${this.base}/contents/${encodeURIComponent(hash)}`, { method: 'HEAD' }, READ_TIMEOUT_MS)
+    if (res.status === 404) return null
+    if (!res.ok) throw new WorldsError(res.status, '')
+    const len = res.headers.get('content-length')
+    return len !== null && /^\d+$/.test(len.trim()) ? Number(len) : null
+  }
+
+  async getContent(hash: string) {
+    const res = await request(`${this.base}/contents/${encodeURIComponent(hash)}`, {}, CONTENT_TIMEOUT_MS)
+    if (res.status === 404) return null
+    if (!res.ok) throw new WorldsError(res.status, await readBody(res))
+    // No Decentraland file is over the limit, so a bigger body is never read in full
+    const tooBig = () => new WorldsError(0, '', `Worlds server: ${hash} is over the ${DCL_MAX_FILE_BYTES} byte file limit`)
+    if (Number(res.headers.get('content-length') ?? 0) > DCL_MAX_FILE_BYTES) {
+      await res.body?.cancel().catch(() => {})
+      throw tooBig()
+    }
+    const chunks: Uint8Array[] = []
+    let size = 0
+    try {
+      for await (const chunk of res.body ?? []) {
+        size += chunk.byteLength
+        if (size > DCL_MAX_FILE_BYTES) break
+        chunks.push(chunk)
+      }
+    } catch (err) {
+      throw new WorldsError(0, '', `Worlds server: reading ${hash} failed: ${(err as Error).message}`)
+    }
+    if (size > DCL_MAX_FILE_BYTES) throw tooBig()
+    return new Uint8Array(Buffer.concat(chunks))
   }
 }
 

@@ -11,7 +11,7 @@ import type { FastifyInstance } from 'fastify'
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { dclBudget, plotParcels, plotSizeM, validPlot, type Plot } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { assetLibraryItems, sceneElementInstances, sceneElements, sceneLibrary, scenePresets, scenes } from '../db/schema.js'
+import { assetLibraryItems, sceneElementInstances, sceneElements, sceneLibrary, scenes } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { browsableAsset } from '../catalog/visibility.js'
 import { config } from '../config.js'
@@ -21,6 +21,7 @@ import { sceneLimitError } from './scenes.js'
 import { plotForLayout } from '../room-scan/plot.js'
 import { commitRoomSet, insertRoomSet, loadOwnedScan, parseRoomSetOptions, prepareRoomSet, RoomSetError, type PreparedRoomSet, type Tx } from '../room-scan/sets.js'
 import { CATEGORY_CHIPS, THEMES } from '../wizard/themes.js'
+import { insertSceneWithDefaultPreset } from '../scenes/create.js'
 
 interface WizardAsset {
   id: string
@@ -206,9 +207,9 @@ export default async function wizardRoutes(app: FastifyInstance) {
     }
 
     const create = async (tx: Tx) => {
-      const [scene] = await tx.insert(scenes).values({ ownerId: request.user.id, name }).returning({ id: scenes.id })
-      const [preset] = await tx.insert(scenePresets).values({ sceneId: scene.id, name: 'Default' }).returning({ id: scenePresets.id })
-      await tx.update(scenes).set({ activePresetId: preset.id }).where(eq(scenes.id, scene.id))
+      const { sceneId, presetId } = await insertSceneWithDefaultPreset(tx, request.user.id, name)
+      const scene = { id: sceneId }
+      const preset = { id: presetId }
       if (assets.length) {
         const elements = await tx
           .insert(sceneElements)

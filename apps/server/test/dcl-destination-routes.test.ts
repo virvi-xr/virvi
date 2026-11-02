@@ -8,6 +8,7 @@ import { db } from '../src/db/connection.js'
 import { assetLibraryItems, dclWorldDestinations, sceneDeployments } from '../src/db/schema.js'
 import { setDclDirectory } from '../src/analytics/dcl-directory.js'
 import { dclHash, signedFetchPayload, virviSigner } from '../src/services/dcl/entity.js'
+import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { startVirviDeploy, whenSettled } from '../src/services/dcl/world-deployer.js'
 import { resetDb } from './helpers/db.js'
@@ -59,6 +60,8 @@ describe('World destination routes', () => {
     dir = new FakeDclDirectory()
     setWorldsClient(worlds)
     setDclDirectory(dir)
+    // Every deploy keeps its files: in memory here, never on disk
+    setImportStore(memoryPrivateStore())
     owner = createUnsafeIdentity()
     user = await createUser({ wallet: owner.address })
     worlds.deployers.set(WORLD, { owner: user.wallet, deployers: [] })
@@ -69,6 +72,7 @@ describe('World destination routes', () => {
     cfg.cdnUrl = saved.cdn
     setWorldsClient(null)
     setDclDirectory(null)
+    setImportStore(null)
     await app.close()
   })
 

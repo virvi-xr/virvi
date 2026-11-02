@@ -11,6 +11,10 @@ import { startLifecycleSweep } from './venues/lifecycle.js'
 import { startDclRedeploySweep } from './services/dcl/redeploy-sweep.js'
 import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
+import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
+import { startRetentionSweep, RETENTION_SWEEP_MS } from './services/import/retention.js'
+import { setOnBuildDone } from './services/import/build-runner.js'
+import { deployImport } from './services/import/import-deploy.js'
 import { hyperfyHosting } from './services/hyperfy/infrastructure.js'
 import { startAnalyticsJobs } from './analytics/jobs.js'
 import { initBus } from './realtime/bus.js'
@@ -33,6 +37,8 @@ async function main() {
   const app = await buildApp()
 
   // ── Start HTTP server ────────────────────────────────────────────────────
+  // A finished build of a World Virvi may deploy to goes straight out (Ruling R1)
+  setOnBuildDone(deployImport)
   await app.listen({ port: config.port, host: '0.0.0.0' })
   console.log(`[virvi-server] HTTP listening on port ${config.port}`)
 
@@ -87,6 +93,12 @@ async function main() {
     startStudioSweep(STUDIO_SWEEP_MS)
     console.log(`[virvi-server] Design Studio sweep every ${STUDIO_SWEEP_MS}ms`)
   }
+  // Always on: a build started before SCENE_BUILD_RUNNER changed still needs timing out
+  startBuildSweep(BUILD_SWEEP_MS)
+  console.log(`[virvi-server] Scene build sweep every ${BUILD_SWEEP_MS}ms`)
+  // Ruling R27: import files 30 days after the import ended, deployed files no deploy keeps (it skips a missing bucket)
+  startRetentionSweep(RETENTION_SWEEP_MS)
+  console.log(`[virvi-server] Import file retention sweep 5 min after boot, then every ${RETENTION_SWEEP_MS}ms`)
   startAnalyticsJobs()
   console.log('[virvi-server] Analytics jobs started')
 

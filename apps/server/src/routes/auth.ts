@@ -16,6 +16,7 @@ import { bindSceneRequest, type SceneBinding } from '../auth/scene-binding.js'
 import type { SessionClaims } from '../auth/tokens.js'
 import { issueScenePass, sceneClaims } from '../auth/scene-pass.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
+import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 
 interface RegisterBody {
   email: string
@@ -810,7 +811,10 @@ export default async function authRoutes(app: FastifyInstance) {
       const blocked = await hostedWorldsBlockingDelete({ userId: request.user.id })
       if (blocked) return reply.status(409).send(blocked)
       // Delete user — cascading deletes handle related data
+      const imports = await importsGoingWith({ userId: request.user.id })
       await db.delete(users).where(eq(users.id, request.user.id))
+      // Their imports' rows cascaded; the private files go too
+      await deleteImportFiles(imports)
 
       return reply.status(204).send()
     },

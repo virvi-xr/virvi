@@ -67,7 +67,7 @@ RUN apk add --no-cache ffmpeg
 COPY --from=builder /app ./
 
 # Create uploads directory for local storage
-RUN mkdir -p /app/uploads
+RUN mkdir -p /app/uploads /app/private
 
 ENV NODE_ENV=production
 ENV DASHBOARD_DIR=/app/dashboard

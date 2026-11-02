@@ -14,6 +14,7 @@ import {
 } from '../db/schema.js'
 import { listPacks } from '../catalog/packs.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
+import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authenticate } from '../middleware/auth.js'
 import { isUuid } from '../auth/scene-from.js'
 
@@ -238,7 +239,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     // Hosted worlds' rows would cascade away with it, leaving their Fly app, database and files running untracked.
     const blocked = await hostedWorldsBlockingDelete({ userId })
     if (blocked) return reply.status(409).send(blocked)
+    const imports = await importsGoingWith({ userId })
     await db.delete(users).where(eq(users.id, userId))
+    await deleteImportFiles(imports)
     return reply.status(204).send()
   })
 

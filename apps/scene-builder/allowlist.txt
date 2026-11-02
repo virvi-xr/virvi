@@ -1,0 +1,4 @@
+# Hosts a scene's `npm install` may reach, one per line; everything else is denied. VIRVI_API_HOST is not here:
+# entrypoint.sh gives it its own proxy, which only the trusted `runner` steps can use (see README.md).
+registry.npmjs.org  # npm's registry: metadata and tarballs
+registry.yarnpkg.com  # yarn's mirror of it, which some lockfiles resolve to

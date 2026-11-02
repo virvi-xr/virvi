@@ -325,6 +325,25 @@ describe('FlyApi', () => {
       })
     })
 
+    it('createBuildMachine sends a one-shot performance machine that destroys itself, with no services', async () => {
+      const { fn, calls } = fakeFetch(() => ({ body: { id: 'b1', state: 'created' } }))
+      const r = await mk(fn).createBuildMachine('virvi-scene-builds', { name: 'build-i1', image: 'img:3', env: { A: 'b' }, cpus: 2, memoryMb: 4096 })
+      expect(r).toEqual({ id: 'b1' })
+      expect(calls[0].method).toBe('POST')
+      expect(calls[0].url).toBe('https://api.machines.dev/v1/apps/virvi-scene-builds/machines')
+      expect(calls[0].body).toEqual({
+        name: 'build-i1',
+        region: 'iad',
+        config: {
+          image: 'img:3',
+          env: { A: 'b' },
+          guest: { cpu_kind: 'performance', cpus: 2, memory_mb: 4096 },
+          restart: { policy: 'no' },
+          auto_destroy: true,
+        },
+      })
+    })
+
     it('getMachineState reads the state, and null when the machine is gone', async () => {
       const { fn } = fakeFetch((c) => (c.url.endsWith('/m1') ? { body: { id: 'm1', state: 'stopped' } } : { status: 404, body: { error: 'not found' } }))
       expect(await mk(fn).getMachineState('a', 'm1')).toBe('stopped')

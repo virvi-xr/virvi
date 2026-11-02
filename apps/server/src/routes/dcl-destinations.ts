@@ -66,6 +66,7 @@ import {
   DeployerError, prepareSignedDeploy, sceneTriangleWarning, startVirviDeploy, submitSignedDeploy, type Destination,
 } from '../services/dcl/world-deployer.js'
 import { deploymentForCaller, publicDeployment } from './deploy.js'
+import { ImportError } from '../services/import/scene-zip.js'
 
 /** Signed-fetch metadata Virvi sends on permission calls (see the header comment). */
 const PERMISSION_METADATA = '{}'
@@ -81,7 +82,7 @@ const FUTURE_SKEW_MS = 60_000
 const WORLD_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.eth$/
 const isNum = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
 
-class RouteError extends Error {
+export class RouteError extends Error {
   constructor(public status: number, public code: string, public extra: Record<string, unknown> = {}) {
     super(code)
   }
@@ -94,6 +95,8 @@ async function handle(reply: FastifyReply, fn: () => Promise<unknown>) {
   } catch (err) {
     if (err instanceof RouteError) return reply.status(err.status).send({ error: err.code, ...err.extra })
     if (err instanceof DeployerError) return reply.status(err.status).send({ error: err.code, message: err.message })
+    // An imported scene's files that don't fit the World (assertImportFits)
+    if (err instanceof ImportError) return reply.status(err.status).send({ error: err.code, message: err.message })
     if (err instanceof WorldsError) return reply.status(502).send({ error: 'world_unreachable' })
     if (err instanceof DirectoryUnavailableError) return reply.status(502).send({ error: 'directory_unavailable' })
     throw err
@@ -137,7 +140,7 @@ async function describeWorld(world: string, storage: { maxAllowedBytes: number; 
 }
 
 /** The World's owner when it is one of the caller's verified wallets; 403 not_world_owner otherwise. */
-async function ownerFor(userId: string, world: string): Promise<string> {
+export async function ownerFor(userId: string, world: string): Promise<string> {
   const [{ owner }, wallets] = await Promise.all([read(() => getWorldsClient().getDeployers(world)), verifiedWalletsOf(userId)])
   if (!owner || !wallets.includes(owner)) throw new RouteError(403, 'not_world_owner')
   return owner

@@ -18,6 +18,7 @@ import {
   date,
   doublePrecision,
   bigint,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 import type { VenueRules, Vec3, RoomScanLayout, Plot } from '@virvixr/shared'
@@ -693,7 +694,8 @@ export const sceneDeployments = pgTable('scene_deployments', {
   deploymentType: text('deployment_type').notNull(), // 'parcel' | 'world' | 'instance'
   target: jsonb('target').notNull(), // DCL: { parcels, contentServer } / Hyperfy: { instanceUrl, region }
   assetBundle: jsonb('asset_bundle'), // list of asset IDs + config included in deploy
-  deployedBy: uuid('deployed_by').references(() => users.id),
+  // Kept as the scene's history when the account that deployed is deleted
+  deployedBy: uuid('deployed_by').references(() => users.id, { onDelete: 'set null' }),
   errorMessage: text('error_message'),
   catalystEntityId: text('catalyst_entity_id'), // DCL catalyst entity hash
   infrastructureId: text('infrastructure_id'), // Hyperfy: Docker container ID, Fly machine ID
@@ -742,6 +744,7 @@ export const dclWorldDestinations = pgTable('dcl_world_destinations', {
   pendingSince: timestamp('pending_since', { withTimezone: true }),
   adopted: boolean('adopted').notNull().default(false), // true = the owner's own scene code, never touched
   spawn: jsonb('spawn').$type<{ x: number; y: number; z: number }>(), // metres, plot-relative; null = plot centre
+  pendingImportId: uuid('pending_import_id').references((): AnyPgColumn => sceneImports.id, { onDelete: 'set null' }), // an uploaded scene waiting on this World
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -757,6 +760,45 @@ export const dclWorldDestinationsRelations = relations(dclWorldDestinations, ({ 
     fields: [dclWorldDestinations.ownerUserId],
     references: [users.id],
   }),
+}))
+
+export const sceneImportStatusEnum = pgEnum('scene_import_status', [
+  'uploaded', 'building', 'built', 'deploying', 'awaiting_signature', 'deployed', 'failed',
+])
+
+/** A scene someone built elsewhere (Creator Hub or SDK7), uploaded as a zip, built and deployed to a World. */
+export const sceneImports = pgTable('scene_imports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // An account's imports go with it, like its other rows (files under imports/<id>/ stay in the bucket)
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  sceneId: uuid('scene_id')
+    .notNull()
+    .references(() => scenes.id, { onDelete: 'cascade' }),
+  worldName: text('world_name').notNull(), // lowercased
+  kind: text('kind').notNull(), // 'creator-hub' | 'sdk7'
+  status: sceneImportStatusEnum('status').notNull().default('uploaded'),
+  errorCode: text('error_code'),
+  errorMessage: text('error_message'),
+  sourceKey: text('source_key').notNull(), // private store
+  builtKeyPrefix: text('built_key_prefix'),
+  logKey: text('log_key'),
+  buildTokenHash: text('build_token_hash'),
+  machineId: text('machine_id'),
+  destinationId: uuid('destination_id').references(() => dclWorldDestinations.id, { onDelete: 'set null' }),
+  deploymentId: uuid('deployment_id').references(() => sceneDeployments.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  builtAt: timestamp('built_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  /** When the retention sweep deleted its files under imports/<id>/ (Ruling R27); the row stays. */
+  filesDeletedAt: timestamp('files_deleted_at', { withTimezone: true }),
+  /** The upload already started Virvi itself, so installVirvi added no code (only the dependency range and the icon). */
+  virviAlreadyPresent: boolean('virvi_already_present').notNull().default(false),
+}, (t) => ({
+  worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
+  userCreatedIdx: index('scene_imports_user_created_idx').on(t.userId, t.createdAt),
 }))
 
 // ── Streaming Servers ──────────────────────────────────────────────────────

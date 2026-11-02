@@ -5,6 +5,7 @@
  * from the World's live entity: every live file stays (by hash), only missing models are fetched
  * and added, and a wizard-made scene on an older runtime gets the current one. Adopted scenes, and any
  * live scene without Virvi's `virvi` block (not made by the wizard), never have their code or metadata touched.
+ * An imported scene (assembleImported) is deployed as its built files plus the scene's Virvi models.
  */
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, localModelFile } from '@virvixr/shared'
@@ -355,4 +356,41 @@ export async function assembleRedeploy(input: {
     models: input.models,
     changed: got.size > 0 || upgrade || renamed,
   })
+}
+
+/** The scene's models an import adds to its built files: every one whose path the build doesn't already have. */
+export function modelsBesideBuilt(models: ModelNeed[], builtPaths: Iterable<string>): ModelNeed[] {
+  const built = new Set([...builtPaths].map((f) => f.toLowerCase()))
+  return models.filter((m) => !built.has(m.file.toLowerCase()))
+}
+
+/**
+ * An imported scene, built elsewhere: the entity is its built files plus the Virvi scene's models placed in-world (a
+ * built file at the same path wins), every one new. Models are fetched and refused as in a redeploy. It replaces
+ * whatever is live at its parcels, so nothing is kept from the live entity, and its code and scene.json are the owner's.
+ */
+export async function assembleImported(input: {
+  files: Map<string, Uint8Array>
+  metadata: SceneMetadata
+  timestamp: number
+  models?: ModelNeed[]
+  fetch?: ModelFetcher
+}): Promise<Assembled> {
+  const models = modelsBesideBuilt(input.models ?? [], input.files.keys())
+  const { got, sources, refused } = await fetchModels(models, input.fetch ?? defaultModelFetcher)
+  const newFiles = new Map(input.files)
+  for (const [file, bytes] of got) newFiles.set(file, bytes)
+  const a = await finish({
+    pointers: input.metadata.scene.parcels,
+    metadata: input.metadata,
+    existing: [],
+    newFiles,
+    timestamp: input.timestamp,
+    modelFiles: got,
+    sources,
+    refused,
+    models: input.models ?? [],
+    changed: true,
+  })
+  return { ...a, deployedFiles: a.deployedFiles.map((f) => f.toLowerCase()).sort() }
 }

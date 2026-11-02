@@ -1,6 +1,6 @@
 'use client'
 // One scene's Decentraland World on the deploy page: mode, status, models waiting, Redeploy now, the
-// permission for Virvi, "Use the live version", and the deploy history.
+// permission for Virvi, "Use the live version", "Download what went live" and the deploy history.
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useApi, type DclDeployment, type DclDestination, type DclPendingModel } from '@/lib/api'
@@ -11,6 +11,7 @@ import { errorCode, grantVirvi, jumpInUrl, progressLines, revokeVirvi } from '@/
 import { Badge, ConfirmAction } from '@/components/ui'
 import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
+import { DownloadLiveButton } from './DownloadLiveButton'
 
 interface Detail {
   /** Over the triangles Decentraland recommends: shown, never a stop. */
@@ -129,6 +130,11 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
           <p className="text-gray-200">
             {last ? `${deploymentStatusLabel(last.status)} · ${formatDateTime(last.deployedAt ?? last.createdAt)}` : 'Not deployed by Virvi yet'}
           </p>
+          {last?.status === 'deployed' && (
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              <DownloadLiveButton deploymentId={last.id} className={secondary} />
+            </div>
+          )}
         </div>
       </div>
 

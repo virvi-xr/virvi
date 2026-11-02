@@ -2,6 +2,7 @@
  * Scene Deployment Routes — Build and deploy scenes to platforms.
  *
  * GET    /api/deploy/:id              — Get deployment status
+ * GET    /api/deploy/:id/files.zip    — The files a World deployment put live, as a zip
  * GET    /api/deploy/scene/:sceneId   — List deployments for a scene
  * POST   /api/deploy/:id/cancel       — Cancel a pending/building deployment
  * GET    /api/deploy/platforms        — Platforms this server can deploy to
@@ -15,6 +16,8 @@ import { authenticate } from '../middleware/auth.js'
 import { hyperfyHosting } from '../services/hyperfy/infrastructure.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, hasScope, isFullAccess } from '../auth/permissions.js'
+import { DownloadError, planDownload, zipEntries } from '../services/dcl/deployed-files.js'
+import { DeployerError, markFailed } from '../services/dcl/world-deployer.js'
 
 type Deployment = typeof sceneDeployments.$inferSelect
 
@@ -55,6 +58,30 @@ export default async function deployRoutes(app: FastifyInstance) {
       }
 
       return reply.send({ deployment: publicDeployment(deployment) })
+    },
+  )
+
+  // ── Download What Went Live ───────────────────────────────────────────
+  app.get(
+    '/api/deploy/:id/files.zip',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string }
+      const deployment = await deploymentForCaller(request, id, 'read')
+      if (!deployment) return reply.status(404).send({ error: 'Deployment not found' })
+
+      let plan: Awaited<ReturnType<typeof planDownload>>
+      try {
+        plan = await planDownload(deployment)
+      } catch (err) {
+        if (err instanceof DownloadError) return reply.status(err.status).send({ error: err.code, message: err.message })
+        throw err
+      }
+      return reply
+        .type('application/zip')
+        .header('Content-Disposition', `attachment; filename="${plan.filename}"`)
+        .header('Cache-Control', 'private, no-store')
+        .send(zipEntries(plan.entries))
     },
   )
 
@@ -99,11 +126,11 @@ export default async function deployRoutes(app: FastifyInstance) {
         })
       }
 
-      const [updated] = await db
-        .update(sceneDeployments)
-        .set({ status: 'failed', errorMessage: 'Cancelled by user' })
-        .where(eq(sceneDeployments.id, id))
-        .returning()
+      // Through markFailed, so an import this deploys doesn't stay deploying
+      await markFailed(id, new DeployerError(400, 'cancelled', 'Cancelled by user'), deployment.status, {
+        importMessage: 'The deploy was cancelled. Press Deploy to try again.',
+      })
+      const updated = (await db.query.sceneDeployments.findFirst({ where: eq(sceneDeployments.id, id) }))!
 
       return reply.send({ deployment: publicDeployment(updated) })
     },

@@ -77,6 +77,8 @@ const PUBLIC_PREFIX = [
   'GET /api/studio/worker/', // studio worker machines: the per-design worker token is the auth
   'PUT /api/studio/worker/', // studio worker machines: the per-design worker token is the auth
   'POST /api/studio/worker/', // studio worker machines: the per-design worker token is the auth
+  'GET /api/imports/build/', // scene build boxes: the one-build token is the auth
+  'POST /api/imports/build/', // scene build boxes: the one-build token is the auth
 ]
 // Read an optional bearer but treat a scene pass as no bearer (so the walk cannot see a 403).
 // Each entry has its own test below.

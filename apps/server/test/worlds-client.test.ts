@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HttpDclDirectory } from '../src/analytics/dcl-directory.js'
+import { DCL_MAX_FILE_BYTES } from '@virvixr/shared'
 import { HttpWorldsClient, WorldsError } from '../src/services/dcl/worlds-client.js'
 
 const BASE = 'https://worlds.test'
@@ -99,6 +100,44 @@ describe('HttpWorldsClient', () => {
     expect(await client.getDeployers('a.dcl.eth')).toEqual({ owner: '0xab', deployers: ['0xcd'] })
     await client.getDeployers('a.dcl.eth')
     expect(fetchFn).toHaveBeenCalledTimes(2)
+  })
+
+  it('hasContent is a HEAD of /contents/{hash}; getContent reads it, 404 gives null', async () => {
+    const fetchFn = stubFetch((url, init) => {
+      if (url !== `${BASE}/contents/bafyok`) return new Response('', { status: 404 })
+      return new Response(init?.method === 'HEAD' ? null : 'file bytes', { status: 200 })
+    })
+    expect(await client.hasContent('bafyok')).toBe(true)
+    expect(fetchFn.mock.calls[0][1]?.method).toBe('HEAD')
+    expect(await client.hasContent('bafygone')).toBe(false)
+    expect(new TextDecoder().decode((await client.getContent('bafyok'))!)).toBe('file bytes')
+    expect(await client.getContent('bafygone')).toBeNull()
+  })
+
+  it('contentSize is the HEAD Content-Length of /contents/{hash}; 404 or no length gives null', async () => {
+    const fetchFn = stubFetch((url) => {
+      if (url === `${BASE}/contents/bafyok`) return new Response(null, { status: 200, headers: { 'content-length': '1234' } })
+      if (url === `${BASE}/contents/bafynolen`) return new Response(null, { status: 200 })
+      return new Response('', { status: 404 })
+    })
+    expect(await client.contentSize('bafyok')).toBe(1234)
+    expect(fetchFn.mock.calls[0][1]?.method).toBe('HEAD')
+    expect(await client.contentSize('bafygone')).toBeNull()
+    expect(await client.contentSize('bafynolen')).toBeNull()
+  })
+
+  it("getContent refuses a file over Decentraland's 50 MB limit, by header or by what arrives", async () => {
+    const big = DCL_MAX_FILE_BYTES + 1
+    stubFetch(() => new Response('x', { status: 200, headers: { 'content-length': String(big) } }))
+    await expect(client.getContent('bafybig')).rejects.toThrow(WorldsError)
+    // No length header: the read stops once it passes the limit
+    let sent = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) { if (sent > big) return c.close(); const chunk = new Uint8Array(4 * 1024 * 1024); sent += chunk.length; c.enqueue(chunk) },
+    })
+    stubFetch(() => new Response(body, { status: 200 }))
+    await expect(client.getContent('bafybig')).rejects.toThrow(WorldsError)
+    expect(sent).toBeLessThan(big + 8 * 1024 * 1024)
   })
 
   it('getWalletStats parses string byte counts; 404 gives null', async () => {
