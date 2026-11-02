@@ -3,21 +3,67 @@ import { useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  formatCents, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
+  formatCents, paidSummary, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
   type FinalizedRevision, type StudioPiece,
 } from '@/lib/studio'
 
-type Props = { designId: string; piece: StudioPiece | undefined; onChanged: () => Promise<void>; kind?: string }
+type Props = { designId: string; pieces: StudioPiece[]; onChanged: () => Promise<void>; kind?: string }
 
-/** The selected piece's paid revisions: download, a free retry when packaging failed, and mistake reports. */
-export default function PaidRevisions({ designId, piece, onChanged, kind }: Props) {
-  if (!piece || piece.finalized.length === 0) return null
+/** Save a downloaded blob under its file name. */
+function save(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
+/**
+ * Every paid piece's revisions, whichever tab is selected: download, a free retry when packaging failed, and mistake
+ * reports. With two or more pieces ready, "Download all" fetches them as one zip; while pieces package, it says how many
+ * are ready.
+ */
+export default function PaidRevisions({ designId, pieces, onChanged, kind }: Props) {
+  const api = useApi()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const paid = pieces.filter((p) => p.finalized.length > 0)
+  if (paid.length === 0) return null
+  const summary = paidSummary(pieces)
+  const several = paid.length > 1
+
+  const downloadAll = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const { blob, filename } = await api.downloadStudioPackages(designId)
+      save(blob, filename)
+    } catch (err) {
+      setError(refusalMessage(err as never, new Date()).text)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900">
-      <h3 className="border-b border-gray-800 px-4 py-3 text-sm font-medium">Paid revisions · {piece.name}</h3>
-      <ul className="divide-y divide-gray-800">
-        {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} />)}
-      </ul>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-800 px-4 py-3">
+        <div>
+          <h3 className="text-sm font-medium">{several ? `Paid pieces · ${summary.ready} of ${summary.paid} ready` : `Paid revisions · ${paid[0].name}`}</h3>
+          {summary.progress && several && <p className="text-xs text-gray-400" role="status">{summary.progress}</p>}
+        </div>
+        {summary.downloadAll && <PrimaryButton type="button" disabled={busy} onClick={downloadAll}>Download all</PrimaryButton>}
+      </div>
+      {error && <p className="px-4 pt-3 text-sm text-amber-300" role="alert">{error}</p>}
+      {paid.map((piece) => (
+        <section key={piece.category} aria-label={piece.name}>
+          {several && <h4 className="px-4 pt-3 text-xs font-medium uppercase tracking-wide text-gray-400">{piece.name}</h4>}
+          <ul className="divide-y divide-gray-800">
+            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} />)}
+          </ul>
+        </section>
+      ))}
     </div>
   )
 }
@@ -45,12 +91,7 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
 
   const download = () => run(async () => {
     const { blob, filename } = await api.downloadStudioPackage(designId, category, f.revision)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    save(blob, filename)
   })
 
   const retry = () => run(async () => {

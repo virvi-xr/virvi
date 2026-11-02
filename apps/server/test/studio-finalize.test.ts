@@ -11,7 +11,8 @@ import { grantPayment } from '../src/studio/payments.js'
 import { failJobs } from '../src/studio/results.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
-import { createDesign, addRevision, fakeFly, fakeStripe, issueWorker } from './helpers/studio.js'
+import { createDesign, addRevision, entitle, fakeFly, fakeStripe, issueWorker } from './helpers/studio.js'
+import { crc32 } from '../src/studio/zip.js'
 
 const PACKAGE = 'final/hat/package.zip'
 const CHECKS = { thumbnail: { pass: true }, listing: { pass: true }, clipping: { pass: false, failed: ['Dance'] }, emoteCheck: null }
@@ -182,6 +183,71 @@ describe('studio finalize jobs and downloads', () => {
     const unpaid = await download(u, d.id, 2)
     expect(unpaid.statusCode).toBe(402)
     expect(unpaid.json().code).toBe('not_paid')
+  })
+
+  /** The names and bodies of a stored zip's entries, read from its central directory. */
+  function zipEntries(zip: Buffer): { name: string; data: Buffer; crc: number }[] {
+    const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]))
+    const count = zip.readUInt16LE(end + 10)
+    let at = zip.readUInt32LE(end + 16)
+    const out: { name: string; data: Buffer; crc: number }[] = []
+    for (let i = 0; i < count; i++) {
+      expect(zip.readUInt32LE(at)).toBe(0x02014b50)
+      const size = zip.readUInt32LE(at + 20)
+      const nameLen = zip.readUInt16LE(at + 28)
+      const local = zip.readUInt32LE(at + 42)
+      const name = zip.subarray(at + 46, at + 46 + nameLen).toString('utf8')
+      const dataAt = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28)
+      out.push({ name, data: zip.subarray(dataAt, dataAt + size), crc: zip.readUInt32LE(at + 16) })
+      at += 46 + nameLen
+    }
+    return out
+  }
+
+  /** A scene design with a building and furniture, each paid for; pieces in `ready` have a stored package. */
+  async function paidScene(u: TestUser, ready: string[]) {
+    const d = await createDesign(u, { kind: 'scene', name: "Unknower's HQ" })
+    for (const category of ['building', 'furniture_chair', 'furniture_lamp']) {
+      const rev = await addRevision(d, category, undefined, { kind: category === 'building' ? 'building' : 'furniture' })
+      const { entitlement } = await entitle(d, rev)
+      if (ready.includes(category)) {
+        const key = `designs/${d.id}/jobs/${rev.jobId}/final/${category}/package.zip`
+        await store.put(key, Buffer.from(`PK-${category}`), 'application/zip')
+        await db.update(studioEntitlements).set({ packageKey: key }).where(eq(studioEntitlements.id, entitlement.id))
+      } else {
+        await db.update(studioEntitlements).set({ status: 'packaging' }).where(eq(studioEntitlements.id, entitlement.id))
+      }
+    }
+    return d
+  }
+  const downloadAll = (u: TestUser, designId: string) =>
+    app.inject({ method: 'GET', url: `/api/studio/designs/${designId}/packages`, headers: as(u) })
+
+  it('Download all zips every ready piece of a building with furniture (LIV-82)', async () => {
+    const u = await createUser()
+    const d = await paidScene(u, ['building', 'furniture_chair', 'furniture_lamp'])
+    const res = await downloadAll(u, d.id)
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toBe('application/zip')
+    expect(res.headers['content-disposition']).toBe('attachment; filename="unknower-s-hq.zip"')
+    expect(res.headers['cache-control']).toBe('private, no-store')
+    const entries = zipEntries(res.rawPayload)
+    expect(entries.map((e) => e.name)).toEqual(['neon-building-r1.zip', 'neon-furniture-chair-r1.zip', 'neon-furniture-lamp-r1.zip'])
+    expect(entries.map((e) => e.data.toString())).toEqual(['PK-building', 'PK-furniture_chair', 'PK-furniture_lamp'])
+    expect(entries.every((e) => e.crc === crc32(e.data))).toBe(true)
+  })
+
+  it('Download all leaves out pieces still packaging; nothing ready is 409; another user gets 404', async () => {
+    const u = await createUser()
+    const d = await paidScene(u, ['building'])
+    const res = await downloadAll(u, d.id)
+    expect(res.statusCode).toBe(200)
+    expect(zipEntries(res.rawPayload).map((e) => e.name)).toEqual(['neon-building-r1.zip'])
+    expect((await downloadAll(await createUser(), d.id)).statusCode).toBe(404)
+    const none = await paidScene(u, [])
+    const empty = await downloadAll(u, none.id)
+    expect(empty.statusCode).toBe(409)
+    expect(empty.json().code).toBe('nothing_ready')
   })
 
   it('designDetail lists finalized revisions without links', async () => {

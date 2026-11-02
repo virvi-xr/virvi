@@ -721,5 +721,16 @@ export function useApi() {
       const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
       return { blob: await res.blob(), filename: m?.[1] ?? `${category}-r${n}.zip` }
     },
+    /** Every piece's newest ready package in one zip ("Download all"), through the same kind of authenticated route. */
+    downloadStudioPackages: async (id: string): Promise<{ blob: Blob; filename: string }> => {
+      const res = await fetch(`${API_URL}/api/studio/designs/${id}/packages`, { headers: requestHeaders(token, {}) })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        dropDeadSession(res.status, err)
+        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+      }
+      const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
+      return { blob: await res.blob(), filename: m?.[1] ?? 'design.zip' }
+    },
   }), [apiFetch, token, dropDeadSession])
 }
