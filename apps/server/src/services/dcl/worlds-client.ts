@@ -16,6 +16,7 @@
  *                                      (numbers are strings).
  * - Signed fetch (ADR-44) requests carry x-identity-auth-chain-N, x-identity-timestamp, x-identity-metadata.
  */
+import { DCL_MAX_FILE_BYTES } from '@virvixr/shared'
 import { config } from '../../config.js'
 import type { AuthChain, ContentRef, SceneMetadata } from './entity.js'
 
@@ -166,11 +167,25 @@ export class HttpWorldsClient implements WorldsClient {
     const res = await request(`${this.base}/contents/${encodeURIComponent(hash)}`, {}, CONTENT_TIMEOUT_MS)
     if (res.status === 404) return null
     if (!res.ok) throw new WorldsError(res.status, await readBody(res))
+    // No Decentraland file is over the limit, so a bigger body is never read in full
+    const tooBig = () => new WorldsError(0, '', `Worlds server: ${hash} is over the ${DCL_MAX_FILE_BYTES} byte file limit`)
+    if (Number(res.headers.get('content-length') ?? 0) > DCL_MAX_FILE_BYTES) {
+      await res.body?.cancel().catch(() => {})
+      throw tooBig()
+    }
+    const chunks: Uint8Array[] = []
+    let size = 0
     try {
-      return new Uint8Array(await res.arrayBuffer())
+      for await (const chunk of res.body ?? []) {
+        size += chunk.byteLength
+        if (size > DCL_MAX_FILE_BYTES) break
+        chunks.push(chunk)
+      }
     } catch (err) {
       throw new WorldsError(0, '', `Worlds server: reading ${hash} failed: ${(err as Error).message}`)
     }
+    if (size > DCL_MAX_FILE_BYTES) throw tooBig()
+    return new Uint8Array(Buffer.concat(chunks))
   }
 }
 

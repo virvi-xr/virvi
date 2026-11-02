@@ -426,9 +426,17 @@ async function importDeployFailed(deploymentIds: string[], message: string | nul
   })
 }
 
+const keeping = new Map<string, Promise<void>>()
+
+/** Resolves when the files of `deploymentId`'s deploy have been kept, or failed to be (now, if nothing is keeping them). */
+export function whenFilesKept(deploymentId: string): Promise<void> {
+  return keeping.get(deploymentId) ?? Promise.resolve()
+}
+
 /**
- * After the World accepted `entityId`: record it on the destination and deployment, keep the files it uploaded
- * (`kept`, when the caller has them), then link the World's location to the Virvi scene.
+ * After the World accepted `entityId`: record it on the destination and deployment, link the World's location to the
+ * Virvi scene, then keep the files it uploaded (`kept`, when the caller has them) in the background. Nothing waits on
+ * the bucket: a file that couldn't be kept is fetched from the Worlds server on download.
  */
 export async function afterWorldDeploy(
   dest: Destination, entityId: string, deployedFiles: string[], deploymentId: string,
@@ -444,6 +452,7 @@ export async function afterWorldDeploy(
       .update(sceneDeployments)
       .set({
         status: 'deployed', deployedAt: now, catalystEntityId: entityId, errorMessage: null,
+        // Mode A's bundle already has it; this covers a mode B row prepared before bundles carried it
         ...(kept ? { assetBundle: sql`coalesce(${sceneDeployments.assetBundle}, '{}'::jsonb) || ${JSON.stringify({ content: kept.content })}::jsonb` } : {}),
       })
       .where(eq(sceneDeployments.id, deploymentId))
@@ -453,17 +462,22 @@ export async function afterWorldDeploy(
       .set({ status: 'deployed', errorCode: null, errorMessage: null, finishedAt: now, updatedAt: now })
       .where(and(eq(sceneImports.deploymentId, deploymentId), eq(sceneImports.status, 'deploying')))
   })
-  if (kept) {
-    // The deploy is live either way: a file that couldn't be kept is fetched from the Worlds server on download
-    await keepDeployedFiles(kept.content, kept.files).catch((err) => {
-      console.error('[world-deployer] could not keep deployed files:', deploymentId, err instanceof Error ? err.message : err)
-    })
+  try {
+    const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
+    await linkWorldLocation({
+      world: dest.worldName, virviSceneId: dest.sceneId, hostUserId: dest.ownerUserId, entityId,
+      title: scene?.name ?? dest.worldName, base: dest.base, parcels: dest.parcels,
+    }, now)
+  } finally {
+    if (kept) {
+      const run = keepDeployedFiles(kept.content, kept.files)
+        .catch((err) => {
+          console.error('[world-deployer] could not keep deployed files:', deploymentId, err instanceof Error ? err.message : err)
+        })
+        .finally(() => keeping.delete(deploymentId))
+      keeping.set(deploymentId, run)
+    }
   }
-  const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
-  await linkWorldLocation({
-    world: dest.worldName, virviSceneId: dest.sceneId, hostUserId: dest.ownerUserId, entityId,
-    title: scene?.name ?? dest.worldName, base: dest.base, parcels: dest.parcels,
-  }, now)
 }
 
 const running = new Map<string, Promise<void>>()
@@ -658,9 +672,10 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
       pointers: bundle.pointers, metadata: JSON.parse(bundle.metadataJson) as SceneMetadata, existing: bundle.existing, newFiles, timestamp: bundle.timestamp,
     })
     if (entityId !== bundle.entityId) throw new DeployerError(500, 'entity_mismatch', 'The rebuilt deployment did not match what was signed')
+    const content = bundle.content ?? entityContent({ entityId, files })
     await getWorldsClient().deploy({ entityId, authChain: chain, files })
     live = true
-    await afterWorldDeploy(dest, entityId, bundle.deployedFiles, dep.id, { content: entityContent({ entityId, files }), files })
+    await afterWorldDeploy(dest, entityId, bundle.deployedFiles, dep.id, { content, files })
   } catch (err) {
     if (!live) {
       await markFailed(dep.id, err).catch(() => {})

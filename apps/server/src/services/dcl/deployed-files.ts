@@ -15,6 +15,7 @@ import { dclHash, type ContentRef } from './entity.js'
 import { getWorldsClient } from './worlds-client.js'
 
 export const FILES_GONE = "Some of this deploy's files are no longer stored anywhere, so it can't be downloaded."
+export const FILES_UNSAFE = "Some of this deploy's file names can't be put in a zip safely, so it can't be downloaded."
 const NOT_DEPLOYED = "This deploy never went live, so there's nothing to download."
 const UNREACHABLE = "Couldn't read your World from Decentraland. Try again in a minute."
 
@@ -39,7 +40,7 @@ export async function keepDeployedFiles(content: ContentRef[], files: Map<string
   for (const hash of new Set(content.map((c) => c.hash))) {
     const bytes = files.get(hash)
     if (!bytes || (await isStored(store, deployedKey(hash)))) continue
-    await store.put(deployedKey(hash), Buffer.from(bytes), 'application/octet-stream')
+    await store.put(deployedKey(hash), Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), 'application/octet-stream')
   }
 }
 
@@ -68,34 +69,44 @@ async function contentOf(dep: DeployedRow, world: string): Promise<ContentRef[]>
   return live.content
 }
 
+/** A content hash is a CID, letters and digits only: anything else could reach outside `deployed/` or the Worlds URL. */
+const CID = /^[a-zA-Z0-9]{1,128}$/
+
+/**
+ * Each file's safe zip path, or 409 files_unsafe when any one can't have one: a path the import's safe-path check
+ * refuses, two files at the same path (compared case-insensitively, as Decentraland and most unzippers do) or a
+ * hash that isn't a CID. The whole list is checked, so a download is never missing files.
+ */
+function zipPaths(content: ContentRef[]): Array<{ path: string; hash: string }> {
+  const unsafe = () => new DownloadError(409, 'files_unsafe', FILES_UNSAFE)
+  const seen = new Set<string>()
+  return content.map(({ file, hash }) => {
+    let path: string
+    try {
+      path = safeSegments(String(file)).join('/')
+    } catch {
+      throw unsafe()
+    }
+    if (!path || seen.has(path.toLowerCase()) || typeof hash !== 'string' || !CID.test(hash)) throw unsafe()
+    seen.add(path.toLowerCase())
+    return { path, hash }
+  })
+}
+
 /**
  * Where each file of a deployed World deployment comes from, decided before anything is sent: a file in neither the
- * store nor the Worlds server is 409 files_gone. Paths go through the import's safe-path check; an unsafe one (or a
- * second file at the same path) is left out, so nothing in the zip can land outside the folder it is unpacked in.
+ * store nor the Worlds server is 409 files_gone, and a list that can't be zipped safely is 409 files_unsafe.
  */
 export async function planDownload(dep: DeployedRow): Promise<{ filename: string; entries: Entry[] }> {
   const world = (dep.target as { world?: unknown } | null)?.world
   if (dep.status !== 'deployed' || !dep.catalystEntityId || typeof world !== 'string') {
     throw new DownloadError(409, 'not_deployed', NOT_DEPLOYED)
   }
-  const content = await contentOf(dep, world)
+  const files = zipPaths(await contentOf(dep, world))
   const store = getImportStore()
   const source = new Map<string, Entry['from']>()
   const entries: Entry[] = []
-  const paths = new Set<string>()
-  for (const { file, hash } of content) {
-    let path: string
-    try {
-      path = safeSegments(String(file)).join('/')
-    } catch {
-      path = ''
-    }
-    // A content hash is a CID (letters and digits): anything else could reach outside `deployed/`
-    if (!path || paths.has(path) || typeof hash !== 'string' || !/^[a-zA-Z0-9]{1,128}$/.test(hash)) {
-      console.error('[deployed-files] left out a content path that is unsafe or repeated:', JSON.stringify(String(file)).slice(0, 200))
-      continue
-    }
-    paths.add(path)
+  for (const { path, hash } of files) {
     let from = source.get(hash)
     if (!from) {
       if (await isStored(store, deployedKey(hash))) from = 'store'
@@ -122,7 +133,10 @@ const pad = (n: number) => String(n).padStart(2, '0')
 const utcStamp = (d: Date) =>
   `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}`
 
-/** The bytes of one entry: streamed from the store, or fetched from the Worlds server and checked against the hash. */
+/**
+ * The bytes of one entry: streamed from the store, or fetched from the Worlds server. A CIDv1 file is checked against
+ * its hash; a CIDv0 one (`Qm…`, older deploys) can't be with the hashing Virvi has, so it goes out as the server sent it.
+ */
 async function* bytesOf(e: Entry): AsyncGenerator<Uint8Array> {
   if (e.from === 'store') {
     const obj = await getImportStore().getStream(deployedKey(e.hash))
@@ -132,7 +146,7 @@ async function* bytesOf(e: Entry): AsyncGenerator<Uint8Array> {
   }
   const bytes = await getWorldsClient().getContent(e.hash)
   if (!bytes) throw new Error(`Worlds server no longer has ${e.hash}`)
-  if ((await dclHash(bytes)) !== e.hash) throw new Error(`Worlds server sent bytes that don't match ${e.hash}`)
+  if (!e.hash.startsWith('Qm') && (await dclHash(bytes)) !== e.hash) throw new Error(`Worlds server sent bytes that don't match ${e.hash}`)
   yield bytes
 }
 
