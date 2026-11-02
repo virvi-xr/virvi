@@ -9,7 +9,7 @@ import * as runnerModule from '../src/services/import/build-runner.js'
 import { setBuildRunner, type BuildRunner } from '../src/services/import/build-runner.js'
 import { DEPLOY_WINDOW_MS } from '../src/services/dcl/world-deployer.js'
 import { createImport, importView } from '../src/services/import/imports.js'
-import { importLimits, uploadWork, IMPORTS_BUSY } from '../src/services/import/import-work.js'
+import { importLimits, uploadDeadlineMs, uploadWork, IMPORTS_BUSY, UPLOAD_TOO_SLOW } from '../src/services/import/import-work.js'
 import { request as httpRequest } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
@@ -446,8 +446,18 @@ describe('scene import routes', () => {
       expect(uploadWork.inUse()).toBe(0)
     })
 
+    it('the upload deadline scales with the declared size: 128 KiB/s, at least 120 s, at most 15 minutes (Ruling R29)', () => {
+      expect(uploadDeadlineMs(undefined)).toBe(120_000)
+      expect(uploadDeadlineMs('chunked-or-junk')).toBe(120_000)
+      expect(uploadDeadlineMs(String(1024 * 1024))).toBe(120_000)
+      expect(uploadDeadlineMs(String(100 * 1024 * 1024))).toBe(800_000)
+      expect(uploadDeadlineMs(String(10 * 1024 * 1024 * 1024))).toBe(15 * 60_000)
+      expect(UPLOAD_TOO_SLOW).toBe('The upload took too long. Try again on a faster connection, or remove large unused files from the scene.')
+    })
+
     it('a trickling upload is cut off at the body time limit and frees its slot', async () => {
       const saved = importLimits.uploadBodyMs
+      // The floor of the size-scaled deadline, shortened for the test
       importLimits.uploadBodyMs = 300
       await app.listen({ port: 0, host: '127.0.0.1' })
       try {
@@ -456,12 +466,17 @@ describe('scene import routes', () => {
           const req = httpRequest({
             host: '127.0.0.1', port, method: 'POST', path: '/api/imports',
             headers: { ...auth(user), 'content-type': 'application/zip', 'content-length': '100000' },
-          }, (res) => resolve(`status ${res.statusCode}`))
+          }, (res) => {
+            let body = ''
+            res.on('data', (c) => { body += c })
+            res.on('end', () => resolve(`status ${res.statusCode} ${body}`))
+            res.on('error', () => resolve(`status ${res.statusCode} ${body}`))
+          })
           req.on('error', (e) => resolve(`error ${(e as NodeJS.ErrnoException).code}`))
           // A few bytes, then nothing: the slot must not be held forever
           req.write(Buffer.alloc(100))
         })
-        expect(ended).toMatch(/^(status 408|error ECONNRESET|error EPIPE)$/)
+        expect(ended).toBe(`status 408 ${JSON.stringify({ error: 'upload_too_slow', message: UPLOAD_TOO_SLOW })}`)
         await vi.waitFor(() => expect(uploadWork.inUse()).toBe(0))
         expect(await db.select().from(sceneImports)).toHaveLength(0)
       } finally {

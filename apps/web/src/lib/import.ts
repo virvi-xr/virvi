@@ -84,6 +84,7 @@ const CODE_MESSAGES: Record<string, string> = {
   builds_unavailable: 'Scene builds are not available right now. Try again later.',
   not_uploaded: 'This import is not waiting for a build. Upload the scene again.',
   imports_busy: 'Virvi is busy with other imports. Try again in a minute.',
+  upload_too_slow: 'The upload took too long. Try again on a faster connection, or remove large unused files from the scene.',
   // The deploy
   scene_too_big: "The scene has more files than its parcels allow in Decentraland. Remove some files, then upload again.",
   file_too_big: "One of the scene's files is over Decentraland's limit for a single file. Make it smaller, then upload again.",

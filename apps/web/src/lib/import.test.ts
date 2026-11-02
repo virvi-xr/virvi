@@ -53,7 +53,7 @@ describe('importErrorMessage', () => {
     // build-runner.ts, build-sweep.ts, import-build.ts
     'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded',
     // import-work.ts (I5)
-    'imports_busy',
+    'imports_busy', 'upload_too_slow',
     // retention.ts (Ruling R27)
     'files_expired',
     // markFailed's and the sweep's codes for an import put back to built (R19)
@@ -76,6 +76,10 @@ describe('importErrorMessage', () => {
 
   it('says Virvi is busy in the same words as the server', () => {
     expect(importErrorMessage('imports_busy')).toBe('Virvi is busy with other imports. Try again in a minute.')
+  })
+
+  it('says an upload was too slow in the same words as the server (Ruling R29)', () => {
+    expect(importErrorMessage('upload_too_slow')).toBe('The upload took too long. Try again on a faster connection, or remove large unused files from the scene.')
   })
 
   it('falls back to a plain sentence for a code it does not know', () => {

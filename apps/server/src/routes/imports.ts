@@ -25,7 +25,7 @@ import { getActiveSetup } from '../setup/setups.js'
 import { getImportStore } from '../storage/private-store.js'
 import { ImportError, readSceneZip, type SceneFolder } from '../services/import/scene-zip.js'
 import { installVirvi } from '../services/import/install-virvi.js'
-import { importLimits, importSlotGate, importSlotHooks, releaseImportSlot, uploadWork } from '../services/import/import-work.js'
+import { importSlotGate, importSlotHooks, releaseImportSlot, uploadDeadlineMs, uploadWork, UPLOAD_TOO_SLOW } from '../services/import/import-work.js'
 import { FILES_EXPIRED } from '../services/import/retention.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
 import {
@@ -114,8 +114,10 @@ export default async function importRoutes(app: FastifyInstance) {
       throw err
     })
 
-    // Auth, the builds check and the slot run before the body is read; the body has importLimits.uploadBodyMs to arrive
-    const slot = importSlotGate(uploadWork, () => importLimits.uploadBodyMs)
+    // Auth, the builds check and the slot run before the body is read; the body's deadline scales with its size (R29)
+    const slot = importSlotGate(uploadWork, (request) => uploadDeadlineMs(request.headers['content-length']), {
+      error: 'upload_too_slow', message: UPLOAD_TOO_SLOW,
+    })
     upload.post('/api/imports', { onRequest: [authenticate, buildsGate, slot], bodyLimit: SCENE_IMPORT_MAX_BYTES }, async (request, reply) => handle(reply, async () => {
       try {
         return await uploadImport(request, reply)

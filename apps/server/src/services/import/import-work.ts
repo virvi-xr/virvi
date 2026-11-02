@@ -14,8 +14,21 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
  */
 export const IMPORT_CONCURRENCY = 2
 export const IMPORTS_BUSY = 'Virvi is busy with other imports. Try again in a minute.'
-/** How long a body may take to arrive; tests shorten them. */
+/** How long a body may take to arrive (an upload's is its floor, see uploadDeadlineMs); tests shorten them. */
 export const importLimits = { uploadBodyMs: 120_000, resultBodyMs: 300_000 }
+/** Ruling R29: an upload may arrive as slowly as 128 KiB/s (about 1 Mbit/s), for at most 15 minutes. */
+const UPLOAD_MIN_BYTES_PER_S = 128 * 1024
+const UPLOAD_MAX_MS = 15 * 60_000
+export const UPLOAD_TOO_SLOW = 'The upload took too long. Try again on a faster connection, or remove large unused files from the scene.'
+
+/**
+ * An upload's body deadline from its declared Content-Length: max(the floor, length at 128 KiB/s), at most 15 minutes.
+ * No length (or a chunked body) gets the floor; the route's byte limit still applies.
+ */
+export function uploadDeadlineMs(contentLength: string | undefined): number {
+  const n = contentLength !== undefined && /^\d+$/.test(contentLength.trim()) ? Number(contentLength) : 0
+  return Math.min(UPLOAD_MAX_MS, Math.max(importLimits.uploadBodyMs, Math.ceil((n / UPLOAD_MIN_BYTES_PER_S) * 1000)))
+}
 
 /** A counting semaphore that never waits: `tryTake` gives a release function (safe to call twice), or null when full. */
 export function slots(max: number) {
@@ -55,15 +68,21 @@ declare module 'fastify' {
  * An onRequest hook (after auth) taking a slot from `pool` or answering 503 imports_busy, with a body deadline of
  * `limit()` ms. Register `importSlotHooks` on the same scope and call `releaseImportSlot` when the handler ends.
  */
-export function importSlotGate(pool: ReturnType<typeof slots>, limit: () => number) {
+export function importSlotGate(pool: ReturnType<typeof slots>, limit: (request: FastifyRequest) => number, tooSlow?: { error: string; message: string }) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const release = pool.tryTake()
     if (!release) return reply.status(503).send({ error: 'imports_busy', message: IMPORTS_BUSY })
     const timer = setTimeout(() => {
       if (request.importSlot?.bodyRead) return
       release()
-      request.raw.destroy()
-    }, limit())
+      // Say why while the socket can still take an answer (408), then close it; otherwise just close it
+      if (tooSlow && !reply.sent && !reply.raw.headersSent && reply.raw.writable) {
+        reply.raw.once('finish', () => request.raw.destroy())
+        reply.code(408).header('connection', 'close').send(tooSlow)
+      } else {
+        request.raw.destroy()
+      }
+    }, limit(request))
     timer.unref?.()
     request.importSlot = { release, bodyRead: false, timer }
   }

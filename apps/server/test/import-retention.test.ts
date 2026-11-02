@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { dclWorldDestinations, sceneDeployments, sceneImports } from '../src/db/schema.js'
+import { dclWorldDestinations, sceneDeployments, sceneImports, userAuthMethods } from '../src/db/schema.js'
+import bcrypt from 'bcryptjs'
 import { localPrivateStore, memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { FILES_EXPIRED, startRetentionSweep, stopRetentionSweep, sweepRetention } from '../src/services/import/retention.js'
 import { resetDb } from './helpers/db.js'
@@ -99,6 +100,16 @@ describe('retention (Ruling R27)', () => {
       expect(under(mine)).toEqual([])
       expect(under(onMyScene)).toEqual([])
       expect(under(theirs)).toHaveLength(1)
+    })
+
+    it('deleting your own account deletes the files of your imports', async () => {
+      await db.insert(userAuthMethods).values({ userId: user.id, type: 'email', identifier: user.email!, credentialHash: await bcrypt.hash('pw-1234', 4) })
+      const id = await anImport('deployed', now)
+      const r = await app.inject({
+        method: 'DELETE', url: '/api/auth/account', payload: { password: 'pw-1234' }, headers: { authorization: `Bearer ${tokenFor(user)}` },
+      })
+      expect(r.statusCode).toBe(204)
+      expect(under(id)).toEqual([])
     })
 
     it('deleting a scene deletes the files of its imports', async () => {
