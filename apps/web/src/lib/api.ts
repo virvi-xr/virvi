@@ -493,6 +493,8 @@ export function useApi() {
     uploadSceneImport: (zip: Blob) =>
       apiFetch<{ import: SceneImportView }>('/api/imports', { method: 'POST', body: zip, headers: { 'Content-Type': 'application/zip' } }),
     getSceneImport: (id: string) => apiFetch<{ import: SceneImportView }>(`/api/imports/${id}`),
+    /** The caller's own last 10 imports, any scene, newest first. */
+    listMySceneImports: () => apiFetch<{ imports: SceneImportView[] }>('/api/imports'),
     /** The whole build log, as text. */
     getSceneImportLog: async (id: string): Promise<string> => {
       const res = await fetch(`${API_URL}/api/imports/${id}/log`, { headers: requestHeaders(token, {}) })

@@ -333,6 +333,27 @@ describe('scene import routes', () => {
     expect((await get('/api/imports?sceneId=nope')).statusCode).toBe(400)
   })
 
+  it("with no sceneId lists the caller's own last 10 imports across scenes, newest first, never anyone else's", async () => {
+    const other = await createUser({ wallet: randomWallet() })
+    const { scene } = await createScene(user, 'Mine')
+    const { scene: theirs } = await createScene(other, 'Theirs')
+    const base = Date.now()
+    const insert = (u: TestUser, sceneId: string, i: number) => db.insert(sceneImports).values({
+      userId: u.id, sceneId, worldName: `w${i}.dcl.eth`, kind: 'sdk7', sourceKey: `imports/x${i}/source.zip`, status: 'deployed', createdAt: new Date(base + i * 1000),
+    }).returning().then(([r]) => r.id)
+    const mine: string[] = []
+    for (let i = 0; i < 12; i++) mine.push(await insert(user, i % 2 ? scene.id : (await createScene(user, `S${i}`)).scene.id, i))
+    // Someone else's import, even on the caller's own scene, is not "mine"
+    await insert(other, theirs.id, 50)
+    await insert(other, scene.id, 51)
+    const res = await get('/api/imports')
+    expect(res.statusCode).toBe(200)
+    expect(res.json().imports.map((i: { id: string }) => i.id)).toEqual(mine.slice(2).reverse())
+    expect(res.json().imports[0]).toMatchObject({ worldName: 'w11.dcl.eth', status: 'deployed' })
+    expect((await get('/api/imports', other)).json().imports).toHaveLength(2)
+    expect((await app.inject({ method: 'GET', url: '/api/imports' })).statusCode).toBe(401)
+  })
+
   it('the log route returns the stored log, and the view carries its tail', async () => {
     const view = (await upload(sceneZip())).json().import
     expect((await get(`/api/imports/${view.id}/log`)).statusCode).toBe(404)

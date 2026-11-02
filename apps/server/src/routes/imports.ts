@@ -2,6 +2,7 @@
  * Scene import routes: a creator uploads a scene built elsewhere (Creator Hub or SDK7) for a World they own.
  *
  * POST /api/imports              — the scene zip as the raw body: checks, Virvi installed, stored, build started
+ * GET  /api/imports              — the caller's own last 10 imports, any scene (the Import page's "recent imports")
  * GET  /api/imports?sceneId=     — the scene's last 10 imports (all of them with full access, else the caller's own)
  * GET  /api/imports/:id          — one import (its importer, or full access on its scene)
  * GET  /api/imports/:id/log      — its whole build log, as text
@@ -164,6 +165,11 @@ export default async function importRoutes(app: FastifyInstance) {
 
     reads.get<{ Querystring: { sceneId?: string } }>('/api/imports', async (request, reply) => handle(reply, async () => {
       const { sceneId } = request.query
+      if (sceneId === undefined) {
+        const rows = await db.select().from(sceneImports).where(eq(sceneImports.userId, request.user.id))
+          .orderBy(desc(sceneImports.createdAt)).limit(LIST_LIMIT)
+        return reply.send({ imports: await Promise.all(rows.map(loadImportView)) })
+      }
       if (!isUuid(sceneId)) throw new RouteError(400, 'invalid_scene')
       const where = (await full(request, sceneId))
         ? eq(sceneImports.sceneId, sceneId)

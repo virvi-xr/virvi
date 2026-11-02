@@ -8,7 +8,7 @@ import { SCENE_IMPORT_MAX_BYTES, type SceneImportView } from '@virvixr/shared'
 import { useApi, type DclDestination } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { signErrorMessage } from '@/lib/deploy'
-import { importFailure, importLines, importPhase, importViewError, watchImport } from '@/lib/import'
+import { importFailure, importLines, importPhase, importViewError, PHASE_BADGES, recentImports, watchImport } from '@/lib/import'
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
 import { Badge, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
@@ -269,21 +269,49 @@ function ImportContent() {
       )}
 
       {showPicker && <Picker onFolder={pickFolder} onZip={pickZip} again={!!view} />}
+
+      {!id && !sending && <RecentImports />}
     </div>
   )
 }
 
 function PhaseBadge({ phase }: { phase: NonNullable<ReturnType<typeof importPhase>> }) {
-  const [tone, label] = ({
-    uploading: ['info', 'Uploading'],
-    building: ['info', 'Building'],
-    ready: ['warning', 'Ready to deploy'],
-    sign: ['warning', 'Waiting for your signature'],
-    deploying: ['info', 'Deploying'],
-    live: ['success', 'Live'],
-    failed: ['danger', 'Failed'],
-  } as const)[phase]
+  const [tone, label] = PHASE_BADGES[phase]
   return <Badge tone={tone}>{label}</Badge>
+}
+
+/** The creator's last 10 imports, so one left building or waiting for its deploy can be picked up again. */
+function RecentImports() {
+  const api = useApi()
+  const { token } = useAuth()
+  const [views, setViews] = useState<SceneImportView[] | null>(null)
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    api.listMySceneImports()
+      .then((r) => { if (!cancelled) setViews(r.imports) })
+      .catch(() => { if (!cancelled) setViews([]) })
+    return () => { cancelled = true }
+  }, [token])
+  if (!views?.length) return null
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="text-base font-medium text-white">Your recent imports</p>
+      <ul className="divide-y divide-gray-800 rounded-lg border border-gray-800 bg-gray-900">
+        {recentImports(views, new Date()).map((i) => (
+          <li key={i.id}>
+            <Link href={i.href} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 hover:bg-gray-800/60">
+              <span className="min-w-0 truncate text-gray-200">{i.world}</span>
+              <span className="flex items-center gap-3">
+                <span className="text-xs text-gray-500">{i.when}</span>
+                <Badge tone={i.tone}>{i.label}</Badge>
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 /** The scene folder (the folder picker) or its .zip. */

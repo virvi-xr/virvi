@@ -2,6 +2,7 @@
 import type { SceneImportView } from '@virvixr/shared'
 import type { LineState } from './wizard/run'
 import { errorCode, POLL_MS, wizardErrorMessage } from './wizard/run'
+import { relativeTime } from './studio'
 
 export type ImportPhase = 'uploading' | 'building' | 'ready' | 'deploying' | 'sign' | 'live' | 'failed'
 
@@ -19,6 +20,32 @@ export function importPhase(v: Pick<SceneImportView, 'status' | 'canDeploy'>): I
     case 'deployed': return 'live'
     default: return 'failed'
   }
+}
+
+export type PhaseTone = 'info' | 'warning' | 'success' | 'danger'
+
+/** The badge for each phase. */
+export const PHASE_BADGES: Record<ImportPhase, [PhaseTone, string]> = {
+  uploading: ['info', 'Uploading'],
+  building: ['info', 'Building'],
+  ready: ['warning', 'Ready to deploy'],
+  sign: ['warning', 'Waiting for your signature'],
+  deploying: ['info', 'Deploying'],
+  live: ['success', 'Live'],
+  failed: ['danger', 'Failed'],
+}
+
+const RECENT_LIMIT = 10
+
+/** The signed-in creator's recent imports for the Import page: newest first, at most 10, each opening its own view. */
+export function recentImports(views: SceneImportView[], now: Date) {
+  return [...views]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, RECENT_LIMIT)
+    .map((v) => {
+      const [tone, label] = PHASE_BADGES[importPhase(v)]
+      return { id: v.id, world: v.worldName, label, tone, when: relativeTime(v.createdAt, now), href: `/import/?id=${v.id}` }
+    })
 }
 
 export const IMPORT_FALLBACK_MESSAGE = 'Something went wrong with this import. Try again in a moment.'

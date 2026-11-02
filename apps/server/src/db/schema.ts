@@ -790,6 +790,7 @@ export const sceneImports = pgTable('scene_imports', {
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 }, (t) => ({
   worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
+  userCreatedIdx: index('scene_imports_user_created_idx').on(t.userId, t.createdAt),
 }))
 
 // ── Streaming Servers ──────────────────────────────────────────────────────

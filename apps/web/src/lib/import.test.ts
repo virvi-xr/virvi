@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { SceneImportStatus, SceneImportView } from '@virvixr/shared'
-import { importErrorMessage, importFailure, importLines, importPhase, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
+import { importErrorMessage, importFailure, importLines, importPhase, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
 
 const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   id: 'imp-1',
@@ -131,5 +131,26 @@ describe('watchImport', () => {
     const r = await run(['building'], () => ++n > 2)
     expect(r.seen).toEqual(['building', 'building'])
     expect(r.last).toBeNull()
+  })
+})
+
+describe('recentImports', () => {
+  const now = new Date('2026-11-02T12:00:00Z')
+  it('lists each import with its World, a status label and how long ago, linking to its view, newest first', () => {
+    const items = recentImports([
+      view({ id: 'a', worldName: 'old.dcl.eth', status: 'deployed', createdAt: '2026-11-01T12:00:00Z' }),
+      view({ id: 'b', worldName: 'new.dcl.eth', status: 'built', canDeploy: true, createdAt: '2026-11-02T11:55:00Z' }),
+      view({ id: 'c', worldName: 'gone.dcl.eth', status: 'failed', createdAt: '2026-11-02T09:00:00Z' }),
+    ], now)
+    expect(items).toEqual([
+      { id: 'b', world: 'new.dcl.eth', label: 'Ready to deploy', tone: 'warning', when: '5 min ago', href: '/import/?id=b' },
+      { id: 'c', world: 'gone.dcl.eth', label: 'Failed', tone: 'danger', when: '3 h ago', href: '/import/?id=c' },
+      { id: 'a', world: 'old.dcl.eth', label: 'Live', tone: 'success', when: '1 day ago', href: '/import/?id=a' },
+    ])
+  })
+
+  it('keeps at most 10', () => {
+    const many = Array.from({ length: 12 }, (_, i) => view({ id: `i${i}`, createdAt: new Date(now.getTime() - i * 60_000).toISOString() }))
+    expect(recentImports(many, now).map((i) => i.id)).toEqual(many.slice(0, 10).map((v) => v.id))
   })
 })
