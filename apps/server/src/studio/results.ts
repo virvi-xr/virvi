@@ -4,8 +4,8 @@ import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPi
 import { checkFilePath, jobFileKey } from './store.js'
 import { recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
 import { publishStudio } from './events.js'
-import { ORBIT_FRAMES, orbitKey, queueFullOrbit, revisionsKey, type FixClipping, type View } from './designs.js'
-import { requestSetRender } from './sets.js'
+import { ORBIT_FRAMES, orbitKeyFor, queueFullOrbit, revisionsKey, type FixClipping, type View } from './designs.js'
+import { hasBuilding, requestSetRender, TOUR_VIEW } from './sets.js'
 import { DECLINED_NOTE, SCOPE_CATEGORIES, logScopeEvent, maybeFlag, offTopicIsFree, offTopicNote } from './scope.js'
 
 /** A worker's Result, as apps/studio-worker/CONTRACT.md defines it (only the fields Virvi reads are typed). */
@@ -31,7 +31,7 @@ export type ContractPiece = {
   changed?: boolean
   changeKind?: string
   meta?: Record<string, unknown>
-  checker?: { pass: boolean; failures: number; warnings: number } | null
+  checker?: { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } | null
   files?: string[]
   renders?: Record<string, number>
   finalize?: Record<string, unknown> | null // a finalize job's check summary for the piece
@@ -202,7 +202,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
             .onConflictDoNothing()
         }
         // The prompt rendered Inspect's ring; the rest of the sphere follows in the background
-        const ring = p.renders?.[orbitKey('male')] ?? 0
+        const ring = p.renders?.[orbitKeyFor(design?.kind ?? 'wearable', 'male')] ?? 0
         if (design && ring > 0 && ring < ORBIT_FRAMES) await queueFullOrbit(tx, design, rev.id, p.category, 'male')
       }
       if (result.pieces.some((p) => p.files?.length)) await cancelSupersededRenders(job.designId, superseded, tx, now)
@@ -268,6 +268,14 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     if (d) {
       await requestSetRender(d, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : fix.emote } as View, now)
         .catch((err) => console.error('[studio] fix re-render failed:', err instanceof Error ? err.message : err))
+    }
+  }
+  if (job.type === 'prompt' && result.pieces.some((p) => p.files?.length)) {
+    // A scene design's walk-through belongs to the pieces it shows: any change renders it again
+    const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, job.designId))
+    if (d?.kind === 'scene' && await hasBuilding(d.id)) {
+      await requestSetRender(d, TOUR_VIEW, now)
+        .catch((err) => console.error('[studio] walk-through render failed:', err instanceof Error ? err.message : err))
     }
   }
   if (result.outcome === 'off_topic' || result.outcome === 'declined') {
