@@ -3,7 +3,7 @@ import SwiftUI
 /// "Media Library": the scene's images and GLB models, Rename, Place and Dismiss, and the Upload view.
 struct AssetsTab: View {
     let app: AppModel
-    let builder: SceneBuilder
+    @ObservedObject var builder: SceneBuilder
     let onClose: () -> Void
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
@@ -31,7 +31,7 @@ struct AssetsTab: View {
             }
             .padding(12)
         }
-        .task { if canEdit(builder.role) { await load() } }
+        .task(id: builder.role) { if canEdit(builder.role) { await load() } }
     }
 
     @ViewBuilder private var list: some View {

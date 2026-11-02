@@ -31,7 +31,7 @@ final class AppModel: ObservableObject {
 
     func open(_ scene: DeviceScene) {
         builder?.stop()
-        builder = SceneBuilder(api: api, scene: scene)
+        builder = SceneBuilder(api: api, scene: scene, fetchScenes: { [auth] in try await auth.scenes() })
         builder?.start()
     }
 
@@ -51,7 +51,8 @@ final class AppModel: ObservableObject {
 @MainActor
 final class SceneBuilder: ObservableObject {
     let scene: DeviceScene
-    let role: SceneRole
+    /// From the scene list when opened, and fetched again after the feed reconnects (a role can change meanwhile).
+    @Published private(set) var role: SceneRole
     let feed: SceneFeed
     let edit: EditSession
     let alerts = HudAlerts()
@@ -64,9 +65,11 @@ final class SceneBuilder: ObservableObject {
     /// The `build` immersive space's scene, gizmo and head pose.
     let space: BuildSpace
     private var subscriptions: Set<AnyCancellable> = []
+    private let fetchScenes: () async throws -> [DeviceScene]
 
-    init(api: VirviApi, scene: DeviceScene) {
+    init(api: VirviApi, scene: DeviceScene, fetchScenes: @escaping () async throws -> [DeviceScene]) {
         self.scene = scene
+        self.fetchScenes = fetchScenes
         role = scene.sceneRole
         feed = SceneFeed(api: api)
         edit = EditSession(api: api, sceneId: scene.sceneId)
@@ -82,6 +85,18 @@ final class SceneBuilder: ObservableObject {
         edit.$message.sink { [alerts] in alerts.editMessage($0) }.store(in: &subscriptions)
         edit.$heldBy.sink { [alerts] in alerts.heldLine($0.map { "being moved by \($0)" }) }.store(in: &subscriptions)
         feed.$scene.sink { [alerts] in alerts.scene($0) }.store(in: &subscriptions)
+        // Back after a drop: fetch the role again before a stale one can hide or block editing.
+        feed.$status
+            .scan((FeedStatus.idle, FeedStatus.idle)) { ($0.1, $1) }
+            .filter { feedReconnected(from: $0.0, to: $0.1) }
+            .sink { [weak self] _ in Task { await self?.refreshRole() } }
+            .store(in: &subscriptions)
+    }
+
+    /// A failed fetch, or a scene no longer listed, keeps the current role.
+    func refreshRole() async {
+        guard let scenes = try? await fetchScenes(), let fresh = freshRole(in: scenes, sceneId: sceneId) else { return }
+        if fresh != role { role = fresh }
     }
 
     var sceneId: String { scene.sceneId }

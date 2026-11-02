@@ -327,7 +327,7 @@ final class EditSessionTests: XCTestCase {
         var t = start; t.position.x = 3
         s.update(t)
         await s.save()
-        XCTAssertEqual(s.message, "Can't reach virvi.io: check the connection and try again")
+        XCTAssertEqual(s.message, "Disconnected from Virvi. Reconnecting…")
         XCTAssertTrue(s.dirty)
         XCTAssertFalse(s.saving)
         XCTAssertTrue(s.saveEnabled)
@@ -386,7 +386,7 @@ final class EditSessionTests: XCTestCase {
         _ = s.select(selection())
         s.update(start.with(x: 3))
         await s.idle()
-        XCTAssertEqual(s.message, "Can't reach virvi.io: check the connection and try again")
+        XCTAssertEqual(s.message, "Disconnected from Virvi. Reconnecting…")
         XCTAssertTrue(s.dirty)
         XCTAssertTrue(s.saveEnabled)
     }

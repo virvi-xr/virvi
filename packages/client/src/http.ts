@@ -50,6 +50,9 @@ export class VirviHttpClient {
    * Set by Virvi after platform sign-in; called at most once per request, shared by concurrent requests.
    */
   reauthenticate: (() => Promise<void>) | null = null
+
+  /** Sent with every request, under the caller's own headers (the HUD's edit protocol, x-virvi-hud-protocol). */
+  defaultHeaders: Record<string, string> = {}
   private reauthInFlight: Promise<void> | null = null
 
   private async _fetch<T>(path: string, options: RequestInit = {}, retried = false): Promise<T> {
@@ -58,6 +61,7 @@ export class VirviHttpClient {
     const headers: Record<string, string> = {
       // Only with a body: the server refuses an empty body labelled as JSON (bodyless DELETEs)
       ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...this.defaultHeaders,
       ...this.auth.getAuthHeader(),
       ...(options.headers as Record<string, string> || {}),
     }

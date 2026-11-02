@@ -1,4 +1,5 @@
 import type { SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
+import { HUD_PROTOCOL_HEADER } from '@virvixr/shared'
 import { VirviHttpClient, ColyseusManager } from '@virvixr/client'
 import { SceneManager } from './SceneManager.js'
 import { VirviStorageImpl } from './storage.js'
@@ -194,6 +195,7 @@ export class Virvi {
     const apiUrl = resolveApiUrl(config)
     this.wssUrl = config.wssUrl || WSS_URLS[env] || WSS_URLS.prod
     this.http = new VirviHttpClient(apiUrl)
+    if (this.adapter.hudProtocol !== undefined) this.http.defaultHeaders[HUD_PROTOCOL_HEADER] = String(this.adapter.hudProtocol)
     // A previous sign-in's binding must never outlive a new attempt (failed or not).
     this._binding = null
 

@@ -145,6 +145,9 @@ export const config = {
   jwtSecret: env('JWT_SECRET') || 'dev-secret-change-me',
   jwtAccessExpiry: env('JWT_ACCESS_EXPIRY') || '15m',
   jwtRefreshExpiry: env('JWT_REFRESH_EXPIRY') || '7d',
+  // The oldest Decentraland HUD edit protocol (x-virvi-hud-protocol) allowed to write; older HUDs get 426 redeploy_required.
+  // 0 lets every HUD edit, including those deployed before the header. Raise it when a release breaks old HUDs' edits.
+  minDclHudProtocol: parseInt(env('MIN_DCL_HUD_PROTOCOL') || '0'),
   // Accept unverified DCL platform logins (local preview only — never in production)
   allowUnverifiedPlatformAuth: env('ALLOW_UNVERIFIED_PLATFORM_AUTH') === 'true',
 

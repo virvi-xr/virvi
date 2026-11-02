@@ -4,7 +4,7 @@ import SwiftUI
 /// Select (not in the Decentraland HUD) picks an element in the room, for things too small, far or buried to pinch.
 struct LayoutTab: View {
     @ObservedObject var app: AppModel
-    let builder: SceneBuilder
+    @ObservedObject var builder: SceneBuilder
     @ObservedObject var edit: EditSession
     @ObservedObject var feed: SceneFeed
     let onClose: () -> Void

@@ -7,6 +7,7 @@ import { DclAdapter } from './DclAdapter'
 import { startVirviAnalytics, getAnalyticsSceneRef } from './analytics.js'
 import { DclHUDRenderer, setSceneActionHandler } from './DclHUDRenderer.js'
 import { DclEditMode } from './transform/edit-mode.js'
+import { friendlyEditError, friendlyRenameError, editBlockedMessage, createReconnector, DISCONNECTED } from './edit-errors.js'
 import type { HUDMediaItem, HUDLayoutItem } from './DclHUDRenderer.js'
 import { locationKeyFor } from '@virvixr/shared'
 import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
@@ -34,21 +35,6 @@ function friendlyRoleError(err: unknown): string {
     }
   }
   return 'Something went wrong — try again'
-}
-
-/** Map a @virvixr/client error from a media / layout edit to text for the Assets and Layout panels. */
-function friendlyEditError(err: unknown): string {
-  const status = Number(/^HTTP (\d+):/.exec(err instanceof Error ? err.message : String(err))?.[1])
-  if (status === 401 || status === 403) return "You don't have permission to edit this scene"
-  if (status === 404) return 'That item no longer exists — reopen the panel to refresh'
-  return 'Something went wrong — try again'
-}
-
-function friendlyRenameError(err: unknown): string {
-  const status = Number(/^HTTP (\d+):/.exec(err instanceof Error ? err.message : String(err))?.[1])
-  if (status === 400) return 'Names need 1-120 characters, without slashes'
-  if (status === 409) return "That file isn't ready yet"
-  return friendlyEditError(err)
 }
 
 const PLACEABLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -265,6 +251,13 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
     let editMode: DclEditMode | null = null
     // Live library + missing-model subscriptions of the current connected handler (replaced on reinstall)
     let offLibrary: (() => void)[] = []
+    // The scene room is up: false from a drop until a (re)connect finishes. Edits wait for it.
+    let roomUp = false
+    virvi.onStateChange((state) => {
+      if (state === 'connected') roomUp = true
+      else if (state === 'connecting' || state === 'error' || state === 'idle') roomUp = false
+    })
+    virvi.events.on('connection_lost', () => { roomUp = false })
 
     // Scene actions once connected: 'retry' for everyone; roles management for host and co-hosts;
     // placing media and showing / hiding / deleting elements for host, co-hosts and editors
@@ -275,11 +268,14 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       let currentRole: SceneRole = role
       const managesRoles = () => currentRole === 'host' || currentRole === 'cohost'
       const edits = () => currentRole !== 'viewer'
-      if (edits() && !editMode) editMode = new DclEditMode(virvi, adapter)
-      if (editMode) {
-        const em = editMode
-        em.onChange = () => renderer?.setEditMode(em.state)
+      const ensureEditMode = () => {
+        if (edits() && !editMode) editMode = new DclEditMode(virvi, adapter)
+        if (editMode) {
+          const em = editMode
+          em.onChange = () => renderer?.setEditMode(em.state)
+        }
       }
+      ensureEditMode()
       let busy = false
       let media: SceneLibraryItem[] = []
       let layout: HUDLayoutItem[] = []
@@ -293,6 +289,41 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           renderer?.setRolesError(friendlyRoleError(err))
         }
       }
+
+      // Ask the server for this wallet's role here again (it may have changed since joining, e.g. promoted to
+      // editor, or across a reconnect). Only a member answer for this scene counts: getSetupStatus reads any
+      // failure as "none", so anything else keeps the current role (the server still refuses what it must).
+      const refreshRole = async () => {
+        const status = await probe.getSetupStatus(sceneRef, adapter)
+        if (status.state !== 'member' || (status.sceneId !== configuredSceneId && status.sceneId !== sceneId)) return
+        if (status.role === currentRole) return
+        currentRole = status.role
+        renderer?.setSceneRole(currentRole)
+        ensureEditMode()
+        if (managesRoles()) void refresh()
+      }
+
+      // A dropped room rejoins on its own (backoff); the role is fetched again once it's back
+      const reconnector = createReconnector({
+        connect: async () => {
+          await virvi.connectToScene(sceneId)
+          await ensureHUD()
+        },
+        onReconnected: async () => {
+          renderer?.setEditMessage(null)
+          await refreshRole()
+        },
+        onFailed: () => renderer?.updateConnectionState('error', { error: DISCONNECTED }),
+        schedule: (fn, ms) => {
+          const t = setTimeout(fn, ms)
+          return () => clearTimeout(t)
+        },
+      })
+      const onConnectionLost = () => {
+        renderer?.setEditMessage(DISCONNECTED, true)
+        reconnector.lost()
+      }
+      const connected = () => roomUp
       const pushMedia = () => renderer?.setMedia(toHUDMedia(media, virvi.missingModelSrcs()))
       const refreshMedia = async () => {
         const { items } = await virvi.httpClient.getSceneLibrary(sceneId)
@@ -308,7 +339,10 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           pushMedia()
         }),
         virvi.onModelsMissing(() => { if (edits() && media.length) pushMedia() }),
+        () => virvi.events.off('connection_lost', onConnectionLost),
+        () => reconnector.stop(),
       ]
+      virvi.events.on('connection_lost', onConnectionLost)
       // Upload link: minted on the press, kept only while the Upload view is open
       let uploadUrl: string | null = null
       const mintUploadLink = async () => {
@@ -387,7 +421,13 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           return
         }
 
-        if (action === 'retry') return reconnect(sceneId)
+        if (action === 'retry') {
+          // A manual Retry replaces any pending automatic one; the role is fetched again once connected
+          reconnector.stop()
+          await reconnect(sceneId)
+          if (virvi.connectionState === 'connected') await refreshRole().catch(() => {})
+          return
+        }
 
         if (action.startsWith('edit_')) {
           if (!edits() || !editMode) return
@@ -450,7 +490,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
             pushMedia()
             renderer?.setRenaming(null)
           } catch (err) {
-            renderer?.setEditMessage(friendlyRenameError(err), true)
+            renderer?.setEditMessage(friendlyRenameError(err, { connected: connected() }), true)
           } finally {
             busy = false
           }
@@ -464,7 +504,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
             media = media.filter((a) => a.id !== String(data?.assetId))
             pushMedia()
           } catch (err) {
-            renderer?.setEditMessage(friendlyEditError(err), true)
+            renderer?.setEditMessage(friendlyEditError(err, { connected: connected() }), true)
           }
           return
         }
@@ -478,20 +518,22 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
             else await refreshMedia()
           } catch (err) {
             renderer?.setLoadFailed(action === 'layout_refresh' ? 'layout' : 'media')
-            renderer?.setEditMessage(friendlyEditError(err), true)
+            renderer?.setEditMessage(friendlyEditError(err, { connected: connected() }), true)
           }
           return
         }
 
         if (action !== 'media_place' && action !== 'layout_toggle' && action !== 'layout_delete') return
-        if (!edits()) {
-          renderer?.setEditMessage("You don't have permission to edit this scene", true)
-          return
-        }
         if (busy) return
         busy = true
-        renderer?.setEditMessage(null)
         try {
+          // Disconnected, or a role that still says viewer after fetching it again (never a server answer)
+          const blocked = await editBlockedMessage({ connected: connected(), canEdit: edits, refreshRole })
+          if (blocked) {
+            renderer?.setEditMessage(blocked, true)
+            return
+          }
+          renderer?.setEditMessage(null)
           if (action === 'media_place') await place(String(data?.assetId))
           if (action === 'layout_toggle') {
             const { element } = await virvi.httpClient.updateElement(String(data?.elementId), { enabled: !!data?.enabled })
@@ -505,7 +547,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
             renderer?.setLayout(layout)
           }
         } catch (err) {
-          renderer?.setEditMessage(friendlyEditError(err), true)
+          renderer?.setEditMessage(friendlyEditError(err, { connected: connected() }), true)
         } finally {
           busy = false
         }
