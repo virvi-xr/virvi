@@ -233,3 +233,20 @@ describe('scene pricing', () => {
     expect(q.totalCents).toBe(0)
   })
 })
+
+describe('Virvi admins', () => {
+  const prev = config.studioEnabled
+  beforeAll(() => { ;(config as any).studioEnabled = true })
+  afterAll(() => { ;(config as any).studioEnabled = prev })
+  beforeEach(resetDb)
+
+  it('an admin quote is free on every line and spends no gift', async () => {
+    const d = await createDesign(await createUser({ role: 'admin' }), { kind: 'scene' })
+    await addRevision(d, 'building', { pass: true, failures: 0, warnings: 0 }, { kind: 'building', footprint: '4x4' })
+    await addRevision(d, 'furniture_chair', { pass: true, failures: 0, warnings: 0 }, { kind: 'furniture' })
+    const q = await quoteFinalize(d, null, [], 2, undefined, { admin: true })
+    expect(q.lines.map((l) => [l.category, l.amountCents, l.admin])).toEqual([['building', 7900, true], ['furniture_chair', 500, true]])
+    expect(q.totalCents).toBe(0)
+    expect(q.giftsUsed).toBe(0)
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, dialogTotal, giftNote, checkedEmotes } from './studio'
+import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, dialogTotal, giftNote, checkedEmotes, lineNote } from './studio'
 
 const NOW = new Date('2026-11-01T12:00:00Z')
 const detail = (over: Partial<StudioDetail> = {}): StudioDetail => ({
@@ -165,5 +165,17 @@ describe('scene gifts and checks', () => {
   it('a scene design has no emotes to check', () => {
     expect(checkedEmotes('scene')).toEqual([])
     expect(checkedEmotes('wearable')).toHaveLength(7)
+  })
+})
+
+describe('Virvi admins finalize free', () => {
+  const line = (over: Record<string, unknown>) => ({ category: 'hat', revisionId: 'r1', revisionNumber: 1, pieceName: 'Cap',
+    priceKind: 'first', amountCents: 2900, waived: false, ...over }) as any
+  const quote = (lines: any[]) => ({ pieces: [], lines, totalCents: 0, blocked: [], giftsUsed: 0, reportsHeld: [], notes: [] }) as any
+  it('costs nothing, says why, and the button says it is free', () => {
+    expect(dialogTotal(quote([line({ admin: true }), line({ category: 'feet', amountCents: 1900, admin: true })]), [])).toBe(0)
+    expect(lineNote(line({ admin: true }))).toBe('free (Virvi admin)')
+    expect(lineNote(line({ gift: true }))).toBe('free (gift code)')
+    expect(finalizeStrip(quote([line({ admin: true })]), 'wearable').button).toBe('Finalize · free (Virvi admin)')
   })
 })

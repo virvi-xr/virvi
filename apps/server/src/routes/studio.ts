@@ -7,7 +7,7 @@ import { authenticate } from '../middleware/auth.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
 import { verifyRenderFrame, framePath } from '../studio/render-urls.js'
-import { quoteFinalize, QuoteError } from '../studio/pricing.js'
+import { isVirviAdmin, quoteFinalize, QuoteError } from '../studio/pricing.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
@@ -191,7 +191,8 @@ export default async function studioRoutes(app: FastifyInstance) {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     try {
-      return await quoteFinalize(d, null, [], await giftsFor(request.user.id, d.id, new Date()))
+      const admin = await isVirviAdmin(request.user.id)
+      return await quoteFinalize(d, null, [], admin ? 0 : await giftsFor(request.user.id, d.id, new Date()), undefined, { admin })
     } catch (err) {
       if (err instanceof QuoteError) return quoteRefusal(reply, err)
       throw err

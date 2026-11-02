@@ -115,10 +115,14 @@ export type QuoteLine = {
   held?: boolean
   gift?: boolean // paid by a gift code: the whole line, or `giftCents` of it (a scene piece's cap)
   giftCents?: number
+  admin?: boolean // free: the customer is a Virvi admin
 }
 
 /** What a line costs after its gift: a scene gift covers up to its cap, a wearable or emote gift the whole line. */
-const afterGift = (l: QuoteLine) => l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
+const afterGift = (l: QuoteLine) => l.admin ? 0 : l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
+
+/** Why a line costs less in the checkout: a Virvi admin's, or a gift's. */
+export const lineNote = (l: QuoteLine): string | null => l.admin ? 'free (Virvi admin)' : giftNote(l)
 
 /** How a gift line reads in the checkout: free, or how much it takes off. */
 export function giftNote(l: QuoteLine): string | null {
@@ -507,7 +511,8 @@ const UNLOCKS: Record<StudioKind, string> = {
 export function finalizeStrip(quote: Quote | null, kind: StudioKind): { unlocks: string; button: string | null; blocked: string | null } {
   return {
     unlocks: UNLOCKS[kind] ?? UNLOCKS.wearable,
-    button: quote && quote.lines.length > 0 ? `Finalize · ${formatCents(quote.totalCents)}` : null,
+    button: quote && quote.lines.length > 0
+      ? `Finalize · ${quote.lines.every((l) => l.admin) ? 'free (Virvi admin)' : formatCents(quote.totalCents)}` : null,
     blocked: quote?.blocked.length ? refusalMessage({ body: { code: 'checks_failed', categories: quote.blocked } }, new Date()).text : null,
   }
 }

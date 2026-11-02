@@ -111,6 +111,29 @@ describe('studio payments', () => {
     expect(after.refundedCents).toBe(0)
   })
 
+  it('a Virvi admin finalizes free: granted at once, no Stripe, packaged like any paid piece', async () => {
+    const u = await createUser({ role: 'admin' })
+    const d = await createDesign(u)
+    await addRevision(d, 'hat')
+    const quote = await app.inject({ method: 'GET', url: `/api/studio/designs/${d.id}/finalize`, headers: as(u) })
+    expect(quote.json()).toMatchObject({ totalCents: 0, lines: [{ category: 'hat', amountCents: 2900, admin: true }] })
+    const res = await finalize(u, d.id)
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ granted: true })
+    expect(stripe.calls.sessions).toHaveLength(0)
+    const [ent] = await db.select().from(studioEntitlements)
+    expect(ent).toMatchObject({ category: 'hat', amountCents: 0, status: 'packaging' })
+    expect(await db.select().from(studioJobs).where(eq(studioJobs.type, 'finalize'))).toHaveLength(1)
+  })
+
+  it('a creator still pays', async () => {
+    const u = await createUser({ role: 'creator' })
+    const d = await createDesign(u)
+    await addRevision(d, 'hat')
+    await finalize(u, d.id)
+    expect(stripe.calls.sessions[0].line_items.map((l: any) => l.price_data.unit_amount)).toEqual([2900])
+  })
+
   it('a second click reuses the open session', async () => {
     const u = await createUser()
     const d = await createDesign(u)

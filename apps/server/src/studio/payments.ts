@@ -6,7 +6,7 @@ import {
 } from '../db/schema.js'
 import { config } from '../config.js'
 import { ensureCustomer, getStripe } from '../integrations/stripe.js'
-import { chargedCents, instantReportsUsed, priceLines, quoteFinalize, QuoteError } from './pricing.js'
+import { chargedCents, instantReportsUsed, isVirviAdmin, priceLines, quoteFinalize, QuoteError } from './pricing.js'
 import { startWorker, type Design } from './designs.js'
 import type { Exec } from './quota.js'
 import { publishStudio } from './events.js'
@@ -110,7 +110,8 @@ export async function createFinalizeCheckout(
 ): Promise<{ url: string } | { granted: true; paymentId: string }> {
   const waived = Object.keys(reports)
   const withReports = (lines: PaymentLine[]) => lines.map((l) => (l.waived || l.held ? { ...l, reportText: reports[l.category] } : l))
-  const quote = await quoteFinalize(design, categories, waived, await giftsFor(user.id, design.id, now))
+  const admin = await isVirviAdmin(user.id)
+  const quote = await quoteFinalize(design, categories, waived, admin ? 0 : await giftsFor(user.id, design.id, now), db, { admin })
   if (!quote.lines.length) throw new QuoteError('nothing_to_pay', categories ?? [])
   const open = await db.select().from(studioPayments).where(and(
     eq(studioPayments.designId, design.id), eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now),
@@ -136,7 +137,7 @@ export async function createFinalizeCheckout(
     await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.id, design.id)).for('key share')
     await tx.insert(studioFinalizeCredits).values({ userId: user.id, balance: 0, updatedAt: now }).onConflictDoNothing()
     const [credits] = await tx.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, user.id)).for('update')
-    const q = await quoteFinalize(design, categories, waived, credits.balance, tx)
+    const q = await quoteFinalize(design, categories, waived, admin ? 0 : credits.balance, tx, { admin })
     if (!q.lines.length) throw new QuoteError('nothing_to_pay', categories ?? [])
     // The quote the customer saw counted a credit an older checkout still holds (Stripe didn't expire it, or it is
     // still opening): refuse rather than charge that line in full

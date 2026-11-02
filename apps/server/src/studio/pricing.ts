@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioEntitlements, studioMistakeReports, studioPieces, studioRevisions, type PaymentLine } from '../db/schema.js'
+import { studioEntitlements, studioMistakeReports, studioPieces, studioRevisions, users, type PaymentLine } from '../db/schema.js'
 import { config } from '../config.js'
 import type { Design } from './designs.js'
 import type { Exec } from './quota.js'
@@ -42,8 +42,8 @@ export class QuoteError extends Error {
  * what has been paid for by then.
  */
 /** What a line charges after its waiver or free-finalize credit. */
-export const chargedCents = (l: Pick<PaymentLine, 'amountCents' | 'waived' | 'gift' | 'giftCents'>) =>
-  l.waived ? 0 : l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
+export const chargedCents = (l: Pick<PaymentLine, 'amountCents' | 'waived' | 'gift' | 'giftCents' | 'admin'>) =>
+  l.admin || l.waived ? 0 : l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
 
 type Tier = 'Small' | 'Medium' | 'Large'
 const tierOf = (footprint?: string): Tier => footprint === '4x4' ? 'Large' : footprint === '1x2' || footprint === '2x2' ? 'Medium' : 'Small'
@@ -117,7 +117,17 @@ export async function instantReportsUsed(designId: string, category: string, exe
  * `gifts` free-finalize credits each make one first-finalize line free, the most expensive first (ties in piece order);
  * revision lines are never free this way.
  */
-export async function quoteFinalize(design: Design, categories: string[] | null, waived: string[], gifts = 0, exec: Exec = db): Promise<Quote> {
+/** Whether a user is a Virvi admin, who finalizes without paying. Read from the database, not the session token. */
+export async function isVirviAdmin(userId: string, exec: Exec = db): Promise<boolean> {
+  const [u] = await exec.select({ role: users.role }).from(users).where(eq(users.id, userId))
+  return u?.role === 'admin'
+}
+
+/** `admin`: a Virvi admin's quote, every line free and no gift credit spent. */
+export async function quoteFinalize(
+  design: Design, categories: string[] | null, waived: string[], gifts = 0, exec: Exec = db, opts: { admin?: boolean } = {},
+): Promise<Quote> {
+  if (opts.admin) gifts = 0
   const pieceRows = await exec.select().from(studioPieces).where(eq(studioPieces.designId, design.id)).orderBy(asc(studioPieces.category))
   const revIds = pieceRows.map((p) => p.latestRevisionId).filter((x): x is string => !!x)
   const revs = revIds.length ? await exec.select().from(studioRevisions).where(inArray(studioRevisions.id, revIds)) : []
@@ -165,6 +175,7 @@ export async function quoteFinalize(design: Design, categories: string[] | null,
     category: p.category, revisionId: p.revisionId, revisionNumber: p.revisionNumber, pieceName: p.name,
     ...prices[i], waived: waived.includes(p.category) && !overLimit.has(p.category),
     ...(waived.includes(p.category) && overLimit.has(p.category) ? { held: true } : {}),
+    ...(opts.admin ? { admin: true } : {}),
     ...(giftIdx.has(i) ? { gift: true, ...(design.kind === 'scene' ? { giftCents: Math.min(prices[i].amountCents, cap) } : {}) } : {}),
     ...(p.footprint ? { footprint: p.footprint } : {}),
   }))

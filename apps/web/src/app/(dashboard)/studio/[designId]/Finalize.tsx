@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  checkoutBody, dialogTotal, emoteChecklist, finalizeStrip, formatCents, giftNote, HELD_REPORT_COPY, REPORT_MAX, refusalMessage, reportOk, triangleWarning,
+  checkoutBody, dialogTotal, emoteChecklist, finalizeStrip, formatCents, lineNote, HELD_REPORT_COPY, REPORT_MAX, refusalMessage, reportOk, triangleWarning,
   type Quote, type QuoteLine, type Refusal, type StudioDetail, type StudioKind,
 } from '@/lib/studio'
 import { STATE_BADGE, emoteName, type EmoteTarget } from './EmotesStep'
@@ -139,8 +139,8 @@ function FinalizeDialog({ designId, quote, onClose, onChanged, children }: {
                     <p className="text-xs text-gray-500">{PRICE_LABEL[l.priceKind]} · revision {l.revisionNumber}</p>
                   </div>
                   <p className="shrink-0 text-right">
-                    <span className={waived || giftNote(l) === 'free (gift code)' ? 'text-gray-500 line-through' : ''}>{formatCents(l.amountCents)}</span>
-                    {l.gift ? <span className="block text-xs text-emerald-300">{giftNote(l)}</span> : waived && <span className="block text-xs text-emerald-300">not charged</span>}
+                    <span className={waived || lineNote(l)?.startsWith('free') ? 'text-gray-500 line-through' : ''}>{formatCents(l.amountCents)}</span>
+                    {lineNote(l) ? <span className="block text-xs text-emerald-300">{lineNote(l)}</span> : waived && <span className="block text-xs text-emerald-300">not charged</span>}
                   </p>
                 </div>
                 {revision && (
