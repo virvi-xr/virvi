@@ -8,13 +8,100 @@ const PACKAGE = '@virvixr/dcl'
 const HUD_ICON = 'images/virvi/hud-v.png'
 const MAIN_FILES = ['src/index.ts', 'src/index.tsx', 'src/index.js']
 const IMPORT_LINE = `import { createVirvi } from '${PACKAGE}'`
-const ALREADY_IMPORTED = /\bimport\s*(?:type\s+)?\{[^}]*\bcreateVirvi\b[^}]*\}/
 
-// The opening `{` of an exported `main`: function, async function, or arrow assigned to a const.
-const MAIN_FORMS = [
-  /export\s+(?:async\s+)?function\s+main\s*\([^)]*\)[^{;=]*\{/,
-  /export\s+const\s+main\s*(?::[^=]+)?=\s*(?:async\s*)?\([^)]*\)\s*(?::[^=]+?)?=>\s*\{/,
+// Where an exported `main`'s parameter list opens (run on the masked source).
+const MAIN_HEADS = [
+  /export\s+(?:async\s+)?function\s+main\s*\(/g,
+  /export\s+const\s+main\s*(?::[^=]+)?=\s*(?:async\s*)?\(/g,
 ]
+
+/** Same-length copy with comment text and string contents blanked (newlines and quote marks kept). */
+function maskSource(src: string): string {
+  const out = src.split('')
+  const blank = (from: number, to: number) => { for (let k = from; k < to; k++) if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ' }
+  let i = 0
+  while (i < src.length) {
+    const c = src[i], n = src[i + 1]
+    if (c === '/' && n === '/') {
+      let e = i
+      while (e < src.length && src[e] !== '\n') e++
+      blank(i, e); i = e
+    } else if (c === '/' && n === '*') {
+      const close = src.indexOf('*/', i + 2)
+      const e = close < 0 ? src.length : close + 2
+      blank(i, e); i = e
+    } else if (c === '"' || c === "'" || c === '`') {
+      let e = i + 1
+      while (e < src.length && src[e] !== c && (c === '`' || src[e] !== '\n')) e += src[e] === '\\' ? 2 : 1
+      e = Math.min(e, src.length)
+      blank(i + 1, e); i = e + 1
+    } else i++
+  }
+  return out.join('')
+}
+
+const OPEN = '([{', CLOSE = ')]}'
+
+/** Index just past the bracket that closes the one at `at` (masked source), or -1. */
+function skipBrackets(m: string, at: number): number {
+  let depth = 0
+  for (let i = at; i < m.length; i++) {
+    if (OPEN.includes(m[i])) depth++
+    else if (CLOSE.includes(m[i]) && --depth === 0) return i + 1
+  }
+  return -1
+}
+
+/** Index of main's body `{` given the `(` that opens its parameters, or -1 when there is no block body. */
+function findBodyBrace(m: string, paren: number, arrow: boolean): number {
+  let i = skipBrackets(m, paren)
+  if (i < 0) return -1
+  let depth = 0 // () [] {} and <> inside the return type
+  for (; i < m.length; i++) {
+    const c = m[i]
+    if (c === '=' && m[i + 1] === '>') {
+      i++
+      if (depth === 0 && arrow) { while (/\s/.test(m[i + 1] ?? '')) i++; return m[i + 1] === '{' ? i + 1 : -1 }
+      continue
+    }
+    if (depth === 0 && c === '{' && !arrow) {
+      let j = i - 1
+      while (j >= 0 && /\s/.test(m[j])) j--
+      const prev = m[j] ?? ''
+      const typeLiteral = /[:|&,(<]/.test(prev) || (prev === '>' && m[j - 1] === '=')
+      if (!typeLiteral) return i
+    }
+    if (depth === 0 && !arrow && (c === ';' || c === '}')) return -1
+    if (c === '(' || c === '[' || c === '{' || c === '<') depth++
+    else if (c === ')' || c === ']' || c === '}' || c === '>') depth--
+    if (depth < 0) return -1
+  }
+  return -1
+}
+
+/** Where `import { … } from` statements put createVirvi: the local name of a value import, if any. */
+function importedName(src: string, m: string): string | null {
+  const re = /\bimport\s*(type\s+)?\{([^}]*)\}\s*from\s*(['"`])( *)\3/g
+  for (let hit = re.exec(m); hit; hit = re.exec(m)) {
+    if (hit[1]) continue
+    for (const spec of hit[2].split(',')) {
+      const mm = /^\s*(?!type\s)(\w+)(?:\s+as\s+(\w+))?\s*$/.exec(spec)
+      if (mm && mm[1] === 'createVirvi') return mm[2] ?? mm[1]
+    }
+  }
+  return null
+}
+
+/** Offset just after any leading `/// <reference …/>` lines and a 'use strict' directive. */
+function headerEnd(src: string): number {
+  let at = 0
+  for (const line of src.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    if (!/^\s*\/\/\/\s*<reference\b/.test(line) && !/^\s*(['"])use strict\1;?\s*$/.test(line)) break
+    at += line.length
+    if (!line.endsWith('\n')) return at
+  }
+  return at
+}
 
 type Version = [number, number, number]
 
@@ -39,30 +126,48 @@ function withDependency(pkgText: string | undefined): string | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ImportError(422, 'bad_package_json', 'package.json could not be read.')
     pkg = parsed as Record<string, unknown>
   }
-  const deps = pkg.dependencies && typeof pkg.dependencies === 'object' && !Array.isArray(pkg.dependencies) ? (pkg.dependencies as Record<string, unknown>) : undefined
-  const current = deps?.[PACKAGE]
-  const have = typeof current === 'string' ? minVersion(current) : null
   const want = minVersion(VIRVI_DCL_RANGE)!
-  if (have && !lower(have, want)) return null
-  if (deps) deps[PACKAGE] = VIRVI_DCL_RANGE
-  else pkg.dependencies = { [PACKAGE]: VIRVI_DCL_RANGE }
-  return JSON.stringify(pkg, null, 2) + '\n'
+  const obj = (k: string) => (pkg[k] && typeof pkg[k] === 'object' && !Array.isArray(pkg[k]) ? (pkg[k] as Record<string, unknown>) : undefined)
+  const holders = ['dependencies', 'devDependencies'].map(obj).filter((o): o is Record<string, unknown> => !!o && PACKAGE in o)
+  if (holders.length === 0) {
+    const deps = obj('dependencies')
+    if (deps) deps[PACKAGE] = VIRVI_DCL_RANGE
+    else pkg.dependencies = { [PACKAGE]: VIRVI_DCL_RANGE }
+    return JSON.stringify(pkg, null, 2) + '\n'
+  }
+  let edited = false
+  for (const h of holders) {
+    const have = typeof h[PACKAGE] === 'string' ? minVersion(h[PACKAGE] as string) : null
+    if (have && !lower(have, want)) continue
+    h[PACKAGE] = VIRVI_DCL_RANGE
+    edited = true
+  }
+  return edited ? JSON.stringify(pkg, null, 2) + '\n' : null
 }
 
-/** The source with `void createVirvi()` first in `main` and the import on top, or null when it already imports createVirvi. */
+/** The source with `void createVirvi()` first in `main` (and the import if missing), or null when nothing needs adding. */
 function withCreateVirvi(src: string): string | null {
-  const hit = MAIN_FORMS.map((re) => re.exec(src)).find((m) => m)
-  if (!hit) throw new ImportError(422, 'no_main', 'The scene has no exported main() function in src/index.')
-  if (ALREADY_IMPORTED.test(src)) return null
+  const m = maskSource(src)
+  const hits = MAIN_HEADS.flatMap((re, form) => [...m.matchAll(re)].map((h) => ({ index: h.index!, paren: h.index! + h[0].length - 1, arrow: form === 1 })))
+  const hit = hits.sort((a, b) => a.index - b.index)[0]
+  const open = hit ? findBodyBrace(m, hit.paren, hit.arrow) : -1
+  if (open < 0) throw new ImportError(422, 'no_main', 'The scene has no exported main() function in src/index.')
+  const close = skipBrackets(m, open)
+  const local = importedName(src, m)
+  const name = local ?? 'createVirvi'
+  if (local && new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}\\s*\\(`).test(m.slice(open, close < 0 ? m.length : close))) return null
   const eol = src.includes('\r\n') ? '\r\n' : '\n'
-  const at = hit.index + hit[0].length
+  const at = open + 1
   const rest = src.slice(at)
-  const call = `${eol}  void createVirvi()`
+  const call = `${eol}  void ${name}()`
   const body =
     /^\s*\}/.test(rest) ? `${call}${eol}${rest.replace(/^\s+/, '')}`
     : /^[ \t]*\r?\n/.test(rest) ? `${call}${rest}`
     : `${call}${eol}${rest}`
-  return `${IMPORT_LINE}${eol}${src.slice(0, at)}${body}`
+  const edited = src.slice(0, at) + body
+  if (local) return edited
+  const h = headerEnd(src)
+  return `${edited.slice(0, h)}${IMPORT_LINE}${eol}${edited.slice(h)}`
 }
 
 /**
@@ -71,13 +176,16 @@ function withCreateVirvi(src: string): string | null {
  */
 export async function installVirvi(folder: SceneFolder): Promise<{ files: Map<string, Uint8Array>; changed: string[] }> {
   const dec = new TextDecoder()
+  const strict = new TextDecoder('utf-8', { fatal: true })
   const enc = new TextEncoder()
   const files = new Map(folder.files)
   const changed: string[] = []
 
   const mainPath = MAIN_FILES.find((p) => files.has(p))
   if (!mainPath) throw new ImportError(422, 'no_main', 'The scene has no src/index.ts to add Virvi to.')
-  const edited = withCreateVirvi(dec.decode(files.get(mainPath)!))
+  let source: string
+  try { source = strict.decode(files.get(mainPath)!) } catch { throw new ImportError(422, 'bad_source_encoding', `${mainPath} is not valid UTF-8 text.`) }
+  const edited = withCreateVirvi(source)
 
   const pkgBytes = files.get('package.json')
   const pkgText = withDependency(pkgBytes && dec.decode(pkgBytes))

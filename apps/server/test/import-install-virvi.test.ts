@@ -95,4 +95,56 @@ describe('installVirvi', () => {
     expect(text(f.files, 'src/index.ts')).toBe('export function main() {}\n')
     expect(f.files.has('images/virvi/hud-v.png')).toBe(false)
   })
+  describe('fix round 1', () => {
+    const edit = async (src: string, pk = pkg()) => text((await installVirvi(folder({ 'package.json': pk, 'src/index.ts': src }))).files, 'src/index.ts')
+    const IMP = "import { createVirvi } from '@virvixr/dcl'\n"
+
+    it('ignores main and imports inside comments and strings', async () => {
+      expect(await edit('/* export function main() { */\nexport function main() {\n  x()\n}\n')).toBe(IMP + '/* export function main() { */\nexport function main() {\n  void createVirvi()\n  x()\n}\n')
+      expect(await edit("// import { createVirvi } from '@virvixr/dcl'\nexport function main() {\n  x()\n}\n")).toBe(IMP + "// import { createVirvi } from '@virvixr/dcl'\nexport function main() {\n  void createVirvi()\n  x()\n}\n")
+      expect(await failure(installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': 'const s = "export function main() {"\nconst t = `export function main() {`\n' })))).toEqual([422, 'no_main'])
+    })
+
+    it('takes the earliest main across forms', async () => {
+      const out = await edit('export const main = () => {\n  a()\n}\nexport function main2() {}\n')
+      expect(out).toContain('=> {\n  void createVirvi()\n  a()')
+      const out2 = await edit('export const main = () => {\n  a()\n}\n// export function main() {\n')
+      expect(out2).toContain('=> {\n  void createVirvi()')
+    })
+
+    it('finds the body brace past complex signatures', async () => {
+      expect(await edit('export function main(): Promise<{ ok: boolean }> {\n  x()\n}\n')).toContain('boolean }> {\n  void createVirvi()\n  x()')
+      expect(await edit('export function main(): { ok: boolean } {\n  x()\n}\n')).toContain('boolean } {\n  void createVirvi()\n  x()')
+      expect(await edit('export function main(cb: () => void) {\n  x()\n}\n')).toContain('void) {\n  void createVirvi()\n  x()')
+      expect(await edit('export const main = (cb: () => void) => {\n  x()\n}\n')).toContain('=> {\n  void createVirvi()\n  x()')
+      expect(await edit('export function main({ a, b }: { a: number; b: number }) {\n  x()\n}\n')).toContain('number }) {\n  void createVirvi()')
+      expect(await failure(installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': 'export const main = () => foo()\n' })))).toEqual([422, 'no_main'])
+    })
+
+    it('inserts only the call when createVirvi is imported but not called, and calls an alias', async () => {
+      const a = await edit("import { createVirvi } from '@virvixr/dcl'\nexport function main() {\n  x()\n}\n")
+      expect(a).toBe("import { createVirvi } from '@virvixr/dcl'\nexport function main() {\n  void createVirvi()\n  x()\n}\n")
+      const b = await edit("import { createVirvi as cv } from '@virvixr/dcl'\nexport function main() {\n  x()\n}\n")
+      expect(b).toBe("import { createVirvi as cv } from '@virvixr/dcl'\nexport function main() {\n  void cv()\n  x()\n}\n")
+      expect(await edit(b)).toBe(b)
+      const t = await edit("import type { createVirvi } from '@virvixr/dcl'\nexport function main() {}\n")
+      expect(t.startsWith(IMP + 'import type')).toBe(true)
+      expect(t).toContain('void createVirvi()')
+    })
+
+    it('raises @virvixr/dcl in devDependencies when it is there', async () => {
+      const pk = JSON.stringify({ name: 'x', devDependencies: { '@virvixr/dcl': '^2.0.0' } }, null, 2)
+      const r = await installVirvi(folder({ 'package.json': pk, 'src/index.ts': 'export function main() {}' }))
+      const p = JSON.parse(text(r.files, 'package.json'))
+      expect(p.devDependencies['@virvixr/dcl']).toBe('^2.5.0')
+      expect(p.dependencies).toBeUndefined()
+    })
+
+    it('puts the import after reference lines and use strict, and rejects bad encodings', async () => {
+      expect(await edit("/// <reference types=\"x\" />\n'use strict'\nimport a from 'a'\nexport function main() {}\n")).toBe("/// <reference types=\"x\" />\n'use strict'\n" + IMP + "import a from 'a'\nexport function main() {\n  void createVirvi()\n}\n")
+      const f = folder({ 'package.json': pkg() })
+      f.files.set('src/index.ts', new Uint8Array([0x65, 0xff, 0xfe, 0x20]))
+      expect(await failure(installVirvi(f))).toEqual([422, 'bad_source_encoding'])
+    })
+  })
 })
