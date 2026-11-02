@@ -315,7 +315,10 @@ def _render_and_upload(client, job_id, piece: Piece, view, render_fn) -> tuple[d
             if blank and Path(blank['path']).is_file():
                 # kept privately (only render frames reach the browser) so a blank view can be looked into
                 path = f"checks/{piece.category}/{key}-blank-{blank['index']:03d}.png"
-                client.put_file(job_id, path, Path(blank['path']).read_bytes(), 'image/png')
+                try:
+                    client.put_file(job_id, path, Path(blank['path']).read_bytes(), 'image/png')
+                except ApiError as e:  # a clue for later, never worth failing the prompt over
+                    return {key: 0}, f"{r['error']} (frame {blank['index']}, not kept: {e})"
                 return {key: 0}, f"{r['error']} (frame {blank['index']}, kept as {path})"
             return {key: 0}, r['error']
         for i, frame in enumerate(r['frames']):

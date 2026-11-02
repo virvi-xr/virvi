@@ -8,7 +8,7 @@ from PIL import Image
 import fake_api
 from conftest import FIXTURES
 from studio_worker import jobs, scope
-from studio_worker.api import Api
+from studio_worker.api import Api, ApiError
 from studio_worker.workspace import State, pack, save_state
 
 FAKES = Path(__file__).parent / 'fakes'
@@ -331,6 +331,30 @@ def test_a_blank_ring_frame_is_kept_privately_for_a_look(api, tmp_path, skills):
     assert result['outcome'] == 'ok', result
     assert api.files['job-1/checks/hat/orbit-male-blank-003.png'][:8] == b'\x89PNG\r\n\x1a\n'
     assert not [f for f in api.files if f.startswith('job-1/renders/hat/orbit-male/')]  # never served to the browser
+
+
+def test_a_refused_blank_frame_upload_still_saves_the_piece(api, tmp_path, skills):
+    ok = fake_render([])
+
+    def render(pieces, view, out, **kw):
+        if view['mode'] == 'orbit':
+            kept = out.with_name(f'{out.name}.blank-003.png')
+            Image.new('RGB', (8, 8), (40, 40, 50)).save(kept)
+            return {'ok': False, 'frames': [], 'error': 'blank', 'bootSec': 1.0,
+                    'blankFrame': {'index': 3, 'path': str(kept)}}
+        return ok(pieces, view, out, **kw)
+    api.fail[('PUT', 'checks/hat/orbit-male-blank-003.png')] = 400
+    result = jobs.run_job(prompt_job(), client(api), tmp_path, render_fn=render,
+                          command=fake_command('claude_builds_hat.jsonl'), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert 'job-1/pieces/hat/neon_cap_male.glb' in api.files
+
+
+def test_the_fake_api_refuses_paths_virvi_refuses(api):
+    c = client(api)
+    c.put_file('job-1', 'checks/hat/orbit-male-blank-003.png', b'x', 'image/png')
+    with pytest.raises(ApiError):
+        c.put_file('job-1', 'checks/hat/orbit.txt', b'x', 'text/plain')
 
 
 def test_emote_prompt_renders_no_ring():
