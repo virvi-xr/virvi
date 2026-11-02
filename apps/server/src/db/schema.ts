@@ -18,6 +18,7 @@ import {
   date,
   doublePrecision,
   bigint,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 import type { VenueRules, Vec3, RoomScanLayout, Plot } from '@virvixr/shared'
@@ -740,6 +741,7 @@ export const dclWorldDestinations = pgTable('dcl_world_destinations', {
   pendingSince: timestamp('pending_since', { withTimezone: true }),
   adopted: boolean('adopted').notNull().default(false), // true = the owner's own scene code, never touched
   spawn: jsonb('spawn').$type<{ x: number; y: number; z: number }>(), // metres, plot-relative; null = plot centre
+  pendingImportId: uuid('pending_import_id').references((): AnyPgColumn => sceneImports.id, { onDelete: 'set null' }), // an uploaded scene waiting on this World
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -755,6 +757,39 @@ export const dclWorldDestinationsRelations = relations(dclWorldDestinations, ({ 
     fields: [dclWorldDestinations.ownerUserId],
     references: [users.id],
   }),
+}))
+
+export const sceneImportStatusEnum = pgEnum('scene_import_status', [
+  'uploaded', 'building', 'built', 'deploying', 'awaiting_signature', 'deployed', 'failed',
+])
+
+/** A scene someone built elsewhere (Creator Hub or SDK7), uploaded as a zip, built and deployed to a World. */
+export const sceneImports = pgTable('scene_imports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id),
+  sceneId: uuid('scene_id')
+    .notNull()
+    .references(() => scenes.id, { onDelete: 'cascade' }),
+  worldName: text('world_name').notNull(), // lowercased
+  kind: text('kind').notNull(), // 'creator-hub' | 'sdk7'
+  status: sceneImportStatusEnum('status').notNull().default('uploaded'),
+  errorCode: text('error_code'),
+  errorMessage: text('error_message'),
+  sourceKey: text('source_key').notNull(), // private store
+  builtKeyPrefix: text('built_key_prefix'),
+  logKey: text('log_key'),
+  buildTokenHash: text('build_token_hash'),
+  machineId: text('machine_id'),
+  destinationId: uuid('destination_id').references(() => dclWorldDestinations.id, { onDelete: 'set null' }),
+  deploymentId: uuid('deployment_id').references(() => sceneDeployments.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  builtAt: timestamp('built_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (t) => ({
+  worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
 }))
 
 // ── Streaming Servers ──────────────────────────────────────────────────────

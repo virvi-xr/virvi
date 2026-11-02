@@ -206,6 +206,9 @@ export const config = {
   // ── Design Studio (cloud only; see src/studio/README.md) ───────────────
   studioWorkerImage: env('STUDIO_WORKER_IMAGE'), // registry.fly.io/vlm-studio-worker:<git-sha>
   studioS3Uri: env('STUDIO_S3_URI'), // private bucket, s3://<key>:<secret>@<account>.r2.cloudflarestorage.com/<bucket>, or file://<dir>
+  // Scene imports (uploaded sources, built output, logs): private bucket, s3://<key>:<secret>@<account>.r2.cloudflarestorage.com/<bucket>, or file://<dir>
+  // Outside cloud mode it falls back to <LOCAL_STORAGE_PATH>/private (storage/private-store.ts)
+  sceneImportS3Uri: env('SCENE_IMPORT_S3_URI'),
   studioFlyApp: env('STUDIO_FLY_APP') || 'vlm-studio-worker',
   // `external`: Virvi never creates or starts worker machines; a worker is run by hand (local development)
   studioMachines: (env('STUDIO_MACHINES') === 'external' ? 'external' : 'fly') as 'fly' | 'external',
