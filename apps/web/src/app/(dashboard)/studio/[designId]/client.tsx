@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth'
 import { useStudioRoom } from '@/lib/colyseus'
 import { Badge, PageHeader, RowMenu, Skeleton } from '@/components/ui'
 import {
-  designBadge, designIdFromPath, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn,
+  designBadge, designIdFromPath, kindLabel, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn,
   type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioUsage,
 } from '@/lib/studio'
 import Conversation from './Conversation'
@@ -145,7 +145,7 @@ export default function StudioDesignPage() {
       <PageHeader
         crumbs={[{ label: 'Design Studio', href: '/studio' }, d.name]}
         title={d.name}
-        subtitle={<span className="flex flex-wrap items-center gap-2">{d.kind === 'emote' ? 'Emote' : 'Wearable'} <Badge tone={badge.tone}>{badge.label}</Badge></span>}
+        subtitle={<span className="flex flex-wrap items-center gap-2">{kindLabel(d.kind)} <Badge tone={badge.tone}>{badge.label}</Badge></span>}
         actions={<RowMenu label="Design actions" items={[d.archivedAt
           ? { label: 'Unarchive', onSelect: () => setArchived(false) }
           : { label: 'Archive', onSelect: () => setArchived(true), confirm: 'Archive this design?' }]} />}
