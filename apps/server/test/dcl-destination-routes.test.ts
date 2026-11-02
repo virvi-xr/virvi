@@ -546,17 +546,17 @@ describe('World destination routes', () => {
       expect(worlds.deployed).toHaveLength(1)
     })
 
-    it.each(['virvi', 'sign'] as const)('mode %s over the triangle budget is 422 over_budget with nothing started', async (mode) => {
+    it.each(['virvi', 'sign'] as const)('mode %s over the triangle budget deploys, and the destination carries a warning', async (mode) => {
       const { scene, preset } = await createScene(user)
       await db.insert(assetLibraryItems).values({ name: 'tree', storageKey: 'k', cdnUrl: `${CDN}/m/tree.glb`, triangleCount: 8_000 })
       const el = await createElement(preset.id, { type: 'model', name: 'tree', properties: { modelSrc: `${CDN}/m/tree.glb` } })
       for (let i = 0; i < 3; i++) await createInstance(el.id)
       const dest = await insertDest(scene.id, { mode, grantedAt: mode === 'virvi' ? new Date() : null })
       const res = await req('POST', `/api/dcl/destinations/${dest.id}/deploy`, {})
-      expect([res.statusCode, res.json().error]).toEqual([422, 'over_budget'])
-      expect(res.json().message).toMatch(/triangles/)
-      expect(await db.select().from(sceneDeployments)).toHaveLength(0)
-      expect(worlds.deployed).toHaveLength(0)
+      expect(res.statusCode).toBeLessThan(300)
+      expect(await db.select().from(sceneDeployments)).toHaveLength(1)
+      const detail = await req('GET', `/api/dcl/destinations/${dest.id}`)
+      expect(detail.json().warning).toMatch(/24,000 triangles, more than the .* Decentraland recommends/)
     })
 
     it('a World read failure during a deploy maps to world_unreachable', async () => {

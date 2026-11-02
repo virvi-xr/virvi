@@ -469,7 +469,7 @@ export function useApi() {
     getSceneDclDestinations: (sceneId: string) =>
       apiFetch<{ destinations: DclDestination[]; adoptable: Array<{ world: string }> }>(`/api/scenes/${sceneId}/dcl/destinations`),
     getDclDestination: (id: string) =>
-      apiFetch<{ destination: DclDestination; pending: DclPendingModel[]; refused: Array<{ name: string; reason: string }>; lastDeployment: DclDeployment | null }>(`/api/dcl/destinations/${id}`),
+      apiFetch<{ destination: DclDestination; pending: DclPendingModel[]; refused: Array<{ name: string; reason: string }>; lastDeployment: DclDeployment | null; warning?: string | null }>(`/api/dcl/destinations/${id}`),
     patchDclDestination: (id: string, data: { mode: DclDestinationMode }) =>
       apiFetch<{ destination: DclDestination; message?: string }>(`/api/dcl/destinations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     getDclGrant: (id: string) => apiFetch<DclGrantRequests>(`/api/dcl/destinations/${id}/grant`),

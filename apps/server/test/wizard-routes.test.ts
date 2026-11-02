@@ -137,16 +137,13 @@ describe('wizard routes', () => {
     expect((await book(u, { name: 'Bad', plot: plot1, spawn: { x: 1, z: 1 }, items: [], dcl: 'no' })).statusCode).toBe(400)
   })
 
-  it('422 over_budget when the summed triangles exceed the plot budget, and creates nothing', async () => {
+  it('creates the scene when the summed triangles exceed the plot budget: Decentraland only warns', async () => {
     const u = await createUser()
     const big = await seedAsset('Big', { triangleCount: 6000 })
     const plot1 = { width: 1, depth: 1, base: { x: 0, y: 0 } }
-    const body = (n: number) => ({ name: 'S', plot: plot1, spawn: { x: 1, z: 1 }, dcl: true, items: Array.from({ length: n }, () => ({ assetId: big.id, x: 1, z: 1, rotationY: 0 })) })
-    const res = await book(u, body(2))
-    expect(res.statusCode).toBe(422)
-    expect(res.json()).toMatchObject({ error: 'over_budget', triangles: 12000, limit: 10000 })
-    expect(await counts()).toEqual({ scenes: 0, presets: 0, elements: 0, instances: 0, links: 0 })
-    expect((await book(u, body(1))).statusCode).toBe(201)
+    const res = await book(u, { name: 'S', plot: plot1, spawn: { x: 1, z: 1 }, dcl: true, items: [0, 1].map(() => ({ assetId: big.id, x: 1, z: 1, rotationY: 0 })) })
+    expect(res.statusCode).toBe(201)
+    expect(await counts()).toMatchObject({ scenes: 1, instances: 2 })
   })
 
   it('400 unmeasured_asset when an item has no triangle count, creating nothing', async () => {
@@ -295,17 +292,13 @@ describe('wizard routes', () => {
       expect((await book(u, withSet(scan.id, { items: items.slice(1) }))).statusCode).toBe(201)
     })
 
-    it('422 over_budget when the set plus items exceed the triangle budget, storing nothing', async () => {
+    it('creates the scene when the set plus items exceed the triangle budget', async () => {
       const u = await createUser()
       const scan = await scanFor(u)
       const big = await seedAsset('Big', { triangleCount: 10000 })
       const res = await book(u, withSet(scan.id, { items: [{ assetId: big.id, x: 1, z: 1, rotationY: 0 }] }))
-      expect(res.statusCode).toBe(422)
-      expect(res.json()).toMatchObject({ error: 'over_budget', limit: 10000 })
-      expect(res.json().triangles).toBeGreaterThan(10000)
-      expect(await counts()).toEqual({ scenes: 0, presets: 0, elements: 0, instances: 0, links: 0 })
-      expect(await db.select().from(roomSets)).toEqual([])
-      expect(files.size).toBe(0)
+      expect(res.statusCode).toBe(201)
+      expect(await db.select().from(roomSets)).toHaveLength(1)
     })
   })
 })

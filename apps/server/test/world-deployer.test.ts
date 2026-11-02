@@ -10,8 +10,10 @@ import { chainSigner, verifyChain, virviSigner } from '../src/services/dcl/entit
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { DCL_RUNTIME_VERSION } from '../src/services/dcl/runtime.js'
 import {
-  DEPLOY_WINDOW_MS, DeployerError, liveBaseFor, prepareSignedDeploy, startVirviDeploy, submitSignedDeploy, whenSettled,
+  DEPLOY_WINDOW_MS, DeployerError, liveBaseFor, prepareSignedDeploy, sceneLimitProblem, sceneTriangleWarning, startVirviDeploy,
+  submitSignedDeploy, whenSettled,
 } from '../src/services/dcl/world-deployer.js'
+import { modelsInScene } from '../src/services/dcl/assemble.js'
 import { getActiveSetup, linkWorldLocation } from '../src/setup/setups.js'
 import { resetDb } from './helpers/db.js'
 import { createElement, createInstance, createScene, createUser } from './helpers/factories.js'
@@ -305,15 +307,29 @@ describe('every deploy path checks first', () => {
     return s
   }
 
-  it.each(['virvi', 'sign'] as const)('mode %s over the triangle budget is 422 over_budget, with no row and the destination over_budget', async (mode) => {
+  it.each(['virvi', 'sign'] as const)('mode %s over the triangle budget still deploys: Decentraland only warns', async (mode) => {
     const { user, dest } = await overBudget(mode)
     const start = mode === 'virvi' ? startVirviDeploy : prepareSignedDeploy
-    const err = await start(dest.id, user.id, { fetch: fetcher }).catch((e) => e)
-    expect(err).toBeInstanceOf(DeployerError)
-    expect(err).toMatchObject({ status: 422, code: 'over_budget' })
-    expect(err.message).toMatch(/24,000 triangles/)
-    expect(await db.select().from(sceneDeployments)).toHaveLength(0)
-    expect(await destRow(dest.id)).toMatchObject({ status: 'over_budget' })
+    await start(dest.id, user.id, { fetch: fetcher })
+    expect(await db.select().from(sceneDeployments)).toHaveLength(1)
+    expect((await destRow(dest.id)).status).not.toBe('over_budget')
+  })
+
+  it('a scene over its triangle budget gets a warning, not a problem', async () => {
+    const { dest } = await overBudget('virvi')
+    const models = await modelsInScene(dest.sceneId)
+    expect(sceneLimitProblem(dest, models)).toBeNull()
+    expect(sceneTriangleWarning(dest, models)).toBe(
+      'Your scene has 24,000 triangles, more than the 20,000 Decentraland recommends for your 2 parcels. It still deploys, but it may run slowly for visitors.')
+    expect(sceneTriangleWarning(dest, [{ ...models[0], triangles: null, instances: 1 }, { ...models[0], instances: 3 }]))
+      .toMatch(/1 model has no triangle count yet and counted as 0\.$/)
+    expect(sceneTriangleWarning(dest, [{ ...models[0], instances: 1 }])).toBeNull()
+  })
+
+  it('too many placed models is still a problem', async () => {
+    const { dest } = await overBudget('virvi')
+    const [model] = await modelsInScene(dest.sceneId)
+    expect(sceneLimitProblem(dest, [{ ...model, triangles: 1, instances: 1_000 }])).toMatch(/1,000 placed models/)
   })
 
   it('new model bytes over the World storage left is 422 over_budget', async () => {

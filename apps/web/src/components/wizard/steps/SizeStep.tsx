@@ -76,8 +76,8 @@ export function SizeStep({ state, dispatch }: { state: WizardState; dispatch: Di
       {budget && current && (
         <div className="space-y-1 rounded-md border border-gray-800 bg-gray-950 px-3 py-2.5 text-sm text-gray-300">
           <p>
-            {current.width * 16} × {current.depth * 16} m fits about <span className="text-white">{n(budget.triangles)} triangles</span> and{' '}
-            <span className="text-white">{n(budget.entities)} items</span>.
+            {current.width * 16} × {current.depth * 16} m fits about <span className="text-white">{n(budget.entities)} items</span>. Decentraland
+            recommends staying under <span className="text-white">{n(budget.triangles)} triangles</span>.
           </p>
           {room?.triangles != null && <p className="text-gray-400">Your room uses about {n(room.triangles)} triangles of that.</p>}
           {storage && <p className="text-gray-400">{storageLine(stateBudget(state).bytes.used, storage)}</p>}

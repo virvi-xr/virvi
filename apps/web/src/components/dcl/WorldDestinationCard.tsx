@@ -13,6 +13,8 @@ import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
 
 interface Detail {
+  /** Over the triangles Decentraland recommends: shown, never a stop. */
+  warning: string | null
   pending: DclPendingModel[]
   refused: Array<{ name: string; reason: string }>
   lastDeployment: DclDeployment | null
@@ -48,7 +50,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
     api.getDclDestination(dest.id)
       .then((d) => {
         setDest(d.destination)
-        setDetail({ pending: d.pending, refused: d.refused, lastDeployment: d.lastDeployment })
+        setDetail({ pending: d.pending, refused: d.refused, lastDeployment: d.lastDeployment, warning: d.warning ?? null })
       })
       .catch((err) => setError(signErrorMessage(err, dest)))
 
@@ -112,6 +114,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
       </div>
 
       {status.line && <p className={status.tone === 'danger' ? 'text-red-300' : 'text-yellow-200'}>{status.line}</p>}
+      {detail?.warning && <p className="text-yellow-200">{detail.warning}</p>}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>

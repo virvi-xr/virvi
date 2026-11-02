@@ -59,11 +59,11 @@ import { verifiedWalletsOf } from '../analytics/claims.js'
 import { DirectoryUnavailableError, getDclDirectory } from '../analytics/dcl-directory.js'
 import { getActiveSetup } from '../setup/setups.js'
 import { config } from '../config.js'
-import { builtByVirvi, pendingModels } from '../services/dcl/assemble.js'
+import { builtByVirvi, modelsInScene, pendingModels } from '../services/dcl/assemble.js'
 import { chainSigner, signedFetchPayload, verifyChain, virviSigner, type AuthChain } from '../services/dcl/entity.js'
 import { getWorldsClient, WorldsError, type LiveEntity, type SignedRequest } from '../services/dcl/worlds-client.js'
 import {
-  DeployerError, prepareSignedDeploy, startVirviDeploy, submitSignedDeploy, type Destination,
+  DeployerError, prepareSignedDeploy, sceneTriangleWarning, startVirviDeploy, submitSignedDeploy, type Destination,
 } from '../services/dcl/world-deployer.js'
 import { deploymentForCaller, publicDeployment } from './deploy.js'
 
@@ -385,7 +385,10 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
       orderBy: [desc(sceneDeployments.createdAt)],
     })
     const refused = (last?.assetBundle as { refused?: unknown } | null)?.refused ?? []
-    return reply.send({ destination: dest, pending: await pendingModels(dest), refused, lastDeployment: last ? publicDeployment(last) : null })
+    return reply.send({
+      destination: dest, pending: await pendingModels(dest), refused, lastDeployment: last ? publicDeployment(last) : null,
+      warning: sceneTriangleWarning(dest, await modelsInScene(dest.sceneId)),
+    })
   }))
 
   app.patch<{ Params: { id: string }; Body: { mode?: unknown } }>('/api/dcl/destinations/:id', async (request, reply) => handle(reply, async () => {

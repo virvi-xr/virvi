@@ -19,7 +19,7 @@ import { getSubscription } from '../integrations/stripe.js'
 import { virviSigner } from '../services/dcl/entity.js'
 import { sceneLimitError } from './scenes.js'
 import { plotForLayout } from '../room-scan/plot.js'
-import { commitRoomSet, discardRoomSet, insertRoomSet, loadOwnedScan, parseRoomSetOptions, prepareRoomSet, RoomSetError, type PreparedRoomSet, type Tx } from '../room-scan/sets.js'
+import { commitRoomSet, insertRoomSet, loadOwnedScan, parseRoomSetOptions, prepareRoomSet, RoomSetError, type PreparedRoomSet, type Tx } from '../room-scan/sets.js'
 import { CATEGORY_CHIPS, THEMES } from '../wizard/themes.js'
 
 interface WizardAsset {
@@ -179,14 +179,7 @@ export default async function wizardRoutes(app: FastifyInstance) {
     const byId = new Map(assets.map((a) => [a.id, a]))
 
     const itemTriangles = items.reduce((sum, i) => sum + byId.get(i.assetId as string)!.triangleCount!, 0)
-    const overBudget = (triangles: number) =>
-      reply.status(422).send({
-        error: 'over_budget',
-        message: `This plot fits ${budget.triangles.toLocaleString('en-US')} triangles; the chosen items make ${triangles.toLocaleString('en-US')}`,
-        triangles,
-        limit: budget.triangles,
-      })
-    if (dclLimits && itemTriangles > budget.triangles) return overBudget(itemTriangles)
+    // Triangles are never a stop: Decentraland only warns about a scene over its recommended count
     // The room model is one more entity on the plot
     if (dclLimits && roomSetRequest && items.length + 1 > budget.entities) {
       return reply.status(422).send({
@@ -202,7 +195,6 @@ export default async function wizardRoutes(app: FastifyInstance) {
     const limitError = await sceneLimitError(request.user.id)
     if (limitError) return reply.status(403).send(limitError)
 
-    // The set's triangles are only known once it is generated (and uploaded, outside the transaction); drop it if refused
     let prepared: PreparedRoomSet | null = null
     if (roomSetRequest) {
       try {
@@ -210,10 +202,6 @@ export default async function wizardRoutes(app: FastifyInstance) {
       } catch (err) {
         if (err instanceof RoomSetError) return reply.status(err.status).send({ error: err.code })
         throw err
-      }
-      if (dclLimits && itemTriangles + prepared.triangles > budget.triangles) {
-        await discardRoomSet(prepared)
-        return overBudget(itemTriangles + prepared.triangles)
       }
     }
 

@@ -7,7 +7,8 @@ import { db } from '../src/db/connection.js'
 import { assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElements } from '../src/db/schema.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { BATCH_WINDOW_MS, RETRY_BACKOFF_MS, startDclRedeploySweep, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
-import { DEPLOY_WINDOW_MS, prepareSignedDeploy, startVirviDeploy, whenSettled } from '../src/services/dcl/world-deployer.js'
+import { DEPLOY_WINDOW_MS, prepareSignedDeploy, sceneTriangleWarning, startVirviDeploy, whenSettled } from '../src/services/dcl/world-deployer.js'
+import { modelsInScene } from '../src/services/dcl/assemble.js'
 import { DCL_RUNTIME_VERSION } from '../src/services/dcl/runtime.js'
 import { dclHash } from '../src/services/dcl/entity.js'
 import { resetDb } from './helpers/db.js'
@@ -177,32 +178,24 @@ describe('sweepRedeploys', () => {
     expect((await destRow(dest.id)).status).toBe('ok')
   })
 
-  it('going over the triangle budget is over_budget with no deploy, and clears by itself when the pending set changes', async () => {
-    const { preset, dest, scene } = await setup({ models: ['big'] })
+  it('going over the triangle budget still redeploys: Decentraland only warns', async () => {
+    const { dest } = await setup({ models: ['big'] })
     await db.insert(assetLibraryItems).values({ name: 'big', storageKey: 'k1', cdnUrl: `${CDN}/m/big.glb`, triangleCount: 25_000 })
     await sweepAndSettle(at(0))
     await sweepAndSettle(at(61))
-    expect(fake.deployed).toHaveLength(0)
-    const d = await destRow(dest.id)
-    expect(d.status).toBe('over_budget')
-    expect(d.statusDetail).toMatch(/triangle/i)
-    expect(await deps()).toHaveLength(0)
-
-    // the owner removes the big model: the pending set changes and the status clears
-    await db.delete(sceneElements).where(eq(sceneElements.presetId, preset.id))
-    await addModel(preset.id, 'small')
-    await sweepAndSettle(at(70))
     expect(fake.deployed).toHaveLength(1)
     expect((await destRow(dest.id)).status).toBe('ok')
-    expect(scene.id).toBe(dest.sceneId)
   })
 
-  it('says unknown triangle counts were counted as 0 when over budget', async () => {
-    const { dest } = await setup({ models: ['big', 'mystery'] })
+  it('a destination left over_budget by triangles alone is cleared and redeployed', async () => {
+    const { dest } = await setup({ models: ['big'] })
     await db.insert(assetLibraryItems).values({ name: 'big', storageKey: 'k1', cdnUrl: `${CDN}/m/big.glb`, triangleCount: 25_000 })
+    await db.update(dclWorldDestinations).set({ status: 'over_budget', statusDetail: 'Your scene would have 25,000 triangles, over the 20,000 your 2 parcels allow. Remove some models to publish.' })
+      .where(eq(dclWorldDestinations.id, dest.id))
     await sweepAndSettle(at(0))
     await sweepAndSettle(at(61))
-    expect((await destRow(dest.id)).statusDetail).toMatch(/counted as 0/)
+    expect(fake.deployed).toHaveLength(1)
+    expect(await destRow(dest.id)).toMatchObject({ status: 'ok', statusDetail: null })
   })
 
   it('new bytes over the remaining World storage is over_budget', async () => {
@@ -269,11 +262,10 @@ describe('cross-task: what the sweep must never do', () => {
     const { preset, dest } = await setup({ models: [] })
     await db.insert(assetLibraryItems).values({ name: 'tree', storageKey: 'k1', cdnUrl: `${CDN}/m/tree.glb`, triangleCount: 6_000 })
     await addModel(preset.id, 'tree', 4) // 24,000 placed > 20,000 for 2 parcels
+    expect(sceneTriangleWarning(dest, await modelsInScene(dest.sceneId))).toMatch(/24,000 triangles/)
     await sweepAndSettle(at(0))
     await sweepAndSettle(at(61))
-    expect(fake.deployed).toHaveLength(0)
-    expect(await destRow(dest.id)).toMatchObject({ status: 'over_budget' })
-    expect((await destRow(dest.id)).statusDetail).toMatch(/24,000 triangles/)
+    expect(fake.deployed).toHaveLength(1) // a warning, not a stop
   })
 
   it('a sign destination held on a refused model stays held on the next sweeps', async () => {
@@ -297,11 +289,11 @@ describe('cross-task: what the sweep must never do', () => {
     expect(await destRow(dest.id)).toMatchObject({ status: 'needs_review', statusDetail: 'Your World changed outside Virvi' })
   })
 
-  it('a sign destination over the triangle budget shows over_budget too', async () => {
+  it('a sign destination over the triangle budget is not over_budget either', async () => {
     const { dest } = await setup({ mode: 'sign', models: ['big'] })
     await db.insert(assetLibraryItems).values({ name: 'big', storageKey: 'k1', cdnUrl: `${CDN}/m/big.glb`, triangleCount: 25_000 })
     await sweepAndSettle(at(0))
-    expect(await destRow(dest.id)).toMatchObject({ status: 'over_budget' })
+    expect((await destRow(dest.id)).status).not.toBe('over_budget')
   })
 })
 

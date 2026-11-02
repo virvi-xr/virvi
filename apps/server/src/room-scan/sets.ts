@@ -7,7 +7,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
-import { dclBudget, plotParcels, type Plot, type RoomScanLayout } from '@virvixr/shared'
+import { type Plot, type RoomScanLayout } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { assetLibraryItems, roomScans, roomSets, sceneElements, sceneLibrary, scenePresets } from '../db/schema.js'
 import { createStorage, type StorageProvider } from '../storage/index.js'
@@ -94,14 +94,13 @@ export async function loadOwnedScan(userId: string, scanId: string | null) {
 }
 
 /**
- * The set's GLB and stats, nothing stored. The plot is checked before generating, and the triangle count against
- * the plot's budget after: either failing is 422 too_big.
+ * The set's GLB and stats, nothing stored. A home larger than the largest plot is 422 too_big; its triangle count
+ * never is (Decentraland only warns about a scene over its recommended count).
  */
 export async function generateRoomSet(layout: RoomScanLayout, options: RoomSetOptions, nudges: Nudge[]) {
   const plot = plotForLayout(layout, nudges)
   if (!plot) throw new RoomSetError(422, 'too_big')
   const out = await buildRoomSetGlb(layout, options, nudges)
-  if (out.triangles > dclBudget(plotParcels(plot).length).triangles) throw new RoomSetError(422, 'too_big')
   return { ...out, plot }
 }
 

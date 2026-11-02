@@ -113,23 +113,31 @@ export function refusedLine(refused: Assembled['refused']): string {
 const plural = (n: number, one: string) => `${n.toLocaleString('en-US')} ${one}${n === 1 ? '' : 's'}`
 
 /**
- * A plain sentence when the scene breaks Decentraland's per-parcel limits, else null. No network.
- * Triangles and entities count every placed instance, as the wizard does.
+ * A plain sentence when the scene has more placed models than Decentraland's per-parcel limit, else null. No network.
+ * Entities count every placed instance, as the wizard does. Triangles are only a warning (`sceneTriangleWarning`).
  */
 export function sceneLimitProblem(dest: Destination, all: ModelNeed[]): string | null {
   const budget = dclBudget(dest.parcels.length)
   const parcels = plural(dest.parcels.length, 'parcel')
-  const triangles = all.reduce((n, m) => n + (m.triangles ?? 0) * m.instances, 0)
-  if (triangles > budget.triangles) {
-    const unknown = all.filter((m) => m.triangles == null).length
-    const note = unknown > 0 ? ` ${unknown} model${unknown === 1 ? ' has' : 's have'} no triangle count yet and counted as 0.` : ''
-    return `Your scene would have ${plural(triangles, 'triangle')}, over the ${budget.triangles.toLocaleString('en-US')} your ${parcels} allow. Remove some models to publish.${note}`
-  }
   const placed = all.reduce((n, m) => n + m.instances, 0)
   if (placed > budget.entities) {
     return `Your scene has ${plural(placed, 'placed model')}, over the ${budget.entities.toLocaleString('en-US')} your ${parcels} allow. Remove some to publish.`
   }
   return null
+}
+
+/**
+ * A plain sentence when the scene is over the triangles Decentraland recommends for its parcels, else null. Decentraland
+ * warns about it but still takes the deployment, so it never stops one. Counts every placed instance, as the wizard does.
+ */
+export function sceneTriangleWarning(dest: Destination, all: ModelNeed[]): string | null {
+  const budget = dclBudget(dest.parcels.length)
+  const triangles = all.reduce((n, m) => n + (m.triangles ?? 0) * m.instances, 0)
+  if (triangles <= budget.triangles) return null
+  const unknown = all.filter((m) => m.triangles == null).length
+  const note = unknown > 0 ? ` ${unknown} model${unknown === 1 ? ' has' : 's have'} no triangle count yet and counted as 0.` : ''
+  return `Your scene has ${plural(triangles, 'triangle')}, more than the ${budget.triangles.toLocaleString('en-US')} Decentraland recommends for your ` +
+    `${plural(dest.parcels.length, 'parcel')}. It still deploys, but it may run slowly for visitors.${note}`
 }
 
 /** A plain sentence when the new models don't fit the owner's World storage, else null. */
