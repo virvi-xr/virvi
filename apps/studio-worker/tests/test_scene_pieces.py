@@ -216,3 +216,10 @@ def test_a_malformed_layout_entry_is_skipped_with_a_warning(api, tmp_path, skill
                           render_fn=fake_render([]), as_user=None)
     assert result['outcome'] == 'ok', result
     assert any('not a number' in w for w in result['warnings'])
+
+
+def test_a_route_that_starts_inside_the_building_fails(tmp_path, skills):
+    # the walk-through shows a visitor arriving: it starts outside, in front of the doorway
+    pieces, _, _ = scene(tmp_path, 'building', files={'building/route.json': {'waypoints': [[0, 0], [0, 8]]}})
+    assert pieces[0].checker['pass'] is False
+    assert 'start outside' in pieces[0].checker['report']

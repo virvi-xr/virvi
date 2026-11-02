@@ -139,6 +139,7 @@ def test_closing_for_a_scene_design_names_the_skills_folders_and_checks():
         assert words in text, words
     for words in ('rarity', 'check_wearable', 'proposal.json'):
         assert words not in text, words
+    assert 'a few metres in front of the doorway' in text and 'its floor height' in text
     # its scope is buildings and furniture, so a cafe isn't declined as off-topic
     assert 'buildings, furniture and decor' in text
     assert 'wearables and emotes, and nothing else' not in text

@@ -103,6 +103,24 @@ def layout_items(path: Path, pieces: dict) -> tuple[list[dict], list[str]]:
     return placed, warnings
 
 
+def _bounds(model_report: str) -> tuple[float, float, float, float] | None:
+    """A building's x and z extent from the model check's footprint row: (x0, x1, z0, z1)."""
+    m = re.search(r'inside the footprint\s+x (-?[\d.]+)\.\.(-?[\d.]+), z (-?[\d.]+)\.\.(-?[\d.]+)', model_report)
+    return tuple(float(g) for g in m.groups()) if m else None
+
+
+def _start_problem(route: Path, bounds) -> str | None:
+    """A FAIL row when the route's first waypoint is inside the building: the walk-through shows a visitor arriving."""
+    try:
+        x, z = json.loads(route.read_text())['waypoints'][0][:2]
+    except (ValueError, KeyError, IndexError, TypeError, OSError):
+        return None  # check_walk says what's wrong with the file
+    if bounds and bounds[0] < x < bounds[1] and bounds[2] < z < bounds[3]:
+        return (f'  FAIL  route.json starts inside the building, at ({x:g}, {z:g}): start outside, a few metres in front '
+                'of the doorway, so the walk-through shows a visitor arriving')
+    return None
+
+
 def _size(model_report: str) -> tuple[float, float, float] | None:
     m = re.search(r'size w x h x d\s+([\d.]+) x ([\d.]+) x ([\d.]+) m', model_report)
     return tuple(float(g) for g in m.groups()) if m else None
@@ -142,6 +160,9 @@ def check(piece, others: list) -> dict:
     if meta.get('kind') == 'building':
         walk = _run([_scripts() / 'check_walk.py', glb, '--route', named['route.json']]) if 'route.json' in named \
             else MISSING_ROUTE
+        start = _start_problem(named['route.json'], _bounds(model)) if 'route.json' in named else None
+        if start:
+            walk += '\n' + start
         sections.append(('walk check', walk))
         for r in _rows(walk):
             failures += r[0] == 'FAIL'

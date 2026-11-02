@@ -22,8 +22,9 @@ piece (<name> in lowercase letters and underscores, e.g. out/furniture_round_tab
 - one GLB;
 - piece.json: {"name": str, "description": str, "kind": "building" | "furniture" | "decor", "type": str,
   "changeKind": "new" | "fix" | "design"}, and for the building "footprint": "0.5x0.5" | "1x1" | "1x2" | "2x2" | "4x4";
-- for the building, route.json (the walk-through: {"waypoints": [[x, z], [x, z, y], ...]} from outside, through the
-  doorway, round every room and up to every floor) and layout.json (where its furniture stands:
+- for the building, route.json (the walk-through: {"waypoints": [[x, z], [x, z, y], ...]} starting outside,
+  a few metres in front of the doorway, then through it, round every room and up to every floor; give every waypoint
+  on an upper floor its floor height y, so the check can tell the walker got there) and layout.json (where its furniture stands:
   {"furniture": [{"category": "furniture_<name>", "x": m, "z": m, "yaw": degrees}]});
 - for anything people sit on, <glb name>.sittables.json, its dcl-sittables seats.
 Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is."""
