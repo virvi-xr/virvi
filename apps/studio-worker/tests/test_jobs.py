@@ -32,17 +32,17 @@ def fake_render(calls):
         calls.append((pieces, view))
         out.mkdir(parents=True, exist_ok=True)
         mode = view.get('mode')
-        n = (24 if view.get('ring') else 122) if mode == 'orbit' else \
-            (view.get('sample') or 96) if mode == 'walk' else frames
+        n = (24 if view.get('ring') else 122) if mode in ('orbit', 'scene-orbit') else \
+            (view.get('sample') or 96) if mode in ('walk', 'tour') else frames
         paths = []
         for i in range(n):
-            if mode == 'walk' and view.get('sample'):
+            if mode in ('walk', 'tour') and view.get('sample'):
                 paths.append(out / f'{i:02d}.png')
                 Image.new('RGB', (8, 8), (i, 0, 0)).save(paths[-1], 'PNG')
             else:
                 paths.append(out / f'{i:03d}.webp')
                 Image.new('RGB', (8, 8), (i, 0, 0)).save(paths[-1], 'WEBP')
-        return {'ok': True, 'frames': paths, 'error': None, 'bootSec': 1.0, **({'fps': 24.0} if mode == 'walk' else {})}
+        return {'ok': True, 'frames': paths, 'error': None, 'bootSec': 1.0, **({'fps': 24.0} if mode in ('walk', 'tour') else {})}
     return render
 
 

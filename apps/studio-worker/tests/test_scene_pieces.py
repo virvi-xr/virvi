@@ -124,3 +124,67 @@ def test_a_changed_route_alone_marks_the_building_changed(tmp_path, skills):
     assert again[0].changed is True
     same, _, _ = collect(tmp_path, 'scene', new_hashes(again))
     assert same[0].changed is False
+
+
+def scene_render_job(spec):
+    return {'jobId': 'job-r', 'type': 'render', 'kind': 'scene', 'agent': None, 'model': None, 'prompt': None,
+            'selectedSlots': None, 'limits': None, 'render': spec}
+
+
+def scene_prompt(api, tmp_path, renders):
+    return jobs.run_job(prompt_job(kind='scene', selectedSlots=None, prompt='a little kiosk'), client(api), tmp_path,
+                        render_fn=fake_render(renders), command=fake_command('claude_builds_kiosk.jsonl'), as_user=None)
+
+
+def test_scene_building_prompt_renders_the_inspect_ring(api, tmp_path, skills):
+    renders = []
+    result = scene_prompt(api, tmp_path, renders)
+    assert result['outcome'] == 'ok', result
+    building = next(p for p in result['pieces'] if p['category'] == 'building')
+    assert building['renders'] == {'orbit-scene': 24}
+    assert len([f for f in api.files if f.startswith('job-1/renders/building/orbit-scene/')]) == 24
+
+
+def test_scene_furniture_prompt_renders_scale_and_ring(api, tmp_path, skills):
+    renders = []
+    result = scene_prompt(api, tmp_path, renders)
+    chair = next(p for p in result['pieces'] if p['category'] == 'furniture_chair')
+    assert chair['renders'] == {'scale': 36, 'orbit-scene': 24}
+    assert [v['mode'] for pieces, v in renders if pieces[0]['category'] == 'furniture_chair'] == ['scale', 'scene-orbit']
+
+
+def test_scene_orbit_render_job_full_sphere(api, tmp_path, skills):
+    lay_out(tmp_path, 'building')
+    result = jobs.run_job(scene_render_job({'categories': ['building'], 'mode': 'orbit', 'ring': False}), client(api),
+                          tmp_path, render_fn=fake_render([]), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert result['pieces'] == [{'category': 'building', 'renders': {'orbit-scene': 122}}]
+    assert 'job-r/renders/building/orbit-scene/121.webp' in api.files
+
+
+def test_tour_set_job_places_the_furniture(api, tmp_path, skills):
+    lay_out(tmp_path, 'building', 'furniture_chair')
+    renders = []
+    result = jobs.run_job(scene_render_job({'set': True, 'tour': True}), client(api), tmp_path,
+                          render_fn=fake_render(renders), as_user=None)
+    assert result['outcome'] == 'ok', result
+    pieces, view = renders[0]
+    assert {p['category']: p['at'] for p in pieces} == {'building': None, 'furniture_chair': {'x': 3, 'z': -3, 'yaw': 0}}
+    assert view['mode'] == 'tour' and len(view['path']) > 100
+    assert result['set'] == {'viewKey': 'tour', 'frames': 96, 'fps': 24.0}
+    assert 'job-r/renders/set/tour/095.webp' in api.files
+
+
+def test_tour_skips_a_missing_layout_piece_and_says_so(api, tmp_path, skills):
+    lay_out(tmp_path, 'building')
+    result = jobs.run_job(scene_render_job({'set': True, 'tour': True}), client(api), tmp_path,
+                          render_fn=fake_render([]), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert any('furniture_chair' in w for w in result['warnings'])
+
+
+def test_tour_without_a_building_is_an_error(api, tmp_path, skills):
+    lay_out(tmp_path, 'furniture_chair')
+    result = jobs.run_job(scene_render_job({'set': True, 'tour': True}), client(api), tmp_path,
+                          render_fn=fake_render([]), as_user=None)
+    assert result['outcome'] == 'error' and 'building' in result['error']
