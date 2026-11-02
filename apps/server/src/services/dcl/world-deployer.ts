@@ -24,7 +24,7 @@ import { linkWorldLocation } from '../../setup/setups.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { ImportError, worldNameOf } from '../import/scene-zip.js'
 import {
-  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsInScene, pendingModels, wizardSceneJson,
+  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsBesideBuilt, modelsInScene, pendingModels, wizardSceneJson,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { keepDeployedFiles } from './deployed-files.js'
@@ -219,20 +219,24 @@ const MIB = 1024 * 1024
 
 /**
  * The check an import's deploy runs first, from the stored sizes alone: no more files than the World's parcels allow,
- * none over Decentraland's file limit, and room in the owner's World storage. Throws ImportError 413 otherwise.
+ * none over Decentraland's file limit, and room in the owner's World storage. The scene's Virvi models that deploy with
+ * it count too (their known sizes). Throws ImportError 413 otherwise.
  */
 export async function assertImportFits(dest: Destination): Promise<void> {
   const prefix = await pendingImportPrefix(dest)
   const files = await getImportStore().list(prefix)
+  const models = modelsBesideBuilt(await modelsInScene(dest.sceneId), files.map((f) => f.key.slice(prefix.length)))
   const budget = dclBudget(dest.parcels.length)
-  if (files.length > budget.files) {
-    throw new ImportError(413, 'scene_too_big', `Your scene has ${plural(files.length, 'file')}, over the ${budget.files.toLocaleString('en-US')} your ${plural(dest.parcels.length, 'parcel')} allow. Remove some files to deploy it.`)
+  const count = files.length + models.length
+  if (count > budget.files) {
+    throw new ImportError(413, 'scene_too_big', `Your scene has ${plural(count, 'file')}, over the ${budget.files.toLocaleString('en-US')} your ${plural(dest.parcels.length, 'parcel')} allow. Remove some files to deploy it.`)
   }
+  // A model over the limit is refused when it is fetched, as in a redeploy
   const big = files.find((f) => f.size > DCL_MAX_FILE_BYTES)
   if (big) {
     throw new ImportError(413, 'file_too_big', `${big.key.slice(prefix.length)} is ${(big.size / MIB).toFixed(1)} MB, over Decentraland's ${DCL_MAX_FILE_BYTES / MIB} MB limit for one file.`)
   }
-  const bytes = files.reduce((n, f) => n + f.size, 0)
+  const bytes = files.reduce((n, f) => n + f.size, 0) + models.reduce((n, m) => n + (m.bytes ?? 0), 0)
   let stats: { maxAllowedBytes: number; usedBytes: number } | null
   try {
     stats = await getWorldsClient().getWalletStats(dest.ownerWallet)
@@ -297,7 +301,9 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     if (metadataWorld(built) !== dest.worldName) throw new DeployerError(422, 'world_changed', worldChanged(metadataWorld(built), dest.worldName))
     // The creator's code runs the npm package, never Virvi's runtime: without Virvi's marker the scene stays adopted
     const { virvi: _virvi, ...metadata } = built
-    return { assembled: await assembleImported({ files, metadata, timestamp }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
+    // Models placed in-world deploy with it, or a re-upload would take them out of the World
+    const models = await modelsInScene(dest.sceneId)
+    return { assembled: await assembleImported({ files, metadata, timestamp, models, fetch }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
   }
   const live = await liveBaseFor(dest)
   const models = await modelsInScene(dest.sceneId)
@@ -347,9 +353,15 @@ async function retimestamp(a: Assembled, timestamp: number): Promise<{ a: Assemb
 }
 
 async function describeNewFiles(a: Assembled, storedPrefix?: string): Promise<NewFileSource[]> {
-  if (storedPrefix) return [...contentOf(a)].map(([file, hash]) => ({ file, hash, storageKey: storedPrefix + file }))
-  const existing = new Set(a.existing.map((e) => e.file))
   const models = new Map(a.newFileSources.map((s) => [s.file, s]))
+  // An import: the built files from the store, the scene's models by URL
+  if (storedPrefix) {
+    return [...contentOf(a)].map(([file, hash]) => {
+      const model = models.get(file)
+      return model ? { file, hash, url: model.url } : { file, hash, storageKey: storedPrefix + file }
+    })
+  }
+  const existing = new Set(a.existing.map((e) => e.file))
   const runtime = await runtimeFiles(DCL_RUNTIME_VERSION)
   const out: NewFileSource[] = []
   for (const [file, hash] of contentOf(a)) {

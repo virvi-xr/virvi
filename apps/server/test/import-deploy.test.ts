@@ -6,18 +6,19 @@ import { eq } from 'drizzle-orm'
 import { zipSync } from 'fflate'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { analyticsScenes, dclWorldDestinations, sceneDeployments, sceneImports } from '../src/db/schema.js'
+import { analyticsScenes, assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneImports } from '../src/db/schema.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { chainSigner, dclHash, virviSigner } from '../src/services/dcl/entity.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
-import { assembleImported } from '../src/services/dcl/assemble.js'
+import { assembleImported, ModelRefused } from '../src/services/dcl/assemble.js'
 import {
-  DEPLOY_WINDOW_MS, DeployerError, markFailed, prepareSignedDeploy, reconcileStaleDeployments, startVirviDeploy, whenSettled, type SignedBundle,
+  DEPLOY_WINDOW_MS, DeployerError, markFailed, prepareSignedDeploy, reconcileStaleDeployments, startVirviDeploy, submitSignedDeploy, whenSettled,
+  type SignedBundle,
 } from '../src/services/dcl/world-deployer.js'
 import { sweepBuilds } from '../src/services/import/build-sweep.js'
 import { setBuildRunner, setOnBuildDone, startBuild, type BuildRunner } from '../src/services/import/build-runner.js'
 import { createImport, SUPERSEDED_MESSAGE } from '../src/services/import/imports.js'
-import { deployImport } from '../src/services/import/import-deploy.js'
+import { deployImport, startImportDeploy } from '../src/services/import/import-deploy.js'
 import { resetDb } from './helpers/db.js'
 import { createElement, createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { FakeWorldsClient } from './helpers/fake-worlds.js'
@@ -783,6 +784,86 @@ describe('deploying an imported build', () => {
       const r = await post(`/api/deploy/${deployment.id}/signature`, { chain: await chainFor(owner, payload) })
       expect([r.statusCode, r.json().error]).toEqual([422, 'world_changed'])
       expect(worlds.deployed).toHaveLength(0)
+    })
+  })
+  describe('models placed in-world ride along with the import', () => {
+    const fileOf = (e: ReturnType<typeof entityOf>, file: string) => e.content.find((c) => c.file === file)
+
+    it('a first import into a World whose scene has a placed model keeps the model, then a re-upload keeps it too', async () => {
+      const { scene, preset } = await createScene(user, 'Cafe')
+      await grantedDest(scene.id)
+      await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+      const first = await built({ sceneId: scene.id })
+      await deployImport(first.id, { fetch: fetcher })
+      await whenSettled((await importRow(first.id)).deploymentId!)
+      expect((await importRow(first.id)).status).toBe('deployed')
+      const one = entityOf()
+      expect(fileOf(one, 'models/virvi/a.glb')?.hash).toBe(await dclHash(enc(`bytes of ${CDN}/m/a.glb`)))
+      expect(fileOf(one, 'bin/index.js')).toBeDefined()
+      expect((await destByWorld())!.deployedFiles).toContain('models/virvi/a.glb')
+      goLive()
+
+      const again = await built({ sceneId: scene.id, files: builtFiles({ 'bin/index.js': enc('owner code v2') }) })
+      await deployImport(again.id, { fetch: fetcher })
+      await whenSettled((await importRow(again.id)).deploymentId!)
+      expect((await importRow(again.id)).status).toBe('deployed')
+      const two = entityOf()
+      expect(worlds.deployed).toHaveLength(2)
+      expect(fileOf(two, 'models/virvi/a.glb')?.hash).toBe(await dclHash(enc(`bytes of ${CDN}/m/a.glb`)))
+      expect(fileOf(two, 'bin/index.js')?.hash).toBe(await dclHash(enc('owner code v2')))
+    })
+
+    it('the owner-signed path carries the model through the signature', async () => {
+      const { scene, preset } = await createScene(user, 'Cafe')
+      await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+      const imp = await built({ sceneId: scene.id })
+      const started = await startImportDeploy(await importRow(imp.id), user.id, { fetch: fetcher })
+      expect(started?.mode).toBe('sign')
+      const { deployment, payload } = started as Extract<typeof started, { mode: 'sign' }>
+      await submitSignedDeploy(deployment.id, await chainFor(owner, payload), { fetch: fetcher })
+      expect((await importRow(imp.id)).status).toBe('deployed')
+      expect(fileOf(entityOf(), 'models/virvi/a.glb')?.hash).toBe(await dclHash(enc(`bytes of ${CDN}/m/a.glb`)))
+    })
+
+    it('a built file at the same path wins, and a refused model is left out as in a redeploy', async () => {
+      const { scene, preset } = await createScene(user, 'Cafe')
+      await grantedDest(scene.id)
+      await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+      await createElement(preset.id, { type: 'model', name: 'b', properties: { modelSrc: `${CDN}/m/b.glb` } })
+      const failing = vi.fn(async (url: string) => {
+        if (url.endsWith('/b.glb')) throw new ModelRefused('Model download failed (404)')
+        return enc(`bytes of ${url}`)
+      })
+      const imp = await built({ sceneId: scene.id, files: builtFiles({ 'models/virvi/a.glb': enc('built a') }) })
+      await deployImport(imp.id, { fetch: failing })
+      const depId = (await importRow(imp.id)).deploymentId!
+      await whenSettled(depId)
+      expect((await importRow(imp.id)).status).toBe('deployed')
+      const e = entityOf()
+      expect(fileOf(e, 'models/virvi/a.glb')?.hash).toBe(await dclHash(enc('built a')))
+      expect(fileOf(e, 'models/virvi/b.glb')).toBeUndefined()
+      expect(failing).not.toHaveBeenCalledWith(`${CDN}/m/a.glb`)
+      expect((await depRow(depId)).assetBundle).toMatchObject({ refused: [{ name: 'b', file: 'models/virvi/b.glb' }] })
+    })
+
+    it("the file budget and the storage check count the scene's models too", async () => {
+      const { scene, preset } = await createScene(user, 'Cafe')
+      await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+      const extra: Record<string, Uint8Array> = {}
+      for (let i = 0; i < 196; i++) extra[`assets/f${i}.txt`] = enc(`f${i}`)
+      const crowded = await built({ sceneId: scene.id, files: builtFiles(extra, ['0,0']) })
+      await grantedDest(scene.id, { parcels: ['0,0'] })
+      await expect(deployImport(crowded.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'scene_too_big' })
+      expect((await importRow(crowded.id)).errorMessage).toMatch(/201 files/)
+
+      await db.delete(dclWorldDestinations)
+      await db.insert(assetLibraryItems).values({ name: 'a', storageKey: 'm/a.glb', cdnUrl: `${CDN}/m/a.glb`, fileSizeBytes: 1_000_000 })
+      const small = await built({ sceneId: scene.id })
+      const builtBytes = [...builtFiles().values()].reduce((n, b) => n + b.byteLength, 0)
+      // Room for the built files, not for the model as well
+      worlds.stats.set(user.wallet!, { maxAllowedBytes: builtBytes + 500_000, usedBytes: 0 })
+      const r = await post(`/api/imports/${small.id}/deploy`)
+      expect([r.statusCode, r.json().error]).toEqual([413, 'world_storage_full'])
     })
   })
 })

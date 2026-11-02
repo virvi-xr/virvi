@@ -5,7 +5,8 @@ import { getImportStore } from '../../storage/private-store.js'
 import { ownerFor, RouteError } from '../../routes/dcl-destinations.js'
 import { virviSigner } from '../dcl/entity.js'
 import {
-  DeployerError, importAfterFailure, markFailed, prepareSignedDeploy, startVirviDeploy, worldChanged, type Deployment, type Destination,
+  DeployerError, importAfterFailure, markFailed, prepareSignedDeploy, startVirviDeploy, worldChanged, type DeployOptions, type Deployment,
+  type Destination,
 } from '../dcl/world-deployer.js'
 import { OWNER_ERROR_MESSAGES, type SceneImportRow } from './imports.js'
 import { ImportError, worldNameOf } from './scene-zip.js'
@@ -82,7 +83,9 @@ async function startFailed(importId: string, err: unknown): Promise<void> {
  * startFailed). With `virviOnly`, an import Virvi can't deploy itself (it would need a signature) is left alone and
  * null is returned.
  */
-export async function startImportDeploy(row: SceneImportRow, by: string, opts: { virviOnly?: boolean; claimed?: boolean } = {}): Promise<StartedImportDeploy | null> {
+export async function startImportDeploy(
+  row: SceneImportRow, by: string, opts: { virviOnly?: boolean; claimed?: boolean } & DeployOptions = {},
+): Promise<StartedImportDeploy | null> {
   const from = row.status
   const startable = from === 'built' || from === 'awaiting_signature' || (opts.claimed && from === 'deploying' && !row.deploymentId)
   if (!startable) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
@@ -98,7 +101,7 @@ export async function startImportDeploy(row: SceneImportRow, by: string, opts: {
   }
 }
 
-async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { virviOnly?: boolean }): Promise<StartedImportDeploy | null> {
+async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { virviOnly?: boolean } & DeployOptions): Promise<StartedImportDeploy | null> {
   const from = row.status
   const plot = await builtPlot(row)
   const owner = await worldOwner(by, row.worldName)
@@ -134,8 +137,8 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
   }
 
   try {
-    if (granted(dest)) return { mode: 'virvi', deployment: await startVirviDeploy(dest.id, by) }
-    return { mode: 'sign', ...(await prepareSignedDeploy(dest.id, by)) }
+    if (granted(dest)) return { mode: 'virvi', deployment: await startVirviDeploy(dest.id, by, { fetch: opts.fetch }) }
+    return { mode: 'sign', ...(await prepareSignedDeploy(dest.id, by, { fetch: opts.fetch })) }
   } catch (err) {
     // Nothing started: the World doesn't wait on this import
     await db.update(dclWorldDestinations).set({ pendingImportId: null, updatedAt: new Date() })
@@ -148,7 +151,7 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
  * What runs when an import's build is stored (setOnBuildDone): a granted Virvi-mode World deploys it now; anything
  * else stays `built` for the creator. An error is recorded on the import (startFailed) and rethrown for the caller's log.
  */
-export async function deployImport(importId: string): Promise<void> {
+export async function deployImport(importId: string, opts: DeployOptions = {}): Promise<void> {
   const row = await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, importId) })
   if (row?.status !== 'built') return
   const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, row.worldName) })
@@ -158,7 +161,7 @@ export async function deployImport(importId: string): Promise<void> {
     .where(and(eq(sceneImports.id, importId), eq(sceneImports.status, 'built'), isNull(sceneImports.deploymentId)))
     .returning()
   if (!claimed) return
-  const started = await startImportDeploy(claimed, claimed.userId, { virviOnly: true, claimed: true })
+  const started = await startImportDeploy(claimed, claimed.userId, { virviOnly: true, claimed: true, fetch: opts.fetch })
   // Nothing started and nothing failed (the grant or the World moved on): the creator deploys it
   if (!started) {
     await db.update(sceneImports).set({ status: 'built', updatedAt: new Date() })
