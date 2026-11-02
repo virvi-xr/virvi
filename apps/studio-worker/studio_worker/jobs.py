@@ -23,6 +23,7 @@ from typing import Callable, Mapping
 from . import render as renderer
 from . import scope
 from .agent import Usage, run_agent, then
+from . import scene
 from .api import Api, ApiError
 from .config import AGENT_USER, DESIGN, skills_sha
 from .finalize import Tools, finalize_job
@@ -33,6 +34,7 @@ from .workspace import load_state, pack, prompt_with_context, save_state, state_
 IDLE_EXIT_SEC = 600
 POLL_SEC = 2.0
 DEFAULT_LIMITS = {'timeoutSec': 1500, 'maxTurns': 80, 'costCeilingUsd': 3.0}
+TOUR_WATCHDOG_SEC = 900  # a walk-through is up to 480 frames: more than a spin's 36
 # Sent to a Grok run that changed a piece without opening a single render (the reply goes to the user as usual)
 LOOK_AGAIN = ('You changed a piece without looking at it. Run `studio-preview out/<category>` for each piece you '
               'changed and read every PNG it prints with read_file to see it. Fix whatever looks wrong: shape, size, '
@@ -298,26 +300,17 @@ def _tour_render(job, client, pieces, render_fn, result):
     if 'route.json' not in extras:
         result['error'] = 'out/building/route.json is missing: there is no walk-through to follow'
         return
-    others = {p.category: p for p in pieces}
-    try:
-        layout = json.loads(extras['layout.json'].read_text()).get('furniture') or [] if 'layout.json' in extras else []
-    except (ValueError, AttributeError):
-        layout = []
+    placed, warnings = scene.layout_items(extras['layout.json'], {p.category: p for p in pieces}) \
+        if 'layout.json' in extras else ([], [])
     worn = [{'category': 'building', 'glbs': glbs_by_shape(building), 'meta': building.meta, 'at': None}]
-    warnings = []
-    for item in layout:
-        p = others.get(item.get('category')) if isinstance(item, dict) and item.get('category') != 'building' else None
-        if p is None:
-            warnings.append(f"layout names {item.get('category') if isinstance(item, dict) else item!r}, which is not a piece: left out")
-            continue
-        worn.append({'category': p.category, 'glbs': glbs_by_shape(p), 'meta': p.meta,
-                     'at': {'x': item.get('x', 0), 'z': item.get('z', 0), 'yaw': item.get('yaw', 0)}})
+    worn += [{'category': i['piece'].category, 'glbs': glbs_by_shape(i['piece']), 'meta': i['piece'].meta,
+              'at': {'x': i['x'], 'z': i['z'], 'yaw': i['yaw']}} for i in placed]
     from . import scene_render
     place = [(next(iter(w['glbs'].values())), w['at']['x'], w['at']['z'], w['at']['yaw']) for w in worn[1:]]
     path = scene_render.tour_path(building.glbs[0], json.loads(extras['route.json'].read_text()), place)
     _phase(client, job['jobId'], 'rendering')
     with tempfile.TemporaryDirectory() as tmp:
-        r = render_fn(worn, {'mode': 'tour', 'path': path}, Path(tmp) / 'tour')
+        r = render_fn(worn, {'mode': 'tour', 'path': path}, Path(tmp) / 'tour', watchdog_sec=TOUR_WATCHDOG_SEC)
         if not r['ok']:
             result['error'] = r['error']
             return

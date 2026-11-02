@@ -188,3 +188,31 @@ def test_tour_without_a_building_is_an_error(api, tmp_path, skills):
     result = jobs.run_job(scene_render_job({'set': True, 'tour': True}), client(api), tmp_path,
                           render_fn=fake_render([]), as_user=None)
     assert result['outcome'] == 'error' and 'building' in result['error']
+
+
+def test_furniture_bigger_than_half_a_parcel_fails_as_a_building_in_disguise(tmp_path, skills):
+    # a 20 m "couch" would be priced as furniture; anything over 8 m (a 0.5x0.5 parcel) is a building
+    import glbfactory as gf
+    lay_out(tmp_path, 'furniture_wide_couch')
+    gf.write(tmp_path / 'out/furniture_wide_couch/couch.glb', [gf.box('House', (-10, 0, -4), (10, 6, 4)),
+                                                              gf.box('House_collider', (-10, 0, -4), (10, 6, 4), material=None)])
+    pieces, _, _ = collect(tmp_path, 'scene', {})
+    assert pieces[0].checker['pass'] is False
+    assert 'out/building/' in pieces[0].checker['report']
+
+
+def test_a_file_name_virvi_cannot_store_is_a_problem(tmp_path, skills):
+    lay_out(tmp_path, 'furniture_chair')
+    (tmp_path / 'out/furniture_chair/chair.glb').rename(tmp_path / 'out/furniture_chair/Round Chair.glb')
+    pieces, _, error = collect(tmp_path, 'scene', {})
+    assert pieces == [] and 'Round Chair.glb' in error
+
+
+def test_a_malformed_layout_entry_is_skipped_with_a_warning(api, tmp_path, skills):
+    layout = {'furniture': [{'category': 'furniture_chair', 'x': 'left', 'z': -3, 'yaw': 0}]}
+    pieces, _, _ = scene(tmp_path, 'building', 'furniture_chair', files={'building/layout.json': layout})
+    assert pieces[0].checker['pass'] is True and 'not a number' in pieces[0].checker['report']
+    result = jobs.run_job(scene_render_job({'set': True, 'tour': True}), client(api), tmp_path,
+                          render_fn=fake_render([]), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert any('not a number' in w for w in result['warnings'])

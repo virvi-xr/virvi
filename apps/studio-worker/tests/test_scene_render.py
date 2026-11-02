@@ -133,3 +133,36 @@ def test_the_walk_through_camera_stands_where_the_path_says(tmp_path):
     back = [[0, 1.2, -5 + i * 0.05] for i in range(40)]   # walking towards the -Z face
     assert reddest(front) > 500
     assert reddest(back) == 0
+
+
+@needs_page
+def test_a_glb_cannot_pull_local_files_into_its_frames(tmp_path):
+    # an agent-written GLB whose texture points at a file on the worker: whatever happens, that file never shows
+    import json as _json
+    import struct
+    red = tmp_path / 'secret.png'
+    Image.new('RGB', (64, 64), (255, 0, 0)).save(red)
+    glb = gf.write(tmp_path / 'plain.glb', [gf.box('Body', (-0.5, 0, -0.5), (0.5, 1, 0.5))])
+    data = glb.read_bytes()
+    n = struct.unpack('<I', data[12:16])[0]
+    g = _json.loads(data[20:20 + n])
+    uvs = np.array([[0.5, 0.5]] * 8, '<f4').tobytes()
+    rest = bytearray(data[20 + n + 8:])
+    g['bufferViews'].append({'buffer': 0, 'byteOffset': len(rest), 'byteLength': len(uvs)})
+    rest += uvs
+    g['buffers'][0]['byteLength'] = len(rest)
+    g['accessors'].append({'bufferView': len(g['bufferViews']) - 1, 'componentType': 5126, 'count': 8, 'type': 'VEC2'})
+    g['meshes'][0]['primitives'][0]['attributes']['TEXCOORD_0'] = len(g['accessors']) - 1
+    g['images'] = [{'uri': red.as_uri()}]
+    g['textures'] = [{'source': 0}]
+    g['materials'][0]['pbrMetallicRoughness'] = {'baseColorTexture': {'index': 0}}
+    js = _json.dumps(g).encode()
+    js += b' ' * (-len(js) % 4)
+    out = struct.pack('<III', 0x46546C67, 2, 28 + len(js) + len(rest)) + struct.pack('<II', len(js), 0x4E4F534A) + js + \
+        struct.pack('<II', len(rest), 0x004E4942) + bytes(rest)
+    glb.write_bytes(out)
+    piece = {'category': 'furniture_plain', 'glbs': {'unisex': glb}, 'meta': {'kind': 'decor'}, 'at': None}
+    r = scene_render.render([piece], {'mode': 'scene-orbit', 'ring': True}, tmp_path / 'o')
+    if r['ok']:
+        a = np.asarray(Image.open(r['frames'][0]).convert('RGB'), int)
+        assert int(((a[..., 0] > a[..., 1] + 60) & (a[..., 0] > a[..., 2] + 60)).sum()) == 0

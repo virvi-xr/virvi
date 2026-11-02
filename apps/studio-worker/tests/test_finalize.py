@@ -302,3 +302,21 @@ def test_a_building_report_has_the_walk_check(api, tmp_path, skills):
     assert {'kiosk.glb', 'route.json', 'layout.json', 'tour.mp4', 'REPORT.md'} <= set(z.namelist())
     assert 'walk check' in z.read('REPORT.md').decode()
     assert any(view['mode'] == 'tour' for _, view, _, _ in calls)
+
+
+def test_a_paid_building_still_packages_when_its_walk_through_fails(api, tmp_path, skills):
+    report = '== model check\n  PASS  colliders\n'
+    piece = scene_inputs(api, 'job-f', 'building', ['layout.json', 'route.json'], report)
+    ok = fake_render([])
+
+    def render(pieces, view, out, **kw):
+        if view['mode'] == 'tour':
+            return {'ok': False, 'frames': [], 'error': 'timeout', 'bootSec': None}
+        return ok(pieces, view, out, **kw)
+    client = Api(api.url, TOKEN, 'design-1', backoff=0.01)
+    result = jobs.run_job(finalize_job([piece], kind='scene'), client, tmp_path / 'design', render_fn=render,
+                          tools=FakeTools().tools())
+    assert result['outcome'] == 'ok', result
+    z = package(api, 'job-f', 'building')
+    assert 'tour.mp4' not in z.namelist()
+    assert 'walk-through' in z.read('REPORT.md').decode()

@@ -14,6 +14,8 @@ MAX_FURNITURE = 12
 FOOTPRINTS = ('0.5x0.5', '1x1', '1x2', '2x2', '4x4')
 FURNITURE_KINDS = ('furniture', 'decor')
 CHECK_TIMEOUT_SEC = 300
+FURNITURE_MAX_M = 8.0  # half a parcel: anything wider or deeper is a building (and priced as one)
+SAFE_NAME = re.compile(r'^[A-Za-z0-9._-]{1,120}$')  # what Virvi stores as a file name
 MISSING_ROUTE = ('  FAIL  route.json missing: write {"waypoints": [[x, z], [x, z, y], ...]} from outside, through the '
                  'doorway, round every room and floor')
 
@@ -33,6 +35,10 @@ def validate(category: str, meta: dict, glbs: list[Path]) -> str | None:
     """A problem with one piece's folder, or None."""
     if len(glbs) != 1:
         return f'out/{category}/ needs exactly one GLB, not {len(glbs)}'
+    folder = glbs[0].parent
+    bad = [p.name for p in [*glbs, *folder.glob('*.json')] if not SAFE_NAME.match(p.name)]
+    if bad:
+        return f'out/{category}/: rename {", ".join(bad)} (letters, digits, dots, dashes and underscores only)'
     kind = meta.get('kind')
     if category == 'building':
         if kind != 'building':
@@ -72,6 +78,36 @@ def _run(args: list) -> str:
     return out
 
 
+def layout_items(path: Path, pieces: dict) -> tuple[list[dict], list[str]]:
+    """The furniture a building's layout.json places, as {'piece', 'x', 'z', 'yaw'}, and a warning for each entry that
+    can't be placed (not a piece, the building itself, or a position that isn't numbers): skipped, never fatal."""
+    try:
+        entries = json.loads(Path(path).read_text()).get('furniture') or []
+        if not isinstance(entries, list):
+            raise ValueError
+    except (ValueError, AttributeError, OSError):
+        return [], ['layout.json is not {"furniture": [{"category", "x", "z", "yaw"}, ...]}: no furniture placed']
+    placed, warnings = [], []
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+    for item in entries:
+        name = item.get('category') if isinstance(item, dict) else item
+        piece = pieces.get(name) if isinstance(name, str) and name != 'building' else None
+        if piece is None:
+            warnings.append(f'layout names {name!r}, which is not a furniture piece: skipped')
+            continue
+        where = {k: item.get(k, 0) for k in ('x', 'z', 'yaw')}
+        if not all(num(v) for v in where.values()):
+            warnings.append(f'layout places {name} at {where}, and that is not a number: skipped')
+            continue
+        placed.append({'piece': piece, **where})
+    return placed, warnings
+
+
+def _size(model_report: str) -> tuple[float, float, float] | None:
+    m = re.search(r'size w x h x d\s+([\d.]+) x ([\d.]+) x ([\d.]+) m', model_report)
+    return tuple(float(g) for g in m.groups()) if m else None
+
+
 def _triangles(model_report: str) -> dict | None:
     for line in model_report.splitlines():
         m = re.match(r'\s+WARN\s+triangles\s+(\d+)\s+recommended <= (\d+)', line)
@@ -94,6 +130,10 @@ def check(piece, others: list) -> dict:
     if seats:
         args += ['--sittables', seats[0]]
     model = _run(args)
+    size = _size(model)
+    if meta.get('kind') != 'building' and size and max(size[0], size[2]) > FURNITURE_MAX_M:
+        model += (f'\n  FAIL  {size[0]:.1f} x {size[2]:.1f} m is bigger than furniture can be ({FURNITURE_MAX_M:g} m, half a '
+                  'parcel): a piece this size is a building, so build it in out/building/ with its footprint')
     sections, failures, warnings = [('model check', model)], 0, 0
     for r in _rows(model):
         failures += r[0] == 'FAIL'
@@ -119,19 +159,11 @@ def check(piece, others: list) -> dict:
 def _furnished_walk(glb: Path, named: dict, others: list) -> str | None:
     if 'route.json' not in named or 'layout.json' not in named:
         return None
-    try:
-        layout = json.loads(named['layout.json'].read_text()).get('furniture') or []
-    except (ValueError, AttributeError):
-        return '  WARN  layout.json is not {"furniture": [{"category", "x", "z", "yaw"}, ...]}: skipped'
-    pieces = {p.category: p for p in others}
-    place, notes = [], []
-    for item in layout:
-        p = pieces.get(item.get('category')) if isinstance(item, dict) else None
-        if p is None:
-            notes.append(f"  WARN  layout names {item.get('category') if isinstance(item, dict) else item!r}, which is "
-                         'not a piece: skipped')
-            continue
-        place += ['--place', p.glbs[0], item.get('x', 0), item.get('z', 0), item.get('yaw', 0)]
+    placed, warned = layout_items(named['layout.json'], {p.category: p for p in others})
+    notes = [f'  WARN  {w}' for w in warned]
+    place = []
+    for item in placed:
+        place += ['--place', item['piece'].glbs[0], item['x'], item['z'], item['yaw']]
     walk = _run([_scripts() / 'check_walk.py', glb, '--route', named['route.json'], *place]) if place else ''
     text = '\n'.join(x for x in notes + [walk.rstrip()] if x)
     return text or None

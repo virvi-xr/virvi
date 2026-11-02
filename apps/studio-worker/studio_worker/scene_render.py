@@ -140,7 +140,8 @@ def _run(spec: dict) -> dict:
         items.append({'category': p['category'], 'file': name, 'at': p.get('at')})
     start = time.monotonic()
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(channel='chrome', headless=True, args=CHROME_ARGS + ['--allow-file-access-from-files'])
+        # No --allow-file-access-from-files: the GLBs arrive as data URIs, and an agent's GLB must never read worker files
+        browser = pw.chromium.launch(channel='chrome', headless=True, args=CHROME_ARGS)
         page = browser.new_page(viewport={'width': size, 'height': size})
         page.goto(PAGE.as_uri())
         if not _wait(page, 'window.__scene && window.__scene.ready', LOAD_SEC):

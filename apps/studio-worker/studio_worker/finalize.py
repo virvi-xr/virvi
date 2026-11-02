@@ -29,6 +29,7 @@ LOOK_VIEWS = ('front', 'right', 'back', 'left')
 PROMO_FRAMES, PROMO_SIZE, PROMO_FPS = 72, 720, 24
 RENDER_SIZE = 1024
 REPORT_LINES = 200
+TOUR_WATCHDOG_SEC = 900  # a walk-through is up to 480 frames
 SAFE_NAME = re.compile(r'^[A-Za-z0-9._-]{1,120}$')
 # package_item.py's own limits (the Builder's)
 BUILDER_NAME_MAX, BUILDER_DESCRIPTION_MAX = 32, 64
@@ -305,21 +306,28 @@ def _package_scene(piece, glb, meta, checker_report, extras, render_fn, tools: T
     for frame in r['frames']:
         shutil.copy(frame, renders / Path(frame).name)
     route = next((e for e in extras if e.name == 'route.json'), None)
+    tour_note = ''
     if meta.get('kind') == 'building' and route is not None:
-        from . import scene_render
-        path = scene_render.tour_path(glb, json.loads(route.read_text()), [])
-        r = render_fn(worn, {'mode': 'tour', 'path': path}, work / 'tour', size=PROMO_SIZE)
-        if not r['ok']:
-            raise PieceFailed(f"walk-through render failed: {r['error']}")
-        tour = out / 'tour.mp4'
-        ok, log = tools.ffmpeg(['-y', '-loglevel', 'error', '-framerate', str(r.get('fps') or PROMO_FPS), '-i',
-                                work / 'tour' / '%03d.webp', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags',
-                                '+faststart', tour], 300)
-        if not ok or not tour.exists():
-            raise PieceFailed(f'walk-through clip failed: {log.strip()[-300:]}')
+        # A nice extra: a paid building is packaged whether or not its walk-through clip can be made
+        try:
+            from . import scene_render
+            path = scene_render.tour_path(glb, json.loads(route.read_text()), [])
+            r = render_fn(worn, {'mode': 'tour', 'path': path}, work / 'tour', size=RENDER_SIZE // 2,
+                          watchdog_sec=TOUR_WATCHDOG_SEC)
+            if not r['ok']:
+                raise PieceFailed(f"render: {r['error']}")
+            tour = out / 'tour.mp4'
+            ok, log = tools.ffmpeg(['-y', '-loglevel', 'error', '-framerate', str(r.get('fps') or PROMO_FPS), '-i',
+                                    work / 'tour' / '%03d.webp', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags',
+                                    '+faststart', tour], 300)
+            if not ok or not tour.exists():
+                raise PieceFailed(f'clip: {log.strip()[-300:]}')
+        except (PieceFailed, ValueError, KeyError, TypeError, OSError) as e:
+            tour_note = (f'\n## Walk-through\n\nThe walk-through clip couldn\'t be made here ({str(e)[:200]}); watch it in the '
+                         'studio\'s Walk-through step.\n')
     checks_ok = 'FAIL' not in [line.split()[0] for line in checker_report.splitlines() if line.startswith('  ') and line.split()]
     (out / 'REPORT.md').write_text(f'# {name}: check report\n\nPiece: `{category}`\n\n## Checks\n\n```\n'
-                                   f'{_clip(checker_report) or "(no report)"}\n```\n')
+                                   f'{_clip(checker_report) or "(no report)"}\n```\n{tour_note}')
     zipped = work / 'package.zip'
     with zipfile.ZipFile(zipped, 'w', zipfile.ZIP_DEFLATED) as z:
         for f in sorted(out.rglob('*')):
