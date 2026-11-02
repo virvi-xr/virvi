@@ -10,6 +10,11 @@ export type RenderItem = {
   /** For video, image and model, the URL to show. */
   src: string
   loop: boolean
+  /**
+   * Playlist mode only (else empty): the videos to play in turn, starting with `src`, back to the first after the last.
+   * With one video, `loop` repeats it instead.
+   */
+  playlist: string[]
   volume: number
   width: number
   height: number
@@ -59,15 +64,15 @@ function clickOf(inst: Props, el: Props): unknown {
   return set ? own : el.clickEvent
 }
 
-type Media = { kind: RenderItem['kind']; src: string; loop: boolean } | null
+type Media = { kind: RenderItem['kind']; src: string; loop: boolean; playlist?: string[] } | null
 
 function videoMedia(el: Props): Media {
   if (el.isLive && el.enableLiveStream && typeof el.liveSrc === 'string' && el.liveSrc) {
     return supported(el.liveSrc, VIDEO_EXT) ? { kind: 'video', src: el.liveSrc, loop: true } : null
   }
   if (el.offType === OFF_PLAYLIST) {
-    const first = Array.isArray(el.playlist) ? el.playlist[0] : undefined
-    return supported(first, VIDEO_EXT) ? { kind: 'video', src: first, loop: true } : null
+    const playlist = (Array.isArray(el.playlist) ? el.playlist : []).filter((src): src is string => supported(src, VIDEO_EXT))
+    return playlist.length ? { kind: 'video', src: playlist[0], loop: playlist.length === 1, playlist } : null
   }
   if (el.offType === OFF_IMAGE) {
     return supported(el.offImageSrc, IMAGE_EXT) ? { kind: 'image', src: el.offImageSrc, loop: false } : null
@@ -109,6 +114,7 @@ function planElements(
         name: typeof el.name === 'string' ? el.name : '',
         src: media.src,
         loop: media.loop,
+        playlist: media.playlist ?? [],
         volume: media.kind === 'image' ? 0 : volume,
         width: scale.x,
         height: scale.y,

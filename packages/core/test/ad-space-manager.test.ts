@@ -574,4 +574,36 @@ describe('video screens in ad modes', () => {
     s.end(e)
     expect(s.showing(e)).toMatchObject({ src: 'https://v/p1.mp4' })
   })
+
+  it('playlist mode plays three videos in turn, loops to the first, and a move keeps its place', () => {
+    const s = setup()
+    const list = ['https://v/p1.mp4', 'https://v/p2.mp4', 'https://v/p3.mp4']
+    s.sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen('tv', 9, { offType: 2, playlist: list })] } })
+    const e = s.entityAt(9)
+    const seen = [s.showing(e)!.src]
+    for (let i = 0; i < 3; i++) {
+      s.end(e)
+      seen.push(s.showing(e)!.src)
+    }
+    expect(seen).toEqual([...list, list[0]])
+    s.end(e) // now on p2
+    const moved = screen('tv', 10, { offType: 2, playlist: list })
+    s.sm.handlePresetUpdate({ action: 'upsert', element: 'video', elementData: moved })
+    expect(s.showing(s.entityAt(10))).toMatchObject({ src: 'https://v/p2.mp4' })
+  })
+
+  it('playlist mode with one video loops it in the player', () => {
+    const s = setup()
+    s.sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen('tv', 9, { offType: 2, playlist: ['https://v/p1.mp4'] })] } })
+    const e = s.entityAt(9)
+    expect(s.showing(e)).toMatchObject({ src: 'https://v/p1.mp4', opts: { loop: true } })
+    s.end(e)
+    expect(s.showing(e)).toMatchObject({ src: 'https://v/p1.mp4', opts: { loop: true } })
+  })
+
+  it('playlist mode with an empty playlist plays nothing', () => {
+    const s = setup()
+    s.sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen('tv', 9, { offType: 2, playlist: [] })] } })
+    expect(s.adapter.createVideoPlayer).not.toHaveBeenCalled()
+  })
 })

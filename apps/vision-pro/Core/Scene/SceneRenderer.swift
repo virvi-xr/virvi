@@ -31,7 +31,8 @@ final class SceneRenderer {
     private var plan: [RenderItem] = []
     private var shown: [String: Entity] = [:]
     private var tokens: [String: UUID] = [:]
-    private var players: [String: (AVPlayer, AVPlayerLooper?)] = [:]
+    /// Each video's player, and what keeps it going (its AVPlayerLooper or PlaylistPlayer), by item key.
+    private var players: [String: (AVPlayer, AnyObject?)] = [:]
 
     init() {
         root.name = "virvi-scene"
@@ -183,8 +184,13 @@ final class SceneRenderer {
     private func addVideo(_ item: RenderItem, to group: Entity) {
         guard let url = URL(string: item.src) else { return }
         let player: AVPlayer
-        var looper: AVPlayerLooper?
-        if item.loop && extOf(item.src) == "mp4" {
+        var looper: AnyObject?
+        let urls = item.playlist.compactMap { URL(string: $0) }
+        if urls.count > 1 {
+            let list = PlaylistPlayer(urls: urls)
+            looper = list
+            player = list.player
+        } else if item.loop && extOf(item.src) == "mp4" {
             let q = AVQueuePlayer()
             looper = AVPlayerLooper(player: q, templateItem: AVPlayerItem(url: url))
             player = q

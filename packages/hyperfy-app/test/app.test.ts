@@ -274,6 +274,78 @@ describe('the Virvi app script', () => {
     expect(model.scale.toArray()).toEqual([1, 1, 1])
   })
 
+  it('client: a playlist screen moves to the next video when one ends, and loops back to the first', async () => {
+    const c = run({ isServer: false })
+    const list = ['https://x/1.mp4', 'https://x/2.mp4', 'https://x/3.mp4']
+    const tv = (playlist: string[], x = 1) => ({
+      sk: 'tv',
+      offType: 2,
+      playlist,
+      volume: 0.5,
+      instances: [{ sk: 'i1', position: { x, y: 1, z: 2 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 3, y: 2, z: 1 } }],
+    })
+    const snap = (playlist: string[], version = 'a', x = 1): HyperfyFeedResponse => ({
+      v: 1,
+      version,
+      scene: { videos: [tv(playlist, x)], images: [], models: [], sounds: [] },
+    })
+    c.handlers.get('virvi:scene')!(snap(list))
+    const screen = () => {
+      const videos = c.added.filter((n) => n.type === 'video')
+      expect(videos).toHaveLength(1)
+      return videos[0]
+    }
+    // Hyperfy's video node: playing, time and duration (seconds); no "ended" event.
+    const play = (n: Fake) => Object.assign(n, { playing: true, time: 3, duration: 20 })
+    const end = (n: Fake) => Object.assign(n, { playing: false, time: 20, duration: 20 })
+    expect(screen()).toMatchObject({ src: list[0], loop: false })
+
+    const seen = [screen().src]
+    for (let i = 0; i < 3; i++) {
+      play(screen())
+      await c.tick()
+      expect(screen().src).toBe(seen[seen.length - 1]) // still playing: stays
+      end(screen())
+      await c.tick()
+      seen.push(screen().src)
+    }
+    expect(seen).toEqual([...list, list[0]])
+    expect(screen()).toMatchObject({ loop: false, volume: 0.5, width: 3, height: 2 })
+
+    // Not started yet (autoplay blocked, still loading): never skipped.
+    Object.assign(screen(), { playing: false, time: 0, duration: 0 })
+    await c.tick()
+    expect(screen().src).toBe(list[0])
+
+    // A move keeps its place in the playlist; a new playlist starts over.
+    end(screen())
+    await c.tick()
+    c.handlers.get('virvi:scene')!(snap(list, 'b', 4))
+    expect(screen().src).toBe(list[1])
+    expect(screen().position.x).toBe(4)
+    c.handlers.get('virvi:scene')!(snap(['https://x/9.mp4', ...list], 'c', 4))
+    expect(screen().src).toBe('https://x/9.mp4')
+  })
+
+  it('client: a one-video playlist loops in the node and is never replaced', async () => {
+    const c = run({ isServer: false })
+    c.handlers.get('virvi:scene')!({
+      v: 1,
+      version: 'a',
+      scene: {
+        videos: [{ sk: 'tv', offType: 2, playlist: ['https://x/1.mp4'], instances: [{ sk: 'i1' }] }],
+        images: [],
+        models: [],
+        sounds: [],
+      },
+    })
+    const [node] = c.added.filter((n) => n.type === 'video')
+    expect(node).toMatchObject({ src: 'https://x/1.mp4', loop: true })
+    Object.assign(node, { playing: false, time: 20, duration: 20 })
+    await c.tick()
+    expect(c.added.filter((n) => n.type === 'video')).toEqual([node])
+  })
+
   it('the sandbox build runs the client and server halves without forbidden globals', async () => {
     const me = { id: 'p1', name: 'Pip', admin: true, builder: true, position: new Vector3() }
     const server = run({ isServer: true, players: [me], virviVouch: hostedVouch(() => ({ status: 'pending' })).virviVouch })

@@ -340,8 +340,10 @@ class SceneRenderer(private val activity: AppSystemActivity) : SceneView, Builde
     val h = maxOf(Math.abs(item.height), 0.001).toFloat()
     val player =
         ExoPlayer.Builder(activity).build().apply {
-          setMediaItem(MediaItem.fromUri(item.src))
-          repeatMode = if (item.loop) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+          // A playlist plays each video in turn and, repeating all, goes back to the first after the last.
+          setMediaItems(item.playlist.ifEmpty { listOf(item.src) }.map { MediaItem.fromUri(it) })
+          repeatMode =
+              if (item.loop || item.playlist.size > 1) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
           volume = 0f // muted, like the other spikes until Sound is on
           prepare()
           playWhenReady = appliedMedia && !paused

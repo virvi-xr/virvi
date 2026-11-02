@@ -26,6 +26,11 @@ data class RenderItem(
     val height: Double,
     val transform: MappedTransform,
     val clickUrl: String?,
+    /**
+     * Playlist mode only (else empty): the videos to play in turn, starting with [src], back to the first after the
+     * last. With one video, [loop] repeats it instead.
+     */
+    val playlist: List<String> = emptyList(),
 ) {
   enum class Kind { VIDEO, IMAGE, MODEL, AUDIO }
 }
@@ -113,7 +118,12 @@ private fun clickOf(inst: JsonObject, el: JsonObject): JsonElement? {
   return el["clickEvent"]
 }
 
-private data class Media(val kind: RenderItem.Kind, val src: String, val loop: Boolean)
+private data class Media(
+    val kind: RenderItem.Kind,
+    val src: String,
+    val loop: Boolean,
+    val playlist: List<String> = emptyList(),
+)
 
 private fun videoMedia(el: JsonObject): Media? {
   val live = nonEmptyString(el["liveSrc"])
@@ -121,7 +131,8 @@ private fun videoMedia(el: JsonObject): Media? {
     return supported(JsonPrimitive(live), VIDEO_EXT)?.let { Media(RenderItem.Kind.VIDEO, it, true) }
   }
   if (number(el["offType"]) == OFF_PLAYLIST) {
-    return supported(el["playlist"].arr().firstOrNull(), VIDEO_EXT)?.let { Media(RenderItem.Kind.VIDEO, it, true) }
+    val playlist = el["playlist"].arr().mapNotNull { supported(it, VIDEO_EXT) }
+    return playlist.firstOrNull()?.let { Media(RenderItem.Kind.VIDEO, it, playlist.size == 1, playlist) }
   }
   if (number(el["offType"]) == OFF_IMAGE) {
     return supported(el["offImageSrc"], IMAGE_EXT)?.let { Media(RenderItem.Kind.IMAGE, it, false) }
@@ -163,6 +174,7 @@ private fun planElements(out: MutableList<RenderItem>, elements: JsonElement?, k
               height = scale.y,
               transform = toSpatialTransform(vec(inst["position"], 0.0), vec(inst["rotation"], 0.0), scale),
               clickUrl = externalUrl(clickOf(inst, el)),
+              playlist = media.playlist,
           )
       )
     }

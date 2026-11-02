@@ -35,6 +35,19 @@ const closeV = (a: V3, b: V3) => Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.
 const sameTransform = (a: VirviTransform, b: VirviTransform) =>
   closeV(a.position, b.position) && closeV(a.rotation, b.rotation) && closeV(a.scale, b.scale)
 const HELLO = 'virvi:hello'
+/** How often playlist screens are checked for a video that has ended (Hyperfy's video node has no "ended" event). */
+const PLAYLIST_CHECK_MS = 500
+/** A video stopped within this many seconds of its end has ended. */
+const END_SLACK_S = 0.5
+
+/** Stopped at its end: not paused partway, nor not started yet (still loading, or autoplay blocked). */
+const videoEnded = (node: HNode) =>
+  node.playing === false &&
+  typeof node.duration === 'number' &&
+  node.duration > 0 &&
+  typeof node.time === 'number' &&
+  node.time >= node.duration - END_SLACK_S
+const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((s, i) => s === b[i])
 
 app.configure([
   { key: 'feedUrl', type: 'text', label: 'Virvi feed URL', initial: 'https://api.virvi.io' },
@@ -89,7 +102,8 @@ function runServer(): void {
 export type { ClientEditHooks } from './sandbox.js'
 
 function runClient(): ClientEditHooks {
-  type Shown = { item: RenderItem; node: HNode | null }
+  /** `track`: for a playlist screen, the index of the playlist video it is showing. */
+  type Shown = { item: RenderItem; node: HNode | null; track: number }
   let plan: RenderItem[] = []
   const shown = new Map<string, Shown>()
   /** Edit mode's drafts shown in place of the feed transform, by key, until restored. */
@@ -121,9 +135,9 @@ function runClient(): ClientEditHooks {
     return draft ? toHyperfyTransform(draft) : item.transform
   }
 
-  const plane = (type: 'video' | 'image', item: RenderItem): HNode => {
+  const plane = (type: 'video' | 'image', item: RenderItem, src = item.src): HNode => {
     const node = app.create(type)
-    node.src = item.src
+    node.src = src
     // A Virvi plane is 1 m times its scale, so its scale is the plane's size
     node.width = item.width
     node.height = item.height
@@ -137,8 +151,8 @@ function runClient(): ClientEditHooks {
     return node
   }
 
-  const add = (item: RenderItem) => {
-    const entry: Shown = { item, node: null }
+  const add = (item: RenderItem, track = 0) => {
+    const entry: Shown = { item, node: null, track }
     shown.set(item.key, entry)
     if (item.kind === 'model') {
       world
@@ -164,13 +178,14 @@ function runClient(): ClientEditHooks {
       node.loop = item.loop
       node.volume = item.volume
     } else {
-      node = plane(item.kind, item)
+      node = plane(item.kind, item, item.playlist[track] ?? item.src)
     }
     place(node, item, shownTransform(item))
     setClick(node, item)
     entry.node = node
     app.add(node)
     node.play?.()
+    if (item.playlist.length > 1) watchPlaylists()
   }
 
   const remove = (key: string) => {
@@ -178,6 +193,27 @@ function runClient(): ClientEditHooks {
     if (!entry) return
     shown.delete(key)
     if (entry.node) app.remove(entry.node)
+  }
+
+  /** Each playlist screen whose video has ended gets a fresh node for the next video (the last is followed by the first). */
+  let watching = false
+  const checkPlaylists = () => {
+    let any = false
+    for (const entry of [...shown.values()]) {
+      const { item, node, track } = entry
+      if (item.playlist.length < 2 || !node) continue
+      any = true
+      if (!videoEnded(node)) continue
+      remove(item.key)
+      add(item, (track + 1) % item.playlist.length)
+    }
+    watching = any
+    if (any) setTimeout(checkPlaylists, PLAYLIST_CHECK_MS)
+  }
+  const watchPlaylists = () => {
+    if (watching) return
+    watching = true
+    setTimeout(checkPlaylists, PLAYLIST_CHECK_MS)
   }
 
   app.on(SCENE, (data) => {
@@ -191,8 +227,11 @@ function runClient(): ClientEditHooks {
     const d = diffPlans(plan, next)
     for (const key of d.remove) remove(key)
     for (const item of d.update) {
+      // A screen that kept its playlist (moved, renamed, volume) stays on the video it was showing.
+      const old = shown.get(item.key)
+      const track = old && sameList(old.item.playlist, item.playlist) ? old.track : 0
       remove(item.key)
-      add(item)
+      add(item, track)
     }
     for (const item of d.add) add(item)
     // A preview ends with its item, or once the feed carries it (a save came back).
