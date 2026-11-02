@@ -373,6 +373,17 @@ describe('scene import routes', () => {
     expect((await db.select().from(sceneDeployments).where(eq(sceneDeployments.id, dep.id)))[0].deployedBy).toBeNull()
   })
 
+  it('says on the import when Virvi was already in the scene (N5)', async () => {
+    const plain = (await upload(sceneZip())).json().import
+    expect(plain.virviAlreadyPresent).toBe(false)
+    await setStatus(plain.id, 'failed')
+    const manager = "import { startVirviManager } from '@virvixr/dcl'\nexport class VirviManager { start() { startVirviManager(this.entity, {}) } }\n"
+    const res = await upload(sceneZip({ files: { 'assets/scene/Scripts/VirviManager.ts': manager } }))
+    expect(res.statusCode).toBe(201)
+    expect(res.json().import.virviAlreadyPresent).toBe(true)
+    expect((await importRow(res.json().import.id)).virviAlreadyPresent).toBe(true)
+  })
+
   it('the log route returns the stored log, and the view carries its tail', async () => {
     const view = (await upload(sceneZip())).json().import
     expect((await get(`/api/imports/${view.id}/log`)).statusCode).toBe(404)

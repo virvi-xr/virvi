@@ -133,13 +133,13 @@ export default async function importRoutes(app: FastifyInstance) {
     await ownerFor(request.user.id, world)
     const scene = await sceneFor(request, world, folder)
     const { files, alreadyInstalled } = await installVirvi(folder)
-    if (alreadyInstalled) request.log.info(`[scene-import] ${world} already starts Virvi: only its @virvixr/dcl range was checked`)
     // Ruling R5: the installed files are re-zipped in memory; the upload never becomes files on disk. Stored, not
     // deflated (the box unzips it anyway), and wrapped without a copy
     const zipped = zipSync(Object.fromEntries(files), { level: 0 })
     const source = Buffer.from(zipped.buffer, zipped.byteOffset, zipped.byteLength)
 
-    const row = await createImport({ userId: request.user.id, world, kind: folder.kind, scene })
+    // N5: recorded on the import, so the page can say Virvi wasn't added again
+    const row = await createImport({ userId: request.user.id, world, kind: folder.kind, scene, virviAlreadyPresent: alreadyInstalled })
     try {
       await getImportStore().put(row.sourceKey, source, 'application/zip')
     } catch (err) {

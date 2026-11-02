@@ -149,6 +149,12 @@ export function buildLogShown(v: Pick<SceneImportView, 'errorCode' | 'filesExpir
   return v.filesExpired ? 'expired' : 'log'
 }
 
+export const VIRVI_ALREADY_PRESENT = "Virvi was already in your scene, so it wasn't added again."
+
+/** N5: the note an import shows when the scene already started Virvi itself, else null. */
+export const virviNote = (v: Pick<SceneImportView, 'virviAlreadyPresent'>): string | null =>
+  v.virviAlreadyPresent ? VIRVI_ALREADY_PRESENT : null
+
 const BUILD_CODES = new Set([
   'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded', 'bad_package_json', 'bad_source_encoding',
   'no_main', 'store_failed',

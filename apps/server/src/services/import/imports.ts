@@ -55,6 +55,7 @@ export function importView(row: SceneImportRow, logTail: string | null, deployme
     canDeploy: row.status === 'built' || (row.status === 'awaiting_signature' && signingOver(deployment, now)),
     logTail,
     filesExpired: row.filesDeletedAt !== null,
+    virviAlreadyPresent: row.virviAlreadyPresent,
     createdAt: row.createdAt.toISOString(),
   }
 }
@@ -97,6 +98,7 @@ export async function createImport(input: {
   world: string
   kind: 'creator-hub' | 'sdk7'
   scene: { id: string } | { newName: string }
+  virviAlreadyPresent?: boolean
 }): Promise<SceneImportRow> {
   const id = randomUUID()
   const { row, superseded } = await db.transaction(async (tx) => {
@@ -125,6 +127,7 @@ export async function createImport(input: {
     }
     const [row] = await tx.insert(sceneImports).values({
       id, userId: input.userId, sceneId, worldName: input.world, kind: input.kind, sourceKey: sourceKey(id),
+      virviAlreadyPresent: input.virviAlreadyPresent ?? false,
     }).returning()
     return { row, superseded }
   })

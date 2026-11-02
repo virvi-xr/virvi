@@ -792,6 +792,8 @@ export const sceneImports = pgTable('scene_imports', {
   finishedAt: timestamp('finished_at', { withTimezone: true }),
   /** When the retention sweep deleted its files under imports/<id>/ (Ruling R27); the row stays. */
   filesDeletedAt: timestamp('files_deleted_at', { withTimezone: true }),
+  /** The upload already started Virvi itself, so installVirvi added no code (only the dependency range and the icon). */
+  virviAlreadyPresent: boolean('virvi_already_present').notNull().default(false),
 }, (t) => ({
   worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
   userCreatedIdx: index('scene_imports_user_created_idx').on(t.userId, t.createdAt),

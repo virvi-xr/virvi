@@ -9,7 +9,7 @@ import { useApi, type DclDestination } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { signErrorMessage } from '@/lib/deploy'
 import {
-  buildLogShown, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, recentImports, watchImport,
+  buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, recentImports, watchImport,
 } from '@/lib/import'
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
@@ -203,6 +203,7 @@ function ImportContent() {
           )}
 
           <ProgressLines lines={importLines(phase!, view?.worldName ?? 'your World', view ?? undefined)} />
+          {view && virviNote(view) && <p className={infoBox}>{virviNote(view)}</p>}
 
           {phase === 'uploading' && view && <p className="text-gray-400">Your scene is uploaded. Its build starts in a moment.</p>}
           {phase === 'building' && <p className="text-gray-400">Virvi is building your scene. This usually takes a minute or two.</p>}

@@ -23,6 +23,8 @@ export interface SceneImportView {
   logTail: string | null
   /** The retention sweep deleted its stored files (source, build, log) 30 days after it ended. */
   filesExpired: boolean
+  /** The scene already started Virvi itself, so Virvi wasn't added again. */
+  virviAlreadyPresent: boolean
   createdAt: string
 }
 

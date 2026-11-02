@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { SceneImportStatus, SceneImportView } from '@virvixr/shared'
-import { buildLogShown, importErrorMessage, importFailure, importLines, importPhase, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
+import { buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
 
 const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   id: 'imp-1',
@@ -15,6 +15,7 @@ const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   canDeploy: false,
   logTail: null,
   filesExpired: false,
+  virviAlreadyPresent: false,
   createdAt: '2026-11-01T00:00:00Z',
   ...over,
 })
@@ -164,5 +165,12 @@ describe('buildLogShown', () => {
     expect(buildLogShown(view({ status: 'failed', errorCode: 'build_failed', filesExpired: true }))).toBe('expired')
     expect(buildLogShown(view({ status: 'failed', errorCode: 'superseded' }))).toBeNull()
     expect(importErrorMessage('files_expired')).toBe("This import's files were deleted after 30 days.")
+  })
+})
+
+describe('virviNote', () => {
+  it('says Virvi was already in the scene, and nothing otherwise', () => {
+    expect(virviNote(view({ virviAlreadyPresent: true }))).toBe("Virvi was already in your scene, so it wasn't added again.")
+    expect(virviNote(view())).toBeNull()
   })
 })
