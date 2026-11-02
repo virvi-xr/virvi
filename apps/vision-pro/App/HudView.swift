@@ -4,7 +4,7 @@ import SwiftUI
 /// an action tab, as in Decentraland: it opens the analytics page instead of a panel.
 struct HudView: View {
     @ObservedObject var app: AppModel
-    let builder: SceneBuilder
+    @ObservedObject var builder: SceneBuilder
     @ObservedObject var feed: SceneFeed
     @ObservedObject var alerts: HudAlerts
     @Environment(\.openWindow) private var openWindow

@@ -32,15 +32,48 @@ final class WindowGlueTests: XCTestCase {
     func testFriendlyRenameError() {
         XCTAssertEqual(friendlyRenameError(ApiError.status(400, code: nil)), "Names need 1-120 characters, without slashes")
         XCTAssertEqual(friendlyRenameError(ApiError.status(409, code: "not_ready")), "That file isn't ready yet")
-        XCTAssertEqual(friendlyRenameError(ApiError.status(403, code: nil)), "You don't have permission to edit this scene")
+        XCTAssertEqual(friendlyRenameError(ApiError.status(403, code: nil)), "You don't have permission to edit this scene.")
+        XCTAssertEqual(friendlyRenameError(ApiError.status(401, code: nil)), "You're signed out. Sign in again to edit.")
+        XCTAssertEqual(friendlyRenameError(ApiError.offline), "Disconnected from Virvi. Reconnecting…")
         XCTAssertEqual(friendlyRenameError(ApiError.status(500, code: nil)), "Something went wrong — try again")
+    }
+
+    /// LIV-23: signed out, no permission and disconnected each get their own message.
+    func testFriendlyEditMessageTellsEachFailureApart() {
+        XCTAssertEqual(friendlyEditMessage(ApiError.status(401, code: "Unauthorized")), "You're signed out. Sign in again to edit.")
+        XCTAssertEqual(friendlyEditMessage(ApiError.status(401, code: nil)), "You're signed out. Sign in again to edit.")
+        XCTAssertEqual(friendlyEditMessage(ApiError.status(403, code: "Forbidden")), "You don't have permission to edit this scene.")
+        XCTAssertEqual(friendlyEditMessage(ApiError.status(403, code: "no_access")), "You don't have permission to edit this scene.")
+        XCTAssertEqual(friendlyEditMessage(ApiError.offline), "Disconnected from Virvi. Reconnecting…")
+        XCTAssertEqual(friendlyEditMessage(ApiError.status(404, code: nil)), "That item no longer exists — reopen the panel to refresh")
+        XCTAssertEqual(friendlyEditMessage(ApiError.decode), "Something went wrong — try again")
+    }
+
+    /// The feed coming back after a drop is a reconnect: the role is fetched again then.
+    func testFeedReconnectedOnlyWhenComingBackLive() {
+        XCTAssertTrue(feedReconnected(from: .offline, to: .live))
+        XCTAssertTrue(feedReconnected(from: .failed("HTTP 502"), to: .live))
+        XCTAssertFalse(feedReconnected(from: .connecting, to: .live)) // the first connect: the role is fresh
+        XCTAssertFalse(feedReconnected(from: .live, to: .live))
+        XCTAssertFalse(feedReconnected(from: .live, to: .offline))
+        XCTAssertFalse(feedReconnected(from: .offline, to: .failed("HTTP 500")))
+    }
+
+    func testFreshRoleFromTheSceneList() throws {
+        func scene(_ id: String, _ role: String) throws -> DeviceScene {
+            try JSONDecoder().decode(DeviceScene.self, from: JSONSerialization.data(withJSONObject: ["sceneId": id, "sceneName": "n", "role": role]))
+        }
+        let list = [try scene("s1", "editor"), try scene("s2", "viewer")]
+        XCTAssertEqual(freshRole(in: list, sceneId: "s1"), .editor)
+        XCTAssertEqual(freshRole(in: list, sceneId: "s2"), .viewer)
+        XCTAssertNil(freshRole(in: list, sceneId: "gone")) // not listed: keep the current role
     }
 
     func testFriendlyRoleError() {
         XCTAssertEqual(friendlyRoleError(ApiError.status(403, code: "Forbidden")), "Only the host and co-hosts can manage roles.")
         XCTAssertEqual(friendlyRoleError(ApiError.status(409, code: "is_host")), "That wallet is the host.")
         XCTAssertEqual(friendlyRoleError(ApiError.status(400, code: "whatever")), "Something went wrong — try again")
-        XCTAssertEqual(friendlyRoleError(ApiError.offline), "Can't reach virvi.io: check the connection and try again")
+        XCTAssertEqual(friendlyRoleError(ApiError.offline), "Disconnected from Virvi. Reconnecting…")
     }
 
     func testUploadLinkAsksForImagesAndModels() async throws {
@@ -62,7 +95,7 @@ final class WindowGlueTests: XCTestCase {
     }
 
     func testUploadLinkErrorCopy() {
-        XCTAssertEqual(AssetsModel.uploadLinkError(ApiError.offline), "Can't reach virvi.io: check the connection and try again")
+        XCTAssertEqual(AssetsModel.uploadLinkError(ApiError.offline), "Disconnected from Virvi. Reconnecting…")
         XCTAssertEqual(AssetsModel.uploadLinkError(ApiError.status(500, code: nil)), "Couldn't make an upload link — try again")
     }
 

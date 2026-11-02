@@ -81,7 +81,7 @@ final class DeviceAuth: ObservableObject {
         } catch {
             clearKeys()
             state = .unpaired
-            if case ApiError.offline = error { pairingMessage = friendlyEditMessage(error) }
+            if case ApiError.offline = error { pairingMessage = cantReachVirvi }
         }
     }
 

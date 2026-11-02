@@ -64,6 +64,8 @@ struct ScenePickerView: View {
             if let pick = autoPick?(list) { onPick(pick) }
         } catch ApiError.status(401, _) {
             // Revoked: DeviceAuth is back to unpaired and the root shows pairing.
+        } catch ApiError.offline {
+            failed = cantReachVirvi
         } catch {
             failed = friendlyEditMessage(error)
         }
