@@ -6,10 +6,12 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, hasScope, isFullAccess } from '../auth/permissions.js'
 import { fromParam, isScenePass, isUuid } from '../auth/scene-from.js'
-import { getSceneLibraryItem, linkToScene, listSceneLibrary, uploadDestination } from '../library/scene-library.js'
+import { getSceneLibraryItem, linkToScene, listSceneLibrary, resolveMediaNames, uploadDestination } from '../library/scene-library.js'
 import { storeMedia, StoreMediaError } from '../media/store.js'
 import { publishLibraryChanged } from '../realtime/bus.js'
 import { PackDisabledError } from '../catalog/visibility.js'
+
+const MAX_NAME_URLS = 500
 
 export default async function sceneLibraryRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate)
@@ -23,6 +25,17 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
   app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/library', { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: true } } }, async (request, reply) => {
     if ((await access(request, request.params.sceneId)).level === 'none') return reply.status(403).send({ error: 'forbidden' })
     return reply.send({ items: await listSceneLibrary(request.params.sceneId) })
+  })
+
+  // The current names of the files behind media URLs (a video playlist stores URLs only), so the editor shows
+  // "Intro trailer.mp4" rather than the stored file's id. Account sessions only (no scene pass opts in).
+  app.post<{ Params: { sceneId: string }; Body: { urls?: unknown } }>('/api/scenes/:sceneId/media-names', async (request, reply) => {
+    const urls = request.body?.urls
+    if (!Array.isArray(urls) || urls.length > MAX_NAME_URLS || urls.some((u) => typeof u !== 'string' || u.length > 2048)) {
+      return reply.status(400).send({ error: `urls must be up to ${MAX_NAME_URLS} URLs` })
+    }
+    if ((await access(request, request.params.sceneId)).level === 'none') return reply.status(403).send({ error: 'forbidden' })
+    return reply.send(await resolveMediaNames(request.params.sceneId, request.user.id, urls))
   })
 
   // A scene pass (the Hyperfy HUD) may add public catalog models only: it can't pull the account's own files into a scene.

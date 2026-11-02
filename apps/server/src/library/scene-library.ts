@@ -5,6 +5,7 @@ import { assetLibraryItems, bookings, mediaAssets, sceneLibrary, scenes, systemF
 import type { Actor } from '../auth/actor.js'
 import { publishLibraryChanged } from '../realtime/bus.js'
 import { getSceneAccess, hasScope } from '../auth/permissions.js'
+import { createStorage } from '../storage/index.js'
 
 export interface LibraryItem {
   id: string
@@ -153,6 +154,54 @@ export async function backfillSceneLibrary(): Promise<number> {
       JOIN asset_library_items a ON a.cdn_url = pl.url AND (a.uploaded_by = s.owner_id OR a.is_public)
     ON CONFLICT DO NOTHING RETURNING id`)
   return rowCount(media) + rowCount(models)
+}
+
+const rowsOf = <T>(r: unknown): T[] => (Array.isArray(r) ? r : ((r as { rows?: T[] }).rows ?? [])) as T[]
+
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+/** Storage keys of uploads: media files are `<owner>/<uuid>.<ext>` (fillMedia), models `assets/<owner>/<uuid>.<ext>`. */
+const UPLOAD_KEY = new RegExp(`^(?:assets/)?${UUID}/${UUID}\\.[a-z0-9]+$`, 'i')
+let storageBase: string | null = null
+
+/**
+ * Whether a URL is one of our uploads: under this server's storage and keyed like an upload. Other files in
+ * storage (thumbnails, catalog models, room sets) and URLs anywhere else are not.
+ */
+export function isUploadUrl(url: string): boolean {
+  storageBase ??= createStorage().getPublicUrl('')
+  if (!url.startsWith(storageBase)) return false
+  return UPLOAD_KEY.test(url.slice(storageBase.length).split(/[?#]/)[0])
+}
+
+/**
+ * The current names of the files behind URLs placed (or about to be placed) in a scene, for its editors.
+ * A URL is named when its file is the viewer's own, linked in the scene's library, already placed in the
+ * scene, or (models) a public one. `missing`: our upload URLs whose file no longer exists at all.
+ * Everything else (pasted links, files the viewer can't see) is left out, and the caller shows the URL.
+ */
+export async function resolveMediaNames(sceneId: string, userId: string, urls: string[]): Promise<{ names: Record<string, string>; missing: string[] }> {
+  const wanted = [...new Set(urls.filter((u) => u))]
+  if (wanted.length === 0) return { names: {}, missing: [] }
+  const list = sql.join(wanted.map((u) => sql`${u}`), sql`, `)
+  const [placedRows, media, models, linked] = await Promise.all([
+    db.execute(sql`SELECT DISTINCT pl.url FROM (${PLACED}) pl WHERE pl.scene_id = ${sceneId} AND pl.url IN (${list})`),
+    db.select().from(mediaAssets).where(inArray(mediaAssets.publicUrl, wanted)),
+    db.select().from(assetLibraryItems).where(inArray(assetLibraryItems.cdnUrl, wanted)),
+    db.select({ m: sceneLibrary.mediaAssetId, a: sceneLibrary.assetItemId }).from(sceneLibrary).where(and(eq(sceneLibrary.sceneId, sceneId), ACTIVE_BOOKING)),
+  ])
+  const placed = new Set(rowsOf<{ url: string }>(placedRows).map((r) => r.url))
+  const linkedIds = new Set(linked.flatMap((l) => [l.m, l.a]).filter(Boolean))
+  const names: Record<string, string> = {}
+  const known = new Set<string>()
+  for (const m of media) {
+    known.add(m.publicUrl!)
+    if (m.status === 'ready' && (m.ownerId === userId || placed.has(m.publicUrl!) || linkedIds.has(m.id))) names[m.publicUrl!] = m.filename
+  }
+  for (const a of models) {
+    known.add(a.cdnUrl!)
+    if (names[a.cdnUrl!] === undefined && (a.uploadedBy === userId || a.isPublic || placed.has(a.cdnUrl!) || linkedIds.has(a.id))) names[a.cdnUrl!] = a.name
+  }
+  return { names, missing: wanted.filter((u) => !known.has(u) && isUploadUrl(u)) }
 }
 
 const BACKFILL_FLAG = 'scene_library_backfill_v1'

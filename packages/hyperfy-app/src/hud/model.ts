@@ -454,6 +454,8 @@ export interface PlaceApi {
     presetId: string,
     src: string,
     t: VirviTransform,
+    /** The new element's name; the URL's file name when absent. */
+    name?: string,
   ): Promise<ApiResult<{ elementId: string; instanceId: string }>>
 }
 
@@ -478,7 +480,9 @@ export async function placeAsset(opts: {
     const added = await opts.api.addFromCatalog(opts.sceneId, { id: opts.entry.id })
     if (!added.ok) return fail(added.reason)
   }
-  const placed = await opts.api.placeModel(opts.presetId, opts.entry.src, opts.transform)
+  // Library and catalog models are named as the library names them (an upload's URL is only its storage id)
+  const name = opts.entry.source === 'link' ? undefined : opts.entry.name
+  const placed = await opts.api.placeModel(opts.presetId, opts.entry.src, opts.transform, name)
   if (!placed.ok) return fail(placed.reason)
   opts.alert({ kind: 'info', text: ALERT_PLACED })
   return true
