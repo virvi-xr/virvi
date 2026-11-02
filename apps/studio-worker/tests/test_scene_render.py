@@ -95,3 +95,41 @@ def test_studio_preview_on_a_scene_piece_writes_four_views(tmp_path):
 def test_a_plain_wall_filling_the_frame_is_drawn_but_the_background_alone_is_not():
     assert scene_render.nothing_drawn(Image.new('RGB', (64, 64), scene_render.BACKGROUND))
     assert not scene_render.nothing_drawn(Image.new('RGB', (64, 64), (110, 110, 110)))
+
+
+@needs_page
+def test_inspect_starts_at_the_front_which_is_plus_z(tmp_path):
+    # the front of a scene piece is glTF +Z (the skills' convention): Inspect's first frame looks at it
+    glb = gf.write(tmp_path / 'marked.glb', [gf.box('Body', (-0.5, 0, -0.5), (0.5, 1, 0.5), material=0),
+                                             gf.box('FrontMark', (-0.3, 0.3, 0.5), (0.3, 0.7, 0.6), material=1)],
+                   materials=[{'name': 'Grey', 'pbrMetallicRoughness': {'baseColorFactor': [0.5, 0.5, 0.5, 1]}},
+                              {'name': 'Red', 'pbrMetallicRoughness': {'baseColorFactor': [1, 0, 0, 1]}}])
+    piece = {'category': 'furniture_marked', 'glbs': {'unisex': glb}, 'meta': {'kind': 'decor'}, 'at': None}
+    r = scene_render.render([piece], {'mode': 'scene-orbit', 'ring': True}, tmp_path / 'o')
+    assert r['ok'], r
+
+    def red(path):
+        a = np.asarray(Image.open(path).convert('RGB'), int)
+        return int(((a[..., 0] > a[..., 1] + 40) & (a[..., 0] > a[..., 2] + 40)).sum())  # red, however it's lit
+    assert red(r['frames'][0]) > 500, 'the front (+Z) is not facing the camera in frame 0'
+    assert red(r['frames'][12]) == 0
+
+
+@needs_page
+def test_the_walk_through_camera_stands_where_the_path_says(tmp_path):
+    # a path in front of the red +Z face, looking at it: the walk-through sees red; walking behind the box, it doesn't
+    glb = gf.write(tmp_path / 'marked.glb', [gf.box('Body', (-1, 0, -1), (1, 2, 1), material=0),
+                                             gf.box('FrontMark', (-0.6, 0.6, 1), (0.6, 1.6, 1.1), material=1)],
+                   materials=[{'name': 'Grey', 'pbrMetallicRoughness': {'baseColorFactor': [0.5, 0.5, 0.5, 1]}},
+                              {'name': 'Red', 'pbrMetallicRoughness': {'baseColorFactor': [1, 0, 0, 1]}}])
+    piece = {'category': 'building', 'glbs': {'unisex': glb}, 'meta': {'kind': 'building'}, 'at': None}
+
+    def reddest(path):
+        r = scene_render.render([piece], {'mode': 'tour', 'path': path, 'sample': 4}, tmp_path / f'tour{len(path)}{path[0][2]}')
+        assert r['ok'], r
+        a = np.asarray(Image.open(r['frames'][0]).convert('RGB'), int)
+        return int(((a[..., 0] > a[..., 1] + 40) & (a[..., 0] > a[..., 2] + 40)).sum())
+    front = [[0, 1.2, 5 - i * 0.05] for i in range(40)]   # walking towards the +Z face
+    back = [[0, 1.2, -5 + i * 0.05] for i in range(40)]   # walking towards the -Z face
+    assert reddest(front) > 500
+    assert reddest(back) == 0

@@ -159,7 +159,7 @@ def _run(spec: dict) -> dict:
         elif mode == 'scale':
             page.evaluate('__scene.ground()')
             lo, hi = loaded['min'], loaded['max']
-            page.evaluate('([x, z]) => __scene.mannequin(x, z)', [hi[0] + 0.6, -(lo[2] + hi[2]) / 2])
+            page.evaluate('([x, z]) => __scene.mannequin(x, z)', [hi[0] + 0.6, (lo[2] + hi[2]) / 2])  # Babylon coordinates
             page.evaluate('__scene.frameOrbit(1.05)')
             n = 4 if view.get('look') else SCALE_FRAMES
             steps = [('orbit', 0 if i == 0 else 2 * math.pi / n, 0) for i in range(n)]

@@ -1,5 +1,6 @@
 // The scene renderer's page. scene_render.py drives it through window.__scene. Positions it's given are glTF
-// (right-handed, metres, +Z the model's front); Babylon is left-handed, so z is negated on the way in.
+// (right-handed, metres, +Z the model's front). Babylon is left-handed, and its glTF loader turns a model so that glTF
+// (x, y, z) lands at Babylon (-x, y, z): positions go through `b()` the same way.
 (() => {
   const canvas = document.getElementById('c')
   const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true })
@@ -19,6 +20,7 @@
   scene.activeCamera = orbitCam
   const visible = []
   const b64 = (s) => 'data:model/gltf-binary;base64,' + s
+  const b = (x, y, z) => new BABYLON.Vector3(-x, y, z)
 
   function box() {
     let min = new BABYLON.Vector3(Infinity, Infinity, Infinity), max = min.scale(-1)
@@ -40,7 +42,7 @@
         const holder = new BABYLON.TransformNode('holder-' + it.category, scene)
         res.meshes[0].parent = holder
         if (it.at) {
-          holder.position = new BABYLON.Vector3(it.at.x || 0, 0, -(it.at.z || 0))
+          holder.position = b(it.at.x || 0, 0, it.at.z || 0)
           holder.rotation.y = -((it.at.yaw || 0) * Math.PI / 180)
         }
         for (const m of res.meshes) {
@@ -61,7 +63,7 @@
       const radius = max.subtract(min).length() / 2 || 1
       scene.activeCamera = orbitCam
       orbitCam.target = centre
-      orbitCam.alpha = -Math.PI / 2  // at -Z in Babylon, which is the model's front (+Z in glTF)
+      orbitCam.alpha = Math.PI / 2  // at Babylon +Z, which is the model's front (glTF +Z)
       orbitCam.beta = Math.PI / 2
       orbitCam.radius = (radius * (scaleMargin || 1.15)) / Math.sin(orbitCam.fov / 2)
     },
@@ -70,13 +72,14 @@
       // ArcRotateCamera degenerates at the poles: keep a hair off them
       orbitCam.beta = Math.min(Math.PI - 1e-4, Math.max(1e-4, orbitCam.beta + (dBeta || 0)))
     },
+    // In Babylon's own coordinates (beside the bounding box load() returned)
     mannequin(x, z) {
       const mat = new BABYLON.StandardMaterial('mannequin', scene)
       mat.diffuseColor = new BABYLON.Color3(0.78, 0.8, 0.84)
       const body = BABYLON.MeshBuilder.CreateCapsule('mannequin', { height: 1.55, radius: 0.2 }, scene)
-      body.position = new BABYLON.Vector3(x, 0.775, -z)
+      body.position = new BABYLON.Vector3(x, 0.775, z)
       const head = BABYLON.MeshBuilder.CreateSphere('mannequin-head', { diameter: 0.25 }, scene)
-      head.position = new BABYLON.Vector3(x, 1.675, -z)
+      head.position = new BABYLON.Vector3(x, 1.675, z)
       for (const m of [body, head]) { m.material = mat; visible.push(m) }
     },
     // A scene stands on ground: a walk-through looking out of a window or away from the building sees it
@@ -90,8 +93,8 @@
     },
     eye(x, y, z, tx, ty, tz) {
       scene.activeCamera = eyeCam
-      eyeCam.position = new BABYLON.Vector3(x, y, -z)
-      eyeCam.setTarget(new BABYLON.Vector3(tx, ty, -tz))
+      eyeCam.position = b(x, y, z)
+      eyeCam.setTarget(b(tx, ty, tz))
     },
     // Shaders compile asynchronously and a mesh whose shader isn't ready is skipped: wait, then draw
     async frame() { await scene.whenReadyAsync(); scene.render(); return true },
