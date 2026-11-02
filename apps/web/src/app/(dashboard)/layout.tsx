@@ -9,7 +9,7 @@ import { useStudioAvailable } from '@/lib/use-studio'
 import Link from 'next/link'
 import {
   BroadcastIcon, CalendarIcon, ChartIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LogoutIcon, MediaIcon,
-  ScenesIcon, ShieldIcon, SparkleIcon,
+  ScenesIcon, ShieldIcon, SparkleIcon, UploadIcon,
 } from '@/components/icons'
 
 type NavItem = { href: string; label: string; icon: (p: { size?: number }) => React.ReactElement }
@@ -21,6 +21,7 @@ const baseNavSections: NavSection[] = [
     items: [
       { href: '/command-center', label: 'Command Center', icon: HomeIcon },
       { href: '/scenes', label: 'Scenes', icon: ScenesIcon },
+      { href: '/import', label: 'Import', icon: UploadIcon },
       { href: '/events', label: 'Events', icon: CalendarIcon },
       { href: '/giveaways', label: 'Giveaways', icon: GiftIcon },
     ],

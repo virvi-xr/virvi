@@ -8,6 +8,7 @@ import type { RoomNudge } from './room-set'
 import type { AuthChain } from '@dcl/crypto'
 import type { ArFileFormat, ArMounting } from './ar'
 import type { AdminGiftCode, AdminMistakeReport, AdminStudioFlag, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
+import type { SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
 
@@ -486,6 +487,36 @@ export function useApi() {
       apiFetch<{ deployment: DclDeployment }>(`/api/deploy/${deploymentId}/signature`, { method: 'POST', body: JSON.stringify({ chain }) }),
     rebaseDclDestination: (id: string) =>
       apiFetch<{ destination: DclDestination }>(`/api/dcl/destinations/${id}/rebase`, { method: 'POST' }),
+
+    // Scene imports (a Creator Hub or SDK7 scene built and deployed by Virvi)
+    /** The scene zip as the raw body. Errors carry `{ error, message, importId? }` (the import made, for its build log). */
+    uploadSceneImport: (zip: Blob) =>
+      apiFetch<{ import: SceneImportView }>('/api/imports', { method: 'POST', body: zip, headers: { 'Content-Type': 'application/zip' } }),
+    getSceneImport: (id: string) => apiFetch<{ import: SceneImportView }>(`/api/imports/${id}`),
+    /** The whole build log, as text. */
+    getSceneImportLog: async (id: string): Promise<string> => {
+      const res = await fetch(`${API_URL}/api/imports/${id}/log`, { headers: requestHeaders(token, {}) })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        dropDeadSession(res.status, err)
+        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+      }
+      return res.text()
+    },
+    /** 200 with the `payload` to sign (then `submitDeploySignature`), or 202 with just the deployment: Virvi deploys. */
+    deploySceneImport: (id: string) =>
+      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/imports/${id}/deploy`, { method: 'POST' }),
+    /** What a World deployment put live, as a zip: through the authenticated route, never a plain link. */
+    downloadDeployFiles: async (deploymentId: string): Promise<{ blob: Blob; filename: string }> => {
+      const res = await fetch(`${API_URL}/api/deploy/${deploymentId}/files.zip`, { headers: requestHeaders(token, {}) })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        dropDeadSession(res.status, err)
+        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+      }
+      const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
+      return { blob: await res.blob(), filename: m?.[1] ?? `deploy-${deploymentId}.zip` }
+    },
 
     // Deployments
     getDeployments: (sceneId: string) =>

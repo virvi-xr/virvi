@@ -14,12 +14,13 @@
     "@dcl/crypto": "3.7.0",
     "@react-three/drei": "10.7.9",
     "@react-three/fiber": "9.8.2",
+    "@virvixr/shared": "workspace:*",
     "colyseus.js": "^0.15.26",
+    "fflate": "^0.8.2",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "three": "0.186.1",
-    "@virvixr/shared": "workspace:*"
+    "three": "0.186.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
