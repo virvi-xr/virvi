@@ -79,6 +79,17 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] catalog packs ensured');
       } catch(e) { console.log('[virvi-server] catalog packs:', e.message); }
 
+      // Scene imports; matches sceneImportStatusEnum / sceneImports / dclWorldDestinations.pendingImportId in src/db/schema.ts.
+      // markFailed and afterWorldDeploy touch scene_imports on every World deploy, so it must exist.
+      try {
+        await sql\`DO \$\$ BEGIN CREATE TYPE scene_import_status AS ENUM ('uploaded','building','built','deploying','awaiting_signature','deployed','failed'); EXCEPTION WHEN duplicate_object THEN NULL; END \$\$\`;
+        await sql\`CREATE TABLE IF NOT EXISTS scene_imports (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, scene_id UUID NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, world_name TEXT NOT NULL, kind TEXT NOT NULL, status scene_import_status NOT NULL DEFAULT 'uploaded', error_code TEXT, error_message TEXT, source_key TEXT NOT NULL, built_key_prefix TEXT, log_key TEXT, build_token_hash TEXT, machine_id TEXT, destination_id UUID REFERENCES dcl_world_destinations(id) ON DELETE SET NULL, deployment_id UUID REFERENCES scene_deployments(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), built_at TIMESTAMPTZ, finished_at TIMESTAMPTZ)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS scene_imports_world_status_idx ON scene_imports (world_name, status)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS scene_imports_user_created_idx ON scene_imports (user_id, created_at)\`;
+        await sql\`ALTER TABLE dcl_world_destinations ADD COLUMN IF NOT EXISTS pending_import_id UUID REFERENCES scene_imports(id) ON DELETE SET NULL\`;
+        console.log('[virvi-server] scene_imports ensured');
+      } catch(e) { console.log('[virvi-server] scene_imports:', e.message); }
+
       // Hyperfy worlds; matches hyperfyWorlds in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_worlds (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scene_id UUID NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'self', key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL, last_seen_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
