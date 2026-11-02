@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  checkoutBody, dialogTotal, emoteChecklist, finalizeStrip, formatCents, HELD_REPORT_COPY, REPORT_MAX, refusalMessage, reportOk,
+  checkoutBody, dialogTotal, emoteChecklist, finalizeStrip, formatCents, HELD_REPORT_COPY, REPORT_MAX, refusalMessage, reportOk, triangleWarning,
   type Quote, type QuoteLine, type Refusal, type StudioDetail, type StudioKind,
 } from '@/lib/studio'
 import { STATE_BADGE, emoteName, type EmoteTarget } from './EmotesStep'
@@ -63,12 +63,15 @@ export default function Finalize({ designId, kind, quote, busy, onChanged, detai
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
       <p className="text-sm text-gray-300">{strip.unlocks}</p>
       {strip.blocked && <p className="mt-2 text-sm text-amber-300">{strip.blocked}</p>}
+      {detail.pieces.map((p) => triangleWarning(p.name, p.revision?.checker ?? null)).filter(Boolean).map((w) => (
+        <p key={w} className="mt-2 text-sm text-amber-300">{w}</p>
+      ))}
       {strip.button && (
         <PrimaryButton type="button" className="mt-3" disabled={busy} onClick={() => setOpen(true)}>{strip.button}</PrimaryButton>
       )}
       {open && quote && (
         <FinalizeDialog designId={designId} quote={quote} onClose={() => setOpen(false)} onChanged={onChanged}>
-          <EmoteChecklist designId={designId} detail={detail} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />
+          {kind !== 'scene' && <EmoteChecklist designId={designId} detail={detail} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />}
         </FinalizeDialog>
       )}
     </div>

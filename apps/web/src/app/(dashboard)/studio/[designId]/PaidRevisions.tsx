@@ -7,22 +7,22 @@ import {
   type FinalizedRevision, type StudioPiece,
 } from '@/lib/studio'
 
-type Props = { designId: string; piece: StudioPiece | undefined; onChanged: () => Promise<void> }
+type Props = { designId: string; piece: StudioPiece | undefined; onChanged: () => Promise<void>; kind?: string }
 
 /** The selected piece's paid revisions: download, a free retry when packaging failed, and mistake reports. */
-export default function PaidRevisions({ designId, piece, onChanged }: Props) {
+export default function PaidRevisions({ designId, piece, onChanged, kind }: Props) {
   if (!piece || piece.finalized.length === 0) return null
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900">
       <h3 className="border-b border-gray-800 px-4 py-3 text-sm font-medium">Paid revisions · {piece.name}</h3>
       <ul className="divide-y divide-gray-800">
-        {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} />)}
+        {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} />)}
       </ul>
     </div>
   )
 }
 
-function PaidRevision({ designId, category, f, onChanged }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void> }) {
+function PaidRevision({ designId, category, f, onChanged, scene }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean }) {
   const api = useApi()
   const actions = revisionActions(f, new Date())
   const [busy, setBusy] = useState(false)
@@ -80,6 +80,7 @@ function PaidRevision({ designId, category, f, onChanged }: { designId: string; 
             <Badge tone="success">{f.report.status === 'waived' ? 'Waived' : 'Refunded'}</Badge>
           )}
           {actions.packaging && <span className="text-gray-400">Packaging…</span>}
+          {actions.download && scene && <a href="/assets" className="text-blue-300 underline">In your asset library</a>}
           {actions.download && <PrimaryButton type="button" disabled={busy} onClick={download}>Download</PrimaryButton>}
           {actions.retry && <PrimaryButton type="button" disabled={busy} onClick={retry}>Try again</PrimaryButton>}
           {actions.report === 'open' && !reporting && refunded === null && (

@@ -35,7 +35,7 @@ export default function StudioDesignPage() {
   const [events, setEvents] = useState<StudioEvent[]>([])
   const [notice, setNotice] = useState<Refusal | null>(null)
   const [category, setCategory] = useState<string | null>(null)
-  const [step, setStep] = useState<Step>('avatar')
+  const [step, setStep] = useState<Step>('avatar')  // shown as Inspect for a scene design (shownStep)
   const [emoteTarget, setEmoteTarget] = useState<EmoteTarget | null>(null)
   const openEmote = useCallback((t: EmoteTarget) => { setEmoteTarget(t); setStep('emotes') }, [])
   const [quote, setQuote] = useState<Quote | null>(null)
@@ -167,7 +167,7 @@ export default function StudioDesignPage() {
           finalizeStep={<div className="p-4"><EmoteChecklist designId={designId} detail={detail} onOpen={openEmote} /></div>}>
           <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'} onChanged={reload}
             detail={detail} onOpenEmote={openEmote} />
-          <PaidRevisions designId={designId} piece={detail.pieces.find((p) => p.category === category) ?? detail.pieces[0]} onChanged={reload} />
+          <PaidRevisions designId={designId} piece={detail.pieces.find((p) => p.category === category) ?? detail.pieces[0]} onChanged={reload} kind={detail.design.kind} />
         </Preview>
       </div>
     </div>

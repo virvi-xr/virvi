@@ -669,10 +669,12 @@ export function useApi() {
       apiFetch<StudioDesign>(`/api/studio/designs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean }) =>
       apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', body: JSON.stringify(body) }),
-    requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }) =>
+    requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }
+      | { category: string; mode: 'orbit' | 'scale' }) =>
       apiFetch<{ status: 'ready'; frames: number; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/renders`, { method: 'POST', body: JSON.stringify(body) }),
-    requestStudioSetRender: (id: string, view: RenderView) =>
-      apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/set-renders`, { method: 'POST', body: JSON.stringify(view) }),
+    /** An emote view with every piece worn; a scene design's walk-through takes no view. */
+    requestStudioSetRender: (id: string, view?: RenderView) =>
+      apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/set-renders`, { method: 'POST', body: JSON.stringify(view ?? {}) }),
     checkStudioEmote: (id: string, body: { emote: string; bodyShape: 'male' | 'female' }) =>
       apiFetch<void>(`/api/studio/designs/${id}/emote-checks`, { method: 'POST', body: JSON.stringify({ ...body, state: 'fine' }) }),
     reportStudioClipping: (id: string, body: { emote: string; bodyShape: 'male' | 'female'; outfit: string }) =>

@@ -4,7 +4,11 @@
  */
 import type { Tone } from '@/components/ui'
 
-export type StudioKind = 'wearable' | 'emote'
+export type StudioKind = 'wearable' | 'emote' | 'scene'
+
+/** What the new design picker offers, and what a design's kind is called. */
+export const KIND_CHOICES: [StudioKind, string][] = [['wearable', 'Wearable'], ['emote', 'Emote'], ['scene', 'Building or furniture']]
+export const kindLabel = (kind: string) => KIND_CHOICES.find(([k]) => k === kind)?.[1] ?? 'Wearable'
 export type StudioAgent = 'claude' | 'codex' | 'grok'
 
 export type StudioUsage = {
@@ -33,7 +37,8 @@ export type StudioDesign = {
   createdAt: string
 }
 
-export type Checker = { pass: boolean; failures: number; warnings: number } | null
+/** `triangles`: a scene piece over its recommended triangle count (a warning, never a block). */
+export type Checker = { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } | null
 
 export type StudioView = {
   status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string
@@ -342,6 +347,7 @@ export function composerState(detail: StudioDetail, usage: StudioUsage | null, n
 
 /** The server's view key, `<mode>-<bodyShape>-<outfit>[-<emote>]` (apps/server/src/studio/designs.ts `viewKey`). */
 export function viewKey(kind: string, view: RenderView): string {
+  if (kind === 'scene') return 'scale'  // a furniture piece's turn beside the mannequin
   return `${kind === 'emote' ? 'emote' : 'spin'}-${view.bodyShape}-${view.outfit}${view.emote ? `-${view.emote}` : ''}`
 }
 
@@ -350,21 +356,56 @@ const mod = (n: number, m: number) => ((n % m) + m) % m
 export const EMOTES = ['idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump'] as const
 /** An emote design's emote view plays its own animation. */
 export const OWN_EMOTE = 'own'
-export const STEPS = ['design', 'inspect', 'avatar', 'emotes', 'finalize'] as const
+export const STEPS = ['design', 'inspect', 'avatar', 'emotes', 'tour', 'scale', 'finalize'] as const
 export type Step = typeof STEPS[number]
-export const STEP_LABELS: Record<Step, string> = { design: 'Design', inspect: 'Inspect', avatar: 'On avatar', emotes: 'Emotes', finalize: 'Finalize' }
+export const STEP_LABELS: Record<Step, string> = {
+  design: 'Design', inspect: 'Inspect', avatar: 'On avatar', emotes: 'Emotes', tour: 'Walk-through', scale: 'Scale', finalize: 'Finalize',
+}
 
-/** An emote design has nothing to inspect without the avatar. */
-export const stepsFor = (kind: string): Step[] => STEPS.filter((s) => kind !== 'emote' || s !== 'inspect')
+/**
+ * An emote design has nothing to inspect without the avatar. A scene design has no avatar or emotes: a building gets
+ * its walk-through and furniture its scale view, once the design has one.
+ */
+export function stepsFor(kind: string, categories: string[] = []): Step[] {
+  if (kind === 'scene') {
+    const building = categories.includes('building')
+    const furniture = categories.some((c) => c.startsWith('furniture_'))
+    return STEPS.filter((s) => s === 'design' || s === 'inspect' || s === 'finalize' || (s === 'tour' && building) || (s === 'scale' && furniture))
+  }
+  return STEPS.filter((s) => s !== 'tour' && s !== 'scale' && (kind !== 'emote' || s !== 'inspect'))
+}
+
+/** The step a design opens on: On avatar, or Inspect for a scene design (it has no avatar). */
+export const defaultStep = (kind: string): Step => kind === 'scene' ? 'inspect' : 'avatar'
+
+/** The step to show: the one picked, while the design has it (a walk-through needs the building first). */
+export const shownStep = (step: Step, kind: string, categories: string[]): Step =>
+  stepsFor(kind, categories).includes(step) ? step : defaultStep(kind)
 
 /** `the dance`, or `the emote` for an emote design's own. */
 export const emoteLabel = (kind: string, emote: string) => kind === 'emote' || emote === OWN_EMOTE ? 'the emote' : `the ${emote}`
 
 export const orbitKey = (bodyShape: string) => `orbit-${bodyShape}`
+/** Inspect's view key: a scene piece has no body shape (apps/server/src/studio/designs.ts `orbitKeyFor`). */
+export const orbitKeyFor = (kind: string, bodyShape: string) => kind === 'scene' ? 'orbit-scene' : orbitKey(bodyShape)
 
 /** The server's emote view key, `walk-<bodyShape>-<outfit>-<emote|own>` (apps/server/src/studio/designs.ts `setViewKey`). */
 export const setViewKey = (kind: string, view: RenderView) =>
-  `walk-${view.bodyShape}-${view.outfit}-${kind === 'emote' ? OWN_EMOTE : view.emote}`
+  kind === 'scene' ? 'tour' : `walk-${view.bodyShape}-${view.outfit}-${kind === 'emote' ? OWN_EMOTE : view.emote}`
+
+/** A scene piece's name for people: `building` → Building, `furniture_round_table` → Round table. */
+export function pieceLabel(category: string): string {
+  const words = category === 'building' ? 'building' : category.replace(/^furniture_/, '').replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/** A piece over its recommended triangles: Decentraland only warns, so this is a note, never a block. */
+export function triangleWarning(name: string, checker: Checker): string | null {
+  const over = checker?.triangles
+  if (!over) return null
+  return `${name} has ${over.count.toLocaleString('en-US')} triangles, more than the ${over.limit.toLocaleString('en-US')} recommended. ` +
+    'It still works in Decentraland, but a lighter piece leaves room for the rest of the scene.'
+}
 
 /** Inspect's grid: 24 columns round, and on screen seven rows from straight down (0°) to straight up (180°). */
 export const ORBIT_COLS = 24
@@ -449,6 +490,7 @@ export function pieceTabStatus(piece: StudioPiece, detail: StudioDetail): 'ready
 const UNLOCKS: Record<StudioKind, string> = {
   wearable: 'Finalize to get the GLBs, thumbnail, Builder settings, listing text, curation report, renders and a promo clip.',
   emote: 'Finalize to get the GLB, thumbnail, emote report, renders and a promo clip.',
+  scene: 'Finalize to add each piece to your asset library, ready to place in a scene, and get its GLB, thumbnail, renders, seats and check report.',
 }
 
 /** The strip under the preview: what finalizing unlocks, its price, and the pieces the checker blocks. */
