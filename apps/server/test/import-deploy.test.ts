@@ -11,7 +11,10 @@ import { memoryPrivateStore, setImportStore } from '../src/storage/private-store
 import { chainSigner, dclHash, virviSigner } from '../src/services/dcl/entity.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { assembleImported } from '../src/services/dcl/assemble.js'
-import { DEPLOY_WINDOW_MS, prepareSignedDeploy, startVirviDeploy, whenSettled, type SignedBundle } from '../src/services/dcl/world-deployer.js'
+import {
+  DEPLOY_WINDOW_MS, DeployerError, markFailed, prepareSignedDeploy, reconcileStaleDeployments, startVirviDeploy, whenSettled, type SignedBundle,
+} from '../src/services/dcl/world-deployer.js'
+import { sweepBuilds } from '../src/services/import/build-sweep.js'
 import { setBuildRunner, setOnBuildDone, startBuild, type BuildRunner } from '../src/services/import/build-runner.js'
 import { createImport, SUPERSEDED_MESSAGE } from '../src/services/import/imports.js'
 import { deployImport } from '../src/services/import/import-deploy.js'
@@ -310,7 +313,7 @@ describe('deploying an imported build', () => {
     expect(d).toMatchObject({ lastEntityId: worlds.deployed[0].entityId, adopted: true, status: 'ok', pendingImportId: null })
   })
 
-  it("a scene over the World's file budget fails with scene_too_big, and the import can be deployed again", async () => {
+  it("a scene over the World's file budget fails the import with scene_too_big (a limit error is permanent)", async () => {
     const { scene } = await createScene(user, 'Cafe')
     await grantedDest(scene.id, { parcels: ['0,0'] })
     const extra: Record<string, Uint8Array> = {}
@@ -318,11 +321,10 @@ describe('deploying an imported build', () => {
     const imp = await built({ sceneId: scene.id, files: builtFiles(extra, ['0,0']) })
     await expect(deployImport(imp.id)).rejects.toMatchObject({ code: 'scene_too_big' })
     const row = await importRow(imp.id)
-    expect(row.status).toBe('built')
+    expect(row.status).toBe('failed')
     expect(row.errorCode).toBe('scene_too_big')
     expect(row.errorMessage).toMatch(/204 files.*200.*1 parcel/)
-    expect(row.builtKeyPrefix).not.toBeNull()
-    expect((await view(imp.id)).canDeploy).toBe(true)
+    expect((await view(imp.id)).canDeploy).toBe(false)
     expect((await destByWorld())!.pendingImportId).toBeNull()
     expect(await db.select().from(sceneDeployments)).toHaveLength(0)
     expect(worlds.deployed).toHaveLength(0)
@@ -332,13 +334,14 @@ describe('deploying an imported build', () => {
     const big = await built({ files: builtFiles({ 'models/huge.glb': new Uint8Array(50 * 1024 * 1024 + 1) }) })
     const r = await post(`/api/imports/${big.id}/deploy`)
     expect([r.statusCode, r.json().error]).toEqual([413, 'file_too_big'])
-    expect(await importRow(big.id)).toMatchObject({ status: 'built', errorCode: 'file_too_big' })
+    expect(await importRow(big.id)).toMatchObject({ status: 'failed', errorCode: 'file_too_big' })
     expect((await importRow(big.id)).errorMessage).toBe("models/huge.glb is 50.0 MB, over Decentraland's 50 MB limit for one file.")
 
     const imp = await built({ sceneId: big.sceneId })
     worlds.stats.set(user.wallet!, { maxAllowedBytes: 100, usedBytes: 90 })
     const full = await post(`/api/imports/${imp.id}/deploy`)
     expect([full.statusCode, full.json().error]).toEqual([413, 'world_storage_full'])
+    expect(await importRow(imp.id)).toMatchObject({ status: 'failed', errorCode: 'world_storage_full' })
     expect((await importRow(imp.id)).errorMessage).toMatch(/MB of World storage/)
     expect(await db.select().from(sceneDeployments)).toHaveLength(0)
   })
@@ -368,20 +371,167 @@ describe('deploying an imported build', () => {
     expect((await destByWorld())!.adopted).toBe(true)
   })
 
-  it("a failed upload fails the import with the deploy's message", async () => {
-    const { scene } = await createScene(user, 'Cafe')
-    await grantedDest(scene.id)
-    const imp = await built({ sceneId: scene.id })
-    worlds.failNext = new WorldsError(400, JSON.stringify({ message: 'scene.json is wrong' }))
-    await deployImport(imp.id)
-    const depId = (await importRow(imp.id)).deploymentId!
-    await whenSettled(depId)
-    const dep = await depRow(depId)
-    expect(dep.status).toBe('failed')
+  describe('a deploy that fails before the World accepts it puts the import back to built (Ruling R19)', () => {
+    /** A granted World's automatic deploy, run to its end. */
+    async function autoDeploy() {
+      const { scene } = await createScene(user, 'Cafe')
+      await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      await deployImport(imp.id)
+      const depId = (await importRow(imp.id)).deploymentId!
+      await whenSettled(depId)
+      return { imp, depId }
+    }
+
+    it('Virvi-signed: Decentraland refusing the upload', async () => {
+      worlds.failNext = new WorldsError(400, JSON.stringify({ message: 'scene.json is wrong' }))
+      const { imp, depId } = await autoDeploy()
+      const dep = await depRow(depId)
+      expect(dep.status).toBe('failed')
+      const row = await importRow(imp.id)
+      expect(row).toMatchObject({ status: 'built', errorMessage: dep.errorMessage, deploymentId: depId, finishedAt: null })
+      expect(row.errorMessage).toMatch(/Decentraland rejected the deploy: scene\.json is wrong/)
+      expect((await view(imp.id)).canDeploy).toBe(true)
+      expect((await destByWorld())!.pendingImportId).toBeNull()
+
+      // And Deploy works again
+      const again = await post(`/api/imports/${imp.id}/deploy`)
+      expect(again.statusCode).toBe(202)
+      await whenSettled(again.json().deployment.id)
+      expect((await importRow(imp.id)).status).toBe('deployed')
+    })
+
+    it("Virvi-signed: the Worlds server unreachable or timing out", async () => {
+      worlds.failNext = new WorldsError(0, '', 'timed out')
+      const { imp } = await autoDeploy()
+      expect(await importRow(imp.id)).toMatchObject({ status: 'built', errorMessage: "Couldn't reach Decentraland's Worlds server. Try again in a minute." })
+      expect((await view(imp.id)).canDeploy).toBe(true)
+    })
+
+    it('Virvi-signed: built files gone by the time it packs is permanent', async () => {
+      const real = store.get.bind(store)
+      store.get = async (key: string) => (key.endsWith('/built/bin/index.js') ? null : real(key))
+      const { imp } = await autoDeploy()
+      expect(await importRow(imp.id)).toMatchObject({ status: 'failed', errorCode: 'import_files_missing' })
+      expect((await view(imp.id)).canDeploy).toBe(false)
+      expect(worlds.deployed).toHaveLength(0)
+    })
+
+    it('owner-signed: the Worlds server unreachable at submit, then signed again', async () => {
+      const imp = await built()
+      const { deployment, payload } = (await post(`/api/imports/${imp.id}/deploy`)).json()
+      worlds.failNext = new WorldsError(0, '', 'timed out')
+      const r = await post(`/api/deploy/${deployment.id}/signature`, { chain: await chainFor(owner, payload) })
+      expect(r.statusCode).toBe(502)
+      expect(await importRow(imp.id)).toMatchObject({ status: 'built', deploymentId: deployment.id })
+      expect((await view(imp.id)).canDeploy).toBe(true)
+      expect((await destByWorld())!.pendingImportId).toBeNull()
+
+      const again = (await post(`/api/imports/${imp.id}/deploy`)).json()
+      const ok = await post(`/api/deploy/${again.deployment.id}/signature`, { chain: await chainFor(owner, again.payload) })
+      expect(ok.statusCode).toBe(200)
+      expect((await importRow(imp.id)).status).toBe('deployed')
+    })
+
+    it('owner-signed: the World changed before the signature came (stale) says to press Deploy', async () => {
+      const imp = await built()
+      const { deployment, payload } = (await post(`/api/imports/${imp.id}/deploy`)).json()
+      worlds.entities.set(WORLD, [{ id: 'bafyelse', pointers: ['0,0'], content: [], metadata: {} as any }])
+      const r = await post(`/api/deploy/${deployment.id}/signature`, { chain: await chainFor(owner, payload) })
+      expect([r.statusCode, r.json().error]).toEqual([409, 'stale'])
+      const row = await importRow(imp.id)
+      expect(row).toMatchObject({ status: 'built', errorCode: 'stale' })
+      expect(row.errorMessage).toMatch(/Press Deploy to sign again/)
+      expect((await view(imp.id)).canDeploy).toBe(true)
+    })
+
+    it('owner-signed: a signature that came too late says to press Deploy', async () => {
+      const imp = await built()
+      const { deployment, payload } = (await post(`/api/imports/${imp.id}/deploy`)).json()
+      const bundle = (await depRow(deployment.id)).assetBundle as SignedBundle
+      await db.update(sceneDeployments).set({ assetBundle: { ...bundle, timestamp: bundle.timestamp - DEPLOY_WINDOW_MS - 1000 } })
+        .where(eq(sceneDeployments.id, deployment.id))
+      const r = await post(`/api/deploy/${deployment.id}/signature`, { chain: await chainFor(owner, payload) })
+      expect([r.statusCode, r.json().error]).toEqual([409, 'expired'])
+      expect(r.json().message).toMatch(/Press Deploy to sign again/)
+      expect((await view(imp.id)).canDeploy).toBe(true)
+    })
+
+    it('owner-signed: built files gone at submit is permanent', async () => {
+      const imp = await built()
+      const { deployment, payload } = (await post(`/api/imports/${imp.id}/deploy`)).json()
+      await store.deletePrefix(`imports/${imp.id}/built/`)
+      const r = await post(`/api/deploy/${deployment.id}/signature`, { chain: await chainFor(owner, payload) })
+      expect([r.statusCode, r.json().error]).toEqual([409, 'import_files_missing'])
+      expect(await importRow(imp.id)).toMatchObject({ status: 'failed', errorCode: 'import_files_missing' })
+      expect((await view(imp.id)).canDeploy).toBe(false)
+    })
+
+    it('an interrupted deploy (reconcile) puts the import back to built with a sentence for the Import page', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      const old = new Date(Date.now() - DEPLOY_WINDOW_MS - 60_000)
+      const [dep] = await db.insert(sceneDeployments).values({
+        sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id, target: {}, status: 'deploying',
+        createdAt: old, assetBundle: { entityId: 'bafynever' },
+      }).returning()
+      await db.update(sceneImports).set({ status: 'deploying', deploymentId: dep.id }).where(eq(sceneImports.id, imp.id))
+      await db.update(dclWorldDestinations).set({ pendingImportId: imp.id }).where(eq(dclWorldDestinations.id, dest.id))
+      await reconcileStaleDeployments()
+      const row = await importRow(imp.id)
+      expect(row).toMatchObject({ status: 'built', deploymentId: dep.id })
+      expect(row.errorMessage).toMatch(/Press Deploy to try again/)
+      expect(row.errorMessage).not.toMatch(/Upload/)
+      expect((await destByWorld())!.pendingImportId).toBeNull()
+    })
+
+    it('a cancelled deployment and a deployment with nothing to deploy never leave the import deploying', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      for (const end of ['cancel', 'noop'] as const) {
+        const imp = await built({ sceneId: scene.id })
+        const [dep] = await db.insert(sceneDeployments).values({
+          sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id, target: {}, status: 'building',
+        }).returning()
+        await db.update(sceneImports).set({ status: 'deploying', deploymentId: dep.id }).where(eq(sceneImports.id, imp.id))
+        await db.update(dclWorldDestinations).set({ pendingImportId: imp.id }).where(eq(dclWorldDestinations.id, dest.id))
+        if (end === 'cancel') {
+          expect((await post(`/api/deploy/${dep.id}/cancel`)).statusCode).toBe(200)
+        } else {
+          await markFailed(dep.id, new DeployerError(409, 'nothing_to_deploy', 'Your World already has everything in this scene, so there was nothing to deploy.'))
+        }
+        expect((await depRow(dep.id)).status).toBe('failed')
+        expect(await importRow(imp.id)).toMatchObject({ status: 'built', deploymentId: dep.id })
+        expect((await view(imp.id)).canDeploy).toBe(true)
+        expect((await destByWorld())!.pendingImportId).toBeNull()
+        await db.update(sceneImports).set({ status: 'failed' }).where(eq(sceneImports.id, imp.id))
+      }
+    })
+  })
+
+  it('an import claimed by the automatic deploy that never got a deployment is swept back to built after 5 minutes', async () => {
+    const imp = await built()
+    await grantedDest(imp.sceneId, { pendingImportId: imp.id })
+    const fresh = await built()
+    const linked = await built()
+    const now = new Date()
+    const old = new Date(now.getTime() - 6 * 60_000)
+    await db.update(sceneImports).set({ status: 'deploying', updatedAt: old }).where(eq(sceneImports.id, imp.id))
+    await db.update(sceneImports).set({ status: 'deploying', updatedAt: new Date(now.getTime() - 60_000) }).where(eq(sceneImports.id, fresh.id))
+    const [dep] = await db.insert(sceneDeployments).values({
+      sceneId: linked.sceneId, platform: 'decentraland', deploymentType: 'world', target: {}, status: 'deploying',
+    }).returning()
+    await db.update(sceneImports).set({ status: 'deploying', deploymentId: dep.id, updatedAt: old }).where(eq(sceneImports.id, linked.id))
+
+    await sweepBuilds(now)
     const row = await importRow(imp.id)
-    expect(row).toMatchObject({ status: 'failed', errorCode: 'deploy_failed', errorMessage: dep.errorMessage })
-    expect(row.errorMessage).toMatch(/Decentraland rejected the deploy: scene\.json is wrong/)
+    expect(row).toMatchObject({ status: 'built', deploymentId: null })
+    expect(row.errorMessage).toMatch(/interrupted before the deploy started\. Press Deploy to try again/)
+    expect((await view(imp.id)).canDeploy).toBe(true)
     expect((await destByWorld())!.pendingImportId).toBeNull()
+    expect((await importRow(fresh.id)).status).toBe('deploying')
+    expect((await importRow(linked.id)).status).toBe('deploying')
   })
 
   it('a superseded sign-pending import never deploys, even with its signature inside the window', async () => {
@@ -423,12 +573,11 @@ describe('deploying an imported build', () => {
     setOnBuildDone(deployImport)
     const { scene } = await createScene(user, 'Cafe')
     await grantedDest(scene.id, { parcels: ['0,0'] })
-    const extra: Record<string, Uint8Array> = {}
-    for (let i = 0; i < 200; i++) extra[`assets/f${i}.txt`] = enc(`f${i}`)
     const { id, token } = await building(scene.id, ['0,0'])
-    const r = await postResult(id, token, builtFiles(extra, ['0,0']))
+    worlds.down = true
+    const r = await postResult(id, token, builtFiles({}, ['0,0']))
     expect(r.statusCode).toBe(204)
-    await vi.waitFor(async () => expect((await importRow(id)).errorCode).toBe('scene_too_big'))
+    await vi.waitFor(async () => expect((await importRow(id)).errorCode).toBe('world_unreachable'))
     expect(await importRow(id)).toMatchObject({ status: 'built', builtKeyPrefix: `imports/${id}/built/` })
     expect((await view(id)).canDeploy).toBe(true)
   })

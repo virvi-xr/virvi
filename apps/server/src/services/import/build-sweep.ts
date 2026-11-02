@@ -1,6 +1,6 @@
-import { and, inArray, lt } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
-import { sceneImports } from '../../db/schema.js'
+import { dclWorldDestinations, sceneImports } from '../../db/schema.js'
 import { getBuildRunner } from './build-runner.js'
 
 /**
@@ -9,11 +9,18 @@ import { getBuildRunner } from './build-runner.js'
  * it starts and not touched while it runs. The transition is one conditional UPDATE, so concurrent sweeps on several
  * servers fail each build once; its token goes with it, so a late result or failure report is refused. An `uploaded` row
  * this old never got a machine (machine_id is null), so there is nothing to stop.
+ *
+ * It also puts back an import the automatic deploy claimed (Ruling R24: `deploying`, no deployment linked) and then lost,
+ * when the server stopped between the claim and the deployment: after CLAIM_TIMEOUT_MS it is `built` again, so the World
+ * isn't held and the creator can press Deploy.
  */
 
 export const BUILD_SWEEP_MS = 60_000
 export const BUILD_TIMEOUT_MS = 15 * 60_000
 export const BUILD_TIMEOUT_MESSAGE = 'The build took longer than 15 minutes and was stopped.'
+/** A claim links its deployment within seconds; one this old was lost. */
+export const CLAIM_TIMEOUT_MS = 5 * 60_000
+export const CLAIM_LOST_MESSAGE = 'Virvi was interrupted before the deploy started. Press Deploy to try again.'
 
 export async function sweepBuilds(now: Date): Promise<number> {
   const timedOut = await db.update(sceneImports).set({
@@ -35,7 +42,21 @@ export async function sweepBuilds(now: Date): Promise<number> {
     await runner.stop(machineId)
       .catch((err) => console.error(`[build-sweep] stopping the machine of import ${id} failed:`, err instanceof Error ? err.message : err))
   }
-  return timedOut.length
+
+  // Conditional on the row still being claimed and unlinked, so a deployment linked meanwhile keeps it
+  const lost = await db.update(sceneImports).set({
+    status: 'built', errorCode: 'deploy_interrupted', errorMessage: CLAIM_LOST_MESSAGE, updatedAt: now,
+  }).where(and(
+    eq(sceneImports.status, 'deploying'),
+    isNull(sceneImports.deploymentId),
+    lt(sceneImports.updatedAt, new Date(now.getTime() - CLAIM_TIMEOUT_MS)),
+  )).returning({ id: sceneImports.id })
+  // The claim may have pointed the World at it before the server stopped
+  if (lost.length) {
+    await db.update(dclWorldDestinations).set({ pendingImportId: null, updatedAt: now })
+      .where(inArray(dclWorldDestinations.pendingImportId, lost.map((l) => l.id)))
+  }
+  return timedOut.length + lost.length
 }
 
 let timer: ReturnType<typeof setInterval> | null = null

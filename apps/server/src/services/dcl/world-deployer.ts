@@ -13,7 +13,8 @@
  *
  * A destination with a `pendingImportId` deploys that import's built files instead (`assembleImported`): it replaces
  * whatever is live, so the changed-outside check is skipped, and its files are checked by `assertImportFits`. The
- * deployment is linked to the import when it is created, and the import settles with it (deployed or failed).
+ * deployment is linked to the import when it is created, and the import settles with it: deployed, or, when the World
+ * accepted nothing, back to `built` (or `failed` for a PERMANENT error), all through `markFailed` (Ruling R19).
  */
 import { and, eq, inArray, isNull, lt, or, sql, TransactionRollbackError } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, dclBudget, parseParcel } from '@virvixr/shared'
@@ -45,6 +46,25 @@ const NOTHING_NEW = 'Your World already has everything in this scene, so there w
 const GENERIC_FAILURE = 'Something went wrong on our side while deploying. Try again in a few minutes.'
 const IMPORT_REPLACED = 'A newer upload replaced this one, so this deploy was cancelled.'
 const IMPORT_FILES_GONE = "The built scene's files are gone. Upload it again."
+/** What an import's deploy says when the signature can no longer be used (the Import page's button is Deploy). */
+const IMPORT_EXPIRED = 'The signature took too long. Press Deploy to sign again.'
+const IMPORT_STALE = 'Your World changed while this deploy waited for its signature. Press Deploy to sign again.'
+const IMPORT_INTERRUPTED = 'Virvi was interrupted while deploying. Press Deploy to try again.'
+
+/**
+ * Errors a retry of the same stored build can't fix (Rulings R19, R20): the import fails and needs a new upload. Any
+ * other failure before the World accepted the deploy puts the import back to `built`, so the creator presses Deploy.
+ */
+export const PERMANENT_IMPORT_ERRORS: ReadonlySet<string> = new Set([
+  'import_files_missing', 'world_changed', 'bad_scene_json', 'scene_too_big', 'file_too_big', 'world_storage_full',
+])
+
+/** The import's columns after a deploy of it ended without going live with error `code` (see PERMANENT_IMPORT_ERRORS). */
+export function importAfterFailure(code: string, message: string, now = new Date()) {
+  return PERMANENT_IMPORT_ERRORS.has(code)
+    ? { status: 'failed' as const, errorCode: code, errorMessage: message, finishedAt: now, updatedAt: now }
+    : { status: 'built' as const, errorCode: code, errorMessage: message, updatedAt: now }
+}
 /** The sentence when a built scene.json names a World other than the one it is deploying to. */
 export const worldChanged = (named: string | null, world: string) =>
   `The built scene.json names the World ${named ?? '(none)'}, not ${world}. Virvi only deploys a scene to the World it was uploaded for.`
@@ -391,15 +411,28 @@ function plainError(err: unknown): string {
   return GENERIC_FAILURE
 }
 
-/** Fails the deployment (only while it is `onlyIf`, when given) and settles the import it deploys, if any. */
-export async function markFailed(deploymentId: string, err: unknown, onlyIf?: Deployment['status']) {
+/** The code an import records for a deploy error. */
+function errorCodeOf(err: unknown): string {
+  if (err instanceof DeployerError || err instanceof ImportError) return err.code
+  if (err instanceof WorldsError) return err.status === 0 ? 'world_unreachable' : 'deploy_rejected'
+  return 'deploy_failed'
+}
+
+/**
+ * Every deployment that ends without going live ends here: it fails (only while it is `onlyIf`, when given) and the
+ * import it deploys, if any, settles by importAfterFailure. `importMessage` replaces the deployment's sentence on the
+ * import when that one only makes sense on the Deploy page; `assetBundle` is stored with the failure.
+ */
+export async function markFailed(
+  deploymentId: string, err: unknown, onlyIf?: Deployment['status'], extra: { importMessage?: string; assetBundle?: unknown } = {},
+) {
   const message = plainError(err)
   const failed = await db
     .update(sceneDeployments)
-    .set({ status: 'failed', errorMessage: message })
+    .set({ status: 'failed', errorMessage: message, ...(extra.assetBundle !== undefined ? { assetBundle: extra.assetBundle } : {}) })
     .where(and(eq(sceneDeployments.id, deploymentId), ...(onlyIf ? [eq(sceneDeployments.status, onlyIf)] : [])))
     .returning({ id: sceneDeployments.id })
-  if (failed.length) await importDeployFailed([deploymentId], message)
+  if (failed.length) await importDeployFailed([deploymentId], { code: errorCodeOf(err), message: extra.importMessage ?? message })
 }
 
 /** The destination stops waiting on the imports these deployments deploy. */
@@ -409,18 +442,17 @@ async function clearPendingImport(tx: Pick<typeof db, 'update' | 'select'>, depl
 }
 
 /**
- * These deployments ended without going live. An import that was deploying fails with the deployment's message; one
- * still waiting for a signature stays so (its window is over, so the creator can start it again). Either way the World
- * no longer waits on it.
+ * These deployments ended without going live. An import that was deploying settles by importAfterFailure (back to
+ * `built` with the sentence, or `failed`); one still waiting for a signature stays so (its window is over, so the
+ * creator can start it again). Either way the World no longer waits on it.
  */
-async function importDeployFailed(deploymentIds: string[], message: string | null) {
+async function importDeployFailed(deploymentIds: string[], error: { code: string; message: string } | null) {
   if (!deploymentIds.length) return
-  const now = new Date()
   await db.transaction(async (tx) => {
     await clearPendingImport(tx, deploymentIds)
-    if (message === null) return
+    if (error === null) return
     await tx.update(sceneImports)
-      .set({ status: 'failed', errorCode: 'deploy_failed', errorMessage: message, finishedAt: now, updatedAt: now })
+      .set(importAfterFailure(error.code, error.message))
       .where(and(inArray(sceneImports.deploymentId, deploymentIds), eq(sceneImports.status, 'deploying')))
   })
 }
@@ -543,10 +575,7 @@ async function runVirviDeploy(
     const packed = await assembleFor(dest, started, opts.fetch)
     if (!packed.assembled.changed) {
       const err = await nothingToDeploy(dest, packed.assembled)
-      await db
-        .update(sceneDeployments)
-        .set({ status: 'failed', errorMessage: err.message, assetBundle: noopBundle(packed) })
-        .where(eq(sceneDeployments.id, deploymentId))
+      await markFailed(deploymentId, err, undefined, { assetBundle: noopBundle(packed) })
       return
     }
     const { a } = await retimestamp(packed.assembled, started)
@@ -624,7 +653,7 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   if (dep.status !== 'awaiting_signature') throw new DeployerError(409, 'not_awaiting_signature', 'This deploy is not waiting for a signature')
   const bundle = dep.assetBundle as SignedBundle
   if (Date.now() - bundle.timestamp > DEPLOY_WINDOW_MS) {
-    const err = new DeployerError(409, 'expired', 'The signature came too late. Start the deploy again.')
+    const err = new DeployerError(409, 'expired', bundle.importId ? IMPORT_EXPIRED : 'The signature came too late. Start the deploy again.')
     await markFailed(dep.id, err)
     throw err
   }
@@ -668,7 +697,7 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   try {
     const base = bundle.importId ? await liveAt(dest) : await liveBaseFor(dest)
     if ((base?.id ?? null) !== bundle.baseEntityId) {
-      throw new DeployerError(409, 'stale', 'Your World changed since this deploy was prepared. Start it again.')
+      throw new DeployerError(409, 'stale', bundle.importId ? IMPORT_STALE : 'Your World changed since this deploy was prepared. Start it again.')
     }
     const newFiles = await rebuildNewFiles(bundle.newFiles, opts.fetch ?? defaultModelFetcher)
     const { entityId, files } = await buildEntity({
@@ -726,13 +755,8 @@ export async function reconcileStaleDeployments(now: Date = new Date()): Promise
       if (bundle?.entityId && live?.id === bundle.entityId) {
         await afterWorldDeploy(dest, bundle.entityId, bundle.deployedFiles ?? [], row.id)
       } else {
-        const interrupted = 'This deploy was interrupted. Virvi will try again.'
-        const failed = await db
-          .update(sceneDeployments)
-          .set({ status: 'failed', errorMessage: interrupted })
-          .where(and(eq(sceneDeployments.id, row.id), eq(sceneDeployments.status, row.status)))
-          .returning({ id: sceneDeployments.id })
-        if (failed.length) await importDeployFailed([row.id], 'This deploy was interrupted. Upload the scene again to retry.')
+        const interrupted = new DeployerError(500, 'interrupted', 'This deploy was interrupted. Virvi will try again.')
+        await markFailed(row.id, interrupted, row.status, { importMessage: IMPORT_INTERRUPTED })
       }
     } catch (err) {
       console.error('[world-deployer] reconcile failed:', row.id, err instanceof Error ? err.message : err)

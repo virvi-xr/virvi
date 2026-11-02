@@ -5,7 +5,7 @@ import { getImportStore } from '../../storage/private-store.js'
 import { ownerFor, RouteError } from '../../routes/dcl-destinations.js'
 import { virviSigner } from '../dcl/entity.js'
 import {
-  DeployerError, markFailed, prepareSignedDeploy, startVirviDeploy, worldChanged, type Deployment, type Destination,
+  DeployerError, importAfterFailure, markFailed, prepareSignedDeploy, startVirviDeploy, worldChanged, type Deployment, type Destination,
 } from '../dcl/world-deployer.js'
 import { OWNER_ERROR_MESSAGES, type SceneImportRow } from './imports.js'
 import { ImportError, worldNameOf } from './scene-zip.js'
@@ -28,9 +28,6 @@ export type StartedImportDeploy =
   | { mode: 'sign'; deployment: Deployment; payload: string; expiresAt: string }
 
 const granted = (d: Pick<Destination, 'mode' | 'grantedAt'>) => d.mode === 'virvi' && !!d.grantedAt
-
-/** Errors a retry can't fix: the stored build itself is unusable, so the import fails. Any other start error leaves it `built`. */
-const PERMANENT = new Set(['import_files_missing', 'world_changed', 'bad_scene_json'])
 
 /** The base and parcels of the built scene.json, which must name the import's World (a stored build is never trusted). */
 async function builtPlot(row: SceneImportRow): Promise<{ base: string; parcels: string[] }> {
@@ -70,17 +67,11 @@ const notYetDeploying = (id: string) => and(
 /**
  * A deploy that didn't start (the World accepted nothing) puts the import back to `built` with the error's sentence, so
  * the creator can try again (Ruling R19), also from the automatic deploy's claim (R24); a stored build that can't work
- * (PERMANENT) fails it. The built files stay.
+ * (PERMANENT_IMPORT_ERRORS) fails it. The same rule as a deployment that fails (markFailed). The built files stay.
  */
 async function startFailed(importId: string, err: unknown): Promise<void> {
   const known = err instanceof ImportError || err instanceof DeployerError
-  const code = known ? err.code : 'deploy_failed'
-  const message = known ? err.message : GENERIC
-  const now = new Date()
-  const set = PERMANENT.has(code)
-    ? { status: 'failed' as const, errorCode: code, errorMessage: message, finishedAt: now, updatedAt: now }
-    : { status: 'built' as const, errorCode: code, errorMessage: message, updatedAt: now }
-  await db.update(sceneImports).set(set).where(notYetDeploying(importId))
+  await db.update(sceneImports).set(importAfterFailure(known ? err.code : 'deploy_failed', known ? err.message : GENERIC)).where(notYetDeploying(importId))
 }
 
 /**

@@ -17,6 +17,7 @@ import { hyperfyHosting } from '../services/hyperfy/infrastructure.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, hasScope, isFullAccess } from '../auth/permissions.js'
 import { DownloadError, planDownload, zipEntries } from '../services/dcl/deployed-files.js'
+import { DeployerError, markFailed } from '../services/dcl/world-deployer.js'
 
 type Deployment = typeof sceneDeployments.$inferSelect
 
@@ -125,11 +126,11 @@ export default async function deployRoutes(app: FastifyInstance) {
         })
       }
 
-      const [updated] = await db
-        .update(sceneDeployments)
-        .set({ status: 'failed', errorMessage: 'Cancelled by user' })
-        .where(eq(sceneDeployments.id, id))
-        .returning()
+      // Through markFailed, so an import this deploys doesn't stay deploying
+      await markFailed(id, new DeployerError(400, 'cancelled', 'Cancelled by user'), deployment.status, {
+        importMessage: 'The deploy was cancelled. Press Deploy to try again.',
+      })
+      const updated = (await db.query.sceneDeployments.findFirst({ where: eq(sceneDeployments.id, id) }))!
 
       return reply.send({ deployment: publicDeployment(updated) })
     },
