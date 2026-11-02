@@ -26,6 +26,7 @@ import {
   assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsInScene, pendingModels, wizardSceneJson,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
+import { keepDeployedFiles } from './deployed-files.js'
 import { buildEntity, dclHash, verifyChain, virviSigner, type AuthChain, type ContentRef, type SceneMetadata } from './entity.js'
 import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
 import { getWorldsClient, WorldsError, type LiveEntity } from './worlds-client.js'
@@ -82,6 +83,8 @@ export interface SignedBundle {
   refused: Assembled['refused']
   newFiles: NewFileSource[]
   existing: ContentRef[]
+  /** Every file of the entity, path to hash: what the deployment's download is made of. */
+  content: ContentRef[]
   /** scene.json metadata as exact JSON text: jsonb reorders keys, which would change the entity id. */
   metadataJson: string
   /** The live entity this deployment builds on (or replaces); null when the World was empty. */
@@ -298,10 +301,14 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
   return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name }), baseEntityId: live.id }
 }
 
-/** Path to hash for every file in the entity, read from the entity file itself. */
+/** Every file in the entity, path and hash, read from the entity file itself. */
+function entityContent(a: { entityId: string; files: Map<string, Uint8Array> }): ContentRef[] {
+  return (JSON.parse(new TextDecoder().decode(a.files.get(a.entityId)!)) as { content: ContentRef[] }).content
+}
+
+/** Path to hash for every file in the entity. */
 function contentOf(a: { entityId: string; files: Map<string, Uint8Array> }): Map<string, string> {
-  const entity = JSON.parse(new TextDecoder().decode(a.files.get(a.entityId)!)) as { content: ContentRef[] }
-  return new Map(entity.content.map((c) => [c.file, c.hash]))
+  return new Map(entityContent(a).map((c) => [c.file, c.hash]))
 }
 
 /** The new (not referenced-by-hash) files of an assembled deployment, path to bytes. */
@@ -420,10 +427,13 @@ async function importDeployFailed(deploymentIds: string[], message: string | nul
 }
 
 /**
- * After the World accepted `entityId`: record it on the destination and deployment, then link the
- * World's location to the Virvi scene.
+ * After the World accepted `entityId`: record it on the destination and deployment, keep the files it uploaded
+ * (`kept`, when the caller has them), then link the World's location to the Virvi scene.
  */
-export async function afterWorldDeploy(dest: Destination, entityId: string, deployedFiles: string[], deploymentId: string): Promise<void> {
+export async function afterWorldDeploy(
+  dest: Destination, entityId: string, deployedFiles: string[], deploymentId: string,
+  kept?: { content: ContentRef[]; files: Map<string, Uint8Array> },
+): Promise<void> {
   const now = new Date()
   await db.transaction(async (tx) => {
     await tx
@@ -432,7 +442,10 @@ export async function afterWorldDeploy(dest: Destination, entityId: string, depl
       .where(eq(dclWorldDestinations.id, dest.id))
     await tx
       .update(sceneDeployments)
-      .set({ status: 'deployed', deployedAt: now, catalystEntityId: entityId, errorMessage: null })
+      .set({
+        status: 'deployed', deployedAt: now, catalystEntityId: entityId, errorMessage: null,
+        ...(kept ? { assetBundle: sql`coalesce(${sceneDeployments.assetBundle}, '{}'::jsonb) || ${JSON.stringify({ content: kept.content })}::jsonb` } : {}),
+      })
       .where(eq(sceneDeployments.id, deploymentId))
     // The import this deployed is live: the World no longer waits on it
     await clearPendingImport(tx, [deploymentId])
@@ -440,6 +453,12 @@ export async function afterWorldDeploy(dest: Destination, entityId: string, depl
       .set({ status: 'deployed', errorCode: null, errorMessage: null, finishedAt: now, updatedAt: now })
       .where(and(eq(sceneImports.deploymentId, deploymentId), eq(sceneImports.status, 'deploying')))
   })
+  if (kept) {
+    // The deploy is live either way: a file that couldn't be kept is fetched from the Worlds server on download
+    await keepDeployedFiles(kept.content, kept.files).catch((err) => {
+      console.error('[world-deployer] could not keep deployed files:', deploymentId, err instanceof Error ? err.message : err)
+    })
+  }
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
   await linkWorldLocation({
     world: dest.worldName, virviSceneId: dest.sceneId, hostUserId: dest.ownerUserId, entityId,
@@ -515,7 +534,8 @@ async function runVirviDeploy(
     }
     const { a } = await retimestamp(packed.assembled, started)
     const progress = { modelsTotal: a.added.length, modelsUploaded: 0 }
-    const bundle = { entityId: a.entityId, pointers: a.pointers, deployedFiles: a.deployedFiles, added: a.added, refused: a.refused, baseEntityId: packed.baseEntityId }
+    const content = entityContent(a)
+    const bundle = { entityId: a.entityId, pointers: a.pointers, deployedFiles: a.deployedFiles, added: a.added, refused: a.refused, baseEntityId: packed.baseEntityId, content }
     await db.update(sceneDeployments).set({ status: 'deploying', assetBundle: { ...bundle, progress } }).where(eq(sceneDeployments.id, deploymentId))
     const authChain = await signer.signChain(a.entityId)
     await getWorldsClient().deploy({ entityId: a.entityId, authChain, files: a.files })
@@ -524,7 +544,7 @@ async function runVirviDeploy(
       .update(sceneDeployments)
       .set({ assetBundle: { ...bundle, progress: { ...progress, modelsUploaded: progress.modelsTotal } } })
       .where(eq(sceneDeployments.id, deploymentId))
-    await afterWorldDeploy(dest, a.entityId, a.deployedFiles, deploymentId)
+    await afterWorldDeploy(dest, a.entityId, a.deployedFiles, deploymentId, { content, files: a.files })
   } catch (err) {
     console.error('[world-deployer] deploy failed:', deploymentId, err instanceof Error ? err.message : err)
     // Once the World has accepted it the deployment is live; a later bookkeeping error must not say otherwise.
@@ -564,6 +584,7 @@ export async function prepareSignedDeploy(
     refused: a.refused,
     newFiles: await describeNewFiles(a, packed.storedPrefix),
     existing: a.existing,
+    content: entityContent(a),
     metadataJson: JSON.stringify(a.metadata),
     baseEntityId: packed.baseEntityId,
     importId: dest.pendingImportId,
@@ -639,7 +660,7 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
     if (entityId !== bundle.entityId) throw new DeployerError(500, 'entity_mismatch', 'The rebuilt deployment did not match what was signed')
     await getWorldsClient().deploy({ entityId, authChain: chain, files })
     live = true
-    await afterWorldDeploy(dest, entityId, bundle.deployedFiles, dep.id)
+    await afterWorldDeploy(dest, entityId, bundle.deployedFiles, dep.id, { content: entityContent({ entityId, files }), files })
   } catch (err) {
     if (!live) {
       await markFailed(dep.id, err).catch(() => {})

@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElements } from '../src/db/schema.js'
+import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { BATCH_WINDOW_MS, RETRY_BACKOFF_MS, startDclRedeploySweep, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
 import { DEPLOY_WINDOW_MS, prepareSignedDeploy, startVirviDeploy, whenSettled } from '../src/services/dcl/world-deployer.js'
@@ -33,12 +34,15 @@ beforeEach(async () => {
   cfg.virviDclDeployKey = Wallet.createRandom().privateKey
   fake = new FakeWorldsClient()
   setWorldsClient(fake)
+  // Every deploy keeps its files: in memory here, never on disk
+  setImportStore(memoryPrivateStore())
   fetcher.mockClear()
 })
 afterEach(() => {
   cfg.cdnUrl = saved.cdnUrl
   cfg.virviDclDeployKey = saved.key
   setWorldsClient(null)
+  setImportStore(null)
 })
 
 /** The World's scene before the test: Virvi's runtime, no models yet (the owner's first deploy). */

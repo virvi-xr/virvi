@@ -86,6 +86,12 @@ async function fixtures() {
   const [signDeploy] = await db.insert(sceneDeployments).values({
     sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', destinationId: destination.id, target: { world: 'b-world.dcl.eth' }, status: 'awaiting_signature', deployedBy: b.id,
   }).returning()
+  // A World deploy that went live, its one file kept (beforeEach puts it in the import store)
+  const [liveDeploy] = await db.insert(sceneDeployments).values({
+    sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', destinationId: destination.id, target: { world: 'b-world.dcl.eth' },
+    status: 'deployed', deployedAt: new Date(), catalystEntityId: 'bafkreibentity', deployedBy: b.id,
+    assetBundle: { content: [{ file: 'scene.json', hash: 'bafkreibscenejson' }] },
+  }).returning()
   const [sceneImport] = await db.insert(sceneImports).values({
     userId: b.id, sceneId: scene.id, worldName: 'b-world.dcl.eth', kind: 'sdk7', status: 'failed', sourceKey: 'imports/b/source.zip', logKey: 'imports/b/build.log',
   }).returning()
@@ -120,7 +126,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, signDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -192,6 +198,7 @@ const CASES: Case[] = [
   { route: 'DELETE /api/ar/devices/:id', url: (f) => `/api/ar/devices/${f.arDevice.id}` },
   // deploy
   { route: 'GET /api/deploy/:id', url: (f) => `/api/deploy/${f.dcl.id}` },
+  { route: 'GET /api/deploy/:id/files.zip', url: (f) => `/api/deploy/${f.liveDeploy.id}/files.zip` },
   { route: 'GET /api/deploy/scene/:sceneId', url: (f) => `/api/deploy/scene/${f.scene.id}` },
   { route: 'POST /api/deploy/:id/cancel', url: (f) => `/api/deploy/${f.dcl.id}/cancel` },
   { route: 'POST /api/deploy/:id/signature', url: (f) => `/api/deploy/${f.signDeploy.id}/signature`, body: () => ({ chain: [] }) },
@@ -394,6 +401,7 @@ describe('cross-account route walk', () => {
     const importStore = memoryPrivateStore()
     setImportStore(importStore)
     await importStore.put(f.sceneImport.logKey!, Buffer.from('B build log'), 'text/plain; charset=utf-8')
+    await importStore.put('deployed/bafkreibscenejson', Buffer.from('{"b":"scene"}'), 'application/octet-stream')
     worlds.deployers.set('b-world.dcl.eth', { owner: f.b.wallet, deployers: [] })
   })
   afterEach(async () => {

@@ -7,6 +7,7 @@ import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { analyticsScenes, assetLibraryItems, dclWorldDestinations, locationSetups, sceneDeployments, scenes } from '../src/db/schema.js'
 import { chainSigner, verifyChain, virviSigner } from '../src/services/dcl/entity.js'
+import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { DCL_RUNTIME_VERSION } from '../src/services/dcl/runtime.js'
 import {
@@ -42,12 +43,15 @@ beforeEach(async () => {
   cfg.virviDclDeployKey = Wallet.createRandom().privateKey
   fake = new FakeWorldsClient()
   setWorldsClient(fake)
+  // Every deploy keeps its files: in memory here, never on disk
+  setImportStore(memoryPrivateStore())
   fetcher.mockClear()
 })
 afterEach(() => {
   cfg.cdnUrl = saved.cdnUrl
   cfg.virviDclDeployKey = saved.key
   setWorldsClient(null)
+  setImportStore(null)
   vi.useRealTimers()
 })
 

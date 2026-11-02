@@ -6,6 +6,7 @@
  *                                      404 `{error, message}` when the World has no scene deployed.
  * - GET  /contents/{hash}           -> the content file; for an entity id, the entity JSON
  *                                      `{ version, type, pointers, timestamp, content: [{file, hash}], metadata }`.
+ * - HEAD /contents/{hash}           -> 200 when the server holds the file, 404 when it doesn't.
  * - POST /entities                  -> multipart/form-data: `entityId`, `authChain[i][type|payload|signature]`,
  *                                      then one file part per content hash. Same form dcl-catalyst-client's
  *                                      ContentClient.deploy builds; we send it ourselves so the 4xx body reaches
@@ -48,9 +49,15 @@ export interface WorldsClient {
   /** Never cached: callers act on the answer right away. */
   getDeployers(world: string): Promise<{ owner: string | null; deployers: string[] }>
   getWalletStats(address: string): Promise<{ maxAllowedBytes: number; usedBytes: number } | null>
+  /** Whether the server still holds the content file `hash`. */
+  hasContent(hash: string): Promise<boolean>
+  /** The content file `hash`, null when the server doesn't hold it. Not checked against the hash here. */
+  getContent(hash: string): Promise<Uint8Array | null>
 }
 
 const READ_TIMEOUT_MS = 10_000
+/** A content file can be up to 50 MB. */
+const CONTENT_TIMEOUT_MS = 120_000
 const WRITE_TIMEOUT_MS = 120_000
 
 async function readBody(res: Response): Promise<string> {
@@ -146,6 +153,24 @@ export class HttpWorldsClient implements WorldsClient {
     const max = Number(s.maxAllowedSpace)
     if (!Number.isFinite(used) || !Number.isFinite(max)) return null
     return { maxAllowedBytes: max, usedBytes: used }
+  }
+
+  async hasContent(hash: string) {
+    const res = await request(`${this.base}/contents/${encodeURIComponent(hash)}`, { method: 'HEAD' }, READ_TIMEOUT_MS)
+    if (res.status === 404) return false
+    if (!res.ok) throw new WorldsError(res.status, '')
+    return true
+  }
+
+  async getContent(hash: string) {
+    const res = await request(`${this.base}/contents/${encodeURIComponent(hash)}`, {}, CONTENT_TIMEOUT_MS)
+    if (res.status === 404) return null
+    if (!res.ok) throw new WorldsError(res.status, await readBody(res))
+    try {
+      return new Uint8Array(await res.arrayBuffer())
+    } catch (err) {
+      throw new WorldsError(0, '', `Worlds server: reading ${hash} failed: ${(err as Error).message}`)
+    }
   }
 }
 

@@ -7,6 +7,8 @@ export class FakeWorldsClient implements WorldsClient {
   signed: Array<{ req: SignedRequest; chain: AuthChain }> = []
   deployers = new Map<string, { owner: string | null; deployers: string[] }>()
   stats = new Map<string, { maxAllowedBytes: number; usedBytes: number }>()
+  /** Content files the server holds, by hash (deploys don't add to it on their own). */
+  contents = new Map<string, Uint8Array>()
   failNext?: WorldsError
   down = false
 
@@ -35,4 +37,6 @@ export class FakeWorldsClient implements WorldsClient {
   }
   async getDeployers(world: string) { this.hit(); return this.deployers.get(world.toLowerCase()) ?? { owner: null, deployers: [] } }
   async getWalletStats(address: string) { this.hit(); return this.stats.get(address.toLowerCase()) ?? null }
+  async hasContent(hash: string) { this.hit(); return this.contents.has(hash) }
+  async getContent(hash: string) { this.hit(); return this.contents.get(hash) ?? null }
 }
