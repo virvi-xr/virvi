@@ -15,6 +15,8 @@ export interface PrivateStore {
   put(key: string, body: Buffer, contentType: string): Promise<void>
   get(key: string): Promise<{ body: Buffer; contentType: string } | null>
   deletePrefix(prefix: string): Promise<number>
+  /** Every key under `prefix` with its size in bytes, sorted by key. */
+  list(prefix: string): Promise<Array<{ key: string; size: number }>>
   /** Large objects stream through, never held whole in memory. */
   putStream(key: string, body: Readable, length: number, contentType: string): Promise<void>
   getStream(key: string): Promise<{ body: Readable; contentType: string; length?: number } | null>
@@ -62,6 +64,16 @@ export function r2PrivateStore(uri: string): PrivateStore {
         if ((err as { name?: string }).name === 'NoSuchKey') return null
         throw err
       }
+    },
+    async list(prefix) {
+      const out: Array<{ key: string; size: number }> = []
+      let token: string | undefined
+      do {
+        const res = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token }))
+        for (const o of res.Contents ?? []) if (o.Key?.startsWith(prefix)) out.push({ key: o.Key, size: o.Size ?? 0 })
+        token = res.IsTruncated ? res.NextContinuationToken : undefined
+      } while (token)
+      return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     },
     async deletePrefix(prefix) {
       const keys: string[] = []
@@ -134,6 +146,15 @@ export function localPrivateStore(dir: string): PrivateStore {
         throw err
       }
     },
+    async list(prefix) {
+      const base = join(root, 'objects') + sep
+      const out: Array<{ key: string; size: number }> = []
+      for (const p of await walk(join(root, 'objects'))) {
+        const key = p.slice(base.length).split(sep).join('/')
+        if (key.startsWith(prefix)) out.push({ key, size: (await stat(p)).size })
+      }
+      return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    },
     async deletePrefix(prefix) {
       const base = join(root, 'objects') + sep
       const keys = (await walk(join(root, 'objects')))
@@ -157,6 +178,10 @@ export function memoryPrivateStore(): PrivateStore & { keys(): string[] } {
       let n = 0
       for (const k of [...objects.keys()]) if (k.startsWith(prefix)) { objects.delete(k); n++ }
       return n
+    },
+    async list(prefix) {
+      return [...objects.entries()].filter(([k]) => k.startsWith(prefix)).map(([key, o]) => ({ key, size: o.body.length }))
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     },
     async putStream(key, body, _length, contentType) { objects.set(key, { body: await collect(body), contentType }) },
     async getStream(key) {

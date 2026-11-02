@@ -12,6 +12,8 @@ import { startDclRedeploySweep } from './services/dcl/redeploy-sweep.js'
 import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
 import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
+import { setOnBuildDone } from './services/import/build-runner.js'
+import { deployImport } from './services/import/import-deploy.js'
 import { hyperfyHosting } from './services/hyperfy/infrastructure.js'
 import { startAnalyticsJobs } from './analytics/jobs.js'
 import { initBus } from './realtime/bus.js'
@@ -34,6 +36,8 @@ async function main() {
   const app = await buildApp()
 
   // ── Start HTTP server ────────────────────────────────────────────────────
+  // A finished build of a World Virvi may deploy to goes straight out (Ruling R1)
+  setOnBuildDone(deployImport)
   await app.listen({ port: config.port, host: '0.0.0.0' })
   console.log(`[virvi-server] HTTP listening on port ${config.port}`)
 

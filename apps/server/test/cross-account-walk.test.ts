@@ -209,6 +209,7 @@ const CASES: Case[] = [
   // scene imports
   { route: 'GET /api/imports/:id', url: (f) => `/api/imports/${f.sceneImport.id}` },
   { route: 'GET /api/imports/:id/log', url: (f) => `/api/imports/${f.sceneImport.id}/log` },
+  { route: 'POST /api/imports/:id/deploy', url: (f) => `/api/imports/${f.sceneImport.id}/deploy` },
   { route: 'GET /api/scenes/:sceneId/dcl/destinations', url: (f) => `/api/scenes/${f.scene.id}/dcl/destinations` },
   // events and command center
   { route: 'GET /api/scenes/:sceneId/events', url: (f) => `/api/scenes/${f.scene.id}/events` },

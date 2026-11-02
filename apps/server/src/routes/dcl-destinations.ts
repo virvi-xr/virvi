@@ -66,6 +66,7 @@ import {
   DeployerError, prepareSignedDeploy, startVirviDeploy, submitSignedDeploy, type Destination,
 } from '../services/dcl/world-deployer.js'
 import { deploymentForCaller, publicDeployment } from './deploy.js'
+import { ImportError } from '../services/import/scene-zip.js'
 
 /** Signed-fetch metadata Virvi sends on permission calls (see the header comment). */
 const PERMISSION_METADATA = '{}'
@@ -94,6 +95,8 @@ async function handle(reply: FastifyReply, fn: () => Promise<unknown>) {
   } catch (err) {
     if (err instanceof RouteError) return reply.status(err.status).send({ error: err.code, ...err.extra })
     if (err instanceof DeployerError) return reply.status(err.status).send({ error: err.code, message: err.message })
+    // An imported scene's files that don't fit the World (assertImportFits)
+    if (err instanceof ImportError) return reply.status(err.status).send({ error: err.code, message: err.message })
     if (err instanceof WorldsError) return reply.status(502).send({ error: 'world_unreachable' })
     if (err instanceof DirectoryUnavailableError) return reply.status(502).send({ error: 'directory_unavailable' })
     throw err

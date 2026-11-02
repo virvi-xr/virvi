@@ -5,6 +5,7 @@
  * from the World's live entity: every live file stays (by hash), only missing models are fetched
  * and added, and a wizard-made scene on an older runtime gets the current one. Adopted scenes, and any
  * live scene without Virvi's `virvi` block (not made by the wizard), never have their code or metadata touched.
+ * An imported scene (assembleImported) is deployed as exactly its built files.
  */
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, localModelFile } from '@virvixr/shared'
@@ -355,4 +356,33 @@ export async function assembleRedeploy(input: {
     models: input.models,
     changed: got.size > 0 || upgrade || renamed,
   })
+}
+
+/**
+ * An imported scene, built elsewhere: the entity is exactly its built files, every one new. It replaces whatever is live
+ * at its parcels, so nothing is kept from the live entity, and its code and scene.json are the owner's.
+ */
+export async function assembleImported(input: {
+  files: Map<string, Uint8Array>
+  metadata: SceneMetadata
+  timestamp: number
+}): Promise<Assembled> {
+  const pointers = input.metadata.scene.parcels
+  const { entityId, files } = await buildEntity({ pointers, metadata: input.metadata, existing: [], newFiles: input.files, timestamp: input.timestamp })
+  let newBytes = 0
+  for (const b of input.files.values()) newBytes += b.byteLength
+  return {
+    entityId,
+    files,
+    pointers,
+    deployedFiles: [...input.files.keys()].map((f) => f.toLowerCase()).sort(),
+    added: [],
+    refused: [],
+    changed: true,
+    triangles: 0,
+    newBytes,
+    newFileSources: [],
+    existing: [],
+    metadata: input.metadata,
+  }
 }

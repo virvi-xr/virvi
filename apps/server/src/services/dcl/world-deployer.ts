@@ -10,14 +10,20 @@
  * builds on the live entity at its base. If the live entity is not the one Virvi last deployed, it stops.
  * Every path (the sweep, "Redeploy now", a mode B publish) first checks Decentraland's limits
  * (`assertDeployable`), and never signs or uploads a deployment that would change nothing.
+ *
+ * A destination with a `pendingImportId` deploys that import's built files instead (`assembleImported`): it replaces
+ * whatever is live, so the changed-outside check is skipped, and its files are checked by `assertImportFits`. The
+ * deployment is linked to the import when it is created, and the import settles with it (deployed or failed).
  */
-import { and, eq, inArray, lt, sql } from 'drizzle-orm'
+import { and, eq, inArray, lt, sql, TransactionRollbackError } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, dclBudget, parseParcel } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
-import { dclWorldDestinations, sceneDeployments, scenes } from '../../db/schema.js'
+import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
 import { linkWorldLocation } from '../../setup/setups.js'
+import { getImportStore } from '../../storage/private-store.js'
+import { ImportError } from '../import/scene-zip.js'
 import {
-  assembleFresh, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsInScene, pendingModels, wizardSceneJson,
+  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsInScene, pendingModels, wizardSceneJson,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { buildEntity, dclHash, verifyChain, virviSigner, type AuthChain, type ContentRef, type SceneMetadata } from './entity.js'
@@ -36,6 +42,8 @@ const UNREACHABLE = "Couldn't read your World from Decentraland"
 export const REFUSED_PREFIX = "Virvi couldn't add "
 const NOTHING_NEW = 'Your World already has everything in this scene, so there was nothing to deploy.'
 const GENERIC_FAILURE = 'Something went wrong on our side while deploying. Try again in a few minutes.'
+const IMPORT_REPLACED = 'A newer upload replaced this one, so this deploy was cancelled.'
+const IMPORT_FILES_GONE = "The built scene's files are gone. Upload it again."
 
 export type Destination = typeof dclWorldDestinations.$inferSelect
 export type Deployment = typeof sceneDeployments.$inferSelect
@@ -56,6 +64,8 @@ export type NewFileSource =
   | { file: string; hash: string; url: string }
   | { file: string; hash: string; base64: string }
   | { file: string; hash: string; runtimeVersion: number }
+  /** A built file of an imported scene, in the import store. */
+  | { file: string; hash: string; storageKey: string }
 
 export interface SignedBundle {
   entityId: string
@@ -70,6 +80,8 @@ export interface SignedBundle {
   metadataJson: string
   /** The live entity this deployment builds on (or replaces); null when the World was empty. */
   baseEntityId: string | null
+  /** The scene import this deployment deploys, if any. */
+  importId?: string | null
 }
 
 async function loadDestination(id: string): Promise<Destination> {
@@ -88,6 +100,17 @@ async function setDestStatus(id: string, status: Destination['status'], statusDe
  * with 503 world_unreachable when the World can't be read. Shared by deploys and the sweep.
  */
 export async function liveBaseFor(dest: Destination): Promise<LiveEntity | null> {
+  const live = await liveAt(dest)
+  if (dest.lastEntityId && live?.id !== dest.lastEntityId) {
+    await setDestStatus(dest.id, 'needs_review', CHANGED_OUTSIDE)
+    throw new DeployerError(409, 'needs_review', CHANGED_OUTSIDE)
+  }
+  if (dest.status === 'unreachable') await setDestStatus(dest.id, 'ok', null)
+  return live
+}
+
+/** The live entity at the destination's base, without the changed-outside check (an import replaces it). */
+async function liveAt(dest: Destination): Promise<LiveEntity | null> {
   let entities: LiveEntity[]
   try {
     entities = await getWorldsClient().getWorldEntities(dest.worldName)
@@ -95,13 +118,7 @@ export async function liveBaseFor(dest: Destination): Promise<LiveEntity | null>
     await setDestStatus(dest.id, 'unreachable', UNREACHABLE)
     throw new DeployerError(503, 'world_unreachable', UNREACHABLE)
   }
-  const live = entities.find((e) => e.pointers.includes(dest.base)) ?? null
-  if (dest.lastEntityId && live?.id !== dest.lastEntityId) {
-    await setDestStatus(dest.id, 'needs_review', CHANGED_OUTSIDE)
-    throw new DeployerError(409, 'needs_review', CHANGED_OUTSIDE)
-  }
-  if (dest.status === 'unreachable') await setDestStatus(dest.id, 'ok', null)
-  return live
+  return entities.find((e) => e.pointers.includes(dest.base)) ?? null
 }
 
 /** The owner-facing sentence for models left out of a deployment. */
@@ -160,6 +177,60 @@ export async function assertDeployable(dest: Destination): Promise<void> {
   if (dest.status === 'over_budget') await setDestStatus(dest.id, 'ok', null)
 }
 
+/** Where the destination's pending import keeps its built files. */
+async function pendingImportPrefix(dest: Destination): Promise<string> {
+  const imp = dest.pendingImportId
+    ? await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, dest.pendingImportId), columns: { builtKeyPrefix: true } })
+    : undefined
+  if (!imp?.builtKeyPrefix) throw new DeployerError(409, 'import_files_missing', IMPORT_FILES_GONE)
+  return imp.builtKeyPrefix
+}
+
+const mb = (n: number) => (n / 1_000_000).toFixed(1)
+
+/**
+ * The check an import's deploy runs first, from the stored sizes alone: no more files than the World's parcels allow,
+ * none over Decentraland's file limit, and room in the owner's World storage. Throws ImportError 413 otherwise.
+ */
+export async function assertImportFits(dest: Destination): Promise<void> {
+  const prefix = await pendingImportPrefix(dest)
+  const files = await getImportStore().list(prefix)
+  const budget = dclBudget(dest.parcels.length)
+  if (files.length > budget.files) {
+    throw new ImportError(413, 'scene_too_big', `Your scene has ${plural(files.length, 'file')}, over the ${budget.files.toLocaleString('en-US')} your ${plural(dest.parcels.length, 'parcel')} allow. Remove some files to deploy it.`)
+  }
+  const big = files.find((f) => f.size > DCL_MAX_FILE_BYTES)
+  if (big) {
+    throw new ImportError(413, 'file_too_big', `${big.key.slice(prefix.length)} is ${mb(big.size)} MB, over Decentraland's 50 MB limit for one file.`)
+  }
+  const bytes = files.reduce((n, f) => n + f.size, 0)
+  let stats: { maxAllowedBytes: number; usedBytes: number } | null
+  try {
+    stats = await getWorldsClient().getWalletStats(dest.ownerWallet)
+  } catch {
+    return // can't tell: let the deploy try, Decentraland will say if it's full
+  }
+  if (stats && bytes > stats.maxAllowedBytes - stats.usedBytes) {
+    throw new ImportError(413, 'world_storage_full', `Your scene needs ${mb(bytes)} MB of World storage but only ${mb(Math.max(0, stats.maxAllowedBytes - stats.usedBytes))} MB is left.`)
+  }
+}
+
+/** The deploy check for the destination: its pending import's files, else the Virvi scene's limits. */
+const assertFits = (dest: Destination) => (dest.pendingImportId ? assertImportFits(dest) : assertDeployable(dest))
+
+/** The built files under `prefix`, by scene-relative path. */
+async function readBuilt(prefix: string): Promise<Map<string, Uint8Array>> {
+  const store = getImportStore()
+  const out = new Map<string, Uint8Array>()
+  for (const { key } of await store.list(prefix)) {
+    const obj = await store.get(key)
+    if (!obj) throw new DeployerError(409, 'import_files_missing', IMPORT_FILES_GONE)
+    out.set(key.slice(prefix.length), new Uint8Array(obj.body))
+  }
+  if (!out.has('scene.json')) throw new DeployerError(409, 'import_files_missing', IMPORT_FILES_GONE)
+  return out
+}
+
 /**
  * A deployment that would add nothing is never signed or uploaded. Models that were refused hold the
  * destination at needs_review with the reason (so nothing retries them on its own); otherwise the World
@@ -186,7 +257,15 @@ function defaultSpawn(parcels: string[]) {
   return { x: (width * DCL_PARCEL_M) / 2, y: 0, z: 1 }
 }
 
-async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFetcher) {
+async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFetcher): Promise<{ assembled: Assembled; baseEntityId: string | null; storedPrefix?: string }> {
+  if (dest.pendingImportId) {
+    // An import replaces whatever is live (deployed outside Virvi too); the live entity is still what it builds on
+    const prefix = await pendingImportPrefix(dest)
+    const live = await liveAt(dest)
+    const files = await readBuilt(prefix)
+    const metadata = JSON.parse(new TextDecoder().decode(files.get('scene.json')!)) as SceneMetadata
+    return { assembled: await assembleImported({ files, metadata, timestamp }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
+  }
   const live = await liveBaseFor(dest)
   const models = await modelsInScene(dest.sceneId)
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
@@ -230,7 +309,8 @@ async function retimestamp(a: Assembled, timestamp: number): Promise<{ a: Assemb
   return { a: { ...a, entityId, files }, timestamp: now }
 }
 
-async function describeNewFiles(a: Assembled): Promise<NewFileSource[]> {
+async function describeNewFiles(a: Assembled, storedPrefix?: string): Promise<NewFileSource[]> {
+  if (storedPrefix) return [...contentOf(a)].map(([file, hash]) => ({ file, hash, storageKey: storedPrefix + file }))
   const existing = new Set(a.existing.map((e) => e.file))
   const models = new Map(a.newFileSources.map((s) => [s.file, s]))
   const runtime = await runtimeFiles(DCL_RUNTIME_VERSION)
@@ -265,6 +345,10 @@ async function rebuildNewFiles(sources: NewFileSource[], fetch: ModelFetcher): P
       out.set(s.file, bytes)
     } else if ('base64' in s) {
       out.set(s.file, new Uint8Array(Buffer.from(s.base64, 'base64')))
+    } else if ('storageKey' in s) {
+      const obj = await getImportStore().get(s.storageKey)
+      if (!obj) throw new DeployerError(409, 'import_files_missing', IMPORT_FILES_GONE)
+      out.set(s.file, new Uint8Array(obj.body))
     } else {
       const rt = (await runtimeFiles(s.runtimeVersion)).get(s.file)
       if (!rt) throw new DeployerError(500, 'entity_mismatch')
@@ -290,11 +374,38 @@ function plainError(err: unknown): string {
   return GENERIC_FAILURE
 }
 
-async function markFailed(deploymentId: string, err: unknown) {
-  await db
+/** Fails the deployment (only while it is `onlyIf`, when given) and settles the import it deploys, if any. */
+export async function markFailed(deploymentId: string, err: unknown, onlyIf?: Deployment['status']) {
+  const message = plainError(err)
+  const failed = await db
     .update(sceneDeployments)
-    .set({ status: 'failed', errorMessage: plainError(err) })
-    .where(eq(sceneDeployments.id, deploymentId))
+    .set({ status: 'failed', errorMessage: message })
+    .where(and(eq(sceneDeployments.id, deploymentId), ...(onlyIf ? [eq(sceneDeployments.status, onlyIf)] : [])))
+    .returning({ id: sceneDeployments.id })
+  if (failed.length) await importDeployFailed([deploymentId], message)
+}
+
+/** The destination stops waiting on the imports these deployments deploy. */
+async function clearPendingImport(tx: Pick<typeof db, 'update' | 'select'>, deploymentIds: string[]) {
+  const linked = tx.select({ id: sceneImports.id }).from(sceneImports).where(inArray(sceneImports.deploymentId, deploymentIds))
+  await tx.update(dclWorldDestinations).set({ pendingImportId: null, updatedAt: new Date() }).where(inArray(dclWorldDestinations.pendingImportId, linked))
+}
+
+/**
+ * These deployments ended without going live. An import that was deploying fails with the deployment's message; one
+ * still waiting for a signature stays so (its window is over, so the creator can start it again). Either way the World
+ * no longer waits on it.
+ */
+async function importDeployFailed(deploymentIds: string[], message: string | null) {
+  if (!deploymentIds.length) return
+  const now = new Date()
+  await db.transaction(async (tx) => {
+    await clearPendingImport(tx, deploymentIds)
+    if (message === null) return
+    await tx.update(sceneImports)
+      .set({ status: 'failed', errorCode: 'deploy_failed', errorMessage: message, finishedAt: now, updatedAt: now })
+      .where(and(inArray(sceneImports.deploymentId, deploymentIds), eq(sceneImports.status, 'deploying')))
+  })
 }
 
 /**
@@ -312,6 +423,11 @@ export async function afterWorldDeploy(dest: Destination, entityId: string, depl
       .update(sceneDeployments)
       .set({ status: 'deployed', deployedAt: now, catalystEntityId: entityId, errorMessage: null })
       .where(eq(sceneDeployments.id, deploymentId))
+    // The import this deployed is live: the World no longer waits on it
+    await clearPendingImport(tx, [deploymentId])
+    await tx.update(sceneImports)
+      .set({ status: 'deployed', errorCode: null, errorMessage: null, finishedAt: now, updatedAt: now })
+      .where(and(eq(sceneImports.deploymentId, deploymentId), eq(sceneImports.status, 'deploying')))
   })
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
   await linkWorldLocation({
@@ -327,13 +443,25 @@ export function whenSettled(deploymentId: string): Promise<void> {
   return running.get(deploymentId) ?? Promise.resolve()
 }
 
+/**
+ * Links a new deployment to the import it deploys, moving the import to `status`; throws 409 import_superseded (which
+ * rolls the deployment back) when the import was replaced meanwhile.
+ */
+async function linkImport(tx: Pick<typeof db, 'update'>, importId: string, deploymentId: string, status: 'deploying' | 'awaiting_signature') {
+  const linked = await tx.update(sceneImports)
+    .set({ status, deploymentId, updatedAt: new Date() })
+    .where(and(eq(sceneImports.id, importId), inArray(sceneImports.status, ['built', 'awaiting_signature'])))
+    .returning({ id: sceneImports.id })
+  if (!linked.length) throw new DeployerError(409, 'import_superseded', IMPORT_REPLACED)
+}
+
 /** Mode A: inserts the deployment and returns it; packing, signing and uploading run in the background. */
 export async function startVirviDeploy(destinationId: string, by: string | null, opts: DeployOptions = {}): Promise<Deployment> {
   const dest = await loadDestination(destinationId)
   const signer = virviSigner()
   if (!signer) throw new DeployerError(503, 'virvi_deploys_unavailable', 'Virvi deploys are not available right now')
   if (dest.mode !== 'virvi' || !dest.grantedAt) throw new DeployerError(409, 'not_granted', 'Virvi has no deploy permission on this World')
-  await assertDeployable(dest)
+  await assertFits(dest)
 
   // One at a time per destination (double clicks, a route racing the sweep): the lock serialises check + insert.
   const dep = await db.transaction(async (tx) => {
@@ -347,6 +475,7 @@ export async function startVirviDeploy(destinationId: string, by: string | null,
       sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
       target: { world: dest.worldName, parcels: dest.parcels }, status: 'building', deployedBy: by,
     }).returning()
+    if (dest.pendingImportId) await linkImport(tx, dest.pendingImportId, row.id, 'deploying')
     return row
   })
 
@@ -399,7 +528,7 @@ export async function prepareSignedDeploy(
   opts: DeployOptions = {},
 ): Promise<{ deployment: Deployment; payload: string; expiresAt: string }> {
   const dest = await loadDestination(destinationId)
-  await assertDeployable(dest)
+  await assertFits(dest)
   const started = Date.now()
   const packed = await assembleFor(dest, started, opts.fetch)
   if (!packed.assembled.changed) {
@@ -422,15 +551,20 @@ export async function prepareSignedDeploy(
     deployedFiles: a.deployedFiles,
     added: a.added,
     refused: a.refused,
-    newFiles: await describeNewFiles(a),
+    newFiles: await describeNewFiles(a, packed.storedPrefix),
     existing: a.existing,
     metadataJson: JSON.stringify(a.metadata),
     baseEntityId: packed.baseEntityId,
+    importId: dest.pendingImportId,
   }
-  const [deployment] = await db.insert(sceneDeployments).values({
-    sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
-    target: { world: dest.worldName, parcels: dest.parcels }, status: 'awaiting_signature', deployedBy: by, assetBundle: bundle,
-  }).returning()
+  const deployment = await db.transaction(async (tx) => {
+    const [row] = await tx.insert(sceneDeployments).values({
+      sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
+      target: { world: dest.worldName, parcels: dest.parcels }, status: 'awaiting_signature', deployedBy: by, assetBundle: bundle,
+    }).returning()
+    if (dest.pendingImportId) await linkImport(tx, dest.pendingImportId, row.id, 'awaiting_signature')
+    return row
+  })
   return { deployment, payload: a.entityId, expiresAt: new Date(timestamp + DEPLOY_WINDOW_MS).toISOString() }
 }
 
@@ -449,17 +583,37 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   if (!(await verifyChain(chain, bundle.entityId, dest.ownerWallet))) {
     throw new DeployerError(403, 'not_world_owner', "That signature isn't from the wallet that owns this World")
   }
-  // Claim it, so a second submit of the same signature can't upload twice.
-  const [claimed] = await db
-    .update(sceneDeployments)
-    .set({ status: 'deploying' })
-    .where(and(eq(sceneDeployments.id, dep.id), eq(sceneDeployments.status, 'awaiting_signature')))
-    .returning({ id: sceneDeployments.id })
-  if (!claimed) throw new DeployerError(409, 'not_awaiting_signature', 'This deploy is not waiting for a signature')
+  // Claim it, so a second submit of the same signature can't upload twice. An import's deployment is claimed with its
+  // import, which must still be waiting for this very deployment (a newer upload may have replaced it).
+  const claimed = await db.transaction(async (tx) => {
+    if (bundle.importId) {
+      const imp = await tx.update(sceneImports)
+        .set({ status: 'deploying', updatedAt: new Date() })
+        .where(and(eq(sceneImports.id, bundle.importId), eq(sceneImports.status, 'awaiting_signature'), eq(sceneImports.deploymentId, dep.id)))
+        .returning({ id: sceneImports.id })
+      if (!imp.length) return 'import' as const
+    }
+    const [row] = await tx
+      .update(sceneDeployments)
+      .set({ status: 'deploying' })
+      .where(and(eq(sceneDeployments.id, dep.id), eq(sceneDeployments.status, 'awaiting_signature')))
+      .returning({ id: sceneDeployments.id })
+    if (!row) tx.rollback()
+    return 'claimed' as const
+  }).catch((err) => {
+    if (err instanceof TransactionRollbackError) return 'taken' as const
+    throw err
+  })
+  if (claimed === 'import') {
+    const err = new DeployerError(409, 'import_superseded', IMPORT_REPLACED)
+    await markFailed(dep.id, err, 'awaiting_signature')
+    throw err
+  }
+  if (claimed !== 'claimed') throw new DeployerError(409, 'not_awaiting_signature', 'This deploy is not waiting for a signature')
 
   let live = false
   try {
-    const base = await liveBaseFor(dest)
+    const base = bundle.importId ? await liveAt(dest) : await liveBaseFor(dest)
     if ((base?.id ?? null) !== bundle.baseEntityId) {
       throw new DeployerError(409, 'stale', 'Your World changed since this deploy was prepared. Start it again.')
     }
@@ -490,10 +644,13 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
  */
 export async function reconcileStaleDeployments(now: Date = new Date()): Promise<void> {
   const cutoff = new Date(now.getTime() - DEPLOY_WINDOW_MS)
-  await db
+  const expired = await db
     .update(sceneDeployments)
     .set({ status: 'failed', errorMessage: 'This publish request expired.' })
     .where(and(eq(sceneDeployments.status, 'awaiting_signature'), lt(sceneDeployments.createdAt, cutoff)))
+    .returning({ id: sceneDeployments.id })
+  // An import waiting on one of these stays awaiting_signature: the creator can start it again
+  await importDeployFailed(expired.map((e) => e.id), null)
 
   const stale = await db
     .select()
@@ -515,10 +672,13 @@ export async function reconcileStaleDeployments(now: Date = new Date()): Promise
       if (bundle?.entityId && live?.id === bundle.entityId) {
         await afterWorldDeploy(dest, bundle.entityId, bundle.deployedFiles ?? [], row.id)
       } else {
-        await db
+        const interrupted = 'This deploy was interrupted. Virvi will try again.'
+        const failed = await db
           .update(sceneDeployments)
-          .set({ status: 'failed', errorMessage: 'This deploy was interrupted. Virvi will try again.' })
+          .set({ status: 'failed', errorMessage: interrupted })
           .where(and(eq(sceneDeployments.id, row.id), eq(sceneDeployments.status, row.status)))
+          .returning({ id: sceneDeployments.id })
+        if (failed.length) await importDeployFailed([row.id], 'This deploy was interrupted. Upload the scene again to retry.')
       }
     } catch (err) {
       console.error('[world-deployer] reconcile failed:', row.id, err instanceof Error ? err.message : err)

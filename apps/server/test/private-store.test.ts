@@ -37,6 +37,18 @@ describe.each<[string, () => PrivateStore]>([
     expect(await s.get('imports/a/one')).toBeNull()
     expect(await s.get('imports/b/three')).not.toBeNull()
   })
+
+  it('list returns the keys under a prefix with their sizes, sorted', async () => {
+    const s = make()
+    await s.put('imports/a/built/scene.json', Buffer.from('{}'), 'application/json')
+    await s.put('imports/a/built/bin/index.js', Buffer.from('code!'), 'text/javascript')
+    await s.put('imports/ab/other', Buffer.from('x'), 'text/plain')
+    expect(await s.list('imports/a/built/')).toEqual([
+      { key: 'imports/a/built/bin/index.js', size: 5 },
+      { key: 'imports/a/built/scene.json', size: 2 },
+    ])
+    expect(await s.list('imports/none/')).toEqual([])
+  })
 })
 
 describe('file private store', () => {

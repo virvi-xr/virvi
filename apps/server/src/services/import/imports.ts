@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { SceneImportView } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
-import { sceneDeployments, sceneImports } from '../../db/schema.js'
+import { dclWorldDestinations, sceneDeployments, sceneImports } from '../../db/schema.js'
 import { insertSceneWithDefaultPreset } from '../../scenes/create.js'
 import { getImportStore } from '../../storage/private-store.js'
-import { DEPLOY_WINDOW_MS } from '../dcl/world-deployer.js'
+import { DEPLOY_WINDOW_MS, DeployerError, markFailed } from '../dcl/world-deployer.js'
 import { ImportError } from './scene-zip.js'
 
 /**
@@ -21,6 +21,11 @@ const BLOCKING = ['uploaded', 'building', 'deploying'] as const
 /** Statuses a new upload replaces (Ruling R2): nothing runs, the creator just hasn't deployed or signed. */
 const SUPERSEDED = ['built', 'awaiting_signature'] as const
 export const SUPERSEDED_MESSAGE = 'A newer upload replaced this one.'
+/** Sentences for ownerFor's codes, which carry none. */
+export const OWNER_ERROR_MESSAGES: Record<string, string> = {
+  not_world_owner: 'None of your verified wallets owns this World.',
+  world_unreachable: "Decentraland's Worlds server didn't answer. Try again in a few minutes.",
+}
 /** How much of the build log the view carries; the log route has the whole of it. */
 const LOG_TAIL_BYTES = 4096
 
@@ -82,7 +87,8 @@ export async function latestImportFor(world: string): Promise<SceneImportRow | n
 
 /**
  * Records a new upload for `world`, serialised per World with an advisory lock: an import that is uploaded, building or
- * deploying refuses it (409 import_in_progress); one that is built or awaiting a signature is failed as superseded.
+ * deploying refuses it (409 import_in_progress); one that is built or awaiting a signature is failed as superseded, and
+ * its prepared deployment with it.
  * `scene` is an existing Virvi scene's id, or the name of a new one (with a Default preset) for the importer.
  */
 export async function createImport(input: {
@@ -92,7 +98,7 @@ export async function createImport(input: {
   scene: { id: string } | { newName: string }
 }): Promise<SceneImportRow> {
   const id = randomUUID()
-  return db.transaction(async (tx) => {
+  const { row, superseded } = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:${input.world}`}))`)
     const busy = await tx.query.sceneImports.findFirst({
       where: and(eq(sceneImports.worldName, input.world), inArray(sceneImports.status, [...BLOCKING])),
@@ -100,9 +106,15 @@ export async function createImport(input: {
     })
     if (busy) throw new ImportError(409, 'import_in_progress', 'This World already has an import under way. Wait for it to finish, then upload again.')
     const now = new Date()
-    await tx.update(sceneImports).set({
+    const superseded = await tx.update(sceneImports).set({
       status: 'failed', errorCode: 'superseded', errorMessage: SUPERSEDED_MESSAGE, buildTokenHash: null, finishedAt: now, updatedAt: now,
     }).where(and(eq(sceneImports.worldName, input.world), inArray(sceneImports.status, [...SUPERSEDED])))
+      .returning({ id: sceneImports.id, deploymentId: sceneImports.deploymentId })
+    // Ruling R16: the World never waits on a superseded import
+    if (superseded.length) {
+      await tx.update(dclWorldDestinations).set({ pendingImportId: null, updatedAt: now })
+        .where(inArray(dclWorldDestinations.pendingImportId, superseded.map((s) => s.id)))
+    }
 
     let sceneId: string
     if ('id' in input.scene) {
@@ -113,8 +125,13 @@ export async function createImport(input: {
     const [row] = await tx.insert(sceneImports).values({
       id, userId: input.userId, sceneId, worldName: input.world, kind: input.kind, sourceKey: sourceKey(id),
     }).returning()
-    return row
+    return { row, superseded }
   })
+  // A superseded import's prepared deploy can no longer be signed (the signed submit also checks the import)
+  for (const s of superseded) {
+    if (s.deploymentId) await markFailed(s.deploymentId, new DeployerError(409, 'superseded', SUPERSEDED_MESSAGE), 'awaiting_signature')
+  }
+  return row
 }
 
 /** Fails an import that never got its build going (storing the source or starting the build threw). */

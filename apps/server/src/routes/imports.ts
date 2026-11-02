@@ -5,6 +5,7 @@
  * GET  /api/imports?sceneId=     — the scene's last 10 imports (all of them with full access, else the caller's own)
  * GET  /api/imports/:id          — one import (its importer, or full access on its scene)
  * GET  /api/imports/:id/log      — its whole build log, as text
+ * POST /api/imports/:id/deploy   — start its deploy (Virvi-signed on a granted World, else returns what to sign)
  *
  * Open to every plan (no feature gate). The build box's own routes are in import-build.ts.
  */
@@ -24,27 +25,29 @@ import { getImportStore } from '../storage/private-store.js'
 import { ImportError, readSceneZip, type SceneFolder } from '../services/import/scene-zip.js'
 import { installVirvi } from '../services/import/install-virvi.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
-import { createImport, failImport, latestImportFor, loadImportView, type SceneImportRow } from '../services/import/imports.js'
+import {
+  createImport, failImport, latestImportFor, loadImportView, OWNER_ERROR_MESSAGES, type SceneImportRow,
+} from '../services/import/imports.js'
+import { NOT_DEPLOYABLE, startImportDeploy } from '../services/import/import-deploy.js'
+import { DeployerError } from '../services/dcl/world-deployer.js'
 import { ownerFor, RouteError } from './dcl-destinations.js'
+import { publicDeployment } from './deploy.js'
 
 const PARCELS_NOT_YET = 'Genesis City imports are coming soon. For now, import a scene whose scene.json names a World.'
 const BUILD_START_FAILED = "The build couldn't start. Try the upload again in a few minutes."
 /** Messages for the destination routes' codes that carry none. */
-const ROUTE_MESSAGES: Record<string, string> = {
-  not_world_owner: 'None of your verified wallets owns this World.',
-  world_unreachable: "Decentraland's Worlds server didn't answer. Try again in a few minutes.",
-}
+const ROUTE_MESSAGES = OWNER_ERROR_MESSAGES
 const LIST_LIMIT = 10
 const MAX_SCENE_NAME = 120
 
 const full = async (request: FastifyRequest, sceneId: string) => isFullAccess(await getSceneAccess(actorFromClaims(request.user), sceneId))
 
-/** Maps ImportError and the destination routes' errors to `{ error, message }`. */
+/** Maps ImportError, the deployer's and the destination routes' errors to `{ error, message }`. */
 async function handle(reply: FastifyReply, fn: () => Promise<unknown>) {
   try {
     return await fn()
   } catch (err) {
-    if (err instanceof ImportError) return reply.status(err.status).send({ error: err.code, message: err.message })
+    if (err instanceof ImportError || err instanceof DeployerError) return reply.status(err.status).send({ error: err.code, message: err.message })
     if (err instanceof RouteError) return reply.status(err.status).send({ error: err.code, message: ROUTE_MESSAGES[err.code], ...err.extra })
     throw err
   }
@@ -142,6 +145,15 @@ export default async function importRoutes(app: FastifyInstance) {
 
   await app.register(async (reads) => {
     reads.addHook('preHandler', authenticate)
+
+    // Ruling R1: the creator starts the deploy of a built import (or one whose signature window passed)
+    reads.post<{ Params: { id: string } }>('/api/imports/:id/deploy', async (request, reply) => handle(reply, async () => {
+      const row = await importFor(request, request.params.id)
+      if (!(await loadImportView(row)).canDeploy) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
+      const started = (await startImportDeploy(row, request.user.id))!
+      if (started.mode === 'virvi') return reply.status(202).send({ deployment: publicDeployment(started.deployment) })
+      return reply.send({ deployment: publicDeployment(started.deployment), payload: started.payload, expiresAt: started.expiresAt })
+    }))
 
     reads.get<{ Querystring: { sceneId?: string } }>('/api/imports', async (request, reply) => handle(reply, async () => {
       const { sceneId } = request.query
