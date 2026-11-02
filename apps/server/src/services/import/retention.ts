@@ -112,18 +112,36 @@ export async function sweepRetention(now: Date): Promise<{ imports: number; depl
   return { imports, deployed }
 }
 
+/** The first run, soon after boot: Railway restarts the server on every deploy, which may come more often than daily. */
+export const RETENTION_FIRST_RUN_MS = 5 * 60_000
+
+let first: ReturnType<typeof setTimeout> | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 
-export function startRetentionSweep(ms = RETENTION_SWEEP_MS): void {
-  if (timer) return
+/** Runs the sweep RETENTION_FIRST_RUN_MS after boot, then every `ms`. `run` is for tests. */
+export function startRetentionSweep(ms = RETENTION_SWEEP_MS, firstAfterMs = RETENTION_FIRST_RUN_MS, run = sweepRetention): void {
+  if (timer || first) return
   let running = false
-  timer = setInterval(() => {
+  const tick = () => {
     if (running) return
     running = true
-    sweepRetention(new Date())
+    run(new Date())
       .then((r) => { if (r.imports || r.deployed) console.log(`[retention] deleted the files of ${r.imports} imports and ${r.deployed} deployed files`) })
       .catch((err) => console.error('[retention] failed:', err))
       .finally(() => { running = false })
-  }, ms)
-  timer.unref?.()
+  }
+  first = setTimeout(() => {
+    first = null
+    tick()
+    timer = setInterval(tick, ms)
+    timer.unref?.()
+  }, firstAfterMs)
+  first.unref?.()
+}
+
+export function stopRetentionSweep(): void {
+  if (first) clearTimeout(first)
+  if (timer) clearInterval(timer)
+  first = null
+  timer = null
 }

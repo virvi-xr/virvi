@@ -98,7 +98,7 @@ async function main() {
   console.log(`[virvi-server] Scene build sweep every ${BUILD_SWEEP_MS}ms`)
   // Ruling R27: import files 30 days after the import ended, deployed files no deploy keeps (it skips a missing bucket)
   startRetentionSweep(RETENTION_SWEEP_MS)
-  console.log(`[virvi-server] Import file retention sweep every ${RETENTION_SWEEP_MS}ms`)
+  console.log(`[virvi-server] Import file retention sweep 5 min after boot, then every ${RETENTION_SWEEP_MS}ms`)
   startAnalyticsJobs()
   console.log('[virvi-server] Analytics jobs started')
 

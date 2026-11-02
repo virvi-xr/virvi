@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports } from '../src/db/schema.js'
 import { localPrivateStore, memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
-import { FILES_EXPIRED, sweepRetention } from '../src/services/import/retention.js'
+import { FILES_EXPIRED, startRetentionSweep, stopRetentionSweep, sweepRetention } from '../src/services/import/retention.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { mkdtempSync } from 'node:fs'
@@ -179,5 +179,20 @@ describe('retention (Ruling R27)', () => {
       expect(await local.delete('a/b')).toBe(1)
       expect(await local.get('a/b')).toBeNull()
     })
+  })
+})
+
+describe('the retention sweep schedule (N6)', () => {
+  afterEach(() => { stopRetentionSweep(); vi.useRealTimers() })
+  it('first runs 5 minutes after boot, then daily', async () => {
+    vi.useFakeTimers()
+    const run = vi.fn(async () => ({ imports: 0, deployed: 0 }))
+    startRetentionSweep(undefined, undefined, run)
+    await vi.advanceTimersByTimeAsync(4 * 60_000)
+    expect(run).toHaveBeenCalledTimes(0)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(run).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+    expect(run).toHaveBeenCalledTimes(2)
   })
 })

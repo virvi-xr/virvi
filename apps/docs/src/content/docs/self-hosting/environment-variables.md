@@ -36,13 +36,15 @@ description: Complete reference for all Virvi environment variables
 
 The import bucket (or `PRIVATE_STORAGE_PATH`) holds `imports/<id>/` (each upload's source, its built files and its build
 log) and `deployed/<hash>` (the files of every World deploy, kept once per content hash, for "Download what went live").
-Once a day the server deletes:
+Five minutes after it starts, and then once a day, the server deletes:
 
 - an import's `imports/<id>/` 30 days after the import ended (deployed or failed, a replaced upload included). The import
   stays listed; its build log answers 410 `files_expired`.
 - every `deployed/<hash>` that neither a World's current live deployment nor any deployment from the last 30 days uses,
   and that was written more than an hour ago. Downloading an older deploy then reads the files from Decentraland's Worlds
   server, while it still has them.
+- any `imports/<id>/` left without its import (deleting an account or a scene deletes its imports' files at once; this
+  catches what a failure left behind).
 
 Nothing is configured for this; a server without the bucket skips it.
 
