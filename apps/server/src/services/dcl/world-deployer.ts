@@ -44,6 +44,12 @@ const NOTHING_NEW = 'Your World already has everything in this scene, so there w
 const GENERIC_FAILURE = 'Something went wrong on our side while deploying. Try again in a few minutes.'
 const IMPORT_REPLACED = 'A newer upload replaced this one, so this deploy was cancelled.'
 const IMPORT_FILES_GONE = "The built scene's files are gone. Upload it again."
+/** The sentence when a built scene.json names a World other than the one it is deploying to. */
+export const worldChanged = (named: string | null, world: string) =>
+  `The built scene.json names the World ${named ?? '(none)'}, not ${world}. Virvi only deploys a scene to the World it was uploaded for.`
+/** The World an entity's metadata deploys to, lower-cased. */
+const metadataWorld = (m: { worldConfiguration?: { name?: unknown } } | undefined) =>
+  typeof m?.worldConfiguration?.name === 'string' ? m.worldConfiguration.name.toLowerCase() : null
 
 export type Destination = typeof dclWorldDestinations.$inferSelect
 export type Deployment = typeof sceneDeployments.$inferSelect
@@ -187,6 +193,7 @@ async function pendingImportPrefix(dest: Destination): Promise<string> {
 }
 
 const mb = (n: number) => (n / 1_000_000).toFixed(1)
+const MIB = 1024 * 1024
 
 /**
  * The check an import's deploy runs first, from the stored sizes alone: no more files than the World's parcels allow,
@@ -201,7 +208,7 @@ export async function assertImportFits(dest: Destination): Promise<void> {
   }
   const big = files.find((f) => f.size > DCL_MAX_FILE_BYTES)
   if (big) {
-    throw new ImportError(413, 'file_too_big', `${big.key.slice(prefix.length)} is ${mb(big.size)} MB, over Decentraland's 50 MB limit for one file.`)
+    throw new ImportError(413, 'file_too_big', `${big.key.slice(prefix.length)} is ${(big.size / MIB).toFixed(1)} MB, over Decentraland's ${DCL_MAX_FILE_BYTES / MIB} MB limit for one file.`)
   }
   const bytes = files.reduce((n, f) => n + f.size, 0)
   let stats: { maxAllowedBytes: number; usedBytes: number } | null
@@ -263,7 +270,11 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     const prefix = await pendingImportPrefix(dest)
     const live = await liveAt(dest)
     const files = await readBuilt(prefix)
-    const metadata = JSON.parse(new TextDecoder().decode(files.get('scene.json')!)) as SceneMetadata
+    const built = JSON.parse(new TextDecoder().decode(files.get('scene.json')!)) as SceneMetadata
+    // Never trusted as stored: the build ran the creator's code, and the entity deploys to the World it names
+    if (metadataWorld(built) !== dest.worldName) throw new DeployerError(422, 'world_changed', worldChanged(metadataWorld(built), dest.worldName))
+    // The creator's code runs the npm package, never Virvi's runtime: without Virvi's marker the scene stays adopted
+    const { virvi: _virvi, ...metadata } = built
     return { assembled: await assembleImported({ files, metadata, timestamp }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
   }
   const live = await liveBaseFor(dest)
@@ -449,7 +460,7 @@ export function whenSettled(deploymentId: string): Promise<void> {
  */
 async function linkImport(tx: Pick<typeof db, 'update'>, importId: string, deploymentId: string, status: 'deploying' | 'awaiting_signature') {
   const linked = await tx.update(sceneImports)
-    .set({ status, deploymentId, updatedAt: new Date() })
+    .set({ status, deploymentId, errorCode: null, errorMessage: null, updatedAt: new Date() })
     .where(and(eq(sceneImports.id, importId), inArray(sceneImports.status, ['built', 'awaiting_signature'])))
     .returning({ id: sceneImports.id })
   if (!linked.length) throw new DeployerError(409, 'import_superseded', IMPORT_REPLACED)
@@ -580,6 +591,10 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
     throw err
   }
   const dest = await loadDestination(dep.destinationId)
+  if (bundle.importId) {
+    const named = metadataWorld(JSON.parse(bundle.metadataJson) as SceneMetadata)
+    if (named !== dest.worldName) throw new DeployerError(422, 'world_changed', worldChanged(named, dest.worldName))
+  }
   if (!(await verifyChain(chain, bundle.entityId, dest.ownerWallet))) {
     throw new DeployerError(403, 'not_world_owner', "That signature isn't from the wallet that owns this World")
   }

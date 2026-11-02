@@ -32,10 +32,10 @@ async function chainFor(wallet: Identity, payload: string) {
   return Authenticator.signPayload(identity, payload)
 }
 
-function sceneJson(parcels = ['0,0', '1,0'], title = 'Owner Title') {
+function sceneJson(parcels = ['0,0', '1,0'], title = 'Owner Title', world = WORLD) {
   return JSON.stringify({
     display: { title }, owner: '', main: 'bin/index.js', ecs7: true, runtimeVersion: '7',
-    scene: { parcels, base: parcels[0] }, worldConfiguration: { name: WORLD }, spawnPoints: [],
+    scene: { parcels, base: parcels[0] }, worldConfiguration: { name: world }, spawnPoints: [],
   })
 }
 
@@ -109,6 +109,27 @@ describe('deploying an imported build', () => {
     }).returning()
     return d
   }
+
+  const view = async (id: string) => (await app.inject({ method: 'GET', url: `/api/imports/${id}`, headers: auth(user) })).json().import
+
+  /** An import of the World in `building`, its uploaded source stored, and the token its box holds. */
+  async function building(sceneId: string, parcels?: string[]) {
+    const started: Record<string, string>[] = []
+    const runner: BuildRunner = { async start(_id, env) { started.push(env); return { machineId: 'm1' } }, async stop() {} }
+    setBuildRunner(runner)
+    const [row] = await db.insert(sceneImports).values({
+      userId: user.id, sceneId, worldName: WORLD, kind: 'sdk7', sourceKey: 'pending',
+    }).returning()
+    const sourceKey = `imports/${row.id}/source.zip`
+    await db.update(sceneImports).set({ sourceKey }).where(eq(sceneImports.id, row.id))
+    await store.put(sourceKey, Buffer.from(zipSync({ 'scene.json': enc(sceneJson(parcels)), 'src/index.ts': enc('main') })), 'application/zip')
+    await startBuild(row.id)
+    return { id: row.id, token: started[0].BUILD_TOKEN }
+  }
+  const postResult = (id: string, token: string, files: Map<string, Uint8Array>) => app.inject({
+    method: 'POST', url: `/api/imports/build/${id}/result`, payload: Buffer.from(zipSync(Object.fromEntries(files))),
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/zip' },
+  })
 
   /** The World's last deployment, as its live entity. */
   function goLive(i = worlds.deployed.length - 1) {
@@ -289,7 +310,7 @@ describe('deploying an imported build', () => {
     expect(d).toMatchObject({ lastEntityId: worlds.deployed[0].entityId, adopted: true, status: 'ok', pendingImportId: null })
   })
 
-  it("a scene over the World's file budget fails with scene_too_big", async () => {
+  it("a scene over the World's file budget fails with scene_too_big, and the import can be deployed again", async () => {
     const { scene } = await createScene(user, 'Cafe')
     await grantedDest(scene.id, { parcels: ['0,0'] })
     const extra: Record<string, Uint8Array> = {}
@@ -297,10 +318,11 @@ describe('deploying an imported build', () => {
     const imp = await built({ sceneId: scene.id, files: builtFiles(extra, ['0,0']) })
     await expect(deployImport(imp.id)).rejects.toMatchObject({ code: 'scene_too_big' })
     const row = await importRow(imp.id)
-    expect(row.status).toBe('failed')
+    expect(row.status).toBe('built')
     expect(row.errorCode).toBe('scene_too_big')
     expect(row.errorMessage).toMatch(/204 files.*200.*1 parcel/)
     expect(row.builtKeyPrefix).not.toBeNull()
+    expect((await view(imp.id)).canDeploy).toBe(true)
     expect((await destByWorld())!.pendingImportId).toBeNull()
     expect(await db.select().from(sceneDeployments)).toHaveLength(0)
     expect(worlds.deployed).toHaveLength(0)
@@ -310,8 +332,8 @@ describe('deploying an imported build', () => {
     const big = await built({ files: builtFiles({ 'models/huge.glb': new Uint8Array(50 * 1024 * 1024 + 1) }) })
     const r = await post(`/api/imports/${big.id}/deploy`)
     expect([r.statusCode, r.json().error]).toEqual([413, 'file_too_big'])
-    expect(await importRow(big.id)).toMatchObject({ status: 'failed', errorCode: 'file_too_big' })
-    expect((await importRow(big.id)).errorMessage).toMatch(/models\/huge\.glb.*50 MB/)
+    expect(await importRow(big.id)).toMatchObject({ status: 'built', errorCode: 'file_too_big' })
+    expect((await importRow(big.id)).errorMessage).toBe("models/huge.glb is 50.0 MB, over Decentraland's 50 MB limit for one file.")
 
     const imp = await built({ sceneId: big.sceneId })
     worlds.stats.set(user.wallet!, { maxAllowedBytes: 100, usedBytes: 90 })
@@ -397,26 +419,125 @@ describe('deploying an imported build', () => {
     expect((await destByWorld())!.pendingImportId).toBeNull()
   })
 
-  it("a deploy that won't start after a build fails the import, and the build result is still accepted", async () => {
-    const started: Record<string, string>[] = []
-    const runner: BuildRunner = { async start(_id, env) { started.push(env); return { machineId: 'm1' } }, async stop() {} }
-    setBuildRunner(runner)
+  it("a deploy that won't start after a build puts the import back to built, and the build result is still accepted", async () => {
     setOnBuildDone(deployImport)
     const { scene } = await createScene(user, 'Cafe')
     await grantedDest(scene.id, { parcels: ['0,0'] })
-    const [row] = await db.insert(sceneImports).values({
-      userId: user.id, sceneId: scene.id, worldName: WORLD, kind: 'sdk7', sourceKey: 'x',
-    }).returning()
-    await startBuild(row.id)
     const extra: Record<string, Uint8Array> = {}
     for (let i = 0; i < 200; i++) extra[`assets/f${i}.txt`] = enc(`f${i}`)
-    const zip = Buffer.from(zipSync(Object.fromEntries(builtFiles(extra, ['0,0']))))
-    const r = await app.inject({
-      method: 'POST', url: `/api/imports/build/${row.id}/result`, payload: zip,
-      headers: { authorization: `Bearer ${started[0].BUILD_TOKEN}`, 'content-type': 'application/zip' },
-    })
+    const { id, token } = await building(scene.id, ['0,0'])
+    const r = await postResult(id, token, builtFiles(extra, ['0,0']))
     expect(r.statusCode).toBe(204)
-    await vi.waitFor(async () => expect((await importRow(row.id)).status).toBe('failed'))
-    expect(await importRow(row.id)).toMatchObject({ errorCode: 'scene_too_big', builtKeyPrefix: `imports/${row.id}/built/` })
+    await vi.waitFor(async () => expect((await importRow(id)).errorCode).toBe('scene_too_big'))
+    expect(await importRow(id)).toMatchObject({ status: 'built', builtKeyPrefix: `imports/${id}/built/` })
+    expect((await view(id)).canDeploy).toBe(true)
+  })
+
+  it('a build that renames the World is refused at the result, and nothing is signed', async () => {
+    setOnBuildDone(deployImport)
+    const { scene } = await createScene(user, 'Cafe')
+    await grantedDest(scene.id)
+    const { id, token } = await building(scene.id)
+    const files = builtFiles()
+    files.set('scene.json', enc(sceneJson(undefined, undefined, 'victim.dcl.eth')))
+    const r = await postResult(id, token, files)
+    expect(r.statusCode).toBe(422)
+    const row = await importRow(id)
+    expect(row).toMatchObject({ status: 'failed', errorCode: 'build_failed' })
+    expect((await store.get(`imports/${id}/build.log`))!.body.toString()).toMatch(/changed the World in scene\.json from cafe\.dcl\.eth to victim\.dcl\.eth/)
+    expect(store.keys().filter((k) => k.includes('/built/'))).toEqual([])
+    expect(await db.select().from(sceneDeployments)).toHaveLength(0)
+    expect(worlds.deployed).toHaveLength(0)
+  })
+
+  it("a build that moves the scene's parcels or base is refused at the result", async () => {
+    for (const parcels of [['0,0', '0,1'], ['1,0', '0,0']]) {
+      const { scene } = await createScene(user, 'Cafe')
+      const { id, token } = await building(scene.id)
+      const r = await postResult(id, token, builtFiles({}, parcels))
+      expect(r.statusCode).toBe(422)
+      expect(await importRow(id)).toMatchObject({ status: 'failed', errorCode: 'build_failed' })
+      expect((await store.get(`imports/${id}/build.log`))!.body.toString()).toMatch(/changed scene\.parcels or scene\.base/)
+    }
+  })
+
+  it('a stored build naming another World never reaches the signer', async () => {
+    const files = builtFiles()
+    files.set('scene.json', enc(sceneJson(undefined, undefined, 'victim.dcl.eth')))
+    const { scene } = await createScene(user, 'Cafe')
+    await grantedDest(scene.id)
+    const imp = await built({ sceneId: scene.id, files })
+    await expect(deployImport(imp.id)).rejects.toMatchObject({ code: 'world_changed' })
+    expect(await importRow(imp.id)).toMatchObject({ status: 'failed', errorCode: 'world_changed' })
+
+    await db.delete(dclWorldDestinations)
+    const signed = await built({ files })
+    const r = await post(`/api/imports/${signed.id}/deploy`)
+    expect([r.statusCode, r.json().error]).toEqual([422, 'world_changed'])
+    expect(await db.select().from(sceneDeployments)).toHaveLength(0)
+    expect(worlds.deployed).toHaveLength(0)
+  })
+
+  it("a re-imported wizard download keeps the creator's code and title across a HUD redeploy and a rebase", async () => {
+    const { scene, preset } = await createScene(user, 'Virvi Name')
+    const dest = await grantedDest(scene.id)
+    const wizard = JSON.parse(sceneJson())
+    wizard.virvi = { runtime: 1, apiUrl: 'https://api.virvi.test', wssUrl: 'wss://api.virvi.test' }
+    const files = builtFiles()
+    files.set('scene.json', enc(JSON.stringify(wizard)))
+    files.set('bin/index.js', enc('creator code'))
+    const imp = await built({ sceneId: scene.id, files })
+    await deployImport(imp.id)
+    await whenSettled((await importRow(imp.id)).deploymentId!)
+    expect((await importRow(imp.id)).status).toBe('deployed')
+    const first = goLive()
+    expect(first.metadata.virvi).toBeUndefined()
+
+    await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+    const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+    await whenSettled(dep.id)
+    expect((await depRow(dep.id)).status).toBe('deployed')
+    const next = entityOf(1)
+    const code = (e: { content: Array<{ file: string; hash: string }> }) => e.content.find((c) => c.file === 'bin/index.js')!.hash
+    expect(code(next)).toBe(code(first))
+    expect(code(next)).toBe(await dclHash(enc('creator code')))
+    expect(next.metadata.display.title).toBe('Owner Title')
+    expect(next.metadata.virvi).toBeUndefined()
+    expect((await destByWorld())!.adopted).toBe(true)
+
+    goLive(1)
+    const rebase = await post(`/api/dcl/destinations/${dest.id}/rebase`)
+    expect(rebase.statusCode).toBe(200)
+    expect((await destByWorld())!.adopted).toBe(true)
+  })
+
+  it('a deploy that finds another deploy running puts the import back to built (automatic path)', async () => {
+    const { scene } = await createScene(user, 'Cafe')
+    const dest = await grantedDest(scene.id)
+    await db.insert(sceneDeployments).values({
+      sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id, target: {}, status: 'building',
+    })
+    const imp = await built({ sceneId: scene.id })
+    await expect(deployImport(imp.id)).rejects.toMatchObject({ code: 'deploy_in_progress' })
+    expect(await importRow(imp.id)).toMatchObject({ status: 'built', errorCode: 'deploy_in_progress', errorMessage: 'A deploy is already running for this World' })
+    expect((await view(imp.id)).canDeploy).toBe(true)
+    expect((await destByWorld())!.pendingImportId).toBeNull()
+  })
+
+  it("a World that doesn't answer puts the import back to built (route), and missing built files fail it", async () => {
+    const imp = await built()
+    worlds.down = true
+    const r = await post(`/api/imports/${imp.id}/deploy`)
+    expect([r.statusCode, r.json().error]).toEqual([502, 'world_unreachable'])
+    expect(await importRow(imp.id)).toMatchObject({ status: 'built', errorCode: 'world_unreachable' })
+    expect((await view(imp.id)).canDeploy).toBe(true)
+    worlds.down = false
+
+    await store.deletePrefix(`imports/${imp.id}/built/`)
+    const gone = await post(`/api/imports/${imp.id}/deploy`)
+    expect([gone.statusCode, gone.json().error]).toEqual([409, 'import_files_missing'])
+    expect(await importRow(imp.id)).toMatchObject({ status: 'failed', errorCode: 'import_files_missing' })
+    expect((await importRow(imp.id)).errorMessage).toMatch(/Upload it again/)
+    expect((await view(imp.id)).canDeploy).toBe(false)
   })
 })

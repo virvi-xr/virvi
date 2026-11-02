@@ -5,7 +5,7 @@ import { getImportStore } from '../../storage/private-store.js'
 import { ownerFor, RouteError } from '../../routes/dcl-destinations.js'
 import { virviSigner } from '../dcl/entity.js'
 import {
-  DeployerError, markFailed, prepareSignedDeploy, startVirviDeploy, type Deployment, type Destination,
+  DeployerError, markFailed, prepareSignedDeploy, startVirviDeploy, worldChanged, type Deployment, type Destination,
 } from '../dcl/world-deployer.js'
 import { OWNER_ERROR_MESSAGES, type SceneImportRow } from './imports.js'
 import { ImportError } from './scene-zip.js'
@@ -29,14 +29,21 @@ export type StartedImportDeploy =
 
 const granted = (d: Pick<Destination, 'mode' | 'grantedAt'>) => d.mode === 'virvi' && !!d.grantedAt
 
-/** The base and parcels of the built scene.json. */
+/** Errors a retry can't fix: the stored build itself is unusable, so the import fails. Any other start error leaves it `built`. */
+const PERMANENT = new Set(['import_files_missing', 'world_changed', 'bad_scene_json'])
+
+/** The base and parcels of the built scene.json, which must name the import's World (a stored build is never trusted). */
 async function builtPlot(row: SceneImportRow): Promise<{ base: string; parcels: string[] }> {
   const obj = row.builtKeyPrefix ? await getImportStore().get(`${row.builtKeyPrefix}scene.json`) : null
   if (!obj) throw new ImportError(409, 'import_files_missing', FILES_GONE)
-  let scene: { parcels?: unknown; base?: unknown } | undefined
+  let json: { scene?: { parcels?: unknown; base?: unknown }; worldConfiguration?: { name?: unknown } } | undefined
   try {
-    scene = (JSON.parse(obj.body.toString('utf8')) as { scene?: typeof scene }).scene
+    json = JSON.parse(obj.body.toString('utf8')) as typeof json
   } catch { /* checked below */ }
+  const name = json?.worldConfiguration?.name
+  const named = typeof name === 'string' ? name.toLowerCase() : null
+  if (named !== row.worldName) throw new ImportError(422, 'world_changed', worldChanged(named, row.worldName))
+  const scene = json?.scene
   const parcels = Array.isArray(scene?.parcels) && scene.parcels.length && scene.parcels.every((p) => typeof p === 'string') ? (scene.parcels as string[]) : null
   if (!parcels) throw new ImportError(422, 'bad_scene_json', "The built scene.json doesn't list its parcels.")
   return { base: typeof scene?.base === 'string' ? scene.base : parcels[0], parcels }
@@ -52,31 +59,49 @@ async function worldOwner(userId: string, world: string): Promise<string> {
   }
 }
 
-/** Fails an import whose deploy couldn't start, with the error's own sentence (the built files stay). */
-async function failImportDeploy(importId: string, err: unknown): Promise<void> {
+/**
+ * A deploy that didn't start (the World accepted nothing) puts the import back to `built` with the error's sentence, so
+ * the creator can try again (Ruling R19); a stored build that can't work (PERMANENT) fails it. The built files stay.
+ */
+async function startFailed(importId: string, err: unknown): Promise<void> {
   const known = err instanceof ImportError || err instanceof DeployerError
+  const code = known ? err.code : 'deploy_failed'
+  const message = known ? err.message : GENERIC
   const now = new Date()
-  await db.update(sceneImports).set({
-    status: 'failed', errorCode: known ? err.code : 'deploy_failed', errorMessage: known ? err.message : GENERIC, finishedAt: now, updatedAt: now,
-  }).where(and(eq(sceneImports.id, importId), inArray(sceneImports.status, ['built', 'awaiting_signature'])))
+  const set = PERMANENT.has(code)
+    ? { status: 'failed' as const, errorCode: code, errorMessage: message, finishedAt: now, updatedAt: now }
+    : { status: 'built' as const, errorCode: code, errorMessage: message, updatedAt: now }
+  await db.update(sceneImports).set(set)
+    .where(and(eq(sceneImports.id, importId), inArray(sceneImports.status, ['built', 'awaiting_signature'])))
 }
 
 /**
  * Starts the deploy of a `built` import, or one whose signature window passed: Virvi-signed on a granted Virvi-mode
  * World (import `deploying`), otherwise prepared for the owner to sign (import `awaiting_signature`). The import must
  * still be its World's newest with its status unchanged, checked under the lock uploads take, or this is 409
- * not_deployable. `by` must own the World. A deploy that fails to start fails the import, except while Virvi or the
- * World can't be reached (503), when it is left as it was. With `virviOnly`, an import Virvi can't deploy itself (it
- * would need a signature) is left alone and null is returned.
+ * not_deployable. `by` must own the World. A deploy that fails to start goes back to `built` with the error (see
+ * startFailed). With `virviOnly`, an import Virvi can't deploy itself (it would need a signature) is left alone and
+ * null is returned.
  */
 export async function startImportDeploy(row: SceneImportRow, by: string, opts: { virviOnly?: boolean } = {}): Promise<StartedImportDeploy | null> {
   const from = row.status
   if (from !== 'built' && from !== 'awaiting_signature') throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
-  const plot = await builtPlot(row)
-  const owner = await worldOwner(by, row.worldName)
   const existing = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, row.worldName) })
   const virvi = !!existing && granted(existing)
   if (opts.virviOnly && !(virvi && virviSigner())) return null
+  try {
+    return await begin(row, by, virvi, opts)
+  } catch (err) {
+    // Not ours to touch when the import moved on meanwhile
+    if (!(err instanceof ImportError && err.code === 'not_deployable')) await startFailed(row.id, err)
+    throw err
+  }
+}
+
+async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { virviOnly?: boolean }): Promise<StartedImportDeploy | null> {
+  const from = row.status
+  const plot = await builtPlot(row)
+  const owner = await worldOwner(by, row.worldName)
   if (virvi && !virviSigner()) throw new DeployerError(503, 'virvi_deploys_unavailable', 'Virvi deploys are not available right now')
   // A signature that came too late must not deploy the old preparation
   if (from === 'awaiting_signature' && row.deploymentId) {
@@ -115,22 +140,16 @@ export async function startImportDeploy(row: SceneImportRow, by: string, opts: {
     // Nothing started: the World doesn't wait on this import
     await db.update(dclWorldDestinations).set({ pendingImportId: null, updatedAt: new Date() })
       .where(and(eq(dclWorldDestinations.id, dest.id), eq(dclWorldDestinations.pendingImportId, row.id)))
-    if (!(err instanceof DeployerError && err.status === 503)) await failImportDeploy(row.id, err)
     throw err
   }
 }
 
 /**
  * What runs when an import's build is stored (setOnBuildDone): a granted Virvi-mode World deploys it now; anything
- * else stays `built` for the creator. An error fails the import with its sentence and is rethrown for the caller's log.
+ * else stays `built` for the creator. An error is recorded on the import (startFailed) and rethrown for the caller's log.
  */
 export async function deployImport(importId: string): Promise<void> {
   const row = await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, importId) })
   if (row?.status !== 'built') return
-  try {
-    await startImportDeploy(row, row.userId, { virviOnly: true })
-  } catch (err) {
-    await failImportDeploy(row.id, err)
-    throw err
-  }
+  await startImportDeploy(row, row.userId, { virviOnly: true })
 }

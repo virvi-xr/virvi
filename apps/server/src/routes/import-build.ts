@@ -82,6 +82,35 @@ function readBuiltZip(zip: Buffer): Map<string, Uint8Array> {
   return files
 }
 
+/** The World, parcels and base a scene.json names, or null when it can't be read. */
+function placeOf(bytes: Uint8Array | undefined): { world: string | null; parcels: string; base: unknown } | null {
+  if (!bytes) return null
+  try {
+    const j = JSON.parse(new TextDecoder().decode(bytes)) as { worldConfiguration?: { name?: unknown }; scene?: { parcels?: unknown; base?: unknown } }
+    const name = j?.worldConfiguration?.name
+    return { world: typeof name === 'string' ? name.toLowerCase() : null, parcels: JSON.stringify(j?.scene?.parcels ?? null), base: j?.scene?.base ?? null }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Why the built scene.json may not be deployed, or null: the build runs the creator's code, which must not move the
+ * scene to another World or other parcels than the uploaded scene.json's.
+ */
+async function movedReason(imp: SceneImport, files: Map<string, Uint8Array>): Promise<string | null> {
+  const built = placeOf(files.get('scene.json'))
+  if (built?.world !== imp.worldName) return `the build changed the World in scene.json from ${imp.worldName} to ${built?.world ?? 'none'}.`
+  const source = await getImportStore().get(imp.sourceKey)
+  let uploaded: ReturnType<typeof placeOf> = null
+  try {
+    uploaded = source ? placeOf(unzipSync(source.body, { filter: (f) => f.name === 'scene.json' })['scene.json']) : null
+  } catch { /* unreadable: refused below */ }
+  if (!uploaded) return 'the uploaded scene.json could not be read to check the build against it.'
+  if (built.parcels !== uploaded.parcels || built.base !== uploaded.base) return 'the build changed scene.parcels or scene.base in scene.json.'
+  return null
+}
+
 /** Ruling R12: a result Virvi won't take fails the import here, with the box's log and the reason, and spends the token. */
 async function refuse(request: FastifyRequest, reply: FastifyReply, status: number, reason: string) {
   const imp = request.sceneImport!
@@ -128,6 +157,8 @@ export default async function importBuildRoutes(app: FastifyInstance) {
           if (err instanceof ImportError) return refuse(request, reply, err.status, err.message)
           throw err
         }
+        const moved = await movedReason(imp, files)
+        if (moved) return refuse(request, reply, 422, moved)
 
         // Spend the token first: one result is taken, and a failure report racing it is refused
         const claimed = await db.update(sceneImports).set({ buildTokenHash: null, updatedAt: new Date() })

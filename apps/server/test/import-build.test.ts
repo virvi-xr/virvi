@@ -16,7 +16,9 @@ import { testApp, createUser, createScene } from './helpers/factories.js'
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 const B = '/api/imports/build'
 const auth = (t: string) => ({ authorization: `Bearer ${t}` })
-const SOURCE = Buffer.from('PK-source-zip')
+/** The built scene.json the tests' default result carries: the uploaded one's World, parcels and base. */
+const SCENE_JSON = '{"main":"bin/index.js","scene":{"parcels":["0,0"],"base":"0,0"},"worldConfiguration":{"name":"moon.dcl.eth"}}'
+const SOURCE = Buffer.from(zipSync({ 'scene.json': strToU8(SCENE_JSON), 'src/index.ts': strToU8('main()') }))
 const b64 = (s: string) => Buffer.from(s).toString('base64')
 
 function fakeRunner() {
@@ -79,7 +81,7 @@ describe('scene import builds', () => {
     return { id, token: env.BUILD_TOKEN }
   }
   const row = async (id: string) => (await db.select().from(sceneImports).where(eq(sceneImports.id, id)))[0]
-  const builtZip = (files: Record<string, string> = { 'scene.json': '{"main":"bin/index.js"}', 'bin/index.js': 'main()' }) =>
+  const builtZip = (files: Record<string, string> = { 'scene.json': SCENE_JSON, 'bin/index.js': 'main()' }) =>
     Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)]))))
   const postResult = (id: string, token: string, zip: Buffer, log: string | null = b64('build ok')) =>
     app.inject({
@@ -175,7 +177,7 @@ describe('scene import builds', () => {
     const { id, token } = await building()
     const res = await postResult(id, token, builtZip())
     expect(res.statusCode).toBe(204)
-    expect((await store.get(`imports/${id}/built/scene.json`))?.body.toString()).toBe('{"main":"bin/index.js"}')
+    expect((await store.get(`imports/${id}/built/scene.json`))?.body.toString()).toBe(SCENE_JSON)
     expect((await store.get(`imports/${id}/built/bin/index.js`))?.body.toString()).toBe('main()')
     expect((await store.get(`imports/${id}/build.log`))?.body.toString()).toBe('build ok')
     const r = await row(id)
