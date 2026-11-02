@@ -51,7 +51,8 @@ The wire contract (with `apps/server`'s build routes):
 
 The log tail has the token and any npm credential line (`//host/:_authToken=…`, `_auth`, `_password`) or
 `Authorization:` value redacted. If the result POST fails on the network, the box still posts the failure, so Virvi
-should ignore a failure report that arrives after it has taken a result.
+should ignore a failure report that arrives after it has taken a result. A `503` to the result POST means Virvi is busy
+with other imports and read nothing (`imports_busy`): the box sends it again, up to 8 times, 15 s apart.
 
 `node build.mjs` with no step runs all three in one process in the current directory, for the server's dev-only
 `local` runner. It is not isolated at all.

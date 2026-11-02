@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { zipSync } from 'fflate'
-import { deployableFiles, extractZip, logTail, resultLogHeader } from './lib.mjs'
+import { deployableFiles, extractZip, logTail, resultLogHeader, whileBusy } from './lib.mjs'
 
 const [step, arg] = process.argv.slice(2)
 const LOCAL = step === undefined
@@ -152,9 +152,10 @@ async function upload(outcome) {
     if (zip) {
       try {
         // Ruling R9: the header carries only the last 8 KB; the failed body below keeps 64 KB
-        const res = await post(env('BUILD_RESULT_URL'), 'application/zip', zip, {
+        // A busy Virvi answers 503 before reading the body: wait and send it again
+        const res = await whileBusy(() => post(env('BUILD_RESULT_URL'), 'application/zip', zip, {
           'X-Build-Log': resultLogHeader(fullLog(), token),
-        })
+        }))
         if (res.ok) {
           say('Result accepted')
           return 0

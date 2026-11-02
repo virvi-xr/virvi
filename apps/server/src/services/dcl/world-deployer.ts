@@ -288,7 +288,7 @@ async function readBuilt(prefix: string): Promise<Map<string, Uint8Array>> {
   for (const { key } of await store.list(prefix)) {
     const obj = await store.get(key)
     if (!obj) throw new DeployerError(409, 'import_files_missing', IMPORT_FILES_GONE)
-    out.set(key.slice(prefix.length), new Uint8Array(obj.body))
+    out.set(key.slice(prefix.length), new Uint8Array(obj.body.buffer, obj.body.byteOffset, obj.body.byteLength))
   }
   if (!out.has('scene.json')) throw new DeployerError(409, 'import_files_missing', IMPORT_FILES_GONE)
   return out
@@ -427,7 +427,7 @@ async function rebuildNewFiles(sources: NewFileSource[], fetch: ModelFetcher): P
     } else if ('storageKey' in s) {
       const obj = await getImportStore().get(s.storageKey)
       if (!obj) throw new DeployerError(409, 'import_files_missing', IMPORT_FILES_GONE)
-      out.set(s.file, new Uint8Array(obj.body))
+      out.set(s.file, new Uint8Array(obj.body.buffer, obj.body.byteOffset, obj.body.byteLength))
     } else {
       const rt = (await runtimeFiles(s.runtimeVersion)).get(s.file)
       if (!rt) throw new DeployerError(500, 'entity_mismatch')

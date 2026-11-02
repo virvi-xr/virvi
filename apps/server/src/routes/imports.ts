@@ -24,6 +24,7 @@ import { getActiveSetup } from '../setup/setups.js'
 import { getImportStore } from '../storage/private-store.js'
 import { ImportError, readSceneZip, type SceneFolder } from '../services/import/scene-zip.js'
 import { installVirvi } from '../services/import/install-virvi.js'
+import { importSlotGate, releaseImportSlot } from '../services/import/import-work.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
 import {
   createImport, failImport, latestImportFor, loadImportView, OWNER_ERROR_MESSAGES, type SceneImportRow,
@@ -100,6 +101,9 @@ export default async function importRoutes(app: FastifyInstance) {
   await app.register(async (upload) => {
     upload.removeAllContentTypeParsers()
     upload.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: SCENE_IMPORT_MAX_BYTES }, (_req, body, done) => done(null, body))
+    // At most IMPORT_CONCURRENCY uploads are read at once; the slot goes back with the response
+    upload.addHook('onResponse', releaseImportSlot)
+    upload.addHook('onRequestAbort', releaseImportSlot)
     upload.setErrorHandler(async (err: FastifyError, _request, reply) => {
       if (err.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
         return reply.status(413).send({ error: 'too_big', message: `The zip is larger than ${SCENE_IMPORT_MAX_BYTES / 1024 / 1024} MB.` })
@@ -107,8 +111,8 @@ export default async function importRoutes(app: FastifyInstance) {
       throw err
     })
 
-    // Auth and the builds check run before the body is read
-    upload.post('/api/imports', { onRequest: [authenticate, buildsGate], bodyLimit: SCENE_IMPORT_MAX_BYTES }, async (request, reply) => handle(reply, async () => {
+    // Auth, the builds check and the slot run before the body is read
+    upload.post('/api/imports', { onRequest: [authenticate, buildsGate, importSlotGate], bodyLimit: SCENE_IMPORT_MAX_BYTES }, async (request, reply) => handle(reply, async () => {
       const folder = readSceneZip(Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0))
       if (folder.location.kind !== 'world') throw new ImportError(422, 'parcels_not_yet', PARCELS_NOT_YET)
       const world = folder.location.world
@@ -116,8 +120,10 @@ export default async function importRoutes(app: FastifyInstance) {
       const scene = await sceneFor(request, world, folder)
       const { files, alreadyInstalled } = await installVirvi(folder)
       if (alreadyInstalled) request.log.info(`[scene-import] ${world} already starts Virvi: only its @virvixr/dcl range was checked`)
-      // Ruling R5: the installed files are re-zipped in memory; the upload never becomes files on disk
-      const source = Buffer.from(zipSync(Object.fromEntries(files)))
+      // Ruling R5: the installed files are re-zipped in memory; the upload never becomes files on disk. Stored, not
+      // deflated (the box unzips it anyway), and wrapped without a copy
+      const zipped = zipSync(Object.fromEntries(files), { level: 0 })
+      const source = Buffer.from(zipped.buffer, zipped.byteOffset, zipped.byteLength)
 
       const row = await createImport({ userId: request.user.id, world, kind: folder.kind, scene })
       try {

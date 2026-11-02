@@ -50,6 +50,10 @@ describe('importErrorMessage', () => {
     'superseded', 'store_failed', 'not_deployable', 'not_found', 'no_log', 'invalid_scene',
     // build-runner.ts, build-sweep.ts, import-build.ts
     'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded',
+    // import-work.ts (I5)
+    'imports_busy',
+    // markFailed's and the sweep's codes for an import put back to built (R19)
+    'interrupted', 'deploy_interrupted', 'cancelled',
     // import-deploy.ts, world-deployer.ts
     'scene_too_big', 'file_too_big', 'world_storage_full', 'world_changed', 'import_files_missing', 'virvi_deploys_unavailable',
     'expired', 'needs_review', 'over_budget', 'nothing_to_deploy', 'no_live_scene', 'deploy_failed', 'model_unavailable',
@@ -64,6 +68,10 @@ describe('importErrorMessage', () => {
       expect(m, code).not.toBe(IMPORT_FALLBACK_MESSAGE)
       expect(m, code).toMatch(/^[A-Z].*[.]$/)
     }
+  })
+
+  it('says Virvi is busy in the same words as the server', () => {
+    expect(importErrorMessage('imports_busy')).toBe('Virvi is busy with other imports. Try again in a minute.')
   })
 
   it('falls back to a plain sentence for a code it does not know', () => {

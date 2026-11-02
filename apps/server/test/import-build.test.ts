@@ -10,6 +10,7 @@ import {
   buildsAvailable, flyBuildRunner, getBuildRunner, setBuildRunner, setOnBuildDone, startBuild, type BuildRunner,
 } from '../src/services/import/build-runner.js'
 import { sweepBuilds } from '../src/services/import/build-sweep.js'
+import { importWork } from '../src/services/import/import-work.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene } from './helpers/factories.js'
 
@@ -187,6 +188,21 @@ describe('scene import builds', () => {
     expect(r.logKey).toBe(`imports/${id}/build.log`)
     expect(r.buildTokenHash).toBeNull()
     await vi.waitFor(() => expect(done).toEqual([id]))
+  })
+
+  it('a result while two imports are being processed answers 503 imports_busy, and the build is not failed', async () => {
+    const { id, token } = await building()
+    const held = [importWork.tryTake()!, importWork.tryTake()!]
+    const busy = await postResult(id, token, builtZip())
+    expect([busy.statusCode, busy.json().error]).toEqual([503, 'imports_busy'])
+    expect(await row(id)).toMatchObject({ status: 'building' })
+    expect((await row(id)).buildTokenHash).not.toBeNull()
+    held.forEach((release) => release())
+    expect((await postResult(id, token, builtZip())).statusCode).toBe(204)
+    expect(importWork.inUse()).toBe(0)
+    // A request without the token never takes a slot
+    expect((await postResult(id, 'nope', builtZip())).statusCode).toBe(401)
+    expect(importWork.inUse()).toBe(0)
   })
 
   it('a missing or malformed X-Build-Log does not fail a good build', async () => {

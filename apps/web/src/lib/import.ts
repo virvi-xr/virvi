@@ -56,6 +56,7 @@ const CODE_MESSAGES: Record<string, string> = {
   build_start_failed: "The build couldn't start. Try the upload again in a few minutes.",
   builds_unavailable: 'Scene builds are not available right now. Try again later.',
   not_uploaded: 'This import is not waiting for a build. Upload the scene again.',
+  imports_busy: 'Virvi is busy with other imports. Try again in a minute.',
   // The deploy
   scene_too_big: "The scene has more files than its parcels allow in Decentraland. Remove some files, then upload again.",
   file_too_big: "One of the scene's files is over Decentraland's limit for a single file. Make it smaller, then upload again.",
@@ -76,6 +77,9 @@ const CODE_MESSAGES: Record<string, string> = {
   not_awaiting_signature: 'This deploy is no longer waiting for a signature. Reload the page to see where it is.',
   stale: 'Your World changed since this deploy was prepared. Deploy again.',
   deploy_rejected: "Decentraland didn't take the deploy. Try again.",
+  interrupted: 'Virvi was interrupted while deploying. Press Deploy to try again.',
+  deploy_interrupted: 'Virvi was interrupted before the deploy started. Press Deploy to try again.',
+  cancelled: 'The deploy was cancelled. Press Deploy to try again.',
   // What went live
   files_gone: "Some of this deploy's files are no longer stored anywhere, so it can't be downloaded.",
   files_unsafe: "Some of this deploy's file names can't be put in a zip safely, so it can't be downloaded.",

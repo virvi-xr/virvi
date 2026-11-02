@@ -6,6 +6,7 @@ import { sceneImports } from '../db/schema.js'
 import { getImportStore } from '../storage/private-store.js'
 import { ImportError, safeSegments, worldNameOf } from '../services/import/scene-zip.js'
 import { buildLogKey, buildTokenMatches, builtKeyPrefix, failBuild, getOnBuildDone } from '../services/import/build-runner.js'
+import { importSlotGate, releaseImportSlot } from '../services/import/import-work.js'
 
 /**
  * Virvi's side of the wire contract in apps/scene-builder/README.md. The build box authenticates with its one-build
@@ -138,6 +139,9 @@ export default async function importBuildRoutes(app: FastifyInstance) {
     // The result: the deployable files as one zip
     await scope.register(async (res) => {
       res.removeAllContentTypeParsers()
+      // At most IMPORT_CONCURRENCY results are unpacked at once (the token is checked first); the box retries a 503
+      res.addHook('onResponse', releaseImportSlot)
+      res.addHook('onRequestAbort', releaseImportSlot)
       res.addContentTypeParser('application/zip', { parseAs: 'buffer', bodyLimit: RESULT_LIMIT }, (_req, body, done) => done(null, body))
       // A body the parser refuses (too large, not a zip type) is a refused result too
       res.setErrorHandler(async (err: FastifyError, request, reply) => {
@@ -146,7 +150,7 @@ export default async function importBuildRoutes(app: FastifyInstance) {
         return refuse(request, reply, status, tooLarge(err) ? 'it is larger than 200 MB.' : 'it is not an application/zip body.')
       })
 
-      res.post('/api/imports/build/:id/result', { ...opts, bodyLimit: RESULT_LIMIT }, async (request, reply) => {
+      res.post('/api/imports/build/:id/result', { ...opts, bodyLimit: RESULT_LIMIT, onRequest: importSlotGate }, async (request, reply) => {
         const imp = request.sceneImport!
         if (imp.status !== 'building') return reply.status(409).send({ error: 'not_building' })
         let files: Map<string, Uint8Array>
@@ -169,7 +173,7 @@ export default async function importBuildRoutes(app: FastifyInstance) {
         const prefix = builtKeyPrefix(imp.id)
         const log = headerLog(request.headers['x-build-log'])
         try {
-          for (const [path, data] of files) await store.put(prefix + path, Buffer.from(data), 'application/octet-stream')
+          for (const [path, data] of files) await store.put(prefix + path, Buffer.from(data.buffer, data.byteOffset, data.byteLength), 'application/octet-stream')
           if (log) await store.put(buildLogKey(imp.id), log, 'text/plain; charset=utf-8')
         } catch (err) {
           request.log.error({ err }, `[scene-build] storing the result of import ${imp.id} failed`)

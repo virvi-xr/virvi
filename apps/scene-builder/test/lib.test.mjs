@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, readFileSync, exist
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { zipSync, strToU8, Zip, ZipPassThrough } from 'fflate'
-import { deployableFiles, logTail, safeEntryPath, extractZip, resultLogHeader, LOG_LIMIT, HEADER_LOG_LIMIT } from '../lib.mjs'
+import { deployableFiles, logTail, safeEntryPath, extractZip, resultLogHeader, whileBusy, LOG_LIMIT, HEADER_LOG_LIMIT } from '../lib.mjs'
 
 function scene(files) {
   const root = mkdtempSync(join(tmpdir(), 'scene-builder-'))
@@ -233,4 +233,23 @@ test('resultLogHeader is the base64 of at most the last 8 KB, redacted', () => {
   assert.ok(decoded.toString().endsWith('[redacted] THE END'))
   assert.ok(!decoded.toString().includes(TOKEN))
   assert.equal(Buffer.from(resultLogHeader(Buffer.from('short'), TOKEN), 'base64').toString(), 'short')
+})
+
+test('whileBusy retries a 503 (Virvi busy with other imports) and stops at anything else or the last try', async () => {
+  const waits = []
+  const sleep = async (ms) => { waits.push(ms) }
+  const answers = [503, 503, 204]
+  let calls = 0
+  const res = await whileBusy(async () => ({ status: answers[calls++] }), { tries: 5, waitMs: 15_000, sleep })
+  assert.equal(res.status, 204)
+  assert.equal(calls, 3)
+  assert.deepEqual(waits, [15_000, 15_000])
+
+  calls = 0
+  assert.equal((await whileBusy(async () => { calls++; return { status: 422 } }, { tries: 5, waitMs: 1, sleep })).status, 422)
+  assert.equal(calls, 1)
+
+  calls = 0
+  assert.equal((await whileBusy(async () => { calls++; return { status: 503 } }, { tries: 3, waitMs: 1, sleep })).status, 503)
+  assert.equal(calls, 3)
 })

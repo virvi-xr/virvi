@@ -160,3 +160,15 @@ export function extractZip(data, root) {
     writeFileSync(target, body, { flag: 'wx', mode: 0o644 })
   }
 }
+
+/**
+ * Sends with `send()` again while Virvi answers 503 (it is busy with other imports and refused before reading the
+ * body), up to `tries` times, `waitMs` apart. Any other answer, or the last one, is returned as it is.
+ */
+export async function whileBusy(send, { tries = 8, waitMs = 15_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  for (let i = 1; ; i++) {
+    const res = await send()
+    if (res.status !== 503 || i >= tries) return res
+    await sleep(waitMs)
+  }
+}

@@ -9,6 +9,7 @@ import * as runnerModule from '../src/services/import/build-runner.js'
 import { setBuildRunner, type BuildRunner } from '../src/services/import/build-runner.js'
 import { DEPLOY_WINDOW_MS } from '../src/services/dcl/world-deployer.js'
 import { createImport, importView } from '../src/services/import/imports.js'
+import { importWork, IMPORTS_BUSY } from '../src/services/import/import-work.js'
 import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -368,5 +369,40 @@ describe('scene import routes', () => {
     expect((await get(`/api/imports/${view.id}`)).json().import.canDeploy).toBe(false)
     await db.update(sceneDeployments).set({ assetBundle: { timestamp: now - DEPLOY_WINDOW_MS - 1000 } }).where(eq(sceneDeployments.id, dep.id))
     expect((await get(`/api/imports/${view.id}`)).json().import.canDeploy).toBe(true)
+  })
+  describe('large uploads never stall the API (I5)', () => {
+    it('the source is re-zipped stored (level 0): the box unzips it anyway', async () => {
+      const res = await upload(sceneZip({ files: { 'assets/big.txt': 'a'.repeat(50_000) } }))
+      expect(res.statusCode).toBe(201)
+      const stored = (await store.get(`imports/${res.json().import.id}/source.zip`))!
+      const methods: number[] = []
+      unzipSync(new Uint8Array(stored.body), { filter: (f) => { methods.push(f.compression); return false } })
+      expect(methods.length).toBeGreaterThan(3)
+      expect(new Set(methods)).toEqual(new Set([0]))
+    })
+
+    it('a third upload while two are processed answers 503 imports_busy, and nothing is stored', async () => {
+      const held = [importWork.tryTake(), importWork.tryTake()]
+      expect(held.every(Boolean)).toBe(true)
+      expect(importWork.tryTake()).toBeNull()
+      const res = await upload(sceneZip())
+      expect([res.statusCode, res.json()]).toEqual([503, { error: 'imports_busy', message: IMPORTS_BUSY }])
+      expect(IMPORTS_BUSY).toBe('Virvi is busy with other imports. Try again in a minute.')
+      expect(await db.select().from(sceneImports)).toHaveLength(0)
+      held.forEach((release) => release!())
+      expect((await upload(sceneZip())).statusCode).toBe(201)
+      // Every slot came back, whatever the answer was
+      expect(importWork.inUse()).toBe(0)
+    })
+
+    it('a slot is given back once, even when release is called twice', () => {
+      const a = importWork.tryTake()!
+      a()
+      a()
+      expect(importWork.inUse()).toBe(0)
+      const b = importWork.tryTake()!, c = importWork.tryTake()!
+      expect(importWork.tryTake()).toBeNull()
+      b(); c()
+    })
   })
 })
