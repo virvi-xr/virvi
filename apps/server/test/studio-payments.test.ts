@@ -95,6 +95,22 @@ describe('studio payments', () => {
     expect(s.expires_at * 1000 - before).toBeLessThan(1870_000)
   })
 
+  it('a gifted 4x4 building opens one Stripe line for the rest, and the grant keeps that price', async () => {
+    const u = await createUser()
+    const d = await createDesign(u, { kind: 'scene' })
+    await addRevision(d, 'building', { pass: true, failures: 0, warnings: 0 }, { kind: 'building', footprint: '4x4' })
+    await db.insert(studioFinalizeCredits).values({ userId: u.id, balance: 1 })
+    expect((await finalize(u, d.id)).statusCode).toBe(200)
+    expect(stripe.calls.sessions[0].line_items.map((l: any) => l.price_data.unit_amount)).toEqual([5000])
+    const [pay] = await paymentOf(d.id)
+    expect(pay).toMatchObject({ amountCents: 5000, giftsHeld: 1 })
+    await paid(pay.id)
+    const [ent] = await db.select().from(studioEntitlements)
+    expect(ent).toMatchObject({ category: 'building', amountCents: 5000, status: 'packaging' })
+    const [after] = await paymentOf(d.id)
+    expect(after.refundedCents).toBe(0)
+  })
+
   it('a second click reuses the open session', async () => {
     const u = await createUser()
     const d = await createDesign(u)

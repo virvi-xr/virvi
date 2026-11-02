@@ -114,6 +114,7 @@ export async function addRevision(
   design: { id: string },
   category: string,
   checker: { pass: boolean; failures: number; warnings: number } = { pass: true, failures: 0, warnings: 0 },
+  meta: Record<string, unknown> = {},
 ) {
   const { studioPieces, studioRevisions } = await import('../../src/db/schema.js')
   const { eq, max } = await import('drizzle-orm')
@@ -125,7 +126,7 @@ export async function addRevision(
   const files = [`pieces/${category}/neon_male.glb`, `pieces/${category}/neon_female.glb`, `pieces/${category}/piece.json`, `checks/${category}.txt`]
   const [rev] = await db.insert(studioRevisions).values({
     pieceId: piece.id, number: (n ?? 0) + 1, jobId: job.id, changeKind: n ? 'design' : 'new',
-    meta: { name: `Neon ${category}`, category }, checker, files,
+    meta: { name: `Neon ${category}`, category, ...meta }, checker, files,
   }).returning()
   await db.update(studioPieces).set({ latestRevisionId: rev.id }).where(eq(studioPieces.id, piece.id))
   return rev

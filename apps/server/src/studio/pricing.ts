@@ -17,6 +17,7 @@ export const RECURATION_NOTE =
 
 export type QuotePiece = {
   category: string
+  footprint?: string // a scene building's, from its revision
   name: string
   revisionNumber: number
   revisionId: string
@@ -40,11 +41,44 @@ export class QuoteError extends Error {
  * `designHasFirst` whether any piece of the design has. Used to quote, and again when a payment is granted, against
  * what has been paid for by then.
  */
-export function priceLines(
-  designKind: string,
-  pieces: { kind: 'first' | 'revision' }[],
+/** What a line charges after its waiver or free-finalize credit. */
+export const chargedCents = (l: Pick<PaymentLine, 'amountCents' | 'waived' | 'gift' | 'giftCents'>) =>
+  l.waived ? 0 : l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
+
+type Tier = 'Small' | 'Medium' | 'Large'
+const tierOf = (footprint?: string): Tier => footprint === '4x4' ? 'Large' : footprint === '1x2' || footprint === '2x2' ? 'Medium' : 'Small'
+
+/**
+ * A scene design: a building by its footprint (as revised, for a revision); furniture 900 for the design's first paid
+ * piece, 500 after it (a building earlier in the checkout counts), 500 a revision.
+ */
+function scenePriceLines(
+  pieces: { kind: 'first' | 'revision'; category?: string; footprint?: string }[],
   designHasFirst: boolean,
 ): { priceKind: PaymentLine['priceKind']; amountCents: number }[] {
+  const prices = config.studioPrices
+  let hasFirst = designHasFirst
+  return pieces.map((p) => {
+    if (p.category === 'building') {
+      hasFirst = hasFirst || p.kind === 'first'
+      return p.kind === 'first'
+        ? { priceKind: 'first' as const, amountCents: prices[`building${tierOf(p.footprint)}`] }
+        : { priceKind: 'revision' as const, amountCents: prices[`revisionBuilding${tierOf(p.footprint)}`] }
+    }
+    if (p.kind === 'revision') return { priceKind: 'revision' as const, amountCents: prices.revisionFurniture }
+    const line = hasFirst ? { priceKind: 'first_extra' as const, amountCents: prices.furnitureExtra }
+      : { priceKind: 'first' as const, amountCents: prices.furniture }
+    hasFirst = true
+    return line
+  })
+}
+
+export function priceLines(
+  designKind: string,
+  pieces: { kind: 'first' | 'revision'; category?: string; footprint?: string }[],
+  designHasFirst: boolean,
+): { priceKind: PaymentLine['priceKind']; amountCents: number }[] {
+  if (designKind === 'scene') return scenePriceLines(pieces, designHasFirst)
   const prices = config.studioPrices
   const emote = designKind === 'emote'
   let hasFirst = designHasFirst
@@ -95,7 +129,11 @@ export async function quoteFinalize(design: Design, categories: string[] | null,
       : ents.some((e) => e.revisionId === rev.id) ? 'entitled' as const
         : (rev.checker as { pass?: boolean } | null)?.pass === false ? 'blocked' as const
           : 'payable' as const
-    return { category: p.category, name: p.name, revisionNumber: rev?.number ?? 0, revisionId: rev?.id ?? '', state, kind, checker: rev?.checker ?? null }
+    const footprint = (rev?.meta as { footprint?: unknown } | undefined)?.footprint
+    return {
+      category: p.category, name: p.name, revisionNumber: rev?.number ?? 0, revisionId: rev?.id ?? '', state, kind,
+      checker: rev?.checker ?? null, ...(typeof footprint === 'string' ? { footprint } : {}),
+    }
   })
   const blocked = pieces.filter((p) => p.state === 'blocked').map((p) => p.category)
 
@@ -122,16 +160,18 @@ export async function quoteFinalize(design: Design, categories: string[] | null,
   const giftIdx = new Set(chosen.map((p, i) => ({ p, i })).filter(({ p }) => p.kind === 'first')
     .sort((a, b) => prices[b.i].amountCents - prices[a.i].amountCents || a.i - b.i)
     .slice(0, Math.max(0, gifts)).map(({ i }) => i))
+  const cap = config.studioPrices.giftCapCents
   const lines: PaymentLine[] = chosen.map((p, i) => ({
     category: p.category, revisionId: p.revisionId, revisionNumber: p.revisionNumber, pieceName: p.name,
     ...prices[i], waived: waived.includes(p.category) && !overLimit.has(p.category),
     ...(waived.includes(p.category) && overLimit.has(p.category) ? { held: true } : {}),
-    ...(giftIdx.has(i) ? { gift: true } : {}),
+    ...(giftIdx.has(i) ? { gift: true, ...(design.kind === 'scene' ? { giftCents: Math.min(prices[i].amountCents, cap) } : {}) } : {}),
+    ...(p.footprint ? { footprint: p.footprint } : {}),
   }))
   return {
     pieces,
     lines,
-    totalCents: lines.reduce((sum, l) => sum + (l.waived || l.gift ? 0 : l.amountCents), 0),
+    totalCents: lines.reduce((sum, l) => sum + chargedCents(l), 0),
     giftsUsed: giftIdx.size,
     blocked,
     reportsHeld: [...overLimit],

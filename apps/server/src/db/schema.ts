@@ -1654,6 +1654,8 @@ export type PaymentLine = {
   amountCents: number
   waived: boolean
   gift?: boolean // a first-finalize line paid by a free-finalize credit
+  giftCents?: number // how much of it the credit covers (at most the gift cap); missing on older lines: all of it
+  footprint?: string // a scene building's footprint, which sets its price
   held?: boolean // a mistake report past the instant limit: charged, and its report waits for the owner
   reportText?: string // a waived or held line's mistake report, stored as a report at grant time
 }
