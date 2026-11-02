@@ -8,6 +8,8 @@ export const NO_PERMISSION = "You don't have permission to edit this scene."
 export const DISCONNECTED = 'Disconnected from Virvi. Reconnecting…'
 export const NOT_FOUND = 'That item no longer exists — reopen the panel to refresh'
 export const SOMETHING_WRONG = 'Something went wrong — try again'
+/** The server's 426: this HUD is older than the oldest one allowed to edit (x-virvi-hud-protocol). */
+export const REDEPLOY = 'This scene needs a redeploy to edit'
 
 /** The HTTP status of a @virvixr/client error (`HTTP 403: {...}`), or null when the request got no answer. */
 export function httpStatusOf(err: unknown): number | null {
@@ -31,6 +33,7 @@ export function friendlyEditError(err: unknown, opts: { connected?: boolean } = 
   const status = httpStatusOf(err)
   const connected = opts.connected !== false
   if (status === 403) return NO_PERMISSION
+  if (status === 426) return REDEPLOY
   if (status === 401) return connected ? SIGNED_OUT : DISCONNECTED
   if (status === 404) return NOT_FOUND
   if (status === null && (!connected || isNetworkError(err))) return DISCONNECTED

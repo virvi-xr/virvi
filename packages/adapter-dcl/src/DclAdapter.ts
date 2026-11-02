@@ -39,9 +39,12 @@ import type {
   Vec3,
   Quat,
 } from '@virvixr/shared'
-import { localModelFile } from '@virvixr/shared'
+import { localModelFile, DCL_HUD_PROTOCOL } from '@virvixr/shared'
 
 export class DclAdapter implements VirviPlatformAdapter {
+  /** Sent with every request, so the server can tell an old HUD to redeploy (426 redeploy_required). */
+  readonly hudProtocol = DCL_HUD_PROTOCOL
+
   // Video player entities -- DCL uses a separate entity for the VideoPlayer component
   private videoPlayerEntities: Map<number, Entity> = new Map()
 

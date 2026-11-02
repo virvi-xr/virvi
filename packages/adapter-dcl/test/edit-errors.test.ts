@@ -9,12 +9,19 @@ import {
   DISCONNECTED,
   NOT_FOUND,
   SOMETHING_WRONG,
+  REDEPLOY,
 } from '../src/edit-errors.js'
 
 // @virvixr/client's error shape
 const http = (status: number, body = '{"error":"x"}') => new Error(`HTTP ${status}: ${body}`)
 
 describe('friendlyEditError', () => {
+  it('426 says the scene needs a redeploy (the HUD is older than the oldest allowed to edit)', () => {
+    expect(friendlyEditError(http(426, '{"error":"redeploy_required"}'))).toBe('This scene needs a redeploy to edit')
+    expect(friendlyEditError(http(426), { connected: false })).toBe(REDEPLOY)
+    expect(friendlyRenameError(http(426))).toBe(REDEPLOY)
+  })
+
   it('401 says signed out, not permission', () => {
     expect(friendlyEditError(http(401, '{"error":"Unauthorized","message":"Session expired — sign in again"}'))).toBe(
       "You're signed out. Sign in again to edit.",
