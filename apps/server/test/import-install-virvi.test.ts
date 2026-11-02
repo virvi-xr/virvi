@@ -1,0 +1,98 @@
+import { describe, it, expect } from 'vitest'
+import { strToU8, strFromU8 } from 'fflate'
+import { installVirvi, VIRVI_DCL_RANGE } from '../src/services/import/install-virvi.js'
+import { ImportError, type SceneFolder } from '../src/services/import/scene-zip.js'
+import { runtimeFiles } from '../src/services/dcl/runtime.js'
+
+const sceneJson = { main: 'bin/index.js', runtimeVersion: '7', scene: { parcels: ['0,0'], base: '0,0' } }
+const SCENE_JSON_TEXT = '{\n    "main": "bin/index.js",\n  "runtimeVersion":"7","scene":{"parcels":["0,0"],"base":"0,0"}}'
+const pkg = (deps?: Record<string, string>) => JSON.stringify({ name: 'my-scene', version: '1.0.0', ...(deps ? { dependencies: deps } : {}), devDependencies: { '@dcl/sdk': 'latest' } }, null, 2)
+
+function folder(src: Record<string, string>, kind: SceneFolder['kind'] = 'sdk7'): SceneFolder {
+  const files = new Map<string, Uint8Array>()
+  files.set('scene.json', strToU8(SCENE_JSON_TEXT))
+  for (const [k, v] of Object.entries(src)) files.set(k, strToU8(v))
+  return { files, sceneJson, kind, location: { kind: 'parcels', parcels: ['0,0'], base: '0,0' } }
+}
+const text = (m: Map<string, Uint8Array>, p: string) => strFromU8(m.get(p)!)
+const failure = async (p: Promise<unknown>) => { try { await p } catch (e) { return e instanceof ImportError ? [e.status, e.code] : e } return null }
+
+describe('installVirvi', () => {
+  it('adds the dependency, the createVirvi call and the HUD icon', async () => {
+    const r = await installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': "import { engine } from '@dcl/sdk/ecs'\n\nexport function main() {\n  engine.addSystem(() => {})\n}\n" }))
+    const p = JSON.parse(text(r.files, 'package.json'))
+    expect(p.dependencies['@virvixr/dcl']).toBe(VIRVI_DCL_RANGE)
+    expect(VIRVI_DCL_RANGE).toBe('^2.5.0')
+    expect(Object.keys(p)).toEqual(['name', 'version', 'devDependencies', 'dependencies'])
+    expect(text(r.files, 'package.json').endsWith('}\n')).toBe(true)
+    expect(text(r.files, 'src/index.ts')).toBe("import { createVirvi } from '@virvixr/dcl'\nimport { engine } from '@dcl/sdk/ecs'\n\nexport function main() {\n  void createVirvi()\n  engine.addSystem(() => {})\n}\n")
+    expect(r.files.get('images/virvi/hud-v.png')).toEqual((await runtimeFiles()).get('images/virvi/hud-v.png'))
+    expect(r.changed.sort()).toEqual(['images/virvi/hud-v.png', 'package.json', 'src/index.ts'])
+  })
+
+  it('raises an older @virvixr/dcl and replaces non-semver specs, never lowers', async () => {
+    const run = async (spec: string) => JSON.parse(text((await installVirvi(folder({ 'package.json': pkg({ '@virvixr/dcl': spec, left: '1.0.0' }), 'src/index.ts': 'export function main() {}' }))).files, 'package.json'))
+    expect((await run('^2.4.0')).dependencies).toEqual({ '@virvixr/dcl': '^2.5.0', left: '1.0.0' })
+    expect((await run('~2.1.9'))['dependencies']['@virvixr/dcl']).toBe('^2.5.0')
+    expect((await run('>=1.0.0'))['dependencies']['@virvixr/dcl']).toBe('^2.5.0')
+    expect((await run('latest'))['dependencies']['@virvixr/dcl']).toBe('^2.5.0')
+    expect((await run('file:../dcl'))['dependencies']['@virvixr/dcl']).toBe('^2.5.0')
+    expect((await run('github:a/b'))['dependencies']['@virvixr/dcl']).toBe('^2.5.0')
+    expect((await run('*'))['dependencies']['@virvixr/dcl']).toBe('^2.5.0')
+    expect((await run('^2.6.1'))['dependencies']['@virvixr/dcl']).toBe('^2.6.1')
+    expect((await run('^10.0.0'))['dependencies']['@virvixr/dcl']).toBe('^10.0.0')
+  })
+
+  it('is idempotent', async () => {
+    const first = await installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': 'export function main() {\n  a()\n}\n' }))
+    const second = await installVirvi({ ...folder({}), files: first.files })
+    expect(second.changed).toEqual([])
+    for (const [k, v] of first.files) expect(second.files.get(k)).toEqual(v)
+  })
+
+  it('handles async, arrow, empty and one-line main, and CRLF', async () => {
+    const edit = async (src: string) => text((await installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': src }))).files, 'src/index.ts')
+    expect(await edit('export async function main(): Promise<void> {\n  await x()\n}\n')).toContain('Promise<void> {\n  void createVirvi()\n  await x()\n}')
+    expect(await edit('export const main = async () => {\n  x()\n}\n')).toContain('=> {\n  void createVirvi()\n  x()\n}')
+    expect(await edit('export const main = (): void => {\n  x()\n}\n')).toContain('=> {\n  void createVirvi()\n  x()\n}')
+    expect(await edit('export function main() {}\n')).toBe("import { createVirvi } from '@virvixr/dcl'\nexport function main() {\n  void createVirvi()\n}\n")
+    expect(await edit('export function main() { x() }\n')).toContain('{\n  void createVirvi()\n x() }')
+    const crlf = await edit("import a from 'a'\r\nexport function main() {\r\n  x()\r\n}\r\n")
+    expect(crlf).toBe("import { createVirvi } from '@virvixr/dcl'\r\nimport a from 'a'\r\nexport function main() {\r\n  void createVirvi()\r\n  x()\r\n}\r\n")
+  })
+
+  it('leaves a file that already imports createVirvi alone, and uses index.tsx / index.js', async () => {
+    const src = "import { createVirvi } from '@virvixr/dcl'\nexport function main() {\n  void createVirvi()\n}\n"
+    const r = await installVirvi(folder({ 'package.json': pkg({ '@virvixr/dcl': '^2.5.0' }), 'src/index.ts': src }))
+    expect(text(r.files, 'src/index.ts')).toBe(src)
+    expect(r.changed).toEqual(['images/virvi/hud-v.png'])
+    const js = await installVirvi(folder({ 'package.json': pkg(), 'src/index.js': 'export function main() {}' }))
+    expect(text(js.files, 'src/index.js')).toContain('void createVirvi()')
+    const tsx = await installVirvi(folder({ 'package.json': pkg(), 'src/index.tsx': 'export function main() {}' }))
+    expect(text(tsx.files, 'src/index.tsx')).toContain('void createVirvi()')
+  })
+
+  it('a Creator Hub scene gets the same edit and no composite change', async () => {
+    const composite = '{"version":1}'
+    const f = folder({ 'package.json': pkg(), 'assets/scene/main.composite': composite, 'src/index.ts': 'export function main() {}\n' }, 'creator-hub')
+    const r = await installVirvi(f)
+    expect(text(r.files, 'assets/scene/main.composite')).toBe(composite)
+    expect(r.changed.sort()).toEqual(['images/virvi/hud-v.png', 'package.json', 'src/index.ts'])
+  })
+
+  it('no main is no_main', async () => {
+    expect(await failure(installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': 'console.log(1)\n' })))).toEqual([422, 'no_main'])
+    expect(await failure(installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': 'function main() {}\n' })))).toEqual([422, 'no_main'])
+    expect(await failure(installVirvi(folder({ 'package.json': pkg() })))).toEqual([422, 'no_main'])
+  })
+
+  it('leaves scene.json byte-for-byte and does not mutate the input folder', async () => {
+    const f = folder({ 'package.json': pkg(), 'src/index.ts': 'export function main() {}\n' })
+    const before = new Uint8Array(f.files.get('scene.json')!)
+    const r = await installVirvi(f)
+    expect(r.files.get('scene.json')).toEqual(before)
+    expect(r.changed).not.toContain('scene.json')
+    expect(text(f.files, 'src/index.ts')).toBe('export function main() {}\n')
+    expect(f.files.has('images/virvi/hud-v.png')).toBe(false)
+  })
+})
