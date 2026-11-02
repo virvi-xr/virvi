@@ -6,7 +6,7 @@ import { sceneImports } from '../db/schema.js'
 import { getImportStore } from '../storage/private-store.js'
 import { ImportError, safeSegments, worldNameOf } from '../services/import/scene-zip.js'
 import { buildLogKey, buildTokenMatches, builtKeyPrefix, failBuild, getOnBuildDone } from '../services/import/build-runner.js'
-import { importSlotGate, releaseImportSlot } from '../services/import/import-work.js'
+import { importLimits, importSlotGate, importSlotHooks, releaseImportSlot, resultWork } from '../services/import/import-work.js'
 
 /**
  * Virvi's side of the wire contract in apps/scene-builder/README.md. The build box authenticates with its one-build
@@ -140,8 +140,9 @@ export default async function importBuildRoutes(app: FastifyInstance) {
     await scope.register(async (res) => {
       res.removeAllContentTypeParsers()
       // At most IMPORT_CONCURRENCY results are unpacked at once (the token is checked first); the box retries a 503
-      res.addHook('onResponse', releaseImportSlot)
-      res.addHook('onRequestAbort', releaseImportSlot)
+      res.addHook('preHandler', importSlotHooks.preHandler)
+      res.addHook('onResponse', importSlotHooks.onResponse)
+      res.addHook('onRequestAbort', importSlotHooks.onRequestAbort)
       res.addContentTypeParser('application/zip', { parseAs: 'buffer', bodyLimit: RESULT_LIMIT }, (_req, body, done) => done(null, body))
       // A body the parser refuses (too large, not a zip type) is a refused result too
       res.setErrorHandler(async (err: FastifyError, request, reply) => {
@@ -150,51 +151,14 @@ export default async function importBuildRoutes(app: FastifyInstance) {
         return refuse(request, reply, status, tooLarge(err) ? 'it is larger than 200 MB.' : 'it is not an application/zip body.')
       })
 
-      res.post('/api/imports/build/:id/result', { ...opts, bodyLimit: RESULT_LIMIT, onRequest: importSlotGate }, async (request, reply) => {
-        const imp = request.sceneImport!
-        if (imp.status !== 'building') return reply.status(409).send({ error: 'not_building' })
-        let files: Map<string, Uint8Array>
+      // Results have their own pool, so uploads never starve them; the body has importLimits.resultBodyMs to arrive
+      const slot = importSlotGate(resultWork, () => importLimits.resultBodyMs)
+      res.post('/api/imports/build/:id/result', { ...opts, bodyLimit: RESULT_LIMIT, onRequest: slot }, async (request, reply) => {
         try {
-          files = readBuiltZip(Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0))
-        } catch (err) {
-          if (err instanceof ImportError) return refuse(request, reply, err.status, err.message)
-          throw err
+          return await takeResult(request, reply)
+        } finally {
+          releaseImportSlot(request)
         }
-        const moved = await movedReason(imp, files)
-        if (moved) return refuse(request, reply, 422, moved)
-
-        // Spend the token first: one result is taken, and a failure report racing it is refused
-        const claimed = await db.update(sceneImports).set({ buildTokenHash: null, updatedAt: new Date() })
-          .where(and(eq(sceneImports.id, imp.id), eq(sceneImports.status, 'building'), eq(sceneImports.buildTokenHash, imp.buildTokenHash!)))
-          .returning({ id: sceneImports.id })
-        if (!claimed.length) return reply.status(401).send({ error: 'invalid_build_token' })
-
-        const store = getImportStore()
-        const prefix = builtKeyPrefix(imp.id)
-        const log = headerLog(request.headers['x-build-log'])
-        try {
-          for (const [path, data] of files) await store.put(prefix + path, Buffer.from(data.buffer, data.byteOffset, data.byteLength), 'application/octet-stream')
-          if (log) await store.put(buildLogKey(imp.id), log, 'text/plain; charset=utf-8')
-        } catch (err) {
-          request.log.error({ err }, `[scene-build] storing the result of import ${imp.id} failed`)
-          await store.deletePrefix(prefix).catch(() => {})
-          await failBuild(imp.id, Buffer.concat([log ?? Buffer.alloc(0), Buffer.from('\n[virvi] The built files could not be stored. Try the upload again.\n')]))
-          return reply.status(500).send({ error: 'store_failed' })
-        }
-
-        const now = new Date()
-        const built = await db.update(sceneImports).set({
-          status: 'built', builtAt: now, builtKeyPrefix: prefix, logKey: log ? buildLogKey(imp.id) : null, updatedAt: now,
-        }).where(and(eq(sceneImports.id, imp.id), eq(sceneImports.status, 'building'), isNull(sceneImports.buildTokenHash)))
-          .returning({ id: sceneImports.id })
-        // The sweep timed it out while the files were stored: they're not this import's any more
-        if (!built.length) {
-          await store.deletePrefix(prefix).catch(() => {})
-          return reply.status(409).send({ error: 'not_building' })
-        }
-        // The deploy that follows is not the box's business; it gets its answer now
-        getOnBuildDone()(imp.id).catch((err) => request.log.error({ err }, `[scene-build] after the build of import ${imp.id}`))
-        return reply.status(204).send()
       })
     })
 
@@ -218,4 +182,52 @@ export default async function importBuildRoutes(app: FastifyInstance) {
       })
     })
   })
+}
+
+/** A build result, once its body is in: checked, stored, and the import built. */
+async function takeResult(request: FastifyRequest, reply: FastifyReply) {
+  const imp = request.sceneImport!
+  if (imp.status !== 'building') return reply.status(409).send({ error: 'not_building' })
+  let files: Map<string, Uint8Array>
+  try {
+    files = readBuiltZip(Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0))
+  } catch (err) {
+    if (err instanceof ImportError) return refuse(request, reply, err.status, err.message)
+    throw err
+  }
+  const moved = await movedReason(imp, files)
+  if (moved) return refuse(request, reply, 422, moved)
+
+  // Spend the token first: one result is taken, and a failure report racing it is refused
+  const claimed = await db.update(sceneImports).set({ buildTokenHash: null, updatedAt: new Date() })
+    .where(and(eq(sceneImports.id, imp.id), eq(sceneImports.status, 'building'), eq(sceneImports.buildTokenHash, imp.buildTokenHash!)))
+    .returning({ id: sceneImports.id })
+  if (!claimed.length) return reply.status(401).send({ error: 'invalid_build_token' })
+
+  const store = getImportStore()
+  const prefix = builtKeyPrefix(imp.id)
+  const log = headerLog(request.headers['x-build-log'])
+  try {
+    for (const [path, data] of files) await store.put(prefix + path, Buffer.from(data.buffer, data.byteOffset, data.byteLength), 'application/octet-stream')
+    if (log) await store.put(buildLogKey(imp.id), log, 'text/plain; charset=utf-8')
+  } catch (err) {
+    request.log.error({ err }, `[scene-build] storing the result of import ${imp.id} failed`)
+    await store.deletePrefix(prefix).catch(() => {})
+    await failBuild(imp.id, Buffer.concat([log ?? Buffer.alloc(0), Buffer.from('\n[virvi] The built files could not be stored. Try the upload again.\n')]))
+    return reply.status(500).send({ error: 'store_failed' })
+  }
+
+  const now = new Date()
+  const built = await db.update(sceneImports).set({
+    status: 'built', builtAt: now, builtKeyPrefix: prefix, logKey: log ? buildLogKey(imp.id) : null, updatedAt: now,
+  }).where(and(eq(sceneImports.id, imp.id), eq(sceneImports.status, 'building'), isNull(sceneImports.buildTokenHash)))
+    .returning({ id: sceneImports.id })
+  // The sweep timed it out while the files were stored: they're not this import's any more
+  if (!built.length) {
+    await store.deletePrefix(prefix).catch(() => {})
+    return reply.status(409).send({ error: 'not_building' })
+  }
+  // The deploy that follows is not the box's business; it gets its answer now
+  getOnBuildDone()(imp.id).catch((err) => request.log.error({ err }, `[scene-build] after the build of import ${imp.id}`))
+  return reply.status(204).send()
 }

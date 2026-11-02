@@ -25,7 +25,7 @@ import { getActiveSetup } from '../setup/setups.js'
 import { getImportStore } from '../storage/private-store.js'
 import { ImportError, readSceneZip, type SceneFolder } from '../services/import/scene-zip.js'
 import { installVirvi } from '../services/import/install-virvi.js'
-import { importSlotGate, releaseImportSlot } from '../services/import/import-work.js'
+import { importLimits, importSlotGate, importSlotHooks, releaseImportSlot, uploadWork } from '../services/import/import-work.js'
 import { FILES_EXPIRED } from '../services/import/retention.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
 import {
@@ -103,9 +103,10 @@ export default async function importRoutes(app: FastifyInstance) {
   await app.register(async (upload) => {
     upload.removeAllContentTypeParsers()
     upload.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: SCENE_IMPORT_MAX_BYTES }, (_req, body, done) => done(null, body))
-    // At most IMPORT_CONCURRENCY uploads are read at once; the slot goes back with the response
-    upload.addHook('onResponse', releaseImportSlot)
-    upload.addHook('onRequestAbort', releaseImportSlot)
+    // At most IMPORT_CONCURRENCY uploads at once (import-work.ts); the slot goes back when the handler ends
+    upload.addHook('preHandler', importSlotHooks.preHandler)
+    upload.addHook('onResponse', importSlotHooks.onResponse)
+    upload.addHook('onRequestAbort', importSlotHooks.onRequestAbort)
     upload.setErrorHandler(async (err: FastifyError, _request, reply) => {
       if (err.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
         return reply.status(413).send({ error: 'too_big', message: `The zip is larger than ${SCENE_IMPORT_MAX_BYTES / 1024 / 1024} MB.` })
@@ -113,44 +114,54 @@ export default async function importRoutes(app: FastifyInstance) {
       throw err
     })
 
-    // Auth, the builds check and the slot run before the body is read
-    upload.post('/api/imports', { onRequest: [authenticate, buildsGate, importSlotGate], bodyLimit: SCENE_IMPORT_MAX_BYTES }, async (request, reply) => handle(reply, async () => {
-      const folder = readSceneZip(Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0))
-      if (folder.location.kind !== 'world') throw new ImportError(422, 'parcels_not_yet', PARCELS_NOT_YET)
-      const world = folder.location.world
-      await ownerFor(request.user.id, world)
-      const scene = await sceneFor(request, world, folder)
-      const { files, alreadyInstalled } = await installVirvi(folder)
-      if (alreadyInstalled) request.log.info(`[scene-import] ${world} already starts Virvi: only its @virvixr/dcl range was checked`)
-      // Ruling R5: the installed files are re-zipped in memory; the upload never becomes files on disk. Stored, not
-      // deflated (the box unzips it anyway), and wrapped without a copy
-      const zipped = zipSync(Object.fromEntries(files), { level: 0 })
-      const source = Buffer.from(zipped.buffer, zipped.byteOffset, zipped.byteLength)
-
-      const row = await createImport({ userId: request.user.id, world, kind: folder.kind, scene })
+    // Auth, the builds check and the slot run before the body is read; the body has importLimits.uploadBodyMs to arrive
+    const slot = importSlotGate(uploadWork, () => importLimits.uploadBodyMs)
+    upload.post('/api/imports', { onRequest: [authenticate, buildsGate, slot], bodyLimit: SCENE_IMPORT_MAX_BYTES }, async (request, reply) => handle(reply, async () => {
       try {
-        await getImportStore().put(row.sourceKey, source, 'application/zip')
-      } catch (err) {
-        request.log.error({ err }, `[scene-import] storing the source of import ${row.id} failed`)
-        await failImport(row.id, 'store_failed', "The upload couldn't be stored. Try again in a few minutes.")
-        return reply.status(500).send({ error: 'store_failed', message: "The upload couldn't be stored. Try again in a few minutes.", importId: row.id })
+        return await uploadImport(request, reply)
+      } finally {
+        releaseImportSlot(request)
       }
-      try {
-        await startBuild(row.id)
-      } catch (err) {
-        // The import must not sit in `uploaded` holding the World
-        const known = err instanceof ImportError
-        if (!known) request.log.error({ err }, `[scene-import] starting the build of import ${row.id} failed`)
-        await failImport(row.id, known ? err.code : 'build_start_failed', known ? err.message : BUILD_START_FAILED)
-      }
-      // startBuild fails the import itself when its machine won't start, and returns
-      const after = await reload(row.id)
-      if (after.status === 'failed') {
-        return reply.status(502).send({ error: 'build_start_failed', message: after.errorMessage ?? BUILD_START_FAILED, importId: row.id })
-      }
-      return reply.status(201).send({ import: await loadImportView(after) })
     }))
   })
+
+  /** The upload, once its body is in: checks, Virvi installed, stored, build started. */
+  async function uploadImport(request: FastifyRequest, reply: FastifyReply) {
+    const folder = readSceneZip(Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0))
+    if (folder.location.kind !== 'world') throw new ImportError(422, 'parcels_not_yet', PARCELS_NOT_YET)
+    const world = folder.location.world
+    await ownerFor(request.user.id, world)
+    const scene = await sceneFor(request, world, folder)
+    const { files, alreadyInstalled } = await installVirvi(folder)
+    if (alreadyInstalled) request.log.info(`[scene-import] ${world} already starts Virvi: only its @virvixr/dcl range was checked`)
+    // Ruling R5: the installed files are re-zipped in memory; the upload never becomes files on disk. Stored, not
+    // deflated (the box unzips it anyway), and wrapped without a copy
+    const zipped = zipSync(Object.fromEntries(files), { level: 0 })
+    const source = Buffer.from(zipped.buffer, zipped.byteOffset, zipped.byteLength)
+
+    const row = await createImport({ userId: request.user.id, world, kind: folder.kind, scene })
+    try {
+      await getImportStore().put(row.sourceKey, source, 'application/zip')
+    } catch (err) {
+      request.log.error({ err }, `[scene-import] storing the source of import ${row.id} failed`)
+      await failImport(row.id, 'store_failed', "The upload couldn't be stored. Try again in a few minutes.")
+      return reply.status(500).send({ error: 'store_failed', message: "The upload couldn't be stored. Try again in a few minutes.", importId: row.id })
+    }
+    try {
+      await startBuild(row.id)
+    } catch (err) {
+      // The import must not sit in `uploaded` holding the World
+      const known = err instanceof ImportError
+      if (!known) request.log.error({ err }, `[scene-import] starting the build of import ${row.id} failed`)
+      await failImport(row.id, known ? err.code : 'build_start_failed', known ? err.message : BUILD_START_FAILED)
+    }
+    // startBuild fails the import itself when its machine won't start, and returns
+    const after = await reload(row.id)
+    if (after.status === 'failed') {
+      return reply.status(502).send({ error: 'build_start_failed', message: after.errorMessage ?? BUILD_START_FAILED, importId: row.id })
+    }
+    return reply.status(201).send({ import: await loadImportView(after) })
+  }
 
   await app.register(async (reads) => {
     reads.addHook('preHandler', authenticate)

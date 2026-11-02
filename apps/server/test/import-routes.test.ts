@@ -9,7 +9,9 @@ import * as runnerModule from '../src/services/import/build-runner.js'
 import { setBuildRunner, type BuildRunner } from '../src/services/import/build-runner.js'
 import { DEPLOY_WINDOW_MS } from '../src/services/dcl/world-deployer.js'
 import { createImport, importView } from '../src/services/import/imports.js'
-import { importWork, IMPORTS_BUSY } from '../src/services/import/import-work.js'
+import { importLimits, uploadWork, IMPORTS_BUSY } from '../src/services/import/import-work.js'
+import { request as httpRequest } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -420,9 +422,9 @@ describe('scene import routes', () => {
     })
 
     it('a third upload while two are processed answers 503 imports_busy, and nothing is stored', async () => {
-      const held = [importWork.tryTake(), importWork.tryTake()]
+      const held = [uploadWork.tryTake(), uploadWork.tryTake()]
       expect(held.every(Boolean)).toBe(true)
-      expect(importWork.tryTake()).toBeNull()
+      expect(uploadWork.tryTake()).toBeNull()
       const res = await upload(sceneZip())
       expect([res.statusCode, res.json()]).toEqual([503, { error: 'imports_busy', message: IMPORTS_BUSY }])
       expect(IMPORTS_BUSY).toBe('Virvi is busy with other imports. Try again in a minute.')
@@ -430,16 +432,39 @@ describe('scene import routes', () => {
       held.forEach((release) => release!())
       expect((await upload(sceneZip())).statusCode).toBe(201)
       // Every slot came back, whatever the answer was
-      expect(importWork.inUse()).toBe(0)
+      expect(uploadWork.inUse()).toBe(0)
+    })
+
+    it('a trickling upload is cut off at the body time limit and frees its slot', async () => {
+      const saved = importLimits.uploadBodyMs
+      importLimits.uploadBodyMs = 300
+      await app.listen({ port: 0, host: '127.0.0.1' })
+      try {
+        const { port } = app.server.address() as AddressInfo
+        const ended = await new Promise<string>((resolve) => {
+          const req = httpRequest({
+            host: '127.0.0.1', port, method: 'POST', path: '/api/imports',
+            headers: { ...auth(user), 'content-type': 'application/zip', 'content-length': '100000' },
+          }, (res) => resolve(`status ${res.statusCode}`))
+          req.on('error', (e) => resolve(`error ${(e as NodeJS.ErrnoException).code}`))
+          // A few bytes, then nothing: the slot must not be held forever
+          req.write(Buffer.alloc(100))
+        })
+        expect(ended).toMatch(/^(status 408|error ECONNRESET|error EPIPE)$/)
+        await vi.waitFor(() => expect(uploadWork.inUse()).toBe(0))
+        expect(await db.select().from(sceneImports)).toHaveLength(0)
+      } finally {
+        importLimits.uploadBodyMs = saved
+      }
     })
 
     it('a slot is given back once, even when release is called twice', () => {
-      const a = importWork.tryTake()!
+      const a = uploadWork.tryTake()!
       a()
       a()
-      expect(importWork.inUse()).toBe(0)
-      const b = importWork.tryTake()!, c = importWork.tryTake()!
-      expect(importWork.tryTake()).toBeNull()
+      expect(uploadWork.inUse()).toBe(0)
+      const b = uploadWork.tryTake()!, c = uploadWork.tryTake()!
+      expect(uploadWork.tryTake()).toBeNull()
       b(); c()
     })
   })
