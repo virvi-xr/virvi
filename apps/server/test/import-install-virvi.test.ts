@@ -147,4 +147,47 @@ describe('installVirvi', () => {
       expect(await failure(installVirvi(f))).toEqual([422, 'bad_source_encoding'])
     })
   })
+  describe('Virvi already in the scene (outside src/index.ts)', () => {
+    const MAIN = 'export function main() {\n  x()\n}\n'
+    const VIRVI_MANAGER = "import { Entity } from '@dcl/sdk/ecs'\nimport { startVirviManager, VirviSmartItem } from '@virvixr/dcl'\n\nexport class VirviManager {\n  start() { startVirviManager(this.entity, {}) }\n}\n"
+
+    it("the Creator Hub VirviManager script: nothing is inserted, the dependency is raised", async () => {
+      const r = await installVirvi(folder({
+        'package.json': pkg({ '@virvixr/dcl': '^2.4.0' }), 'assets/scene/main.composite': '{}', 'assets/scene/Scripts/VirviManager.ts': VIRVI_MANAGER, 'src/index.ts': MAIN,
+      }, 'creator-hub'))
+      expect(text(r.files, 'src/index.ts')).toBe(MAIN)
+      expect(text(r.files, 'assets/scene/Scripts/VirviManager.ts')).toBe(VIRVI_MANAGER)
+      expect(JSON.parse(text(r.files, 'package.json')).dependencies['@virvixr/dcl']).toBe('^2.5.0')
+      expect(r.alreadyInstalled).toBe(true)
+      expect(r.changed.sort()).toEqual(['images/virvi/hud-v.png', 'package.json'])
+    })
+
+    it('createVirvi called from src/other.ts: nothing is inserted', async () => {
+      const other = "import { createVirvi } from '@virvixr/dcl'\nexport function startAll() {\n  void createVirvi()\n}\n"
+      const r = await installVirvi(folder({ 'package.json': pkg(), 'src/other.ts': other, 'src/index.ts': "import { startAll } from './other'\n" + MAIN }))
+      expect(text(r.files, 'src/index.ts')).toBe("import { startAll } from './other'\n" + MAIN)
+      expect(JSON.parse(text(r.files, 'package.json')).dependencies['@virvixr/dcl']).toBe('^2.5.0')
+      expect(r.alreadyInstalled).toBe(true)
+    })
+
+    it('createVirvi called outside main in index.ts counts too; a type-only import, a comment or another package does not', async () => {
+      const top = "import { createVirvi } from '@virvixr/dcl'\nvoid createVirvi()\n" + MAIN
+      expect(text((await installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': top }))).files, 'src/index.ts')).toBe(top)
+      for (const other of [
+        "import type { VirviSmartItem } from '@virvixr/dcl'\nexport const a = 1\n",
+        "// import { createVirvi } from '@virvixr/dcl'\nexport const a = 1\n",
+        "import { createVirvi } from './mine'\nexport const a = 1\n",
+      ]) {
+        const r = await installVirvi(folder({ 'package.json': pkg(), 'src/other.ts': other, 'src/index.ts': MAIN }))
+        expect(text(r.files, 'src/index.ts')).toContain('void createVirvi()')
+        expect(r.alreadyInstalled).toBe(false)
+      }
+    })
+
+    it("index.ts importing createVirvi without calling it still gets the call (Ruling R7)", async () => {
+      const r = await installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': "import { createVirvi } from '@virvixr/dcl'\n" + MAIN }))
+      expect(text(r.files, 'src/index.ts')).toContain('void createVirvi()')
+      expect(r.alreadyInstalled).toBe(false)
+    })
+  })
 })

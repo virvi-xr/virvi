@@ -92,6 +92,47 @@ function importedName(src: string, m: string): string | null {
   return null
 }
 
+/** Scene code Virvi may already be started from: anything under src/, and Creator Hub scripts under assets/. */
+const SOURCE_FILE = /^(?:src|assets)\/.+\.(?:ts|tsx|js)$/
+
+/**
+ * The names a source value-imports from @virvixr/dcl (`*` for a default or namespace import), read on the masked
+ * source with the module specifier taken from the original. `import type` and `type X` specifiers don't count.
+ */
+function virviValueImports(src: string, m: string): string[] {
+  const re = /\bimport\s+(type\s+)?([^;'"`]*?)\s*from\s*(['"`])( *)\3/g
+  const names: string[] = []
+  for (let hit = re.exec(m); hit; hit = re.exec(m)) {
+    const end = hit.index + hit[0].length - 1
+    if (hit[1] || src.slice(end - hit[4].length, end) !== PACKAGE) continue
+    const clause = hit[2]
+    const braces = /\{([^}]*)\}/.exec(clause)
+    for (const spec of braces ? braces[1].split(',') : []) {
+      const mm = /^\s*(?!type\s)(\w+)(?:\s+as\s+\w+)?\s*$/.exec(spec)
+      if (mm) names.push(mm[1])
+    }
+    if (clause.replace(/\{[^}]*\}/, '').replace(/[\s,]/g, '')) names.push('*')
+  }
+  return names
+}
+
+/**
+ * Whether the scene already starts Virvi somewhere: another source file imports @virvixr/dcl (the Creator Hub
+ * VirviManager script, a createVirvi call in another module), or the main file imports more than createVirvi from it, or
+ * calls the createVirvi it imports anywhere. A main file that imports createVirvi and never calls it is not (Ruling R7).
+ */
+function virviPresent(sources: Map<string, string>, mainPath: string): boolean {
+  for (const [path, src] of sources) {
+    const m = maskSource(src)
+    const names = virviValueImports(src, m)
+    if (!names.length) continue
+    if (path !== mainPath || names.some((n) => n !== 'createVirvi')) return true
+    const local = importedName(src, m)
+    if (local && new RegExp(`(?<![\\w$.])${local.replace(/\$/g, '\\$')}\\s*\\(`).test(m)) return true
+  }
+  return false
+}
+
 /** Offset just after any leading `/// <reference …/>` lines and a 'use strict' directive. */
 function headerEnd(src: string): number {
   let at = 0
@@ -172,9 +213,10 @@ function withCreateVirvi(src: string): string | null {
 
 /**
  * Edits an uploaded scene so it runs Virvi: the `@virvixr/dcl` dependency, `void createVirvi()` first in `main()`,
- * and the HUD icon. Returns a new file map (the input is untouched) and the edited paths.
+ * and the HUD icon. A scene that already starts Virvi (virviPresent) gets no code edit, only the dependency range and
+ * the icon, and `alreadyInstalled`. Returns a new file map (the input is untouched) and the edited paths.
  */
-export async function installVirvi(folder: SceneFolder): Promise<{ files: Map<string, Uint8Array>; changed: string[] }> {
+export async function installVirvi(folder: SceneFolder): Promise<{ files: Map<string, Uint8Array>; changed: string[]; alreadyInstalled: boolean }> {
   const dec = new TextDecoder()
   const strict = new TextDecoder('utf-8', { fatal: true })
   const enc = new TextEncoder()
@@ -185,7 +227,10 @@ export async function installVirvi(folder: SceneFolder): Promise<{ files: Map<st
   if (!mainPath) throw new ImportError(422, 'no_main', 'The scene has no src/index.ts to add Virvi to.')
   let source: string
   try { source = strict.decode(files.get(mainPath)!) } catch { throw new ImportError(422, 'bad_source_encoding', `${mainPath} is not valid UTF-8 text.`) }
-  const edited = withCreateVirvi(source)
+  const sources = new Map<string, string>()
+  for (const [path, bytes] of files) if (SOURCE_FILE.test(path)) sources.set(path, path === mainPath ? source : dec.decode(bytes))
+  const alreadyInstalled = virviPresent(sources, mainPath)
+  const edited = alreadyInstalled ? null : withCreateVirvi(source)
 
   const pkgBytes = files.get('package.json')
   const pkgText = withDependency(pkgBytes && dec.decode(pkgBytes))
@@ -197,5 +242,5 @@ export async function installVirvi(folder: SceneFolder): Promise<{ files: Map<st
   const old = files.get(HUD_ICON)
   if (!old || old.length !== icon.length || old.some((b, i) => b !== icon[i])) { files.set(HUD_ICON, icon); changed.push(HUD_ICON) }
 
-  return { files, changed }
+  return { files, changed, alreadyInstalled }
 }
