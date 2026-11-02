@@ -658,6 +658,8 @@ export const assetLibraryItems = pgTable('asset_library_items', {
   venueTags: text('venue_tags').array(),
   sourceRef: text('source_ref'), // the item's id or path in its source; re-imports upsert on (pack_id, source_ref)
   contentHash: text('content_hash'), // sha256 of the GLB
+  // A Design Studio scene piece's dcl-sittables seats (FurnitureModel), kept for seating in Virvi later
+  sittables: jsonb('sittables'),
 }, (t) => ({
   packRefUq: uniqueIndex('asset_library_items_pack_ref').on(t.packId, t.sourceRef),
   contentHashIdx: index('asset_library_items_content_hash_idx').on(t.contentHash),
@@ -1699,6 +1701,8 @@ export const studioEntitlements = pgTable('studio_entitlements', {
   jobId: uuid('job_id'), // the finalize job
   packageKey: text('package_key'),
   checks: jsonb('checks'), // the finalize job's check summary
+  // A scene piece's rows in its owner's asset library, once added (null until then: the sweep retries)
+  assetItemIds: jsonb('asset_item_ids').$type<string[]>(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   designIdx: index('studio_entitlements_design_idx').on(t.designId),

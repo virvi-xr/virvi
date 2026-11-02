@@ -4,6 +4,7 @@ import { studioDesigns, studioEntitlements, studioJobs, studioPayments } from '.
 import { destroyWorker, ensureWorker, type MachineDeps } from './machines.js'
 import { failJobs } from './results.js'
 import { queueFinalize, settleRefund } from './payments.js'
+import { addMissingLibraryRows } from './library.js'
 
 /**
  * The Design Studio sweep: fails jobs that will never get a result (refunding counted prompts), restarts machines for
@@ -77,6 +78,8 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
   const owing = await db.select({ id: studioPayments.id }).from(studioPayments)
     .where(and(sql`${studioPayments.refundDueCents} > 0`, isNotNull(studioPayments.stripePaymentIntent)))
   for (const { id } of owing) await settleRefund(id)
+  // Paid scene pieces whose library rows didn't land (storage was down) get another try
+  await addMissingLibraryRows(now).catch((err) => console.error('[studio-sweep] library retry failed:', err instanceof Error ? err.message : err))
   return { lost, destroyed }
 }
 

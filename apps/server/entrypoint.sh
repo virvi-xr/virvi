@@ -145,6 +145,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] room_scans / room_sets tables ensured');
       } catch(e) { console.log('[virvi-server] room_scans / room_sets:', e.message); }
 
+      // Design Studio scene pieces in the asset library; matches assetLibraryItems.sittables and studioEntitlements.assetItemIds
+      try {
+        await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS sittables JSONB\`;
+        await sql\`ALTER TABLE studio_entitlements ADD COLUMN IF NOT EXISTS asset_item_ids JSONB\`;
+        console.log('[virvi-server] scene library columns ensured');
+      } catch(e) { console.log('[virvi-server] scene library columns:', e.message); }
+
       // Studio gift codes; matches studioGiftCodes / studioGiftRedemptions / studioFinalizeCredits in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS studio_gift_codes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), code_hash TEXT NOT NULL UNIQUE, code_hint TEXT NOT NULL, note TEXT, prompts INTEGER NOT NULL, finalizes INTEGER NOT NULL, max_uses INTEGER NOT NULL, uses INTEGER NOT NULL DEFAULT 0, expires_at TIMESTAMPTZ, disabled_at TIMESTAMPTZ, created_by UUID REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

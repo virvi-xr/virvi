@@ -87,7 +87,7 @@ export default async function studioWorkerRoutes(app: FastifyInstance) {
         if (job.status !== 'taken') return reply.status(409).send({ error: 'job_not_taken' })
         // A finalize job uploads only its package, and only a finalize job uploads one
         if ((checked.kind === 'final') !== (job.type === 'finalize')) {
-          return reply.status(400).send({ error: 'bad_path', reason: job.type === 'finalize' ? 'a finalize job uploads only final/<category>/package.zip' : 'only a finalize job uploads a package' })
+          return reply.status(400).send({ error: 'bad_path', reason: job.type === 'finalize' ? 'a finalize job uploads only final/<category>/package.zip (and a scene piece its thumbnail.png)' : 'only a finalize job uploads a package' })
         }
         const body = request.body
         if (!Buffer.isBuffer(body)) return reply.status(400).send({ error: 'not_bytes' })

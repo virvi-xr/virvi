@@ -6,6 +6,7 @@ import { recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from '
 import { publishStudio } from './events.js'
 import { ORBIT_FRAMES, orbitKeyFor, queueFullOrbit, revisionsKey, type FixClipping, type View } from './designs.js'
 import { hasBuilding, requestSetRender, TOUR_VIEW } from './sets.js'
+import { addToLibrary } from './library.js'
 import { DECLINED_NOTE, SCOPE_CATEGORIES, logScopeEvent, maybeFlag, offTopicIsFree, offTopicNote } from './scope.js'
 
 /** A worker's Result, as apps/studio-worker/CONTRACT.md defines it (only the fields Virvi reads are typed). */
@@ -268,6 +269,14 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     if (d) {
       await requestSetRender(d, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : fix.emote } as View, now)
         .catch((err) => console.error('[studio] fix re-render failed:', err instanceof Error ? err.message : err))
+    }
+  }
+  if (job.type === 'finalize') {
+    // Paid scene pieces go into the designer's asset library; a failure leaves them for the sweep to add
+    const ready = await db.select({ id: studioEntitlements.id }).from(studioEntitlements)
+      .where(and(eq(studioEntitlements.jobId, job.id), eq(studioEntitlements.status, 'ready')))
+    for (const { id } of ready) {
+      await addToLibrary(id, now).catch((err) => console.error('[studio] library add failed:', err instanceof Error ? err.message : err))
     }
   }
   if (job.type === 'prompt' && result.pieces.some((p) => p.files?.length)) {
