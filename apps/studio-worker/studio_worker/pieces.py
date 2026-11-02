@@ -6,10 +6,10 @@ import os
 import stat
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config
+from . import config, scene
 
 CHECKER_TIMEOUT_SEC = 300
 
@@ -20,7 +20,8 @@ class Piece:
     glbs: list[Path]
     meta: dict  # piece.json
     changed: bool
-    checker: dict  # ran, pass, failures, warnings, report
+    checker: dict  # ran, pass, failures, warnings, report (and triangles, for a scene piece)
+    extras: list[Path] = field(default_factory=list)  # a scene piece's route/layout/sittables JSON
 
 
 def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, stage: Path | None = None
@@ -49,6 +50,9 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
             continue
         if not d.is_dir() or not os.path.lexists(d / 'piece.json'):
             continue  # its GLBs are reported as strays below
+        if kind == 'scene' and scene.folder_problem(d.name):
+            problems.append(scene.folder_problem(d.name))
+            continue
         try:
             meta = json.loads(_read(d / 'piece.json'))
             glbs = [g for g in sorted(d.iterdir()) if g.suffix.lower() == '.glb']
@@ -61,12 +65,18 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
             if not isinstance(meta, dict) or meta.get('category', d.name) != d.name:
                 problems.append(f'{rel}/piece.json says category {meta.get("category") if isinstance(meta, dict) else meta!r}')
                 continue
+            if kind == 'scene' and scene.validate(d.name, meta, glbs):
+                problems.append(scene.validate(d.name, meta, glbs))
+                continue
             staged = stage / d.name
             staged.mkdir(parents=True, exist_ok=True)
-            copies = []
+            copies, extras = [], []
             for g in glbs:
                 copies.append(staged / g.name)
                 copies[-1].write_bytes(_read(g))
+            for e in scene.extras(d, meta) if kind == 'scene' else []:
+                extras.append(staged / e.name)
+                extras[-1].write_bytes(_read(e))
             (staged / 'piece.json').write_text(json.dumps(meta))
         except UnsafeFile as e:
             problems.append(str(e))
@@ -74,8 +84,11 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
         except json.JSONDecodeError as e:
             problems.append(f'{rel}/piece.json is not JSON: {e}')
             continue
-        pieces.append(Piece(category=d.name, glbs=copies, meta=meta,
-                            changed=_shas(copies) != set((hashes.get(d.name) or {}).values()), checker={'ran': False}))
+        pieces.append(Piece(category=d.name, glbs=copies, meta=meta, extras=extras,
+                            changed=_shas(copies + extras) != set((hashes.get(d.name) or {}).values()),
+                            checker={'ran': False}))
+    if kind == 'scene' and scene.limits([p.category for p in pieces]):
+        problems.append(scene.limits([p.category for p in pieces]))
     placed = {(p.category, g.name) for p in pieces for g in p.glbs}
     strays = [g for g in _glbs_under(out) if (g.parent.name, g.name) not in placed or g.parent.parent != out]
     if strays:
@@ -84,7 +97,7 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
     if problems:
         return [], proposal, '; '.join(problems)
     for p in pieces if run_checker else []:
-        p.checker = check(p, kind)
+        p.checker = scene.check(p, pieces) if kind == 'scene' else check(p, kind)
     return pieces, proposal, None
 
 
@@ -163,7 +176,7 @@ def check(piece: Piece, kind: str) -> dict:
 
 
 def new_hashes(pieces: list[Piece]) -> dict:
-    return {p.category: {g.name: _sha(g) for g in p.glbs} for p in pieces}
+    return {p.category: {g.name: _sha(g) for g in p.glbs + p.extras} for p in pieces}
 
 
 def glbs_by_shape(piece: Piece) -> dict:

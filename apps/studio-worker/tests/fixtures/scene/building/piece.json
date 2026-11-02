@@ -1,0 +1,8 @@
+{
+ "description": "",
+ "changeKind": "new",
+ "name": "Little Kiosk",
+ "kind": "building",
+ "type": "kiosk",
+ "footprint": "1x1"
+}

@@ -331,14 +331,16 @@ def _upload_piece(client, job_id, piece: Piece) -> None:
     for f in piece.glbs + [piece.glbs[0].parent / 'piece.json']:
         client.put_file(job_id, f'pieces/{piece.category}/{f.name}', f.read_bytes(),
                         'model/gltf-binary' if f.suffix == '.glb' else 'application/json')
+    for e in piece.extras:
+        client.put_file(job_id, f'pieces/{piece.category}/{e.name}', e.read_bytes(), 'application/json')
     client.put_file(job_id, f'checks/{piece.category}.txt', piece.checker.get('report', '').encode(), 'text/plain')
 
 
 def _piece_result(p: Piece, renders: dict | None, uploaded: bool) -> dict:
-    files = [f'pieces/{p.category}/{f.name}' for f in p.glbs] + [f'pieces/{p.category}/piece.json',
-                                                                 f'checks/{p.category}.txt']
+    files = [f'pieces/{p.category}/{f.name}' for f in p.glbs + p.extras] + [f'pieces/{p.category}/piece.json',
+                                                                            f'checks/{p.category}.txt']
     return {'category': p.category, 'changed': p.changed, 'changeKind': p.meta.get('changeKind'), 'meta': p.meta,
-            'checker': {k: p.checker.get(k) for k in ('pass', 'failures', 'warnings')},
+            'checker': {k: p.checker.get(k) for k in ('pass', 'failures', 'warnings', 'triangles')},
             'files': files if uploaded else [], 'renders': renders or {}}
 
 
