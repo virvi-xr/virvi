@@ -123,6 +123,20 @@ describe('scene import routes', () => {
     expect(await db.select().from(scenes)).toHaveLength(1)
   })
 
+  it("a re-upload by someone without full access on the last import's scene gets a new scene", async () => {
+    const first = (await upload(sceneZip())).json().import
+    await setStatus(first.id, 'deployed')
+    // The NAME moved to another account
+    const next = await createUser({ wallet: randomWallet() })
+    worlds.deployers.set(WORLD, { owner: next.wallet, deployers: [] })
+    const res = await upload(sceneZip(), next)
+    expect(res.statusCode).toBe(201)
+    const view = res.json().import
+    expect(view.sceneId).not.toBe(first.sceneId)
+    const [scene] = await db.select().from(scenes).where(eq(scenes.id, view.sceneId))
+    expect(scene.ownerId).toBe(next.id)
+  })
+
   it("a re-upload goes to the scene the World's destination belongs to", async () => {
     const { scene } = await createScene(user)
     const [dest] = await db.insert(dclWorldDestinations).values({
@@ -149,6 +163,7 @@ describe('scene import routes', () => {
     worlds.deployers.set(WORLD, { owner: randomWallet(), deployers: [] })
     const res = await upload(sceneZip())
     expect([res.statusCode, res.json().error]).toEqual([403, 'not_world_owner'])
+    expect(res.json().message).toBeTruthy()
     expect(await db.select().from(sceneImports)).toHaveLength(0)
     expect(store.keys()).toEqual([])
   })
@@ -265,15 +280,25 @@ describe('scene import routes', () => {
   it('an import whose build could not start ends failed with a message', async () => {
     vi.mocked(runnerModule.startBuild).mockRejectedValueOnce(new Error('database went away'))
     const res = await upload(sceneZip())
-    expect(res.statusCode).toBe(500)
-    expect(res.json().error).toBe('build_start_failed')
+    expect(res.statusCode).toBe(502)
     const [row] = await db.select().from(sceneImports)
+    expect(res.json()).toEqual({ error: 'build_start_failed', message: row.errorMessage, importId: row.id })
     expect(row.status).toBe('failed')
     expect(row.errorCode).toBe('build_start_failed')
     expect(row.errorMessage).toBeTruthy()
     expect(row.finishedAt).toBeTruthy()
     // It doesn't block the next upload
     expect((await upload(sceneZip())).statusCode).toBe(201)
+  })
+
+  it("a build machine that won't start answers 502 with the import's message", async () => {
+    fake.runner.start = async () => { throw new Error('fly said no') }
+    const res = await upload(sceneZip())
+    expect(res.statusCode).toBe(502)
+    const [row] = await db.select().from(sceneImports)
+    expect(row.status).toBe('failed')
+    expect(res.json()).toEqual({ error: 'build_start_failed', message: row.errorMessage, importId: row.id })
+    expect(res.json().message).toBeTruthy()
   })
 
   it("GET is the importer's only (or full access on the scene)", async () => {

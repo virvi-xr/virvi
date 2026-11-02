@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto'
 import { and, eq, isNull } from 'drizzle-orm'
 import { locationKeyFor } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { analyticsScenes, locationSetups, sceneRoles, scenePresets, scenes } from '../db/schema.js'
+import { analyticsScenes, locationSetups, sceneRoles, scenes } from '../db/schema.js'
+import { insertSceneWithDefaultPreset } from '../scenes/create.js'
 import { getDclDirectory, type DclDirectory } from '../analytics/dcl-directory.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
 import { resolveVerifiedWalletUser } from '../auth/wallet-users.js'
@@ -168,9 +169,8 @@ export async function setUpLocation(scene: AnalyticsSceneRow, wallet: string, no
   const user = await resolveVerifiedWalletUser(w, `${w.slice(0, 6)}…${w.slice(-4)}`, 'account')
   try {
     return await db.transaction(async (tx) => {
-      const [created] = await tx.insert(scenes).values({ ownerId: user.id, name: scene.title || scene.locationKey }).returning()
-      const [preset] = await tx.insert(scenePresets).values({ sceneId: created.id, name: 'Default' }).returning()
-      await tx.update(scenes).set({ activePresetId: preset.id }).where(eq(scenes.id, created.id))
+      const { sceneId } = await insertSceneWithDefaultPreset(tx, user.id, scene.title || scene.locationKey)
+      const created = { id: sceneId }
       const [setup] = await tx
         .insert(locationSetups)
         .values({ analyticsSceneId: scene.id, virviSceneId: created.id, hostUserId: user.id, deploymentEntityId: scene.activeEntityId ?? null, startedAt: now })

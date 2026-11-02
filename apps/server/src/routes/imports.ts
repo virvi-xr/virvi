@@ -29,6 +29,11 @@ import { ownerFor, RouteError } from './dcl-destinations.js'
 
 const PARCELS_NOT_YET = 'Genesis City imports are coming soon. For now, import a scene whose scene.json names a World.'
 const BUILD_START_FAILED = "The build couldn't start. Try the upload again in a few minutes."
+/** Messages for the destination routes' codes that carry none. */
+const ROUTE_MESSAGES: Record<string, string> = {
+  not_world_owner: 'None of your verified wallets owns this World.',
+  world_unreachable: "Decentraland's Worlds server didn't answer. Try again in a few minutes.",
+}
 const LIST_LIMIT = 10
 const MAX_SCENE_NAME = 120
 
@@ -40,7 +45,7 @@ async function handle(reply: FastifyReply, fn: () => Promise<unknown>) {
     return await fn()
   } catch (err) {
     if (err instanceof ImportError) return reply.status(err.status).send({ error: err.code, message: err.message })
-    if (err instanceof RouteError) return reply.status(err.status).send({ error: err.code, ...err.extra })
+    if (err instanceof RouteError) return reply.status(err.status).send({ error: err.code, message: ROUTE_MESSAGES[err.code], ...err.extra })
     throw err
   }
 }
@@ -52,7 +57,7 @@ async function buildsGate(_request: FastifyRequest, reply: FastifyReply) {
 
 function sceneName(folder: SceneFolder, world: string): string {
   const title = (folder.sceneJson.display as { title?: unknown } | undefined)?.title
-  const name = typeof title === 'string' ? title.trim().slice(0, MAX_SCENE_NAME) : ''
+  const name = typeof title === 'string' ? Array.from(title.trim()).slice(0, MAX_SCENE_NAME).join('') : ''
   return name || world
 }
 
@@ -124,12 +129,14 @@ export default async function importRoutes(app: FastifyInstance) {
         // The import must not sit in `uploaded` holding the World
         const known = err instanceof ImportError
         if (!known) request.log.error({ err }, `[scene-import] starting the build of import ${row.id} failed`)
-        const code = known ? err.code : 'build_start_failed'
-        const message = known ? err.message : BUILD_START_FAILED
-        await failImport(row.id, code, message)
-        return reply.status(known ? err.status : 500).send({ error: code, message, importId: row.id })
+        await failImport(row.id, known ? err.code : 'build_start_failed', known ? err.message : BUILD_START_FAILED)
       }
-      return reply.status(201).send({ import: await loadImportView(await reload(row.id)) })
+      // startBuild fails the import itself when its machine won't start, and returns
+      const after = await reload(row.id)
+      if (after.status === 'failed') {
+        return reply.status(502).send({ error: 'build_start_failed', message: after.errorMessage ?? BUILD_START_FAILED, importId: row.id })
+      }
+      return reply.status(201).send({ import: await loadImportView(after) })
     }))
   })
 

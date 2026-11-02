@@ -1,4 +1,4 @@
-import { and, eq, lt } from 'drizzle-orm'
+import { and, inArray, lt } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { sceneImports } from '../../db/schema.js'
 import { getBuildRunner } from './build-runner.js'
@@ -7,7 +7,8 @@ import { getBuildRunner } from './build-runner.js'
  * Fails builds that never reported back (a box that died, hung or was cut off) and removes their machines. The box has
  * no output or memory caps of its own (Ruling R11), so this is what bounds a build. A build's `updated_at` is set when
  * it starts and not touched while it runs. The transition is one conditional UPDATE, so concurrent sweeps on several
- * servers fail each build once; its token goes with it, so a late result or failure report is refused.
+ * servers fail each build once; its token goes with it, so a late result or failure report is refused. An `uploaded` row
+ * this old never got a machine (machine_id is null), so there is nothing to stop.
  */
 
 export const BUILD_SWEEP_MS = 60_000
@@ -23,7 +24,8 @@ export async function sweepBuilds(now: Date): Promise<number> {
     finishedAt: now,
     updatedAt: now,
   }).where(and(
-    eq(sceneImports.status, 'building'),
+    // An upload whose build never started (the server stopped between storing and starting it) holds its World too
+    inArray(sceneImports.status, ['building', 'uploaded']),
     lt(sceneImports.updatedAt, new Date(now.getTime() - BUILD_TIMEOUT_MS)),
   )).returning({ id: sceneImports.id, machineId: sceneImports.machineId })
 

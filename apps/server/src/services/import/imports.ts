@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { SceneImportView } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
-import { sceneDeployments, sceneImports, scenePresets, scenes } from '../../db/schema.js'
+import { sceneDeployments, sceneImports } from '../../db/schema.js'
+import { insertSceneWithDefaultPreset } from '../../scenes/create.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { DEPLOY_WINDOW_MS } from '../dcl/world-deployer.js'
 import { ImportError } from './scene-zip.js'
@@ -107,11 +108,7 @@ export async function createImport(input: {
     if ('id' in input.scene) {
       sceneId = input.scene.id
     } else {
-      // As POST /api/wizard/scenes: the scene, its Default preset, the preset made active
-      const [scene] = await tx.insert(scenes).values({ ownerId: input.userId, name: input.scene.newName }).returning({ id: scenes.id })
-      const [preset] = await tx.insert(scenePresets).values({ sceneId: scene.id, name: 'Default' }).returning({ id: scenePresets.id })
-      await tx.update(scenes).set({ activePresetId: preset.id }).where(eq(scenes.id, scene.id))
-      sceneId = scene.id
+      ;({ sceneId } = await insertSceneWithDefaultPreset(tx, input.userId, input.scene.newName))
     }
     const [row] = await tx.insert(sceneImports).values({
       id, userId: input.userId, sceneId, worldName: input.world, kind: input.kind, sourceKey: sourceKey(id),

@@ -290,4 +290,18 @@ describe('scene import builds', () => {
     expect((await postResult(stuck.id, stuck.token, builtZip())).statusCode).toBe(401)
     expect(await sweepBuilds(now)).toBe(0)
   })
+
+  it('an upload whose build never started fails after 15 minutes, with no machine to stop', async () => {
+    const stuck = await uploaded()
+    const recent = await uploaded()
+    const now = new Date()
+    await db.update(sceneImports).set({ updatedAt: new Date(now.getTime() - 16 * 60_000) }).where(eq(sceneImports.id, stuck))
+    await db.update(sceneImports).set({ updatedAt: new Date(now.getTime() - 5 * 60_000) }).where(eq(sceneImports.id, recent))
+    expect(await sweepBuilds(now)).toBe(1)
+    const r = await row(stuck)
+    expect(r).toMatchObject({ status: 'failed', errorCode: 'build_timeout', errorMessage: 'The build took longer than 15 minutes and was stopped.' })
+    expect(r.finishedAt).toBeTruthy()
+    expect(fake.stopped).toEqual([])
+    expect((await row(recent)).status).toBe('uploaded')
+  })
 })
