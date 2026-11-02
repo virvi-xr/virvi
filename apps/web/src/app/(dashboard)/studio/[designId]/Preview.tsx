@@ -18,7 +18,7 @@ const OUTFITS = [['default', 'Default'], ['outfit-2', 'Outfit 2'], ['outfit-3', 
 
 function tabBadge(piece: StudioPiece, detail: StudioDetail): { label: string; tone: Tone } | null {
   const status = pieceTabStatus(piece, detail)
-  if (status === 'building') return { label: 'Building', tone: 'info' }
+  if (status === 'building') return { label: 'Agent working', tone: 'info' }
   if (piece.revision?.checker?.pass === false) return { label: 'Checker found problems', tone: 'warning' }
   if (triangleWarning(piece.name, piece.revision?.checker ?? null)) return { label: 'Over the triangle budget', tone: 'warning' }
   if (status === 'ready') return { label: 'Ready', tone: 'success' }

@@ -248,7 +248,7 @@ export const refreshDue = (fetchedAt: number, now: number) => now - fetchedAt >=
 export function designBadge(d: StudioDesign): { label: string; tone: Tone } {
   if (d.archivedAt) return { label: 'Archived', tone: 'neutral' }
   if (d.finalizedAt) return { label: 'Finalized', tone: 'success' }
-  if (d.status === 'building') return { label: 'Building', tone: 'info' }
+  if (d.status === 'building') return { label: 'Agent working', tone: 'info' }
   return { label: 'Draft', tone: 'violet' }
 }
 
@@ -295,7 +295,7 @@ export function giftRedeemSuccess(g: { prompts: number; finalizes: number }): st
 }
 
 const PHASES: Record<string, string> = {
-  building: 'Building…',
+  building: 'Agent working…',
   checking: 'Running the checks…',
   rendering: 'Rendering the preview…',
   saving: 'Saving…',
