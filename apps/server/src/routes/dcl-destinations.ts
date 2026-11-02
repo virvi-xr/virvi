@@ -81,7 +81,7 @@ const FUTURE_SKEW_MS = 60_000
 const WORLD_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.eth$/
 const isNum = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
 
-class RouteError extends Error {
+export class RouteError extends Error {
   constructor(public status: number, public code: string, public extra: Record<string, unknown> = {}) {
     super(code)
   }
@@ -137,7 +137,7 @@ async function describeWorld(world: string, storage: { maxAllowedBytes: number; 
 }
 
 /** The World's owner when it is one of the caller's verified wallets; 403 not_world_owner otherwise. */
-async function ownerFor(userId: string, world: string): Promise<string> {
+export async function ownerFor(userId: string, world: string): Promise<string> {
   const [{ owner }, wallets] = await Promise.all([read(() => getWorldsClient().getDeployers(world)), verifiedWalletsOf(userId)])
   if (!owner || !wallets.includes(owner)) throw new RouteError(403, 'not_world_owner')
   return owner

@@ -7,12 +7,13 @@ import {
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
   giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, apiKeys, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, roomScans, roomSets, arDevices,
-  dclWorldDestinations, adSpaceSettings, adSpaceApprovals,
+  dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
+import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { createVenue, createBooking, addGrant } from '../src/venues/service.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, randomWallet, type TestUser } from './helpers/factories.js'
@@ -85,6 +86,9 @@ async function fixtures() {
   const [signDeploy] = await db.insert(sceneDeployments).values({
     sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', destinationId: destination.id, target: { world: 'b-world.dcl.eth' }, status: 'awaiting_signature', deployedBy: b.id,
   }).returning()
+  const [sceneImport] = await db.insert(sceneImports).values({
+    userId: b.id, sceneId: scene.id, worldName: 'b-world.dcl.eth', kind: 'sdk7', status: 'failed', sourceKey: 'imports/b/source.zip', logKey: 'imports/b/build.log',
+  }).returning()
   const [bKey] = await db.insert(apiKeys).values({ userId: b.id, name: 'B key', keyHash: 'b-hash', keyPrefix: 'virvi_k1' }).returning()
 
   const [design] = await db.insert(studioDesigns).values({ ownerId: b.id, name: 'B cap', kind: 'wearable', agent: 'claude' }).returning()
@@ -116,7 +120,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, signDeploy, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, signDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -202,6 +206,9 @@ const CASES: Case[] = [
   { route: 'POST /api/dcl/destinations/:id/deploy', url: (f) => `/api/dcl/destinations/${f.destination.id}/deploy` },
   { route: 'POST /api/dcl/destinations/:id/rebase', url: (f) => `/api/dcl/destinations/${f.destination.id}/rebase` },
   { route: 'GET /api/scenes/:sceneId/dcl/publish-status', url: (f) => `/api/scenes/${f.scene.id}/dcl/publish-status` },
+  // scene imports
+  { route: 'GET /api/imports/:id', url: (f) => `/api/imports/${f.sceneImport.id}` },
+  { route: 'GET /api/imports/:id/log', url: (f) => `/api/imports/${f.sceneImport.id}/log` },
   { route: 'GET /api/scenes/:sceneId/dcl/destinations', url: (f) => `/api/scenes/${f.scene.id}/dcl/destinations` },
   // events and command center
   { route: 'GET /api/scenes/:sceneId/events', url: (f) => `/api/scenes/${f.scene.id}/events` },
@@ -346,7 +353,7 @@ const TABLES = [
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
   giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, arDevices, roomScans, roomSets,
-  dclWorldDestinations,
+  dclWorldDestinations, sceneImports,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
 ]
@@ -383,12 +390,16 @@ describe('cross-account route walk', () => {
     const [paid] = await db.select().from(studioEntitlements)
     await store.put(paid.packageKey!, Buffer.from('PK-b-package'), 'application/zip')
     await store.put(uploadKey(f.design.id, f.designUpload.id), Buffer.from('b-png'), 'image/png')
+    const importStore = memoryPrivateStore()
+    setImportStore(importStore)
+    await importStore.put(f.sceneImport.logKey!, Buffer.from('B build log'), 'text/plain; charset=utf-8')
     worlds.deployers.set('b-world.dcl.eth', { owner: f.b.wallet, deployers: [] })
   })
   afterEach(async () => {
     ;(config as any).streamingEnabled = prevStreaming
     ;(config as any).studioEnabled = prevStudio
     setStudioStore(null)
+    setImportStore(null)
     ;(config as any).virviDclDeployKey = prevDeployKey
     setWorldsClient(null)
     await app.close()
