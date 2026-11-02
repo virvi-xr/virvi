@@ -31,39 +31,68 @@ function safeSegments(name: string): string[] {
 
 const isParcelList = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string')
 
+const WORLD_NAME = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/
+/** Dropped wherever they appear; `bin/` is dropped only at the scene root. */
+const alwaysDropped = (segs: string[]) => segs.slice(0, -1).some((s) => s !== 'bin' && DROPPED_DIRS.has(s)) || segs[segs.length - 1] === '.DS_Store'
+
 /** Reads an uploaded scene zip into a validated, normalised `SceneFolder`. */
 export function readSceneZip(zip: Uint8Array): SceneFolder {
-  // Paths are checked, dropped entries skipped and sizes counted in the filter, before anything is inflated.
+  const notAZip = () => new ImportError(400, 'not_a_zip', 'That file is not a readable zip.')
+
+  // Pass 1: names only (nothing is inflated). Checks paths and decides the wrapper-folder strip.
   const segsByName = new Map<string, string[]>()
+  const seen = new Set<string>()
+  try {
+    unzipSync(zip, {
+      filter: (f) => {
+        const segs = safeSegments(f.name)
+        if (f.name.endsWith('/') || segs.length === 0) return false
+        const joined = segs.join('/')
+        if (seen.has(joined)) throw new ImportError(422, 'unsafe_path', `Duplicate path in zip: ${f.name}`)
+        seen.add(joined)
+        segsByName.set(f.name, segs)
+        return false
+      },
+    })
+  } catch (e) {
+    if (e instanceof ImportError) throw e
+    throw notAZip()
+  }
+  const candidates = [...segsByName.values()].filter((s) => !alwaysDropped(s))
+  const atRoot = candidates.some((s) => s.length === 1 && s[0] === 'scene.json')
+  const top = candidates[0]?.[0]
+  const strip = !atRoot && candidates.length > 0 && candidates.every((s) => s.length > 1 && s[0] === top) ? 1 : 0
+  const keptSegs = (name: string): string[] | null => {
+    const segs = segsByName.get(name)!
+    if (alwaysDropped(segs)) return null
+    const rel = segs.slice(strip)
+    if (rel.length === 0 || (rel.length > 1 && rel[0] === 'bin')) return null
+    return rel
+  }
+
+  // Pass 2: inflate kept entries only, counting files and declared bytes before each is expanded.
+  const relByName = new Map<string, string[]>()
   let total = 0
-  let count = 0
   let raw: Record<string, Uint8Array>
   try {
     raw = unzipSync(zip, {
       filter: (f) => {
-        const segs = safeSegments(f.name)
-        if (f.name.endsWith('/') || segs.length === 0) return false
-        if (segs.slice(0, -1).some((s) => DROPPED_DIRS.has(s)) || segs[segs.length - 1] === '.DS_Store') return false
-        if (++count > MAX_FILES) throw new ImportError(413, 'too_many_files', `A scene can have at most ${MAX_FILES} files.`)
+        const rel = segsByName.has(f.name) ? keptSegs(f.name) : null
+        if (!rel) return false
+        if (relByName.size + 1 > MAX_FILES) throw new ImportError(413, 'too_many_files', `A scene can have at most ${MAX_FILES} files.`)
         total += f.originalSize
         if (total > MAX_UNZIPPED_BYTES) throw new ImportError(413, 'too_big', 'The unzipped scene is larger than 300 MB.')
-        segsByName.set(f.name, segs)
+        relByName.set(f.name, rel)
         return true
       },
     })
   } catch (e) {
     if (e instanceof ImportError) throw e
-    throw new ImportError(400, 'not_a_zip', 'That file is not a readable zip.')
+    throw notAZip()
   }
 
-  let entries = Object.keys(raw).map((name) => ({ segs: segsByName.get(name)!, data: raw[name]! }))
-  const atRoot = entries.some((e) => e.segs.length === 1 && e.segs[0] === 'scene.json')
-  if (!atRoot && entries.length > 0) {
-    const top = entries[0]!.segs[0]
-    if (entries.every((e) => e.segs.length > 1 && e.segs[0] === top)) entries = entries.map((e) => ({ ...e, segs: e.segs.slice(1) }))
-  }
   const files = new Map<string, Uint8Array>()
-  for (const e of entries) files.set(e.segs.join('/'), e.data)
+  for (const [name, data] of Object.entries(raw)) files.set(relByName.get(name)!.join('/'), data)
 
   const sceneBytes = files.get('scene.json')
   if (!sceneBytes) throw new ImportError(422, 'no_scene_json', 'The zip has no scene.json.')
@@ -85,6 +114,6 @@ export function readSceneZip(zip: Uint8Array): SceneFolder {
   const wc = sceneJson.worldConfiguration as { name?: unknown } | undefined
   if (wc === undefined || wc === null) return { files, sceneJson, kind, location: { kind: 'parcels', parcels, base } }
   const name = typeof wc.name === 'string' ? wc.name.toLowerCase() : ''
-  if (!name.endsWith('.eth')) throw new ImportError(422, 'bad_world_name', 'worldConfiguration.name must be a .eth name.')
+  if (!WORLD_NAME.test(name)) throw new ImportError(422, 'bad_world_name', 'worldConfiguration.name must be a .eth name.')
   return { files, sceneJson, kind, location: { kind: 'world', world: name, parcels, base } }
 }

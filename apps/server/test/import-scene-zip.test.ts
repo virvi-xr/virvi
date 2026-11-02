@@ -65,8 +65,62 @@ describe('readSceneZip', () => {
     expect(code(() => readSceneZip(zip(files)))).toEqual([413, 'too_many_files'])
   })
   it('refuses a zip bomb before expanding it', () => {
-    const big = new Uint8Array(101 * 1024 * 1024)
-    const files: Record<string, Uint8Array> = { 'scene.json': enc(world), 'a.bin': big, 'b.bin': big, 'c.bin': big }
-    expect(code(() => readSceneZip(zip(files)))).toEqual([413, 'too_big'])
+    const patched = (sizes: number[]) => {
+      const files: Record<string, Uint8Array> = { 'scene.json': enc(world) }
+      sizes.forEach((_, n) => { files[`f${n}.bin`] = strToU8('tiny') })
+      const z = zip(files)
+      const dv = new DataView(z.buffer, z.byteOffset, z.byteLength)
+      let k = 0
+      for (let o = 0; o + 46 <= z.length; o++) {
+        if (dv.getUint32(o, true) !== 0x02014b50) continue
+        const nameLen = dv.getUint16(o + 28, true)
+        const name = new TextDecoder().decode(z.subarray(o + 46, o + 46 + nameLen))
+        const m = /^f(\d+)\.bin$/.exec(name)
+        if (m) { dv.setUint32(o + 24, sizes[Number(m[1])]!, true); k++ }
+      }
+      expect(k).toBe(sizes.length)
+      return z
+    }
+    expect(code(() => readSceneZip(patched([301 * 1024 * 1024])))).toEqual([413, 'too_big'])
+    expect(code(() => readSceneZip(patched([160 * 1024 * 1024, 160 * 1024 * 1024])))).toEqual([413, 'too_big'])
+  })
+  it('keeps src/bin but drops bin at the scene root', () => {
+    const s = readSceneZip(zip({ 'scene.json': enc(world), 'src/bin/x.ts': strToU8('x'), 'bin/index.js': strToU8('x') }))
+    expect([...s.files.keys()].sort()).toEqual(['scene.json', 'src/bin/x.ts'])
+  })
+  it('drops bin inside a wrapper folder', () => {
+    const s = readSceneZip(zip({ 'top/scene.json': enc(world), 'top/bin/index.js': strToU8('x'), 'top/src/a.ts': strToU8('x') }))
+    expect([...s.files.keys()].sort()).toEqual(['scene.json', 'src/a.ts'])
+  })
+  it('still strips a wrapper folder in a macOS zip with root __MACOSX', () => {
+    const s = readSceneZip(zip({ 'top/scene.json': enc(world), 'top/src/a.ts': strToU8('x'), '__MACOSX/top/._scene.json': strToU8('x'), 'top/.DS_Store': strToU8('x') }))
+    expect([...s.files.keys()].sort()).toEqual(['scene.json', 'src/a.ts'])
+  })
+  it('refuses odd world names', () => {
+    for (const name of ['.eth', 'a/b.eth', 'x y.eth', '../x.eth', 'a..eth']) {
+      expect(code(() => readSceneZip(zip({ 'scene.json': enc({ ...world, worldConfiguration: { name } }) })))).toEqual([422, 'bad_world_name'])
+    }
+  })
+  it('refuses two entries that normalise to the same path', () => {
+    expect(code(() => readSceneZip(zip({ 'scene.json': enc(world), 'a//b': strToU8('1'), 'a/b': strToU8('2') })))).toEqual([422, 'unsafe_path'])
+    expect(code(() => readSceneZip(zip({ 'scene.json': enc(world), './x': strToU8('1'), x: strToU8('2') })))).toEqual([422, 'unsafe_path'])
+  })
+  it('refuses NUL and backslash-dotdot names', () => {
+    expect(code(() => readSceneZip(zip({ 'scene.json': enc(world), 'a\0b': strToU8('x') })))).toEqual([422, 'unsafe_path'])
+    expect(code(() => readSceneZip(zip({ 'scene.json': enc(world), 'a\\..\\b': strToU8('x') })))).toEqual([422, 'unsafe_path'])
+  })
+  it('keeps ./scene.json as scene.json', () => {
+    const s = readSceneZip(zip({ './scene.json': enc(world) }))
+    expect([...s.files.keys()]).toEqual(['scene.json'])
+  })
+  it('prefers a root scene.json and does not strip', () => {
+    const s = readSceneZip(zip({ 'scene.json': enc(world), 'sub/scene.json': enc(parcels), 'sub/a.ts': strToU8('x') }))
+    expect(s.location.kind).toBe('world')
+    expect([...s.files.keys()].sort()).toEqual(['scene.json', 'sub/a.ts', 'sub/scene.json'])
+  })
+  it('accepts exactly 2000 files', () => {
+    const files: Record<string, Uint8Array> = { 'scene.json': enc(world) }
+    for (let i = 0; i < 1999; i++) files[`f/${i}.txt`] = new Uint8Array(0)
+    expect(readSceneZip(zip(files)).files.size).toBe(2000)
   })
 })
