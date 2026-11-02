@@ -126,6 +126,26 @@ describe('studio payments', () => {
     expect(await db.select().from(studioJobs).where(eq(studioJobs.type, 'finalize'))).toHaveLength(1)
   })
 
+  it('a Virvi admin finalizes free when Stripe isn’t set up; a creator is told payments are off', async () => {
+    const key = config.stripeSecretKey
+    ;(config as any).stripeSecretKey = ''
+    try {
+      const admin = await createUser({ role: 'admin' })
+      const d = await createDesign(admin)
+      await addRevision(d, 'hat')
+      const res = await finalize(admin, d.id)
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toMatchObject({ granted: true })
+      const creator = await createUser({ role: 'creator' })
+      const c = await createDesign(creator)
+      await addRevision(c, 'hat')
+      const off = await finalize(creator, c.id)
+      expect([off.statusCode, off.json().code]).toEqual([503, 'payments_unavailable'])
+    } finally {
+      ;(config as any).stripeSecretKey = key
+    }
+  })
+
   it('a creator still pays', async () => {
     const u = await createUser({ role: 'creator' })
     const d = await createDesign(u)

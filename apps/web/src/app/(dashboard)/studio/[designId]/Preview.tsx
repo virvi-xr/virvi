@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, type Tone } from '@/components/ui'
 import {
-  ORBIT_FRAMES, categoryLabel, inspectNote, orbitKeyFor, pieceLabel, pieceTabStatus, refusalMessage, relativeTime, shownStep, stageState, stepsFor,
+  ORBIT_FRAMES, categoryLabel, inspectNote, orbitKeyFor, pieceLabel, pieceTabStatus, refusalMessage, relativeTime, shownStep, stageFor, stageState, stepsFor,
   triangleWarning, viewButtonRendering, viewKey,
   type RenderView, type Step, type StudioDetail, type StudioPiece,
 } from '@/lib/studio'
@@ -49,6 +49,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
   const kind = detail.design.kind
   const categories = detail.pieces.map((p) => p.category)
   const step = shownStep(picked, kind, categories)
+  const stage = stageFor(step, kind)
   const [view, setView] = useState<RenderView>({ bodyShape: 'male', outfit: 'default', emote: null })
   const [pending, setPending] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
@@ -64,14 +65,14 @@ export default function Preview({ designId, detail, category, onSelect, onChange
 
   // Inspect asks for the rest of the sphere when it isn't there, once per piece revision and body shape
   useEffect(() => {
-    if (step !== 'inspect' || !piece?.revision || kind === 'emote') return
+    if (stage !== 'inspect' || !piece?.revision || kind === 'emote') return
     const asked = `${piece.category}/${piece.revision.number}/${inspectShape}`
     if (inspectAsked === asked || inspect?.status === 'queued' || (inspect?.status === 'ready' && (inspect.frames >= ORBIT_FRAMES || inspect.pending))) return
     setInspectAsked(asked)
     api.requestStudioRender(designId, kind === 'scene' ? { category: piece.category, mode: 'orbit' }
       : { category: piece.category, bodyShape: inspectShape, mode: 'orbit' }).then(onChanged)
       .catch((err) => setError(refusalMessage(err as never, new Date()).text))
-  }, [step, piece?.category, piece?.revision?.number, inspectShape, inspect?.status, inspectAsked]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stage, piece?.category, piece?.revision?.number, inspectShape, inspect?.status, inspectAsked]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickStep = (s: Step) => {
     if (s === 'design') {
@@ -82,7 +83,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
     onStep(s)
   }
   const key = viewKey(kind, view)
-  const stage = stageState(piece, key, pending)
+  const spin = stageState(piece, key, pending)
 
   // `pending` covers the request in flight; after it the design's own `queued` status says the view is rendering,
   // and the room's job event re-reads the design when it is done
@@ -140,7 +141,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
           <TourStep designId={designId} detail={detail} onChanged={onChanged} />
         ) : step === 'finalize' ? (
           finalizeStep
-        ) : step === 'inspect' ? (
+        ) : stage === 'inspect' ? (
           <>
             <div className="relative mx-auto aspect-square w-full max-w-[560px] bg-gray-950">
               {!piece ? (
@@ -170,14 +171,14 @@ export default function Preview({ designId, detail, category, onSelect, onChange
           </>
         ) : (<>
         <div className="relative mx-auto aspect-square w-full max-w-[560px] bg-gray-950">
-          {stage.kind === 'frames' ? (
-            <SpinStage view={`${piece!.category}/${key}`} urls={stage.urls} loop={kind === 'emote' || !!view.emote}
+          {spin.kind === 'frames' ? (
+            <SpinStage view={`${piece!.category}/${key}`} urls={spin.urls} loop={kind === 'emote' || !!view.emote}
               label={`${piece!.name}, ${view.bodyShape}${view.emote ? `, ${view.emote}` : ''}`} />
-          ) : stage.kind === 'rendering' ? (
+          ) : spin.kind === 'rendering' ? (
             <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-400" aria-live="polite">Rendering this view…</p>
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center text-sm text-gray-400">
-              <p>{stage.text}</p>
+              <p>{spin.text}</p>
               {piece && <button type="button" onClick={() => pick({ ...view })} className="text-blue-300 underline">Render this view</button>}
             </div>
           )}
@@ -187,7 +188,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
           {piece?.revision && (
             <p className="text-xs text-gray-500">
               Revision {piece.revision.number}
-              {stage.kind === 'frames' && ` · rendered ${relativeTime(stage.renderedAt, new Date())}`}
+              {spin.kind === 'frames' && ` · rendered ${relativeTime(spin.renderedAt, new Date())}`}
             </p>
           )}
           {kind === 'scene' ? (

@@ -202,7 +202,8 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    if (!config.stripeSecretKey) return paymentsOff(reply)
+    // an admin's finalize is granted without Stripe, so it doesn't wait on payments being set up
+    if (!config.stripeSecretKey && !(await isVirviAdmin(request.user.id))) return paymentsOff(reply)
     const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown }
     let categories: string[] | null = null
     if (b.categories != null) {

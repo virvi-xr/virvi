@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, dialogTotal, giftNote, checkedEmotes, lineNote } from './studio'
+import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, stageFor, uploadHint, dialogTotal, giftNote, checkedEmotes, lineNote } from './studio'
 
 const NOW = new Date('2026-11-01T12:00:00Z')
 const detail = (over: Partial<StudioDetail> = {}): StudioDetail => ({
@@ -110,6 +110,16 @@ describe('scene designs', () => {
     expect(stepsFor('emote', ['emote'])).toEqual(['design', 'avatar', 'emotes', 'finalize'])
     expect(STEP_LABELS.tour).toBe('Walk-through')
     expect(STEP_LABELS.scale).toBe('Scale')
+  })
+  it('a scene piece’s Design step shows the piece turning, as Inspect does: a building has no scale view', () => {
+    expect(stageFor('design', 'scene')).toBe('inspect')
+    expect(stageFor('scale', 'scene')).toBe('scale')
+    expect(stageFor('design', 'wearable')).toBe('design')
+    expect(stageFor('design', 'emote')).toBe('design')
+  })
+  it('the attach hint gives an example for the kind of design', () => {
+    expect(uploadHint('wearable')).toBe('Images or 3D files for the agent. Say what each is for, like “put logo.png on the chest”.')
+    expect(uploadHint('scene')).toBe('Images or 3D files for the agent. Say what each is for, like “put sign.png over the door”.')
   })
   it('scene pieces are named for people, and their views keyed as the server keys them', () => {
     expect(pieceLabel('building')).toBe('Building')

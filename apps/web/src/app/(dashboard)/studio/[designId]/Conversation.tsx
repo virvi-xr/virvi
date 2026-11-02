@@ -108,7 +108,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
       </div>
 
       <div className="border-t border-gray-800 p-3">
-        <Uploads designId={designId} uploads={detail.uploads ?? []} disabled={composer.mode === 'archived' || composer.mode === 'paused'} dropped={dropped} onChanged={onChanged} />
+        <Uploads designId={designId} kind={detail.design.kind} uploads={detail.uploads ?? []} disabled={composer.mode === 'archived' || composer.mode === 'paused'} dropped={dropped} onChanged={onChanged} />
         {refusal && <RefusalLine refusal={refusal} usage={usage} onFix={() => send({ fixChecks: true })} />}
         {failing.length > 0 && !active && (
           <button type="button" disabled={sending} onClick={() => send({ fixChecks: true })}

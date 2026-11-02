@@ -395,6 +395,12 @@ export const defaultStep = (kind: string): Step => kind === 'scene' ? 'inspect' 
 /** The step to show: the one picked, while the design has it (a walk-through needs the building first). */
 export const shownStep = (step: Step, kind: string, categories: string[]): Step =>
   stepsFor(kind, categories).includes(step) ? step : defaultStep(kind)
+/** The attach button's hint, with an example that fits the kind of design. */
+export const uploadHint = (kind: string) =>
+  `Images or 3D files for the agent. Say what each is for, like “put ${kind === 'scene' ? 'sign.png over the door' : 'logo.png on the chest'}”.`
+
+/** The stage a step shows: a scene piece's Design step turns it as Inspect does, since a building has no scale view. */
+export const stageFor = (step: Step, kind: string): Step => kind === 'scene' && step === 'design' ? 'inspect' : step
 
 /** `the dance`, or `the emote` for an emote design's own. */
 export const emoteLabel = (kind: string, emote: string) => kind === 'emote' || emote === OWN_EMOTE ? 'the emote' : `the ${emote}`
