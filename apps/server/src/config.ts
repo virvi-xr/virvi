@@ -33,6 +33,15 @@ function positiveInt(raw: string | undefined, def: number, zeroOk = false): numb
   return n
 }
 
+export type SceneBuildRunner = 'fly' | 'local' | 'off'
+
+/** SCENE_BUILD_RUNNER; a value other than the three refuses to start rather than silently turning builds off. */
+export function sceneBuildRunnerFrom(raw: string | undefined, m: VirviMode): SceneBuildRunner {
+  if (raw === undefined || raw === '') return m === 'cloud' ? 'fly' : 'off'
+  if (raw === 'fly' || raw === 'local' || raw === 'off') return raw
+  throw new Error(`SCENE_BUILD_RUNNER must be fly, local or off, not ${raw}`)
+}
+
 /** Design Studio prices in US cents, each a setting (see src/studio/README.md). A bad value refuses to start. */
 export function studioPricesFrom(e: Record<string, string | undefined>) {
   const cents = (name: string, def: number) => {
@@ -213,6 +222,13 @@ export const config = {
   // Scene imports (uploaded sources, built output, logs): private bucket, s3://<key>:<secret>@<account>.r2.cloudflarestorage.com/<bucket>, or file://<dir>
   // Outside cloud mode it falls back to <LOCAL_STORAGE_PATH>/private (storage/private-store.ts)
   sceneImportS3Uri: env('SCENE_IMPORT_S3_URI'),
+  // Where uploaded scenes are built (apps/scene-builder/README.md): `fly` (a one-shot machine per build in
+  // SCENE_BUILD_FLY_APP, from SCENE_BUILD_IMAGE), `local` (build.mjs on this server, unisolated: development only, refused
+  // in cloud mode) or `off` (imports are refused). Default: `fly` in cloud mode, else `off`.
+  sceneBuildRunner: sceneBuildRunnerFrom(env('SCENE_BUILD_RUNNER'), mode),
+  sceneBuildImage: env('SCENE_BUILD_IMAGE'), // registry.fly.io/virvi-scene-builds:<git-sha>
+  sceneBuildFlyApp: env('SCENE_BUILD_FLY_APP') || 'virvi-scene-builds',
+  sceneBuildFlyToken: env('SCENE_BUILD_FLY_TOKEN'), // scoped to the build app only
   studioFlyApp: env('STUDIO_FLY_APP') || 'vlm-studio-worker',
   // `external`: Virvi never creates or starts worker machines; a worker is run by hand (local development)
   studioMachines: (env('STUDIO_MACHINES') === 'external' ? 'external' : 'fly') as 'fly' | 'external',

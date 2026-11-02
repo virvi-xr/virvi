@@ -20,6 +20,10 @@ description: Complete reference for all Virvi environment variables
 | `LOCAL_STORAGE_PATH` | Path for local storage (default: `./uploads`) |
 | `PRIVATE_STORAGE_PATH` | Where single mode keeps private files such as scene import sources and builds (default: a `private` folder beside `LOCAL_STORAGE_PATH`). Must be outside `LOCAL_STORAGE_PATH`, which is served publicly, and on persistent storage; the server refuses to use a path inside it |
 | `SCENE_IMPORT_S3_URI` | Private bucket for scene imports, `s3://<key>:<secret>@<host>/<bucket>` or `file://<dir>`. Required in scalable and cloud modes; single mode falls back to `PRIVATE_STORAGE_PATH` |
+| `SCENE_BUILD_RUNNER` | Where uploaded scenes are built: `fly` (a one-shot, isolated machine per build), `local` (runs `apps/scene-builder/build.mjs` on the server with no isolation; development only, refused in cloud mode) or `off` (scene imports are refused). Default: `fly` in cloud mode, otherwise `off`. Any other value stops the server from starting |
+| `SCENE_BUILD_IMAGE` | The build image for `fly`, e.g. `registry.fly.io/virvi-scene-builds:<label>` (see `apps/scene-builder/README.md`). Without it, `fly` builds are unavailable |
+| `SCENE_BUILD_FLY_APP` | The Fly app build machines run in (default: `virvi-scene-builds`) |
+| `SCENE_BUILD_FLY_TOKEN` | A Fly token scoped to the build app only. Without it, `fly` builds are unavailable |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_ANON_KEY` | Supabase anon key |
 | `SUPABASE_SERVICE_KEY` | Supabase service role key |

@@ -53,6 +53,7 @@ import wizardRoutes from './routes/wizard.js'
 import dclDestinationRoutes from './routes/dcl-destinations.js'
 import studioWorkerRoutes from './routes/studio-worker.js'
 import studioRoutes from './routes/studio.js'
+import importBuildRoutes from './routes/import-build.js'
 import { db } from './db/connection.js'
 import { sql } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
@@ -223,6 +224,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(dclDestinationRoutes)
   await app.register(studioWorkerRoutes)
   await app.register(studioRoutes)
+  await app.register(importBuildRoutes)
 
   // Health check
   app.get('/api/health', async (_request, reply) => {

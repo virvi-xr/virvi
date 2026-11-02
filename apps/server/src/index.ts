@@ -11,6 +11,7 @@ import { startLifecycleSweep } from './venues/lifecycle.js'
 import { startDclRedeploySweep } from './services/dcl/redeploy-sweep.js'
 import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
+import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
 import { hyperfyHosting } from './services/hyperfy/infrastructure.js'
 import { startAnalyticsJobs } from './analytics/jobs.js'
 import { initBus } from './realtime/bus.js'
@@ -87,6 +88,9 @@ async function main() {
     startStudioSweep(STUDIO_SWEEP_MS)
     console.log(`[virvi-server] Design Studio sweep every ${STUDIO_SWEEP_MS}ms`)
   }
+  // Always on: a build started before SCENE_BUILD_RUNNER changed still needs timing out
+  startBuildSweep(BUILD_SWEEP_MS)
+  console.log(`[virvi-server] Scene build sweep every ${BUILD_SWEEP_MS}ms`)
   startAnalyticsJobs()
   console.log('[virvi-server] Analytics jobs started')
 

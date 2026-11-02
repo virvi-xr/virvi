@@ -23,6 +23,9 @@ export type JobSpec = { image: string; env: Record<string, string>; cmd: string[
 /** A Design Studio worker: one per design, no services (it only calls out), never restarted by Fly. */
 export type WorkerMachineSpec = { name: string; image: string; env: Record<string, string> }
 
+/** A scene import's build box (apps/scene-builder): no services (it only calls out), never restarted, gone once it exits. */
+export type BuildMachineSpec = { name: string; image: string; env: Record<string, string>; cpus: number; memoryMb: number }
+
 type FlyOpts = { token: string; org: string; fetch?: typeof fetch; baseUrl?: string; timeoutMs?: number }
 
 const REGION = 'iad'
@@ -90,6 +93,20 @@ function workerBody(m: WorkerMachineSpec) {
       guest: { cpu_kind: 'performance', cpus: 4, memory_mb: 8192 },
       restart: { policy: 'no' },
       auto_destroy: false,
+    },
+  }
+}
+
+function buildBody(m: BuildMachineSpec) {
+  return {
+    name: m.name,
+    region: REGION,
+    config: {
+      image: m.image,
+      env: m.env,
+      guest: { cpu_kind: 'performance', cpus: m.cpus, memory_mb: m.memoryMb },
+      restart: { policy: 'no' },
+      auto_destroy: true,
     },
   }
 }
@@ -183,6 +200,11 @@ export class FlyApi {
 
   async createWorkerMachine(app: string, m: WorkerMachineSpec): Promise<{ id: string }> {
     const r = await this.json<{ id: string }>('POST', `/apps/${encodeURIComponent(app)}/machines`, workerBody(m))
+    return { id: r.id }
+  }
+
+  async createBuildMachine(app: string, m: BuildMachineSpec): Promise<{ id: string }> {
+    const r = await this.json<{ id: string }>('POST', `/apps/${encodeURIComponent(app)}/machines`, buildBody(m))
     return { id: r.id }
   }
 

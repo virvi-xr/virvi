@@ -21,7 +21,7 @@ const MAX_UNZIPPED_BYTES = 300 * 1024 * 1024
 const DROPPED_DIRS = new Set(['__MACOSX', 'node_modules', 'bin', '.git'])
 
 /** Normalised path segments, or throws unsafe_path. Backslashes count as separators. */
-function safeSegments(name: string): string[] {
+export function safeSegments(name: string): string[] {
   const p = name.replace(/\\/g, '/')
   if (p.startsWith('/') || /^[a-zA-Z]:/.test(p) || p.includes('\0')) throw new ImportError(422, 'unsafe_path', `Unsafe path in zip: ${name}`)
   const segs = p.split('/').filter((s) => s !== '' && s !== '.')

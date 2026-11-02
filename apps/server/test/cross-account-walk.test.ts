@@ -335,6 +335,9 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
   'GET /api/studio/render-frames/*': 'the signed frame token is the auth; it names one frame of one design (studio-routes.test.ts)',
   'POST /api/studio/worker/jobs/:jobId/result': "the per-design worker token is the auth; another design's token is 403 (studio-worker-routes.test.ts)",
   'GET /api/studio/worker/jobs/:jobId/inputs/*': "the per-design worker token is the auth; another design's token is 403 (studio-finalize.test.ts)",
+  'GET /api/imports/build/:id/source': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
+  'POST /api/imports/build/:id/result': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
+  'POST /api/imports/build/:id/failed': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
 }
 
 // Every table holding B's fixtures; a refused request must leave all of them as they were.
