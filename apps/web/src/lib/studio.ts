@@ -113,7 +113,17 @@ export type QuoteLine = {
   amountCents: number
   waived: boolean
   held?: boolean
-  gift?: boolean // free through a gift code
+  gift?: boolean // paid by a gift code: the whole line, or `giftCents` of it (a scene piece's cap)
+  giftCents?: number
+}
+
+/** What a line costs after its gift: a scene gift covers up to its cap, a wearable or emote gift the whole line. */
+const afterGift = (l: QuoteLine) => l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
+
+/** How a gift line reads in the checkout: free, or how much it takes off. */
+export function giftNote(l: QuoteLine): string | null {
+  if (!l.gift) return null
+  return afterGift(l) > 0 ? `${formatCents(l.giftCents ?? 0)} off (gift code)` : 'free (gift code)'
 }
 
 export type Quote = {
@@ -442,7 +452,7 @@ export function inspectNote(view: StudioView | undefined): 'loading' | 'retry' |
 export type EmoteState = 'unchecked' | 'fine' | 'clipping' | 'fixing'
 
 /** The emotes a design is checked in: the base ones, or an emote design's own. */
-export const checkedEmotes = (kind: string): string[] => kind === 'emote' ? [OWN_EMOTE] : [...EMOTES]
+export const checkedEmotes = (kind: string): string[] => kind === 'emote' ? [OWN_EMOTE] : kind === 'scene' ? [] : [...EMOTES]
 
 /** Where an emote stands on a body shape: being fixed, said to clip, looks fine, or not looked at yet. */
 export function emoteState(detail: StudioDetail, emote: string, bodyShape: string): EmoteState {
@@ -518,7 +528,7 @@ export function checkoutBody(reports: Record<string, string>): { reports?: Recor
  * past its instant refunds (`reportsHeld`) is charged, and goes to the team.
  */
 export const dialogTotal = (quote: Quote, reported: string[]) =>
-  quote.lines.reduce((n, l) => n + (l.gift || (reported.includes(l.category) && !quote.reportsHeld?.includes(l.category)) ? 0 : l.amountCents), 0)
+  quote.lines.reduce((n, l) => n + (reported.includes(l.category) && !quote.reportsHeld?.includes(l.category) ? 0 : afterGift(l)), 0)
 
 export const HELD_REPORT_COPY = 'Your report is with our team. If it’s approved, this revision is refunded in full.'
 

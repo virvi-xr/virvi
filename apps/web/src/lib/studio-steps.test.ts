@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep } from './studio'
+import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, dialogTotal, giftNote, checkedEmotes } from './studio'
 
 const NOW = new Date('2026-11-01T12:00:00Z')
 const detail = (over: Partial<StudioDetail> = {}): StudioDetail => ({
@@ -146,5 +146,24 @@ describe('the step a design opens on', () => {
     expect(shownStep('tour', 'scene', ['furniture_chair'])).toBe('inspect')  // no building, so no walk-through
     expect(shownStep('tour', 'scene', ['building'])).toBe('tour')
     expect(shownStep('emotes', 'wearable', ['hat'])).toBe('emotes')
+  })
+})
+
+describe('scene gifts and checks', () => {
+  const line = (over: Record<string, unknown>) => ({ category: 'building', revisionId: 'r1', revisionNumber: 1, pieceName: 'Kiosk',
+    priceKind: 'first', amountCents: 7900, waived: false, ...over }) as any
+  const quote = (lines: any[]) => ({ pieces: [], lines, totalCents: 0, blocked: [], giftsUsed: 0, reportsHeld: [], notes: [] }) as any
+  it('a gift takes $29 off a 4x4 building and covers a chair whole, as Stripe charges', () => {
+    expect(dialogTotal(quote([line({ gift: true, giftCents: 2900 })]), [])).toBe(5000)
+    expect(dialogTotal(quote([line({ amountCents: 900, gift: true, giftCents: 900 })]), [])).toBe(0)
+    expect(dialogTotal(quote([line({ amountCents: 2900, gift: true })]), [])).toBe(0)  // a wearable gift: the whole line
+    expect(giftNote(line({ gift: true, giftCents: 2900 }))).toBe('$29 off (gift code)')
+    expect(giftNote(line({ amountCents: 900, gift: true, giftCents: 900 }))).toBe('free (gift code)')
+    expect(giftNote(line({ amountCents: 2900, gift: true }))).toBe('free (gift code)')
+    expect(giftNote(line({}))).toBeNull()
+  })
+  it('a scene design has no emotes to check', () => {
+    expect(checkedEmotes('scene')).toEqual([])
+    expect(checkedEmotes('wearable')).toHaveLength(7)
   })
 })
