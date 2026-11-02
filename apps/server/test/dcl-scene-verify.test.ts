@@ -61,6 +61,31 @@ describe('verifyDclSceneRequest', () => {
     await expect(verifyDclSceneRequest('POST', PATH, headers, JSON.stringify({ user: { displayName: 'Evil' } }))).rejects.toThrow(/body does not match signed hash/)
   })
 
+  it('reports a body covered by hashPayload as signed', async () => {
+    const { headers } = await signedSceneHeaders({ method: 'POST', path: PATH, body: BODY })
+    await expect(verifyDclSceneRequest('POST', PATH, headers, BODY)).resolves.toMatchObject({ bodySigned: true })
+  })
+
+  it('refuses a body signed without hashPayload by default (ads keep needing it)', async () => {
+    const { headers } = await signedSceneHeaders({ method: 'POST', path: PATH, body: BODY, metadata: { hashPayload: undefined } })
+    await expect(verifyDclSceneRequest('POST', PATH, headers, BODY)).rejects.toThrow(/body does not match signed hash/)
+  })
+
+  it('with allowUnsignedBody, accepts a body signed without hashPayload (web explorer) and reports it unsigned', async () => {
+    const { headers, wallet } = await signedSceneHeaders({ method: 'POST', path: PATH, body: BODY, metadata: { hashPayload: undefined } })
+    const r = await verifyDclSceneRequest('POST', PATH, headers, BODY, { allowUnsignedBody: true })
+    expect(r.wallet).toBe(wallet)
+    expect(r.bodySigned).toBe(false)
+    expect(r.scene.sceneId).toBe(SCENE_META.sceneId)
+  })
+
+  it('with allowUnsignedBody, still refuses a body that does not match a hashPayload that is present', async () => {
+    const { headers } = await signedSceneHeaders({ method: 'POST', path: PATH, body: BODY })
+    await expect(
+      verifyDclSceneRequest('POST', PATH, headers, JSON.stringify({ user: { displayName: 'Evil' } }), { allowUnsignedBody: true }),
+    ).rejects.toThrow(/body does not match signed hash/)
+  })
+
   it('refuses a wallet-signed (non-scene) request', async () => {
     const { headers } = await signedSceneHeaders({ method: 'POST', path: PATH, body: BODY, metadata: { signer: 'dcl:explorer' } })
     await expect(verifyDclSceneRequest('POST', PATH, headers, BODY)).rejects.toThrow(/Invalid metadata content/)

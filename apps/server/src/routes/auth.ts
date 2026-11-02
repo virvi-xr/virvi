@@ -231,10 +231,13 @@ export default async function authRoutes(app: FastifyInstance) {
             request.url.split('?')[0],
             request.headers as Record<string, string | string[] | undefined>,
             raw,
+            // The web explorer signs the request but not its body; only the display name comes from it
+            { allowUnsignedBody: true },
           )
           if (!signed.scene.isGuest) {
             verifiedWallet = signed.wallet.toLowerCase()
-            request.log.info({ wallet: verifiedWallet }, 'DCL signed fetch verified')
+            if (!signed.bodySigned) displayName = `${verifiedWallet.slice(0, 6)}…${verifiedWallet.slice(-4)}`
+            request.log.info({ wallet: verifiedWallet, bodySigned: signed.bodySigned }, 'DCL signed fetch verified')
             const localPreview =
               config.mode !== 'cloud' && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(signed.scene.realm.hostname)
             try {

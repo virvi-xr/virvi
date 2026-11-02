@@ -56,13 +56,18 @@ export async function verifyDclSignedFetch(method: string, path: string, headers
  * Verify a request the explorer signed on a scene's behalf (ADR-289) and return its scene context.
  * Throws on anything else: bad signature, missing/respelled/foreign signer, incomplete scene
  * metadata, or a body that does not match the signed hashPayload.
+ *
+ * The web explorer signs the request but sends no hashPayload. With `allowUnsignedBody` such a
+ * request is accepted with `bodySigned: false`, and the caller must not trust the body; a
+ * hashPayload that is present still has to match.
  */
 export async function verifyDclSceneRequest(
   method: string,
   path: string,
   headers: Headers,
   rawBody: string | null,
-): Promise<{ wallet: string; scene: SceneRequestContext }> {
+  opts: { allowUnsignedBody?: boolean } = {},
+): Promise<{ wallet: string; scene: SceneRequestContext; bodySigned: boolean }> {
   const r = await verify(method, path, headers, {
     expiration: EXPIRATION_MS,
     canonicalMetadataKeys: CANONICAL_KEYS,
@@ -75,29 +80,19 @@ export async function verifyDclSceneRequest(
   const serverName = str(realm, 'serverName')
   const hostname = str(realm, 'hostname') ?? ''
   if (!sceneId || !parcel || !serverName) throw new Error('scene metadata incomplete')
+  let bodySigned = true
   if (rawBody !== null && rawBody.length > 0) {
-    const want = createHash('sha256').update(rawBody, 'utf8').digest('hex')
     const signed = str(m, 'hashPayload')
-    if (signed !== want) throw new Error(`body does not match signed hash (${bodyHashDiagnosis(rawBody, signed)})`)
+    if (signed === null && opts.allowUnsignedBody) bodySigned = false
+    else if (signed !== createHash('sha256').update(rawBody, 'utf8').digest('hex')) {
+      throw new Error(`body does not match signed hash (${signed ? 'hashPayload differs' : 'no hashPayload'})`)
+    }
   }
   return {
+    bodySigned,
     wallet: r.auth.toLowerCase(),
     scene: { sceneId, parcel, realm: { hostname, serverName }, isGuest: own(m, 'isGuest') && m.isGuest === true },
   }
-}
-
-const sha256 = (s: string, enc: BufferEncoding = 'utf8') => createHash('sha256').update(s, enc).digest('hex')
-
-/** Temporary diagnosis for a body-hash mismatch: sizes, hash prefixes, and which plausible encoding of the body the signer hashed, if any. */
-function bodyHashDiagnosis(rawBody: string, signed: string | null): string {
-  const variants: Record<string, () => string> = {
-    latin1: () => sha256(rawBody, 'latin1'),
-    trimmed: () => sha256(rawBody.trim()),
-    reserialized: () => sha256(JSON.stringify(JSON.parse(rawBody))),
-    empty: () => sha256(''),
-  }
-  const matched = signed ? Object.keys(variants).filter((k) => { try { return variants[k]() === signed } catch { return false } }) : []
-  return `chars ${rawBody.length}, bytes ${Buffer.byteLength(rawBody, 'utf8')}, signed ${signed ? signed.slice(0, 8) : 'none'}, got ${sha256(rawBody).slice(0, 8)}, matches ${matched.join('+') || 'none'}`
 }
 
 /**

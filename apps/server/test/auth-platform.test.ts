@@ -14,10 +14,15 @@ vi.mock('../src/middleware/dcl-auth.js', () => ({
     if (typeof v === 'string' && v.startsWith('valid:')) return { walletAddress: v.slice(6), metadata: {} }
     throw new Error('bad signature')
   },
-  verifyDclSceneRequest: async (_m: string, _p: string, h: Record<string, string>) => {
+  verifyDclSceneRequest: async (_m: string, _p: string, h: Record<string, string>, _b: string | null, opts?: { allowUnsignedBody?: boolean }) => {
     const v = h['x-identity-auth-chain-0']
-    if (typeof v === 'string' && v.startsWith('valid:'))
-      return { wallet: v.slice(6), scene: { sceneId: 'bafyX', parcel: '0,0', realm: { hostname: 'peer.decentraland.org', serverName: 'main' }, isGuest: false } }
+    const scene = { sceneId: 'bafyX', parcel: '0,0', realm: { hostname: 'peer.decentraland.org', serverName: 'main' }, isGuest: false }
+    if (typeof v === 'string' && v.startsWith('valid:')) return { wallet: v.slice(6), scene, bodySigned: true }
+    // The web explorer signs the request but not its body (no hashPayload)
+    if (typeof v === 'string' && v.startsWith('nohash:')) {
+      if (!opts?.allowUnsignedBody) throw new Error('body does not match signed hash')
+      return { wallet: v.slice(7), scene, bodySigned: false }
+    }
     throw new Error('bad signature')
   },
 }))
@@ -50,6 +55,23 @@ describe('POST /api/auth/platform', () => {
     expect(claims.kind).toBe('scene')
     const method = await db.query.userAuthMethods.findFirst({ where: eq(userAuthMethods.identifier, WALLET) })
     expect(method).toBeTruthy()
+  })
+
+  it('a web-explorer sign-in (request signed, body not) gets a verified pass, without the body display name', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/platform',
+      headers: { 'x-identity-auth-chain-0': `nohash:${WALLET}` },
+      payload: { user: { displayName: 'Evil' } },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.guest).toBeUndefined()
+    const claims = verifySessionToken(body.accessToken)!
+    expect(claims.wallet).toBe(WALLET)
+    expect(claims.verified).toBe(true)
+    const method = await db.query.userAuthMethods.findFirst({ where: eq(userAuthMethods.identifier, WALLET), with: { user: true } })
+    expect(method!.user.displayName).toBe('0x0000…00aa')
   })
 
   it('a forged body wallet with a bad signature gets a guest token and no account', async () => {
