@@ -12,6 +12,7 @@ import { startDclRedeploySweep } from './services/dcl/redeploy-sweep.js'
 import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
 import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
+import { startRetentionSweep, RETENTION_SWEEP_MS } from './services/import/retention.js'
 import { setOnBuildDone } from './services/import/build-runner.js'
 import { deployImport } from './services/import/import-deploy.js'
 import { hyperfyHosting } from './services/hyperfy/infrastructure.js'
@@ -95,6 +96,9 @@ async function main() {
   // Always on: a build started before SCENE_BUILD_RUNNER changed still needs timing out
   startBuildSweep(BUILD_SWEEP_MS)
   console.log(`[virvi-server] Scene build sweep every ${BUILD_SWEEP_MS}ms`)
+  // Ruling R27: import files 30 days after the import ended, deployed files no deploy keeps (it skips a missing bucket)
+  startRetentionSweep(RETENTION_SWEEP_MS)
+  console.log(`[virvi-server] Import file retention sweep every ${RETENTION_SWEEP_MS}ms`)
   startAnalyticsJobs()
   console.log('[virvi-server] Analytics jobs started')
 

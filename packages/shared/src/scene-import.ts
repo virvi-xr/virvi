@@ -21,6 +21,8 @@ export interface SceneImportView {
   /** True when the web can start (or restart) the deploy: `built`, or `awaiting_signature` with the signing window passed. */
   canDeploy: boolean
   logTail: string | null
+  /** The retention sweep deleted its stored files (source, build, log) 30 days after it ended. */
+  filesExpired: boolean
   createdAt: string
 }
 

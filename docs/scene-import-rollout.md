@@ -134,6 +134,20 @@ With a test World you own, upload a small scene zip on the Import page and check
 
 Also upload a scene with a failing build and check the error and log are shown.
 
+## Retention
+
+Ruling R27, decided by the owner. Once a day the server (`services/import/retention.ts`) deletes:
+
+- `imports/<id>/` (source.zip, built/, build.log) 30 days after the import ended: status `deployed` or `failed` (a
+  superseded upload included), by its `updated_at`. The `scene_imports` row stays with `files_deleted_at` set; the Import
+  page and `GET /api/imports/:id/log` (410 `files_expired`) say the files were deleted after 30 days.
+- `deployed/<hash>` objects that no destination's current live deployment and no deployment from the last 30 days lists in
+  its `assetBundle.content`, and that are over an hour old. Older downloads fall back to the Worlds server, and answer
+  `files_gone` once it no longer has a file either.
+
+Nothing needs setting up. The sweep logs `[retention] deleted the files of N imports and M deployed files` when it
+deletes anything.
+
 ## 7. Rollback
 
 ```bash

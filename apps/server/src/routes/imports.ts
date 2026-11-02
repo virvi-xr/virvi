@@ -26,6 +26,7 @@ import { getImportStore } from '../storage/private-store.js'
 import { ImportError, readSceneZip, type SceneFolder } from '../services/import/scene-zip.js'
 import { installVirvi } from '../services/import/install-virvi.js'
 import { importSlotGate, releaseImportSlot } from '../services/import/import-work.js'
+import { FILES_EXPIRED } from '../services/import/retention.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
 import {
   createImport, failImport, latestImportFor, loadImportView, OWNER_ERROR_MESSAGES, type SceneImportRow,
@@ -184,6 +185,7 @@ export default async function importRoutes(app: FastifyInstance) {
 
     reads.get<{ Params: { id: string } }>('/api/imports/:id/log', async (request, reply) => handle(reply, async () => {
       const row = await importFor(request, request.params.id)
+      if (row.filesDeletedAt) return reply.status(410).send({ error: 'files_expired', message: FILES_EXPIRED })
       const obj = row.logKey ? await getImportStore().getStream(row.logKey) : null
       if (!obj) throw new RouteError(404, 'no_log')
       if (obj.length !== undefined) reply.header('Content-Length', obj.length)

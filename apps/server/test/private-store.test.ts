@@ -44,10 +44,19 @@ describe.each<[string, () => PrivateStore]>([
     await s.put('imports/a/built/bin/index.js', Buffer.from('code!'), 'text/javascript')
     await s.put('imports/ab/other', Buffer.from('x'), 'text/plain')
     expect(await s.list('imports/a/built/')).toEqual([
-      { key: 'imports/a/built/bin/index.js', size: 5 },
-      { key: 'imports/a/built/scene.json', size: 2 },
+      { key: 'imports/a/built/bin/index.js', size: 5, modifiedAt: expect.any(Date) },
+      { key: 'imports/a/built/scene.json', size: 2, modifiedAt: expect.any(Date) },
     ])
     expect(await s.list('imports/none/')).toEqual([])
+  })
+
+  it('delete removes one object and says whether it was there; deleteKeys removes several (Ruling R27)', async () => {
+    const s = make()
+    for (const k of ['deployed/a', 'deployed/b', 'deployed/c']) await s.put(k, Buffer.from(k), 'application/octet-stream')
+    expect(await s.delete('deployed/a')).toBe(1)
+    expect(await s.delete('deployed/a')).toBe(0)
+    expect(await s.deleteKeys(['deployed/b', 'deployed/c'])).toBe(2)
+    expect(await s.list('deployed/')).toEqual([])
   })
 })
 

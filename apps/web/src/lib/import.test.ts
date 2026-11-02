@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { SceneImportStatus, SceneImportView } from '@virvixr/shared'
-import { importErrorMessage, importFailure, importLines, importPhase, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
+import { buildLogShown, importErrorMessage, importFailure, importLines, importPhase, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
 
 const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   id: 'imp-1',
@@ -14,6 +14,7 @@ const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   destinationId: null,
   canDeploy: false,
   logTail: null,
+  filesExpired: false,
   createdAt: '2026-11-01T00:00:00Z',
   ...over,
 })
@@ -52,6 +53,8 @@ describe('importErrorMessage', () => {
     'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded',
     // import-work.ts (I5)
     'imports_busy',
+    // retention.ts (Ruling R27)
+    'files_expired',
     // markFailed's and the sweep's codes for an import put back to built (R19)
     'interrupted', 'deploy_interrupted', 'cancelled',
     // import-deploy.ts, world-deployer.ts
@@ -152,5 +155,14 @@ describe('recentImports', () => {
   it('keeps at most 10', () => {
     const many = Array.from({ length: 12 }, (_, i) => view({ id: `i${i}`, createdAt: new Date(now.getTime() - i * 60_000).toISOString() }))
     expect(recentImports(many, now).map((i) => i.id)).toEqual(many.slice(0, 10).map((v) => v.id))
+  })
+})
+
+describe('buildLogShown', () => {
+  it("shows the log of a failed import, says its files are gone after 30 days, and shows nothing for a replaced one", () => {
+    expect(buildLogShown(view({ status: 'failed', errorCode: 'build_failed' }))).toBe('log')
+    expect(buildLogShown(view({ status: 'failed', errorCode: 'build_failed', filesExpired: true }))).toBe('expired')
+    expect(buildLogShown(view({ status: 'failed', errorCode: 'superseded' }))).toBeNull()
+    expect(importErrorMessage('files_expired')).toBe("This import's files were deleted after 30 days.")
   })
 })

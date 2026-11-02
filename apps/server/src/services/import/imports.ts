@@ -54,13 +54,14 @@ export function importView(row: SceneImportRow, logTail: string | null, deployme
     destinationId: row.destinationId,
     canDeploy: row.status === 'built' || (row.status === 'awaiting_signature' && signingOver(deployment, now)),
     logTail,
+    filesExpired: row.filesDeletedAt !== null,
     createdAt: row.createdAt.toISOString(),
   }
 }
 
 /** The last few KB of the stored build log, from a line start when it was cut. */
 export async function readLogTail(row: SceneImportRow): Promise<string | null> {
-  if (!row.logKey) return null
+  if (!row.logKey || row.filesDeletedAt) return null
   const obj = await getImportStore().get(row.logKey)
   if (!obj) return null
   if (obj.body.length <= LOG_TAIL_BYTES) return obj.body.toString('utf8')

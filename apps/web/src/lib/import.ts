@@ -111,6 +111,8 @@ const CODE_MESSAGES: Record<string, string> = {
   files_gone: "Some of this deploy's files are no longer stored anywhere, so it can't be downloaded.",
   files_unsafe: "Some of this deploy's file names can't be put in a zip safely, so it can't be downloaded.",
   not_deployed: "This deploy never went live, so there's nothing to download.",
+  // Retention (Ruling R27)
+  files_expired: "This import's files were deleted after 30 days.",
 }
 
 /** One plain sentence for an import's error code. */
@@ -137,6 +139,15 @@ export function importFailure(err: unknown): { message: string; importId: string
 /** What a failed import says: its stored message, else its code's sentence. */
 export const importViewError = (v: Pick<SceneImportView, 'errorCode' | 'errorMessage'>): string =>
   v.errorMessage || importErrorMessage(v.errorCode ?? '')
+
+/**
+ * What a failed import shows under its error: its build log, or (Ruling R27) that its files were deleted after 30 days;
+ * nothing for one a newer upload replaced.
+ */
+export function buildLogShown(v: Pick<SceneImportView, 'errorCode' | 'filesExpired'>): 'log' | 'expired' | null {
+  if (v.errorCode === 'superseded') return null
+  return v.filesExpired ? 'expired' : 'log'
+}
 
 const BUILD_CODES = new Set([
   'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded', 'bad_package_json', 'bad_source_encoding',

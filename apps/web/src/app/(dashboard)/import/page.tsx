@@ -8,7 +8,9 @@ import { SCENE_IMPORT_MAX_BYTES, type SceneImportView } from '@virvixr/shared'
 import { useApi, type DclDestination } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { signErrorMessage } from '@/lib/deploy'
-import { importFailure, importLines, importPhase, importViewError, PHASE_BADGES, recentImports, watchImport } from '@/lib/import'
+import {
+  buildLogShown, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, recentImports, watchImport,
+} from '@/lib/import'
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
 import { Badge, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
@@ -253,7 +255,8 @@ function ImportContent() {
           {phase === 'failed' && view && (
             <>
               <p className={errorBox} role="alert">{importViewError(view)}</p>
-              {view.errorCode !== 'superseded' && <BuildLog importId={view.id} tail={view.logTail} />}
+              {buildLogShown(view) === 'log' && <BuildLog importId={view.id} tail={view.logTail} />}
+              {buildLogShown(view) === 'expired' && <p className="text-gray-500">{importErrorMessage('files_expired')}</p>}
             </>
           )}
 

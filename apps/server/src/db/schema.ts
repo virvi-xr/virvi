@@ -790,6 +790,8 @@ export const sceneImports = pgTable('scene_imports', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   builtAt: timestamp('built_at', { withTimezone: true }),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
+  /** When the retention sweep deleted its files under imports/<id>/ (Ruling R27); the row stays. */
+  filesDeletedAt: timestamp('files_deleted_at', { withTimezone: true }),
 }, (t) => ({
   worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
   userCreatedIdx: index('scene_imports_user_created_idx').on(t.userId, t.createdAt),

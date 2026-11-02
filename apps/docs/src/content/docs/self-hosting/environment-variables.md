@@ -19,7 +19,7 @@ description: Complete reference for all Virvi environment variables
 | `STORAGE_PROVIDER` | `local` \| `supabase` \| `s3` \| `r2` (default: `local`) |
 | `LOCAL_STORAGE_PATH` | Path for local storage (default: `./uploads`) |
 | `PRIVATE_STORAGE_PATH` | Where single mode keeps private files such as scene import sources and builds (default: a `private` folder beside `LOCAL_STORAGE_PATH`). Must be outside `LOCAL_STORAGE_PATH`, which is served publicly, and on persistent storage; the server refuses to use a path inside it |
-| `SCENE_IMPORT_S3_URI` | Private bucket for scene imports, `s3://<key>:<secret>@<host>/<bucket>` or `file://<dir>`. Required in scalable and cloud modes; single mode falls back to `PRIVATE_STORAGE_PATH` |
+| `SCENE_IMPORT_S3_URI` | Private bucket for scene imports, `s3://<key>:<secret>@<host>/<bucket>` or `file://<dir>`. Required in scalable and cloud modes; single mode falls back to `PRIVATE_STORAGE_PATH`. A daily sweep deletes an import's files 30 days after it ended (the import itself is kept) and `deployed/` files no live or recent (30-day) deployment uses; see [Scene import files](#scene-import-files) |
 | `SCENE_BUILD_RUNNER` | Where uploaded scenes are built: `fly` (a one-shot, isolated machine per build), `local` (runs `apps/scene-builder/build.mjs` on the server with no isolation; development only, refused in cloud mode) or `off` (scene imports are refused). Default: `fly` in cloud mode, otherwise `off`. Any other value stops the server from starting |
 | `SCENE_BUILD_IMAGE` | The build image for `fly`, e.g. `registry.fly.io/virvi-scene-builds:<label>` (see `apps/scene-builder/README.md`). Without it, `fly` builds are unavailable |
 | `SCENE_BUILD_FLY_APP` | The Fly app build machines run in (default: `virvi-scene-builds`) |
@@ -31,6 +31,20 @@ description: Complete reference for all Virvi environment variables
 | `S3_REGION` | S3 region |
 | `S3_ENDPOINT` | Custom S3 endpoint (for R2/MinIO) |
 | `CDN_URL` | Prepended to public file URLs |
+
+### Scene import files
+
+The import bucket (or `PRIVATE_STORAGE_PATH`) holds `imports/<id>/` (each upload's source, its built files and its build
+log) and `deployed/<hash>` (the files of every World deploy, kept once per content hash, for "Download what went live").
+Once a day the server deletes:
+
+- an import's `imports/<id>/` 30 days after the import ended (deployed or failed, a replaced upload included). The import
+  stays listed; its build log answers 410 `files_expired`.
+- every `deployed/<hash>` that neither a World's current live deployment nor any deployment from the last 30 days uses,
+  and that was written more than an hour ago. Downloading an older deploy then reads the files from Decentraland's Worlds
+  server, while it still has them.
+
+Nothing is configured for this; a server without the bucket skips it.
 
 ## Scalable/Cloud Mode
 
