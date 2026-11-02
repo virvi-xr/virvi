@@ -174,10 +174,13 @@ export function privateStoreFromUri(uri: string): PrivateStore {
 
 let importStore: PrivateStore | null = null
 
-/** Where scene imports keep sources, built output and logs. Tests replace it with setImportStore. */
+/**
+ * Where scene imports keep sources, built output and logs. Tests replace it with setImportStore. Only single mode may fall
+ * back to local disk (outside the served uploads folder); scalable and cloud need a shared bucket.
+ */
 export function getImportStore(): PrivateStore {
   if (!importStore) {
-    const uri = config.sceneImportS3Uri || (config.mode !== 'cloud' ? `file://${resolve(config.localStoragePath, 'private')}` : undefined)
+    const uri = config.sceneImportS3Uri || (config.mode === 'single' ? `file://${config.privateStoragePath}` : undefined)
     if (!uri) throw new Error('SCENE_IMPORT_S3_URI is not set')
     importStore = privateStoreFromUri(uri)
   }

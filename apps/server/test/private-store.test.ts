@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
-import { memoryPrivateStore, privateStoreFromUri, type PrivateStore } from '../src/storage/private-store.js'
+import { config } from '../src/config.js'
+import { memoryPrivateStore, privateStoreFromUri, getImportStore, setImportStore, type PrivateStore } from '../src/storage/private-store.js'
 
 async function read(body: Readable): Promise<string> {
   const chunks: Buffer[] = []
@@ -39,9 +40,48 @@ describe.each<[string, () => PrivateStore]>([
 })
 
 describe('file private store', () => {
-  it('refuses a key containing ..', async () => {
+  it('refuses keys that escape the store', async () => {
     const s = privateStoreFromUri(`file://${mkdtempSync(join(tmpdir(), 'private-store-'))}`)
-    await expect(s.put('imports/../escape', Buffer.from('x'), 'text/plain')).rejects.toThrow()
-    await expect(s.get('../escape')).rejects.toThrow()
+    for (const key of ['imports/../escape', '../escape', 'a/../b', '/etc/x']) {
+      await expect(s.put(key, Buffer.from('x'), 'text/plain'), key).rejects.toThrow()
+      await expect(s.get(key), key).rejects.toThrow()
+    }
+  })
+
+  it('rejects an absolute key through the resolved-path guard, not only the .. check', async () => {
+    const s = privateStoreFromUri(`file://${mkdtempSync(join(tmpdir(), 'private-store-'))}`)
+    await expect(s.put('/etc/x', Buffer.from('x'), 'text/plain')).rejects.toThrow('escapes its folder')
+  })
+})
+
+describe('import store', () => {
+  const saved = { mode: config.mode, uri: config.sceneImportS3Uri }
+  const restore = () => { (config as any).mode = saved.mode; (config as any).sceneImportS3Uri = saved.uri; setImportStore(null) }
+
+  it('single mode falls back to local disk at privateStoragePath', async () => {
+    const savedPath = config.privateStoragePath
+    try {
+      ;(config as any).mode = 'single'; (config as any).sceneImportS3Uri = undefined
+      ;(config as any).privateStoragePath = mkdtempSync(join(tmpdir(), 'private-default-'))
+      setImportStore(null)
+      await getImportStore().put('imports/x/source.zip', Buffer.from('z'), 'application/zip')
+      expect((await getImportStore().get('imports/x/source.zip'))?.body.toString()).toBe('z')
+    } finally { (config as any).privateStoragePath = savedPath; restore() }
+  })
+
+  it('the default private path is never inside the served uploads root', () => {
+    const root = resolve(config.localStoragePath)
+    const priv = resolve(config.privateStoragePath)
+    expect(priv === root || priv.startsWith(root + sep)).toBe(false)
+  })
+
+  it('scalable and cloud modes need SCENE_IMPORT_S3_URI', () => {
+    try {
+      for (const mode of ['scalable', 'cloud']) {
+        ;(config as any).mode = mode; (config as any).sceneImportS3Uri = undefined
+        setImportStore(null)
+        expect(() => getImportStore(), mode).toThrow('SCENE_IMPORT_S3_URI')
+      }
+    } finally { restore() }
   })
 })

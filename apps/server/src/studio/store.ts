@@ -30,7 +30,6 @@ export function checkFilePath(
   return { ok: true, kind: 'final', category: m[6] }
 }
 
-
 export function r2StudioStore(uri = config.studioS3Uri): StudioStore {
   if (!uri) throw new Error('STUDIO_S3_URI is not set')
   return r2PrivateStore(uri)

@@ -7,6 +7,8 @@
  *   cloud    — Hosted virvi.io SaaS, multi-tenant, billing enabled
  */
 
+import { resolve } from 'node:path'
+
 export type VirviMode = 'single' | 'scalable' | 'cloud'
 
 function env(key: string): string | undefined {
@@ -181,6 +183,8 @@ export const config = {
 
   // Local filesystem
   localStoragePath: env('LOCAL_STORAGE_PATH') || './uploads',
+  // Private local objects (single mode scene imports). Never under localStoragePath: that folder is served at /uploads/
+  privateStoragePath: env('PRIVATE_STORAGE_PATH') || resolve(env('LOCAL_STORAGE_PATH') || './uploads', '..', 'private'),
 
   // ── Streaming ───────────────────────────────────────────────────────────
   streamingEnabled: env('ENABLE_STREAMING') === 'true' || mode === 'cloud',
