@@ -6,6 +6,8 @@ import { unzipSync } from 'fflate'
 import ignore from 'ignore'
 
 export const LOG_LIMIT = 64 * 1024
+// The result's X-Build-Log header (Ruling R9): small enough for ordinary header limits once base64'd (~11 KB)
+export const HEADER_LOG_LIMIT = 8 * 1024
 
 // The SDK's own deploy ignores: `defaultDclIgnore` plus the extras `getDCLIgnorePatterns` always adds, in
 // @dcl/sdk-commands 7.31.0 dist/logic/dcl-ignore.js. Then the brief's: `src` (bundled into the main file, never loaded
@@ -19,7 +21,7 @@ const DEFAULT_IGNORES = [...SDK_IGNORES, 'src', 'README*']
 
 /** A zip entry or scene path as a clean relative path (`a/b.glb`), or null when it is absolute, climbs out, or is odd. */
 export function safeEntryPath(name) {
-  if (typeof name !== 'string' || name === '' || name.includes('\0') || name.includes('\\')) return null
+  if (typeof name !== 'string' || name === '' || /[\x00-\x1f\x7f\\]/.test(name)) return null
   if (name.startsWith('/') || /^[a-zA-Z]:/.test(name)) return null
   const parts = name.split('/')
   if (parts.some((p) => p === '' || p === '.' || p === '..')) return null
@@ -66,6 +68,8 @@ export function deployableFiles(root, dclignore) {
     for (const entry of readdirSync(rel ? join(root, rel) : root, { withFileTypes: true })) {
       if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
       const path = rel ? `${rel}/${entry.name}` : entry.name
+      // A name no zip entry should carry (a backslash, a newline...) is left out, directory and all
+      if (!safeEntryPath(path)) continue
       if (entry.isDirectory()) walk(path)
       else if (entry.isFile()) found.push(path)
     }
@@ -117,13 +121,26 @@ export function logTail(log, token, limit = LOG_LIMIT) {
   return out.subarray(skip)
 }
 
+/** The X-Build-Log value: base64 of the redacted last HEADER_LOG_LIMIT bytes of `log`. */
+export function resultLogHeader(log, token) {
+  return logTail(log, token, HEADER_LOG_LIMIT).toString('base64')
+}
+
 /**
  * Extracts a zip into `root` with fflate (never `unzip`/`tar`, which honour links). Every entry name is checked
  * before anything is written; a bad one throws naming it. Files are created exclusively, so nothing is overwritten
  * through an existing path.
  */
 export function extractZip(data, root) {
-  const entries = unzipSync(data instanceof Uint8Array ? data : new Uint8Array(data))
+  // fflate's result is an object, so a repeated name would collapse silently: count them on the way in
+  const names = new Set()
+  const entries = unzipSync(data instanceof Uint8Array ? data : new Uint8Array(data), {
+    filter: (file) => {
+      if (names.has(file.name)) throw new Error(`Refusing zip entry ${JSON.stringify(file.name)}: it appears twice`)
+      names.add(file.name)
+      return true
+    },
+  })
   const base = resolve(root)
   const plan = []
   for (const [name, body] of Object.entries(entries)) {

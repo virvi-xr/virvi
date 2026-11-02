@@ -16,7 +16,7 @@ RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + || true
 
 COPY package.json package-lock.json /opt/scene-builder/
 RUN cd /opt/scene-builder && npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
-COPY lib.mjs build.mjs entrypoint.sh tinyproxy.conf allowlist.txt /opt/scene-builder/
-RUN chmod -R a+rX,go-w /opt/scene-builder && chmod 755 /opt/scene-builder/entrypoint.sh
+COPY lib.mjs build.mjs entrypoint.sh steps.sh smoke.sh tinyproxy.conf allowlist.txt /opt/scene-builder/
+RUN chmod -R a+rX,go-w /opt/scene-builder && chmod 755 /opt/scene-builder/entrypoint.sh /opt/scene-builder/smoke.sh
 WORKDIR /work
 ENTRYPOINT ["/opt/scene-builder/entrypoint.sh"]

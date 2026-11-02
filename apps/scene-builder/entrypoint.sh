@@ -28,22 +28,25 @@ sed -e 's/^Port .*/Port 8889/' -e 's#^Filter .*#Filter "/etc/tinyproxy/filter-ap
 
 mkdir -p /var/log/tinyproxy /run/tinyproxy
 chown tinyproxy:tinyproxy /var/log/tinyproxy /run/tinyproxy
-tinyproxy -c /opt/scene-builder/tinyproxy.conf
-tinyproxy -c /etc/tinyproxy/api.conf
+# The proxies are the one uid with a way out: they start with an empty environment, so never hold the token
+env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin tinyproxy -c /opt/scene-builder/tinyproxy.conf
+env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin tinyproxy -c /etc/tinyproxy/api.conf
 
-# nftables matches the socket's user natively (no xt_owner needed). Port 8889 is Virvi's API: runner's alone (root
-# only probes it below).
+# nftables matches the socket's user natively (no xt_owner needed). On loopback only the proxies are reachable:
+# 8888 (npm) by anyone, 8889 (Virvi's API) by runner alone (and root's probe below); nothing else, Docker's
+# 127.0.0.11 resolver included. Off the box only tinyproxy's traffic leaves.
 nft -f - <<'NFT'
 table inet scenebuild {
   chain output {
     type filter hook output priority 0; policy drop;
-    oif "lo" tcp dport 8889 meta skuid "runner" accept
-    oif "lo" tcp dport 8889 meta skuid 0 accept
-    oif "lo" tcp dport 8889 reject
-    oif "lo" accept
+    ct state established,related accept
+    oif "lo" ip daddr 127.0.0.1 tcp dport 8888 accept
+    oif "lo" ip daddr 127.0.0.1 tcp dport 8889 meta skuid "runner" accept
+    oif "lo" ip daddr 127.0.0.1 tcp dport 8889 meta skuid 0 accept
+    oif "lo" meta skuid "tinyproxy" accept
+    oif "lo" reject
     # IPv6 neighbor discovery: kernel packets with no user, without which no IPv6 traffic (DNS included) flows
     icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit } accept
-    ct state established,related accept
     meta skuid "tinyproxy" accept
     reject
   }
@@ -51,44 +54,29 @@ table inet scenebuild {
 NFT
 
 for port in 8888 8889; do
+  up=0
   for _ in $(seq 50); do
-    (exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null && break
+    if (exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null; then up=1; break; fi
     sleep 0.1
   done
+  if [ $up -eq 0 ]; then echo "[scene-builder] The proxy on port $port did not start" >&2; exit 1; fi
 done
 
-npm_proxy=http://127.0.0.1:8888
-api_proxy=http://127.0.0.1:8889
+source /opt/scene-builder/steps.sh
+
+# Nothing untrusted runs until builder provably has no way around the firewall
+lock_fly
+if ! check_no_side_channels; then
+  echo "[scene-builder] Refusing to build: builder can reach something the firewall can't see" >&2
+  exit 1
+fi
 
 if [ $# -gt 0 ]; then
   export HTTPS_PROXY=$npm_proxy HTTP_PROXY=$npm_proxy https_proxy=$npm_proxy http_proxy=$npm_proxy NO_PROXY=localhost,127.0.0.1
   exec "$@"
 fi
 
-# Runs a build.mjs step as `user` with only the named variables (plus `name=value` pairs set here), never in argv:
-# the subshell unsets the rest, and setpriv drops every capability and forbids gaining new privileges (no setuid).
-as_user() {
-  local user=$1 keep=$2
-  shift 2
-  (
-    for v in $(compgen -e); do
-      case " $keep " in *" $v "*) ;; *) unset "$v" ;; esac
-    done
-    export HOME=/home/$user USER=$user LOGNAME=$user PATH=/usr/local/bin:/usr/bin:/bin
-    exec setpriv --reuid="$user" --regid="$user" --init-groups --no-new-privs --inh-caps=-all --bounding-set=-all \
-      -- /usr/local/bin/node --disable-warning=UNDICI-EHPA /opt/scene-builder/build.mjs "$@"
-  )
-}
-
-# Kills every `builder` process, including any the build left behind or detached
-kill_builder() {
-  for _ in $(seq 50); do
-    pkill -KILL -u builder || return 0
-    sleep 0.1
-  done
-  ! pgrep -u builder > /dev/null
-}
-
+node_step=(/usr/local/bin/node --disable-warning=UNDICI-EHPA /opt/scene-builder/build.mjs)
 log=/work/log/build.log
 mkdir -p /work/log /work/scene
 chmod 755 /work /work/log
@@ -96,16 +84,11 @@ chmod 755 /work /work/log
 chmod 644 "$log"
 chown runner:runner /work/scene
 
-runner_vars="BUILD_SOURCE_URL BUILD_RESULT_URL BUILD_FAILED_URL BUILD_TOKEN NODE_USE_ENV_PROXY HTTPS_PROXY https_proxy NO_PROXY"
-export NODE_USE_ENV_PROXY=1 HTTPS_PROXY=$api_proxy https_proxy=$api_proxy NO_PROXY=localhost,127.0.0.1
-
 outcome=failed
-if as_user runner "$runner_vars" fetch >> "$log" 2>&1; then
+if as_runner "${node_step[@]}" fetch >> "$log" 2>&1; then
   chown -R builder:builder /work/scene
   # The scene's own code from here on: no token, no Virvi proxy. The log is opened here, as root; builder only gets the fd.
-  if HTTPS_PROXY=$npm_proxy https_proxy=$npm_proxy HTTP_PROXY=$npm_proxy http_proxy=$npm_proxy \
-     npm_config_proxy=$npm_proxy npm_config_https_proxy=$npm_proxy npm_config_update_notifier=false CI=true \
-     timeout -s KILL 16m bash -c "$(declare -f as_user); as_user builder 'HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY npm_config_proxy npm_config_https_proxy npm_config_update_notifier CI' build" \
+  if timeout -s KILL 16m bash -c 'source /opt/scene-builder/steps.sh; as_builder "$@"' _ "${node_step[@]}" build \
      >> "$log" 2>&1 < /dev/null; then
     outcome=ok
   fi
@@ -113,9 +96,7 @@ if as_user runner "$runner_vars" fetch >> "$log" 2>&1; then
     echo "[scene-builder] The build left processes that would not stop" >> "$log"
     outcome=failed
   fi
-  # Let runner read the output: real files and directories the build owns, nothing reached through a link
-  find /work/scene -mindepth 1 -type l -delete
-  find /work/scene -user builder \( -type d -exec chmod 755 {} + -o -type f -exec chmod 644 {} + \)
+  freeze_scene /work/scene
 fi
 
-as_user runner "$runner_vars" upload "$outcome"
+as_runner "${node_step[@]}" upload "$outcome"

@@ -16,7 +16,13 @@ when the firewall can't be set, i.e. without `NET_ADMIN`. There are two proxies,
 | 8888 | `allowlist.txt`: `registry.npmjs.org`, `registry.yarnpkg.com` | anyone (the scene's `npm install` and build) |
 | 8889 | `VIRVI_API_HOST` only | the `runner` user only (nftables rejects everyone else) |
 
-Both allow `CONNECT` to port 443 only. Nothing else, DNS included, leaves the box.
+Both allow `CONNECT` to port 443 only, and start with an empty environment, so they never hold the token. On
+loopback nothing but `127.0.0.1:8888`/`8889` is reachable (no Docker `127.0.0.11` resolver), and only the proxies'
+own traffic leaves the box: no DNS, no direct connections.
+
+nftables can't see Unix sockets, so before anything untrusted runs, the entrypoint removes Fly's Machines API socket
+`/.fly/api` and locks `/.fly` to root. Then, as `builder`, it tries every listening Unix socket in the box (abstract
+ones included) and `/.fly`. If any of them answers, it exits 1 without building.
 
 ## How a build runs
 
@@ -30,7 +36,7 @@ through the environment, never argv) and with every capability dropped and `no_n
    `npx sdk-commands build --production` when the install brought `@dcl/sdk-commands`, else the package's `build`
    script (10 minutes). Each step runs in its own process group, which is killed whole at its limit; the whole step
    also has a 16-minute hard stop. The log file is opened by root; `builder` only gets the descriptor.
-3. Root kills every `builder` process left, deletes symlinks under `/work/scene`, and makes `builder`'s files readable.
+3. Root kills every `builder` process left (`kill -KILL -1` as `builder`), deletes symlinks under `/work/scene`, and makes `builder`'s files readable.
 4. **upload**, as `runner`, with the token: `deployableFiles` (the SDK's default ignores plus `.dclignore`, regular
    files only, never through a symlink), zip, `POST BUILD_RESULT_URL`. Any failure, or a result Virvi refuses, posts
    `BUILD_FAILED_URL` instead.
@@ -39,12 +45,13 @@ The wire contract (with `apps/server`'s build routes):
 
 - `GET BUILD_SOURCE_URL` with `Authorization: Bearer <BUILD_TOKEN>` → the source zip.
 - Success: `POST BUILD_RESULT_URL`, `Content-Type: application/zip`, body the deployable files (paths relative to the
-  scene root), header `X-Build-Log: <base64 of the last 64 KB of the log>`. Exit code 0.
+  scene root), header `X-Build-Log: <base64 of the last 8 KB of the log>` (Ruling R9: about 11 KB, inside ordinary header
+  limits). Exit code 0.
 - Failure: `POST BUILD_FAILED_URL`, `Content-Type: text/plain`, body the last 64 KB of the log. Exit code 1.
 
 The log tail has the token and any npm credential line (`//host/:_authToken=…`, `_auth`, `_password`) or
-`Authorization:` value redacted. Note that `X-Build-Log` can be about 87 KB, past Node's default 16 KB header limit:
-the receiving server must allow it.
+`Authorization:` value redacted. If the result POST fails on the network, the box still posts the failure, so Virvi
+should ignore a failure report that arrives after it has taken a result.
 
 `node build.mjs` with no step runs all three in one process in the current directory, for the server's dev-only
 `local` runner. It is not isolated at all.
@@ -56,7 +63,22 @@ cd apps/scene-builder && npm install && npm test   # node --test: lib.mjs (deplo
 
 # The image (Fly runs amd64)
 docker build --platform linux/amd64 -t virvi-scene-builder:dev apps/scene-builder
+
+# The isolation, checked from inside with the same functions a build uses (steps.sh). Any public HTTPS host stands
+# in for Virvi's API. Add --cap-add SYS_PTRACE to also check the proxies' environment.
+docker run --rm --cap-add NET_ADMIN -e BUILD_TOKEN=smoke-token-0123456789 -e VIRVI_API_HOST=example.com \
+  virvi-scene-builder:dev /opt/scene-builder/smoke.sh
 ```
+
+The smoke script checks:
+- the token is in no environ or cmdline that `builder` can read;
+- `builder` reaches the npm registry and nothing else: not 8889, `::1`, other hosts, direct IPs or DNS;
+- `runner` reaches only the API host;
+- the side-channel guard catches open, abstract and `/.fly/api` sockets, and `lock_fly` closes `/.fly`;
+- symlinks are dropped before packaging;
+- detached `builder` processes are killed.
+
+On a new Fly setup, also run it once on a real machine. Its `/.fly` is the one that matters.
 
 To release, push the image to the build app's registry and point the server at it:
 

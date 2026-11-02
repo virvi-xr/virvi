@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { zipSync } from 'fflate'
-import { deployableFiles, extractZip, logTail } from './lib.mjs'
+import { deployableFiles, extractZip, logTail, resultLogHeader } from './lib.mjs'
 
 const [step, arg] = process.argv.slice(2)
 const LOCAL = step === undefined
@@ -136,29 +136,38 @@ async function upload(outcome) {
     say(line)
     if (!LOCAL) notes.push(`[scene-builder] ${line}\n`)
   }
-  const tail = () => logTail(Buffer.concat([readLog(), Buffer.from(notes.join(''))]), token)
+  const fullLog = () => Buffer.concat([readLog(), Buffer.from(notes.join(''))])
 
   if (outcome === 'ok') {
+    let zip = null
     try {
       const files = deployableFiles(SCENE, readDclignore())
       const entries = {}
       for (const f of files) entries[f] = new Uint8Array(readFileSync(join(SCENE, f)))
-      const zip = zipSync(entries, { level: 6 })
+      zip = zipSync(entries, { level: 6 })
       note(`Packaged ${files.length} deployable files (${zip.length} bytes)`)
-      const res = await post(env('BUILD_RESULT_URL'), 'application/zip', zip, {
-        'X-Build-Log': tail().toString('base64'),
-      })
-      if (res.ok) {
-        say('Result accepted')
-        return 0
-      }
-      note(`Virvi did not accept the result: HTTP ${res.status}`)
     } catch (err) {
       note(`Packaging the build failed: ${err.message}`)
     }
+    if (zip) {
+      try {
+        // Ruling R9: the header carries only the last 8 KB; the failed body below keeps 64 KB
+        const res = await post(env('BUILD_RESULT_URL'), 'application/zip', zip, {
+          'X-Build-Log': resultLogHeader(fullLog(), token),
+        })
+        if (res.ok) {
+          say('Result accepted')
+          return 0
+        }
+        note(`Virvi did not accept the result: HTTP ${res.status}`)
+      } catch (err) {
+        // Virvi may have taken the result before the error; it ignores a failure report after a result
+        note(`Uploading the result failed: ${err.message}`)
+      }
+    }
   }
 
-  const log = tail()
+  const log = logTail(fullLog(), token)
   process.stdout.write(log)
   try {
     const res = await post(env('BUILD_FAILED_URL'), 'text/plain', log)

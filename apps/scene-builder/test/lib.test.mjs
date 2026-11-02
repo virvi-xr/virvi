@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { zipSync, strToU8 } from 'fflate'
-import { deployableFiles, logTail, safeEntryPath, extractZip, LOG_LIMIT } from '../lib.mjs'
+import { zipSync, strToU8, Zip, ZipPassThrough } from 'fflate'
+import { deployableFiles, logTail, safeEntryPath, extractZip, resultLogHeader, LOG_LIMIT, HEADER_LOG_LIMIT } from '../lib.mjs'
 
 function scene(files) {
   const root = mkdtempSync(join(tmpdir(), 'scene-builder-'))
@@ -193,4 +193,44 @@ test('extractZip refuses an absolute entry', () => {
 test('extractZip refuses a file that collides with a directory', () => {
   const root = mkdtempSync(join(tmpdir(), 'scene-extract-'))
   assert.throws(() => extractZip(zipSync({ a: strToU8('file'), 'a/b': strToU8('x') }), root))
+})
+
+test('deployableFiles skips filesystem names that are not clean entry paths', () => {
+  const root = scene({ ...BASIC, 'models/back\\slash.glb': 'x', 'models/new\nline.glb': 'x', 'models/tab\tname.glb': 'x' })
+  const files = deployableFiles(root, null)
+  assert.deepEqual(files, ['bin/index.js', 'docs/notes.txt', 'images/sign.png', 'models/tree.glb', 'scene.json'])
+})
+
+test('safeEntryPath refuses control characters', () => {
+  for (const bad of ['a\nb', 'a\rb', 'a\tb', 'a\x7fb', 'a\x01b']) assert.equal(safeEntryPath(bad), null, JSON.stringify(bad))
+})
+
+test('extractZip refuses a zip with a duplicate entry name', () => {
+  const chunks = []
+  const zip = new Zip((err, chunk) => {
+    if (err) throw err
+    chunks.push(chunk)
+  })
+  for (const body of ['first', 'second']) {
+    const f = new ZipPassThrough('scene.json')
+    zip.add(f)
+    f.push(strToU8(body), true)
+  }
+  zip.end()
+  const data = new Uint8Array(Buffer.concat(chunks))
+  const root = mkdtempSync(join(tmpdir(), 'scene-extract-'))
+  assert.throws(() => extractZip(data, root), /scene\.json/)
+  assert.ok(!existsSync(join(root, 'scene.json')))
+})
+
+test('resultLogHeader is the base64 of at most the last 8 KB, redacted', () => {
+  assert.equal(HEADER_LOG_LIMIT, 8 * 1024)
+  const log = Buffer.from('a'.repeat(100_000) + TOKEN + ' THE END')
+  const header = resultLogHeader(log, TOKEN)
+  const decoded = Buffer.from(header, 'base64')
+  assert.ok(decoded.length <= HEADER_LOG_LIMIT)
+  assert.ok(header.length <= Math.ceil(HEADER_LOG_LIMIT / 3) * 4)
+  assert.ok(decoded.toString().endsWith('[redacted] THE END'))
+  assert.ok(!decoded.toString().includes(TOKEN))
+  assert.equal(Buffer.from(resultLogHeader(Buffer.from('short'), TOKEN), 'base64').toString(), 'short')
 })
