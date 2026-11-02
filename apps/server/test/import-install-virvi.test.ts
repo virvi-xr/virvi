@@ -190,4 +190,30 @@ describe('installVirvi', () => {
       expect(r.alreadyInstalled).toBe(false)
     })
   })
+  describe('the source scan is linear (N2)', () => {
+    const MB = 1024 * 1024
+    const fill = (unit: string) => unit.repeat(Math.ceil(MB / unit.length)).slice(0, MB)
+    const MAIN = 'export function main() {\n  x()\n}\n'
+
+    it.each([
+      ['import x ', 'repeated import keywords with no from'],
+      ['import { a, ', 'an import clause that never closes'],
+      ['export const main: ', 'a main type annotation with no ='],
+      ['import x from ', 'from with no module'],
+    ])('a 1 MB file of %j (%s) scans in well under 100 ms', async (unit) => {
+      const big = fill(unit)
+      for (const files of [{ 'src/other.ts': big, 'src/index.ts': MAIN }, { 'src/index.ts': big + '\n' + MAIN }]) {
+        const started = performance.now()
+        await installVirvi(folder({ 'package.json': pkg(), ...files })).catch(() => {})
+        // Generous for slow CI; quadratic scanning takes seconds at this size
+        expect(performance.now() - started).toBeLessThan(250)
+      }
+    })
+
+    it('still finds real imports among many statements', async () => {
+      const lines = Array.from({ length: 5000 }, (_, i) => `import { a${i} } from './m${i}'`).join('\n')
+      const r = await installVirvi(folder({ 'package.json': pkg(), 'src/other.ts': `${lines}\nimport { startVirviManager } from '@virvixr/dcl'\n`, 'src/index.ts': MAIN }))
+      expect(r.alreadyInstalled).toBe(true)
+    })
+  })
 })

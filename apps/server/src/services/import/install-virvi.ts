@@ -9,10 +9,11 @@ const HUD_ICON = 'images/virvi/hud-v.png'
 const MAIN_FILES = ['src/index.ts', 'src/index.tsx', 'src/index.js']
 const IMPORT_LINE = `import { createVirvi } from '${PACKAGE}'`
 
-// Where an exported `main`'s parameter list opens (run on the masked source).
+// Where an exported `main`'s parameter list opens (run on the masked source). Every repeat is bounded, so no match
+// attempt can scan to the end of a hostile file from every position (N2).
 const MAIN_HEADS = [
-  /export\s+(?:async\s+)?function\s+main\s*\(/g,
-  /export\s+const\s+main\s*(?::[^=]+)?=\s*(?:async\s*)?\(/g,
+  /export\s{1,200}(?:async\s{1,200})?function\s{1,200}main\s{0,200}\(/g,
+  /export\s{1,200}const\s{1,200}main\s{0,200}(?::[^=]{1,500})?=\s{0,200}(?:async\s{0,200})?\(/g,
 ]
 
 /** Same-length copy with comment text and string contents blanked (newlines and quote marks kept). */
@@ -79,15 +80,65 @@ function findBodyBrace(m: string, paren: number, arrow: boolean): number {
   return -1
 }
 
+/** The longest import clause read (`import … from`); a longer one is not an import Virvi cares about. */
+const MAX_CLAUSE = 2000
+const QUOTES = `'"\``
+const isWord = (c: string | undefined) => !!c && /[\w$]/.test(c)
+const wordAt = (m: string, i: number, w: string) => m.startsWith(w, i) && !isWord(m[i - 1]) && !isWord(m[i + w.length])
+
+interface ImportStatement { typeOnly: boolean; clause: string; specifier: string }
+
+/**
+ * Every `import … from '…'` statement, read in one pass over the masked source (comments and string contents blank)
+ * instead of a backtracking regex (N2). A statement's scan stops at the first `;`, quote or next `import`, and after
+ * MAX_CLAUSE characters, so the whole read is linear in the file's size. The specifier comes from the original text.
+ */
+function importStatements(src: string, m: string): ImportStatement[] {
+  const out: ImportStatement[] = []
+  const skipWs = (i: number) => { while (i < m.length && /\s/.test(m[i])) i++; return i }
+  for (let i = m.indexOf('import'); i >= 0; i = m.indexOf('import', i + 1)) {
+    if (!wordAt(m, i, 'import')) continue
+    let j = skipWs(i + 6)
+    const typeOnly = wordAt(m, j, 'type')
+    if (typeOnly) j = skipWs(j + 4)
+    let depth = 0
+    let from = -1
+    for (let k = j; k < m.length && k - j <= MAX_CLAUSE; k++) {
+      const c = m[k]
+      if (c === ';' || QUOTES.includes(c) || (k > j && wordAt(m, k, 'import'))) break
+      if (c === '{') depth++
+      else if (c === '}') depth--
+      else if (depth === 0 && wordAt(m, k, 'from')) { from = k; break }
+    }
+    if (from < 0) continue
+    const q = skipWs(from + 4)
+    if (!QUOTES.includes(m[q] ?? '')) continue
+    const close = m.indexOf(m[q], q + 1)
+    const nl = m.indexOf('\n', q + 1)
+    if (close < 0 || (nl >= 0 && nl < close)) continue
+    out.push({ typeOnly, clause: m.slice(j, from).trim(), specifier: src.slice(q + 1, close) })
+    i = close
+  }
+  return out
+}
+
+/** The `{ … }` specifiers of a clause that import a value (not `type X`), as [imported, local]. */
+function valueSpecifiers(clause: string): Array<[string, string]> {
+  const braces = /\{([^}]*)\}/.exec(clause)
+  const out: Array<[string, string]> = []
+  for (const spec of braces ? braces[1].split(',') : []) {
+    const mm = /^\s*(?!type\s)(\w+)(?:\s+as\s+(\w+))?\s*$/.exec(spec)
+    if (mm) out.push([mm[1], mm[2] ?? mm[1]])
+  }
+  return out
+}
+
 /** Where `import { … } from` statements put createVirvi: the local name of a value import, if any. */
 function importedName(src: string, m: string): string | null {
-  const re = /\bimport\s*(type\s+)?\{([^}]*)\}\s*from\s*(['"`])( *)\3/g
-  for (let hit = re.exec(m); hit; hit = re.exec(m)) {
-    if (hit[1]) continue
-    for (const spec of hit[2].split(',')) {
-      const mm = /^\s*(?!type\s)(\w+)(?:\s+as\s+(\w+))?\s*$/.exec(spec)
-      if (mm && mm[1] === 'createVirvi') return mm[2] ?? mm[1]
-    }
+  for (const st of importStatements(src, m)) {
+    if (st.typeOnly) continue
+    const hit = valueSpecifiers(st.clause).find(([name]) => name === 'createVirvi')
+    if (hit) return hit[1]
   }
   return null
 }
@@ -96,22 +147,15 @@ function importedName(src: string, m: string): string | null {
 const SOURCE_FILE = /^(?:src|assets)\/.+\.(?:ts|tsx|js)$/
 
 /**
- * The names a source value-imports from @virvixr/dcl (`*` for a default or namespace import), read on the masked
- * source with the module specifier taken from the original. `import type` and `type X` specifiers don't count.
+ * The names a source value-imports from @virvixr/dcl (`*` for a default or namespace import). `import type` and
+ * `type X` specifiers don't count.
  */
 function virviValueImports(src: string, m: string): string[] {
-  const re = /\bimport\s+(type\s+)?([^;'"`]*?)\s*from\s*(['"`])( *)\3/g
   const names: string[] = []
-  for (let hit = re.exec(m); hit; hit = re.exec(m)) {
-    const end = hit.index + hit[0].length - 1
-    if (hit[1] || src.slice(end - hit[4].length, end) !== PACKAGE) continue
-    const clause = hit[2]
-    const braces = /\{([^}]*)\}/.exec(clause)
-    for (const spec of braces ? braces[1].split(',') : []) {
-      const mm = /^\s*(?!type\s)(\w+)(?:\s+as\s+\w+)?\s*$/.exec(spec)
-      if (mm) names.push(mm[1])
-    }
-    if (clause.replace(/\{[^}]*\}/, '').replace(/[\s,]/g, '')) names.push('*')
+  for (const st of importStatements(src, m)) {
+    if (st.typeOnly || st.specifier !== PACKAGE) continue
+    names.push(...valueSpecifiers(st.clause).map(([name]) => name))
+    if (st.clause.replace(/\{[^}]*\}/, '').replace(/[\s,]/g, '')) names.push('*')
   }
   return names
 }
