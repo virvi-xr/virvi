@@ -50,14 +50,15 @@ export interface SceneInfo {
 
 const CATALOG_PAGE = 24
 
-/** The model's display name: the file name in its URL, without the extension. */
-function modelName(src: string): string {
-  const file = src.split('?')[0].split('/').pop() || 'Model'
-  let name = file
-  try {
-    name = decodeURIComponent(file)
-  } catch {
-    /* keep the raw name */
+/** The model's display name: its library name when given, else the file name in its URL; without the extension. */
+function modelName(src: string, given?: string): string {
+  let name = given?.trim() || src.split('?')[0].split('/').pop() || 'Model'
+  if (!given?.trim()) {
+    try {
+      name = decodeURIComponent(name)
+    } catch {
+      /* keep the raw name */
+    }
   }
   return name.replace(/\.glb$/i, '').trim().slice(0, 100) || 'Model'
 }
@@ -133,10 +134,10 @@ export class VirviApi {
    * properties.modelSrc }, then POST /api/elements/:id/instances with the transform. If the instance can't be
    * made the new element is deleted again (DELETE /api/elements/:id) so no empty model is left behind.
    */
-  async placeModel(presetId: string, src: string, t: VirviTransform): Promise<ApiResult<{ elementId: string; instanceId: string }>> {
+  async placeModel(presetId: string, src: string, t: VirviTransform, name?: string): Promise<ApiResult<{ elementId: string; instanceId: string }>> {
     const el = await this.call<{ element?: { id?: string } }>('POST', `/api/presets/${encodeURIComponent(presetId)}/elements`, {
       type: 'model',
-      name: modelName(src),
+      name: modelName(src, name),
       properties: { modelSrc: src },
     })
     if (!el.ok) return el

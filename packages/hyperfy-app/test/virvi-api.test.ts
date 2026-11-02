@@ -132,6 +132,12 @@ describe('VirviApi', () => {
     expect(f.calls[2].url).toBe('https://api.example/api/elements/e9')
   })
 
+  it('placeModel takes a given name over the URL\'s file name, without .glb', async () => {
+    const t = make([res(201, { element: { id: 'e9' } }), res(201, { instance: { id: 'i9' } })])
+    await t.api.placeModel('p1', 'https://cdn/u/3cb079fe-bc44-4ebf-87db-459e003c7c3f.glb', T, ' Chair.glb ')
+    expect(body(t.calls[0]).name).toBe('Chair')
+  })
+
   it('getScene reads the scene and its presets with the pass', async () => {
     const t = make([res(200, { scene: { id: 's1', activePresetId: 'p1', presets: [{ id: 'p1', name: 'Day' }, { id: 'p2', name: 'Night', extra: 1 }] } })])
     expect(await t.api.getScene('s1')).toEqual({ ok: true, value: { id: 's1', activePresetId: 'p1', presets: [{ id: 'p1', name: 'Day' }, { id: 'p2', name: 'Night' }] } })

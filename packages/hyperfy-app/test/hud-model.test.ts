@@ -18,6 +18,7 @@ import {
   pairingAlert,
   placeAsset,
   typeKey,
+  type AssetEntry,
   type HudState,
 } from '../src/hud/model.js'
 import { planScene } from '../src/plan.js'
@@ -445,7 +446,7 @@ describe('placeAsset', () => {
     expect(placed).toBe(true)
     expect(calls).toEqual([
       ['addFromCatalog', 'scene-1', { id: 'c1' }],
-      ['placeModel', 'preset-a', 'https://cdn/rock.glb', where],
+      ['placeModel', 'preset-a', 'https://cdn/rock.glb', where, 'Rock'],
     ])
     expect(alerts).toEqual([{ kind: 'info', text: ALERT_PLACED }])
   })
@@ -471,6 +472,18 @@ describe('placeAsset', () => {
     expect(placed).toBe(false)
     expect(calls).toEqual(['placeModel'])
     expect(alerts).toEqual([{ kind: 'error', text: "You can't edit this right now" }])
+  })
+
+  it('a library model is named after its library name, a pasted link after its URL', async () => {
+    const named: unknown[] = []
+    const api = {
+      addFromCatalog: () => ok({}),
+      placeModel: (_p: string, _s: string, _t: unknown, name?: string) => (named.push(name), ok({ elementId: 'e', instanceId: 'i' })),
+    }
+    const place = (entry: AssetEntry) => placeAsset({ api, sceneId: 's', presetId: 'p', entry, transform: where, alert: () => {} })
+    await place({ id: 'l1', name: 'Chair.glb', src: 'https://cdn/u/3cb079fe-bc44-4ebf-87db-459e003c7c3f.glb', source: 'library' })
+    await place({ id: 'link', name: 'Model', src: 'https://x/a.glb', source: 'link' })
+    expect(named).toEqual(['Chair.glb', undefined])
   })
 })
 

@@ -163,6 +163,7 @@ const CASES: Case[] = [
   { route: 'DELETE /api/scenes/:sceneId/library/:id', url: (f) => `/api/scenes/${f.scene.id}/library/${f.libraryItem.id}` },
   { route: 'PATCH /api/scenes/:sceneId/library/:id', url: (f) => `/api/scenes/${f.scene.id}/library/${f.libraryItem.id}`, body: () => ({ name: 'renamed' }) },
   { route: 'POST /api/scenes/:sceneId/library/upload', url: (f) => `/api/scenes/${f.scene.id}/library/upload`, body: () => ({ filename: 'x.png', contentType: 'image/png', data: 'iVBORw0KGgo=' }) },
+  { route: 'POST /api/scenes/:sceneId/media-names', url: (f) => `/api/scenes/${f.scene.id}/media-names`, body: (f) => ({ urls: [f.media.publicUrl] }) },
   // room scans
   { route: 'GET /api/room-scans/:id', url: (f) => `/api/room-scans/${f.roomScan.id}` },
   { route: 'DELETE /api/room-scans/:id', url: (f) => `/api/room-scans/${f.roomScan.id}` },

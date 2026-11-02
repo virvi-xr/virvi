@@ -9,6 +9,7 @@ import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
 import { RoomSetPanel } from './RoomSetPanel'
 import { sceneHasRoomSet } from '@/lib/room-set'
+import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -211,8 +212,9 @@ function InstanceEditor({ instance, onUpdate, onDelete }: { instance: Instance; 
 // Video Element Editor
 // ---------------------------------------------------------------------------
 
-function VideoElementEditor({ element, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
+function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
   element: Element
+  sceneId: string
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
@@ -221,6 +223,8 @@ function VideoElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
 }) {
   const props = element.properties || {}
   const playlist: string[] = props.playlist || []
+  // The playlist stores URLs only: names are looked up, so a rename in the Media Library shows here
+  const names = useMediaNames(api, sceneId, playlist)
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
@@ -277,10 +281,6 @@ function VideoElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
     if (!urlInput.trim()) return
     addToPlaylist(urlInput.trim())
     setUrlInput('')
-  }
-
-  const getFilename = (url: string) => {
-    try { return decodeURIComponent(url.split('/').pop() || url) } catch { return url }
   }
 
   return (
@@ -340,7 +340,10 @@ function VideoElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
                   dragIdx === idx ? 'border-blue-500 bg-blue-900/20' : 'border-gray-700'
                 }`}>
                 <span className="text-gray-500 text-xs w-5 shrink-0">{idx + 1}.</span>
-                <span className="text-gray-300 truncate flex-1" title={url}>{getFilename(url)}</span>
+                {(() => {
+                  const { label, missing } = mediaLabel(url, names)
+                  return <span className={`truncate flex-1 ${missing ? 'text-amber-300 italic' : 'text-gray-300'}`} title={url}>{label}</span>
+                })()}
                 <button onClick={() => removeFromPlaylist(idx)} className="text-red-400 hover:text-red-300 text-xs shrink-0">Remove</button>
               </div>
             ))}
@@ -1692,7 +1695,7 @@ export default function SceneEditorPage() {
               }
 
               switch (el.type) {
-                case 'video': return <VideoElementEditor key={el.id} {...editorProps} api={api} />
+                case 'video': return <VideoElementEditor key={el.id} {...editorProps} sceneId={sceneId} api={api} />
                 case 'image': return <ImageElementEditor key={el.id} {...editorProps} api={api} />
                 case 'model': return <ModelElementEditor key={el.id} {...editorProps} onRoomSetSaved={handleRoomSetSaved} api={api} />
                 case 'sound': return <SoundElementEditor key={el.id} {...editorProps} />
