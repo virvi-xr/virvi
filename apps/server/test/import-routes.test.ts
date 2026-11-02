@@ -354,6 +354,23 @@ describe('scene import routes', () => {
     expect((await app.inject({ method: 'GET', url: '/api/imports' })).statusCode).toBe(401)
   })
 
+  it("an account with imports (and their deployments) into someone else's scene can be deleted", async () => {
+    const owner = await createUser({ wallet: randomWallet() })
+    const { scene } = await createScene(owner, 'Theirs')
+    const [dep] = await db.insert(sceneDeployments).values({
+      sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', target: {}, status: 'deployed', deployedBy: user.id,
+    }).returning()
+    await db.insert(sceneImports).values({
+      userId: user.id, sceneId: scene.id, worldName: WORLD, kind: 'sdk7', sourceKey: 'imports/x/source.zip', status: 'deployed', deploymentId: dep.id,
+    })
+    const admin = await createUser({ role: 'admin' })
+    const r = await app.inject({ method: 'DELETE', url: `/api/admin/users/${user.id}`, headers: auth(admin) })
+    expect(r.statusCode).toBe(204)
+    expect(await db.select().from(sceneImports)).toHaveLength(0)
+    // The scene's deployment history stays, without the deleted account
+    expect((await db.select().from(sceneDeployments).where(eq(sceneDeployments.id, dep.id)))[0].deployedBy).toBeNull()
+  })
+
   it('the log route returns the stored log, and the view carries its tail', async () => {
     const view = (await upload(sceneZip())).json().import
     expect((await get(`/api/imports/${view.id}/log`)).statusCode).toBe(404)

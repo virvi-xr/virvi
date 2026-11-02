@@ -692,7 +692,8 @@ export const sceneDeployments = pgTable('scene_deployments', {
   deploymentType: text('deployment_type').notNull(), // 'parcel' | 'world' | 'instance'
   target: jsonb('target').notNull(), // DCL: { parcels, contentServer } / Hyperfy: { instanceUrl, region }
   assetBundle: jsonb('asset_bundle'), // list of asset IDs + config included in deploy
-  deployedBy: uuid('deployed_by').references(() => users.id),
+  // Kept as the scene's history when the account that deployed is deleted
+  deployedBy: uuid('deployed_by').references(() => users.id, { onDelete: 'set null' }),
   errorMessage: text('error_message'),
   catalystEntityId: text('catalyst_entity_id'), // DCL catalyst entity hash
   infrastructureId: text('infrastructure_id'), // Hyperfy: Docker container ID, Fly machine ID
@@ -766,9 +767,10 @@ export const sceneImportStatusEnum = pgEnum('scene_import_status', [
 /** A scene someone built elsewhere (Creator Hub or SDK7), uploaded as a zip, built and deployed to a World. */
 export const sceneImports = pgTable('scene_imports', {
   id: uuid('id').primaryKey().defaultRandom(),
+  // An account's imports go with it, like its other rows (files under imports/<id>/ stay in the bucket)
   userId: uuid('user_id')
     .notNull()
-    .references(() => users.id),
+    .references(() => users.id, { onDelete: 'cascade' }),
   sceneId: uuid('scene_id')
     .notNull()
     .references(() => scenes.id, { onDelete: 'cascade' }),
