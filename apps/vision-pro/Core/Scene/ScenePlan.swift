@@ -25,6 +25,9 @@ struct RenderItem: Equatable {
     var source = ItemTransform(position: .zero, rotation: .zero, scale: .one)
     /// The element type the draft and save routes take: "video", "image", "model" or "sound".
     var elementKind = ""
+    /// Playlist mode only (else empty): the videos to play in turn, starting with `src`, back to the first after the
+    /// last. With one video, `loop` repeats it instead.
+    var playlist: [String] = []
 }
 
 typealias Props = [String: Any]
@@ -108,18 +111,19 @@ private func clickOf(_ inst: Props, _ el: Props) -> Any? {
     return el["clickEvent"]
 }
 
-private typealias Media = (kind: RenderItem.Kind, src: String, loop: Bool)
+private typealias Media = (kind: RenderItem.Kind, src: String, loop: Bool, playlist: [String])
 
 private func videoMedia(_ el: Props) -> Media? {
     if truthy(el["isLive"]) && truthy(el["enableLiveStream"]), let live = nonEmptyString(el["liveSrc"]) {
-        return supported(live, VIDEO_EXT).map { (.video, $0, true) }
+        return supported(live, VIDEO_EXT).map { (.video, $0, true, []) }
     }
     if number(el["offType"]) == OFF_PLAYLIST {
-        let first = (el["playlist"] as? [Any])?.first
-        return supported(first, VIDEO_EXT).map { (.video, $0, true) }
+        let playlist = ((el["playlist"] as? [Any]) ?? []).compactMap { supported($0, VIDEO_EXT) }
+        guard let first = playlist.first else { return nil }
+        return (.video, first, playlist.count == 1, playlist)
     }
     if number(el["offType"]) == OFF_IMAGE {
-        return supported(el["offImageSrc"], IMAGE_EXT).map { (.image, $0, false) }
+        return supported(el["offImageSrc"], IMAGE_EXT).map { (.image, $0, false, []) }
     }
     return nil
 }
@@ -127,9 +131,9 @@ private func videoMedia(_ el: Props) -> Media? {
 private func elementMedia(_ kind: RenderItem.Kind, _ el: Props) -> Media? {
     switch kind {
     case .video: return videoMedia(el)
-    case .image: return supported(el["textureSrc"], IMAGE_EXT).map { (.image, $0, false) }
-    case .model: return nonEmptyString(el["modelSrc"]).map { (.model, $0, false) }
-    case .audio: return nonEmptyString(el["audioSrc"]).map { (.audio, $0, true) }
+    case .image: return supported(el["textureSrc"], IMAGE_EXT).map { (.image, $0, false, []) }
+    case .model: return nonEmptyString(el["modelSrc"]).map { (.model, $0, false, []) }
+    case .audio: return nonEmptyString(el["audioSrc"]).map { (.audio, $0, true, []) }
     }
 }
 
@@ -157,7 +161,8 @@ private func planElements(_ out: inout [RenderItem], _ elements: Any?, _ kind: R
                 instanceSk: templateString(inst["sk"]),
                 source: ItemTransform(position: [position.x, position.y, position.z], rotation: [rotation.x, rotation.y, rotation.z],
                                       scale: [scale.x, scale.y, scale.z]),
-                elementKind: kind == .audio ? "sound" : kind.rawValue
+                elementKind: kind == .audio ? "sound" : kind.rawValue,
+                playlist: media.playlist
             ))
         }
     }

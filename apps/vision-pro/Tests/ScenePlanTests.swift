@@ -43,6 +43,26 @@ final class ScenePlanTests: XCTestCase {
         XCTAssertEqual(items[2].elementKind, "sound")
     }
 
+    func testPlaylistModeCarriesThePlaylist() throws {
+        func video(_ playlist: String) throws -> RenderItem? {
+            let json = """
+            {"videos":[{"sk":"pl","offType":2,"playlist":\(playlist),"instances":[{"sk":"p1"}]}]}
+            """
+            return planScene(try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? Props)).first
+        }
+        let three = try XCTUnwrap(video(#"["https://x/1.mp4","https://x/2.webm","https://x/3.m3u8","https://x/4.mp4"]"#))
+        XCTAssertEqual(three.src, "https://x/1.mp4")
+        XCTAssertEqual(three.playlist, ["https://x/1.mp4", "https://x/3.m3u8", "https://x/4.mp4"])
+        XCTAssertFalse(three.loop)
+        let one = try XCTUnwrap(video(#"["https://x/a.webm","https://x/1.mp4"]"#))
+        XCTAssertEqual(one.playlist, ["https://x/1.mp4"])
+        XCTAssertTrue(one.loop)
+        XCTAssertNil(try video("[]"))
+        let live = planScene(["videos": [["sk": "l", "isLive": true, "enableLiveStream": true, "liveSrc": "https://x/s.m3u8",
+                                          "instances": [["sk": "1"]]]]])
+        XCTAssertEqual(live.first?.playlist, [])
+    }
+
     func testDiff() {
         let a = planScene(["images": [["sk": "e", "textureSrc": "https://x/a.png", "instances": [["sk": "1"], ["sk": "2"]]]]])
         let b = planScene(["images": [["sk": "e", "textureSrc": "https://x/a.png", "instances": [["sk": "2", "scale": ["x": 2]], ["sk": "3"]]]]])

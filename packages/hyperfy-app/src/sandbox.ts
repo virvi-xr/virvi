@@ -16,6 +16,10 @@ export interface HNode {
   scale: Vec
   onPointerDown?: (() => void) | undefined
   play?: () => void
+  /** Video nodes: whether it is playing, and where it is and how long it is, in seconds (0 until it loads). */
+  playing?: boolean
+  time?: number
+  duration?: number
   add(child: HNode): void
   [prop: string]: unknown
 }

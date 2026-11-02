@@ -36,6 +36,35 @@ class ScenePlanTest {
   }
 
   @Test
+  fun playlistModeCarriesThePlaylist() {
+    fun video(playlist: String) =
+        planScene(
+                Json.parseToJsonElement(
+                        """{"videos":[{"sk":"pl","offType":2,"playlist":$playlist,"instances":[{"sk":"p1"}]}]}"""
+                    )
+                    .jsonObject
+            )
+            .firstOrNull()
+    val three = video("""["https://x/1.mp4","https://x/2.webm","https://x/3.m3u8","https://x/4.mp4"]""")!!
+    assertEquals("https://x/1.mp4", three.src)
+    assertEquals(listOf("https://x/1.mp4", "https://x/3.m3u8", "https://x/4.mp4"), three.playlist)
+    assertEquals(false, three.loop)
+    val one = video("""["https://x/a.webm","https://x/1.mp4"]""")!!
+    assertEquals(listOf("https://x/1.mp4"), one.playlist)
+    assertEquals(true, one.loop)
+    assertEquals(null, video("[]"))
+    val live =
+        planScene(
+                Json.parseToJsonElement(
+                        """{"videos":[{"sk":"l","isLive":true,"enableLiveStream":true,"liveSrc":"https://x/s.m3u8","instances":[{"sk":"1"}]}]}"""
+                    )
+                    .jsonObject
+            )
+            .single()
+    assertEquals(emptyList<String>(), live.playlist)
+  }
+
+  @Test
   fun diff() {
     fun plan(json: String) = planScene(Json.parseToJsonElement(json).jsonObject)
     val a = plan("""{"images":[{"sk":"e","textureSrc":"https://x/a.png","instances":[{"sk":"1"},{"sk":"2"}]}]}""")

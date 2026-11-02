@@ -54,9 +54,31 @@ describe('planScene', () => {
     expect(unnamed.name).toBe('')
   })
 
-  it('playlist mode shows the first playlist item looped', () => {
+  it('playlist mode starts on the first video and carries the whole playlist, unlooped', () => {
     const [item] = planScene(scene({ videos: [video({ offType: 2 })] }))
-    expect(item).toMatchObject({ kind: 'video', src: 'https://cdn.example/a.mp4', loop: true })
+    expect(item).toMatchObject({
+      kind: 'video',
+      src: 'https://cdn.example/a.mp4',
+      loop: false,
+      playlist: ['https://cdn.example/a.mp4', 'https://cdn.example/b.mp4'],
+    })
+  })
+
+  it('a one-video playlist loops that video', () => {
+    const [item] = planScene(scene({ videos: [video({ offType: 2, playlist: ['https://cdn.example/a.mp4'] })] }))
+    expect(item).toMatchObject({ src: 'https://cdn.example/a.mp4', loop: true, playlist: ['https://cdn.example/a.mp4'] })
+  })
+
+  it('a playlist skips videos it cannot play; an empty one shows nothing', () => {
+    const list = ['https://cdn.example/a.webm', 'https://cdn.example/b.mp4', 'https://cdn.example/c.m3u8']
+    const [item] = planScene(scene({ videos: [video({ offType: 2, playlist: list })] }))
+    expect(item).toMatchObject({ src: 'https://cdn.example/b.mp4', loop: false, playlist: list.slice(1) })
+    expect(planScene(scene({ videos: [video({ offType: 2, playlist: [] })] }))).toEqual([])
+  })
+
+  it('only playlist mode carries a playlist', () => {
+    const [live] = planScene(scene({ videos: [video({ isLive: true })] }))
+    expect(live.playlist).toEqual([])
   })
 
   it('off image mode becomes an image item', () => {
