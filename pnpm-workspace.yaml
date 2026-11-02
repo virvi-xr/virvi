@@ -1,3 +1,5 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # Standalone: the scene-builder image installs its own dependencies with npm (see its README)
+  - "!apps/scene-builder"
