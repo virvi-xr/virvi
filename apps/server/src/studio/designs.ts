@@ -11,6 +11,7 @@ import { signRenderFrame, frameUrlExpiry } from './render-urls.js'
 import { finalizedRevisions } from './payments.js'
 import type { Exec } from './quota.js'
 import { setDetail } from './sets.js'
+import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
@@ -26,7 +27,8 @@ export function modelFor(agent: string): string {
 }
 
 /** Grok counts each tool call as a turn, so it gets more of them. */
-export function promptLimits(agent: string): typeof PROMPT_LIMITS {
+export function promptLimits(agent: string, kind = 'wearable'): typeof PROMPT_LIMITS {
+  if (kind === 'scene') return SCENE_PROMPT_LIMITS
   return agent === 'grok' ? { ...PROMPT_LIMITS, maxTurns: 150 } : PROMPT_LIMITS
 }
 export const RENDER_LIMITS = { timeoutSec: 300, maxTurns: 80, costCeilingUsd: 3 }
@@ -60,13 +62,17 @@ export const ORBIT_FRAMES = 122
 
 /** The contract's view key, `<mode>-<bodyShape>-<outfit>[-<emote>]`: the one place it is made. */
 export function viewKey(kind: string, view: View): string {
+  if (kind === 'scene') return SCALE_KEY
   return `${kind === 'emote' ? 'emote' : 'spin'}-${view.bodyShape}-${view.outfit}${view.emote ? `-${view.emote}` : ''}`
 }
 
 export const orbitKey = (bodyShape: View['bodyShape']) => `orbit-${bodyShape}`
+/** Inspect's view key: a scene piece has no body shape. */
+export const orbitKeyFor = (kind: string, bodyShape: View['bodyShape']) => kind === 'scene' ? SCENE_ORBIT_KEY : orbitKey(bodyShape)
 
 /** An emote view with every piece worn: `walk-<bodyShape>-<outfit>-<emote>`, `own` for an emote design. */
 export function setViewKey(kind: string, view: View): string {
+  if (kind === 'scene') return TOUR_KEY
   return `walk-${view.bodyShape}-${view.outfit}-${kind === 'emote' ? OWN_EMOTE : view.emote}`
 }
 
@@ -236,7 +242,7 @@ export async function queuePrompt(
           model: modelFor(d.agent),
           prompt: fix ? clippingInstruction(d.kind, fix) : text,
           selectedSlots: input.selectedSlots,
-          limits: promptLimits(d.agent),
+          limits: promptLimits(d.agent, d.kind),
           render: null,
           uploads: await uploadPaths(d.id, tx),
           check: counted, // the user's own words; Continue and fixing the checks are the server's
@@ -274,7 +280,7 @@ export async function queueFullOrbit(
     payload: renderPayload(design.kind, { categories: [category], bodyShape, mode: 'orbit', ring: false }),
   }).returning({ id: studioJobs.id })
   await exec.update(studioRenders).set({ pendingJobId: job.id })
-    .where(and(eq(studioRenders.revisionId, revisionId), eq(studioRenders.viewKey, orbitKey(bodyShape))))
+    .where(and(eq(studioRenders.revisionId, revisionId), eq(studioRenders.viewKey, orbitKeyFor(design.kind, bodyShape))))
   return job.id
 }
 
@@ -292,7 +298,7 @@ export async function requestOrbit(
     .where(and(eq(studioPieces.designId, design.id), eq(studioPieces.category, category)))
   if (!piece?.latestRevisionId) return null
   const revisionId = piece.latestRevisionId
-  const key = orbitKey(bodyShape)
+  const key = orbitKeyFor(design.kind, bodyShape)
   const queued = await db.transaction(async (tx) => {
     await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.id, design.id)).for('update')
     const [row] = await tx.select().from(studioRenders)

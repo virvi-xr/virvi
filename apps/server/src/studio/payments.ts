@@ -6,7 +6,7 @@ import {
 } from '../db/schema.js'
 import { config } from '../config.js'
 import { ensureCustomer, getStripe } from '../integrations/stripe.js'
-import { instantReportsUsed, priceLines, quoteFinalize, QuoteError } from './pricing.js'
+import { chargedCents, instantReportsUsed, isVirviAdmin, priceLines, quoteFinalize, QuoteError } from './pricing.js'
 import { startWorker, type Design } from './designs.js'
 import type { Exec } from './quota.js'
 import { publishStudio } from './events.js'
@@ -110,7 +110,8 @@ export async function createFinalizeCheckout(
 ): Promise<{ url: string } | { granted: true; paymentId: string }> {
   const waived = Object.keys(reports)
   const withReports = (lines: PaymentLine[]) => lines.map((l) => (l.waived || l.held ? { ...l, reportText: reports[l.category] } : l))
-  const quote = await quoteFinalize(design, categories, waived, await giftsFor(user.id, design.id, now))
+  const admin = await isVirviAdmin(user.id)
+  const quote = await quoteFinalize(design, categories, waived, admin ? 0 : await giftsFor(user.id, design.id, now), db, { admin })
   if (!quote.lines.length) throw new QuoteError('nothing_to_pay', categories ?? [])
   const open = await db.select().from(studioPayments).where(and(
     eq(studioPayments.designId, design.id), eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now),
@@ -136,7 +137,7 @@ export async function createFinalizeCheckout(
     await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.id, design.id)).for('key share')
     await tx.insert(studioFinalizeCredits).values({ userId: user.id, balance: 0, updatedAt: now }).onConflictDoNothing()
     const [credits] = await tx.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, user.id)).for('update')
-    const q = await quoteFinalize(design, categories, waived, credits.balance, tx)
+    const q = await quoteFinalize(design, categories, waived, admin ? 0 : credits.balance, tx, { admin })
     if (!q.lines.length) throw new QuoteError('nothing_to_pay', categories ?? [])
     // The quote the customer saw counted a credit an older checkout still holds (Stripe didn't expire it, or it is
     // still opening): refuse rather than charge that line in full
@@ -173,9 +174,9 @@ export async function createFinalizeCheckout(
   const url = await openSession({
     mode: 'payment',
     customer,
-    line_items: lines.filter((l) => !l.waived && !l.gift).map((l) => ({
+    line_items: lines.filter((l) => chargedCents(l) > 0).map((l) => ({
       quantity: 1,
-      price_data: { currency: 'usd', unit_amount: l.amountCents, product_data: { name: lineName(l) } },
+      price_data: { currency: 'usd', unit_amount: chargedCents(l), product_data: { name: lineName(l) } },
     })),
     metadata,
     payment_intent_data: { metadata },
@@ -242,8 +243,9 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
     const fresh = pay.lines.filter((l) => !earlier.some((e) => e.revisionId === l.revisionId))
     const repriced = priceLines(design.kind, fresh.map((l) => ({
       kind: earlier.some((e) => e.category === l.category) ? 'revision' as const : 'first' as const,
+      category: l.category, footprint: l.footprint,
     })), earlier.length > 0)
-    let owed = pay.lines.filter((l) => !fresh.includes(l) && !l.waived && !l.gift).reduce((sum, l) => sum + l.amountCents, 0)
+    let owed = pay.lines.filter((l) => !fresh.includes(l)).reduce((sum, l) => sum + chargedCents(l), 0)
     // A free line whose revision was paid for meanwhile gives its credit back
     const unusedGifts = Math.min(pay.giftsHeld, pay.lines.filter((l) => !fresh.includes(l) && l.gift).length)
     if (unusedGifts > 0) {
@@ -253,8 +255,9 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
     const entitlementIds: string[] = []
     for (const [i, l] of fresh.entries()) {
       const price = repriced[i]
-      const charged = l.waived || l.gift ? 0 : Math.min(l.amountCents, price.amountCents)
-      if (!l.waived && !l.gift) owed += l.amountCents - charged
+      // Never more than was paid for the line; a credit still covers what it covered
+      const charged = chargedCents({ ...l, amountCents: Math.min(l.amountCents, price.amountCents) })
+      owed += chargedCents(l) - charged
       const [e] = await tx.insert(studioEntitlements).values({
         revisionId: l.revisionId, paymentId: pay.id, userId: pay.userId, designId: design.id, category: l.category,
         kind: price.priceKind.startsWith('revision') ? 'revision' : 'first', amountCents: charged, status: 'packaging',

@@ -7,11 +7,12 @@ import { authenticate } from '../middleware/auth.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
 import { verifyRenderFrame, framePath } from '../studio/render-urls.js'
-import { quoteFinalize, QuoteError } from '../studio/pricing.js'
+import { isVirviAdmin, quoteFinalize, QuoteError } from '../studio/pricing.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
-import { currentRevisions, emotesFor, freeFixesLeft, queueFinalizeRenders, recordCheck, requestSetRender } from '../studio/sets.js'
+import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
+import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, entitlementFor, giftsFor, queueFinalize, reportMistake, PaymentError } from '../studio/payments.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
@@ -101,7 +102,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     const b = (request.body ?? {}) as { kind?: unknown; agent?: unknown; name?: unknown }
     const err = agentError(b.agent)
     if (err) return reply.status(400).send({ error: err })
-    if (b.kind !== 'wearable' && b.kind !== 'emote') return reply.status(400).send({ error: 'kind must be wearable or emote' })
+    if (b.kind !== 'wearable' && b.kind !== 'emote' && b.kind !== 'scene') return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
     if (b.name !== undefined && (typeof b.name !== 'string' || !b.name.trim() || b.name.length > MAX_NAME)) {
       return reply.status(400).send({ error: `name must be 1-${MAX_NAME} characters` })
     }
@@ -110,7 +111,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
     const [d] = await db.insert(studioDesigns).values({
       ownerId: request.user.id,
-      name: typeof b.name === 'string' ? b.name.trim() : b.kind === 'emote' ? 'Untitled emote' : 'Untitled design',
+      name: typeof b.name === 'string' ? b.name.trim() : b.kind === 'emote' ? 'Untitled emote' : b.kind === 'scene' ? 'Untitled scene piece' : 'Untitled design',
       kind: b.kind,
       agent: b.agent as string,
     }).returning()
@@ -190,7 +191,8 @@ export default async function studioRoutes(app: FastifyInstance) {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     try {
-      return await quoteFinalize(d, null, [], await giftsFor(request.user.id, d.id, new Date()))
+      const admin = await isVirviAdmin(request.user.id)
+      return await quoteFinalize(d, null, [], admin ? 0 : await giftsFor(request.user.id, d.id, new Date()), undefined, { admin })
     } catch (err) {
       if (err instanceof QuoteError) return quoteRefusal(reply, err)
       throw err
@@ -200,7 +202,8 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    if (!config.stripeSecretKey) return paymentsOff(reply)
+    // an admin's finalize is granted without Stripe, so it doesn't wait on payments being set up
+    if (!config.stripeSecretKey && !(await isVirviAdmin(request.user.id))) return paymentsOff(reply)
     const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown }
     let categories: string[] | null = null
     if (b.categories != null) {
@@ -330,6 +333,15 @@ export default async function studioRoutes(app: FastifyInstance) {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { category?: unknown; bodyShape?: unknown; outfit?: unknown; emote?: unknown; mode?: unknown }
+    if (d.kind === 'scene') {
+      // Inspect for any scene piece; the scale turn for furniture (a building has the walk-through instead)
+      if (typeof b.category !== 'string' || !SCENE_CATEGORY.test(b.category)) return reply.status(400).send({ error: 'unknown category' })
+      if (b.mode !== 'orbit' && !(b.mode === 'scale' && isFurniture(b.category))) return reply.status(400).send({ error: 'unknown mode' })
+      const r = b.mode === 'orbit'
+        ? await requestOrbit(d, b.category, 'male', new Date())
+        : await requestRender(d, b.category, TOUR_VIEW, new Date())
+      return r ?? reply.status(404).send({ error: 'piece_not_found' })
+    }
     if (b.mode !== undefined && (b.mode !== 'orbit' || d.kind === 'emote')) return reply.status(400).send({ error: 'unknown mode' })
     const categoryOk = d.kind === 'emote' ? b.category === 'emote' : (WEARABLE_CATEGORIES as readonly string[]).includes(b.category as string)
     if (!categoryOk) return reply.status(400).send({ error: 'unknown category' })
@@ -354,6 +366,12 @@ export default async function studioRoutes(app: FastifyInstance) {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { bodyShape?: unknown; outfit?: unknown; emote?: unknown }
+    if (d.kind === 'scene') {  // the building's walk-through, the one design-level view a scene design has
+      if (!(await hasBuilding(d.id))) return reply.status(404).send({ error: 'no_building' })
+      const r = await requestSetRender(d, TOUR_VIEW, new Date())
+      if (!r) return reply.status(404).send({ error: 'piece_not_found' })
+      return r.status === 'queued' ? { status: 'queued' } : r
+    }
     if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
     if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return reply.status(400).send({ error: 'unknown outfit' })
     const emote = b.emote ?? null

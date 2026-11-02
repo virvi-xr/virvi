@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  checkoutBody, dialogTotal, emoteChecklist, finalizeStrip, formatCents, HELD_REPORT_COPY, REPORT_MAX, refusalMessage, reportOk,
+  checkoutBody, dialogTotal, emoteChecklist, finalizeStrip, formatCents, lineNote, HELD_REPORT_COPY, REPORT_MAX, refusalMessage, reportOk, triangleWarning,
   type Quote, type QuoteLine, type Refusal, type StudioDetail, type StudioKind,
 } from '@/lib/studio'
 import { STATE_BADGE, emoteName, type EmoteTarget } from './EmotesStep'
@@ -63,12 +63,15 @@ export default function Finalize({ designId, kind, quote, busy, onChanged, detai
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
       <p className="text-sm text-gray-300">{strip.unlocks}</p>
       {strip.blocked && <p className="mt-2 text-sm text-amber-300">{strip.blocked}</p>}
+      {detail.pieces.map((p) => triangleWarning(p.name, p.revision?.checker ?? null)).filter(Boolean).map((w) => (
+        <p key={w} className="mt-2 text-sm text-amber-300">{w}</p>
+      ))}
       {strip.button && (
         <PrimaryButton type="button" className="mt-3" disabled={busy} onClick={() => setOpen(true)}>{strip.button}</PrimaryButton>
       )}
       {open && quote && (
         <FinalizeDialog designId={designId} quote={quote} onClose={() => setOpen(false)} onChanged={onChanged}>
-          <EmoteChecklist designId={designId} detail={detail} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />
+          {kind !== 'scene' && <EmoteChecklist designId={designId} detail={detail} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />}
         </FinalizeDialog>
       )}
     </div>
@@ -136,8 +139,8 @@ function FinalizeDialog({ designId, quote, onClose, onChanged, children }: {
                     <p className="text-xs text-gray-500">{PRICE_LABEL[l.priceKind]} · revision {l.revisionNumber}</p>
                   </div>
                   <p className="shrink-0 text-right">
-                    <span className={waived || l.gift ? 'text-gray-500 line-through' : ''}>{formatCents(l.amountCents)}</span>
-                    {l.gift ? <span className="block text-xs text-emerald-300">free (gift code)</span> : waived && <span className="block text-xs text-emerald-300">not charged</span>}
+                    <span className={waived || lineNote(l)?.startsWith('free') ? 'text-gray-500 line-through' : ''}>{formatCents(l.amountCents)}</span>
+                    {lineNote(l) ? <span className="block text-xs text-emerald-300">{lineNote(l)}</span> : waived && <span className="block text-xs text-emerald-300">not charged</span>}
                   </p>
                 </div>
                 {revision && (

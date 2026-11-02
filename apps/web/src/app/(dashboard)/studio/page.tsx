@@ -8,7 +8,7 @@ import { PlusIcon, SparkleIcon } from '@/components/icons'
 import { countLabel } from '@/lib/format'
 import { AgentPicker } from './AgentPicker'
 import {
-  DEFAULT_AGENT, agentLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, usageLine,
+  DEFAULT_AGENT, KIND_CHOICES, agentLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, kindLabel, refusalMessage, relativeTime, usageLine,
   type Refusal, type StudioDesign, type StudioKind, type StudioUsage,
 } from '@/lib/studio'
 
@@ -54,7 +54,7 @@ export default function StudioPage() {
         crumbs={['Workspace', 'Design Studio']}
         title="Design Studio"
         count={designs ? countLabel(designs.length) : undefined}
-        subtitle={usage ? usageLine(usage) : 'Design Decentraland wearables and emotes with an agent.'}
+        subtitle={usage ? usageLine(usage) : 'Design Decentraland wearables, emotes, buildings and furniture with an agent.'}
         actions={
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setShowRedeem((v) => !v)} aria-expanded={showRedeem}
@@ -90,7 +90,7 @@ export default function StudioPage() {
           <p className="text-gray-500">No archived designs.</p>
         ) : (
           <EmptyState icon={<SparkleIcon size={32} />} title="No designs yet"
-            body="Describe a wearable or an emote and an agent builds it on a Decentraland avatar."
+            body="Describe a wearable, an emote, a building or furniture, and an agent builds it for Decentraland."
             action={<PrimaryButton onClick={() => setShowCreate(true)}><PlusIcon size={16} /> New design</PrimaryButton>} />
         )
       ) : (
@@ -110,7 +110,7 @@ function DesignCard({ d }: { d: StudioDesign }) {
         <h3 className="truncate font-semibold">{d.name}</h3>
         <Badge tone={badge.tone}>{badge.label}</Badge>
       </div>
-      <p className="mt-2 text-sm text-gray-400">{d.kind === 'emote' ? 'Emote' : 'Wearable'} · {agentLabel(d.agent)}</p>
+      <p className="mt-2 text-sm text-gray-400">{kindLabel(d.kind)} · {agentLabel(d.agent)}</p>
       <p className="mt-1 text-xs text-gray-600">{d.lastJobAt ? `Last worked on ${relativeTime(d.lastJobAt, new Date())}` : `Started ${relativeTime(d.createdAt, new Date())}`}</p>
     </a>
   )
@@ -181,7 +181,7 @@ function NewDesign({ onCancel }: { onCancel: () => void }) {
       <fieldset>
         <legend className="mb-2 text-sm text-gray-400">What are you making?</legend>
         <div role="radiogroup" className="inline-flex rounded-md border border-gray-800 p-0.5 text-sm">
-          {([['wearable', 'Wearable'], ['emote', 'Emote']] as const).map(([value, label]) => (
+          {KIND_CHOICES.map(([value, label]) => (
             <label key={value} className={`cursor-pointer rounded px-3 py-1.5 ${kind === value ? 'bg-white/[0.06] text-white' : 'text-gray-400 hover:text-white'}`}>
               <input type="radio" name="kind" className="sr-only" value={value} checked={kind === value} onChange={() => setKind(value)} />
               {label}
@@ -196,7 +196,7 @@ function NewDesign({ onCancel }: { onCancel: () => void }) {
       <label className="block">
         <span className="mb-2 block text-sm text-gray-400">Name (optional)</span>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} maxLength={120}
-          placeholder={kind === 'emote' ? 'Untitled emote' : 'Untitled design'}
+          placeholder={kind === 'emote' ? 'Untitled emote' : kind === 'scene' ? 'Untitled scene piece' : 'Untitled design'}
           className="w-full max-w-md rounded-md border border-gray-800 bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400" />
       </label>
       {refusal && (

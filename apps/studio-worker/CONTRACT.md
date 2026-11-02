@@ -58,6 +58,7 @@ workspace as an opaque blob, privately.
 | `pieces/<category>/<name>_male.glb`, `_female.glb` or `<name>.glb` | a piece's GLBs | paid downloads only |
 | `pieces/<category>/piece.json` | the piece's settings, as below | Virvi only |
 | `checks/<category>.txt` | the skills checker's full report | Virvi only |
+| `checks/<category>/<viewKey>-blank-<nnn>.png` | the frame a render stopped on as blank (that view has no frames) | Virvi only |
 | `renders/<category>/<viewKey>/<nnn>.webp` | render frames, `000` up | the browser |
 | `renders/set/<viewKey>/<nnn>.webp` | an emote view's frames, every piece worn together | the browser |
 | `final/<category>/package.zip` | a paid revision's package (finalize jobs only, and the only file they upload) | paid downloads only |
@@ -128,6 +129,27 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   "costCeilingUsd": 0}`: no agent runs.
 
 Switching agent between prompts is allowed: the new agent is given the conversation it missed.
+
+### Scene designs
+
+A job with `"kind": "scene"` builds buildings and furniture. Its pieces live in `out/building/` (at most one) and
+`out/furniture_<name>/` (at most 12; `<name>` in lowercase letters and underscores), one GLB each. `piece.json` holds
+`name`, `description`, `kind` (`building` | `furniture` | `decor`), `type`, `changeKind`, and a building's `footprint`
+(`0.5x0.5` | `1x1` | `1x2` | `2x2` | `4x4`). These upload with the piece as `pieces/<category>/<file>.json` and count
+toward its change: a building's `route.json` (`{"waypoints": [[x, z], [x, z, y], ...]}`) and `layout.json`
+(`{"furniture": [{"category", "x", "z", "yaw"}]}`), and a sittable piece's `<glb name>.sittables.json`. The checker is
+the scene skills' `check_scene_model.py`, and `check_walk.py` for a building (with its furniture placed, which only
+warns); `checker.triangles` is `{"count", "limit"}` when a piece is over its recommended triangles (a warning).
+
+Views, rendered in the worker's own Babylon page:
+
+- `orbit-scene`: the piece alone from every angle, the same 24 / 122 frame grid as a wearable's `orbit-<bodyShape>`.
+  A prompt renders the ring; a render job `{"categories", "mode": "orbit", "ring": false}` renders the sphere.
+- `scale`: 36 frames turning once round a furniture piece beside a 1.8 m mannequin. A prompt renders it for furniture;
+  a render job `{"categories"}` without a mode renders it again.
+- `tour`: the building's walk-through, a set render (`{"set": true, "tour": true}`) to `renders/set/tour/NNN.webp` at
+  24 fps, along the path the skills' walker takes through `route.json`, with the furniture placed from `layout.json`.
+  Its result is `set: {"viewKey": "tour", "frames", "fps"}`, plus `warnings` naming layout entries that aren't pieces.
 
 ## Event
 

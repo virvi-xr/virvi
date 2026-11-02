@@ -81,3 +81,10 @@ def test_schema_enums_match_their_declared_type():
 def test_design_answer_with_none_category_has_no_category():
     v = scope.check('a neon cap', 'wearable', [], [], ask=asks({'verdict': 'design', 'category': 'none', 'note': ''}))
     assert v.category is None
+
+
+def test_the_screen_knows_scene_designs():
+    from studio_worker.scope import SYSTEM, request
+    assert 'buildings' in SYSTEM and 'furniture' in SYSTEM
+    content = request('a cosy cafe', 'scene', [], [])['messages'][0]['content']
+    assert content.startswith('The design is a building or furniture for a Decentraland scene.')

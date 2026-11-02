@@ -36,8 +36,13 @@ describe('studioPricesFrom', () => {
     expect(studioPricesFrom({})).toEqual({
       wearable: 2900, extraPiece: 1900, emote: 3900,
       revisionWearable: 1500, revisionExtraPiece: 1000, revisionEmote: 2000,
+      furniture: 900, furnitureExtra: 500, revisionFurniture: 500,
+      buildingSmall: 2900, buildingMedium: 4900, buildingLarge: 7900,
+      revisionBuildingSmall: 1500, revisionBuildingMedium: 2500, revisionBuildingLarge: 4000,
+      giftCapCents: 2900,
       topupCents: 500, topupPrompts: 10,
     })
+    expect(studioPricesFrom({ STUDIO_PRICE_BUILDING_LARGE_CENTS: '9900' }).buildingLarge).toBe(9900)
     expect(studioPricesFrom({ STUDIO_PRICE_WEARABLE_CENTS: '3500' }).wearable).toBe(3500)
     expect(() => studioPricesFrom({ STUDIO_PRICE_EMOTE_CENTS: 'abc' })).toThrow(/STUDIO_PRICE_EMOTE_CENTS/)
     expect(() => studioPricesFrom({ STUDIO_TOPUP_PROMPTS: '-1' })).toThrow(/STUDIO_TOPUP_PROMPTS/)

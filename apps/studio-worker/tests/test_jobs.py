@@ -8,7 +8,7 @@ from PIL import Image
 import fake_api
 from conftest import FIXTURES
 from studio_worker import jobs, scope
-from studio_worker.api import Api
+from studio_worker.api import Api, ApiError
 from studio_worker.workspace import State, pack, save_state
 
 FAKES = Path(__file__).parent / 'fakes'
@@ -32,17 +32,17 @@ def fake_render(calls):
         calls.append((pieces, view))
         out.mkdir(parents=True, exist_ok=True)
         mode = view.get('mode')
-        n = (24 if view.get('ring') else 122) if mode == 'orbit' else \
-            (view.get('sample') or 96) if mode == 'walk' else frames
+        n = (24 if view.get('ring') else 122) if mode in ('orbit', 'scene-orbit') else \
+            (view.get('sample') or 96) if mode in ('walk', 'tour') else frames
         paths = []
         for i in range(n):
-            if mode == 'walk' and view.get('sample'):
+            if mode in ('walk', 'tour') and view.get('sample'):
                 paths.append(out / f'{i:02d}.png')
                 Image.new('RGB', (8, 8), (i, 0, 0)).save(paths[-1], 'PNG')
             else:
                 paths.append(out / f'{i:03d}.webp')
                 Image.new('RGB', (8, 8), (i, 0, 0)).save(paths[-1], 'WEBP')
-        return {'ok': True, 'frames': paths, 'error': None, 'bootSec': 1.0, **({'fps': 24.0} if mode == 'walk' else {})}
+        return {'ok': True, 'frames': paths, 'error': None, 'bootSec': 1.0, **({'fps': 24.0} if mode in ('walk', 'tour') else {})}
     return render
 
 
@@ -314,6 +314,47 @@ def test_a_failed_ring_still_saves_the_piece(api, tmp_path, skills):
     assert result['outcome'] == 'ok', result
     assert result['pieces'][0]['renders'] == {'spin-male-default': 36}
     assert 'job-1/pieces/hat/neon_cap_male.glb' in api.files
+
+
+def test_a_blank_ring_frame_is_kept_privately_for_a_look(api, tmp_path, skills):
+    ok = fake_render([])
+
+    def render(pieces, view, out, **kw):
+        if view['mode'] == 'orbit':
+            kept = out.with_name(f'{out.name}.blank-003.png')
+            Image.new('RGB', (8, 8), (40, 40, 50)).save(kept)
+            return {'ok': False, 'frames': [], 'error': 'blank', 'bootSec': 1.0,
+                    'blankFrame': {'index': 3, 'path': str(kept)}}
+        return ok(pieces, view, out, **kw)
+    result = jobs.run_job(prompt_job(), client(api), tmp_path, render_fn=render,
+                          command=fake_command('claude_builds_hat.jsonl'), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert api.files['job-1/checks/hat/orbit-male-blank-003.png'][:8] == b'\x89PNG\r\n\x1a\n'
+    assert not [f for f in api.files if f.startswith('job-1/renders/hat/orbit-male/')]  # never served to the browser
+
+
+def test_a_refused_blank_frame_upload_still_saves_the_piece(api, tmp_path, skills):
+    ok = fake_render([])
+
+    def render(pieces, view, out, **kw):
+        if view['mode'] == 'orbit':
+            kept = out.with_name(f'{out.name}.blank-003.png')
+            Image.new('RGB', (8, 8), (40, 40, 50)).save(kept)
+            return {'ok': False, 'frames': [], 'error': 'blank', 'bootSec': 1.0,
+                    'blankFrame': {'index': 3, 'path': str(kept)}}
+        return ok(pieces, view, out, **kw)
+    api.fail[('PUT', 'checks/hat/orbit-male-blank-003.png')] = 400
+    result = jobs.run_job(prompt_job(), client(api), tmp_path, render_fn=render,
+                          command=fake_command('claude_builds_hat.jsonl'), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert 'job-1/pieces/hat/neon_cap_male.glb' in api.files
+
+
+def test_the_fake_api_refuses_paths_virvi_refuses(api):
+    c = client(api)
+    c.put_file('job-1', 'checks/hat/orbit-male-blank-003.png', b'x', 'image/png')
+    with pytest.raises(ApiError):
+        c.put_file('job-1', 'checks/hat/orbit.txt', b'x', 'text/plain')
 
 
 def test_emote_prompt_renders_no_ring():

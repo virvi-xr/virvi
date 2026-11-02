@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","session_id":"sess-hat","model":"claude-opus-5-5"}
+{"copy": "scene/building/kiosk.glb", "to": "out/building/kiosk.glb"}
+{"copy": "scene/building/piece.json", "to": "out/building/piece.json"}
+{"copy": "scene/building/route.json", "to": "out/building/route.json"}
+{"copy": "scene/building/layout.json", "to": "out/building/layout.json"}
+{"copy": "scene/furniture_chair/chair.glb", "to": "out/furniture_chair/chair.glb"}
+{"copy": "scene/furniture_chair/piece.json", "to": "out/furniture_chair/piece.json"}
+{"copy": "scene/furniture_chair/chair.sittables.json", "to": "out/furniture_chair/chair.sittables.json"}
+{"type":"assistant","message":{"id":"msg_1","model":"claude-opus-5-5","content":[{"type":"text","text":"Built a little kiosk and a chair."}],"usage":{"input_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":1000,"output_tokens":20}},"session_id":"sess-hat"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"Built a little kiosk and a chair.","session_id":"sess-hat","total_cost_usd":0.0125,"modelUsage":{"claude-opus-5-5":{"inputTokens":15,"outputTokens":50,"cacheReadInputTokens":1000,"cacheCreationInputTokens":1000,"costUSD":0.0125}}}

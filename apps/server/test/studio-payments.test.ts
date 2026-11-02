@@ -95,6 +95,65 @@ describe('studio payments', () => {
     expect(s.expires_at * 1000 - before).toBeLessThan(1870_000)
   })
 
+  it('a gifted 4x4 building opens one Stripe line for the rest, and the grant keeps that price', async () => {
+    const u = await createUser()
+    const d = await createDesign(u, { kind: 'scene' })
+    await addRevision(d, 'building', { pass: true, failures: 0, warnings: 0 }, { kind: 'building', footprint: '4x4' })
+    await db.insert(studioFinalizeCredits).values({ userId: u.id, balance: 1 })
+    expect((await finalize(u, d.id)).statusCode).toBe(200)
+    expect(stripe.calls.sessions[0].line_items.map((l: any) => l.price_data.unit_amount)).toEqual([5000])
+    const [pay] = await paymentOf(d.id)
+    expect(pay).toMatchObject({ amountCents: 5000, giftsHeld: 1 })
+    await paid(pay.id)
+    const [ent] = await db.select().from(studioEntitlements)
+    expect(ent).toMatchObject({ category: 'building', amountCents: 5000, status: 'packaging' })
+    const [after] = await paymentOf(d.id)
+    expect(after.refundedCents).toBe(0)
+  })
+
+  it('a Virvi admin finalizes free: granted at once, no Stripe, packaged like any paid piece', async () => {
+    const u = await createUser({ role: 'admin' })
+    const d = await createDesign(u)
+    await addRevision(d, 'hat')
+    const quote = await app.inject({ method: 'GET', url: `/api/studio/designs/${d.id}/finalize`, headers: as(u) })
+    expect(quote.json()).toMatchObject({ totalCents: 0, lines: [{ category: 'hat', amountCents: 2900, admin: true }] })
+    const res = await finalize(u, d.id)
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ granted: true })
+    expect(stripe.calls.sessions).toHaveLength(0)
+    const [ent] = await db.select().from(studioEntitlements)
+    expect(ent).toMatchObject({ category: 'hat', amountCents: 0, status: 'packaging' })
+    expect(await db.select().from(studioJobs).where(eq(studioJobs.type, 'finalize'))).toHaveLength(1)
+  })
+
+  it('a Virvi admin finalizes free when Stripe isn’t set up; a creator is told payments are off', async () => {
+    const key = config.stripeSecretKey
+    ;(config as any).stripeSecretKey = ''
+    try {
+      const admin = await createUser({ role: 'admin' })
+      const d = await createDesign(admin)
+      await addRevision(d, 'hat')
+      const res = await finalize(admin, d.id)
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toMatchObject({ granted: true })
+      const creator = await createUser({ role: 'creator' })
+      const c = await createDesign(creator)
+      await addRevision(c, 'hat')
+      const off = await finalize(creator, c.id)
+      expect([off.statusCode, off.json().code]).toEqual([503, 'payments_unavailable'])
+    } finally {
+      ;(config as any).stripeSecretKey = key
+    }
+  })
+
+  it('a creator still pays', async () => {
+    const u = await createUser({ role: 'creator' })
+    const d = await createDesign(u)
+    await addRevision(d, 'hat')
+    await finalize(u, d.id)
+    expect(stripe.calls.sessions[0].line_items.map((l: any) => l.price_data.unit_amount)).toEqual([2900])
+  })
+
   it('a second click reuses the open session', async () => {
     const u = await createUser()
     const d = await createDesign(u)

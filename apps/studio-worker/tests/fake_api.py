@@ -6,12 +6,16 @@ run the worker against it.
         ...  # api.url, api.calls, api.events, api.files, api.results, api.workspace
 """
 import json
+import re
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
 PREFIX = '/api/studio/worker'
+# The job file paths Virvi accepts (apps/server/src/studio/store.ts FILE_PATH): anything else is a 400
+FILE_PATH = re.compile(r'^(pieces/[a-z_]+/[A-Za-z0-9._-]+\.(glb|json)|checks/[a-z_]+(\.txt|/[a-z0-9-]+\.png)|'
+                       r'renders/[a-z_]+/[a-z0-9-]+/[0-9]{3}\.webp|final/[a-z_]+/(package\.zip|thumbnail\.png))$')
 
 
 class FakeApi:
@@ -59,6 +63,8 @@ class FakeApi:
                     self.on_event(job_id, self.events[-1][1])
                 return 204, b''
             if what == 'files' and method == 'PUT':
+                if not FILE_PATH.match('/'.join(parts[3:])):
+                    return 400, b''
                 self.files[f"{job_id}/{'/'.join(parts[3:])}"] = body
                 return 204, b''
             if what == 'inputs' and method == 'GET':

@@ -61,7 +61,8 @@ export async function requestSetRender(
       background: !!opts.background,
       payload: {
         type: 'render', kind: design.kind, agent: null, model: null, prompt: null, selectedSlots: null, limits: RENDER_LIMITS,
-        render: { set: true, bodyShape: view.bodyShape, outfit: view.outfit, emote: design.kind === 'emote' ? OWN_EMOTE : view.emote },
+        render: design.kind === 'scene' ? { set: true, tour: true }
+          : { set: true, bodyShape: view.bodyShape, outfit: view.outfit, emote: design.kind === 'emote' ? OWN_EMOTE : view.emote },
         revisions, // the pieces it is for: a change before it runs cancels it (results.ts cancelSupersededRenders)
       },
     }).returning({ id: studioJobs.id })
@@ -86,7 +87,17 @@ export async function requestSetRender(
 }
 
 /** The emotes a design's pieces are checked in: the base emotes, or an emote design's own. */
-export const emotesFor = (kind: string): string[] => kind === 'emote' ? [OWN_EMOTE] : [...BASE_EMOTES]
+export const emotesFor = (kind: string): string[] => kind === 'emote' ? [OWN_EMOTE] : kind === 'scene' ? [] : [...BASE_EMOTES]
+
+/** A scene design's walk-through view: there's one, and it has no body shape, outfit or emote. */
+export const TOUR_VIEW = { bodyShape: 'male', outfit: 'default', emote: null } as View
+
+/** Whether a scene design has its building yet (only a building has a walk-through). */
+export async function hasBuilding(designId: string, exec: Exec = db): Promise<boolean> {
+  const [b] = await exec.select({ id: studioPieces.id }).from(studioPieces)
+    .where(and(eq(studioPieces.designId, designId), eq(studioPieces.category, 'building')))
+  return !!b
+}
 
 /** Free clipping fixes per design and emote, counted since the person's last prompt of their own. */
 export const FREE_CLIPPING_FIXES = 2
@@ -121,6 +132,11 @@ export async function recordCheck(
  * person clicks still goes first. Returns how many were queued.
  */
 export async function queueFinalizeRenders(design: Design, now: Date): Promise<number> {
+  if (design.kind === 'scene') {
+    if (!(await hasBuilding(design.id))) return 0
+    const r = await requestSetRender(design, TOUR_VIEW, now, { background: true })
+    return r?.status === 'queued' && r.queued ? 1 : 0
+  }
   let n = 0
   for (const emote of emotesFor(design.kind)) {
     for (const bodyShape of BODY_SHAPES) {

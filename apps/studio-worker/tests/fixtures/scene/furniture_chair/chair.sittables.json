@@ -1,0 +1,17 @@
+{
+ "file": "chair.glb",
+ "scale": 1,
+ "uprightX": 0,
+ "yawOffset": 0,
+ "collision": "colliders",
+ "kind": "bench",
+ "seats": [
+  {
+   "across": 0,
+   "forward": 0.38,
+   "rise": 0,
+   "orbForward": 0,
+   "orbRise": 0.7
+  }
+ ]
+}

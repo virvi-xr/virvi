@@ -40,6 +40,8 @@ ORBIT_COLS = 24
 ORBIT_FRAMES = len(ORBIT_ROWS) * ORBIT_COLS + 2
 WALK_FPS, WALK_MIN_SEC, WALK_MAX_FRAMES = 24, 4.0, 120
 EMOTE_SAMPLE = 16  # frames studio-preview --emote keeps
+SCENE_MODES = ('scene-orbit', 'scale', 'tour')  # rendered by scene_render, in the worker's own Babylon page
+SCENE_KINDS = ('building', 'furniture', 'decor')
 
 
 def orbit_steps(ring: bool) -> list[dict]:
@@ -74,7 +76,10 @@ def render(pieces: list[dict], view: dict, out: Path, frames: int = 36, size: in
     alone from every angle (`ring` keeps the eye-level 24); a walk-around steps the emote through its timeline while
     the camera turns once (`sample`: keep that many evenly spaced frames, as PNGs). Both ignore `frames`.
     Returns {'ok', 'frames': [Path], 'error': None|'timeout'|'item_not_loaded'|'blank'|str, 'bootSec'}, plus
-    'fps' for a walk-around."""
+    'fps' for a walk-around, and on 'blank' `blankFrame`: {'index', 'path'}, that frame as a PNG beside `out`."""
+    if view.get('mode') in SCENE_MODES:
+        from . import scene_render
+        return scene_render.render(pieces, view, out, frames, size, watchdog_sec)
     out = Path(out).absolute()  # the child process runs in another directory
     out.mkdir(parents=True, exist_ok=True)
     spec = {'pieces': [{**p, 'glbs': {k: str(Path(v).absolute()) for k, v in p['glbs'].items()}} for p in pieces],
@@ -103,10 +108,20 @@ def render(pieces: list[dict], view: dict, out: Path, frames: int = 36, size: in
     return result
 
 
-def is_blank(image: Image.Image, threshold: float = 4.0) -> bool:
-    """True when the frame is one flat colour: the renderer drew nothing."""
-    pixels = np.asarray(image.convert('RGB'), dtype=np.float32).reshape(-1, 3)
-    return float(pixels.std(axis=0).max()) < threshold  # per channel: one flat colour differs between channels
+# A pixel is drawn when a channel is this far from the frame's background colour, and a frame with fewer drawn pixels
+# than this share is blank. An empty frame has none; a pale beard alone on the pale Inspect background has ~5%.
+DRAWN_LEVELS = 8
+DRAWN_SHARE = 0.001
+
+
+def is_blank(image: Image.Image) -> bool:
+    """True when the renderer drew nothing: next to no pixel stands out from the background (the median colour). A
+    small or pale item still counts, where a frame's overall colour spread would call it blank."""
+    if image.mode in ('RGBA', 'LA', 'P'):
+        image = Image.alpha_composite(Image.new('RGBA', image.size, (0, 0, 0, 255)), image.convert('RGBA'))
+    pixels = np.asarray(image.convert('RGB'), dtype=np.int16).reshape(-1, 3)
+    drawn = np.abs(pixels - np.median(pixels, axis=0)).max(axis=1) > DRAWN_LEVELS
+    return float(drawn.mean()) < DRAWN_SHARE
 
 
 def chrome_available() -> bool:
@@ -192,7 +207,7 @@ def _run(spec: dict) -> dict:
             page.evaluate('__studio.frames()')
             image = Image.open(_png(page, transparent=True)).convert('RGBA')
             if is_blank(image):
-                return _fail('blank', start)
+                return _blank(image, out, 0, start)
             path = out / 'thumbnail.png'
             fit_square(image).save(path)
             browser.close()
@@ -227,7 +242,7 @@ def _run(spec: dict) -> dict:
             page.evaluate('__studio.frames()')
             image = Image.open(_png(page))
             if is_blank(image):
-                return _fail('blank', start)
+                return _blank(image, out, i, start)
             if mode == 'look':
                 path = out / f"{view.get('bodyShape', 'male')}-{LOOK_NAMES[i]}.png"
                 image.save(path)
@@ -284,6 +299,13 @@ def _fail(error: str, start: float) -> dict:
     return {'ok': False, 'frames': [], 'error': error, 'bootSec': round(time.monotonic() - start, 1)}
 
 
+def _blank(image: Image.Image, out: Path, index: int, start: float) -> dict:
+    """A blank-frame failure, the frame kept beside `out` (whose frames are cleared) so someone can see what rendered."""
+    kept = out.with_name(f'{out.name}.blank-{index:03d}.png')
+    image.save(kept)
+    return {**_fail('blank', start), 'blankFrame': {'index': index, 'path': str(kept)}}
+
+
 def _load_pieces(piece_dirs: list[Path]) -> list[dict]:
     from .pieces import Piece, glbs_by_shape
     pieces = []
@@ -298,9 +320,46 @@ def _load_pieces(piece_dirs: list[Path]) -> list[dict]:
     return pieces
 
 
-def look(piece_dirs: list[Path], out: Path) -> list[Path]:
+def look_scene(pieces: list[dict], out: Path, tour: bool = False) -> list[Path]:
+    """studio-preview for scene pieces: front, right, back and left views of each beside a 1.8 m mannequin; with
+    `tour`, 16 frames of the building's walk-through instead (its route.json, its layout.json furniture placed)."""
+    from . import scene_render
+    paths = []
+    if tour:
+        building = next((p for p in pieces if p['meta'].get('kind') == 'building'), None)
+        if building is None:
+            raise SystemExit('--tour needs the building: studio-preview out/building --tour')
+        folder = Path(next(iter(building['glbs'].values()))).parent
+        if not (folder / 'route.json').exists():
+            raise SystemExit(f'{folder}/route.json is missing: write the walk-through route first')
+        route = json.loads((folder / 'route.json').read_text())
+        layout = json.loads((folder / 'layout.json').read_text()).get('furniture', []) if (folder / 'layout.json').exists() else []
+        placed = [building]
+        for item in layout:
+            d = folder.parent / item.get('category', '')
+            glbs = sorted(d.glob('*.glb')) if d.is_dir() else []
+            if glbs:
+                placed.append({'category': d.name, 'glbs': {'unisex': glbs[0]}, 'meta': {},
+                               'at': {'x': item.get('x', 0), 'z': item.get('z', 0), 'yaw': item.get('yaw', 0)}})
+        path = scene_render.tour_path(next(iter(building['glbs'].values())), route,
+                                      [(next(iter(p['glbs'].values())), p['at']['x'], p['at']['z'], p['at']['yaw']) for p in placed[1:]])
+        r = render(placed, {'mode': 'tour', 'path': path, 'sample': EMOTE_SAMPLE}, Path(out))
+        if not r['ok']:
+            raise SystemExit(f'studio-preview failed on the walk-through: {r["error"]}')
+        return r['frames']
+    for p in pieces:
+        r = render([p], {'mode': 'scale', 'look': True}, Path(out))
+        if not r['ok']:
+            raise SystemExit(f"studio-preview failed on {p['category']}: {r['error']}")
+        paths += r['frames']
+    return paths
+
+
+def look(piece_dirs: list[Path], out: Path, tour: bool = False) -> list[Path]:
     """studio-preview: front, right, back and left views of the pieces together, on each body shape they have."""
     pieces = _load_pieces(piece_dirs)
+    if any(p['meta'].get('kind') in SCENE_KINDS for p in pieces):
+        return look_scene(pieces, out, tour)
     shapes = sorted({s for p in pieces for s in p['glbs']} - {'unisex'}) or ['male', 'female']
     paths = []
     for shape in shapes:
@@ -338,11 +397,12 @@ def main(argv: list[str] | None = None) -> int:
                                     f"{', '.join(config.BASE_EMOTES)}, or own for an emote design")
     ap.add_argument('--body', choices=('male', 'female'), default='male', help='the body shape for --emote')
     ap.add_argument('--outfit', choices=tuple(config.OUTFITS), default='default', help='the base outfit for --emote')
+    ap.add_argument('--tour', action='store_true', help='a building: 16 frames of its walk-through (route.json)')
     a = ap.parse_args(argv)
     if a.emote:
         paths = look_emote(a.pieces, a.out or Path('review') / a.emote, a.emote, a.body, a.outfit)
     else:
-        paths = look(a.pieces, a.out or Path('review'))
+        paths = look(a.pieces, a.out or Path('review') / ('tour' if a.tour else ''), a.tour)
     for p in paths:
         print(p)
     return 0

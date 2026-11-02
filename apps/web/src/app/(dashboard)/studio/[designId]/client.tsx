@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth'
 import { useStudioRoom } from '@/lib/colyseus'
 import { Badge, PageHeader, RowMenu, Skeleton } from '@/components/ui'
 import {
-  designBadge, designIdFromPath, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn,
+  designBadge, designIdFromPath, kindLabel, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn,
   type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioUsage,
 } from '@/lib/studio'
 import Conversation from './Conversation'
@@ -35,7 +35,7 @@ export default function StudioDesignPage() {
   const [events, setEvents] = useState<StudioEvent[]>([])
   const [notice, setNotice] = useState<Refusal | null>(null)
   const [category, setCategory] = useState<string | null>(null)
-  const [step, setStep] = useState<Step>('avatar')
+  const [step, setStep] = useState<Step>('avatar')  // shown as Inspect for a scene design (shownStep)
   const [emoteTarget, setEmoteTarget] = useState<EmoteTarget | null>(null)
   const openEmote = useCallback((t: EmoteTarget) => { setEmoteTarget(t); setStep('emotes') }, [])
   const [quote, setQuote] = useState<Quote | null>(null)
@@ -145,7 +145,7 @@ export default function StudioDesignPage() {
       <PageHeader
         crumbs={[{ label: 'Design Studio', href: '/studio' }, d.name]}
         title={d.name}
-        subtitle={<span className="flex flex-wrap items-center gap-2">{d.kind === 'emote' ? 'Emote' : 'Wearable'} <Badge tone={badge.tone}>{badge.label}</Badge></span>}
+        subtitle={<span className="flex flex-wrap items-center gap-2">{kindLabel(d.kind)} <Badge tone={badge.tone}>{badge.label}</Badge></span>}
         actions={<RowMenu label="Design actions" items={[d.archivedAt
           ? { label: 'Unarchive', onSelect: () => setArchived(false) }
           : { label: 'Archive', onSelect: () => setArchived(true), confirm: 'Archive this design?' }]} />}
@@ -164,10 +164,12 @@ export default function StudioDesignPage() {
         <Conversation designId={designId} detail={detail} usage={usage} events={events} onChanged={reload} />
         <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}
           step={step} onStep={setStep} emoteTarget={emoteTarget}
-          finalizeStep={<div className="p-4"><EmoteChecklist designId={designId} detail={detail} onOpen={openEmote} /></div>}>
+          finalizeStep={detail.design.kind === 'scene'
+            ? <p className="p-4 text-sm text-gray-300">Each piece you finalize goes into your asset library, ready to place in a scene.</p>
+            : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} onOpen={openEmote} /></div>}>
           <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'} onChanged={reload}
             detail={detail} onOpenEmote={openEmote} />
-          <PaidRevisions designId={designId} piece={detail.pieces.find((p) => p.category === category) ?? detail.pieces[0]} onChanged={reload} />
+          <PaidRevisions designId={designId} piece={detail.pieces.find((p) => p.category === category) ?? detail.pieces[0]} onChanged={reload} kind={detail.design.kind} />
         </Preview>
       </div>
     </div>

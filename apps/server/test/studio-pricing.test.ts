@@ -150,3 +150,103 @@ describe('studio finalize pricing', () => {
     await app.close()
   })
 })
+
+
+describe('scene pricing', () => {
+  const prev = config.studioEnabled
+  beforeAll(() => { ;(config as any).studioEnabled = true })
+  afterAll(() => { ;(config as any).studioEnabled = prev })
+  beforeEach(resetDb)
+
+  const scene = async () => createDesign(await createUser(), { kind: 'scene' })
+  const ok = { pass: true, failures: 0, warnings: 0 }
+  const house = (d: { id: string }, footprint: string) => addRevision(d, 'building', ok, { kind: 'building', footprint })
+  const piece = (d: { id: string }, category: string) => addRevision(d, category, ok, { kind: 'furniture', type: 'chair' })
+  const amounts = (q: Awaited<ReturnType<typeof quoteFinalize>>) => q.lines.map((l) => l.amountCents)
+
+  it('furniture alone: 900 for the first piece, 500 for each extra, 500 a revision', async () => {
+    const d = await scene()
+    const chair = await piece(d, 'furniture_chair')
+    const table = await piece(d, 'furniture_table')
+    expect(amounts(await quoteFinalize(d, null, []))).toEqual([900, 500])
+    await entitle(d, chair)
+    await entitle(d, table)
+    await piece(d, 'furniture_lamp')
+    expect(amounts(await quoteFinalize(d, null, []))).toEqual([500])
+    await piece(d, 'furniture_chair')
+    expect(amounts(await quoteFinalize(d, ['furniture_chair'], []))).toEqual([500])
+  })
+
+  it('a building is priced by its footprint, and its furniture as extra pieces', async () => {
+    const d = await scene()
+    await house(d, '1x1')
+    await piece(d, 'furniture_chair')
+    await piece(d, 'furniture_table')
+    const q = await quoteFinalize(d, null, [])
+    expect(q.lines.map((l) => [l.category, l.amountCents])).toEqual([['building', 2900], ['furniture_chair', 500], ['furniture_table', 500]])
+    expect(q.totalCents).toBe(3900)
+    for (const [fp, cents] of [['0.5x0.5', 2900], ['1x2', 4900], ['2x2', 4900], ['4x4', 7900]] as const) {
+      const e = await scene()
+      await house(e, fp)
+      expect(amounts(await quoteFinalize(e, null, []))).toEqual([cents])
+    }
+  })
+
+  it('furniture paid for before a building stays as it was; the building is priced on its own', async () => {
+    const d = await scene()
+    const chair = await piece(d, 'furniture_chair')
+    expect(amounts(await quoteFinalize(d, null, []))).toEqual([900])
+    await entitle(d, chair)
+    await house(d, '1x1')
+    expect(amounts(await quoteFinalize(d, null, []))).toEqual([2900])
+  })
+
+  it('a building revised into a bigger footprint pays that footprint’s revision', async () => {
+    const d = await scene()
+    await entitle(d, await house(d, '1x1'))
+    const bigger = await house(d, '2x2')
+    const q = await quoteFinalize(d, null, [])
+    expect(q.lines.map((l) => [l.priceKind, l.amountCents])).toEqual([['revision', 2500]])
+    await entitle(d, bigger)
+    await house(d, '4x4')
+    expect(amounts(await quoteFinalize(d, null, []))).toEqual([4000])
+  })
+
+  it('a gift covers up to $29: a 4x4 costs 5000 with it, a chair nothing', async () => {
+    const d = await scene()
+    await house(d, '4x4')
+    const q = await quoteFinalize(d, null, [], 1)
+    expect(q.lines[0]).toMatchObject({ amountCents: 7900, gift: true, giftCents: 2900 })
+    expect(q.totalCents).toBe(5000)
+    const e = await scene()
+    await piece(e, 'furniture_chair')
+    const c = await quoteFinalize(e, null, [], 1)
+    expect(c.lines[0]).toMatchObject({ amountCents: 900, gift: true, giftCents: 900 })
+    expect(c.totalCents).toBe(0)
+  })
+
+  it('a wearable gift still covers the whole line', async () => {
+    const d = await createDesign(await createUser())
+    await addRevision(d, 'hat')
+    const q = await quoteFinalize(d, null, [], 1)
+    expect(q.lines[0]).toMatchObject({ amountCents: 2900, gift: true })
+    expect(q.totalCents).toBe(0)
+  })
+})
+
+describe('Virvi admins', () => {
+  const prev = config.studioEnabled
+  beforeAll(() => { ;(config as any).studioEnabled = true })
+  afterAll(() => { ;(config as any).studioEnabled = prev })
+  beforeEach(resetDb)
+
+  it('an admin quote is free on every line and spends no gift', async () => {
+    const d = await createDesign(await createUser({ role: 'admin' }), { kind: 'scene' })
+    await addRevision(d, 'building', { pass: true, failures: 0, warnings: 0 }, { kind: 'building', footprint: '4x4' })
+    await addRevision(d, 'furniture_chair', { pass: true, failures: 0, warnings: 0 }, { kind: 'furniture' })
+    const q = await quoteFinalize(d, null, [], 2, undefined, { admin: true })
+    expect(q.lines.map((l) => [l.category, l.amountCents, l.admin])).toEqual([['building', 7900, true], ['furniture_chair', 500, true]])
+    expect(q.totalCents).toBe(0)
+    expect(q.giftsUsed).toBe(0)
+  })
+})

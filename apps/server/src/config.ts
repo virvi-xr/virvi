@@ -57,6 +57,18 @@ export function studioPricesFrom(e: Record<string, string | undefined>) {
     revisionWearable: cents('STUDIO_REVISION_WEARABLE_CENTS', 1500),
     revisionExtraPiece: cents('STUDIO_REVISION_EXTRA_PIECE_CENTS', 1000),
     revisionEmote: cents('STUDIO_REVISION_EMOTE_CENTS', 2000),
+    // Scene designs: furniture, and buildings by footprint (small 0.5x0.5 and 1x1, medium 1x2 and 2x2, large 4x4)
+    furniture: cents('STUDIO_PRICE_FURNITURE_CENTS', 900),
+    furnitureExtra: cents('STUDIO_PRICE_FURNITURE_EXTRA_CENTS', 500),
+    revisionFurniture: cents('STUDIO_REVISION_FURNITURE_CENTS', 500),
+    buildingSmall: cents('STUDIO_PRICE_BUILDING_SMALL_CENTS', 2900),
+    buildingMedium: cents('STUDIO_PRICE_BUILDING_MEDIUM_CENTS', 4900),
+    buildingLarge: cents('STUDIO_PRICE_BUILDING_LARGE_CENTS', 7900),
+    revisionBuildingSmall: cents('STUDIO_REVISION_BUILDING_SMALL_CENTS', 1500),
+    revisionBuildingMedium: cents('STUDIO_REVISION_BUILDING_MEDIUM_CENTS', 2500),
+    revisionBuildingLarge: cents('STUDIO_REVISION_BUILDING_LARGE_CENTS', 4000),
+    // The most a free-finalize credit covers on one line: a bigger line is charged the rest
+    giftCapCents: cents('STUDIO_GIFT_CAP_CENTS', 2900),
     topupCents: cents('STUDIO_TOPUP_CENTS', 500),
     topupPrompts: cents('STUDIO_TOPUP_PROMPTS', 10),
   }

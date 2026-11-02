@@ -7,6 +7,7 @@ for an emote view) and saves nothing. A finalize job builds
 paid packages from Virvi's copies of the paid files (finalize.py) and saves nothing either.
 """
 import copy
+import json
 import mimetypes
 import os
 import re
@@ -22,6 +23,7 @@ from typing import Callable, Mapping
 from . import render as renderer
 from . import scope
 from .agent import Usage, run_agent, then
+from . import scene
 from .api import Api, ApiError
 from .config import AGENT_USER, DESIGN, skills_sha
 from .finalize import Tools, finalize_job
@@ -32,6 +34,7 @@ from .workspace import load_state, pack, prompt_with_context, save_state, state_
 IDLE_EXIT_SEC = 600
 POLL_SEC = 2.0
 DEFAULT_LIMITS = {'timeoutSec': 1500, 'maxTurns': 80, 'costCeilingUsd': 3.0}
+TOUR_WATCHDOG_SEC = 900  # a walk-through is up to 480 frames: more than a spin's 36
 # Sent to a Grok run that changed a piece without opening a single render (the reply goes to the user as usual)
 LOOK_AGAIN = ('You changed a piece without looking at it. Run `studio-preview out/<category>` for each piece you '
               'changed and read every PNG it prints with read_file to see it. Fix whatever looks wrong: shape, size, '
@@ -156,9 +159,9 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
             _phase(client, job_id, 'rendering')
             for p in changed:
                 counts, problem = {}, None
-                for view in _prompt_views(kind):
+                for view in _prompt_views(kind, p):
                     count, problem = _render_and_upload(client, job_id, p, view, render_fn)
-                    if problem and view['mode'] == 'orbit':
+                    if problem and view['mode'] in ('orbit', 'scene-orbit'):
                         # Inspect is extra: the piece still saves, and Inspect asks for its ring when opened
                         print(f'[worker] {p.category}: Inspect ring not rendered: {problem[-300:]}', file=sys.stderr)
                         problem = None
@@ -208,9 +211,13 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
         result['outcome'] = 'ok' if uploaded else 'no_change'
 
 
-def _prompt_views(kind: str) -> list[dict]:
+def _prompt_views(kind: str, piece: Piece | None = None) -> list[dict]:
     """What a prompt renders for each changed piece: the on-avatar spin, and for a wearable the Inspect ring (the rest
-    of the sphere is a render job Virvi queues behind it)."""
+    of the sphere is a render job Virvi queues behind it). A scene piece: the Inspect ring, after the Scale turn for
+    furniture; a building's walk-through is a set render Virvi queues."""
+    if kind == 'scene':
+        ring = {'mode': 'scene-orbit', 'ring': True}
+        return [ring] if piece is not None and piece.meta.get('kind') == 'building' else [{'mode': 'scale'}, ring]
     if kind == 'emote':
         return [{'bodyShape': 'male', 'outfit': 'default', 'emote': None, 'mode': 'emote'}]
     return [{'bodyShape': 'male', 'outfit': 'default', 'emote': None, 'mode': 'spin'},
@@ -256,6 +263,9 @@ def _render_job(job, client, design, render_fn, result):
         if error:
             result['error'] = error
             return
+        if spec.get('set') and spec.get('tour'):
+            _tour_render(job, client, pieces, render_fn, result)
+            return
         if spec.get('set'):
             _set_render(job, client, pieces, spec, render_fn, result)
             return
@@ -266,7 +276,9 @@ def _render_job(job, client, design, render_fn, result):
             return
         view = {'bodyShape': spec.get('bodyShape') or 'male', 'outfit': spec.get('outfit') or 'default',
                 'emote': spec.get('emote'), 'mode': 'emote' if kind == 'emote' else 'spin'}
-        if spec.get('mode') == 'orbit' and kind != 'emote':
+        if kind == 'scene':
+            view = {'mode': 'scene-orbit', 'ring': bool(spec.get('ring'))} if spec.get('mode') == 'orbit' else {'mode': 'scale'}
+        elif spec.get('mode') == 'orbit' and kind != 'emote':
             view = {**view, 'outfit': 'default', 'emote': None, 'mode': 'orbit', 'ring': bool(spec.get('ring'))}
         _phase(client, job['jobId'], 'rendering')
         problems = []
@@ -276,6 +288,37 @@ def _render_job(job, client, design, render_fn, result):
             if problem:
                 problems.append(f'{category}: {problem}')
     result.update(outcome='error' if problems else 'ok', error='; '.join(problems) or None)
+
+
+def _tour_render(job, client, pieces, render_fn, result):
+    """A building's walk-through with its furniture placed from layout.json: renders/set/tour/."""
+    building = next((p for p in pieces if p.category == 'building'), None)
+    if building is None:
+        result['error'] = 'a walk-through needs the building (out/building/)'
+        return
+    extras = {e.name: e for e in building.extras}
+    if 'route.json' not in extras:
+        result['error'] = 'out/building/route.json is missing: there is no walk-through to follow'
+        return
+    placed, warnings = scene.layout_items(extras['layout.json'], {p.category: p for p in pieces}) \
+        if 'layout.json' in extras else ([], [])
+    worn = [{'category': 'building', 'glbs': glbs_by_shape(building), 'meta': building.meta, 'at': None}]
+    worn += [{'category': i['piece'].category, 'glbs': glbs_by_shape(i['piece']), 'meta': i['piece'].meta,
+              'at': {'x': i['x'], 'z': i['z'], 'yaw': i['yaw']}} for i in placed]
+    from . import scene_render
+    place = [(next(iter(w['glbs'].values())), w['at']['x'], w['at']['z'], w['at']['yaw']) for w in worn[1:]]
+    path = scene_render.tour_path(building.glbs[0], json.loads(extras['route.json'].read_text()), place)
+    _phase(client, job['jobId'], 'rendering')
+    with tempfile.TemporaryDirectory() as tmp:
+        r = render_fn(worn, {'mode': 'tour', 'path': path}, Path(tmp) / 'tour', watchdog_sec=TOUR_WATCHDOG_SEC)
+        if not r['ok']:
+            result['error'] = r['error']
+            return
+        for i, frame in enumerate(r['frames']):
+            client.put_file(job['jobId'], f'renders/set/tour/{i:03d}{frame.suffix}', frame.read_bytes(),
+                            mimetypes.guess_type(frame.name)[0] or 'image/webp')
+    result.update(outcome='ok', set={'viewKey': 'tour', 'frames': len(r['frames']), 'fps': r.get('fps')},
+                  **({'warnings': warnings} if warnings else {}))
 
 
 def _set_render(job, client, pieces, spec, render_fn, result):
@@ -299,6 +342,10 @@ def _set_render(job, client, pieces, spec, render_fn, result):
 
 
 def view_key(view: dict) -> str:
+    if view['mode'] == 'scene-orbit':
+        return 'orbit-scene'
+    if view['mode'] in ('scale', 'tour'):
+        return view['mode']
     if view['mode'] == 'orbit':
         return f"orbit-{view['bodyShape']}"
     return '-'.join([view['mode'], view['bodyShape'], view['outfit']] + ([view['emote']] if view.get('emote') else []))
@@ -311,6 +358,15 @@ def _render_and_upload(client, job_id, piece: Piece, view, render_fn) -> tuple[d
         r = render_fn([{'category': piece.category, 'glbs': glbs_by_shape(piece), 'meta': piece.meta}], view,
                       Path(tmp) / key)
         if not r['ok']:
+            blank = r.get('blankFrame')
+            if blank and Path(blank['path']).is_file():
+                # kept privately (only render frames reach the browser) so a blank view can be looked into
+                path = f"checks/{piece.category}/{key}-blank-{blank['index']:03d}.png"
+                try:
+                    client.put_file(job_id, path, Path(blank['path']).read_bytes(), 'image/png')
+                except ApiError as e:  # a clue for later, never worth failing the prompt over
+                    return {key: 0}, f"{r['error']} (frame {blank['index']}, not kept: {e})"
+                return {key: 0}, f"{r['error']} (frame {blank['index']}, kept as {path})"
             return {key: 0}, r['error']
         for i, frame in enumerate(r['frames']):
             client.put_file(job_id, f'renders/{piece.category}/{key}/{i:03d}{frame.suffix}', frame.read_bytes(),
@@ -322,14 +378,16 @@ def _upload_piece(client, job_id, piece: Piece) -> None:
     for f in piece.glbs + [piece.glbs[0].parent / 'piece.json']:
         client.put_file(job_id, f'pieces/{piece.category}/{f.name}', f.read_bytes(),
                         'model/gltf-binary' if f.suffix == '.glb' else 'application/json')
+    for e in piece.extras:
+        client.put_file(job_id, f'pieces/{piece.category}/{e.name}', e.read_bytes(), 'application/json')
     client.put_file(job_id, f'checks/{piece.category}.txt', piece.checker.get('report', '').encode(), 'text/plain')
 
 
 def _piece_result(p: Piece, renders: dict | None, uploaded: bool) -> dict:
-    files = [f'pieces/{p.category}/{f.name}' for f in p.glbs] + [f'pieces/{p.category}/piece.json',
-                                                                 f'checks/{p.category}.txt']
+    files = [f'pieces/{p.category}/{f.name}' for f in p.glbs + p.extras] + [f'pieces/{p.category}/piece.json',
+                                                                            f'checks/{p.category}.txt']
     return {'category': p.category, 'changed': p.changed, 'changeKind': p.meta.get('changeKind'), 'meta': p.meta,
-            'checker': {k: p.checker.get(k) for k in ('pass', 'failures', 'warnings')},
+            'checker': {k: p.checker.get(k) for k in ('pass', 'failures', 'warnings', 'triangles')},
             'files': files if uploaded else [], 'renders': renders or {}}
 
 

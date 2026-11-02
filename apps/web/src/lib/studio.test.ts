@@ -121,7 +121,7 @@ describe('designBadge', () => {
   })
   it('names each state', () => {
     expect(designBadge(d({}))).toEqual({ label: 'Draft', tone: 'violet' })
-    expect(designBadge(d({ status: 'building' }))).toEqual({ label: 'Building', tone: 'info' })
+    expect(designBadge(d({ status: 'building' }))).toEqual({ label: 'Agent working', tone: 'info' })
     expect(designBadge(d({ finalizedAt: NOW.toISOString() }))).toEqual({ label: 'Finalized', tone: 'success' })
     expect(designBadge(d({ archivedAt: NOW.toISOString() }))).toEqual({ label: 'Archived', tone: 'neutral' })
   })
@@ -540,5 +540,11 @@ describe('giftCodeStatus', () => {
     expect(giftCodeStatus({ ...c, expiresAt: at(-MIN) }, NOW)).toBe('Expired')
     expect(giftCodeStatus({ ...c, expiresAt: at(MIN) }, NOW)).toBe('Active')
     expect(giftCodeStatus({ ...c, disabledAt: at(-MIN), uses: 2 }, NOW)).toBe('Off')
+  })
+})
+
+describe('the agent at work', () => {
+  it('says the agent is working, never "Building" (a building design would read it as its kind)', () => {
+    expect(progressFor([{ type: 'phase', jobId: 'j1', phase: 'building' }], 'j1')).toBe('Agent working…')
   })
 })

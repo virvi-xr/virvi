@@ -29,6 +29,7 @@ LOOK_VIEWS = ('front', 'right', 'back', 'left')
 PROMO_FRAMES, PROMO_SIZE, PROMO_FPS = 72, 720, 24
 RENDER_SIZE = 1024
 REPORT_LINES = 200
+TOUR_WATCHDOG_SEC = 900  # a walk-through is up to 480 frames
 SAFE_NAME = re.compile(r'^[A-Za-z0-9._-]{1,120}$')
 # package_item.py's own limits (the Builder's)
 BUILDER_NAME_MAX, BUILDER_DESCRIPTION_MAX = 32, 64
@@ -76,7 +77,12 @@ def finalize_job(job: dict, client, render_fn, tools: Tools, result: dict, stage
             summary, zipped = _package(job, piece, kind, spec.get('designName') or '', client, render_fn, tools, work)
             path = f'final/{category}/package.zip'
             client.put_file(job['jobId'], path, zipped.read_bytes(), 'application/zip')
-            result['pieces'].append({'category': category, 'files': [path], 'finalize': summary})
+            files = [path]
+            if kind == 'scene':  # Virvi puts it in the asset library beside the piece
+                thumb = f'final/{category}/thumbnail.png'
+                client.put_file(job['jobId'], thumb, (work / 'package' / 'thumbnail.png').read_bytes(), 'image/png')
+                files.append(thumb)
+            result['pieces'].append({'category': category, 'files': files, 'finalize': summary})
         except PieceFailed as e:
             problems.append(f'{category}: {e}')
         except ApiError as e:
@@ -91,10 +97,11 @@ def _phase(client, job_id):
         print(f'event not sent: {e}', file=sys.stderr)
 
 
-def _inputs(job_id: str, piece: dict, client, into: Path) -> tuple[list[Path], dict, str]:
-    """The paid revision's GLBs, piece.json and checker report, downloaded into `into`."""
+def _inputs(job_id: str, piece: dict, client, into: Path) -> tuple[list[Path], dict, str, list[Path]]:
+    """The paid revision's GLBs, piece.json, checker report and a scene piece's other JSON (route, layout, seats),
+    downloaded into `into`."""
     category = piece['category']
-    glbs, meta, report = [], None, ''
+    glbs, meta, report, extras = [], None, '', []
     for f in piece.get('files') or []:
         name = f.rsplit('/', 1)[-1]
         if not SAFE_NAME.match(name):
@@ -113,11 +120,14 @@ def _inputs(job_id: str, piece: dict, client, into: Path) -> tuple[list[Path], d
                 raise PieceFailed('piece.json is not JSON') from None
         elif f == f'checks/{category}.txt':
             report = data.decode(errors='replace')
+        elif f.startswith(f'pieces/{category}/') and name.endswith('.json'):
+            (into / name).write_bytes(data)
+            extras.append(into / name)
     if not glbs:
         raise PieceFailed('no GLB among the inputs')
     if not isinstance(meta, dict):
         raise PieceFailed('no piece.json among the inputs')
-    return sorted(glbs), meta, report
+    return sorted(glbs), meta, report, sorted(extras)
 
 
 def _skill(path: str) -> Path:
@@ -151,7 +161,9 @@ def _clip(text: str) -> str:
 def _package(job, piece, kind, design_name, client, render_fn, tools: Tools, work: Path):
     inputs = work / 'in'
     inputs.mkdir(exist_ok=True)
-    glbs, meta, checker_report = _inputs(job['jobId'], piece, client, inputs)
+    glbs, meta, checker_report, extras = _inputs(job['jobId'], piece, client, inputs)
+    if kind == 'scene':
+        return _package_scene(piece, glbs[0], meta, checker_report, extras, render_fn, tools, work)
     category, emote = piece['category'], kind == 'emote'
     name = str(meta.get('name') or piece.get('name') or category)
     hides, replaces, tags = _as_list(meta.get('hides')), _as_list(meta.get('replaces')), _as_list(meta.get('tags'))
@@ -268,6 +280,60 @@ def _package(job, piece, kind, design_name, client, render_fn, tools: Tools, wor
             if f.is_file():
                 z.write(f, f.relative_to(out).as_posix())
     return summary, zipped
+
+
+def _package_scene(piece, glb, meta, checker_report, extras, render_fn, tools: Tools, work: Path):
+    """A building's or furniture piece's package: the GLB, piece.json, its route/layout/seat JSON, a thumbnail, four
+    views beside the mannequin, a building's walk-through as tour.mp4, and the checks in REPORT.md."""
+    category, name = piece['category'], str(meta.get('name') or piece.get('name') or piece['category'])
+    out = work / 'package'
+    out.mkdir(exist_ok=True)
+    for f in [glb, *extras]:
+        shutil.copy(f, out / f.name)
+    (out / 'piece.json').write_text(json.dumps(meta, indent=1))
+    large = work / 'thumbnail-large.png'
+    ok, log = tools.blender(['-b', '--factory-startup', '--python', THUMBNAIL_BLEND, '--', '--glb', glb, '--out', large,
+                             '--size', '1024'], 300)
+    if not ok or not large.exists():
+        raise PieceFailed(f'thumbnail failed: {log.strip()[-300:]}')
+    fit_square(Image.open(large).convert('RGBA')).save(out / 'thumbnail.png')
+    worn = [{'category': category, 'glbs': {'unisex': glb}, 'meta': meta, 'at': None}]
+    renders = out / 'renders'
+    renders.mkdir(exist_ok=True)
+    r = render_fn(worn, {'mode': 'scale', 'look': True}, work / 'look', size=RENDER_SIZE)
+    if not r['ok']:
+        raise PieceFailed(f"renders failed: {r['error']}")
+    for frame in r['frames']:
+        shutil.copy(frame, renders / Path(frame).name)
+    route = next((e for e in extras if e.name == 'route.json'), None)
+    tour_note = ''
+    if meta.get('kind') == 'building' and route is not None:
+        # A nice extra: a paid building is packaged whether or not its walk-through clip can be made
+        try:
+            from . import scene_render
+            path = scene_render.tour_path(glb, json.loads(route.read_text()), [])
+            r = render_fn(worn, {'mode': 'tour', 'path': path}, work / 'tour', size=RENDER_SIZE // 2,
+                          watchdog_sec=TOUR_WATCHDOG_SEC)
+            if not r['ok']:
+                raise PieceFailed(f"render: {r['error']}")
+            tour = out / 'tour.mp4'
+            ok, log = tools.ffmpeg(['-y', '-loglevel', 'error', '-framerate', str(r.get('fps') or PROMO_FPS), '-i',
+                                    work / 'tour' / '%03d.webp', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags',
+                                    '+faststart', tour], 300)
+            if not ok or not tour.exists():
+                raise PieceFailed(f'clip: {log.strip()[-300:]}')
+        except (PieceFailed, ValueError, KeyError, TypeError, OSError) as e:
+            tour_note = (f'\n## Walk-through\n\nThe walk-through clip couldn\'t be made here ({str(e)[:200]}); watch it in the '
+                         'studio\'s Walk-through step.\n')
+    checks_ok = 'FAIL' not in [line.split()[0] for line in checker_report.splitlines() if line.startswith('  ') and line.split()]
+    (out / 'REPORT.md').write_text(f'# {name}: check report\n\nPiece: `{category}`\n\n## Checks\n\n```\n'
+                                   f'{_clip(checker_report) or "(no report)"}\n```\n{tour_note}')
+    zipped = work / 'package.zip'
+    with zipfile.ZipFile(zipped, 'w', zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(out.rglob('*')):
+            if f.is_file():
+                z.write(f, f.relative_to(out).as_posix())
+    return {'thumbnail': {'pass': True}, 'checks': {'pass': checks_ok}}, zipped
 
 
 RARITIES = ('common', 'uncommon', 'rare', 'epic', 'legendary', 'exotic', 'mythic', 'unique')

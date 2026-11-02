@@ -2,15 +2,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { CubeIcon, PaperclipIcon, XSmallIcon } from '@/components/icons'
-import { formatBytesShort, refusalMessage, uploadProblem, UPLOAD_ACCEPT, type StudioUpload } from '@/lib/studio'
+import { formatBytesShort, refusalMessage, uploadHint, uploadProblem, UPLOAD_ACCEPT, type StudioUpload } from '@/lib/studio'
 
-type Props = { designId: string; uploads: StudioUpload[]; disabled: boolean; dropped: File[] | null; onChanged: () => Promise<void> }
+type Props = { designId: string; kind: string; uploads: StudioUpload[]; disabled: boolean; dropped: File[] | null; onChanged: () => Promise<void> }
 
 /**
  * The files the agent can use (a logo for a shirt, a reference photo, a base mesh): attach, see, remove. Every prompt
  * gets all of them; the message says what to do with each.
  */
-export default function Uploads({ designId, uploads, disabled, dropped, onChanged }: Props) {
+export default function Uploads({ designId, kind, uploads, disabled, dropped, onChanged }: Props) {
   const api = useApi()
   const input = useRef<HTMLInputElement>(null)
   const [sending, setSending] = useState<string[]>([])
@@ -74,7 +74,7 @@ export default function Uploads({ designId, uploads, disabled, dropped, onChange
           className="flex items-center gap-1.5 rounded-md border border-gray-800 px-2 py-1 text-gray-300 hover:bg-white/[0.04] disabled:opacity-40">
           <PaperclipIcon size={14} /> Attach files
         </button>
-        <span>Images or 3D files for the agent. Say what each is for, like “put logo.png on the chest”.</span>
+        <span>{uploadHint(kind)}</span>
         <input ref={input} type="file" multiple accept={UPLOAD_ACCEPT} className="hidden"
           onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ''; if (files.length) add(files) }} />
       </div>

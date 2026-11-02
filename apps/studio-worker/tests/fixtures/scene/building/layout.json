@@ -1,0 +1,10 @@
+{
+ "furniture": [
+  {
+   "category": "furniture_chair",
+   "x": 3,
+   "z": -3,
+   "yaw": 0
+  }
+ ]
+}

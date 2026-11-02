@@ -1,10 +1,12 @@
-"""A wearable's thumbnail: the item alone, on a transparent background, the way the Builder wants it. Runs inside
-Blender (Cycles on the CPU: the worker has no GPU).
+"""A piece's thumbnail: the item alone, on a transparent background, the way the Builder wants it. Runs inside
+Blender (Cycles on the CPU: the worker has no GPU). A scene piece's *_collider meshes are invisible in Decentraland, so
+they're left out here too.
 
     blender -b --factory-startup --python thumbnail_blend.py -- --glb item.glb --out thumbnail.png [--size 256]
 """
 import argparse
 import math
+import re
 import sys
 
 import bpy
@@ -14,6 +16,7 @@ SAMPLES = 32
 MARGIN = 1.1  # the item fills the frame with a 10% margin
 YAW = math.radians(30)  # a 3/4 front view
 PITCH = math.radians(15)
+COLLIDER = re.compile(r'_collider(_(box|sphere|capsule))?(\.\d+)?$', re.IGNORECASE)
 
 
 def main(argv: list[str]) -> None:
@@ -26,11 +29,11 @@ def main(argv: list[str]) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=a.glb)
     scene = bpy.context.scene
-    meshes = [o for o in scene.objects if o.type == 'MESH']
+    meshes = [o for o in scene.objects if o.type == 'MESH' and not COLLIDER.search(o.name)]
     if not meshes:
         sys.exit(f'no meshes in {a.glb}')
     for o in scene.objects:
-        if o.type not in ('MESH',):
+        if o not in meshes:
             o.hide_render = True
 
     depsgraph = bpy.context.evaluated_depsgraph_get()

@@ -3,3 +3,4 @@ assets/
 runs/
 __pycache__/
 .pytest_cache/
+scene_page/vendor/

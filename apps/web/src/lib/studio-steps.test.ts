@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor,
-  type StudioDetail,
-} from './studio'
+import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, stageFor, uploadHint, dialogTotal, giftNote, checkedEmotes, lineNote } from './studio'
 
 const NOW = new Date('2026-11-01T12:00:00Z')
 const detail = (over: Partial<StudioDetail> = {}): StudioDetail => ({
@@ -100,5 +97,95 @@ describe('steps and emote checks', () => {
     expect(refusalMessage({ status: 409, body: { code: 'clipping_fix_limit', emote: 'own' } }, NOW).text)
       .toContain('the clipping in the emote twice')
     expect(refusalMessage({ status: 409, body: { code: 'not_seen' } }, NOW).text).toBe('Play that emote first, then report what you see.')
+  })
+})
+
+describe('scene designs', () => {
+  it('a building gets the walk-through, furniture the scale view, and neither gets avatar or emotes', () => {
+    expect(stepsFor('scene', ['building'])).toEqual(['design', 'inspect', 'tour', 'finalize'])
+    expect(stepsFor('scene', ['furniture_chair'])).toEqual(['design', 'inspect', 'scale', 'finalize'])
+    expect(stepsFor('scene', ['building', 'furniture_chair'])).toEqual(['design', 'inspect', 'tour', 'scale', 'finalize'])
+    expect(stepsFor('scene', [])).toEqual(['design', 'inspect', 'finalize'])
+    expect(stepsFor('wearable', ['hat'])).toEqual(['design', 'inspect', 'avatar', 'emotes', 'finalize'])
+    expect(stepsFor('emote', ['emote'])).toEqual(['design', 'avatar', 'emotes', 'finalize'])
+    expect(STEP_LABELS.tour).toBe('Walk-through')
+    expect(STEP_LABELS.scale).toBe('Scale')
+  })
+  it('a scene piece’s Design step shows the piece turning, as Inspect does: a building has no scale view', () => {
+    expect(stageFor('design', 'scene')).toBe('inspect')
+    expect(stageFor('scale', 'scene')).toBe('scale')
+    expect(stageFor('design', 'wearable')).toBe('design')
+    expect(stageFor('design', 'emote')).toBe('design')
+  })
+  it('the attach hint gives an example for the kind of design', () => {
+    expect(uploadHint('wearable')).toBe('Images or 3D files for the agent. Say what each is for, like “put logo.png on the chest”.')
+    expect(uploadHint('scene')).toBe('Images or 3D files for the agent. Say what each is for, like “put sign.png over the door”.')
+  })
+  it('scene pieces are named for people, and their views keyed as the server keys them', () => {
+    expect(pieceLabel('building')).toBe('Building')
+    expect(pieceLabel('furniture_round_table')).toBe('Round table')
+    expect(pieceLabel('furniture_door')).toBe('Door')
+    expect(orbitKeyFor('scene', 'male')).toBe('orbit-scene')
+    expect(orbitKeyFor('wearable', 'female')).toBe('orbit-female')
+    expect(viewKey('scene', { bodyShape: 'male', outfit: 'default', emote: null })).toBe('scale')
+    expect(setViewKey('scene', { bodyShape: 'male', outfit: 'default', emote: null })).toBe('tour')
+  })
+  it('a piece over its recommended triangles gets a warning, not a block', () => {
+    expect(triangleWarning('Neon Chair', { pass: true, failures: 0, warnings: 1, triangles: { count: 1200, limit: 800 } }))
+      .toBe('Neon Chair has 1,200 triangles, more than the 800 recommended. It still works in Decentraland, but a lighter piece leaves room for the rest of the scene.')
+    expect(triangleWarning('Neon Chair', { pass: true, failures: 0, warnings: 0, triangles: null })).toBeNull()
+    expect(triangleWarning('Neon Chair', null)).toBeNull()
+  })
+  it('the new design picker offers buildings and furniture', () => {
+    expect(KIND_CHOICES).toEqual([['wearable', 'Wearable'], ['emote', 'Emote'], ['scene', 'Building or furniture']])
+    expect(kindLabel('scene')).toBe('Building or furniture')
+  })
+})
+
+describe('scene finalize', () => {
+  it('says the pieces go into the asset library', () => {
+    expect(finalizeStrip(null, 'scene').unlocks).toMatch(/asset library/)
+  })
+})
+
+describe('the step a design opens on', () => {
+  it('is On avatar, or Inspect for a scene design, and a step the design has', () => {
+    expect(defaultStep('wearable')).toBe('avatar')
+    expect(defaultStep('emote')).toBe('avatar')
+    expect(defaultStep('scene')).toBe('inspect')
+    expect(shownStep('tour', 'scene', ['furniture_chair'])).toBe('inspect')  // no building, so no walk-through
+    expect(shownStep('tour', 'scene', ['building'])).toBe('tour')
+    expect(shownStep('emotes', 'wearable', ['hat'])).toBe('emotes')
+  })
+})
+
+describe('scene gifts and checks', () => {
+  const line = (over: Record<string, unknown>) => ({ category: 'building', revisionId: 'r1', revisionNumber: 1, pieceName: 'Kiosk',
+    priceKind: 'first', amountCents: 7900, waived: false, ...over }) as any
+  const quote = (lines: any[]) => ({ pieces: [], lines, totalCents: 0, blocked: [], giftsUsed: 0, reportsHeld: [], notes: [] }) as any
+  it('a gift takes $29 off a 4x4 building and covers a chair whole, as Stripe charges', () => {
+    expect(dialogTotal(quote([line({ gift: true, giftCents: 2900 })]), [])).toBe(5000)
+    expect(dialogTotal(quote([line({ amountCents: 900, gift: true, giftCents: 900 })]), [])).toBe(0)
+    expect(dialogTotal(quote([line({ amountCents: 2900, gift: true })]), [])).toBe(0)  // a wearable gift: the whole line
+    expect(giftNote(line({ gift: true, giftCents: 2900 }))).toBe('$29 off (gift code)')
+    expect(giftNote(line({ amountCents: 900, gift: true, giftCents: 900 }))).toBe('free (gift code)')
+    expect(giftNote(line({ amountCents: 2900, gift: true }))).toBe('free (gift code)')
+    expect(giftNote(line({}))).toBeNull()
+  })
+  it('a scene design has no emotes to check', () => {
+    expect(checkedEmotes('scene')).toEqual([])
+    expect(checkedEmotes('wearable')).toHaveLength(7)
+  })
+})
+
+describe('Virvi admins finalize free', () => {
+  const line = (over: Record<string, unknown>) => ({ category: 'hat', revisionId: 'r1', revisionNumber: 1, pieceName: 'Cap',
+    priceKind: 'first', amountCents: 2900, waived: false, ...over }) as any
+  const quote = (lines: any[]) => ({ pieces: [], lines, totalCents: 0, blocked: [], giftsUsed: 0, reportsHeld: [], notes: [] }) as any
+  it('costs nothing, says why, and the button says it is free', () => {
+    expect(dialogTotal(quote([line({ admin: true }), line({ category: 'feet', amountCents: 1900, admin: true })]), [])).toBe(0)
+    expect(lineNote(line({ admin: true }))).toBe('free (Virvi admin)')
+    expect(lineNote(line({ gift: true }))).toBe('free (gift code)')
+    expect(finalizeStrip(quote([line({ admin: true })]), 'wearable').button).toBe('Finalize · free (Virvi admin)')
   })
 })

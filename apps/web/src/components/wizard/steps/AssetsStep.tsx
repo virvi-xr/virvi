@@ -26,7 +26,6 @@ export function AssetsStep({ state, dispatch, catalog }: { state: WizardState; d
   const [searchError, setSearchError] = useState('')
   const [pendingTheme, setPendingTheme] = useState<string | null>(null)
   const budget = stateBudget(state)
-  const remaining = budget.triangles.limit !== null ? Math.max(budget.triangles.limit - budget.triangles.used, 0) : null
   const chip = catalog?.chips.find((c) => c.id === chipId) ?? null
 
   useEffect(() => {
@@ -38,13 +37,13 @@ export function AssetsStep({ state, dispatch, catalog }: { state: WizardState; d
     let stale = false
     const timer = setTimeout(() => {
       setSearching(true)
-      api.getAssets({ category: chip.categories.join(','), q: q.trim(), ...(remaining !== null ? { maxTriangles: String(remaining) } : {}), limit: '24' })
+      api.getAssets({ category: chip.categories.join(','), q: q.trim(), limit: '24' })
         .then((r) => { if (!stale) { setResults(r.assets.map(toWizardAsset).filter((a): a is WizardAsset => !!a)); setSearchError('') } })
         .catch(() => { if (!stale) setSearchError("Search didn't work just now. Try again.") })
         .finally(() => { if (!stale) setSearching(false) })
     }, SEARCH_DEBOUNCE_MS)
     return () => { stale = true; clearTimeout(timer) }
-  }, [chip?.id, q, remaining])
+  }, [chip?.id, q])
 
   const applyTheme = (id: string) => {
     const theme = catalog?.themes.find((t) => t.id === id)
@@ -126,6 +125,7 @@ export function AssetsStep({ state, dispatch, catalog }: { state: WizardState; d
           <p className="text-sm text-yellow-300">Left out {state.lastDropped} {state.lastDropped === 1 ? 'item' : 'items'} to fit this plot.</p>
         )}
         {(state.notice || budget.over) && <p className="text-sm text-yellow-300" role="alert">{state.notice ?? budget.over}</p>}
+        {!state.notice && !budget.over && budget.warning && <p className="text-sm text-yellow-300" role="status">{budget.warning}</p>}
         {state.items.length > 0 && (
           <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
             {state.items.map((i) => (

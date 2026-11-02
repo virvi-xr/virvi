@@ -5,7 +5,10 @@ export interface BudgetStatus {
   triangles: { used: number; limit: number | null }
   entities: { used: number; limit: number | null }
   bytes: { used: number; remaining: number | null }
+  /** What stops the scene: too many items or not enough World storage. */
   over: null | string
+  /** More triangles than Decentraland recommends: shown, never a stop (Decentraland doesn't refuse it). */
+  warning: null | string
 }
 
 const n = (v: number) => Math.round(v).toLocaleString('en-US')
@@ -32,9 +35,7 @@ export function budgetStatus(
   const remaining = storage ? storage.maxAllowedBytes - storage.usedBytes : null
 
   let over: string | null = null
-  if (budget && triUsed > budget.triangles) {
-    over = `This plot fits about ${n(budget.triangles)} triangles; that would make it ${n(triUsed)}`
-  } else if (budget && entities > budget.entities) {
+  if (budget && entities > budget.entities) {
     over = `This plot fits about ${n(budget.entities)} items; that would make it ${n(entities)}`
   } else if (remaining !== null && bytesUsed > remaining) {
     over = `Your World has about ${mb(Math.max(remaining, 0))} of storage left; that would make it ${mb(bytesUsed)}`
@@ -44,20 +45,14 @@ export function budgetStatus(
     entities: { used: entities, limit: budget?.entities ?? null },
     bytes: { used: bytesUsed, remaining: remaining === null ? null : remaining - bytesUsed },
     over,
+    warning: budget && triUsed > budget.triangles
+      ? `This scene has ${n(triUsed)} triangles, more than the ${n(budget.triangles)} Decentraland recommends for this plot. It still deploys, but it may run slowly for visitors.`
+      : null,
   }
 }
 
-/** Drops items from the end until the plot's triangle and entity limits hold, leaving room for the room set. */
+/** Drops items from the end until the plot's item limit holds, leaving room for the room set. Triangles never drop one. */
 export function fitToBudget(items: PlacedItem[], plot: Plot, room: RoomBudget | null = null): { items: PlacedItem[]; dropped: number } {
-  const budget = dclBudget(plotParcels(plot).length)
-  const reserved = room ? 1 : 0
-  const kept: PlacedItem[] = []
-  let tris = room?.triangles ?? 0
-  for (const it of items) {
-    const t = it.asset.triangleCount ?? 0
-    if (tris + t > budget.triangles || reserved + kept.length + 1 > budget.entities) break
-    kept.push(it)
-    tris += t
-  }
+  const kept = items.slice(0, Math.max(dclBudget(plotParcels(plot).length).entities - (room ? 1 : 0), 0))
   return { items: kept, dropped: items.length - kept.length }
 }

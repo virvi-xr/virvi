@@ -18,14 +18,15 @@ VERDICTS = ('design', 'off_topic', 'unsure')
 CATEGORIES = ('coding', 'writing', 'research', 'chat', 'other')
 
 SYSTEM = """You screen messages sent to a design studio whose AI agent builds Decentraland avatar wearables (hats,
-jackets, shoes, masks, skins and the like) and emotes (avatar animations) in Blender. The studio pays for every message,
+jackets, shoes, masks, skins and the like), emotes (avatar animations), and buildings and furniture for Decentraland
+scenes in Blender. The studio pays for every message,
 and only design work can lead to a sale, so you decide whether a message belongs here.
 
-- design: building, changing or fixing a wearable, skin or emote; answering the agent's questions; and questions about
+- design: building, changing or fixing a wearable, skin, emote, building or piece of furniture; answering the agent's questions; and questions about
   the design or getting it sold: rarity, names and descriptions, tags, hides and replaces, the Decentraland Builder,
   curation, how it looks in-world. A message that mixes design work with something else is design. So is small talk
   inside a design conversation: a greeting, thanks, "looks great", a yes or no to the agent.
-- off_topic: a message that asks for nothing that can lead to a wearable or emote: coding help, writing unrelated to
+- off_topic: a message that asks for nothing that can lead to a wearable, emote, building or furniture: coding help, writing unrelated to
   the listing, research, homework, general questions or chat, using the machine for something else. Pick the category
   that fits best: coding, writing, research, chat or other. For design or unsure, the category is none.
 - unsure: you can't tell. Prefer unsure over off_topic whenever a real designer could plausibly have sent it.
@@ -55,7 +56,8 @@ class Verdict:
 
 def request(words: str, kind: str, history: list[dict], upload_names: list[str]) -> dict:
     said = '\n'.join(f"{'User' if m.get('role') == 'user' else 'Agent'}: {m.get('text', '')}" for m in history[-HISTORY:])
-    content = (f'The design is a {kind}.\n\n<conversation>\n{said or "(none)"}\n</conversation>\n\n'
+    what = 'a building or furniture for a Decentraland scene' if kind == 'scene' else f'a {kind}'
+    content = (f'The design is {what}.\n\n<conversation>\n{said or "(none)"}\n</conversation>\n\n'
                f'<uploads>\n{", ".join(upload_names) or "(none)"}\n</uploads>\n\n<message>\n{words}\n</message>')
     return {'model': MODEL, 'max_tokens': 1024, 'system': SYSTEM, 'messages': [{'role': 'user', 'content': content}],
             'output_config': {'effort': 'low', 'format': {'type': 'json_schema', 'schema': SCHEMA}}}
