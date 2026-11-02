@@ -64,6 +64,10 @@ COPY assets/*.blend /opt/assets/
 RUN chmod -R a+rX /opt/assets
 
 COPY studio_worker /opt/studio_worker
+# The scene renderer's page, and the pinned Babylon.js it loads (checked against its SHA-256 at build)
+COPY scene_page /opt/scene_page
+COPY scripts/fetch_babylon.sh /opt/scripts/fetch_babylon.sh
+RUN bash /opt/scripts/fetch_babylon.sh
 ENV PYTHONPATH=/opt
 RUN printf '#!/bin/sh\nexec python3 -m studio_worker.render "$@"\n' > /usr/local/bin/studio-preview \
     && chmod 755 /usr/local/bin/studio-preview

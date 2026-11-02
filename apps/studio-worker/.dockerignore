@@ -6,3 +6,4 @@ tests/
 e2e/
 **/__pycache__/
 .pytest_cache/
+scene_page/vendor/

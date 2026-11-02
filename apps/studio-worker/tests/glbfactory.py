@@ -5,9 +5,9 @@ import zlib
 
 import numpy as np
 
-# 12 triangles, outward winding, unit cube corners indexed as bits (x, y, z)
-_BOX_FACES = [(0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6), (0, 1, 5), (0, 5, 4),
-              (2, 6, 7), (2, 7, 3), (0, 4, 6), (0, 6, 2), (1, 3, 7), (1, 7, 5)]
+# 12 triangles, counter-clockwise seen from outside (glTF front faces), corners indexed as bits (x, y, z)
+_BOX_FACES = [(a, c, b) for a, b, c in [(0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6), (0, 1, 5), (0, 5, 4),
+                                        (2, 6, 7), (2, 7, 3), (0, 4, 6), (0, 6, 2), (1, 3, 7), (1, 7, 5)]]
 
 
 def box(name, lo, hi, material=0, translation=None):
