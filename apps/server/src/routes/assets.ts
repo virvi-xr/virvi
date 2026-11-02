@@ -11,7 +11,10 @@
 
 import { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
-import { eq, ilike, and, or, sql, arrayContains, inArray } from 'drizzle-orm'
+import { eq, ilike, and, or, sql, arrayContains, inArray, isNull, like, notLike } from 'drizzle-orm'
+
+/** The `mine` filter's values: the caller's assets, only the Design Studio's, or only the rest. */
+const MINE = ['all', 'studio', 'uploads']
 import { db } from '../db/connection.js'
 import { assetLibraryItems, catalogPacks, roomSets } from '../db/schema.js'
 import { browsableAsset } from '../catalog/visibility.js'
@@ -52,6 +55,7 @@ export default async function assetRoutes(app: FastifyInstance) {
       style?: string
       venue?: string
       pack?: string
+      mine?: string
       maxTriangles?: string
       maxFileSize?: string
       limit?: string
@@ -67,6 +71,16 @@ export default async function assetRoutes(app: FastifyInstance) {
         ? or(eq(assetLibraryItems.isPublic, true), eq(assetLibraryItems.uploadedBy, caller.id))
         : eq(assetLibraryItems.isPublic, true),
     )
+
+    // Only the caller's own assets: `all`, `studio` (finalized Design Studio pieces) or `uploads` (everything else they
+    // added). Signed out, there is nothing of theirs to show.
+    if (query.mine) {
+      if (!MINE.includes(query.mine)) return reply.status(400).send({ error: 'mine must be all, studio or uploads' })
+      if (!caller) return reply.send({ assets: [], total: 0, limit: 0, offset: 0 })
+      conditions.push(eq(assetLibraryItems.uploadedBy, caller.id))
+      if (query.mine === 'studio') conditions.push(like(assetLibraryItems.sourceRef, 'studio:%'))
+      if (query.mine === 'uploads') conditions.push(or(isNull(assetLibraryItems.sourceRef), notLike(assetLibraryItems.sourceRef, 'studio:%')))
+    }
 
     if (query.q) {
       conditions.push(
