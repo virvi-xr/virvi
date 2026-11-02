@@ -4,7 +4,7 @@ Owner-run steps to turn Scene Import on in production. Nothing here is done by t
 creates something in a Fly, Cloudflare or Railway account. Until step 5 is finished the feature stays off and uploads
 answer 503 (`builds_unavailable`).
 
-Env var names and defaults are in `apps/server/.env.example` and the self-hosting docs
+Env var names and defaults are in the repository root's `.env.example` and the self-hosting docs
 (`apps/docs/src/content/docs/self-hosting/environment-variables.md`). The build image is described in
 `apps/scene-builder/README.md`.
 
@@ -50,22 +50,26 @@ fly machine run "registry.fly.io/virvi-scene-builds:$label" /opt/scene-builder/s
 fly logs --app virvi-scene-builds     # every check must pass; the script exits non-zero otherwise
 ```
 
-Then, on a machine from the same image, check as the `builder` user that Fly's Machines API socket is out of reach. This
-command must fail (connection refused, permission denied or no such file), never return a machine list:
+Then, on a machine from the same image, check as the `builder` user that Fly's Machines API socket is out of reach. The
+image has no `curl`, so use Node, which it does have:
 
 ```bash
 fly machine run "registry.fly.io/virvi-scene-builds:$label" sleep 600 --app virvi-scene-builds --region <region>
 fly ssh console --app virvi-scene-builds --machine <machine-id>
 # inside the machine:
-su builder -s /bin/sh -c 'curl --unix-socket /.fly/api http://flaps/v1/apps/virvi-scene-builds/machines'
+su builder -s /bin/sh -c "node -e \"require('http').get({socketPath:'/.fly/api',path:'/v1/apps'},r=>console.log(r.statusCode)).on('error',e=>console.log(e.code))\""
 ```
+
+It passes when it prints an error code: `ENOENT` (no socket), `EACCES` (permission denied) or `ECONNREFUSED`. Any
+number (an HTTP status such as `200` or `401`) means the socket answered, and it fails. `smoke.sh` above also probes
+`/.fly`, so this is the second look, not the only one.
 
 Also confirm that locking `/.fly` does not break the machine: it still starts, `fly machine status <machine-id>` reports
 it healthy, and a one-shot machine still exits and is destroyed normally (the smoke run above, with `--rm`, shows this).
 Clean up with `fly machine destroy <machine-id> --force`.
 
-Builds stay `SCENE_BUILD_RUNNER=off` until all of this passes. If the `curl` returns machines, or `/.fly` locking stops the
-machine from running, stop here and do not go on.
+Builds stay `SCENE_BUILD_RUNNER=off` until all of this passes. If the check prints a status code, or `/.fly` locking stops
+the machine from running, stop here and do not go on.
 
 ## 4. Private R2 bucket
 
@@ -84,6 +88,14 @@ or `=` in the secret.
 
 ## 5. Server
 
+**Set `SCENE_IMPORT_S3_URI` before, or together with, deploying the Scene Import code.** From that code on, every World
+deploy (the wizard and the HUD too, not just imports) keeps its files in that bucket, and every "Download what went
+live" reads them from it. Without the bucket each World deploy logs "could not keep deployed files" and downloads fail.
+
+`PUBLIC_URL` must be the server's public `https` address on port 443, reachable from Fly machines: the build box's proxy
+allows `CONNECT` to port 443 only, and the host it may reach (`VIRVI_API_HOST`) is taken from `PUBLIC_URL`. Nothing in
+front of the API (a Cloudflare bot challenge, a WAF rule) may challenge `/api/imports/build/*`, or every build fails.
+
 Set the variables on the Railway service `virvi-server`, leaving the runner off:
 
 ```bash
@@ -94,6 +106,12 @@ railway variables --service virvi-server \
   --set "SCENE_BUILD_FLY_TOKEN=<token from step 1>" \
   --set "SCENE_BUILD_RUNNER=off"
 ```
+
+Check the boot log of that deploy for the schema change: `drizzle-kit push` must not print
+`drizzle-kit push failed, trying raw SQL fallback...`. If it does, the fallback still creates the `scene_imports` table,
+its enum and `dcl_world_destinations.pending_import_id` (look for `[virvi-server] scene_imports ensured`), but not the
+changed delete rules on existing tables (`scene_deployments.deployed_by`); fix the push before relying on account
+deletion.
 
 Once the deploy is healthy and step 3 has passed, turn builds on:
 
