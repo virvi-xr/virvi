@@ -103,10 +103,20 @@ def render(pieces: list[dict], view: dict, out: Path, frames: int = 36, size: in
     return result
 
 
-def is_blank(image: Image.Image, threshold: float = 4.0) -> bool:
-    """True when the frame is one flat colour: the renderer drew nothing."""
-    pixels = np.asarray(image.convert('RGB'), dtype=np.float32).reshape(-1, 3)
-    return float(pixels.std(axis=0).max()) < threshold  # per channel: one flat colour differs between channels
+# A pixel is drawn when a channel is this far from the frame's background colour, and a frame with fewer drawn pixels
+# than this share is blank. An empty frame has none; a pale beard alone on the pale Inspect background has ~5%.
+DRAWN_LEVELS = 8
+DRAWN_SHARE = 0.001
+
+
+def is_blank(image: Image.Image) -> bool:
+    """True when the renderer drew nothing: next to no pixel stands out from the background (the median colour). A
+    small or pale item still counts, where a frame's overall colour spread would call it blank."""
+    if image.mode in ('RGBA', 'LA', 'P'):
+        image = Image.alpha_composite(Image.new('RGBA', image.size, (0, 0, 0, 255)), image.convert('RGBA'))
+    pixels = np.asarray(image.convert('RGB'), dtype=np.int16).reshape(-1, 3)
+    drawn = np.abs(pixels - np.median(pixels, axis=0)).max(axis=1) > DRAWN_LEVELS
+    return float(drawn.mean()) < DRAWN_SHARE
 
 
 def chrome_available() -> bool:
