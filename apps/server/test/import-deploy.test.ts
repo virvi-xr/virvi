@@ -524,6 +524,58 @@ describe('deploying an imported build', () => {
     expect((await destByWorld())!.pendingImportId).toBeNull()
   })
 
+  it('an automatic deploy claims the import first: deploying, not deployable, and an upload refused, before the World is asked (Ruling R24)', async () => {
+    const { scene } = await createScene(user, 'Cafe')
+    await grantedDest(scene.id)
+    const imp = await built({ sceneId: scene.id })
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let asked!: () => void
+    const reached = new Promise<void>((r) => { asked = r })
+    const real = worlds.getDeployers.bind(worlds)
+    worlds.getDeployers = async (world: string) => { asked(); await held; return real(world) }
+
+    const running = deployImport(imp.id)
+    await reached
+    const v = await view(imp.id)
+    expect(v).toMatchObject({ status: 'deploying', canDeploy: false, deploymentId: null })
+    const click = await post(`/api/imports/${imp.id}/deploy`)
+    expect([click.statusCode, click.json().error]).toEqual([409, 'not_deployable'])
+    expect(await db.select().from(sceneDeployments)).toHaveLength(0)
+    await expect(createImport({ userId: user.id, world: WORLD, kind: 'sdk7', scene: { id: scene.id } })).rejects.toMatchObject({ code: 'import_in_progress' })
+
+    release()
+    await running
+    const row = await importRow(imp.id)
+    await whenSettled(row.deploymentId!)
+    expect((await importRow(imp.id)).status).toBe('deployed')
+    expect(worlds.deployed).toHaveLength(1)
+  })
+
+  it('an automatic deploy that fails before the World accepts goes from deploying back to built', async () => {
+    const { scene } = await createScene(user, 'Cafe')
+    await grantedDest(scene.id)
+    const imp = await built({ sceneId: scene.id })
+    let seen: string | undefined
+    const real = worlds.getDeployers.bind(worlds)
+    worlds.getDeployers = async (world: string) => {
+      seen = (await importRow(imp.id)).status
+      worlds.down = true
+      try { return await real(world) } finally { worlds.down = false }
+    }
+    await expect(deployImport(imp.id)).rejects.toMatchObject({ code: 'world_unreachable' })
+    expect(seen).toBe('deploying')
+    expect(await importRow(imp.id)).toMatchObject({ status: 'built', errorCode: 'world_unreachable', deploymentId: null })
+    expect((await view(imp.id)).canDeploy).toBe(true)
+    expect((await destByWorld())!.pendingImportId).toBeNull()
+
+    // A build that can't work still fails the import
+    await store.deletePrefix(`imports/${imp.id}/built/`)
+    worlds.getDeployers = real
+    await expect(deployImport(imp.id)).rejects.toMatchObject({ code: 'import_files_missing' })
+    expect(await importRow(imp.id)).toMatchObject({ status: 'failed', errorCode: 'import_files_missing' })
+  })
+
   it("a World that doesn't answer puts the import back to built (route), and missing built files fail it", async () => {
     const imp = await built()
     worlds.down = true

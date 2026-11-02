@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { unzipSync } from 'fflate'
-import { scenePathMap, zipSceneFiles } from './import-zip'
+import { SCENE_IMPORT_MAX_FILES, SCENE_IMPORT_MAX_UNZIPPED_BYTES } from '@virvixr/shared'
+import { folderTooBig, scenePathMap, zipSceneFiles, zipSceneFilesAsync } from './import-zip'
 
 const bytes = (s: string) => new TextEncoder().encode(s)
 const file = (path: string, text = path) => ({ path, bytes: bytes(text) })
@@ -42,5 +43,27 @@ describe('zipSceneFiles', () => {
   it('scenePathMap names what to read, without the dropped files', () => {
     const map = scenePathMap(['s/scene.json', 's/node_modules/a.js', 's/bin/index.js', 's/src/index.ts'])
     expect([...map.entries()]).toEqual([['s/scene.json', 'scene.json'], ['s/src/index.ts', 'src/index.ts']])
+  })
+
+  it('zipSceneFilesAsync gives the same files without blocking, storing already-compressed ones as they are', async () => {
+    const zip = await zipSceneFilesAsync([file('s/scene.json', '{"a":1}'), file('s/models/tree.glb', 'glb bytes'), file('s/node_modules/x.js')])
+    const out = unzipSync(zip)
+    expect(Object.keys(out).sort()).toEqual(['models/tree.glb', 'scene.json'])
+    expect(new TextDecoder().decode(out['models/tree.glb'])).toBe('glb bytes')
+  })
+})
+
+describe('folderTooBig', () => {
+  const sized = (n: number, size: number) => Array.from({ length: n }, () => ({ size }))
+
+  it('refuses more files, or more bytes, than an import takes, before anything is read', () => {
+    expect(folderTooBig(sized(SCENE_IMPORT_MAX_FILES, 1))).toBeNull()
+    expect(folderTooBig(sized(SCENE_IMPORT_MAX_FILES + 1, 1))).toBe(
+      `The scene has ${SCENE_IMPORT_MAX_FILES + 1} files, over the ${SCENE_IMPORT_MAX_FILES} an import takes. Remove the ones it doesn't use, then try again.`,
+    )
+    expect(folderTooBig([{ size: SCENE_IMPORT_MAX_UNZIPPED_BYTES }])).toBeNull()
+    expect(folderTooBig([{ size: SCENE_IMPORT_MAX_UNZIPPED_BYTES }, { size: 1 }])).toBe(
+      "The scene's files add up to more than the 300 MB an import takes. Remove large files it doesn't use, then try again.",
+    )
   })
 })

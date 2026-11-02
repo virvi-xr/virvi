@@ -122,9 +122,11 @@ export function importLines(
   const at = phase === 'failed'
     ? (failed && !failed.deploymentId && (!failed.errorCode || BUILD_CODES.has(failed.errorCode)) ? 1 : 2)
     : { uploading: 0, building: 1, ready: 2, sign: 2, deploying: 2, live: 4 }[phase]
+  // A replaced import stopped at the deploy without failing there
+  const replaced = phase === 'failed' && failed?.errorCode === 'superseded'
   return labels.map((label, i) => ({
     label,
-    state: i < at ? 'done' : i === at ? (phase === 'failed' ? 'failed' : 'active') : 'todo',
+    state: i < at ? 'done' : i === at ? (replaced ? 'todo' : phase === 'failed' ? 'failed' : 'active') : 'todo',
   }))
 }
 

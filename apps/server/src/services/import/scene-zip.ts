@@ -1,4 +1,5 @@
 import { unzipSync } from 'fflate'
+import { SCENE_IMPORT_MAX_FILES, SCENE_IMPORT_MAX_UNZIPPED_BYTES } from '@virvixr/shared'
 
 export class ImportError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -16,8 +17,8 @@ export interface SceneFolder {
     | { kind: 'parcels'; parcels: string[]; base: string }
 }
 
-const MAX_FILES = 2000
-const MAX_UNZIPPED_BYTES = 300 * 1024 * 1024
+const MAX_FILES = SCENE_IMPORT_MAX_FILES
+const MAX_UNZIPPED_BYTES = SCENE_IMPORT_MAX_UNZIPPED_BYTES
 const DROPPED_DIRS = new Set(['__MACOSX', 'node_modules', 'bin', '.git'])
 
 /** Normalised path segments, or throws unsafe_path. Backslashes count as separators. */

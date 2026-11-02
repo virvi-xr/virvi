@@ -15,7 +15,7 @@
  * whatever is live, so the changed-outside check is skipped, and its files are checked by `assertImportFits`. The
  * deployment is linked to the import when it is created, and the import settles with it (deployed or failed).
  */
-import { and, eq, inArray, lt, sql, TransactionRollbackError } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, or, sql, TransactionRollbackError } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, dclBudget, parseParcel } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
@@ -494,7 +494,11 @@ export function whenSettled(deploymentId: string): Promise<void> {
 async function linkImport(tx: Pick<typeof db, 'update'>, importId: string, deploymentId: string, status: 'deploying' | 'awaiting_signature') {
   const linked = await tx.update(sceneImports)
     .set({ status, deploymentId, errorCode: null, errorMessage: null, updatedAt: new Date() })
-    .where(and(eq(sceneImports.id, importId), inArray(sceneImports.status, ['built', 'awaiting_signature'])))
+    .where(and(
+      eq(sceneImports.id, importId),
+      // or claimed by the automatic deploy (Ruling R24): deploying, nothing linked yet
+      or(inArray(sceneImports.status, ['built', 'awaiting_signature']), and(eq(sceneImports.status, 'deploying'), isNull(sceneImports.deploymentId))),
+    ))
     .returning({ id: sceneImports.id })
   if (!linked.length) throw new DeployerError(409, 'import_superseded', IMPORT_REPLACED)
 }

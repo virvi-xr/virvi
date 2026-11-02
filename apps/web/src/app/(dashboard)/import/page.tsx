@@ -9,7 +9,7 @@ import { useApi, type DclDestination } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { signErrorMessage } from '@/lib/deploy'
 import { importFailure, importLines, importPhase, importViewError, watchImport } from '@/lib/import'
-import { scenePathMap, zipSceneFiles } from '@/lib/import-zip'
+import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
 import { Badge, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { ProgressLines } from '@/components/wizard/ProgressLines'
@@ -60,6 +60,9 @@ function ImportContent() {
     return () => { cancelled = true }
   }, [token, id, watchKey])
 
+  // An action's error belongs to the step it was made in
+  useEffect(() => { setActionError(null) }, [view?.status])
+
   useEffect(() => {
     if (!id) setView(null)
     setPrepared(null)
@@ -101,9 +104,14 @@ function ImportContent() {
     }
     // node_modules/ and the like are never read, let alone uploaded
     const reading = files.filter((f) => kept.has(pathOf(f)))
+    const tooBig = folderTooBig(reading)
+    if (tooBig) {
+      setUploadError({ message: tooBig, importId: null })
+      return
+    }
     setSending({ step: 'zipping', files: reading.length })
     try {
-      const zip = zipSceneFiles(await Promise.all(reading.map(async (f) => ({ path: pathOf(f), bytes: new Uint8Array(await f.arrayBuffer()) }))))
+      const zip = await zipSceneFilesAsync(await Promise.all(reading.map(async (f) => ({ path: pathOf(f), bytes: new Uint8Array(await f.arrayBuffer()) }))))
       await upload(new Blob([zip as BlobPart], { type: 'application/zip' }))
     } catch {
       setSending(null)
@@ -134,6 +142,8 @@ function ImportContent() {
       setView(await api.getSceneImport(view.id).then((x) => x.import).catch(() => view))
       setWatchKey((k) => k + 1)
     } catch (err) {
+      // Without the World there is nothing to sign with: start again rather than show a payload that can't be used
+      setPrepared(null)
       setActionError(importFailure(err).message)
     }
     setBusy(null)
@@ -197,7 +207,7 @@ function ImportContent() {
 
           {phase === 'ready' && view && (
             <>
-              {view.errorMessage && <p className={errorBox} role="alert">{view.errorMessage}</p>}
+              {view.errorMessage && view.errorMessage !== actionError && <p className={errorBox} role="alert">{view.errorMessage}</p>}
               <p className="text-gray-400">
                 Your scene is built. Deploy it to {view.worldName}: unless Virvi deploys there for you, you sign once with the wallet that owns
                 the World. It goes live a minute or so later.

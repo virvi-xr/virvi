@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneImports } from '../../db/schema.js'
 import { getImportStore } from '../../storage/private-store.js'
@@ -60,8 +60,18 @@ async function worldOwner(userId: string, world: string): Promise<string> {
 }
 
 /**
+ * An import that may still be put back or failed: waiting for the creator, or claimed by the automatic deploy (Ruling
+ * R24: `deploying` with no deployment linked yet).
+ */
+const notYetDeploying = (id: string) => and(
+  eq(sceneImports.id, id),
+  or(inArray(sceneImports.status, ['built', 'awaiting_signature']), and(eq(sceneImports.status, 'deploying'), isNull(sceneImports.deploymentId))),
+)
+
+/**
  * A deploy that didn't start (the World accepted nothing) puts the import back to `built` with the error's sentence, so
- * the creator can try again (Ruling R19); a stored build that can't work (PERMANENT) fails it. The built files stay.
+ * the creator can try again (Ruling R19), also from the automatic deploy's claim (R24); a stored build that can't work
+ * (PERMANENT) fails it. The built files stay.
  */
 async function startFailed(importId: string, err: unknown): Promise<void> {
   const known = err instanceof ImportError || err instanceof DeployerError
@@ -71,8 +81,7 @@ async function startFailed(importId: string, err: unknown): Promise<void> {
   const set = PERMANENT.has(code)
     ? { status: 'failed' as const, errorCode: code, errorMessage: message, finishedAt: now, updatedAt: now }
     : { status: 'built' as const, errorCode: code, errorMessage: message, updatedAt: now }
-  await db.update(sceneImports).set(set)
-    .where(and(eq(sceneImports.id, importId), inArray(sceneImports.status, ['built', 'awaiting_signature'])))
+  await db.update(sceneImports).set(set).where(notYetDeploying(importId))
 }
 
 /**
@@ -83,9 +92,10 @@ async function startFailed(importId: string, err: unknown): Promise<void> {
  * startFailed). With `virviOnly`, an import Virvi can't deploy itself (it would need a signature) is left alone and
  * null is returned.
  */
-export async function startImportDeploy(row: SceneImportRow, by: string, opts: { virviOnly?: boolean } = {}): Promise<StartedImportDeploy | null> {
+export async function startImportDeploy(row: SceneImportRow, by: string, opts: { virviOnly?: boolean; claimed?: boolean } = {}): Promise<StartedImportDeploy | null> {
   const from = row.status
-  if (from !== 'built' && from !== 'awaiting_signature') throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
+  const startable = from === 'built' || from === 'awaiting_signature' || (opts.claimed && from === 'deploying' && !row.deploymentId)
+  if (!startable) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
   const existing = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, row.worldName) })
   const virvi = !!existing && granted(existing)
   if (opts.virviOnly && !(virvi && virviSigner())) return null
@@ -151,5 +161,17 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
 export async function deployImport(importId: string): Promise<void> {
   const row = await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, importId) })
   if (row?.status !== 'built') return
-  await startImportDeploy(row, row.userId, { virviOnly: true })
+  const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, row.worldName) })
+  if (!dest || !granted(dest) || !virviSigner()) return
+  // Ruling R24: claimed before anything slow, so the creator is never offered a Deploy this is already doing
+  const [claimed] = await db.update(sceneImports).set({ status: 'deploying', updatedAt: new Date() })
+    .where(and(eq(sceneImports.id, importId), eq(sceneImports.status, 'built'), isNull(sceneImports.deploymentId)))
+    .returning()
+  if (!claimed) return
+  const started = await startImportDeploy(claimed, claimed.userId, { virviOnly: true, claimed: true })
+  // Nothing started and nothing failed (the grant or the World moved on): the creator deploys it
+  if (!started) {
+    await db.update(sceneImports).set({ status: 'built', updatedAt: new Date() })
+      .where(and(eq(sceneImports.id, importId), eq(sceneImports.status, 'deploying'), isNull(sceneImports.deploymentId)))
+  }
 }

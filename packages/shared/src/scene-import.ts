@@ -26,3 +26,7 @@ export interface SceneImportView {
 
 /** The largest zip an import accepts. */
 export const SCENE_IMPORT_MAX_BYTES = 100 * 1024 * 1024
+/** The most files an imported scene may have, once node_modules/ and the like are left out. */
+export const SCENE_IMPORT_MAX_FILES = 2000
+/** The most an imported scene's kept files may add up to, unzipped. */
+export const SCENE_IMPORT_MAX_UNZIPPED_BYTES = 300 * 1024 * 1024
