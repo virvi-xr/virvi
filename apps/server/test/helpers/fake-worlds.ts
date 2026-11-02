@@ -39,4 +39,5 @@ export class FakeWorldsClient implements WorldsClient {
   async getWalletStats(address: string) { this.hit(); return this.stats.get(address.toLowerCase()) ?? null }
   async hasContent(hash: string) { this.hit(); return this.contents.has(hash) }
   async getContent(hash: string) { this.hit(); return this.contents.get(hash) ?? null }
+  async contentSize(hash: string) { this.hit(); return this.contents.get(hash)?.byteLength ?? null }
 }

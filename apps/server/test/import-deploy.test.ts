@@ -866,4 +866,31 @@ describe('deploying an imported build', () => {
       expect([r.statusCode, r.json().error]).toEqual([413, 'world_storage_full'])
     })
   })
+  it("a re-upload of a scene using more than half the World's storage is not refused: the scene it replaces is credited", async () => {
+    const { scene } = await createScene(user, 'Cafe')
+    await grantedDest(scene.id)
+    const big = new Uint8Array(60_000).fill(7)
+    const first = await built({ sceneId: scene.id, files: builtFiles({ 'models/big.glb': big }) })
+    await deployImport(first.id)
+    await whenSettled((await importRow(first.id)).deploymentId!)
+    const live = goLive()
+    // The Worlds server holds what went live, and counts it as used
+    const sent = worlds.deployed[0]
+    for (const c of live.content) worlds.contents.set(c.hash, sent.files.get(c.hash)!)
+    const liveBytes = live.content.reduce((n, c) => n + sent.files.get(c.hash)!.byteLength, 0)
+    worlds.stats.set(user.wallet!, { maxAllowedBytes: 100_000, usedBytes: liveBytes })
+
+    const again = await built({ sceneId: scene.id, files: builtFiles({ 'models/big.glb': big, 'bin/index.js': enc('owner code v2') }) })
+    await deployImport(again.id)
+    expect((await importRow(again.id)).errorCode).toBeNull()
+    await whenSettled((await importRow(again.id)).deploymentId!)
+    expect((await importRow(again.id)).status).toBe('deployed')
+
+    // Still refused when even the credit isn't enough
+    const now = goLive()
+    for (const c of now.content) worlds.contents.set(c.hash, worlds.deployed[1].files.get(c.hash) ?? worlds.contents.get(c.hash)!)
+    worlds.stats.set(user.wallet!, { maxAllowedBytes: 100_000, usedBytes: 100_000 })
+    const huge = await built({ sceneId: scene.id, files: builtFiles({ 'models/big.glb': big, 'models/more.glb': new Uint8Array(60_000).fill(8) }) })
+    await expect(deployImport(huge.id)).rejects.toMatchObject({ code: 'world_storage_full' })
+  })
 })

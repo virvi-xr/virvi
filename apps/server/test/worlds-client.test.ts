@@ -114,6 +114,18 @@ describe('HttpWorldsClient', () => {
     expect(await client.getContent('bafygone')).toBeNull()
   })
 
+  it('contentSize is the HEAD Content-Length of /contents/{hash}; 404 or no length gives null', async () => {
+    const fetchFn = stubFetch((url) => {
+      if (url === `${BASE}/contents/bafyok`) return new Response(null, { status: 200, headers: { 'content-length': '1234' } })
+      if (url === `${BASE}/contents/bafynolen`) return new Response(null, { status: 200 })
+      return new Response('', { status: 404 })
+    })
+    expect(await client.contentSize('bafyok')).toBe(1234)
+    expect(fetchFn.mock.calls[0][1]?.method).toBe('HEAD')
+    expect(await client.contentSize('bafygone')).toBeNull()
+    expect(await client.contentSize('bafynolen')).toBeNull()
+  })
+
   it("getContent refuses a file over Decentraland's 50 MB limit, by header or by what arrives", async () => {
     const big = DCL_MAX_FILE_BYTES + 1
     stubFetch(() => new Response('x', { status: 200, headers: { 'content-length': String(big) } }))

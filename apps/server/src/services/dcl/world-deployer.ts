@@ -243,8 +243,38 @@ export async function assertImportFits(dest: Destination): Promise<void> {
   } catch {
     return // can't tell: let the deploy try, Decentraland will say if it's full
   }
-  if (stats && bytes > stats.maxAllowedBytes - stats.usedBytes) {
-    throw new ImportError(413, 'world_storage_full', `Your scene needs ${mb(bytes)} MB of World storage but only ${mb(Math.max(0, stats.maxAllowedBytes - stats.usedBytes))} MB is left.`)
+  if (!stats || bytes <= stats.maxAllowedBytes - stats.usedBytes) return
+  const freed = await replacedBytes(dest)
+  if (freed === null) return // can't tell what the replaced scene frees: Decentraland will say if it's full
+  const left = stats.maxAllowedBytes - stats.usedBytes + freed
+  if (bytes > left) {
+    throw new ImportError(413, 'world_storage_full', `Your scene needs ${mb(bytes)} MB of World storage but only ${mb(Math.max(0, left))} MB is left.`)
+  }
+}
+
+/** HEAD requests in flight at once while sizing the live scene. */
+const SIZE_CONCURRENCY = 16
+
+/**
+ * The storage the live scene at the destination's base takes, which the import replaces: the sum of its content files'
+ * sizes (each hash once), 0 when nothing is live, null when the World or a size can't be read. Crediting all of it and
+ * counting every new file is the same sum as counting only new hashes and crediting only the live hashes not reused.
+ */
+async function replacedBytes(dest: Destination): Promise<number | null> {
+  const client = getWorldsClient()
+  try {
+    const live = (await client.getWorldEntities(dest.worldName)).find((e) => e.pointers.includes(dest.base))
+    if (!live) return 0
+    const hashes = [...new Set(live.content.map((c) => c.hash))]
+    let total = 0
+    for (let i = 0; i < hashes.length; i += SIZE_CONCURRENCY) {
+      const sizes = await Promise.all(hashes.slice(i, i + SIZE_CONCURRENCY).map((h) => client.contentSize(h)))
+      if (sizes.some((n) => n === null)) return null
+      total += sizes.reduce((n: number, s) => n + s!, 0)
+    }
+    return total
+  } catch {
+    return null
   }
 }
 

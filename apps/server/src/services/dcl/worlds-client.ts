@@ -6,7 +6,7 @@
  *                                      404 `{error, message}` when the World has no scene deployed.
  * - GET  /contents/{hash}           -> the content file; for an entity id, the entity JSON
  *                                      `{ version, type, pointers, timestamp, content: [{file, hash}], metadata }`.
- * - HEAD /contents/{hash}           -> 200 when the server holds the file, 404 when it doesn't.
+ * - HEAD /contents/{hash}           -> 200 (with Content-Length) when the server holds the file, 404 when it doesn't.
  * - POST /entities                  -> multipart/form-data: `entityId`, `authChain[i][type|payload|signature]`,
  *                                      then one file part per content hash. Same form dcl-catalyst-client's
  *                                      ContentClient.deploy builds; we send it ourselves so the 4xx body reaches
@@ -54,6 +54,8 @@ export interface WorldsClient {
   hasContent(hash: string): Promise<boolean>
   /** The content file `hash`, null when the server doesn't hold it. Not checked against the hash here. */
   getContent(hash: string): Promise<Uint8Array | null>
+  /** The size of content file `hash` (HEAD Content-Length), null when the server doesn't hold it or doesn't say. */
+  contentSize(hash: string): Promise<number | null>
 }
 
 const READ_TIMEOUT_MS = 10_000
@@ -161,6 +163,14 @@ export class HttpWorldsClient implements WorldsClient {
     if (res.status === 404) return false
     if (!res.ok) throw new WorldsError(res.status, '')
     return true
+  }
+
+  async contentSize(hash: string) {
+    const res = await request(`${this.base}/contents/${encodeURIComponent(hash)}`, { method: 'HEAD' }, READ_TIMEOUT_MS)
+    if (res.status === 404) return null
+    if (!res.ok) throw new WorldsError(res.status, '')
+    const len = res.headers.get('content-length')
+    return len !== null && /^\d+$/.test(len.trim()) ? Number(len) : null
   }
 
   async getContent(hash: string) {
