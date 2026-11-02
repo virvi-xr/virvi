@@ -8,6 +8,8 @@ import { getImportStore } from '../../storage/private-store.js'
  *
  * - `imports/<id>/` (source.zip, built/, build.log): deleted 30 days after the import ended (`deployed` or `failed`,
  *   superseded included, by `updated_at`). The row stays, with `files_deleted_at` set, so the page can say so.
+ * - `imports/<id>/` whose row is gone (the account or scene was deleted and deleting its files failed, or the server
+ *   stopped in between), once its newest object is over an hour old.
  * - `deployed/<hash>`: kept while a destination's live deployment, or any deployment from the last 30 days, lists the
  *   hash in its `assetBundle.content`; the rest go. A download of an older deploy then reads from the Worlds server.
  *   An object written within the last hour is never deleted, so a deploy keeping its files right now is safe.
@@ -36,6 +38,33 @@ export async function sweepImportFiles(now: Date): Promise<number> {
       n++
     } catch (err) {
       console.error(`[retention] deleting the files of import ${id} failed:`, err instanceof Error ? err.message : err)
+    }
+  }
+  return n
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Deletes `imports/<id>/` prefixes with no `scene_imports` row, once nothing under them is newer than an hour; how many. */
+export async function sweepOrphanedImports(now: Date): Promise<number> {
+  const store = getImportStore()
+  const newest = new Map<string, number>()
+  for (const o of await store.list('imports/')) {
+    const id = o.key.split('/')[1]
+    if (!id || !UUID.test(id)) continue
+    // Undated objects count as fresh: the prefix stays
+    const at = o.modifiedAt?.getTime() ?? Infinity
+    newest.set(id, Math.max(newest.get(id) ?? -Infinity, at))
+  }
+  const old = [...newest].filter(([, at]) => at < now.getTime() - MIN_OBJECT_AGE_MS).map(([id]) => id)
+  let n = 0
+  for (let i = 0; i < old.length; i += DELETE_BATCH) {
+    const batch = old.slice(i, i + DELETE_BATCH)
+    const rows = new Set((await db.select({ id: sceneImports.id }).from(sceneImports).where(inArray(sceneImports.id, batch))).map((r) => r.id))
+    for (const id of batch) {
+      if (rows.has(id)) continue
+      await store.deletePrefix(`imports/${id}/`)
+      n++
     }
   }
   return n
@@ -78,7 +107,7 @@ export async function sweepRetention(now: Date): Promise<{ imports: number; depl
   } catch {
     return { imports: 0, deployed: 0 } // no bucket configured: nothing is kept, so nothing to delete
   }
-  const imports = await sweepImportFiles(now)
+  const imports = (await sweepImportFiles(now)) + (await sweepOrphanedImports(now))
   const deployed = await sweepDeployedFiles(now)
   return { imports, deployed }
 }

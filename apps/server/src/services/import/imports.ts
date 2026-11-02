@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import type { SceneImportView } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
-import { dclWorldDestinations, sceneDeployments, sceneImports } from '../../db/schema.js'
+import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
 import { insertSceneWithDefaultPreset } from '../../scenes/create.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { DEPLOY_WINDOW_MS, DeployerError, markFailed } from '../dcl/world-deployer.js'
@@ -133,6 +133,35 @@ export async function createImport(input: {
     if (s.deploymentId) await markFailed(s.deploymentId, new DeployerError(409, 'superseded', SUPERSEDED_MESSAGE), 'awaiting_signature')
   }
   return row
+}
+
+/**
+ * The imports whose rows go when an account (its own imports, and every import on its scenes) or a scene is deleted.
+ * Read before the delete; their files are removed after it with deleteImportFiles.
+ */
+export async function importsGoingWith(by: { userId: string } | { sceneId: string }): Promise<string[]> {
+  const where = 'sceneId' in by
+    ? eq(sceneImports.sceneId, by.sceneId)
+    : or(eq(sceneImports.userId, by.userId), inArray(sceneImports.sceneId, db.select({ id: scenes.id }).from(scenes).where(eq(scenes.ownerId, by.userId))))
+  return (await db.select({ id: sceneImports.id }).from(sceneImports).where(where)).map((r) => r.id)
+}
+
+/**
+ * Deletes `imports/<id>/` (source, build, log) of each import: a creator's private code must not outlive their account
+ * or scene. Best effort: a failure is logged, and the retention sweep removes what's left once its row is gone.
+ */
+export async function deleteImportFiles(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  let store
+  try {
+    store = getImportStore()
+  } catch {
+    return // no bucket: nothing was kept
+  }
+  for (const id of ids) {
+    await store.deletePrefix(`imports/${id}/`)
+      .catch((err) => console.error(`[scene-import] deleting the files of import ${id} failed:`, err instanceof Error ? err.message : err))
+  }
 }
 
 /** Fails an import that never got its build going (storing the source or starting the build threw). */

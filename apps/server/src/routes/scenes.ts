@@ -20,6 +20,7 @@ import { dispatchPlatformCallbacks } from '../integrations/platform-hooks.js'
 import { serializeSingleElement } from '../services/scene-serializer.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
+import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
 import { commitRoomSet, deleteOrphanedRoomSets, insertRoomSet, prepareRoomSetForPlacement, RoomSetError, roomSetIdsByElement, sceneOwnedRoomSets, type PreparedRoomSet } from '../room-scan/sets.js'
@@ -336,8 +337,10 @@ export default async function sceneRoutes(app: FastifyInstance) {
     if (blocked) return reply.status(409).send(blocked)
     // The cascade only unlinks the scene's room sets, so they (and their GLBs) are removed here
     const roomSetsToDelete = await sceneOwnedRoomSets({ sceneId })
+    const imports = await importsGoingWith({ sceneId })
     await db.delete(scenes).where(eq(scenes.id, sceneId))
     await deleteOrphanedRoomSets(roomSetsToDelete)
+    await deleteImportFiles(imports)
     await publishSceneTouched(sceneId) // wake waiting Hyperfy feed polls so they get 404 now
     return reply.status(204).send()
   })
