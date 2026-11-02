@@ -58,6 +58,7 @@ workspace as an opaque blob, privately.
 | `pieces/<category>/<name>_male.glb`, `_female.glb` or `<name>.glb` | a piece's GLBs | paid downloads only |
 | `pieces/<category>/piece.json` | the piece's settings, as below | Virvi only |
 | `checks/<category>.txt` | the skills checker's full report | Virvi only |
+| `checks/<category>/<viewKey>-blank-<nnn>.png` | the frame a render stopped on as blank (that view has no frames) | Virvi only |
 | `renders/<category>/<viewKey>/<nnn>.webp` | render frames, `000` up | the browser |
 | `renders/set/<viewKey>/<nnn>.webp` | an emote view's frames, every piece worn together | the browser |
 | `final/<category>/package.zip` | a paid revision's package (finalize jobs only, and the only file they upload) | paid downloads only |

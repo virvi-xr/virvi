@@ -3,12 +3,14 @@
      and after each `update`, and `controller_response` to each `controller_request`. Every request is POSTed to
      /log so a test can see it. ?stub=hang never sends ready; ?stub=noload never changes the triangle count;
      ?stub=fewer lowers it, as a hat hiding the hair does; ?stub=alone refuses every controller call until the first
-     `update`, as the page does with type=wearable and no item yet. -->
+     `update`, as the page does with type=wearable and no item yet; ?stub=blank draws one flat colour from the third
+     camera move on, as a frame the item is missing from. -->
 <html><body style="margin:0"><canvas id="c" width="512" height="512"></canvas><script>
 const stub = new URLSearchParams(location.search).get('stub')
 const c = document.getElementById('c').getContext('2d')
 let triangles = 12000, turn = 0, updated = false
 function draw() {
+  if (stub === 'blank' && turn >= 3) { c.fillStyle = '#334'; c.fillRect(0, 0, 512, 512); return }
   const g = c.createLinearGradient(0, 0, 512, 512)
   g.addColorStop(0, `hsl(${turn * 10}, 70%, 50%)`)
   g.addColorStop(1, `hsl(${turn * 10 + 120}, 70%, 30%)`)

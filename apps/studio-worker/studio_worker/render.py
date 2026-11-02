@@ -74,7 +74,7 @@ def render(pieces: list[dict], view: dict, out: Path, frames: int = 36, size: in
     alone from every angle (`ring` keeps the eye-level 24); a walk-around steps the emote through its timeline while
     the camera turns once (`sample`: keep that many evenly spaced frames, as PNGs). Both ignore `frames`.
     Returns {'ok', 'frames': [Path], 'error': None|'timeout'|'item_not_loaded'|'blank'|str, 'bootSec'}, plus
-    'fps' for a walk-around."""
+    'fps' for a walk-around, and on 'blank' `blankFrame`: {'index', 'path'}, that frame as a PNG beside `out`."""
     out = Path(out).absolute()  # the child process runs in another directory
     out.mkdir(parents=True, exist_ok=True)
     spec = {'pieces': [{**p, 'glbs': {k: str(Path(v).absolute()) for k, v in p['glbs'].items()}} for p in pieces],
@@ -192,7 +192,7 @@ def _run(spec: dict) -> dict:
             page.evaluate('__studio.frames()')
             image = Image.open(_png(page, transparent=True)).convert('RGBA')
             if is_blank(image):
-                return _fail('blank', start)
+                return _blank(image, out, 0, start)
             path = out / 'thumbnail.png'
             fit_square(image).save(path)
             browser.close()
@@ -227,7 +227,7 @@ def _run(spec: dict) -> dict:
             page.evaluate('__studio.frames()')
             image = Image.open(_png(page))
             if is_blank(image):
-                return _fail('blank', start)
+                return _blank(image, out, i, start)
             if mode == 'look':
                 path = out / f"{view.get('bodyShape', 'male')}-{LOOK_NAMES[i]}.png"
                 image.save(path)
@@ -282,6 +282,13 @@ def _length(page):
 
 def _fail(error: str, start: float) -> dict:
     return {'ok': False, 'frames': [], 'error': error, 'bootSec': round(time.monotonic() - start, 1)}
+
+
+def _blank(image: Image.Image, out: Path, index: int, start: float) -> dict:
+    """A blank-frame failure, the frame kept beside `out` (whose frames are cleared) so someone can see what rendered."""
+    kept = out.with_name(f'{out.name}.blank-{index:03d}.png')
+    image.save(kept)
+    return {**_fail('blank', start), 'blankFrame': {'index': index, 'path': str(kept)}}
 
 
 def _load_pieces(piece_dirs: list[Path]) -> list[dict]:

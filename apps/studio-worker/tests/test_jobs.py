@@ -316,6 +316,23 @@ def test_a_failed_ring_still_saves_the_piece(api, tmp_path, skills):
     assert 'job-1/pieces/hat/neon_cap_male.glb' in api.files
 
 
+def test_a_blank_ring_frame_is_kept_privately_for_a_look(api, tmp_path, skills):
+    ok = fake_render([])
+
+    def render(pieces, view, out, **kw):
+        if view['mode'] == 'orbit':
+            kept = out.with_name(f'{out.name}.blank-003.png')
+            Image.new('RGB', (8, 8), (40, 40, 50)).save(kept)
+            return {'ok': False, 'frames': [], 'error': 'blank', 'bootSec': 1.0,
+                    'blankFrame': {'index': 3, 'path': str(kept)}}
+        return ok(pieces, view, out, **kw)
+    result = jobs.run_job(prompt_job(), client(api), tmp_path, render_fn=render,
+                          command=fake_command('claude_builds_hat.jsonl'), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert api.files['job-1/checks/hat/orbit-male-blank-003.png'][:8] == b'\x89PNG\r\n\x1a\n'
+    assert not [f for f in api.files if f.startswith('job-1/renders/hat/orbit-male/')]  # never served to the browser
+
+
 def test_emote_prompt_renders_no_ring():
     assert jobs._prompt_views('emote') == [{'bodyShape': 'male', 'outfit': 'default', 'emote': None, 'mode': 'emote'}]
     assert [v['mode'] for v in jobs._prompt_views('wearable')] == ['spin', 'orbit']
