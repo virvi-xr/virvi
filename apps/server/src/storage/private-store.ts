@@ -4,7 +4,7 @@ import { createReadStream, createWriteStream } from 'node:fs'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { dirname, join, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { config } from '../config.js'
 
 /**
@@ -180,7 +180,16 @@ let importStore: PrivateStore | null = null
  */
 export function getImportStore(): PrivateStore {
   if (!importStore) {
-    const uri = config.sceneImportS3Uri || (config.mode === 'single' ? `file://${config.privateStoragePath}` : undefined)
+    let uri = config.sceneImportS3Uri
+    if (!uri && config.mode === 'single') {
+      // The uploads folder is served publicly at /uploads/, so the private folder must never sit in it
+      const root = resolve(config.localStoragePath)
+      const dir = resolve(config.privateStoragePath)
+      if (dir === root || dir.startsWith(root + sep)) {
+        throw new Error(`PRIVATE_STORAGE_PATH (${dir}) must be outside LOCAL_STORAGE_PATH (${root}), which is served publicly`)
+      }
+      uri = pathToFileURL(dir).href
+    }
     if (!uri) throw new Error('SCENE_IMPORT_S3_URI is not set')
     importStore = privateStoreFromUri(uri)
   }

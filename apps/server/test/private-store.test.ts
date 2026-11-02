@@ -75,6 +75,21 @@ describe('import store', () => {
     expect(priv === root || priv.startsWith(root + sep)).toBe(false)
   })
 
+  it('refuses a private path that is the uploads root or inside it', () => {
+    const savedPath = config.privateStoragePath
+    try {
+      ;(config as any).mode = 'single'; (config as any).sceneImportS3Uri = undefined
+      for (const p of [config.localStoragePath, join(config.localStoragePath, 'private'), join(config.localStoragePath, 'a', '..', 'b')]) {
+        ;(config as any).privateStoragePath = p
+        setImportStore(null)
+        expect(() => getImportStore(), p).toThrow(/PRIVATE_STORAGE_PATH.*LOCAL_STORAGE_PATH/)
+      }
+      ;(config as any).privateStoragePath = mkdtempSync(join(tmpdir(), 'private-ok-'))
+      setImportStore(null)
+      expect(() => getImportStore()).not.toThrow()
+    } finally { (config as any).privateStoragePath = savedPath; restore() }
+  })
+
   it('scalable and cloud modes need SCENE_IMPORT_S3_URI', () => {
     try {
       for (const mode of ['scalable', 'cloud']) {

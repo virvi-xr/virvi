@@ -44,7 +44,9 @@ services:
       LOCAL_STORAGE_PATH: /app/uploads
     volumes:
       - uploads:/app/uploads
+      - private:/app/private
 
 volumes:
   pgdata:
   uploads:
+  private:

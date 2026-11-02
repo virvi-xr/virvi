@@ -18,6 +18,8 @@ description: Complete reference for all Virvi environment variables
 |----------|-------------|
 | `STORAGE_PROVIDER` | `local` \| `supabase` \| `s3` \| `r2` (default: `local`) |
 | `LOCAL_STORAGE_PATH` | Path for local storage (default: `./uploads`) |
+| `PRIVATE_STORAGE_PATH` | Where single mode keeps private files such as scene import sources and builds (default: a `private` folder beside `LOCAL_STORAGE_PATH`). Must be outside `LOCAL_STORAGE_PATH`, which is served publicly, and on persistent storage; the server refuses to use a path inside it |
+| `SCENE_IMPORT_S3_URI` | Private bucket for scene imports, `s3://<key>:<secret>@<host>/<bucket>` or `file://<dir>`. Required in scalable and cloud modes; single mode falls back to `PRIVATE_STORAGE_PATH` |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_ANON_KEY` | Supabase anon key |
 | `SUPABASE_SERVICE_KEY` | Supabase service role key |
