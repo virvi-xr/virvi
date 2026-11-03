@@ -66,7 +66,7 @@ describe('verifyDclSceneRequest', () => {
     await expect(verifyDclSceneRequest('POST', PATH, headers, BODY)).resolves.toMatchObject({ bodySigned: true })
   })
 
-  it('refuses a body signed without hashPayload by default (ads keep needing it)', async () => {
+  it('refuses a body signed without hashPayload unless the caller allows it', async () => {
     const { headers } = await signedSceneHeaders({ method: 'POST', path: PATH, body: BODY, metadata: { hashPayload: undefined } })
     await expect(verifyDclSceneRequest('POST', PATH, headers, BODY)).rejects.toThrow(/body does not match signed hash/)
   })

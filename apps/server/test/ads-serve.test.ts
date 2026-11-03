@@ -93,6 +93,35 @@ describe('/api/ads/serve and /api/ads/events', () => {
     expect(forged.statusCode).toBe(401)
   })
 
+  // The web explorer signs the request (wallet, scene) but leaves the body out of the signature.
+  const WEB = { metadata: { hashPayload: undefined } }
+
+  it('serve answers a web-explorer request (signed, body not hashed)', async () => {
+    const { preset } = await boundScene()
+    const el = await createElement(preset.id, { type: 'ad_space', properties: { shape: '1:1', formats: 'both' } })
+    await mkAd('house')
+    const { res } = await signed('/api/ads/serve', { elementIds: [el.id] }, WEB)
+    expect(res.statusCode).toBe(200)
+    expect(Object.keys(res.json().spaces)).toEqual([el.id])
+  })
+
+  it('web-explorer events count under the signed wallet, once per ad per level per day', async () => {
+    const { preset } = await boundScene()
+    const a = await createElement(preset.id, { type: 'ad_space', properties: { shape: '1:1', formats: 'both' } })
+    const onA = await mkAd('partner')
+    await db.insert(adPlacements).values({ adId: onA.ad.id, elementId: a.id })
+    const batch = { v: 1, sessionId: 'web-1', events: [{ adId: onA.ad.id, elementId: a.id, level: 'screen', t: 1 }] }
+    const first = await signed('/api/ads/events', batch, WEB)
+    expect(first.res.statusCode).toBe(200)
+    expect(first.res.json()).toEqual({ accepted: 1 })
+    // A new session id does not make the same wallet count again
+    const again = await signed('/api/ads/events', { ...batch, sessionId: 'web-2' }, WEB)
+    expect(again.res.json()).toEqual({ accepted: 0 })
+    const rows = await db.select().from(adEvents)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ viewerKey: `w:${first.wallet}`, verified: true })
+  })
+
   it('a signed request with no bound scene is 404 scene_not_found', async () => {
     const { res } = await signed('/api/ads/serve', { elementIds: [] })
     expect(res.statusCode).toBe(404)

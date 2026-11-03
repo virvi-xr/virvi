@@ -9,11 +9,15 @@ import { elementsInScene, recordAdEvents } from '../ads/events.js'
 
 const MAX_SERVE_IDS = 50
 
-/** The verified DCL scene request behind this call, or null when it is not one (unsigned, forged, or the body differs from the signed hash). */
+/**
+ * The verified DCL scene request behind this call, or null when it is not one (unsigned, forged, or the body differs
+ * from a signed hash). The web explorer signs the request but not its body; the wallet and scene are still signed, and
+ * events count once per wallet per ad per level per day, so a body it chose cannot count a viewer more than once.
+ */
 async function signedScene(request: FastifyRequest): Promise<{ wallet: string; scene: SceneRequestContext } | null> {
   try {
     const raw = ((request as any).rawBody as string | undefined) ?? null
-    return await verifyDclSceneRequest(request.method, request.url.split('?')[0], request.headers as Record<string, string | string[] | undefined>, raw)
+    return await verifyDclSceneRequest(request.method, request.url.split('?')[0], request.headers as Record<string, string | string[] | undefined>, raw, { allowUnsignedBody: true })
   } catch (err) {
     request.log.warn({ err: (err as Error).message }, 'ads: DCL scene signed fetch refused')
     return null
