@@ -10,6 +10,7 @@ import { ArSpaces } from './ArSpaces'
 import { RoomSetPanel } from './RoomSetPanel'
 import { sceneHasRoomSet } from '@/lib/room-set'
 import { mediaLabel, useMediaNames } from '@/lib/media-names'
+import { imageSourceRow, pastedSource } from '@/lib/image-source'
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -316,7 +317,7 @@ function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
       </div>
 
       {offImageLabel(props.offType ?? 0) && (
-        <TextInput label={offImageLabel(props.offType ?? 0)!} value={props.offImageSrc || ''} onChange={v => updateProp('offImageSrc', v)} />
+        <ImageSourceField label={offImageLabel(props.offType ?? 0)!} value={props.offImageSrc} onChange={v => updateProp('offImageSrc', v)} api={api} sceneId={sceneId} />
       )}
 
       {adModeHint(props.offType ?? 0) && (
@@ -504,18 +505,25 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
 // Image Element Editor
 // ---------------------------------------------------------------------------
 
-function ImageElementEditor({ element, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
-  element: Element
-  onUpdateElement: (id: string, data: Record<string, any>) => void
-  onUpdateInstance: (id: string, data: Partial<Instance>) => void
-  onDeleteInstance: (id: string) => void
-  onAddInstance: (elementId: string) => void
+// ---------------------------------------------------------------------------
+// Image field: upload, pick from the Media Library, or paste a URL
+// ---------------------------------------------------------------------------
+
+/** An image an element shows (texture, ad fallback, video off image), named as it is in the Media Library. */
+function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
+  label: string
+  value: string | undefined
+  onChange: (url: string) => void
+  hint?: string
   api: ReturnType<typeof import('@/lib/api').useApi>
+  sceneId: string
 }) {
-  const props = element.properties || {}
+  const names = useMediaNames(api, sceneId, value ? [value] : [])
+  const row = imageSourceRow(value, names)
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
+  const [urlInput, setUrlInput] = useState('')
   const [uploadError, setUploadError] = useState('')
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -526,7 +534,7 @@ function ImageElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
     try {
       const base64 = await fileToBase64(file)
       const { asset } = await api.uploadMedia(file.name, mediaContentType(file), base64)
-      onUpdateElement(element.id, { properties: { ...props, textureSrc: asset.publicUrl } })
+      onChange(asset.publicUrl)
     } catch (err: any) {
       console.error('Upload failed:', err)
       setUploadError(uploadErrorMessage(err))
@@ -534,6 +542,57 @@ function ImageElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
     setUploading(false)
     if (fileRef.current) fileRef.current.value = ''
   }
+
+  const handlePaste = () => {
+    const url = pastedSource(urlInput)
+    if (!url) return
+    onChange(url)
+    setUrlInput('')
+  }
+
+  return (
+    <div className="space-y-2">
+      <span className="text-xs text-gray-500">{label}</span>
+      {row && (
+        <div className="flex items-center gap-3 rounded-md border border-gray-700 bg-gray-800/50 p-2">
+          <img src={value} alt="" className="h-14 w-14 shrink-0 rounded bg-gray-950 object-contain" />
+          <span className={`min-w-0 flex-1 truncate text-sm ${row.missing ? 'italic text-amber-300' : 'text-gray-300'}`} title={row.title}>{row.label}</span>
+          <button type="button" onClick={() => onChange('')} className="shrink-0 text-xs text-red-400 hover:text-red-300">Clear</button>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className={`shrink-0 cursor-pointer rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600 ${uploading ? 'pointer-events-none opacity-50' : ''}`}>
+          {uploading ? 'Uploading...' : 'Upload'}
+          <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
+        </label>
+        <button type="button" onClick={() => setShowPicker(true)}
+          className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">
+          Media Library
+        </button>
+        <input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handlePaste() }} onBlur={handlePaste}
+          placeholder="or paste an image URL" aria-label={`${label}: paste an image URL`}
+          className="min-w-40 flex-1 rounded border border-gray-800 bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400" />
+      </div>
+      {hint && <p className="text-xs text-gray-500">{hint}</p>}
+      {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
+      {showPicker && (
+        <MediaPicker api={api} accept="image/*" onSelect={url => { onChange(url); setShowPicker(false) }} onClose={() => setShowPicker(false)} />
+      )}
+    </div>
+  )
+}
+
+function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
+  element: Element
+  onUpdateElement: (id: string, data: Record<string, any>) => void
+  onUpdateInstance: (id: string, data: Partial<Instance>) => void
+  onDeleteInstance: (id: string) => void
+  onAddInstance: (elementId: string) => void
+  api: ReturnType<typeof import('@/lib/api').useApi>
+  sceneId: string
+}) {
+  const props = element.properties || {}
 
   const setTexture = (url: string) => {
     onUpdateElement(element.id, { properties: { ...props, textureSrc: url } })
@@ -551,32 +610,7 @@ function ImageElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
         </label>
       </div>
 
-      {props.textureSrc && (
-        <div className="rounded-lg overflow-hidden border border-gray-700 bg-gray-800">
-          <img src={props.textureSrc} alt={element.name}
-            className="max-h-40 w-full object-contain" />
-        </div>
-      )}
-
-      <div className="space-y-2">
-        <TextInput label="Texture URL" value={props.textureSrc || ''} onChange={setTexture} />
-        <div className="flex items-center gap-2">
-          <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-            {uploading ? 'Uploading...' : 'Upload'}
-            <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
-          </label>
-          <button onClick={() => setShowPicker(true)}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">
-            Media Library
-          </button>
-          <span className="text-xs text-gray-500">or paste a URL above</span>
-        </div>
-        {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
-      </div>
-
-      {showPicker && (
-        <MediaPicker api={api} accept="image/*" onSelect={setTexture} onClose={() => setShowPicker(false)} />
-      )}
+      <ImageSourceField label="Texture" value={props.textureSrc} onChange={setTexture} api={api} sceneId={sceneId} />
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -597,39 +631,19 @@ function ImageElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
 // Ad Space Element Editor
 // ---------------------------------------------------------------------------
 
-function AdSpaceElementEditor({ element, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
+function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
+  sceneId: string
 }) {
   const props = element.properties || {}
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [uploading, setUploading] = useState(false)
-  const [showPicker, setShowPicker] = useState(false)
-  const [uploadError, setUploadError] = useState('')
 
   const updateProp = (key: string, value: any) => {
     onUpdateElement(element.id, { properties: { ...props, [key]: value } })
-  }
-
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(true)
-    setUploadError('')
-    try {
-      const base64 = await fileToBase64(file)
-      const { asset } = await api.uploadMedia(file.name, mediaContentType(file), base64)
-      updateProp('fallbackImageSrc', asset.publicUrl)
-    } catch (err: any) {
-      console.error('Upload failed:', err)
-      setUploadError(uploadErrorMessage(err))
-    }
-    setUploading(false)
-    if (fileRef.current) fileRef.current.value = ''
   }
 
   return (
@@ -672,32 +686,8 @@ function AdSpaceElementEditor({ element, onUpdateElement, onUpdateInstance, onDe
 
       <AdSpaceContent elementId={element.id} refreshKey={adSpaceRefreshKey(props)} api={api} />
 
-      {props.fallbackImageSrc && (
-        <div className="rounded-lg overflow-hidden border border-gray-700 bg-gray-800">
-          <img src={props.fallbackImageSrc} alt={`${element.name} fallback`}
-            className="max-h-40 w-full object-contain" />
-        </div>
-      )}
-
-      <div className="space-y-2">
-        <TextInput label="Fallback Image URL" value={props.fallbackImageSrc || ''} onChange={v => updateProp('fallbackImageSrc', v)} />
-        <div className="flex items-center gap-2">
-          <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-            {uploading ? 'Uploading...' : 'Upload'}
-            <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
-          </label>
-          <button onClick={() => setShowPicker(true)}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">
-            Media Library
-          </button>
-          <span className="text-xs text-gray-500">Shown when there is no ad. Without one, the space hides itself.</span>
-        </div>
-        {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
-      </div>
-
-      {showPicker && (
-        <MediaPicker api={api} accept="image/*" onSelect={url => { updateProp('fallbackImageSrc', url); setShowPicker(false) }} onClose={() => setShowPicker(false)} />
-      )}
+      <ImageSourceField label="Fallback image" value={props.fallbackImageSrc} onChange={v => updateProp('fallbackImageSrc', v)}
+        hint="Shown when there is no ad. Without one, the space hides itself." api={api} sceneId={sceneId} />
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -1696,10 +1686,10 @@ export default function SceneEditorPage() {
 
               switch (el.type) {
                 case 'video': return <VideoElementEditor key={el.id} {...editorProps} sceneId={sceneId} api={api} />
-                case 'image': return <ImageElementEditor key={el.id} {...editorProps} api={api} />
+                case 'image': return <ImageElementEditor key={el.id} {...editorProps} sceneId={sceneId} api={api} />
                 case 'model': return <ModelElementEditor key={el.id} {...editorProps} onRoomSetSaved={handleRoomSetSaved} api={api} />
                 case 'sound': return <SoundElementEditor key={el.id} {...editorProps} />
-                case 'ad_space': return <AdSpaceElementEditor key={el.id} {...editorProps} api={api} />
+                case 'ad_space': return <AdSpaceElementEditor key={el.id} {...editorProps} sceneId={sceneId} api={api} />
                 default: return null
               }
             })
