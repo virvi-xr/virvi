@@ -334,6 +334,8 @@ export function useApi() {
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
+    getSceneStreams: (sceneId: string) =>
+      apiFetch<{ streams: import('./streams').SceneStream[] }>(`/api/scenes/${sceneId}/streams`),
     getMediaNames: (sceneId: string, urls: string[]) =>
       apiFetch<MediaNames>(`/api/scenes/${sceneId}/media-names`, { method: 'POST', body: JSON.stringify({ urls }) }),
 

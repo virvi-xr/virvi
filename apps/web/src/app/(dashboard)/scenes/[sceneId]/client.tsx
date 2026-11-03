@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage, isGlbAsset } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { AD_SHAPES, type AdFormats } from '@virvixr/shared'
@@ -12,6 +13,7 @@ import { sceneHasRoomSet } from '@/lib/room-set'
 import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { imageSourceRow, pastedSource } from '@/lib/image-source'
 import { deleteAllInstancesPrompt, withoutInstancesOf } from '@/lib/instances'
+import { streamForSource, streamOptionLabel, type SceneStream } from '@/lib/streams'
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -325,7 +327,7 @@ function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
         </label>
       </div>
 
-      <TextInput label="Live Stream URL" value={props.liveSrc || ''} onChange={v => updateProp('liveSrc', v)} />
+      <LiveStreamField value={props.liveSrc} onChange={v => updateProp('liveSrc', v)} api={api} sceneId={sceneId} />
 
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2 text-sm">
@@ -530,6 +532,66 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
 // ---------------------------------------------------------------------------
 // Image Element Editor
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Live stream field: pick one of your Virvi streams, or paste any stream URL
+// ---------------------------------------------------------------------------
+
+/** A video screen's live source: a Virvi stream shown by name, or a custom URL. */
+function LiveStreamField({ value, onChange, api, sceneId }: {
+  value: string | undefined
+  onChange: (url: string) => void
+  api: ReturnType<typeof import('@/lib/api').useApi>
+  sceneId: string
+}) {
+  const [streams, setStreams] = useState<SceneStream[] | null>(null)
+  const [urlInput, setUrlInput] = useState('')
+  useEffect(() => {
+    let live = true
+    api.getSceneStreams(sceneId).then(r => { if (live) setStreams(r.streams) }).catch(() => { if (live) setStreams([]) })
+    return () => { live = false }
+  }, [api, sceneId])
+  const chosen = streamForSource(value, streams)
+
+  const handlePaste = () => {
+    const url = urlInput.trim()
+    if (!url) return
+    onChange(url)
+    setUrlInput('')
+  }
+
+  return (
+    <div className="space-y-2">
+      <span className="text-xs text-gray-500">Live Stream</span>
+      {value && (
+        <div className="flex items-center gap-3 rounded-md border border-gray-700 bg-gray-800/50 px-3 py-2">
+          {chosen && <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${chosen.live ? 'bg-green-400' : 'bg-gray-500'}`} aria-hidden="true" />}
+          <span className="min-w-0 flex-1 truncate text-sm text-gray-300" title={value}>
+            {chosen ? `${chosen.name} · ${chosen.live ? 'live now' : 'offline'}` : value}
+          </span>
+          <button type="button" onClick={() => onChange('')} className="shrink-0 text-xs text-red-400 hover:text-red-300">Clear</button>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {streams && streams.length > 0 && (
+          <select value={chosen?.id ?? ''} aria-label="Choose stream"
+            onChange={e => { const s = streams.find(x => x.id === e.target.value); if (s) onChange(s.hlsPlaylistUrl) }}
+            className="rounded border border-gray-800 bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400">
+            <option value="" disabled>Choose stream…</option>
+            {streams.map(s => <option key={s.id} value={s.id}>{streamOptionLabel(s)}</option>)}
+          </select>
+        )}
+        <input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handlePaste() }} onBlur={handlePaste}
+          placeholder={streams?.length ? 'or paste a stream URL' : 'Paste a stream URL'} aria-label="Paste a stream URL"
+          className="min-w-48 flex-1 rounded border border-gray-800 bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400" />
+      </div>
+      {streams && streams.length === 0 && (
+        <p className="text-xs text-gray-500">No Virvi streams yet. <Link href="/streaming" className="text-blue-400 hover:text-blue-300">Create one on the Streaming page</Link>.</p>
+      )}
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Image field: upload, pick from the Media Library, or paste a URL

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
-import { and, eq, isNotNull, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, ne, or } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { assetLibraryItems, mediaAssets, sceneLibrary } from '../db/schema.js'
+import { assetLibraryItems, mediaAssets, sceneLibrary, scenes, streamingServers } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, hasScope, isFullAccess } from '../auth/permissions.js'
@@ -36,6 +36,25 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
     }
     if ((await access(request, request.params.sceneId)).level === 'none') return reply.status(403).send({ error: 'forbidden' })
     return reply.send(await resolveMediaNames(request.params.sceneId, request.user.id, urls))
+  })
+
+  // Live streams a video screen can play: the scene owner's (for its editors) and the requester's own, by name.
+  // Only the public playback URL leaves the server, never the stream key. Account sessions only.
+  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/streams', async (request, reply) => {
+    const a = await access(request, request.params.sceneId)
+    if (!hasScope(a, 'screens')) return reply.status(403).send({ error: 'forbidden' })
+    const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, request.params.sceneId), columns: { ownerId: true } })
+    if (!scene) return reply.status(404).send({ error: 'Not found' })
+    // A renter (booking grant) picks from their own streams, not the venue owner's
+    const owners = [...new Set([request.user.id, ...(hasScope(a, 'scene.edit') ? [scene.ownerId] : [])])]
+    const rows = await db
+      .select({ id: streamingServers.id, name: streamingServers.name, status: streamingServers.status, hlsPlaylistUrl: streamingServers.hlsPlaylistUrl, ownerId: streamingServers.ownerId })
+      .from(streamingServers)
+      .where(and(inArray(streamingServers.ownerId, owners), ne(streamingServers.status, 'terminated'), isNotNull(streamingServers.hlsPlaylistUrl)))
+      .orderBy(desc(streamingServers.createdAt))
+    return reply.send({
+      streams: rows.map((r) => ({ id: r.id, name: r.name, hlsPlaylistUrl: r.hlsPlaylistUrl, live: r.status === 'live', mine: r.ownerId === request.user.id })),
+    })
   })
 
   // A scene pass (the Hyperfy HUD) may add public catalog models only: it can't pull the account's own files into a scene.
