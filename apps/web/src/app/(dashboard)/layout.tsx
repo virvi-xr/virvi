@@ -9,7 +9,7 @@ import { useStudioAvailable } from '@/lib/use-studio'
 import Link from 'next/link'
 import {
   BroadcastIcon, CalendarIcon, ChartIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LogoutIcon, MediaIcon,
-  ScenesIcon, ShieldIcon, SparkleIcon, UploadIcon,
+  ScenesIcon, ShieldIcon, SparkleIcon,
 } from '@/components/icons'
 
 type NavItem = { href: string; label: string; icon: (p: { size?: number }) => React.ReactElement }
@@ -21,7 +21,6 @@ const baseNavSections: NavSection[] = [
     items: [
       { href: '/command-center', label: 'Command Center', icon: HomeIcon },
       { href: '/scenes', label: 'Scenes', icon: ScenesIcon },
-      { href: '/import', label: 'Import', icon: UploadIcon },
       { href: '/events', label: 'Events', icon: CalendarIcon },
       { href: '/giveaways', label: 'Giveaways', icon: GiftIcon },
     ],
@@ -38,6 +37,8 @@ const baseNavSections: NavSection[] = [
   },
   { label: 'System', items: [{ href: '/settings', label: 'Settings', icon: GearIcon }] },
 ]
+// Pages reached from another tab, which stays highlighted while they are open
+const NAV_PARENT: Record<string, string> = { '/import': '/scenes' }
 const ADMIN_ITEM: NavItem = { href: '/admin', label: 'Admin', icon: ShieldIcon }
 // Shown only where the studio is on (the server's studio routes answer)
 const STUDIO_ITEM: NavItem = { href: '/studio', label: 'Design Studio', icon: SparkleIcon }
@@ -101,7 +102,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div key={section.label} className={`flex gap-1 md:block ${i > 0 ? 'md:mt-5 md:border-t md:border-gray-800 md:pt-5' : ''}`}>
               <p className="hidden px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-gray-500 md:block">{section.label}</p>
               {section.items.map(({ href, label, icon: NavIcon }) => {
-                const active = pathname.startsWith(href)
+                const active = pathname.startsWith(href) || Object.entries(NAV_PARENT).some(([child, parent]) => parent === href && pathname.startsWith(child))
                 return (
                   <Link key={href} href={href} aria-current={active ? 'page' : undefined}
                     className={`relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors md:mb-0.5 ${active ? 'bg-white/[0.05] text-white' : 'text-gray-400 hover:bg-white/[0.03] hover:text-white'}`}>

@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
 import SceneEditorPage from './[sceneId]/client'
-import { ArrowUpRightIcon, CheckIcon, CopyIcon, GridIcon, ListIcon, PlusIcon, ScenesIcon } from '@/components/icons'
+import { ArrowUpRightIcon, CheckIcon, CopyIcon, GridIcon, ListIcon, PlusIcon, ScenesIcon, UploadIcon } from '@/components/icons'
 import { EmptyState, InlineDescription, PageHeader, SearchField, useStoredView, ViewToggle, Skeleton } from '@/components/ui'
 import { filterScenes, placeholderHues, shortId } from '@/lib/scenes'
 import { countLabel, plural } from '@/lib/format'
@@ -15,6 +15,8 @@ const RELATIONSHIP_LABEL: Record<string, string> = { cohost: 'Co-host', editor: 
 const VIEW_KEY = 'virvi.scenes.view'
 /** PrimaryButton's look, on a link to the New Scene Wizard. */
 const NEW_SCENE_CLASS = 'clip-corner inline-flex items-center gap-1.5 bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink transition-colors hover:bg-accent-hover'
+/** The secondary buttons' look, on a link to Import. */
+const IMPORT_CLASS = 'inline-flex items-center gap-1.5 rounded-md bg-gray-800 px-4 py-2.5 text-sm hover:bg-gray-700'
 /** Only owners and co-hosts can change a scene's details. */
 const canDescribe = (s: Scene) => !s.relationship || s.relationship === 'owner' || s.relationship === 'cohost'
 
@@ -78,6 +80,7 @@ function ScenesContent() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => setShowCreate(!showCreate)} className="rounded-md bg-gray-800 px-4 py-2.5 text-sm hover:bg-gray-700">Blank scene</button>
+            <Link href="/import" className={IMPORT_CLASS}><UploadIcon size={16} /> Import scene</Link>
             <Link href="/scenes/new" className={NEW_SCENE_CLASS}><PlusIcon size={16} /> New scene</Link>
           </div>
         }
@@ -110,7 +113,12 @@ function ScenesContent() {
       ) : scenes.length === 0 ? (
         <EmptyState icon={<ScenesIcon size={40} />} title="No scenes yet"
           body="A scene is one of your virtual worlds. Create one to start placing media and running events."
-          action={<Link href="/scenes/new" className={NEW_SCENE_CLASS}><PlusIcon size={16} /> New scene</Link>} />
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Link href="/scenes/new" className={NEW_SCENE_CLASS}><PlusIcon size={16} /> New scene</Link>
+              <Link href="/import" className={IMPORT_CLASS}><UploadIcon size={16} /> Import a scene you made</Link>
+            </div>
+          } />
       ) : shown.length === 0 ? (
         <p className="py-12 text-center text-gray-500">No scenes match “{query.trim()}”.</p>
       ) : view === 'grid' ? (

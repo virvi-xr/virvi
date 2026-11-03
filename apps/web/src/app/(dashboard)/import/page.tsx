@@ -173,7 +173,7 @@ function ImportContent() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <PageHeader
-        crumbs={['Workspace', 'Import']}
+        crumbs={['Workspace', { label: 'Scenes', href: '/scenes' }, 'Import']}
         title="Import a scene"
         subtitle="Bring a scene you made in the Creator Hub or with the SDK7. Virvi builds it with Virvi added, then deploys it to the World named in its scene.json."
       />
