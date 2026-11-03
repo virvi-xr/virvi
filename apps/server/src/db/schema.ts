@@ -1746,6 +1746,8 @@ export const studioEntitlements = pgTable('studio_entitlements', {
   checks: jsonb('checks'), // the finalize job's check summary
   // A scene piece's rows in its owner's asset library, once added (null until then: the sweep retries)
   assetItemIds: jsonb('asset_item_ids').$type<string[]>(),
+  // Why the piece can never go in (a GLB missing or unreadable): the sweep stops retrying it
+  libraryError: text('library_error'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   designIdx: index('studio_entitlements_design_idx').on(t.designId),

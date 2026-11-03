@@ -19,11 +19,26 @@ let made: StorageProvider | null = null
 export function setLibraryStorage(s: StorageProvider | null) { override = s }
 const storage = () => override ?? (made ??= createStorage())
 
+/** A piece whose files can't go in however often it's tried, unlike storage being down. */
+class UnusablePiece extends Error {}
+
 /**
  * The new rows' ids, or the ones added before (it never adds twice). [] for anything but a scene piece. The entitlement
- * row stays locked while the files copy, so the finalize result and the sweep can't both add the same piece.
+ * row stays locked while the files copy, so the finalize result and the sweep can't both add the same piece. A missing
+ * or unreadable GLB is recorded on the entitlement, so the sweep doesn't retry it every minute.
  */
 export async function addToLibrary(entitlementId: string, now: Date): Promise<string[]> {
+  try {
+    return await copyToLibrary(entitlementId, now)
+  } catch (err) {
+    if (err instanceof UnusablePiece) {
+      await db.update(studioEntitlements).set({ libraryError: err.message.slice(0, 500) }).where(eq(studioEntitlements.id, entitlementId))
+    }
+    throw err
+  }
+}
+
+async function copyToLibrary(entitlementId: string, now: Date): Promise<string[]> {
   return db.transaction(async (tx) => {
     const [ent] = await tx.select().from(studioEntitlements).where(eq(studioEntitlements.id, entitlementId)).for('update')
     if (!ent || ent.status !== 'ready') return []
@@ -53,8 +68,10 @@ export async function addToLibrary(entitlementId: string, now: Date): Promise<st
         .where(and(eq(assetLibraryItems.sourceRef, sourceRef), isNull(assetLibraryItems.packId)))
       if (had) { ids.push(had.id); continue }
       const obj = await studio.get(jobFileKey(design.id, rev.jobId, file))
-      if (!obj) throw new Error(`${file} is missing from the studio store`)
-      const stats = await glbStats(obj.body, { visibleOnly: true })
+      if (!obj) throw new UnusablePiece(`${file} is missing from the studio store`)
+      const stats = await glbStats(obj.body, { visibleOnly: true }).catch((err) => {
+        throw new UnusablePiece(`${file} isn't a readable GLB: ${err instanceof Error ? err.message : err}`)
+      })
       const storageKey = `assets/${design.ownerId}/${randomUUID()}.glb`
       const cdnUrl = await storage().upload(storageKey, obj.body, 'model/gltf-binary')
       const [row] = await tx.insert(assetLibraryItems).values({
@@ -71,11 +88,12 @@ export async function addToLibrary(entitlementId: string, now: Date): Promise<st
   })
 }
 
-/** The sweep's retry: paid scene pieces whose library rows never got added. Returns how many were added now. */
+/** The sweep's retry: paid scene pieces whose library rows never got added, unless they can't be. Returns how many were added now. */
 export async function addMissingLibraryRows(now: Date): Promise<number> {
   const missing = await db.select({ id: studioEntitlements.id }).from(studioEntitlements)
     .innerJoin(studioDesigns, eq(studioDesigns.id, studioEntitlements.designId))
-    .where(and(eq(studioEntitlements.status, 'ready'), isNull(studioEntitlements.assetItemIds), eq(studioDesigns.kind, 'scene')))
+    .where(and(eq(studioEntitlements.status, 'ready'), isNull(studioEntitlements.assetItemIds),
+      isNull(studioEntitlements.libraryError), eq(studioDesigns.kind, 'scene')))
   let n = 0
   for (const { id } of missing) {
     try {

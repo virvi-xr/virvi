@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
@@ -127,6 +127,26 @@ describe('studio library', () => {
     pub.fail.on = false
     expect(await addMissingLibraryRows(new Date())).toBe(1)
     expect(await db.select().from(assetLibraryItems)).toHaveLength(1)
+  })
+
+  it('an unreadable GLB is set aside once: the sweep stops retrying it', async () => {
+    const { entitlement, design, rev } = await paidChair()
+    await store.put(jobFileKey(design.id, rev.jobId, 'pieces/furniture_chair/chair.glb'), Buffer.from('not a glb'), 'model/gltf-binary')
+    await expect(addToLibrary(entitlement.id, new Date())).rejects.toThrow("chair.glb isn't a readable GLB")
+    const [ent] = await db.select().from(studioEntitlements).where(eq(studioEntitlements.id, entitlement.id))
+    expect(ent).toMatchObject({ status: 'ready', assetItemIds: null })
+    expect(ent.libraryError).toMatch(/chair\.glb isn't a readable GLB/)
+    const get = vi.spyOn(store, 'get')
+    expect(await addMissingLibraryRows(new Date())).toBe(0)
+    expect(get).not.toHaveBeenCalled()  // the sweep doesn't open the file again
+  })
+
+  it('a GLB missing from the studio store is set aside too', async () => {
+    const { entitlement, design, rev } = await paidChair()
+    await store.delete(jobFileKey(design.id, rev.jobId, 'pieces/furniture_chair/chair.glb'))
+    await expect(addToLibrary(entitlement.id, new Date())).rejects.toThrow('chair.glb is missing from the studio store')
+    const [ent] = await db.select().from(studioEntitlements).where(eq(studioEntitlements.id, entitlement.id))
+    expect(ent.libraryError).toMatch(/missing/)
   })
 })
 
