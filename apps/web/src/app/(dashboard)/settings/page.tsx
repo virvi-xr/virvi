@@ -6,6 +6,7 @@ import { LinkedWallets } from './LinkedWallets'
 import { LinkedHyperfySessions } from './LinkedHyperfySessions'
 import { PairedHeadsets } from './PairedHeadsets'
 import { Badge, PageHeader, PlatformBadge, Skeleton, tableHeadBand, type Tone } from '@/components/ui'
+import { instanceLabel, useInstance } from '@/lib/instance'
 
 function formatBytes(bytes: number): string {
   if (bytes === Infinity) return 'Unlimited'
@@ -96,6 +97,7 @@ export default function SettingsPage() {
 
   // Billing state
   const [billingEnabled, setBillingEnabled] = useState<boolean | null>(null)
+  const instance = useInstance()
   const [billingTier, setBillingTier] = useState<string>('free')
   const [billingUsage, setBillingUsage] = useState<any>(null)
   const [billingLimits, setBillingLimits] = useState<any>(null)
@@ -593,7 +595,7 @@ export default function SettingsPage() {
         ) : billingEnabled === false ? (
           <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
             <div className="flex items-center gap-3 mb-2">
-              <Badge tone="success">Self-Hosted</Badge>
+              <Badge tone="success">{instanceLabel(instance?.mode) ?? 'Billing off'}</Badge>
             </div>
             <p className="text-gray-300">All features unlocked. Billing is not enabled on this instance.</p>
           </div>

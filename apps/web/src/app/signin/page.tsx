@@ -4,6 +4,7 @@ import { API_URL } from '@/lib/config'
 import { safeNextPath } from '@/lib/next-path'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
+import { InstanceBadge } from '@/components/InstanceBadge'
 
 function SignIn() {
   const { user, loading, scenePass, login, register, loginWithWallet } = useAuth()
@@ -73,7 +74,7 @@ function SignIn() {
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-4">
       <a href="/" className="w-full max-w-md text-sm text-gray-400 hover:text-white">← Back to Virvi</a>
       <div className="w-full max-w-md rounded-xl bg-gray-900 p-8">
-        <h1 className="mb-2 text-2xl font-bold">Virvi</h1>
+        <h1 className="mb-2 flex items-center gap-2 text-2xl font-bold">Virvi <InstanceBadge /></h1>
         <p className="mb-6 text-sm text-gray-400">{mode === 'login' ? 'Sign in to manage your scenes' : 'Create your account'}</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">

@@ -60,6 +60,7 @@ const PUBLIC_EXACT = [
   'POST /api/advertiser-leads', // public: landing page early-access form (anonymous visitors, never reads a bearer)
   'GET /api/studio/render-frames/*', // the signed frame token is the auth (no bearer)
   'GET /api/health', // health check
+  'GET /api/instance', // public: install mode and version (no secrets)
   'GET /metrics', // Prometheus scrape
   'GET /', // static dashboard
   'GET /*', // static dashboard files

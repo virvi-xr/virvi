@@ -59,7 +59,11 @@ import { db } from './db/connection.js'
 import { sql } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+
 import { register, httpRequestsTotal, httpRequestDurationSeconds } from './metrics.js'
+
+/** The server release, reported by the API docs, /api/health and /api/instance. */
+const SERVER_VERSION = '2.0.0'
 
 /**
  * A pairing code in the URL path is a credential (the API's /claim is polled, and every approve link and QR scan
@@ -134,7 +138,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       info: {
         title: 'Virvi API',
         description: 'Virvi API',
-        version: '2.0.0',
+        version: SERVER_VERSION,
       },
       servers: [{ url: config.publicUrl }],
       components: {
@@ -228,6 +232,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(importBuildRoutes)
   await app.register(importRoutes)
 
+  // Which install this is (hosted virvi.io, or self-hosted single/scalable), for the app's label. Public, no secrets.
+  app.get('/api/instance', async (_request, reply) => reply.send({ mode: config.mode, version: SERVER_VERSION }))
+
   // Health check
   app.get('/api/health', async (_request, reply) => {
     let postgresStatus = 'ok'
@@ -249,7 +256,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     const body = {
       status: isHealthy ? 'ok' : 'degraded',
       mode: config.mode,
-      version: '2.0.0',
+      version: SERVER_VERSION,
       timestamp: new Date().toISOString(),
       checks: {
         postgres: postgresStatus,
