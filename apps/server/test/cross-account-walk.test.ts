@@ -148,6 +148,7 @@ const CASES: Case[] = [
   { route: 'POST /api/elements/:elementId/instances', url: (f) => `/api/elements/${f.element.id}/instances`, body: () => ({ position: { x: 0, y: 0, z: 0 } }) },
   { route: 'PUT /api/instances/:instanceId', url: (f) => `/api/instances/${f.instance.id}`, body: () => ({ enabled: false }) },
   { route: 'DELETE /api/instances/:instanceId', url: (f) => `/api/instances/${f.instance.id}` },
+  { route: 'DELETE /api/elements/:elementId/instances', url: (f) => `/api/elements/${f.element.id}/instances` },
   { route: 'GET /api/scenes/:sceneId/collaborators', url: (f) => `/api/scenes/${f.scene.id}/collaborators` },
   { route: 'POST /api/scenes/:sceneId/collaborators', url: (f) => `/api/scenes/${f.scene.id}/collaborators`, body: (f) => ({ email: f.a.email, role: 'editor' }) },
   { route: 'PUT /api/scenes/:sceneId/collaborators/:userId', url: (f) => `/api/scenes/${f.scene.id}/collaborators/${f.collaborator.id}`, body: () => ({ role: 'viewer' }) },

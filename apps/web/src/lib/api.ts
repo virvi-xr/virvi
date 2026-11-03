@@ -324,6 +324,8 @@ export function useApi() {
       apiFetch<{ instance: any }>(`/api/instances/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteInstance: (id: string) =>
       apiFetch(`/api/instances/${id}`, { method: 'DELETE' }),
+    deleteElementInstances: (elementId: string) =>
+      apiFetch<{ deleted: number }>(`/api/elements/${elementId}/instances`, { method: 'DELETE' }),
 
     // Media
     getMedia: () => apiFetch<{ assets: any[] }>('/api/media'),

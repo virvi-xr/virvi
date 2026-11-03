@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { db } from '../src/db/connection.js'
-import { sceneCollaborators } from '../src/db/schema.js'
+import { eq } from 'drizzle-orm'
+import { sceneCollaborators, sceneElements, sceneElementInstances } from '../src/db/schema.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor } from './helpers/factories.js'
 
@@ -43,6 +44,33 @@ describe('scene routes enforce collaborator roles', () => {
       payload: { position: { x: 2, y: 2, z: 2 } },
     })
     expect(putInst.statusCode).toBe(200)
+  })
+
+  it('deleting all of an element\'s instances keeps the element and leaves other elements alone', async () => {
+    const s = await setup()
+    await createInstance(s.element.id)
+    await createInstance(s.element.id)
+    const other = await createElement(s.preset.id, { name: 'Other' })
+    const kept = await createInstance(other.id)
+    const res = await app.inject({ method: 'DELETE', url: `/api/elements/${s.element.id}/instances`, headers: as(s.editor) })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ deleted: 3 })
+    expect(await db.select().from(sceneElementInstances).where(eq(sceneElementInstances.elementId, s.element.id))).toHaveLength(0)
+    expect(await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, s.element.id) })).toBeTruthy()
+    expect((await db.select().from(sceneElementInstances).where(eq(sceneElementInstances.elementId, other.id))).map((i) => i.id)).toEqual([kept.id])
+    // Nothing left to delete is not an error
+    const again = await app.inject({ method: 'DELETE', url: `/api/elements/${s.element.id}/instances`, headers: as(s.editor) })
+    expect(again.json()).toEqual({ deleted: 0 })
+  })
+
+  it('only editors and above can delete all instances; an unknown element is 404', async () => {
+    const s = await setup()
+    const del = (u: any, id = s.element.id) => app.inject({ method: 'DELETE', url: `/api/elements/${id}/instances`, headers: as(u) })
+    expect((await del(s.viewer)).statusCode).toBe(403)
+    expect((await del(s.stranger)).statusCode).toBe(403)
+    expect(await db.select().from(sceneElementInstances).where(eq(sceneElementInstances.elementId, s.element.id))).toHaveLength(1)
+    expect((await del(s.owner, '00000000-0000-0000-0000-000000000000')).statusCode).toBe(404)
+    expect((await del(s.owner)).json()).toEqual({ deleted: 1 })
   })
 
   it('editor can create presets and elements', async () => {

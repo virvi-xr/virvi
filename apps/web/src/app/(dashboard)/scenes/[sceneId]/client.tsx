@@ -11,6 +11,7 @@ import { RoomSetPanel } from './RoomSetPanel'
 import { sceneHasRoomSet } from '@/lib/room-set'
 import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { imageSourceRow, pastedSource } from '@/lib/image-source'
+import { deleteAllInstancesPrompt, withoutInstancesOf } from '@/lib/instances'
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -153,6 +154,33 @@ function TextInput({ value, onChange, label, readOnly }: { value: string; onChan
 // Instance Editor
 // ---------------------------------------------------------------------------
 
+/** An element's instance count, with Add and (after a confirmation) Delete all. */
+function InstancesHeader({ count, onAdd, onDeleteAll }: { count: number; onAdd: () => void; onDeleteAll: () => void }) {
+  const [confirming, setConfirming] = useState(false)
+  useEffect(() => { if (count === 0) setConfirming(false) }, [count])
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-gray-400">Instances ({count})</p>
+        <div className="flex items-center gap-3">
+          {count > 0 && !confirming && (
+            <button type="button" onClick={() => setConfirming(true)} className="text-xs text-red-400 hover:text-red-300">Delete all</button>
+          )}
+          <button type="button" onClick={onAdd} className="text-xs text-blue-400 hover:text-blue-300">+ Add Instance</button>
+        </div>
+      </div>
+      {confirming && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-900/60 bg-red-950/30 px-3 py-2" role="alertdialog" aria-label="Delete all instances">
+          <p className="flex-1 text-xs text-red-200">{deleteAllInstancesPrompt(count)}</p>
+          <button type="button" onClick={() => { setConfirming(false); onDeleteAll() }}
+            className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-500">Delete {count === 1 ? 'it' : `all ${count}`}</button>
+          <button type="button" onClick={() => setConfirming(false)} className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700">Cancel</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function InstanceEditor({ instance, onUpdate, onDelete }: { instance: Instance; onUpdate: (data: Partial<Instance>) => void; onDelete: () => void }) {
   const updatePos = (axis: 'x' | 'y' | 'z', v: number) => {
     onUpdate({ position: { ...instance.position, [axis]: v } })
@@ -213,13 +241,14 @@ function InstanceEditor({ instance, onUpdate, onDelete }: { instance: Instance; 
 // Video Element Editor
 // ---------------------------------------------------------------------------
 
-function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
+function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, api }: {
   element: Element
   sceneId: string
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
+  onDeleteAllInstances: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
 }) {
   const props = element.properties || {}
@@ -390,10 +419,7 @@ function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
       </div>
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-400">Instances ({element.instances.length})</p>
-          <button onClick={() => onAddInstance(element.id)} className="text-xs text-blue-400 hover:text-blue-300">+ Add Instance</button>
-        </div>
+        <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
             onUpdate={data => onUpdateInstance(inst.id, data)}
@@ -583,12 +609,13 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
   )
 }
 
-function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
+function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, api }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
+  onDeleteAllInstances: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
   sceneId: string
 }) {
@@ -613,10 +640,7 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
       <ImageSourceField label="Texture" value={props.textureSrc} onChange={setTexture} api={api} sceneId={sceneId} />
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-400">Instances ({element.instances.length})</p>
-          <button onClick={() => onAddInstance(element.id)} className="text-xs text-blue-400 hover:text-blue-300">+ Add Instance</button>
-        </div>
+        <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
             onUpdate={data => onUpdateInstance(inst.id, data)}
@@ -631,12 +655,13 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
 // Ad Space Element Editor
 // ---------------------------------------------------------------------------
 
-function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
+function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, api }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
+  onDeleteAllInstances: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
   sceneId: string
 }) {
@@ -690,10 +715,7 @@ function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInsta
         hint="Shown when there is no ad. Without one, the space hides itself." api={api} sceneId={sceneId} />
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-400">Instances ({element.instances.length})</p>
-          <button onClick={() => onAddInstance(element.id)} className="text-xs text-blue-400 hover:text-blue-300">+ Add Instance</button>
-        </div>
+        <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
             onUpdate={data => onUpdateInstance(inst.id, data)}
@@ -708,7 +730,7 @@ function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInsta
 // Model Element Editor
 // ---------------------------------------------------------------------------
 
-function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdateInstance, onDeleteInstance, onAddInstance, api }: {
+function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, api }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   /** The room set rewrote this element's model on the server: show the new URL. */
@@ -716,6 +738,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
+  onDeleteAllInstances: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
 }) {
   const props = element.properties || {}
@@ -780,10 +803,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
       )}
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-400">Instances ({element.instances.length})</p>
-          <button onClick={() => onAddInstance(element.id)} className="text-xs text-blue-400 hover:text-blue-300">+ Add Instance</button>
-        </div>
+        <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
             onUpdate={data => onUpdateInstance(inst.id, data)}
@@ -798,12 +818,13 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
 // Sound Element Editor
 // ---------------------------------------------------------------------------
 
-function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance }: {
+function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
+  onDeleteAllInstances: (elementId: string) => void
 }) {
   const props = element.properties || {}
 
@@ -843,10 +864,7 @@ function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
       </label>
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-400">Instances ({element.instances.length})</p>
-          <button onClick={() => onAddInstance(element.id)} className="text-xs text-blue-400 hover:text-blue-300">+ Add Instance</button>
-        </div>
+        <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
             onUpdate={data => onUpdateInstance(inst.id, data)}
@@ -1434,6 +1452,15 @@ export default function SceneEditorPage() {
     }
   }, [api])
 
+  const handleDeleteAllInstances = useCallback(async (elementId: string) => {
+    try {
+      await api.deleteElementInstances(elementId)
+      setScene(prev => withoutInstancesOf(prev, elementId))
+    } catch (err: any) {
+      console.error('Failed to delete instances:', err)
+    }
+  }, [api])
+
   const handleAddInstance = useCallback(async (elementId: string) => {
     try {
       const { instance } = await api.createInstance(elementId, {
@@ -1682,6 +1709,7 @@ export default function SceneEditorPage() {
                 onUpdateInstance: handleUpdateInstance,
                 onDeleteInstance: handleDeleteInstance,
                 onAddInstance: handleAddInstance,
+                onDeleteAllInstances: handleDeleteAllInstances,
               }
 
               switch (el.type) {

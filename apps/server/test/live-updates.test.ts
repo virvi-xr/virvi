@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { db } from '../src/db/connection.js'
 import { scenePresets } from '../src/db/schema.js'
 import { resetDb } from './helpers/db.js'
-import { createUser, createScene, tokenFor, testApp, randomWallet } from './helpers/factories.js'
+import { createUser, createScene, createElement, createInstance, tokenFor, testApp, randomWallet } from './helpers/factories.js'
 import { startGameServer, joinScene, serverRoom } from './helpers/game-server.js'
 import { initBus } from '../src/realtime/bus.js'
 
@@ -101,6 +101,22 @@ describe('REST edits broadcast live updates to scene rooms', () => {
     expect(elDel.statusCode).toBe(204)
     msg = await c.waitFor('scene_preset_update')
     expect(msg).toEqual({ action: 'delete', element: 'image', id: elementId })
+  })
+
+  it('deleting all instances of an element reaches the room as one upsert with none left', async () => {
+    const host = await createUser()
+    const { scene, preset } = await createScene(host)
+    const headers = { authorization: `Bearer ${tokenFor(host)}` }
+    const element = await createElement(preset.id, { type: 'image', name: 'Poster', properties: { textureSrc: 'https://cdn.virvi.io/u1/a.png' } })
+    for (let i = 0; i < 3; i++) await createInstance(element.id)
+    const c = await joinScene(gs.url, scene.id, tokenFor(host))
+    const init = await c.waitFor('scene_preset_update')
+    expect(init.action).toBe('init')
+    const res = await app.inject({ method: 'DELETE', url: `/api/elements/${element.id}/instances`, headers })
+    expect(res.json()).toEqual({ deleted: 3 })
+    // One update for the whole set: the first one after the delete already has no instances left
+    const msg = await c.waitFor('scene_preset_update')
+    expect(msg).toMatchObject({ action: 'upsert', element: 'image', elementData: { sk: element.id, instances: [] } })
   })
 
   it('edits to a preset that is not active are not broadcast', async () => {

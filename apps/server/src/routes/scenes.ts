@@ -684,6 +684,42 @@ export default async function sceneRoutes(app: FastifyInstance) {
     },
   )
 
+  // ── DELETE /api/elements/:elementId/instances — delete all of an element's instances ──
+
+  app.delete<{ Params: { elementId: string } }>(
+    '/api/elements/:elementId/instances',
+    { config: { scenePass: { sceneFrom: fromElement } } },
+    async (request, reply) => {
+      const { elementId } = request.params
+
+      const element = await db.query.sceneElements.findFirst({
+        where: eq(sceneElements.id, elementId),
+        with: { preset: { with: { scene: true } } },
+      })
+      if (!element) return reply.status(404).send({ error: 'Element not found' })
+      // Same rule as deleting one instance: editors and above
+      if (!hasScope(await accessFor(request, element.preset.sceneId), 'scene.edit')) {
+        return reply.status(403).send({ error: 'Forbidden' })
+      }
+
+      // One statement, so every instance goes or none do; the element stays
+      const deleted = await db
+        .delete(sceneElementInstances)
+        .where(eq(sceneElementInstances.elementId, elementId))
+        .returning({ id: sceneElementInstances.id })
+      if (deleted.length) {
+        await elementChanged({
+          sceneId: element.preset.sceneId,
+          presetId: element.presetId,
+          elementId,
+          elementType: element.type,
+          deleted: false,
+        })
+      }
+      return reply.send({ deleted: deleted.length })
+    },
+  )
+
   // ── GET /api/scenes/:sceneId/collaborators — list collaborators ────────
 
   app.get<{ Params: { sceneId: string } }>(
