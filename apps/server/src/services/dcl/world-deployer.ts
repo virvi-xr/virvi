@@ -30,6 +30,7 @@ import {
 import { keepDeployedFiles } from './deployed-files.js'
 import { buildEntity, dclHash, verifyChain, virviSigner, type AuthChain, type ContentRef, type SceneMetadata } from './entity.js'
 import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
+import { CatalystError, contentServerFor } from './catalyst-client.js'
 import { getWorldsClient, WorldsError, type LiveEntity } from './worlds-client.js'
 import { worldOf } from './world-of.js'
 
@@ -142,7 +143,7 @@ export async function liveBaseFor(dest: Destination): Promise<LiveEntity | null>
 async function liveAt(dest: Destination): Promise<LiveEntity | null> {
   let entities: LiveEntity[]
   try {
-    entities = await getWorldsClient().getWorldEntities(worldOf(dest))
+    entities = await contentServerFor(dest).liveEntities(dest)
   } catch {
     await setDestStatus(dest.id, 'unreachable', UNREACHABLE)
     throw new DeployerError(503, 'world_unreachable', UNREACHABLE)
@@ -270,9 +271,9 @@ const SIZE_CONCURRENCY = 16
  * counting every new file is the same sum as counting only new hashes and crediting only the live hashes not reused.
  */
 async function replacedBytes(dest: Destination): Promise<number | null> {
-  const client = getWorldsClient()
+  const client = contentServerFor(dest)
   try {
-    const live = (await client.getWorldEntities(worldOf(dest))).find((e) => e.pointers.includes(dest.base))
+    const live = (await client.liveEntities(dest)).find((e) => e.pointers.includes(dest.base))
     if (!live) return 0
     const hashes = [...new Set(live.content.map((c) => c.hash))]
     let total = 0
@@ -449,8 +450,8 @@ async function rebuildNewFiles(sources: NewFileSource[], fetch: ModelFetcher): P
 /** A plain-language reason for the deploy page. */
 function plainError(err: unknown): string {
   if (err instanceof DeployerError) return err.message
-  if (err instanceof WorldsError) {
-    if (err.status === 0) return "Couldn't reach Decentraland's Worlds server. Try again in a minute."
+  if (err instanceof WorldsError || err instanceof CatalystError) {
+    if (err.status === 0) return err instanceof CatalystError ? "Couldn't reach Decentraland's servers. Try again in a minute." : "Couldn't reach Decentraland's Worlds server. Try again in a minute."
     let reason = err.body
     try {
       const j = JSON.parse(err.body) as { message?: string; error?: string; errors?: string[] }
@@ -465,7 +466,7 @@ function plainError(err: unknown): string {
 /** The code an import records for a deploy error. */
 function errorCodeOf(err: unknown): string {
   if (err instanceof DeployerError || err instanceof ImportError) return err.code
-  if (err instanceof WorldsError) return err.status === 0 ? 'world_unreachable' : 'deploy_rejected'
+  if (err instanceof WorldsError || err instanceof CatalystError) return err.status === 0 ? 'world_unreachable' : 'deploy_rejected'
   return 'deploy_failed'
 }
 
@@ -635,7 +636,7 @@ async function runVirviDeploy(
     const bundle = { entityId: a.entityId, pointers: a.pointers, deployedFiles: a.deployedFiles, added: a.added, refused: a.refused, baseEntityId: packed.baseEntityId, content }
     await db.update(sceneDeployments).set({ status: 'deploying', assetBundle: { ...bundle, progress } }).where(eq(sceneDeployments.id, deploymentId))
     const authChain = await signer.signChain(a.entityId)
-    await getWorldsClient().deploy({ entityId: a.entityId, authChain, files: a.files })
+    await contentServerFor(dest).deploy({ entityId: a.entityId, authChain, files: a.files })
     live = true
     await db
       .update(sceneDeployments)
@@ -756,13 +757,13 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
     })
     if (entityId !== bundle.entityId) throw new DeployerError(500, 'entity_mismatch', 'The rebuilt deployment did not match what was signed')
     const content = bundle.content ?? entityContent({ entityId, files })
-    await getWorldsClient().deploy({ entityId, authChain: chain, files })
+    await contentServerFor(dest).deploy({ entityId, authChain: chain, files })
     live = true
     await afterWorldDeploy(dest, entityId, bundle.deployedFiles, dep.id, { content, files })
   } catch (err) {
     if (!live) {
       await markFailed(dep.id, err).catch(() => {})
-      if (err instanceof WorldsError) throw new DeployerError(502, 'deploy_rejected', plainError(err))
+      if (err instanceof WorldsError || err instanceof CatalystError) throw new DeployerError(502, 'deploy_rejected', plainError(err))
       throw err
     }
     console.error('[world-deployer] after deploy failed:', dep.id, err instanceof Error ? err.message : err)
@@ -797,7 +798,7 @@ export async function reconcileStaleDeployments(now: Date = new Date()): Promise
       if (!dest) continue
       let entities: LiveEntity[]
       try {
-        entities = await getWorldsClient().getWorldEntities(worldOf(dest))
+        entities = await contentServerFor(dest).liveEntities(dest)
       } catch {
         continue
       }

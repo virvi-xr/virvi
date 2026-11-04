@@ -21,6 +21,7 @@
     "@colyseus/redis-driver": "^0.17.6",
     "@colyseus/redis-presence": "^0.15.6",
     "@colyseus/ws-transport": "^0.15.0",
+    "@dcl/crypto": "3.7.0",
     "@dcl/crypto-middleware": "6.3.0",
     "@dcl/hashing": "3.0.4",
     "@fastify/cors": "^10.0.0",
@@ -51,7 +52,6 @@
     "undici": "6.21.3"
   },
   "devDependencies": {
-    "@dcl/crypto": "3.7.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.0.0",
     "@types/nodemailer": "^7.0.11",
