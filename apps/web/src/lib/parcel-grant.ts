@@ -44,7 +44,7 @@ const MAINNET = '0x1'
  * Sends the transactions from the connected account, one at a time, on Ethereum mainnet; the first rejection ends it
  * (the error is the wallet's own, so `wizardErrorMessage` words a refusal). Resolves with the transaction hashes.
  */
-export async function sendTransactions(wallet: Eip1193Provider, txs: GrantTransaction[]): Promise<string[]> {
+export async function sendTransactions(wallet: Eip1193Provider, txs: GrantTransaction[], onSent?: (hash: string) => void): Promise<string[]> {
   const accounts = (await wallet.request({ method: 'eth_requestAccounts' })) as string[]
   const from = accounts?.[0]
   if (!from) throw new Error('No wallet account selected')
@@ -52,7 +52,9 @@ export async function sendTransactions(wallet: Eip1193Provider, txs: GrantTransa
   if (chain?.toLowerCase() !== MAINNET) await wallet.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: MAINNET }] })
   const hashes: string[] = []
   for (const tx of txs) {
-    hashes.push((await wallet.request({ method: 'eth_sendTransaction', params: [{ from, to: tx.to, data: tx.data }] })) as string)
+    const hash = (await wallet.request({ method: 'eth_sendTransaction', params: [{ from, to: tx.to, data: tx.data }] })) as string
+    hashes.push(hash)
+    onSent?.(hash)
   }
   return hashes
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { WrongWalletError } from './dcl-sign'
-import { deploymentSummary, destinationHistory, modeLabel, pendingLine, signErrorMessage, signerWallets, statusView } from './deploy'
+import { deploymentSummary, destinationHistory, modeLabel, pendingLine, signErrorMessage, signerWallets, statusView, destinationLocation } from './deploy'
 
 describe('pendingLine', () => {
   it('counts the models waiting to go live', () => {
@@ -62,5 +62,14 @@ describe('signerWallets', () => {
     expect(signerWallets({ ...dest, signers: ['0xa', '0xb'] })).toEqual(['0xa', '0xb'])
     expect(signerWallets({ ...dest, signers: null })).toBeNull()
     expect(signerWallets({ ...dest, signers: [] })).toBeNull()
+  })
+})
+
+describe('destinationLocation', () => {
+  it('tells a World from Genesis City parcels', () => {
+    expect(destinationLocation({ kind: 'world', worldName: 'a.dcl.eth', base: '0,0', parcels: ['0,0'] })).toEqual({ kind: 'world', world: 'a.dcl.eth' })
+    expect(destinationLocation({ worldName: 'a.dcl.eth', base: '0,0', parcels: ['0,0'] })).toEqual({ kind: 'world', world: 'a.dcl.eth' })
+    expect(destinationLocation({ kind: 'parcels', worldName: null as unknown as string, base: '1,2', parcels: ['1,2', '1,3'] }))
+      .toEqual({ kind: 'parcels', base: '1,2', parcels: ['1,2', '1,3'] })
   })
 })

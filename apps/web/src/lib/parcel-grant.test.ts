@@ -54,6 +54,13 @@ describe('sendTransactions', () => {
     expect(sends).toEqual([[{ from: '0xAbC', to: '0x1', data: '0xaa' }], [{ from: '0xAbC', to: '0x2', data: '0xbb' }]])
   })
 
+  it('reports each hash as it is sent, so a later rejection keeps the earlier ones', async () => {
+    const w = wallet(1)
+    const seen: string[] = []
+    await expect(sendTransactions(w, txs, (h) => seen.push(h))).rejects.toMatchObject({ code: 4001 })
+    expect(seen).toEqual(['0xhash1'])
+  })
+
   it('stops at the first rejection', async () => {
     const w = wallet(0)
     await expect(sendTransactions(w, txs)).rejects.toMatchObject({ code: 4001 })

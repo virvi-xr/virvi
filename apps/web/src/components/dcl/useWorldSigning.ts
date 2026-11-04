@@ -23,7 +23,7 @@ export interface DeployView {
 const idle: DeployView = { status: 'idle', phase: 'packing', models: null, underway: false, deployment: null, error: null }
 
 /** A destination to sign for: `signers` (Genesis City parcels) are the wallets any one of which may sign; null: any wallet may try. */
-export type SigningDestination = Pick<DclDestination, 'id' | 'ownerWallet' | 'worldName' | 'mode'> & { signers?: string[] | null }
+export type SigningDestination = Pick<DclDestination, 'id' | 'ownerWallet' | 'mode'> & { worldName: string | null; signers?: string[] | null }
 
 /**
  * One signing session per page visit (one wallet prompt covers a grant and a deploy), started for the World's

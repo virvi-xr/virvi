@@ -1,4 +1,5 @@
 // Plain-language copy for the deploy page's World destinations and the publish page.
+import type { ImportLocation } from '@virvixr/shared'
 import type { DclDeployment, DclDestination } from './api'
 import { wizardErrorMessage } from './wizard/run'
 import { shortAddress } from './wizard/helpers'
@@ -68,13 +69,18 @@ export function signerWallets(dest: { ownerWallet: string; signers?: string[] | 
 }
 
 /** A failure while signing: the wrong wallet names the owner's (a World) or the kind of wallet (parcels); everything else as in the wizard. */
-export function signErrorMessage(err: unknown, dest: Pick<DclDestination, 'ownerWallet' | 'worldName'> & { kind?: 'world' | 'parcels' }): string {
+export function signErrorMessage(err: unknown, dest: Pick<DclDestination, 'ownerWallet'> & { worldName: string | null; kind?: 'world' | 'parcels' }): string {
   if ((err as Error | null)?.name === 'WrongWalletError' && dest.kind === 'parcels') return 'Sign with a wallet that owns or operates these parcels.'
-  if ((err as Error | null)?.name === 'WrongWalletError') return `Sign with ${shortAddress(dest.ownerWallet)}, the wallet that owns ${dest.worldName}.`
+  if ((err as Error | null)?.name === 'WrongWalletError') return `Sign with ${shortAddress(dest.ownerWallet)}, the wallet that owns ${dest.worldName ?? 'this World'}.`
   return wizardErrorMessage(err)
 }
 
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '--'
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+/** Where a destination deploys: its World, or its Genesis City parcels (a parcels destination has no World name). */
+export function destinationLocation(d: Pick<DclDestination, 'kind' | 'worldName' | 'base' | 'parcels'>): ImportLocation {
+  return d.kind === 'parcels' ? { kind: 'parcels', base: d.base, parcels: d.parcels } : { kind: 'world', world: d.worldName ?? '' }
 }

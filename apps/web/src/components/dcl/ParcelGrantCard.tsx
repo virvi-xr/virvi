@@ -49,13 +49,22 @@ export function ParcelGrantCard({ destinationId, onChanged }: { destinationId: s
   const send = async (txs: GrantTransaction[], step: NonNullable<Step>) => {
     const wallet = getBrowserWallet()
     if (!wallet) throw new Error('No browser wallet found. Install MetaMask or another Ethereum wallet, then try again.')
-    await sendTransactions(wallet, txs)
-    setWaiting(step)
+    // Count each one as it goes: a later refusal still leaves the ones already sent to be checked
+    let sent = 0
+    try {
+      await sendTransactions(wallet, txs, () => { sent++ })
+    } finally {
+      if (sent) setWaiting(step)
+    }
     setNotice('Sent. Once Ethereum confirms the transaction, press Check again.')
   }
 
   const makeOperator = () => run(async () => {
-    if (!grant.transactions?.length) return
+    if (!grant.transactions?.length) {
+      setNotice('There is nothing to send: Virvi may already hold the right. Press Check again.')
+      setWaiting('granting')
+      return
+    }
     await send(grant.transactions, 'granting')
   })
 

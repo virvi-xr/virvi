@@ -10,6 +10,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, Suspense } from 'react'
 import { ConfirmAction, PageHeader, Skeleton } from '@/components/ui'
 import { AdoptWorldCard, WorldDestinationCard } from '@/components/dcl/WorldDestinationCard'
+import { ParcelDestinationCard } from '@/components/dcl/ParcelDestinationCard'
 import { wizardErrorMessage } from '@/lib/wizard/run'
 
 export default function DeployPage() {
@@ -515,7 +516,9 @@ function DeployContent() {
             </div>
           ) : (
             <div className="space-y-4">
-              {worlds.destinations.map((d) => (
+              {worlds.destinations.map((d) => d.kind === 'parcels' ? (
+                <ParcelDestinationCard key={d.id} destination={d} history={destinationHistory(worlds.history, d.id)} onChanged={refreshHistory} />
+              ) : (
                 <WorldDestinationCard
                   key={d.id}
                   destination={d}
