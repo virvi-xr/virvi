@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { accessGrants, mediaAssets, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
+import { moveStudioData } from '../studio/merge.js'
 import { initialRoleForNewUser } from './roles.js'
 
 const isVerified = (m: { metadata: unknown }) => (m.metadata as { verified?: unknown } | null)?.verified === true
@@ -40,6 +41,7 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string) 
     await tx.update(userAuthMethods).set({ userId }).where(eq(userAuthMethods.id, methodId))
     await tx.update(accessGrants).set({ userId }).where(eq(accessGrants.userId, shellId))
     await tx.update(sceneRoles).set({ userId }).where(eq(sceneRoles.userId, shellId))
+    await moveStudioData(tx, shellId, userId, new Date())
     const owns = (await tx.query.scenes.findFirst({ where: eq(scenes.ownerId, shellId), columns: { id: true } }))
       || (await tx.query.mediaAssets.findFirst({ where: eq(mediaAssets.ownerId, shellId), columns: { id: true } }))
     const rest = await tx.query.userAuthMethods.findFirst({ where: eq(userAuthMethods.userId, shellId), columns: { id: true } })
