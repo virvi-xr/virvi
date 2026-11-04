@@ -80,7 +80,7 @@ export class VideoManager {
     if (!msg?.elementId || !Array.isArray(msg.showings) || typeof msg.serverTime !== 'number') return
     this.showings.set(msg.elementId, { showings: msg.showings, offsetMs: msg.serverTime - this.now() })
     const config = this.configs.get(msg.elementId)
-    if (!config || config.offType !== VideoSourceType.SCHEDULED || (config.isLive && config.enableLiveStream && config.liveSrc)) return
+    if (!config || !config.enabled || config.offType !== VideoSourceType.SCHEDULED || (config.isLive && config.enableLiveStream && config.liveSrc)) return
     for (const instance of this.instances.values()) {
       if (instance.configSk !== msg.elementId) continue
       if (instance.showingTick && this.showingState(msg.elementId).key === instance.showingKey) continue
@@ -107,6 +107,8 @@ export class VideoManager {
     let since = 0
     const tick = (dt: number) => {
       if (instance.mediaToken !== token) return
+      // A screen disabled in place keeps its entity: it must not go on changing videos
+      if (!config.enabled) return this.stopShowingClock(instance)
       since += dt
       if (since < SHOWING_CHECK_S) return
       since = 0
@@ -118,7 +120,7 @@ export class VideoManager {
 
   private renderShowing(instance: VideoInstance, config: VideoConfig): void {
     const { state, key } = this.showingState(config.sk)
-    const wasPlaying = instance.showingKey !== undefined && instance.showingKey !== 'between'
+    const prev = instance.showingKey
     instance.showingKey = key
     if (state.mode === 'playing') {
       // Everyone starts at the same second: the item, and how far into it the shared clock says the show is
@@ -127,8 +129,8 @@ export class VideoManager {
       })
       return
     }
-    // Between showings: stop any video, then the holding image
-    if (wasPlaying) this.adapter.createVideoPlayer(instance.entity, { src: '', playing: false, volume: 0, loop: false })
+    // Between showings: stop any video (a film, a stream or a playlist this screen played before), then the holding image
+    if (prev !== 'between') this.adapter.createVideoPlayer(instance.entity, { src: '', playing: false, volume: 0, loop: false })
     if (config.offImageSrc) this.adapter.setMaterial(instance.entity, { textureSrc: config.offImageSrc, emission: config.emission })
   }
 

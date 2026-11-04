@@ -42,6 +42,8 @@ const show: ShowingInstance = {
 }
 const message = (serverTime: number, showings = [show]) => ({ elementId: 'v1', serverTime, showings })
 const lastPlayer = (adapter: any) => adapter.createVideoPlayer.mock.calls.at(-1)?.[1]
+/** Calls that start a video (not the stops before a holding image). */
+const plays = (adapter: any) => adapter.createVideoPlayer.mock.calls.filter((c: any[]) => c[1].playing).length
 
 describe('scheduled screens', () => {
   it('joining mid-show starts the right video at the right second, on the server clock', () => {
@@ -63,7 +65,8 @@ describe('scheduled screens', () => {
     const { sm, adapter, tick } = setup(T0 - 10_000)
     sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
     sm.handleScreenShowings(message(T0 - 10_000))
-    expect(adapter.createVideoPlayer).not.toHaveBeenCalled()
+    expect(adapter.createVideoPlayer.mock.calls.every((c: any[]) => c[1].playing === false)).toBe(true)
+    adapter.createVideoPlayer.mockClear()
     expect(adapter.setMaterial).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ textureSrc: 'https://img/next.png' }))
     tick(9_000)
     expect(adapter.createVideoPlayer).not.toHaveBeenCalled()
@@ -75,9 +78,9 @@ describe('scheduled screens', () => {
     const { sm, adapter, tick } = setup(T0 + 59_000)
     sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
     sm.handleScreenShowings(message(T0 + 59_000))
-    expect(adapter.createVideoPlayer).toHaveBeenCalledTimes(1)
+    expect(plays(adapter)).toBe(1)
     tick(500)
-    expect(adapter.createVideoPlayer).toHaveBeenCalledTimes(1) // same item: no re-seek
+    expect(plays(adapter)).toBe(1) // same item: no re-seek
     tick(500)
     expect(lastPlayer(adapter)).toMatchObject({ src: 'https://cdn/film.mp4', position: 0 })
     adapter.setMaterial.mockClear()
@@ -85,11 +88,12 @@ describe('scheduled screens', () => {
     expect(adapter.setMaterial).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ textureSrc: 'https://img/next.png' }))
   })
 
-  it('new showings replace the old ones (an edit, or the hourly top-up)', () => {
+  it('new showings replace the old ones (an edit, or the hourly top-up), and the film stops', () => {
     const { sm, adapter } = setup(T0 + 100_000)
     sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
     sm.handleScreenShowings(message(T0 + 100_000))
     sm.handleScreenShowings(message(T0 + 100_000, []))
+    expect(lastPlayer(adapter)).toMatchObject({ playing: false })
     expect(adapter.setMaterial).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ textureSrc: 'https://img/next.png' }))
   })
 
@@ -98,7 +102,7 @@ describe('scheduled screens', () => {
     sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
     sm.handleScreenShowings(message(T0 + 100_000))
     sm.handleScreenShowings(message(T0 + 101_000))
-    expect(adapter.createVideoPlayer).toHaveBeenCalledTimes(1)
+    expect(plays(adapter)).toBe(1)
   })
 
   it('leaving Schedule mode or removing the screen stops the clock', () => {
@@ -111,6 +115,28 @@ describe('scheduled screens', () => {
     sm.handlePresetUpdate({ action: 'upsert', element: 'video', elementData: screen() })
     expect(systems.size).toBe(1)
     sm.handlePresetUpdate({ action: 'delete', element: 'video', id: 'v1' })
+    expect(systems.size).toBe(0)
+  })
+
+  it('a live stream that ends between shows leaves no sound under the holding image', () => {
+    const { sm, adapter } = setup(T0 - 600_000)
+    sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen({ enableLiveStream: true, liveSrc: 'https://live/a.m3u8' })] } })
+    sm.handleScreenShowings(message(T0 - 600_000))
+    sm.handleVideoStatus({ elementId: 'v1', status: 'live' })
+    expect(lastPlayer(adapter)).toMatchObject({ src: 'https://live/a.m3u8', playing: true })
+    sm.handleVideoStatus({ elementId: 'v1', status: 'offline' })
+    expect(lastPlayer(adapter)).toMatchObject({ playing: false })
+  })
+
+  it('a disabled scheduled screen stops changing videos', () => {
+    const { sm, adapter, tick, systems } = setup(T0 + 59_000)
+    sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
+    sm.handleScreenShowings(message(T0 + 59_000))
+    sm.handlePresetUpdate({ action: 'update', element: 'video', elementData: { sk: 'v1', enabled: false } })
+    adapter.createVideoPlayer.mockClear()
+    tick(2000)
+    sm.handleScreenShowings(message(T0 + 61_000))
+    expect(adapter.createVideoPlayer.mock.calls.filter((c: any[]) => c[1].playing)).toEqual([])
     expect(systems.size).toBe(0)
   })
 
