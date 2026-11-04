@@ -17,6 +17,7 @@ import { Badge, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { ProgressLines } from '@/components/wizard/ProgressLines'
 import { useWorldSigning, type SigningDestination } from '@/components/dcl/useWorldSigning'
 import { DownloadLiveButton } from '@/components/dcl/DownloadLiveButton'
+import { DownloadBackupButton } from '@/components/dcl/DownloadBackupButton'
 import { ParcelGrantCard } from '@/components/dcl/ParcelGrantCard'
 
 const secondary = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50'
@@ -253,6 +254,7 @@ function ImportContent() {
                   Jump in
                 </a>
                 {view.deploymentId && <DownloadLiveButton deploymentId={view.deploymentId} className={secondary} />}
+                <DownloadBackupButton sceneId={view.sceneId} className={secondary} />
                 <Link href={`/deploy?scene=${view.sceneId}`} className="text-blue-400 hover:text-blue-300">Open Deploy</Link>
               </div>
             </>

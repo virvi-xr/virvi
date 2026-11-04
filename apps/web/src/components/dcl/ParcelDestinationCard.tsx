@@ -11,6 +11,7 @@ import { Badge, ConfirmAction } from '@/components/ui'
 import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
 import { DownloadLiveButton } from './DownloadLiveButton'
+import { DownloadBackupButton } from './DownloadBackupButton'
 import { ParcelGrantCard } from './ParcelGrantCard'
 
 const button = 'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
@@ -97,6 +98,7 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
         {last?.status === 'deployed' && (
           <div className="mt-1.5 flex flex-wrap gap-2">
             <DownloadLiveButton deploymentId={last.id} className={secondary} />
+            <DownloadBackupButton sceneId={dest.sceneId} className={secondary} />
           </div>
         )}
       </div>

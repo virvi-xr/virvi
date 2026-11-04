@@ -12,6 +12,7 @@ import { Badge, ConfirmAction } from '@/components/ui'
 import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
 import { DownloadLiveButton } from './DownloadLiveButton'
+import { DownloadBackupButton } from './DownloadBackupButton'
 
 interface Detail {
   /** Over the triangles Decentraland recommends: shown, never a stop. */
@@ -133,6 +134,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
           {last?.status === 'deployed' && (
             <div className="mt-1.5 flex flex-wrap gap-2">
               <DownloadLiveButton deploymentId={last.id} className={secondary} />
+              <DownloadBackupButton sceneId={dest.sceneId} className={secondary} />
             </div>
           )}
         </div>

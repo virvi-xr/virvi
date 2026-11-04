@@ -564,6 +564,18 @@ export function useApi() {
       return { blob: await res.blob(), filename: m?.[1] ?? `deploy-${deploymentId}.zip` }
     },
 
+    /** A scene's Virvi-free Decentraland project as a zip (errors: `backup_too_big`, `not_decentraland`, `backup_busy`, `backup_timeout`). */
+    downloadSceneBackup: async (sceneId: string): Promise<{ blob: Blob; filename: string }> => {
+      const res = await fetch(`${API_URL}/api/scenes/${sceneId}/backup.zip`, { headers: requestHeaders(token, {}) })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        dropDeadSession(res.status, err)
+        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+      }
+      const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
+      return { blob: await res.blob(), filename: m?.[1] ?? `scene-${sceneId}-backup.zip` }
+    },
+
     // Deployments
     getDeployments: (sceneId: string) =>
       apiFetch<{ deployments: any[] }>(`/api/deploy/scene/${sceneId}`),
