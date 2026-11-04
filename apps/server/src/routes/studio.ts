@@ -13,7 +13,7 @@ import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
 import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
-import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError } from '../studio/payments.js'
+import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
@@ -38,6 +38,12 @@ async function studioOn(_request: FastifyRequest, reply: FastifyReply) {
 }
 
 const paymentsOff = (reply: FastifyReply) => reply.status(503).send({ error: 'Payments are not available', code: 'payments_unavailable' })
+
+/** A checkout's way to pay: card (Stripe, the default) or MANA; undefined for anything else. */
+function checkoutMethod(raw: unknown): CheckoutMethod | undefined {
+  if (raw == null) return 'card'
+  return raw === 'card' || raw === 'mana' ? raw : undefined
+}
 
 /** Checkout failures as the page sees them. */
 function checkoutRefusal(reply: FastifyReply, err: unknown) {
@@ -212,9 +218,11 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    // an admin's finalize is granted without Stripe, so it doesn't wait on payments being set up
-    if (!config.stripeSecretKey && !(await isVirviAdmin(request.user.id))) return paymentsOff(reply)
-    const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown }
+    const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown; method?: unknown }
+    const method = checkoutMethod(b.method)
+    if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
+    // an admin's finalize is granted without Stripe, and MANA doesn't use Stripe, so neither waits on it being set up
+    if (method === 'card' && !config.stripeSecretKey && !(await isVirviAdmin(request.user.id))) return paymentsOff(reply)
     let categories: string[] | null = null
     if (b.categories != null) {
       if (!Array.isArray(b.categories) || !b.categories.length || !b.categories.every((c) => typeof c === 'string' && /^[a-z_]{1,32}$/.test(c))) {
@@ -233,7 +241,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       }
     }
     try {
-      return await createFinalizeCheckout(d, { id: request.user.id, email: request.user.email ?? null }, categories, reports, new Date())
+      return await createFinalizeCheckout(d, { id: request.user.id, email: request.user.email ?? null }, categories, reports, new Date(), method)
     } catch (err) {
       return checkoutRefusal(reply, err)
     }
@@ -322,13 +330,16 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/studio/topups', work, async (request, reply) => {
-    if (!config.stripeSecretKey) return paymentsOff(reply)
-    const packs = (request.body as { packs?: unknown } | null)?.packs ?? 1
+    const b = (request.body ?? {}) as { packs?: unknown; method?: unknown }
+    const method = checkoutMethod(b.method)
+    if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
+    if (method === 'card' && !config.stripeSecretKey) return paymentsOff(reply)
+    const packs = b.packs ?? 1
     if (!Number.isInteger(packs) || (packs as number) < 1 || (packs as number) > MAX_PACKS) {
       return reply.status(400).send({ error: `packs must be 1-${MAX_PACKS}` })
     }
     try {
-      return await createTopupCheckout({ id: request.user.id, email: request.user.email ?? null }, packs as number, new Date())
+      return await createTopupCheckout({ id: request.user.id, email: request.user.email ?? null }, packs as number, new Date(), method)
     } catch (err) {
       return checkoutRefusal(reply, err)
     }

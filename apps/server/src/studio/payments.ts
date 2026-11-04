@@ -13,6 +13,8 @@ import type { Exec } from './quota.js'
 import { publishStudio } from './events.js'
 import { mailOwner } from './scope.js'
 import { frameUrlExpiry, signRenderFrame } from './render-urls.js'
+import { getManaRate, type ManaRate } from './mana/rate.js'
+import { ManaBusy, manaQuoteOf, setManaAmount, type ManaQuote } from './mana/quote.js'
 
 /**
  * Design Studio payments: one-time Stripe Checkout sessions for finalizing pieces and for prompt top-ups, applied once
@@ -25,10 +27,41 @@ const CHECKOUT_TTL_MS = 31 * 60 * 1000
 export const FINALIZE_LIMITS = { timeoutSec: 1800, maxTurns: 0, costCeilingUsd: 0 }
 export const REPORT_WINDOW_DAYS = 30
 const PENDING_REPORT_MS = 10 * 60_000
+// An open MANA quote is handed out again only with more than this left to pay it in
+const MANA_REUSE_MIN_MS = 2 * 60_000
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export class PaymentError extends Error {
   constructor(public status: number, public code: string) { super(code) }
+}
+
+export type CheckoutMethod = 'card' | 'mana'
+export type CheckoutResult = { url: string } | { mana: ManaQuote } | { granted: true; paymentId: string }
+
+/** A MANA checkout is refused before anything is held when MANA is off (no recipient set). */
+function requireMana(): void {
+  if (!config.studioMana.recipient) throw new PaymentError(503, 'mana_unavailable')
+}
+
+/** The rate a MANA quote is priced at; refused with no rate fetched in the last 5 minutes. */
+async function requireRate(now: Date): Promise<ManaRate> {
+  const rate = await getManaRate(now)
+  if (!rate) throw new PaymentError(503, 'rate_unavailable')
+  return rate
+}
+
+/** Prices a pending MANA payment's due cents and returns its quote, in the transaction that holds its credit. */
+async function quoteMana(
+  tx: Exec, pay: typeof studioPayments.$inferSelect, creditCents: number, dueCents: number, rate: ManaRate | null,
+): Promise<ManaQuote> {
+  if (!rate) throw new PaymentError(503, 'rate_unavailable')
+  try {
+    const amountWei = await setManaAmount(tx, pay.id, dueCents, rate)
+    return manaQuoteOf({ ...pay, creditHeldCents: creditCents, manaAmountWei: amountWei, manaUsdRate: String(rate.usdPerMana) })
+  } catch (err) {
+    if (err instanceof ManaBusy) throw new PaymentError(503, 'mana_busy')
+    throw err
+  }
 }
 
 const appUrl = (path: string) => `${config.publicUrl.replace(/\/+$/, '')}${path}`
@@ -106,9 +139,16 @@ async function holdCredit(
   return { lines, creditCents: taken, dueCents }
 }
 
-/** Expires, through Stripe, open checkouts another checkout takes over the holds of; one Stripe won't expire keeps them. */
-async function expireOpen(pays: { id: string; stripeSessionId: string | null }[], now: Date): Promise<void> {
+/**
+ * Expires open checkouts another checkout takes over the holds of: a card one through Stripe (one Stripe won't expire
+ * keeps them), a MANA quote (no Stripe session) directly.
+ */
+async function expireOpen(pays: { id: string; method: string; stripeSessionId: string | null }[], now: Date): Promise<void> {
   for (const p of pays) {
+    if (p.method === 'mana') {
+      await expirePayment(p.id, now)
+      continue
+    }
     if (!p.stripeSessionId) continue // one still being opened is left to its request
     try {
       await (await getStripe()).checkout.sessions.expire(p.stripeSessionId)
@@ -153,6 +193,11 @@ export async function giftsFor(userId: string, designId: string, now: Date, exec
  * credit_busy). The new checkout then takes its free finalizes, and after them its credit, from the balances under
  * locks on the user's rows, so two checkouts at once never use one twice. A checkout that never reaches Stripe gives
  * them back; an expired one gives them back from the webhook. One the credit covers in full is granted at once.
+ *
+ * With method 'mana' there is no Stripe session: the rest is quoted in MANA at the current rate (ManaQuote), held for
+ * 10 minutes. An open MANA quote for the same lines with more than 2 minutes left is handed out again; otherwise this
+ * design's open MANA quotes are expired (giving back their holds) and a new one is made. It is refused with MANA off
+ * (mana_unavailable) or no fresh rate (rate_unavailable) before anything is held.
  */
 export async function createFinalizeCheckout(
   design: Design,
@@ -160,7 +205,9 @@ export async function createFinalizeCheckout(
   categories: string[] | null,
   reports: Record<string, string>,
   now: Date,
-): Promise<{ url: string } | { granted: true; paymentId: string }> {
+  method: CheckoutMethod = 'card',
+): Promise<CheckoutResult> {
+  if (method === 'mana') requireMana()
   const waived = Object.keys(reports)
   const withReports = (lines: PaymentLine[]) => lines.map((l) => (l.waived || l.held ? { ...l, reportText: reports[l.category] } : l))
   const admin = await isVirviAdmin(user.id)
@@ -170,14 +217,23 @@ export async function createFinalizeCheckout(
   const open = await db.select().from(studioPayments).where(and(
     eq(studioPayments.designId, design.id), eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now),
   ))
-  if (quote.dueCents > 0) {
+  if (quote.dueCents > 0 && method === 'card') {
     const same = open.find((p) => p.stripeSessionUrl && sameLines(p.lines, withReports(quote.lines)))
     if (same) return { url: same.stripeSessionUrl! }
   }
-  await expireOpen(open.filter((p) => (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0)), now)
+  if (quote.dueCents > 0 && method === 'mana') {
+    const same = open.find((p) => p.method === 'mana' && p.manaAmountWei && sameLines(p.lines, withReports(quote.lines))
+      && p.expiresAt!.getTime() - now.getTime() > MANA_REUSE_MIN_MS)
+    if (same) return { mana: manaQuoteOf(same) }
+  }
+  // The rate before anything is expired or held, so a refusal leaves everything as it was
+  const rate = method === 'mana' && quote.dueCents > 0 ? await requireRate(now) : null
+  // A new MANA quote replaces this design's open ones; any checkout takes over the free finalizes and credit it needs
+  await expireOpen(open.filter((p) => (method === 'mana' && p.method === 'mana')
+    || (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0)), now)
 
-  const expiresAt = new Date(now.getTime() + CHECKOUT_TTL_MS)
-  const { pay, lines } = await db.transaction(async (tx) => {
+  const expiresAt = new Date(now.getTime() + (method === 'mana' ? config.studioMana.quoteTtlMs : CHECKOUT_TTL_MS))
+  const { pay, lines, mana } = await db.transaction(async (tx) => {
     // The design before the credits, in the order a grant locks them (the payment's foreign key needs the design)
     await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.id, design.id)).for('key share')
     await tx.insert(studioFinalizeCredits).values({ userId: user.id, balance: 0, updatedAt: now }).onConflictDoNothing()
@@ -189,7 +245,7 @@ export async function createFinalizeCheckout(
     if (q.giftsUsed < quote.giftsUsed) throw new PaymentError(409, 'free_finalize_busy')
     const [pay] = await tx.insert(studioPayments).values({
       userId: user.id, designId: design.id, kind: 'finalize', amountCents: q.totalCents, lines: withReports(q.lines), giftsHeld: q.giftsUsed,
-      ...(q.totalCents > 0 ? { expiresAt } : {}),
+      ...(q.totalCents > 0 ? { expiresAt, method } : {}),
     }).returning()
     if (q.giftsUsed > 0) {
       await tx.update(studioFinalizeCredits).set({ balance: sql`${studioFinalizeCredits.balance} - ${q.giftsUsed}`, updatedAt: now })
@@ -198,7 +254,9 @@ export async function createFinalizeCheckout(
     // Credit after gifts: the lock on the credit row comes last
     const held = await holdCredit(tx, pay, now)
     if (held.creditCents < Math.min(quote.creditCents, q.totalCents)) throw new PaymentError(409, 'credit_busy')
-    return { pay: { ...pay, dueCents: held.dueCents }, lines: held.lines }
+    // MANA pays what is left after gifts and credit: the lines with something due
+    const mana = method === 'mana' && held.dueCents > 0 ? await quoteMana(tx, pay, held.creditCents, held.dueCents, rate) : null
+    return { pay: { ...pay, dueCents: held.dueCents }, lines: held.lines, mana }
   })
   if (pay.dueCents === 0) {
     try {
@@ -209,6 +267,7 @@ export async function createFinalizeCheckout(
     }
     return { granted: true, paymentId: pay.id }
   }
+  if (mana) return { mana }
   let customer: string
   try {
     customer = await ensureCustomer(user.id, user.email)
@@ -237,24 +296,30 @@ export async function createFinalizeCheckout(
 /**
  * A checkout for prompt packs. Virvi credit pays first, held as a finalize's is: the user's open top-ups that hold
  * credit are expired through Stripe so it comes back for this one, and a top-up the credit covers in full is granted
- * at once.
+ * at once. With method 'mana' the rest is quoted in MANA instead, as a finalize's is.
  */
 export async function createTopupCheckout(
-  user: { id: string; email: string | null }, packs: number, now: Date,
-): Promise<{ url: string } | { granted: true; paymentId: string }> {
+  user: { id: string; email: string | null }, packs: number, now: Date, method: CheckoutMethod = 'card',
+): Promise<CheckoutResult> {
   const { topupCents, topupPrompts } = config.studioPrices
-  const expiresAt = new Date(now.getTime() + CHECKOUT_TTL_MS)
-  if ((await creditFor(user.id, null, now)) > 0) {
+  if (method === 'mana') requireMana()
+  const credit = await creditFor(user.id, null, now)
+  // The rate before anything is expired or held, so a refusal leaves everything as it was
+  const rate = method === 'mana' && credit < topupCents * packs ? await requireRate(now) : null
+  const expiresAt = new Date(now.getTime() + (method === 'mana' ? config.studioMana.quoteTtlMs : CHECKOUT_TTL_MS))
+  if (credit > 0) {
     await expireOpen(await db.select().from(studioPayments).where(and(
       eq(studioPayments.userId, user.id), eq(studioPayments.kind, 'topup'), eq(studioPayments.status, 'pending'),
       gt(studioPayments.expiresAt, now), gt(studioPayments.creditHeldCents, 0),
     )), now)
   }
-  const { pay, held } = await db.transaction(async (tx) => {
+  const { pay, held, mana } = await db.transaction(async (tx) => {
     const [pay] = await tx.insert(studioPayments).values({
-      userId: user.id, kind: 'topup', amountCents: topupCents * packs, prompts: topupPrompts * packs, expiresAt,
+      userId: user.id, kind: 'topup', amountCents: topupCents * packs, prompts: topupPrompts * packs, expiresAt, method,
     }).returning()
-    return { pay, held: await holdCredit(tx, pay, now) }
+    const held = await holdCredit(tx, pay, now)
+    const mana = method === 'mana' && held.dueCents > 0 ? await quoteMana(tx, pay, held.creditCents, held.dueCents, rate) : null
+    return { pay, held, mana }
   })
   if (held.dueCents === 0) {
     try {
@@ -265,6 +330,7 @@ export async function createTopupCheckout(
     }
     return { granted: true, paymentId: pay.id }
   }
+  if (mana) return { mana }
   let customer: string
   try {
     customer = await ensureCustomer(user.id, user.email)
