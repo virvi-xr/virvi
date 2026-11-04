@@ -134,7 +134,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
           {last?.status === 'deployed' && (
             <div className="mt-1.5 flex flex-wrap gap-2">
               <DownloadLiveButton deploymentId={last.id} className={secondary} />
-              <DownloadBackupButton sceneId={dest.sceneId} className={secondary} />
+              <DownloadBackupButton sceneId={dest.sceneId} destinationId={dest.id} className={secondary} />
             </div>
           )}
         </div>

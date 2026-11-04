@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { useApi } from '@/lib/api'
 import { backupErrorMessage } from '@/lib/backup'
 
-export function DownloadBackupButton({ sceneId, className }: { sceneId: string; className: string }) {
+/** `destinationId`: a deploy card's destination, where a scene Virvi built is placed in the backup's scene.json. */
+export function DownloadBackupButton({ sceneId, destinationId, className }: { sceneId: string; destinationId?: string; className: string }) {
   const api = useApi()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -14,7 +15,7 @@ export function DownloadBackupButton({ sceneId, className }: { sceneId: string; 
     setBusy(true)
     setError(null)
     try {
-      const { blob, filename } = await api.downloadSceneBackup(sceneId)
+      const { blob, filename } = await api.downloadSceneBackup(sceneId, destinationId)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url

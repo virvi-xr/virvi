@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { backupErrorMessage } from './backup'
+import { backupErrorMessage, backupPath } from './backup'
 
 const apiError = (status: number, body: Record<string, unknown>) => Object.assign(new Error(String(body.error)), { status, body })
 
@@ -28,5 +28,12 @@ describe('backupErrorMessage', () => {
 
   it('falls back for an unknown failure', () => {
     expect(backupErrorMessage(apiError(500, { error: 'boom' }))).toMatch(/Try again/)
+  })
+})
+
+describe('backupPath', () => {
+  it("is the scene's backup route, with the card's destination when given", () => {
+    expect(backupPath('s1')).toBe('/api/scenes/s1/backup.zip')
+    expect(backupPath('s1', 'd 2')).toBe('/api/scenes/s1/backup.zip?destination=d%202')
   })
 })
