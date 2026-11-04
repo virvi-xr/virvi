@@ -20,7 +20,10 @@ export interface DclDirectory {
   /** With `entityId`, a cached answer is used only if it belongs to that deployment. */
   getActiveDeployer(parcel: string, entityId?: string): Promise<string | null>
   getWorldScene(name: string): Promise<{ sceneUrns: string[]; title?: string } | null>
-  getParcelRights(parcel: string): Promise<ParcelRights | null>
+  /** `fresh` bypasses the TTL cache (use before authorising a deploy). */
+  getParcelRights(parcel: string, opts?: { fresh?: boolean }): Promise<ParcelRights | null>
+  /** Land-manager subgraph: parcel -> estate id, or null when the parcel is in no estate. Uncached. */
+  getParcelEstates(parcels: string[]): Promise<Map<string, string | null>>
   getWorldOwner(name: string): Promise<string | null>
   getWorldDeployers(name: string): Promise<string[]>
   /** Lowercased hostnames of the DAO catalyst list. Throws DirectoryUnavailableError when it can't be fetched. */
@@ -103,7 +106,7 @@ export class HttpDclDirectory implements DclDirectory {
   private catalystsFailedAt = -Infinity
   private ownedNames = new TtlCache<string[]>()
 
-  constructor(private catalyst = config.catalystUrl, private worlds = config.worldsUrl) {}
+  constructor(private catalyst = config.catalystUrl, private worlds = config.worldsUrl, private subgraph = config.dclLandSubgraphUrl) {}
 
   async getActiveSceneAt(parcel: string): Promise<ActiveScene | null> {
     return this.activeScenes.getOrLoad(parcel, () => this.fetchActiveSceneAt(parcel))
@@ -192,8 +195,45 @@ export class HttpDclDirectory implements DclDirectory {
     })
   }
 
-  async getParcelRights(parcel: string): Promise<ParcelRights | null> {
+  async getParcelRights(parcel: string, opts?: { fresh?: boolean }): Promise<ParcelRights | null> {
+    if (opts?.fresh) {
+      const value = await this.fetchParcelRights(parcel)
+      this.rights.set(parcel, value)
+      return value
+    }
     return this.rights.getOrLoad(parcel, () => this.fetchParcelRights(parcel))
+  }
+
+  /** One subgraph request for all parcels, using a GraphQL alias per parcel. */
+  async getParcelEstates(parcels: string[]): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>()
+    if (!parcels.length) return out
+    const fields = parcels.map((p, i) => {
+      const m = /^(-?\d{1,4}),(-?\d{1,4})$/.exec(p)
+      if (!m) throw new Error(`bad parcel coordinate: ${p}`)
+      return `p${i}: parcels(where:{x:"${m[1]}",y:"${m[2]}"}) { estate { id } }`
+    })
+    const url = this.subgraph
+    let body: { data?: Record<string, Array<{ estate?: { id?: unknown } | null }>>; errors?: unknown } | null
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: `{ ${fields.join(' ')} }` }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
+      if (!res.ok) throw new DirectoryUnavailableError(`${url}: HTTP ${res.status}`)
+      body = (await res.json()) as typeof body
+    } catch (err) {
+      if (err instanceof DirectoryUnavailableError) throw err
+      throw new DirectoryUnavailableError(`${url}: ${(err as Error).message}`)
+    }
+    if (!body?.data || body.errors) throw new DirectoryUnavailableError(`${url}: subgraph error`)
+    parcels.forEach((p, i) => {
+      const id = body!.data![`p${i}`]?.[0]?.estate?.id
+      out.set(p, typeof id === 'string' && id ? id : null)
+    })
+    return out
   }
 
   private async fetchParcelRights(parcel: string): Promise<ParcelRights | null> {

@@ -5,6 +5,7 @@ export class FakeDclDirectory implements DclDirectory {
   deployers = new Map<string, string>()
   worlds = new Map<string, { sceneUrns: string[]; title?: string }>()
   rights = new Map<string, ParcelRights>()
+  estates = new Map<string, string>() // parcel → estate id
   worldOwners = new Map<string, string>()
   worldDeployers = new Map<string, string[]>()
   catalystHosts: string[] = []
@@ -29,7 +30,8 @@ export class FakeDclDirectory implements DclDirectory {
   async getActiveSceneAt(parcel: string) { this.hit(); return this.scenes.get(parcel) ?? null }
   async getActiveDeployer(parcel: string) { this.hit(); return this.deployers.get(parcel) ?? null }
   async getWorldScene(name: string) { this.hit(); return this.worlds.get(name.toLowerCase()) ?? null }
-  async getParcelRights(parcel: string) { this.hit(); return this.rights.get(parcel) ?? null }
+  async getParcelRights(parcel: string, _opts?: { fresh?: boolean }) { this.hit(); return this.rights.get(parcel) ?? null }
+  async getParcelEstates(parcels: string[]) { this.hit(); return new Map(parcels.map((p) => [p, this.estates.get(p) ?? null])) }
   async getWorldOwner(name: string) { this.hit(); return this.worldOwners.get(name.toLowerCase()) ?? null }
   async getWorldDeployers(name: string) { this.hit(); return this.worldDeployers.get(name.toLowerCase()) ?? [] }
   async getOwnedNames(address: string) { this.hit(); return this.ownedNames.get(address.toLowerCase()) ?? [] }

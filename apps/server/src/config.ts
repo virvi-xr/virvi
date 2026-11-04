@@ -299,6 +299,7 @@ export const config = {
 
   // ── Decentraland directory (analytics scene validation & claims) ───────
   catalystUrl: env('DCL_CATALYST_URL') || 'https://peer.decentraland.org',
+  dclLandSubgraphUrl: env('DCL_LAND_SUBGRAPH_URL') || 'https://subgraph.decentraland.org/land-manager',
   worldsUrl: env('DCL_WORLDS_URL') || 'https://worlds-content-server.decentraland.org',
 
   // ── Dashboard ───────────────────────────────────────────────────────────
