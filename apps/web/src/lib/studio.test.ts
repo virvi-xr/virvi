@@ -6,7 +6,7 @@ import {
 import { formatBytesShort, uploadProblem } from './studio'
 import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudioFlag } from './studio'
 import { giftCodeStatus } from './studio'
-import { adminManaMessage, adminManaRows, type AdminManaTransfer } from './studio'
+import { adminActionMessage, readUnrecordedRefunds, writeUnrecordedRefund, adminManaMessage, adminManaRows, type AdminManaTransfer } from './studio'
 import { checkoutHref, checkoutTarget, checkoutTotals, countdown, manaBack } from './studio'
 import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, type StudioDesign, type StudioUsage } from './studio'
 
@@ -672,5 +672,40 @@ describe('adminManaMessage', () => {
     expect(adminManaMessage({ body: { code: 'already_decided' } })).toMatch(/already/)
     expect(adminManaMessage({ body: { code: 'payment_claimed' } })).toMatch(/another/)
     expect(adminManaMessage({ body: { code: 'rate_unavailable' } })).toBe(refusalMessage({ body: { code: 'rate_unavailable' } }, NOW).text)
+  })
+})
+
+describe('adminActionMessage', () => {
+  it('says a wallet rejection was a cancel', () => {
+    expect(adminActionMessage({ code: 4001, message: 'User denied' })).toMatch(/cancelled/)
+  })
+  it('uses the owner wording for a coded server refusal', () => {
+    expect(adminActionMessage(Object.assign(new Error('x'), { status: 409, body: { code: 'already_decided' } }))).toMatch(/already been decided/)
+  })
+  it('shows the error’s own text when it carries no API code', () => {
+    expect(adminActionMessage(new Error('No browser wallet found.'))).toBe('No browser wallet found.')
+    expect(adminActionMessage(new Error('Your wallet isn’t on Polygon.'))).toBe('Your wallet isn’t on Polygon.')
+    expect(adminActionMessage(Object.assign(new Error('HTTP 500'), { status: 500, body: { error: 'HTTP 500' } }))).toBe('HTTP 500')
+  })
+})
+
+describe('unrecorded MANA refunds in storage', () => {
+  const memory = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) } }
+  it('keeps, replaces and clears an entry per request', () => {
+    const store = memory()
+    const a = { id: 'a', txHash: '0x' + '1'.repeat(64), amountWei: '5' }
+    writeUnrecordedRefund(store, 'a', a)
+    writeUnrecordedRefund(store, 'b', { id: 'b', txHash: '0x' + '2'.repeat(64), amountWei: '6' })
+    expect(readUnrecordedRefunds(store).map((x) => x.id)).toEqual(['a', 'b'])
+    writeUnrecordedRefund(store, 'a', { ...a, amountWei: '7' })
+    expect(readUnrecordedRefunds(store).find((x) => x.id === 'a')?.amountWei).toBe('7')
+    writeUnrecordedRefund(store, 'a', null)
+    expect(readUnrecordedRefunds(store).map((x) => x.id)).toEqual(['b'])
+  })
+  it('reads junk, missing or throwing storage as empty', () => {
+    expect(readUnrecordedRefunds(null)).toEqual([])
+    expect(readUnrecordedRefunds({ getItem: () => 'nope', setItem: () => {} })).toEqual([])
+    expect(readUnrecordedRefunds({ getItem: () => { throw new Error('blocked') }, setItem: () => {} })).toEqual([])
+    expect(() => writeUnrecordedRefund({ getItem: () => null, setItem: () => { throw new Error('full') } }, 'a', { id: 'a', txHash: 'h', amountWei: '1' })).not.toThrow()
   })
 })

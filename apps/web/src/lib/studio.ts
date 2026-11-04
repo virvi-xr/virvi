@@ -2,7 +2,7 @@
  * Design Studio: the page's types (the server's JSON, from apps/server/src/routes/studio.ts and studio/*.ts), its
  * copy, and the pure decisions the studio pages make. Kept free of React so it tests in node.
  */
-import { formatMana } from './mana'
+import { formatMana, walletRejected } from './mana'
 import type { Tone } from '@/components/ui'
 
 export type StudioKind = 'wearable' | 'emote' | 'scene'
@@ -893,4 +893,36 @@ const ADMIN_MANA_WORDS: Record<string, string> = {
 export function adminManaMessage(err: { status?: number; body?: { code?: string } }): string {
   const code = err.body?.code
   return (code && ADMIN_MANA_WORDS[code]) || refusalMessage(err, new Date()).text
+}
+
+/** What the owner sees when an action failed: their wallet's refusal, the server's coded refusal, else the error's own text. */
+export function adminActionMessage(err: unknown): string {
+  if (walletRejected(err)) return 'You cancelled it in your wallet. Nothing was sent.'
+  const e = err as { message?: string; status?: number; body?: { code?: string } } | null
+  if (e?.body?.code) return adminManaMessage(e)
+  return e?.message || 'Something went wrong. Try again.'
+}
+
+/** A MANA refund that left the owner's wallet but isn't recorded yet. */
+export type UnrecordedRefund = { id: string; txHash: string; amountWei: string }
+export const UNRECORDED_REFUNDS_KEY = 'admin-mana-unrecorded-refunds'
+type KeyValueStore = Pick<Storage, 'getItem' | 'setItem'>
+
+/** The unrecorded sends kept in the browser; storage that is missing, blocked or holds junk reads as none. */
+export function readUnrecordedRefunds(store: KeyValueStore | null): UnrecordedRefund[] {
+  try {
+    const list = JSON.parse(store?.getItem(UNRECORDED_REFUNDS_KEY) ?? '[]')
+    if (!Array.isArray(list)) return []
+    return list.filter((x): x is UnrecordedRefund => !!x && typeof x.id === 'string' && typeof x.txHash === 'string' && typeof x.amountWei === 'string')
+  } catch {
+    return []
+  }
+}
+
+/** Keeps `entry` (or, with null, drops the request's entry) and returns the new list. Storage failures are ignored. */
+export function writeUnrecordedRefund(store: KeyValueStore | null, id: string, entry: UnrecordedRefund | null): UnrecordedRefund[] {
+  const next = readUnrecordedRefunds(store).filter((x) => x.id !== id)
+  if (entry) next.push(entry)
+  try { store?.setItem(UNRECORDED_REFUNDS_KEY, JSON.stringify(next)) } catch { /* private window or blocked storage */ }
+  return next
 }

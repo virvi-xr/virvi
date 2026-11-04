@@ -5,15 +5,16 @@ import Link from 'next/link'
 import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { Badge, ConfirmAction, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
-import { formatMana, sendMana, walletRejected } from '@/lib/mana'
+import { formatMana, sendMana } from '@/lib/mana'
 import {
-  SCOPE_CATEGORY_WORDS, TX_HASH, adminManaMessage, adminManaRows, flagSummary, formatCents,
+  SCOPE_CATEGORY_WORDS, TX_HASH, adminActionMessage, adminManaRows, flagSummary, formatCents, readUnrecordedRefunds, writeUnrecordedRefund,
   type AdminManaRefund, type AdminMistakeReport, type AdminStudioFlag,
 } from '@/lib/studio'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
 const smallButton = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50'
 const inputClass = 'rounded-md border border-gray-800 bg-gray-950 px-3 py-1.5 text-sm'
+const browserStore = () => { try { return window.localStorage } catch { return null } }
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
 type Api = ReturnType<typeof useApi>
@@ -25,11 +26,17 @@ function RefundRow({ r, api, onChanged }: { r: AdminManaRefund; api: Api; onChan
   const [declining, setDeclining] = useState(false)
   const [typed, setTyped] = useState('')
   // A transaction that left the wallet but isn't recorded yet: kept so the owner can record it again, never send twice
+  // (also kept in the browser, so a reload after sending still shows it)
   const [unrecorded, setUnrecorded] = useState<{ txHash: string; amountWei: string } | null>(null)
+  useEffect(() => {
+    const kept = readUnrecordedRefunds(browserStore()).find((x) => x.id === r.id)
+    if (kept) setUnrecorded({ txHash: kept.txHash, amountWei: kept.amountWei })
+  }, [r.id])
 
   const record = async (txHash: string, amountWei: string) => {
     if (!TX_HASH.test(txHash)) { setNote('That isn’t a transaction hash.'); return }
     await api.markAdminManaRefundSent(r.id, txHash, amountWei)
+    writeUnrecordedRefund(browserStore(), r.id, null)
     await onChanged()
   }
 
@@ -37,7 +44,7 @@ function RefundRow({ r, api, onChanged }: { r: AdminManaRefund; api: Api; onChan
     setBusy(true)
     setNote(null)
     try { await fn() } catch (e) {
-      setNote(walletRejected(e) ? 'You cancelled it in your wallet. Nothing was sent.' : adminManaMessage(e as { status?: number; body?: { code?: string } }) || (e as Error).message)
+      setNote(adminActionMessage(e))
     } finally { setBusy(false) }
   }
 
@@ -47,6 +54,7 @@ function RefundRow({ r, api, onChanged }: { r: AdminManaRefund; api: Api; onChan
     const q = await api.getAdminManaRefundQuote(r.id)
     const hash = await sendMana(wallet, { token: q.token, recipient: q.to, amountWei: q.amountWei })
     setUnrecorded({ txHash: hash, amountWei: q.amountWei })
+    writeUnrecordedRefund(browserStore(), r.id, { id: r.id, txHash: hash, amountWei: q.amountWei })
     await record(hash, q.amountWei)
   })
 
@@ -96,7 +104,7 @@ function TransferRow({ t, api, onChanged }: { t: ReturnType<typeof adminManaRows
     setBusy(true)
     setNote(null)
     try { await fn(); await onChanged() } catch (e) {
-      setNote(adminManaMessage(e as { status?: number; body?: { code?: string } }))
+      setNote(adminActionMessage(e))
     } finally { setBusy(false) }
   }
 
@@ -155,19 +163,20 @@ export default function AdminStudioPage() {
   const [busy, setBusy] = useState(false)
 
   // useApi gives a new object each render, so the effect keys on the role and the tab, not on load itself
+  const [flagsError, setFlagsError] = useState<string | null>(null)
+  const [reportsError, setReportsError] = useState<string | null>(null)
+  const [refundsError, setRefundsError] = useState<string | null>(null)
+  const [transfersError, setTransfersError] = useState<string | null>(null)
+  const text = (e: unknown) => (e as Error)?.message ?? 'Something went wrong'
+  // Each section loads on its own, so one failing list doesn't blank the others
   const load = async () => {
-    try {
-      const [f, r, mr, mt] = await Promise.all([
-        api.getAdminStudioFlags(status), api.getAdminStudioReports(), api.getAdminManaRefunds(), api.getAdminManaTransfers(),
-      ])
-      setFlags(f.flags)
-      setReports(r.reports)
-      setRefunds(mr.refunds)
-      setTransfers(adminManaRows(mt.transfers))
-      setError(null)
-    } catch (e) {
-      setError((e as Error)?.message ?? 'Something went wrong')
-    }
+    setError(null)
+    await Promise.all([
+      api.getAdminStudioFlags(status).then((f) => { setFlags(f.flags); setFlagsError(null) }, (e) => setFlagsError(text(e))),
+      api.getAdminStudioReports().then((r) => { setReports(r.reports); setReportsError(null) }, (e) => setReportsError(text(e))),
+      api.getAdminManaRefunds().then((m) => { setRefunds(m.refunds); setRefundsError(null) }, (e) => setRefundsError(text(e))),
+      api.getAdminManaTransfers().then((m) => { setTransfers(adminManaRows(m.transfers)); setTransfersError(null) }, (e) => setTransfersError(text(e))),
+    ])
   }
 
   useEffect(() => {
@@ -211,7 +220,8 @@ export default function AdminStudioPage() {
             ))}
           </div>
         </div>
-        {!flags ? <Skeleton rows={2} className="h-16" /> : flags.length === 0 ? (
+        {flagsError && <p className="mb-3 text-sm text-red-400" role="alert">{flagsError}</p>}
+        {!flags ? (flagsError ? null : <Skeleton rows={2} className="h-16" />) : flags.length === 0 ? (
           <p className="text-gray-400">{status === 'open' ? 'No account is flagged.' : 'No closed flags yet.'}</p>
         ) : (
           <ul className="space-y-3">
@@ -259,7 +269,8 @@ export default function AdminStudioPage() {
 
       <section aria-labelledby="reports-title" className="mt-10">
         <h2 id="reports-title" className="mb-3 text-lg font-semibold">Mistake reports to review</h2>
-        {!reports ? <Skeleton rows={1} className="h-16" /> : reports.length === 0 ? (
+        {reportsError && <p className="mb-3 text-sm text-red-400" role="alert">{reportsError}</p>}
+        {!reports ? (reportsError ? null : <Skeleton rows={1} className="h-16" />) : reports.length === 0 ? (
           <p className="text-gray-400">No report is waiting.</p>
         ) : (
           <ul className="space-y-3">
@@ -307,7 +318,8 @@ export default function AdminStudioPage() {
 
       <section aria-labelledby="mana-refunds-title" className="mt-10">
         <h2 id="mana-refunds-title" className="mb-3 text-lg font-semibold">MANA refunds to send</h2>
-        {!refunds ? <Skeleton rows={1} className="h-16" /> : refunds.length === 0 ? (
+        {refundsError && <p className="mb-3 text-sm text-red-400" role="alert">{refundsError}</p>}
+        {!refunds ? (refundsError ? null : <Skeleton rows={1} className="h-16" />) : refunds.length === 0 ? (
           <p className="text-gray-400">No one is waiting for MANA back.</p>
         ) : (
           <ul className="space-y-3">
@@ -318,7 +330,8 @@ export default function AdminStudioPage() {
 
       <section aria-labelledby="mana-transfers-title" className="mt-10">
         <h2 id="mana-transfers-title" className="mb-3 text-lg font-semibold">MANA payments that didn’t match</h2>
-        {!transfers ? <Skeleton rows={1} className="h-16" /> : transfers.length === 0 ? (
+        {transfersError && <p className="mb-3 text-sm text-red-400" role="alert">{transfersError}</p>}
+        {!transfers ? (transfersError ? null : <Skeleton rows={1} className="h-16" />) : transfers.length === 0 ? (
           <p className="text-gray-400">Every MANA payment has matched an order.</p>
         ) : (
           <ul className="space-y-3">
