@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { request as httpRequest } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { eq } from 'drizzle-orm'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { config } from '../src/config.js'
@@ -158,6 +160,26 @@ describe('GET /api/scenes/:sceneId/backup.zip', () => {
     // Through the route: each response gives its slot back once sent
     expect((await get(scene.id, user)).statusCode).toBe(200)
     expect((await get(scene.id, user)).statusCode).toBe(200)
+  })
+
+  it('a client that leaves during the build gives the slot back', async () => {
+    setBackupLimits({ maxConcurrent: 1 })
+    const scene = await dclScene()
+    let open!: () => void
+    const gate = new Promise<void>((r) => (open = r))
+    let started = 0
+    setBackupFetcher(async (url) => { started++; await gate; return enc(`bytes of ${url}`) })
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const { port } = app.server.address() as AddressInfo
+    const req = httpRequest({ host: '127.0.0.1', port, path: `/api/scenes/${scene.id}/backup.zip`, headers: { authorization: `Bearer ${tokenFor(user)}` } })
+    req.on('error', () => {})
+    req.end()
+    await vi.waitFor(() => expect(started).toBe(1))
+    req.destroy() // the client gives up while the build is still running
+    await new Promise((r) => setTimeout(r, 50))
+    open()
+    setBackupFetcher(async (url) => enc(`bytes of ${url}`))
+    await vi.waitFor(async () => expect((await get(scene.id, user)).statusCode).toBe(200))
   })
 
   it('the deadline aborts a download in flight', async () => {

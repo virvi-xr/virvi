@@ -36,12 +36,22 @@ export default async function backupRoutes(app: FastifyInstance) {
         if (!ours) return reply.status(404).send({ error: 'destination_not_found', message: 'That destination is not one of this scene\'s.' })
       }
 
+      // A client can leave during the build; the response's `close` has fired by then and won't again
+      let closed = false
+      const onClose = () => { closed = true }
+      reply.raw.once('close', onClose)
       let run: Awaited<ReturnType<typeof runBackup>>
       try {
         run = await runBackup(sceneId, { caller: { userId: request.user.id, fullAccess: isFullAccess(access) }, destinationId: destination })
       } catch (err) {
+        reply.raw.off('close', onClose)
         if (err instanceof BackupError) return reply.status(err.status).send({ error: err.code, message: err.message })
         throw err
+      }
+      reply.raw.off('close', onClose)
+      if (closed || reply.raw.destroyed || request.raw.destroyed) {
+        run.release()
+        return reply.hijack() // nobody to send it to
       }
       // The files stay in memory while the zip streams to the client: the slot is held until the response closes
       reply.raw.once('close', run.release)

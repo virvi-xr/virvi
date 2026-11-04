@@ -185,7 +185,7 @@ export default async function importRoutes(app: FastifyInstance) {
     }
     const scene = await sceneFor(request, location, folder)
     // The upload as the import reads it (node_modules/, .git/, bin/, __MACOSX/ already dropped), kept for the backup
-    const kept = zipSync(Object.fromEntries(folder.files))
+    const kept = zipSync(Object.fromEntries(folder.files), { level: 0 })
     const { files, alreadyInstalled } = await installVirvi(folder)
     // Ruling R5: the installed files are re-zipped in memory; the upload never becomes files on disk. Stored, not
     // deflated (the box unzips it anyway), and wrapped without a copy
