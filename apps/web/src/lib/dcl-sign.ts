@@ -1,6 +1,7 @@
 import { Authenticator, type AuthChain } from '@dcl/crypto'
 import { createUnsafeIdentity } from '@dcl/crypto/dist/crypto.js'
 import type { Eip1193Provider } from './auth'
+import { WrongWalletError } from './wrong-wallet'
 
 export type { AuthChain }
 
@@ -11,13 +12,7 @@ export interface SignSession {
   sign(payload: string): AuthChain
 }
 
-/** The connected wallet isn't the one that owns the World (or none of the wallets that may sign). */
-export class WrongWalletError extends Error {
-  constructor(public readonly expected: string | string[]) {
-    super(`Switch your wallet to ${Array.isArray(expected) ? expected.join(' or ') : expected} and try again.`)
-    this.name = 'WrongWalletError'
-  }
-}
+export { WrongWalletError }
 
 const toHex = (text: string) => '0x' + Array.from(new TextEncoder().encode(text), (b) => b.toString(16).padStart(2, '0')).join('')
 

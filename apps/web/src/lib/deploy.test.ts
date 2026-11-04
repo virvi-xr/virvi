@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { WrongWalletError } from './dcl-sign'
-import { deploymentSummary, destinationHistory, modeLabel, pendingLine, signErrorMessage, signerWallets, statusView, destinationLocation } from './deploy'
+import { deploymentSummary, destinationHistory, modeLabel, pendingLine, publishCopy, signErrorMessage, signerWallets, statusView, destinationLocation } from './deploy'
 
 describe('pendingLine', () => {
   it('counts the models waiting to go live', () => {
@@ -71,5 +71,28 @@ describe('destinationLocation', () => {
     expect(destinationLocation({ worldName: 'a.dcl.eth', base: '0,0', parcels: ['0,0'] })).toEqual({ kind: 'world', world: 'a.dcl.eth' })
     expect(destinationLocation({ kind: 'parcels', worldName: null as unknown as string, base: '1,2', parcels: ['1,2', '1,3'] }))
       .toEqual({ kind: 'parcels', base: '1,2', parcels: ['1,2', '1,3'] })
+  })
+})
+
+describe('publishCopy', () => {
+  it("words a World's publish page by its name and owner", () => {
+    expect(publishCopy({ kind: 'world', worldName: 'a.dcl.eth', base: '0,0', parcels: ['0,0'] })).toEqual({
+      place: 'a.dcl.eth',
+      subtitle: 'Put the models you added live in your Decentraland World.',
+      signWith: 'You sign once with the wallet that owns a.dcl.eth.',
+      yours: 'your World',
+      notSigned: "This World is set to let Virvi deploy, but the permission isn't signed yet.",
+    })
+  })
+  it('words Genesis City parcels without a World name', () => {
+    const copy = publishCopy({ kind: 'parcels', worldName: null as unknown as string, base: '1,2', parcels: ['1,2', '1,3'] })
+    expect(copy).toEqual({
+      place: 'Genesis City 1,2 (2 parcels)',
+      subtitle: 'Put the models you added live on your Genesis City parcels.',
+      signWith: 'You sign once with a wallet that owns or operates these parcels.',
+      yours: 'your parcels',
+      notSigned: "These parcels are set to let Virvi deploy, but Virvi isn't an operator on them yet.",
+    })
+    expect(JSON.stringify(copy)).not.toMatch(/null|World/)
   })
 })

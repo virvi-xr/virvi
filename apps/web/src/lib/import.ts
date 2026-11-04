@@ -79,6 +79,7 @@ const CODE_MESSAGES: Record<string, string> = {
   no_main: "Virvi couldn't find the main() function in src/index.ts. Make sure the scene exports one, then upload again.",
   not_parcel_controller: "None of your linked wallets can deploy to every parcel in scene.json. Link the wallet that owns or operates them in Settings.",
   catalyst_unreachable: "Decentraland didn't answer just now. Try again in a minute.",
+  directory_unavailable: "Decentraland didn't answer just now. Try again in a minute.",
   parcels_in_use: "These parcels are connected to a Virvi scene you can't manage. Ask that scene's owner to give you full access.",
   parcels_set_up_elsewhere: "These parcels are set up under a Virvi scene you can't manage. Ask that scene's owner to give you full access.",
   // The World and the import

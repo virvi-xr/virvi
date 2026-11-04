@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { getBrowserWallet } from '@/lib/auth'
 import { importFailure } from '@/lib/import'
-import { grantView, OPERATOR_REPLACES_NOTE, sendTransactions, type GrantTransaction, type ParcelGrant } from '@/lib/parcel-grant'
+import { grantAction, grantView, OPERATOR_REPLACES_NOTE, sendTransactions, type GrantTransaction, type ParcelGrant } from '@/lib/parcel-grant'
 import { wizardErrorMessage } from '@/lib/wizard/run'
 
 const button = 'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
@@ -32,6 +32,7 @@ export function ParcelGrantCard({ destinationId, onChanged }: { destinationId: s
   if (!grant) return error ? <p className={errorBox} role="alert">{error}</p> : null
   const view = grantView(grant)
   if (!view.show) return null
+  const action = grantAction(grant)
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true)
@@ -49,10 +50,11 @@ export function ParcelGrantCard({ destinationId, onChanged }: { destinationId: s
   const send = async (txs: GrantTransaction[], step: NonNullable<Step>) => {
     const wallet = getBrowserWallet()
     if (!wallet) throw new Error('No browser wallet found. Install MetaMask or another Ethereum wallet, then try again.')
-    // Count each one as it goes: a later refusal still leaves the ones already sent to be checked
+    // Count each one as it goes: a later refusal still leaves the ones already sent to be checked. Only the wallet
+    // that may grant can send them (an update operator's transaction would just fail on-chain, gas spent)
     let sent = 0
     try {
-      await sendTransactions(wallet, txs, () => { sent++ })
+      await sendTransactions(wallet, txs, { expected: grant.from, onSent: () => { sent++ } })
     } finally {
       if (sent) setWaiting(step)
     }
@@ -117,18 +119,29 @@ export function ParcelGrantCard({ destinationId, onChanged }: { destinationId: s
             <p className="text-xs text-gray-500">Virvi&apos;s Genesis City address: <span className="break-all font-mono text-gray-300">{grant.operator}</span></p>
           )}
           {!grant.granted && <p className="text-yellow-200">{OPERATOR_REPLACES_NOTE}</p>}
-          <p className="text-xs text-gray-500">{grant.costNote}</p>
+          {action === 'activate' ? (
+            <p className="text-gray-300">Virvi is already an operator on these parcels. Turning it on here is free: no transaction.</p>
+          ) : (
+            <p className="text-xs text-gray-500">{grant.costNote}</p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
-            {grant.granted ? (
+            {action === 'remove' && grant.canGrant && (
               <button type="button" onClick={removeOperator} disabled={busy} className={secondary}>
                 {busy ? 'Working…' : 'Remove Virvi as operator'}
               </button>
-            ) : (
+            )}
+            {action === 'activate' && (
+              // Virvi already holds the rights on-chain (sent on an earlier visit, say): turning them on is free
+              <button type="button" onClick={checkGrant} disabled={busy} className={button}>
+                {busy ? 'Working…' : 'Let Virvi deploy'}
+              </button>
+            )}
+            {action === 'make' && (
               <button type="button" onClick={makeOperator} disabled={busy} className={button}>
                 {busy ? 'Check your wallet…' : 'Make Virvi an operator'}
               </button>
             )}
-            {waiting && (
+            {waiting && !(waiting === 'granting' && action === 'activate') && (
               <button type="button" onClick={waiting === 'granting' ? checkGrant : () => run(checkRevoke)} disabled={busy} className={secondary}>
                 Check again
               </button>

@@ -3,6 +3,7 @@ import type { ImportLocation } from '@virvixr/shared'
 import type { DclDeployment, DclDestination } from './api'
 import { wizardErrorMessage } from './wizard/run'
 import { shortAddress } from './wizard/helpers'
+import { placeLabel } from './import'
 
 /** "3 models are waiting to go live", or that nothing is. */
 export function pendingLine(count: number): string {
@@ -83,4 +84,28 @@ export function formatDateTime(iso: string | null | undefined): string {
 /** Where a destination deploys: its World, or its Genesis City parcels (a parcels destination has no World name). */
 export function destinationLocation(d: Pick<DclDestination, 'kind' | 'worldName' | 'base' | 'parcels'>): ImportLocation {
   return d.kind === 'parcels' ? { kind: 'parcels', base: d.base, parcels: d.parcels } : { kind: 'world', world: d.worldName ?? '' }
+}
+
+/** The publish page's words for a destination: a World by its name and owner, Genesis City parcels by their place. */
+export function publishCopy(d: Pick<DclDestination, 'kind' | 'worldName' | 'base' | 'parcels'>): {
+  place: string; subtitle: string; signWith: string; yours: string; notSigned: string
+} {
+  const loc = destinationLocation(d)
+  const place = placeLabel(loc)
+  if (loc.kind === 'parcels') {
+    return {
+      place,
+      subtitle: 'Put the models you added live on your Genesis City parcels.',
+      signWith: 'You sign once with a wallet that owns or operates these parcels.',
+      yours: 'your parcels',
+      notSigned: "These parcels are set to let Virvi deploy, but Virvi isn't an operator on them yet.",
+    }
+  }
+  return {
+    place,
+    subtitle: 'Put the models you added live in your Decentraland World.',
+    signWith: `You sign once with the wallet that owns ${place}.`,
+    yours: 'your World',
+    notSigned: "This World is set to let Virvi deploy, but the permission isn't signed yet.",
+  }
 }

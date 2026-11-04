@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { grantView, sendTransactions, OPERATOR_REPLACES_NOTE, type ParcelGrant } from './parcel-grant'
+import { grantAction, grantView, sendTransactions, OPERATOR_REPLACES_NOTE, type ParcelGrant } from './parcel-grant'
+import { WrongWalletError } from './wrong-wallet'
 
 const grant = (over: Partial<ParcelGrant> = {}): ParcelGrant => ({
-  available: true, aetheria: false, canGrant: true, granted: false, operator: '0xabc',
+  available: true, aetheria: false, canGrant: true, granted: false, active: false, from: '0xabc', operator: '0xabc',
   transactions: [{ to: '0x1', data: '0xaa', label: 'Parcel 10,20' }], costNote: 'gas', ...over,
 })
 
@@ -21,8 +22,27 @@ describe('grantView', () => {
   it('explains that only the owner can grant', () => {
     expect(grantView(grant({ canGrant: false }))).toEqual({ show: true, reason: "Only the parcels' owner can make Virvi an operator." })
   })
+  it('lets an operator who cannot grant still turn on a grant the owner already made', () => {
+    expect(grantView(grant({ canGrant: false, granted: true, active: false }))).toEqual({ show: true, reason: null })
+    expect(grantView(grant({ canGrant: false, granted: true, active: true })).reason).toMatch(/Only the parcels' owner/)
+  })
+  it('offers nothing when Decentraland could not say whether the parcels are Aetheria land', () => {
+    expect(grantView(grant({ aetheria: null }))).toEqual({ show: true, reason: expect.stringMatching(/couldn't check these parcels/) })
+  })
   it('warns that an existing update operator is replaced', () => {
     expect(OPERATOR_REPLACES_NOTE).toMatch(/replaces any update operator/)
+  })
+})
+
+describe('grantAction', () => {
+  it('makes Virvi an operator when it holds no rights', () => {
+    expect(grantAction(grant({ granted: false, active: false }))).toBe('make')
+  })
+  it('lets Virvi deploy, for free, when it holds the rights but the destination does not use them yet', () => {
+    expect(grantAction(grant({ granted: true, active: false }))).toBe('activate')
+  })
+  it('offers removing Virvi once it deploys', () => {
+    expect(grantAction(grant({ granted: true, active: true }))).toBe('remove')
   })
 })
 
@@ -57,7 +77,7 @@ describe('sendTransactions', () => {
   it('reports each hash as it is sent, so a later rejection keeps the earlier ones', async () => {
     const w = wallet(1)
     const seen: string[] = []
-    await expect(sendTransactions(w, txs, (h) => seen.push(h))).rejects.toMatchObject({ code: 4001 })
+    await expect(sendTransactions(w, txs, { onSent: (h) => seen.push(h) })).rejects.toMatchObject({ code: 4001 })
     expect(seen).toEqual(['0xhash1'])
   })
 
@@ -65,6 +85,16 @@ describe('sendTransactions', () => {
     const w = wallet(0)
     await expect(sendTransactions(w, txs)).rejects.toMatchObject({ code: 4001 })
     expect(w.calls.filter((c) => c.method === 'eth_sendTransaction')).toHaveLength(1)
+  })
+
+  it('refuses, sending nothing, when the connected account is not the expected wallet', async () => {
+    const w = wallet()
+    const err = await sendTransactions(w, txs, { expected: '0xdef' }).catch((e) => e)
+    expect(err).toBeInstanceOf(WrongWalletError)
+    expect(err.message).toMatch(/0xdef/)
+    expect(w.calls.filter((c) => c.method === 'eth_sendTransaction')).toHaveLength(0)
+    // The expected wallet, in any case, is accepted
+    expect(await sendTransactions(wallet(), txs, { expected: '0xabc' })).toEqual(['0xhash1', '0xhash2'])
   })
 
   it('switches the wallet to Ethereum mainnet first', async () => {

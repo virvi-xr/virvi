@@ -1,12 +1,13 @@
 'use client'
 // One scene's Genesis City parcels destination on the deploy page: status, last deploy, Redeploy now (signed in the
-// browser by an owner or operator, or by Virvi once it is an operator), and the optional operator grant.
+// browser by an owner or operator, or by Virvi once it is an operator), "Use the live version", signing each deploy
+// yourself again (free), and the optional operator grant.
 import { useEffect, useState } from 'react'
 import { useApi, type DclDeployment, type DclDestination } from '@/lib/api'
 import { deploymentStatusLabel, destinationLocation, formatDateTime, modeLabel, signErrorMessage, statusView } from '@/lib/deploy'
 import { placeLabel, SIGNERS_UNKNOWN_NOTE } from '@/lib/import'
 import { jumpInUrl, progressLines } from '@/lib/wizard/run'
-import { Badge } from '@/components/ui'
+import { Badge, ConfirmAction } from '@/components/ui'
 import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
 import { DownloadLiveButton } from './DownloadLiveButton'
@@ -25,6 +26,10 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
   const [dest, setDest] = useState(destination)
   const [signers, setSigners] = useState<string[] | null | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busy, setBusy] = useState<null | 'rebase' | 'mode'>(null)
+  /** Bumped to make the grant card read the rights again after the mode changed here. */
+  const [grantKey, setGrantKey] = useState(0)
   const signing = useWorldSigning({ ...dest, signers })
   const { view } = signing
   const shownPhase = useShownPhase(view.phase)
@@ -39,9 +44,33 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
   const status = statusView(dest)
   const last = history[0] ?? null
   const redeploying = view.status === 'running'
+  const running = redeploying || busy !== null
+  const active = dest.mode === 'virvi' && !!dest.grantedAt
+
+  const act = async (kind: NonNullable<typeof busy>, fn: () => Promise<{ destination: DclDestination; message?: string }>, done: string) => {
+    setBusy(kind)
+    setError(null)
+    setNotice(null)
+    signing.reset()
+    try {
+      const r = await fn()
+      setDest(r.destination)
+      onChanged(r.destination)
+      setNotice(r.message ?? done)
+      setGrantKey((k) => k + 1)
+      load()
+    } catch (err) {
+      setError(signErrorMessage(err, { ...dest, kind: 'parcels' }))
+    }
+    setBusy(null)
+  }
+  // Free: Virvi stays an operator on-chain (removing that is the grant card's transaction), it just stops deploying
+  const signEach = () => act('mode', () => api.patchDclDestination(dest.id, { mode: 'sign' }), 'You sign each deploy from now on.')
+  const rebase = () => act('rebase', () => api.rebaseDclDestination(dest.id), "Virvi now builds on what's live on your parcels.")
 
   const redeploy = async () => {
     setError(null)
+    setNotice(null)
     // Signers are read before the wallet is asked, so the right wallets are accepted
     await signing.deploy()
     onChanged(dest)
@@ -73,9 +102,26 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={redeploy} disabled={redeploying} className={button}>
+        <button type="button" onClick={redeploy} disabled={running} className={button}>
           {redeploying ? 'Deploying…' : 'Redeploy now'}
         </button>
+        {active && (
+          <button type="button" onClick={signEach} disabled={running} className={secondary}>
+            {busy === 'mode' ? 'Working…' : 'Sign each deploy myself'}
+          </button>
+        )}
+        {dest.status === 'needs_review' && (
+          <ConfirmAction
+            disabled={running}
+            danger={false}
+            confirmLabel="Use it"
+            prompt={`Keep what's live on ${placeLabel(loc)} now, and add Virvi's models on top of it from here on?`}
+            onConfirm={rebase}
+            className={secondary}
+          >
+            Use the live version
+          </ConfirmAction>
+        )}
       </div>
       {signers === null && <p className="text-yellow-200">{SIGNERS_UNKNOWN_NOTE}</p>}
 
@@ -86,9 +132,10 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
         </p>
       )}
       {view.status === 'done' && <p className="text-green-300">Live in {placeLabel(loc)}.</p>}
+      {notice && <p className="rounded-md border border-blue-900/60 bg-blue-950/40 px-3 py-2 text-blue-200" role="status">{notice}</p>}
       {(error || view.error) && <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300" role="alert">{error ?? view.error}</p>}
 
-      <ParcelGrantCard destinationId={dest.id} onChanged={() => { load(); onChanged(dest) }} />
+      <ParcelGrantCard key={grantKey} destinationId={dest.id} onChanged={() => { load(); onChanged(dest) }} />
     </div>
   )
 }

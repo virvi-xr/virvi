@@ -83,6 +83,10 @@ describe('importErrorMessage', () => {
     expect(importErrorMessage('upload_too_slow')).toBe('The upload took too long. Try again on a faster connection, or remove large unused files from the scene.')
   })
 
+  it("says Decentraland's directory being down in the catalyst's words (the grant card's GET)", () => {
+    expect(importErrorMessage('directory_unavailable')).toBe(importErrorMessage('catalyst_unreachable'))
+  })
+
   it('falls back to a plain sentence for a code it does not know', () => {
     expect(importErrorMessage('something_new')).toBe(IMPORT_FALLBACK_MESSAGE)
   })

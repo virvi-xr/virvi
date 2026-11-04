@@ -8,6 +8,8 @@ import { useApi, type DclDestination } from '@/lib/api'
 import { defaultTicked, namesDiffer, renameError, sceneNameError, SCENE_NAME_MAX } from '@/lib/scene-rename'
 import { PencilIcon } from '@/components/icons'
 import { useWorldSigning } from '@/components/dcl/useWorldSigning'
+import { destinationLocation } from '@/lib/deploy'
+import { placeLabel } from '@/lib/import'
 import { ROOM_LAYOUT_NOTICE } from '@/lib/room-set'
 
 // ---------------------------------------------------------------------------
@@ -248,13 +250,15 @@ function DclRow({ dest, checked, onToggle, disabled, result, register }: {
   // The hook keeps the reason a deploy failed; show it rather than the generic line.
   const shown: Result | undefined = result?.status === 'failed' && signing.view.error ? { status: 'failed', message: signing.view.error } : result
   const available = canRedeploy(dest)
+  // A World by its name; Genesis City parcels (no World name) by their place
+  const place = placeLabel(destinationLocation(dest))
 
   return (
     <li className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-gray-800 bg-gray-950 px-3 py-2.5">
       <label className={`flex gap-2 ${available ? 'text-gray-200' : 'text-gray-500'}`}>
         <input type="checkbox" className="mt-0.5" checked={checked} onChange={onToggle} disabled={disabled || !available} />
         <span>
-          <span className="block">Redeploy {dest.worldName} so Decentraland shows the new name</span>
+          <span className="block">Redeploy {place} so Decentraland shows the new name</span>
           <span className="block text-xs text-gray-500">
             {dest.adopted ? (
               'Its name comes from your own project: change the title in its scene.json and deploy it from Creator Hub.'
@@ -265,7 +269,7 @@ function DclRow({ dest, checked, onToggle, disabled, result, register }: {
         </span>
       </label>
       <span className="text-right">
-        {signing.asking ? <span className="text-blue-200" role="status">Check your wallet: sign once with the wallet that owns {dest.worldName}.</span> : <ResultLine result={shown} />}
+        {signing.asking ? <span className="text-blue-200" role="status">Check your wallet: sign once with the wallet that {dest.kind === 'parcels' ? 'owns or operates these parcels' : `owns ${place}`}.</span> : <ResultLine result={shown} />}
       </span>
     </li>
   )
