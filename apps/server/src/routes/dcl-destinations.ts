@@ -238,12 +238,13 @@ async function destinationFor(request: FastifyRequest, id: string, need: 'edit' 
 
 /**
  * Wallets that may sign the destination's deploys: a World's owner; for Genesis City parcels, the caller's verified
- * wallets that can deploy to every parcel right now (any of them may sign); null when Decentraland can't say.
+ * wallets that can deploy to every parcel (any of them may sign); null when Decentraland can't say. For the page
+ * only, so the rights may be cached: the signature itself is checked against a fresh read (assertSigner).
  */
 async function signersOf(userId: string, dest: Destination): Promise<string[] | null> {
   if (dest.kind !== 'parcels') return [dest.ownerWallet]
   try {
-    return (await parcelControl(await verifiedWalletsOf(userId), dest.parcels)).wallets
+    return (await parcelControl(await verifiedWalletsOf(userId), dest.parcels, undefined, { fresh: false })).wallets
   } catch (err) {
     if (err instanceof DirectoryUnavailableError) return null // can't tell right now; the rest of the page still loads
     throw err
@@ -545,17 +546,43 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     return reply.send({ destination: await reload(dest.id) })
   }))
 
+  // `granted`: Virvi holds the rights on-chain; `active`: Virvi deploys (confirmed with check); `from`: the caller's
+  // wallet to send the transactions from. `aetheria` is null when the land subgraph can't say (nothing is offered).
   app.get<{ Params: { id: string } }>('/api/dcl/destinations/:id/parcel-grant', async (request, reply) => handle(reply, async () => {
     const dest = await destinationFor(request, request.params.id, 'full')
-    const control = await requireParcelController(request.user.id, dest)
     const operator = virviParcelSigner()?.address ?? null
-    const estates = await getDclDirectory().getParcelEstates(dest.parcels)
-    const aetheria = isAetheria(control, estates)
+    const active = dest.mode === 'virvi' && !!dest.grantedAt
+    const estatesOrNull = async () => {
+      try {
+        return await getDclDirectory().getParcelEstates(dest.parcels)
+      } catch (err) {
+        if (err instanceof DirectoryUnavailableError) return null
+        throw err
+      }
+    }
+    if (!operator) {
+      // Nothing to offer: say so from cached rights, never failing the card on Decentraland
+      if (dest.kind !== 'parcels') throw new RouteError(409, 'not_parcels', { message: 'Worlds use their own permission option.' })
+      let control: ParcelControl | null = null
+      try {
+        control = await parcelControl(await verifiedWalletsOf(request.user.id), dest.parcels, undefined, { fresh: false })
+      } catch (err) {
+        if (!(err instanceof DirectoryUnavailableError)) throw err
+      }
+      const estates = control ? await estatesOrNull() : null
+      return reply.send({
+        available: false, aetheria: control && estates ? isAetheria(control, estates) : null, canGrant: control?.canGrant ?? false,
+        granted: false, active, operator: null, from: control?.granter ?? null, costNote: GRANT_COST_NOTE,
+      })
+    }
+    const control = await requireParcelController(request.user.id, dest)
+    const estates = await estatesOrNull()
+    const aetheria = estates ? isAetheria(control, estates) : null
     return reply.send({
-      available: !!operator, aetheria, canGrant: control.canGrant,
-      granted: !!operator && grantMissing(operator, dest.parcels, control.rightsOf) === null,
-      operator,
-      ...(operator && control.canGrant && !aetheria ? { transactions: grantTransactions(dest.parcels, estates, operator) } : {}),
+      available: true, aetheria, canGrant: control.canGrant,
+      granted: grantMissing(operator, dest.parcels, control.rightsOf) === null,
+      active, operator, from: control.granter,
+      ...(estates && control.canGrant && !aetheria ? { transactions: grantTransactions(dest.parcels, estates, operator) } : {}),
       costNote: GRANT_COST_NOTE,
     })
   }))

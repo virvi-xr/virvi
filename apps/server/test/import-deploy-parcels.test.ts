@@ -3,13 +3,14 @@ import { Authenticator } from '@dcl/crypto'
 import { createUnsafeIdentity } from '@dcl/crypto/dist/crypto.js'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { analyticsScenes, dclWorldDestinations, sceneDeployments, sceneImports, userAuthMethods } from '../src/db/schema.js'
+import { analyticsScenes, dclWorldDestinations, locationSetups, sceneDeployments, sceneImports, userAuthMethods } from '../src/db/schema.js'
 import { setDclDirectory, type ParcelRights } from '../src/analytics/dcl-directory.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setCatalystClient } from '../src/services/dcl/catalyst-client.js'
 import { setWorldsClient, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { PARCEL_MAX_BYTES_PER_PARCEL, submitSignedDeploy } from '../src/services/dcl/world-deployer.js'
 import { startImportDeploy } from '../src/services/import/import-deploy.js'
+import { createImport } from '../src/services/import/imports.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { FakeCatalystClient } from './helpers/fake-catalyst.js'
@@ -100,8 +101,9 @@ describe('deploying an imported scene to Genesis City parcels', () => {
   async function built(o: { files?: Map<string, Uint8Array>; by?: TestUser; sceneId?: string; parcels?: string[] } = {}) {
     const by = o.by ?? user
     const sceneId = o.sceneId ?? (await createScene(by, 'Plaza')).scene.id
+    const parcels = o.parcels ?? PARCELS
     const [row] = await db.insert(sceneImports).values({
-      userId: by.id, sceneId, locationKind: 'parcels', base: BASE, parcels: o.parcels ?? PARCELS, kind: 'sdk7', sourceKey: 'pending', status: 'built', builtAt: new Date(),
+      userId: by.id, sceneId, locationKind: 'parcels', base: parcels[0], parcels, kind: 'sdk7', sourceKey: 'pending', status: 'built', builtAt: new Date(),
     }).returning()
     const prefix = `imports/${row.id}/built/`
     await db.update(sceneImports).set({ sourceKey: `imports/${row.id}/source.zip`, builtKeyPrefix: prefix }).where(eq(sceneImports.id, row.id))
@@ -247,6 +249,90 @@ describe('deploying an imported scene to Genesis City parcels', () => {
     expect(dests).toHaveLength(1)
     expect(dests[0]).toMatchObject({ id: destId, parcels: [BASE], lastEntityId: catalyst.deployed[1].entityId })
     expect(entityOf().pointers).toEqual([BASE])
+  })
+
+  describe('a re-import whose base moved', () => {
+    const MOVED = ['10,11', '10,12']
+    beforeEach(() => { dir.rights.set('10,12', rights({ owner: user.wallet })) })
+    const parcelsDests = () => db.query.dclWorldDestinations.findMany({ where: eq(dclWorldDestinations.kind, 'parcels') })
+
+    it('moves the one destination to the new base, and the HUD and the location follow it', async () => {
+      const first = await built()
+      await deploy(first, owner)
+      const destId = (await importRow(first.row.id)).destinationId!
+      const again = await built({ sceneId: first.sceneId, parcels: MOVED, files: builtFiles({}, { parcels: MOVED }) })
+      await deploy(again, owner)
+
+      expect(await importRow(again.row.id)).toMatchObject({ status: 'deployed', destinationId: destId })
+      const dests = await parcelsDests()
+      expect(dests).toHaveLength(1)
+      expect(dests[0]).toMatchObject({ id: destId, base: '10,11', parcels: MOVED, pendingImportId: null, lastEntityId: catalyst.deployed[1].entityId })
+      expect(entityOf().pointers).toEqual(MOVED)
+
+      const pass = { authorization: `Bearer ${tokenFor(user, { kind: 'scene', sceneId: first.sceneId, locationId: null, orgId: null })}` }
+      const hud = await app.inject({ method: 'GET', url: `/api/scenes/${first.sceneId}/dcl/publish-status`, headers: pass })
+      expect(hud.json().destination).toMatchObject({ id: destId, world: 'gc:10,11' })
+
+      // The location's setup moved with it: gc:10,11 is set up for the scene, gc:10,10 no longer is
+      const at = async (key: string) => (await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, key) }))!
+      const [oldLoc, newLoc] = [await at('gc:10,10'), await at('gc:10,11')]
+      expect(newLoc).toMatchObject({ virviSceneId: first.sceneId, baseParcel: '10,11', parcels: MOVED })
+      expect(oldLoc.virviSceneId).toBeNull()
+      const setups = await db.select().from(locationSetups)
+      expect(setups.find((x) => x.analyticsSceneId === newLoc.id && !x.endedAt)).toMatchObject({ virviSceneId: first.sceneId })
+      expect(setups.find((x) => x.analyticsSceneId === oldLoc.id)).toMatchObject({ endedAt: expect.any(Date), endReason: 'replaced' })
+    })
+
+    it('a changed parcel set goes back to browser signing', async () => {
+      const first = await built()
+      await deploy(first, owner)
+      const destId = (await importRow(first.row.id)).destinationId!
+      await db.update(dclWorldDestinations).set({ mode: 'virvi', grantedAt: new Date() }).where(eq(dclWorldDestinations.id, destId))
+      const again = await built({ sceneId: first.sceneId, parcels: MOVED, files: builtFiles({}, { parcels: MOVED }) })
+      // The grant was for the old parcels: this deploy is signed in the browser, not refused for a missing Virvi key
+      const started = await startImportDeploy(again.row, user.id)
+      expect(started?.mode).toBe('sign')
+      expect((await parcelsDests())).toEqual([expect.objectContaining({ id: destId, base: '10,11', mode: 'sign', grantedAt: null, pendingImportId: again.row.id })])
+    })
+
+    it('a newer upload on overlapping parcels supersedes the waiting one, and deploys to the same destination', async () => {
+      const first = await built()
+      const started = await startImportDeploy(first.row, user.id)
+      expect(started?.mode).toBe('sign')
+      const destId = (await importRow(first.row.id)).destinationId!
+      const next = await createImport({ userId: user.id, location: { kind: 'parcels', base: '10,11', parcels: MOVED }, kind: 'sdk7', scene: { id: first.sceneId } })
+      expect(await importRow(first.row.id)).toMatchObject({ status: 'failed', errorCode: 'superseded' })
+      expect((await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.id, destId) }))!.pendingImportId).toBeNull()
+
+      const prefix = `imports/${next.id}/built/`
+      for (const [path, bytes] of builtFiles({}, { parcels: MOVED })) await store.put(prefix + path, Buffer.from(bytes), 'application/octet-stream')
+      await db.update(sceneImports).set({ status: 'built', builtKeyPrefix: prefix, builtAt: new Date() }).where(eq(sceneImports.id, next.id))
+      await deploy({ row: await importRow(next.id), sceneId: first.sceneId }, owner)
+      expect(await importRow(next.id)).toMatchObject({ status: 'deployed', destinationId: destId })
+      expect(await parcelsDests()).toEqual([expect.objectContaining({ id: destId, base: '10,11', parcels: MOVED })])
+    })
+  })
+
+  it("a signature from a wallet that controls the parcels but isn't the deploying user's is refused", async () => {
+    const outsider = createUnsafeIdentity()
+    for (const p of PARCELS) dir.rights.set(p, rights({ owner: user.wallet, updateOperator: outsider.address.toLowerCase() }))
+    const imp = await built()
+    const started = await startImportDeploy(imp.row, user.id)
+    if (started?.mode !== 'sign') throw new Error('expected a signed deploy')
+    const err = await submitSignedDeploy(started.deployment.id, await chainFor(outsider, started.payload)).catch((e) => e)
+    expect(err).toMatchObject({ status: 403, code: 'not_parcel_controller' })
+    expect(catalyst.deployed).toHaveLength(0)
+  })
+
+  it('the destination names its signers from cached rights (fresh reads are for authorising)', async () => {
+    const imp = await built()
+    await startImportDeploy(imp.row, user.id)
+    const destId = (await importRow(imp.row.id)).destinationId!
+    dir.rightsReads = []
+    const res = await app.inject({ method: 'GET', url: `/api/dcl/destinations/${destId}`, headers: { authorization: `Bearer ${tokenFor(user)}` } })
+    expect(res.json().signers).toEqual([user.wallet])
+    expect(dir.rightsReads.length).toBeGreaterThan(0)
+    expect(dir.rightsReads.some((r) => r.fresh)).toBe(false)
   })
 
   it("refuses a parcels destination another scene holds on that base (409 parcels_in_use)", async () => {

@@ -16,11 +16,12 @@
  * deployment is linked to the import when it is created, and the import settles with it: deployed, or, when the World
  * accepted nothing, back to `built` (or `failed` for a PERMANENT error), all through `markFailed` (Ruling R19).
  */
-import { and, eq, inArray, isNull, lt, or, sql, TransactionRollbackError } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, lte, or, sql, TransactionRollbackError } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, dclBudget, parseParcel, type ImportLocation } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
 import { DirectoryUnavailableError } from '../../analytics/dcl-directory.js'
+import { verifiedWalletsOf } from '../../analytics/claims.js'
 import { linkLocation } from '../../setup/setups.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { ImportError, worldNameOf } from '../import/scene-zip.js'
@@ -92,7 +93,8 @@ export const PLACE_CHANGED =
  */
 export const PARCEL_MAX_BYTES_PER_PARCEL = 15 * 1024 * 1024
 
-const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join(';') === [...b].sort().join(';')
+/** The same parcels, in any order. */
+export const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join(';') === [...b].sort().join(';')
 
 /**
  * A built scene.json (never trusted as stored: the build ran the creator's code) must deploy where the import was
@@ -737,9 +739,14 @@ async function stillOperator(dest: Destination, address: string): Promise<boolea
   }
 }
 
-/** Virvi is no longer an operator on the parcels: the destination goes back to browser signing and the deployment fails saying so. */
+/**
+ * Virvi is no longer an operator on the parcels: the destination goes back to browser signing and the deployment fails
+ * saying so. `dest` is as the deploy started: a grant confirmed again meanwhile (a later grantedAt) is left alone.
+ */
 async function grantRevoked(deploymentId: string, dest: Destination): Promise<void> {
-  await db.update(dclWorldDestinations).set({ mode: 'sign', grantedAt: null, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
+  const grantedThen = dest.grantedAt ? lte(dclWorldDestinations.grantedAt, dest.grantedAt) : isNull(dclWorldDestinations.grantedAt)
+  await db.update(dclWorldDestinations).set({ mode: 'sign', grantedAt: null, updatedAt: new Date() })
+    .where(and(eq(dclWorldDestinations.id, dest.id), grantedThen))
   await markFailed(deploymentId, new DeployerError(409, 'grant_revoked', GRANT_REVOKED_MESSAGE))
 }
 
@@ -793,10 +800,11 @@ const NOT_PARCEL_CONTROLLER = "That signature isn't from a wallet that can deplo
 
 /**
  * The signature must be a valid one over `entityId`: for a World, by the World's owner (403 not_world_owner); for
- * Genesis City parcels, by its own signer, who must still be able to deploy to every parcel right now (403
- * not_parcel_controller; 503 catalyst_unreachable when Decentraland can't say).
+ * Genesis City parcels, by its own signer, who must be a verified wallet of `by` (the user who started the deploy) and
+ * still able to deploy to every parcel right now (403 not_parcel_controller; 503 catalyst_unreachable when Decentraland
+ * can't say).
  */
-async function assertSigner(dest: Destination, chain: AuthChain, entityId: string): Promise<void> {
+async function assertSigner(dest: Destination, chain: AuthChain, entityId: string, by: string | null): Promise<void> {
   if (dest.kind !== 'parcels') {
     if (!(await verifyChain(chain, entityId, dest.ownerWallet))) {
       throw new DeployerError(403, 'not_world_owner', "That signature isn't from the wallet that owns this World")
@@ -805,6 +813,7 @@ async function assertSigner(dest: Destination, chain: AuthChain, entityId: strin
   }
   const signer = chainSigner(chain)
   if (!signer || !(await verifyChain(chain, entityId, signer))) throw new DeployerError(403, 'not_parcel_controller', NOT_PARCEL_CONTROLLER)
+  if (!by || !(await verifiedWalletsOf(by)).includes(signer)) throw new DeployerError(403, 'not_parcel_controller', NOT_PARCEL_CONTROLLER)
   let wallet: string | null
   try {
     ;({ wallet } = await parcelControl([signer], dest.parcels))
@@ -828,7 +837,7 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   }
   const dest = await loadDestination(dep.destinationId)
   if (bundle.importId) assertBuiltPlace(destinationLocation(dest), JSON.parse(bundle.metadataJson) as SceneMetadata)
-  await assertSigner(dest, chain, bundle.entityId)
+  await assertSigner(dest, chain, bundle.entityId, dep.deployedBy)
   // Claim it, so a second submit of the same signature can't upload twice. An import's deployment is claimed with its
   // import, which must still be waiting for this very deployment (a newer upload may have replaced it).
   const claimed = await db.transaction(async (tx) => {

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { dclWorldDestinations, sceneDeployments, sceneImports, sceneRoles, scenePresets, scenes } from '../src/db/schema.js'
+import { dclWorldDestinations, sceneDeployments, sceneImports, sceneRoles, scenePresets, scenes, userAuthMethods } from '../src/db/schema.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import * as runnerModule from '../src/services/import/build-runner.js'
 import { setBuildRunner, type BuildRunner } from '../src/services/import/build-runner.js'
@@ -304,6 +304,42 @@ describe('scene import routes', () => {
       await createSetup(loc.id, mine.id)
       const res = await upload(parcelZip())
       expect([res.statusCode, res.json().import.sceneId]).toEqual([201, mine.id])
+    })
+
+    it('says so plainly when every parcel has a controller but no single wallet controls them all', async () => {
+      const second = randomWallet()
+      await db.insert(userAuthMethods).values({ userId: user.id, type: 'wallet', identifier: second, metadata: { verified: true } })
+      dir.rights.set('10,11', rights(second))
+      const res = await upload(parcelZip())
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toEqual({ error: 'not_parcel_controller', message: 'No single verified wallet can deploy to every parcel in scene.json.' })
+    })
+
+    const parcelsDest = (sceneId: string, base: string, parcels: string[]) => db.insert(dclWorldDestinations).values({
+      sceneId, ownerUserId: user.id, ownerWallet: user.wallet!, kind: 'parcels', worldName: null, base, parcels, mode: 'sign',
+    })
+
+    it("goes to the scene that owns the overlapping destination, over another of the importer's scenes set up there", async () => {
+      const deployed = (await createScene(user, 'Deployed')).scene
+      const setUp = (await createScene(user, 'Set up')).scene
+      await parcelsDest(deployed.id, '10,11', ['10,11'])
+      const loc = await createAnalyticsScene({ locationKey: 'gc:10,10', baseParcel: '10,10', parcels: ['10,10'] })
+      await createSetup(loc.id, setUp.id)
+      const res = await upload(parcelZip())
+      expect([res.statusCode, res.json().import?.sceneId]).toEqual([201, deployed.id])
+    })
+
+    it("refuses parcels that overlap destinations of two different scenes, naming them (409 parcels_in_use)", async () => {
+      const a = (await createScene(user, 'Plaza')).scene
+      const b = (await createScene(user, 'Garden')).scene
+      await parcelsDest(a.id, '10,10', ['10,10'])
+      await parcelsDest(b.id, '10,11', ['10,11'])
+      const res = await upload(parcelZip())
+      expect(res.statusCode).toBe(409)
+      expect(res.json().error).toBe('parcels_in_use')
+      expect(res.json().message).toMatch(/Plaza/)
+      expect(res.json().message).toMatch(/Garden/)
+      expect(await db.select().from(sceneImports)).toHaveLength(0)
     })
 
     it('the catalyst being down is catalyst_unreachable', async () => {

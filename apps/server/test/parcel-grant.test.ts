@@ -3,7 +3,7 @@ import { createUnsafeIdentity } from '@dcl/crypto/dist/crypto.js'
 import { eq } from 'drizzle-orm'
 import { Interface, Wallet, ZeroAddress } from 'ethers'
 import { db } from '../src/db/connection.js'
-import { dclWorldDestinations, sceneDeployments, sceneImports } from '../src/db/schema.js'
+import { dclWorldDestinations, sceneDeployments, sceneImports, userAuthMethods } from '../src/db/schema.js'
 import { setDclDirectory, type ParcelRights } from '../src/analytics/dcl-directory.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { CatalystError, setCatalystClient } from '../src/services/dcl/catalyst-client.js'
@@ -226,6 +226,57 @@ describe('the Genesis City operator grant', () => {
     expect(get.json()).toMatchObject({ granted: true })
   })
 
+  it('the GET says whether Virvi deploys yet: granted on-chain but not confirmed is active false, and check activates it', async () => {
+    grantVirvi()
+    const d = await parcelsDest()
+    const before = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant`)
+    expect(before.json()).toMatchObject({ granted: true, active: false })
+    expect((await call('POST', `/api/dcl/destinations/${d.id}/parcel-grant/check`)).json()).toMatchObject({ granted: true })
+    expect((await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant`)).json()).toMatchObject({ granted: true, active: true })
+  })
+
+  it('canGrant and from name the first wallet that may grant on every parcel, not just the first that may deploy', async () => {
+    // The user's first wallet is only the update operator; their second owns the parcels
+    const first = createUnsafeIdentity().address.toLowerCase()
+    const owner = createUnsafeIdentity().address.toLowerCase()
+    const both = await createUser({ wallet: first })
+    await db.insert(userAuthMethods).values({ userId: both.id, type: 'wallet', identifier: owner, metadata: { verified: true } })
+    for (const p of PARCELS) dir.rights.set(p, rights({ owner, updateOperator: first }))
+    const d = await parcelsDest({ by: both })
+    const res = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant`, both)
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ canGrant: true, from: owner })
+    expect(res.json().transactions).toEqual(grantTransactions(PARCELS, new Map(PARCELS.map((p) => [p, null])), virvi))
+    // An update operator alone has nobody to send them from
+    const op = await createUser({ wallet: createUnsafeIdentity().address })
+    for (const p of PARCELS) dir.rights.set(p, rights({ owner, updateOperator: op.wallet }))
+    await db.delete(dclWorldDestinations).where(eq(dclWorldDestinations.id, d.id))
+    const d2 = await parcelsDest({ by: op })
+    expect((await call('GET', `/api/dcl/destinations/${d2.id}/parcel-grant`, op)).json()).toMatchObject({ canGrant: false, from: null })
+  })
+
+  it('the GET does not fail when the land subgraph is down: Aetheria is unknown and nothing is offered', async () => {
+    const d = await parcelsDest()
+    dir.estatesDown = true
+    const res = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant`)
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ available: true, aetheria: null, canGrant: true })
+    expect(res.json().transactions).toBeUndefined()
+    cfg.virviDclParcelDeployKey = null
+    const unset = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant`)
+    expect(unset.statusCode).toBe(200)
+    expect(unset.json()).toMatchObject({ available: false, aetheria: null, granted: false, active: false })
+  })
+
+  it('with the key unset the GET answers from cached rights, never a fresh read', async () => {
+    cfg.virviDclParcelDeployKey = null
+    const d = await parcelsDest()
+    dir.rightsReads = []
+    const res = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant`)
+    expect(res.json()).toMatchObject({ available: false, aetheria: false, operator: null })
+    expect(dir.rightsReads.some((r) => r.fresh)).toBe(false)
+  })
+
   it('check is not fooled by the World key\'s address', async () => {
     const d = await parcelsDest()
     for (const p of PARCELS) dir.rights.set(p, rights({ owner: user.wallet, updateOperator: virviSigner()!.address }))
@@ -378,6 +429,21 @@ describe('the Genesis City operator grant', () => {
       const started = await startImportDeploy(imp, user.id)
       await whenSettled(started!.deployment.id)
       await expectFellBack(d.id, started!.deployment.id, imp.id)
+    })
+
+    it('a re-grant confirmed while the deploy ran is not undone', async () => {
+      const d = await parcelsDest({ granted: true }) // the rights don't name Virvi: revoked on-chain
+      const imp = await built(d.sceneId)
+      const regranted = new Date(Date.now() + 60_000)
+      const started = await startImportDeploy(imp, user.id)
+      // The owner grants again and confirms it while Virvi reads the rights before signing (the run is packing by now)
+      dir.onRightsRead = async () => {
+        dir.onRightsRead = null
+        await db.update(dclWorldDestinations).set({ mode: 'virvi', grantedAt: regranted }).where(eq(dclWorldDestinations.id, d.id))
+      }
+      await whenSettled(started!.deployment.id)
+      expect(await depRow(started!.deployment.id)).toMatchObject({ status: 'failed', errorMessage: REVOKED })
+      expect(await destRow(d.id)).toMatchObject({ mode: 'virvi', grantedAt: regranted })
     })
 
     it('a catalyst refusal for another reason does not drop the grant', async () => {

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { locationKeyFor, type ImportLocation } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { analyticsScenes, locationSetups, sceneRoles, scenes } from '../db/schema.js'
@@ -99,7 +99,8 @@ async function release(setup: LocationSetupRow, scene: AnalyticsSceneRow, now: D
  * Links a location Virvi just deployed to its Virvi scene: the location row (as the registry would write it
  * for a World or Genesis City ref) and the active setup, so the in-world editor works with no "Set up Virvi here" step.
  * Another scene's setup there is ended as 'replaced'; the same scene's only gets the new entity id.
- * A parcels location is keyed `gc:<base>`; its footprint comes from the location (`parcels` overrides it).
+ * A parcels location is keyed `gc:<base>`; its footprint comes from the location (`parcels` overrides it). The same
+ * scene's setup at another Genesis City location overlapping these parcels (its base moved) ends as 'replaced'.
  */
 export async function linkLocation(input: {
   location: ImportLocation
@@ -150,6 +151,23 @@ export async function linkLocation(input: {
         },
       })
       .returning()
+    if (kind === 'parcels' && parcels?.length) {
+      // The same scene moved its base: its setup at an overlapping location is replaced by this one
+      const overlap = sql`ARRAY[${sql.join(parcels.map((p) => sql`${p}`), sql`, `)}]::text[]`
+      const moved = await tx
+        .select({ setupId: locationSetups.id, locationId: analyticsScenes.id })
+        .from(locationSetups)
+        .innerJoin(analyticsScenes, eq(analyticsScenes.id, locationSetups.analyticsSceneId))
+        .where(and(
+          eq(analyticsScenes.kind, 'parcels'), ne(analyticsScenes.id, loc.id), sql`${analyticsScenes.parcels} && ${overlap}`,
+          eq(locationSetups.virviSceneId, input.virviSceneId), isNull(locationSetups.endedAt),
+        ))
+      if (moved.length) {
+        await tx.update(locationSetups).set({ endedAt: now, endReason: 'replaced' }).where(inArray(locationSetups.id, moved.map((m) => m.setupId)))
+        await tx.update(analyticsScenes).set({ virviSceneId: null, updatedAt: now })
+          .where(and(inArray(analyticsScenes.id, moved.map((m) => m.locationId)), eq(analyticsScenes.virviSceneId, input.virviSceneId)))
+      }
+    }
     const [active] = await tx
       .select()
       .from(locationSetups)

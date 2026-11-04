@@ -9,7 +9,7 @@ import { DirectoryUnavailableError } from '../../analytics/dcl-directory.js'
 import { virviSignerFor } from '../dcl/entity.js'
 import { parcelControl } from '../dcl/parcel-control.js'
 import {
-  assertBuiltPlace, DeployerError, importAfterFailure, markFailed, prepareSignedDeploy, startVirviDeploy, type DeployOptions, type Deployment,
+  assertBuiltPlace, DeployerError, importAfterFailure, markFailed, prepareSignedDeploy, sameSet, startVirviDeploy, type DeployOptions, type Deployment,
   type Destination,
 } from '../dcl/world-deployer.js'
 import { lockLocation, locationOf, OWNER_ERROR_MESSAGES, sameLocation, type SceneImportRow } from './imports.js'
@@ -21,7 +21,8 @@ import { ImportError } from './scene-zip.js'
  * stays `built` until the creator starts it (`startImportDeploy`, from POST /api/imports/:id/deploy) and signs. The
  * destination is set up (or taken over) at the moment a deploy starts: adopted, since the code is the owner's, and
  * pointing at the import with `pending_import_id`, which world-deployer.ts deploys from and clears once the deployment
- * ends. A parcels destination is keyed by its base and owned by the importer's wallet that controls every parcel.
+ * ends. A parcels destination is unique on its base and owned by the importer's wallet that controls every parcel; a
+ * re-import of the same scene whose base or parcels moved updates the scene's overlapping destination in place.
  */
 
 export const NOT_DEPLOYABLE = 'This import has nothing to deploy right now.'
@@ -78,17 +79,57 @@ async function parcelOwner(userId: string, parcels: string[]): Promise<string> {
     if (err instanceof DirectoryUnavailableError) throw new ImportError(503, 'catalyst_unreachable', "Decentraland didn't answer just now. Try again in a minute.")
     throw err
   }
-  if (!wallet) throw new ImportError(403, 'not_parcel_controller', `None of your verified wallets can deploy to parcel ${missing ?? parcels[0]}.`)
+  if (!wallet) throw new ImportError(403, 'not_parcel_controller', notParcelController(missing))
   return wallet
 }
 
-/** The destination of an import's location: the World's, or the parcels destination at its base. */
-function destinationAt(loc: ImportLocation) {
-  return db.query.dclWorldDestinations.findFirst({
-    where: loc.kind === 'world'
-      ? eq(dclWorldDestinations.worldName, loc.world)
-      : and(eq(dclWorldDestinations.kind, 'parcels'), eq(dclWorldDestinations.base, loc.base)),
-  })
+/** Why no verified wallet of the importer may deploy: a parcel none of them controls, or no single one controls them all. */
+export const notParcelController = (missing: string | null) => missing
+  ? `None of your verified wallets can deploy to parcel ${missing}.`
+  : 'No single verified wallet can deploy to every parcel in scene.json.'
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
+const overlaps = (parcels: string[]) => sql`${dclWorldDestinations.parcels} && ARRAY[${sql.join(parcels.map((p) => sql`${p}`), sql`, `)}]::text[]`
+
+/**
+ * The destination an import deploys to. A World: its destination. Parcels: the one at its base; else the scene's own
+ * parcels destination overlapping its parcels (a re-import whose base moved), which the deploy then moves.
+ */
+async function destinationOf(row: Pick<SceneImportRow, 'sceneId'>, loc: ImportLocation, q: Pick<typeof db, 'query'> = db): Promise<Destination | undefined> {
+  if (loc.kind === 'world') return q.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, loc.world) })
+  return (await q.query.dclWorldDestinations.findFirst({ where: and(eq(dclWorldDestinations.kind, 'parcels'), eq(dclWorldDestinations.base, loc.base)) }))
+    ?? q.query.dclWorldDestinations.findFirst({
+      where: and(eq(dclWorldDestinations.kind, 'parcels'), eq(dclWorldDestinations.sceneId, row.sceneId), overlaps(loc.parcels)),
+      orderBy: [dclWorldDestinations.createdAt],
+    })
+}
+
+/** Virvi deploys this import itself: its destination is granted for these very parcels (a moved one goes back to signing). */
+const grantedFor = (d: Destination | undefined, loc: ImportLocation): d is Destination =>
+  !!d && granted(d) && (loc.kind === 'world' || sameSet(d.parcels, loc.parcels))
+
+/**
+ * Sets the import's parcels destination up for this deploy, in the upload lock: the one at its base when it is this
+ * scene's (another scene's is 409 parcels_in_use), else the scene's overlapping one, moved to the new base and parcels
+ * (a changed parcel set goes back to browser signing: the grant was for the old ones), else a new one.
+ */
+async function claimParcelsDestination(
+  tx: Tx, row: SceneImportRow, loc: Extract<ImportLocation, { kind: 'parcels' }>, values: typeof dclWorldDestinations.$inferInsert,
+  set: Partial<typeof dclWorldDestinations.$inferInsert>,
+): Promise<Destination | undefined> {
+  const target = await destinationOf(row, loc, tx)
+  if (target && target.sceneId !== row.sceneId) return undefined
+  if (target) {
+    const moved = !sameSet(target.parcels, loc.parcels)
+    const [d] = await tx.update(dclWorldDestinations).set({ ...set, ...(moved ? { mode: 'sign' as const, grantedAt: null } : {}) })
+      .where(and(eq(dclWorldDestinations.id, target.id), eq(dclWorldDestinations.sceneId, row.sceneId))).returning()
+    return d
+  }
+  // Ruling R3: a parcels destination is unique on its base (a partial index), and no World query ever matches it
+  const [d] = await tx.insert(dclWorldDestinations).values({ ...values, kind: 'parcels', worldName: null })
+    .onConflictDoUpdate({ target: dclWorldDestinations.base, targetWhere: sql`kind = 'parcels'`, set, setWhere: eq(dclWorldDestinations.sceneId, row.sceneId) })
+    .returning()
+  return d
 }
 
 /**
@@ -124,8 +165,9 @@ export async function startImportDeploy(
   const from = row.status
   const startable = from === 'built' || from === 'awaiting_signature' || (opts.claimed && from === 'deploying' && !row.deploymentId)
   if (!startable) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
-  const existing = await destinationAt(locationOf(row))
-  const virvi = !!existing && granted(existing)
+  const loc = locationOf(row)
+  const existing = await destinationOf(row, loc)
+  const virvi = grantedFor(existing, loc)
   if (opts.virviOnly && !(virvi && virviSignerFor(existing.kind))) return null
   try {
     return await begin(row, by, virvi, opts)
@@ -157,13 +199,10 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
     const at = new Date()
     const values = { sceneId: row.sceneId, ownerUserId: by, ownerWallet: owner, ...plot, mode: 'sign' as const, adopted: true, pendingImportId: row.id }
     const set = { ...plot, adopted: true, pendingImportId: row.id, ownerWallet: owner, ownerUserId: by, updatedAt: at }
-    const setWhere = eq(dclWorldDestinations.sceneId, row.sceneId)
-    // Ruling R3: a parcels destination is unique on its base (a partial index), and no World query ever matches it
-    const [d] = loc.kind === 'world'
-      ? await tx.insert(dclWorldDestinations).values({ ...values, worldName: loc.world })
-        .onConflictDoUpdate({ target: dclWorldDestinations.worldName, set, setWhere }).returning()
-      : await tx.insert(dclWorldDestinations).values({ ...values, kind: 'parcels', worldName: null })
-        .onConflictDoUpdate({ target: dclWorldDestinations.base, targetWhere: sql`kind = 'parcels'`, set, setWhere }).returning()
+    const d = loc.kind === 'world'
+      ? (await tx.insert(dclWorldDestinations).values({ ...values, worldName: loc.world })
+        .onConflictDoUpdate({ target: dclWorldDestinations.worldName, set, setWhere: eq(dclWorldDestinations.sceneId, row.sceneId) }).returning())[0]
+      : await claimParcelsDestination(tx, row, loc, values, set)
     if (!d) throw loc.kind === 'world' ? new ImportError(409, 'world_in_use', WORLD_IN_USE) : new ImportError(409, 'parcels_in_use', PARCELS_IN_USE)
     await tx.update(sceneImports).set({ destinationId: d.id, updatedAt: at }).where(eq(sceneImports.id, row.id))
     return d
@@ -191,8 +230,9 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
 export async function deployImport(importId: string, opts: DeployOptions = {}): Promise<void> {
   const row = await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, importId) })
   if (row?.status !== 'built') return
-  const dest = await destinationAt(locationOf(row))
-  if (!dest || !granted(dest) || !virviSignerFor(dest.kind)) return
+  const loc = locationOf(row)
+  const dest = await destinationOf(row, loc)
+  if (!grantedFor(dest, loc) || !virviSignerFor(dest.kind)) return
   // Ruling R24: claimed before anything slow, so the creator is never offered a Deploy this is already doing
   const [claimed] = await db.update(sceneImports).set({ status: 'deploying', updatedAt: new Date() })
     .where(and(eq(sceneImports.id, importId), eq(sceneImports.status, 'built'), isNull(sceneImports.deploymentId)))

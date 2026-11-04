@@ -14,7 +14,7 @@ describe('parcelControl', () => {
     dir.rights.set('1,1', rights())
     dir.rights.set('1,2', rights())
     const c = await parcelControl([OTHER, OWNER.toUpperCase().replace('0X', '0x')], ['1,1', '1,2'], dir)
-    expect(c).toMatchObject({ wallet: OWNER, missing: null, canGrant: true, aetheria: false })
+    expect(c).toMatchObject({ wallet: OWNER, missing: null, canGrant: true, granter: OWNER, aetheria: false })
     expect(c.rightsOf.size).toBe(2)
   })
 
@@ -39,6 +39,36 @@ describe('parcelControl', () => {
     dir.rights.set('108,105', rights({ owner: a, updateOperator: UPD }))
     const c = await parcelControl([UPD], ['108,105'], dir)
     expect(c).toMatchObject({ wallet: UPD, aetheria: true, canGrant: false })
+  })
+
+  it('the granter is the first deploying wallet that may grant on every parcel, not just the first wallet', async () => {
+    const dir = new FakeDclDirectory()
+    for (const p of ['1,1', '1,2']) dir.rights.set(p, rights({ updateOperator: UPD }))
+    const c = await parcelControl([UPD, OWNER], ['1,1', '1,2'], dir)
+    expect(c).toMatchObject({ wallet: UPD, wallets: [UPD, OWNER], granter: OWNER, canGrant: true })
+    const op = await parcelControl([UPD], ['1,1', '1,2'], dir)
+    expect(op).toMatchObject({ granter: null, canGrant: false })
+  })
+
+  it('reads fresh by default, cached on request, a few parcels at a time', async () => {
+    const dir = new FakeDclDirectory()
+    const parcels = Array.from({ length: 10 }, (_, i) => `1,${i}`)
+    for (const p of parcels) dir.rights.set(p, rights())
+    let inFlight = 0
+    let most = 0
+    dir.onRightsRead = async () => {
+      most = Math.max(most, ++inFlight)
+      await new Promise((r) => setTimeout(r, 5))
+      inFlight--
+    }
+    const c = await parcelControl([OWNER], parcels, dir)
+    expect(c.wallet).toBe(OWNER)
+    expect(dir.rightsReads.every((r) => r.fresh)).toBe(true)
+    expect(most).toBeGreaterThan(1)
+    expect(most).toBeLessThanOrEqual(4)
+    dir.rightsReads = []
+    await parcelControl([OWNER], parcels, dir, { fresh: false })
+    expect(dir.rightsReads.some((r) => r.fresh)).toBe(false)
   })
 
   it('throws when the directory is down', async () => {

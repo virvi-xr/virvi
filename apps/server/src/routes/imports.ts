@@ -12,11 +12,11 @@
  */
 
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { zipSync } from 'fflate'
 import { PARCEL_RE, SCENE_IMPORT_MAX_BYTES, type ImportLocation } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { analyticsScenes, dclWorldDestinations, sceneImports } from '../db/schema.js'
+import { analyticsScenes, dclWorldDestinations, sceneImports, scenes } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
@@ -34,7 +34,7 @@ import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
 import {
   createImport, failImport, latestImportFor, loadImportView, OWNER_ERROR_MESSAGES, type SceneImportRow,
 } from '../services/import/imports.js'
-import { NOT_DEPLOYABLE, startImportDeploy } from '../services/import/import-deploy.js'
+import { NOT_DEPLOYABLE, notParcelController, startImportDeploy } from '../services/import/import-deploy.js'
 import { DeployerError } from '../services/dcl/world-deployer.js'
 import { ownerFor, RouteError } from './dcl-destinations.js'
 import { publicDeployment } from './deploy.js'
@@ -69,17 +69,27 @@ function sceneName(folder: SceneFolder, fallback: string): string {
   return name || fallback
 }
 
-/** The first of the Virvi scenes the importer has full access on, or null when there are none; throws `refusal` if any is out of reach. */
+/**
+ * The one Virvi scene among `sceneIds` (repeats allowed), or null when there are none; throws `refusal` if any is out
+ * of the importer's full access, and 409 parcels_in_use naming them when they are several different scenes.
+ */
 async function manageable(request: FastifyRequest, sceneIds: string[], refusal: ImportError): Promise<string | null> {
-  for (const id of sceneIds) if (!(await full(request, id))) throw refusal
-  return sceneIds[0] ?? null
+  const ids = [...new Set(sceneIds)]
+  for (const id of ids) if (!(await full(request, id))) throw refusal
+  if (ids.length > 1) {
+    const rows = await db.select({ id: scenes.id, name: scenes.name }).from(scenes).where(inArray(scenes.id, ids))
+    const names = ids.map((id) => rows.find((r) => r.id === id)?.name ?? id).map((n) => `"${n}"`).join(', ')
+    throw new ImportError(409, 'parcels_in_use', `These parcels overlap more than one of your Virvi scenes (${names}). Change the parcels in scene.json so they overlap only one of them.`)
+  }
+  return ids[0] ?? null
 }
 
 /**
  * Which Virvi scene the import goes to. A World: the scene its destination belongs to (409 world_in_use without full
  * access), else the scene its active setup belongs to (409 world_set_up_elsewhere), else the scene of its last import
  * when the importer still has full access on it, else a new scene. Parcels: the same with a destination or an active
- * setup on any overlapping parcel (409 parcels_in_use, parcels_set_up_elsewhere).
+ * setup on any overlapping parcel (409 parcels_in_use, parcels_set_up_elsewhere), the destinations' scene first; parcels
+ * that overlap several different Virvi scenes are refused (409 parcels_in_use, naming them) rather than one picked.
  */
 async function sceneFor(request: FastifyRequest, location: ImportLocation, folder: SceneFolder): Promise<{ id: string } | { newName: string }> {
   let used: string | null
@@ -154,7 +164,7 @@ export default async function importRoutes(app: FastifyInstance) {
     try {
       const control = await parcelControl(await verifiedWalletsOf(userId), location.parcels)
       if (!control.wallet) {
-        throw new ImportError(403, 'not_parcel_controller', `None of your verified wallets can deploy to parcel ${control.missing ?? location.base}.`)
+        throw new ImportError(403, 'not_parcel_controller', notParcelController(control.missing))
       }
     } catch (err) {
       if (err instanceof DirectoryUnavailableError) {
