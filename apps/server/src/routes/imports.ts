@@ -195,7 +195,8 @@ export default async function importRoutes(app: FastifyInstance) {
     try {
       // The upload itself, kept for the Virvi-free backup; recorded only once it is stored
       const original = originalKey(row.id)
-      await getImportStore().put(original, Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0), 'application/zip')
+      if (!Buffer.isBuffer(request.body)) throw new Error('the upload body is not a Buffer')
+      await getImportStore().put(original, request.body, 'application/zip')
       await db.update(sceneImports).set({ originalKey: original }).where(eq(sceneImports.id, row.id))
       await getImportStore().put(row.sourceKey, source, 'application/zip')
     } catch (err) {

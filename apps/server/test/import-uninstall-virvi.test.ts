@@ -47,7 +47,7 @@ describe('uninstallVirvi', () => {
       'export function main() { x() }\n',
       'export async function main(): Promise<void> {\n  await x()\n}\n',
       'export const main = (): void => {\n  x()\n}\n',
-      "/// <reference types=\"x\" />\nimport a from 'a'\r\nexport function main() {\r\n  x()\r\n}\r\n".replace('\r\n', '\n'),
+      "/// <reference types=\"x\" />\nimport a from 'a'\r\nexport function main() {\r\n  x()\r\n}\r\n".replaceAll('\r\n', '\n'),
       "import a from 'a'\r\nexport function main() {\r\n  x()\r\n}\r\n",
     ]) await roundTrips(folder({ 'package.json': pkg({ left: '1.0.0' }), 'src/index.ts': src }))
     await roundTrips(folder({ 'package.json': pkg(), 'src/index.js': 'export function main() {}\n' }))
@@ -134,5 +134,27 @@ describe('sceneSourceFor', () => {
     const kept = await sceneSourceFor(scene.id)
     expect(kept.origin).toBe('original')
     expect(strFromU8(kept.files.get('src/index.ts')!)).toBe('// the original\nexport function main() {}\n')
+  })
+
+  it("reports the creator's own Virvi code in an original, and falls back to the source when the original is unreadable", async () => {
+    const user = await createUser()
+    const { scene } = await createScene(user, 'Moon')
+    const own = "import { createVirvi } from '@virvixr/dcl'\nexport function main() {\n  void createVirvi()\n}\n"
+    const f = folder({ 'package.json': pkg({ '@virvixr/dcl': '^2.6.0' }), 'src/index.ts': own })
+    const installed = (await installVirvi(f)).files
+    const id = await seed(scene.id, user.id, { at: new Date(Date.UTC(2026, 10, 1)), original: zip(f.files), source: zip(installed) })
+    const r = await sceneSourceFor(scene.id)
+    expect([r.origin, r.leftovers]).toEqual(['original', ['src/index.ts']])
+
+    await store.put(`imports/${id}/original.zip`, Buffer.from('not a zip'), 'application/zip')
+    expect((await sceneSourceFor(scene.id)).origin).toBe('uninstalled')
+  })
+
+  it('leaves the icon, script and sync manifest alone when the scene started Virvi itself', () => {
+    const files = new Map<string, Uint8Array>([
+      ['src/index.ts', strToU8(MAIN)], ['images/virvi/hud-v.png', strToU8('p')],
+      ['assets/scene/Scripts/VirviManager.ts', strToU8('x')], ['models/virvi/.virvi-sync.json', strToU8('{}')],
+    ])
+    expect([...uninstallVirvi(files, { alreadyInstalled: true }).files.keys()].sort()).toEqual([...files.keys()].sort())
   })
 })

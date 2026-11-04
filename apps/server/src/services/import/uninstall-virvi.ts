@@ -46,6 +46,11 @@ function importsVirvi(src: string): boolean {
   return importStatements(src, maskSource(src)).some((st) => st.specifier === PACKAGE || st.specifier.startsWith(`${PACKAGE}/`))
 }
 
+/** The source files (sorted paths) that import @virvixr/dcl. */
+function virviImporters(files: Map<string, Uint8Array>): string[] {
+  return [...files].filter(([path, bytes]) => SOURCE_FILE.test(path) && importsVirvi(dec.decode(bytes))).map(([path]) => path).sort()
+}
+
 /** package.json without the @virvixr/dcl range installVirvi adds, or null to leave it alone. */
 function withoutDependency(pkgText: string): string | null {
   let pkg: unknown
@@ -68,14 +73,16 @@ function withoutDependency(pkgText: string): string | null {
  * Takes Virvi back out of a scene installVirvi edited: the exact reverse of its three edits (the dependency, the import
  * and `void createVirvi()`, the HUD icon), plus the Creator Hub VirviManager script and the `virvi-dcl sync` leftovers
  * (the manifest and models no file names). The original's byte layout can only be guessed from the result, so this is
- * for imports that predate the kept original upload. `alreadyInstalled` (the scene started Virvi itself) leaves the
- * code and the dependency alone. `leftovers` are the files that still import @virvixr/dcl: the creator's own Virvi code.
+ * for imports that predate the kept original upload. `alreadyInstalled` (the scene started Virvi itself) removes
+ * nothing: the code, the dependency, the icon, the script and the synced models may all be the creator's own. `leftovers` are the files that still import @virvixr/dcl: the creator's own Virvi code.
  */
 export function uninstallVirvi(input: Map<string, Uint8Array>, opts: { alreadyInstalled?: boolean } = {}): { files: Map<string, Uint8Array>; leftovers: string[] } {
   const files = new Map(input)
-  files.delete(HUD_ICON)
-  files.delete(CREATOR_HUB_SCRIPT)
-  files.delete(SYNC_MANIFEST)
+  if (!opts.alreadyInstalled) {
+    files.delete(HUD_ICON)
+    files.delete(CREATOR_HUB_SCRIPT)
+    files.delete(SYNC_MANIFEST)
+  }
 
   const mainPath = MAIN_FILES.find((p) => files.has(p))
   if (mainPath && !opts.alreadyInstalled) {
@@ -86,11 +93,11 @@ export function uninstallVirvi(input: Map<string, Uint8Array>, opts: { alreadyIn
   const named = new Set<string>()
   for (const [path, bytes] of files) if (TEXT_FILE.test(path) && path !== 'package.json') named.add(dec.decode(bytes))
   const text = [...named].join('\n')
-  for (const path of [...files.keys()]) {
+  for (const path of opts.alreadyInstalled ? [] : [...files.keys()]) {
     if (SYNCED_MODEL.test(path) && !text.includes(path)) files.delete(path)
   }
 
-  const leftovers = [...files].filter(([path, bytes]) => SOURCE_FILE.test(path) && importsVirvi(dec.decode(bytes))).map(([path]) => path).sort()
+  const leftovers = virviImporters(files)
 
   const pkgBytes = files.get('package.json')
   if (pkgBytes && leftovers.length === 0 && !opts.alreadyInstalled) {
@@ -115,13 +122,18 @@ export async function sceneSourceFor(sceneId: string): Promise<SceneSource> {
   const none: SceneSource = { files: new Map(), leftovers: [], origin: 'none' }
   const [row] = await db.select().from(sceneImports)
     .where(and(eq(sceneImports.sceneId, sceneId), eq(sceneImports.status, 'deployed')))
-    .orderBy(desc(sql`COALESCE(${sceneImports.finishedAt}, ${sceneImports.createdAt})`), desc(sceneImports.createdAt), desc(sceneImports.id))
+    .orderBy(desc(sql`COALESCE(${sceneImports.finishedAt}, ${sceneImports.createdAt})`), desc(sceneImports.createdAt), sceneImports.id)
     .limit(1)
   if (!row) return none
   const store = getImportStore()
   if (row.originalKey) {
     const original = await store.get(row.originalKey)
-    if (original) return { files: readSceneZip(new Uint8Array(original.body)).files, leftovers: [], origin: 'original' }
+    if (original) {
+      try {
+        const files = readSceneZip(new Uint8Array(original.body)).files
+        return { files, leftovers: virviImporters(files), origin: 'original' }
+      } catch { /* unreadable: the source below is still there */ }
+    }
   }
   const source = await store.get(row.sourceKey)
   if (!source) return none
