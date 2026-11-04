@@ -58,6 +58,7 @@ import importBuildRoutes from './routes/import-build.js'
 import importRoutes from './routes/imports.js'
 import brandingRoutes from './routes/branding.js'
 import presetScheduleRoutes from './routes/preset-schedules.js'
+import showingRoutes from './routes/showings.js'
 import { db } from './db/connection.js'
 import { sql } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
@@ -188,6 +189,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(sceneRoleRoutes)
   await app.register(sceneLibraryRoutes)
   await app.register(presetScheduleRoutes)
+  await app.register(showingRoutes)
   if (opts.backfill !== false) {
     runStartupBackfill().catch((err) => app.log.warn({ err }, 'scene library backfill failed'))
   }

@@ -35,6 +35,8 @@ export enum VideoSourceType {
   LIVE = 3,
   ADS = 4,
   PLAYLIST_ADS = 5,
+  /** Scheduled showings at set times, the same moment for everyone (LIV-87). */
+  SCHEDULED = 6,
 }
 
 export enum SoundSourceType {

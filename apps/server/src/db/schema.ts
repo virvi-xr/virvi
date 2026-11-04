@@ -1874,3 +1874,30 @@ export const scenePresetScheduleRuns = pgTable('scene_preset_schedule_runs', {
   oncePerOccurrence: uniqueIndex('scene_preset_schedule_runs_once_uq').on(t.scheduleId, t.occurrenceStart),
   sceneStatusIdx: index('scene_preset_schedule_runs_scene_status_idx').on(t.sceneId, t.status),
 }))
+
+// ── Scheduled showings on video screens (LIV-87) ─────────────────────────────
+// A programme of videos at a wall-clock time ("Fridays 19:00, America/New_York"), on a video element in Schedule
+// mode. Players work out the same moment of it from the start instants (src/scenes/showings.ts, @virvixr/shared).
+
+export const screenShowings = pgTable('screen_showings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+  elementId: uuid('element_id').notNull().references(() => sceneElements.id, { onDelete: 'cascade' }),
+  title: text('title'),
+  description: text('description'),
+  posterUrl: text('poster_url'),
+  /** [{ url, duration (seconds), kind: 'video' | 'ad' }], played in order; ads only before the last video. */
+  items: jsonb('items').$type<Array<{ url: string; duration: number; kind: 'video' | 'ad' }>>().notNull(),
+  recurrence: text('recurrence').$type<'once' | 'daily' | 'weekly'>().notNull(),
+  startDate: text('start_date').notNull(), // YYYY-MM-DD, local
+  startTime: text('start_time').notNull(), // HH:MM, local
+  weekdays: integer('weekdays').array().notNull().default(sql`'{}'::integer[]`), // weekly: 0 = Sunday
+  timezone: text('timezone').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  elementIdx: index('screen_showings_element_idx').on(t.elementId),
+  sceneIdx: index('screen_showings_scene_idx').on(t.sceneId),
+}))

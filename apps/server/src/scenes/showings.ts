@@ -1,5 +1,9 @@
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { programmeLength, type ProgrammeItem, type ShowingInstance } from '@virvixr/shared'
-import { occurrencesBetween, type ScheduleSpec } from './schedule-time.js'
+import { db } from '../db/connection.js'
+import { mediaAssets, screenShowings } from '../db/schema.js'
+import { nextStarts, occurrencesBetween, zonedToUtc, type ScheduleSpec } from './schedule-time.js'
+import { parseWhen, type WhenFields } from './preset-schedules.js'
 
 /**
  * Scheduled showings on a video screen (LIV-87): a programme of videos at a local time, timezone and repetition,
@@ -75,4 +79,126 @@ export function showingOverlaps(showings: ShowingSpec[], from: Date, horizonDays
 /** URLs of programme items with no known length: those can't be scheduled. */
 export function itemsWithoutLength(items: ProgrammeItem[]): string[] {
   return items.filter((i) => !(Number.isFinite(i.duration) && i.duration > 0)).map((i) => i.url)
+}
+
+// ── Stored showings: validation and lookups ─────────────────────────────────
+
+export class ShowingError extends Error {
+  constructor(public status: 400 | 409, public code: string, message: string, public extra: Record<string, unknown> = {}) {
+    super(message)
+  }
+}
+
+export type ShowingRow = typeof screenShowings.$inferSelect
+type Item = ShowingRow['items'][number]
+
+export interface ShowingInput {
+  title: string | null
+  description: string | null
+  posterUrl: string | null
+  /** As sent: lengths are resolved by resolveItems. */
+  items: Array<{ url: string; kind: 'video' | 'ad'; duration: number | null }>
+  recurrence: 'once' | 'daily' | 'weekly'
+  startDate: string
+  startTime: string
+  weekdays: number[]
+  timezone: string
+  enabled: boolean
+}
+
+export const MAX_ITEMS = 50
+/** One video, and a whole programme: no film or marathon runs longer. */
+export const MAX_ITEM_SECONDS = 24 * 3600
+export const MAX_PROGRAMME_SECONDS = 48 * 3600
+const MAX_URL = 2048
+
+const httpUrl = (u: unknown): u is string => {
+  if (typeof u !== 'string' || u.length > MAX_URL) return false
+  try {
+    const p = new URL(u).protocol
+    return p === 'https:' || p === 'http:'
+  } catch {
+    return false
+  }
+}
+
+const optText = (v: unknown, max: number, what: string, bad: (m: string) => Error): string | null => {
+  if (v === null || v === undefined) return null
+  if (typeof v !== 'string' || v.length > max) throw bad(`${what} must be text up to ${max} characters.`)
+  return v.trim() || null
+}
+
+/** Validates a whole showing (a create, or an edit laid over the current one). Throws ShowingError(400). */
+export function parseShowingInput(body: Record<string, unknown>, base?: ShowingRow): ShowingInput {
+  const pick = (k: string): unknown => (body[k] !== undefined ? body[k] : (base as Record<string, unknown> | undefined)?.[k])
+  const bad = (message: string) => new ShowingError(400, 'bad_showing', message)
+  const when = parseWhen(pick as (k: keyof WhenFields) => unknown, bad)
+  const title = optText(pick('title'), 200, 'The title', bad)
+  const description = optText(pick('description'), 2000, 'The description', bad)
+  const posterUrl = pick('posterUrl') ?? null
+  if (posterUrl !== null && !httpUrl(posterUrl)) throw bad('The poster must be a web address.')
+  const enabled = pick('enabled') ?? true
+  if (typeof enabled !== 'boolean') throw bad('enabled must be true or false.')
+  const raw = pick('items')
+  if (!Array.isArray(raw) || raw.length === 0) throw bad('Add at least one video.')
+  if (raw.length > MAX_ITEMS) throw bad(`A showing can have up to ${MAX_ITEMS} videos.`)
+  const items = raw.map((it) => {
+    const o = (it ?? {}) as Record<string, unknown>
+    if (!httpUrl(o.url)) throw bad('Each video needs a web address (https://…).')
+    const kind = o.kind ?? 'video'
+    if (kind !== 'video' && kind !== 'ad') throw bad('Each item is a video or an ad slot.')
+    const d = o.duration ?? null
+    if (d !== null && (typeof d !== 'number' || !Number.isFinite(d) || d <= 0 || d > MAX_ITEM_SECONDS)) throw bad('A video length must be up to 24 hours, in seconds.')
+    return { url: o.url, kind: kind as 'video' | 'ad', duration: d as number | null }
+  })
+  if (items[items.length - 1].kind === 'ad') throw bad('Ads play before the feature, never after it: end the showing with a video.')
+  return { title, description, posterUrl: posterUrl as string | null, items, enabled, ...when }
+}
+
+/**
+ * Fills in each video's length: a length measured on upload (any Media Library file at that address) wins; else the
+ * one sent (an external video whose length the host typed). Throws ShowingError(400, 'unknown_length') naming the rest.
+ */
+export async function resolveItems(items: ShowingInput['items']): Promise<Item[]> {
+  const urls = [...new Set(items.map((i) => i.url))]
+  const rows = await db.select({ url: mediaAssets.publicUrl, duration: sql<unknown>`${mediaAssets.metadata}->'duration'` })
+    .from(mediaAssets)
+    .where(and(inArray(mediaAssets.publicUrl, urls), eq(mediaAssets.status, 'ready')))
+  const measured = new Map<string, number>()
+  for (const r of rows) if (r.url && typeof r.duration === 'number' && r.duration > 0) measured.set(r.url, r.duration)
+  const resolved = items.map((i) => ({ url: i.url, kind: i.kind, duration: measured.get(i.url) ?? i.duration ?? 0 }))
+  const missing = itemsWithoutLength(resolved)
+  if (missing.length) {
+    throw new ShowingError(400, 'unknown_length', "These videos have no known length, so they can't be scheduled. Upload them to the Media Library, or enter their length.", { urls: [...new Set(missing)] })
+  }
+  if (programmeLength(resolved) > MAX_PROGRAMME_SECONDS) throw new ShowingError(400, 'bad_showing', 'A showing can run up to 48 hours.')
+  return resolved
+}
+
+export const specOfShowing = (row: Pick<ShowingRow, 'id' | 'items' | 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'timezone' | 'title' | 'posterUrl'>): ShowingSpec => ({
+  id: row.id, items: row.items, title: row.title ?? undefined, posterUrl: row.posterUrl ?? undefined,
+  schedule: { recurrence: row.recurrence, startDate: row.startDate, startTime: row.startTime, weekdays: row.weekdays, timezone: row.timezone },
+})
+
+/** The first enabled showing on the screen this one would run into (from `now`), or null. */
+export async function findShowingClash(elementId: string, candidate: ShowingSpec, now: Date, ignoreId?: string): Promise<{ row: ShowingRow; at: string } | null> {
+  const others = (await db.select().from(screenShowings).where(and(eq(screenShowings.elementId, elementId), eq(screenShowings.enabled, true))))
+    .filter((r) => r.id !== ignoreId)
+  // From the candidate's first day (or now, if that's passed): a showing starting years ahead is checked there
+  const firstDay = zonedToUtc(candidate.schedule.startDate, '00:00', candidate.schedule.timezone).getTime() - DAY
+  const overlaps = showingOverlaps([...others.map(specOfShowing), candidate], new Date(Math.max(now.getTime(), firstDay)))
+  const hit = overlaps.find((o) => o.first === candidate.id || o.second === candidate.id)
+  if (!hit) return null
+  const otherId = hit.first === candidate.id ? hit.second : hit.first
+  if (otherId === candidate.id) return { row: { id: candidate.id, title: candidate.title ?? null } as ShowingRow, at: hit.at }
+  return { row: others.find((r) => r.id === otherId)!, at: hit.at }
+}
+
+/** A showing as the API returns it: its length and next three starts. */
+export function presentShowing(row: ShowingRow, now: Date) {
+  return {
+    ...row,
+    lengthSeconds: programmeLength(row.items),
+    nextStarts: nextStarts({ ...specOfShowing(row).schedule, durationMinutes: null }, now, 3).map((d) => d.toISOString()),
+  }
 }

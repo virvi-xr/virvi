@@ -47,12 +47,10 @@ const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** Validates a whole schedule (a create, or an edit laid over the current one). Throws ScheduleError(400). */
-export function parseScheduleInput(body: Record<string, unknown>, base?: ScheduleInput): ScheduleInput {
-  const pick = <K extends keyof ScheduleInput>(k: K): unknown => (body[k] !== undefined ? body[k] : base?.[k])
-  const bad = (message: string) => new ScheduleError(400, 'bad_schedule', message)
-  const presetId = pick('presetId')
-  if (typeof presetId !== 'string' || !UUID_RE.test(presetId)) throw bad('Choose a preset.')
+export type WhenFields = Pick<ScheduleInput, 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'timezone'>
+
+/** The time fields every wall-clock schedule has (scheduled presets, screen showings); throws `bad(message)`. */
+export function parseWhen(pick: (k: keyof WhenFields) => unknown, bad: (message: string) => Error): WhenFields {
   const recurrence = pick('recurrence')
   if (recurrence !== 'once' && recurrence !== 'daily' && recurrence !== 'weekly') throw bad('Repeat must be once, daily or weekly.')
   const startDate = pick('startDate')
@@ -65,6 +63,16 @@ export function parseScheduleInput(body: Record<string, unknown>, base?: Schedul
   if (!Array.isArray(rawDays) || rawDays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) throw bad('Weekdays are 0 (Sunday) to 6 (Saturday).')
   const weekdays = recurrence === 'weekly' ? [...new Set(rawDays as number[])].sort() : []
   if (recurrence === 'weekly' && weekdays.length === 0) throw bad('Choose at least one day.')
+  return { recurrence, startDate, startTime, weekdays, timezone }
+}
+
+/** Validates a whole schedule (a create, or an edit laid over the current one). Throws ScheduleError(400). */
+export function parseScheduleInput(body: Record<string, unknown>, base?: ScheduleInput): ScheduleInput {
+  const pick = <K extends keyof ScheduleInput>(k: K): unknown => (body[k] !== undefined ? body[k] : base?.[k])
+  const bad = (message: string) => new ScheduleError(400, 'bad_schedule', message)
+  const presetId = pick('presetId')
+  if (typeof presetId !== 'string' || !UUID_RE.test(presetId)) throw bad('Choose a preset.')
+  const { recurrence, startDate, startTime, timezone, weekdays } = parseWhen(pick as (k: keyof WhenFields) => unknown, bad)
   const duration = pick('durationMinutes') ?? null
   if (duration !== null && (!Number.isInteger(duration) || (duration as number) < 1 || (duration as number) > MAX_DURATION_MINUTES)) {
     throw bad('The length must be 1 minute to 7 days, or none (stays live until the next switch).')

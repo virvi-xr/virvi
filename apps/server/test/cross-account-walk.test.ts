@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { ringCodeOf } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
 import {
-  users, scenes, scenePresets, scenePresetSchedules, sceneElements, sceneElementInstances, sceneCollaborators, sceneRoles, sceneLibrary,
+  users, scenes, scenePresets, scenePresetSchedules, screenShowings, sceneElements, sceneElementInstances, sceneCollaborators, sceneRoles, sceneLibrary,
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
   giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, apiKeys, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, roomScans, roomSets, arDevices,
@@ -69,6 +69,7 @@ async function fixtures() {
   })
   const grant = await addGrant({ bookingId: booking.id, walletAddress: randomWallet(), role: 'vj', grantedByUserId: b.id })
   await db.insert(uploadTokens).values({ code: 'bcode1', userId: b.id, sceneId: scene.id, expiresAt: new Date(Date.now() + H) })
+  const [showing] = await db.insert(screenShowings).values({ sceneId: scene.id, elementId: element.id, title: 'B show', items: [{ url: 'https://cdn.example/b.mp4', duration: 60, kind: 'video' }], recurrence: 'daily', startDate: '2030-01-01', startTime: '20:00', timezone: 'UTC' }).returning()
   const [presetSchedule] = await db.insert(scenePresetSchedules).values({ sceneId: scene.id, presetId: preset.id, recurrence: 'daily', startDate: '2030-01-01', startTime: '20:00', timezone: 'UTC', durationMinutes: 60 }).returning()
   const [hook] = await db.insert(platformCallbacks).values({ sceneId: scene.id, platform: 'secondlife', callbackUrl: 'https://1.1.1.1/cb' }).returning()
   const location = await createAnalyticsScene({ claimedByUserId: b.id, claimStatus: 'active' })
@@ -133,7 +134,7 @@ async function fixtures() {
   const aScene = (await createScene(a, 'A scene')).scene
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
-    a, b, collaborator, scene, preset, presetSchedule, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
+    a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
     asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
   }
 }
@@ -153,6 +154,10 @@ const CASES: Case[] = [
   { route: 'POST /api/scenes/:sceneId/preset-schedules', url: (f) => `/api/scenes/${f.scene.id}/preset-schedules`, body: (f) => ({ presetId: f.preset.id, recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC', durationMinutes: 30 }) },
   { route: 'PATCH /api/preset-schedules/:scheduleId', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}`, body: () => ({ enabled: false }) },
   { route: 'DELETE /api/preset-schedules/:scheduleId', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}` },
+  { route: 'GET /api/elements/:elementId/showings', url: (f) => `/api/elements/${f.element.id}/showings` },
+  { route: 'POST /api/elements/:elementId/showings', url: (f) => `/api/elements/${f.element.id}/showings`, body: () => ({ items: [{ url: 'https://cdn.example/a.mp4', duration: 60 }], recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC' }) },
+  { route: 'PATCH /api/showings/:showingId', url: (f) => `/api/showings/${f.showing.id}`, body: () => ({ enabled: false }) },
+  { route: 'DELETE /api/showings/:showingId', url: (f) => `/api/showings/${f.showing.id}` },
   { route: 'PATCH /api/presets/:presetId', url: (f) => `/api/presets/${f.preset.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'DELETE /api/presets/:presetId', url: (f) => `/api/presets/${f.preset.id}` },
   { route: 'POST /api/presets/:presetId/activate', url: (f) => `/api/presets/${f.preset.id}/activate` },
@@ -382,7 +387,7 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
 
 // Every table holding B's fixtures; a refused request must leave all of them as they were.
 const TABLES = [
-  users, scenes, scenePresets, scenePresetSchedules, sceneElements, sceneElementInstances, sceneCollaborators, sceneRoles, sceneLibrary,
+  users, scenes, scenePresets, scenePresetSchedules, screenShowings, sceneElements, sceneElementInstances, sceneCollaborators, sceneRoles, sceneLibrary,
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
   giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, arDevices, roomScans, roomSets,
