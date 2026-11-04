@@ -128,18 +128,18 @@ export async function pendingModels(dest: { sceneId: string; deployedFiles: stri
 }
 
 /** https, and a host that is ours: the CDN or the public API. Throws ModelRefused otherwise. */
-function assertVirviHosted(url: string): URL {
+export function assertVirviHosted(url: string, what = 'Model'): URL {
   let u: URL
   try {
     u = new URL(url)
   } catch {
     throw new ModelRefused('Not a valid URL')
   }
-  if (u.protocol !== 'https:') throw new ModelRefused('Model is not served over https')
+  if (u.protocol !== 'https:') throw new ModelRefused(`${what} is not served over https`)
   const ours = [config.cdnUrl, config.publicUrl].flatMap((b) => {
     try { return b ? [new URL(b).host.toLowerCase()] : [] } catch { return [] }
   })
-  if (!ours.includes(u.host.toLowerCase())) throw new ModelRefused('Model is not hosted by Virvi')
+  if (!ours.includes(u.host.toLowerCase())) throw new ModelRefused(`${what} is not hosted by Virvi`)
   return u
 }
 
@@ -149,41 +149,50 @@ export function builtByVirvi(metadata: { virvi?: { runtime?: unknown } } | undef
   return typeof metadata?.virvi?.runtime === 'number'
 }
 
-export const defaultModelFetcher: ModelFetcher = async (url) => {
-  assertVirviHosted(url)
-  try {
-    await assertPublicHttpUrl(url)
-  } catch (e) {
-    throw new ModelRefused((e as Error).message)
-  }
-  const res = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(60_000) })
-  if (!res.ok) throw new ModelRefused(`Model download failed (${res.status})`)
-  const lenHeader = res.headers.get('content-length')
-  if (lenHeader !== null) {
-    const declared = Number(lenHeader)
-    if (!/^\d+$/.test(lenHeader.trim()) || !Number.isFinite(declared)) throw new ModelRefused('Model has an invalid content-length')
-    if (declared > DCL_MAX_FILE_BYTES) throw new ModelRefused('Model is over the 50 MB file limit')
-  }
-  if (!res.body) throw new ModelRefused('Model download had no body')
-  // Enforce the cap while streaming: content-length may be absent or wrong.
-  const reader = res.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > DCL_MAX_FILE_BYTES) {
-      await reader.cancel().catch(() => {})
-      throw new ModelRefused('Model is over the 50 MB file limit')
+/**
+ * A fetcher for Virvi-hosted files of at most `maxBytes`: the host check, the public-address check, and the cap
+ * enforced while streaming. Failures are ModelRefused with a reason naming `what`.
+ */
+export function virviFileFetcher(maxBytes: number, what: string): ModelFetcher {
+  const tooBig = `${what} is over the ${Math.round(maxBytes / (1024 * 1024))} MB file limit`
+  return async (url) => {
+    assertVirviHosted(url, what)
+    try {
+      await assertPublicHttpUrl(url)
+    } catch (e) {
+      throw new ModelRefused((e as Error).message)
     }
-    chunks.push(value)
+    const res = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(60_000) })
+    if (!res.ok) throw new ModelRefused(`${what} download failed (${res.status})`)
+    const lenHeader = res.headers.get('content-length')
+    if (lenHeader !== null) {
+      const declared = Number(lenHeader)
+      if (!/^\d+$/.test(lenHeader.trim()) || !Number.isFinite(declared)) throw new ModelRefused(`${what} has an invalid content-length`)
+      if (declared > maxBytes) throw new ModelRefused(tooBig)
+    }
+    if (!res.body) throw new ModelRefused(`${what} download had no body`)
+    // Enforce the cap while streaming: content-length may be absent or wrong.
+    const reader = res.body.getReader()
+    const chunks: Uint8Array[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        throw new ModelRefused(tooBig)
+      }
+      chunks.push(value)
+    }
+    const buf = new Uint8Array(total)
+    let off = 0
+    for (const c of chunks) { buf.set(c, off); off += c.byteLength }
+    return buf
   }
-  const buf = new Uint8Array(total)
-  let off = 0
-  for (const c of chunks) { buf.set(c, off); off += c.byteLength }
-  return buf
 }
+
+export const defaultModelFetcher: ModelFetcher = virviFileFetcher(DCL_MAX_FILE_BYTES, 'Model')
 
 export function wizardSceneJson(d: {
   title: string

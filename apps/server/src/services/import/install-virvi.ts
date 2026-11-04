@@ -230,29 +230,44 @@ function withDependency(pkgText: string | undefined): string | null {
   return edited ? JSON.stringify(pkg, null, 2) + '\n' : null
 }
 
+/** Index of the `{` that opens the first exported `main`'s body in the masked source, or -1 when there is none. */
+export function mainBodyBrace(m: string): number {
+  const hits = MAIN_HEADS.flatMap((re, form) => [...m.matchAll(re)].map((h) => ({ index: h.index!, paren: h.index! + h[0].length - 1, arrow: form === 1 })))
+  const hit = hits.sort((a, b) => a.index - b.index)[0]
+  return hit ? findBodyBrace(m, hit.paren, hit.arrow) : -1
+}
+
+/** The source with `statement` on its own line just inside the body brace at `open` (indented two spaces). */
+export function withFirstStatement(src: string, open: number, statement: string): string {
+  const eol = src.includes('\r\n') ? '\r\n' : '\n'
+  const at = open + 1
+  const rest = src.slice(at)
+  const call = `${eol}  ${statement}`
+  const body =
+    /^\s*\}/.test(rest) ? `${call}${eol}${rest.replace(/^\s+/, '')}`
+    : /^[ \t]*\r?\n/.test(rest) ? `${call}${rest}`
+    : `${call}${eol}${rest}`
+  return src.slice(0, at) + body
+}
+
+/** The source with `line` (an import) after any leading reference lines and 'use strict'. */
+export function withImportLine(src: string, line: string): string {
+  const eol = src.includes('\r\n') ? '\r\n' : '\n'
+  const h = headerEnd(src)
+  return `${src.slice(0, h)}${line}${eol}${src.slice(h)}`
+}
+
 /** The source with `void createVirvi()` first in `main` (and the import if missing), or null when nothing needs adding. */
 function withCreateVirvi(src: string): string | null {
   const m = maskSource(src)
-  const hits = MAIN_HEADS.flatMap((re, form) => [...m.matchAll(re)].map((h) => ({ index: h.index!, paren: h.index! + h[0].length - 1, arrow: form === 1 })))
-  const hit = hits.sort((a, b) => a.index - b.index)[0]
-  const open = hit ? findBodyBrace(m, hit.paren, hit.arrow) : -1
+  const open = mainBodyBrace(m)
   if (open < 0) throw new ImportError(422, 'no_main', 'The scene has no exported main() function in src/index.')
   const close = skipBrackets(m, open)
   const local = importedName(src, m)
   const name = local ?? 'createVirvi'
   if (local && new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}\\s*\\(`).test(m.slice(open, close < 0 ? m.length : close))) return null
-  const eol = src.includes('\r\n') ? '\r\n' : '\n'
-  const at = open + 1
-  const rest = src.slice(at)
-  const call = `${eol}  void ${name}()`
-  const body =
-    /^\s*\}/.test(rest) ? `${call}${eol}${rest.replace(/^\s+/, '')}`
-    : /^[ \t]*\r?\n/.test(rest) ? `${call}${rest}`
-    : `${call}${eol}${rest}`
-  const edited = src.slice(0, at) + body
-  if (local) return edited
-  const h = headerEnd(src)
-  return `${edited.slice(0, h)}${IMPORT_LINE}${eol}${edited.slice(h)}`
+  const edited = withFirstStatement(src, open, `void ${name}()`)
+  return local ? edited : withImportLine(edited, IMPORT_LINE)
 }
 
 /**

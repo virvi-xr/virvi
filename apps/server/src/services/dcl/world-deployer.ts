@@ -388,7 +388,7 @@ function noopBundle(packed: { assembled: Assembled; baseEntityId: string | null 
 }
 
 /** Default spawn: the plot's centre along x, on the ground, 1 m in from the base edge. */
-function defaultSpawn(parcels: string[]) {
+export function defaultSpawn(parcels: string[]) {
   const xs = parcels.map((p) => parseParcel(p)?.x ?? 0)
   const width = Math.max(...xs) - Math.min(...xs) + 1
   return { x: (width * DCL_PARCEL_M) / 2, y: 0, z: 1 }
