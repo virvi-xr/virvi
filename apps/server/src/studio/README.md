@@ -46,8 +46,11 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    - `STUDIO_FLY_APP` only if the worker app isn't `vlm-studio-worker`
    - optional: `STUDIO_CLAUDE_MODEL` (default `claude-opus-5-5`), `STUDIO_CODEX_MODEL` (default `gpt-6.1-sol`),
      `STUDIO_GROK_MODEL` (default `grok-build-0.1`)
-3. **The schema.** Run `drizzle-kit push` against production: the eleven `studio_*` tables (four of them for payments)
-   and two new columns (`studio_designs.finalized_at`, `studio_jobs.counted_from`), plus the MANA and credit tables below.
+3. **The schema.** The server makes it at boot: `entrypoint.sh` runs `drizzle-kit push` before it starts the server,
+   then a hand-written fallback (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) in case push failed. That
+   covers the eleven `studio_*` tables (four of them for payments), two new columns (`studio_designs.finalized_at`,
+   `studio_jobs.counted_from`), and the MANA and credit tables below. Nothing needs running by hand first; to check
+   the schema before a deploy, `drizzle-kit push` against production does the same.
 4. **Fly.** Confirm that the server's `FLY_API_TOKEN` can manage machines in `vlm-studio-worker`, in the
    `FLY_WORLDS_ORG` org (`vlm-worlds`). The agent keys are that app's secrets (`fly secrets import -a
    vlm-studio-worker`), never Railway variables or machine env.
@@ -103,10 +106,13 @@ MANA is off until `STUDIO_MANA_RECIPIENT` is set. Then the Pay with MANA button 
 
 ### The new tables
 
-`drizzle-kit push` creates them at deploy: `studio_credits`, `studio_credit_ledger`, `studio_mana_transfers`,
+The server's boot makes them, before it starts (`entrypoint.sh`: `drizzle-kit push`, then the fallback, which has
+the same tables, columns and indexes): `studio_credits`, `studio_credit_ledger`, `studio_mana_transfers`,
 `studio_mana_scan` and `studio_mana_refunds`. It also adds columns to `studio_payments` (`method`, `credit_held_cents`,
-`mana_amount_wei`, `mana_usd_rate`, `mana_tx_hash`) and to the entitlement and mistake-report tables (`method`,
-`credit_cents`, `credited_cents`, `mana_cents`). Run it before the server that uses them.
+`mana_amount_wei`, `mana_usd_rate`, `mana_tx_hash`, with the unique hash and the partial unique index on open quotes'
+amounts) and to the entitlement and mistake-report tables (`method`, `credit_cents`, `credited_cents`, `mana_cents`).
+A transfer's `payment_id` and a MANA-back request's `report_id` are `ON DELETE SET NULL`: deleting an account keeps
+those records, unlinked.
 
 ### Credit
 
