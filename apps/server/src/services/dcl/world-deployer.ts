@@ -29,8 +29,9 @@ import {
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { keepDeployedFiles } from './deployed-files.js'
-import { buildEntity, chainSigner, dclHash, verifyChain, virviSigner, type AuthChain, type ContentRef, type SceneMetadata } from './entity.js'
-import { parcelControl } from './parcel-control.js'
+import { buildEntity, chainSigner, dclHash, verifyChain, virviSignerFor, type AuthChain, type ContentRef, type SceneMetadata, type VirviSigner } from './entity.js'
+import { parcelControl, readParcelRights } from './parcel-control.js'
+import { GRANT_REVOKED_MESSAGE, grantMissing, isAccessRefusal } from './parcel-grant.js'
 import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
 import { CatalystError, contentServerFor } from './catalyst-client.js'
 import { getWorldsClient, WorldsError, type LiveEntity } from './worlds-client.js'
@@ -651,7 +652,8 @@ async function linkImport(tx: Pick<typeof db, 'update'>, importId: string, deplo
 /** Mode A: inserts the deployment and returns it; packing, signing and uploading run in the background. */
 export async function startVirviDeploy(destinationId: string, by: string | null, opts: DeployOptions = {}): Promise<Deployment> {
   const dest = await loadDestination(destinationId)
-  const signer = virviSigner()
+  // Genesis City parcels are signed by Virvi's Genesis City wallet, never the World key
+  const signer = virviSignerFor(dest.kind)
   if (!signer) throw new DeployerError(503, 'virvi_deploys_unavailable', 'Virvi deploys are not available right now')
   if (dest.mode !== 'virvi' || !dest.grantedAt) throw new DeployerError(409, 'not_granted', say(dest, 'Virvi has no deploy permission on this World', 'Virvi has no deploy permission on these parcels'))
   await assertFits(dest)
@@ -679,10 +681,11 @@ export async function startVirviDeploy(destinationId: string, by: string | null,
 async function runVirviDeploy(
   deploymentId: string,
   dest: Destination,
-  signer: NonNullable<ReturnType<typeof virviSigner>>,
+  signer: VirviSigner,
   opts: DeployOptions,
 ): Promise<void> {
   let live = false
+  let signing = false
   try {
     const started = Date.now()
     const packed = await assembleFor(dest, started, opts.fetch)
@@ -696,7 +699,12 @@ async function runVirviDeploy(
     const content = entityContent(a)
     const bundle = { entityId: a.entityId, pointers: a.pointers, deployedFiles: a.deployedFiles, added: a.added, refused: a.refused, baseEntityId: packed.baseEntityId, content }
     await db.update(sceneDeployments).set({ status: 'deploying', assetBundle: { ...bundle, progress } }).where(eq(sceneDeployments.id, deploymentId))
+    if (dest.kind === 'parcels' && !(await stillOperator(dest, signer.address))) {
+      await grantRevoked(deploymentId, dest)
+      return
+    }
     const authChain = await signer.signChain(a.entityId)
+    signing = true
     await contentServerFor(dest).deploy({ entityId: a.entityId, authChain, files: a.files })
     live = true
     await db
@@ -706,9 +714,33 @@ async function runVirviDeploy(
     await afterDeploy(dest, a.entityId, a.deployedFiles, deploymentId, { content, files: a.files })
   } catch (err) {
     console.error('[world-deployer] deploy failed:', deploymentId, err instanceof Error ? err.message : err)
+    // The owner removed Virvi on-chain: say so once and go back to browser signing, not a loop of failures
+    if (signing && !live && dest.kind === 'parcels' && isAccessRefusal(err)) {
+      await grantRevoked(deploymentId, dest).catch(() => {})
+      return
+    }
     // Once the World has accepted it the deployment is live; a later bookkeeping error must not say otherwise.
     if (!live) await markFailed(deploymentId, err).catch(() => {})
   }
+}
+
+/**
+ * Whether `address` still holds a deploy right on every parcel, read fresh just before signing. When Decentraland
+ * can't say, the deploy goes ahead: the catalyst checks the signer itself, and a refusal is handled as a revoked grant.
+ */
+async function stillOperator(dest: Destination, address: string): Promise<boolean> {
+  try {
+    return grantMissing(address, dest.parcels, await readParcelRights(dest.parcels)) === null
+  } catch (err) {
+    if (err instanceof DirectoryUnavailableError) return true
+    throw err
+  }
+}
+
+/** Virvi is no longer an operator on the parcels: the destination goes back to browser signing and the deployment fails saying so. */
+async function grantRevoked(deploymentId: string, dest: Destination): Promise<void> {
+  await db.update(dclWorldDestinations).set({ mode: 'sign', grantedAt: null, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
+  await markFailed(deploymentId, new DeployerError(409, 'grant_revoked', GRANT_REVOKED_MESSAGE))
 }
 
 /** Mode B, step 1: packs the deployment and returns the entity id for the owner to sign. */

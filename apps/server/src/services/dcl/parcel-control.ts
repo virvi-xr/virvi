@@ -22,14 +22,20 @@ const canDeploy = (r: ParcelRights | undefined, w: string) =>
   !!r && [r.owner, r.operator, r.updateOperator, ...r.updateManagers, ...r.approvedForAll].includes(w)
 const canGrantOn = (r: ParcelRights | undefined, w: string) => !!r && (r.owner === w || r.operator === w || r.approvedForAll.includes(w))
 
-/** Who may deploy to (and grant on) this set of parcels. Throws DirectoryUnavailableError if Decentraland can't answer. */
-export async function parcelControl(wallets: string[], parcels: string[], dir: DclDirectory = getDclDirectory()): Promise<ParcelControl> {
-  const ws = wallets.map((w) => w.toLowerCase())
+/** Each parcel's rights read fresh (a parcel Decentraland knows nothing of is left out). Throws DirectoryUnavailableError. */
+export async function readParcelRights(parcels: string[], dir: DclDirectory = getDclDirectory()): Promise<Map<string, ParcelRights>> {
   const rightsOf = new Map<string, ParcelRights>()
   for (const p of parcels) {
     const r = await dir.getParcelRights(p, { fresh: true })
     if (r) rightsOf.set(p, r)
   }
+  return rightsOf
+}
+
+/** Who may deploy to (and grant on) this set of parcels. Throws DirectoryUnavailableError if Decentraland can't answer. */
+export async function parcelControl(wallets: string[], parcels: string[], dir: DclDirectory = getDclDirectory()): Promise<ParcelControl> {
+  const ws = wallets.map((w) => w.toLowerCase())
+  const rightsOf = await readParcelRights(parcels, dir)
   const all = parcels.length ? ws.filter((w) => parcels.every((p) => canDeploy(rightsOf.get(p), w))) : []
   const wallet = all[0] ?? null
   const missing = parcels.find((p) => !ws.some((w) => canDeploy(rightsOf.get(p), w))) ?? null

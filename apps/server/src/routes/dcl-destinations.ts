@@ -10,6 +10,10 @@
  * POST   /api/dcl/destinations/:id/grant         — forward those signatures, confirm, record the grant
  * DELETE /api/dcl/destinations/:id/grant         — the owner's signed request that removes Virvi
  * POST   /api/dcl/destinations/:id/revoke        — forward that signature, clear the grant
+ * GET    /api/dcl/destinations/:id/parcel-grant  — Genesis City: whether Virvi may be made an operator, and the transactions
+ * POST   /api/dcl/destinations/:id/parcel-grant/check — Genesis City: read the rights fresh; Virvi deploys once it is an operator
+ * GET    /api/dcl/destinations/:id/parcel-grant/revoke — Genesis City: the transactions that remove Virvi again
+ * POST   /api/dcl/destinations/:id/parcel-grant/revoke/check — Genesis City: back to browser signing once Virvi is gone
  * POST   /api/dcl/destinations/:id/deploy        — deploy now (mode A: Virvi signs; mode B: returns what to sign)
  * POST   /api/deploy/:id/signature               — mode B: the owner's signature for a prepared deploy
  * POST   /api/dcl/destinations/:id/rebase        — "Use the live version": accept the World's (or the parcels') current scene
@@ -18,7 +22,9 @@
  *
  * Genesis City parcels destinations (kind 'parcels') use the deploy, signature, rebase and status routes too, with
  * "owner" meaning a verified wallet of the caller that may deploy to every parcel; the World permission routes
- * (grant, revoke) refuse them with 409 not_a_world.
+ * (grant, revoke) refuse them with 409 not_a_world. Their own option is the on-chain operator grant (parcel-grant.ts):
+ * the owner sends the transactions from their wallet, and Virvi only reads the result back from Decentraland. It is
+ * never offered on Aetheria land, and PATCH can't switch parcels to mode 'virvi' unless Virvi already holds the rights.
  *
  * Open to every plan (no feature gate). "Owner" is the World's owner as the Worlds server reports it right
  * now, and it must be one of the caller's verified wallets.
@@ -64,7 +70,7 @@ import { DirectoryUnavailableError, getDclDirectory } from '../analytics/dcl-dir
 import { getActiveSetup } from '../setup/setups.js'
 import { config } from '../config.js'
 import { builtByVirvi, modelsInScene, pendingModels } from '../services/dcl/assemble.js'
-import { chainSigner, signedFetchPayload, verifyChain, virviSigner, type AuthChain } from '../services/dcl/entity.js'
+import { chainSigner, signedFetchPayload, verifyChain, virviParcelSigner, virviSigner, type AuthChain } from '../services/dcl/entity.js'
 import { getWorldsClient, WorldsError, type LiveEntity, type SignedRequest } from '../services/dcl/worlds-client.js'
 import {
   DeployerError, prepareSignedDeploy, sceneTriangleWarning, startVirviDeploy, submitSignedDeploy, type Destination,
@@ -72,7 +78,8 @@ import {
 import { deploymentForCaller, publicDeployment } from './deploy.js'
 import { ImportError } from '../services/import/scene-zip.js'
 import { worldOf } from '../services/dcl/world-of.js'
-import { parcelControl } from '../services/dcl/parcel-control.js'
+import { AETHERIA_ESTATES, parcelControl, readParcelRights, type ParcelControl } from '../services/dcl/parcel-control.js'
+import { GRANT_COST_NOTE, grantMissing, grantTransactions, heldAsUpdateOperator } from '../services/dcl/parcel-grant.js'
 import { CatalystError, contentServerFor } from '../services/dcl/catalyst-client.js'
 
 /** Signed-fetch metadata Virvi sends on permission calls (see the header comment). */
@@ -172,6 +179,28 @@ async function parcelOwnerFor(userId: string, parcels: string[]): Promise<string
   const { wallet } = await parcelControl(await verifiedWalletsOf(userId), parcels)
   if (!wallet) throw new RouteError(403, 'not_parcel_controller')
   return wallet
+}
+
+/**
+ * For the Genesis City operator routes: the destination is parcels (409 not_parcels) and a verified wallet of the caller
+ * may deploy to every parcel right now (403 not_parcel_controller); the owner fields are kept up to date as in
+ * requireOwner. Returns the fresh parcel control.
+ */
+async function requireParcelController(userId: string, dest: Destination): Promise<ParcelControl> {
+  if (dest.kind !== 'parcels') throw new RouteError(409, 'not_parcels', { message: 'Worlds use their own permission option.' })
+  const control = await parcelControl(await verifiedWalletsOf(userId), dest.parcels)
+  if (!control.wallet) throw new RouteError(403, 'not_parcel_controller')
+  if (control.wallet !== dest.ownerWallet || userId !== dest.ownerUserId) {
+    await db.update(dclWorldDestinations).set({ ownerWallet: control.wallet, ownerUserId: userId, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
+  }
+  return control
+}
+
+/** Virvi's Genesis City wallet address; 503 when VIRVI_DCL_PARCEL_DEPLOY_KEY is unset. */
+function virviParcelAddress(): string {
+  const signer = virviParcelSigner()
+  if (!signer) throw new RouteError(503, 'virvi_deploys_unavailable')
+  return signer.address
 }
 
 /** The World permission routes are for Worlds: Genesis City parcels get 409 not_a_world. */
@@ -437,13 +466,24 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     const mode = request.body?.mode
     if (mode !== 'virvi' && mode !== 'sign') throw new RouteError(400, 'invalid_mode')
     const dest = await destinationFor(request, request.params.id, 'full')
+    // Parcels: Virvi deploys only once it is an operator on-chain (the parcel-grant check); then this is that check
+    let grantedAt: Date | undefined
+    if (dest.kind === 'parcels' && mode === 'virvi') {
+      const virvi = virviParcelSigner()?.address
+      if (!virvi || grantMissing(virvi, dest.parcels, await readParcelRights(dest.parcels)) !== null) {
+        throw new RouteError(409, 'not_granted', { message: 'Virvi is not an operator on these parcels yet. Set it up from the deploy page first.' })
+      }
+      grantedAt = dest.grantedAt ?? new Date()
+    }
     await db
       .update(dclWorldDestinations)
-      .set({ mode, ...(mode === 'sign' ? { grantedAt: null } : {}), updatedAt: new Date() })
+      .set({ mode, ...(mode === 'sign' ? { grantedAt: null } : {}), ...(grantedAt ? { grantedAt } : {}), updatedAt: new Date() })
       .where(eq(dclWorldDestinations.id, dest.id))
-    const message = mode === 'sign'
-      ? "Virvi won't deploy on its own any more. Its permission stays on your World until you remove it in the Creator Hub or here."
-      : undefined
+    const message = mode !== 'sign'
+      ? undefined
+      : dest.kind === 'parcels'
+        ? "Virvi won't deploy on its own any more. It stays an operator on your parcels until you remove it here."
+        : "Virvi won't deploy on its own any more. Its permission stays on your World until you remove it in the Creator Hub or here."
     return reply.send({ destination: await reload(dest.id), ...(message ? { message } : {}) })
   }))
 
@@ -488,6 +528,51 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     await forwardSigned(revokeRequests(dest, virviAddress(), timestamp), request.body?.chains, owner, 'revoke_rejected')
     await db.update(dclWorldDestinations).set({ mode: 'sign', grantedAt: null, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
     return reply.send({ destination: await reload(dest.id) })
+  }))
+
+  app.get<{ Params: { id: string } }>('/api/dcl/destinations/:id/parcel-grant', async (request, reply) => handle(reply, async () => {
+    const dest = await destinationFor(request, request.params.id, 'full')
+    const control = await requireParcelController(request.user.id, dest)
+    const operator = virviParcelSigner()?.address ?? null
+    const available = !!operator
+    const estates = available && control.canGrant ? await getDclDirectory().getParcelEstates(dest.parcels) : null
+    const aetheria = control.aetheria || [...(estates?.values() ?? [])].some((e) => !!e && AETHERIA_ESTATES.has(e))
+    return reply.send({
+      available, aetheria, canGrant: control.canGrant,
+      granted: !!operator && grantMissing(operator, dest.parcels, control.rightsOf) === null,
+      operator,
+      ...(operator && estates && !aetheria ? { transactions: grantTransactions(dest.parcels, estates, operator) } : {}),
+      costNote: GRANT_COST_NOTE,
+    })
+  }))
+
+  app.post<{ Params: { id: string } }>('/api/dcl/destinations/:id/parcel-grant/check', async (request, reply) => handle(reply, async () => {
+    const dest = await destinationFor(request, request.params.id, 'full')
+    const control = await requireParcelController(request.user.id, dest)
+    if (control.aetheria) throw new RouteError(409, 'aetheria_managed', { message: 'Aetheria land is managed by Aetheria, so Virvi is never made an operator there.' })
+    const missing = grantMissing(virviParcelAddress(), dest.parcels, control.rightsOf)
+    if (missing) return reply.send({ granted: false, missing })
+    await db.update(dclWorldDestinations).set({ mode: 'virvi', grantedAt: new Date(), updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
+    return reply.send({ granted: true, destination: await reload(dest.id) })
+  }))
+
+  app.get<{ Params: { id: string } }>('/api/dcl/destinations/:id/parcel-grant/revoke', async (request, reply) => handle(reply, async () => {
+    const dest = await destinationFor(request, request.params.id, 'full')
+    const control = await requireParcelController(request.user.id, dest)
+    // Only the parcels where Virvi is the update operator: zeroing the others would remove someone else's
+    const held = heldAsUpdateOperator(virviParcelAddress(), dest.parcels, control.rightsOf)
+    const transactions = control.canGrant && held.length ? grantTransactions(held, await getDclDirectory().getParcelEstates(held), null) : []
+    return reply.send({ canGrant: control.canGrant, transactions, costNote: GRANT_COST_NOTE })
+  }))
+
+  app.post<{ Params: { id: string } }>('/api/dcl/destinations/:id/parcel-grant/revoke/check', async (request, reply) => handle(reply, async () => {
+    const dest = await destinationFor(request, request.params.id, 'full')
+    const control = await requireParcelController(request.user.id, dest)
+    const virvi = virviParcelAddress()
+    const still = dest.parcels.find((p) => grantMissing(virvi, [p], control.rightsOf) === null)
+    if (still) return reply.send({ revoked: false, still })
+    await db.update(dclWorldDestinations).set({ mode: 'sign', grantedAt: null, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
+    return reply.send({ revoked: true, destination: await reload(dest.id) })
   }))
 
   app.post<{ Params: { id: string } }>('/api/dcl/destinations/:id/deploy', async (request, reply) => handle(reply, async () => {

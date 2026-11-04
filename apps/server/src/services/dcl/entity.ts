@@ -113,12 +113,10 @@ export async function verifyChain(chain: AuthChain, payload: string, expectedSig
   }
 }
 
-/**
- * Virvi's own deploy wallet, from VIRVI_DCL_DEPLOY_KEY; null when unset. Like `sdk-commands
- * deploy`, the wallet signs once to authorise a 10-minute ephemeral key, which signs the payload.
- */
-export function virviSigner(): { address: string; signChain(payload: string): Promise<AuthChain> } | null {
-  const key = config.virviDclDeployKey
+export type VirviSigner = { address: string; signChain(payload: string): Promise<AuthChain> }
+
+/** A signer for `key`: like `sdk-commands deploy`, the wallet signs once to authorise a 10-minute ephemeral key, which signs the payload. */
+function signerFor(key: string | null): VirviSigner | null {
   if (!key) return null
   const wallet = new Wallet(key)
   const address = wallet.address.toLowerCase()
@@ -131,4 +129,19 @@ export function virviSigner(): { address: string; signChain(payload: string): Pr
       return Authenticator.signPayload(identity, payload)
     },
   }
+}
+
+/** Virvi's own World deploy wallet, from VIRVI_DCL_DEPLOY_KEY; null when unset. */
+export function virviSigner(): VirviSigner | null {
+  return signerFor(config.virviDclDeployKey)
+}
+
+/** Virvi's Genesis City wallet (owners make it an update operator), from VIRVI_DCL_PARCEL_DEPLOY_KEY; null when unset. */
+export function virviParcelSigner(): VirviSigner | null {
+  return signerFor(config.virviDclParcelDeployKey)
+}
+
+/** The Virvi wallet that deploys to this kind of destination. */
+export function virviSignerFor(kind: 'world' | 'parcels'): VirviSigner | null {
+  return kind === 'parcels' ? virviParcelSigner() : virviSigner()
 }

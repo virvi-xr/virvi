@@ -29,6 +29,18 @@ describe('validDeployKey', () => {
       warn.mockRestore()
     }
   })
+  it('names the Genesis City key in its warning, still without printing it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(validDeployKey('f'.repeat(64), 'VIRVI_DCL_PARCEL_DEPLOY_KEY')).toBeNull()
+      expect(validDeployKey(key, 'VIRVI_DCL_PARCEL_DEPLOY_KEY')).toBe(`0x${key}`)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0])).toMatch(/VIRVI_DCL_PARCEL_DEPLOY_KEY/)
+      expect(String(warn.mock.calls[0])).not.toMatch(/ffff/)
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })
 
 describe('studioPricesFrom', () => {

@@ -6,7 +6,7 @@ import { getImportStore } from '../../storage/private-store.js'
 import { ownerFor, RouteError } from '../../routes/dcl-destinations.js'
 import { verifiedWalletsOf } from '../../analytics/claims.js'
 import { DirectoryUnavailableError } from '../../analytics/dcl-directory.js'
-import { virviSigner } from '../dcl/entity.js'
+import { virviSignerFor } from '../dcl/entity.js'
 import { parcelControl } from '../dcl/parcel-control.js'
 import {
   assertBuiltPlace, DeployerError, importAfterFailure, markFailed, prepareSignedDeploy, startVirviDeploy, type DeployOptions, type Deployment,
@@ -126,7 +126,7 @@ export async function startImportDeploy(
   if (!startable) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
   const existing = await destinationAt(locationOf(row))
   const virvi = !!existing && granted(existing)
-  if (opts.virviOnly && !(virvi && virviSigner())) return null
+  if (opts.virviOnly && !(virvi && virviSignerFor(existing.kind))) return null
   try {
     return await begin(row, by, virvi, opts)
   } catch (err) {
@@ -141,7 +141,7 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
   const loc = locationOf(row)
   const plot = await builtPlot(row, loc)
   const owner = loc.kind === 'world' ? await worldOwner(by, loc.world) : await parcelOwner(by, loc.parcels)
-  if (virvi && !virviSigner()) throw new DeployerError(503, 'virvi_deploys_unavailable', 'Virvi deploys are not available right now')
+  if (virvi && !virviSignerFor(loc.kind)) throw new DeployerError(503, 'virvi_deploys_unavailable', 'Virvi deploys are not available right now')
   // A signature that came too late must not deploy the old preparation
   if (from === 'awaiting_signature' && row.deploymentId) {
     await markFailed(row.deploymentId, new DeployerError(409, 'expired', 'This publish request expired.'), 'awaiting_signature')
@@ -185,14 +185,14 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
 }
 
 /**
- * What runs when an import's build is stored (setOnBuildDone): a granted Virvi-mode World deploys it now; anything
+ * What runs when an import's build is stored (setOnBuildDone): a granted Virvi-mode World (or parcels) deploys it now; anything
  * else stays `built` for the creator. An error is recorded on the import (startFailed) and rethrown for the caller's log.
  */
 export async function deployImport(importId: string, opts: DeployOptions = {}): Promise<void> {
   const row = await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, importId) })
   if (row?.status !== 'built') return
   const dest = await destinationAt(locationOf(row))
-  if (!dest || !granted(dest) || !virviSigner()) return
+  if (!dest || !granted(dest) || !virviSignerFor(dest.kind)) return
   // Ruling R24: claimed before anything slow, so the creator is never offered a Deploy this is already doing
   const [claimed] = await db.update(sceneImports).set({ status: 'deploying', updatedAt: new Date() })
     .where(and(eq(sceneImports.id, importId), eq(sceneImports.status, 'built'), isNull(sceneImports.deploymentId)))

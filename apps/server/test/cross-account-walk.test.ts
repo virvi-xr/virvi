@@ -22,10 +22,13 @@ import { createSetup } from './helpers/setups.js'
 import { Wallet } from 'ethers'
 import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
 import { FakeWorldsClient } from './helpers/fake-worlds.js'
+import { setDclDirectory } from '../src/analytics/dcl-directory.js'
+import { FakeDclDirectory } from './helpers/fake-dcl.js'
 
 const H = 3600_000
 const AD_ID = '00000000-0000-4000-8000-000000000001'
 const PUBLIC_TARGET = { parcels: ['0,0'], contentServer: 'https://1.1.1.1' }
+const B_PARCEL = '-40,-40'
 
 /** Everything below is B's, except `aScene`/`aEvent`, which A owns and uses to reach for B's ids in a body. */
 async function fixtures() {
@@ -84,6 +87,10 @@ async function fixtures() {
   const [destination] = await db.insert(dclWorldDestinations).values({
     sceneId: scene.id, ownerUserId: b.id, ownerWallet: b.wallet!, worldName: 'b-world.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'sign',
   }).returning()
+  // B's Genesis City parcels (beforeEach makes B their owner in the fake directory)
+  const [parcelsDestination] = await db.insert(dclWorldDestinations).values({
+    sceneId: scene.id, ownerUserId: b.id, ownerWallet: b.wallet!, kind: 'parcels', worldName: null, base: B_PARCEL, parcels: [B_PARCEL], mode: 'sign',
+  }).returning()
   const [signDeploy] = await db.insert(sceneDeployments).values({
     sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', destinationId: destination.id, target: { world: 'b-world.dcl.eth' }, status: 'awaiting_signature', deployedBy: b.id,
   }).returning()
@@ -127,7 +134,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -221,6 +228,11 @@ const CASES: Case[] = [
   { route: 'POST /api/dcl/destinations/:id/grant', url: (f) => `/api/dcl/destinations/${f.destination.id}/grant`, body: () => ({ chains: [[], []], timestamp: Date.now() }) },
   { route: 'DELETE /api/dcl/destinations/:id/grant', url: (f) => `/api/dcl/destinations/${f.destination.id}/grant` },
   { route: 'POST /api/dcl/destinations/:id/revoke', url: (f) => `/api/dcl/destinations/${f.destination.id}/revoke`, body: () => ({ chains: [[]], timestamp: Date.now() }) },
+  { route: 'GET /api/dcl/destinations/:id/parcel-grant', url: (f) => `/api/dcl/destinations/${f.parcelsDestination.id}/parcel-grant` },
+  { route: 'POST /api/dcl/destinations/:id/parcel-grant/check', url: (f) => `/api/dcl/destinations/${f.parcelsDestination.id}/parcel-grant/check` },
+  { route: 'GET /api/dcl/destinations/:id/parcel-grant/revoke', url: (f) => `/api/dcl/destinations/${f.parcelsDestination.id}/parcel-grant/revoke` },
+  { route: 'POST /api/dcl/destinations/:id/parcel-grant/revoke/check', url: (f) => `/api/dcl/destinations/${f.parcelsDestination.id}/parcel-grant/revoke/check` },
+  { route: 'PATCH /api/dcl/destinations/:id', url: (f) => `/api/dcl/destinations/${f.parcelsDestination.id}`, body: () => ({ mode: 'virvi' }) },
   { route: 'POST /api/dcl/destinations/:id/deploy', url: (f) => `/api/dcl/destinations/${f.destination.id}/deploy` },
   { route: 'POST /api/dcl/destinations/:id/rebase', url: (f) => `/api/dcl/destinations/${f.destination.id}/rebase` },
   { route: 'GET /api/scenes/:sceneId/dcl/publish-status', url: (f) => `/api/scenes/${f.scene.id}/dcl/publish-status` },
@@ -395,12 +407,16 @@ describe('cross-account route walk', () => {
   const prevStreaming = config.streamingEnabled
   const prevStudio = config.studioEnabled
   const prevDeployKey = config.virviDclDeployKey
+  const prevParcelKey = config.virviDclParcelDeployKey
   beforeEach(async () => {
     await resetDb()
     ;(config as any).streamingEnabled = true
     ;(config as any).studioEnabled = true
     // Never reach Decentraland: B's World is owned by B in the fake
     ;(config as any).virviDclDeployKey = Wallet.createRandom().privateKey
+    ;(config as any).virviDclParcelDeployKey = Wallet.createRandom().privateKey
+    const dir = new FakeDclDirectory()
+    setDclDirectory(dir)
     const worlds = new FakeWorldsClient()
     setWorldsClient(worlds)
     app = await testApp()
@@ -415,6 +431,7 @@ describe('cross-account route walk', () => {
     await importStore.put(f.sceneImport.logKey!, Buffer.from('B build log'), 'text/plain; charset=utf-8')
     await importStore.put('deployed/bafkreibscenejson', Buffer.from('{"b":"scene"}'), 'application/octet-stream')
     worlds.deployers.set('b-world.dcl.eth', { owner: f.b.wallet, deployers: [] })
+    dir.rights.set(B_PARCEL, { owner: f.b.wallet, operator: null, updateOperator: null, updateManagers: [], approvedForAll: [] })
   })
   afterEach(async () => {
     ;(config as any).streamingEnabled = prevStreaming
@@ -422,6 +439,8 @@ describe('cross-account route walk', () => {
     setStudioStore(null)
     setImportStore(null)
     ;(config as any).virviDclDeployKey = prevDeployKey
+    ;(config as any).virviDclParcelDeployKey = prevParcelKey
+    setDclDirectory(null)
     setWorldsClient(null)
     await app.close()
   })

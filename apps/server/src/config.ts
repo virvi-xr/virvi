@@ -104,18 +104,18 @@ export function normalizeCertFingerprints(raw: string): string[] {
 const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
 
 /**
- * VIRVI_DCL_DEPLOY_KEY checked once at startup: a 32-byte hex secp256k1 private key, returned 0x-prefixed. A
- * malformed key is treated as unset (Virvi deploys show as unavailable) with a warning that never includes it,
- * instead of throwing on every use.
+ * A deploy key (VIRVI_DCL_DEPLOY_KEY, VIRVI_DCL_PARCEL_DEPLOY_KEY) checked once at startup: a 32-byte hex secp256k1
+ * private key, returned 0x-prefixed. A malformed key is treated as unset (Virvi deploys show as unavailable) with a
+ * warning that names the variable but never includes the key, instead of throwing on every use.
  */
-export function validDeployKey(raw: string | undefined): string | null {
+export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY_KEY'): string | null {
   const hex = raw?.trim().replace(/^0x/i, '') ?? ''
   if (!hex) return null
   if (/^[0-9a-f]{64}$/i.test(hex)) {
     const n = BigInt(`0x${hex}`)
     if (n > 0n && n < SECP256K1_N) return `0x${hex}`
   }
-  console.warn('[virvi-config] VIRVI_DCL_DEPLOY_KEY is not a valid private key (32 bytes of hex); Virvi deploys are off until it is fixed')
+  console.warn(`[virvi-config] ${name} is not a valid private key (32 bytes of hex); Virvi deploys are off until it is fixed`)
   return null
 }
 
@@ -194,6 +194,9 @@ export const config = {
   // Decentraland wallet Virvi deploys Worlds scenes with ("Let Virvi deploy for me"). Env only:
   // never logged, never returned.
   virviDclDeployKey: validDeployKey(env('VIRVI_DCL_DEPLOY_KEY')),
+  // A separate wallet for Genesis City parcels, which owners make an update operator on-chain. Unset hides that
+  // option (browser signing still works). Env only: never logged, never returned.
+  virviDclParcelDeployKey: validDeployKey(env('VIRVI_DCL_PARCEL_DEPLOY_KEY'), 'VIRVI_DCL_PARCEL_DEPLOY_KEY'),
 
   // Supabase (single mode default external storage)
   supabaseUrl: env('SUPABASE_URL'),
