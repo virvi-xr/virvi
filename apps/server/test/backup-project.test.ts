@@ -8,7 +8,7 @@ import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { assetLibraryItems, catalogPacks, dclWorldDestinations, mediaAssets, sceneElementInstances, sceneImports, scenePresets, streamingServers } from '../src/db/schema.js'
 import { ModelRefused } from '../src/services/dcl/assemble.js'
-import { BackupError, backupProject } from '../src/services/backup/project.js'
+import { BackupError, backupProject, sizeLabel } from '../src/services/backup/project.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { resetDb } from './helpers/db.js'
 import { createElement, createScene, createUser, randomWallet } from './helpers/factories.js'
@@ -58,9 +58,9 @@ async function destination(sceneId: string, o: Partial<typeof dclWorldDestinatio
   })
 }
 
-async function upload(name: string) {
+async function upload(name: string, sizeBytes = 1) {
   const url = `${CDN}/u/${name}`
-  await db.insert(mediaAssets).values({ ownerId: user.id, filename: name, contentType: 'application/octet-stream', sizeBytes: 1, publicUrl: url })
+  await db.insert(mediaAssets).values({ ownerId: user.id, filename: name, contentType: 'application/octet-stream', sizeBytes, publicUrl: url })
   return url
 }
 
@@ -325,15 +325,58 @@ describe('backupProject', () => {
   })
 
   it('over 500 MB is refused', async () => {
+    // Sizes Virvi already knows: refused before anything is downloaded
     const { scene, preset } = await createScene(user, 'Big')
     await destination(scene.id)
-    for (let i = 0; i < 11; i++) await placed(preset.id, 'model', `M${i}`, { modelSrc: await upload(`m${i}.glb`) })
-    const big = new Uint8Array(50 * 1024 * 1024)
-    const f = vi.fn(async () => big)
+    for (let i = 0; i < 11; i++) await placed(preset.id, 'model', `M${i}`, { modelSrc: await upload(`m${i}.glb`, 50 * 1024 * 1024) })
+    await placed(preset.id, 'image', 'Tiny', { textureSrc: await upload('tiny.png', 2048) })
+    const f = vi.fn(async () => new Uint8Array(1))
     const e = await backupProject(scene.id, { fetch: f }).catch((x) => x)
+    expect(f).not.toHaveBeenCalled()
     expect(e).toBeInstanceOf(BackupError)
     expect(e).toMatchObject({ status: 413, code: 'backup_too_big' })
     expect(e.message).toMatch(/500 MB/)
-    expect(e.message).toMatch(/models\/m\d+\.glb/)
+    expect(e.message).toMatch(/models\/m\d+\.glb \(50\.0 MB\)/)
+
+    // Sizes Virvi doesn't know: stops at the first file over the limit and fetches no more
+    const { scene: s2, preset: p2 } = await createScene(user, 'Big unknown')
+    await destination(s2.id, { worldName: 'big2.dcl.eth' })
+    for (let i = 0; i < 15; i++) await placed(p2.id, 'model', `N${i}`, { modelSrc: await upload(`n${i}.glb`) })
+    const big = new Uint8Array(50 * 1024 * 1024)
+    const g = vi.fn(async () => big)
+    const e2 = await backupProject(s2.id, { fetch: g }).catch((x) => x)
+    expect(e2).toMatchObject({ status: 413, code: 'backup_too_big' })
+    expect(e2.message).toMatch(/models\/n\d+\.glb/)
+    expect(g).toHaveBeenCalledTimes(10) // ten 50 MiB files and the project files pass 500 MB; the other five are never fetched
+  })
+
+  it('sizes in the refusal read right for small files', () => {
+    expect(sizeLabel(2048)).toBe('2 KB')
+    expect(sizeLabel(10)).toBe('1 KB')
+    expect(sizeLabel(1.5 * 1024 * 1024)).toBe('1.5 MB')
+    expect(sizeLabel(50 * 1024 * 1024)).toBe('50.0 MB')
+  })
+
+  it('a World destination with no World name is not_decentraland', async () => {
+    const { scene } = await createScene(user, 'Nameless')
+    await destination(scene.id, { worldName: null })
+    await expect(backupProject(scene.id, { fetch: fetcher() })).rejects.toMatchObject({ status: 422, code: 'not_decentraland' })
+  })
+
+  it('an imported bakeVirviContent that main() never calls gets the call', async () => {
+    const { scene } = await createScene(user, 'Uncalled')
+    const src = "import { bakeVirviContent } from './virvi-baked'\nexport function main() {\n  x()\n}\n"
+    await imported(scene.id, { 'scene.json': SCENE_JSON, 'package.json': PKG, 'src/index.ts': src })
+    const r = await backupProject(scene.id, { fetch: fetcher() })
+    expect(text(r.files, 'src/index.ts')).toBe("import { bakeVirviContent } from './virvi-baked'\nexport function main() {\n  bakeVirviContent()\n  x()\n}\n")
+    expect(r.problems).toEqual([])
+  })
+
+  it("the creator's readme.md is merged whatever its case", async () => {
+    const { scene } = await createScene(user, 'Cases')
+    await imported(scene.id, { 'scene.json': SCENE_JSON, 'package.json': PKG, 'src/index.ts': MAIN, 'readme.md': '# lower\n' })
+    const r = await backupProject(scene.id, { fetch: fetcher() })
+    expect([...r.files.keys()].filter((k) => k.toLowerCase() === 'readme.md')).toEqual(['README.md'])
+    expect(text(r.files, 'README.md').endsWith('\n---\n\n# lower\n')).toBe(true)
   })
 })

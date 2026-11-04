@@ -10,14 +10,14 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { desc, eq, sql } from 'drizzle-orm'
+import { desc, eq, inArray, sql } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
-import { dclWorldDestinations } from '../../db/schema.js'
+import { assetLibraryItems, dclWorldDestinations, mediaAssets } from '../../db/schema.js'
 import { IMAGE_MAX_BYTES, MODEL_MAX_BYTES, VIDEO_MAX_BYTES } from '../../storage/upload-policy.js'
 import { ModelRefused, assertVirviHosted, virviFileFetcher, wizardSceneJson, type ModelFetcher } from '../dcl/assemble.js'
 import { defaultSpawn } from '../dcl/world-deployer.js'
-import { MAIN_FILES, PACKAGE, importStatements, mainBodyBrace, maskSource, withFirstStatement, withImportLine } from '../import/install-virvi.js'
+import { MAIN_FILES, PACKAGE, importStatements, mainBodyBrace, maskSource, skipBrackets, withFirstStatement, withImportLine } from '../import/install-virvi.js'
 import { sceneSourceFor } from '../import/uninstall-virvi.js'
 import { bakeModule } from './bake-code.js'
 import { backupSnapshot, type AssetPlan, type AssetUse, type BackupSnapshot, type BakedItem } from './snapshot.js'
@@ -52,15 +52,17 @@ const json = (v: unknown) => enc.encode(JSON.stringify(v, null, 2) + '\n')
 /** One line of Markdown text from a stored name or URL. */
 const clean = (s: string) => s.replace(/\s+/g, ' ').trim()
 
-/** The main source with the import and `bakeVirviContent()` first in `main()`; the source unchanged when it already
- *  imports it; null when there is no exported main() (same locator as installVirvi). */
+/** The main source with `bakeVirviContent()` first in `main()` (and the import if missing); the source unchanged when
+ *  main() already calls it; null when there is no exported main() (same locator as installVirvi). */
 function withBakeCall(src: string): string | null {
   const m = maskSource(src)
-  const has = importStatements(src, m).some((st) => !st.typeOnly && st.specifier === './virvi-baked' && /\bbakeVirviContent\b/.test(st.clause))
-  if (has) return src
   const open = mainBodyBrace(m)
   if (open < 0) return null
-  return withImportLine(withFirstStatement(src, open, BAKE_CALL), BAKE_IMPORT)
+  const close = skipBrackets(m, open)
+  if (/(?<![\w$.])bakeVirviContent\s*\(/.test(m.slice(open, close < 0 ? m.length : close))) return src
+  const edited = withFirstStatement(src, open, BAKE_CALL)
+  const imported = importStatements(src, m).some((st) => !st.typeOnly && st.specifier === './virvi-baked' && /\bbakeVirviContent\b/.test(st.clause))
+  return imported ? edited : withImportLine(edited, BAKE_IMPORT)
 }
 
 /** scene.json without a `virvi` block; any other scene.json byte for byte. */
@@ -147,31 +149,53 @@ function templateFiles(title: string, dest: NonNullable<Awaited<ReturnType<typeo
   ])
 }
 
-const totalBytes = (files: Map<string, Uint8Array>) => [...files.values()].reduce((n, b) => n + b.byteLength, 0)
-const mb = (n: number) => `${Math.max(1, Math.round(n / MB))} MB`
+/** A file size for people: whole KB under 1 MB, else MB to one decimal. */
+export const sizeLabel = (n: number) => (n < MB ? `${Math.max(1, Math.ceil(n / 1024))} KB` : `${(n / MB).toFixed(1)} MB`)
 
-function assertSize(files: Map<string, Uint8Array>) {
-  const total = totalBytes(files)
+type Sized = [path: string, bytes: number]
+const sizesOf = (files: Map<string, Uint8Array>): Sized[] => [...files].map(([p, b]) => [p, b.byteLength])
+
+/** R5: throws 413 backup_too_big, naming the largest files, when the files add up to more than 500 MB. */
+function assertSize(sizes: Sized[]) {
+  const total = sizes.reduce((n, [, b]) => n + b, 0)
   if (total <= BACKUP_MAX_BYTES) return
-  const largest = [...files].sort((a, b) => b[1].byteLength - a[1].byteLength).slice(0, 5).map(([p, b]) => `${p} (${mb(b.byteLength)})`)
+  const largest = [...sizes].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([p, b]) => `${p} (${sizeLabel(b)})`)
   throw new BackupError(413, 'backup_too_big', `This backup would be over the 500 MB limit. The largest files: ${largest.join(', ')}. Remove or shrink some of them in Virvi and try again.`)
+}
+
+/** Each bundled file once, by path. */
+function bundled(snap: BackupSnapshot): Map<string, Extract<AssetPlan, { kind: 'bundle' }>> {
+  const byPath = new Map<string, Extract<AssetPlan, { kind: 'bundle' }>>()
+  for (const it of snap.items) for (const p of Object.values(it.assets)) if (p.kind === 'bundle' && !byPath.has(p.path)) byPath.set(p.path, p)
+  return byPath
+}
+
+/** The sizes Virvi already holds for these URLs (uploads, and library items with a recorded size). */
+async function knownSizes(urls: string[]): Promise<Map<string, number>> {
+  const sizes = new Map<string, number>()
+  if (urls.length === 0) return sizes
+  const media = await db.select({ url: mediaAssets.publicUrl, bytes: mediaAssets.sizeBytes }).from(mediaAssets).where(inArray(mediaAssets.publicUrl, urls))
+  const lib = await db.select({ url: assetLibraryItems.cdnUrl, bytes: assetLibraryItems.fileSizeBytes }).from(assetLibraryItems).where(inArray(assetLibraryItems.cdnUrl, urls))
+  for (const r of [...media, ...lib]) if (r.url && r.bytes > 0) sizes.set(r.url, Math.max(sizes.get(r.url) ?? 0, r.bytes))
+  return sizes
 }
 
 interface Fetched { path: string; url: string; reason?: string }
 
 /** Fetches every bundled file once (host check and per-type cap); failures are reported, never fatal. */
 async function fetchBundled(snap: BackupSnapshot, files: Map<string, Uint8Array>, fetch?: ModelFetcher): Promise<Fetched[]> {
-  const byPath = new Map<string, Extract<AssetPlan, { kind: 'bundle' }>>()
-  for (const it of snap.items) for (const p of Object.values(it.assets)) if (p.kind === 'bundle' && !byPath.has(p.path)) byPath.set(p.path, p)
   const out: Fetched[] = []
-  for (const p of byPath.values()) {
+  let total = sizesOf(files).reduce((n, [, b]) => n + b, 0)
+  for (const p of bundled(snap).values()) {
     const cap = CAP[p.use]
     try {
       assertVirviHosted(p.url, cap.what)
       const bytes = await (fetch ?? virviFileFetcher(cap.bytes, cap.what))(p.url)
       if (bytes.byteLength > cap.bytes) throw new ModelRefused(`${cap.what} is over the ${Math.round(cap.bytes / MB)} MB file limit`)
+      // Refused before the file joins the backup; nothing after it is fetched
+      if (total + bytes.byteLength > BACKUP_MAX_BYTES) assertSize([...sizesOf(files), [p.path, bytes.byteLength]])
       files.set(p.path, bytes)
-      assertSize(files)
+      total += bytes.byteLength
       out.push({ path: p.path, url: p.url })
     } catch (e) {
       if (e instanceof BackupError) throw e
@@ -320,17 +344,23 @@ export async function backupProject(sceneId: string, opts: { fetch?: ModelFetche
   } else {
     const dest = await destinationOf(sceneId)
     if (!dest) throw new BackupError(422, 'not_decentraland', 'This scene has no Decentraland World or parcels to back up.')
+    if (dest.kind !== 'parcels' && !dest.worldName) throw new BackupError(422, 'not_decentraland', 'This scene\'s Decentraland World has no name to back up to.')
     for (const [p, b] of templateFiles(snap.sceneName, dest)) files.set(p, b)
   }
   files.set(BAKED_FILE, enc.encode(bakeModule(snap)))
-  assertSize(files)
+  // Refused up front, before any download, when the sizes Virvi already knows are over the limit
+  const plans = bundled(snap)
+  const known = await knownSizes([...new Set([...plans.values()].map((p) => p.url))])
+  assertSize([...sizesOf(files), ...[...plans].flatMap(([path, p]): Sized[] => (known.has(p.url) ? [[path, known.get(p.url)!]] : []))])
 
   const fetched = await fetchBundled(snap, files, opts.fetch)
   for (const f of fetched) if (f.reason) problems.push(`${f.path} (from ${f.url}) is missing: ${f.reason}`)
 
   // A note the creator already has keeps its text, under the backup's
   const note = (path: string, text: string) => {
-    const theirs = source.files.get(path)
+    const theirPath = [...source.files.keys()].find((k) => k.toLowerCase() === path.toLowerCase())
+    const theirs = theirPath === undefined ? undefined : source.files.get(theirPath)
+    if (theirPath !== undefined) files.delete(theirPath)
     files.set(path, enc.encode(theirs ? `${text}\n---\n\n${dec.decode(theirs)}` : text))
   }
   const attr = attribution(snap, new Set(fetched.filter((f) => !f.reason).map((f) => f.path)))
@@ -338,6 +368,6 @@ export async function backupProject(sceneId: string, opts: { fetch?: ModelFetche
   const missing = missingAssets(snap)
   if (missing) note('MISSING-ASSETS.md', missing.text)
   note('README.md', readme({ snap, origin: source.origin, leftovers: source.leftovers, problems, references: missing?.count ?? 0 }))
-  assertSize(files)
+  assertSize(sizesOf(files))
   return { files, problems }
 }
