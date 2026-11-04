@@ -35,4 +35,11 @@ describe('manaSettingsFrom', () => {
     expect(m.rpcUrl).toBe('https://rpc.example')
     expect(m.token).toBe('0x0000000000000000000000000000000000000001')
   })
+
+  it('checksums the token, and refuses a token that is not an address or has a bad checksum', () => {
+    expect(manaSettingsFrom({ STUDIO_MANA_TOKEN: '0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4' }).token).toBe('0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4')
+    expect(() => manaSettingsFrom({ STUDIO_MANA_TOKEN: 'nope' })).toThrow(/STUDIO_MANA_TOKEN/)
+    expect(() => manaSettingsFrom({ STUDIO_MANA_TOKEN: '0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD5'.replace('A1c', 'a1C') })).toThrow(/STUDIO_MANA_TOKEN/)
+  })
 })
+

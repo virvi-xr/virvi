@@ -44,8 +44,8 @@ export function sceneBuildRunnerFrom(raw: string | undefined, m: VirviMode): Sce
 }
 
 /**
- * Paying for studio work in MANA on Polygon PoS. Off (recipient null) until STUDIO_MANA_RECIPIENT is set; a value that
- * is not a valid, correctly checksummed address refuses to start. The token default must be confirmed on Polygonscan
+ * Paying for studio work in MANA on Polygon PoS. Off (recipient null) until STUDIO_MANA_RECIPIENT is set; a recipient
+ * or STUDIO_MANA_TOKEN that is not a valid, correctly checksummed address refuses to start. The token default must be confirmed on Polygonscan
  * before MANA is turned on. A wrong token makes verification fail closed, so nothing is settled by mistake.
  */
 export function manaSettingsFrom(e: Record<string, string | undefined>) {
@@ -58,10 +58,17 @@ export function manaSettingsFrom(e: Record<string, string | undefined>) {
       throw new Error('STUDIO_MANA_RECIPIENT must be a valid, correctly checksummed Polygon address')
     }
   }
+  // The page sends its transfer to this contract, so a bad value refuses to start too
+  let token: string
+  try {
+    token = getAddress(e.STUDIO_MANA_TOKEN || '0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4')
+  } catch {
+    throw new Error('STUDIO_MANA_TOKEN must be a valid, correctly checksummed Polygon address')
+  }
   return {
     recipient,
     rpcUrl: e.POLYGON_RPC_URL || 'https://polygon-rpc.com',
-    token: e.STUDIO_MANA_TOKEN || '0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4',
+    token,
     chainId: 137 as const,
     quoteTtlMs: 600000 as const, // a quote holds for 10 minutes
     graceMs: 900000 as const, // a late transaction still settles within 15 minutes after that
