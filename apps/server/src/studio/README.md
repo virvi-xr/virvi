@@ -16,7 +16,10 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `pricing.ts` | what finalizing costs: first finalize, extra pieces, half-price revisions, and the checker gate |
 | `payments.ts` | one-time Stripe Checkout for finalizing and top-ups, applied once from the webhook; entitlements, finalize jobs, mistake refunds |
 | `scope.ts` | keeping the studio to design work: the turn-down log, flags for the owner (and their email), pausing an account |
-| `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines |
+| `credit.ts` | Virvi credit: a balance in USD cents per account, and a ledger row for every change |
+| `merge.ts` | moving a visitor wallet's studio data (records, counters, credit) onto an existing account |
+| `mana/` | paying in MANA: the rate (`rate.ts`), quotes (`quote.ts`), the Polygon reader (`polygon.ts`), settling and the watcher (`settle.ts`), MANA-back requests (`refunds.ts`) |
+| `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes |
 
 Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/studio-worker.ts` (the workers,
 `/api/studio/worker`). Every studio route answers 404 unless the studio is enabled.
@@ -44,7 +47,7 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    - optional: `STUDIO_CLAUDE_MODEL` (default `claude-opus-5-5`), `STUDIO_CODEX_MODEL` (default `gpt-6.1-sol`),
      `STUDIO_GROK_MODEL` (default `grok-build-0.1`)
 3. **The schema.** Run `drizzle-kit push` against production: the eleven `studio_*` tables (four of them for payments)
-   and two new columns (`studio_designs.finalized_at`, `studio_jobs.counted_from`).
+   and two new columns (`studio_designs.finalized_at`, `studio_jobs.counted_from`), plus the MANA and credit tables below.
 4. **Fly.** Confirm that the server's `FLY_API_TOKEN` can manage machines in `vlm-studio-worker`, in the
    `FLY_WORLDS_ORG` org (`vlm-worlds`). The agent keys are that app's secrets (`fly secrets import -a
    vlm-studio-worker`), never Railway variables or machine env.
@@ -76,6 +79,106 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
      at boot), then the worker image: `fly deploy --build-only --push --remote-only --image-label <sha>` from
      `apps/studio-worker`, then `e2e/fly.sh <image>`, then `e2e/scope_eval.py` on a machine of that image (it fails if
      a designer's message would be turned down), then `STUDIO_WORKER_IMAGE` on Railway.
+
+## Paying with MANA and credit
+
+Besides a card, a customer can pay for finalizing and top-ups with MANA on Polygon, and with Virvi credit.
+
+### Settings (the owner's steps)
+
+MANA is off until `STUDIO_MANA_RECIPIENT` is set. Then the Pay with MANA button shows, and the MANA routes answer
+`503 mana_unavailable` while it is unset.
+
+- `STUDIO_MANA_RECIPIENT`: the wallet that receives the MANA. Checked at boot: it must be a valid address with the right
+  upper/lower-case checksum, or the server refuses to start. The server never holds a key for it.
+- `POLYGON_RPC_URL`: the Polygon node the server reads transfers from (default `https://polygon-rpc.com`, a free public
+  node). For production use a paid RPC, such as Alchemy's Polygon endpoint; a public node is slow and rate limited, and
+  a flaky one delays settling.
+- `STUDIO_MANA_TOKEN`: the MANA token contract on Polygon, default `0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4`.
+  **Confirm this address on Polygonscan (and in Decentraland's docs) before turning MANA on.** If it is wrong, nothing
+  is ever settled by mistake: payments just don't verify.
+- `STUDIO_SCENE_PARCEL`: the studio scene's base parcel as `x,y` (for example `-12,34`). The studio pass (below) is only
+  issued to a scene on this parcel, and only from an official Genesis City realm: a World or someone else's realm that
+  claims the parcel gets no studio pass.
+
+### The new tables
+
+`drizzle-kit push` creates them at deploy: `studio_credits`, `studio_credit_ledger`, `studio_mana_transfers`,
+`studio_mana_scan` and `studio_mana_refunds`. It also adds columns to `studio_payments` (`method`, `credit_held_cents`,
+`mana_amount_wei`, `mana_usd_rate`, `mana_tx_hash`) and to the entitlement and mistake-report tables (`method`,
+`credit_cents`, `credited_cents`, `mana_cents`). Run it before the server that uses them.
+
+### Credit
+
+Credit is a balance in US cents per account, and every change (hold, release, spend, refund, merge, MANA-back request)
+is a row in `studio_credit_ledger`. A checkout spends it in a fixed order: free finalizes (gifts) first, then credit,
+then card or MANA for the rest. A checkout that credit covers entirely is paid at once with no card or MANA step.
+
+Credit a checkout is going to use is *held* from the balance while the checkout is open, so it can't be spent twice. When
+the checkout expires unpaid, the hold is released back, once. When it is paid, the hold becomes the spend. Opening a new
+checkout for the same design takes over the previous one's holds.
+
+### How a MANA payment settles
+
+1. **Quote.** The customer picks Pay with MANA. The server prices what is left after gifts and credit at the current
+   MANA/USD rate from CoinGecko, fetched on the server (never taken from the browser). With no good rate in the last
+   5 minutes it refuses with `503 rate_unavailable`. The quote holds for 10 minutes. Its amount is rounded up to a
+   millionth of a MANA and ends in a random few digits of wei, so no two open quotes ask for the same amount.
+2. **The customer's wallet sends** exactly that amount of MANA to the recipient.
+3. **The server learns of it** in one of two ways: the page reports the transaction hash, or the watcher (run by the
+   minute sweep) finds the transfer to the recipient by itself.
+4. **Checks.** The transaction must be mined and not reverted, hold a MANA transfer to the recipient for *exactly* the
+   quoted amount, and have been mined within the quote's 10 minutes plus a 15-minute grace. A transaction hash settles
+   at most one payment, ever.
+5. **30 confirmations.** Until the transfer is 30 blocks deep the page shows it as confirming; then the payment is
+   granted. A quote that expired while its transaction was on the way is reopened (gifts and credit held again) and
+   granted. If a gift or credit was spent in the meantime, the payment is still granted and the owner absorbs that small
+   shortfall.
+
+A quote that nothing paid is expired by the sweep once the grace has passed, releasing its holds.
+
+A transfer that matches no payment (wrong amount, too late, sent twice, or from someone who never opened a checkout) is
+kept and shown to the owner under **MANA payments that didn't match** (below).
+
+### Refunds
+
+A mistake-report refund goes back the way each line was paid:
+
+- the card part goes back through Stripe;
+- the credit part and the MANA part go back as credit;
+- a gift line gets its free finalize back.
+
+A grant-time overcharge (for example a second quote paid as well) also returns as credit; for a card payment, only the
+card share goes back to the card. If a refund couldn't be paid at once the sweep retries it.
+
+The MANA part of a refunded mistake report can be turned back into MANA: `POST /api/studio/mana-refunds` with the report
+id takes that much credit and makes a MANA-back request to the customer's verified wallet. It is refused if the report
+has no MANA part, was already asked back, the account has no verified wallet, or the credit has been spent since.
+
+### The owner's two sections on the Studio flags page
+
+On the admin page **Studio flags** (`/admin/studio`), besides flags and mistake reports:
+
+- **MANA refunds to send.** Each request shows the customer, the USD value and their wallet. Get the amount to send from
+  the page (the USD value at the current rate, rounded up to a millionth of a MANA), send it from your own wallet, then
+  paste the transaction hash. The server checks on Polygon that it is a MANA transfer of that amount to that wallet
+  before marking it sent. Or decline (type DECLINE): the credit goes back to the customer.
+- **MANA payments that didn't match.** Each transfer comes with the open or expired payments it might be (asking for
+  within 5% of the amount, created within a day, nearest first). Either *settle by hand* against one of them, which
+  grants that payment, or mark it *returned* after sending the MANA back from your own wallet and pasting that hash.
+
+### The studio pass and the checkout link
+
+The studio scene signs in with a wallet and gets a *studio pass*: it works on the studio routes (those declaring
+`scenePass.studio`, including the MANA-back request) and on `/api/auth/handoff`, and is refused everywhere else with
+`403 studio_pass_not_allowed`. The pass is only issued for `STUDIO_SCENE_PARCEL` on an official Genesis City realm.
+
+From the scene, `/api/auth/handoff` gives a one-time checkout link code that lives 10 minutes (an ordinary sign-in code
+lives 60 seconds). The website trades it for a full wallet session, so the visitor can pay in the browser and come back
+to the scene. Codes work once and only their hash is stored.
+
+When a visitor's wallet joins an existing account, their designs, payments, reports, counters and credit move to that
+account (`merge.ts`), with a `merge` row in the credit ledger on each side.
 
 To check a deploy's machine lifecycle without a user: `scripts/studio-fly-smoke.ts`. To run a real worker against
 a local server: `scripts/studio-local.md`.
