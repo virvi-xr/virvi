@@ -553,6 +553,12 @@ export class VirviSceneRoom extends Room {
         if (item) await this.relayToEditors('scene_library_changed', { action: 'upsert', item })
         return
       }
+      if (e.type === 'presets_changed') {
+        // Editors only: viewers don't manage presets and shouldn't see unpublished preset names
+        const { type: _t, sceneId: _s, ...change } = e
+        await this.relayToEditors('scene_presets_changed', change)
+        return
+      }
       if (e.type === 'preset_changed') {
         const preset = await db.query.scenePresets.findFirst({
           where: eq(scenePresets.id, e.presetId),

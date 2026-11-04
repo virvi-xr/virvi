@@ -6,6 +6,8 @@ import { AD_SHAPES, type AdFormats } from '@virvixr/shared'
 import { shapeLabel, offImageLabel, adModeHint, isAdsMode, adSpaceRefreshKey } from '@/lib/ads'
 import AdSpaceContent from '@/components/AdSpaceContent'
 import { useSceneRoom } from '@/lib/colyseus'
+import { applyPresetsChange, editingPreset, type PresetsChange } from '@/lib/presets'
+import { PresetBar } from './PresetBar'
 import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
 import { RoomSetPanel } from './RoomSetPanel'
@@ -55,6 +57,7 @@ interface Preset {
 interface Scene {
   id: string
   name: string
+  activePresetId?: string | null
   presets: Preset[]
 }
 
@@ -1354,6 +1357,17 @@ export default function SceneEditorPage() {
       .catch(err => { setError(err.message); setLoading(false) })
   }, [token, sceneId])
 
+  /** Load the scene again, e.g. after a preset was copied (its elements aren't in the change message). */
+  const reloadScene = useCallback(() => {
+    api.getScene(sceneId).then(data => setScene(data.scene)).catch(() => {})
+  }, [api, sceneId])
+
+  const sceneRef = useRef<Scene | null>(null)
+  sceneRef.current = scene
+
+  /** The preset being edited: chosen in the preset bar, else the live one (null = follow the live preset). */
+  const [editingPresetId, setEditingPresetId] = useState<string | null>(null)
+
   // -----------------------------------------------------------------------
   // Listen for Colyseus broadcasts
   // -----------------------------------------------------------------------
@@ -1370,6 +1384,19 @@ export default function SceneEditorPage() {
     }
 
     room.onMessage('scene_preset_update', handler)
+    // Someone (here, another dashboard, the HUD or a booking) made another preset live
+    room.onMessage('scene_change_preset', (msg: any) => {
+      const id = msg?.scenePreset?.sk
+      if (!id) return
+      if (sceneRef.current && !sceneRef.current.presets.some(p => p.id === id)) reloadScene()
+      setScene(prev => prev && { ...prev, activePresetId: id })
+    })
+    // Presets created, renamed or deleted elsewhere
+    room.onMessage('scene_presets_changed', (change: PresetsChange) => {
+      // A new preset may be a copy with content the message doesn't carry: load it
+      if (change.action === 'upsert' && sceneRef.current && !sceneRef.current.presets.some(p => p.id === change.preset.id)) reloadScene()
+      setScene(prev => prev && applyPresetsChange(prev, change))
+    })
 
     return () => {
       // Colyseus SDK does not have a removeListener for onMessage in all versions,
@@ -1419,7 +1446,8 @@ export default function SceneEditorPage() {
   // Get active preset elements
   // -----------------------------------------------------------------------
 
-  const activePreset = scene?.presets?.[0] // Use first preset as active for now
+  // Edits go to the preset chosen in the preset bar, else the live one; never just "the first preset"
+  const activePreset = editingPreset(scene, editingPresetId)
   const elements = activePreset?.elements || []
   const filteredElements = activeTab === 'moderation' || activeTab === 'roles' || activeTab === 'ar' ? [] : elements.filter(el => el.type === activeTab)
 
@@ -1683,7 +1711,6 @@ export default function SceneEditorPage() {
                 {copied ? 'Copied!' : 'Copy ID'}
               </button>
             </div>
-            {activePreset && <p className="mt-1 text-sm text-gray-500">Preset: {activePreset.name}</p>}
           </>
         }
         actions={
@@ -1699,6 +1726,16 @@ export default function SceneEditorPage() {
           hasRoomSet={sceneHasRoomSet(scene.presets.flatMap((p) => p.elements))}
           onDone={reloadConnected} onClose={() => setNamePanel(false)} />
       )}
+
+      <PresetBar api={api} sceneId={sceneId}
+        presets={scene.presets.map(p => ({ id: p.id, name: p.name }))}
+        activePresetId={scene.activePresetId ?? null}
+        editingId={activePreset?.id}
+        onSelect={setEditingPresetId}
+        onCreated={(id) => { setEditingPresetId(id); reloadScene() }}
+        onRenamed={(id, name) => setScene(prev => prev && applyPresetsChange(prev, { action: 'upsert', preset: { id, name } }))}
+        onDeleted={(id) => { setEditingPresetId(null); setScene(prev => prev && applyPresetsChange(prev, { action: 'delete', presetId: id })) }}
+        onMadeLive={(id) => setScene(prev => prev && { ...prev, activePresetId: id })} />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800 pb-px">

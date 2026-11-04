@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
@@ -15,7 +15,8 @@ import type { AuthUser } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, hasScope, isFullAccess, isHostAccess, canWriteElement, diffKeys } from '../auth/permissions.js'
 import { config } from '../config.js'
-import { publishElementChanged, publishSceneTouched } from '../realtime/bus.js'
+import { publishElementChanged, publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
+import { activatePreset, canManagePresets, cleanPresetName, createPreset, deletePreset, deleteRefusal, PRESET_NAME_MAX, renamePreset } from '../scenes/presets.js'
 import { dispatchPlatformCallbacks } from '../integrations/platform-hooks.js'
 import { serializeSingleElement } from '../services/scene-serializer.js'
 import { getSubscription } from '../integrations/stripe.js'
@@ -315,7 +316,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
       }
 
       const [updated] = await db.update(scenes).set(updates).where(eq(scenes.id, sceneId)).returning()
-      if (activePresetId !== undefined) await publishSceneTouched(sceneId)
+      if (activePresetId) await publishVenueEvent({ type: 'preset_changed', sceneId, presetId: activePresetId }).catch((err) => console.error('[scenes] preset_changed publish failed:', err))
+      else if (activePresetId !== undefined) await publishSceneTouched(sceneId)
       return reply.send({ scene: updated })
     },
   )
@@ -345,26 +347,76 @@ export default async function sceneRoutes(app: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  // ── POST /api/scenes/:sceneId/presets — create preset ────────────────────
+  // ── Presets (LIV-84): create (blank or a copy), rename, delete, make live ──
+  // Hosts, co-hosts and editors only; booking crew never manage presets (canManagePresets).
 
-  app.post<{ Params: { sceneId: string }; Body: { name: string; locale?: string } }>(
+  app.post<{ Params: { sceneId: string }; Body: { name?: unknown; fromPresetId?: unknown } }>(
     '/api/scenes/:sceneId/presets',
+    { config: { scenePass: { sceneFrom: fromParam('sceneId') } } },
     async (request, reply) => {
       const { sceneId } = request.params
-      const { name, locale } = request.body
+      const body = request.body ?? {}
 
       const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) })
       if (!scene) return reply.status(404).send({ error: 'Scene not found' })
-      if (!hasScope(await accessFor(request, sceneId), 'scene.edit')) {
-        return reply.status(403).send({ error: 'Forbidden' })
+      if (!canManagePresets(await accessFor(request, sceneId))) return reply.status(403).send({ error: 'Forbidden' })
+
+      const name = cleanPresetName(body.name)
+      if (!name) return reply.status(400).send({ error: 'bad_name', message: `A preset name is required (up to ${PRESET_NAME_MAX} characters)` })
+      let fromPresetId: string | undefined
+      if (body.fromPresetId !== undefined && body.fromPresetId !== null) {
+        const from = typeof body.fromPresetId === 'string' && UUID_RE.test(body.fromPresetId)
+          && (await db.query.scenePresets.findFirst({ where: and(eq(scenePresets.id, body.fromPresetId), eq(scenePresets.sceneId, sceneId)), columns: { id: true } }))
+        if (!from) return reply.status(400).send({ error: 'Preset does not belong to this scene' })
+        fromPresetId = from.id
       }
 
-      const [preset] = await db
-        .insert(scenePresets)
-        .values({ sceneId, name, locale: locale || null })
-        .returning()
+      return reply.status(201).send({ preset: await createPreset(sceneId, name, fromPresetId) })
+    },
+  )
 
-      return reply.status(201).send({ preset })
+  /** The preset and whether the caller may manage it; replies 404/403 itself and returns null then. */
+  async function managedPreset(request: FastifyRequest<{ Params: { presetId: string } }>, reply: FastifyReply) {
+    const { presetId } = request.params
+    const preset = UUID_RE.test(presetId) ? await db.query.scenePresets.findFirst({ where: eq(scenePresets.id, presetId) }) : undefined
+    if (!preset) { reply.status(404).send({ error: 'Preset not found' }); return null }
+    if (!canManagePresets(await accessFor(request, preset.sceneId))) { reply.status(403).send({ error: 'Forbidden' }); return null }
+    return preset
+  }
+
+  app.patch<{ Params: { presetId: string }; Body: { name?: unknown } }>(
+    '/api/presets/:presetId',
+    { config: { scenePass: { sceneFrom: fromPreset } } },
+    async (request, reply) => {
+      const preset = await managedPreset(request, reply)
+      if (!preset) return reply
+      const name = cleanPresetName(request.body?.name)
+      if (!name) return reply.status(400).send({ error: 'bad_name', message: `A preset name is required (up to ${PRESET_NAME_MAX} characters)` })
+      return reply.send({ preset: await renamePreset(preset, name) })
+    },
+  )
+
+  // Web only: deleting stays off the in-world HUD, so it can't happen by accident there (no scene pass).
+  app.delete<{ Params: { presetId: string } }>('/api/presets/:presetId', async (request, reply) => {
+    const preset = await managedPreset(request, reply)
+    if (!preset) return reply
+    const refusal = await deleteRefusal(preset)
+    if (refusal) return reply.status(409).send(refusal)
+    // The cascade only unlinks the preset's room sets, so they (and their GLBs, once unused) are removed here
+    const roomSetsToDelete = await sceneOwnedRoomSets({ presetId: preset.id })
+    await deletePreset(preset)
+    await deleteOrphanedRoomSets(roomSetsToDelete)
+    return reply.status(204).send()
+  })
+
+  app.post<{ Params: { presetId: string } }>(
+    '/api/presets/:presetId/activate',
+    { config: { scenePass: { sceneFrom: fromPreset } } },
+    async (request, reply) => {
+      const preset = await managedPreset(request, reply)
+      if (!preset) return reply
+      await activatePreset(preset.sceneId, preset.id)
+      return reply.send({ activePresetId: preset.id })
     },
   )
 

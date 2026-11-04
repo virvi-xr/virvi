@@ -136,6 +136,39 @@ describe('REST edits broadcast live updates to scene rooms', () => {
     await c.expectNone('scene_preset_update', 300)
   })
 
+  it('making a preset live switches everyone in the scene, visitors included (REST and PUT scene)', async () => {
+    const host = await createUser()
+    const { scene } = await createScene(host)
+    const headers = { authorization: `Bearer ${tokenFor(host)}` }
+    const [concert] = await db.insert(scenePresets).values({ sceneId: scene.id, name: 'Concert' }).returning()
+    const visitor = await createUser({ role: 'viewer', email: null, wallet: randomWallet() })
+    const v = await joinScene(gs.url, scene.id, tokenFor(visitor))
+    await v.waitFor('scene_preset_update') // init
+    expect((await app.inject({ method: 'POST', url: `/api/presets/${concert.id}/activate`, headers })).statusCode).toBe(200)
+    expect((await v.waitFor('scene_change_preset')).scenePreset).toMatchObject({ sk: concert.id })
+    const [day] = await db.insert(scenePresets).values({ sceneId: scene.id, name: 'Day' }).returning()
+    await app.inject({ method: 'PUT', url: `/api/scenes/${scene.id}`, headers, payload: { activePresetId: day.id } })
+    expect((await v.waitFor('scene_change_preset')).scenePreset).toMatchObject({ sk: day.id })
+  })
+
+  it('new, renamed and deleted presets reach editors live, but not visitors', async () => {
+    const host = await createUser()
+    const { scene, preset } = await createScene(host)
+    const headers = { authorization: `Bearer ${tokenFor(host)}` }
+    const h = await joinScene(gs.url, scene.id, tokenFor(host))
+    const visitor = await createUser({ role: 'viewer', email: null, wallet: randomWallet() })
+    const v = await joinScene(gs.url, scene.id, tokenFor(visitor))
+    for (const c of [h, v]) await c.waitFor('scene_preset_update') // init
+
+    const made = (await app.inject({ method: 'POST', url: `/api/scenes/${scene.id}/presets`, headers, payload: { name: 'Concert', fromPresetId: preset.id } })).json().preset
+    expect(await h.waitFor('scene_presets_changed')).toMatchObject({ action: 'upsert', preset: { id: made.id, name: 'Concert' } })
+    await app.inject({ method: 'PATCH', url: `/api/presets/${made.id}`, headers, payload: { name: 'Gig' } })
+    expect(await h.waitFor('scene_presets_changed')).toMatchObject({ action: 'upsert', preset: { id: made.id, name: 'Gig' } })
+    await app.inject({ method: 'DELETE', url: `/api/presets/${made.id}`, headers })
+    expect(await h.waitFor('scene_presets_changed')).toEqual({ action: 'delete', presetId: made.id })
+    await v.expectNone('scene_presets_changed', 300)
+  })
+
   it('element delete requires scene edit access', async () => {
     const host = await createUser()
     const stranger = await createUser()

@@ -368,7 +368,7 @@ export async function prepareRoomSetForPlacement(modelSrc: unknown, sceneId: str
  * The scene-owned sets placed by an element, or by any element of a scene. Read them before deleting the element or
  * scene (the link goes null with it), then hand them to `deleteOrphanedRoomSets`. Library-asset sets aren't included.
  */
-export async function sceneOwnedRoomSets(where: { elementId: string } | { sceneId: string }): Promise<RoomSetRow[]> {
+export async function sceneOwnedRoomSets(where: { elementId: string } | { sceneId: string } | { presetId: string }): Promise<RoomSetRow[]> {
   const owned = isNull(roomSets.assetItemId)
   if ('elementId' in where) return db.select().from(roomSets).where(and(eq(roomSets.sceneElementId, where.elementId), owned))
   const rows = await db
@@ -376,7 +376,7 @@ export async function sceneOwnedRoomSets(where: { elementId: string } | { sceneI
     .from(roomSets)
     .innerJoin(sceneElements, eq(sceneElements.id, roomSets.sceneElementId))
     .innerJoin(scenePresets, eq(scenePresets.id, sceneElements.presetId))
-    .where(and(eq(scenePresets.sceneId, where.sceneId), owned))
+    .where(and('presetId' in where ? eq(scenePresets.id, where.presetId) : eq(scenePresets.sceneId, where.sceneId), owned))
   return rows.map((r) => r.set)
 }
 

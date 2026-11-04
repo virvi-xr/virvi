@@ -12,6 +12,7 @@ import { db } from '../db/connection.js'
 import {
   accessGrants,
   bookings,
+  roomSets,
   sceneElementInstances,
   sceneElements,
   scenePresets,
@@ -147,7 +148,20 @@ export async function updateVenue(
 
 // ── Preset cloning ───────────────────────────────────────────────────────
 
-export async function clonePreset(tx: Tx, presetId: string, name: string): Promise<string> {
+/** The copy of a room set model gets its own room set row (same GLB, which stays until nothing uses it). */
+async function copyRoomSetLink(tx: Tx, fromElementId: string, toElementId: string) {
+  const [row] = await tx.select().from(roomSets).where(eq(roomSets.sceneElementId, fromElementId))
+  if (!row) return
+  const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = row
+  await tx.insert(roomSets).values({ ...rest, sceneElementId: toElementId, assetItemId: null })
+}
+
+/**
+ * Copy a preset with all its elements and instances. A booking copy marks each element with the original it came
+ * from (ads and rentable screens follow it); an `independent` copy (a host's own duplicate) doesn't, and also links
+ * each copied room set model to its own room set row, sharing the GLB.
+ */
+export async function clonePreset(tx: Tx, presetId: string, name: string, opts: { independent?: boolean } = {}): Promise<string> {
   const source = await tx.query.scenePresets.findFirst({
     where: eq(scenePresets.id, presetId),
     with: { elements: { with: { instances: true } } },
@@ -169,9 +183,10 @@ export async function clonePreset(tx: Tx, presetId: string, name: string): Promi
         customRendering: el.customRendering,
         clickEvent: el.clickEvent,
         properties: el.properties,
-        clonedFromId: el.id,
+        clonedFromId: opts.independent ? null : el.id,
       })
       .returning()
+    if (opts.independent && el.type === 'model') await copyRoomSetLink(tx, el.id, newEl.id)
     for (const inst of el.instances) {
       const [newInst] = await tx
         .insert(sceneElementInstances)

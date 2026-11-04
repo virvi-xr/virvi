@@ -15,6 +15,12 @@ export type VenueEvent =
       deleted: boolean
     }
   | { type: 'library_changed'; sceneId: string; linkId: string; removed: boolean }
+  | ({ type: 'presets_changed'; sceneId: string } & PresetsChange)
+
+/** A preset was created, renamed or deleted (the list editors see; switching the live one is preset_changed). */
+export type PresetsChange =
+  | { action: 'upsert'; preset: { id: string; name: string; locale: string | null; createdAt: Date; updatedAt: Date } }
+  | { action: 'delete'; presetId: string }
 
 export interface BusPresence {
   publish(topic: string, data: unknown): unknown
@@ -92,6 +98,15 @@ export async function publishLibraryChanged(sceneId: string, linkId: string, rem
     await publishVenueEvent({ type: 'library_changed', sceneId, linkId, removed })
   } catch (err) {
     console.error('[bus] library_changed publish failed:', err)
+  }
+}
+
+/** Tell scene rooms (and so dashboards and HUDs) the preset list changed. Never throws, like publishElementChanged. */
+export async function publishScenePresetsChanged(e: { sceneId: string } & PresetsChange): Promise<void> {
+  try {
+    await publishVenueEvent({ type: 'presets_changed', ...e })
+  } catch (err) {
+    console.error('[bus] presets_changed publish failed:', err)
   }
 }
 

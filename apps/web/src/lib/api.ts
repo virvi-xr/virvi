@@ -334,6 +334,14 @@ export function useApi() {
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
+    /** Scene presets (LIV-84): blank, or a copy of `fromPresetId`. */
+    createPreset: (sceneId: string, body: { name: string; fromPresetId?: string }) =>
+      apiFetch<{ preset: { id: string; name: string } }>(`/api/scenes/${sceneId}/presets`, { method: 'POST', body: JSON.stringify(body) }),
+    renamePreset: (presetId: string, name: string) =>
+      apiFetch<{ preset: { id: string; name: string } }>(`/api/presets/${presetId}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+    deletePreset: (presetId: string) => apiFetch<void>(`/api/presets/${presetId}`, { method: 'DELETE' }),
+    activatePreset: (presetId: string) =>
+      apiFetch<{ activePresetId: string }>(`/api/presets/${presetId}/activate`, { method: 'POST' }),
     /** Self-hosted branding (instance admins). undefined keeps a field, null clears it; images are base64. */
     updateBranding: (body: { name?: string | null; logo?: string | null; favicon?: string | null }) =>
       apiFetch<{ name: string | null; logoUrl: string | null; faviconUrl: string | null }>('/api/instance/branding', { method: 'PUT', body: JSON.stringify(body) }),
