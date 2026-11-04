@@ -1,7 +1,7 @@
 import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
 import type { Selected } from './transform/session.js'
 import type { ListedInstance } from './managers/transform-ops.js'
-import { VideoManager } from './managers/VideoManager.js'
+import { VideoManager, type ScreenShowingsMessage } from './managers/VideoManager.js'
 import { ImageManager } from './managers/ImageManager.js'
 import { MeshManager } from './managers/MeshManager.js'
 import { SoundManager } from './managers/SoundManager.js'
@@ -36,10 +36,10 @@ export class SceneManager {
   private adapter: VirviPlatformAdapter
 
   /** `ads` serves the scene's ad spaces and ads-mode screens; without it they show their fallback or hide. */
-  constructor(adapter: VirviPlatformAdapter, storage: VirviStorage, events: EventBus, ads: AdHost | null = null) {
+  constructor(adapter: VirviPlatformAdapter, storage: VirviStorage, events: EventBus, ads: AdHost | null = null, now: () => number = () => Date.now()) {
     this.adapter = adapter
     this.events = events
-    const video = new VideoManager(adapter, storage, ads)
+    const video = new VideoManager(adapter, storage, ads, now)
     this.managers = {
       video,
       image: new ImageManager(adapter, storage),
@@ -159,6 +159,11 @@ export class SceneManager {
     }
     // Screens are created in preset order: an ads-mode screen may have started a video ad before the live screen existed
     this.streamChanged()
+  }
+
+  /** A scheduled screen's showings (`screen_showings`, LIV-87). */
+  handleScreenShowings(message: ScreenShowingsMessage): void {
+    ;(this.managers.video as VideoManager).setShowings(message)
   }
 
   handleVideoStatus(message: any): void {

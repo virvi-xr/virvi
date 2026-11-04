@@ -378,6 +378,10 @@ export class Virvi {
       this.events.emit('presets_changed', message)
     })
 
+    this.colyseus.onMessage('screen_showings', (message: unknown) => {
+      this.sceneManager.handleScreenShowings(message as any)
+    })
+
     this.colyseus.onMessage('scene_video_status', (message: unknown) => {
       this.sceneManager.handleVideoStatus(message as any)
     })

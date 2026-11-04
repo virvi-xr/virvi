@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { canWriteElement, getSceneAccess } from '../auth/permissions.js'
 import { utcToZoned } from '../scenes/schedule-time.js'
+import { publishVenueEvent } from '../realtime/bus.js'
 import { findShowingClash, parseShowingInput, presentShowing, resolveItems, ShowingError, specOfShowing, type ShowingRow } from '../scenes/showings.js'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -64,6 +65,10 @@ export default async function showingRoutes(app: FastifyInstance) {
       return fn(tx)
     })
 
+  /** Players in the scene get the screen's new showings (after the write). Never fails the request. */
+  const changed = (sceneId: string, elementId: string) =>
+    publishVenueEvent({ type: 'showings_changed', sceneId, elementId }).catch((err) => console.error('[showings] publish failed:', err))
+
   const fail = (reply: FastifyReply, e: unknown) => {
     if (e instanceof ShowingError) return reply.status(e.status).send({ error: e.code, message: e.message, ...e.extra })
     throw e
@@ -85,6 +90,7 @@ export default async function showingRoutes(app: FastifyInstance) {
         const values = await prepare(screen.id, (request.body ?? {}) as Record<string, unknown>, undefined, tx)
         return (await tx.insert(screenShowings).values({ ...values, sceneId: screen.preset.sceneId, elementId: screen.id, createdBy: request.user.id }).returning())[0]
       })
+      await changed(screen.preset.sceneId, screen.id)
       return reply.status(201).send({ showing: presentShowing(row, new Date()) })
     } catch (e) {
       return fail(reply, e)
@@ -102,6 +108,7 @@ export default async function showingRoutes(app: FastifyInstance) {
         const values = await prepare(row.elementId, (request.body ?? {}) as Record<string, unknown>, current, tx)
         return (await tx.update(screenShowings).set({ ...values, updatedAt: new Date() }).where(eq(screenShowings.id, row.id)).returning())[0]
       })
+      await changed(row.sceneId, row.elementId)
       return reply.send({ showing: presentShowing(updated, new Date()) })
     } catch (e) {
       return fail(reply, e)
@@ -112,6 +119,7 @@ export default async function showingRoutes(app: FastifyInstance) {
     const row = await ownShowing(request, reply)
     if (!row) return reply
     await db.delete(screenShowings).where(eq(screenShowings.id, row.id))
+    await changed(row.sceneId, row.elementId)
     return reply.status(204).send()
   })
 }

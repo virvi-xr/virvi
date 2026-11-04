@@ -146,3 +146,30 @@ describe('DclAdapter playlist mode', () => {
     expect(sdk.players.size).toBe(0)
   })
 })
+
+describe('DclAdapter start position (scheduled showings)', () => {
+  beforeEach(() => sdk.reset())
+
+  it('starts at the given second on a fresh player entity, so a playing video really re-seeks', () => {
+    const adapter = new DclAdapter()
+    const screenEntity = adapter.createEntity()
+    adapter.createVideoPlayer(screenEntity, { src: 'https://v/film.mp4', playing: true, position: 754 })
+    const first = player()
+    expect(first.vp).toMatchObject({ src: 'https://v/film.mp4', playing: true, position: 754 })
+    adapter.createVideoPlayer(screenEntity, { src: 'https://v/film.mp4', playing: true, position: 1200 })
+    expect(sdk.players.size).toBe(1)
+    const second = player()
+    expect(second.e).not.toBe(first.e)
+    expect(second.vp.position).toBe(1200)
+  })
+
+  it('without a position it keeps its player entity, as before', () => {
+    const adapter = new DclAdapter()
+    const screenEntity = adapter.createEntity()
+    adapter.createVideoPlayer(screenEntity, { src: 'https://v/1.mp4' })
+    const first = player().e
+    adapter.createVideoPlayer(screenEntity, { src: 'https://v/2.mp4' })
+    expect(player().e).toBe(first)
+    expect(player().vp.position).toBeUndefined()
+  })
+})

@@ -210,3 +210,30 @@ export function presentShowing(row: ShowingRow, now: Date) {
     nextStarts: nextStarts({ ...specOfShowing(row).schedule, durationMinutes: null }, now, 3).map((d) => d.toISOString()),
   }
 }
+
+// ── Delivery to in-world players ────────────────────────────────────────────
+
+/** How far ahead players are sent showings; the room re-sends every SHOWINGS_REFRESH_MS, so they never run out. */
+export const SHOWINGS_WINDOW_MS = 36 * 3600_000
+export const SHOWINGS_REFRESH_MS = 3600_000
+
+export interface ScreenShowingsMessage {
+  elementId: string
+  /** The server's clock when this was built (UTC ms): players work out their offset from it. */
+  serverTime: number
+  /** Running now or starting within SHOWINGS_WINDOW_MS, in start order. */
+  showings: ShowingInstance[]
+}
+
+/** The `screen_showings` message for each video element given, from its enabled showings. */
+export async function screenShowingsMessages(elementIds: string[], now = new Date()): Promise<ScreenShowingsMessage[]> {
+  if (elementIds.length === 0) return []
+  const rows = await db.select().from(screenShowings)
+    .where(and(inArray(screenShowings.elementId, elementIds), eq(screenShowings.enabled, true)))
+  const to = new Date(now.getTime() + SHOWINGS_WINDOW_MS)
+  return elementIds.map((elementId) => ({
+    elementId,
+    serverTime: now.getTime(),
+    showings: showingInstancesBetween(rows.filter((r) => r.elementId === elementId).map(specOfShowing), now, to),
+  }))
+}

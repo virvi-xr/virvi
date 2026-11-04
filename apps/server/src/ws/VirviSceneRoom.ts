@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 const _require = createRequire(import.meta.url)
 const { Room } = _require('colyseus') as any
 type Client = any
-import { eq, and } from 'drizzle-orm'
+import { eq, and, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
   scenes,
@@ -27,7 +27,8 @@ import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget
 import { getSceneLibraryItem } from '../library/scene-library.js'
 import { venueTopic, publishSceneTouched, STREAMS_TOPIC, type VenueEvent, type StreamStatusEvent } from '../realtime/bus.js'
 import { normalizeUrl, withLiveStatus, withLiveVideo } from '../streaming/live-status.js'
-import type { VenueAccessMessage } from '@virvixr/shared'
+import { VideoSourceType, type VenueAccessMessage } from '@virvixr/shared'
+import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
 
 interface JoinOptions {
@@ -149,6 +150,8 @@ export class VirviSceneRoom extends Room {
     console.log(`[VirviSceneRoom] Created for scene ${this.sceneId} (active rooms: ${VirviSceneRoom.activeRoomCount})`)
     if (this.sceneId) this.presence.subscribe(venueTopic(this.sceneId), this.onVenueEventBound)
     if (this.sceneId) this.presence.subscribe(STREAMS_TOPIC, this.onStreamEventBound)
+    // Players hold SHOWINGS_WINDOW_MS of showings: top them up well before they run out
+    if (this.sceneId) this.clock.setInterval(() => void this.sendShowings(), SHOWINGS_REFRESH_MS)
 
     // ── Scene pass renewal: a fresh pass for the same user and this scene extends the session ──
     this.onMessage('auth_renew', async (client: Client, message: any) => {
@@ -403,6 +406,8 @@ export class VirviSceneRoom extends Room {
     // Load the active preset and send init data
     await this.sendInitData(client)
 
+    await this.sendShowings(client)
+
     // Sent after init so existing clients that wait for init are unaffected
     client.send('auth_status', { authenticated: !!actor.userId && actor.verified })
     await this.sendVenueAccess(client)
@@ -541,6 +546,12 @@ export class VirviSceneRoom extends Room {
     try {
       if (e.type === 'element_changed') {
         await this.broadcastElementChange(e)
+        // A screen just switched to Schedule mode needs its showings
+        if (!e.deleted && e.elementType === 'video') await this.sendShowings(undefined, [e.elementId])
+        return
+      }
+      if (e.type === 'showings_changed') {
+        await this.sendShowings(undefined, [e.elementId])
         return
       }
       if (e.type === 'library_changed') {
@@ -564,7 +575,10 @@ export class VirviSceneRoom extends Room {
           where: eq(scenePresets.id, e.presetId),
           with: { elements: { with: { instances: true } } },
         })
-        if (preset) this.broadcast('scene_change_preset', { scenePreset: await withLiveStatus(serializePreset(preset)), user: null })
+        if (preset) {
+          this.broadcast('scene_change_preset', { scenePreset: await withLiveStatus(serializePreset(preset)), user: null })
+          await this.sendShowings()
+        }
         return
       }
       this.accessGeneration++
@@ -821,6 +835,30 @@ export class VirviSceneRoom extends Room {
       }
     }
     return result
+  }
+
+  /**
+   * `screen_showings` for the live preset's screens in Schedule mode (LIV-87), to one client or everyone; `only`
+   * narrows it to those elements (each still has to be a live scheduled screen). Never throws.
+   */
+  private async sendShowings(client?: Client, only?: string[]) {
+    try {
+      const presetId = await this.getActivePresetId()
+      if (!presetId) return
+      const screens = await db.select({ id: sceneElements.id }).from(sceneElements).where(and(
+        eq(sceneElements.presetId, presetId),
+        eq(sceneElements.type, 'video'),
+        eq(sceneElements.enabled, true),
+        sql`(${sceneElements.properties}->>'offType') = ${String(VideoSourceType.SCHEDULED)}`,
+      ))
+      const ids = screens.map((r) => r.id).filter((id) => !only || only.includes(id))
+      for (const msg of await screenShowingsMessages(ids)) {
+        if (client) client.send('screen_showings', msg)
+        else this.broadcast('screen_showings', msg)
+      }
+    } catch (err) {
+      console.error('[VirviSceneRoom] sending showings failed:', err)
+    }
   }
 
   private async getActivePresetId(): Promise<string | null> {

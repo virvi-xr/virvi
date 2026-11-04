@@ -354,6 +354,12 @@ export class DclAdapter implements VirviPlatformAdapter {
     // DCL needs a separate entity for the VideoPlayer component.
     // The video texture is then applied to the display entity's material.
     let vpEntity = this.videoPlayerEntities.get(entity as number)
+    // A start position only takes on a new player: changing `position` (or replacing the component) mid-play is
+    // ignored by the explorer, so a seek swaps in a fresh player entity (LIV-87 spike).
+    if (vpEntity && options.position !== undefined) {
+      engine.removeEntity(vpEntity)
+      vpEntity = undefined
+    }
     if (!vpEntity) {
       vpEntity = engine.addEntity()
       this.videoPlayerEntities.set(entity as number, vpEntity)
@@ -365,6 +371,7 @@ export class DclAdapter implements VirviPlatformAdapter {
       volume: options.volume ?? 1,
       loop: options.loop ?? false,
       playbackRate: options.playbackRate ?? 1,
+      ...(options.position !== undefined ? { position: Math.max(0, options.position) } : {}),
     })
 
     // Apply video texture to the display entity

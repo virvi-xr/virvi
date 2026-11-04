@@ -15,6 +15,8 @@ export type VenueEvent =
       deleted: boolean
     }
   | { type: 'library_changed'; sceneId: string; linkId: string; removed: boolean }
+  /** A screen's scheduled showings were added, edited or removed (LIV-87). */
+  | { type: 'showings_changed'; sceneId: string; elementId: string }
   | ({ type: 'presets_changed'; sceneId: string } & PresetsChange)
 
 /** A preset was created, renamed or deleted (the list editors see; switching the live one is preset_changed). */

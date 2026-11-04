@@ -191,6 +191,11 @@ export interface VideoPlayerOptions {
   volume?: number;
   loop?: boolean;
   playbackRate?: number;
+  /**
+   * Seconds into the video to start from (scheduled showings, LIV-87). Set, the player starts fresh there even if one
+   * is already playing on the entity. Adapters without seeking start from the beginning.
+   */
+  position?: number;
 }
 
 export enum VideoState {

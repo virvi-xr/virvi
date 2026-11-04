@@ -1,3 +1,4 @@
+import { screenStateAt, type ShowingInstance } from '@virvixr/shared'
 import { AD_LIMITS, VideoSourceType } from '@virvixr/shared'
 import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
@@ -41,7 +42,21 @@ interface VideoInstance {
   sinceAd: number
   /** Bumped on each applyMediaState so callbacks from an earlier state are ignored. */
   mediaToken: number
+  /** Schedule mode: the per-frame check for the next item or showing, while one is registered. */
+  showingTick?: (dt: number) => void
+  /** Schedule mode: what's on screen now ('<showing>@<start>#<item>' or 'between'), to act only on a change. */
+  showingKey?: string
 }
+
+/** A `screen_showings` message (see apps/server src/scenes/showings.ts). */
+export interface ScreenShowingsMessage {
+  elementId: string
+  serverTime: number
+  showings: ShowingInstance[]
+}
+
+/** How often a scheduled screen checks whether it's time for the next item or showing. */
+const SHOWING_CHECK_S = 0.25
 
 export class VideoManager {
   private adapter: VirviPlatformAdapter
@@ -49,11 +64,72 @@ export class VideoManager {
   private host: AdHost | null
   private configs: Map<string, VideoConfig> = new Map()
   private instances: Map<string, VideoInstance> = new Map()
+  /** Per element: its showings and the server's clock minus ours (ms). Kept across upserts; may come before the screen. */
+  private showings: Map<string, { showings: ShowingInstance[]; offsetMs: number }> = new Map()
+  private now: () => number
 
-  constructor(adapter: VirviPlatformAdapter, storage: VirviStorage, host: AdHost | null = null) {
+  constructor(adapter: VirviPlatformAdapter, storage: VirviStorage, host: AdHost | null = null, now: () => number = () => Date.now()) {
     this.adapter = adapter
     this.storage = storage
     this.host = host
+    this.now = now
+  }
+
+  /** New showings for a scheduled screen: applied at once, unless what's on screen stays the same. */
+  setShowings(msg: ScreenShowingsMessage): void {
+    if (!msg?.elementId || !Array.isArray(msg.showings) || typeof msg.serverTime !== 'number') return
+    this.showings.set(msg.elementId, { showings: msg.showings, offsetMs: msg.serverTime - this.now() })
+    const config = this.configs.get(msg.elementId)
+    if (!config || config.offType !== VideoSourceType.SCHEDULED || (config.isLive && config.enableLiveStream && config.liveSrc)) return
+    for (const instance of this.instances.values()) {
+      if (instance.configSk !== msg.elementId) continue
+      if (instance.showingTick && this.showingState(msg.elementId).key === instance.showingKey) continue
+      this.applyMediaState(instance, config)
+    }
+  }
+
+  private showingState(elementId: string) {
+    const entry = this.showings.get(elementId)
+    const state = screenStateAt(entry?.showings ?? [], this.now() + (entry?.offsetMs ?? 0))
+    const key = state.mode === 'playing' ? `${state.showing.showingId}@${state.showing.startsAt}#${state.index}` : 'between'
+    return { state, key }
+  }
+
+  private stopShowingClock(instance: VideoInstance): void {
+    if (instance.showingTick) this.adapter.unregisterSystem(instance.showingTick)
+    instance.showingTick = undefined
+    instance.showingKey = undefined
+  }
+
+  /** Schedule mode: show what's on now, then check a few times a second for the next item or showing. */
+  private playScheduled(instance: VideoInstance, config: VideoConfig, token: number): void {
+    this.renderShowing(instance, config)
+    let since = 0
+    const tick = (dt: number) => {
+      if (instance.mediaToken !== token) return
+      since += dt
+      if (since < SHOWING_CHECK_S) return
+      since = 0
+      if (this.showingState(config.sk).key !== instance.showingKey) this.renderShowing(instance, config)
+    }
+    instance.showingTick = tick
+    this.adapter.registerSystem(tick)
+  }
+
+  private renderShowing(instance: VideoInstance, config: VideoConfig): void {
+    const { state, key } = this.showingState(config.sk)
+    const wasPlaying = instance.showingKey !== undefined && instance.showingKey !== 'between'
+    instance.showingKey = key
+    if (state.mode === 'playing') {
+      // Everyone starts at the same second: the item, and how far into it the shared clock says the show is
+      this.adapter.createVideoPlayer(instance.entity, {
+        src: state.item.url, playing: true, loop: false, volume: config.volume, position: state.offset,
+      })
+      return
+    }
+    // Between showings: stop any video, then the holding image
+    if (wasPlaying) this.adapter.createVideoPlayer(instance.entity, { src: '', playing: false, volume: 0, loop: false })
+    if (config.offImageSrc) this.adapter.setMaterial(instance.entity, { textureSrc: config.offImageSrc, emission: config.emission })
   }
 
   /** True when any screen has a live, enabled stream (video ads stop scene-wide). */
@@ -158,6 +234,7 @@ export class VideoManager {
 
   private applyMediaState(instance: VideoInstance, config: VideoConfig): void {
     const token = ++instance.mediaToken
+    this.stopShowingClock(instance)
     if (instance.slot) {
       instance.slot.ensurePlane()
       instance.slot.dispose()
@@ -189,6 +266,9 @@ export class VideoManager {
         break
       case 2: // PLAYLIST
         this.playPlaylist(instance, config, token)
+        break
+      case VideoSourceType.SCHEDULED:
+        this.playScheduled(instance, config, token)
         break
       case 1: // IMAGE
         if (config.offImageSrc) {
@@ -419,6 +499,7 @@ export class VideoManager {
     for (const [sk, instance] of this.instances) {
       if (instance.configSk === elementId) {
         instance.slot?.dispose()
+        this.stopShowingClock(instance)
         this.adapter.destroyEntity(instance.entity)
         const instKey = instance.customId || instance.sk
         delete this.storage.videos.instances[instKey]
@@ -431,6 +512,7 @@ export class VideoManager {
     const instance = this.instances.get(instanceId)
     if (instance) {
       instance.slot?.dispose()
+      this.stopShowingClock(instance)
       this.adapter.destroyEntity(instance.entity)
       const key = instance.customId || instance.sk
       delete this.storage.videos.instances[key]
@@ -441,6 +523,7 @@ export class VideoManager {
   clear(): void {
     for (const instance of this.instances.values()) {
       instance.slot?.dispose()
+      this.stopShowingClock(instance)
       this.adapter.destroyEntity(instance.entity)
     }
     this.configs.clear()
