@@ -48,6 +48,18 @@ describe('HttpCatalystClient', () => {
     expect(err.body).toBe('{"errors":["bad scene"]}')
   })
 
+  it('deploy does not treat a non-200 success (201) as live', async () => {
+    stubFetch(() => json({}, 201))
+    await expect(client.deploy({ entityId: 'e', authChain: chain, files: new Map() })).rejects.toMatchObject({ status: 201 })
+  })
+
+  it('a network failure is a CatalystError with status 0', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED') }))
+    const err = await client.deploy({ entityId: 'e', authChain: chain, files: new Map() }).catch((e) => e)
+    expect(err).toBeInstanceOf(CatalystError)
+    expect(err.status).toBe(0)
+  })
+
   it('liveEntities posts the parcels and de-duplicates an entity covering several', async () => {
     const e = { id: 'bafy1', pointers: ['0,0', '0,1'], content: [{ file: 'a', hash: 'h' }], metadata: { scene: { base: '0,0', parcels: ['0,0', '0,1'] } } }
     const fetchFn = stubFetch(() => json([e, e]))

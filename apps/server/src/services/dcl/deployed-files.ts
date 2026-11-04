@@ -12,7 +12,7 @@ import { Zip, ZipPassThrough } from 'fflate'
 import { getImportStore, type PrivateStore } from '../../storage/private-store.js'
 import { safeSegments } from '../import/scene-zip.js'
 import { dclHash, type ContentRef } from './entity.js'
-import { getWorldsClient } from './worlds-client.js'
+import { contentServerFor, type ContentDest, type ContentServer } from './catalyst-client.js'
 
 export const FILES_GONE = "Some of this deploy's files are no longer stored anywhere, so it can't be downloaded."
 export const FILES_UNSAFE = "Some of this deploy's file names can't be put in a zip safely, so it can't be downloaded."
@@ -53,15 +53,15 @@ interface DeployedRow {
 }
 
 /** One zip entry: its safe path and where its bytes come from. */
-interface Entry { path: string; hash: string; from: 'store' | 'worlds' }
+interface Entry { path: string; hash: string; from: 'store' | ContentServer }
 
 /** Every file of the deployment, path to hash: its kept list, else (older rows) the live entity's while it is still the live one. */
-async function contentOf(dep: DeployedRow, world: string): Promise<ContentRef[]> {
+async function contentOf(dep: DeployedRow, dest: ContentDest): Promise<ContentRef[]> {
   const kept = (dep.assetBundle as { content?: ContentRef[] } | null)?.content
   if (Array.isArray(kept)) return kept
   let live
   try {
-    live = (await getWorldsClient().getWorldEntities(world)).find((e) => e.id === dep.catalystEntityId)
+    live = (await contentServerFor(dest).liveEntities(dest)).find((e) => e.id === dep.catalystEntityId)
   } catch {
     throw new DownloadError(503, 'world_unreachable', UNREACHABLE)
   }
@@ -93,17 +93,27 @@ function zipPaths(content: ContentRef[]): Array<{ path: string; hash: string }> 
   })
 }
 
+/** The content server's view of a deployment's target: a World when it names one, else its Genesis City parcels; null when neither. */
+function destOf(target: unknown): (ContentDest & { label: string }) | null {
+  const t = target as { world?: unknown; parcels?: unknown } | null
+  const parcels = Array.isArray(t?.parcels) ? t.parcels.filter((p): p is string => typeof p === 'string') : []
+  if (typeof t?.world === 'string') return { kind: 'world', worldName: t.world, parcels, label: t.world }
+  if (parcels.length) return { kind: 'parcels', worldName: null, parcels, label: `genesis-city-${parcels[0]}` }
+  return null
+}
+
 /**
- * Where each file of a deployed World deployment comes from, decided before anything is sent: a file in neither the
+ * Where each file of a deployed World or parcels deployment comes from, decided before anything is sent: a file in neither the
  * store nor the Worlds server is 409 files_gone, and a list that can't be zipped safely is 409 files_unsafe.
  */
 export async function planDownload(dep: DeployedRow): Promise<{ filename: string; entries: Entry[] }> {
-  const world = (dep.target as { world?: unknown } | null)?.world
-  if (dep.status !== 'deployed' || !dep.catalystEntityId || typeof world !== 'string') {
+  const dest = destOf(dep.target)
+  if (dep.status !== 'deployed' || !dep.catalystEntityId || !dest) {
     throw new DownloadError(409, 'not_deployed', NOT_DEPLOYED)
   }
-  const files = zipPaths(await contentOf(dep, world))
+  const files = zipPaths(await contentOf(dep, dest))
   const store = getImportStore()
+  const server = contentServerFor(dest)
   const source = new Map<string, Entry['from']>()
   const entries: Entry[] = []
   for (const { path, hash } of files) {
@@ -113,18 +123,18 @@ export async function planDownload(dep: DeployedRow): Promise<{ filename: string
       else {
         let there: boolean
         try {
-          there = await getWorldsClient().hasContent(hash)
+          there = await server.hasContent(hash)
         } catch {
           throw new DownloadError(503, 'world_unreachable', UNREACHABLE)
         }
         if (!there) throw new DownloadError(409, 'files_gone', FILES_GONE)
-        from = 'worlds'
+        from = server
       }
       source.set(hash, from)
     }
     entries.push({ path, hash, from })
   }
-  return { filename: `${filenameSafe(world)}-${utcStamp(dep.deployedAt ?? new Date())}.zip`, entries }
+  return { filename: `${filenameSafe(dest.label)}-${utcStamp(dep.deployedAt ?? new Date())}.zip`, entries }
 }
 
 const filenameSafe = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, '-')
@@ -144,9 +154,9 @@ async function* bytesOf(e: Entry): AsyncGenerator<Uint8Array> {
     for await (const chunk of obj.body as Readable) yield chunk as Uint8Array
     return
   }
-  const bytes = await getWorldsClient().getContent(e.hash)
-  if (!bytes) throw new Error(`Worlds server no longer has ${e.hash}`)
-  if (!e.hash.startsWith('Qm') && (await dclHash(bytes)) !== e.hash) throw new Error(`Worlds server sent bytes that don't match ${e.hash}`)
+  const bytes = await e.from.getContent(e.hash)
+  if (!bytes) throw new Error(`Content server no longer has ${e.hash}`)
+  if (!e.hash.startsWith('Qm') && (await dclHash(bytes)) !== e.hash) throw new Error(`Content server sent bytes that don't match ${e.hash}`)
   yield bytes
 }
 

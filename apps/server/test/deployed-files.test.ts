@@ -15,6 +15,8 @@ import { prepareSignedDeploy, startVirviDeploy, submitSignedDeploy, whenFilesKep
 import { resetDb } from './helpers/db.js'
 import { createElement, createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { FakeWorldsClient } from './helpers/fake-worlds.js'
+import { FakeCatalystClient } from './helpers/fake-catalyst.js'
+import { setCatalystClient } from '../src/services/dcl/catalyst-client.js'
 
 const CDN = 'https://cdn.virvi.test'
 const WORLD = 'cafe.dcl.eth'
@@ -51,6 +53,7 @@ afterEach(async () => {
   cfg.cdnUrl = saved.cdnUrl
   cfg.virviDclDeployKey = saved.key
   setWorldsClient(null)
+  setCatalystClient(null)
   setImportStore(null)
   vi.restoreAllMocks()
   await app.close()
@@ -241,6 +244,28 @@ describe('GET /api/deploy/:id/files.zip', () => {
     }
     const res = await download(row.id, user)
     expect(res.statusCode).toBe(200)
+    expect(unzipped(res.rawPayload)).toEqual(bytesOf(content))
+  })
+
+  it('a parcels deployment reads its missing files and live content from the catalyst, not the Worlds server', async () => {
+    const { user, row } = await deployedOnce()
+    const catalyst = new FakeCatalystClient()
+    setCatalystClient(catalyst)
+    const content = (row.assetBundle as { content: ContentRef[] }).content
+    const sent = fake.deployed[0]
+    const parcels = ['10,20']
+    const { content: _c, ...older } = row.assetBundle as Record<string, unknown>
+    await db.update(sceneDeployments).set({ target: { parcels }, assetBundle: older }).where(eq(sceneDeployments.id, row.id))
+    await store.deletePrefix('deployed/')
+    for (const [h, b] of sent.files) catalyst.contents.set(h, b)
+    const live = { id: row.catalystEntityId!, pointers: parcels, content, metadata: { scene: { base: '10,20', parcels } } } as unknown as LiveEntity
+    catalyst.entities.set('10,20', [live])
+    // The Worlds fake holds nothing: any read there would be files_gone or world_unreachable
+    fake.down = true
+
+    const res = await download(row.id, user)
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-disposition']).toContain('genesis-city-10-20')
     expect(unzipped(res.rawPayload)).toEqual(bytesOf(content))
   })
 
