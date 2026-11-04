@@ -115,3 +115,28 @@ export function previewAt(items: ShowingItem[], secondsIn: number, name: (url: s
 }
 
 export { WEEKDAYS }
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/**
+ * Duplicate: the next screening of the same programme, starting when this one ends (on the next 5 minutes), so it
+ * never clashes with the original. Past midnight, a one-off moves to the next day and weekly days move on one.
+ */
+export function duplicateShowingForm(s: Showing): ShowingForm {
+  const form = showingToForm(s)
+  const [h, m] = s.startTime.split(':').map(Number)
+  const end = h * 60 + m + Math.ceil(programmeLength(s.items) / 60)
+  const start = Math.ceil(end / 5) * 5
+  const days = Math.floor(start / 1440)
+  const minute = start % 1440
+  form.startTime = `${pad(Math.floor(minute / 60))}:${pad(minute % 60)}`
+  if (days > 0) {
+    if (s.recurrence === 'once') {
+      const d = new Date(`${s.startDate}T00:00:00Z`)
+      d.setUTCDate(d.getUTCDate() + days)
+      form.startDate = d.toISOString().slice(0, 10)
+    }
+    if (s.recurrence === 'weekly') form.weekdays = s.weekdays.map((w) => (w + days) % 7)
+  }
+  return form
+}

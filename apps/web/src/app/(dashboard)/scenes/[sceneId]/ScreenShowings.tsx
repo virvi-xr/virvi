@@ -5,7 +5,7 @@ import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { formatRunTime, localDate, timezoneOptions, viewerTimezone } from '@/lib/preset-schedules'
 import { formatDuration } from '@/lib/format'
 import {
-  describeShowing, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
+  describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
   type Showing, type ShowingForm, type ShowingFormItem,
 } from '@/lib/showings'
 
@@ -28,6 +28,8 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
   const [showings, setShowings] = useState<Showing[] | null>(null)
   const [form, setForm] = useState<ShowingForm | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  /** The showing the open form was duplicated from, for the hint above it. */
+  const [copiedFrom, setCopiedFrom] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [unknown, setUnknown] = useState<string[]>([])
@@ -102,7 +104,8 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium text-white">{s.title || 'Untitled showing'}{s.enabled ? '' : ' (paused)'}</span>
                 <span className="flex gap-2">
-                  <button type="button" className={BTN} disabled={busy} onClick={() => { setEditingId(s.id); setForm(showingToForm(s)); setError(''); setUnknown([]) }}>Edit</button>
+                  <button type="button" className={BTN} disabled={busy} onClick={() => { setEditingId(s.id); setCopiedFrom(null); setForm(showingToForm(s)); setError(''); setUnknown([]) }}>Edit</button>
+                  <button type="button" className={BTN} disabled={busy} onClick={() => { setEditingId(null); setCopiedFrom(s.title || 'Untitled showing'); setForm(duplicateShowingForm(s)); setError(''); setUnknown([]) }}>Duplicate</button>
                   <button type="button" className={BTN} disabled={busy} onClick={() => toggle(s)}>{s.enabled ? 'Pause' : 'Resume'}</button>
                   <button type="button" className={`${BTN} text-red-400`} disabled={busy} onClick={() => remove(s)}>Delete</button>
                 </span>
@@ -117,6 +120,9 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
 
       {form ? (
         <form className="space-y-3 rounded-md border border-gray-800 bg-gray-950 p-3" onSubmit={(e) => { e.preventDefault(); void save() }}>
+          {copiedFrom && !editingId && (
+            <p className="text-xs text-gray-400">A copy of {copiedFrom}, starting when it ends. Change the time or days, then add it.</p>
+          )}
           <div className="flex flex-wrap items-center gap-3 text-sm text-gray-300">
             <label className="flex items-center gap-2">Title
               <input className={`${INPUT} w-64`} value={form.title} maxLength={200} onChange={(e) => set('title', e.target.value)} placeholder="Night of the Living Dead" />
@@ -188,7 +194,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
           </div>
         </form>
       ) : (
-        <button type="button" className={BTN} disabled={busy || showings === null} onClick={() => { setEditingId(null); setForm(blank()) }}>Add showing</button>
+        <button type="button" className={BTN} disabled={busy || showings === null} onClick={() => { setEditingId(null); setCopiedFrom(null); setForm(blank()) }}>Add showing</button>
       )}
 
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}

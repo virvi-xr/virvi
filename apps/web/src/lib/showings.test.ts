@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeShowing, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type ShowingForm } from './showings'
+import { describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
 
 const form = (extra: Partial<ShowingForm> = {}): ShowingForm => ({
   title: ' Night of the Living Dead ', description: '', posterUrl: '',
@@ -69,5 +69,32 @@ describe('showingToForm', () => {
       items: [{ url: 'https://cdn/blip.mp4', duration: 0.4, kind: 'video' }, { url: 'https://cdn/film.mp4', duration: 5400.4, kind: 'video' }] })
     expect(f.items.map((i) => i.length)).toEqual(['', '1:30:00'])
     expect(programmeProblem(f.items)).toBeNull()
+  })
+})
+
+describe('duplicateShowingForm', () => {
+  const saved = (extra: Partial<Showing> = {}): Showing => ({
+    id: 's1', elementId: 'v1', title: 'Film', description: 'd', posterUrl: null,
+    items: [{ url: 'https://cdn/reel.mp4', duration: 600, kind: 'ad' }, { url: 'https://cdn/film.mp4', duration: 5520, kind: 'video' }],
+    recurrence: 'weekly', weekdays: [5, 6], startDate: '2026-11-06', startTime: '19:00', timezone: 'America/New_York',
+    enabled: true, lengthSeconds: 6120, nextStarts: [], ...extra,
+  })
+
+  it('is the next screening: the same programme, starting when this one ends, on the next 5 minutes', () => {
+    // 19:00 + 1:42:00 = 20:42 → 20:45
+    const f = duplicateShowingForm(saved())
+    expect(f).toMatchObject({ title: 'Film', description: 'd', recurrence: 'weekly', weekdays: [5, 6], startDate: '2026-11-06', startTime: '20:45', timezone: 'America/New_York', enabled: true })
+    expect(f.items).toEqual(showingToForm(saved()).items)
+  })
+
+  it('an end on the 5 minutes starts right then', () => {
+    expect(duplicateShowingForm(saved({ startTime: '19:03' })).startTime).toBe('20:45')
+    expect(duplicateShowingForm(saved({ startTime: '19:08' })).startTime).toBe('20:50')
+  })
+
+  it('past midnight, a one-off moves to the next day and weekly days move on one', () => {
+    expect(duplicateShowingForm(saved({ recurrence: 'once', startDate: '2026-12-31', startTime: '23:00' }))).toMatchObject({ startDate: '2027-01-01', startTime: '00:45' })
+    expect(duplicateShowingForm(saved({ startTime: '23:00' }))).toMatchObject({ weekdays: [6, 0], startTime: '00:45' })
+    expect(duplicateShowingForm(saved({ recurrence: 'daily', startTime: '23:00' }))).toMatchObject({ recurrence: 'daily', startTime: '00:45' })
   })
 })
