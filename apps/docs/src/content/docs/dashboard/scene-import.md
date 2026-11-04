@@ -46,17 +46,21 @@ Aetheria parcels are managed by their deed. Sign with the deed holder's wallet. 
 After a deploy, use **Download what went live** to get the exact files that were deployed.
 
 ## Your backup without Virvi
-Use **Download backup (no Virvi)** to get your scene as a Decentraland project that runs on its own. The button sits beside **Download what went live** on the Import page and on the deploy cards. It is on every plan, and it works for imported scenes (your scene plus the baked content) and for scenes built in Virvi (the baked content alone).
+Use **Download backup (no Virvi)** to get your scene as a Decentraland project that runs on its own. The button sits beside **Download what went live** on the Import page and on the deploy cards. It is on every plan, and it works for imported scenes (your scene plus the baked content) and for scenes built in Virvi (the baked content alone). For a scene built in Virvi, a deploy card's button places the project at that card's World or parcels.
+
+**Who gets your scene's own code.** Anyone who can edit the scene can download a backup, but the scene's own code (what was imported) is only in it for the person who imported it and for full-access members. Other editors get the baked content alone, and the README says the scene's code was left out.
+
+**When Virvi no longer has your code.** If the imported scene's files have been deleted, or its import never deployed, the backup holds only the baked content, and the README opens with a warning: deploying it as it is would replace your scene's code. Copy `src/virvi-baked.ts` (and the files it uses) into your own project instead.
 
 **What is in it**
 - Only the live preset, as it is now.
 - Models, images, video screens, sounds and ad spaces. Ad spaces come as empty slots at the ad's shape (with the space's own fallback image, if it has one), never the current advertiser's creative.
-- A `README.md`, an `ATTRIBUTION.md` and a `MISSING-ASSETS.md`.
+- A `README.md` saying what was and wasn't carried over. When needed, an `ATTRIBUTION.md` (when MIT-licensed catalog items are bundled) and a `MISSING-ASSETS.md` (when some files must be added by hand).
 
 **Bundled, referenced or linked**
 - Bundled: files you uploaded and catalog items under the MIT license are in the project, and `ATTRIBUTION.md` credits each MIT pack.
-- Referenced: items under licenses that don't allow bundling (such as CC BY-NC) are not included. The project points at the local path each file would have, and `MISSING-ASSETS.md` lists where to get each one. Add the files there before you build.
-- Links: live streams stay as a link, and the README says how they behave.
+- Referenced: catalog items whose license doesn't allow bundling (such as CC BY-NC) or doesn't say (most of the catalog, including all the Decentraland Builder packs) are not included. The project points at the local path each file would have, and `MISSING-ASSETS.md` lists where to get each one. Add the files there before you build.
+- Links: live streams, files hosted outside Virvi, and Virvi-hosted files that don't exactly match one of your uploads or a library item stay as links to their address. A link on Virvi's servers stops loading if Virvi removes the file, so download it into the project and change its address if you want to keep it. A video or sound over Decentraland's 50 MB file limit is linked the same way, and the README lists it.
 
 Click events (for example a button that opens a link or plays a sound) are not baked in. A sound clip does not start by itself.
 
@@ -64,5 +68,8 @@ Click events (for example a button that opens a link or plays a sound) are not b
 
 **Deploy it yourself**
 1. Unzip the project and add any files listed in `MISSING-ASSETS.md`.
-2. Run `npm install`, then `npx @dcl/sdk-commands build`.
-3. Test with `npx @dcl/sdk-commands start`, then deploy with `npx @dcl/sdk-commands deploy` using the wallet that owns your World or parcels.
+2. If the README lists your own Virvi code (files that still import Virvi's package), remove that code before you build: the project doesn't install the package.
+3. Run `npm install`, then `npx @dcl/sdk-commands build`.
+4. Test with `npx @dcl/sdk-commands start`, then deploy with `npx @dcl/sdk-commands deploy` using the wallet that owns your World or parcels. For a World, add `--target-content https://worlds-content-server.decentraland.org`.
+
+To import the backup into Virvi again, first remove the `bakeVirviContent()` call from `main()`, or everything Virvi placed shows twice.
