@@ -1,4 +1,4 @@
-import { needsResync, screenStateAt, type ShowingInstance } from '@virvixr/shared'
+import { needsResync, screenStateAt, showingSign, type ScreenState, type ShowingInstance } from '@virvixr/shared'
 import { AD_LIMITS, VideoSourceType } from '@virvixr/shared'
 import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
@@ -6,6 +6,7 @@ import type { ListedInstance } from './transform-ops.js'
 import { AdSlot } from '../ads/slot.js'
 import type { AdHost } from '../ads/host.js'
 import { itemName } from './naming.js'
+import { add, eulerDegreesToQuat, rotateVector } from '../transform/math.js'
 
 // Internal tracking of element config
 interface VideoConfig {
@@ -50,6 +51,9 @@ interface VideoInstance {
   showingSeekAt?: number
   showingSeeks?: number
   showingDriftCheckAt?: number
+  /** Schedule mode: the countdown / now-showing text over the picture, and what it says now. */
+  showingSign?: EntityHandle
+  showingSignText?: string
 }
 
 /** A `screen_showings` message (see apps/server src/scenes/showings.ts). */
@@ -66,6 +70,8 @@ const SHOWING_DRIFT_CHECK_MS = 5_000
 const SHOWING_SETTLE_MS = 30_000
 const SHOWING_MAX_RESEEKS = 3
 const SHOWING_MIN_LEFT_S = 10
+/** The sign sits this far up from the screen's bottom edge, as a share of its height. */
+const SIGN_LIFT = 0.15
 
 export class VideoManager {
   private adapter: VirviPlatformAdapter
@@ -92,7 +98,11 @@ export class VideoManager {
     if (!config || !config.enabled || config.offType !== VideoSourceType.SCHEDULED || (config.isLive && config.enableLiveStream && config.liveSrc)) return
     for (const instance of this.instances.values()) {
       if (instance.configSk !== msg.elementId) continue
-      if (instance.showingTick && this.showingState(msg.elementId).key === instance.showingKey) continue
+      const { state, key } = this.showingState(msg.elementId)
+      if (instance.showingTick && key === instance.showingKey) {
+        this.updateSign(instance, state) // same picture, but the next showing may have changed
+        continue
+      }
       this.applyMediaState(instance, config)
     }
   }
@@ -108,6 +118,9 @@ export class VideoManager {
     if (instance.showingTick) this.adapter.unregisterSystem(instance.showingTick)
     instance.showingTick = undefined
     instance.showingKey = undefined
+    if (instance.showingSign !== undefined) this.adapter.destroyEntity(instance.showingSign)
+    instance.showingSign = undefined
+    instance.showingSignText = undefined
   }
 
   /** Schedule mode: show what's on now, then check a few times a second for the next item or showing. */
@@ -123,6 +136,7 @@ export class VideoManager {
       since = 0
       const { state, key } = this.showingState(config.sk)
       if (key !== instance.showingKey) return this.renderShowing(instance, config)
+      this.updateSign(instance, state)
       if (state.mode === 'playing') this.correctDrift(instance, config, state.item.url, state.offset, state.item.duration)
     }
     instance.showingTick = tick
@@ -147,10 +161,34 @@ export class VideoManager {
     this.adapter.createVideoPlayer(instance.entity, { src, playing: true, loop: false, volume: config.volume, position: expected })
   }
 
+  /** The bottom middle of the screen, a little up from its edge and just in front of it. */
+  private signTransform(instance: VideoInstance): TransformData {
+    const { position, rotation, scale } = instance
+    const offset = { x: 0, y: -scale.y / 2 + Math.abs(scale.y) * SIGN_LIFT, z: -0.01 }
+    return { position: add(position, rotateVector(eulerDegreesToQuat(rotation), offset)), rotation, scale: { x: 1, y: 1, z: 1 } }
+  }
+
+  /** Rewrite the sign only when its text changes (the countdown ticks once a second). */
+  private updateSign(instance: VideoInstance, state: ScreenState): void {
+    if (!this.adapter.setText) return
+    const text = showingSign(state) ?? ''
+    if (text === instance.showingSignText) return
+    if (instance.showingSign === undefined) {
+      if (!text) return
+      instance.showingSign = this.adapter.createEntity()
+      this.adapter.setTransform(instance.showingSign, this.signTransform(instance))
+    }
+    instance.showingSignText = text
+    // Readable from across a room on a 2 m screen, and in proportion on bigger or smaller ones
+    const fontSize = Math.min(5, Math.max(1, Math.abs(instance.scale.y)))
+    this.adapter.setText(instance.showingSign, text, { fontSize })
+  }
+
   private renderShowing(instance: VideoInstance, config: VideoConfig): void {
     const { state, key } = this.showingState(config.sk)
     const prev = instance.showingKey
     instance.showingKey = key
+    this.updateSign(instance, state)
     if (state.mode === 'playing') {
       instance.showingSeekAt = this.now()
       instance.showingSeeks = 0
@@ -480,6 +518,7 @@ export class VideoManager {
       instance.rotation = rotation
       instance.scale = scale
       instance.slot?.setTransform({ position, rotation, scale })
+      if (instance.showingSign !== undefined) this.adapter.setTransform(instance.showingSign, this.signTransform(instance))
     }
 
     if (instanceData.enabled !== undefined) {

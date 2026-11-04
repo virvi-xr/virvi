@@ -220,6 +220,77 @@ describe('scheduled screens', () => {
     })
   })
 
+  describe('sign', () => {
+    const withText = (localNow: number) => {
+      const t = setup(localNow)
+      t.adapter.setText = vi.fn()
+      return t
+    }
+    const lastText = (adapter: any) => adapter.setText.mock.calls.at(-1)?.[1]
+
+    it('counts down on the holding image, a second at a time, and only rewrites when the text changes', () => {
+      const { sm, adapter, tick } = withText(T0 - 754_000)
+      sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
+      sm.handleScreenShowings(message(T0 - 754_000))
+      expect(lastText(adapter)).toBe('Next: Film\nin 12:34')
+      expect(adapter.setText.mock.calls.at(-1)?.[2].fontSize).toBeGreaterThan(0)
+      tick(250)
+      tick(250)
+      expect(adapter.setText).toHaveBeenCalledTimes(1)
+      tick(500)
+      expect(lastText(adapter)).toBe('Next: Film\nin 12:33')
+    })
+
+    it('sits low in the middle of the screen, just in front, and follows the screen when it moves', () => {
+      const { sm, adapter } = withText(T0 - 60_000)
+      sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen({ instances: [{ ...inst, position: { x: 8, y: 2, z: 8 }, scale: { x: 4, y: 2, z: 1 } }] })] } })
+      sm.handleScreenShowings(message(T0 - 60_000))
+      const sign = adapter.setText.mock.calls.at(-1)[0]
+      const placed = adapter.setTransform.mock.calls.filter((c: any[]) => c[0] === sign).at(-1)[1]
+      expect(placed.position.x).toBeCloseTo(8)
+      expect(placed.position.y).toBeLessThan(2)
+      expect(placed.position.y).toBeGreaterThan(1)
+      expect(placed.position.z).toBeCloseTo(7.99)
+      sm.handlePresetUpdate({ action: 'update', element: 'video', instance: true, instanceData: { sk: 'i1', position: { x: 3, y: 2, z: 8 } } })
+      const moved = adapter.setTransform.mock.calls.filter((c: any[]) => c[0] === sign).at(-1)[1]
+      expect(moved.position.x).toBeCloseTo(3)
+    })
+
+    it('clears once the film has been named, and comes back between showings', () => {
+      const { sm, adapter, tick } = withText(T0 + 59_000)
+      sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
+      sm.handleScreenShowings(message(T0 + 59_000))
+      expect(lastText(adapter)).toBe('Film starts in 0:01')
+      tick(1_000)
+      expect(lastText(adapter)).toBe('Now showing: Film')
+      tick(15_000)
+      expect(lastText(adapter)).toBe('')
+      tick(5_400_000)
+      expect(lastText(adapter)).toBe('')
+    })
+
+    it('goes when the screen leaves Schedule mode or is removed', () => {
+      const { sm, adapter } = withText(T0 - 60_000)
+      sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
+      sm.handleScreenShowings(message(T0 - 60_000))
+      const sign = adapter.setText.mock.calls.at(-1)[0]
+      sm.handlePresetUpdate({ action: 'upsert', element: 'video', elementData: screen({ offType: VideoSourceType.IMAGE }) })
+      expect(adapter.destroyEntity).toHaveBeenCalledWith(sign)
+      sm.handlePresetUpdate({ action: 'upsert', element: 'video', elementData: screen() })
+      const again = adapter.setText.mock.calls.at(-1)[0]
+      sm.handlePresetUpdate({ action: 'delete', element: 'video', id: 'v1' })
+      expect(adapter.destroyEntity).toHaveBeenCalledWith(again)
+    })
+
+    it('platforms without text just show the picture', () => {
+      const { sm, adapter, tick } = setup(T0 - 60_000)
+      sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
+      sm.handleScreenShowings(message(T0 - 60_000))
+      tick(1_000)
+      expect(adapter.createEntity).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it('other modes ignore showings', () => {
     const { sm, adapter } = setup(T0 + 100_000)
     sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen({ offType: VideoSourceType.IMAGE })] } })

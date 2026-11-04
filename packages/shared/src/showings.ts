@@ -108,3 +108,40 @@ export const SHOWING_DRIFT_TOLERANCE_S = 2
 export function needsResync(expected: number, actual: number, toleranceS = SHOWING_DRIFT_TOLERANCE_S): boolean {
   return Math.abs(expected - actual) > toleranceS
 }
+
+/** Seconds the film's name stays up once the feature starts. */
+export const NOW_SHOWING_S = 15
+
+const until = (seconds: number): string => {
+  const s = Math.max(0, Math.ceil(seconds))
+  if (s < 3600) return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  if (s < 86_400) {
+    const m = Math.ceil(s / 60)
+    return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`
+  }
+  const d = Math.floor(s / 86_400)
+  return `${d} ${d === 1 ? 'day' : 'days'}`
+}
+
+/**
+ * The line a scheduled screen shows over its picture, or null for none: a countdown on the holding image, a countdown
+ * to the feature during the ads before it, and the film's name for its first seconds. Nothing over the film after that.
+ */
+export function showingSign(state: ScreenState): string | null {
+  if (state.mode === 'between') {
+    if (!state.next || state.startsIn === null) return null
+    const title = state.next.title?.trim()
+    return `${title ? `Next: ${title}` : 'Next showing'}\nin ${until(state.startsIn)}`
+  }
+  const items = state.showing.items
+  const feature = items.findIndex((i) => i.kind !== 'ad' && playable(i.duration))
+  if (feature < 0) return null
+  const title = state.showing.title?.trim()
+  if (state.index < feature) {
+    let left = state.item.duration - state.offset
+    for (let i = state.index + 1; i < feature; i++) if (playable(items[i].duration)) left += items[i].duration
+    return `${title || 'The film'} starts in ${until(left)}`
+  }
+  if (state.index === feature && title && state.offset < NOW_SHOWING_S) return `Now showing: ${title}`
+  return null
+}

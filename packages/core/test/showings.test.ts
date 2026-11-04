@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  programmeLength, positionAt, screenStateAt, findShowingOverlaps, serverNow, needsResync,
+  programmeLength, positionAt, screenStateAt, findShowingOverlaps, serverNow, needsResync, showingSign,
   type ProgrammeItem, type ShowingInstance,
 } from '@virvixr/shared'
 
@@ -106,5 +106,52 @@ describe('server clock', () => {
     expect(needsResync(100, 101.5)).toBe(false)
     expect(needsResync(100, 97.9)).toBe(true)
     expect(needsResync(100, 102.5, 3)).toBe(false)
+  })
+})
+
+describe('showingSign', () => {
+  const T = Date.UTC(2026, 10, 6, 20, 0)
+  const film = (extra: Partial<ShowingInstance> = {}): ShowingInstance => ({
+    showingId: 's', startsAt: T, title: 'Film',
+    items: [{ url: 'a', duration: 60, kind: 'ad' }, { url: 'b', duration: 30, kind: 'ad' }, { url: 'f', duration: 5400 }],
+    ...extra,
+  })
+  const at = (s: ShowingInstance[], ms: number) => showingSign(screenStateAt(s, ms))
+
+  it('counts down to the next showing in minutes and seconds within the hour', () => {
+    expect(at([film()], T - 754_000)).toBe('Next: Film\nin 12:34')
+    expect(at([film()], T - 500)).toBe('Next: Film\nin 0:01')
+  })
+
+  it('in hours and minutes within the day, and days beyond', () => {
+    expect(at([film()], T - (3 * 3600 + 5 * 60) * 1000)).toBe('Next: Film\nin 3 h 05 min')
+    expect(at([film()], T - 30 * 3600 * 1000)).toBe('Next: Film\nin 1 day')
+    expect(at([film()], T - 50 * 3600 * 1000)).toBe('Next: Film\nin 2 days')
+  })
+
+  it('an untitled showing is "Next showing"', () => {
+    expect(at([film({ title: undefined })], T - 60_000)).toBe('Next showing\nin 1:00')
+    expect(at([film({ title: '  ' })], T - 60_000)).toBe('Next showing\nin 1:00')
+  })
+
+  it('nothing scheduled: no sign', () => {
+    expect(at([], T)).toBeNull()
+  })
+
+  it('during the ads before the feature, counts down to the feature', () => {
+    expect(at([film()], T + 10_000)).toBe('Film starts in 1:20')
+    expect(at([film()], T + 75_000)).toBe('Film starts in 0:15')
+    expect(at([film({ title: undefined })], T + 75_000)).toBe('The film starts in 0:15')
+  })
+
+  it('names the film for its first 15 seconds, then leaves the picture clear', () => {
+    expect(at([film()], T + 90_000)).toBe('Now showing: Film')
+    expect(at([film()], T + 104_000)).toBe('Now showing: Film')
+    expect(at([film()], T + 105_000)).toBeNull()
+    expect(at([film({ title: undefined })], T + 91_000)).toBeNull()
+  })
+
+  it('a programme of only ads shows no countdown to a feature', () => {
+    expect(at([film({ items: [{ url: 'a', duration: 60, kind: 'ad' }] })], T + 10_000)).toBeNull()
   })
 })
