@@ -6,7 +6,7 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess } from '../auth/permissions.js'
 import { canManagePresets } from '../scenes/presets.js'
-import { describeSchedule, findClash, listSchedules, nextRunsOf, parseScheduleInput, ScheduleError, specOf, type ScheduleInput } from '../scenes/preset-schedules.js'
+import { describeSchedule, findClash, listSchedules, nextRunsOf, parseScheduleInput, ScheduleError, specOf, withEventTimes, type ScheduleInput } from '../scenes/preset-schedules.js'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -48,7 +48,10 @@ export default async function presetScheduleRoutes(app: FastifyInstance) {
     if (!UUID_RE.test(sceneId) || !(await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true } }))) return reply.status(404).send({ error: 'Scene not found' })
     if (!(await allowed(request, sceneId))) return reply.status(403).send({ error: 'Forbidden' })
     try {
-      const input = parseScheduleInput((request.body ?? {}) as Record<string, unknown>)
+      const body = (request.body ?? {}) as Record<string, unknown>
+      // A schedule for an event takes its times from the event, so its own time fields may be left out
+      const placeholder = typeof body.eventId === 'string' ? { recurrence: 'once', startDate: '2000-01-01', startTime: '00:00', timezone: 'UTC', ...body } : body
+      const input = await withEventTimes(sceneId, parseScheduleInput(placeholder))
       await check(sceneId, input)
       const [row] = await db.insert(scenePresetSchedules).values({ sceneId, ...input, createdBy: request.user.id }).returning()
       return reply.status(201).send({ schedule: { ...row, nextRuns: nextRunsOf(row, new Date()) } })
@@ -74,7 +77,7 @@ export default async function presetScheduleRoutes(app: FastifyInstance) {
     const row = await ownSchedule(request, reply)
     if (!row) return reply
     try {
-      const input = parseScheduleInput((request.body ?? {}) as Record<string, unknown>, row as unknown as ScheduleInput)
+      const input = await withEventTimes(row.sceneId, parseScheduleInput((request.body ?? {}) as Record<string, unknown>, row as unknown as ScheduleInput))
       await check(row.sceneId, input, row.id)
       const [updated] = await db.update(scenePresetSchedules).set({ ...input, updatedAt: new Date() }).where(eq(scenePresetSchedules.id, row.id)).returning()
       if (!input.enabled && row.enabled) await endOpenRuns(row.id, 'paused')

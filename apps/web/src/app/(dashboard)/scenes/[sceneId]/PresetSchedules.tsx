@@ -104,8 +104,9 @@ export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: 
                     <span className="text-sm font-medium text-white">{name(s.presetId)}</span>
                     <span className="text-sm text-gray-400">{describeSchedule(s)}</span>
                     {!s.enabled && <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-gray-400">Paused</span>}
+                    {s.eventId && <span className="rounded bg-blue-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-blue-300" title="Change the times on the event's page">Follows its event</span>}
                     <span className="ml-auto flex gap-2">
-                      <button type="button" className={BTN} disabled={busy} onClick={() => edit(s)}>Edit</button>
+                      {!s.eventId && <button type="button" className={BTN} disabled={busy} onClick={() => edit(s)}>Edit</button>}
                       <button type="button" className={BTN} disabled={busy} onClick={() => run(async () => { await api.updatePresetSchedule(s.id, { enabled: !s.enabled }); load() })}>{s.enabled ? 'Pause' : 'Resume'}</button>
                       <button type="button" className={`${BTN} hover:border-red-500 hover:text-red-300`} disabled={busy} onClick={() => run(async () => { await api.deletePresetSchedule(s.id); load() })}>Delete</button>
                     </span>

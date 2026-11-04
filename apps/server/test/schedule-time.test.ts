@@ -75,3 +75,12 @@ describe('latestStart', () => {
     expect(latestStart(s, new Date('2027-01-01T00:00:00Z'))!.end).toBeNull()
   })
 })
+
+describe('nextStarts for a one-off far ahead', () => {
+  it('finds a one-off more than a month away', async () => {
+    const { nextStarts } = await import('../src/scenes/schedule-time.js')
+    const spec = { recurrence: 'once' as const, startDate: '2030-07-05', startTime: '20:00', weekdays: [], durationMinutes: 60, timezone: 'UTC' }
+    expect(nextStarts(spec, new Date('2026-01-01T00:00:00Z'), 5).map((d) => d.toISOString())).toEqual(['2030-07-05T20:00:00.000Z'])
+    expect(nextStarts(spec, new Date('2030-07-06T00:00:00Z'), 5)).toEqual([])
+  })
+})

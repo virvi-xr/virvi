@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { events, eventSceneLinks, eventGiveawayLinks, giveaways } from '../db/schema.js'
+import { events, eventSceneLinks, eventGiveawayLinks, giveaways, scenePresets } from '../db/schema.js'
+import { dropEventSchedules, eventPresetSchedules, syncEventSchedules } from '../scenes/preset-schedules.js'
 import { authenticate } from '../middleware/auth.js'
 import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
 import { actorFromClaims } from '../auth/actor.js'
@@ -84,7 +85,12 @@ export default async function eventRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
-      return reply.send({ event })
+      // Scheduled presets that follow this event, and the presets of its scenes to pick from (LIV-86)
+      const sceneIds = event.sceneLinks.map((l) => l.sceneId)
+      const scenePresetRows = sceneIds.length
+        ? await db.select({ id: scenePresets.id, sceneId: scenePresets.sceneId, name: scenePresets.name }).from(scenePresets).where(inArray(scenePresets.sceneId, sceneIds))
+        : []
+      return reply.send({ event, presetSchedules: await eventPresetSchedules(eventId), scenePresets: scenePresetRows })
     },
   )
 
@@ -110,6 +116,7 @@ export default async function eventRoutes(app: FastifyInstance) {
       if (timezone !== undefined) updates.timezone = timezone
 
       const [updated] = await db.update(events).set(updates).where(eq(events.id, eventId)).returning()
+      if (startTime !== undefined || endTime !== undefined || timezone !== undefined) await syncEventSchedules(eventId)
       return reply.send({ event: updated })
     },
   )
@@ -221,6 +228,7 @@ export default async function eventRoutes(app: FastifyInstance) {
             eq(eventSceneLinks.sceneId, sceneId),
           ),
         )
+      if (isUuid(sceneId)) await dropEventSchedules(eventId, sceneId)
 
       return reply.status(204).send()
     },

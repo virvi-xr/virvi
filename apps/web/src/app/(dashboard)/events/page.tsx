@@ -1,4 +1,6 @@
 'use client'
+import { eventPresetLabel, eventPresetsFor, type EventPresetSchedule, type ScenePresetOption } from '@/lib/event-presets'
+import { presetDisplayName } from '@/lib/presets'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -258,6 +260,8 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
   const api = useApi()
 
   const [event, setEvent] = useState<any>(null)
+
+  const [eventPresets, setEventPresets] = useState<{ eventId: string; schedules: EventPresetSchedule[]; presets: ScenePresetOption[] }>({ eventId, schedules: [], presets: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -292,8 +296,9 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
   async function loadEvent() {
     setLoading(true)
     try {
-      const { event: ev } = await api.getEvent(eventId)
+      const { event: ev, presetSchedules, scenePresets } = await api.getEvent(eventId)
       setEvent(ev)
+      setEventPresets({ eventId, schedules: presetSchedules ?? [], presets: scenePresets ?? [] })
       setEditName(ev.name)
       setEditDesc(ev.description || '')
       setEditStart(ev.startTime ? toLocalInput(ev.startTime) : '')
@@ -468,14 +473,17 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
         ) : (
           <ul className="space-y-2 mb-4">
             {(event.sceneLinks || []).map((link: any) => (
-              <li key={link.sceneId} className="flex items-center justify-between rounded-md bg-gray-800 px-3 py-2">
-                <span className="text-sm">{link.scene?.name || link.sceneId}</span>
-                <button
-                  onClick={() => handleUnlinkScene(link.sceneId)}
-                  className="text-xs text-red-400 hover:text-red-300"
-                >
-                  Unlink
-                </button>
+              <li key={link.sceneId} className="rounded-md bg-gray-800 px-3 py-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">{link.scene?.name || link.sceneId}</span>
+                  <button
+                    onClick={() => handleUnlinkScene(link.sceneId)}
+                    className="text-xs text-red-400 hover:text-red-300"
+                  >
+                    Unlink
+                  </button>
+                </div>
+                <EventPresets sceneId={link.sceneId} data={eventPresets} onChanged={loadEvent} />
               </li>
             ))}
           </ul>
@@ -583,6 +591,42 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/** Presets that go live during this event in one linked scene (LIV-86); they follow the event's times. */
+function EventPresets({ sceneId, data, onChanged }: { sceneId: string; data: { eventId: string; schedules: EventPresetSchedule[]; presets: ScenePresetOption[] }; onChanged: () => void }) {
+  const api = useApi()
+  const { scheduled, choices } = eventPresetsFor(sceneId, data.schedules, data.presets)
+  const [pick, setPick] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const run = async (work: () => Promise<unknown>) => {
+    setBusy(true)
+    setError('')
+    try { await work(); setPick(''); onChanged() } catch (e: any) { setError(e?.body?.message || e?.message || 'Something went wrong') } finally { setBusy(false) }
+  }
+  if (scheduled.length === 0 && choices.length === 0) return null
+  return (
+    <div className="mt-2 space-y-1 border-t border-gray-700 pt-2 text-xs text-gray-300">
+      {scheduled.map((s) => (
+        <div key={s.id} className="flex items-center justify-between">
+          <span>Live during this event: {eventPresetLabel(s, presetDisplayName)}</span>
+          <button type="button" disabled={busy} className="text-gray-400 hover:text-red-300" onClick={() => run(() => api.deletePresetSchedule(s.id))}>Remove</button>
+        </div>
+      ))}
+      {choices.length > 0 && (
+        <div className="flex items-center gap-2">
+          <select aria-label="Preset to use during this event" value={pick} onChange={(e) => setPick(e.target.value)} className="rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-xs text-white">
+            <option value="">Use a preset during this event…</option>
+            {choices.map((p) => <option key={p.id} value={p.id}>{presetDisplayName(p.name)}</option>)}
+          </select>
+          <button type="button" disabled={!pick || busy} className="rounded-md border border-gray-700 px-2 py-1 hover:border-gray-500 disabled:opacity-50"
+            onClick={() => run(() => api.createPresetSchedule(sceneId, { presetId: pick, eventId: data.eventId }))}>Add</button>
+        </div>
+      )}
+      {error && <p role="alert" className="text-red-400">{error}</p>}
     </div>
   )
 }

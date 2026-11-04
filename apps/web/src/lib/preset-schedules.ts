@@ -13,6 +13,8 @@ export interface PresetSchedule {
   timezone: string
   returnToPresetId: string | null
   enabled: boolean
+  /** Set: the times follow this event (change them on the event's page). */
+  eventId?: string | null
   nextRuns: string[]
 }
 

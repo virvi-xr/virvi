@@ -1844,11 +1844,14 @@ export const scenePresetSchedules = pgTable('scene_preset_schedules', {
   /** Where the scene goes when a run ends; null = the preset that was live before it started. */
   returnToPresetId: uuid('return_to_preset_id').references(() => scenePresets.id, { onDelete: 'set null' }),
   enabled: boolean('enabled').notNull().default(true),
+  /** Set: the schedule follows this event's start and end (and goes when the event is unlinked from the scene). */
+  eventId: uuid('event_id').references(() => events.id, { onDelete: 'cascade' }),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   sceneIdx: index('scene_preset_schedules_scene_idx').on(t.sceneId),
+  eventIdx: index('scene_preset_schedules_event_idx').on(t.eventId),
 }))
 
 export const scenePresetScheduleRuns = pgTable('scene_preset_schedule_runs', {

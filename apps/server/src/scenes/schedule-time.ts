@@ -65,6 +65,12 @@ export function zonedToUtc(date: string, time: string, tz: string): Date {
 
 const ymd = (ms: number) => new Date(ms).toISOString().slice(0, 10)
 
+/** An instant as a local date (YYYY-MM-DD) and time (HH:MM) in `tz`. */
+export function utcToZoned(instant: Date, tz: string): { date: string; time: string } {
+  const local = new Date(instant.getTime() + offsetAt(instant.getTime(), tz)).toISOString()
+  return { date: local.slice(0, 10), time: local.slice(11, 16) }
+}
+
 /** The local calendar date of an instant in `tz`. */
 function localDate(instant: Date, tz: string): string {
   return ymd(instant.getTime() + offsetAt(instant.getTime(), tz))
@@ -115,13 +121,17 @@ export function latestStart(spec: ScheduleSpec, at: Date): Occurrence | null {
 
 /** The next `n` occurrence starts after `after`. */
 export function nextStarts(spec: ScheduleSpec, after: Date, n: number): Date[] {
+  if (spec.recurrence === 'once') {
+    // However far ahead it is
+    const o = occurrenceOn(spec, spec.startDate)
+    return n > 0 && o.start > after ? [o.start] : []
+  }
   const out: Date[] = []
   let from = new Date(after.getTime() + 1)
   // Look ahead in 31-day windows; a once-schedule or sparse weekly needs at most a few
   for (let i = 0; i < 60 && out.length < n; i++) {
     const to = new Date(from.getTime() + 31 * DAY)
     for (const o of occurrencesBetween(spec, from, to)) if (out.length < n) out.push(o.start)
-    if (spec.recurrence === 'once') break
     from = new Date(to.getTime() + 1)
   }
   return out

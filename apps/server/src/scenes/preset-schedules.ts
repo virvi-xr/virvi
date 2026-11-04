@@ -1,8 +1,8 @@
 import { and, desc, eq, inArray, ne, or } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { bookings, scenePresets, scenePresetScheduleRuns, scenePresetSchedules, scenes, venues } from '../db/schema.js'
+import { bookings, eventSceneLinks, events, scenePresets, scenePresetScheduleRuns, scenePresetSchedules, scenes, venues } from '../db/schema.js'
 import { publishVenueEvent } from '../realtime/bus.js'
-import { isTimeZone, latestStart, nextStarts, occurrencesBetween, type Occurrence, type ScheduleSpec } from './schedule-time.js'
+import { isTimeZone, latestStart, utcToZoned, nextStarts, occurrencesBetween, type Occurrence, type ScheduleSpec } from './schedule-time.js'
 
 /**
  * Scheduled presets (LIV-86): a scene's live preset switches on its own at set times. The sweep follows the venue
@@ -39,6 +39,8 @@ export interface ScheduleInput {
   timezone: string
   returnToPresetId: string | null
   enabled: boolean
+  /** Set: the times come from this event (see eventTimes) and follow it when it's edited. */
+  eventId: string | null
 }
 
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
@@ -72,7 +74,69 @@ export function parseScheduleInput(body: Record<string, unknown>, base?: Schedul
   if (returnTo !== null && (typeof returnTo !== 'string' || !UUID_RE.test(returnTo))) throw bad('Choose a preset to return to.')
   const enabled = pick('enabled') ?? true
   if (typeof enabled !== 'boolean') throw bad('enabled must be true or false.')
-  return { presetId, recurrence, startDate, startTime, weekdays, durationMinutes: duration as number | null, timezone, returnToPresetId: returnTo as string | null, enabled }
+  const eventId = pick('eventId') ?? null
+  if (eventId !== null && (typeof eventId !== 'string' || !UUID_RE.test(eventId))) throw bad('Choose an event.')
+  return { presetId, recurrence, startDate, startTime, weekdays, durationMinutes: duration as number | null, timezone, returnToPresetId: returnTo as string | null, enabled, eventId: eventId as string | null }
+}
+
+// ── Schedules that follow an event ──────────────────────────────────────────
+
+type EventTimes = Pick<typeof events.$inferSelect, 'startTime' | 'endTime' | 'timezone'>
+type TimeFields = Pick<ScheduleInput, 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'durationMinutes' | 'timezone'>
+
+/** A one-off run over the event's start and end, in the event's timezone; null when the event can't be one. */
+export function eventTimes(e: EventTimes): TimeFields | null {
+  if (!e.startTime || !e.endTime || e.endTime <= e.startTime) return null
+  const minutes = Math.round((e.endTime.getTime() - e.startTime.getTime()) / 60_000)
+  if (minutes < 1 || minutes > MAX_DURATION_MINUTES) return null
+  const tz = e.timezone && isTimeZone(e.timezone) ? e.timezone : 'UTC'
+  const { date, time } = utcToZoned(e.startTime, tz)
+  return { recurrence: 'once', startDate: date, startTime: time, weekdays: [], durationMinutes: minutes, timezone: tz }
+}
+
+/** The input with its times taken from its event, which must be linked to the scene. Throws ScheduleError(400). */
+export async function withEventTimes(sceneId: string, input: ScheduleInput): Promise<ScheduleInput> {
+  if (!input.eventId) return input
+  const [link] = await db.select({ e: events }).from(eventSceneLinks).innerJoin(events, eq(eventSceneLinks.eventId, events.id))
+    .where(and(eq(eventSceneLinks.sceneId, sceneId), eq(eventSceneLinks.eventId, input.eventId)))
+  if (!link) throw new ScheduleError(400, 'bad_schedule', 'Link the event to this scene first.')
+  const times = eventTimes(link.e)
+  if (!times) throw new ScheduleError(400, 'bad_schedule', 'The event needs a start and an end time.')
+  return { ...input, ...times }
+}
+
+/**
+ * After an event's times change: every schedule following it moves with it. One whose event no longer has usable
+ * times is paused (and resumes when they come back). Clashes aren't re-checked: the event's time is the host's choice.
+ */
+export async function syncEventSchedules(eventId: string): Promise<void> {
+  const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
+  if (!event) return
+  const times = eventTimes(event)
+  const rows = await db.select().from(scenePresetSchedules).where(eq(scenePresetSchedules.eventId, eventId))
+  for (const s of rows) {
+    const set = times ? { ...times, enabled: true, updatedAt: new Date() } : { enabled: false, updatedAt: new Date() }
+    await db.update(scenePresetSchedules).set(set).where(eq(scenePresetSchedules.id, s.id))
+    if (!times || s.startDate !== times.startDate || s.startTime !== times.startTime || s.durationMinutes !== times.durationMinutes || s.timezone !== times.timezone) {
+      // The old window is gone: end a run in progress (the live preset stays as it is; the sweep starts the new one)
+      await db.update(scenePresetScheduleRuns).set({ status: 'ended', endedAt: new Date(), outcome: 'event times changed' })
+        .where(and(eq(scenePresetScheduleRuns.scheduleId, s.id), inArray(scenePresetScheduleRuns.status, ['active', 'held'])))
+    }
+  }
+}
+
+/** Unlinking a scene from an event removes the schedules that only existed for that event there. */
+export async function dropEventSchedules(eventId: string, sceneId: string): Promise<void> {
+  await db.delete(scenePresetSchedules).where(and(eq(scenePresetSchedules.eventId, eventId), eq(scenePresetSchedules.sceneId, sceneId)))
+}
+
+/** The schedules following an event, with their preset names, for the event page. */
+export async function eventPresetSchedules(eventId: string) {
+  return db.select({
+    id: scenePresetSchedules.id, sceneId: scenePresetSchedules.sceneId, presetId: scenePresetSchedules.presetId,
+    presetName: scenePresets.name, enabled: scenePresetSchedules.enabled,
+  }).from(scenePresetSchedules).innerJoin(scenePresets, eq(scenePresetSchedules.presetId, scenePresets.id))
+    .where(eq(scenePresetSchedules.eventId, eventId)).orderBy(scenePresetSchedules.createdAt)
 }
 
 function overlaps(a: Occurrence, b: Occurrence): boolean {
