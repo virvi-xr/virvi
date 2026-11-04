@@ -646,6 +646,8 @@ async function refundReport(
   }
   const now = review?.at ?? new Date()
   await db.transaction(async (tx) => {
+    // The payment before the report, in the order a grant or a merge locks them
+    await tx.select({ id: studioPayments.id }).from(studioPayments).where(eq(studioPayments.id, pay.id)).for('update')
     const [marked] = await tx.update(studioMistakeReports)
       .set({
         status: 'refunded', stripeRefundId: refundId, creditedCents, manaCents: split.manaCents,

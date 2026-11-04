@@ -14,12 +14,17 @@ import type { Exec } from './quota.js'
 export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: string, now: Date): Promise<void> {
   if (fromUserId === toUserId) return
 
-  // Locks come in the order checkout and grant take them: the design, then the free-finalize credits, then the credit
-  // rows last. Within a kind, rows are locked in user-id order so two merges can't wait on each other either.
+  // Locks come in the one order every studio path takes them: payment, design, free-finalize credits, mistake report,
+  // credit row (a grant, reopen or expiry locks its payment and then its design; a refund its payment and then its
+  // report). Within a kind, rows are locked in id order so two merges can't wait on each other either.
+  await tx.select({ id: studioPayments.id }).from(studioPayments).where(eq(studioPayments.userId, fromUserId))
+    .orderBy(studioPayments.id).for('update')
   await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.ownerId, fromUserId))
     .orderBy(studioDesigns.id).for('update')
   await tx.select({ userId: studioFinalizeCredits.userId }).from(studioFinalizeCredits)
     .where(inArray(studioFinalizeCredits.userId, [fromUserId, toUserId])).orderBy(studioFinalizeCredits.userId).for('update')
+  await tx.select({ id: studioMistakeReports.id }).from(studioMistakeReports).where(eq(studioMistakeReports.userId, fromUserId))
+    .orderBy(studioMistakeReports.id).for('update')
 
   // Records
   await tx.update(studioDesigns).set({ ownerId: toUserId }).where(eq(studioDesigns.ownerId, fromUserId))

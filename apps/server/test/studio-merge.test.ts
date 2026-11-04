@@ -163,12 +163,43 @@ describe('studio data follows a wallet linked to an existing account', () => {
       await tx.select().from(studioCredits).where(eq(studioCredits.userId, e.id)).for('update')
     })
     await isLocked
-    const merge = linkVerifiedWallet(e.id, w)
+    let done = false
+    const merge = linkVerifiedWallet(e.id, w).then((r) => { done = true; return r })
     await new Promise((r) => setTimeout(r, 300))
+    expect(done).toBe(false) // it really waited for the checkout
     release()
     await checkout
     expect(await merge).toBe('linked')
     expect((await db.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, e.id)))[0].balance).toBe(3)
     expect(await creditBalance(e.id)).toBe(600)
   })
+
+  it('waits behind a grant holding a source payment row, then its design (payment before design: no deadlock)', async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    const d = await createDesign(shell)
+    const { payment } = await entitle(d, await addRevision(d, 'hat'))
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let locked!: () => void
+    const isLocked = new Promise<void>((r) => { locked = r })
+    // A grant: the payment row first, then (after the merge starts) the design
+    const grant = db.transaction(async (tx) => {
+      await tx.select().from(studioPayments).where(eq(studioPayments.id, payment.id)).for('update')
+      locked()
+      await held
+      await tx.select().from(studioDesigns).where(eq(studioDesigns.id, d.id)).for('update')
+    })
+    await isLocked
+    let done = false
+    const merge = linkVerifiedWallet(e.id, w).then((r) => { done = true; return r })
+    await new Promise((r) => setTimeout(r, 300))
+    // The merge waits for the payment row before it locks the design
+    expect(done).toBe(false)
+    release()
+    await grant
+    expect(await merge).toBe('linked')
+    expect((await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id)))[0].ownerId).toBe(e.id)
+  })
 })
+

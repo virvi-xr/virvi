@@ -258,4 +258,27 @@ describe('mistake refunds by how each line was paid', () => {
     const [row] = await db.select().from(studioMistakeReports)
     expect(row).toMatchObject({ status: 'refunded', creditedCents: 500, stripeRefundId: stripe.made[0].id })
   })
+
+  it('a refund locks the payment before the report, as a grant or merge does (no deadlock)', async () => {
+    const u = await createUser()
+    const { d, payment } = await revised(u, { amountCents: 1500, creditCents: 500, method: 'card' })
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let locked!: () => void
+    const isLocked = new Promise<void>((r) => { locked = r })
+    // Something holding the payment row that then touches the report (a merge moving both)
+    const holder = db.transaction(async (tx) => {
+      await tx.select().from(studioPayments).where(eq(studioPayments.id, payment.id)).for('update')
+      locked()
+      await held
+      await tx.update(studioMistakeReports).set({ userId: u.id }).where(eq(studioMistakeReports.userId, u.id))
+    })
+    await isLocked
+    const res = report(u, d.id)
+    await new Promise((r) => setTimeout(r, 300))
+    release()
+    await holder
+    expect((await res).json()).toMatchObject({ status: 'refunded', creditedCents: 500 })
+  })
 })
+
