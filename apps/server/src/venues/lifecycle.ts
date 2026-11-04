@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { bookings, scenes, venues } from '../db/schema.js'
 import { publishVenueEvent, type VenueEvent } from '../realtime/bus.js'
+import { runPresetScheduleSweep } from '../scenes/preset-schedules.js'
 
 // Must match liveWindowStart / liveWindowEnd in src/auth/permissions.ts.
 const setupLead = sql`make_interval(mins => (${venues.rules}->>'setupLeadMinutes')::int)`
@@ -110,6 +111,12 @@ export function startLifecycleSweep(intervalMs: number): () => void {
       await runLifecycleSweep()
     } catch (err) {
       console.error('[virvi-server] Lifecycle sweep failed:', err)
+    }
+    // Scheduled presets run after bookings, so a booking that just ended has handed the scene back first
+    try {
+      await runPresetScheduleSweep()
+    } catch (err) {
+      console.error('[virvi-server] Preset schedule sweep failed:', err)
     } finally {
       running = false
     }

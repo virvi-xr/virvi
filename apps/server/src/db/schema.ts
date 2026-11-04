@@ -1818,3 +1818,48 @@ export const instanceBranding = pgTable('instance_branding', {
   updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+// ── Scheduled presets (LIV-86) ───────────────────────────────────────────────
+// A wall-clock schedule ("Concert, Fridays 20:00 for 3 hours, Europe/London"); its instants are worked out per
+// occurrence in src/scenes/schedule-time.ts. Each occurrence the sweep acts on is a run, unique per start.
+
+export const scenePresetSchedules = pgTable('scene_preset_schedules', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+  presetId: uuid('preset_id').notNull().references(() => scenePresets.id, { onDelete: 'cascade' }),
+  recurrence: text('recurrence').$type<'once' | 'daily' | 'weekly'>().notNull(),
+  startDate: text('start_date').notNull(), // YYYY-MM-DD, local
+  startTime: text('start_time').notNull(), // HH:MM, local
+  weekdays: integer('weekdays').array().notNull().default(sql`'{}'::integer[]`), // weekly: 0 = Sunday
+  durationMinutes: integer('duration_minutes'), // null: live until the next schedule or a manual switch
+  timezone: text('timezone').notNull(),
+  /** Where the scene goes when a run ends; null = the preset that was live before it started. */
+  returnToPresetId: uuid('return_to_preset_id').references(() => scenePresets.id, { onDelete: 'set null' }),
+  enabled: boolean('enabled').notNull().default(true),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  sceneIdx: index('scene_preset_schedules_scene_idx').on(t.sceneId),
+}))
+
+export const scenePresetScheduleRuns = pgTable('scene_preset_schedule_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  scheduleId: uuid('schedule_id').notNull().references(() => scenePresetSchedules.id, { onDelete: 'cascade' }),
+  sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+  occurrenceStart: timestamp('occurrence_start', { withTimezone: true }).notNull(),
+  occurrenceEnd: timestamp('occurrence_end', { withTimezone: true }),
+  /**
+   * active: its preset is live. held: a venue booking is live, so it waits. ended: finished (outcome says how).
+   * overridden: someone switched the preset by hand. skipped: the window passed while nothing could apply it.
+   */
+  status: text('status').$type<'active' | 'held' | 'ended' | 'overridden' | 'skipped'>().notNull(),
+  previousPresetId: uuid('previous_preset_id').references(() => scenePresets.id, { onDelete: 'set null' }),
+  outcome: text('outcome'),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  oncePerOccurrence: uniqueIndex('scene_preset_schedule_runs_once_uq').on(t.scheduleId, t.occurrenceStart),
+  sceneStatusIdx: index('scene_preset_schedule_runs_scene_status_idx').on(t.sceneId, t.status),
+}))

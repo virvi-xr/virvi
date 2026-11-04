@@ -334,6 +334,14 @@ export function useApi() {
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
+    /** Scheduled presets (LIV-86). */
+    getPresetSchedules: (sceneId: string) =>
+      apiFetch<{ schedules: import('./preset-schedules').PresetSchedule[]; runs: import('./preset-schedules').ScheduleRun[] }>(`/api/scenes/${sceneId}/preset-schedules`),
+    createPresetSchedule: (sceneId: string, body: Record<string, unknown>) =>
+      apiFetch<{ schedule: import('./preset-schedules').PresetSchedule }>(`/api/scenes/${sceneId}/preset-schedules`, { method: 'POST', body: JSON.stringify(body) }),
+    updatePresetSchedule: (scheduleId: string, body: Record<string, unknown>) =>
+      apiFetch<{ schedule: import('./preset-schedules').PresetSchedule }>(`/api/preset-schedules/${scheduleId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    deletePresetSchedule: (scheduleId: string) => apiFetch<void>(`/api/preset-schedules/${scheduleId}`, { method: 'DELETE' }),
     /** Scene presets (LIV-84): blank, or a copy of `fromPresetId`. */
     createPreset: (sceneId: string, body: { name: string; fromPresetId?: string }) =>
       apiFetch<{ preset: { id: string; name: string } }>(`/api/scenes/${sceneId}/presets`, { method: 'POST', body: JSON.stringify(body) }),

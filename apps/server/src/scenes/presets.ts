@@ -3,6 +3,7 @@ import { db } from '../db/connection.js'
 import { bookings, scenePresets, scenes, venues } from '../db/schema.js'
 import { hasScope, type SceneAccess } from '../auth/permissions.js'
 import { clonePreset } from '../venues/service.js'
+import { describeSchedule, schedulesUsingPreset, specOf } from './preset-schedules.js'
 import { publishScenePresetsChanged, publishVenueEvent } from '../realtime/bus.js'
 
 export const PRESET_NAME_MAX = 60
@@ -42,7 +43,7 @@ export async function renamePreset(preset: typeof scenePresets.$inferSelect, nam
   return summary(updated)
 }
 
-export type DeleteRefusal = { error: 'preset_live' | 'preset_only' | 'preset_venue_default' | 'preset_booking'; message: string }
+export type DeleteRefusal = { error: 'preset_live' | 'preset_only' | 'preset_venue_default' | 'preset_booking' | 'preset_scheduled'; message: string }
 
 /** Why a preset can't be deleted, or null when it can. Ended and canceled bookings don't hold their preset. */
 export async function deleteRefusal(preset: typeof scenePresets.$inferSelect, now = new Date()): Promise<DeleteRefusal | null> {
@@ -64,6 +65,11 @@ export async function deleteRefusal(preset: typeof scenePresets.$inferSelect, no
     ))
     .limit(1)
   if (booking) return { error: 'preset_booking', message: `The booking "${booking.title}" uses this preset.` }
+  const [schedule] = await schedulesUsingPreset(preset.id, now)
+  if (schedule) {
+    const scheduled = await db.query.scenePresets.findFirst({ where: eq(scenePresets.id, schedule.presetId), columns: { name: true } })
+    return { error: 'preset_scheduled', message: `The schedule "${describeSchedule(specOf(schedule), scheduled?.name ?? 'a preset')}" uses this preset.` }
+  }
   return null
 }
 

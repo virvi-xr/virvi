@@ -8,6 +8,7 @@ import AdSpaceContent from '@/components/AdSpaceContent'
 import { useSceneRoom } from '@/lib/colyseus'
 import { applyPresetsChange, editingPreset, type PresetsChange } from '@/lib/presets'
 import { PresetBar } from './PresetBar'
+import { PresetSchedules } from './PresetSchedules'
 import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
 import { RoomSetPanel } from './RoomSetPanel'
@@ -1736,6 +1737,8 @@ export default function SceneEditorPage() {
         onRenamed={(id, name) => setScene(prev => prev && applyPresetsChange(prev, { action: 'upsert', preset: { id, name } }))}
         onDeleted={(id) => { setEditingPresetId(null); setScene(prev => prev && applyPresetsChange(prev, { action: 'delete', presetId: id })) }}
         onMadeLive={(id) => setScene(prev => prev && { ...prev, activePresetId: id })} />
+
+      <PresetSchedules api={api} sceneId={sceneId} presets={scene.presets.map(p => ({ id: p.id, name: p.name }))} />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800 pb-px">
