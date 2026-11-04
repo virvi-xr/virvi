@@ -56,23 +56,26 @@ describe('studio data follows a wallet linked to an existing account', () => {
     expect((await db.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, e.id)))[0].balance).toBe(1)
     expect(await creditBalance(e.id)).toBe(1500)
     const merges = (await db.select().from(studioCreditLedger).where(eq(studioCreditLedger.userId, e.id))).filter((r) => r.reason === 'merge')
-    expect(merges).toHaveLength(1)
-    expect(merges[0].deltaCents).toBe(1200)
+    // Both sides of the merge, the shell's having moved with its ledger
+    expect(merges.map((r) => r.deltaCents).sort((a, b) => a - b)).toEqual([-1200, 1200])
     expect(await db.query.users.findFirst({ where: eq(users.id, shell.id) })).toBeUndefined()
 
     const res = await app.inject({ method: 'GET', url: `/api/studio/designs/${d.id}/packages`, headers: { authorization: `Bearer ${tokenFor(e)}` } })
     expect(res.statusCode).toBe(200)
   })
 
-  it('writes a merge ledger row on the source side too while the shell survives', async () => {
+  it("writes a merge ledger row on each side, and moves the source's ledger to the target", async () => {
     const { w, shell } = await shellWith()
     const e = await createUser({ role: 'creator' })
     await db.insert(studioCredits).values({ userId: shell.id, balanceCents: 700 })
+    await db.insert(studioCreditLedger).values({ userId: shell.id, deltaCents: 700, reason: 'refund', refId: 'r1' })
     // an extra auth method keeps the shell alive
     await db.insert(userAuthMethods).values({ userId: shell.id, type: 'wallet', identifier: randomWallet(), metadata: { verified: true } })
     await linkVerifiedWallet(e.id, w)
-    const rows = await db.select().from(studioCreditLedger).where(eq(studioCreditLedger.userId, shell.id))
-    expect(rows.map((r) => r.deltaCents)).toEqual([-700])
+    expect(await db.select().from(studioCreditLedger).where(eq(studioCreditLedger.userId, shell.id))).toEqual([])
+    const rows = await db.select().from(studioCreditLedger).where(eq(studioCreditLedger.userId, e.id))
+    expect(rows.map((r) => [r.reason, r.deltaCents]).sort()).toEqual([['merge', -700], ['merge', 700], ['refund', 700]])
+    expect(rows.reduce((n, r) => n + r.deltaCents, 0)).toBe(700)
     expect(await creditBalance(shell.id)).toBe(0)
     expect(await creditBalance(e.id)).toBe(700)
   })

@@ -15,7 +15,9 @@ import { setPolygon } from '../src/studio/mana/polygon.js'
 import { reportManaTx, settleTransferByHand, watchManaTransfers } from '../src/studio/mana/settle.js'
 import { sweepStudio } from '../src/studio/sweep.js'
 import { resetDb } from './helpers/db.js'
-import { createUser, type TestUser } from './helpers/factories.js'
+import { createUser, randomWallet, type TestUser } from './helpers/factories.js'
+import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
+import { users } from '../src/db/schema.js'
 import { createDesign, addRevision, entitle, fakeFly, fakePolygon, fakeStripe } from './helpers/studio.js'
 
 /**
@@ -281,4 +283,25 @@ describe('reopening a MANA payment late in its grace (R9)', () => {
     expect(await creditBalance(u.id)).toBe(0)
     await ledgerMatches(u)
   })
+
+  it("a visitor's MANA top-up still finds its credit hold after their wallet joins an account (finding 8)", async () => {
+    const w = randomWallet()
+    const shell = await createUser({ role: 'viewer', email: null, wallet: w })
+    const e = await createUser({ role: 'creator' })
+    await give(shell, 100)
+    const a = manaOf(await createTopupCheckout(userOf(shell), 1, T, 'mana'))
+    const expiresAt = new Date(a.expiresAt).getTime()
+    await sweepStudio(new Date(expiresAt + 16 * MIN))
+    expect(await creditBalance(shell.id)).toBe(100)
+    expect(await linkVerifiedWallet(e.id, w)).toBe('linked')
+    expect(await db.select().from(users).where(eq(users.id, shell.id))).toEqual([]) // the shell is gone
+    expect(await creditBalance(e.id)).toBe(100)
+    await ledgerMatches(e)
+    const hash = pay(a, new Date(expiresAt + 5 * MIN))
+    expect(await reportManaTx(e.id, a.paymentId, hash, new Date(expiresAt + 17 * MIN))).toEqual({ status: 'granted' })
+    expect(await paymentOf(a.paymentId)).toMatchObject({ status: 'paid', userId: e.id, creditHeldCents: 100 })
+    expect(await creditBalance(e.id)).toBe(0)
+    await ledgerMatches(e)
+  })
 })
+

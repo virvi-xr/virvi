@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import {
-  studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions,
+  studioCreditLedger, studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions,
   studioManaRefunds, studioMistakeReports, studioPauses, studioPayments, studioPromptCredits, studioScopeEvents, studioUsageDays,
 } from '../db/schema.js'
 import { addCredit, takeCredit } from './credit.js'
@@ -9,7 +9,7 @@ import type { Exec } from './quota.js'
 /**
  * Moves everything the Design Studio holds for one account onto another, inside the caller's transaction: used when a
  * visitor's wallet joins an existing account. Records move, counters add up onto the target's row, credit moves with a
- * `merge` ledger row on each side, and a pause follows the person.
+ * `merge` ledger row on each side (the source's ledger then moves too), and a pause follows the person.
  */
 export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: string, now: Date): Promise<void> {
   if (fromUserId === toUserId) return
@@ -89,4 +89,7 @@ export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: str
     await addCredit(tx, toUserId, taken, 'merge', fromUserId, now)
     await tx.delete(studioCredits).where(eq(studioCredits.userId, fromUserId))
   }
+  // The source's ledger (its side of this merge included) follows the person, so it adds up on the target and isn't
+  // lost when the visitor shell is deleted: a MANA top-up reopened later reads its hold there
+  await tx.update(studioCreditLedger).set({ userId: toUserId }).where(eq(studioCreditLedger.userId, fromUserId))
 }
