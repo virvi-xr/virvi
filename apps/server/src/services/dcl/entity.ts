@@ -29,7 +29,8 @@ export interface SceneMetadata {
   main: string
   ecs7: boolean
   runtimeVersion: string
-  worldConfiguration: { name: string; [k: string]: unknown }
+  /** Worlds only: a Genesis City parcel scene has none. */
+  worldConfiguration?: { name: string; [k: string]: unknown }
   spawnPoints: unknown[]
   /** Virvi runtime config read by the generic scene bundle. */
   virvi?: { runtime: number; apiUrl: string; wssUrl: string }

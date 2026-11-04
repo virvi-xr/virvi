@@ -375,13 +375,15 @@ export async function assembleImported(input: {
   timestamp: number
   models?: ModelNeed[]
   fetch?: ModelFetcher
+  /** The entity's pointers; scene.parcels by default. */
+  pointers?: string[]
 }): Promise<Assembled> {
   const models = modelsBesideBuilt(input.models ?? [], input.files.keys())
   const { got, sources, refused } = await fetchModels(models, input.fetch ?? defaultModelFetcher)
   const newFiles = new Map(input.files)
   for (const [file, bytes] of got) newFiles.set(file, bytes)
   const a = await finish({
-    pointers: input.metadata.scene.parcels,
+    pointers: input.pointers ?? input.metadata.scene.parcels,
     metadata: input.metadata,
     existing: [],
     newFiles,

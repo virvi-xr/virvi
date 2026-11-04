@@ -4,7 +4,7 @@
  * GET    /api/dcl/names                          — each verified wallet's DCL names and their Worlds
  * GET    /api/dcl/worlds/:world                  — one typed name (ENS or DCL), plus whether the caller owns it
  * POST   /api/dcl/destinations                   — connect a World to a scene (wizard plot, or adopt the live scene)
- * GET    /api/dcl/destinations/:id               — the destination, models waiting to publish, the last deployment
+ * GET    /api/dcl/destinations/:id               — the destination (kind, parcels, who may sign), models waiting to publish, the last deployment
  * PATCH  /api/dcl/destinations/:id               — switch deploy mode
  * GET    /api/dcl/destinations/:id/grant         — the owner's signed requests that let Virvi deploy
  * POST   /api/dcl/destinations/:id/grant         — forward those signatures, confirm, record the grant
@@ -68,6 +68,7 @@ import {
 import { deploymentForCaller, publicDeployment } from './deploy.js'
 import { ImportError } from '../services/import/scene-zip.js'
 import { worldOf } from '../services/dcl/world-of.js'
+import { parcelControl } from '../services/dcl/parcel-control.js'
 
 /** Signed-fetch metadata Virvi sends on permission calls (see the header comment). */
 const PERMISSION_METADATA = '{}'
@@ -164,6 +165,15 @@ async function destinationFor(request: FastifyRequest, id: string, need: 'edit' 
   const access = await getSceneAccess(actorFromClaims(request.user), dest.sceneId)
   if (!(need === 'full' ? isFullAccess(access) : hasScope(access, 'scene.edit'))) throw new RouteError(404, 'not_found')
   return dest
+}
+
+/**
+ * Wallets that may sign the destination's deploys: a World's owner; for Genesis City parcels, the caller's verified
+ * wallets that can deploy to every parcel right now (any of them may sign).
+ */
+async function signersOf(userId: string, dest: Destination): Promise<string[]> {
+  if (dest.kind !== 'parcels') return [dest.ownerWallet]
+  return (await parcelControl(await verifiedWalletsOf(userId), dest.parcels)).wallets
 }
 
 const reload = async (id: string) => (await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.id, id) }))!
@@ -390,7 +400,8 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     })
     const refused = (last?.assetBundle as { refused?: unknown } | null)?.refused ?? []
     return reply.send({
-      destination: dest, pending: await pendingModels(dest), refused, lastDeployment: last ? publicDeployment(last) : null,
+      destination: dest, kind: dest.kind, parcels: dest.parcels, signers: await signersOf(request.user.id, dest),
+      pending: await pendingModels(dest), refused, lastDeployment: last ? publicDeployment(last) : null,
       warning: sceneTriangleWarning(dest, await modelsInScene(dest.sceneId)),
     })
   }))

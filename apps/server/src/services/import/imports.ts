@@ -54,8 +54,22 @@ export function locationKeyOf(loc: ImportLocation): string {
 
 const asLocation = (loc: ImportLocation | string): ImportLocation => (typeof loc === 'string' ? { kind: 'world', world: loc } : loc)
 
+/**
+ * The lock uploads and deploy starts take for a location, held to the end of `tx`: the World's, or one per parcel in
+ * sorted order, so overlapping footprints serialise without deadlocking.
+ */
+export async function lockLocation(tx: Pick<typeof db, 'execute'>, loc: ImportLocation): Promise<void> {
+  if (loc.kind === 'world') {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:${locationKeyOf(loc)}`}))`)
+    return
+  }
+  for (const p of [...new Set(loc.parcels)].sort()) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:gc:${p}`}))`)
+  }
+}
+
 /** Rows of the same location: the World's name, or any shared parcel. */
-function sameLocation(loc: ImportLocation) {
+export function sameLocation(loc: ImportLocation) {
   return loc.kind === 'world'
     ? and(eq(sceneImports.locationKind, 'world'), eq(sceneImports.worldName, loc.world))
     : and(eq(sceneImports.locationKind, 'parcels'), sql`${sceneImports.parcels} && ${pgArray(loc.parcels)}`)
@@ -134,14 +148,7 @@ export async function createImport(input: {
   const loc = input.location ?? (input.world ? asLocation(input.world) : null)
   if (!loc) throw new Error('createImport needs a location or a world')
   const { row, superseded } = await db.transaction(async (tx) => {
-    if (loc.kind === 'world') {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:${locationKeyOf(loc)}`}))`)
-    } else {
-      // One lock per parcel, in sorted order, so overlapping footprints serialise without deadlocking
-      for (const p of [...new Set(loc.parcels)].sort()) {
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:gc:${p}`}))`)
-      }
-    }
+    await lockLocation(tx, loc)
     const busy = await tx.query.sceneImports.findFirst({
       where: and(sameLocation(loc), inArray(sceneImports.status, [...BLOCKING])),
       columns: { id: true },

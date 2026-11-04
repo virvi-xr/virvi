@@ -1,28 +1,33 @@
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import type { ImportLocation } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneImports } from '../../db/schema.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { ownerFor, RouteError } from '../../routes/dcl-destinations.js'
+import { verifiedWalletsOf } from '../../analytics/claims.js'
+import { DirectoryUnavailableError } from '../../analytics/dcl-directory.js'
 import { virviSigner } from '../dcl/entity.js'
+import { parcelControl } from '../dcl/parcel-control.js'
 import {
-  DeployerError, importAfterFailure, markFailed, prepareSignedDeploy, startVirviDeploy, worldChanged, type DeployOptions, type Deployment,
+  assertBuiltPlace, DeployerError, importAfterFailure, markFailed, prepareSignedDeploy, startVirviDeploy, type DeployOptions, type Deployment,
   type Destination,
 } from '../dcl/world-deployer.js'
-import { OWNER_ERROR_MESSAGES, type SceneImportRow } from './imports.js'
-import { ImportError, worldNameOf } from './scene-zip.js'
-import { worldOf } from '../dcl/world-of.js'
+import { lockLocation, locationOf, OWNER_ERROR_MESSAGES, sameLocation, type SceneImportRow } from './imports.js'
+import { ImportError } from './scene-zip.js'
 
 /**
- * Deploying an import's build to the World its scene.json names (Ruling R1). When the build finishes, only a World
- * where Virvi holds the grant deploys on its own (`deployImport`); any other import stays `built` until the creator
- * starts it (`startImportDeploy`, from POST /api/imports/:id/deploy) and signs. The World's destination is set up (or
- * taken over) at the moment a deploy starts: adopted, since the code is the owner's, and pointing at the import with
- * `pending_import_id`, which world-deployer.ts deploys from and clears once the deployment ends.
+ * Deploying an import's build to the World its scene.json names (Ruling R1), or to its Genesis City parcels. When the
+ * build finishes, only a destination where Virvi holds the grant deploys on its own (`deployImport`); any other import
+ * stays `built` until the creator starts it (`startImportDeploy`, from POST /api/imports/:id/deploy) and signs. The
+ * destination is set up (or taken over) at the moment a deploy starts: adopted, since the code is the owner's, and
+ * pointing at the import with `pending_import_id`, which world-deployer.ts deploys from and clears once the deployment
+ * ends. A parcels destination is keyed by its base and owned by the importer's wallet that controls every parcel.
  */
 
 export const NOT_DEPLOYABLE = 'This import has nothing to deploy right now.'
 const FILES_GONE = "The built scene's files are gone. Upload it again."
 const WORLD_IN_USE = "This World is connected to a Virvi scene you can't manage."
+const PARCELS_IN_USE = "These parcels are connected to a Virvi scene you can't manage."
 const GENERIC = 'Something went wrong on our side while deploying. Try again in a few minutes.'
 
 export type StartedImportDeploy =
@@ -31,16 +36,19 @@ export type StartedImportDeploy =
 
 const granted = (d: Pick<Destination, 'mode' | 'grantedAt'>) => d.mode === 'virvi' && !!d.grantedAt
 
-/** The base and parcels of the built scene.json, which must name the import's World (a stored build is never trusted). */
-async function builtPlot(row: SceneImportRow): Promise<{ base: string; parcels: string[] }> {
+/**
+ * The base and parcels of the built scene.json, which must still deploy where the import was uploaded for: its World,
+ * or its very parcels (assertBuiltPlace). A stored build is never trusted.
+ */
+async function builtPlot(row: SceneImportRow, loc: ImportLocation): Promise<{ base: string; parcels: string[] }> {
   const obj = row.builtKeyPrefix ? await getImportStore().get(`${row.builtKeyPrefix}scene.json`) : null
   if (!obj) throw new ImportError(409, 'import_files_missing', FILES_GONE)
   let json: { scene?: { parcels?: unknown; base?: unknown }; worldConfiguration?: { name?: unknown } } | undefined
   try {
     json = JSON.parse(obj.body.toString('utf8')) as typeof json
   } catch { /* checked below */ }
-  const named = worldNameOf(json?.worldConfiguration?.name)
-  if (named !== worldOf(row)) throw new ImportError(422, 'world_changed', worldChanged(named, worldOf(row)))
+  assertBuiltPlace(loc, json)
+  if (loc.kind === 'parcels') return { base: loc.base, parcels: loc.parcels }
   const scene = json?.scene
   const parcels = Array.isArray(scene?.parcels) && scene.parcels.length && scene.parcels.every((p) => typeof p === 'string') ? (scene.parcels as string[]) : null
   if (!parcels) throw new ImportError(422, 'bad_scene_json', "The built scene.json doesn't list its parcels.")
@@ -55,6 +63,32 @@ async function worldOwner(userId: string, world: string): Promise<string> {
     if (err instanceof RouteError) throw new ImportError(err.status, err.code, OWNER_ERROR_MESSAGES[err.code] ?? GENERIC)
     throw err
   }
+}
+
+/**
+ * The importer's verified wallet that may deploy to every parcel (403 not_parcel_controller otherwise, 503 when
+ * Decentraland can't say): the parcels destination's owner wallet.
+ */
+async function parcelOwner(userId: string, parcels: string[]): Promise<string> {
+  let wallet: string | null
+  let missing: string | null
+  try {
+    ;({ wallet, missing } = await parcelControl(await verifiedWalletsOf(userId), parcels))
+  } catch (err) {
+    if (err instanceof DirectoryUnavailableError) throw new ImportError(503, 'catalyst_unreachable', "Decentraland didn't answer just now. Try again in a minute.")
+    throw err
+  }
+  if (!wallet) throw new ImportError(403, 'not_parcel_controller', `None of your verified wallets can deploy to parcel ${missing ?? parcels[0]}.`)
+  return wallet
+}
+
+/** The destination of an import's location: the World's, or the parcels destination at its base. */
+function destinationAt(loc: ImportLocation) {
+  return db.query.dclWorldDestinations.findFirst({
+    where: loc.kind === 'world'
+      ? eq(dclWorldDestinations.worldName, loc.world)
+      : and(eq(dclWorldDestinations.kind, 'parcels'), eq(dclWorldDestinations.base, loc.base)),
+  })
 }
 
 /**
@@ -90,7 +124,7 @@ export async function startImportDeploy(
   const from = row.status
   const startable = from === 'built' || from === 'awaiting_signature' || (opts.claimed && from === 'deploying' && !row.deploymentId)
   if (!startable) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
-  const existing = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, worldOf(row)) })
+  const existing = await destinationAt(locationOf(row))
   const virvi = !!existing && granted(existing)
   if (opts.virviOnly && !(virvi && virviSigner())) return null
   try {
@@ -104,8 +138,9 @@ export async function startImportDeploy(
 
 async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { virviOnly?: boolean } & DeployOptions): Promise<StartedImportDeploy | null> {
   const from = row.status
-  const plot = await builtPlot(row)
-  const owner = await worldOwner(by, worldOf(row))
+  const loc = locationOf(row)
+  const plot = await builtPlot(row, loc)
+  const owner = loc.kind === 'world' ? await worldOwner(by, loc.world) : await parcelOwner(by, loc.parcels)
   if (virvi && !virviSigner()) throw new DeployerError(503, 'virvi_deploys_unavailable', 'Virvi deploys are not available right now')
   // A signature that came too late must not deploy the old preparation
   if (from === 'awaiting_signature' && row.deploymentId) {
@@ -113,22 +148,23 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
   }
 
   const dest = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:${worldOf(row)}`}))`)
+    await lockLocation(tx, loc)
     const now = await tx.query.sceneImports.findFirst({ where: eq(sceneImports.id, row.id), columns: { status: true } })
     const newest = await tx.query.sceneImports.findFirst({
-      where: eq(sceneImports.worldName, worldOf(row)), orderBy: [desc(sceneImports.createdAt)], columns: { id: true },
+      where: sameLocation(loc), orderBy: [desc(sceneImports.createdAt)], columns: { id: true },
     })
     if (now?.status !== from || newest?.id !== row.id) return null
     const at = new Date()
-    const [d] = await tx.insert(dclWorldDestinations).values({
-      sceneId: row.sceneId, ownerUserId: by, ownerWallet: owner, worldName: worldOf(row), ...plot,
-      mode: 'sign', adopted: true, pendingImportId: row.id,
-    }).onConflictDoUpdate({
-      target: dclWorldDestinations.worldName,
-      set: { ...plot, adopted: true, pendingImportId: row.id, ownerWallet: owner, ownerUserId: by, updatedAt: at },
-      setWhere: eq(dclWorldDestinations.sceneId, row.sceneId),
-    }).returning()
-    if (!d) throw new ImportError(409, 'world_in_use', WORLD_IN_USE)
+    const values = { sceneId: row.sceneId, ownerUserId: by, ownerWallet: owner, ...plot, mode: 'sign' as const, adopted: true, pendingImportId: row.id }
+    const set = { ...plot, adopted: true, pendingImportId: row.id, ownerWallet: owner, ownerUserId: by, updatedAt: at }
+    const setWhere = eq(dclWorldDestinations.sceneId, row.sceneId)
+    // Ruling R3: a parcels destination is unique on its base (a partial index), and no World query ever matches it
+    const [d] = loc.kind === 'world'
+      ? await tx.insert(dclWorldDestinations).values({ ...values, worldName: loc.world })
+        .onConflictDoUpdate({ target: dclWorldDestinations.worldName, set, setWhere }).returning()
+      : await tx.insert(dclWorldDestinations).values({ ...values, kind: 'parcels', worldName: null })
+        .onConflictDoUpdate({ target: dclWorldDestinations.base, targetWhere: sql`kind = 'parcels'`, set, setWhere }).returning()
+    if (!d) throw loc.kind === 'world' ? new ImportError(409, 'world_in_use', WORLD_IN_USE) : new ImportError(409, 'parcels_in_use', PARCELS_IN_USE)
     await tx.update(sceneImports).set({ destinationId: d.id, updatedAt: at }).where(eq(sceneImports.id, row.id))
     return d
   })
@@ -141,7 +177,7 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
     if (granted(dest)) return { mode: 'virvi', deployment: await startVirviDeploy(dest.id, by, { fetch: opts.fetch }) }
     return { mode: 'sign', ...(await prepareSignedDeploy(dest.id, by, { fetch: opts.fetch })) }
   } catch (err) {
-    // Nothing started: the World doesn't wait on this import
+    // Nothing started: the destination doesn't wait on this import
     await db.update(dclWorldDestinations).set({ pendingImportId: null, updatedAt: new Date() })
       .where(and(eq(dclWorldDestinations.id, dest.id), eq(dclWorldDestinations.pendingImportId, row.id)))
     throw err
@@ -155,7 +191,7 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
 export async function deployImport(importId: string, opts: DeployOptions = {}): Promise<void> {
   const row = await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, importId) })
   if (row?.status !== 'built') return
-  const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, worldOf(row)) })
+  const dest = await destinationAt(locationOf(row))
   if (!dest || !granted(dest) || !virviSigner()) return
   // Ruling R24: claimed before anything slow, so the creator is never offered a Deploy this is already doing
   const [claimed] = await db.update(sceneImports).set({ status: 'deploying', updatedAt: new Date() })

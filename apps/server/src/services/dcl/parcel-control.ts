@@ -7,6 +7,8 @@ export const AETHERIA_ESTATES = new Set(['2092'])
 export interface ParcelControl {
   /** First of `wallets` that may deploy to every parcel. */
   wallet: string | null
+  /** Every one of `wallets` that may deploy to every parcel, in order. */
+  wallets: string[]
   /** First parcel none of the wallets may deploy to. */
   missing: string | null
   /** `wallet` is owner/operator/approvedForAll of every parcel (an update operator can't grant). */
@@ -28,10 +30,12 @@ export async function parcelControl(wallets: string[], parcels: string[], dir: D
     const r = await dir.getParcelRights(p, { fresh: true })
     if (r) rightsOf.set(p, r)
   }
-  const wallet = parcels.length ? (ws.find((w) => parcels.every((p) => canDeploy(rightsOf.get(p), w))) ?? null) : null
+  const all = parcels.length ? ws.filter((w) => parcels.every((p) => canDeploy(rightsOf.get(p), w))) : []
+  const wallet = all[0] ?? null
   const missing = parcels.find((p) => !ws.some((w) => canDeploy(rightsOf.get(p), w))) ?? null
   return {
     wallet,
+    wallets: all,
     missing,
     canGrant: !!wallet && parcels.every((p) => canGrantOn(rightsOf.get(p), wallet)),
     aetheria: [...rightsOf.values()].some((r) => !!r.owner && AETHERIA_OWNERS.has(r.owner)),

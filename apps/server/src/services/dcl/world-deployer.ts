@@ -17,10 +17,11 @@
  * accepted nothing, back to `built` (or `failed` for a PERMANENT error), all through `markFailed` (Ruling R19).
  */
 import { and, eq, inArray, isNull, lt, or, sql, TransactionRollbackError } from 'drizzle-orm'
-import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, dclBudget, parseParcel } from '@virvixr/shared'
+import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, dclBudget, parseParcel, type ImportLocation } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
-import { linkWorldLocation } from '../../setup/setups.js'
+import { DirectoryUnavailableError } from '../../analytics/dcl-directory.js'
+import { linkLocation } from '../../setup/setups.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { ImportError, worldNameOf } from '../import/scene-zip.js'
 import {
@@ -28,7 +29,8 @@ import {
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { keepDeployedFiles } from './deployed-files.js'
-import { buildEntity, dclHash, verifyChain, virviSigner, type AuthChain, type ContentRef, type SceneMetadata } from './entity.js'
+import { buildEntity, chainSigner, dclHash, verifyChain, virviSigner, type AuthChain, type ContentRef, type SceneMetadata } from './entity.js'
+import { parcelControl } from './parcel-control.js'
 import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
 import { CatalystError, contentServerFor } from './catalyst-client.js'
 import { getWorldsClient, WorldsError, type LiveEntity } from './worlds-client.js'
@@ -51,6 +53,7 @@ const IMPORT_FILES_GONE = "The built scene's files are gone. Upload it again."
 /** What an import's deploy says when the signature can no longer be used (the Import page's button is Deploy). */
 const IMPORT_EXPIRED = 'The signature took too long. Press Deploy to sign again.'
 const IMPORT_STALE = 'Your World changed while this deploy waited for its signature. Press Deploy to sign again.'
+const IMPORT_STALE_PARCELS = 'Your parcels changed while this deploy waited for its signature. Press Deploy to sign again.'
 const IMPORT_INTERRUPTED = 'Virvi was interrupted while deploying. Press Deploy to try again.'
 
 /**
@@ -58,7 +61,7 @@ const IMPORT_INTERRUPTED = 'Virvi was interrupted while deploying. Press Deploy 
  * other failure before the World accepted the deploy puts the import back to `built`, so the creator presses Deploy.
  */
 export const PERMANENT_IMPORT_ERRORS: ReadonlySet<string> = new Set([
-  'import_files_missing', 'world_changed', 'bad_scene_json', 'scene_too_big', 'file_too_big', 'world_storage_full',
+  'import_files_missing', 'world_changed', 'place_changed', 'bad_scene_json', 'scene_too_big', 'file_too_big', 'world_storage_full',
 ])
 
 /** The import's columns after a deploy of it ended without going live with error `code` (see PERMANENT_IMPORT_ERRORS). */
@@ -72,9 +75,51 @@ export const worldChanged = (named: string | null, world: string) =>
   `The built scene.json names the World ${named ?? '(none)'}, not ${world}. Virvi only deploys a scene to the World it was uploaded for.`
 /** The World an entity's metadata deploys to (ASCII-lower-cased, see worldNameOf), or null when it names none. */
 const metadataWorld = (m: { worldConfiguration?: { name?: unknown } } | undefined) => worldNameOf(m?.worldConfiguration?.name)
+/** The sentence when a built scene.json no longer deploys to the Genesis City parcels it was uploaded for. */
+export const PLACE_CHANGED =
+  'The built scene.json no longer deploys to the parcels it was uploaded for. Virvi only deploys a scene to the parcels it was uploaded for.'
+
+/**
+ * Decentraland's scene size limit, per parcel: @dcl/content-validator src/validations/ADR51.ts gives scenes
+ * `maxSizeInMB: 15`, and src/validations/size.ts refuses an entity whose total content size divided by its pointer
+ * count is over `maxSizeInMB * 1024 * 1024` (no other total cap). Checked on 2026-11-04 against the main branch.
+ */
+export const PARCEL_MAX_BYTES_PER_PARCEL = 15 * 1024 * 1024
+
+const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().join(';') === [...b].sort().join(';')
+
+/**
+ * A built scene.json (never trusted as stored: the build ran the creator's code) must deploy where the import was
+ * uploaded for: the same World (422 world_changed), or the same parcels and base with no worldConfiguration
+ * (422 place_changed).
+ */
+export function assertBuiltPlace(loc: ImportLocation, metadata: { worldConfiguration?: { name?: unknown }; scene?: { parcels?: unknown; base?: unknown } } | undefined): void {
+  if (loc.kind === 'world') {
+    const named = metadataWorld(metadata)
+    if (named !== loc.world) throw new DeployerError(422, 'world_changed', worldChanged(named, loc.world))
+    return
+  }
+  const parcels = metadata?.scene?.parcels
+  const ok = metadata?.worldConfiguration === undefined &&
+    Array.isArray(parcels) && parcels.every((p) => typeof p === 'string') && sameSet(parcels as string[], loc.parcels) &&
+    (metadata?.scene?.base ?? parcels[0]) === loc.base
+  if (!ok) throw new DeployerError(422, 'place_changed', PLACE_CHANGED)
+}
 
 export type Destination = typeof dclWorldDestinations.$inferSelect
 export type Deployment = typeof sceneDeployments.$inferSelect
+
+/** Where a destination deploys: its World, or its Genesis City parcels. */
+export function destinationLocation(dest: Pick<Destination, 'kind' | 'worldName' | 'base' | 'parcels'>): ImportLocation {
+  return dest.kind === 'parcels' ? { kind: 'parcels', base: dest.base, parcels: dest.parcels } : { kind: 'world', world: worldOf(dest) }
+}
+
+/** A deployment row's type and target: a World's by name; parcels with no `world` (deployed-files reads the catalyst). */
+function ledgerOf(dest: Destination) {
+  return dest.kind === 'parcels'
+    ? { deploymentType: 'parcel', target: { parcels: dest.parcels } }
+    : { deploymentType: 'world', target: { world: worldOf(dest), parcels: dest.parcels } }
+}
 
 export class DeployerError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -187,8 +232,9 @@ export function sceneTriangleWarning(dest: Destination, all: ModelNeed[]): strin
     `${plural(dest.parcels.length, 'parcel')}. It still deploys, but it may run slowly for visitors.${note}`
 }
 
-/** A plain sentence when the new models don't fit the owner's World storage, else null. */
+/** A plain sentence when the new models don't fit the owner's World storage, else null. Genesis City parcels have none. */
 export async function storageProblem(dest: Destination, pending: ModelNeed[]): Promise<string | null> {
+  if (dest.kind !== 'world') return null
   const bytes = pending.reduce((n, m) => n + (m.bytes ?? 0), 0)
   if (bytes === 0) return null
   let stats: { maxAllowedBytes: number; usedBytes: number } | null
@@ -228,9 +274,10 @@ const mb = (n: number) => (n / 1_000_000).toFixed(1)
 const MIB = 1024 * 1024
 
 /**
- * The check an import's deploy runs first, from the stored sizes alone: no more files than the World's parcels allow,
- * none over Decentraland's file limit, and room in the owner's World storage. The scene's Virvi models that deploy with
- * it count too (their known sizes). Throws ImportError 413 otherwise.
+ * The check an import's deploy runs first, from the stored sizes alone: no more files than the parcels allow, none over
+ * Decentraland's file limit, and room in the owner's World storage (for Genesis City parcels: within Decentraland's
+ * scene size limit, PARCEL_MAX_BYTES_PER_PARCEL per parcel). The scene's Virvi models that deploy with it count too
+ * (their known sizes). Throws ImportError 413 otherwise.
  */
 export async function assertImportFits(dest: Destination): Promise<void> {
   const prefix = await pendingImportPrefix(dest)
@@ -247,6 +294,13 @@ export async function assertImportFits(dest: Destination): Promise<void> {
     throw new ImportError(413, 'file_too_big', `${big.key.slice(prefix.length)} is ${(big.size / MIB).toFixed(1)} MB, over Decentraland's ${DCL_MAX_FILE_BYTES / MIB} MB limit for one file.`)
   }
   const bytes = files.reduce((n, f) => n + f.size, 0) + models.reduce((n, m) => n + (m.bytes ?? 0), 0)
+  if (dest.kind === 'parcels') {
+    const max = PARCEL_MAX_BYTES_PER_PARCEL * dest.parcels.length
+    if (bytes > max) {
+      throw new ImportError(413, 'scene_too_big', `Your scene is ${(bytes / MIB).toFixed(1)} MB, over the ${(max / MIB).toFixed(0)} MB Decentraland allows for your ${plural(dest.parcels.length, 'parcel')}. Make it smaller to deploy it.`)
+    }
+    return
+  }
   let stats: { maxAllowedBytes: number; usedBytes: number } | null
   try {
     stats = await getWorldsClient().getWalletStats(dest.ownerWallet)
@@ -337,13 +391,14 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     const live = await liveAt(dest)
     const files = await readBuilt(prefix)
     const built = JSON.parse(new TextDecoder().decode(files.get('scene.json')!)) as SceneMetadata
-    // Never trusted as stored: the build ran the creator's code, and the entity deploys to the World it names
-    if (metadataWorld(built) !== worldOf(dest)) throw new DeployerError(422, 'world_changed', worldChanged(metadataWorld(built), worldOf(dest)))
+    // Never trusted as stored: the build ran the creator's code, and the entity deploys where it was uploaded for
+    assertBuiltPlace(destinationLocation(dest), built)
     // The creator's code runs the npm package, never Virvi's runtime: without Virvi's marker the scene stays adopted
     const { virvi: _virvi, ...metadata } = built
     // Models placed in-world deploy with it, or a re-upload would take them out of the World
     const models = await modelsInScene(dest.sceneId)
-    return { assembled: await assembleImported({ files, metadata, timestamp, models, fetch }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
+    const pointers = dest.kind === 'parcels' ? dest.parcels : undefined
+    return { assembled: await assembleImported({ files, metadata, timestamp, models, fetch, pointers }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
   }
   const live = await liveBaseFor(dest)
   const models = await modelsInScene(dest.sceneId)
@@ -517,11 +572,11 @@ export function whenFilesKept(deploymentId: string): Promise<void> {
 }
 
 /**
- * After the World accepted `entityId`: record it on the destination and deployment, link the World's location to the
- * Virvi scene, then keep the files it uploaded (`kept`, when the caller has them) in the background. Nothing waits on
- * the bucket: a file that couldn't be kept is fetched from the Worlds server on download.
+ * After the content server accepted `entityId`: record it on the destination and deployment, link the location (the
+ * World, or the parcels) to the Virvi scene, then keep the files it uploaded (`kept`, when the caller has them) in the
+ * background. Nothing waits on the bucket: a file that couldn't be kept is fetched from the content server on download.
  */
-export async function afterWorldDeploy(
+export async function afterDeploy(
   dest: Destination, entityId: string, deployedFiles: string[], deploymentId: string,
   kept?: { content: ContentRef[]; files: Map<string, Uint8Array> },
 ): Promise<void> {
@@ -547,9 +602,9 @@ export async function afterWorldDeploy(
   })
   try {
     const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
-    await linkWorldLocation({
-      world: worldOf(dest), virviSceneId: dest.sceneId, hostUserId: dest.ownerUserId, entityId,
-      title: scene?.name ?? worldOf(dest), base: dest.base, parcels: dest.parcels,
+    await linkLocation({
+      location: destinationLocation(dest), virviSceneId: dest.sceneId, hostUserId: dest.ownerUserId, entityId,
+      title: scene?.name ?? dest.worldName ?? dest.base, base: dest.base, parcels: dest.parcels,
     }, now)
   } finally {
     if (kept) {
@@ -603,8 +658,7 @@ export async function startVirviDeploy(destinationId: string, by: string | null,
     })
     if (busy) throw new DeployerError(409, 'deploy_in_progress', 'A deploy is already running for this World')
     const [row] = await tx.insert(sceneDeployments).values({
-      sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
-      target: { world: worldOf(dest), parcels: dest.parcels }, status: 'building', deployedBy: by,
+      sceneId: dest.sceneId, platform: 'decentraland', ...ledgerOf(dest), destinationId: dest.id, status: 'building', deployedBy: by,
     }).returning()
     if (dest.pendingImportId) await linkImport(tx, dest.pendingImportId, row.id, 'deploying')
     return row
@@ -642,7 +696,7 @@ async function runVirviDeploy(
       .update(sceneDeployments)
       .set({ assetBundle: { ...bundle, progress: { ...progress, modelsUploaded: progress.modelsTotal } } })
       .where(eq(sceneDeployments.id, deploymentId))
-    await afterWorldDeploy(dest, a.entityId, a.deployedFiles, deploymentId, { content, files: a.files })
+    await afterDeploy(dest, a.entityId, a.deployedFiles, deploymentId, { content, files: a.files })
   } catch (err) {
     console.error('[world-deployer] deploy failed:', deploymentId, err instanceof Error ? err.message : err)
     // Once the World has accepted it the deployment is live; a later bookkeeping error must not say otherwise.
@@ -665,8 +719,7 @@ export async function prepareSignedDeploy(
     // Record what was refused so the sweep keeps the destination held on it (mode A's row does the same).
     if (packed.assembled.refused.length) {
       await db.insert(sceneDeployments).values({
-        sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
-        target: { world: worldOf(dest), parcels: dest.parcels }, status: 'failed', deployedBy: by,
+        sceneId: dest.sceneId, platform: 'decentraland', ...ledgerOf(dest), destinationId: dest.id, status: 'failed', deployedBy: by,
         errorMessage: err.message, assetBundle: noopBundle(packed),
       })
     }
@@ -689,8 +742,7 @@ export async function prepareSignedDeploy(
   }
   const deployment = await db.transaction(async (tx) => {
     const [row] = await tx.insert(sceneDeployments).values({
-      sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
-      target: { world: worldOf(dest), parcels: dest.parcels }, status: 'awaiting_signature', deployedBy: by, assetBundle: bundle,
+      sceneId: dest.sceneId, platform: 'decentraland', ...ledgerOf(dest), destinationId: dest.id, status: 'awaiting_signature', deployedBy: by, assetBundle: bundle,
     }).returning()
     if (dest.pendingImportId) await linkImport(tx, dest.pendingImportId, row.id, 'awaiting_signature')
     return row
@@ -698,7 +750,33 @@ export async function prepareSignedDeploy(
   return { deployment, payload: a.entityId, expiresAt: new Date(timestamp + DEPLOY_WINDOW_MS).toISOString() }
 }
 
-/** Mode B, step 2: checks the owner's signature, rebuilds the exact upload and sends it. */
+const NOT_PARCEL_CONTROLLER = "That signature isn't from a wallet that can deploy to every one of these parcels."
+
+/**
+ * The signature must be a valid one over `entityId`: for a World, by the World's owner (403 not_world_owner); for
+ * Genesis City parcels, by its own signer, who must still be able to deploy to every parcel right now (403
+ * not_parcel_controller; 503 catalyst_unreachable when Decentraland can't say).
+ */
+async function assertSigner(dest: Destination, chain: AuthChain, entityId: string): Promise<void> {
+  if (dest.kind !== 'parcels') {
+    if (!(await verifyChain(chain, entityId, dest.ownerWallet))) {
+      throw new DeployerError(403, 'not_world_owner', "That signature isn't from the wallet that owns this World")
+    }
+    return
+  }
+  const signer = chainSigner(chain)
+  if (!signer || !(await verifyChain(chain, entityId, signer))) throw new DeployerError(403, 'not_parcel_controller', NOT_PARCEL_CONTROLLER)
+  let wallet: string | null
+  try {
+    ;({ wallet } = await parcelControl([signer], dest.parcels))
+  } catch (err) {
+    if (err instanceof DirectoryUnavailableError) throw new DeployerError(503, 'catalyst_unreachable', "Decentraland didn't answer just now. Try again in a minute.")
+    throw err
+  }
+  if (wallet !== signer) throw new DeployerError(403, 'not_parcel_controller', NOT_PARCEL_CONTROLLER)
+}
+
+/** Mode B, step 2: checks the signature (assertSigner), rebuilds the exact upload and sends it. */
 export async function submitSignedDeploy(deploymentId: string, chain: AuthChain, opts: DeployOptions = {}): Promise<Deployment> {
   const dep = await db.query.sceneDeployments.findFirst({ where: eq(sceneDeployments.id, deploymentId) })
   if (!dep || !dep.destinationId) throw new DeployerError(404, 'not_found')
@@ -710,13 +788,8 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
     throw err
   }
   const dest = await loadDestination(dep.destinationId)
-  if (bundle.importId) {
-    const named = metadataWorld(JSON.parse(bundle.metadataJson) as SceneMetadata)
-    if (named !== worldOf(dest)) throw new DeployerError(422, 'world_changed', worldChanged(named, worldOf(dest)))
-  }
-  if (!(await verifyChain(chain, bundle.entityId, dest.ownerWallet))) {
-    throw new DeployerError(403, 'not_world_owner', "That signature isn't from the wallet that owns this World")
-  }
+  if (bundle.importId) assertBuiltPlace(destinationLocation(dest), JSON.parse(bundle.metadataJson) as SceneMetadata)
+  await assertSigner(dest, chain, bundle.entityId)
   // Claim it, so a second submit of the same signature can't upload twice. An import's deployment is claimed with its
   // import, which must still be waiting for this very deployment (a newer upload may have replaced it).
   const claimed = await db.transaction(async (tx) => {
@@ -749,7 +822,8 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   try {
     const base = bundle.importId ? await liveAt(dest) : await liveBaseFor(dest)
     if ((base?.id ?? null) !== bundle.baseEntityId) {
-      throw new DeployerError(409, 'stale', bundle.importId ? IMPORT_STALE : 'Your World changed since this deploy was prepared. Start it again.')
+      const stale = dest.kind === 'parcels' ? IMPORT_STALE_PARCELS : IMPORT_STALE
+      throw new DeployerError(409, 'stale', bundle.importId ? stale : 'Your World changed since this deploy was prepared. Start it again.')
     }
     const newFiles = await rebuildNewFiles(bundle.newFiles, opts.fetch ?? defaultModelFetcher)
     const { entityId, files } = await buildEntity({
@@ -759,7 +833,7 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
     const content = bundle.content ?? entityContent({ entityId, files })
     await contentServerFor(dest).deploy({ entityId, authChain: chain, files })
     live = true
-    await afterWorldDeploy(dest, entityId, bundle.deployedFiles, dep.id, { content, files })
+    await afterDeploy(dest, entityId, bundle.deployedFiles, dep.id, { content, files })
   } catch (err) {
     if (!live) {
       await markFailed(dep.id, err).catch(() => {})
@@ -805,7 +879,7 @@ export async function reconcileStaleDeployments(now: Date = new Date()): Promise
       const bundle = row.assetBundle as { entityId?: string; deployedFiles?: string[] } | null
       const live = entities.find((e) => e.pointers.includes(dest.base))
       if (bundle?.entityId && live?.id === bundle.entityId) {
-        await afterWorldDeploy(dest, bundle.entityId, bundle.deployedFiles ?? [], row.id)
+        await afterDeploy(dest, bundle.entityId, bundle.deployedFiles ?? [], row.id)
       } else {
         const interrupted = new DeployerError(500, 'interrupted', 'This deploy was interrupted. Virvi will try again.')
         await markFailed(row.id, interrupted, row.status, { importMessage: IMPORT_INTERRUPTED })
