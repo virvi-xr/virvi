@@ -7,8 +7,9 @@ import { setStripe } from '../src/integrations/stripe.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { setFlagMailer } from '../src/studio/scope.js'
-import { creditBalance } from '../src/studio/credit.js'
-import { grantPayment, refundSplit } from '../src/studio/payments.js'
+import { addCredit, creditBalance } from '../src/studio/credit.js'
+import { approveReport, grantPayment, refundSplit } from '../src/studio/payments.js'
+import { sweepStudio } from '../src/studio/sweep.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
 import { createDesign, addRevision, entitle, fakeFly, fakeStripe } from './helpers/studio.js'
@@ -180,5 +181,81 @@ describe('mistake refunds by how each line was paid', () => {
     expect(await refundLedger(u)).toEqual([expect.objectContaining({ deltaCents: 2900, refId: pay.id })])
     const [e] = await db.select().from(studioEntitlements).where(eq(studioEntitlements.paymentId, pay.id))
     expect(e).toMatchObject({ category: 'feet', amountCents: 1900, method: 'mana' })
+  })
+  it('a MANA overcharge that also held credit gives back exactly the overcharge', async () => {
+    const u = await createUser()
+    const d = await createDesign(u)
+    const hat = await addRevision(d, 'hat')
+    await addRevision(d, 'feet')
+    await db.transaction((tx) => addCredit(tx, u.id, 2000, 'refund', null, new Date()))
+    // feet the first finalize, 2900 (2000 credit + 900 MANA); hat an extra piece, 1900 MANA: 4800 paid in all
+    expect((await app.inject({ method: 'POST', url: `/api/studio/designs/${d.id}/finalize`, headers: as(u), payload: {} })).statusCode).toBe(200)
+    const [pay] = await db.select().from(studioPayments).where(eq(studioPayments.designId, d.id))
+    expect(pay.creditHeldCents).toBe(2000)
+    expect(await creditBalance(u.id)).toBe(0)
+    await db.update(studioPayments).set({ method: 'mana', stripeSessionId: null }).where(eq(studioPayments.id, pay.id))
+    // Meanwhile hat was paid for: only feet, now 1900, is kept; 4800 - 1900 = 2900 is owed back
+    await entitle(d, hat, { amountCents: 2900 })
+    expect(await grantPayment(pay.id, null, new Date())).toBe('granted')
+    expect(stripe.calls.refunds).toHaveLength(0)
+    expect(await creditBalance(u.id)).toBe(2900)
+    const back = (await refundLedger(u)).filter((r) => r.refId === pay.id)
+    expect(back.reduce((sum, r) => sum + r.deltaCents, 0)).toBe(2900)
+    const [e] = await db.select().from(studioEntitlements).where(eq(studioEntitlements.paymentId, pay.id))
+    expect(e).toMatchObject({ category: 'feet', amountCents: 1900, creditCents: 1900, method: 'mana' })
+  })
+
+  it('the sweep credits a MANA payment still owed back, once', async () => {
+    const u = await createUser()
+    const d = await createDesign(u)
+    // A grant whose post-commit credit didn't land (the database blinked): the debt is still on the payment
+    const [pay] = await db.insert(studioPayments).values({
+      userId: u.id, designId: d.id, kind: 'finalize', status: 'paid', method: 'mana', amountCents: 2900, paidAt: new Date(), refundDueCents: 700,
+    }).returning()
+    await sweepStudio(new Date(), { fly: fakeFly() })
+    expect(await creditBalance(u.id)).toBe(700)
+    await sweepStudio(new Date(), { fly: fakeFly() })
+    expect(await creditBalance(u.id)).toBe(700)
+    expect(await refundLedger(u)).toEqual([expect.objectContaining({ deltaCents: 700, refId: pay.id })])
+    const [after] = await db.select().from(studioPayments).where(eq(studioPayments.id, pay.id))
+    expect(after.refundDueCents).toBe(0)
+    expect(stripe.calls.refunds).toHaveLength(0)
+  })
+
+  it('a stale approval approved again on a card and credit line refunds Stripe once and credits once', async () => {
+    ;(config as any).studioFlag = { ...config.studioFlag, instantReports: 0 }
+    const admin = await createUser({ role: 'admin' })
+    const u = await createUser()
+    const { d, payment } = await revised(u, { amountCents: 1500, creditCents: 500, method: 'card' })
+    expect((await report(u, d.id)).json()).toEqual({ status: 'in_review' })
+    const [held] = await db.select().from(studioMistakeReports)
+    // The first approval stalls before it reaches Stripe
+    const list = stripe.refunds.list.bind(stripe.refunds)
+    let entered!: () => void
+    let release!: () => void
+    const stalled = new Promise<void>((r) => { entered = r })
+    const gate = new Promise<void>((r) => { release = r })
+    let first = true
+    stripe.refunds.list = async (params: any) => {
+      if (first) { first = false; entered(); await gate }
+      return list(params)
+    }
+    const t0 = new Date()
+    const a = approveReport(held.id, admin.id, t0)
+    await stalled
+    // Past the approval's lock time, the owner approves again and it completes
+    const b = await approveReport(held.id, admin.id, new Date(t0.getTime() + 20 * 60_000))
+    expect(b).toEqual({ status: 'refunded', refundCents: 1500, creditedCents: 500, manaCents: 0 })
+    // The first approval resumes: it finds Stripe's refund and records nothing more
+    release()
+    expect(await a).toEqual({ status: 'refunded', refundCents: 1500, creditedCents: 500, manaCents: 0 })
+    expect(stripe.calls.refunds).toHaveLength(1)
+    expect(stripe.made).toHaveLength(1)
+    expect(await creditBalance(u.id)).toBe(500)
+    expect(await refundLedger(u)).toHaveLength(1)
+    const [pay] = await db.select().from(studioPayments).where(eq(studioPayments.id, payment.id))
+    expect(pay.refundedCents).toBe(1000)
+    const [row] = await db.select().from(studioMistakeReports)
+    expect(row).toMatchObject({ status: 'refunded', creditedCents: 500, stripeRefundId: stripe.made[0].id })
   })
 })

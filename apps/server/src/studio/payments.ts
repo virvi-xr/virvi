@@ -427,11 +427,15 @@ export async function settleRefund(paymentId: string): Promise<void> {
   if (!pay || !(pay.refundDueCents > 0)) return
   if (pay.method === 'mana' || pay.method === 'credit') {
     const due = pay.refundDueCents
-    await db.transaction(async (tx) => {
-      const [cleared] = await tx.update(studioPayments).set({ refundDueCents: 0 })
-        .where(and(eq(studioPayments.id, pay.id), eq(studioPayments.refundDueCents, due))).returning({ id: studioPayments.id })
-      if (cleared) await addCredit(tx, pay.userId, due, 'refund', pay.id, new Date())
-    })
+    try {
+      await db.transaction(async (tx) => {
+        const [cleared] = await tx.update(studioPayments).set({ refundDueCents: 0 })
+          .where(and(eq(studioPayments.id, pay.id), eq(studioPayments.refundDueCents, due))).returning({ id: studioPayments.id })
+        if (cleared) await addCredit(tx, pay.userId, due, 'refund', pay.id, new Date())
+      })
+    } catch (err) { // the sweep tries again
+      console.error(`[studio] crediting ${due} cents owed by payment ${pay.id} failed:`, err instanceof Error ? err.message : err)
+    }
     return
   }
   if (!pay.stripePaymentIntent) {

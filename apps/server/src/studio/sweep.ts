@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioEntitlements, studioJobs, studioPayments } from '../db/schema.js'
 import { destroyWorker, ensureWorker, type MachineDeps } from './machines.js'
@@ -76,7 +76,10 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
   }
 
   const owing = await db.select({ id: studioPayments.id }).from(studioPayments)
-    .where(and(sql`${studioPayments.refundDueCents} > 0`, isNotNull(studioPayments.stripePaymentIntent)))
+    .where(and(sql`${studioPayments.refundDueCents} > 0`, or(
+      isNotNull(studioPayments.stripePaymentIntent), // a card refund through Stripe
+      inArray(studioPayments.method, ['mana', 'credit']), // paid back as credit
+    )))
   for (const { id } of owing) await settleRefund(id)
   // Paid scene pieces whose library rows didn't land (storage was down) get another try
   await addMissingLibraryRows(now).catch((err) => console.error('[studio-sweep] library retry failed:', err instanceof Error ? err.message : err))
