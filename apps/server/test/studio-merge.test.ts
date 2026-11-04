@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
-  users, studioCreditLedger, studioDesigns, studioEntitlements, studioFinalizeCredits, studioGiftCodes, studioGiftRedemptions,
+  users, userAuthMethods, studioCredits, studioFlags, studioCreditLedger, studioDesigns, studioEntitlements, studioFinalizeCredits, studioGiftCodes, studioGiftRedemptions,
   studioPauses, studioPayments, studioPromptCredits, studioUsageDays,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
@@ -42,8 +42,6 @@ describe('studio data follows a wallet linked to an existing account', () => {
     await db.insert(studioPromptCredits).values({ userId: shell.id, balance: 2, gifted: 4 })
     await db.insert(studioPromptCredits).values({ userId: e.id, balance: 1, gifted: 1 })
     await db.insert(studioFinalizeCredits).values({ userId: shell.id, balance: 1 })
-    await db.insert(studioCreditLedger).values({ userId: shell.id, deltaCents: 1200, reason: 'refund' })
-    const { studioCredits } = await import('../src/db/schema.js')
     await db.insert(studioCredits).values([{ userId: shell.id, balanceCents: 1200 }, { userId: e.id, balanceCents: 300 }])
 
     expect(await linkVerifiedWallet(e.id, w)).toBe('linked')
@@ -69,10 +67,8 @@ describe('studio data follows a wallet linked to an existing account', () => {
   it('writes a merge ledger row on the source side too while the shell survives', async () => {
     const { w, shell } = await shellWith()
     const e = await createUser({ role: 'creator' })
-    const { studioCredits } = await import('../src/db/schema.js')
     await db.insert(studioCredits).values({ userId: shell.id, balanceCents: 700 })
     // an extra auth method keeps the shell alive
-    const { userAuthMethods } = await import('../src/db/schema.js')
     await db.insert(userAuthMethods).values({ userId: shell.id, type: 'wallet', identifier: randomWallet(), metadata: { verified: true } })
     await linkVerifiedWallet(e.id, w)
     const rows = await db.select().from(studioCreditLedger).where(eq(studioCreditLedger.userId, shell.id))
@@ -117,5 +113,62 @@ describe('studio data follows a wallet linked to an existing account', () => {
     expect(await linkVerifiedWallet(e.id, w)).toBe('linked')
     expect(await db.query.users.findFirst({ where: eq(users.id, shell.id) })).toBeUndefined()
     expect(await creditBalance(e.id)).toBe(0)
+  })
+
+  it('dismisses the shell\'s open flag when the target already has one, and moves it otherwise', async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    await db.insert(studioFlags).values([{ userId: shell.id }, { userId: e.id }])
+    await linkVerifiedWallet(e.id, w)
+    const rows = await db.select().from(studioFlags)
+    expect(rows.every((r) => r.userId === e.id)).toBe(true)
+    expect(rows.filter((r) => r.status === 'open')).toHaveLength(1)
+    expect(rows.filter((r) => r.status === 'dismissed')).toHaveLength(1)
+  })
+
+  it('moves an open flag when the target has none', async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    await db.insert(studioFlags).values({ userId: shell.id })
+    await linkVerifiedWallet(e.id, w)
+    const rows = await db.select().from(studioFlags)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ userId: e.id, status: 'open' })
+  })
+
+  it('keeps a target that is already paused paused, with one pause row', async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    await db.insert(studioPauses).values([{ userId: shell.id }, { userId: e.id }])
+    await linkVerifiedWallet(e.id, w)
+    expect(await db.select().from(studioPauses)).toHaveLength(1)
+    expect((await db.select().from(studioPauses))[0].userId).toBe(e.id)
+  })
+
+  it('waits behind a checkout holding the target\'s finalize credits, and still sums (no deadlock)', async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    await createDesign(shell)
+    await db.insert(studioFinalizeCredits).values([{ userId: shell.id, balance: 1 }, { userId: e.id, balance: 2 }])
+    await db.insert(studioCredits).values([{ userId: shell.id, balanceCents: 500 }, { userId: e.id, balanceCents: 100 }])
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let locked!: () => void
+    const isLocked = new Promise<void>((r) => { locked = r })
+    // A checkout: finalize credits first, then (after the merge starts) credit
+    const checkout = db.transaction(async (tx) => {
+      await tx.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, e.id)).for('update')
+      locked()
+      await held
+      await tx.select().from(studioCredits).where(eq(studioCredits.userId, e.id)).for('update')
+    })
+    await isLocked
+    const merge = linkVerifiedWallet(e.id, w)
+    await new Promise((r) => setTimeout(r, 300))
+    release()
+    await checkout
+    expect(await merge).toBe('linked')
+    expect((await db.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, e.id)))[0].balance).toBe(3)
+    expect(await creditBalance(e.id)).toBe(600)
   })
 })

@@ -14,15 +14,12 @@ import type { Exec } from './quota.js'
 export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: string, now: Date): Promise<void> {
   if (fromUserId === toUserId) return
 
-  // Credit first. The source's balance row is locked (by takeCredit), then the target's (by addCredit's upsert); the
-  // order is always source then target, and a checkout only ever locks one row, so no pair of transactions can deadlock.
-  const [src] = await tx.select({ balanceCents: studioCredits.balanceCents }).from(studioCredits)
-    .where(eq(studioCredits.userId, fromUserId)).for('update')
-  if (src) {
-    const taken = await takeCredit(tx, fromUserId, src.balanceCents, 'merge', toUserId, now)
-    await addCredit(tx, toUserId, taken, 'merge', fromUserId, now)
-    await tx.delete(studioCredits).where(eq(studioCredits.userId, fromUserId))
-  }
+  // Locks come in the order checkout and grant take them: the design, then the free-finalize credits, then the credit
+  // rows last. Within a kind, rows are locked in user-id order so two merges can't wait on each other either.
+  await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.ownerId, fromUserId))
+    .orderBy(studioDesigns.id).for('update')
+  await tx.select({ userId: studioFinalizeCredits.userId }).from(studioFinalizeCredits)
+    .where(inArray(studioFinalizeCredits.userId, [fromUserId, toUserId])).orderBy(studioFinalizeCredits.userId).for('update')
 
   // Records
   await tx.update(studioDesigns).set({ ownerId: toUserId }).where(eq(studioDesigns.ownerId, fromUserId))
@@ -77,4 +74,14 @@ export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: str
       inArray(studioGiftRedemptions.codeId, has.map((r) => r.codeId))))
   }
   await tx.update(studioGiftRedemptions).set({ userId: toUserId }).where(eq(studioGiftRedemptions.userId, fromUserId))
+
+  // Credit last, as a checkout does: both balance rows locked in user-id order, then moved with a ledger row on each side
+  const locked = await tx.select({ userId: studioCredits.userId, balanceCents: studioCredits.balanceCents }).from(studioCredits)
+    .where(inArray(studioCredits.userId, [fromUserId, toUserId])).orderBy(studioCredits.userId).for('update')
+  const src = locked.find((r) => r.userId === fromUserId)
+  if (src) {
+    const taken = await takeCredit(tx, fromUserId, src.balanceCents, 'merge', toUserId, now)
+    await addCredit(tx, toUserId, taken, 'merge', fromUserId, now)
+    await tx.delete(studioCredits).where(eq(studioCredits.userId, fromUserId))
+  }
 }
