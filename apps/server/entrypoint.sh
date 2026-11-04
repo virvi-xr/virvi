@@ -79,16 +79,23 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] catalog packs ensured');
       } catch(e) { console.log('[virvi-server] catalog packs:', e.message); }
 
-      // Scene imports; matches sceneImportStatusEnum / sceneImports / dclWorldDestinations.pendingImportId in src/db/schema.ts.
+      // Scene imports; matches sceneImportStatusEnum / dclDestinationKindEnum / sceneImports and dclWorldDestinations'
+      // pendingImportId, kind, nullable world_name and parcels base index in src/db/schema.ts.
       // markFailed and afterWorldDeploy touch scene_imports on every World deploy, so it must exist.
       try {
+        await sql\`DO \$\$ BEGIN CREATE TYPE dcl_destination_kind AS ENUM ('world','parcels'); EXCEPTION WHEN duplicate_object THEN NULL; END \$\$\`;
         await sql\`DO \$\$ BEGIN CREATE TYPE scene_import_status AS ENUM ('uploaded','building','built','deploying','awaiting_signature','deployed','failed'); EXCEPTION WHEN duplicate_object THEN NULL; END \$\$\`;
         await sql\`CREATE TABLE IF NOT EXISTS scene_imports (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, scene_id UUID NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, world_name TEXT NOT NULL, kind TEXT NOT NULL, status scene_import_status NOT NULL DEFAULT 'uploaded', error_code TEXT, error_message TEXT, source_key TEXT NOT NULL, built_key_prefix TEXT, log_key TEXT, build_token_hash TEXT, machine_id TEXT, destination_id UUID REFERENCES dcl_world_destinations(id) ON DELETE SET NULL, deployment_id UUID REFERENCES scene_deployments(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), built_at TIMESTAMPTZ, finished_at TIMESTAMPTZ)\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS files_deleted_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS virvi_already_present BOOLEAN NOT NULL DEFAULT FALSE\`;
+        await sql\`ALTER TABLE scene_imports ALTER COLUMN world_name DROP NOT NULL\`;
+        await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS location_kind dcl_destination_kind NOT NULL DEFAULT 'world', ADD COLUMN IF NOT EXISTS base TEXT, ADD COLUMN IF NOT EXISTS parcels TEXT[] NOT NULL DEFAULT '{}'::text[]\`;
         await sql\`CREATE INDEX IF NOT EXISTS scene_imports_world_status_idx ON scene_imports (world_name, status)\`;
         await sql\`CREATE INDEX IF NOT EXISTS scene_imports_user_created_idx ON scene_imports (user_id, created_at)\`;
         await sql\`ALTER TABLE dcl_world_destinations ADD COLUMN IF NOT EXISTS pending_import_id UUID REFERENCES scene_imports(id) ON DELETE SET NULL\`;
+        await sql\`ALTER TABLE dcl_world_destinations ADD COLUMN IF NOT EXISTS kind dcl_destination_kind NOT NULL DEFAULT 'world'\`;
+        await sql\`ALTER TABLE dcl_world_destinations ALTER COLUMN world_name DROP NOT NULL\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS dcl_destinations_parcels_base ON dcl_world_destinations (base) WHERE kind = 'parcels'\`;
         console.log('[virvi-server] scene_imports ensured');
       } catch(e) { console.log('[virvi-server] scene_imports:', e.message); }
 

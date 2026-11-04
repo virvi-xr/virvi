@@ -74,6 +74,14 @@ describe('entrypoint schema fallback: scene imports', () => {
       // The column statement matches the pushed one (it is a no-op here, since push already made it)
       const pending = statements.find((s) => s.includes('pending_import_id'))!
       expect(pending).toMatch(/ADD COLUMN IF NOT EXISTS pending_import_id UUID REFERENCES scene_imports\(id\) ON DELETE SET NULL/)
+      // Genesis City parcels destinations (no-ops here too): the kind, a nullable world_name, and the base index as pushed
+      expect(statements).toContain("ALTER TABLE dcl_world_destinations ADD COLUMN IF NOT EXISTS kind dcl_destination_kind NOT NULL DEFAULT 'world'")
+      expect(statements).toContain('ALTER TABLE dcl_world_destinations ALTER COLUMN world_name DROP NOT NULL')
+      const [pushed] = (await db.execute(sql`SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'dcl_destinations_parcels_base'`)) as unknown as Array<{ indexdef: string }>
+      expect(pushed.indexdef).toMatch(/UNIQUE INDEX dcl_destinations_parcels_base ON public\.dcl_world_destinations USING btree \(base\) WHERE \(kind = 'parcels'::dcl_destination_kind\)/)
+      expect(statements).toContain("CREATE UNIQUE INDEX IF NOT EXISTS dcl_destinations_parcels_base ON dcl_world_destinations (base) WHERE kind = 'parcels'")
+      const destCols = (await columns('public', 'dcl_world_destinations')).filter((c) => c.column_name === 'kind' || c.column_name === 'world_name')
+      expect(destCols.map((c) => [c.column_name, c.is_nullable, c.column_default])).toEqual([['kind', 'NO', "'world'::dcl_destination_kind"], ['world_name', 'YES', null]])
     } finally {
       await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
     }

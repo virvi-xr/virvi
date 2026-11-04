@@ -6,20 +6,23 @@
  *
  * Registries (checked 2026-11-04, see the Scene Import plan 2's "Facts checked"):
  * - LANDRegistry `setManyUpdateOperator(uint256[] assetIds, address operator)` for parcels outside an estate;
- * - EstateRegistry `setUpdateOperator(uint256 estateId, address operator)` for each estate;
+ * - EstateRegistry `setManyLandUpdateOperator(uint256 estateId, uint256[] landIds, address operator)` for the parcels
+ *   inside each estate (Ruling R5: never the estate-wide `setUpdateOperator`, which would reach beyond scene.json's
+ *   parcels). Selector 0x3dcbeb00, present in the proxy's implementation 0xdcf39b96b4df02ff98fc6f3916d41f782ff59f7f
+ *   (checked on mainnet 2026-11-04); the operators lambda reports that per-land update operator as `updateOperator`;
  * - only the owner, an operator or an approved-for-all wallet may call them (an update operator can't);
  * - the zero address as operator removes it.
  */
 import { Interface, ZeroAddress } from 'ethers'
 import type { ParcelRights } from '../../analytics/dcl-directory.js'
 import { CatalystError } from './catalyst-client.js'
-import { grantedTo } from './parcel-control.js'
+import { AETHERIA_ESTATES, grantedTo, type ParcelControl } from './parcel-control.js'
 
 export const LAND_REGISTRY = '0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d'
 export const ESTATE_REGISTRY = '0x959e104e1a4db6317fa58f8295f586e1a978c297'
 
 const LAND = new Interface(['function setManyUpdateOperator(uint256[] _assetIds, address _operator)'])
-const ESTATE = new Interface(['function setUpdateOperator(uint256 estateId, address operator)'])
+const ESTATE = new Interface(['function setManyLandUpdateOperator(uint256 _estateId, uint256[] _landIds, address _operator)'])
 
 export const GRANT_COST_NOTE =
   'This is an Ethereum mainnet transaction: you pay its gas fee once. Undo it any time with a second transaction from here (also paid in gas).'
@@ -42,8 +45,9 @@ export function landAssetId(parcel: string): bigint {
 const count = (n: number) => `${n} parcel${n === 1 ? '' : 's'}`
 
 /**
- * The transactions that make `operator` the update operator of `parcels` (null: remove it): one LANDRegistry call for
- * the parcels in no estate, one EstateRegistry call per estate (`estates`: parcel -> estate id, or null).
+ * The transactions that make `operator` the update operator of exactly `parcels` (null: remove it): one LANDRegistry
+ * call for the parcels in no estate, and one EstateRegistry call per estate naming only its parcels among `parcels`
+ * (`estates`: parcel -> estate id, or null).
  */
 export function grantTransactions(parcels: string[], estates: Map<string, string | null>, operator: string | null): GrantTransaction[] {
   const to = operator ?? ZeroAddress
@@ -54,10 +58,20 @@ export function grantTransactions(parcels: string[], estates: Map<string, string
     ...(loose.length
       ? [{ to: LAND_REGISTRY, data: LAND.encodeFunctionData('setManyUpdateOperator', [loose.map(landAssetId), to]), label: `${verb} ${count(loose.length)}` }]
       : []),
-    ...estateIds.map((id) => ({
-      to: ESTATE_REGISTRY, data: ESTATE.encodeFunctionData('setUpdateOperator', [BigInt(id), to]), label: `${verb} estate ${id}`,
-    })),
+    ...estateIds.map((id) => {
+      const lands = parcels.filter((p) => estates.get(p) === id)
+      return {
+        to: ESTATE_REGISTRY,
+        data: ESTATE.encodeFunctionData('setManyLandUpdateOperator', [BigInt(id), lands.map(landAssetId), to]),
+        label: `${verb} ${count(lands.length)} in estate ${id}`,
+      }
+    }),
   ]
+}
+
+/** Aetheria land: an owner in AETHERIA_OWNERS (parcelControl's flag) or any parcel in an AETHERIA_ESTATES estate. */
+export function isAetheria(control: Pick<ParcelControl, 'aetheria'>, estates: Map<string, string | null>): boolean {
+  return control.aetheria || [...estates.values()].some((e) => !!e && AETHERIA_ESTATES.has(e))
 }
 
 /** The first of `parcels` where `address` holds no deploy right (a parcel with no rights counts as one); null when it holds them all. */

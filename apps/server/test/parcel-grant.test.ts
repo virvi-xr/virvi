@@ -26,7 +26,7 @@ vi.mock('../src/net/public-url.js', async (orig) => ({
 }))
 
 const LAND = new Interface(['function setManyUpdateOperator(uint256[] _assetIds, address _operator)'])
-const ESTATE = new Interface(['function setUpdateOperator(uint256 estateId, address operator)'])
+const ESTATE = new Interface(['function setManyLandUpdateOperator(uint256 _estateId, uint256[] _landIds, address _operator)'])
 const COST_NOTE =
   'This is an Ethereum mainnet transaction: you pay its gas fee once. Undo it any time with a second transaction from here (also paid in gas).'
 const REVOKED = 'Virvi is no longer an operator on these parcels. Sign this deploy in the browser, or set Virvi up again.'
@@ -43,22 +43,26 @@ describe('grantTransactions', () => {
     expect(operator.toLowerCase()).toBe(op)
   })
 
-  it('makes one estate call per estate, and the loose parcels in one LAND call', () => {
+  it('makes one estate call per estate naming only the scene\'s parcels in it, and the loose parcels in one LAND call', () => {
     const op = Wallet.createRandom().address.toLowerCase()
-    const estates = new Map<string, string | null>([['1,1', '77'], ['1,2', '77'], ['3,3', null], ['4,4', '12']])
-    const txs = grantTransactions(['1,1', '1,2', '3,3', '4,4'], estates, op)
+    const estates = new Map<string, string | null>([['1,1', '77'], ['1,2', '77'], ['3,3', null], ['-9,-9', '12']])
+    const txs = grantTransactions(['1,1', '1,2', '3,3', '-9,-9'], estates, op)
     expect(txs.map((t) => t.to)).toEqual([LAND_REGISTRY, ESTATE_REGISTRY, ESTATE_REGISTRY])
     expect([...LAND.decodeFunctionData('setManyUpdateOperator', txs[0].data)[0]]).toEqual([landAssetId('3,3')])
-    expect(ESTATE.decodeFunctionData('setUpdateOperator', txs[1].data)[0]).toBe(77n)
-    expect(ESTATE.decodeFunctionData('setUpdateOperator', txs[2].data)[0]).toBe(12n)
-    expect(String(ESTATE.decodeFunctionData('setUpdateOperator', txs[2].data)[1]).toLowerCase()).toBe(op)
-    for (const t of txs) expect(t.label).toBeTruthy()
+    // setManyLandUpdateOperator(uint256,uint256[],address), never the estate-wide setUpdateOperator (Ruling R5)
+    for (const t of txs.slice(1)) expect(t.data.slice(0, 10)).toBe('0x3dcbeb00')
+    const [id77, lands77, op77] = ESTATE.decodeFunctionData('setManyLandUpdateOperator', txs[1].data)
+    expect([id77, [...lands77], String(op77).toLowerCase()]).toEqual([77n, [(1n << 128n) | 1n, (1n << 128n) | 2n], op])
+    const [id12, lands12] = ESTATE.decodeFunctionData('setManyLandUpdateOperator', txs[2].data)
+    expect([id12, [...lands12]]).toEqual([12n, [0xfffffffffffffffffffffffffffffff7fffffffffffffffffffffffffffffff7n]])
+    expect(txs.map((t) => t.label)).toEqual(['Let Virvi deploy to 1 parcel', 'Let Virvi deploy to 2 parcels in estate 77', 'Let Virvi deploy to 1 parcel in estate 12'])
   })
 
   it('a null operator encodes the zero address (revoke), with no LAND call when every parcel is in an estate', () => {
     const txs = grantTransactions(['1,1'], new Map([['1,1', '77']]), null)
     expect(txs).toHaveLength(1)
-    expect(ESTATE.decodeFunctionData('setUpdateOperator', txs[0].data)[1]).toBe(ZeroAddress)
+    const [id, lands, op] = ESTATE.decodeFunctionData('setManyLandUpdateOperator', txs[0].data)
+    expect([id, [...lands], op]).toEqual([77n, [(1n << 128n) | 1n], ZeroAddress])
   })
 })
 
@@ -173,15 +177,35 @@ describe('the Genesis City operator grant', () => {
     const check = await call('POST', `/api/dcl/destinations/${d.id}/parcel-grant/check`, holder)
     expect(check.statusCode).toBe(409)
     expect(check.json().error).toBe('aetheria_managed')
+    const patch = await call('PATCH', `/api/dcl/destinations/${d.id}`, holder, { mode: 'virvi' })
+    expect(patch.statusCode).toBe(409)
+    expect(patch.json().error).toBe('aetheria_managed')
     expect(await destRow(d.id)).toMatchObject({ mode: 'sign', grantedAt: null })
   })
 
-  it('also treats a parcel in the Aetheria estate as Aetheria', async () => {
+  it('refuses the operator grant for a parcel in the Aetheria estate, whoever owns it', async () => {
     dir.estates.set(PARCELS[0], '2092')
     const d = await parcelsDest()
     const res = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant`)
-    expect(res.json()).toMatchObject({ aetheria: true })
+    expect(res.json()).toMatchObject({ aetheria: true, canGrant: true })
     expect(res.json().transactions).toBeUndefined()
+    grantVirvi()
+    for (const [method, url] of [['POST', `/api/dcl/destinations/${d.id}/parcel-grant/check`], ['PATCH', `/api/dcl/destinations/${d.id}`]] as const) {
+      const r = await call(method, url, user, method === 'PATCH' ? { mode: 'virvi' } : undefined)
+      expect(r.statusCode, method).toBe(409)
+      expect(r.json().error, method).toBe('aetheria_managed')
+    }
+    expect(await destRow(d.id)).toMatchObject({ mode: 'sign', grantedAt: null })
+  })
+
+  it('the GET reports Aetheria by estate even to a caller who cannot grant, and when the key is unset', async () => {
+    dir.estates.set(PARCELS[0], '2092')
+    cfg.virviDclParcelDeployKey = null
+    const op = await createUser({ wallet: createUnsafeIdentity().address })
+    for (const p of PARCELS) dir.rights.set(p, rights({ owner: user.wallet, updateOperator: op.wallet }))
+    const d = await parcelsDest({ by: op })
+    const res = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant`, op)
+    expect(res.json()).toMatchObject({ available: false, canGrant: false, aetheria: true })
   })
 
   it('check flips to virvi when the rights name Virvi\'s address', async () => {
@@ -239,7 +263,7 @@ describe('the Genesis City operator grant', () => {
     const d = await parcelsDest()
     const res = await call('PATCH', `/api/dcl/destinations/${d.id}`, user, { mode: 'virvi' })
     expect(res.statusCode).toBe(409)
-    expect(res.json().error).toBe('not_granted')
+    expect(res.json()).toMatchObject({ error: 'not_granted', missing: PARCELS[0] })
     expect((await destRow(d.id)).mode).toBe('sign')
 
     grantVirvi()
@@ -264,9 +288,31 @@ describe('the Genesis City operator grant', () => {
     expect((await destRow(d.id)).mode).toBe('virvi')
 
     dir.rights.set(PARCELS[0], rights({ owner: user.wallet }))
+    expect((await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant/revoke`)).json()).toMatchObject({ transactions: [] })
     const gone = await call('POST', `/api/dcl/destinations/${d.id}/parcel-grant/revoke/check`)
     expect(gone.json()).toMatchObject({ revoked: true })
     expect(await destRow(d.id)).toMatchObject({ mode: 'sign', grantedAt: null })
+  })
+
+  it('revoke covers estate parcels with the per-land estate call', async () => {
+    dir.estates.set(PARCELS[1], '77')
+    grantVirvi()
+    const d = await parcelsDest({ granted: true })
+    const res = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant/revoke`)
+    const txs = res.json().transactions as Array<{ to: string; data: string }>
+    expect(txs.map((t) => t.to)).toEqual([LAND_REGISTRY, ESTATE_REGISTRY])
+    const [id, lands, op] = ESTATE.decodeFunctionData('setManyLandUpdateOperator', txs[1].data)
+    expect([id, [...lands], op]).toEqual([77n, [landAssetId(PARCELS[1])], ZeroAddress])
+    expect(res.json().message).toBeUndefined()
+  })
+
+  it('revoke explains a right the transactions cannot remove (an update manager)', async () => {
+    dir.rights.set(PARCELS[0], rights({ owner: user.wallet, updateOperator: virvi }))
+    dir.rights.set(PARCELS[1], rights({ owner: user.wallet, updateManagers: [virvi] }))
+    const d = await parcelsDest({ granted: true })
+    const res = await call('GET', `/api/dcl/destinations/${d.id}/parcel-grant/revoke`)
+    expect(res.json().transactions).toEqual(grantTransactions([PARCELS[0]], new Map([[PARCELS[0], null]]), null))
+    expect(res.json().message).toMatch(/Builder/)
   })
 
   it('a granted parcels deploy is signed by the Genesis City key', async () => {
