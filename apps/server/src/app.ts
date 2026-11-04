@@ -26,6 +26,7 @@ import hookRoutes from './routes/hooks.js'
 import assetRoutes from './routes/assets.js'
 import catalogRoutes from './routes/catalog.js'
 import deployRoutes from './routes/deploy.js'
+import backupRoutes from './routes/backup.js'
 import commandCenterRoutes from './routes/command-center.js'
 import streamingRoutes from './routes/streaming.js'
 import billingRoutes from './routes/billing.js'
@@ -201,6 +202,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(assetRoutes)
   await app.register(catalogRoutes)
   await app.register(deployRoutes)
+  await app.register(backupRoutes)
   await app.register(commandCenterRoutes)
   await app.register(streamingRoutes)
   // Stripe signs the exact raw body, so billing keeps request.rawBody too

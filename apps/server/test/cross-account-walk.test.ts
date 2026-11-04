@@ -235,6 +235,7 @@ const CASES: Case[] = [
   { route: 'PATCH /api/dcl/destinations/:id', url: (f) => `/api/dcl/destinations/${f.parcelsDestination.id}`, body: () => ({ mode: 'virvi' }) },
   { route: 'POST /api/dcl/destinations/:id/deploy', url: (f) => `/api/dcl/destinations/${f.destination.id}/deploy` },
   { route: 'POST /api/dcl/destinations/:id/rebase', url: (f) => `/api/dcl/destinations/${f.destination.id}/rebase` },
+  { route: 'GET /api/scenes/:sceneId/backup.zip', url: (f) => `/api/scenes/${f.scene.id}/backup.zip` },
   { route: 'GET /api/scenes/:sceneId/dcl/publish-status', url: (f) => `/api/scenes/${f.scene.id}/dcl/publish-status` },
   // scene imports
   { route: 'GET /api/imports/:id', url: (f) => `/api/imports/${f.sceneImport.id}` },

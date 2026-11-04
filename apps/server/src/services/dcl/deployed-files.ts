@@ -137,10 +137,10 @@ export async function planDownload(dep: DeployedRow): Promise<{ filename: string
   return { filename: `${filenameSafe(dest.label)}-${utcStamp(dep.deployedAt ?? new Date())}.zip`, entries }
 }
 
-const filenameSafe = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, '-')
+export const filenameSafe = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, '-')
 const pad = (n: number) => String(n).padStart(2, '0')
 /** YYYYMMDD-HHmm, in UTC. */
-const utcStamp = (d: Date) =>
+export const utcStamp = (d: Date) =>
   `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}`
 
 /**
@@ -165,6 +165,15 @@ async function* bytesOf(e: Entry): AsyncGenerator<Uint8Array> {
  * images already). A file that fails partway ends the stream with an error, so a broken zip never looks complete.
  */
 export function zipEntries(entries: Entry[]): Readable {
+  return zipStreams(entries.map((e) => ({ path: e.path, chunks: () => bytesOf(e) })))
+}
+
+/** The same streamed zip for files already in memory (the scene backup). */
+export function zipFiles(files: Map<string, Uint8Array>): Readable {
+  return zipStreams([...files].map(([path, bytes]) => ({ path, chunks: async function* () { yield bytes } })))
+}
+
+function zipStreams(items: Array<{ path: string; chunks: () => AsyncIterable<Uint8Array> }>): Readable {
   const out = new PassThrough()
   const zip = new Zip((err, chunk, final) => {
     if (err) return void out.destroy(err)
@@ -172,10 +181,10 @@ export function zipEntries(entries: Entry[]): Readable {
     if (final) out.end()
   })
   void (async () => {
-    for (const e of entries) {
-      const f = new ZipPassThrough(e.path)
+    for (const item of items) {
+      const f = new ZipPassThrough(item.path)
       zip.add(f)
-      for await (const chunk of bytesOf(e)) {
+      for await (const chunk of item.chunks()) {
         f.push(chunk)
         if (out.writableNeedDrain) await Promise.race([once(out, 'drain'), once(out, 'close')])
         if (out.destroyed) return
