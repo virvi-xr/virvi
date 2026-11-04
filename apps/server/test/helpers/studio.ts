@@ -2,6 +2,8 @@ import { db } from '../../src/db/connection.js'
 import { studioDesigns, studioJobs } from '../../src/db/schema.js'
 import type { WorkerMachineSpec } from '../../src/hyperfy/fly.js'
 import type { TestUser } from './factories.js'
+import * as polygonModule from '../../src/studio/mana/polygon.js'
+import type { PolygonLog } from '../../src/studio/mana/polygon.js'
 
 /** A Fly that keeps machines in memory and records what it was asked to do. */
 export function fakeFly() {
@@ -216,4 +218,57 @@ export function fakeStripe() {
     },
   }
   return stripe
+}
+
+/**
+ * A Polygon chain the test drives: the latest block, mined transactions (receipts and their logs), block times and
+ * the Transfer logs a scan finds. `send` mines an ERC-20 Transfer; `advance` adds blocks.
+ */
+export function fakePolygon(opts: { latest?: number; t0?: Date; secPerBlock?: number } = {}) {
+  const { parseTransfers, TRANSFER_TOPIC } = polygonModule
+  const word = (hex: string) => '0x' + hex.replace(/^0x/, '').toLowerCase().padStart(64, '0')
+  const t0 = opts.t0 ?? new Date()
+  const secPerBlock = opts.secPerBlock ?? 2
+  const startBlock = opts.latest ?? 50_000
+  let n = 0
+  const txs = new Map<string, { status: 0 | 1; blockNumber: number; logs: PolygonLog[] }>()
+  const times = new Map<number, Date>()
+  const chain = {
+    latest: startBlock,
+    calls: { transfersTo: [] as { fromBlock: number; toBlock: number }[], receipts: [] as string[] },
+    failScan: false,
+    /** Mines a Transfer of `amountWei` to `to` (on `token`) in `block` (default: the latest), mined at `at`. */
+    send(t: { to: string; amountWei: bigint; token?: string; from?: string; block?: number; at?: Date; status?: 0 | 1; hash?: string }): string {
+      const hash = t.hash ?? '0x' + (++n).toString(16).padStart(64, 'a')
+      const blockNumber = t.block ?? chain.latest
+      if (t.at) times.set(blockNumber, t.at)
+      txs.set(hash, {
+        status: t.status ?? 1,
+        blockNumber,
+        logs: [{
+          address: (t.token ?? '0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4').toLowerCase(),
+          topics: [TRANSFER_TOPIC, word(t.from ?? '0x1111111111111111111111111111111111111111'), word(t.to)],
+          data: word(t.amountWei.toString(16)), logIndex: 0, transactionHash: hash, blockNumber,
+        }],
+      })
+      return hash
+    },
+    advance(blocks: number) { chain.latest += blocks },
+    async latestBlock() { return chain.latest },
+    async receipt(txHash: string) {
+      chain.calls.receipts.push(txHash)
+      const tx = txs.get(txHash.toLowerCase()) ?? txs.get(txHash)
+      return tx && tx.blockNumber <= chain.latest ? tx : null
+    },
+    async blockTime(blockNumber: number) {
+      return times.get(blockNumber) ?? new Date(t0.getTime() + (blockNumber - startBlock) * secPerBlock * 1000)
+    },
+    async transfersTo(token: string, to: string, fromBlock: number, toBlock: number) {
+      chain.calls.transfersTo.push({ fromBlock, toBlock })
+      if (chain.failScan) throw new Error('RPC is down')
+      const logs = [...txs.values()].filter((tx) => tx.status === 1 && tx.blockNumber >= fromBlock && tx.blockNumber <= toBlock).flatMap((tx) => tx.logs)
+      return parseTransfers(token, logs).filter((t) => t.to.toLowerCase() === to.toLowerCase())
+    },
+  }
+  return chain
 }

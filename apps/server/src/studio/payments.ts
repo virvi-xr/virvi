@@ -107,12 +107,13 @@ async function dropPayment(paymentId: string, now: Date): Promise<void> {
 
 /**
  * Marks a pending payment expired and gives back the free finalizes and credit it held, once (a paid or expired one is
- * left alone).
+ * left alone, and so is a MANA payment whose transaction is claimed: it is paid, waiting for its confirmations).
  */
-async function expirePayment(paymentId: string, now: Date): Promise<void> {
+export async function expirePayment(paymentId: string, now: Date): Promise<void> {
   await db.transaction(async (tx) => {
     const [pay] = await tx.select({ userId: studioPayments.userId, giftsHeld: studioPayments.giftsHeld, creditHeldCents: studioPayments.creditHeldCents })
-      .from(studioPayments).where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending'))).for('update')
+      .from(studioPayments)
+      .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending'), isNull(studioPayments.manaTxHash))).for('update')
     if (!pay) return
     await tx.update(studioPayments).set({ status: 'expired', giftsHeld: 0, creditHeldCents: 0 }).where(eq(studioPayments.id, paymentId))
     await returnGifts(tx, pay.userId, pay.giftsHeld, now)

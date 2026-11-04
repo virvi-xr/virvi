@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioJobs, studioRenders, studioSetRenders } from '../db/schema.js'
+import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders } from '../db/schema.js'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { getSubscription } from '../integrations/stripe.js'
@@ -15,6 +15,7 @@ import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeR
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
+import { reportManaTx } from '../studio/mana/settle.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
   designDetail, openDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
@@ -340,6 +341,33 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
     try {
       return await createTopupCheckout({ id: request.user.id, email: request.user.email ?? null }, packs as number, new Date(), method)
+    } catch (err) {
+      return checkoutRefusal(reply, err)
+    }
+  })
+
+  // A payment's state, for the page to poll while a MANA transaction confirms
+  app.get('/api/studio/payments/:paymentId', auth, async (request, reply) => {
+    const id = (request.params as { paymentId: string }).paymentId
+    const [pay] = UUID.test(id)
+      ? await db.select({
+        status: studioPayments.status, method: studioPayments.method, expiresAt: studioPayments.expiresAt, manaTxHash: studioPayments.manaTxHash,
+      }).from(studioPayments).where(and(eq(studioPayments.id, id), eq(studioPayments.userId, request.user.id)))
+      : []
+    if (!pay) return reply.status(404).send({ error: 'not_found', code: 'not_found' })
+    return pay
+  })
+
+  // The customer's page reports the transaction that pays a MANA payment
+  app.post('/api/studio/payments/:paymentId/mana-tx', auth, async (request, reply) => {
+    const id = (request.params as { paymentId: string }).paymentId
+    if (!UUID.test(id)) return reply.status(404).send({ error: 'not_found', code: 'not_found' })
+    const txHash = ((request.body ?? {}) as { txHash?: unknown }).txHash
+    if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      return reply.status(400).send({ error: 'txHash must be a 0x-prefixed 32-byte hex transaction hash' })
+    }
+    try {
+      return await reportManaTx(request.user.id, id, txHash, new Date())
     } catch (err) {
       return checkoutRefusal(reply, err)
     }

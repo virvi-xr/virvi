@@ -1,16 +1,18 @@
-import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioEntitlements, studioJobs, studioPayments } from '../db/schema.js'
 import { destroyWorker, ensureWorker, type MachineDeps } from './machines.js'
 import { failJobs } from './results.js'
-import { queueFinalize, settleRefund } from './payments.js'
+import { expirePayment, queueFinalize, settleRefund } from './payments.js'
+import { watchManaTransfers } from './mana/settle.js'
+import { config } from '../config.js'
 import { addMissingLibraryRows } from './library.js'
 
 /**
  * The Design Studio sweep: fails jobs that will never get a result (refunding counted prompts), restarts machines for
- * jobs left waiting, destroys machines idle for days, packages paid pieces left without a job, and pays back refunds
- * still owed. Every transition is conditional, so concurrent sweeps on
- * several servers fail each job once.
+ * jobs left waiting, destroys machines idle for days, packages paid pieces left without a job, settles MANA transfers
+ * and expires MANA quotes left unpaid past their grace, and pays back refunds still owed. Every transition is
+ * conditional, so concurrent sweeps on several servers fail each job once.
  */
 
 export const STUDIO_SWEEP_MS = 60_000
@@ -73,6 +75,16 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
   ))
   for (const o of orphans) {
     await queueFinalize(o.designId, [o.id], now).catch((err) => console.error('[studio-sweep] requeue failed:', err instanceof Error ? err.message : err))
+  }
+
+  // MANA: transfers first, so one mined in time settles even if its quote is expired just after
+  await watchManaTransfers(now).catch((err) => console.error('[studio-sweep] MANA watcher failed:', err instanceof Error ? err.message : err))
+  const lapsed = await db.select({ id: studioPayments.id }).from(studioPayments).where(and(
+    eq(studioPayments.method, 'mana'), eq(studioPayments.status, 'pending'), isNull(studioPayments.manaTxHash),
+    lt(studioPayments.expiresAt, new Date(now.getTime() - config.studioMana.graceMs)),
+  ))
+  for (const { id } of lapsed) {
+    await expirePayment(id, now).catch((err) => console.error('[studio-sweep] MANA expiry failed:', err instanceof Error ? err.message : err))
   }
 
   const owing = await db.select({ id: studioPayments.id }).from(studioPayments)

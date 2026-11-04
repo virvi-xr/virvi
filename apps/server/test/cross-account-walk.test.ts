@@ -127,7 +127,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, designPayment, aScene, aEvent,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -264,6 +264,8 @@ const CASES: Case[] = [
   { route: 'POST /api/studio/designs/:id/set-renders', url: (f) => `/api/studio/designs/${f.design.id}/set-renders`, body: () => ({ bodyShape: 'male', outfit: 'default', emote: 'run' }) },
   { route: 'POST /api/studio/designs/:id/emote-checks', url: (f) => `/api/studio/designs/${f.design.id}/emote-checks`, body: () => ({ emote: 'run', bodyShape: 'male', state: 'fine' }) },
   { route: 'POST /api/studio/designs/:id/clipping', url: (f) => `/api/studio/designs/${f.design.id}/clipping`, body: () => ({ emote: 'run', bodyShape: 'male', outfit: 'default' }) },
+  { route: 'GET /api/studio/payments/:paymentId', url: (f) => `/api/studio/payments/${f.designPayment.id}` },
+  { route: 'POST /api/studio/payments/:paymentId/mana-tx', url: (f) => `/api/studio/payments/${f.designPayment.id}/mana-tx`, body: () => ({ txHash: '0x' + 'ab'.repeat(32) }) },
   { route: 'POST /api/studio/designs/:id/finalize-renders', url: (f) => `/api/studio/designs/${f.design.id}/finalize-renders` },
   { route: 'DELETE /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}` },
   { route: 'PATCH /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}`, body: () => ({ endsAt: null }) },
