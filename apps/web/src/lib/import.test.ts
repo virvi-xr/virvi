@@ -6,6 +6,7 @@ const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   id: 'imp-1',
   sceneId: 'scene-1',
   worldName: 'cafe.dcl.eth',
+  location: { kind: 'world', world: 'cafe.dcl.eth' },
   kind: 'creator-hub',
   status: 'building',
   errorCode: null,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
-import type { SceneImportView } from '@virvixr/shared'
+import type { ImportLocation, SceneImportView } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
 import { insertSceneWithDefaultPreset } from '../../scenes/create.js'
@@ -40,12 +40,36 @@ function signingOver(dep: DeploymentRow | null, now: number): boolean {
   return now - started > DEPLOY_WINDOW_MS
 }
 
+/** The import row's location: a World by name, or Genesis City parcels by base and footprint. */
+export function locationOf(row: Pick<SceneImportRow, 'locationKind' | 'worldName' | 'base' | 'parcels'>): ImportLocation {
+  return row.locationKind === 'parcels'
+    ? { kind: 'parcels', base: row.base ?? '', parcels: row.parcels }
+    : { kind: 'world', world: row.worldName ?? '' }
+}
+
+/** `world:<name>` or `gc:<base>`. */
+export function locationKeyOf(loc: ImportLocation): string {
+  return loc.kind === 'world' ? `world:${loc.world}` : `gc:${loc.base}`
+}
+
+const asLocation = (loc: ImportLocation | string): ImportLocation => (typeof loc === 'string' ? { kind: 'world', world: loc } : loc)
+
+/** Rows of the same location: the World's name, or any shared parcel. */
+function sameLocation(loc: ImportLocation) {
+  return loc.kind === 'world'
+    ? and(eq(sceneImports.locationKind, 'world'), eq(sceneImports.worldName, loc.world))
+    : and(eq(sceneImports.locationKind, 'parcels'), sql`${sceneImports.parcels} && ${pgArray(loc.parcels)}`)
+}
+
+const pgArray = (items: string[]) => sql`ARRAY[${sql.join(items.map((p) => sql`${p}`), sql`, `)}]::text[]`
+
 /** `deployment` is the import's deployment row, needed to tell whether an awaiting signature has expired. */
 export function importView(row: SceneImportRow, logTail: string | null, deployment: DeploymentRow | null = null, now = Date.now()): SceneImportView {
   return {
     id: row.id,
     sceneId: row.sceneId,
     worldName: row.worldName,
+    location: locationOf(row),
     kind: row.kind as SceneImportView['kind'],
     status: row.status,
     errorCode: row.errorCode,
@@ -83,8 +107,12 @@ export async function loadImportView(row: SceneImportRow): Promise<SceneImportVi
 }
 
 /** The newest import of a World whose Virvi scene the caller may reuse (checked by the caller). */
-export async function latestImportFor(world: string): Promise<SceneImportRow | null> {
-  return (await db.query.sceneImports.findFirst({ where: eq(sceneImports.worldName, world), orderBy: [desc(sceneImports.createdAt)] })) ?? null
+export async function latestImportFor(location: ImportLocation | string): Promise<SceneImportRow | null> {
+  const loc = asLocation(location)
+  const where = loc.kind === 'world'
+    ? and(eq(sceneImports.locationKind, 'world'), eq(sceneImports.worldName, loc.world))
+    : and(eq(sceneImports.locationKind, 'parcels'), eq(sceneImports.base, loc.base))
+  return (await db.query.sceneImports.findFirst({ where, orderBy: [desc(sceneImports.createdAt)] })) ?? null
 }
 
 /**
@@ -95,23 +123,34 @@ export async function latestImportFor(world: string): Promise<SceneImportRow | n
  */
 export async function createImport(input: {
   userId: string
-  world: string
+  /** Where it deploys. A World-only caller may pass `world` (its name) instead. */
+  location?: ImportLocation
+  world?: string
   kind: 'creator-hub' | 'sdk7'
   scene: { id: string } | { newName: string }
   virviAlreadyPresent?: boolean
 }): Promise<SceneImportRow> {
   const id = randomUUID()
+  const loc = input.location ?? (input.world ? asLocation(input.world) : null)
+  if (!loc) throw new Error('createImport needs a location or a world')
   const { row, superseded } = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:${input.world}`}))`)
+    if (loc.kind === 'world') {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:${locationKeyOf(loc)}`}))`)
+    } else {
+      // One lock per parcel, in sorted order, so overlapping footprints serialise without deadlocking
+      for (const p of [...new Set(loc.parcels)].sort()) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:gc:${p}`}))`)
+      }
+    }
     const busy = await tx.query.sceneImports.findFirst({
-      where: and(eq(sceneImports.worldName, input.world), inArray(sceneImports.status, [...BLOCKING])),
+      where: and(sameLocation(loc), inArray(sceneImports.status, [...BLOCKING])),
       columns: { id: true },
     })
-    if (busy) throw new ImportError(409, 'import_in_progress', 'This World already has an import under way. Wait for it to finish, then upload again.')
+    if (busy) throw new ImportError(409, 'import_in_progress', loc.kind === 'world' ? 'This World already has an import under way. Wait for it to finish, then upload again.' : 'These parcels already have an import under way. Wait for it to finish, then upload again.')
     const now = new Date()
     const superseded = await tx.update(sceneImports).set({
       status: 'failed', errorCode: 'superseded', errorMessage: SUPERSEDED_MESSAGE, buildTokenHash: null, finishedAt: now, updatedAt: now,
-    }).where(and(eq(sceneImports.worldName, input.world), inArray(sceneImports.status, [...SUPERSEDED])))
+    }).where(and(sameLocation(loc), inArray(sceneImports.status, [...SUPERSEDED])))
       .returning({ id: sceneImports.id, deploymentId: sceneImports.deploymentId })
     // Ruling R16: the World never waits on a superseded import
     if (superseded.length) {
@@ -126,7 +165,8 @@ export async function createImport(input: {
       ;({ sceneId } = await insertSceneWithDefaultPreset(tx, input.userId, input.scene.newName))
     }
     const [row] = await tx.insert(sceneImports).values({
-      id, userId: input.userId, sceneId, worldName: input.world, kind: input.kind, sourceKey: sourceKey(id),
+      id, userId: input.userId, sceneId, ...(loc.kind === 'world' ? { worldName: loc.world } : { locationKind: 'parcels' as const, base: loc.base, parcels: loc.parcels }),
+      kind: input.kind, sourceKey: sourceKey(id),
       virviAlreadyPresent: input.virviAlreadyPresent ?? false,
     }).returning()
     return { row, superseded }

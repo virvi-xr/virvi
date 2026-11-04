@@ -720,6 +720,7 @@ export const sceneDeploymentsRelations = relations(sceneDeployments, ({ one }) =
 }))
 
 export const dclDestinationModeEnum = pgEnum('dcl_destination_mode', ['virvi', 'sign'])
+export const dclDestinationKindEnum = pgEnum('dcl_destination_kind', ['world', 'parcels'])
 export const dclDestinationStatusEnum = pgEnum('dcl_destination_status', ['ok', 'needs_review', 'over_budget', 'unreachable'])
 
 /** A Decentraland World a scene deploys to. Virvi never holds the owner's key. */
@@ -732,7 +733,8 @@ export const dclWorldDestinations = pgTable('dcl_world_destinations', {
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
   ownerWallet: text('owner_wallet').notNull(), // lowercased
-  worldName: text('world_name').notNull().unique(), // lowercased
+  kind: dclDestinationKindEnum('kind').notNull().default('world'),
+  worldName: text('world_name').unique(), // lowercased; null for a Genesis City parcels destination
   base: text('base').notNull(), // "x,y"
   parcels: text('parcels').array().notNull(),
   mode: dclDestinationModeEnum('mode').notNull(),
@@ -749,6 +751,7 @@ export const dclWorldDestinations = pgTable('dcl_world_destinations', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   sceneIdx: index('dcl_world_destinations_scene_idx').on(t.sceneId),
+  parcelsBaseUq: uniqueIndex('dcl_destinations_parcels_base').on(t.base).where(sql`kind = 'parcels'`),
 }))
 
 export const dclWorldDestinationsRelations = relations(dclWorldDestinations, ({ one }) => ({
@@ -776,7 +779,10 @@ export const sceneImports = pgTable('scene_imports', {
   sceneId: uuid('scene_id')
     .notNull()
     .references(() => scenes.id, { onDelete: 'cascade' }),
-  worldName: text('world_name').notNull(), // lowercased
+  worldName: text('world_name'), // lowercased; null for a Genesis City parcels import
+  locationKind: dclDestinationKindEnum('location_kind').notNull().default('world'),
+  base: text('base'), // "x,y" of a parcels import
+  parcels: text('parcels').array().notNull().default(sql`'{}'::text[]`),
   kind: text('kind').notNull(), // 'creator-hub' | 'sdk7'
   status: sceneImportStatusEnum('status').notNull().default('uploaded'),
   errorCode: text('error_code'),

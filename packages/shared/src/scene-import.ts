@@ -8,10 +8,15 @@ export type SceneImportStatus =
   | 'deployed'
   | 'failed'
 
+/** Where an import deploys: a Decentraland World, or Genesis City parcels (`base` is "x,y"). */
+export type ImportLocation = { kind: 'world'; world: string } | { kind: 'parcels'; base: string; parcels: string[] }
+
 export interface SceneImportView {
   id: string
   sceneId: string
-  worldName: string
+  /** Null for a Genesis City parcels import. */
+  worldName: string | null
+  location: ImportLocation
   kind: 'creator-hub' | 'sdk7'
   status: SceneImportStatus
   errorCode: string | null

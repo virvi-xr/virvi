@@ -10,6 +10,7 @@ import {
 } from '../dcl/world-deployer.js'
 import { OWNER_ERROR_MESSAGES, type SceneImportRow } from './imports.js'
 import { ImportError, worldNameOf } from './scene-zip.js'
+import { worldOf } from '../dcl/world-of.js'
 
 /**
  * Deploying an import's build to the World its scene.json names (Ruling R1). When the build finishes, only a World
@@ -39,7 +40,7 @@ async function builtPlot(row: SceneImportRow): Promise<{ base: string; parcels: 
     json = JSON.parse(obj.body.toString('utf8')) as typeof json
   } catch { /* checked below */ }
   const named = worldNameOf(json?.worldConfiguration?.name)
-  if (named !== row.worldName) throw new ImportError(422, 'world_changed', worldChanged(named, row.worldName))
+  if (named !== worldOf(row)) throw new ImportError(422, 'world_changed', worldChanged(named, worldOf(row)))
   const scene = json?.scene
   const parcels = Array.isArray(scene?.parcels) && scene.parcels.length && scene.parcels.every((p) => typeof p === 'string') ? (scene.parcels as string[]) : null
   if (!parcels) throw new ImportError(422, 'bad_scene_json', "The built scene.json doesn't list its parcels.")
@@ -89,7 +90,7 @@ export async function startImportDeploy(
   const from = row.status
   const startable = from === 'built' || from === 'awaiting_signature' || (opts.claimed && from === 'deploying' && !row.deploymentId)
   if (!startable) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
-  const existing = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, row.worldName) })
+  const existing = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, worldOf(row)) })
   const virvi = !!existing && granted(existing)
   if (opts.virviOnly && !(virvi && virviSigner())) return null
   try {
@@ -104,7 +105,7 @@ export async function startImportDeploy(
 async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { virviOnly?: boolean } & DeployOptions): Promise<StartedImportDeploy | null> {
   const from = row.status
   const plot = await builtPlot(row)
-  const owner = await worldOwner(by, row.worldName)
+  const owner = await worldOwner(by, worldOf(row))
   if (virvi && !virviSigner()) throw new DeployerError(503, 'virvi_deploys_unavailable', 'Virvi deploys are not available right now')
   // A signature that came too late must not deploy the old preparation
   if (from === 'awaiting_signature' && row.deploymentId) {
@@ -112,15 +113,15 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
   }
 
   const dest = await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:${row.worldName}`}))`)
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`scene-import:${worldOf(row)}`}))`)
     const now = await tx.query.sceneImports.findFirst({ where: eq(sceneImports.id, row.id), columns: { status: true } })
     const newest = await tx.query.sceneImports.findFirst({
-      where: eq(sceneImports.worldName, row.worldName), orderBy: [desc(sceneImports.createdAt)], columns: { id: true },
+      where: eq(sceneImports.worldName, worldOf(row)), orderBy: [desc(sceneImports.createdAt)], columns: { id: true },
     })
     if (now?.status !== from || newest?.id !== row.id) return null
     const at = new Date()
     const [d] = await tx.insert(dclWorldDestinations).values({
-      sceneId: row.sceneId, ownerUserId: by, ownerWallet: owner, worldName: row.worldName, ...plot,
+      sceneId: row.sceneId, ownerUserId: by, ownerWallet: owner, worldName: worldOf(row), ...plot,
       mode: 'sign', adopted: true, pendingImportId: row.id,
     }).onConflictDoUpdate({
       target: dclWorldDestinations.worldName,
@@ -154,7 +155,7 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
 export async function deployImport(importId: string, opts: DeployOptions = {}): Promise<void> {
   const row = await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, importId) })
   if (row?.status !== 'built') return
-  const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, row.worldName) })
+  const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, worldOf(row)) })
   if (!dest || !granted(dest) || !virviSigner()) return
   // Ruling R24: claimed before anything slow, so the creator is never offered a Deploy this is already doing
   const [claimed] = await db.update(sceneImports).set({ status: 'deploying', updatedAt: new Date() })

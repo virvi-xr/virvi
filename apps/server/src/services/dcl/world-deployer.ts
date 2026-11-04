@@ -31,6 +31,7 @@ import { keepDeployedFiles } from './deployed-files.js'
 import { buildEntity, dclHash, verifyChain, virviSigner, type AuthChain, type ContentRef, type SceneMetadata } from './entity.js'
 import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
 import { getWorldsClient, WorldsError, type LiveEntity } from './worlds-client.js'
+import { worldOf } from './world-of.js'
 
 /** The server's limit, inside Decentraland's ~5-minute entity timestamp window. */
 export const DEPLOY_WINDOW_MS = 240_000
@@ -141,7 +142,7 @@ export async function liveBaseFor(dest: Destination): Promise<LiveEntity | null>
 async function liveAt(dest: Destination): Promise<LiveEntity | null> {
   let entities: LiveEntity[]
   try {
-    entities = await getWorldsClient().getWorldEntities(dest.worldName)
+    entities = await getWorldsClient().getWorldEntities(worldOf(dest))
   } catch {
     await setDestStatus(dest.id, 'unreachable', UNREACHABLE)
     throw new DeployerError(503, 'world_unreachable', UNREACHABLE)
@@ -271,7 +272,7 @@ const SIZE_CONCURRENCY = 16
 async function replacedBytes(dest: Destination): Promise<number | null> {
   const client = getWorldsClient()
   try {
-    const live = (await client.getWorldEntities(dest.worldName)).find((e) => e.pointers.includes(dest.base))
+    const live = (await client.getWorldEntities(worldOf(dest))).find((e) => e.pointers.includes(dest.base))
     if (!live) return 0
     const hashes = [...new Set(live.content.map((c) => c.hash))]
     let total = 0
@@ -336,7 +337,7 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     const files = await readBuilt(prefix)
     const built = JSON.parse(new TextDecoder().decode(files.get('scene.json')!)) as SceneMetadata
     // Never trusted as stored: the build ran the creator's code, and the entity deploys to the World it names
-    if (metadataWorld(built) !== dest.worldName) throw new DeployerError(422, 'world_changed', worldChanged(metadataWorld(built), dest.worldName))
+    if (metadataWorld(built) !== worldOf(dest)) throw new DeployerError(422, 'world_changed', worldChanged(metadataWorld(built), worldOf(dest)))
     // The creator's code runs the npm package, never Virvi's runtime: without Virvi's marker the scene stays adopted
     const { virvi: _virvi, ...metadata } = built
     // Models placed in-world deploy with it, or a re-upload would take them out of the World
@@ -348,7 +349,7 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
   if (dest.lastEntityId == null && !dest.adopted) {
     const metadata = wizardSceneJson({
-      title: scene?.name ?? dest.worldName, world: dest.worldName, base: dest.base, parcels: dest.parcels,
+      title: scene?.name ?? worldOf(dest), world: worldOf(dest), base: dest.base, parcels: dest.parcels,
       spawn: dest.spawn ?? defaultSpawn(dest.parcels),
     })
     return { assembled: await assembleFresh({ metadata, models, timestamp, fetch }), baseEntityId: live?.id ?? null }
@@ -546,8 +547,8 @@ export async function afterWorldDeploy(
   try {
     const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
     await linkWorldLocation({
-      world: dest.worldName, virviSceneId: dest.sceneId, hostUserId: dest.ownerUserId, entityId,
-      title: scene?.name ?? dest.worldName, base: dest.base, parcels: dest.parcels,
+      world: worldOf(dest), virviSceneId: dest.sceneId, hostUserId: dest.ownerUserId, entityId,
+      title: scene?.name ?? worldOf(dest), base: dest.base, parcels: dest.parcels,
     }, now)
   } finally {
     if (kept) {
@@ -602,7 +603,7 @@ export async function startVirviDeploy(destinationId: string, by: string | null,
     if (busy) throw new DeployerError(409, 'deploy_in_progress', 'A deploy is already running for this World')
     const [row] = await tx.insert(sceneDeployments).values({
       sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
-      target: { world: dest.worldName, parcels: dest.parcels }, status: 'building', deployedBy: by,
+      target: { world: worldOf(dest), parcels: dest.parcels }, status: 'building', deployedBy: by,
     }).returning()
     if (dest.pendingImportId) await linkImport(tx, dest.pendingImportId, row.id, 'deploying')
     return row
@@ -664,7 +665,7 @@ export async function prepareSignedDeploy(
     if (packed.assembled.refused.length) {
       await db.insert(sceneDeployments).values({
         sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
-        target: { world: dest.worldName, parcels: dest.parcels }, status: 'failed', deployedBy: by,
+        target: { world: worldOf(dest), parcels: dest.parcels }, status: 'failed', deployedBy: by,
         errorMessage: err.message, assetBundle: noopBundle(packed),
       })
     }
@@ -688,7 +689,7 @@ export async function prepareSignedDeploy(
   const deployment = await db.transaction(async (tx) => {
     const [row] = await tx.insert(sceneDeployments).values({
       sceneId: dest.sceneId, platform: 'decentraland', deploymentType: 'world', destinationId: dest.id,
-      target: { world: dest.worldName, parcels: dest.parcels }, status: 'awaiting_signature', deployedBy: by, assetBundle: bundle,
+      target: { world: worldOf(dest), parcels: dest.parcels }, status: 'awaiting_signature', deployedBy: by, assetBundle: bundle,
     }).returning()
     if (dest.pendingImportId) await linkImport(tx, dest.pendingImportId, row.id, 'awaiting_signature')
     return row
@@ -710,7 +711,7 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   const dest = await loadDestination(dep.destinationId)
   if (bundle.importId) {
     const named = metadataWorld(JSON.parse(bundle.metadataJson) as SceneMetadata)
-    if (named !== dest.worldName) throw new DeployerError(422, 'world_changed', worldChanged(named, dest.worldName))
+    if (named !== worldOf(dest)) throw new DeployerError(422, 'world_changed', worldChanged(named, worldOf(dest)))
   }
   if (!(await verifyChain(chain, bundle.entityId, dest.ownerWallet))) {
     throw new DeployerError(403, 'not_world_owner', "That signature isn't from the wallet that owns this World")
@@ -796,7 +797,7 @@ export async function reconcileStaleDeployments(now: Date = new Date()): Promise
       if (!dest) continue
       let entities: LiveEntity[]
       try {
-        entities = await getWorldsClient().getWorldEntities(dest.worldName)
+        entities = await getWorldsClient().getWorldEntities(worldOf(dest))
       } catch {
         continue
       }

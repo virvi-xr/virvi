@@ -67,6 +67,7 @@ import {
 } from '../services/dcl/world-deployer.js'
 import { deploymentForCaller, publicDeployment } from './deploy.js'
 import { ImportError } from '../services/import/scene-zip.js'
+import { worldOf } from '../services/dcl/world-of.js'
 
 /** Signed-fetch metadata Virvi sends on permission calls (see the header comment). */
 const PERMISSION_METADATA = '{}'
@@ -148,7 +149,7 @@ export async function ownerFor(userId: string, world: string): Promise<string> {
 
 /** As ownerFor, and keeps the destination's owner up to date (the NAME may have moved between their wallets). */
 async function requireOwner(userId: string, dest: Destination): Promise<string> {
-  const owner = await ownerFor(userId, dest.worldName)
+  const owner = await ownerFor(userId, worldOf(dest))
   if (owner !== dest.ownerWallet || userId !== dest.ownerUserId) {
     await db.update(dclWorldDestinations).set({ ownerWallet: owner, ownerUserId: userId, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
   }
@@ -184,11 +185,11 @@ type GrantStep = SignedRequest & { purpose: 'reset' | 'grant' | 'scope' | 'rollb
  */
 async function grantRequests(dest: Destination, virvi: string, timestamp: number): Promise<GrantStep[]> {
   const [entities, { deployers }] = await Promise.all([
-    read(() => getWorldsClient().getWorldEntities(dest.worldName)),
-    read(() => getWorldsClient().getDeployers(dest.worldName)),
+    read(() => getWorldsClient().getWorldEntities(worldOf(dest))),
+    read(() => getWorldsClient().getDeployers(worldOf(dest))),
   ])
   const parcels = unique([...dest.parcels, ...overlapping(entities, dest.parcels)])
-  const w = encodeURIComponent(dest.worldName)
+  const w = encodeURIComponent(worldOf(dest))
   const remove = { method: 'DELETE', path: `/world/${w}/permissions/deployment/${virvi}`, metadata: PERMISSION_METADATA, timestamp } as const
   return [
     ...(deployers.includes(virvi) ? [{ ...remove, purpose: 'reset' } as const] : []),
@@ -199,7 +200,7 @@ async function grantRequests(dest: Destination, virvi: string, timestamp: number
 }
 
 function revokeRequests(dest: Destination, virvi: string, timestamp: number): SignedRequest[] {
-  return [{ method: 'DELETE', path: `/world/${encodeURIComponent(dest.worldName)}/permissions/deployment/${virvi}`, metadata: PERMISSION_METADATA, timestamp }]
+  return [{ method: 'DELETE', path: `/world/${encodeURIComponent(worldOf(dest))}/permissions/deployment/${virvi}`, metadata: PERMISSION_METADATA, timestamp }]
 }
 
 function signedTimestamp(raw: unknown): number {
@@ -423,7 +424,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     const timestamp = signedTimestamp(request.body?.timestamp)
     const steps = await grantRequests(dest, virvi, timestamp)
     await sendGrant(dest, steps, await verifyChains(steps, request.body?.chains, owner))
-    const { deployers } = await read(() => getWorldsClient().getDeployers(dest.worldName))
+    const { deployers } = await read(() => getWorldsClient().getDeployers(worldOf(dest)))
     if (!deployers.includes(virvi)) {
       await db.update(dclWorldDestinations).set({ grantedAt: null, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
       throw new RouteError(502, 'grant_not_visible')
@@ -468,7 +469,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string } }>('/api/dcl/destinations/:id/rebase', async (request, reply) => handle(reply, async () => {
     const dest = await destinationFor(request, request.params.id, 'full')
-    const entities = await read(() => getWorldsClient().getWorldEntities(dest.worldName))
+    const entities = await read(() => getWorldsClient().getWorldEntities(worldOf(dest)))
     const live = entities.find((e) => e.pointers.includes(dest.base))
     if (!live) throw new RouteError(409, 'no_live_scene')
     await db
@@ -520,7 +521,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
       if (!dest) return reply.send({ destination: null })
       return reply.send({
         destination: {
-          id: dest.id, world: dest.worldName, mode: dest.mode, status: dest.status,
+          id: dest.id, world: worldOf(dest), mode: dest.mode, status: dest.status,
           granted: dest.mode === 'virvi' && !!dest.grantedAt,
           pending: (await pendingModels(dest)).length,
           publishUrl: `${config.webAppUrl}/publish/?d=${dest.id}`,

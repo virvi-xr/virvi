@@ -191,7 +191,7 @@ function ImportContent() {
           {view ? (
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <a href={jumpInUrl(view.worldName)} target="_blank" rel="noreferrer" className="truncate text-base font-medium text-white hover:text-blue-300">{view.worldName}</a>
+                <a href={jumpInUrl(view.worldName ?? '')} target="_blank" rel="noreferrer" className="truncate text-base font-medium text-white hover:text-blue-300">{view.worldName}</a>
                 <p className="text-gray-400">{view.kind === 'creator-hub' ? 'Creator Hub scene' : 'SDK7 scene'}</p>
               </div>
               <PhaseBadge phase={phase!} />
@@ -243,7 +243,7 @@ function ImportContent() {
             <>
               <p className="text-base font-medium text-green-200">Live in {view.worldName}.</p>
               <div className="flex flex-wrap items-center gap-3">
-                <a href={jumpInUrl(view.worldName)} target="_blank" rel="noreferrer"
+                <a href={jumpInUrl(view.worldName ?? '')} target="_blank" rel="noreferrer"
                   className="clip-corner inline-flex items-center gap-1.5 bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink hover:bg-accent-hover">
                   Jump in
                 </a>
