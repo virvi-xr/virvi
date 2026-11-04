@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { countLabel, formatBytes, plural } from './format'
+import { countLabel, formatBytes, formatDuration, plural } from './format'
 
 describe('list formatting', () => {
   it('pads the count to two digits and separates thousands', () => {
@@ -21,5 +21,21 @@ describe('list formatting', () => {
     expect(formatBytes(512)).toBe('512 B')
     expect(formatBytes(292_966)).toBe('286.1 KB')
     expect(formatBytes(1_468_006)).toBe('1.4 MB')
+  })
+
+  it('formats video lengths as m:ss, or h:mm:ss from an hour', () => {
+    expect(formatDuration(2.7)).toBe('0:03')
+    expect(formatDuration(59.4)).toBe('0:59')
+    expect(formatDuration(754)).toBe('12:34')
+    expect(formatDuration(8100.4)).toBe('2:15:00')
+    expect(formatDuration(3599.6)).toBe('1:00:00')
+  })
+
+  it('has no length for a missing or bad value', () => {
+    expect(formatDuration(undefined)).toBeNull()
+    expect(formatDuration(null)).toBeNull()
+    expect(formatDuration(0)).toBeNull()
+    expect(formatDuration('12' as unknown)).toBeNull()
+    expect(formatDuration(Number.NaN)).toBeNull()
   })
 })

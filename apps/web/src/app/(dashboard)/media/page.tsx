@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/auth'
 import { useEffect, useState, useRef } from 'react'
 import { CheckIcon, CopyIcon, CubeIcon, GridIcon, ListIcon, MediaIcon, PlusIcon, TrashIcon } from '@/components/icons'
 import { EmptyState, PageHeader, PrimaryButton, RowMenu, SearchField, SelectField, useStoredView, ViewToggle } from '@/components/ui'
-import { countLabel, formatBytes, plural } from '@/lib/format'
+import { countLabel, formatBytes, formatDuration, plural } from '@/lib/format'
 
 type Kind = 'image' | 'model' | 'video' | 'other'
 const VIEW_KEY = 'virvi.media.view'
@@ -182,6 +182,12 @@ function useArmed(action: () => void) {
   return [armed, () => (armed ? action() : setArmed(true))] as const
 }
 
+/** "1.4 MB · video/mp4 · 12:34": a video shows its length once it's known. */
+function assetDetails(asset: any): string {
+  const length = formatDuration(asset.metadata?.duration)
+  return [formatBytes(asset.sizeBytes), asset.contentType, length].filter(Boolean).join(' · ')
+}
+
 function MediaCard({ asset, onDelete }: { asset: any; onDelete: () => void }) {
   const [copied, copy] = useCopyUrl(asset.publicUrl)
   const [armed, del] = useArmed(onDelete)
@@ -193,7 +199,7 @@ function MediaCard({ asset, onDelete }: { asset: any; onDelete: () => void }) {
       </div>
       <div className="flex-1 px-4 pt-4 pb-3">
         <p className="truncate font-semibold" title={asset.filename}>{asset.filename}</p>
-        <p className="mt-1 text-sm text-gray-400">{formatBytes(asset.sizeBytes)} · {asset.contentType}</p>
+        <p className="mt-1 text-sm text-gray-400">{assetDetails(asset)}</p>
       </div>
       <footer className="flex items-center gap-2 border-t border-gray-800 p-4">
         <button onClick={copy} disabled={!asset.publicUrl}
@@ -216,7 +222,7 @@ function MediaRow({ asset, first, onDelete }: { asset: any; first: boolean; onDe
       <div className="shrink-0 overflow-hidden rounded"><MediaPreview asset={asset} className="h-12 w-20" compact /></div>
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium" title={asset.filename}>{asset.filename}</p>
-        <p className="truncate text-sm text-gray-500">{formatBytes(asset.sizeBytes)} · {asset.contentType}</p>
+        <p className="truncate text-sm text-gray-500">{assetDetails(asset)}</p>
       </div>
       <span className="hidden rounded border border-gray-700 px-2 py-0.5 font-mono text-xs text-gray-300 sm:inline">{typeBadge(asset)}</span>
       <button onClick={copy} disabled={!asset.publicUrl} aria-label={copied ? 'Copied' : 'Copy URL'}

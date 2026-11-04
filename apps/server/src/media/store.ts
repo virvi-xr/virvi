@@ -5,6 +5,7 @@ import { mediaAssets } from '../db/schema.js'
 import { assertStorageQuota } from './quota.js'
 import { createStorage } from '../storage/index.js'
 import { classifyUpload, extensionFor } from '../storage/upload-policy.js'
+import { isVideo, probeDuration } from './probe.js'
 
 const storage = createStorage()
 
@@ -54,9 +55,10 @@ export async function fillMedia(assetId: string, buffer: Buffer): Promise<MediaR
     // Quota was checked against the declared size: never store more than that
     if (buffer.length > asset.sizeBytes) throw new StoreMediaError(413, { error: 'too_large' })
     const key = `${asset.ownerId}/${randomUUID()}.${extensionFor(verdict.contentType)}`
+    const metadata = isVideo(verdict.contentType) ? await withDuration(asset.metadata, buffer) : asset.metadata
     const publicUrl = await storage.upload(key, buffer, verdict.contentType)
     const [stored] = await db.update(mediaAssets)
-      .set({ status: 'ready', error: null, storageKey: key, publicUrl, sizeBytes: buffer.length })
+      .set({ status: 'ready', error: null, storageKey: key, publicUrl, sizeBytes: buffer.length, metadata })
       .where(eq(mediaAssets.id, assetId))
       .returning()
     return stored
@@ -65,6 +67,18 @@ export async function fillMedia(assetId: string, buffer: Buffer): Promise<MediaR
     await db.update(mediaAssets).set({ status: 'failed', error: reason }).where(eq(mediaAssets.id, assetId))
     throw err
   }
+}
+
+/**
+ * A video's metadata with its length in seconds (`duration`), which scheduled screens need (LIV-87). A file ffprobe
+ * can't read still uploads, marked `durationProbe: 'failed'`; if ffprobe is unavailable it's left for the backfill.
+ */
+async function withDuration(metadata: unknown, buffer: Buffer): Promise<Record<string, unknown> | null> {
+  const base = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : null
+  const result = await probeDuration(buffer)
+  if (result.ok) return { ...base, duration: result.seconds }
+  if (result.reason === 'unreadable') return { ...base, durationProbe: 'failed' }
+  return base
 }
 
 /** Classify, quota-check (against ownerId), upload and record a media file. Throws StoreMediaError for refusals. */
