@@ -1806,3 +1806,15 @@ export const studioGiftRedemptions = pgTable('studio_gift_redemptions', {
 }, (t) => ({
   codeUserUnique: uniqueIndex('studio_gift_redemptions_code_user_idx').on(t.codeId, t.userId),
 }))
+
+/** A self-hosted install's own name, logo and favicon (LIV-80). One row, id 'default'; cloud mode ignores it. */
+export const instanceBranding = pgTable('instance_branding', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  logoKey: text('logo_key'),
+  logoUrl: text('logo_url'),
+  faviconKey: text('favicon_key'),
+  faviconUrl: text('favicon_url'),
+  updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})

@@ -55,6 +55,7 @@ import studioWorkerRoutes from './routes/studio-worker.js'
 import studioRoutes from './routes/studio.js'
 import importBuildRoutes from './routes/import-build.js'
 import importRoutes from './routes/imports.js'
+import brandingRoutes from './routes/branding.js'
 import { db } from './db/connection.js'
 import { sql } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
@@ -232,8 +233,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(importBuildRoutes)
   await app.register(importRoutes)
 
-  // Which install this is (hosted virvi.io, or self-hosted single/scalable), for the app's label. Public, no secrets.
-  app.get('/api/instance', async (_request, reply) => reply.send({ mode: config.mode, version: SERVER_VERSION }))
+  // GET /api/instance (mode, version, branding) and the admin branding routes
+  await app.register(brandingRoutes, { version: SERVER_VERSION })
 
   // Health check
   app.get('/api/health', async (_request, reply) => {
@@ -308,6 +309,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       root: uploadsPath,
       prefix: '/uploads/',
       decorateReply: false,
+      // Files are served with the type they were stored as; browsers must not guess another (e.g. HTML from an image)
+      setHeaders: (res) => { res.setHeader('X-Content-Type-Options', 'nosniff') },
     })
   }
 

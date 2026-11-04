@@ -334,6 +334,10 @@ export function useApi() {
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
+    /** Self-hosted branding (instance admins). undefined keeps a field, null clears it; images are base64. */
+    updateBranding: (body: { name?: string | null; logo?: string | null; favicon?: string | null }) =>
+      apiFetch<{ name: string | null; logoUrl: string | null; faviconUrl: string | null }>('/api/instance/branding', { method: 'PUT', body: JSON.stringify(body) }),
+    resetBranding: () => apiFetch<void>('/api/instance/branding', { method: 'DELETE' }),
     getSceneStreams: (sceneId: string) =>
       apiFetch<{ streams: import('./streams').SceneStream[] }>(`/api/scenes/${sceneId}/streams`),
     getMediaNames: (sceneId: string, urls: string[]) =>

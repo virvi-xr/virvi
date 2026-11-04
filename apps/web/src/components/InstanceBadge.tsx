@@ -1,12 +1,16 @@
 'use client'
 import { useState } from 'react'
 import { instanceLabel, instanceTooltip, SELF_HOSTING_DOCS_URL, useInstance } from '@/lib/instance'
+import { hasCustomBrand } from '@/lib/branding'
 
-/** A quiet "Self-hosted" / "Self-hosted · Scalable" label; nothing on hosted virvi.io. Hover or tap for details. */
+/**
+ * A quiet "Self-hosted" / "Self-hosted · Scalable" label (plus "Powered by Virvi" under a custom brand); nothing on
+ * hosted virvi.io. Hover or tap for details.
+ */
 export function InstanceBadge({ className = '' }: { className?: string }) {
   const info = useInstance()
   const [open, setOpen] = useState(false)
-  const label = instanceLabel(info?.mode)
+  const label = instanceLabel(info?.mode, hasCustomBrand(info))
   if (!info || !label) return null
   return (
     <span className={`relative inline-flex ${className}`}>

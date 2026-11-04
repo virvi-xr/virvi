@@ -7,6 +7,8 @@ import { LinkedHyperfySessions } from './LinkedHyperfySessions'
 import { PairedHeadsets } from './PairedHeadsets'
 import { Badge, PageHeader, PlatformBadge, Skeleton, tableHeadBand, type Tone } from '@/components/ui'
 import { instanceLabel, useInstance } from '@/lib/instance'
+import { canManageBranding } from '@/lib/branding'
+import { BrandingSettings } from './BrandingSettings'
 
 function formatBytes(bytes: number): string {
   if (bytes === Infinity) return 'Unlimited'
@@ -586,6 +588,9 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+
+      {/* Branding: self-hosted installs, instance admins only */}
+      {canManageBranding(instance?.mode, user?.role) && <BrandingSettings />}
 
       {/* Billing & Usage */}
       <section className="mt-10">
