@@ -3,7 +3,7 @@ import { DEFAULT_VENUE_RULES, VENUE_ROLE_SCOPES } from '@virvixr/shared'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { accessGrants, bookings, sceneCollaborators, scenePresets, scenePresetScheduleRuns, scenePresetSchedules, scenes, venues } from '../src/db/schema.js'
-import { runPresetScheduleSweep } from '../src/scenes/preset-schedules.js'
+import { liveStatus, runPresetScheduleSweep } from '../src/scenes/preset-schedules.js'
 import { initBus } from '../src/realtime/bus.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -160,6 +160,67 @@ describe('scheduled presets (LIV-86)', () => {
     })
   })
 
+  describe('why the live preset is live', () => {
+    const at = (iso: string) => new Date(iso)
+
+    it('says nothing when no schedule or booking is involved', async () => {
+      expect(await liveStatus(scene.id, at('2026-11-06T12:00:00Z'))).toEqual({ reason: { kind: 'none' }, nextSwitch: null })
+    })
+
+    it('before a run: the next switch is its start, to its preset', async () => {
+      const s = await schedule({})
+      expect(await liveStatus(scene.id, at('2026-11-06T19:00:00Z'))).toEqual({
+        reason: { kind: 'none' },
+        nextSwitch: { at: '2026-11-06T20:00:00.000Z', presetId: concert.id, scheduleId: s.id },
+      })
+    })
+
+    it('during a run: scheduled until its end, then back to the previous preset', async () => {
+      const s = await schedule({})
+      await runPresetScheduleSweep(at('2026-11-06T20:00:00Z'))
+      expect(await liveStatus(scene.id, at('2026-11-06T21:00:00Z'))).toEqual({
+        reason: { kind: 'schedule', scheduleId: s.id, until: '2026-11-06T23:00:00.000Z' },
+        nextSwitch: { at: '2026-11-06T23:00:00.000Z', presetId: day.id, scheduleId: s.id },
+      })
+    })
+
+    it('an open-ended run has no end; the next switch is the next schedule to start', async () => {
+      const [night] = await db.insert(scenePresets).values({ sceneId: scene.id, name: 'Night' }).returning()
+      const s = await schedule({ durationMinutes: null })
+      const n = await schedule({ presetId: night.id, startDate: '2026-11-08', durationMinutes: null })
+      await runPresetScheduleSweep(at('2026-11-06T20:00:00Z'))
+      expect(await liveStatus(scene.id, at('2026-11-07T10:00:00Z'))).toEqual({
+        reason: { kind: 'schedule', scheduleId: s.id, until: null },
+        nextSwitch: { at: '2026-11-08T20:00:00.000Z', presetId: night.id, scheduleId: n.id },
+      })
+    })
+
+    it('after a manual switch: switched manually, and the schedule resumes at its next run', async () => {
+      const s = await schedule({ recurrence: 'daily' })
+      await runPresetScheduleSweep(at('2026-11-06T20:00:00Z'))
+      await db.update(scenes).set({ activePresetId: day.id }).where(eq(scenes.id, scene.id))
+      const expected = {
+        reason: { kind: 'manual' },
+        nextSwitch: { at: '2026-11-07T20:00:00.000Z', presetId: concert.id, scheduleId: s.id },
+      }
+      expect(await liveStatus(scene.id, at('2026-11-06T20:05:00Z'))).toEqual(expected) // before the sweep notices
+      await runPresetScheduleSweep(at('2026-11-06T20:10:00Z'))
+      expect(await liveStatus(scene.id, at('2026-11-06T20:15:00Z'))).toEqual(expected)
+      expect((await liveStatus(scene.id, at('2026-11-07T00:00:00Z'))).reason).toEqual({ kind: 'none' }) // window over
+    })
+
+    it('a live booking says so, with its end', async () => {
+      await schedule({})
+      await liveBooking(at('2026-11-06T18:00:00Z'), at('2026-11-06T21:30:00Z'))
+      expect((await liveStatus(scene.id, at('2026-11-06T19:00:00Z'))).reason).toEqual({ kind: 'booking', title: 'Show', until: '2026-11-06T21:30:00.000Z' })
+    })
+
+    it('ignores paused schedules', async () => {
+      await schedule({ enabled: false })
+      expect((await liveStatus(scene.id, at('2026-11-06T19:00:00Z'))).nextSwitch).toBeNull()
+    })
+  })
+
   describe('routes', () => {
     let app: Awaited<ReturnType<typeof testApp>>
     beforeEach(async () => { app = await testApp() })
@@ -175,6 +236,7 @@ describe('scheduled presets (LIV-86)', () => {
       expect(s.nextRuns).toHaveLength(5)
       expect(s.nextRuns[0]).toBe('2030-01-04T20:00:00.000Z') // first Friday of 2030, 20:00 GMT
       const list = (await app.inject({ method: 'GET', url: `/api/scenes/${scene.id}/preset-schedules`, headers: as(host) })).json()
+      expect(list.status.reason).toEqual({ kind: 'none' })
       expect(list.schedules.map((x: any) => x.id)).toEqual([s.id])
       const paused = await app.inject({ method: 'PATCH', url: `/api/preset-schedules/${s.id}`, headers: as(host), payload: { enabled: false } })
       expect(paused.json().schedule).toMatchObject({ enabled: false, nextRuns: [], startTime: '20:00' })

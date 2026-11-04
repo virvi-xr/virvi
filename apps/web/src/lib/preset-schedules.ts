@@ -106,3 +106,27 @@ export function runLabel(r: Pick<ScheduleRun, 'status' | 'outcome'>): string {
     default: return r.outcome === 'finished' || !r.outcome ? 'Finished' : `Ended: ${r.outcome}`
   }
 }
+
+export type LiveReason =
+  | { kind: 'none' }
+  | { kind: 'booking'; title: string; until: string }
+  | { kind: 'schedule'; scheduleId: string; until: string | null }
+  | { kind: 'manual' }
+
+export interface LiveStatus {
+  reason: LiveReason
+  nextSwitch: { at: string; presetId: string | null; scheduleId: string } | null
+}
+
+/** The preset bar's "why is this live" and "next switch" lines, in the viewer's timezone. */
+export function liveStatusText(s: LiveStatus, presetName: (id: string | null) => string | null, viewerTz: string): { why: string | null; next: string | null } {
+  const when = (iso: string) => fmt(iso, viewerTz)
+  const r = s.reason
+  const why = r.kind === 'booking' ? `Booking: ${r.title}, until ${when(r.until)}`
+    : r.kind === 'schedule' ? (r.until ? `Scheduled until ${when(r.until)}` : 'Scheduled, until the next switch')
+    : r.kind === 'manual' ? (s.nextSwitch ? `Switched manually; the schedule resumes ${when(s.nextSwitch.at)}` : 'Switched manually')
+    : null
+  const n = s.nextSwitch
+  const next = n ? `Next switch: ${presetName(n.presetId) ?? 'back to the previous preset'} at ${when(n.at)}` : null
+  return { why, next }
+}

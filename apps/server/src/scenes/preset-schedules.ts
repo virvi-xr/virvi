@@ -256,12 +256,68 @@ export async function runPresetScheduleSweep(at = new Date()): Promise<SweepResu
   return result
 }
 
+// ── Why the live preset is live (shown in the preset bar) ───────────────────────
+
+export type LiveReason =
+  | { kind: 'none' }
+  | { kind: 'booking'; title: string; until: string }
+  | { kind: 'schedule'; scheduleId: string; until: string | null }
+  | { kind: 'manual' }
+
+export interface LiveStatus {
+  reason: LiveReason
+  /** The next switch the schedules will make; presetId null when it returns to a preset that no longer exists. */
+  nextSwitch: { at: string; presetId: string | null; scheduleId: string } | null
+}
+
+/**
+ * Why the scene's live preset is live, and the next scheduled switch. A live booking comes first; then a schedule's
+ * run in progress; a run the host switched away from (whether or not the sweep has noticed yet) reads as "switched
+ * manually" until its window closes.
+ */
+export async function liveStatus(sceneId: string, now = new Date()): Promise<LiveStatus> {
+  const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { activePresetId: true } })
+  const rows = await db.select().from(scenePresetSchedules).where(and(eq(scenePresetSchedules.sceneId, sceneId), eq(scenePresetSchedules.enabled, true)))
+  const runs = await db.select({ run: scenePresetScheduleRuns, presetId: scenePresetSchedules.presetId, returnTo: scenePresetSchedules.returnToPresetId })
+    .from(scenePresetScheduleRuns)
+    .innerJoin(scenePresetSchedules, eq(scenePresetScheduleRuns.scheduleId, scenePresetSchedules.id))
+    .where(and(eq(scenePresetScheduleRuns.sceneId, sceneId), inArray(scenePresetScheduleRuns.status, ['active', 'held', 'overridden'])))
+    .orderBy(desc(scenePresetScheduleRuns.occurrenceStart))
+  const open = runs.find((r) => r.run.status !== 'overridden')
+  const windowOpen = (r: RunRow) => r.occurrenceEnd === null || r.occurrenceEnd > now
+
+  const [booking] = await db.select({ title: bookings.title, endsAt: bookings.endsAt }).from(bookings).innerJoin(venues, eq(bookings.venueId, venues.id))
+    .where(and(eq(bookings.status, 'live'), eq(venues.sceneId, sceneId))).limit(1)
+
+  let reason: LiveReason = { kind: 'none' }
+  let ending: LiveStatus['nextSwitch'] = null
+  if (booking) {
+    reason = { kind: 'booking', title: booking.title, until: booking.endsAt.toISOString() }
+  } else if (open?.run.status === 'active' && scene?.activePresetId === open.presetId) {
+    const until = open.run.occurrenceEnd?.toISOString() ?? null
+    reason = { kind: 'schedule', scheduleId: open.run.scheduleId, until }
+    if (until) {
+      const back = await presetOfScene(sceneId, open.returnTo ?? open.run.previousPresetId)
+      ending = { at: until, presetId: back, scheduleId: open.run.scheduleId }
+    }
+  } else if (runs.some((r) => windowOpen(r.run) && (r.run.status === 'overridden' || (r.run.status === 'active' && scene?.activePresetId !== r.presetId)))) {
+    reason = { kind: 'manual' }
+  }
+
+  let next: LiveStatus['nextSwitch'] = ending
+  for (const s of rows) {
+    const [start] = nextStarts(specOf(s), now, 1)
+    if (start && (!next || start.getTime() < Date.parse(next.at))) next = { at: start.toISOString(), presetId: s.presetId, scheduleId: s.id }
+  }
+  return { reason, nextSwitch: next }
+}
+
 /** The scene's schedules (with their next runs) and its recent run history, newest first. */
 export async function listSchedules(sceneId: string, now = new Date()) {
   const rows = await db.select().from(scenePresetSchedules).where(eq(scenePresetSchedules.sceneId, sceneId)).orderBy(scenePresetSchedules.createdAt)
   const runs = await db.select().from(scenePresetScheduleRuns).where(eq(scenePresetScheduleRuns.sceneId, sceneId))
     .orderBy(desc(scenePresetScheduleRuns.occurrenceStart)).limit(20)
-  return { schedules: rows.map((s) => ({ ...s, nextRuns: nextRunsOf(s, now) })), runs }
+  return { schedules: rows.map((s) => ({ ...s, nextRuns: nextRunsOf(s, now) })), runs, status: await liveStatus(sceneId, now) }
 }
 
 /** Enabled schedules that still have runs to come and use the preset (as theirs or as where they return to). */

@@ -1,7 +1,8 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { useApi } from '@/lib/api'
 import { copyName, PRESET_NAME_MAX, presetDisplayName } from '@/lib/presets'
+import { liveStatusText, viewerTimezone, type LiveStatus } from '@/lib/preset-schedules'
 
 type Api = ReturnType<typeof useApi>
 interface PresetItem { id: string; name: string }
@@ -33,6 +34,20 @@ export function PresetBar({ api, sceneId, presets, activePresetId, editingId, on
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const names = presets.map((p) => p.name)
+  const [status, setStatus] = useState<LiveStatus | null>(null)
+
+  // Why the live preset is live (LIV-86). Only hosts, co-hosts and editors can read schedules; others see no line.
+  useEffect(() => {
+    let gone = false
+    const load = () => api.getPresetSchedules(sceneId).then((r) => { if (!gone) setStatus(r.status) }).catch(() => { if (!gone) setStatus(null) })
+    load()
+    const timer = setInterval(load, 60_000)
+    return () => { gone = true; clearInterval(timer) }
+  }, [api, sceneId, activePresetId])
+  const statusText = status && liveStatusText(status, (id) => {
+    const p = presets.find((x) => x.id === id)
+    return p ? presetDisplayName(p.name) : null
+  }, viewerTimezone())
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true)
@@ -101,6 +116,13 @@ export function PresetBar({ api, sceneId, presets, activePresetId, editingId, on
           {editing && <button type="button" className={`${BTN} hover:border-red-500 hover:text-red-300`} disabled={busy} onClick={() => open('delete')}>Delete</button>}
         </span>
       </div>
+
+      {statusText && (statusText.why || statusText.next) && (
+        <p className="mt-2 flex flex-wrap gap-x-4 text-xs text-gray-400">
+          {statusText.why && <span>{statusText.why}</span>}
+          {statusText.next && <span>{statusText.next}</span>}
+        </p>
+      )}
 
       {mode === 'new' && (
         <form className="mt-3 flex flex-wrap items-center gap-3 border-t border-gray-800 pt-3" onSubmit={(e) => { e.preventDefault(); if (nameOk) void create() }}>
