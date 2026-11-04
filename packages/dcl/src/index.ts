@@ -107,10 +107,14 @@ export class VirviSmartItem {
       }
     })
 
+    // Makes a preset live for everyone (same route as the dashboard and HUD). It works for a signed-in host, co-host
+    // or editor; the server refuses anyone else, which is logged rather than shown.
     channel.handleAction('switchPreset', (opts: any) => {
       const presetId = opts?.presetId || opts?.values?.presetId
       if (presetId && this.virvi) {
-        this.virvi.sendMessage('virvi:preset:switch', { presetId })
+        void this.virvi.httpClient.activatePreset(String(presetId)).catch((err: unknown) => {
+          console.log('[Virvi] switchPreset failed:', err instanceof Error ? err.message : String(err))
+        })
       }
     })
 

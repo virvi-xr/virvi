@@ -369,6 +369,13 @@ export class Virvi {
     this.colyseus.onMessage('scene_change_preset', (message: unknown) => {
       this.sceneManager.handlePresetChange(message as any)
       void this.ads.refresh()
+      const presetId = (message as any)?.scenePreset?.sk
+      if (presetId) this.events.emit('active_preset_changed', presetId)
+    })
+
+    // Editors only: a preset was created, renamed or deleted (LIV-84)
+    this.colyseus.onMessage('scene_presets_changed', (message: unknown) => {
+      this.events.emit('presets_changed', message)
     })
 
     this.colyseus.onMessage('scene_video_status', (message: unknown) => {
@@ -516,6 +523,24 @@ export class Virvi {
   }
 
   /** Called with each scene library change (editors only); returns an unsubscribe. */
+  /** The scene's live preset changed (from the dashboard, the HUD, a schedule or a booking). */
+  onActivePresetChanged(listener: (presetId: string) => void): () => void {
+    const handler = (id: string) => {
+      try { listener(id) } catch { /* swallow */ }
+    }
+    this.events.on('active_preset_changed', handler)
+    return () => this.events.off('active_preset_changed', handler)
+  }
+
+  /** Editors only: a preset was created, renamed or deleted (`{ action: 'upsert', preset } | { action: 'delete', presetId }`). */
+  onPresetsChanged(listener: (change: { action: 'upsert'; preset: { id: string; name: string } } | { action: 'delete'; presetId: string }) => void): () => void {
+    const handler = (change: any) => {
+      try { listener(change) } catch { /* swallow */ }
+    }
+    this.events.on('presets_changed', handler)
+    return () => this.events.off('presets_changed', handler)
+  }
+
   onLibraryChanged(listener: (change: SceneLibraryChangeData) => void): () => void {
     const handler = (change: SceneLibraryChangeData) => {
       try { listener(change) } catch { /* swallow */ }

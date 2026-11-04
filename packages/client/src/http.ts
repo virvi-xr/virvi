@@ -295,6 +295,23 @@ export class VirviHttpClient {
     return this._fetch('/api/scenes')
   }
 
+  /** Scene presets (LIV-84): blank, or a copy of `fromPresetId`. */
+  async createPreset(sceneId: string, name: string, fromPresetId?: string): Promise<{ preset: { id: string; name: string } }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/presets`, {
+      method: 'POST',
+      body: JSON.stringify(fromPresetId ? { name, fromPresetId } : { name }),
+    })
+  }
+
+  async renamePreset(presetId: string, name: string): Promise<{ preset: { id: string; name: string } }> {
+    return this._fetch(`/api/presets/${encodeURIComponent(presetId)}`, { method: 'PATCH', body: JSON.stringify({ name }) })
+  }
+
+  /** Make a preset live: everyone in the scene switches to it. */
+  async activatePreset(presetId: string): Promise<{ activePresetId: string }> {
+    return this._fetch(`/api/presets/${encodeURIComponent(presetId)}/activate`, { method: 'POST', body: '{}' })
+  }
+
   async getScene(sceneId: string): Promise<{ scene: Scene }> {
     return this._fetch(`/api/scenes/${sceneId}`)
   }

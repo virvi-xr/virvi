@@ -8,6 +8,7 @@ import { startVirviAnalytics, getAnalyticsSceneRef } from './analytics.js'
 import { DclHUDRenderer, setSceneActionHandler } from './DclHUDRenderer.js'
 import { DclEditMode } from './transform/edit-mode.js'
 import { friendlyEditError, friendlyRenameError, editBlockedMessage, createReconnector, DISCONNECTED } from './edit-errors.js'
+import { applyPresetsChange, friendlyPresetError, presetsFromScene, type HUDPreset } from './presets.js'
 import type { HUDMediaItem, HUDLayoutItem } from './DclHUDRenderer.js'
 import { locationKeyFor } from '@virvixr/shared'
 import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
@@ -279,6 +280,14 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       let busy = false
       let media: SceneLibraryItem[] = []
       let layout: HUDLayoutItem[] = []
+      let presets: HUDPreset[] = []
+      const refreshPresets = async () => {
+        const { scene } = await virvi.httpClient.getScene(sceneId)
+        const got = presetsFromScene(scene as any)
+        presets = got.list
+        renderer?.setPresets(presets, got.activeId)
+        renderer?.setPresetsError(null)
+      }
 
       const refresh = async () => {
         try {
@@ -339,6 +348,16 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           pushMedia()
         }),
         virvi.onModelsMissing(() => { if (edits() && media.length) pushMedia() }),
+        // Presets made, renamed or deleted elsewhere, and the live one switching (dashboard, schedule, booking)
+        virvi.onPresetsChanged((change) => {
+          if (!edits()) return
+          presets = applyPresetsChange(presets, change)
+          renderer?.setPresets(presets)
+        }),
+        virvi.onActivePresetChanged((id) => {
+          renderer?.setActivePreset(id)
+          if (edits() && !presets.some((p) => p.id === id)) void refreshPresets().catch(() => {})
+        }),
         () => virvi.events.off('connection_lost', onConnectionLost),
         () => reconnector.stop(),
       ]
@@ -505,6 +524,41 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
             pushMedia()
           } catch (err) {
             renderer?.setEditMessage(friendlyEditError(err, { connected: connected() }), true)
+          }
+          return
+        }
+
+        // Presets (LIV-84): host, co-hosts and editors; the server refuses everyone else (and booking crew)
+        if (action.startsWith('presets_')) {
+          if (!edits()) return
+          if (action === 'presets_refresh') {
+            try { await refreshPresets() } catch (err) { renderer?.setPresetsError(friendlyPresetError(err, { connected: connected() })) }
+            return
+          }
+          if (busy) return
+          busy = true
+          renderer?.setPresetBusy(true)
+          try {
+            if (action === 'presets_activate') {
+              const { activePresetId } = await virvi.httpClient.activatePreset(String(data?.presetId))
+              renderer?.setActivePreset(activePresetId)
+            }
+            if (action === 'presets_create') {
+              const { preset } = await virvi.httpClient.createPreset(sceneId, String(data?.name ?? ''), data?.copyOf ? String(data.copyOf) : undefined)
+              presets = applyPresetsChange(presets, { action: 'upsert', preset })
+              renderer?.setPresets(presets)
+            }
+            if (action === 'presets_rename') {
+              const { preset } = await virvi.httpClient.renamePreset(String(data?.presetId), String(data?.name ?? ''))
+              presets = applyPresetsChange(presets, { action: 'upsert', preset })
+              renderer?.setPresets(presets)
+            }
+            renderer?.presetDone()
+          } catch (err) {
+            renderer?.setPresetsError(friendlyPresetError(err, { connected: connected() }))
+          } finally {
+            busy = false
+            renderer?.setPresetBusy(false)
           }
           return
         }

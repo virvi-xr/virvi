@@ -24,6 +24,12 @@ Requests for another account's scenes, deployments, events, giveaways, streams o
 | POST | `/scenes` | Yes | Create scene |
 | GET | `/scenes/:id` | Yes | Get scene with presets + elements |
 | PUT | `/elements/:id` | Yes | Update element |
+| POST | `/scenes/:sceneId/presets` | Yes | Create a preset: `{ name, fromPresetId? }` (blank, or a copy) |
+| PATCH | `/presets/:presetId` | Yes | Rename a preset: `{ name }` |
+| DELETE | `/presets/:presetId` | Yes | Delete a preset (409 if it's live, the only one, a venue default, or used by a booking or schedule) |
+| POST | `/presets/:presetId/activate` | Yes | Make a preset live for everyone in the scene |
+| GET/POST | `/scenes/:sceneId/preset-schedules` | Yes | List or add scheduled presets |
+| PATCH/DELETE | `/preset-schedules/:scheduleId` | Yes | Edit, pause (`{ enabled: false }`) or delete a schedule |
 | POST | `/presets/:presetId/elements` | Yes | Create element |
 | POST | `/elements/:id/instances` | Yes | Create instance |
 | PUT | `/instances/:id` | Yes | Update instance |

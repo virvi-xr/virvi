@@ -9,6 +9,7 @@
  */
 
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
+import { copyName, presetLabel, PRESET_NAME_MAX, type HUDPreset } from './presets.js'
 import { Color4 } from '@dcl/sdk/math'
 import { engine } from '@dcl/sdk/ecs'
 import type {
@@ -88,6 +89,17 @@ interface HUDState {
 
   // In-world transform editing (editors); mirrored from DclEditMode.state
   editMode: EditModeHUDState
+
+  // Presets (host, co-hosts, editors; LIV-84): in the Events panel
+  presets: HUDPreset[]
+  activePresetId: string | null
+  presetsLoaded: boolean
+  presetsError: string | null
+  /** The preset waiting for "Make live?" to be confirmed. */
+  presetConfirm: string | null
+  /** New (a copy of the live preset, or blank) or Rename, with the draft name. */
+  presetDraft: { mode: 'new' | 'rename'; name: string; copy: boolean; targetId: string | null } | null
+  presetBusy: boolean
 }
 
 type SceneRole = 'host' | 'cohost' | 'editor' | 'viewer'
@@ -141,6 +153,14 @@ const state: HUDState = {
   upload: { open: false, loading: false, error: null, token: null },
   renaming: null,
   editMode: NO_EDIT_MODE,
+
+  presets: [],
+  activePresetId: null,
+  presetsLoaded: false,
+  presetsError: null,
+  presetConfirm: null,
+  presetDraft: null,
+  presetBusy: false,
 }
 
 // Callbacks
@@ -686,6 +706,11 @@ function NavBar() {
               if (opened) onSceneAction?.('layout_refresh')
             } else if (p.type === HUDPanelType.ASSET_BROWSER) {
               if (opened && canEdit()) onSceneAction?.('media_refresh')
+            } else if (p.type === HUDPanelType.EVENT_CONTROL) {
+              state.presetConfirm = null
+              state.presetDraft = null
+              if (opened && canEdit()) onSceneAction?.('presets_refresh')
+              onPanelAction?.(p.type, 'open')
             } else {
               onPanelAction?.(p.type, 'open')
             }
@@ -1046,11 +1071,104 @@ function EventControlPanel() {
             </UiEntity>
           ))
         )}
-        <UiEntity uiTransform={{ margin: { top: 8 } }}>
-          <Button label="Switch Preset" color={C.accent}
-            onPress={() => onPanelAction?.(HUDPanelType.EVENT_CONTROL, 'switchPreset')} />
-        </UiEntity>
+        {canEdit() && <PresetsSection />}
       </UiEntity>
+    </UiEntity>
+  )
+}
+
+/**
+ * The scene's presets (LIV-84): the live one is marked; tapping another asks first, since everyone here sees the
+ * change. New copies the live preset (or starts blank); Rename renames one. Deleting stays on the web dashboard.
+ */
+function PresetsSection() {
+  const draft = state.presetDraft
+  const confirm = state.presets.find((p) => p.id === state.presetConfirm)
+  const live = state.presets.find((p) => p.id === state.activePresetId)
+  const names = state.presets.map((p) => p.name)
+  const startNew = () => {
+    state.presetConfirm = null
+    state.presetsError = null
+    state.presetDraft = { mode: 'new', name: live ? copyName(live.name, names) : 'New preset', copy: !!live, targetId: null }
+  }
+  return (
+    <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', margin: { top: 10 } }}>
+      <Divider />
+      <Label value="Presets" fontSize={11} color={C.textDim} textAlign="middle-left" uiTransform={{ width: '100%', height: 20 }} />
+      {state.presetsError && (
+        <Label value={state.presetsError} fontSize={10} color={C.danger} textAlign="top-left" uiTransform={{ width: '100%', height: 28 }} />
+      )}
+      {!state.presetsLoaded && !state.presetsError && <Label value="Loading…" fontSize={10} color={C.textMuted} uiTransform={{ height: 20 }} />}
+      {state.presets.slice(0, 8).map((p) => {
+        const isLive = p.id === state.activePresetId
+        return (
+          <UiEntity key={p.id}
+            uiTransform={{ width: '100%', height: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: { left: 8, right: 4 }, margin: { bottom: 2 } }}
+            uiBackground={{ color: isLive ? C.bgHover : C.bgCard }}>
+            <Label value={`${isLive ? '● ' : ''}${presetLabel(p.name)}${isLive ? ' (live)' : ''}`} fontSize={12} color={isLive ? C.success : C.text}
+              textAlign="middle-left" uiTransform={{ width: 170 }} />
+            <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Button label="Rename" onPress={() => { state.presetConfirm = null; state.presetsError = null; state.presetDraft = { mode: 'rename', name: p.name, copy: false, targetId: p.id } }}
+                width={60} height={24} fontSize={10} />
+              <UiEntity uiTransform={{ width: 4 }} />
+              {!isLive && <Button label="Make live" color={C.accent} onPress={() => { state.presetDraft = null; state.presetConfirm = p.id }} width={70} height={24} fontSize={10} />}
+            </UiEntity>
+          </UiEntity>
+        )
+      })}
+
+      {confirm && (
+        <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', margin: { top: 4 } }}>
+          <Label value={`Make ${presetLabel(confirm.name)} live? Everyone in the scene sees the change.`} fontSize={10} color={C.warning}
+            textAlign="top-left" uiTransform={{ width: '100%', height: 28 }} />
+          <UiEntity uiTransform={{ width: '100%', height: 28, flexDirection: 'row' }}>
+            <Button label={state.presetBusy ? 'Switching…' : 'Make live'} color={C.warning} textColor={C.bg} width={110} height={26} fontSize={11}
+              onPress={() => { if (!state.presetBusy) onSceneAction?.('presets_activate', { presetId: confirm.id }) }} />
+            <UiEntity uiTransform={{ width: 6 }} />
+            <Button label="Cancel" width={80} height={26} fontSize={11} onPress={() => { state.presetConfirm = null }} />
+          </UiEntity>
+        </UiEntity>
+      )}
+
+      {draft ? (
+        <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', margin: { top: 4 } }}>
+          <Input
+            uiTransform={{ width: '100%', height: 34, margin: { bottom: 4 } }}
+            uiBackground={{ color: C.bgCard }}
+            color={C.text}
+            placeholderColor={C.textMuted}
+            placeholder={draft.mode === 'new' ? 'New preset name' : 'Preset name'}
+            fontSize={11}
+            value={draft.name}
+            onChange={(v) => { if (state.presetDraft) state.presetDraft = { ...state.presetDraft, name: v.slice(0, PRESET_NAME_MAX) } }}
+          />
+          {draft.mode === 'new' && live && (
+            <UiEntity uiTransform={{ width: '100%', height: 28, flexDirection: 'row', margin: { bottom: 4 } }}>
+              <Button label={`Copy of ${presetLabel(live.name)}`} color={draft.copy ? C.accent : undefined} width={170} height={26} fontSize={10}
+                onPress={() => { if (state.presetDraft) state.presetDraft = { ...state.presetDraft, copy: true, name: copyName(live.name, names) } }} />
+              <UiEntity uiTransform={{ width: 6 }} />
+              <Button label="Blank" color={!draft.copy ? C.accent : undefined} width={80} height={26} fontSize={10}
+                onPress={() => { if (state.presetDraft) state.presetDraft = { ...state.presetDraft, copy: false, name: 'New preset' } }} />
+            </UiEntity>
+          )}
+          <UiEntity uiTransform={{ width: '100%', height: 28, flexDirection: 'row' }}>
+            <Button label={state.presetBusy ? 'Saving…' : draft.mode === 'new' ? 'Create' : 'Save'} color={C.accent} width={110} height={26} fontSize={11}
+              onPress={() => {
+                const name = draft.name.trim()
+                if (!name) { state.presetsError = 'Give the preset a name'; return }
+                if (state.presetBusy) return
+                if (draft.mode === 'new') onSceneAction?.('presets_create', { name, copyOf: draft.copy ? state.activePresetId : null })
+                else onSceneAction?.('presets_rename', { presetId: draft.targetId, name })
+              }} />
+            <UiEntity uiTransform={{ width: 6 }} />
+            <Button label="Cancel" width={80} height={26} fontSize={11} onPress={() => { state.presetDraft = null; state.presetsError = null }} />
+          </UiEntity>
+        </UiEntity>
+      ) : (
+        <UiEntity uiTransform={{ width: '100%', margin: { top: 4 } }}>
+          <Button label="New preset" onPress={startNew} height={28} fontSize={11} />
+        </UiEntity>
+      )}
     </UiEntity>
   )
 }
@@ -1451,6 +1569,35 @@ export class DclHUDRenderer implements HUDRenderer {
   /** Empty the paste-an-address field after a successful add. */
   clearRoleDraft(): void {
     state.roleDraftWallet = ''
+  }
+
+  // --- Presets (called by the createVirvi flow; LIV-84) ---
+
+  setPresets(list: HUDPreset[], activeId?: string | null): void {
+    state.presets = list
+    if (activeId !== undefined) state.activePresetId = activeId
+    state.presetsLoaded = true
+    if (state.presetConfirm && !list.some((p) => p.id === state.presetConfirm)) state.presetConfirm = null
+  }
+
+  setActivePreset(id: string): void {
+    state.activePresetId = id
+    if (state.presetConfirm === id) state.presetConfirm = null
+  }
+
+  setPresetsError(msg: string | null): void {
+    state.presetsError = msg
+  }
+
+  setPresetBusy(busy: boolean): void {
+    state.presetBusy = busy
+  }
+
+  /** A create or rename went through, or a switch was made: close the draft / confirmation. */
+  presetDone(): void {
+    state.presetDraft = null
+    state.presetConfirm = null
+    state.presetsError = null
   }
 
   // --- Media library + layout editing (called by the createVirvi flow) ---
