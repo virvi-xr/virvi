@@ -89,7 +89,7 @@ describe('MANA back on request, and the owner\'s MANA admin', () => {
     })
     expect(res.json()).toMatchObject({ status: 'refunded' })
     const [r] = await db.select().from(studioMistakeReports).where(eq(studioMistakeReports.entitlementId, entitlement.id))
-    return r
+    return Object.assign(r, { designId: d.id })
   }
 
   /** A customer with a verified wallet, a refunded MANA report of 1500 cents, and a request for it. */
@@ -116,6 +116,16 @@ describe('MANA back on request, and the owner\'s MANA admin', () => {
       expect(row.toAddress.toLowerCase()).toBe(u.wallet)
       const ledger = await db.select().from(studioCreditLedger).where(eq(studioCreditLedger.reason, 'mana_refund_request'))
       expect(ledger).toMatchObject([{ userId: u.id, deltaCents: -1500, refId: r.id }])
+    })
+
+    it("the design's paid revisions name a refunded report's id, its MANA share and any MANA-back request", async () => {
+      const u = await createUser({ wallet: randomWallet() })
+      const r = await refunded(u)
+      const piece = async () => (await app.inject({ method: 'GET', url: `/api/studio/designs/${r.designId}`, headers: as(u) })).json()
+        .pieces.find((p: any) => p.category === 'hat').finalized.find((f: any) => f.revision === 2)
+      expect((await piece()).report).toMatchObject({ id: r.id, status: 'refunded', manaCents: 1500, creditedCents: 1500, manaRefund: null })
+      expect((await ask(u, r.id)).statusCode).toBe(201)
+      expect((await piece()).report.manaRefund).toBe('requested')
     })
 
     it('refuses with credit_spent when the credit was spent, taking nothing (Review Focus 5)', async () => {

@@ -70,6 +70,25 @@ describe('AR static pages', () => {
     expect((await app.inject({ method: 'GET', url: '/studio/index.txt' })).body).toBe('LIST-RSC')
   })
 
+  it('serves the checkout page for /studio/checkout, with its query, not the design page', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'virvi-dash-'))
+    writeFileSync(join(dir, 'index.html'), 'HOME')
+    mkdirSync(join(dir, 'studio/_'), { recursive: true })
+    mkdirSync(join(dir, 'studio/checkout'), { recursive: true })
+    writeFileSync(join(dir, 'studio/_/index.html'), 'STUDIO')
+    writeFileSync(join(dir, 'studio/checkout/index.html'), 'CHECKOUT')
+    writeFileSync(join(dir, 'studio/checkout/index.txt'), 'CHECKOUT-RSC')
+    ;(config as any).dashboardDir = dir
+    await app.close()
+    app = await testApp()
+    for (const url of ['/studio/checkout', '/studio/checkout/', '/studio/checkout/?design=2f1c6a0e-8d3b-4c1a-9f6e-0b7d5e4a3c21', '/studio/checkout?topup=2']) {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode).toBe(200)
+      expect(res.body).toBe('CHECKOUT')
+    }
+    expect((await app.inject({ method: 'GET', url: '/studio/checkout/index.txt' })).body).toBe('CHECKOUT-RSC')
+  })
+
   describe('/.well-known/assetlinks.json', () => {
     const prevLinks = { pkg: config.androidAppPackage, sha: config.androidCertSha256 }
     afterEach(() => {

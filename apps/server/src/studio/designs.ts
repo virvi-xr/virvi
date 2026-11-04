@@ -9,6 +9,7 @@ import { failJobs } from './results.js'
 import { publishStudio } from './events.js'
 import { signRenderFrame, frameUrlExpiry } from './render-urls.js'
 import { finalizedRevisions } from './payments.js'
+import { creditBalance } from './credit.js'
 import type { Exec } from './quota.js'
 import { setDetail } from './sets.js'
 import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
@@ -114,6 +115,8 @@ export async function usage(userId: string, limit: number, now: Date) {
     openDesigns: await openDesignCount(userId),
     openDesignLimit: Number.isFinite(limit) ? limit : null,
     topup: { cents: config.studioPrices.topupCents, prompts: config.studioPrices.topupPrompts },
+    creditCents: await creditBalance(userId), // Virvi credit, in USD cents
+    mana: !!config.studioMana.recipient, // Pay with MANA is offered
   }
 }
 

@@ -38,6 +38,12 @@ describe('runHandoff', () => {
     await runHandoff(d)
     expect(d.go).toHaveBeenLastCalledWith('/analytics/')
   })
+  it("passes the studio scene's checkout link, query and all, through to next", async () => {
+    const { d } = deps(200)
+    d.href = 'https://virvi.io/auth/handoff#code=X&next=/studio/checkout?design=2f1c6a0e-8d3b-4c1a-9f6e-0b7d5e4a3c21'
+    expect(await runHandoff(d)).toBe('signed-in')
+    expect(d.go).toHaveBeenLastCalledWith('/studio/checkout?design=2f1c6a0e-8d3b-4c1a-9f6e-0b7d5e4a3c21')
+  })
   it('a code in the query string is never exchanged, and is removed from the address bar', async () => {
     const { calls, d } = deps(200)
     d.href = 'https://virvi.io/auth/handoff/?code=SECRET&next=%2Fanalytics%2F%3Fscene%3Dabc'

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useApi } from '@/lib/api'
 import { PrimaryButton } from '@/components/ui'
 import {
-  agentLabel, canSend, categoryLabel, composerState, formatCents, initialTicks, progressFor, refusalMessage, slotSelection,
+  agentLabel, canSend, categoryLabel, checkoutHref, composerState, formatCents, initialTicks, progressFor, refusalMessage, slotSelection,
   type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage,
 } from '@/lib/studio'
 import { AgentPicker } from '../AgentPicker'
@@ -201,9 +201,14 @@ function TopupButton({ usage, onRefusal }: { usage: StudioUsage; onRefusal?: (r:
   const api = useApi()
   const [busy, setBusy] = useState(false)
   const buy = async () => {
+    // With MANA on, the checkout page offers card and MANA side by side
+    if (usage.mana) {
+      window.location.assign(checkoutHref({ kind: 'topup', packs: 1 }))
+      return
+    }
     setBusy(true)
     try {
-      const r = await api.buyStudioPrompts(1)
+      const r = await api.buyStudioPrompts(1, 'card')
       // Credit that covers the pack in full is spent at once: there is no Stripe page to go to
       if ('url' in r) window.location.assign(r.url)
       else window.location.reload()

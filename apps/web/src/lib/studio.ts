@@ -23,6 +23,8 @@ export type StudioUsage = {
   paused: boolean
   giftedPrompts: number
   freeFinalizes: { available: number; held: number }
+  creditCents?: number // Virvi credit, in USD cents
+  mana?: boolean // Pay with MANA is on (the server has a recipient)
 }
 
 export type StudioDesign = {
@@ -52,7 +54,11 @@ export type FinalizedRevision = {
   amountCents: number
   paymentId: string
   paidAt: string | null
-  report: { status: 'pending' | 'refunded' | 'waived' | 'in_review' | 'declined' | string; createdAt: string } | null
+  /** `manaCents`: the refund's MANA share (now Virvi credit), which may be asked back as MANA; `manaRefund`: that request's status. */
+  report: {
+    status: 'pending' | 'refunded' | 'waived' | 'in_review' | 'declined' | string; createdAt: string
+    id?: string; manaCents?: number; creditedCents?: number; manaRefund?: 'requested' | 'sent' | 'declined' | string | null
+  } | null
   reportableUntil: string | null
 }
 
@@ -121,6 +127,14 @@ export type QuoteLine = {
 /** What a line costs after its gift: a scene gift covers up to its cap, a wearable or emote gift the whole line. */
 const afterGift = (l: QuoteLine) => l.admin ? 0 : l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
 
+/** How each kind of checkout line is named. */
+export const PRICE_LABEL: Record<QuoteLine['priceKind'], string> = {
+  first: 'First finalize',
+  first_extra: 'Extra piece',
+  revision: 'Revision',
+  revision_extra: 'Revision',
+}
+
 /** Why a line costs less in the checkout: a Virvi admin's, or a gift's. */
 export const lineNote = (l: QuoteLine): string | null => l.admin ? 'free (Virvi admin)' : giftNote(l)
 
@@ -134,11 +148,23 @@ export type Quote = {
   pieces: { category: string; name: string; revisionNumber: number; state: 'payable' | 'entitled' | 'blocked' | 'none'; kind: 'first' | 'revision'; checker: Checker }[]
   lines: QuoteLine[]
   totalCents: number
+  creditCents: number // Virvi credit applied
+  dueCents: number // left to pay by card or MANA
   blocked: string[]
   giftsUsed: number
   reportsHeld: string[] // pieces whose mistake report would wait for the team rather than be waived
   notes: string[]
 }
+
+/** A MANA payment's quote (the server's studio/mana/quote.ts): send exactly `amountWei` of `token` to `recipient` before `expiresAt`. */
+export type ManaQuote = {
+  paymentId: string; amountWei: string; recipient: string; token: string; chainId: 137
+  usdCents: number; usdPerMana: number; expiresAt: string
+}
+
+/** What a checkout answers: Stripe's page, granted outright (credit, gifts or waivers cover it), or a MANA quote. */
+export type CheckoutResult = { url: string } | { granted: true; paymentId: string } | { mana: ManaQuote }
+export type CheckoutMethod = 'card' | 'mana'
 
 /** What the room sends (apps/server/src/studio/events.ts). */
 export type StudioEvent =
@@ -184,6 +210,8 @@ export function untilReset(resetsAt: string, now: Date): string {
 }
 
 export type Refusal = { text: string; action?: 'topup' | 'settings' | 'fix' }
+
+const TX_MISMATCH = "That payment didn't match this order. Contact support and we'll sort it out."
 
 const UNSUPPORTED_FILE = 'That file type can’t be used. Upload an image (PNG, JPEG, WebP, GIF, TIFF, AVIF or SVG) or a 3D file (GLB, VRM, FBX, OBJ, STL or .blend).'
 const FILE_TOO_LARGE = 'That file is too big: images can be up to 20 MB, 3D files up to 25 MB.'
@@ -233,6 +261,33 @@ export function refusalMessage(
       return { text: 'No piece has finished packaging yet. Try again in a minute.' }
     case 'too_large':
       return { text: 'These files are too big to download together. Download each piece on its own.' }
+    case 'rate_unavailable':
+      return { text: 'MANA pricing is unavailable right now. Try again in a minute, or pay by card.' }
+    case 'mana_unavailable':
+      return { text: "MANA payments aren't available." }
+    case 'mana_busy':
+      return { text: 'MANA checkout is busy. Try again in a moment.' }
+    case 'credit_busy':
+      return { text: 'An open checkout is still holding your Virvi credit. Try again in a few minutes.' }
+    case 'credit_spent':
+      return { text: 'That credit has already been spent.' }
+    case 'tx_mismatch':
+    case 'tx_late':
+      return { text: TX_MISMATCH }
+    case 'tx_used':
+      return { text: 'That transaction has already paid for something else.' }
+    case 'tx_failed':
+      return { text: 'That transaction failed on Polygon, so no MANA was sent. Try again.' }
+    case 'tx_not_found':
+      return { text: 'Polygon doesn’t know that transaction yet. Try again in a moment.' }
+    case 'not_mana':
+      return { text: 'Only a refund of a MANA payment can go back as MANA.' }
+    case 'not_refunded':
+      return { text: 'That revision hasn’t been refunded.' }
+    case 'already_requested':
+      return { text: 'You’ve already asked for that refund as MANA.' }
+    case 'no_wallet':
+      return { text: 'Link a wallet in Settings first, so we know where to send the MANA.', action: 'settings' }
     default:
       // The server's own body-size limit answers 413 without a code
       return { text: err.status === 413 ? FILE_TOO_LARGE : 'Something went wrong. Try again.' }
@@ -272,10 +327,17 @@ export function relativeTime(iso: string, now: Date): string {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-/** `free plan · 3 prompts left today`, plus `· 7 bought` with bought prompts and `· 1 free finalize` with gifted ones. */
+/** `$15.00`: Virvi credit always shows its cents. */
+export const formatCredit = (cents: number) => `$${(cents / 100).toFixed(2)}`
+
+/**
+ * `free plan · 3 prompts left today`, plus `· 7 bought` with bought prompts, `· $15.00 credit` with Virvi credit and
+ * `· 1 free finalize` with gifted ones.
+ */
 export function usageLine(u: StudioUsage): string {
   const { available, held } = u.freeFinalizes
   return `${u.plan} plan · ${u.promptsLeft} prompts left today${u.credits > 0 ? ` · ${u.credits} bought` : ''}`
+    + ((u.creditCents ?? 0) > 0 ? ` · ${formatCredit(u.creditCents!)} credit` : '')
     + (available > 0 ? ` · ${plural(available, 'free finalize', 'free finalizes')}` : '')
     + (held > 0 ? ` · ${plural(held, 'free finalize', 'free finalizes')} held by an open checkout` : '')
 }
@@ -544,6 +606,60 @@ export function checkoutBody(reports: Record<string, string>): { reports?: Recor
  */
 export const dialogTotal = (quote: Quote, reported: string[]) =>
   quote.lines.reduce((n, l) => n + (reported.includes(l.category) && !quote.reportsHeld?.includes(l.category) ? 0 : afterGift(l)), 0)
+
+/**
+ * The checkout page's sums: the dialog's total after gifts and waived reports, the Virvi credit applied to it (the
+ * quote's credit, never more than the total) and what is left to pay.
+ */
+export function checkoutTotals(quote: Quote, reported: string[]): { totalCents: number; creditCents: number; dueCents: number } {
+  const totalCents = dialogTotal(quote, reported)
+  const creditCents = Math.min(quote.creditCents ?? 0, totalCents)
+  return { totalCents, creditCents, dueCents: totalCents - creditCents }
+}
+
+/** What the checkout page pays for: a design's payable pieces (or some of them), or prompt top-up packs. */
+export type CheckoutTarget = { kind: 'design'; designId: string; categories: string[] | null } | { kind: 'topup'; packs: number }
+
+/** The checkout page's target from its query: `?design=<id>` with optional `&categories=a,b`, or `?topup=<packs>`. */
+export function checkoutTarget(search: string): CheckoutTarget | null {
+  const q = new URLSearchParams(search)
+  const design = q.get('design')
+  if (design) {
+    if (!UUID.test(design)) return null
+    const categories = (q.get('categories') ?? '').split(',').filter((c) => /^[a-z_]{1,32}$/.test(c))
+    return { kind: 'design', designId: design, categories: categories.length ? categories : null }
+  }
+  const topup = q.get('topup')
+  if (topup && /^[1-9][0-9]?$/.test(topup)) return { kind: 'topup', packs: Number(topup) }
+  return null
+}
+
+export function checkoutHref(t: CheckoutTarget): string {
+  if (t.kind === 'topup') return `/studio/checkout/?topup=${t.packs}`
+  return `/studio/checkout/?design=${t.designId}${t.categories?.length ? `&categories=${t.categories.join(',')}` : ''}`
+}
+
+/** The dialog hands its mistake reports to the checkout page here (sessionStorage), keyed by design. */
+export const checkoutReportsKey = (designId: string) => `virvi-studio-checkout-reports:${designId}`
+
+/** Time left on a quote: `9:58`, never below `0:00`. */
+export function countdown(expiresAt: string, now: Date): string {
+  const s = Math.max(0, Math.ceil((new Date(expiresAt).getTime() - now.getTime()) / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** A refunded revision's MANA-back: offered while its MANA share is credit and not yet asked for; afterwards, where it stands. */
+export function manaBack(report: FinalizedRevision['report']): { offer: boolean; note: string | null } {
+  const cents = report?.manaCents ?? 0
+  if (!report || report.status !== 'refunded' || !(cents > 0) || !report.id) return { offer: false, note: null }
+  switch (report.manaRefund ?? null) {
+    case null: return { offer: true, note: null }
+    case 'requested': return { offer: false, note: `We’ll send ${formatCredit(cents)} of MANA to your wallet. It can take a few days.` }
+    case 'sent': return { offer: false, note: `We’ve sent ${formatCredit(cents)} of MANA to your wallet.` }
+    case 'declined': return { offer: false, note: `We couldn’t send MANA back, so ${formatCredit(cents)} stays as Virvi credit.` }
+    default: return { offer: false, note: null }
+  }
+}
 
 export const HELD_REPORT_COPY = 'Your report is with our team. If it’s approved, this revision is refunded in full.'
 

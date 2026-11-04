@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
-  studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioMistakeReports, studioPayments, studioPieces, studioPromptCredits,
+  studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioManaRefunds, studioMistakeReports, studioPayments, studioPieces, studioPromptCredits,
   studioRenders, studioRevisions, users, type PaymentLine,
 } from '../db/schema.js'
 import { config } from '../config.js'
@@ -687,12 +687,15 @@ export async function readyPackages(designId: string) {
 export async function finalizedRevisions(designId: string) {
   const rows = await db.select({
     e: studioEntitlements, number: studioRevisions.number, paidAt: studioPayments.paidAt,
-    reportStatus: studioMistakeReports.status, reportedAt: studioMistakeReports.createdAt,
+    reportId: studioMistakeReports.id, reportStatus: studioMistakeReports.status, reportedAt: studioMistakeReports.createdAt,
+    manaCents: studioMistakeReports.manaCents, creditedCents: studioMistakeReports.creditedCents, manaRefund: studioManaRefunds.status,
   })
     .from(studioEntitlements)
     .innerJoin(studioRevisions, eq(studioRevisions.id, studioEntitlements.revisionId))
     .innerJoin(studioPayments, eq(studioPayments.id, studioEntitlements.paymentId))
     .leftJoin(studioMistakeReports, eq(studioMistakeReports.entitlementId, studioEntitlements.id))
+    // at most one MANA-back request per report (requestManaRefund locks the report)
+    .leftJoin(studioManaRefunds, eq(studioManaRefunds.reportId, studioMistakeReports.id))
     .where(eq(studioEntitlements.designId, designId))
   return rows
     .sort((a, b) => b.number - a.number)
@@ -704,7 +707,11 @@ export async function finalizedRevisions(designId: string) {
       amountCents: r.e.amountCents,
       paymentId: r.e.paymentId,
       paidAt: r.paidAt,
-      report: r.reportStatus ? { status: r.reportStatus, createdAt: r.reportedAt } : null,
+      // manaCents: the refund's share paid in MANA (now credit), which may be asked back as MANA; manaRefund: that request's status
+      report: r.reportId && r.reportStatus ? {
+        id: r.reportId, status: r.reportStatus, createdAt: r.reportedAt,
+        manaCents: r.manaCents ?? 0, creditedCents: r.creditedCents ?? 0, manaRefund: r.manaRefund ?? null,
+      } : null,
       reportableUntil: r.e.kind === 'revision' && r.e.amountCents > 0 && !r.reportStatus && r.paidAt
         ? new Date(r.paidAt.getTime() + REPORT_WINDOW_DAYS * 24 * 3600 * 1000)
         : null,
