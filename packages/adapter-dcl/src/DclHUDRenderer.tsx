@@ -27,7 +27,7 @@ import type { UploadToken } from '@virvixr/client'
 import { nearbyPlayers } from './players.js'
 import { markHudPress } from './hud/press.js'
 import { EditModeBar, NO_EDIT_MODE, type EditModeHUDState } from './hud/EditModeBar.js'
-import { HUD_ICON_SRC, hudIconDot } from './hud/icon.js'
+import { HUD_ICON_MISSING_HINT, HUD_ICON_SRC, hudIconDot, hudIconInScene } from './hud/icon.js'
 
 // ---------------------------------------------------------------------------
 // State
@@ -54,6 +54,8 @@ interface HUDState {
   worlds: WorldStatus[]
   upgradePrompt: { feature: string; tier: string } | null
   hudVisible: boolean
+  /** The scene was deployed without images/virvi/hud-v.png: draw a text V, not the image (else a white square). */
+  hudIconMissing: boolean
 
   // Scene creation
   newSceneName: string
@@ -114,6 +116,7 @@ const state: HUDState = {
   worlds: [],
   upgradePrompt: null,
   hudVisible: true,
+  hudIconMissing: false,
 
   newSceneName: '',
 
@@ -206,9 +209,10 @@ function HUDToggleButton() {
       onMouseDown={() => { markHudPress(); state.hudVisible = !state.hudVisible }}
     >
       <UiEntity
-        uiTransform={{ width: LAUNCHER_ICON, height: LAUNCHER_ICON }}
-        uiBackground={{ texture: { src: HUD_ICON_SRC }, textureMode: 'stretch', color: C.text }}
+        uiTransform={{ width: LAUNCHER_ICON, height: LAUNCHER_ICON, alignItems: 'center', justifyContent: 'center' }}
+        uiBackground={state.hudIconMissing ? undefined : { texture: { src: HUD_ICON_SRC }, textureMode: 'stretch', color: C.text }}
       >
+        {state.hudIconMissing && <Label value="V" fontSize={26} color={C.text} textAlign="middle-center" />}
         {/* Status dot, where the symbol's dot is */}
         <UiEntity
           uiTransform={{
@@ -1353,6 +1357,20 @@ function VirviHUD() {
 // DclHUDRenderer — implements HUDRenderer + setup state management
 // ---------------------------------------------------------------------------
 
+/** Switches the launcher to its text V when the scene's files don't include the icon (unknown: keep the image). */
+async function checkHudIcon(): Promise<void> {
+  try {
+    const { getSceneInformation } = await import('~system/Runtime' as any)
+    const info = await getSceneInformation({})
+    if (hudIconInScene(info?.content) === false) {
+      state.hudIconMissing = true
+      console.log(HUD_ICON_MISSING_HINT)
+    }
+  } catch {
+    // Outside the DCL runtime: keep the image
+  }
+}
+
 export class DclHUDRenderer implements HUDRenderer {
   private initialized = false
 
@@ -1364,6 +1382,7 @@ export class DclHUDRenderer implements HUDRenderer {
     // a virtual size set by the scene's main UI takes precedence. zIndex keeps the HUD above the scene's UI.
     ReactEcsRenderer.addUiRenderer(engine.addEntity(), VirviHUD, { virtualWidth: 1920, virtualHeight: 1080, zIndex: 1000 })
     console.log('[Virvi HUD] DCL HUD renderer initialized')
+    void checkHudIcon()
   }
 
   // --- Connection state updates (called by the createVirvi flow) ---

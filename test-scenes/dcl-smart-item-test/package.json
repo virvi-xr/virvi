@@ -4,7 +4,9 @@
   "private": true,
   "description": "Virvi V2 smart item (Creator Hub Script component) test scene",
   "scripts": {
+    "prestart": "virvi-dcl install",
     "start": "sdk-commands start",
+    "prebuild": "virvi-dcl install",
     "build": "sdk-commands build"
   },
   "devDependencies": {
