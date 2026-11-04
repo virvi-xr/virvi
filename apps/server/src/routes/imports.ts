@@ -184,6 +184,8 @@ export default async function importRoutes(app: FastifyInstance) {
       await requireParcelController(request.user.id, location)
     }
     const scene = await sceneFor(request, location, folder)
+    // The upload as the import reads it (node_modules/, .git/, bin/, __MACOSX/ already dropped), kept for the backup
+    const kept = zipSync(Object.fromEntries(folder.files))
     const { files, alreadyInstalled } = await installVirvi(folder)
     // Ruling R5: the installed files are re-zipped in memory; the upload never becomes files on disk. Stored, not
     // deflated (the box unzips it anyway), and wrapped without a copy
@@ -193,10 +195,9 @@ export default async function importRoutes(app: FastifyInstance) {
     // N5: recorded on the import, so the page can say Virvi wasn't added again
     const row = await createImport({ userId: request.user.id, location, kind: folder.kind, scene, virviAlreadyPresent: alreadyInstalled })
     try {
-      // The upload itself, kept for the Virvi-free backup; recorded only once it is stored
+      // The creator's own files, kept for the Virvi-free backup; recorded only once they are stored
       const original = originalKey(row.id)
-      if (!Buffer.isBuffer(request.body)) throw new Error('the upload body is not a Buffer')
-      await getImportStore().put(original, request.body, 'application/zip')
+      await getImportStore().put(original, Buffer.from(kept.buffer, kept.byteOffset, kept.byteLength), 'application/zip')
       await db.update(sceneImports).set({ originalKey: original }).where(eq(sceneImports.id, row.id))
       await getImportStore().put(row.sourceKey, source, 'application/zip')
     } catch (err) {

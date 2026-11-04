@@ -113,14 +113,16 @@ describe('scene import routes', () => {
     expect(store.keys().sort()).toEqual([`imports/${view.id}/original.zip`, `imports/${view.id}/source.zip`])
   })
 
-  it('keeps the upload as sent as original.zip, before Virvi is installed', async () => {
-    const zip = sceneZip({ title: 'Moon Base' })
+  it('keeps the upload as original.zip, before Virvi is installed and without what the import drops', async () => {
+    const zip = sceneZip({ title: 'Moon Base', files: { 'node_modules/x/index.js': 'x', '.git/HEAD': 'ref', 'bin/index.js': 'built', '__MACOSX/._a': 'junk', 'models/a.glb': 'glb' } })
     const view = (await upload(zip)).json().import
     const row = await importRow(view.id)
     expect(row.originalKey).toBe(`imports/${view.id}/original.zip`)
     const stored = await store.get(row.originalKey!)
-    expect(Buffer.compare(stored!.body, zip)).toBe(0)
-    expect(strFromU8(unzipSync(new Uint8Array(stored!.body))['src/index.ts'])).toBe(MAIN)
+    const files = unzipSync(new Uint8Array(stored!.body))
+    expect(Object.keys(files).sort()).toEqual(['models/a.glb', 'package.json', 'scene.json', 'src/index.ts'])
+    expect(strFromU8(files['src/index.ts'])).toBe(MAIN)
+    expect(strFromU8(files['models/a.glb'])).toBe('glb')
   })
 
   it('names a new scene after the World when scene.json has no title', async () => {
