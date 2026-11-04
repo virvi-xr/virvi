@@ -748,7 +748,7 @@ export function useApi() {
       apiFetch<{ url: string } | { granted: true; paymentId: string }>(`/api/studio/designs/${id}/finalize`, { method: 'POST', body: JSON.stringify(body) }),
     redeemGiftCode: (code: string) =>
       apiFetch<{ prompts: number; finalizes: number }>('/api/studio/gift-codes/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
-    buyStudioPrompts: (packs = 1) => apiFetch<{ url: string }>('/api/studio/topups', { method: 'POST', body: JSON.stringify({ packs }) }),
+    buyStudioPrompts: (packs = 1) => apiFetch<{ url: string } | { granted: true; paymentId: string }>('/api/studio/topups', { method: 'POST', body: JSON.stringify({ packs }) }),
     reportStudioMistake: (id: string, category: string, n: number, text: string) =>
       apiFetch<{ status: 'refunded'; refundCents: number } | { status: 'in_review' }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/report`, { method: 'POST', body: JSON.stringify({ text }) }),
     retryStudioPackage: (id: string, category: string, n: number) =>

@@ -13,7 +13,7 @@ import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
 import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
-import { createFinalizeCheckout, createTopupCheckout, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError } from '../studio/payments.js'
+import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
@@ -200,7 +200,9 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!d) return notFound(reply)
     try {
       const admin = await isVirviAdmin(request.user.id)
-      return await quoteFinalize(d, null, [], admin ? 0 : await giftsFor(request.user.id, d.id, new Date()), undefined, { admin })
+      const now = new Date()
+      return await quoteFinalize(d, null, [], admin ? 0 : await giftsFor(request.user.id, d.id, now), undefined,
+        { admin, credit: admin ? 0 : await creditFor(request.user.id, d.id, now) })
     } catch (err) {
       if (err instanceof QuoteError) return quoteRefusal(reply, err)
       throw err

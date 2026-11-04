@@ -203,8 +203,10 @@ function TopupButton({ usage, onRefusal }: { usage: StudioUsage; onRefusal?: (r:
   const buy = async () => {
     setBusy(true)
     try {
-      const { url } = await api.buyStudioPrompts(1)
-      window.location.assign(url)
+      const r = await api.buyStudioPrompts(1)
+      // Credit that covers the pack in full is spent at once: there is no Stripe page to go to
+      if ('url' in r) window.location.assign(r.url)
+      else window.location.reload()
     } catch (err) {
       onRefusal?.(refusalMessage(err as never, new Date()))
       setBusy(false)

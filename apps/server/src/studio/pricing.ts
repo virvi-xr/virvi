@@ -26,8 +26,10 @@ export type QuotePiece = {
   checker: unknown
 }
 
+/** `creditCents`: the Virvi credit applied; `dueCents`: what is left to pay by card or MANA (`totalCents - creditCents`). */
 export type Quote = {
-  pieces: QuotePiece[]; lines: PaymentLine[]; totalCents: number; giftsUsed: number; blocked: string[]; reportsHeld: string[]; notes: string[]
+  pieces: QuotePiece[]; lines: PaymentLine[]; totalCents: number; creditCents: number; dueCents: number; giftsUsed: number
+  blocked: string[]; reportsHeld: string[]; notes: string[]
 }
 
 export class QuoteError extends Error {
@@ -44,6 +46,26 @@ export class QuoteError extends Error {
 /** What a line charges after its waiver or free-finalize credit. */
 export const chargedCents = (l: Pick<PaymentLine, 'amountCents' | 'waived' | 'gift' | 'giftCents' | 'admin'>) =>
   l.admin || l.waived ? 0 : l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
+
+/** What is left of a line to pay by card or MANA once credit paid its share. */
+export const dueCentsOf = (l: Pick<PaymentLine, 'amountCents' | 'waived' | 'gift' | 'giftCents' | 'admin' | 'creditCents'>) =>
+  chargedCents(l) - (l.creditCents ?? 0)
+
+/**
+ * Spends up to `cents` of credit on lines in order: each charged line takes what is left, up to what it charges, as
+ * its `creditCents`; a line that charges nothing (waived, free or an admin's) is left as it is.
+ */
+export function allocateCredit(lines: PaymentLine[], cents: number): { lines: PaymentLine[]; usedCents: number } {
+  let left = Math.max(0, cents)
+  const out = lines.map((l) => {
+    const charged = chargedCents(l)
+    if (!(charged > 0)) return l
+    const creditCents = Math.min(left, charged)
+    left -= creditCents
+    return { ...l, creditCents }
+  })
+  return { lines: out, usedCents: Math.max(0, cents) - left }
+}
 
 type Tier = 'Small' | 'Medium' | 'Large'
 const tierOf = (footprint?: string): Tier => footprint === '4x4' ? 'Large' : footprint === '1x2' || footprint === '2x2' ? 'Medium' : 'Small'
@@ -123,9 +145,12 @@ export async function isVirviAdmin(userId: string, exec: Exec = db): Promise<boo
   return u?.role === 'admin'
 }
 
-/** `admin`: a Virvi admin's quote, every line free and no gift credit spent. */
+/**
+ * `admin`: a Virvi admin's quote, every line free and no gift credit spent. `credit`: the Virvi credit cents the
+ * customer could spend, applied after gift finalizes (a checkout takes and allocates it itself, under a lock).
+ */
 export async function quoteFinalize(
-  design: Design, categories: string[] | null, waived: string[], gifts = 0, exec: Exec = db, opts: { admin?: boolean } = {},
+  design: Design, categories: string[] | null, waived: string[], gifts = 0, exec: Exec = db, opts: { admin?: boolean; credit?: number } = {},
 ): Promise<Quote> {
   if (opts.admin) gifts = 0
   const pieceRows = await exec.select().from(studioPieces).where(eq(studioPieces.designId, design.id)).orderBy(asc(studioPieces.category))
@@ -171,7 +196,7 @@ export async function quoteFinalize(
     .sort((a, b) => prices[b.i].amountCents - prices[a.i].amountCents || a.i - b.i)
     .slice(0, Math.max(0, gifts)).map(({ i }) => i))
   const cap = config.studioPrices.giftCapCents
-  const lines: PaymentLine[] = chosen.map((p, i) => ({
+  const priced: PaymentLine[] = chosen.map((p, i) => ({
     category: p.category, revisionId: p.revisionId, revisionNumber: p.revisionNumber, pieceName: p.name,
     ...prices[i], waived: waived.includes(p.category) && !overLimit.has(p.category),
     ...(waived.includes(p.category) && overLimit.has(p.category) ? { held: true } : {}),
@@ -179,10 +204,15 @@ export async function quoteFinalize(
     ...(giftIdx.has(i) ? { gift: true, ...(design.kind === 'scene' ? { giftCents: Math.min(prices[i].amountCents, cap) } : {}) } : {}),
     ...(p.footprint ? { footprint: p.footprint } : {}),
   }))
+  const totalCents = priced.reduce((sum, l) => sum + chargedCents(l), 0)
+  const credit = opts.admin || !(opts.credit && opts.credit > 0) ? { lines: priced, usedCents: 0 } : allocateCredit(priced, opts.credit)
+  const lines = credit.lines
   return {
     pieces,
     lines,
-    totalCents: lines.reduce((sum, l) => sum + chargedCents(l), 0),
+    totalCents,
+    creditCents: credit.usedCents,
+    dueCents: totalCents - credit.usedCents,
     giftsUsed: giftIdx.size,
     blocked,
     reportsHeld: [...overLimit],

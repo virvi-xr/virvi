@@ -6,7 +6,8 @@ import {
 } from '../db/schema.js'
 import { config } from '../config.js'
 import { ensureCustomer, getStripe } from '../integrations/stripe.js'
-import { chargedCents, instantReportsUsed, isVirviAdmin, priceLines, quoteFinalize, QuoteError } from './pricing.js'
+import { allocateCredit, chargedCents, dueCentsOf, instantReportsUsed, isVirviAdmin, priceLines, quoteFinalize, QuoteError } from './pricing.js'
+import { addCredit, creditBalance, takeCredit } from './credit.js'
 import { startWorker, type Design } from './designs.js'
 import type { Exec } from './quota.js'
 import { publishStudio } from './events.js'
@@ -31,9 +32,10 @@ export class PaymentError extends Error {
 }
 
 const appUrl = (path: string) => `${config.publicUrl.replace(/\/+$/, '')}${path}`
-// An open session is reused only for exactly the same lines: revisions, what each costs, and which are waived or free
+// An open session is reused only for exactly the same lines: revisions, what each costs, which are waived or free, and
+// what credit pays of each
 const lineKey = (lines: PaymentLine[]) =>
-  lines.map((l) => `${l.revisionId}:${l.amountCents}:${l.gift ? 'g' : l.waived ? 'w' : l.held ? 'h' : 'c'}`).sort().join(',')
+  lines.map((l) => `${l.revisionId}:${l.amountCents}:${l.gift ? 'g' : l.waived ? 'w' : l.held ? 'h' : 'c'}:${l.creditCents ?? 0}`).sort().join(',')
 const sameLines = (a: PaymentLine[], b: PaymentLine[]) => lineKey(a) === lineKey(b)
 
 function lineName(l: PaymentLine): string {
@@ -59,24 +61,75 @@ async function returnGifts(tx: Exec, userId: string, n: number, now: Date): Prom
     .onConflictDoUpdate({ target: studioFinalizeCredits.userId, set: { balance: sql`${studioFinalizeCredits.balance} + ${n}`, updatedAt: now } })
 }
 
-/** Deletes a pending payment that never reached Stripe, giving back the free finalizes it held, in one step. */
+/** Deletes a pending payment that never reached Stripe, giving back the free finalizes and credit it held, in one step. */
 async function dropPayment(paymentId: string, now: Date): Promise<void> {
   await db.transaction(async (tx) => {
     const [gone] = await tx.delete(studioPayments).where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending')))
-      .returning({ userId: studioPayments.userId, giftsHeld: studioPayments.giftsHeld })
-    if (gone) await returnGifts(tx, gone.userId, gone.giftsHeld, now)
+      .returning({ userId: studioPayments.userId, giftsHeld: studioPayments.giftsHeld, creditHeldCents: studioPayments.creditHeldCents })
+    if (!gone) return
+    await returnGifts(tx, gone.userId, gone.giftsHeld, now)
+    await addCredit(tx, gone.userId, gone.creditHeldCents, 'release', paymentId, now)
   })
 }
 
-/** Marks a pending payment expired and gives back the free finalizes it held, once (a paid or expired one is left alone). */
+/**
+ * Marks a pending payment expired and gives back the free finalizes and credit it held, once (a paid or expired one is
+ * left alone).
+ */
 async function expirePayment(paymentId: string, now: Date): Promise<void> {
   await db.transaction(async (tx) => {
-    const [pay] = await tx.select({ userId: studioPayments.userId, giftsHeld: studioPayments.giftsHeld }).from(studioPayments)
-      .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending'))).for('update')
+    const [pay] = await tx.select({ userId: studioPayments.userId, giftsHeld: studioPayments.giftsHeld, creditHeldCents: studioPayments.creditHeldCents })
+      .from(studioPayments).where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending'))).for('update')
     if (!pay) return
-    await tx.update(studioPayments).set({ status: 'expired', giftsHeld: 0 }).where(eq(studioPayments.id, paymentId))
+    await tx.update(studioPayments).set({ status: 'expired', giftsHeld: 0, creditHeldCents: 0 }).where(eq(studioPayments.id, paymentId))
     await returnGifts(tx, pay.userId, pay.giftsHeld, now)
+    await addCredit(tx, pay.userId, pay.creditHeldCents, 'release', paymentId, now)
   })
+}
+
+/**
+ * Holds credit for a new pending checkout (a finalize or a top-up, whatever pays the rest): takes up to what it
+ * charges from the user's balance under a lock on the credit row, spends it on its lines in order, and records both
+ * on the payment. One the credit covers in full becomes a credit payment, granted at once by its caller. The caller
+ * locks the design and the free-finalize credits first, in the order a grant does.
+ */
+async function holdCredit(
+  tx: Exec, pay: { id: string; userId: string; amountCents: number; lines: PaymentLine[] }, now: Date,
+): Promise<{ lines: PaymentLine[]; creditCents: number; dueCents: number }> {
+  const taken = await takeCredit(tx, pay.userId, pay.amountCents, 'hold', pay.id, now)
+  if (!(taken > 0)) return { lines: pay.lines, creditCents: 0, dueCents: pay.amountCents }
+  const lines = pay.lines.length ? allocateCredit(pay.lines, taken).lines : pay.lines
+  const dueCents = pay.amountCents - taken
+  await tx.update(studioPayments).set({
+    lines, creditHeldCents: taken, ...(dueCents === 0 ? { method: 'credit', expiresAt: null } : {}),
+  }).where(eq(studioPayments.id, pay.id))
+  return { lines, creditCents: taken, dueCents }
+}
+
+/** Expires, through Stripe, open checkouts another checkout takes over the holds of; one Stripe won't expire keeps them. */
+async function expireOpen(pays: { id: string; stripeSessionId: string | null }[], now: Date): Promise<void> {
+  for (const p of pays) {
+    if (!p.stripeSessionId) continue // one still being opened is left to its request
+    try {
+      await (await getStripe()).checkout.sessions.expire(p.stripeSessionId)
+    } catch (err) {
+      console.error(`[studio] checkout ${p.id} could not be expired:`, err instanceof Error ? err.message : err)
+      continue
+    }
+    await expirePayment(p.id, now)
+  }
+}
+
+/**
+ * Credit cents a checkout could use: the user's balance plus what their open checkouts for this design (or their open
+ * top-ups, for null) hold, since a new checkout takes those over.
+ */
+export async function creditFor(userId: string, designId: string | null, now: Date, exec: Exec = db): Promise<number> {
+  const [held] = await exec.select({ n: sql<number>`coalesce(sum(${studioPayments.creditHeldCents}), 0)::int` }).from(studioPayments)
+    .where(and(eq(studioPayments.userId, userId),
+      designId ? and(eq(studioPayments.designId, designId), eq(studioPayments.kind, 'finalize')) : eq(studioPayments.kind, 'topup'),
+      eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now)))
+  return (await creditBalance(userId, exec)) + held.n
 }
 
 /**
@@ -94,12 +147,12 @@ export async function giftsFor(userId: string, designId: string, now: Date, exec
 
 /**
  * A checkout for a design's pieces. An open session with exactly the same lines is reused. Otherwise, when the new
- * quote has a free line, this design's open sessions that hold free finalizes are expired through Stripe first, so
- * their credits come back for the new quote; one Stripe won't expire (already paid) keeps its credits, and a checkout
- * that would then lose a free line it was quoted is refused (free_finalize_busy). The new
- * checkout then takes its free finalizes from the balance under a lock on the user's credit row, so two checkouts at
- * once never use one credit twice. A checkout that never reaches Stripe gives them back; an expired one gives them
- * back from the webhook.
+ * quote has a free line (or spends Virvi credit), this design's open sessions that hold free finalizes (or credit) are
+ * expired through Stripe first, so they come back for the new quote; one Stripe won't expire (already paid) keeps
+ * them, and a checkout that would then lose a free line or credit it was quoted is refused (free_finalize_busy,
+ * credit_busy). The new checkout then takes its free finalizes, and after them its credit, from the balances under
+ * locks on the user's rows, so two checkouts at once never use one twice. A checkout that never reaches Stripe gives
+ * them back; an expired one gives them back from the webhook. One the credit covers in full is granted at once.
  */
 export async function createFinalizeCheckout(
   design: Design,
@@ -111,25 +164,17 @@ export async function createFinalizeCheckout(
   const waived = Object.keys(reports)
   const withReports = (lines: PaymentLine[]) => lines.map((l) => (l.waived || l.held ? { ...l, reportText: reports[l.category] } : l))
   const admin = await isVirviAdmin(user.id)
-  const quote = await quoteFinalize(design, categories, waived, admin ? 0 : await giftsFor(user.id, design.id, now), db, { admin })
+  const quote = await quoteFinalize(design, categories, waived, admin ? 0 : await giftsFor(user.id, design.id, now), db,
+    { admin, credit: admin ? 0 : await creditFor(user.id, design.id, now) })
   if (!quote.lines.length) throw new QuoteError('nothing_to_pay', categories ?? [])
   const open = await db.select().from(studioPayments).where(and(
     eq(studioPayments.designId, design.id), eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now),
   ))
-  if (quote.totalCents > 0) {
+  if (quote.dueCents > 0) {
     const same = open.find((p) => p.stripeSessionUrl && sameLines(p.lines, withReports(quote.lines)))
     if (same) return { url: same.stripeSessionUrl! }
   }
-  for (const p of quote.giftsUsed > 0 ? open : []) {
-    if (!(p.giftsHeld > 0) || !p.stripeSessionId) continue // one still being opened is left to its request
-    try {
-      await (await getStripe()).checkout.sessions.expire(p.stripeSessionId)
-    } catch (err) {
-      console.error(`[studio] checkout ${p.id} could not be expired:`, err instanceof Error ? err.message : err)
-      continue
-    }
-    await expirePayment(p.id, now)
-  }
+  await expireOpen(open.filter((p) => (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0)), now)
 
   const expiresAt = new Date(now.getTime() + CHECKOUT_TTL_MS)
   const { pay, lines } = await db.transaction(async (tx) => {
@@ -142,18 +187,20 @@ export async function createFinalizeCheckout(
     // The quote the customer saw counted a credit an older checkout still holds (Stripe didn't expire it, or it is
     // still opening): refuse rather than charge that line in full
     if (q.giftsUsed < quote.giftsUsed) throw new PaymentError(409, 'free_finalize_busy')
-    const lines = withReports(q.lines)
     const [pay] = await tx.insert(studioPayments).values({
-      userId: user.id, designId: design.id, kind: 'finalize', amountCents: q.totalCents, lines, giftsHeld: q.giftsUsed,
+      userId: user.id, designId: design.id, kind: 'finalize', amountCents: q.totalCents, lines: withReports(q.lines), giftsHeld: q.giftsUsed,
       ...(q.totalCents > 0 ? { expiresAt } : {}),
     }).returning()
     if (q.giftsUsed > 0) {
       await tx.update(studioFinalizeCredits).set({ balance: sql`${studioFinalizeCredits.balance} - ${q.giftsUsed}`, updatedAt: now })
         .where(eq(studioFinalizeCredits.userId, user.id))
     }
-    return { pay, lines }
+    // Credit after gifts: the lock on the credit row comes last
+    const held = await holdCredit(tx, pay, now)
+    if (held.creditCents < Math.min(quote.creditCents, q.totalCents)) throw new PaymentError(409, 'credit_busy')
+    return { pay: { ...pay, dueCents: held.dueCents }, lines: held.lines }
   })
-  if (pay.amountCents === 0) {
+  if (pay.dueCents === 0) {
     try {
       await grantPayment(pay.id, null, now)
     } catch (err) {
@@ -174,9 +221,9 @@ export async function createFinalizeCheckout(
   const url = await openSession({
     mode: 'payment',
     customer,
-    line_items: lines.filter((l) => chargedCents(l) > 0).map((l) => ({
+    line_items: lines.filter((l) => dueCentsOf(l) > 0).map((l) => ({
       quantity: 1,
-      price_data: { currency: 'usd', unit_amount: chargedCents(l), product_data: { name: lineName(l) } },
+      price_data: { currency: 'usd', unit_amount: dueCentsOf(l), product_data: { name: lineName(l) } },
     })),
     metadata,
     payment_intent_data: { metadata },
@@ -187,25 +234,53 @@ export async function createFinalizeCheckout(
   return { url }
 }
 
-export async function createTopupCheckout(user: { id: string; email: string | null }, packs: number, now: Date): Promise<{ url: string }> {
+/**
+ * A checkout for prompt packs. Virvi credit pays first, held as a finalize's is: the user's open top-ups that hold
+ * credit are expired through Stripe so it comes back for this one, and a top-up the credit covers in full is granted
+ * at once.
+ */
+export async function createTopupCheckout(
+  user: { id: string; email: string | null }, packs: number, now: Date,
+): Promise<{ url: string } | { granted: true; paymentId: string }> {
   const { topupCents, topupPrompts } = config.studioPrices
   const expiresAt = new Date(now.getTime() + CHECKOUT_TTL_MS)
-  const [pay] = await db.insert(studioPayments).values({
-    userId: user.id, kind: 'topup', amountCents: topupCents * packs, prompts: topupPrompts * packs, expiresAt,
-  }).returning()
+  if ((await creditFor(user.id, null, now)) > 0) {
+    await expireOpen(await db.select().from(studioPayments).where(and(
+      eq(studioPayments.userId, user.id), eq(studioPayments.kind, 'topup'), eq(studioPayments.status, 'pending'),
+      gt(studioPayments.expiresAt, now), gt(studioPayments.creditHeldCents, 0),
+    )), now)
+  }
+  const { pay, held } = await db.transaction(async (tx) => {
+    const [pay] = await tx.insert(studioPayments).values({
+      userId: user.id, kind: 'topup', amountCents: topupCents * packs, prompts: topupPrompts * packs, expiresAt,
+    }).returning()
+    return { pay, held: await holdCredit(tx, pay, now) }
+  })
+  if (held.dueCents === 0) {
+    try {
+      await grantPayment(pay.id, null, now)
+    } catch (err) {
+      await dropPayment(pay.id, now)
+      throw err
+    }
+    return { granted: true, paymentId: pay.id }
+  }
   let customer: string
   try {
     customer = await ensureCustomer(user.id, user.email)
   } catch (err) {
     console.error('[studio] stripe customer failed:', err instanceof Error ? err.message : err)
-    await db.delete(studioPayments).where(eq(studioPayments.id, pay.id))
+    await dropPayment(pay.id, now)
     throw new PaymentError(502, 'stripe_error')
   }
   const metadata = { vlm_user_id: user.id, vlm_studio_payment_id: pay.id }
   const url = await openSession({
     mode: 'payment',
     customer,
-    line_items: [{ quantity: packs, price_data: { currency: 'usd', unit_amount: topupCents, product_data: { name: `${topupPrompts} Design Studio prompts` } } }],
+    // With credit spent, the rest is one line: it needn't divide by the packs
+    line_items: held.creditCents > 0
+      ? [{ quantity: 1, price_data: { currency: 'usd', unit_amount: held.dueCents, product_data: { name: `${topupPrompts * packs} Design Studio prompts` } } }]
+      : [{ quantity: packs, price_data: { currency: 'usd', unit_amount: topupCents, product_data: { name: `${topupPrompts} Design Studio prompts` } } }],
     metadata,
     payment_intent_data: { metadata },
     success_url: appUrl(`/studio?payment=${pay.id}`),
@@ -221,7 +296,8 @@ export async function createTopupCheckout(user: { id: string; email: string | nu
  * again against what is paid for by then (another checkout may have been paid first): an overcharge, and a line whose
  * revision was already paid for, are owed back, refunded after the commit and retried by the sweep until Stripe
  * confirms. A free line (a free-finalize credit) is charged nothing; one whose revision was already paid for gives its
- * credit back instead.
+ * credit back instead. Of what a line is owed back, the share Virvi credit paid goes back as credit at once (a line
+ * kept at a lower price keeps as much of its credit as it still charges); only the rest is refunded.
  */
 export async function grantPayment(paymentId: string, paymentIntent: string | null, now: Date): Promise<'granted' | 'already'> {
   const held: { name: string; revision: number; text: string }[] = []
@@ -245,7 +321,9 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
       kind: earlier.some((e) => e.category === l.category) ? 'revision' as const : 'first' as const,
       category: l.category, footprint: l.footprint,
     })), earlier.length > 0)
-    let owed = pay.lines.filter((l) => !fresh.includes(l)).reduce((sum, l) => sum + chargedCents(l), 0)
+    const unpaid = pay.lines.filter((l) => !fresh.includes(l))
+    let owed = unpaid.reduce((sum, l) => sum + dueCentsOf(l), 0)
+    let creditBack = unpaid.reduce((sum, l) => sum + (l.creditCents ?? 0), 0)
     // A free line whose revision was paid for meanwhile gives its credit back
     const unusedGifts = Math.min(pay.giftsHeld, pay.lines.filter((l) => !fresh.includes(l) && l.gift).length)
     if (unusedGifts > 0) {
@@ -257,10 +335,13 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
       const price = repriced[i]
       // Never more than was paid for the line; a credit still covers what it covered
       const charged = chargedCents({ ...l, amountCents: Math.min(l.amountCents, price.amountCents) })
-      owed += chargedCents(l) - charged
+      const creditCents = Math.min(l.creditCents ?? 0, charged)
+      creditBack += (l.creditCents ?? 0) - creditCents
+      owed += dueCentsOf(l) - (charged - creditCents)
       const [e] = await tx.insert(studioEntitlements).values({
         revisionId: l.revisionId, paymentId: pay.id, userId: pay.userId, designId: design.id, category: l.category,
-        kind: price.priceKind.startsWith('revision') ? 'revision' : 'first', amountCents: charged, status: 'packaging',
+        kind: price.priceKind.startsWith('revision') ? 'revision' : 'first', amountCents: charged, method: pay.method, creditCents,
+        status: 'packaging',
       }).returning()
       entitlementIds.push(e.id)
       if (l.waived) {
@@ -274,6 +355,8 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
         held.push({ name: l.pieceName, revision: l.revisionNumber, text: l.reportText ?? '' })
       }
     }
+    // The credit row after the design and the free-finalize credits, in the order a checkout locks them
+    await addCredit(tx, pay.userId, creditBack, 'refund', pay.id, now)
     if (owed > 0) await tx.update(studioPayments).set({ refundDueCents: owed }).where(eq(studioPayments.id, pay.id))
     if (entitlementIds.length) {
       await tx.update(studioDesigns).set({ finalizedAt: now })
