@@ -18,6 +18,8 @@ import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser
 import { createAnalyticsScene } from './helpers/analytics.js'
 import { createSetup } from './helpers/setups.js'
 import { FakeWorldsClient } from './helpers/fake-worlds.js'
+import { FakeDclDirectory } from './helpers/fake-dcl.js'
+import { setDclDirectory } from '../src/analytics/dcl-directory.js'
 
 vi.mock('../src/services/import/build-runner.js', async (orig) => {
   const actual = await orig<typeof import('../src/services/import/build-runner.js')>()
@@ -27,10 +29,10 @@ vi.mock('../src/services/import/build-runner.js', async (orig) => {
 const WORLD = 'moon.dcl.eth'
 const MAIN = "import { engine } from '@dcl/sdk/ecs'\n\nexport function main() {\n  engine.addSystem(() => {})\n}\n"
 
-function sceneZip(o: { world?: string | null; title?: string; files?: Record<string, string> } = {}): Buffer {
+function sceneZip(o: { world?: string | null; title?: string; files?: Record<string, string>; parcels?: string[]; base?: string } = {}): Buffer {
   const world = o.world === undefined ? WORLD : o.world
   const sceneJson = {
-    main: 'bin/index.js', runtimeVersion: '7', scene: { parcels: ['0,0'], base: '0,0' },
+    main: 'bin/index.js', runtimeVersion: '7', scene: { parcels: o.parcels ?? ['0,0'], base: o.base ?? (o.parcels?.[0] ?? '0,0') },
     ...(o.title ? { display: { title: o.title } } : {}),
     ...(world ? { worldConfiguration: { name: world } } : {}),
   }
@@ -231,12 +233,84 @@ describe('scene import routes', () => {
     expect(await db.select().from(scenes)).toHaveLength(1)
   })
 
-  it('a parcels scene is parcels_not_yet', async () => {
-    const res = await upload(sceneZip({ world: null }))
-    expect(res.statusCode).toBe(422)
-    expect(res.json()).toEqual({
-      error: 'parcels_not_yet',
-      message: 'Genesis City imports are coming soon. For now, import a scene whose scene.json names a World.',
+  describe('a Genesis City parcels scene', () => {
+    const rights = (owner: string | null) => ({ owner, operator: null, updateOperator: null, updateManagers: [], approvedForAll: [] })
+    let dir: FakeDclDirectory
+    beforeEach(() => {
+      dir = new FakeDclDirectory()
+      setDclDirectory(dir)
+      for (const p of ['10,10', '10,11']) dir.rights.set(p, rights(user.wallet!))
+    })
+    afterEach(() => setDclDirectory(null))
+    const parcelZip = (parcels = ['10,10', '10,11']) => sceneZip({ world: null, parcels })
+
+    it("imports a parcel scene for the parcels' owner", async () => {
+      const res = await upload(parcelZip())
+      expect(res.statusCode).toBe(201)
+      const view = res.json().import
+      expect(view).toMatchObject({ worldName: null, location: { kind: 'parcels', base: '10,10', parcels: ['10,10', '10,11'] } })
+      expect(fake.started).toEqual([view.id])
+      expect(await importRow(view.id)).toMatchObject({ locationKind: 'parcels', base: '10,10', status: 'building' })
+      const [scene] = await db.select().from(scenes).where(eq(scenes.id, view.sceneId))
+      expect(scene.name).toBe('Genesis City 10,10')
+    })
+
+    it('refuses an importer who controls only some parcels', async () => {
+      dir.rights.set('10,11', rights(randomWallet()))
+      const res = await upload(parcelZip())
+      expect(res.statusCode).toBe(403)
+      expect(res.json()).toEqual({ error: 'not_parcel_controller', message: 'None of your verified wallets can deploy to parcel 10,11.' })
+      expect(await db.select().from(sceneImports)).toHaveLength(0)
+    })
+
+    it('refuses a parcels scene with no parcels, or a base outside them', async () => {
+      for (const zip of [sceneZip({ world: null, parcels: [] }), sceneZip({ world: null, parcels: ['10,10'], base: '10,11' })]) {
+        const res = await upload(zip)
+        expect([res.statusCode, res.json().error]).toEqual([422, 'bad_scene_json'])
+      }
+      expect(await db.select().from(sceneImports)).toHaveLength(0)
+    })
+
+    it('refuses a second import for overlapping parcels mid-import', async () => {
+      expect((await upload(parcelZip(['10,10']))).statusCode).toBe(201)
+      const res = await upload(parcelZip(['10,10', '10,11']))
+      expect([res.statusCode, res.json().error]).toEqual([409, 'import_in_progress'])
+      expect(await db.select().from(sceneImports)).toHaveLength(1)
+    })
+
+    it("parcels connected to another Virvi scene the importer can't manage are parcels_in_use", async () => {
+      const other = await createUser({ wallet: randomWallet() })
+      const theirs = (await createScene(other)).scene
+      await db.insert(dclWorldDestinations).values({
+        sceneId: theirs.id, ownerUserId: other.id, ownerWallet: other.wallet!, kind: 'parcels', worldName: null,
+        base: '10,11', parcels: ['10,11', '10,12'], mode: 'virvi',
+      })
+      const res = await upload(parcelZip())
+      expect([res.statusCode, res.json().error]).toEqual([409, 'parcels_in_use'])
+    })
+
+    it("parcels set up under another Virvi scene the importer can't manage are parcels_set_up_elsewhere", async () => {
+      const other = await createUser({ wallet: randomWallet() })
+      const theirs = (await createScene(other)).scene
+      const loc = await createAnalyticsScene({ locationKey: 'gc:10,11', baseParcel: '10,11', parcels: ['10,11'] })
+      await createSetup(loc.id, theirs.id)
+      const res = await upload(parcelZip())
+      expect([res.statusCode, res.json().error]).toEqual([409, 'parcels_set_up_elsewhere'])
+    })
+
+    it('reuses a Virvi scene set up on the parcels when the importer manages it', async () => {
+      const mine = (await createScene(user)).scene
+      const loc = await createAnalyticsScene({ locationKey: 'gc:10,11', baseParcel: '10,11', parcels: ['10,11'] })
+      await createSetup(loc.id, mine.id)
+      const res = await upload(parcelZip())
+      expect([res.statusCode, res.json().import.sceneId]).toEqual([201, mine.id])
+    })
+
+    it('the catalyst being down is catalyst_unreachable', async () => {
+      dir.down = true
+      const res = await upload(parcelZip())
+      expect([res.statusCode, res.json().error]).toEqual([503, 'catalyst_unreachable'])
+      expect(await db.select().from(sceneImports)).toHaveLength(0)
     })
   })
 

@@ -15,7 +15,7 @@ import {
   submitSignedDeploy, whenSettled,
 } from '../src/services/dcl/world-deployer.js'
 import { modelsInScene } from '../src/services/dcl/assemble.js'
-import { getActiveSetup, linkWorldLocation } from '../src/setup/setups.js'
+import { getActiveSetup, linkLocation, linkWorldLocation } from '../src/setup/setups.js'
 import { resetDb } from './helpers/db.js'
 import { createElement, createInstance, createScene, createUser } from './helpers/factories.js'
 import { FakeWorldsClient } from './helpers/fake-worlds.js'
@@ -444,5 +444,14 @@ describe('linkWorldLocation', () => {
     expect(active).toHaveLength(1)
     expect(active[0].deploymentEntityId).toBe('bafy2')
     expect(await db.select().from(locationSetups)).toHaveLength(1)
+  })
+
+  it('linkLocation links Genesis City parcels under gc:<base>', async () => {
+    const u = await createUser()
+    const { scene } = await createScene(u, 'A')
+    await linkLocation({ location: { kind: 'parcels', base: '10,10', parcels: ['10,10', '10,11'] }, virviSceneId: scene.id, hostUserId: u.id, entityId: 'bafy1', title: 'A' })
+    const as = await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, 'gc:10,10') })
+    expect(as).toMatchObject({ kind: 'parcels', baseParcel: '10,10', parcels: ['10,10', '10,11'], worldName: null, virviSceneId: scene.id })
+    expect((await getActiveSetup(as!.id))).toMatchObject({ virviSceneId: scene.id, deploymentEntityId: 'bafy1' })
   })
 })

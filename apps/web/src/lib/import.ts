@@ -63,7 +63,10 @@ const CODE_MESSAGES: Record<string, string> = {
   bad_package_json: "The scene's package.json can't be read. Check it in the Creator Hub, then upload again.",
   bad_source_encoding: "The scene's src/index.ts isn't plain text Virvi can read. Save it as UTF-8, then upload again.",
   no_main: "Virvi couldn't find the main() function in src/index.ts. Make sure the scene exports one, then upload again.",
-  parcels_not_yet: 'Genesis City imports are coming soon. For now, import a scene whose scene.json names a World.',
+  not_parcel_controller: "None of your linked wallets can deploy to every parcel in scene.json. Link the wallet that owns or operates them in Settings.",
+  catalyst_unreachable: "Decentraland didn't answer just now. Try again in a minute.",
+  parcels_in_use: "These parcels are connected to a Virvi scene you can't manage. Ask that scene's owner to give you full access.",
+  parcels_set_up_elsewhere: "These parcels are set up under a Virvi scene you can't manage. Ask that scene's owner to give you full access.",
   // The World and the import
   not_world_owner: "The World in scene.json isn't owned by a wallet linked to your account. Link the wallet that owns it in Settings.",
   world_unreachable: "Decentraland didn't answer just now. Try again in a minute.",

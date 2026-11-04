@@ -49,7 +49,7 @@ describe('importErrorMessage', () => {
     // install-virvi.ts (Ruling R8)
     'bad_package_json', 'bad_source_encoding', 'no_main',
     // routes/imports.ts, imports.ts, the owner check
-    'parcels_not_yet', 'not_world_owner', 'world_unreachable', 'world_in_use', 'world_set_up_elsewhere', 'import_in_progress',
+    'not_parcel_controller', 'catalyst_unreachable', 'parcels_in_use', 'parcels_set_up_elsewhere', 'not_world_owner', 'world_unreachable', 'world_in_use', 'world_set_up_elsewhere', 'import_in_progress',
     'superseded', 'store_failed', 'not_deployable', 'not_found', 'no_log', 'invalid_scene',
     // build-runner.ts, build-sweep.ts, import-build.ts
     'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded',

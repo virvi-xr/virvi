@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { and, eq, isNull } from 'drizzle-orm'
-import { locationKeyFor } from '@virvixr/shared'
+import { locationKeyFor, type ImportLocation } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { analyticsScenes, locationSetups, sceneRoles, scenes } from '../db/schema.js'
 import { insertSceneWithDefaultPreset } from '../scenes/create.js'
@@ -96,12 +96,13 @@ async function release(setup: LocationSetupRow, scene: AnalyticsSceneRow, now: D
 }
 
 /**
- * Links a World Virvi just deployed to its Virvi scene: the location row (as the registry would write it
- * for a World ref) and the active setup, so the in-world editor works with no "Set up Virvi here" step.
+ * Links a location Virvi just deployed to its Virvi scene: the location row (as the registry would write it
+ * for a World or Genesis City ref) and the active setup, so the in-world editor works with no "Set up Virvi here" step.
  * Another scene's setup there is ended as 'replaced'; the same scene's only gets the new entity id.
+ * A parcels location is keyed `gc:<base>`; its footprint comes from the location (`parcels` overrides it).
  */
-export async function linkWorldLocation(input: {
-  world: string
+export async function linkLocation(input: {
+  location: ImportLocation
   virviSceneId: string
   hostUserId: string
   entityId: string
@@ -109,17 +110,24 @@ export async function linkWorldLocation(input: {
   base?: string
   parcels?: string[]
 }, now = new Date()): Promise<void> {
-  const world = input.world.toLowerCase()
-  const locationKey = locationKeyFor({ realm: world, isWorld: true, isPreview: false, worldName: world }, null)
+  const loc = input.location
+  const world = loc.kind === 'world' ? loc.world.toLowerCase() : null
+  const base = input.base ?? (loc.kind === 'parcels' ? loc.base : undefined)
+  const parcels = input.parcels ?? (loc.kind === 'parcels' ? loc.parcels : undefined)
+  const kind = loc.kind === 'world' ? 'world' : 'parcels'
+  const realm = world ?? 'main'
+  const locationKey = world
+    ? locationKeyFor({ realm: world, isWorld: true, isPreview: false, worldName: world }, null)
+    : locationKeyFor({ realm, isWorld: false, isPreview: false, baseParcel: base }, null)
   await db.transaction(async (tx) => {
     const [loc] = await tx
       .insert(analyticsScenes)
       .values({
-        kind: 'world',
+        kind,
         locationKey,
-        realm: world,
-        baseParcel: input.base ?? null,
-        parcels: input.parcels ?? [],
+        realm,
+        baseParcel: base ?? null,
+        parcels: parcels ?? [],
         worldName: world,
         activeEntityId: input.entityId,
         title: input.title,
@@ -131,9 +139,9 @@ export async function linkWorldLocation(input: {
       .onConflictDoUpdate({
         target: analyticsScenes.locationKey,
         set: {
-          realm: world,
-          ...(input.base ? { baseParcel: input.base } : {}),
-          ...(input.parcels ? { parcels: input.parcels } : {}),
+          realm,
+          ...(base ? { baseParcel: base } : {}),
+          ...(parcels ? { parcels } : {}),
           activeEntityId: input.entityId,
           title: input.title,
           virviSceneId: input.virviSceneId,
@@ -160,6 +168,12 @@ export async function linkWorldLocation(input: {
     // A new host starts with wallet visibility off, as in setUpLocation.
     await tx.update(analyticsScenes).set({ walletVisibility: false }).where(eq(analyticsScenes.id, loc.id))
   })
+}
+
+/** A World's location: linkLocation for a `world`. */
+export function linkWorldLocation(input: Omit<Parameters<typeof linkLocation>[0], 'location'> & { world: string }, now = new Date()): Promise<void> {
+  const { world, ...rest } = input
+  return linkLocation({ ...rest, location: { kind: 'world', world } }, now)
 }
 
 /** Create (or reuse) the wallet's user, a Virvi scene with a default preset, and the active setup. Free: no plan limits. */

@@ -12,9 +12,9 @@
  */
 
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { zipSync } from 'fflate'
-import { SCENE_IMPORT_MAX_BYTES } from '@virvixr/shared'
+import { PARCEL_RE, SCENE_IMPORT_MAX_BYTES, type ImportLocation } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { analyticsScenes, dclWorldDestinations, sceneImports } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
@@ -22,6 +22,9 @@ import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
 import { isUuid } from '../auth/scene-from.js'
 import { getActiveSetup } from '../setup/setups.js'
+import { verifiedWalletsOf } from '../analytics/claims.js'
+import { DirectoryUnavailableError } from '../analytics/dcl-directory.js'
+import { parcelControl } from '../services/dcl/parcel-control.js'
 import { getImportStore } from '../storage/private-store.js'
 import { ImportError, readSceneZip, type SceneFolder } from '../services/import/scene-zip.js'
 import { installVirvi } from '../services/import/install-virvi.js'
@@ -36,7 +39,6 @@ import { DeployerError } from '../services/dcl/world-deployer.js'
 import { ownerFor, RouteError } from './dcl-destinations.js'
 import { publicDeployment } from './deploy.js'
 
-const PARCELS_NOT_YET = 'Genesis City imports are coming soon. For now, import a scene whose scene.json names a World.'
 const BUILD_START_FAILED = "The build couldn't start. Try the upload again in a few minutes."
 /** Messages for the destination routes' codes that carry none. */
 const ROUTE_MESSAGES = OWNER_ERROR_MESSAGES
@@ -61,32 +63,49 @@ async function buildsGate(_request: FastifyRequest, reply: FastifyReply) {
   if (!buildsAvailable()) return reply.status(503).send({ error: 'builds_unavailable', message: 'Scene builds are not available right now.' })
 }
 
-function sceneName(folder: SceneFolder, world: string): string {
+function sceneName(folder: SceneFolder, fallback: string): string {
   const title = (folder.sceneJson.display as { title?: unknown } | undefined)?.title
   const name = typeof title === 'string' ? Array.from(title.trim()).slice(0, MAX_SCENE_NAME).join('') : ''
-  return name || world
+  return name || fallback
+}
+
+/** The first of the Virvi scenes the importer has full access on, or null when there are none; throws `refusal` if any is out of reach. */
+async function manageable(request: FastifyRequest, sceneIds: string[], refusal: ImportError): Promise<string | null> {
+  for (const id of sceneIds) if (!(await full(request, id))) throw refusal
+  return sceneIds[0] ?? null
 }
 
 /**
- * Which Virvi scene the World's import goes to: the scene its destination belongs to (409 world_in_use without full
+ * Which Virvi scene the import goes to. A World: the scene its destination belongs to (409 world_in_use without full
  * access), else the scene its active setup belongs to (409 world_set_up_elsewhere), else the scene of its last import
- * when the importer still has full access on it, else a new scene.
+ * when the importer still has full access on it, else a new scene. Parcels: the same with a destination or an active
+ * setup on any overlapping parcel (409 parcels_in_use, parcels_set_up_elsewhere).
  */
-async function sceneFor(request: FastifyRequest, world: string, folder: SceneFolder): Promise<{ id: string } | { newName: string }> {
-  const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, world), columns: { sceneId: true } })
-  if (dest) {
-    if (!(await full(request, dest.sceneId))) throw new ImportError(409, 'world_in_use', "This World is connected to a Virvi scene you can't manage.")
-    return { id: dest.sceneId }
+async function sceneFor(request: FastifyRequest, location: ImportLocation, folder: SceneFolder): Promise<{ id: string } | { newName: string }> {
+  let used: string | null
+  let setupScene: string | null
+  if (location.kind === 'world') {
+    const world = location.world
+    const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, world), columns: { sceneId: true } })
+    used = await manageable(request, dest ? [dest.sceneId] : [], new ImportError(409, 'world_in_use', "This World is connected to a Virvi scene you can't manage."))
+    const loc = used ? null : await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, `world:${world}`), columns: { id: true } })
+    const setup = loc ? await getActiveSetup(loc.id) : null
+    setupScene = await manageable(request, setup ? [setup.virviSceneId] : [], new ImportError(409, 'world_set_up_elsewhere', "This World is set up under a Virvi scene you can't manage."))
+  } else {
+    const overlap = sql`ARRAY[${sql.join(location.parcels.map((p) => sql`${p}`), sql`, `)}]::text[]`
+    const dests = await db.select({ sceneId: dclWorldDestinations.sceneId }).from(dclWorldDestinations)
+      .where(and(eq(dclWorldDestinations.kind, 'parcels'), sql`${dclWorldDestinations.parcels} && ${overlap}`))
+    used = await manageable(request, dests.map((d) => d.sceneId), new ImportError(409, 'parcels_in_use', "These parcels are connected to a Virvi scene you can't manage."))
+    const locs = used ? [] : await db.select({ id: analyticsScenes.id }).from(analyticsScenes)
+      .where(and(eq(analyticsScenes.kind, 'parcels'), sql`${analyticsScenes.parcels} && ${overlap}`))
+    const setups = (await Promise.all(locs.map((l) => getActiveSetup(l.id)))).flatMap((s) => (s ? [s.virviSceneId] : []))
+    setupScene = await manageable(request, setups, new ImportError(409, 'parcels_set_up_elsewhere', "These parcels are set up under a Virvi scene you can't manage."))
   }
-  const loc = await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, `world:${world}`), columns: { id: true } })
-  const setup = loc ? await getActiveSetup(loc.id) : null
-  if (setup) {
-    if (!(await full(request, setup.virviSceneId))) throw new ImportError(409, 'world_set_up_elsewhere', "This World is set up under a Virvi scene you can't manage.")
-    return { id: setup.virviSceneId }
-  }
-  const last = await latestImportFor(world)
+  if (used) return { id: used }
+  if (setupScene) return { id: setupScene }
+  const last = await latestImportFor(location)
   if (last && (await full(request, last.sceneId))) return { id: last.sceneId }
-  return { newName: sceneName(folder, world) }
+  return { newName: sceneName(folder, location.kind === 'world' ? location.world : `Genesis City ${location.base}`) }
 }
 
 /** The import when the caller made it or has full access on its scene; 404 otherwise (never says whether it exists). */
@@ -127,13 +146,34 @@ export default async function importRoutes(app: FastifyInstance) {
     }))
   })
 
+  /** The importer's verified wallets must deploy to every parcel: 403 not_parcel_controller, 503 when Decentraland can't answer. */
+  async function requireParcelController(userId: string, location: Extract<ImportLocation, { kind: 'parcels' }>) {
+    if (!location.parcels.length || !location.parcels.every((p) => PARCEL_RE.test(p)) || !location.parcels.includes(location.base)) {
+      throw new ImportError(422, 'bad_scene_json', 'scene.json needs at least one valid parcel, and its base must be one of them.')
+    }
+    try {
+      const control = await parcelControl(await verifiedWalletsOf(userId), location.parcels)
+      if (!control.wallet) {
+        throw new ImportError(403, 'not_parcel_controller', `None of your verified wallets can deploy to parcel ${control.missing ?? location.base}.`)
+      }
+    } catch (err) {
+      if (err instanceof DirectoryUnavailableError) {
+        throw new ImportError(503, 'catalyst_unreachable', "Decentraland didn't answer just now. Try again in a minute.")
+      }
+      throw err
+    }
+  }
+
   /** The upload, once its body is in: checks, Virvi installed, stored, build started. */
   async function uploadImport(request: FastifyRequest, reply: FastifyReply) {
     const folder = readSceneZip(Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0))
-    if (folder.location.kind !== 'world') throw new ImportError(422, 'parcels_not_yet', PARCELS_NOT_YET)
-    const world = folder.location.world
-    await ownerFor(request.user.id, world)
-    const scene = await sceneFor(request, world, folder)
+    const location = folder.location
+    if (location.kind === 'world') {
+      await ownerFor(request.user.id, location.world)
+    } else {
+      await requireParcelController(request.user.id, location)
+    }
+    const scene = await sceneFor(request, location, folder)
     const { files, alreadyInstalled } = await installVirvi(folder)
     // Ruling R5: the installed files are re-zipped in memory; the upload never becomes files on disk. Stored, not
     // deflated (the box unzips it anyway), and wrapped without a copy
@@ -141,7 +181,7 @@ export default async function importRoutes(app: FastifyInstance) {
     const source = Buffer.from(zipped.buffer, zipped.byteOffset, zipped.byteLength)
 
     // N5: recorded on the import, so the page can say Virvi wasn't added again
-    const row = await createImport({ userId: request.user.id, world, kind: folder.kind, scene, virviAlreadyPresent: alreadyInstalled })
+    const row = await createImport({ userId: request.user.id, location, kind: folder.kind, scene, virviAlreadyPresent: alreadyInstalled })
     try {
       await getImportStore().put(row.sourceKey, source, 'application/zip')
     } catch (err) {
