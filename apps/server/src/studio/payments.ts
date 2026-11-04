@@ -169,13 +169,14 @@ export async function expireOpen(pays: { id: string; method: string; stripeSessi
 
 /**
  * Credit cents a checkout could use: the user's balance plus what their open checkouts for this design (or their open
- * top-ups, for null) hold, since a new checkout takes those over.
+ * top-ups, for null) hold, since a new checkout takes those over. A MANA payment whose transaction is claimed is paid
+ * (waiting for confirmations): its holds are spent, not available.
  */
 export async function creditFor(userId: string, designId: string | null, now: Date, exec: Exec = db): Promise<number> {
   const [held] = await exec.select({ n: sql<number>`coalesce(sum(${studioPayments.creditHeldCents}), 0)::int` }).from(studioPayments)
     .where(and(eq(studioPayments.userId, userId),
       designId ? and(eq(studioPayments.designId, designId), eq(studioPayments.kind, 'finalize')) : eq(studioPayments.kind, 'topup'),
-      eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now)))
+      eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now), isNull(studioPayments.manaTxHash)))
   return (await creditBalance(userId, exec)) + held.n
 }
 
@@ -188,7 +189,7 @@ export async function giftsFor(userId: string, designId: string, now: Date, exec
     .where(eq(studioFinalizeCredits.userId, userId))
   const [held] = await exec.select({ n: sql<number>`coalesce(sum(${studioPayments.giftsHeld}), 0)::int` }).from(studioPayments)
     .where(and(eq(studioPayments.userId, userId), eq(studioPayments.designId, designId), eq(studioPayments.kind, 'finalize'),
-      eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now)))
+      eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now), isNull(studioPayments.manaTxHash)))
   return (bal?.balance ?? 0) + held.n
 }
 
@@ -229,7 +230,8 @@ export async function createFinalizeCheckout(
     if (same) return { url: same.stripeSessionUrl! }
   }
   if (quote.dueCents > 0 && method === 'mana') {
-    const same = open.find((p) => p.method === 'mana' && p.manaAmountWei && sameLines(p.lines, withReports(quote.lines))
+    // Never one whose transaction is claimed: it is paid, and a second transfer of its amount would match nothing
+    const same = open.find((p) => p.method === 'mana' && p.manaAmountWei && !p.manaTxHash && sameLines(p.lines, withReports(quote.lines))
       && p.expiresAt!.getTime() - now.getTime() > MANA_REUSE_MIN_MS)
     if (same) return { mana: manaQuoteOf(same) }
   }

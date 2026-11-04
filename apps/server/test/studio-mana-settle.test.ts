@@ -9,7 +9,7 @@ import { setStripe } from '../src/integrations/stripe.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { addCredit, creditBalance, takeCredit } from '../src/studio/credit.js'
-import { createFinalizeCheckout, createTopupCheckout, PaymentError } from '../src/studio/payments.js'
+import { createFinalizeCheckout, createTopupCheckout, creditFor, PaymentError } from '../src/studio/payments.js'
 import { setManaRateSource } from '../src/studio/mana/rate.js'
 import { setManaSaltSource, type ManaQuote } from '../src/studio/mana/quote.js'
 import { setPolygon } from '../src/studio/mana/polygon.js'
@@ -249,6 +249,27 @@ describe('settling MANA payments', () => {
     expect(await reportManaTx(u.id, mana.paymentId, hash, at(9 * MIN))).toEqual({ status: 'confirming' })
     await sweepStudio(new Date(expiresAt + 16 * MIN))
     expect(await paymentOf(mana.paymentId)).toMatchObject({ status: 'pending', creditHeldCents: 1000 })
+  })
+
+  it('never hands out a claimed quote again (a reload while confirming)', async () => {
+    const { u, d, mana } = await quoted()
+    const hash = pay(mana, at(MIN), 5)
+    expect(await reportManaTx(u.id, mana.paymentId, hash, at(MIN))).toEqual({ status: 'confirming' })
+    const again = await createFinalizeCheckout(d, userOf(u), null, {}, at(2 * MIN), 'mana') as { mana: ManaQuote }
+    expect(again.mana.paymentId).not.toBe(mana.paymentId)
+    expect(again.mana.amountWei).not.toBe(mana.amountWei)
+    expect(await paymentOf(mana.paymentId)).toMatchObject({ status: 'pending', manaTxHash: hash })
+  })
+
+  it('does not count credit a claimed payment holds as available', async () => {
+    const { u, d, mana } = await quoted({ credit: 1000 })
+    const hash = pay(mana, at(MIN), 5)
+    expect(await reportManaTx(u.id, mana.paymentId, hash, at(MIN))).toEqual({ status: 'confirming' })
+    expect(await creditFor(u.id, d.id, at(2 * MIN))).toBe(0)
+    // So a new checkout isn't refused for credit it was never going to get
+    const card = await createFinalizeCheckout(d, userOf(u), null, {}, at(2 * MIN), 'card')
+    expect(card).toHaveProperty('url')
+    expect(await paymentOf(mana.paymentId)).toMatchObject({ status: 'pending', manaTxHash: hash, creditHeldCents: 1000 })
   })
 
   it('settles a quote a newer checkout expired early, and credits a second payment of the same design once', async () => {
