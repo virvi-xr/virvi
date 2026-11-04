@@ -12,7 +12,7 @@ describe('dcl runtime', () => {
     // The HUD registers with a virtual canvas (scales on high-DPI screens) and textures its launcher from the icon
     expect(src).toContain('virtualWidth')
     expect(src).toContain('images/virvi/hud-v.png')
-    expect(DCL_RUNTIME_VERSION).toBe(5)
+    expect(DCL_RUNTIME_VERSION).toBe(6)
   })
 
   it('names Virvi items for analytics (v4)', async () => {
@@ -27,9 +27,17 @@ describe('dcl runtime', () => {
     expect(src).toContain('This scene needs a redeploy to edit')
   })
 
-  it('keeps v3 and v4 for deploys still waiting to be signed', async () => {
+  it('plays scheduled showings and has the HUD Presets section (v6)', async () => {
+    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    expect(src).toContain('screen_showings')
+    expect(src).toContain('Now showing')
+    expect(src).toContain('Presets')
+  })
+
+  it('keeps v3, v4 and v5 for deploys still waiting to be signed', async () => {
     expect((await runtimeFiles(3)).has('bin/index.js')).toBe(true)
     expect((await runtimeFiles(4)).has('bin/index.js')).toBe(true)
+    expect((await runtimeFiles(5)).has('bin/index.js')).toBe(true)
   })
 
   it('speaks the Virvi protocol only', async () => {
