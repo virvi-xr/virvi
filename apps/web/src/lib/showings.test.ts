@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeShowing, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, type ShowingForm } from './showings'
+import { describeShowing, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type ShowingForm } from './showings'
 
 const form = (extra: Partial<ShowingForm> = {}): ShowingForm => ({
   title: ' Night of the Living Dead ', description: '', posterUrl: '',
@@ -60,5 +60,14 @@ describe('showing wording', () => {
     expect(previewAt(items, 14 * 60 + 2, name)).toBe('14:02 into the showing: 4:02 into Night.mp4')
     expect(previewAt(items, 0, name)).toBe('0:00 into the showing: 0:00 into reel.mp4 (ad)')
     expect(previewAt(items, 6000, name)).toBe('The showing has ended by then.')
+  })
+})
+
+describe('showingToForm', () => {
+  it('leaves a sub-second length blank, so the form can still be saved', () => {
+    const f = showingToForm({ id: 's', elementId: 'e', title: null, description: null, posterUrl: null, recurrence: 'daily', startDate: '2026-11-06', startTime: '19:00', weekdays: [], timezone: 'UTC', enabled: true, lengthSeconds: 0.4, nextStarts: [],
+      items: [{ url: 'https://cdn/blip.mp4', duration: 0.4, kind: 'video' }, { url: 'https://cdn/film.mp4', duration: 5400.4, kind: 'video' }] })
+    expect(f.items.map((i) => i.length)).toEqual(['', '1:30:00'])
+    expect(programmeProblem(f.items)).toBeNull()
   })
 })

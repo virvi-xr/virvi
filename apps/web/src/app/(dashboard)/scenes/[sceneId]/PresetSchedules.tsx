@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { useApi } from '@/lib/api'
 import { presetDisplayName } from '@/lib/presets'
 import {
-  describeSchedule, formatRunTime, formToBody, runLabel, timezones, viewerTimezone, weekGrid, WEEKDAYS,
+  describeSchedule, formatRunTime, formToBody, localDate, runLabel, timezoneOptions, viewerTimezone, weekGrid, WEEKDAYS,
   type PresetSchedule, type ScheduleForm, type ScheduleRun, type WeekOccurrence,
 } from '@/lib/preset-schedules'
 
@@ -13,7 +13,6 @@ const INPUT = 'rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-sm t
 const COLORS = ['bg-blue-600/70', 'bg-purple-600/70', 'bg-emerald-600/70', 'bg-amber-600/70', 'bg-pink-600/70', 'bg-cyan-600/70']
 const BTN = 'rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 hover:border-gray-500 hover:text-white disabled:opacity-50'
 
-const today = () => new Date().toISOString().slice(0, 10)
 
 /**
  * Scheduled presets (LIV-86): a preset goes live on its own at set times, once or repeating, in a timezone. Shown under
@@ -22,7 +21,7 @@ const today = () => new Date().toISOString().slice(0, 10)
 export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: string; presets: { id: string; name: string }[] }) {
   const viewerTz = viewerTimezone()
   const blank = (): ScheduleForm => ({
-    presetId: presets[0]?.id ?? '', recurrence: 'weekly', weekdays: [new Date().getDay()], startDate: today(), startTime: '20:00',
+    presetId: presets[0]?.id ?? '', recurrence: 'weekly', weekdays: [new Date().getDay()], startDate: localDate(), startTime: '20:00',
     hasEnd: true, durationMinutes: 120, timezone: viewerTz, returnToPresetId: '',
   })
   const [open, setOpen] = useState(false)
@@ -161,7 +160,7 @@ export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: 
                 </label>
                 <label className="flex items-center gap-2">Timezone
                   <select className={`${INPUT} max-w-[14rem]`} value={form.timezone} onChange={(e) => set('timezone', e.target.value)}>
-                    {timezones().map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                    {timezoneOptions(form.timezone).map((tz) => <option key={tz} value={tz}>{tz}</option>)}
                   </select>
                 </label>
               </div>

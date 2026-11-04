@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState, type ComponentType } from 'react'
 import type { useApi } from '@/lib/api'
 import { mediaLabel, useMediaNames } from '@/lib/media-names'
-import { formatRunTime, timezones, viewerTimezone } from '@/lib/preset-schedules'
+import { formatRunTime, localDate, timezoneOptions, viewerTimezone } from '@/lib/preset-schedules'
 import { formatDuration } from '@/lib/format'
 import {
   describeShowing, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
@@ -14,7 +14,6 @@ type Picker = ComponentType<{ api: Api; accept?: string; onSelect: (url: string)
 
 const INPUT = 'rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-sm text-white outline-none focus:border-blue-400'
 const BTN = 'rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 hover:border-gray-500 hover:text-white disabled:opacity-50'
-const today = () => new Date().toISOString().slice(0, 10)
 
 /**
  * Scheduled showings (LIV-87): a screen in Schedule mode plays programmes of videos at set times, and everyone in the
@@ -24,7 +23,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
   const viewerTz = viewerTimezone()
   const blank = (): ShowingForm => ({
     title: '', description: '', posterUrl: '', items: [], recurrence: 'weekly', weekdays: [new Date().getDay()],
-    startDate: today(), startTime: '19:00', timezone: viewerTz, enabled: true,
+    startDate: localDate(), startTime: '19:00', timezone: viewerTz, enabled: true,
   })
   const [showings, setShowings] = useState<Showing[] | null>(null)
   const [form, setForm] = useState<ShowingForm | null>(null)
@@ -80,7 +79,12 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
     load()
   })
   const toggle = (s: Showing) => run(async () => { await api.updateShowing(s.id, { enabled: !s.enabled }); load() })
-  const remove = (s: Showing) => run(async () => { await api.deleteShowing(s.id); load() })
+  const remove = (s: Showing) => run(async () => {
+    await api.deleteShowing(s.id)
+    // Deleting the one being edited closes its form (saving it would edit a showing that's gone)
+    if (s.id === editingId) { setForm(null); setEditingId(null) }
+    load()
+  })
 
   return (
     <div className="space-y-3 rounded-md border border-gray-800 bg-gray-950/50 p-3">
@@ -146,7 +150,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
             </label>
             <label className="flex items-center gap-2">Timezone
               <select className={`${INPUT} max-w-[14rem]`} value={form.timezone} onChange={(e) => set('timezone', e.target.value)}>
-                {timezones().map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                {timezoneOptions(form.timezone).map((tz) => <option key={tz} value={tz}>{tz}</option>)}
               </select>
             </label>
           </div>

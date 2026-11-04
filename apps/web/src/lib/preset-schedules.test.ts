@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeSchedule, formatRunTime, formToBody, liveStatusText, runLabel, weekGrid, type ScheduleForm } from './preset-schedules'
+import { describeSchedule, formatRunTime, formToBody, liveStatusText, localDate, runLabel, timezoneOptions, weekGrid, type ScheduleForm } from './preset-schedules'
 
 const form = (v: Partial<ScheduleForm> = {}): ScheduleForm => ({
   presetId: 'p1', recurrence: 'weekly', weekdays: [5], startDate: '2026-11-06', startTime: '20:00',
@@ -99,5 +99,19 @@ describe('weekGrid', () => {
     const days = weekGrid([occ('2026-11-07T01:00:00Z', '2026-11-07T02:00:00Z')], 'America/New_York', now)
     expect(days[0].label).toBe('Fri 6')
     expect(days[0].blocks[0]).toMatchObject({ top: (20 / 24) * 100, time: '20:00–21:00' })
+  })
+})
+
+describe('form defaults', () => {
+  it('today is the local date, not the UTC one', () => {
+    // 21:30 on 6 Nov in a UTC-5 browser is already 7 Nov in UTC
+    const evening = new Date(2026, 10, 6, 21, 30)
+    expect(localDate(evening)).toBe('2026-11-06')
+  })
+  it('the timezone list always holds the current value (UTC and aliases are missing from some browsers)', () => {
+    const list = timezoneOptions('Asia/Calcutta')
+    expect(list[0]).toBe('Asia/Calcutta')
+    expect(timezoneOptions('UTC')).toContain('UTC')
+    expect(new Set(timezoneOptions('Europe/London')).size).toBe(timezoneOptions('Europe/London').length)
   })
 })

@@ -85,7 +85,7 @@ export function formToShowingBody(f: ShowingForm) {
 export function showingToForm(s: Showing): ShowingForm {
   return {
     title: s.title ?? '', description: s.description ?? '', posterUrl: s.posterUrl ?? '',
-    items: s.items.map((i) => ({ url: i.url, kind: i.kind, length: formatDuration(i.duration) ?? '' })),
+    items: s.items.map((i) => ({ url: i.url, kind: i.kind, length: Math.round(i.duration) >= 1 ? formatDuration(i.duration) ?? '' : '' })),
     recurrence: s.recurrence, weekdays: s.weekdays, startDate: s.startDate, startTime: s.startTime, timezone: s.timezone, enabled: s.enabled,
   }
 }

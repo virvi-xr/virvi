@@ -64,6 +64,19 @@ export function viewerTimezone(): string {
   }
 }
 
+/** A date as YYYY-MM-DD in the browser's own timezone (the date pickers' default: not the UTC date). */
+export function localDate(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * The timezone picker's options with `current` first: some browsers leave UTC and aliases (Asia/Calcutta) out of
+ * the list, and a select without its value shows the first option while the form keeps the real one.
+ */
+export function timezoneOptions(current: string): string[] {
+  return [...new Set([current, ...timezones()].filter(Boolean))]
+}
+
 /** Every IANA timezone the browser knows, or a short list when it can't say. */
 export function timezones(): string[] {
   try {

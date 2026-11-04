@@ -337,7 +337,6 @@ export function useApi() {
       apiFetch<{ asset: any }>('/api/media/upload', { method: 'POST', body: JSON.stringify({ filename, contentType, data }) }),
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
-    /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
     /** Scheduled showings on a video screen (LIV-87). */
     getShowings: (elementId: string) => apiFetch<{ showings: import('./showings').Showing[] }>(`/api/elements/${elementId}/showings`),
     createShowing: (elementId: string, body: Record<string, unknown>) =>
@@ -367,6 +366,7 @@ export function useApi() {
     resetBranding: () => apiFetch<void>('/api/instance/branding', { method: 'DELETE' }),
     getSceneStreams: (sceneId: string) =>
       apiFetch<{ streams: import('./streams').SceneStream[] }>(`/api/scenes/${sceneId}/streams`),
+    /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
     getMediaNames: (sceneId: string, urls: string[]) =>
       apiFetch<MediaNames>(`/api/scenes/${sceneId}/media-names`, { method: 'POST', body: JSON.stringify({ urls }) }),
 
