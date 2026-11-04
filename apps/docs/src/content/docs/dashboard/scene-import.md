@@ -21,6 +21,7 @@ Deploying to parcels is signed with a wallet that can deploy to every parcel in 
 - the operator
 - the update operator
 - an update manager
+- a wallet the owner approved for all of their land
 
 Estate parcels count through the estate's owner and operators. If no single wallet covers every parcel, split the scene or sign with the wallet that does.
 
@@ -32,7 +33,11 @@ By default you sign each deploy in your browser. If you would rather let Virvi d
 - It replaces an existing update operator on those parcels.
 - Estate parcels are granted per parcel, not estate-wide.
 
-After the transaction confirms, Virvi checks the rights fresh and starts deploying for you. Switching back to browser signing stays available.
+After the transaction confirms, press **Check again** and Virvi starts deploying for you. If you left before it confirmed, come back to the deploy page and press **Let Virvi deploy**: that step is free, with no transaction.
+
+To sign each deploy yourself again, press **Sign each deploy myself**. That is free too, and Virvi stays an operator on-chain until you remove it with **Remove Virvi as operator** (a second transaction).
+
+Only the parcels' owner, operator or a wallet approved for all their land can send these transactions. An update operator can still press **Let Virvi deploy** once the owner has made Virvi an operator.
 
 ## Aetheria parcels
 Aetheria parcels are managed by their deed. Sign with the deed holder's wallet. The operator option is not offered for them.

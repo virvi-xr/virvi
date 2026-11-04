@@ -33,7 +33,8 @@ description: Complete reference for all Virvi environment variables
 | `CDN_URL` | Prepended to public file URLs |
 | `VIRVI_DCL_DEPLOY_KEY` | Private key (32-byte hex) of the wallet Virvi deploys World scenes with once an owner grants it |
 | `VIRVI_DCL_PARCEL_DEPLOY_KEY` | Private key (32-byte hex) of the wallet Virvi deploys Genesis City parcels with. Keep it separate from `VIRVI_DCL_DEPLOY_KEY`. Unset, browser signing still works and the "Make Virvi an operator" option is hidden |
-| `DCL_LAND_SUBGRAPH_URL` | Decentraland LAND subgraph used to read parcel and estate rights (default: `https://subgraph.decentraland.org/land-manager`) |
+| `DCL_LAND_SUBGRAPH_URL` | Decentraland LAND subgraph, used only to find which estate each parcel is in (default: `https://subgraph.decentraland.org/land-manager`) |
+| `DCL_CATALYST_URL` | Decentraland catalyst: Genesis City deploys, and who may deploy to each parcel (owner, operators, update managers) through its lambdas (default: `https://peer.decentraland.org`) |
 
 ### Scene import files
 

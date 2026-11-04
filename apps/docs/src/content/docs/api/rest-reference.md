@@ -67,12 +67,14 @@ Where a scene deploys to: a World or a set of Genesis City parcels. Parcel desti
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/dcl/destinations/:id` | Yes | Destination detail: `kind` (`world` or `parcels`), `parcels`, `signers` (your wallets that can deploy), pending models and the last deployment |
-| GET | `/dcl/destinations/:id/parcel-grant` | Yes | Parcels: whether Virvi can be made an operator, whether it already is, and the transactions to send |
+| GET | `/dcl/destinations/:id/parcel-grant` | Yes | Parcels: whether Virvi can be made an operator, whether it already is on-chain (`granted`) and deploys (`active`), the wallet to send from (`from`) and the transactions to send |
 | POST | `/dcl/destinations/:id/parcel-grant/check` | Yes | Parcels: read the rights fresh; Virvi deploys once it is an operator |
 | GET | `/dcl/destinations/:id/parcel-grant/revoke` | Yes | Parcels: the transactions that remove Virvi as operator |
 | POST | `/dcl/destinations/:id/parcel-grant/revoke/check` | Yes | Parcels: back to browser signing once Virvi is no longer an operator |
 
-Parcel routes need full access to the scene. Aetheria parcels report `aetheria: true` and return no grant transactions. World destinations answer the parcel-grant routes with `409 not_parcels`; use their `grant` and `revoke` routes instead.
+Parcel routes need full access to the scene. Aetheria parcels report `aetheria: true` and return no grant transactions; when Decentraland can't say, `aetheria` is `null` and no transactions are returned. World destinations answer the parcel-grant routes with `409 not_parcels`; use their `grant` and `revoke` routes instead.
+
+The World permission routes (`GET`, `POST` and `DELETE /dcl/destinations/:id/grant`, `POST /dcl/destinations/:id/revoke`) answer parcels destinations with `409 not_a_world`. `PATCH /dcl/destinations/:id` with `mode: "virvi"` on parcels needs the on-chain grant first: `409 not_granted` until Virvi is an operator on every parcel, `409 aetheria_managed` on Aetheria land. `mode: "sign"` is always allowed and free.
 
 ## Streaming
 
