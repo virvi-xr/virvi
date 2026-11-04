@@ -336,8 +336,9 @@ export async function settleTransferByHand(
     note: `settled by hand by ${adminId} against payment ${pay.id} on ${now.toISOString()}${note ? `: ${note}` : ''}`,
   }).where(and(key, eq(studioManaTransfers.status, 'unmatched'))).returning({ txHash: studioManaTransfers.txHash })
   if (!taken) throw new PaymentError(409, 'not_unmatched')
+  let claimed: Awaited<ReturnType<typeof claim>> | null = null
   try {
-    const claimed = await claim(pay.id, t.txHash)
+    claimed = await claim(pay.id, t.txHash)
     if (claimed === 'taken') throw new PaymentError(409, 'tx_used')
     if (claimed === 'other') {
       const [p] = await db.select({ status: studioPayments.status }).from(studioPayments).where(eq(studioPayments.id, pay.id))
@@ -345,7 +346,12 @@ export async function settleTransferByHand(
     }
     await settle(pay.id, now)
   } catch (err) {
-    // Left unmatched for another try (a claimed hash stays on its payment, and a retry finds it claimed)
+    // Paid after all (the grant committed, then something after it failed): the transfer did settle it
+    if (claimed === 'claimed' && await letGo(pay.id, t.txHash)) {
+      console.error(`[studio] payment ${pay.id} was settled by hand, but what follows its grant failed:`, err instanceof Error ? err.message : err)
+      return { txHash: t.txHash, logIndex: t.logIndex, status: 'settled_by_hand' as const, paymentId: pay.id }
+    }
+    // Otherwise the claim is let go and the transfer left unmatched, for another try or a return
     await db.update(studioManaTransfers).set({ status: 'unmatched', paymentId: null, note: null }).where(key)
     throw err
   }
@@ -355,6 +361,9 @@ export async function settleTransferByHand(
 /** Marks an unmatched transfer returned, once the owner sent it back from their own wallet in returnTxHash. */
 export async function markTransferReturned(txHash: string, logIndex: number, returnTxHash: string, adminId: string, now: Date) {
   const t = await transferOf(txHash, logIndex)
+  // A payment holding the hash may yet be granted by it (its holds are on it): returning the MANA too would pay twice
+  const [holder] = await db.select({ id: studioPayments.id }).from(studioPayments).where(eq(studioPayments.manaTxHash, t.txHash))
+  if (holder) throw new PaymentError(409, 'payment_claimed')
   const [row] = await db.update(studioManaTransfers).set({
     status: 'returned', note: `returned in ${returnTxHash.toLowerCase()} by ${adminId} on ${now.toISOString()}`,
   }).where(and(eq(studioManaTransfers.txHash, t.txHash), eq(studioManaTransfers.logIndex, t.logIndex), eq(studioManaTransfers.status, 'unmatched')))
