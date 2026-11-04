@@ -43,10 +43,15 @@ const RETIMESTAMP_AFTER_MS = 10_000
 /** Generated files at most this big are kept inline in a mode B bundle. */
 const INLINE_MAX_BYTES = 64 * 1024
 const CHANGED_OUTSIDE = 'Your World changed outside Virvi'
+const CHANGED_OUTSIDE_PARCELS = 'The scene on these parcels changed outside Virvi'
 const UNREACHABLE = "Couldn't read your World from Decentraland"
+const UNREACHABLE_PARCELS = "Couldn't read these parcels from Decentraland"
 /** Starts the destination's statusDetail while models Virvi couldn't add hold it at needs_review. */
 export const REFUSED_PREFIX = "Virvi couldn't add "
 const NOTHING_NEW = 'Your World already has everything in this scene, so there was nothing to deploy.'
+const NOTHING_NEW_PARCELS = 'These parcels already have everything in this scene, so there was nothing to deploy.'
+/** The World sentence, or the Genesis City parcels one. */
+const say = (dest: Pick<Destination, 'kind'>, world: string, parcels: string) => (dest.kind === 'parcels' ? parcels : world)
 const GENERIC_FAILURE = 'Something went wrong on our side while deploying. Try again in a few minutes.'
 const IMPORT_REPLACED = 'A newer upload replaced this one, so this deploy was cancelled.'
 const IMPORT_FILES_GONE = "The built scene's files are gone. Upload it again."
@@ -177,8 +182,9 @@ async function setDestStatus(id: string, status: Destination['status'], statusDe
 export async function liveBaseFor(dest: Destination): Promise<LiveEntity | null> {
   const live = await liveAt(dest)
   if (dest.lastEntityId && live?.id !== dest.lastEntityId) {
-    await setDestStatus(dest.id, 'needs_review', CHANGED_OUTSIDE)
-    throw new DeployerError(409, 'needs_review', CHANGED_OUTSIDE)
+    const changed = say(dest, CHANGED_OUTSIDE, CHANGED_OUTSIDE_PARCELS)
+    await setDestStatus(dest.id, 'needs_review', changed)
+    throw new DeployerError(409, 'needs_review', changed)
   }
   if (dest.status === 'unreachable') await setDestStatus(dest.id, 'ok', null)
   return live
@@ -190,8 +196,9 @@ async function liveAt(dest: Destination): Promise<LiveEntity | null> {
   try {
     entities = await contentServerFor(dest).liveEntities(dest)
   } catch {
-    await setDestStatus(dest.id, 'unreachable', UNREACHABLE)
-    throw new DeployerError(503, 'world_unreachable', UNREACHABLE)
+    const unreachable = say(dest, UNREACHABLE, UNREACHABLE_PARCELS)
+    await setDestStatus(dest.id, 'unreachable', unreachable)
+    throw new DeployerError(503, 'world_unreachable', unreachable)
   }
   return entities.find((e) => e.pointers.includes(dest.base)) ?? null
 }
@@ -369,7 +376,7 @@ async function nothingToDeploy(dest: Destination, a: Assembled): Promise<Deploye
     .update(dclWorldDestinations)
     .set({ status: detail ? 'needs_review' : 'ok', statusDetail: detail, deployedFiles: a.deployedFiles.map((f) => f.toLowerCase()), updatedAt: new Date() })
     .where(eq(dclWorldDestinations.id, dest.id))
-  return new DeployerError(409, 'nothing_to_deploy', detail ?? NOTHING_NEW)
+  return new DeployerError(409, 'nothing_to_deploy', detail ?? say(dest, NOTHING_NEW, NOTHING_NEW_PARCELS))
 }
 
 /** The bundle of a deployment that had nothing new to send; the sweep never counts it as a failure. */
@@ -410,7 +417,7 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     })
     return { assembled: await assembleFresh({ metadata, models, timestamp, fetch }), baseEntityId: live?.id ?? null }
   }
-  if (!live) throw new DeployerError(409, 'no_live_scene', 'Your World has no scene to add models to')
+  if (!live) throw new DeployerError(409, 'no_live_scene', say(dest, 'Your World has no scene to add models to', 'These parcels have no scene to add models to'))
   let adopted = dest.adopted
   if (adopted && builtByVirvi(live.metadata)) {
     // Marked adopted by mistake (connected before connecting checked who built it): Virvi's runtime is live there,
@@ -646,7 +653,7 @@ export async function startVirviDeploy(destinationId: string, by: string | null,
   const dest = await loadDestination(destinationId)
   const signer = virviSigner()
   if (!signer) throw new DeployerError(503, 'virvi_deploys_unavailable', 'Virvi deploys are not available right now')
-  if (dest.mode !== 'virvi' || !dest.grantedAt) throw new DeployerError(409, 'not_granted', 'Virvi has no deploy permission on this World')
+  if (dest.mode !== 'virvi' || !dest.grantedAt) throw new DeployerError(409, 'not_granted', say(dest, 'Virvi has no deploy permission on this World', 'Virvi has no deploy permission on these parcels'))
   await assertFits(dest)
 
   // One at a time per destination (double clicks, a route racing the sweep): the lock serialises check + insert.
@@ -656,7 +663,7 @@ export async function startVirviDeploy(destinationId: string, by: string | null,
       where: and(eq(sceneDeployments.destinationId, dest.id), inArray(sceneDeployments.status, ['building', 'deploying'])),
       columns: { id: true },
     })
-    if (busy) throw new DeployerError(409, 'deploy_in_progress', 'A deploy is already running for this World')
+    if (busy) throw new DeployerError(409, 'deploy_in_progress', say(dest, 'A deploy is already running for this World', 'A deploy is already running for these parcels'))
     const [row] = await tx.insert(sceneDeployments).values({
       sceneId: dest.sceneId, platform: 'decentraland', ...ledgerOf(dest), destinationId: dest.id, status: 'building', deployedBy: by,
     }).returning()
@@ -822,8 +829,9 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   try {
     const base = bundle.importId ? await liveAt(dest) : await liveBaseFor(dest)
     if ((base?.id ?? null) !== bundle.baseEntityId) {
-      const stale = dest.kind === 'parcels' ? IMPORT_STALE_PARCELS : IMPORT_STALE
-      throw new DeployerError(409, 'stale', bundle.importId ? stale : 'Your World changed since this deploy was prepared. Start it again.')
+      throw new DeployerError(409, 'stale', bundle.importId
+        ? say(dest, IMPORT_STALE, IMPORT_STALE_PARCELS)
+        : say(dest, 'Your World changed since this deploy was prepared. Start it again.', 'These parcels changed since this deploy was prepared. Start it again.'))
     }
     const newFiles = await rebuildNewFiles(bundle.newFiles, opts.fetch ?? defaultModelFetcher)
     const { entityId, files } = await buildEntity({

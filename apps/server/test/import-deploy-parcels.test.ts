@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Authenticator } from '@dcl/crypto'
 import { createUnsafeIdentity } from '@dcl/crypto/dist/crypto.js'
 import { eq } from 'drizzle-orm'
@@ -15,6 +15,15 @@ import { createScene, createUser, testApp, tokenFor, type TestUser } from './hel
 import { FakeCatalystClient } from './helpers/fake-catalyst.js'
 import { FakeDclDirectory } from './helpers/fake-dcl.js'
 import { FakeWorldsClient } from './helpers/fake-worlds.js'
+import { config } from '../src/config.js'
+import { createElement } from './helpers/factories.js'
+
+// Model downloads in "Redeploy now" resolve the CDN's host; the tests' CDN has none
+vi.mock('../src/net/public-url.js', async (orig) => ({
+  ...(await orig<typeof import('../src/net/public-url.js')>()),
+  assertPublicHttpUrl: async (url: string) => new URL(url),
+}))
+const CDN = 'https://cdn.virvi.test'
 
 const PARCELS = ['10,10', '10,11']
 const BASE = '10,10'
@@ -39,7 +48,7 @@ function sceneJson(o: { parcels?: string[]; world?: string } = {}) {
   })
 }
 
-function builtFiles(extra: Record<string, Uint8Array> = {}, o: { world?: string } = {}) {
+function builtFiles(extra: Record<string, Uint8Array> = {}, o: { world?: string; parcels?: string[] } = {}) {
   return new Map<string, Uint8Array>([
     ['scene.json', enc(sceneJson(o))],
     ['bin/index.js', enc('owner code')],
@@ -88,11 +97,11 @@ describe('deploying an imported scene to Genesis City parcels', () => {
   }
 
   /** A built parcel import for `u`'s new scene, its files in the store. */
-  async function built(o: { files?: Map<string, Uint8Array>; by?: TestUser } = {}) {
+  async function built(o: { files?: Map<string, Uint8Array>; by?: TestUser; sceneId?: string; parcels?: string[] } = {}) {
     const by = o.by ?? user
-    const sceneId = (await createScene(by, 'Plaza')).scene.id
+    const sceneId = o.sceneId ?? (await createScene(by, 'Plaza')).scene.id
     const [row] = await db.insert(sceneImports).values({
-      userId: by.id, sceneId, locationKind: 'parcels', base: BASE, parcels: PARCELS, kind: 'sdk7', sourceKey: 'pending', status: 'built', builtAt: new Date(),
+      userId: by.id, sceneId, locationKind: 'parcels', base: BASE, parcels: o.parcels ?? PARCELS, kind: 'sdk7', sourceKey: 'pending', status: 'built', builtAt: new Date(),
     }).returning()
     const prefix = `imports/${row.id}/built/`
     await db.update(sceneImports).set({ sourceKey: `imports/${row.id}/source.zip`, builtKeyPrefix: prefix }).where(eq(sceneImports.id, row.id))
@@ -214,5 +223,153 @@ describe('deploying an imported scene to Genesis City parcels', () => {
     const res = await app.inject({ method: 'GET', url: `/api/dcl/destinations/${destId}`, headers: { authorization: `Bearer ${tokenFor(user)}` } })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toMatchObject({ kind: 'parcels', parcels: PARCELS, signers: [user.wallet] })
+  })
+
+  it('the destination says signers is null when Decentraland cannot say who controls the parcels', async () => {
+    const imp = await built()
+    await startImportDeploy(imp.row, user.id)
+    const destId = (await importRow(imp.row.id)).destinationId!
+    dir.down = true
+    const res = await app.inject({ method: 'GET', url: `/api/dcl/destinations/${destId}`, headers: { authorization: `Bearer ${tokenFor(user)}` } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ kind: 'parcels', parcels: PARCELS, signers: null })
+  })
+
+  it('a re-import of the same scene updates its parcels destination', async () => {
+    const first = await built()
+    await deploy(first, owner)
+    const destId = (await importRow(first.row.id)).destinationId!
+    // The creator shrinks the scene to its base parcel
+    const again = await built({ sceneId: first.sceneId, parcels: [BASE], files: builtFiles({}, { parcels: [BASE] }) })
+    await deploy(again, owner)
+    expect((await importRow(again.row.id))).toMatchObject({ status: 'deployed', destinationId: destId })
+    const dests = await db.query.dclWorldDestinations.findMany({ where: eq(dclWorldDestinations.kind, 'parcels') })
+    expect(dests).toHaveLength(1)
+    expect(dests[0]).toMatchObject({ id: destId, parcels: [BASE], lastEntityId: catalyst.deployed[1].entityId })
+    expect(entityOf().pointers).toEqual([BASE])
+  })
+
+  it("refuses a parcels destination another scene holds on that base (409 parcels_in_use)", async () => {
+    const other = (await createScene(user, 'Other')).scene.id
+    await db.insert(dclWorldDestinations).values({
+      sceneId: other, ownerUserId: user.id, ownerWallet: user.wallet!, kind: 'parcels', worldName: null, base: BASE, parcels: PARCELS, mode: 'sign', adopted: true,
+    })
+    const imp = await built()
+    const err = await startImportDeploy(imp.row, user.id).catch((e) => e)
+    expect(err).toMatchObject({ status: 409, code: 'parcels_in_use' })
+    expect(await importRow(imp.row.id)).toMatchObject({ status: 'built', errorCode: 'parcels_in_use' })
+    const held = (await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.base, BASE) }))!
+    expect(held).toMatchObject({ sceneId: other, pendingImportId: null })
+  })
+
+  describe('the deploy page and HUD routes on a parcels destination', () => {
+    const cfg = config as { cdnUrl: string | null; webAppUrl: string }
+    const savedCdn = cfg.cdnUrl
+    beforeEach(() => { cfg.cdnUrl = CDN })
+    afterEach(() => {
+      cfg.cdnUrl = savedCdn
+      vi.unstubAllGlobals()
+    })
+    const auth = (u: TestUser = user) => ({ authorization: `Bearer ${tokenFor(u)}` })
+    const req = (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: object, u: TestUser = user) =>
+      app.inject({ method, url, headers: auth(u), ...(payload ? { payload } : {}) })
+
+    /** A parcel import deployed and live on the catalyst; its destination. */
+    async function liveParcels() {
+      const { scene, preset } = await createScene(user, 'Plaza')
+      const imp = await built({ sceneId: scene.id })
+      await deploy(imp, owner)
+      const d = catalyst.deployed[0]
+      const e = JSON.parse(dec(d.files.get(d.entityId)!))
+      const live: LiveEntity = { id: d.entityId, pointers: e.pointers, content: e.content, metadata: e.metadata }
+      for (const p of PARCELS) catalyst.entities.set(p, [live])
+      const dest = (await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.base, BASE) }))!
+      return { scene, preset, dest, live }
+    }
+
+    it('publish-status answers for the HUD with the parcels location where a World name goes', async () => {
+      const { scene, preset, dest } = await liveParcels()
+      await createElement(preset.id, { type: 'model', name: 'Tree', properties: { modelSrc: `${CDN}/m/tree.glb` } })
+      const pass = { authorization: `Bearer ${tokenFor(user, { kind: 'scene', sceneId: scene.id, locationId: null, orgId: null })}` }
+      const res = await app.inject({ method: 'GET', url: `/api/scenes/${scene.id}/dcl/publish-status`, headers: pass })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({
+        destination: { id: dest.id, world: `gc:${BASE}`, mode: 'sign', status: 'ok', granted: false, pending: 1, publishUrl: `${cfg.webAppUrl}/publish/?d=${dest.id}` },
+      })
+    })
+
+    it('Redeploy now prepares a browser-signed deploy of the new models, and the signature deploys it', async () => {
+      const { preset, dest, live } = await liveParcels()
+      await createElement(preset.id, { type: 'model', name: 'Bench', properties: { modelSrc: `${CDN}/m/bench.glb` } })
+      vi.stubGlobal('fetch', async () => new Response(enc('bench bytes')))
+
+      const stranger = createUnsafeIdentity()
+      const notMine = await createUser({ wallet: stranger.address })
+      await db.update(dclWorldDestinations).set({ ownerUserId: notMine.id }).where(eq(dclWorldDestinations.id, dest.id))
+      // Scene access is checked first: a stranger can't even see it
+      expect((await req('POST', `/api/dcl/destinations/${dest.id}/deploy`, {}, notMine)).statusCode).toBe(404)
+
+      const res = await req('POST', `/api/dcl/destinations/${dest.id}/deploy`, {})
+      expect(res.statusCode).toBe(200)
+      const { deployment, payload } = res.json()
+      expect(deployment.status).toBe('awaiting_signature')
+      expect(typeof payload).toBe('string')
+      // The owner wallet is brought up to date with the caller
+      expect((await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.id, dest.id) }))!.ownerUserId).toBe(user.id)
+
+      const ok = await req('POST', `/api/deploy/${deployment.id}/signature`, { chain: await chainFor(owner, payload) })
+      expect(ok.statusCode).toBe(200)
+      expect(ok.json().deployment.status).toBe('deployed')
+      expect(catalyst.deployed).toHaveLength(2)
+      const entity = entityOf()
+      expect(entity.pointers).toEqual(live.pointers)
+      expect(entity.content.map((c) => c.file)).toContain('models/virvi/bench.glb')
+      expect(entity.content.map((c) => c.file)).toContain('bin/index.js')
+    })
+
+    it('Redeploy now refuses a caller whose wallets no longer control every parcel', async () => {
+      const { dest } = await liveParcels()
+      dir.rights.set(PARCELS[1], rights({ owner: createUnsafeIdentity().address.toLowerCase() }))
+      const res = await req('POST', `/api/dcl/destinations/${dest.id}/deploy`, {})
+      expect([res.statusCode, res.json().error]).toEqual([403, 'not_parcel_controller'])
+    })
+
+    it('Redeploy now with nothing new says so about the parcels, not a World', async () => {
+      const { dest } = await liveParcels()
+      const res = await req('POST', `/api/dcl/destinations/${dest.id}/deploy`, {})
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({ error: 'nothing_to_deploy', message: 'These parcels already have everything in this scene, so there was nothing to deploy.' })
+    })
+
+    it('a scene changed outside Virvi holds the parcels for review in plain words, and rebase takes the live scene', async () => {
+      const { preset, dest } = await liveParcels()
+      await createElement(preset.id, { type: 'model', name: 'Bench', properties: { modelSrc: `${CDN}/m/bench.glb` } })
+      const foreign: LiveEntity = { id: 'bafyforeignscene', pointers: PARCELS, content: [{ file: 'scene.json', hash: 'bafyforeignjson' }], metadata: JSON.parse(sceneJson()) }
+      for (const p of PARCELS) catalyst.entities.set(p, [foreign])
+
+      const held = await req('POST', `/api/dcl/destinations/${dest.id}/deploy`, {})
+      expect(held.json()).toEqual({ error: 'needs_review', message: 'The scene on these parcels changed outside Virvi' })
+
+      const res = await req('POST', `/api/dcl/destinations/${dest.id}/rebase`)
+      expect(res.statusCode).toBe(200)
+      expect(res.json().destination).toMatchObject({ lastEntityId: 'bafyforeignscene', deployedFiles: ['scene.json'], adopted: true, status: 'ok' })
+
+      catalyst.down = true
+      expect((await req('POST', `/api/dcl/destinations/${dest.id}/rebase`)).json()).toEqual({ error: 'catalyst_unreachable' })
+    })
+
+    it('the World permission routes refuse parcels with 409 not_a_world', async () => {
+      const { dest } = await liveParcels()
+      const want = { error: 'not_a_world', message: 'Genesis City parcels use their own operator option.' }
+      for (const [method, url] of [
+        ['GET', `/api/dcl/destinations/${dest.id}/grant`],
+        ['POST', `/api/dcl/destinations/${dest.id}/grant`],
+        ['DELETE', `/api/dcl/destinations/${dest.id}/grant`],
+        ['POST', `/api/dcl/destinations/${dest.id}/revoke`],
+      ] as const) {
+        const res = await req(method, url, method === 'POST' ? { chains: [], timestamp: Date.now() } : undefined)
+        expect([url, method, res.statusCode, res.json()]).toEqual([url, method, 409, want])
+      }
+    })
   })
 })

@@ -12,9 +12,13 @@
  * POST   /api/dcl/destinations/:id/revoke        — forward that signature, clear the grant
  * POST   /api/dcl/destinations/:id/deploy        — deploy now (mode A: Virvi signs; mode B: returns what to sign)
  * POST   /api/deploy/:id/signature               — mode B: the owner's signature for a prepared deploy
- * POST   /api/dcl/destinations/:id/rebase        — "Use the live version": accept the World's current scene
+ * POST   /api/dcl/destinations/:id/rebase        — "Use the live version": accept the World's (or the parcels') current scene
  * GET    /api/scenes/:sceneId/dcl/destinations — the deploy page: the scene's destinations, and set-up Worlds it can adopt
  * GET    /api/scenes/:sceneId/dcl/publish-status — for the in-world HUD (scene pass)
+ *
+ * Genesis City parcels destinations (kind 'parcels') use the deploy, signature, rebase and status routes too, with
+ * "owner" meaning a verified wallet of the caller that may deploy to every parcel; the World permission routes
+ * (grant, revoke) refuse them with 409 not_a_world.
  *
  * Open to every plan (no feature gate). "Owner" is the World's owner as the Worlds server reports it right
  * now, and it must be one of the caller's verified wallets.
@@ -69,6 +73,7 @@ import { deploymentForCaller, publicDeployment } from './deploy.js'
 import { ImportError } from '../services/import/scene-zip.js'
 import { worldOf } from '../services/dcl/world-of.js'
 import { parcelControl } from '../services/dcl/parcel-control.js'
+import { CatalystError, contentServerFor } from '../services/dcl/catalyst-client.js'
 
 /** Signed-fetch metadata Virvi sends on permission calls (see the header comment). */
 const PERMISSION_METADATA = '{}'
@@ -100,17 +105,19 @@ async function handle(reply: FastifyReply, fn: () => Promise<unknown>) {
     // An imported scene's files that don't fit the World (assertImportFits)
     if (err instanceof ImportError) return reply.status(err.status).send({ error: err.code, message: err.message })
     if (err instanceof WorldsError) return reply.status(502).send({ error: 'world_unreachable' })
+    if (err instanceof CatalystError) return reply.status(502).send({ error: 'catalyst_unreachable' })
     if (err instanceof DirectoryUnavailableError) return reply.status(502).send({ error: 'directory_unavailable' })
     throw err
   }
 }
 
-/** A read from the Worlds server; any failure (a listed-but-unresolvable entity too) is "unreachable", never "none". */
+/** A read from the Worlds server (or the catalyst); any failure (a listed-but-unresolvable entity too) is "unreachable", never "none". */
 async function read<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (err) {
     if (err instanceof WorldsError) throw new RouteError(502, 'world_unreachable')
+    if (err instanceof CatalystError) throw new RouteError(502, 'catalyst_unreachable')
     throw err
   }
 }
@@ -148,13 +155,28 @@ export async function ownerFor(userId: string, world: string): Promise<string> {
   return owner
 }
 
-/** As ownerFor, and keeps the destination's owner up to date (the NAME may have moved between their wallets). */
+/**
+ * The caller's wallet that controls the destination, kept up to date on it: a World's owner (the NAME may have moved
+ * between their wallets; 403 not_world_owner), or for Genesis City parcels a verified wallet that may deploy to every
+ * parcel right now (403 not_parcel_controller).
+ */
 async function requireOwner(userId: string, dest: Destination): Promise<string> {
-  const owner = await ownerFor(userId, worldOf(dest))
+  const owner = dest.kind === 'parcels' ? await parcelOwnerFor(userId, dest.parcels) : await ownerFor(userId, worldOf(dest))
   if (owner !== dest.ownerWallet || userId !== dest.ownerUserId) {
     await db.update(dclWorldDestinations).set({ ownerWallet: owner, ownerUserId: userId, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
   }
   return owner
+}
+
+async function parcelOwnerFor(userId: string, parcels: string[]): Promise<string> {
+  const { wallet } = await parcelControl(await verifiedWalletsOf(userId), parcels)
+  if (!wallet) throw new RouteError(403, 'not_parcel_controller')
+  return wallet
+}
+
+/** The World permission routes are for Worlds: Genesis City parcels get 409 not_a_world. */
+function requireWorld(dest: Destination): void {
+  if (dest.kind !== 'world') throw new RouteError(409, 'not_a_world', { message: 'Genesis City parcels use their own operator option.' })
 }
 
 /** The destination when the caller has `need` on its scene; 404 otherwise (never says whether it exists). */
@@ -169,11 +191,16 @@ async function destinationFor(request: FastifyRequest, id: string, need: 'edit' 
 
 /**
  * Wallets that may sign the destination's deploys: a World's owner; for Genesis City parcels, the caller's verified
- * wallets that can deploy to every parcel right now (any of them may sign).
+ * wallets that can deploy to every parcel right now (any of them may sign); null when Decentraland can't say.
  */
-async function signersOf(userId: string, dest: Destination): Promise<string[]> {
+async function signersOf(userId: string, dest: Destination): Promise<string[] | null> {
   if (dest.kind !== 'parcels') return [dest.ownerWallet]
-  return (await parcelControl(await verifiedWalletsOf(userId), dest.parcels)).wallets
+  try {
+    return (await parcelControl(await verifiedWalletsOf(userId), dest.parcels)).wallets
+  } catch (err) {
+    if (err instanceof DirectoryUnavailableError) return null // can't tell right now; the rest of the page still loads
+    throw err
+  }
 }
 
 const reload = async (id: string) => (await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.id, id) }))!
@@ -422,6 +449,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { id: string } }>('/api/dcl/destinations/:id/grant', async (request, reply) => handle(reply, async () => {
     const dest = await destinationFor(request, request.params.id, 'full')
+    requireWorld(dest)
     await requireOwner(request.user.id, dest)
     const virvi = virviAddress()
     const requests = await grantRequests(dest, virvi, Date.now())
@@ -430,6 +458,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string }; Body: { chains?: unknown; timestamp?: unknown } }>('/api/dcl/destinations/:id/grant', async (request, reply) => handle(reply, async () => {
     const dest = await destinationFor(request, request.params.id, 'full')
+    requireWorld(dest)
     const owner = await requireOwner(request.user.id, dest)
     const virvi = virviAddress()
     const timestamp = signedTimestamp(request.body?.timestamp)
@@ -446,12 +475,14 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { id: string } }>('/api/dcl/destinations/:id/grant', async (request, reply) => handle(reply, async () => {
     const dest = await destinationFor(request, request.params.id, 'full')
+    requireWorld(dest)
     await requireOwner(request.user.id, dest)
     return reply.send({ requests: revokeRequests(dest, virviAddress(), Date.now()).map(signable) })
   }))
 
   app.post<{ Params: { id: string }; Body: { chains?: unknown; timestamp?: unknown } }>('/api/dcl/destinations/:id/revoke', async (request, reply) => handle(reply, async () => {
     const dest = await destinationFor(request, request.params.id, 'full')
+    requireWorld(dest)
     const owner = await requireOwner(request.user.id, dest)
     const timestamp = signedTimestamp(request.body?.timestamp)
     await forwardSigned(revokeRequests(dest, virviAddress(), timestamp), request.body?.chains, owner, 'revoke_rejected')
@@ -480,7 +511,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string } }>('/api/dcl/destinations/:id/rebase', async (request, reply) => handle(reply, async () => {
     const dest = await destinationFor(request, request.params.id, 'full')
-    const entities = await read(() => getWorldsClient().getWorldEntities(worldOf(dest)))
+    const entities = await read(() => contentServerFor(dest).liveEntities(dest))
     const live = entities.find((e) => e.pointers.includes(dest.base))
     if (!live) throw new RouteError(409, 'no_live_scene')
     await db
@@ -532,7 +563,8 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
       if (!dest) return reply.send({ destination: null })
       return reply.send({
         destination: {
-          id: dest.id, world: worldOf(dest), mode: dest.mode, status: dest.status,
+          // Genesis City parcels: their location key (gc:<base>) where a World's name goes
+          id: dest.id, world: dest.worldName ?? `gc:${dest.base}`, mode: dest.mode, status: dest.status,
           granted: dest.mode === 'virvi' && !!dest.grantedAt,
           pending: (await pendingModels(dest)).length,
           publishUrl: `${config.webAppUrl}/publish/?d=${dest.id}`,
