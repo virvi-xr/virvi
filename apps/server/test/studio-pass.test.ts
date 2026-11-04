@@ -131,6 +131,9 @@ describe('the studio pass', () => {
       // The payment routes Task 6 added are studio routes too (unknown payment → 404, past the pass check).
       const pay = await app.inject({ method: 'GET', url: '/api/studio/payments/00000000-0000-0000-0000-000000000000', headers: bearer(t) })
       expect(pay.statusCode).toBe(404)
+      // So is Task 9's MANA-back request (unknown report → 404, past the pass check)
+      const back = await app.inject({ method: 'POST', url: '/api/studio/mana-refunds', headers: bearer(t), payload: { reportId: '00000000-0000-0000-0000-000000000000' } })
+      expect(back.statusCode).toBe(404)
     })
 
     it('is refused everywhere else with studio_pass_not_allowed', async () => {
@@ -142,6 +145,8 @@ describe('the studio pass', () => {
         ['GET', '/api/scenes'],
         ['GET', `/api/scenes/${scene.id}`],
         ['GET', '/api/admin/studio/flags'],
+        ['GET', '/api/admin/studio/mana-refunds'],
+        ['GET', '/api/admin/studio/mana-transfers'],
         ['GET', '/api/auth/wallets'],
       ] as const) {
         const res = await app.inject({ method, url, headers: bearer(t), payload: method === 'PUT' ? {} : undefined })

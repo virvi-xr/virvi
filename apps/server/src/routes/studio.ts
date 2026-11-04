@@ -17,6 +17,7 @@ import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
 import { reportManaTx } from '../studio/mana/settle.js'
+import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
   designDetail, openDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
@@ -371,6 +372,18 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
     try {
       return await reportManaTx(request.user.id, id, txHash, new Date())
+    } catch (err) {
+      return checkoutRefusal(reply, err)
+    }
+  })
+
+  // A refunded mistake report's MANA share, asked back as MANA (the owner sends it by hand). Not behind notPaused:
+  // a paused account may still have its money back.
+  app.post('/api/studio/mana-refunds', auth, async (request, reply) => {
+    const reportId = ((request.body ?? {}) as { reportId?: unknown }).reportId
+    if (typeof reportId !== 'string' || !UUID.test(reportId)) return reply.status(400).send({ error: 'reportId must be a report id' })
+    try {
+      return reply.status(201).send(await requestManaRefund(request.user.id, reportId, new Date()))
     } catch (err) {
       return checkoutRefusal(reply, err)
     }

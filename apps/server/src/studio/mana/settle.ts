@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
-import { studioCreditLedger, studioDesigns, studioFinalizeCredits, studioManaScan, studioManaTransfers, studioPayments } from '../../db/schema.js'
+import { studioCreditLedger, studioDesigns, studioFinalizeCredits, studioManaScan, studioManaTransfers, studioPayments, users } from '../../db/schema.js'
 import { config } from '../../config.js'
 import { takeCredit } from '../credit.js'
 import { grantPayment, PaymentError } from '../payments.js'
@@ -208,4 +208,100 @@ export async function watchManaTransfers(now: Date, reader?: PolygonReader): Pro
   await db.insert(studioManaScan).values({ id: SCAN_ID, lastBlock: toBlock })
     .onConflictDoUpdate({ target: studioManaScan.id, set: { lastBlock: sql`greatest(${studioManaScan.lastBlock}, ${toBlock})` } })
   return out
+}
+
+// ── The owner's look at transfers that matched no payment ─────────────────────────────────────────────────────────
+
+export type ManaTransferStatus = 'matched' | 'unmatched' | 'settled_by_hand' | 'returned'
+
+const NEAR_PERCENT = 5n // a candidate payment asks for within 5% of the transfer's amount
+const NEAR_MS = 24 * 3600_000 // and was created within 24 hours of the transfer being seen
+
+/**
+ * Transfers in a status, newest first. Each unmatched one comes with the MANA payments that might be it (who sent it
+ * is unknown): open or expired, holding no transaction, asking for within 5% of its amount, created within 24 hours,
+ * nearest amount first.
+ */
+export async function listManaTransfers(status: ManaTransferStatus) {
+  const rows = await db.select().from(studioManaTransfers).where(eq(studioManaTransfers.status, status))
+    .orderBy(desc(studioManaTransfers.createdAt))
+  return Promise.all(rows.map(async (t) => {
+    const out = {
+      txHash: t.txHash, logIndex: t.logIndex, fromAddress: t.fromAddress, amountWei: t.amountWei, blockNumber: t.blockNumber,
+      paymentId: t.paymentId, status: t.status, note: t.note, createdAt: t.createdAt,
+    }
+    if (t.status !== 'unmatched') return out
+    const wei = BigInt(t.amountWei)
+    const pays = await db.select({ p: studioPayments, email: users.email }).from(studioPayments)
+      .innerJoin(users, eq(users.id, studioPayments.userId))
+      .where(and(
+        eq(studioPayments.method, 'mana'), inArray(studioPayments.status, ['pending', 'expired']), isNull(studioPayments.manaTxHash),
+        isNotNull(studioPayments.manaAmountWei),
+        gte(studioPayments.createdAt, new Date(t.createdAt.getTime() - NEAR_MS)), lte(studioPayments.createdAt, new Date(t.createdAt.getTime() + NEAR_MS)),
+      ))
+    const off = (p: Payment) => { const d = BigInt(p.manaAmountWei!) - wei; return d < 0n ? -d : d }
+    const candidates = pays.filter(({ p }) => off(p) * 100n <= wei * NEAR_PERCENT)
+      .sort((a, b) => (off(a.p) < off(b.p) ? -1 : off(a.p) > off(b.p) ? 1 : 0))
+      .map(({ p, email }) => ({
+        id: p.id, user: { id: p.userId, email }, kind: p.kind, amountCents: p.amountCents, creditHeldCents: p.creditHeldCents,
+        manaAmountWei: p.manaAmountWei, status: p.status, createdAt: p.createdAt, expiresAt: p.expiresAt,
+      }))
+    return { ...out, candidates }
+  }))
+}
+
+async function transferOf(txHash: string, logIndex: number) {
+  const [t] = await db.select().from(studioManaTransfers)
+    .where(and(eq(studioManaTransfers.txHash, txHash.toLowerCase()), eq(studioManaTransfers.logIndex, logIndex)))
+  if (!t) throw new PaymentError(404, 'transfer_not_found')
+  return t
+}
+
+/**
+ * The owner grants a pending or expired MANA payment with an unmatched transfer, by hand: the transfer's hash is
+ * claimed for the payment (a hash settles one payment, ever), an expired payment is reopened, holding its free
+ * finalizes and credit again where they are left (ruling R2: a shortfall is absorbed), and the payment is granted.
+ * Refused for a paid payment (already_paid), and for a transfer already settled or returned (not_unmatched).
+ */
+export async function settleTransferByHand(
+  txHash: string, logIndex: number, paymentId: string, adminId: string, note: string | null, now: Date,
+) {
+  const t = await transferOf(txHash, logIndex)
+  if (t.status !== 'unmatched') throw new PaymentError(409, 'not_unmatched')
+  const [pay] = await db.select().from(studioPayments).where(and(eq(studioPayments.id, paymentId), eq(studioPayments.method, 'mana')))
+  if (!pay) throw new PaymentError(404, 'payment_not_found')
+  if (pay.status === 'paid') throw new PaymentError(409, 'already_paid')
+  if (pay.status !== 'pending' && pay.status !== 'expired') throw new PaymentError(409, 'not_open')
+  const key = and(eq(studioManaTransfers.txHash, t.txHash), eq(studioManaTransfers.logIndex, t.logIndex))
+  // The transfer first, so a second settle or a "returned" for it can't run alongside
+  const [taken] = await db.update(studioManaTransfers).set({
+    status: 'settled_by_hand', paymentId: pay.id,
+    note: `settled by hand by ${adminId} against payment ${pay.id} on ${now.toISOString()}${note ? `: ${note}` : ''}`,
+  }).where(and(key, eq(studioManaTransfers.status, 'unmatched'))).returning({ txHash: studioManaTransfers.txHash })
+  if (!taken) throw new PaymentError(409, 'not_unmatched')
+  try {
+    const claimed = await claim(pay.id, t.txHash)
+    if (claimed === 'taken') throw new PaymentError(409, 'tx_used')
+    if (claimed === 'other') {
+      const [p] = await db.select({ status: studioPayments.status }).from(studioPayments).where(eq(studioPayments.id, pay.id))
+      throw new PaymentError(409, p.status === 'paid' ? 'already_paid' : 'payment_claimed')
+    }
+    await settle(pay.id, now)
+  } catch (err) {
+    // Left unmatched for another try (a claimed hash stays on its payment, and a retry finds it claimed)
+    await db.update(studioManaTransfers).set({ status: 'unmatched', paymentId: null, note: null }).where(key)
+    throw err
+  }
+  return { txHash: t.txHash, logIndex: t.logIndex, status: 'settled_by_hand' as const, paymentId: pay.id }
+}
+
+/** Marks an unmatched transfer returned, once the owner sent it back from their own wallet in returnTxHash. */
+export async function markTransferReturned(txHash: string, logIndex: number, returnTxHash: string, adminId: string, now: Date) {
+  const t = await transferOf(txHash, logIndex)
+  const [row] = await db.update(studioManaTransfers).set({
+    status: 'returned', note: `returned in ${returnTxHash.toLowerCase()} by ${adminId} on ${now.toISOString()}`,
+  }).where(and(eq(studioManaTransfers.txHash, t.txHash), eq(studioManaTransfers.logIndex, t.logIndex), eq(studioManaTransfers.status, 'unmatched')))
+    .returning({ txHash: studioManaTransfers.txHash })
+  if (!row) throw new PaymentError(409, 'not_unmatched')
+  return { txHash: t.txHash, logIndex: t.logIndex, status: 'returned' as const }
 }

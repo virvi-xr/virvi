@@ -18,14 +18,22 @@ export type ManaQuote = {
   usdCents: number; usdPerMana: number; expiresAt: string
 }
 
-/** usdCents at usdPerMana in wei: rounded up to a multiple of 10^12 (never below the USD price), plus salt (1..10^12-1). */
-export function manaWeiFor(usdCents: number, usdPerMana: number, salt: bigint): bigint {
+/** usdCents at usdPerMana in wei, rounded up to a multiple of 10^12 (never below the USD price), with no salt. */
+export function manaWeiAtLeast(usdCents: number, usdPerMana: number): bigint {
   if (!Number.isInteger(usdCents) || usdCents <= 0) throw new Error(`not a price: ${usdCents}`)
   if (!Number.isFinite(usdPerMana) || usdPerMana <= 0) throw new Error(`not a rate: ${usdPerMana}`)
-  if (salt < 1n || salt >= STEP) throw new Error('the salt must be 1..10^12-1')
   // usdCents / 100 / usdPerMana MANA, in millionths of a MANA, rounded up
-  const millionths = BigInt(Math.ceil((usdCents * 10_000) / usdPerMana))
-  return millionths * STEP + salt
+  return BigInt(Math.ceil((usdCents * 10_000) / usdPerMana)) * STEP
+}
+
+/**
+ * A quote's amount: usdCents at usdPerMana in wei, rounded up to a multiple of 10^12, plus salt (1..10^12-1), so open
+ * quotes never ask for the same amount. The owner's MANA-back sends need no salt: they use manaWeiAtLeast.
+ */
+export function manaWeiFor(usdCents: number, usdPerMana: number, salt: bigint): bigint {
+  const wei = manaWeiAtLeast(usdCents, usdPerMana)
+  if (salt < 1n || salt >= STEP) throw new Error('the salt must be 1..10^12-1')
+  return wei + salt
 }
 
 const randomSalt = () => (BigInt('0x' + randomBytes(8).toString('hex')) % (STEP - 1n)) + 1n
