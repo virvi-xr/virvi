@@ -1806,7 +1806,8 @@ export const studioManaTransfers = pgTable('studio_mana_transfers', {
   fromAddress: text('from_address').notNull(),
   amountWei: text('amount_wei').notNull(),
   blockNumber: bigint('block_number', { mode: 'number' }).notNull(),
-  paymentId: uuid('payment_id').references(() => studioPayments.id),
+  // A financial record: it outlives the payment (an account deleted with its payments leaves it unlinked)
+  paymentId: uuid('payment_id').references(() => studioPayments.id, { onDelete: 'set null' }),
   status: text('status').notNull(), // matched | unmatched | settled_by_hand | returned
   note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1824,7 +1825,7 @@ export const studioManaScan = pgTable('studio_mana_scan', {
 export const studioManaRefunds = pgTable('studio_mana_refunds', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  reportId: uuid('report_id').references(() => studioMistakeReports.id),
+  reportId: uuid('report_id').references(() => studioMistakeReports.id, { onDelete: 'set null' }),
   usdCents: integer('usd_cents').notNull(),
   toAddress: text('to_address').notNull(),
   status: text('status').notNull(), // requested | sent | declined

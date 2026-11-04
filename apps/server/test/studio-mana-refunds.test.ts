@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { studioCreditLedger, studioEntitlements, studioManaRefunds, studioManaTransfers, studioMistakeReports, studioPayments } from '../src/db/schema.js'
+import { studioCreditLedger, studioEntitlements, studioManaRefunds, studioManaTransfers, studioMistakeReports, studioPayments, users } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { setStripe } from '../src/integrations/stripe.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
@@ -365,6 +365,24 @@ describe('MANA back on request, and the owner\'s MANA admin', () => {
       expect(again.json()).toMatchObject({ code: 'not_unmatched' })
       expect((await adminPost(`/api/admin/studio/mana-transfers/${'0x' + 'c'.repeat(64)}/0/returned`, { returnTxHash: back })).statusCode).toBe(404)
     })
+  })
+
+  it('deleting an account that paid in MANA and asked for MANA back keeps the transfer, unlinked', async () => {
+    const { u, r } = await requested()
+    const [e] = await db.select().from(studioEntitlements).where(eq(studioEntitlements.id, r.entitlementId))
+    const hash = '0x' + 'd'.repeat(64)
+    await db.insert(studioManaTransfers).values({
+      txHash: hash, logIndex: 0, fromAddress: OTHER, amountWei: '1', blockNumber: 1, paymentId: e.paymentId, status: 'matched',
+    })
+    await db.delete(users).where(eq(users.id, u.id))
+    expect(await db.select().from(studioManaTransfers)).toMatchObject([{ txHash: hash, paymentId: null, status: 'matched' }])
+    expect(await db.select().from(studioPayments).where(eq(studioPayments.id, e.paymentId))).toEqual([])
+  })
+
+  it('deleting a report (with its payment) leaves its MANA-back request, unlinked', async () => {
+    const { r, id } = await requested()
+    await db.delete(studioMistakeReports).where(eq(studioMistakeReports.id, r.id))
+    expect(await db.select().from(studioManaRefunds).where(eq(studioManaRefunds.id, id))).toMatchObject([{ reportId: null, status: 'requested' }])
   })
 
   it('non-admins get 403 on every admin route', async () => {
