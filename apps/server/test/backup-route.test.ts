@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { unzipSync } from 'fflate'
+import { eq } from 'drizzle-orm'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { dclWorldDestinations, mediaAssets, sceneCollaborators, sceneElementInstances } from '../src/db/schema.js'
-import { BACKUP_DEADLINE_MS, BACKUP_MAX_CONCURRENT, setBackupFetcher, setBackupLimits } from '../src/services/backup/download.js'
+import { dclWorldDestinations, mediaAssets, sceneCollaborators, sceneElementInstances, sceneImports } from '../src/db/schema.js'
+import { BACKUP_DEADLINE_MS, BACKUP_MAX_CONCURRENT, runBackup, setBackupFetcher, setBackupLimits } from '../src/services/backup/download.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { resetDb } from './helpers/db.js'
 import { createElement, createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -14,10 +15,12 @@ const enc = (s: string) => new TextEncoder().encode(s)
 let app: Awaited<ReturnType<typeof testApp>>
 let user: TestUser
 let savedCdn: string | null
+let store: ReturnType<typeof memoryPrivateStore>
 
 beforeEach(async () => {
   await resetDb()
-  setImportStore(memoryPrivateStore())
+  store = memoryPrivateStore()
+  setImportStore(store)
   savedCdn = config.cdnUrl
   ;(config as { cdnUrl: string | null }).cdnUrl = CDN
   user = await createUser({ wallet: randomWallet() })
@@ -33,7 +36,7 @@ afterEach(async () => {
   await app.close()
 })
 
-async function dclScene(name = 'My Cafe!', models = 1) {
+async function dclScene(name = 'My Cafe!', models = 1, world = 'moon.dcl.eth') {
   const { scene, preset } = await createScene(user, name)
   for (let i = 0; i < models; i++) {
     const url = `${CDN}/u/m${i}.glb`
@@ -42,11 +45,12 @@ async function dclScene(name = 'My Cafe!', models = 1) {
     await db.insert(sceneElementInstances).values({ elementId: el.id, position: { x: 1, y: 2, z: 3 } })
   }
   await db.insert(dclWorldDestinations).values({
-    sceneId: scene.id, ownerUserId: user.id, ownerWallet: user.wallet!, worldName: 'moon.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'virvi', grantedAt: new Date(),
+    sceneId: scene.id, ownerUserId: user.id, ownerWallet: user.wallet!, worldName: world, base: '0,0', parcels: ['0,0'], mode: 'virvi', grantedAt: new Date(),
   })
   return scene
 }
-const get = (sceneId: string, u: TestUser) => app.inject({ method: 'GET', url: `/api/scenes/${sceneId}/backup.zip`, headers: { authorization: `Bearer ${tokenFor(u)}` } })
+const get = (sceneId: string, u: TestUser, query = '') => app.inject({ method: 'GET', url: `/api/scenes/${sceneId}/backup.zip${query}`, headers: { authorization: `Bearer ${tokenFor(u)}` } })
+const unzip = (res: { rawPayload: Buffer }) => unzipSync(new Uint8Array(res.rawPayload))
 
 describe('GET /api/scenes/:sceneId/backup.zip', () => {
   it('sends the project as a zip with download headers', async () => {
@@ -118,5 +122,121 @@ describe('GET /api/scenes/:sceneId/backup.zip', () => {
     expect(res.json().error).toBe('backup_timeout')
     await new Promise((r) => setTimeout(r, 300))
     expect(fetcher.mock.calls.length).toBeLessThan(3)
+  })
+
+  it('a slot frees after a failed build, and after a timed-out one winds down', async () => {
+    setBackupLimits({ maxConcurrent: 1 })
+    const scene = await dclScene()
+    const { scene: plain } = await createScene(user, 'Plain')
+    expect((await get(plain.id, user)).statusCode).toBe(422)
+    expect((await get(scene.id, user)).statusCode).toBe(200)
+
+    setBackupLimits({ maxConcurrent: 1, deadlineMs: 50 })
+    setBackupFetcher(async (url, _cap, _what, signal) => {
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, 5_000)
+        signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('aborted')) })
+      })
+      return enc(url)
+    })
+    expect((await get(scene.id, user)).statusCode).toBe(504)
+    setBackupLimits({ maxConcurrent: 1 })
+    setBackupFetcher(async (url) => enc(`bytes of ${url}`))
+    await vi.waitFor(async () => expect((await get(scene.id, user)).statusCode).toBe(200))
+  })
+
+  it('a finished build holds its slot until its response closes', async () => {
+    setBackupLimits({ maxConcurrent: 1 })
+    const scene = await dclScene()
+    const held = await runBackup(scene.id, { caller: { userId: user.id, fullAccess: true } })
+    expect(held.files.has('README.md')).toBe(true)
+    await expect(runBackup(scene.id, { caller: { userId: user.id, fullAccess: true } })).rejects.toMatchObject({ status: 429, code: 'backup_busy' })
+    held.release()
+    held.release() // twice is harmless
+    const next = await runBackup(scene.id, { caller: { userId: user.id, fullAccess: true } })
+    next.release()
+    // Through the route: each response gives its slot back once sent
+    expect((await get(scene.id, user)).statusCode).toBe(200)
+    expect((await get(scene.id, user)).statusCode).toBe(200)
+  })
+
+  it('the deadline aborts a download in flight', async () => {
+    const scene = await dclScene()
+    setBackupLimits({ deadlineMs: 50 })
+    let aborted = false
+    setBackupFetcher(async (url, _cap, _what, signal) => {
+      await new Promise((resolve) => signal?.addEventListener('abort', () => { aborted = true; resolve(null) }))
+      return enc(url)
+    })
+    expect((await get(scene.id, user)).statusCode).toBe(504)
+    expect(aborted).toBe(true)
+  })
+
+  it('the fetch hook gets each file\'s own cap and kind', async () => {
+    const { scene, preset } = await createScene(user, 'Kinds')
+    const img = `${CDN}/u/logo.png`
+    await db.insert(mediaAssets).values({ ownerId: user.id, filename: 'logo.png', contentType: 'image/png', sizeBytes: 1, publicUrl: img })
+    const el = await createElement(preset.id, { type: 'image', name: 'Logo', properties: { textureSrc: img } })
+    await db.insert(sceneElementInstances).values({ elementId: el.id, position: { x: 1, y: 2, z: 3 } })
+    await db.insert(dclWorldDestinations).values({ sceneId: scene.id, ownerUserId: user.id, ownerWallet: user.wallet!, worldName: 'sun.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'virvi', grantedAt: new Date() })
+    const seen: Array<[string, number, string]> = []
+    setBackupFetcher(async (url, cap, what) => { seen.push([url, cap, what]); return enc(url) })
+    expect((await get(scene.id, user)).statusCode).toBe(200)
+    expect(seen).toEqual([[img, 10 * 1024 * 1024, 'Image']])
+  })
+
+  describe('?destination=', () => {
+    it('a Virvi-built backup uses the chosen destination; one of another scene is 404', async () => {
+      const scene = await dclScene()
+      const [parcels] = await db.insert(dclWorldDestinations).values({
+        sceneId: scene.id, ownerUserId: user.id, ownerWallet: user.wallet!, kind: 'parcels', base: '10,20', parcels: ['10,20'], mode: 'virvi', grantedAt: new Date(),
+      }).returning()
+      const sj = (res: { rawPayload: Buffer }) => JSON.parse(strFromU8(unzip(res)['scene.json']))
+      const chosen = await get(scene.id, user, `?destination=${parcels.id}`)
+      expect(chosen.statusCode).toBe(200)
+      expect(sj(chosen).scene).toEqual({ base: '10,20', parcels: ['10,20'] })
+      expect(sj(chosen).worldConfiguration).toBeUndefined()
+
+      const other = await dclScene('Other', 1, 'sun.dcl.eth')
+      const [theirs] = await db.select().from(dclWorldDestinations).where(eq(dclWorldDestinations.sceneId, other.id))
+      expect((await get(scene.id, user, `?destination=${theirs.id}`)).statusCode).toBe(404)
+      expect((await get(scene.id, user, '?destination=nope')).statusCode).toBe(404)
+    })
+  })
+
+  describe("the creator's own source (an imported scene)", () => {
+    const CREATOR_MAIN = "export function main() {\n  // the creator's code\n}\n"
+    async function importedBy(importer: TestUser) {
+      const scene = await dclScene('Imported')
+      const zip = Buffer.from(zipSync({ 'scene.json': strToU8('{"main":"bin/index.js","runtimeVersion":"7","scene":{"parcels":["0,0"],"base":"0,0"},"worldConfiguration":{"name":"moon.dcl.eth"}}'), 'src/index.ts': strToU8(CREATOR_MAIN) }))
+      const [row] = await db.insert(sceneImports).values({ userId: importer.id, sceneId: scene.id, worldName: 'moon.dcl.eth', kind: 'sdk7', sourceKey: 'x', status: 'deployed', finishedAt: new Date() }).returning()
+      await store.put(`imports/${row.id}/original.zip`, zip, 'application/zip')
+      await store.put(`imports/${row.id}/source.zip`, zip, 'application/zip')
+      await db.update(sceneImports).set({ originalKey: `imports/${row.id}/original.zip`, sourceKey: `imports/${row.id}/source.zip` }).where(eq(sceneImports.id, row.id))
+      return scene
+    }
+    const hasCreatorCode = (res: { rawPayload: Buffer }) => strFromU8(unzip(res)['src/index.ts']).includes("the creator's code")
+    const LINE = "This backup leaves out the scene's own code, which only the person who imported it (or a full-access member) can download."
+
+    it('goes to its importer and to full-access members; another editor gets the baked content alone', async () => {
+      const importer = await createUser({ wallet: randomWallet() })
+      const editor = await createUser({ wallet: randomWallet() })
+      const scene = await importedBy(importer)
+      await db.insert(sceneCollaborators).values([{ sceneId: scene.id, userId: importer.id, role: 'editor' }, { sceneId: scene.id, userId: editor.id, role: 'editor' }])
+
+      const mine = await get(scene.id, importer)
+      expect(mine.statusCode).toBe(200)
+      expect(hasCreatorCode(mine)).toBe(true)
+      const owner = await get(scene.id, user)
+      expect(hasCreatorCode(owner)).toBe(true)
+
+      const theirs = await get(scene.id, editor)
+      expect(theirs.statusCode).toBe(200)
+      const files = unzip(theirs)
+      expect(hasCreatorCode(theirs)).toBe(false)
+      expect(strFromU8(files['src/index.ts'])).toContain('bakeVirviContent()')
+      expect(strFromU8(files['README.md'])).toContain(LINE)
+      expect(JSON.parse(strFromU8(files['scene.json'])).worldConfiguration).toMatchObject({ name: 'moon.dcl.eth' })
+    })
   })
 })

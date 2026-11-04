@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { sceneImports } from '../../db/schema.js'
 import { getImportStore } from '../../storage/private-store.js'
@@ -110,33 +110,50 @@ export function uninstallVirvi(input: Map<string, Uint8Array>, opts: { alreadyIn
 export interface SceneSource {
   files: Map<string, Uint8Array>
   leftovers: string[]
-  /** 'original': the creator's upload as sent; 'uninstalled': the stored source with Virvi taken back out; 'none': nothing kept. */
-  origin: 'original' | 'uninstalled' | 'none'
+  /**
+   * 'original': the creator's upload as kept; 'uninstalled': the stored source with Virvi taken back out; 'withheld':
+   * the scene was imported, but the caller is neither its importer nor a full-access member; 'expired': the scene was
+   * imported, but Virvi no longer has its code (the files were deleted or are unreadable, or no import ever deployed);
+   * 'none': never imported.
+   */
+  origin: 'original' | 'uninstalled' | 'withheld' | 'expired' | 'none'
+}
+
+/** Who is asking for the creator's source (Ruling F1). */
+export interface SourceCaller {
+  userId: string
+  fullAccess: boolean
+}
+
+const readable = (bytes: Buffer) => {
+  try { return readSceneZip(new Uint8Array(bytes)).files } catch { return null }
 }
 
 /**
  * The creator's own scene source from the newest deployed import of the scene (any World or parcels): the kept
- * original.zip, else source.zip un-installed, else nothing (the files were deleted, or no import was deployed).
+ * original.zip, else source.zip un-installed. Only that import's importer and full-access members get it (F1); the
+ * newest import of any status decides who that is when none deployed.
  */
-export async function sceneSourceFor(sceneId: string): Promise<SceneSource> {
-  const none: SceneSource = { files: new Map(), leftovers: [], origin: 'none' }
-  const [row] = await db.select().from(sceneImports)
-    .where(and(eq(sceneImports.sceneId, sceneId), eq(sceneImports.status, 'deployed')))
+export async function sceneSourceFor(sceneId: string, caller: SourceCaller): Promise<SceneSource> {
+  const without = (origin: SceneSource['origin']): SceneSource => ({ files: new Map(), leftovers: [], origin })
+  const newest = (where: SQL | undefined) => db.select().from(sceneImports).where(where)
     .orderBy(desc(sql`COALESCE(${sceneImports.finishedAt}, ${sceneImports.createdAt})`), desc(sceneImports.createdAt), sceneImports.id)
     .limit(1)
-  if (!row) return none
+  const [deployed] = await newest(and(eq(sceneImports.sceneId, sceneId), eq(sceneImports.status, 'deployed')))
+  const row = deployed ?? (await newest(eq(sceneImports.sceneId, sceneId)))[0]
+  if (!row) return without('none')
+  if (row.userId !== caller.userId && !caller.fullAccess) return without('withheld')
+  if (!deployed) return without('expired')
+
   const store = getImportStore()
   if (row.originalKey) {
     const original = await store.get(row.originalKey)
-    if (original) {
-      try {
-        const files = readSceneZip(new Uint8Array(original.body)).files
-        return { files, leftovers: virviImporters(files), origin: 'original' }
-      } catch { /* unreadable: the source below is still there */ }
-    }
+    const files = original && readable(original.body)
+    if (files) return { files, leftovers: virviImporters(files), origin: 'original' }
   }
   const source = await store.get(row.sourceKey)
-  if (!source) return none
-  const { files, leftovers } = uninstallVirvi(readSceneZip(new Uint8Array(source.body)).files, { alreadyInstalled: row.virviAlreadyPresent })
-  return { files, leftovers, origin: 'uninstalled' }
+  const files = source && readable(source.body)
+  if (!files) return without('expired')
+  const out = uninstallVirvi(files, { alreadyInstalled: row.virviAlreadyPresent })
+  return { ...out, origin: 'uninstalled' }
 }

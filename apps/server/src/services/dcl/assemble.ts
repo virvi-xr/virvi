@@ -37,6 +37,9 @@ export class ModelRefused extends Error {
   }
 }
 
+/** A file over the fetcher's size cap: a ModelRefused (same name), so callers that only know that one still report it. */
+export class FileTooBig extends ModelRefused {}
+
 export type ModelFetcher = (url: string) => Promise<Uint8Array>
 
 export interface Assembled {
@@ -151,9 +154,10 @@ export function builtByVirvi(metadata: { virvi?: { runtime?: unknown } } | undef
 
 /**
  * A fetcher for Virvi-hosted files of at most `maxBytes`: the host check, the public-address check, and the cap
- * enforced while streaming. Failures are ModelRefused with a reason naming `what`.
+ * enforced while streaming. Failures are ModelRefused with a reason naming `what` (FileTooBig over the cap). `signal`
+ * aborts a download in flight, as well as the 60-second timeout.
  */
-export function virviFileFetcher(maxBytes: number, what: string): ModelFetcher {
+export function virviFileFetcher(maxBytes: number, what: string, signal?: AbortSignal): ModelFetcher {
   const tooBig = `${what} is over the ${Math.round(maxBytes / (1024 * 1024))} MB file limit`
   return async (url) => {
     assertVirviHosted(url, what)
@@ -162,13 +166,14 @@ export function virviFileFetcher(maxBytes: number, what: string): ModelFetcher {
     } catch (e) {
       throw new ModelRefused((e as Error).message)
     }
-    const res = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(60_000) })
+    const timeout = AbortSignal.timeout(60_000)
+    const res = await fetch(url, { redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
     if (!res.ok) throw new ModelRefused(`${what} download failed (${res.status})`)
     const lenHeader = res.headers.get('content-length')
     if (lenHeader !== null) {
       const declared = Number(lenHeader)
       if (!/^\d+$/.test(lenHeader.trim()) || !Number.isFinite(declared)) throw new ModelRefused(`${what} has an invalid content-length`)
-      if (declared > maxBytes) throw new ModelRefused(tooBig)
+      if (declared > maxBytes) throw new FileTooBig(tooBig)
     }
     if (!res.body) throw new ModelRefused(`${what} download had no body`)
     // Enforce the cap while streaming: content-length may be absent or wrong.
@@ -181,7 +186,7 @@ export function virviFileFetcher(maxBytes: number, what: string): ModelFetcher {
       total += value.byteLength
       if (total > maxBytes) {
         await reader.cancel().catch(() => {})
-        throw new ModelRefused(tooBig)
+        throw new FileTooBig(tooBig)
       }
       chunks.push(value)
     }

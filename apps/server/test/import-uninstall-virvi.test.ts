@@ -117,13 +117,13 @@ describe('sceneSourceFor', () => {
   it('reads the newest deployed import: its original, else its source un-installed, else none', async () => {
     const user = await createUser()
     const { scene } = await createScene(user, 'Moon')
-    expect((await sceneSourceFor(scene.id)).origin).toBe('none')
+    expect((await sceneSourceFor(scene.id, { userId: user.id, fullAccess: true })).origin).toBe('none')
 
     const f = folder({ 'package.json': pkg(), 'src/index.ts': MAIN })
     const installed = (await installVirvi(f)).files
     const d = (days: number) => new Date(Date.UTC(2026, 10, 1) - days * 86_400_000)
     await seed(scene.id, user.id, { at: d(5), source: zip(installed) })
-    const uninstalled = await sceneSourceFor(scene.id)
+    const uninstalled = await sceneSourceFor(scene.id, { userId: user.id, fullAccess: true })
     expect(uninstalled.origin).toBe('uninstalled')
     expect(strFromU8(uninstalled.files.get('src/index.ts')!)).toBe(MAIN)
     expect(uninstalled.files.has('images/virvi/hud-v.png')).toBe(false)
@@ -131,7 +131,7 @@ describe('sceneSourceFor', () => {
     const withOriginal = new Map(f.files).set('src/index.ts', strToU8('// the original\nexport function main() {}\n'))
     await seed(scene.id, user.id, { at: d(2), original: zip(withOriginal), source: zip(installed) })
     await seed(scene.id, user.id, { status: 'failed', at: d(0), source: zip(installed) })
-    const kept = await sceneSourceFor(scene.id)
+    const kept = await sceneSourceFor(scene.id, { userId: user.id, fullAccess: true })
     expect(kept.origin).toBe('original')
     expect(strFromU8(kept.files.get('src/index.ts')!)).toBe('// the original\nexport function main() {}\n')
   })
@@ -143,11 +143,39 @@ describe('sceneSourceFor', () => {
     const f = folder({ 'package.json': pkg({ '@virvixr/dcl': '^2.6.0' }), 'src/index.ts': own })
     const installed = (await installVirvi(f)).files
     const id = await seed(scene.id, user.id, { at: new Date(Date.UTC(2026, 10, 1)), original: zip(f.files), source: zip(installed) })
-    const r = await sceneSourceFor(scene.id)
+    const r = await sceneSourceFor(scene.id, { userId: user.id, fullAccess: true })
     expect([r.origin, r.leftovers]).toEqual(['original', ['src/index.ts']])
 
     await store.put(`imports/${id}/original.zip`, Buffer.from('not a zip'), 'application/zip')
-    expect((await sceneSourceFor(scene.id)).origin).toBe('uninstalled')
+    expect((await sceneSourceFor(scene.id, { userId: user.id, fullAccess: true })).origin).toBe('uninstalled')
+  })
+
+  it("withholds the creator's source from anyone but its importer and full-access members", async () => {
+    const user = await createUser()
+    const other = await createUser()
+    const { scene } = await createScene(user, 'Moon')
+    const f = folder({ 'package.json': pkg(), 'src/index.ts': MAIN })
+    await seed(scene.id, user.id, { at: new Date(Date.UTC(2026, 10, 1)), original: zip(f.files), source: zip((await installVirvi(f)).files) })
+    expect((await sceneSourceFor(scene.id, { userId: user.id, fullAccess: false })).origin).toBe('original')
+    expect((await sceneSourceFor(scene.id, { userId: other.id, fullAccess: true })).origin).toBe('original')
+    const withheld = await sceneSourceFor(scene.id, { userId: other.id, fullAccess: false })
+    expect(withheld).toMatchObject({ origin: 'withheld', leftovers: [] })
+    expect(withheld.files.size).toBe(0)
+  })
+
+  it("is 'expired' when an import's files are gone or unreadable, or the scene's imports never deployed", async () => {
+    const user = await createUser()
+    const caller = { userId: user.id, fullAccess: true }
+    const { scene: never } = await createScene(user, 'Never')
+    await seed(never.id, user.id, { status: 'failed', at: new Date(), source: Buffer.from('x') })
+    expect((await sceneSourceFor(never.id, caller)).origin).toBe('expired')
+
+    const { scene: gone } = await createScene(user, 'Gone')
+    const id = await seed(gone.id, user.id, { at: new Date(), original: Buffer.from('not a zip'), source: Buffer.from('not a zip either') })
+    expect((await sceneSourceFor(gone.id, caller)).origin).toBe('expired')
+    await store.delete(`imports/${id}/source.zip`)
+    await store.delete(`imports/${id}/original.zip`)
+    expect((await sceneSourceFor(gone.id, caller)).origin).toBe('expired')
   })
 
   it('leaves the icon, script and sync manifest alone when the scene started Virvi itself', () => {

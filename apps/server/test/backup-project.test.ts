@@ -7,7 +7,7 @@ import { strFromU8, strToU8, zipSync } from 'fflate'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { assetLibraryItems, catalogPacks, dclWorldDestinations, mediaAssets, sceneElementInstances, sceneImports, scenePresets, streamingServers } from '../src/db/schema.js'
-import { ModelRefused } from '../src/services/dcl/assemble.js'
+import { FileTooBig, ModelRefused } from '../src/services/dcl/assemble.js'
 import { BackupError, backupProject, sizeLabel } from '../src/services/backup/project.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { resetDb } from './helpers/db.js'
@@ -22,6 +22,7 @@ const MAIN = "import { engine } from '@dcl/sdk/ecs'\n\nexport function main() {\
 const enc = (s: string) => new TextEncoder().encode(s)
 const text = (m: Map<string, Uint8Array>, p: string) => strFromU8(m.get(p)!)
 const fetcher = () => vi.fn(async (url: string) => enc(`bytes of ${url}`))
+const owner = () => ({ userId: user.id, fullAccess: true })
 const calls = (src: string) => src.split('bakeVirviContent()').length - 1
 
 let store: ReturnType<typeof memoryPrivateStore>
@@ -94,7 +95,7 @@ describe('backupProject', () => {
     await placed(preset.id, 'model', 'Chair', { modelSrc: await upload('chair.glb') })
 
     const f = fetcher()
-    const r = await backupProject(scene.id, { fetch: f })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: f })
     expect(r.problems).toEqual([])
     for (const p of ['package.json', 'src/other.ts', 'assets/scene/main.composite', 'models/chair.glb']) {
       expect(text(r.files, p), p).toBe(creator[p as keyof typeof creator])
@@ -136,7 +137,7 @@ describe('backupProject', () => {
     for (const [path, src, want] of forms) {
       const { scene } = await createScene(user, 'Form')
       await imported(scene.id, { 'scene.json': SCENE_JSON, 'package.json': PKG, [path]: src })
-      const r = await backupProject(scene.id, { fetch: fetcher() })
+      const r = await backupProject(scene.id, { caller: owner(), fetch: fetcher() })
       const out = text(r.files, path)
       expect(out, src).toContain(want)
       expect(calls(out), src).toBe(1)
@@ -148,12 +149,12 @@ describe('backupProject', () => {
     const { scene: again } = await createScene(user, 'Again')
     const done = "import { bakeVirviContent } from './virvi-baked'\nexport function main() {\n  bakeVirviContent()\n}\n"
     await imported(again.id, { 'scene.json': SCENE_JSON, 'package.json': PKG, 'src/index.ts': done, 'src/virvi-baked.ts': 'export function bakeVirviContent(): void {}\n' })
-    expect(text((await backupProject(again.id, { fetch: fetcher() })).files, 'src/index.ts')).toBe(done)
+    expect(text((await backupProject(again.id, { caller: owner(), fetch: fetcher() })).files, 'src/index.ts')).toBe(done)
 
     // No main to call it from: still a project, with the problem named
     const { scene: bare } = await createScene(user, 'Bare')
     await imported(bare.id, { 'scene.json': SCENE_JSON, 'package.json': PKG, 'src/index.ts': 'export function start() {}\n' })
-    const r = await backupProject(bare.id, { fetch: fetcher() })
+    const r = await backupProject(bare.id, { caller: owner(), fetch: fetcher() })
     expect(text(r.files, 'src/index.ts')).toBe('export function start() {}\n')
     expect(r.problems).toHaveLength(1)
     expect(r.problems[0]).toMatch(/main\(\)/)
@@ -164,7 +165,7 @@ describe('backupProject', () => {
     const { scene, preset } = await createScene(user, 'Moon Base')
     await destination(scene.id, { spawn: { x: 4, y: 0, z: 2 } })
     await placed(preset.id, 'image', 'Logo', { textureSrc: await upload('logo.png') })
-    const r = await backupProject(scene.id, { fetch: fetcher() })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: fetcher() })
     expect([...r.files.keys()].sort()).toEqual(['README.md', 'images/logo.png', 'package.json', 'scene.json', 'src/index.ts', 'src/virvi-baked.ts', 'tsconfig.json'])
 
     const tpl = JSON.parse(readFileSync(resolve(TEMPLATE, 'package.json'), 'utf8'))
@@ -190,7 +191,7 @@ describe('backupProject', () => {
   it('a Virvi-built Genesis City scene has parcels and no worldConfiguration', async () => {
     const { scene } = await createScene(user, 'Plaza')
     await destination(scene.id, { kind: 'parcels', worldName: null, base: '10,20', parcels: ['10,20', '11,20'] })
-    const sj = JSON.parse(text((await backupProject(scene.id, { fetch: fetcher() })).files, 'scene.json'))
+    const sj = JSON.parse(text((await backupProject(scene.id, { caller: owner(), fetch: fetcher() })).files, 'scene.json'))
     expect(sj.worldConfiguration).toBeUndefined()
     expect(sj.virvi).toBeUndefined()
     expect(sj.scene).toEqual({ parcels: ['10,20', '11,20'], base: '10,20' })
@@ -199,14 +200,14 @@ describe('backupProject', () => {
 
   it('a scene with no import and no Decentraland destination is not_decentraland', async () => {
     const { scene } = await createScene(user, 'Nowhere')
-    await expect(backupProject(scene.id, { fetch: fetcher() })).rejects.toMatchObject({ status: 422, code: 'not_decentraland' })
+    await expect(backupProject(scene.id, { caller: owner(), fetch: fetcher() })).rejects.toMatchObject({ status: 422, code: 'not_decentraland' })
   })
 
   it('an empty live preset', async () => {
     const { scene } = await createScene(user, 'Empty')
     await destination(scene.id)
     const f = fetcher()
-    const r = await backupProject(scene.id, { fetch: f })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: f })
     expect(f).not.toHaveBeenCalled()
     expect(r.problems).toEqual([])
     expect(text(r.files, 'src/virvi-baked.ts')).toContain('export function bakeVirviContent(): void {\n}')
@@ -215,7 +216,7 @@ describe('backupProject', () => {
 
     const { scene: imp } = await createScene(user, 'Empty import')
     await imported(imp.id, { 'scene.json': SCENE_JSON, 'package.json': PKG, 'src/index.ts': MAIN })
-    const r2 = await backupProject(imp.id, { fetch: f })
+    const r2 = await backupProject(imp.id, { caller: owner(), fetch: f })
     expect(calls(text(r2.files, 'src/index.ts'))).toBe(1)
     expect([...r2.files.keys()].sort()).toEqual(['README.md', 'package.json', 'scene.json', 'src/index.ts', 'src/virvi-baked.ts'])
   })
@@ -234,7 +235,7 @@ describe('backupProject', () => {
     await placed(preset.id, 'model', 'Anvil', { modelSrc: `${CDN}/c/anvil.glb` })
     await placed(preset.id, 'model', 'Deck', { modelSrc: `${CDN}/c/deck.glb` })
     const f = fetcher()
-    const r = await backupProject(scene.id, { fetch: f })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: f })
     expect(f.mock.calls.map((c) => c[0])).toEqual([`${CDN}/c/deck.glb`])
     expect(r.files.has('models/anvil.glb')).toBe(false)
     expect(text(r.files, 'src/virvi-baked.ts')).toContain('"models/anvil.glb"')
@@ -270,7 +271,7 @@ describe('backupProject', () => {
       return enc('ok')
     })
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const r = await backupProject(scene.id, { fetch: f })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: f })
     err.mockRestore()
     expect(text(r.files, 'images/good.png')).toBe('ok')
     for (const p of ['images/bad.png', 'models/broken.glb', 'images/huge.png']) expect(r.files.has(p), p).toBe(false)
@@ -290,7 +291,7 @@ describe('backupProject', () => {
     await db.insert(mediaAssets).values({ ownerId: user.id, filename: 'x.png', contentType: 'image/png', sizeBytes: 1, publicUrl: 'https://evil.example/x.png' })
     await placed(preset.id, 'image', 'Evil', { textureSrc: 'https://evil.example/x.png' })
     const f = fetcher()
-    const r = await backupProject(scene.id, { fetch: f })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: f })
     expect(f).not.toHaveBeenCalled()
     expect(r.problems).toHaveLength(1)
     expect(r.problems[0]).toMatch(/not hosted by Virvi/)
@@ -310,7 +311,7 @@ describe('backupProject', () => {
     await placed(preset.id, 'widget', 'Toggle', {})
     await placed(preset.id, 'sound', 'Silent', {})
     await placed(preset.id, 'image', 'Linked', { textureSrc: `${CDN}/not-an-upload.png` })
-    const r = await backupProject(scene.id, { fetch: fetcher() })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: fetcher() })
     const readme = text(r.files, 'README.md')
     expect(readme).toContain('Button') // click events (R1)
     expect(readme).toContain('Night') // other presets (R3)
@@ -331,7 +332,7 @@ describe('backupProject', () => {
     for (let i = 0; i < 11; i++) await placed(preset.id, 'model', `M${i}`, { modelSrc: await upload(`m${i}.glb`, 50 * 1024 * 1024) })
     await placed(preset.id, 'image', 'Tiny', { textureSrc: await upload('tiny.png', 2048) })
     const f = vi.fn(async () => new Uint8Array(1))
-    const e = await backupProject(scene.id, { fetch: f }).catch((x) => x)
+    const e = await backupProject(scene.id, { caller: owner(), fetch: f }).catch((x) => x)
     expect(f).not.toHaveBeenCalled()
     expect(e).toBeInstanceOf(BackupError)
     expect(e).toMatchObject({ status: 413, code: 'backup_too_big' })
@@ -344,7 +345,7 @@ describe('backupProject', () => {
     for (let i = 0; i < 15; i++) await placed(p2.id, 'model', `N${i}`, { modelSrc: await upload(`n${i}.glb`) })
     const big = new Uint8Array(50 * 1024 * 1024)
     const g = vi.fn(async () => big)
-    const e2 = await backupProject(s2.id, { fetch: g }).catch((x) => x)
+    const e2 = await backupProject(s2.id, { caller: owner(), fetch: g }).catch((x) => x)
     expect(e2).toMatchObject({ status: 413, code: 'backup_too_big' })
     expect(e2.message).toMatch(/models\/n\d+\.glb/)
     expect(g).toHaveBeenCalledTimes(10) // ten 50 MiB files and the project files pass 500 MB; the other five are never fetched
@@ -360,14 +361,14 @@ describe('backupProject', () => {
   it('a World destination with no World name is not_decentraland', async () => {
     const { scene } = await createScene(user, 'Nameless')
     await destination(scene.id, { worldName: null })
-    await expect(backupProject(scene.id, { fetch: fetcher() })).rejects.toMatchObject({ status: 422, code: 'not_decentraland' })
+    await expect(backupProject(scene.id, { caller: owner(), fetch: fetcher() })).rejects.toMatchObject({ status: 422, code: 'not_decentraland' })
   })
 
   it('an imported bakeVirviContent that main() never calls gets the call', async () => {
     const { scene } = await createScene(user, 'Uncalled')
     const src = "import { bakeVirviContent } from './virvi-baked'\nexport function main() {\n  x()\n}\n"
     await imported(scene.id, { 'scene.json': SCENE_JSON, 'package.json': PKG, 'src/index.ts': src })
-    const r = await backupProject(scene.id, { fetch: fetcher() })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: fetcher() })
     expect(text(r.files, 'src/index.ts')).toBe("import { bakeVirviContent } from './virvi-baked'\nexport function main() {\n  bakeVirviContent()\n  x()\n}\n")
     expect(r.problems).toEqual([])
   })
@@ -375,8 +376,81 @@ describe('backupProject', () => {
   it("the creator's readme.md is merged whatever its case", async () => {
     const { scene } = await createScene(user, 'Cases')
     await imported(scene.id, { 'scene.json': SCENE_JSON, 'package.json': PKG, 'src/index.ts': MAIN, 'readme.md': '# lower\n' })
-    const r = await backupProject(scene.id, { fetch: fetcher() })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: fetcher() })
     expect([...r.files.keys()].filter((k) => k.toLowerCase() === 'readme.md')).toEqual(['README.md'])
     expect(text(r.files, 'README.md').endsWith('\n---\n\n# lower\n')).toBe(true)
+  })
+
+  describe("an imported scene whose own code Virvi no longer has", () => {
+    const WARNING = /Warning: Virvi no longer has this scene's own code/
+    const expectBakedOnly = (r: { files: Map<string, Uint8Array>; problems: string[] }) => {
+      expect(text(r.files, 'src/index.ts')).toBe("import { bakeVirviContent } from './virvi-baked'\n\nexport function main() {\n  bakeVirviContent()\n}\n")
+      const readme = text(r.files, 'README.md')
+      expect(readme.split('\n').find((l) => l.startsWith('> '))).toMatch(WARNING)
+      expect(readme).toMatch(/deploying this project as it is would replace/i)
+      expect(readme).not.toMatch(/Virvi built this scene/)
+      expect(r.problems.some((p) => /no longer has this scene's own code/.test(p))).toBe(true)
+      expect(readme).toContain(r.problems.find((p) => /own code/.test(p)))
+      noVirviCode(r.files)
+    }
+
+    it('its kept files were deleted', async () => {
+      const { scene } = await createScene(user, 'Gone')
+      await destination(scene.id)
+      await db.insert(sceneImports).values({ userId: user.id, sceneId: scene.id, worldName: 'moon.dcl.eth', kind: 'sdk7', sourceKey: 'imports/x/source.zip', originalKey: 'imports/x/original.zip', status: 'deployed', finishedAt: new Date() })
+      expectBakedOnly(await backupProject(scene.id, { caller: owner(), fetch: fetcher() }))
+    })
+
+    it('it never deployed, and has no destination: placed at the import\'s location', async () => {
+      const { scene } = await createScene(user, 'Never')
+      await db.insert(sceneImports).values({ userId: user.id, sceneId: scene.id, locationKind: 'parcels', worldName: null, base: '5,6', parcels: ['5,6'], kind: 'sdk7', sourceKey: 'x', status: 'failed' })
+      const r = await backupProject(scene.id, { caller: owner(), fetch: fetcher() })
+      expectBakedOnly(r)
+      expect(JSON.parse(text(r.files, 'scene.json')).scene).toEqual({ parcels: ['5,6'], base: '5,6' })
+    })
+  })
+
+  it('a video or sound over Decentraland\'s 50 MB file limit is linked, not bundled', async () => {
+    const { scene, preset } = await createScene(user, 'Cinema')
+    await destination(scene.id)
+    const known = await upload('known.mp4', 60 * 1024 * 1024)
+    const fetchedBig = await upload('fetched.mp3')
+    await placed(preset.id, 'video', 'Screen', { playlist: [known], offType: 2 })
+    await placed(preset.id, 'sound', 'Song', { audioSrc: fetchedBig })
+    const f = vi.fn(async (url: string, cap: number, what: string) => {
+      if (url === fetchedBig) throw new FileTooBig(`${what} is over the ${Math.round(cap / 1024 / 1024)} MB file limit`)
+      return enc(url)
+    })
+    const r = await backupProject(scene.id, { caller: owner(), fetch: f })
+    expect(f.mock.calls.map((c) => c[0])).toEqual([fetchedBig])
+    expect([...r.files.keys()].some((p) => /known|fetched/.test(p))).toBe(false)
+    const baked = text(r.files, 'src/virvi-baked.ts')
+    expect(baked).toContain(JSON.stringify(known))
+    expect(baked).toContain(JSON.stringify(fetchedBig))
+    expect(r.problems).toEqual([])
+    const readme = text(r.files, 'README.md')
+    expect(readme).toContain('## Too big to bundle')
+    expect(readme).toContain(`Screen: ${known}`)
+    expect(readme).toContain(`Song: ${fetchedBig}`)
+  })
+
+  it('the README says to remove the bakeVirviContent() call before importing the backup into Virvi again', async () => {
+    const { scene } = await createScene(user, 'Again')
+    await destination(scene.id)
+    const readme = text((await backupProject(scene.id, { caller: owner(), fetch: fetcher() })).files, 'README.md')
+    expect(readme).toContain('## Importing it into Virvi again')
+    expect(readme).toMatch(/twice/)
+    expect(readme).toContain('bakeVirviContent()')
+  })
+
+  it('a signal aborted before or during the build stops it fetching', async () => {
+    const { scene, preset } = await createScene(user, 'Stop')
+    await destination(scene.id)
+    await placed(preset.id, 'image', 'A', { textureSrc: await upload('a.png') })
+    await placed(preset.id, 'image', 'B', { textureSrc: await upload('b.png') })
+    const ac = new AbortController()
+    const f = vi.fn(async (url: string) => { ac.abort(new Error('deadline')); return enc(url) })
+    await expect(backupProject(scene.id, { caller: owner(), fetch: f, signal: ac.signal })).rejects.toThrow()
+    expect(f).toHaveBeenCalledTimes(1)
   })
 })

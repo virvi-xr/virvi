@@ -4,7 +4,7 @@ import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { assetLibraryItems } from '../src/db/schema.js'
 import {
-  assembleFresh, assembleRedeploy, modelsInScene, pendingModels, wizardSceneJson, defaultModelFetcher,
+  assembleFresh, assembleRedeploy, modelsInScene, pendingModels, wizardSceneJson, defaultModelFetcher, virviFileFetcher, FileTooBig, ModelRefused,
   type ModelNeed,
 } from '../src/services/dcl/assemble.js'
 import { dclHash } from '../src/services/dcl/entity.js'
@@ -211,6 +211,24 @@ describe('defaultModelFetcher streaming cap', () => {
   it('rejects a non-numeric content-length', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array(4), { headers: { 'content-length': 'abc' } })))
     await expect(defaultModelFetcher(URL_OK)).rejects.toMatchObject({ name: 'ModelRefused' })
+  })
+
+  it('a caller\'s signal aborts the download in flight; an over-cap file is FileTooBig', async () => {
+    const ac = new AbortController()
+    let seen: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_, reject) => {
+      seen = init.signal ?? undefined
+      init.signal?.addEventListener('abort', () => reject(init.signal!.reason))
+    })))
+    const pending = virviFileFetcher(1024, 'Video', ac.signal)(URL_OK)
+    await vi.waitFor(() => expect(seen).toBeDefined())
+    ac.abort(new Error('deadline'))
+    await expect(pending).rejects.toThrow('deadline')
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array(2048))))
+    const big = await virviFileFetcher(1024, 'Video')(URL_OK).catch((e) => e)
+    expect(big).toBeInstanceOf(FileTooBig)
+    expect(big).toBeInstanceOf(ModelRefused)
   })
 
   it('returns a small body', async () => {
