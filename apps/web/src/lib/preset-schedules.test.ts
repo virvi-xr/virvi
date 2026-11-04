@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeSchedule, formatRunTime, formToBody, liveStatusText, runLabel, type ScheduleForm } from './preset-schedules'
+import { describeSchedule, formatRunTime, formToBody, liveStatusText, runLabel, weekGrid, type ScheduleForm } from './preset-schedules'
 
 const form = (v: Partial<ScheduleForm> = {}): ScheduleForm => ({
   presetId: 'p1', recurrence: 'weekly', weekdays: [5], startDate: '2026-11-06', startTime: '20:00',
@@ -69,5 +69,35 @@ describe('liveStatusText', () => {
   it('a return to a deleted preset reads as the previous one', () => {
     expect(liveStatusText({ reason: { kind: 'none' }, nextSwitch: { at: '2026-11-07T20:00:00.000Z', presetId: null, scheduleId: 's1' } }, names, tz).next)
       .toBe('Next switch: back to the previous preset at Sat, Nov 7, 20:00')
+  })
+})
+
+describe('weekGrid', () => {
+  const now = new Date('2026-11-06T12:00:00Z') // a Friday
+  const occ = (start: string, end: string | null, presetId = 'p1') => ({ scheduleId: 's1', presetId, start, end })
+
+  it('seven days from today in the viewer timezone, each with its runs placed by local time', () => {
+    const days = weekGrid([occ('2026-11-06T20:00:00Z', '2026-11-06T23:00:00Z')], 'UTC', now)
+    expect(days.map((d) => d.label)).toEqual(['Fri 6', 'Sat 7', 'Sun 8', 'Mon 9', 'Tue 10', 'Wed 11', 'Thu 12'])
+    expect(days[0].blocks).toEqual([{ scheduleId: 's1', presetId: 'p1', top: (20 / 24) * 100, height: (3 / 24) * 100, time: '20:00–23:00' }])
+    expect(days.slice(1).every((d) => d.blocks.length === 0)).toBe(true)
+  })
+
+  it('a run past midnight carries into the next day', () => {
+    const days = weekGrid([occ('2026-11-06T22:00:00Z', '2026-11-07T02:00:00Z')], 'UTC', now)
+    expect(days[0].blocks[0]).toMatchObject({ top: (22 / 24) * 100, height: (2 / 24) * 100, time: '22:00–02:00' })
+    expect(days[1].blocks[0]).toMatchObject({ top: 0, height: (2 / 24) * 100, time: '22:00–02:00' })
+  })
+
+  it('an open-ended run lasts until the next run starts', () => {
+    const days = weekGrid([occ('2026-11-06T20:00:00Z', null), occ('2026-11-07T08:00:00Z', '2026-11-07T09:00:00Z', 'p2')], 'UTC', now)
+    expect(days[0].blocks[0]).toMatchObject({ height: (4 / 24) * 100, time: '20:00 →' })
+    expect(days[1].blocks.map((b) => [b.presetId, b.top, b.height])).toEqual([['p1', 0, (8 / 24) * 100], ['p2', (8 / 24) * 100, (1 / 24) * 100]])
+  })
+
+  it('uses the viewer timezone for days and times', () => {
+    const days = weekGrid([occ('2026-11-07T01:00:00Z', '2026-11-07T02:00:00Z')], 'America/New_York', now)
+    expect(days[0].label).toBe('Fri 6')
+    expect(days[0].blocks[0]).toMatchObject({ top: (20 / 24) * 100, time: '20:00–21:00' })
   })
 })

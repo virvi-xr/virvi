@@ -336,7 +336,7 @@ export function useApi() {
     /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
     /** Scheduled presets (LIV-86). */
     getPresetSchedules: (sceneId: string) =>
-      apiFetch<{ schedules: import('./preset-schedules').PresetSchedule[]; runs: import('./preset-schedules').ScheduleRun[]; status: import('./preset-schedules').LiveStatus }>(`/api/scenes/${sceneId}/preset-schedules`),
+      apiFetch<{ schedules: import('./preset-schedules').PresetSchedule[]; runs: import('./preset-schedules').ScheduleRun[]; status: import('./preset-schedules').LiveStatus; week: import('./preset-schedules').WeekOccurrence[] }>(`/api/scenes/${sceneId}/preset-schedules`),
     createPresetSchedule: (sceneId: string, body: Record<string, unknown>) =>
       apiFetch<{ schedule: import('./preset-schedules').PresetSchedule }>(`/api/scenes/${sceneId}/preset-schedules`, { method: 'POST', body: JSON.stringify(body) }),
     updatePresetSchedule: (scheduleId: string, body: Record<string, unknown>) =>

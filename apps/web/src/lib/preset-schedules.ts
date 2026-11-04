@@ -130,3 +130,48 @@ export function liveStatusText(s: LiveStatus, presetName: (id: string | null) =>
   const next = n ? `Next switch: ${presetName(n.presetId) ?? 'back to the previous preset'} at ${when(n.at)}` : null
   return { why, next }
 }
+
+export interface WeekOccurrence { scheduleId: string; presetId: string; start: string; end: string | null }
+export interface WeekBlock { scheduleId: string; presetId: string; top: number; height: number; time: string }
+export interface WeekDay { date: string; label: string; blocks: WeekBlock[] }
+
+/** The local date (YYYY-MM-DD) and minutes past local midnight of an instant in `tz`. */
+function localParts(ms: number, tz: string): { date: string; minutes: number } {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(new Date(ms)).map((p) => [p.type, p.value]))
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) }
+}
+
+const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
+const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`
+
+/**
+ * The schedule's week view: `days` days from today in the viewer's timezone, each run placed by local time (top and
+ * height as % of the day). A run past midnight continues on the next day; an open-ended run lasts until the next run
+ * starts, or to the end of the week.
+ */
+export function weekGrid(occurrences: WeekOccurrence[], viewerTz: string, now: Date, days = 7): WeekDay[] {
+  const first = localParts(now.getTime(), viewerTz).date
+  const grid: WeekDay[] = Array.from({ length: days }, (_, i) => {
+    const date = addDays(first, i)
+    const d = new Date(`${date}T12:00:00Z`)
+    return { date, label: `${d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })} ${d.getUTCDate()}`, blocks: [] }
+  })
+  const lastDate = grid[grid.length - 1].date
+  const sorted = [...occurrences].sort((a, b) => a.start.localeCompare(b.start))
+  sorted.forEach((o, i) => {
+    const startMs = Date.parse(o.start)
+    const nextStart = sorted.slice(i + 1).find((x) => Date.parse(x.start) > startMs)
+    const s = localParts(startMs, viewerTz)
+    const e = o.end ? localParts(Date.parse(o.end), viewerTz) : nextStart ? localParts(Date.parse(nextStart.start), viewerTz) : { date: addDays(lastDate, 1), minutes: 0 }
+    const time = o.end ? `${hhmm(s.minutes)}–${hhmm(e.minutes)}` : `${hhmm(s.minutes)} →`
+    for (let date = s.date; date <= e.date; date = addDays(date, 1)) {
+      const from = date === s.date ? s.minutes : 0
+      const to = date === e.date ? e.minutes : 1440
+      const day = grid.find((g) => g.date === date)
+      if (!day || to <= from) continue
+      day.blocks.push({ scheduleId: o.scheduleId, presetId: o.presetId, top: (from / 1440) * 100, height: ((to - from) / 1440) * 100, time })
+    }
+  })
+  return grid
+}

@@ -3,13 +3,14 @@ import { useCallback, useEffect, useState } from 'react'
 import type { useApi } from '@/lib/api'
 import { presetDisplayName } from '@/lib/presets'
 import {
-  describeSchedule, formatRunTime, formToBody, runLabel, timezones, viewerTimezone, WEEKDAYS,
-  type PresetSchedule, type ScheduleForm, type ScheduleRun,
+  describeSchedule, formatRunTime, formToBody, runLabel, timezones, viewerTimezone, weekGrid, WEEKDAYS,
+  type PresetSchedule, type ScheduleForm, type ScheduleRun, type WeekOccurrence,
 } from '@/lib/preset-schedules'
 
 type Api = ReturnType<typeof useApi>
 
 const INPUT = 'rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-sm text-white outline-none focus:border-blue-400'
+const COLORS = ['bg-blue-600/70', 'bg-purple-600/70', 'bg-emerald-600/70', 'bg-amber-600/70', 'bg-pink-600/70', 'bg-cyan-600/70']
 const BTN = 'rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 hover:border-gray-500 hover:text-white disabled:opacity-50'
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -27,6 +28,8 @@ export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: 
   const [open, setOpen] = useState(false)
   const [schedules, setSchedules] = useState<PresetSchedule[] | null>(null)
   const [runs, setRuns] = useState<ScheduleRun[]>([])
+  const [week, setWeek] = useState<WeekOccurrence[]>([])
+  const [view, setView] = useState<'list' | 'week'>('list')
   const [form, setForm] = useState<ScheduleForm | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -35,7 +38,7 @@ export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: 
 
   const load = useCallback(() => {
     api.getPresetSchedules(sceneId)
-      .then((r) => { setSchedules(r.schedules); setRuns(r.runs) })
+      .then((r) => { setSchedules(r.schedules); setRuns(r.runs); setWeek(r.week ?? []) })
       .catch((e: any) => { setSchedules([]); setError(e?.status === 403 ? 'Only the scene host, co-hosts and editors can schedule presets.' : e?.message || 'Could not load schedules') })
   }, [api, sceneId])
   useEffect(() => { if (open && schedules === null) load() }, [open, schedules, load])
@@ -80,7 +83,18 @@ export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: 
             </p>
           )}
 
-          {schedules === null ? <p className="text-sm text-gray-500">Loading…</p> : schedules.length === 0 && !form ? (
+          {schedules && schedules.length > 0 && (
+            <div className="flex gap-1 text-xs" role="tablist" aria-label="Schedule view">
+              {(['list', 'week'] as const).map((v) => (
+                <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => setView(v)}
+                  className={`rounded-md px-2.5 py-1 ${view === v ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white'}`}>{v === 'list' ? 'List' : 'Week'}</button>
+              ))}
+            </div>
+          )}
+
+          {schedules && schedules.length > 0 && view === 'week' ? (
+            <WeekView week={week} viewerTz={viewerTz} name={name} color={(id) => COLORS[Math.max(0, presets.findIndex((p) => p.id === id)) % COLORS.length]} />
+          ) : schedules === null ? <p className="text-sm text-gray-500">Loading…</p> : schedules.length === 0 && !form ? (
             <p className="text-sm text-gray-500">No schedules yet. A schedule makes a preset live at set times, even with nobody online. Venue bookings take priority, and switching by hand overrides the run in progress.</p>
           ) : (
             <ul className="space-y-2">
@@ -188,6 +202,34 @@ export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: 
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+/** The next seven days in the viewer's timezone, each run a block placed by its local time (LIV-86). */
+function WeekView({ week, viewerTz, name, color }: { week: WeekOccurrence[]; viewerTz: string; name: (id: string | null) => string; color: (presetId: string) => string }) {
+  const days = weekGrid(week, viewerTz, new Date())
+  return (
+    <div>
+      <div className="grid grid-cols-[2rem_repeat(7,minmax(0,1fr))] gap-1 text-[10px] text-gray-500">
+        <span />
+        {days.map((d) => <span key={d.date} className="text-center">{d.label}</span>)}
+        <div className="relative h-72">
+          {[0, 6, 12, 18].map((h) => <span key={h} className="absolute right-1" style={{ top: `${(h / 24) * 100}%` }}>{String(h).padStart(2, '0')}</span>)}
+        </div>
+        {days.map((d) => (
+          <div key={d.date} className="relative h-72 rounded bg-gray-950 ring-1 ring-gray-800">
+            {d.blocks.map((b, i) => (
+              <div key={i} title={`${name(b.presetId)}, ${b.time}`}
+                className={`absolute inset-x-0.5 overflow-hidden rounded px-1 text-[10px] leading-tight text-white ${color(b.presetId)}`}
+                style={{ top: `${b.top}%`, height: `max(${b.height}%, 0.9rem)` }}>
+                {name(b.presetId)}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-gray-500">Times in your timezone ({viewerTz}). Paused schedules aren&apos;t shown.</p>
     </div>
   )
 }

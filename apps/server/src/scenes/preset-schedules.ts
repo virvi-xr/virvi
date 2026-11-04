@@ -312,12 +312,22 @@ export async function liveStatus(sceneId: string, now = new Date()): Promise<Liv
   return { reason, nextSwitch: next }
 }
 
+export interface WeekOccurrence { scheduleId: string; presetId: string; start: string; end: string | null }
+
+/** Every enabled schedule's occurrences starting within [from, to], in start order: the dashboard's week view. */
+export async function weekOccurrences(sceneId: string, from: Date, to: Date): Promise<WeekOccurrence[]> {
+  const rows = await db.select().from(scenePresetSchedules).where(and(eq(scenePresetSchedules.sceneId, sceneId), eq(scenePresetSchedules.enabled, true)))
+  return rows
+    .flatMap((s) => occurrencesBetween(specOf(s), from, to).map((o) => ({ scheduleId: s.id, presetId: s.presetId, start: o.start.toISOString(), end: o.end?.toISOString() ?? null })))
+    .sort((a, b) => a.start.localeCompare(b.start))
+}
+
 /** The scene's schedules (with their next runs) and its recent run history, newest first. */
 export async function listSchedules(sceneId: string, now = new Date()) {
   const rows = await db.select().from(scenePresetSchedules).where(eq(scenePresetSchedules.sceneId, sceneId)).orderBy(scenePresetSchedules.createdAt)
   const runs = await db.select().from(scenePresetScheduleRuns).where(eq(scenePresetScheduleRuns.sceneId, sceneId))
     .orderBy(desc(scenePresetScheduleRuns.occurrenceStart)).limit(20)
-  return { schedules: rows.map((s) => ({ ...s, nextRuns: nextRunsOf(s, now) })), runs, status: await liveStatus(sceneId, now) }
+  return { schedules: rows.map((s) => ({ ...s, nextRuns: nextRunsOf(s, now) })), runs, status: await liveStatus(sceneId, now), week: await weekOccurrences(sceneId, new Date(now.getTime() - DAY), new Date(now.getTime() + 8 * DAY)) }
 }
 
 /** Enabled schedules that still have runs to come and use the preset (as theirs or as where they return to). */

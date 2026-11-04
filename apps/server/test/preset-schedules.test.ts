@@ -3,7 +3,7 @@ import { DEFAULT_VENUE_RULES, VENUE_ROLE_SCOPES } from '@virvixr/shared'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { accessGrants, bookings, sceneCollaborators, scenePresets, scenePresetScheduleRuns, scenePresetSchedules, scenes, venues } from '../src/db/schema.js'
-import { liveStatus, runPresetScheduleSweep } from '../src/scenes/preset-schedules.js'
+import { liveStatus, runPresetScheduleSweep, weekOccurrences } from '../src/scenes/preset-schedules.js'
 import { initBus } from '../src/realtime/bus.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -218,6 +218,21 @@ describe('scheduled presets (LIV-86)', () => {
     it('ignores paused schedules', async () => {
       await schedule({ enabled: false })
       expect((await liveStatus(scene.id, at('2026-11-06T19:00:00Z'))).nextSwitch).toBeNull()
+    })
+  })
+
+  describe('the week ahead', () => {
+    it('lists every enabled occurrence starting in the window, with its end, in order', async () => {
+      const [night] = await db.insert(scenePresets).values({ sceneId: scene.id, name: 'Night' }).returning()
+      const daily = await schedule({ recurrence: 'daily', startDate: '2026-11-01', startTime: '19:00', durationMinutes: 60, timezone: 'America/New_York' })
+      const open = await schedule({ presetId: night.id, startDate: '2026-11-07', startTime: '02:00', durationMinutes: null })
+      await schedule({ startDate: '2026-11-06', startTime: '10:00', enabled: false })
+      const week = await weekOccurrences(scene.id, new Date('2026-11-06T01:00:00Z'), new Date('2026-11-08T00:00:00Z'))
+      expect(week).toEqual([
+        { scheduleId: daily.id, presetId: concert.id, start: '2026-11-07T00:00:00.000Z', end: '2026-11-07T01:00:00.000Z' }, // 19:00 EST on the 6th
+        { scheduleId: open.id, presetId: night.id, start: '2026-11-07T02:00:00.000Z', end: null },
+        { scheduleId: daily.id, presetId: concert.id, start: '2026-11-08T00:00:00.000Z', end: '2026-11-08T01:00:00.000Z' },
+      ])
     })
   })
 
