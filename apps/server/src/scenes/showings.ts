@@ -84,7 +84,7 @@ export function itemsWithoutLength(items: ProgrammeItem[]): string[] {
 // ── Stored showings: validation and lookups ─────────────────────────────────
 
 export class ShowingError extends Error {
-  constructor(public status: 400 | 409, public code: string, message: string, public extra: Record<string, unknown> = {}) {
+  constructor(public status: 400 | 404 | 409, public code: string, message: string, public extra: Record<string, unknown> = {}) {
     super(message)
   }
 }
@@ -180,18 +180,26 @@ export const specOfShowing = (row: Pick<ShowingRow, 'id' | 'items' | 'recurrence
   schedule: { recurrence: row.recurrence, startDate: row.startDate, startTime: row.startTime, weekdays: row.weekdays, timezone: row.timezone },
 })
 
-/** The first enabled showing on the screen this one would run into (from `now`), or null. */
-export async function findShowingClash(elementId: string, candidate: ShowingSpec, now: Date, ignoreId?: string): Promise<{ row: ShowingRow; at: string } | null> {
-  const others = (await db.select().from(screenShowings).where(and(eq(screenShowings.elementId, elementId), eq(screenShowings.enabled, true))))
+type Db = Pick<typeof db, 'select'>
+
+const firstDayOf = (spec: ShowingSpec) => zonedToUtc(spec.schedule.startDate, '00:00', spec.schedule.timezone).getTime() - DAY
+
+/**
+ * The first enabled showing on the screen this one would run into (from `now`), or null. Each pair is checked from
+ * when both have begun (the later first day, or now), so a showing starting years ahead is still compared.
+ */
+export async function findShowingClash(elementId: string, candidate: ShowingSpec, now: Date, ignoreId?: string, tx: Db = db): Promise<{ row: ShowingRow; at: string } | null> {
+  const others = (await tx.select().from(screenShowings).where(and(eq(screenShowings.elementId, elementId), eq(screenShowings.enabled, true))))
     .filter((r) => r.id !== ignoreId)
-  // From the candidate's first day (or now, if that's passed): a showing starting years ahead is checked there
-  const firstDay = zonedToUtc(candidate.schedule.startDate, '00:00', candidate.schedule.timezone).getTime() - DAY
-  const overlaps = showingOverlaps([...others.map(specOfShowing), candidate], new Date(Math.max(now.getTime(), firstDay)))
-  const hit = overlaps.find((o) => o.first === candidate.id || o.second === candidate.id)
-  if (!hit) return null
-  const otherId = hit.first === candidate.id ? hit.second : hit.first
-  if (otherId === candidate.id) return { row: { id: candidate.id, title: candidate.title ?? null } as ShowingRow, at: hit.at }
-  return { row: others.find((r) => r.id === otherId)!, at: hit.at }
+  const from = (...specs: ShowingSpec[]) => new Date(Math.max(now.getTime(), ...specs.map(firstDayOf)))
+  const self = showingOverlaps([candidate], from(candidate))[0]
+  const clashes: Array<{ row: ShowingRow; at: string }> = self ? [{ row: { id: candidate.id, title: candidate.title ?? null } as ShowingRow, at: self.at }] : []
+  for (const row of others) {
+    const other = specOfShowing(row)
+    const hit = showingOverlaps([other, candidate], from(other, candidate)).find((o) => o.first !== o.second)
+    if (hit) clashes.push({ row, at: hit.at })
+  }
+  return clashes.sort((a, b) => a.at.localeCompare(b.at))[0] ?? null
 }
 
 /** A showing as the API returns it: its length and next three starts. */

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { mediaAssets, sceneCollaborators, screenShowings } from '../src/db/schema.js'
+import { mediaAssets, sceneCollaborators, sceneElements, screenShowings } from '../src/db/schema.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -84,6 +84,31 @@ describe('screen showings routes', () => {
     const other = await createElement(preset.id, { type: 'video' })
     expect((await call(owner, 'POST', `/api/elements/${other.id}/showings`, fridays('20:00'))).statusCode).toBe(201)
     expect((await call(owner, 'POST', `/api/elements/${screenId}/showings`, fridays('20:00', { enabled: false }))).statusCode).toBe(201)
+  })
+
+  it('catches a clash with a showing that only starts years later', async () => {
+    const later = await call(owner, 'POST', `/api/elements/${screenId}/showings`, fridays('19:00', { startDate: '2033-01-01' }))
+    expect(later.statusCode).toBe(201)
+    const now = await call(owner, 'POST', `/api/elements/${screenId}/showings`, fridays('19:00', { startDate: '2026-01-01' }))
+    expect(now.statusCode).toBe(409)
+    expect(now.json().showingId).toBe(later.json().showing.id)
+  })
+
+  it('two showings saved at the same moment cannot both get in', async () => {
+    const results = await Promise.all([
+      call(owner, 'POST', `/api/elements/${screenId}/showings`, fridays('19:00')),
+      call(owner, 'POST', `/api/elements/${screenId}/showings`, fridays('19:30')),
+      call(owner, 'POST', `/api/elements/${screenId}/showings`, fridays('20:00')),
+    ])
+    expect(results.map((r) => r.statusCode).sort()).toEqual([201, 409, 409])
+    expect(await db.select().from(screenShowings)).toHaveLength(1)
+  })
+
+  it('showings of a screen that stopped being a video can still be deleted', async () => {
+    const s = (await call(owner, 'POST', `/api/elements/${screenId}/showings`, fridays('19:00'))).json().showing
+    await db.update(sceneElements).set({ type: 'image' }).where(eq(sceneElements.id, screenId))
+    expect((await call(owner, 'GET', `/api/elements/${screenId}/showings`)).statusCode).toBe(200)
+    expect((await call(owner, 'DELETE', `/api/showings/${s.id}`)).statusCode).toBe(204)
   })
 
   it('refuses a daily showing longer than a day (it would run into itself)', async () => {
