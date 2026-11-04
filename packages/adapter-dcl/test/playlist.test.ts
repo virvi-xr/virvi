@@ -173,3 +173,64 @@ describe('DclAdapter start position (scheduled showings)', () => {
     expect(player().vp.position).toBeUndefined()
   })
 })
+
+describe('DclAdapter video position (drift correction)', () => {
+  beforeEach(() => sdk.reset())
+
+  const setup = () => {
+    const clock = { now: 1_000_000 }
+    const adapter = new DclAdapter(() => clock.now)
+    const screenEntity = adapter.createEntity()
+    adapter.createVideoPlayer(screenEntity, { src: 'https://v/film.mp4', playing: true, position: 100 })
+    const report = (state: number, currentOffset: number, timestamp: number) =>
+      sdk.states.set(player().e, { state, currentOffset, videoLength: 5400, timestamp } as any)
+    const step = (ms: number) => {
+      clock.now += ms
+      frame()
+    }
+    return { adapter, screenEntity, report, step }
+  }
+
+  it('is unknown until the player has reported while being watched', () => {
+    const { adapter, screenEntity, report } = setup()
+    expect(adapter.getVideoPosition(screenEntity)).toBeNull()
+    report(sdk.VS_PLAYING, 100, 1)
+    // The report was there before anyone watched it: when it arrived is unknown
+    expect(adapter.getVideoPosition(screenEntity)).toBeNull()
+  })
+
+  it('counts on from the last report while playing', () => {
+    const { adapter, screenEntity, report, step } = setup()
+    adapter.getVideoPosition(screenEntity)
+    report(sdk.VS_PLAYING, 101, 1)
+    step(16)
+    step(4_000)
+    expect(adapter.getVideoPosition(screenEntity)).toBeCloseTo(105, 1)
+    report(sdk.VS_PLAYING, 104, 2) // a fresh report wins over the estimate
+    step(16)
+    expect(adapter.getVideoPosition(screenEntity)).toBeCloseTo(104, 1)
+  })
+
+  it('is unknown while loading, buffering or paused', () => {
+    const { adapter, screenEntity, report, step } = setup()
+    adapter.getVideoPosition(screenEntity)
+    report(sdk.VS_LOADING, 0, 1)
+    step(16)
+    expect(adapter.getVideoPosition(screenEntity)).toBeNull()
+    report(sdk.VS_PAUSED, 120, 2)
+    step(16)
+    expect(adapter.getVideoPosition(screenEntity)).toBeNull()
+  })
+
+  it('a re-seek starts over on the new player', () => {
+    const { adapter, screenEntity, report, step } = setup()
+    adapter.getVideoPosition(screenEntity)
+    report(sdk.VS_PLAYING, 101, 1)
+    step(16)
+    adapter.createVideoPlayer(screenEntity, { src: 'https://v/film.mp4', playing: true, position: 300 })
+    expect(adapter.getVideoPosition(screenEntity)).toBeNull()
+    report(sdk.VS_PLAYING, 300, 1)
+    step(16)
+    expect(adapter.getVideoPosition(screenEntity)).toBeCloseTo(300, 1)
+  })
+})

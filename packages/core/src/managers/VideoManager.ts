@@ -1,4 +1,4 @@
-import { screenStateAt, type ShowingInstance } from '@virvixr/shared'
+import { needsResync, screenStateAt, type ShowingInstance } from '@virvixr/shared'
 import { AD_LIMITS, VideoSourceType } from '@virvixr/shared'
 import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
@@ -46,6 +46,10 @@ interface VideoInstance {
   showingTick?: (dt: number) => void
   /** Schedule mode: what's on screen now ('<showing>@<start>#<item>' or 'between'), to act only on a change. */
   showingKey?: string
+  /** Schedule mode: when (local ms) the current video was last started or re-seeked, and how many re-seeks it has had. */
+  showingSeekAt?: number
+  showingSeeks?: number
+  showingDriftCheckAt?: number
 }
 
 /** A `screen_showings` message (see apps/server src/scenes/showings.ts). */
@@ -57,6 +61,11 @@ export interface ScreenShowingsMessage {
 
 /** How often a scheduled screen checks whether it's time for the next item or showing. */
 const SHOWING_CHECK_S = 0.25
+/** Drift correction: how often to compare the player with the show, how long a fresh start gets to settle, how many tries a video gets, and how close to its end a video is left alone. */
+const SHOWING_DRIFT_CHECK_MS = 5_000
+const SHOWING_SETTLE_MS = 30_000
+const SHOWING_MAX_RESEEKS = 3
+const SHOWING_MIN_LEFT_S = 10
 
 export class VideoManager {
   private adapter: VirviPlatformAdapter
@@ -112,10 +121,30 @@ export class VideoManager {
       since += dt
       if (since < SHOWING_CHECK_S) return
       since = 0
-      if (this.showingState(config.sk).key !== instance.showingKey) this.renderShowing(instance, config)
+      const { state, key } = this.showingState(config.sk)
+      if (key !== instance.showingKey) return this.renderShowing(instance, config)
+      if (state.mode === 'playing') this.correctDrift(instance, config, state.item.url, state.offset, state.item.duration)
     }
     instance.showingTick = tick
     this.adapter.registerSystem(tick)
+  }
+
+  /**
+   * A player that has slipped from the shared clock (buffering, a stall, a slow start) is moved back to where the show is.
+   * Each video gets a few tries, spaced out, so a player that can't keep up isn't restarted over and over.
+   */
+  private correctDrift(instance: VideoInstance, config: VideoConfig, src: string, expected: number, duration: number): void {
+    if (!this.adapter.getVideoPosition) return
+    const now = this.now()
+    if (now - (instance.showingDriftCheckAt ?? 0) < SHOWING_DRIFT_CHECK_MS) return
+    if (now - (instance.showingSeekAt ?? 0) < SHOWING_SETTLE_MS) return
+    if ((instance.showingSeeks ?? 0) >= SHOWING_MAX_RESEEKS || duration - expected < SHOWING_MIN_LEFT_S) return
+    instance.showingDriftCheckAt = now
+    const actual = this.adapter.getVideoPosition(instance.entity)
+    if (actual === null || !needsResync(expected, actual)) return
+    instance.showingSeeks = (instance.showingSeeks ?? 0) + 1
+    instance.showingSeekAt = now
+    this.adapter.createVideoPlayer(instance.entity, { src, playing: true, loop: false, volume: config.volume, position: expected })
   }
 
   private renderShowing(instance: VideoInstance, config: VideoConfig): void {
@@ -123,6 +152,8 @@ export class VideoManager {
     const prev = instance.showingKey
     instance.showingKey = key
     if (state.mode === 'playing') {
+      instance.showingSeekAt = this.now()
+      instance.showingSeeks = 0
       // Everyone starts at the same second: the item, and how far into it the shared clock says the show is
       this.adapter.createVideoPlayer(instance.entity, {
         src: state.item.url, playing: true, loop: false, volume: config.volume, position: state.offset,

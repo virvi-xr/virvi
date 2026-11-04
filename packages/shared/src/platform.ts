@@ -61,6 +61,11 @@ export interface VirviPlatformAdapter {
   setVideoVolume(entity: EntityHandle, volume: number): void;
   getVideoState(entity: EntityHandle): VideoState;
   /**
+   * Optional: seconds into the video playing on this entity, or null while it isn't playing or the player hasn't said.
+   * Scheduled showings use it to pull a drifting player back to the shared clock; without it, players are never corrected.
+   */
+  getVideoPosition?(entity: EntityHandle): number | null;
+  /**
    * Optional: call cb when the video playing on this entity reaches its end. A later call for the same entity
    * replaces the callback. Without it, playlists don't advance and video ads never play.
    */

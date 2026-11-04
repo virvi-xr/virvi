@@ -140,6 +140,86 @@ describe('scheduled screens', () => {
     expect(systems.size).toBe(0)
   })
 
+  describe('drift', () => {
+    // The player reports where it is; the film started at T0 + 60 s
+    const drifting = (localNow: number) => {
+      const t = setup(localNow)
+      const pos = { value: null as number | null }
+      t.adapter.getVideoPosition = vi.fn(() => pos.value)
+      t.sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
+      t.sm.handleScreenShowings(message(localNow))
+      t.adapter.createVideoPlayer.mockClear()
+      return { ...t, pos }
+    }
+
+    it('a player that falls behind is moved back to where the show is, after the first half minute', () => {
+      const { adapter, tick, pos } = drifting(T0 + 600_000)
+      pos.value = 500 // should be 540 + elapsed
+      tick(29_000)
+      expect(plays(adapter)).toBe(0) // still settling in after starting
+      tick(1_000)
+      expect(lastPlayer(adapter)).toMatchObject({ src: 'https://cdn/film.mp4', playing: true, position: 570 })
+    })
+
+    it('a player within the tolerance is left alone', () => {
+      const { adapter, tick, pos, clock } = drifting(T0 + 600_000)
+      for (let i = 0; i < 20; i++) {
+        pos.value = (clock.now + 5_000 - T0 - 60_000) / 1000 - 1.5
+        tick(5_000)
+      }
+      expect(plays(adapter)).toBe(0)
+    })
+
+    it('a player ahead of the show is moved back too', () => {
+      const { adapter, tick, pos } = drifting(T0 + 600_000)
+      pos.value = 600
+      tick(30_000)
+      expect(lastPlayer(adapter)).toMatchObject({ position: 570 })
+    })
+
+    it('no position yet (loading) means no re-seek', () => {
+      const { adapter, tick } = drifting(T0 + 600_000)
+      tick(120_000)
+      expect(plays(adapter)).toBe(0)
+    })
+
+    it('re-seeks at most every 30 s and gives up after 3 tries on the same video', () => {
+      const { adapter, tick, pos } = drifting(T0 + 600_000)
+      pos.value = 0 // a player that never catches up
+      for (let i = 0; i < 60; i++) tick(5_000)
+      expect(plays(adapter)).toBe(3)
+      const at = adapter.createVideoPlayer.mock.calls.map((c: any[]) => c[1].position)
+      expect(at).toEqual([570, 600, 630])
+    })
+
+    it('does not re-seek in the last seconds of a video', () => {
+      // The reel ends at T0 + 60 s; the check at T0 + 55 s would re-seek with 5 s left
+      const { adapter, tick, pos } = drifting(T0 + 25_000)
+      pos.value = 0
+      tick(30_000)
+      expect(plays(adapter)).toBe(0)
+    })
+
+    it('a new video gets its own tries', () => {
+      const { adapter, tick, pos } = drifting(T0 + 25_000)
+      pos.value = 0
+      tick(35_000) // the film starts at T0 + 60 s
+      expect(lastPlayer(adapter)).toMatchObject({ src: 'https://cdn/film.mp4', position: 0 })
+      adapter.createVideoPlayer.mockClear()
+      tick(30_000)
+      expect(lastPlayer(adapter)).toMatchObject({ src: 'https://cdn/film.mp4', position: 30 })
+    })
+
+    it('players that cannot report a position just keep playing', () => {
+      const { adapter, sm, tick } = setup(T0 + 600_000)
+      sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen()] } })
+      sm.handleScreenShowings(message(T0 + 600_000))
+      adapter.createVideoPlayer.mockClear()
+      tick(120_000)
+      expect(plays(adapter)).toBe(0)
+    })
+  })
+
   it('other modes ignore showings', () => {
     const { sm, adapter } = setup(T0 + 100_000)
     sm.handlePresetUpdate({ action: 'init', scenePreset: { videos: [screen({ offType: VideoSourceType.IMAGE })] } })

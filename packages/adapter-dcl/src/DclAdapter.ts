@@ -54,6 +54,11 @@ export class DclAdapter implements VirviPlatformAdapter {
   // Video end callbacks by display entity. `ended` is true while the video sits at its end, so one playback fires once.
   private videoEndWatchers: Map<number, { cb: () => void; ended: boolean }> = new Map()
   private videoEndSystemAdded = false
+  /** Screens whose video position is asked for, and per player entity the last report seen and when (local ms; null = before watching). */
+  private positionWatched: Set<number> = new Set()
+  private positionReports: Map<Entity, { timestamp?: number; state?: number; offset: number; at: number | null }> = new Map()
+  private positionSystemAdded = false
+  private now: () => number
 
   // Entities with hover handlers registered; a destroyed entity is dropped so its callbacks never fire.
   private hoverEntities: Set<number> = new Set()
@@ -65,7 +70,8 @@ export class DclAdapter implements VirviPlatformAdapter {
   private sceneFiles: Map<string, string> = new Map()
   private sceneFilesReady: Promise<void>
 
-  constructor() {
+  constructor(now: () => number = () => Date.now()) {
+    this.now = now
     this.sceneFilesReady = this.loadSceneFiles()
   }
 
@@ -416,6 +422,53 @@ export class DclAdapter implements VirviPlatformAdapter {
       return 3 // VideoState.PLAYING
     }
     return 0 // VideoState.NONE
+  }
+
+  /**
+   * The explorer only says where a video is when it sends a video event, so each frame notes when a new one arrives
+   * and the position counts on from there. Unknown until a report arrives while watched, and while not playing.
+   */
+  getVideoPosition(entity: EntityHandle): number | null {
+    const handle = entity as number
+    this.positionWatched.add(handle)
+    this.watchPositions()
+    const vpEntity = this.videoPlayerEntities.get(handle)
+    if (!vpEntity) return null
+    const report = this.positionReports.get(vpEntity)
+    if (!report) {
+      // Whatever is there now arrived at an unknown time: wait for the next one
+      this.positionReports.set(vpEntity, { timestamp: this.videoEvent(vpEntity)?.timestamp, offset: 0, at: null })
+      return null
+    }
+    if (report.at === null || report.state !== DclVideoState.VS_PLAYING) return null
+    return report.offset + (this.now() - report.at) / 1000
+  }
+
+  private videoEvent(vpEntity: Entity) {
+    try {
+      return VideoEvent.has(vpEntity) ? videoEventsSystem.getVideoState(vpEntity) : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private watchPositions(): void {
+    if (this.positionSystemAdded) return
+    this.positionSystemAdded = true
+    engine.addSystem(() => {
+      const live = new Set<Entity>()
+      for (const handle of this.positionWatched) {
+        const vp = this.videoPlayerEntities.get(handle)
+        if (!vp) continue
+        live.add(vp)
+        const ev = this.videoEvent(vp)
+        const report = this.positionReports.get(vp)
+        if (!ev || (report && report.timestamp === ev.timestamp)) continue
+        this.positionReports.set(vp, { timestamp: ev.timestamp, state: ev.state, offset: ev.currentOffset, at: this.now() })
+      }
+      // Players replaced by a re-seek or removed with their screen
+      for (const vp of this.positionReports.keys()) if (!live.has(vp)) this.positionReports.delete(vp)
+    })
   }
 
   onVideoEnded(entity: EntityHandle, cb: () => void): void {
