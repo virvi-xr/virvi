@@ -31,6 +31,9 @@ description: Complete reference for all Virvi environment variables
 | `S3_REGION` | S3 region |
 | `S3_ENDPOINT` | Custom S3 endpoint (for R2/MinIO) |
 | `CDN_URL` | Prepended to public file URLs |
+| `VIRVI_DCL_DEPLOY_KEY` | Private key (32-byte hex) of the wallet Virvi deploys World scenes with once an owner grants it |
+| `VIRVI_DCL_PARCEL_DEPLOY_KEY` | Private key (32-byte hex) of the wallet Virvi deploys Genesis City parcels with. Keep it separate from `VIRVI_DCL_DEPLOY_KEY`. Unset, browser signing still works and the "Make Virvi an operator" option is hidden |
+| `DCL_LAND_SUBGRAPH_URL` | Decentraland LAND subgraph used to read parcel and estate rights (default: `https://subgraph.decentraland.org/land-manager`) |
 
 ### Scene import files
 

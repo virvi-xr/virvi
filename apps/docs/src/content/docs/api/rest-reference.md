@@ -60,6 +60,20 @@ Requests for another account's scenes, deployments, events, giveaways, streams o
 
 Deploying needs full access to the scene (host or co-host). A deploy signs only with one of your own deployment wallets: a `walletId` that belongs to another account returns `404`.
 
+## Decentraland destinations
+
+Where a scene deploys to: a World or a set of Genesis City parcels. Parcel destinations deploy only after you sign, or after Virvi has been made an operator on every parcel.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/dcl/destinations/:id` | Yes | Destination detail: `kind` (`world` or `parcels`), `parcels`, `signers` (your wallets that can deploy), pending models and the last deployment |
+| GET | `/dcl/destinations/:id/parcel-grant` | Yes | Parcels: whether Virvi can be made an operator, whether it already is, and the transactions to send |
+| POST | `/dcl/destinations/:id/parcel-grant/check` | Yes | Parcels: read the rights fresh; Virvi deploys once it is an operator |
+| GET | `/dcl/destinations/:id/parcel-grant/revoke` | Yes | Parcels: the transactions that remove Virvi as operator |
+| POST | `/dcl/destinations/:id/parcel-grant/revoke/check` | Yes | Parcels: back to browser signing once Virvi is no longer an operator |
+
+Parcel routes need full access to the scene. Aetheria parcels report `aetheria: true` and return no grant transactions. World destinations answer the parcel-grant routes with `409 not_parcels`; use their `grant` and `revoke` routes instead.
+
 ## Streaming
 
 | Method | Path | Auth | Description |
