@@ -57,6 +57,7 @@ describe('hasAccountSession', () => {
     expect(hasAccountSession(stored({ exp: NOW / 1000 + 60, kind: 'account' }), NOW)).toBe(true)
     expect(hasAccountSession(stored({ exp: NOW / 1000 - 1, kind: 'account' }), NOW)).toBe(false)
     expect(hasAccountSession(stored({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1' }), NOW)).toBe(false)
+    expect(hasAccountSession(stored({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: null, via: 'studio' }), NOW)).toBe(false)
     expect(hasAccountSession(stored({ exp: NOW / 1000 + 60 }), NOW)).toBe(false)
     expect(hasAccountSession(null, NOW)).toBe(false)
     expect(hasAccountSession('{not json', NOW)).toBe(false)

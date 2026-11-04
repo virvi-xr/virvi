@@ -15,6 +15,8 @@ describe('readSession', () => {
     expect(readSession(tok({ exp, kind: 'account' }), NOW)).toEqual({ ok: true, scenePass: null })
     expect(readSession(tok({ exp, kind: 'scene', sceneId: 's1', locationId: 'l1' }), NOW)).toEqual({ ok: true, scenePass: { sceneId: 's1', locationId: 'l1' } })
     expect(readSession(tok({ exp, kind: 'scene', sceneId: null }), NOW)).toEqual({ ok: false })
+    // The studio scene's pass is a visitor pass too: never kept, never an account session.
+    expect(readSession(tok({ exp, kind: 'scene', sceneId: null, locationId: null, via: 'studio' }), NOW)).toEqual({ ok: false })
   })
 })
 

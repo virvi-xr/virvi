@@ -14,8 +14,8 @@ export interface SessionClaims {
   kind?: TokenKind
   sceneId?: string | null
   locationId?: string | null
-  /** Set on a Hyperfy HUD pass (the pairing that minted it) or an AR pass (the headset), checked on every request. */
-  via?: 'hyperfy' | 'ar'
+  /** Set on a Hyperfy HUD pass (the pairing that minted it) or an AR pass (the headset), checked on every request; 'studio' on the studio scene's pass. */
+  via?: 'hyperfy' | 'ar' | 'studio'
   pairingId?: string
   worldId?: string
   deviceId?: string

@@ -4,6 +4,7 @@ import { db } from '../db/connection.js'
 import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders } from '../db/schema.js'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
+import { STUDIO_ROUTE_SCENE_PASS } from '../auth/scene-from.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
 import { verifyRenderFrame, framePath } from '../studio/render-urls.js'
@@ -91,13 +92,15 @@ async function openLimit(userId: string) {
 }
 
 export default async function studioRoutes(app: FastifyInstance) {
-  const auth = { preHandler: [authenticate, studioOn] }
-  const work = { preHandler: [authenticate, studioOn, notPaused] }
+  // Every customer route takes the studio scene's pass too (and no other scene pass).
+  const routeConfig = { scenePass: STUDIO_ROUTE_SCENE_PASS }
+  const auth = { preHandler: [authenticate, studioOn], config: routeConfig }
+  const work = { preHandler: [authenticate, studioOn, notPaused], config: routeConfig }
 
   // Not behind notPaused: a paused account may still redeem. Guessing is slow: 10 tries an hour per account.
   app.post('/api/studio/gift-codes/redeem', {
     ...auth,
-    config: { rateLimit: { max: 10, timeWindow: '1 hour', hook: 'preHandler', keyGenerator: (r: FastifyRequest) => r.user.id } },
+    config: { ...auth.config, rateLimit: { max: 10, timeWindow: '1 hour', hook: 'preHandler', keyGenerator: (r: FastifyRequest) => r.user.id } },
   }, async (request, reply) => {
     const b = (request.body ?? {}) as { code?: unknown }
     if (typeof b.code !== 'string' || b.code.length > 100) return reply.status(400).send({ error: 'code must be text' })
