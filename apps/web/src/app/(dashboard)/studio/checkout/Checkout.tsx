@@ -1,10 +1,11 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
 import { getBrowserWallet, useAuth, type Eip1193Provider } from '@/lib/auth'
 import { PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { formatMana, sendMana, walletRejected } from '@/lib/mana'
+import { MANA_IDLE, canQuote, confirmOutcome, manaReducer, manaView, onSent, type ManaEvent, type ManaState } from '@/lib/mana-flow'
 import {
   checkoutReportsKey, checkoutTarget, checkoutTotals, countdown, formatCents, formatCredit, HELD_REPORT_COPY, lineNote, PRICE_LABEL, refusalMessage,
   type CheckoutMethod, type CheckoutResult, type CheckoutTarget, type ManaQuote, type Quote, type StudioUsage,
@@ -13,22 +14,9 @@ import {
 /** How often the page asks about a sent MANA transaction until Polygon confirms it. */
 const POLL_MS = 5000
 const NO_WALLET = 'Pay with MANA needs a browser wallet like MetaMask. You can pay by card.'
-const CONFIRMING = 'Waiting for Polygon confirmations…'
 
 type OrderLine = { key: string; name: string; detail: string; amountCents: number; note: string | null; struck: boolean; held: boolean }
 type Order = { lines: OrderLine[]; totalCents: number; creditCents: number; dueCents: number }
-
-/**
- * Pay with MANA, step by step: a quote, the wallet sending it, then Polygon confirming it. `quoted` is a quote the
- * wallet didn't send (an error that isn't the person saying no): send it again, or get a new price once it expires.
- */
-type ManaStep =
-  | { step: 'idle' }
-  | { step: 'quoting' }
-  | { step: 'sending'; quote: ManaQuote }
-  | { step: 'quoted'; quote: ManaQuote; error: string }
-  | { step: 'confirming'; quote: ManaQuote; hash: string }
-  | { step: 'mismatch'; hash: string; text: string }
 
 /** The design's payable lines (only `categories`, when given), with the dialog's mistake reports waiving theirs. */
 function designOrder(quote: Quote, categories: string[] | null, reports: Record<string, string>): Order {
@@ -68,8 +56,6 @@ function readReports(designId: string): Record<string, string> {
   }
 }
 
-const codeOf = (err: unknown) => (err as { body?: { code?: string } })?.body?.code
-
 export default function Checkout() {
   const { token } = useAuth()
   const api = useApi()
@@ -84,10 +70,15 @@ export default function Checkout() {
   const [wallet, setWallet] = useState<Eip1193Provider | null>(null)
   const [cardBusy, setCardBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mana, setMana] = useState<ManaStep>({ step: 'idle' })
+  // Pay with MANA's steps (lib/mana-flow.ts). The ref is the latest state for the flow's awaits: dispatch updates it at once.
+  const [mana, dispatchMana] = useReducer(manaReducer, MANA_IDLE)
+  const manaRef = useRef<ManaState>(mana)
+  const dispatch = (e: ManaEvent) => {
+    manaRef.current = manaReducer(manaRef.current, e)
+    dispatchMana(e)
+  }
+  const latest = (): ManaState => manaRef.current
   const [now, setNow] = useState(() => new Date())
-  // Each MANA attempt's number: a wallet answering an attempt the person has moved on from is ignored
-  const attempt = useRef(0)
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
@@ -138,7 +129,8 @@ export default function Checkout() {
   const order = target.kind === 'design'
     ? quote && designOrder(quote, target.categories, reports)
     : usage && topupOrder(usage, target.packs)
-  const busy = cardBusy || mana.step !== 'idle'
+  const view = manaView(mana, now)
+  const cardDisabled = cardBusy || !view.cardOpen
 
   if (loadError) {
     return (
@@ -192,68 +184,69 @@ export default function Checkout() {
   }
 
   const payMana = async () => {
-    const mine = ++attempt.current
+    if (!canQuote(latest())) return
+    dispatch({ type: 'pay' })
+    const mine = latest().attempt
     setError(null)
-    setMana({ step: 'quoting' })
     let q: ManaQuote | null
     try {
       q = follow(await run('mana'))
     } catch (err) {
-      if (mine !== attempt.current) return
-      setError(refusalMessage(err as never, new Date()).text)
-      setMana({ step: 'idle' })
+      if (latest().attempt === mine) setError(refusalMessage(err as never, new Date()).text)
+      dispatch({ type: 'quoteFailed', attempt: mine })
       return
     }
-    if (q && mine === attempt.current) await send(q, mine)
-  }
-
-  const send = async (q: ManaQuote, mine: number) => {
+    if (!q) return // fully covered: on the way to the design
+    dispatch({ type: 'quote', attempt: mine, quote: q })
+    const cur = latest()
+    if (cur.step !== 'sending' || cur.attempt !== mine) return
     const w = wallet ?? getBrowserWallet()
     if (!w) {
-      setMana({ step: 'idle' })
+      dispatch({ type: 'rejected', attempt: mine })
       setError(NO_WALLET)
       return
     }
-    setError(null)
-    setMana({ step: 'sending', quote: q })
     let hash: string
     try {
       hash = await sendMana(w, q)
     } catch (err) {
-      if (mine !== attempt.current) return
-      if (walletRejected(err)) setMana({ step: 'idle' })
-      else setMana({ step: 'quoted', quote: q, error: (err as Error)?.message || 'Your wallet didn’t send the payment. Try again.' })
+      dispatch(walletRejected(err)
+        ? { type: 'rejected', attempt: mine }
+        : { type: 'walletError', attempt: mine, text: `${(err as Error)?.message || 'Your wallet didn’t send the payment.'} Get a new price to try again.` })
       return
     }
-    if (mine !== attempt.current) return
-    setMana({ step: 'confirming', quote: q, hash })
+    const sent = onSent(latest(), mine, q, hash)
+    if (sent.reportStale) {
+      // The page moved on, but this MANA was sent: the server can still settle it (a duplicate becomes credit)
+      apiRef.current.reportStudioManaTx(sent.reportStale.paymentId, sent.reportStale.hash).catch(() => {})
+      return
+    }
+    dispatch({ type: 'sent', attempt: mine, hash })
     await confirm(q, hash, mine)
   }
 
-  /** Reports the hash until Polygon has mined it, then follows the payment until it is paid. */
+  /** Reports the hash until Polygon has mined it, then follows the payment until it is paid (or closes unpaid). */
   const confirm = async (q: ManaQuote, hash: string, mine: number) => {
     let claimed = false
-    while (alive.current && mine === attempt.current) {
+    while (alive.current && latest().step === 'confirming' && latest().attempt === mine) {
+      let outcome: ReturnType<typeof confirmOutcome>
       try {
-        if (!claimed) {
-          if ((await apiRef.current.reportStudioManaTx(q.paymentId, hash)).status === 'granted') return finish(q.paymentId)
-          claimed = true
-        } else if ((await apiRef.current.getStudioPayment(q.paymentId)).status === 'paid') {
-          return finish(q.paymentId)
-        }
+        outcome = claimed
+          ? confirmOutcome({ paymentStatus: (await apiRef.current.getStudioPayment(q.paymentId)).status })
+          : confirmOutcome({ reported: (await apiRef.current.reportStudioManaTx(q.paymentId, hash)).status })
       } catch (err) {
-        const code = codeOf(err)
-        const status = (err as { status?: number }).status ?? 0
-        if (code === 'tx_failed') {
-          setMana({ step: 'quoted', quote: q, error: refusalMessage(err as never, new Date()).text })
-          return
+        outcome = confirmOutcome({ err: err as never })
+      }
+      if (outcome === 'paid') return finish(q.paymentId)
+      if (outcome === 'claimed') claimed = true
+      else if (typeof outcome === 'object') {
+        if ('txFailed' in outcome) {
+          dispatch({ type: 'txFailed', attempt: mine, text: refusalMessage({ body: { code: 'tx_failed' } }, new Date()).text })
+        } else {
+          const code = outcome.support === 'tx_used' ? 'tx_used' : 'tx_mismatch'
+          dispatch({ type: 'support', attempt: mine, hash, text: refusalMessage({ body: { code } }, new Date()).text })
         }
-        // Not mined yet (tx_not_found), or the network or server hiccuped: ask again. Anything else is for support.
-        if (code !== 'tx_not_found' && status >= 400 && status < 500) {
-          const text = code === 'tx_used' ? refusalMessage(err as never, new Date()).text : refusalMessage({ body: { code: 'tx_mismatch' } }, new Date()).text
-          setMana({ step: 'mismatch', hash, text })
-          return
-        }
+        return
       }
       await new Promise((r) => setTimeout(r, POLL_MS))
     }
@@ -302,7 +295,7 @@ export default function Checkout() {
 
       {due === 0 ? (
         <div className="mt-4">
-          <PrimaryButton type="button" disabled={busy} onClick={payCard}>{cardBusy ? 'Finalizing…' : 'Finalize'}</PrimaryButton>
+          <PrimaryButton type="button" disabled={cardDisabled} onClick={payCard}>{cardBusy ? 'Finalizing…' : 'Finalize'}</PrimaryButton>
           <p className="mt-2 text-xs text-gray-500">Nothing to pay: your credit, gifts or reports cover it.</p>
         </div>
       ) : (
@@ -310,7 +303,7 @@ export default function Checkout() {
           <section aria-labelledby="card-title" className="rounded-lg border border-gray-800 bg-gray-900 p-4">
             <h2 id="card-title" className="text-sm font-medium">Pay by card</h2>
             <p className="mt-1 text-xs text-gray-500">Secure checkout with Stripe.</p>
-            <PrimaryButton type="button" className="mt-3" disabled={busy} onClick={payCard}>
+            <PrimaryButton type="button" className="mt-3" disabled={cardDisabled} onClick={payCard}>
               {cardBusy ? 'Opening Stripe…' : `Pay ${formatCents(due)} by card`}
             </PrimaryButton>
           </section>
@@ -319,7 +312,7 @@ export default function Checkout() {
               <h2 id="mana-title" className="text-sm font-medium">Pay with MANA</h2>
               <p className="mt-1 text-xs text-gray-500">On Polygon, at today’s MANA price, from any wallet.</p>
               {wallet
-                ? <ManaPanel mana={mana} now={now} disabled={cardBusy} onPay={payMana} onSend={(q) => send(q, attempt.current)} />
+                ? <ManaPanel mana={mana} now={now} disabled={cardBusy} onPay={payMana} />
                 : <p className="mt-3 text-sm text-gray-300">{NO_WALLET}</p>}
             </section>
           )}
@@ -329,52 +322,33 @@ export default function Checkout() {
   )
 }
 
-function ManaPanel({ mana, now, disabled, onPay, onSend }: {
-  mana: ManaStep; now: Date; disabled: boolean; onPay: () => void; onSend: (q: ManaQuote) => void
-}) {
-  if (mana.step === 'idle' || mana.step === 'quoting') {
-    return (
-      <PrimaryButton type="button" className="mt-3" disabled={disabled || mana.step === 'quoting'} onClick={onPay}>
-        {mana.step === 'quoting' ? 'Getting the MANA price…' : 'Pay with MANA'}
-      </PrimaryButton>
-    )
-  }
-  if (mana.step === 'mismatch') {
-    return (
-      <div className="mt-3 space-y-2 text-sm" role="alert">
-        <p className="text-amber-300">{mana.text}</p>
-        <p className="text-gray-400">Transaction: <a className="break-all text-blue-300 underline" href={`https://polygonscan.com/tx/${mana.hash}`} target="_blank" rel="noreferrer">{mana.hash}</a></p>
-      </div>
-    )
-  }
-  const q = mana.quote
-  const amount = <p className="mt-3 text-2xl font-semibold text-white">{formatMana(q.amountWei)}</p>
-  if (mana.step === 'confirming') {
-    return (
-      <div className="text-sm">
-        {amount}
-        <p className="mt-2 text-gray-300" role="status">{CONFIRMING}</p>
-        <p className="mt-1 text-xs text-gray-500">This takes a minute or two. You can keep this page open.</p>
-        <p className="mt-2 text-xs text-gray-500">Transaction: <a className="break-all text-blue-300 underline" href={`https://polygonscan.com/tx/${mana.hash}`} target="_blank" rel="noreferrer">{mana.hash}</a></p>
-      </div>
-    )
-  }
-  const expired = new Date(q.expiresAt).getTime() <= now.getTime()
+function ManaPanel({ mana, now, disabled, onPay }: { mana: ManaState; now: Date; disabled: boolean; onPay: () => void }) {
+  const v = manaView(mana, now)
+  const q = v.quote
+  const hash = 'hash' in mana ? mana.hash : null
   return (
     <div className="text-sm">
-      {amount}
-      <p className="mt-1 text-xs text-gray-500">
-        {formatCents(q.usdCents)} at ${q.usdPerMana.toFixed(4)} per MANA · {expired ? 'price expired' : `price held for ${countdown(q.expiresAt, now)}`}
-      </p>
-      {mana.step === 'sending' && !expired && <p className="mt-2 text-gray-300" role="status">Confirm the payment in your wallet.</p>}
-      {mana.step === 'quoted' && <p className="mt-2 text-amber-300" role="alert">{mana.error}</p>}
-      {expired ? (
+      {q && mana.step !== 'mismatch' && (
         <>
-          <p className="mt-2 text-gray-300">This price has expired. {mana.step === 'sending' && 'If your wallet still shows it, reject it there. '}Get a new price to pay.</p>
-          <PrimaryButton type="button" className="mt-3" disabled={disabled} onClick={onPay}>Get a new price</PrimaryButton>
+          <p className="mt-3 text-2xl font-semibold text-white">{formatMana(q.amountWei)}</p>
+          {mana.step !== 'confirming' && (
+            <p className="mt-1 text-xs text-gray-500">
+              {formatCents(q.usdCents)} at ${q.usdPerMana.toFixed(4)} per MANA · {v.expired ? 'price expired' : `price held for ${countdown(q.expiresAt, now)}`}
+            </p>
+          )}
         </>
-      ) : mana.step === 'quoted' && (
-        <PrimaryButton type="button" className="mt-3" disabled={disabled} onClick={() => onSend(q)}>Send {formatMana(q.amountWei)}</PrimaryButton>
+      )}
+      {v.message && (
+        <p className={`mt-2 ${v.tone === 'alert' ? 'text-amber-300' : 'text-gray-300'}`} role={v.tone ?? undefined}>{v.message}</p>
+      )}
+      {mana.step === 'confirming' && <p className="mt-1 text-xs text-gray-500">This takes a minute or two. You can keep this page open.</p>}
+      {hash && (
+        <p className="mt-2 text-xs text-gray-500">Transaction: <a className="break-all text-blue-300 underline" href={`https://polygonscan.com/tx/${hash}`} target="_blank" rel="noreferrer">{hash}</a></p>
+      )}
+      {(v.action || mana.step === 'quoting') && (
+        <PrimaryButton type="button" className="mt-3" disabled={disabled || mana.step === 'quoting'} onClick={onPay}>
+          {mana.step === 'quoting' ? 'Getting the MANA price…' : v.action === 'requote' ? 'Get a new price' : 'Pay with MANA'}
+        </PrimaryButton>
       )}
     </div>
   )

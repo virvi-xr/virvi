@@ -76,13 +76,24 @@ describe('sendMana', () => {
     const w = fakeWallet({
       eth_requestAccounts: () => ['0xabc0000000000000000000000000000000000001'],
       wallet_switchEthereumChain: () => null,
+      eth_chainId: () => '0x89',
       eth_sendTransaction: () => '0xhash',
     })
     expect(await sendMana(w, q)).toBe('0xhash')
-    expect(w.calls.map((c) => c.method)).toEqual(['eth_requestAccounts', 'wallet_switchEthereumChain', 'eth_sendTransaction'])
-    expect(w.calls[2].params).toEqual([{
+    expect(w.calls.map((c) => c.method)).toEqual(['eth_requestAccounts', 'wallet_switchEthereumChain', 'eth_chainId', 'eth_sendTransaction'])
+    expect(w.calls[3].params).toEqual([{
       from: '0xabc0000000000000000000000000000000000001', to: TOKEN, data: encodeTransfer(RECIPIENT, BigInt('116000000000000000007')),
     }])
+  })
+  it('sends nothing when the wallet is still not on Polygon after switching', async () => {
+    const w = fakeWallet({
+      eth_requestAccounts: () => ['0xabc0000000000000000000000000000000000001'],
+      wallet_switchEthereumChain: () => null,
+      eth_chainId: () => '0x1',
+      eth_sendTransaction: () => '0xhash',
+    })
+    await expect(sendMana(w, q)).rejects.toThrow(/Polygon/)
+    expect(w.calls.map((c) => c.method)).not.toContain('eth_sendTransaction')
   })
   it('refuses with no account', async () => {
     const w = fakeWallet({ eth_requestAccounts: () => [] })

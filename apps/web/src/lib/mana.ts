@@ -60,6 +60,9 @@ export async function sendMana(w: Eip1193Provider, q: Pick<ManaQuote, 'token' | 
   const from = accounts?.[0]
   if (!from) throw new Error('No wallet account selected')
   await ensurePolygon(w)
+  // Some wallets accept the switch and stay put: never send MANA on another chain
+  const chainId = await w.request({ method: 'eth_chainId' })
+  if (typeof chainId !== 'string' || chainId.toLowerCase() !== POLYGON) throw new Error('Your wallet isn’t on Polygon. Switch it to Polygon and try again.')
   const hash = await w.request({
     method: 'eth_sendTransaction',
     params: [{ from, to: q.token, data: encodeTransfer(q.recipient, BigInt(q.amountWei)) }],
