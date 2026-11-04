@@ -45,6 +45,9 @@ export class DclAdapter implements VirviPlatformAdapter {
   /** Sent with every request, so the server can tell an old HUD to redeploy (426 redeploy_required). */
   readonly hudProtocol = DCL_HUD_PROTOCOL
 
+  /** Models with collisions on: the GltfContainer visible-mesh mask to (re)apply whenever their model is set. */
+  private meshCollisionMasks = new Map<Entity, number>()
+
   // Video player entities -- DCL uses a separate entity for the VideoPlayer component
   private videoPlayerEntities: Map<number, Entity> = new Map()
 
@@ -244,6 +247,7 @@ export class DclAdapter implements VirviPlatformAdapter {
   }
 
   destroyEntity(handle: EntityHandle): void {
+    this.meshCollisionMasks.delete(handle as Entity)
     this.hoverEntities.delete(handle as number)
     this.videoEndWatchers.delete(handle as number)
     engine.removeEntity(handle as Entity)
@@ -293,7 +297,9 @@ export class DclAdapter implements VirviPlatformAdapter {
   }
 
   setGltfModel(entity: EntityHandle, src: string): void {
-    GltfContainer.createOrReplace(entity as Entity, { src })
+    // A model with collisions keeps them across a model swap (createOrReplace would drop the mask)
+    const mask = this.meshCollisionMasks.get(entity as Entity)
+    GltfContainer.createOrReplace(entity as Entity, mask ? { src, visibleMeshesCollisionMask: mask } : { src })
   }
 
   /**
@@ -485,13 +491,28 @@ export class DclAdapter implements VirviPlatformAdapter {
       case 'sphere':
         MeshCollider.setSphere(entity as Entity, layers)
         break
-      case 'mesh':
-        MeshCollider.setPlane(entity as Entity, layers)
+      case 'mesh': {
+        // A model collides with its own visible meshes, not a flat plane (which visitors walked through or
+        // tripped over). The mask is kept so it's applied when the model loads or is swapped.
+        const mask = layers.reduce((m, l) => m | l, 0)
+        this.meshCollisionMasks.set(entity as Entity, mask)
+        const gltf = GltfContainer.getMutableOrNull(entity as Entity)
+        if (gltf) gltf.visibleMeshesCollisionMask = mask
+        try {
+          MeshCollider.deleteFrom(entity as Entity)
+        } catch {
+          // No collider to remove
+        }
         break
+      }
     }
   }
 
   removeCollider(entity: EntityHandle): void {
+    if (this.meshCollisionMasks.delete(entity as Entity)) {
+      const gltf = GltfContainer.getMutableOrNull(entity as Entity)
+      if (gltf) gltf.visibleMeshesCollisionMask = ColliderLayer.CL_NONE
+    }
     try {
       MeshCollider.deleteFrom(entity as Entity)
     } catch {
