@@ -110,15 +110,21 @@ async function dropPayment(paymentId: string, now: Date): Promise<void> {
  * left alone, and so is a MANA payment whose transaction is claimed: it is paid, waiting for its confirmations).
  */
 export async function expirePayment(paymentId: string, now: Date): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [pay] = await tx.select({ userId: studioPayments.userId, giftsHeld: studioPayments.giftsHeld, creditHeldCents: studioPayments.creditHeldCents })
-      .from(studioPayments)
-      .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending'), isNull(studioPayments.manaTxHash))).for('update')
-    if (!pay) return
-    await tx.update(studioPayments).set({ status: 'expired', giftsHeld: 0, creditHeldCents: 0 }).where(eq(studioPayments.id, paymentId))
-    await returnGifts(tx, pay.userId, pay.giftsHeld, now)
-    await addCredit(tx, pay.userId, pay.creditHeldCents, 'release', paymentId, now)
-  })
+  await db.transaction((tx) => expirePaymentIn(tx, paymentId, now))
+}
+
+/**
+ * expirePayment inside the caller's transaction, which locks the payment row (here, if it hasn't) before the free
+ * finalizes and the credit, in the order a grant does.
+ */
+export async function expirePaymentIn(tx: Exec, paymentId: string, now: Date): Promise<void> {
+  const [pay] = await tx.select({ userId: studioPayments.userId, giftsHeld: studioPayments.giftsHeld, creditHeldCents: studioPayments.creditHeldCents })
+    .from(studioPayments)
+    .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending'), isNull(studioPayments.manaTxHash))).for('update')
+  if (!pay) return
+  await tx.update(studioPayments).set({ status: 'expired', giftsHeld: 0, creditHeldCents: 0 }).where(eq(studioPayments.id, paymentId))
+  await returnGifts(tx, pay.userId, pay.giftsHeld, now)
+  await addCredit(tx, pay.userId, pay.creditHeldCents, 'release', paymentId, now)
 }
 
 /**
@@ -144,7 +150,7 @@ async function holdCredit(
  * Expires open checkouts another checkout takes over the holds of: a card one through Stripe (one Stripe won't expire
  * keeps them), a MANA quote (no Stripe session) directly.
  */
-async function expireOpen(pays: { id: string; method: string; stripeSessionId: string | null }[], now: Date): Promise<void> {
+export async function expireOpen(pays: { id: string; method: string; stripeSessionId: string | null }[], now: Date): Promise<void> {
   for (const p of pays) {
     if (p.method === 'mana') {
       await expirePayment(p.id, now)
@@ -400,8 +406,10 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
     const entitlementIds: string[] = []
     for (const [i, l] of fresh.entries()) {
       const price = repriced[i]
-      // Never more than was paid for the line; a credit still covers what it covered
-      const charged = chargedCents({ ...l, amountCents: Math.min(l.amountCents, price.amountCents) })
+      // Never more than was paid for the line (what the owner absorbed of it wasn't: R9); a credit still covers what
+      // it covered
+      const paid = chargedCents(l) - (l.absorbedCents ?? 0)
+      const charged = Math.min(paid, chargedCents({ ...l, amountCents: Math.min(l.amountCents, price.amountCents) }))
       const creditCents = Math.min(l.creditCents ?? 0, charged)
       creditBack += (l.creditCents ?? 0) - creditCents
       owed += dueCentsOf(l) - (charged - creditCents)

@@ -47,9 +47,9 @@ export class QuoteError extends Error {
 export const chargedCents = (l: Pick<PaymentLine, 'amountCents' | 'waived' | 'gift' | 'giftCents' | 'admin'>) =>
   l.admin || l.waived ? 0 : l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
 
-/** What is left of a line to pay by card or MANA once credit paid its share. */
-export const dueCentsOf = (l: Pick<PaymentLine, 'amountCents' | 'waived' | 'gift' | 'giftCents' | 'admin' | 'creditCents'>) =>
-  chargedCents(l) - (l.creditCents ?? 0)
+/** What is left of a line to pay by card or MANA once credit paid its share (and the owner absorbed theirs). */
+export const dueCentsOf = (l: Pick<PaymentLine, 'amountCents' | 'waived' | 'gift' | 'giftCents' | 'admin' | 'creditCents' | 'absorbedCents'>) =>
+  chargedCents(l) - (l.creditCents ?? 0) - (l.absorbedCents ?? 0)
 
 /**
  * Spends up to `cents` of credit on lines in order: each charged line takes what is left, up to what it charges, as
@@ -65,6 +65,32 @@ export function allocateCredit(lines: PaymentLine[], cents: number): { lines: Pa
     return { ...l, creditCents }
   })
   return { lines: out, usedCents: Math.max(0, cents) - left }
+}
+
+/**
+ * A reopened MANA payment's lines, re-allocated to what it holds again (ruling R9): `gifts` free finalizes stay on the
+ * most expensive gift lines, as quoteFinalize gives them, and the others lose theirs; `credit` cents are spent in line
+ * order, as the checkout spent them. Each line keeps the share its MANA paid; what is left of it uncovered becomes its
+ * `absorbedCents`, which the owner absorbs.
+ */
+export function reallocateLines(lines: PaymentLine[], gifts: number, credit: number): { lines: PaymentLine[]; absorbedCents: number } {
+  const mana = lines.map((l) => dueCentsOf(l))
+  const keep = new Set(lines.map((l, i) => ({ l, i })).filter(({ l }) => l.gift)
+    .sort((a, b) => b.l.amountCents - a.l.amountCents || a.i - b.i)
+    .slice(0, Math.max(0, gifts)).map(({ i }) => i))
+  let absorbedCents = 0
+  const out = allocateCredit(lines, credit).lines.map((l, i) => {
+    let line: PaymentLine = { ...l }
+    delete line.absorbedCents
+    if (line.gift && !keep.has(i)) {
+      const { gift: _gift, giftCents: _giftCents, ...rest } = line
+      line = rest
+    }
+    const absorbed = chargedCents(line) - (line.creditCents ?? 0) - mana[i]
+    absorbedCents += Math.max(0, absorbed)
+    return absorbed > 0 ? { ...line, absorbedCents: absorbed } : line
+  })
+  return { lines: out, absorbedCents }
 }
 
 type Tier = 'Small' | 'Medium' | 'Large'

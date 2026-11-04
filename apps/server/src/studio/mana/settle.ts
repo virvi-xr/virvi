@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { studioCreditLedger, studioDesigns, studioFinalizeCredits, studioManaScan, studioManaTransfers, studioPayments, users } from '../../db/schema.js'
 import { config } from '../../config.js'
 import { takeCredit } from '../credit.js'
-import { grantPayment, PaymentError } from '../payments.js'
+import { expireOpen, expirePaymentIn, grantPayment, PaymentError } from '../payments.js'
+import { reallocateLines } from '../pricing.js'
 import { getPolygon, parseTransfers, type ManaTransfer, type PolygonReader } from './polygon.js'
 
 /**
@@ -51,40 +52,66 @@ async function claim(paymentId: string, txHash: string): Promise<'claimed' | 'ta
 
 /**
  * Puts an expired MANA payment back to pending, taking its free finalizes and credit again (a newer checkout or the
- * sweep released them while its transaction was on the way). What was spent meanwhile can't be taken: the payment is
- * granted anyway and the owner absorbs the shortfall (ruling R2), which is logged, never owed to the customer.
+ * sweep released them while its transaction was on the way). Ruling R9: first it takes over the holds of the
+ * customer's other open checkouts for the same design (or their open top-ups, for a top-up), expiring them as a new
+ * checkout does: a card one through Stripe before the transaction, a MANA quote inside it. What was spent elsewhere
+ * meanwhile can't be taken: the lines are re-allocated to what is really held again (reallocateLines), and the rest is
+ * absorbed by the owner, logged, and never owed, refunded or credited back to the customer.
  */
 async function reopen(paymentId: string, now: Date): Promise<void> {
+  const [first] = await db.select().from(studioPayments).where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'expired')))
+  if (!first) return
+  const giftsWanted = first.lines.filter((l) => l.gift).length
+  // What the quote held: a finalize's credit is on its lines; a top-up's, in its first hold in the ledger
+  const creditWanted = first.kind === 'topup' ? await topupHold(first.id) : first.lines.reduce((n, l) => n + (l.creditCents ?? 0), 0)
+  const others = giftsWanted > 0 || creditWanted > 0 ? await db.select().from(studioPayments).where(and(
+    eq(studioPayments.userId, first.userId), ne(studioPayments.id, first.id), eq(studioPayments.status, 'pending'), isNull(studioPayments.manaTxHash),
+    first.designId ? and(eq(studioPayments.designId, first.designId), eq(studioPayments.kind, 'finalize')) : eq(studioPayments.kind, 'topup'),
+    or(giftsWanted > 0 ? gt(studioPayments.giftsHeld, 0) : sql`false`, creditWanted > 0 ? gt(studioPayments.creditHeldCents, 0) : sql`false`),
+  )) : []
+  await expireOpen(others.filter((p) => p.method !== 'mana'), now)
+  const quotes = others.filter((p) => p.method === 'mana').map((p) => p.id)
+
   const short = await db.transaction(async (tx) => {
-    const [pay] = await tx.select().from(studioPayments)
-      .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'expired'))).for('update')
+    // Payment rows first (in id order), then the design, the free finalizes and the credit: the order a grant locks them
+    const locked = await tx.select().from(studioPayments).where(inArray(studioPayments.id, [first.id, ...quotes]))
+      .orderBy(asc(studioPayments.id)).for('update')
+    const pay = locked.find((p) => p.id === first.id && p.status === 'expired')
     if (!pay) return null
-    // In the order a grant locks them: the design, the free finalizes, the credit
     if (pay.designId) await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.id, pay.designId)).for('key share')
-    const giftsWanted = pay.lines.filter((l) => l.gift).length
+    if (giftsWanted > 0 || locked.some((p) => p.giftsHeld > 0)) {
+      await tx.insert(studioFinalizeCredits).values({ userId: pay.userId, balance: 0, updatedAt: now }).onConflictDoNothing()
+      await tx.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, pay.userId)).for('update')
+    }
+    for (const q of quotes) await expirePaymentIn(tx, q, now)
     let gifts = 0
     if (giftsWanted > 0) {
-      await tx.insert(studioFinalizeCredits).values({ userId: pay.userId, balance: 0, updatedAt: now }).onConflictDoNothing()
-      const [bal] = await tx.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, pay.userId)).for('update')
+      const [bal] = await tx.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, pay.userId))
       gifts = Math.min(Math.max(bal.balance, 0), giftsWanted)
       if (gifts > 0) {
         await tx.update(studioFinalizeCredits).set({ balance: sql`${studioFinalizeCredits.balance} - ${gifts}`, updatedAt: now })
           .where(eq(studioFinalizeCredits.userId, pay.userId))
       }
     }
-    // The credit the quote held: its first hold in the ledger
-    const [hold] = await tx.select({ deltaCents: studioCreditLedger.deltaCents }).from(studioCreditLedger)
-      .where(and(eq(studioCreditLedger.refId, pay.id), eq(studioCreditLedger.reason, 'hold')))
-      .orderBy(asc(studioCreditLedger.createdAt)).limit(1)
-    const creditWanted = hold ? -hold.deltaCents : 0
     const credit = await takeCredit(tx, pay.userId, creditWanted, 'hold', pay.id, now)
-    await tx.update(studioPayments).set({ status: 'pending', giftsHeld: gifts, creditHeldCents: credit }).where(eq(studioPayments.id, pay.id))
-    return { gifts: giftsWanted - gifts, cents: creditWanted - credit }
+    // The lines say what was really held again, so the grant (and any later refund) never pays back what wasn't
+    const re = pay.lines.length ? reallocateLines(pay.lines, gifts, credit) : { lines: pay.lines, absorbedCents: creditWanted - credit }
+    await tx.update(studioPayments).set({ status: 'pending', giftsHeld: gifts, creditHeldCents: credit, lines: re.lines })
+      .where(eq(studioPayments.id, pay.id))
+    return { gifts: giftsWanted - gifts, cents: creditWanted - credit, absorbed: re.absorbedCents }
   })
   if (short && (short.gifts > 0 || short.cents > 0)) {
     console.warn(`[studio] MANA payment ${paymentId} was reopened short: ${short.cents} cents of credit and ${short.gifts} free finalizes`
-      + ' were spent meanwhile; granted anyway, the shortfall is absorbed')
+      + ` were spent meanwhile; granted anyway, the owner absorbs ${short.absorbed} cents`)
   }
+}
+
+/** The credit a top-up's checkout held: its first hold in the ledger. */
+async function topupHold(paymentId: string): Promise<number> {
+  const [hold] = await db.select({ deltaCents: studioCreditLedger.deltaCents }).from(studioCreditLedger)
+    .where(and(eq(studioCreditLedger.refId, paymentId), eq(studioCreditLedger.reason, 'hold')))
+    .orderBy(asc(studioCreditLedger.createdAt)).limit(1)
+  return hold ? -hold.deltaCents : 0
 }
 
 /** Grants a claimed MANA payment, reopening it first if it was expired. */

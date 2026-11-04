@@ -1700,6 +1700,9 @@ export type PaymentLine = {
   gift?: boolean // a first-finalize line paid by a free-finalize credit
   admin?: boolean // free: the customer is a Virvi admin
   creditCents?: number // how much of the line's charged cents credit paid
+  // Of a MANA payment reopened late in its grace: what neither the credit nor the free finalize it held again, nor its
+  // MANA, paid of the line (ruling R9). The owner absorbs it; it is never refunded or credited back.
+  absorbedCents?: number
   giftCents?: number // how much of it the credit covers (at most the gift cap); missing on older lines: all of it
   footprint?: string // a scene building's footprint, which sets its price
   held?: boolean // a mistake report past the instant limit: charged, and its report waits for the owner
