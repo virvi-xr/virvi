@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useApi, type DclDeployment, type DclDestination } from '@/lib/api'
 import { getBrowserWallet } from '@/lib/auth'
 import type { SignSession } from '@/lib/dcl-sign'
-import { signErrorMessage } from '@/lib/deploy'
+import { signErrorMessage, signerWallets } from '@/lib/deploy'
 import { deployVirvi, publishSigned, RunError, watchDeployment, type Phase, type RunUpdate } from '@/lib/wizard/run'
 
 /** startSignSession authorises its key for 10 minutes; reuse it a little less than that. */
@@ -22,11 +22,14 @@ export interface DeployView {
 
 const idle: DeployView = { status: 'idle', phase: 'packing', models: null, underway: false, deployment: null, error: null }
 
+/** A destination to sign for: `signers` (Genesis City parcels) are the wallets any one of which may sign; null: any wallet may try. */
+export type SigningDestination = Pick<DclDestination, 'id' | 'ownerWallet' | 'worldName' | 'mode'> & { signers?: string[] | null }
+
 /**
  * One signing session per page visit (one wallet prompt covers a grant and a deploy), started for the World's
- * owner wallet; and a deploy run with the wizard's progress.
+ * owner wallet (or any of a parcels destination's signers); and a deploy run with the wizard's progress.
  */
-export function useWorldSigning(dest: Pick<DclDestination, 'id' | 'ownerWallet' | 'worldName' | 'mode'> | null) {
+export function useWorldSigning(dest: SigningDestination | null) {
   const api = useApi()
   const [view, setView] = useState<DeployView>(idle)
   const [asking, setAsking] = useState(false)
@@ -39,17 +42,18 @@ export function useWorldSigning(dest: Pick<DclDestination, 'id' | 'ownerWallet' 
     return () => { alive.current = false }
   }, [])
 
-  /** The session for the owner's wallet, asking the wallet only when there is none yet. */
+  /** The session for a wallet that may sign, asking the wallet only when there is none yet. */
   const signer = async (): Promise<SignSession> => {
     if (!dest) throw new RunError('This World is still loading.')
+    const allowed = signerWallets(dest)
     const s = session.current
-    if (s && s.session.address === dest.ownerWallet.toLowerCase() && Date.now() - s.startedAt < SESSION_REUSE_MS) return s.session
+    if (s && (!allowed || allowed.some((a) => a.toLowerCase() === s.session.address)) && Date.now() - s.startedAt < SESSION_REUSE_MS) return s.session
     const wallet = getBrowserWallet()
     if (!wallet) throw new RunError('No browser wallet found. Install MetaMask or another Ethereum wallet, then try again.')
     setAsking(true)
     try {
       const { startSignSession } = await import('@/lib/dcl-sign')
-      const started = await startSignSession(wallet, { expectedAddress: dest.ownerWallet })
+      const started = await startSignSession(wallet, { expectedAddress: allowed ?? undefined })
       session.current = { session: started, startedAt: Date.now() }
       return started
     } finally {

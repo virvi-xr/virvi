@@ -5,18 +5,19 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { SCENE_IMPORT_MAX_BYTES, type SceneImportView } from '@virvixr/shared'
-import { useApi, type DclDestination } from '@/lib/api'
+import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { signErrorMessage } from '@/lib/deploy'
 import {
-  buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, recentImports, watchImport,
+  buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, placeLabel, recentImports, signerPhrase, SIGNERS_UNKNOWN_NOTE, watchImport,
 } from '@/lib/import'
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
 import { Badge, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { ProgressLines } from '@/components/wizard/ProgressLines'
-import { useWorldSigning } from '@/components/dcl/useWorldSigning'
+import { useWorldSigning, type SigningDestination } from '@/components/dcl/useWorldSigning'
 import { DownloadLiveButton } from '@/components/dcl/DownloadLiveButton'
+import { ParcelGrantCard } from '@/components/dcl/ParcelGrantCard'
 
 const secondary = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50'
 const errorBox = 'rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300'
@@ -48,7 +49,7 @@ function ImportContent() {
   const [busy, setBusy] = useState<null | 'deploy' | 'sign'>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [prepared, setPrepared] = useState<Prepared | null>(null)
-  const [dest, setDest] = useState<DclDestination | null>(null)
+  const [dest, setDest] = useState<(SigningDestination & { kind?: 'world' | 'parcels'; ownerWallet: string }) | null>(null)
   const signing = useWorldSigning(dest)
 
   // Follow the import in the URL until it is live or failed (a reload picks it up again)
@@ -139,7 +140,10 @@ function ImportContent() {
       if (r.payload) {
         setPrepared({ deploymentId: r.deployment.id, payload: r.payload })
         const destinationId = (r.deployment.destinationId as string | null | undefined) ?? view.destinationId
-        if (destinationId) setDest((await api.getDclDestination(destinationId)).destination)
+        if (destinationId) {
+          const d = await api.getDclDestination(destinationId)
+          setDest({ ...d.destination, kind: d.kind, signers: d.signers })
+        }
       }
       setView(await api.getSceneImport(view.id).then((x) => x.import).catch(() => view))
       setWatchKey((k) => k + 1)
@@ -175,7 +179,7 @@ function ImportContent() {
       <PageHeader
         crumbs={['Workspace', { label: 'Scenes', href: '/scenes' }, 'Import']}
         title="Import a scene"
-        subtitle="Bring a scene you made in the Creator Hub or with the SDK7. Virvi builds it with Virvi added, then deploys it to the World named in its scene.json."
+        subtitle="Bring a scene you made in the Creator Hub or with the SDK7. Virvi builds it with Virvi added, then deploys it to the World or the Genesis City parcels named in its scene.json."
       />
 
       {id && !view && !watchError && <Skeleton rows={1} />}
@@ -191,7 +195,7 @@ function ImportContent() {
           {view ? (
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <a href={jumpInUrl(view.worldName ?? '')} target="_blank" rel="noreferrer" className="truncate text-base font-medium text-white hover:text-blue-300">{view.worldName}</a>
+                <a href={jumpInUrl(view.location)} target="_blank" rel="noreferrer" className="truncate text-base font-medium text-white hover:text-blue-300">{placeLabel(view.location)}</a>
                 <p className="text-gray-400">{view.kind === 'creator-hub' ? 'Creator Hub scene' : 'SDK7 scene'}</p>
               </div>
               <PhaseBadge phase={phase!} />
@@ -202,7 +206,7 @@ function ImportContent() {
             </p>
           )}
 
-          <ProgressLines lines={importLines(phase!, view?.worldName ?? 'your World', view ?? undefined)} />
+          <ProgressLines lines={importLines(phase!, view?.location ?? null, view ?? undefined)} />
           {view && virviNote(view) && <p className={infoBox}>{virviNote(view)}</p>}
 
           {phase === 'uploading' && view && <p className="text-gray-400">Your scene is uploaded. Its build starts in a moment.</p>}
@@ -212,8 +216,8 @@ function ImportContent() {
             <>
               {view.errorMessage && view.errorMessage !== actionError && <p className={errorBox} role="alert">{view.errorMessage}</p>}
               <p className="text-gray-400">
-                Your scene is built. Deploy it to {view.worldName}: unless Virvi deploys there for you, you sign once with the wallet that owns
-                the World. It goes live a minute or so later.
+                Your scene is built. Deploy it to {placeLabel(view.location)}: unless Virvi deploys there for you, you sign once with{' '}
+                {signerPhrase(view.location)}. It goes live a minute or so later.
               </p>
               <PrimaryButton type="button" onClick={deploy} disabled={busy !== null}>
                 {busy === 'deploy' ? 'Preparing the deploy…' : 'Deploy'}
@@ -223,7 +227,8 @@ function ImportContent() {
 
           {phase === 'sign' && view && (canSign ? (
             <>
-              <p className="text-gray-400">The deploy is ready. Sign it with the wallet that owns {view.worldName} within the next few minutes.</p>
+              <p className="text-gray-400">The deploy is ready. Sign it with {signerPhrase(view.location)} within the next few minutes.</p>
+              {dest?.signers === null && <p className={infoBox}>{SIGNERS_UNKNOWN_NOTE}</p>}
               <PrimaryButton type="button" onClick={sign} disabled={busy !== null}>
                 {busy === 'sign' ? 'Signing…' : 'Sign the deploy'}
               </PrimaryButton>
@@ -234,16 +239,16 @@ function ImportContent() {
             </p>
           ))}
           {signing.asking && view && (
-            <p className={infoBox} role="status">Check your wallet: sign once with the wallet that owns {view.worldName}.</p>
+            <p className={infoBox} role="status">Check your wallet: sign once with {signerPhrase(view.location)}.</p>
           )}
 
           {phase === 'deploying' && <p className="text-gray-400">Deploying to Decentraland. It is usually live within a minute.</p>}
 
           {phase === 'live' && view && (
             <>
-              <p className="text-base font-medium text-green-200">Live in {view.worldName}.</p>
+              <p className="text-base font-medium text-green-200">Live in {placeLabel(view.location)}.</p>
               <div className="flex flex-wrap items-center gap-3">
-                <a href={jumpInUrl(view.worldName ?? '')} target="_blank" rel="noreferrer"
+                <a href={jumpInUrl(view.location)} target="_blank" rel="noreferrer"
                   className="clip-corner inline-flex items-center gap-1.5 bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink hover:bg-accent-hover">
                   Jump in
                 </a>
@@ -259,6 +264,10 @@ function ImportContent() {
               {buildLogShown(view) === 'log' && <BuildLog importId={view.id} tail={view.logTail} />}
               {buildLogShown(view) === 'expired' && <p className="text-gray-500">{importErrorMessage('files_expired')}</p>}
             </>
+          )}
+
+          {view && view.location.kind === 'parcels' && view.destinationId && (phase === 'ready' || phase === 'live' || phase === 'failed') && (
+            <ParcelGrantCard destinationId={view.destinationId} onChanged={() => setWatchKey((k) => k + 1)} />
           )}
 
           {actionError && <p className={errorBox} role="alert">{actionError}</p>}
@@ -305,7 +314,7 @@ function RecentImports() {
         {recentImports(views, new Date()).map((i) => (
           <li key={i.id}>
             <Link href={i.href} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 hover:bg-gray-800/60">
-              <span className="min-w-0 truncate text-gray-200">{i.world}</span>
+              <span className="min-w-0 truncate text-gray-200">{i.place}</span>
               <span className="flex items-center gap-3">
                 <span className="text-xs text-gray-500">{i.when}</span>
                 <Badge tone={i.tone}>{i.label}</Badge>

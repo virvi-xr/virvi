@@ -1,7 +1,7 @@
 // The wizard's "Create and deploy" run: scene, World destination, permission or signature, the extra
 // destinations, then polling until Decentraland has accepted the deployment. Everything it has created
 // is kept in `RunMemory`, so "Try again" picks up where it stopped and never makes a second scene.
-import type { Plot, RoomSetOptions } from '@virvixr/shared'
+import type { ImportLocation, Plot, RoomSetOptions } from '@virvixr/shared'
 import type { Eip1193Provider } from '../auth'
 import type { AuthChain, SignSession } from '../dcl-sign'
 import { hyperfyErrorMessage } from '../hyperfy'
@@ -76,8 +76,9 @@ export const GRANT_PARTIAL_MESSAGE =
   "To remove it, open Deploy in Virvi Studio and remove Virvi's permission for this World, or remove Virvi under your World's permissions in the Creator Hub."
 
 /** The web explorer boots into `realm` (a World name works; checked against decentraland.org/play's launcher). */
-export function jumpInUrl(world: string): string {
-  return `https://decentraland.org/play/?realm=${encodeURIComponent(world)}`
+export function jumpInUrl(place: string | ImportLocation): string {
+  if (typeof place !== 'string' && place.kind === 'parcels') return `https://decentraland.org/play/?position=${place.base}`
+  return `https://decentraland.org/play/?realm=${encodeURIComponent(typeof place === 'string' ? place : place.world)}`
 }
 
 export type Phase = 'packing' | 'uploading' | 'checking' | 'live'

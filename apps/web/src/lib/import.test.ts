@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { SceneImportStatus, SceneImportView } from '@virvixr/shared'
-import { buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
+import { buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, placeLabel, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
 
 const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   id: 'imp-1',
@@ -49,7 +49,7 @@ describe('importErrorMessage', () => {
     // install-virvi.ts (Ruling R8)
     'bad_package_json', 'bad_source_encoding', 'no_main',
     // routes/imports.ts, imports.ts, the owner check
-    'not_parcel_controller', 'catalyst_unreachable', 'parcels_in_use', 'parcels_set_up_elsewhere', 'not_world_owner', 'world_unreachable', 'world_in_use', 'world_set_up_elsewhere', 'import_in_progress',
+    'not_parcel_controller', 'aetheria_managed', 'not_a_world', 'grant_revoked', 'catalyst_unreachable', 'parcels_in_use', 'parcels_set_up_elsewhere', 'not_world_owner', 'world_unreachable', 'world_in_use', 'world_set_up_elsewhere', 'import_in_progress',
     'superseded', 'store_failed', 'not_deployable', 'not_found', 'no_log', 'invalid_scene',
     // build-runner.ts, build-sweep.ts, import-build.ts
     'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded',
@@ -99,18 +99,30 @@ describe('importFailure', () => {
   })
 })
 
+describe('placeLabel', () => {
+  it('names a World, one parcel, or several', () => {
+    expect(placeLabel({ kind: 'world', world: 'my.dcl.eth' })).toBe('my.dcl.eth')
+    expect(placeLabel({ kind: 'parcels', base: '10,20', parcels: ['10,20'] })).toBe('Genesis City 10,20')
+    expect(placeLabel({ kind: 'parcels', base: '10,20', parcels: ['10,20', '10,21', '11,20', '11,21'] })).toBe('Genesis City 10,20 (4 parcels)')
+  })
+})
+
 describe('importLines', () => {
+  const world = { kind: 'world', world: 'cafe.dcl.eth' } as const
+  it('labels the deploy step with the place', () => {
+    expect(importLines('ready', { kind: 'parcels', base: '1,2', parcels: ['1,2'] })[2].label).toBe('Deploy to Genesis City 1,2')
+  })
   it('marks the steps done up to the phase, and the failing one', () => {
-    expect(importLines('building', 'cafe.dcl.eth').map((l) => l.state)).toEqual(['done', 'active', 'todo', 'todo'])
-    expect(importLines('live', 'cafe.dcl.eth').map((l) => l.state)).toEqual(['done', 'done', 'done', 'done'])
-    expect(importLines('failed', 'cafe.dcl.eth', view({ status: 'failed', errorCode: 'build_failed' })).map((l) => l.state))
+    expect(importLines('building', world).map((l) => l.state)).toEqual(['done', 'active', 'todo', 'todo'])
+    expect(importLines('live', world).map((l) => l.state)).toEqual(['done', 'done', 'done', 'done'])
+    expect(importLines('failed', world, view({ status: 'failed', errorCode: 'build_failed' })).map((l) => l.state))
       .toEqual(['done', 'failed', 'todo', 'todo'])
-    expect(importLines('failed', 'cafe.dcl.eth', view({ status: 'failed', errorCode: 'deploy_rejected', deploymentId: 'd1' })).map((l) => l.state))
+    expect(importLines('failed', world, view({ status: 'failed', errorCode: 'deploy_rejected', deploymentId: 'd1' })).map((l) => l.state))
       .toEqual(['done', 'done', 'failed', 'todo'])
     // A replaced import didn't fail anywhere (review M7)
-    expect(importLines('failed', 'cafe.dcl.eth', view({ status: 'failed', errorCode: 'superseded' })).map((l) => l.state))
+    expect(importLines('failed', world, view({ status: 'failed', errorCode: 'superseded' })).map((l) => l.state))
       .toEqual(['done', 'done', 'todo', 'todo'])
-    expect(importLines('ready', 'cafe.dcl.eth')[2]).toMatchObject({ label: 'Deploy to cafe.dcl.eth', state: 'active' })
+    expect(importLines('ready', world)[2]).toMatchObject({ label: 'Deploy to cafe.dcl.eth', state: 'active' })
   })
 })
 
@@ -147,14 +159,14 @@ describe('recentImports', () => {
   const now = new Date('2026-11-02T12:00:00Z')
   it('lists each import with its World, a status label and how long ago, linking to its view, newest first', () => {
     const items = recentImports([
-      view({ id: 'a', worldName: 'old.dcl.eth', status: 'deployed', createdAt: '2026-11-01T12:00:00Z' }),
-      view({ id: 'b', worldName: 'new.dcl.eth', status: 'built', canDeploy: true, createdAt: '2026-11-02T11:55:00Z' }),
-      view({ id: 'c', worldName: 'gone.dcl.eth', status: 'failed', createdAt: '2026-11-02T09:00:00Z' }),
+      view({ id: 'a', worldName: 'old.dcl.eth', location: { kind: 'world', world: 'old.dcl.eth' }, status: 'deployed', createdAt: '2026-11-01T12:00:00Z' }),
+      view({ id: 'b', worldName: 'new.dcl.eth', location: { kind: 'world', world: 'new.dcl.eth' }, status: 'built', canDeploy: true, createdAt: '2026-11-02T11:55:00Z' }),
+      view({ id: 'c', worldName: 'gone.dcl.eth', location: { kind: 'world', world: 'gone.dcl.eth' }, status: 'failed', createdAt: '2026-11-02T09:00:00Z' }),
     ], now)
     expect(items).toEqual([
-      { id: 'b', world: 'new.dcl.eth', label: 'Ready to deploy', tone: 'warning', when: '5 min ago', href: '/import/?id=b' },
-      { id: 'c', world: 'gone.dcl.eth', label: 'Failed', tone: 'danger', when: '3 h ago', href: '/import/?id=c' },
-      { id: 'a', world: 'old.dcl.eth', label: 'Live', tone: 'success', when: '1 day ago', href: '/import/?id=a' },
+      { id: 'b', place: 'new.dcl.eth', label: 'Ready to deploy', tone: 'warning', when: '5 min ago', href: '/import/?id=b' },
+      { id: 'c', place: 'gone.dcl.eth', label: 'Failed', tone: 'danger', when: '3 h ago', href: '/import/?id=c' },
+      { id: 'a', place: 'old.dcl.eth', label: 'Live', tone: 'success', when: '1 day ago', href: '/import/?id=a' },
     ])
   })
 

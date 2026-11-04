@@ -1,5 +1,5 @@
-// The Import page: a Creator Hub or SDK7 scene uploaded, built by Virvi, then deployed to its World.
-import type { SceneImportView } from '@virvixr/shared'
+// The Import page: a Creator Hub or SDK7 scene uploaded, built by Virvi, then deployed to its World or Genesis City parcels.
+import type { ImportLocation, SceneImportView } from '@virvixr/shared'
 import type { LineState } from './wizard/run'
 import { errorCode, POLL_MS, wizardErrorMessage } from './wizard/run'
 import { relativeTime } from './studio'
@@ -21,6 +21,20 @@ export function importPhase(v: Pick<SceneImportView, 'status' | 'canDeploy'>): I
     default: return 'failed'
   }
 }
+
+/** Where an import goes: "my.dcl.eth", "Genesis City 10,20" or "Genesis City 10,20 (4 parcels)". */
+export function placeLabel(loc: ImportLocation): string {
+  if (loc.kind === 'world') return loc.world
+  return loc.parcels.length > 1 ? `Genesis City ${loc.base} (${loc.parcels.length} parcels)` : `Genesis City ${loc.base}`
+}
+
+/** Who signs the deploy, for the page's copy. */
+export const signerPhrase = (loc: ImportLocation): string =>
+  loc.kind === 'world' ? `the wallet that owns ${loc.world}` : 'the wallet that owns or operates these parcels'
+
+/** Shown when Decentraland couldn't say which of the creator's wallets may sign for the parcels. */
+export const SIGNERS_UNKNOWN_NOTE =
+  "Virvi couldn't check with Decentraland which of your wallets may deploy to these parcels. Sign with the one that owns or operates them: if it can't, Decentraland says so."
 
 export type PhaseTone = 'info' | 'warning' | 'success' | 'danger'
 
@@ -44,7 +58,7 @@ export function recentImports(views: SceneImportView[], now: Date) {
     .slice(0, RECENT_LIMIT)
     .map((v) => {
       const [tone, label] = PHASE_BADGES[importPhase(v)]
-      return { id: v.id, world: v.worldName, label, tone, when: relativeTime(v.createdAt, now), href: `/import/?id=${v.id}` }
+      return { id: v.id, place: placeLabel(v.location), label, tone, when: relativeTime(v.createdAt, now), href: `/import/?id=${v.id}` }
     })
 }
 
@@ -72,9 +86,9 @@ const CODE_MESSAGES: Record<string, string> = {
   world_unreachable: "Decentraland didn't answer just now. Try again in a minute.",
   world_in_use: "This World is connected to a Virvi scene you can't manage. Ask that scene's owner to give you full access.",
   world_set_up_elsewhere: "This World is set up under a Virvi scene you can't manage. Ask that scene's owner to give you full access.",
-  import_in_progress: 'This World already has an import under way. Wait for it to finish, then upload again.',
-  superseded: 'A newer upload for this World replaced this one.',
-  import_superseded: 'A newer upload for this World replaced this one.',
+  import_in_progress: 'This location already has an import under way. Wait for it to finish, then upload again.',
+  superseded: 'A newer upload for this location replaced this one.',
+  import_superseded: 'A newer upload for this location replaced this one.',
   store_failed: "The upload couldn't be saved. Try again in a few minutes.",
   not_deployable: "This import can't be deployed now. Reload the page to see where it is.",
   not_found: "This import couldn't be found. It may belong to someone else, or the link is wrong.",
@@ -103,7 +117,10 @@ const CODE_MESSAGES: Record<string, string> = {
   deploy_failed: 'Something went wrong on our side while deploying. Try again in a few minutes.',
   model_unavailable: "One of the scene's models couldn't be fetched again. Try again in a few minutes.",
   entity_mismatch: "The deploy didn't match what was signed. Try again.",
-  not_granted: "Virvi doesn't have permission to deploy to this World. Deploy and sign it yourself instead.",
+  not_granted: "Virvi doesn't have permission to deploy here. Deploy and sign it yourself instead.",
+  grant_revoked: 'Virvi is no longer an operator on these parcels. Sign this deploy in the browser, or set Virvi up again.',
+  aetheria_managed: "Aetheria parcels are managed by their deed. Sign each deploy with the deed holder's wallet.",
+  not_a_world: "These are Genesis City parcels, not a World, so this option doesn't apply.",
   deploy_in_progress: 'A deploy is already running for this World. Wait for it to finish.',
   not_awaiting_signature: 'This deploy is no longer waiting for a signature. Reload the page to see where it is.',
   stale: 'Your World changed since this deploy was prepared. Deploy again.',
@@ -167,10 +184,10 @@ const BUILD_CODES = new Set([
 /** The four steps; on a failure the step it stopped at turns `failed`. */
 export function importLines(
   phase: ImportPhase,
-  world: string,
+  place: ImportLocation | null,
   failed?: Pick<SceneImportView, 'errorCode' | 'deploymentId'>,
 ): Array<{ label: string; state: LineState }> {
-  const labels = ['Upload', 'Build', `Deploy to ${world}`, 'Live']
+  const labels = ['Upload', 'Build', `Deploy to ${place ? placeLabel(place) : 'your scene'}`, 'Live']
   const at = phase === 'failed'
     ? (failed && !failed.deploymentId && (!failed.errorCode || BUILD_CODES.has(failed.errorCode)) ? 1 : 2)
     : { uploading: 0, building: 1, ready: 2, sign: 2, deploying: 2, live: 4 }[phase]

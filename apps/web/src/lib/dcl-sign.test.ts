@@ -55,6 +55,14 @@ describe('startSignSession', () => {
     expect(provider.calls).not.toContain('personal_sign')
   })
 
+  it('accepts any one of several expected addresses, and rejects a wallet outside them', async () => {
+    const { provider, address } = fakeWallet()
+    const other = '0x' + '1'.repeat(40)
+    expect((await startSignSession(provider, { expectedAddress: [other, address] })).address).toBe(address.toLowerCase())
+    const err = await startSignSession(fakeWallet().provider, { expectedAddress: [other] }).catch((e) => e)
+    expect(err).toBeInstanceOf(WrongWalletError)
+  })
+
   it('accepts the expected address in any letter case', async () => {
     const { provider, address } = fakeWallet()
     const session = await startSignSession(provider, { expectedAddress: address.toUpperCase().replace('0X', '0x') })

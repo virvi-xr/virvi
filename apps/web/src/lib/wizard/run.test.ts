@@ -294,6 +294,8 @@ describe('progress and Jump in', () => {
 
   it('opens the World in the web explorer', () => {
     expect(jumpInUrl('cafe.dcl.eth')).toBe('https://decentraland.org/play/?realm=cafe.dcl.eth')
+    expect(jumpInUrl({ kind: 'world', world: 'cafe.dcl.eth' })).toBe('https://decentraland.org/play/?realm=cafe.dcl.eth')
+    expect(jumpInUrl({ kind: 'parcels', base: '10,20', parcels: ['10,20'] })).toBe('https://decentraland.org/play/?position=10,20')
   })
 })
 

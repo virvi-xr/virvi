@@ -11,10 +11,10 @@ export interface SignSession {
   sign(payload: string): AuthChain
 }
 
-/** The connected wallet isn't the one that owns the World. */
+/** The connected wallet isn't the one that owns the World (or none of the wallets that may sign). */
 export class WrongWalletError extends Error {
-  constructor(public readonly expected: string) {
-    super(`Switch your wallet to ${expected} and try again.`)
+  constructor(public readonly expected: string | string[]) {
+    super(`Switch your wallet to ${Array.isArray(expected) ? expected.join(' or ') : expected} and try again.`)
     this.name = 'WrongWalletError'
   }
 }
@@ -33,12 +33,13 @@ export async function isContractWallet(wallet: Eip1193Provider, address: string)
  */
 export async function startSignSession(
   wallet: Eip1193Provider,
-  opts: { minutes?: number; expectedAddress?: string } = {},
+  opts: { minutes?: number; expectedAddress?: string | string[] } = {},
 ): Promise<SignSession> {
   const accounts = (await wallet.request({ method: 'eth_requestAccounts' })) as string[]
   const address = accounts?.[0]?.toLowerCase()
   if (!address) throw new Error('No wallet account selected')
-  if (opts.expectedAddress && opts.expectedAddress.toLowerCase() !== address) throw new WrongWalletError(opts.expectedAddress)
+  const expected = opts.expectedAddress === undefined ? [] : [opts.expectedAddress].flat()
+  if (expected.length && !expected.some((a) => a.toLowerCase() === address)) throw new WrongWalletError(opts.expectedAddress!)
 
   const identity = await Authenticator.initializeAuthChain(address, createUnsafeIdentity(), opts.minutes ?? 10, async (message) =>
     (await wallet.request({ method: 'personal_sign', params: [toHex(message), address] })) as string,

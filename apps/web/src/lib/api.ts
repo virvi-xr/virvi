@@ -7,6 +7,7 @@ import type { Plot, RoomSetOptions } from '@virvixr/shared'
 import type { RoomNudge } from './room-set'
 import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
+import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
 import type { AdminGiftCode, AdminMistakeReport, AdminStudioFlag, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
 import type { SceneImportView } from '@virvixr/shared'
@@ -99,6 +100,8 @@ export type DclDestinationMode = 'virvi' | 'sign'
 
 export interface DclDestination {
   id: string
+  /** Absent on older responses: a World. */
+  kind?: 'world' | 'parcels'
   sceneId: string
   ownerUserId: string
   ownerWallet: string
@@ -498,7 +501,20 @@ export function useApi() {
     getSceneDclDestinations: (sceneId: string) =>
       apiFetch<{ destinations: DclDestination[]; adoptable: Array<{ world: string }> }>(`/api/scenes/${sceneId}/dcl/destinations`),
     getDclDestination: (id: string) =>
-      apiFetch<{ destination: DclDestination; pending: DclPendingModel[]; refused: Array<{ name: string; reason: string }>; lastDeployment: DclDeployment | null; warning?: string | null }>(`/api/dcl/destinations/${id}`),
+      apiFetch<{
+        destination: DclDestination; kind: 'world' | 'parcels'; parcels: string[]
+        /** Wallets that may sign this destination's deploys; null when Decentraland couldn't be reached. */
+        signers: string[] | null
+        pending: DclPendingModel[]; refused: Array<{ name: string; reason: string }>; lastDeployment: DclDeployment | null; warning?: string | null
+      }>(`/api/dcl/destinations/${id}`),
+    /** Genesis City parcels: whether Virvi may be made an operator, and the owner's transactions that do it. */
+    getParcelGrant: (id: string) => apiFetch<ParcelGrant>(`/api/dcl/destinations/${id}/parcel-grant`),
+    /** Reads the rights fresh. 409 `aetheria_managed`. */
+    checkParcelGrant: (id: string) =>
+      apiFetch<{ granted: true } | { granted: false; missing: string }>(`/api/dcl/destinations/${id}/parcel-grant/check`, { method: 'POST' }),
+    getParcelRevoke: (id: string) => apiFetch<ParcelRevoke>(`/api/dcl/destinations/${id}/parcel-grant/revoke`),
+    checkParcelRevoke: (id: string) =>
+      apiFetch<{ revoked: boolean; still?: string }>(`/api/dcl/destinations/${id}/parcel-grant/revoke/check`, { method: 'POST' }),
     patchDclDestination: (id: string, data: { mode: DclDestinationMode }) =>
       apiFetch<{ destination: DclDestination; message?: string }>(`/api/dcl/destinations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     getDclGrant: (id: string) => apiFetch<DclGrantRequests>(`/api/dcl/destinations/${id}/grant`),

@@ -58,8 +58,18 @@ export function destinationHistory<T extends { id: string; destinationId?: strin
   return deployments.filter((d) => d.destinationId === destinationId)
 }
 
-/** A failure while signing for a World: the wrong wallet names the owner's; everything else as in the wizard. */
-export function signErrorMessage(err: unknown, dest: Pick<DclDestination, 'ownerWallet' | 'worldName'>): string {
+/**
+ * The wallets that may sign a destination's deploys: its owner for a World; for Genesis City parcels, the `signers` the
+ * server named. Null when any wallet may try (the parcels' signers couldn't be read from Decentraland).
+ */
+export function signerWallets(dest: { ownerWallet: string; signers?: string[] | null }): string[] | null {
+  if (dest.signers === undefined) return [dest.ownerWallet]
+  return dest.signers?.length ? dest.signers : null
+}
+
+/** A failure while signing: the wrong wallet names the owner's (a World) or the kind of wallet (parcels); everything else as in the wizard. */
+export function signErrorMessage(err: unknown, dest: Pick<DclDestination, 'ownerWallet' | 'worldName'> & { kind?: 'world' | 'parcels' }): string {
+  if ((err as Error | null)?.name === 'WrongWalletError' && dest.kind === 'parcels') return 'Sign with a wallet that owns or operates these parcels.'
   if ((err as Error | null)?.name === 'WrongWalletError') return `Sign with ${shortAddress(dest.ownerWallet)}, the wallet that owns ${dest.worldName}.`
   return wizardErrorMessage(err)
 }

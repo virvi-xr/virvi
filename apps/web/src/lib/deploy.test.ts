@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { WrongWalletError } from './dcl-sign'
-import { deploymentSummary, destinationHistory, modeLabel, pendingLine, signErrorMessage, statusView } from './deploy'
+import { deploymentSummary, destinationHistory, modeLabel, pendingLine, signErrorMessage, signerWallets, statusView } from './deploy'
 
 describe('pendingLine', () => {
   it('counts the models waiting to go live', () => {
@@ -47,7 +47,20 @@ describe('signErrorMessage', () => {
   it('names the owning wallet on a wrong wallet', () => {
     expect(signErrorMessage(new WrongWalletError(dest.ownerWallet), dest)).toBe('Sign with 0x1234…5678, the wallet that owns cafe.dcl.eth.')
   })
+  it('names no single wallet for Genesis City parcels', () => {
+    expect(signErrorMessage(new WrongWalletError(['0xaa']), { ...dest, kind: 'parcels' })).toBe('Sign with a wallet that owns or operates these parcels.')
+  })
   it('falls back to the wizard messages', () => {
     expect(signErrorMessage(Object.assign(new Error('x'), { code: 4001 }), dest)).toBe('You cancelled the request in your wallet. Nothing was changed.')
+  })
+})
+
+describe('signerWallets', () => {
+  const dest = { ownerWallet: '0xOwner' }
+  it('is the owner for a World, the signers for parcels, and no restriction when they are unknown', () => {
+    expect(signerWallets(dest)).toEqual(['0xOwner'])
+    expect(signerWallets({ ...dest, signers: ['0xa', '0xb'] })).toEqual(['0xa', '0xb'])
+    expect(signerWallets({ ...dest, signers: null })).toBeNull()
+    expect(signerWallets({ ...dest, signers: [] })).toBeNull()
   })
 })
