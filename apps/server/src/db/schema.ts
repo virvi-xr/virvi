@@ -788,6 +788,8 @@ export const sceneImports = pgTable('scene_imports', {
   errorCode: text('error_code'),
   errorMessage: text('error_message'),
   sourceKey: text('source_key').notNull(), // private store
+  /** imports/<id>/original.zip: the upload as the creator sent it, before Virvi was installed (null: none kept). */
+  originalKey: text('original_key'),
   builtKeyPrefix: text('built_key_prefix'),
   logKey: text('log_key'),
   buildTokenHash: text('build_token_hash'),

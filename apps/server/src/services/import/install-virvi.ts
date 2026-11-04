@@ -4,20 +4,20 @@ import { ImportError, type SceneFolder } from './scene-zip.js'
 /** 2.5.0 carries the analytics item names; a scene on an older range is raised to it. */
 export const VIRVI_DCL_RANGE = '^2.6.0'
 
-const PACKAGE = '@virvixr/dcl'
-const HUD_ICON = 'images/virvi/hud-v.png'
-const MAIN_FILES = ['src/index.ts', 'src/index.tsx', 'src/index.js']
-const IMPORT_LINE = `import { createVirvi } from '${PACKAGE}'`
+export const PACKAGE = '@virvixr/dcl'
+export const HUD_ICON = 'images/virvi/hud-v.png'
+export const MAIN_FILES = ['src/index.ts', 'src/index.tsx', 'src/index.js']
+export const IMPORT_LINE = `import { createVirvi } from '${PACKAGE}'`
 
 // Where an exported `main`'s parameter list opens (run on the masked source). Every repeat is bounded, so no match
 // attempt can scan to the end of a hostile file from every position (N2).
-const MAIN_HEADS = [
+export const MAIN_HEADS = [
   /export\s{1,200}(?:async\s{1,200})?function\s{1,200}main\s{0,200}\(/g,
   /export\s{1,200}const\s{1,200}main\s{0,200}(?::[^=]{1,500})?=\s{0,200}(?:async\s{0,200})?\(/g,
 ]
 
 /** Same-length copy with comment text and string contents blanked (newlines and quote marks kept). */
-function maskSource(src: string): string {
+export function maskSource(src: string): string {
   const out = src.split('')
   const blank = (from: number, to: number) => { for (let k = from; k < to; k++) if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ' }
   let i = 0
@@ -44,7 +44,7 @@ function maskSource(src: string): string {
 const OPEN = '([{', CLOSE = ')]}'
 
 /** Index just past the bracket that closes the one at `at` (masked source), or -1. */
-function skipBrackets(m: string, at: number): number {
+export function skipBrackets(m: string, at: number): number {
   let depth = 0
   for (let i = at; i < m.length; i++) {
     if (OPEN.includes(m[i])) depth++
@@ -54,7 +54,7 @@ function skipBrackets(m: string, at: number): number {
 }
 
 /** Index of main's body `{` given the `(` that opens its parameters, or -1 when there is no block body. */
-function findBodyBrace(m: string, paren: number, arrow: boolean): number {
+export function findBodyBrace(m: string, paren: number, arrow: boolean): number {
   let i = skipBrackets(m, paren)
   if (i < 0) return -1
   let depth = 0 // () [] {} and <> inside the return type
@@ -93,7 +93,7 @@ interface ImportStatement { typeOnly: boolean; clause: string; specifier: string
  * instead of a backtracking regex (N2). A statement's scan stops at the first `;`, quote or next `import`, and after
  * MAX_CLAUSE characters, so the whole read is linear in the file's size. The specifier comes from the original text.
  */
-function importStatements(src: string, m: string): ImportStatement[] {
+export function importStatements(src: string, m: string): ImportStatement[] {
   const out: ImportStatement[] = []
   const skipWs = (i: number) => { while (i < m.length && /\s/.test(m[i])) i++; return i }
   for (let i = m.indexOf('import'); i >= 0; i = m.indexOf('import', i + 1)) {
@@ -144,7 +144,7 @@ function importedName(src: string, m: string): string | null {
 }
 
 /** Scene code Virvi may already be started from: anything under src/, and Creator Hub scripts under assets/. */
-const SOURCE_FILE = /^(?:src|assets)\/.+\.(?:ts|tsx|js)$/
+export const SOURCE_FILE = /^(?:src|assets)\/.+\.(?:ts|tsx|js)$/
 
 /**
  * The names a source value-imports from @virvixr/dcl (`*` for a default or namespace import). `import type` and
@@ -178,7 +178,7 @@ function virviPresent(sources: Map<string, string>, mainPath: string): boolean {
 }
 
 /** Offset just after any leading `/// <reference …/>` lines and a 'use strict' directive. */
-function headerEnd(src: string): number {
+export function headerEnd(src: string): number {
   let at = 0
   for (const line of src.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
     if (!/^\s*\/\/\/\s*<reference\b/.test(line) && !/^\s*(['"])use strict\1;?\s*$/.test(line)) break

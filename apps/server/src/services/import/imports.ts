@@ -30,6 +30,8 @@ export const OWNER_ERROR_MESSAGES: Record<string, string> = {
 const LOG_TAIL_BYTES = 4096
 
 export const sourceKey = (importId: string) => `imports/${importId}/source.zip`
+/** The upload as sent, kept for the Virvi-free backup (Ruling R7). */
+export const originalKey = (importId: string) => `imports/${importId}/original.zip`
 
 /** Whether a signed deploy's window has passed (or it ended): the creator can start the deploy again. */
 function signingOver(dep: DeploymentRow | null, now: number): boolean {

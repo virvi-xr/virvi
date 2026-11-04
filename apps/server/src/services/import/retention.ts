@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { sceneImports } from '../../db/schema.js'
 import { getImportStore } from '../../storage/private-store.js'
@@ -8,6 +8,8 @@ import { getImportStore } from '../../storage/private-store.js'
  *
  * - `imports/<id>/` (source.zip, built/, build.log): deleted 30 days after the import ended (`deployed` or `failed`,
  *   superseded included, by `updated_at`). The row stays, with `files_deleted_at` set, so the page can say so.
+ *   Ruling R7: `original.zip` (the upload before Virvi was installed) outlives that for the newest deployed import of
+ *   each scene, and goes once a newer deployed import replaces it (or with the scene).
  * - `imports/<id>/` whose row is gone (the account or scene was deleted and deleting its files failed, or the server
  *   stopped in between), once its newest object is over an hour old.
  * - `deployed/<hash>`: kept while a destination's live deployment, or any deployment from the last 30 days, lists the
@@ -25,19 +27,55 @@ const DELETE_BATCH = 1000
 /** Deletes the files of imports that ended more than 30 days before `now`; how many imports. */
 export async function sweepImportFiles(now: Date): Promise<number> {
   const store = getImportStore()
-  const ended = await db.select({ id: sceneImports.id }).from(sceneImports).where(and(
+  const newest = await newestDeployedIds()
+  const ended = await db.select({ id: sceneImports.id, originalKey: sceneImports.originalKey }).from(sceneImports).where(and(
     inArray(sceneImports.status, ['deployed', 'failed']),
     isNull(sceneImports.filesDeletedAt),
     lt(sceneImports.updatedAt, new Date(now.getTime() - RETENTION_MS)),
   ))
   let n = 0
-  for (const { id } of ended) {
+  for (const { id, originalKey } of ended) {
     try {
-      await store.deletePrefix(`imports/${id}/`)
+      if (originalKey && newest.has(id)) {
+        const doomed = (await store.list(`imports/${id}/`)).map((o) => o.key).filter((k) => k !== originalKey)
+        for (let i = 0; i < doomed.length; i += DELETE_BATCH) await store.deleteKeys(doomed.slice(i, i + DELETE_BATCH))
+      } else {
+        await store.deletePrefix(`imports/${id}/`)
+      }
       await db.update(sceneImports).set({ filesDeletedAt: now }).where(and(eq(sceneImports.id, id), isNull(sceneImports.filesDeletedAt)))
       n++
     } catch (err) {
       console.error(`[retention] deleting the files of import ${id} failed:`, err instanceof Error ? err.message : err)
+    }
+  }
+  return n
+}
+
+/** The newest deployed import of each scene (by finished_at, else created_at), whatever World or parcels it went to. */
+export async function newestDeployedIds(): Promise<Set<string>> {
+  const rows = await db.execute<{ id: string }>(sql`
+    SELECT DISTINCT ON (scene_id) id FROM scene_imports WHERE status = 'deployed'
+    ORDER BY scene_id, COALESCE(finished_at, created_at) DESC, created_at DESC, id`)
+  return new Set((rows as unknown as Array<{ id: string }>).map((r) => r.id))
+}
+
+/** Deletes the kept original.zip of imports a newer deployed import of the same scene replaced; how many. */
+export async function sweepSupersededOriginals(): Promise<number> {
+  const store = getImportStore()
+  const newest = await newestDeployedIds()
+  const old = await db.select({ id: sceneImports.id, originalKey: sceneImports.originalKey }).from(sceneImports).where(and(
+    isNotNull(sceneImports.originalKey),
+    isNotNull(sceneImports.filesDeletedAt),
+  ))
+  let n = 0
+  for (const { id, originalKey } of old) {
+    if (newest.has(id)) continue
+    try {
+      await store.delete(originalKey!)
+      await db.update(sceneImports).set({ originalKey: null }).where(and(eq(sceneImports.id, id), eq(sceneImports.originalKey, originalKey!)))
+      n++
+    } catch (err) {
+      console.error(`[retention] deleting the original upload of import ${id} failed:`, err instanceof Error ? err.message : err)
     }
   }
   return n
@@ -107,7 +145,7 @@ export async function sweepRetention(now: Date): Promise<{ imports: number; depl
   } catch {
     return { imports: 0, deployed: 0 } // no bucket configured: nothing is kept, so nothing to delete
   }
-  const imports = (await sweepImportFiles(now)) + (await sweepOrphanedImports(now))
+  const imports = (await sweepImportFiles(now)) + (await sweepSupersededOriginals()) + (await sweepOrphanedImports(now))
   const deployed = await sweepDeployedFiles(now)
   return { imports, deployed }
 }

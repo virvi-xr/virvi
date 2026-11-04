@@ -110,7 +110,17 @@ describe('scene import routes', () => {
     expect(strFromU8(files['src/index.ts'])).toContain('void createVirvi()')
     expect(JSON.parse(strFromU8(files['package.json'])).dependencies['@virvixr/dcl']).toBeTruthy()
     expect(files['images/virvi/hud-v.png']).toBeTruthy()
-    expect(store.keys()).toEqual([`imports/${view.id}/source.zip`])
+    expect(store.keys().sort()).toEqual([`imports/${view.id}/original.zip`, `imports/${view.id}/source.zip`])
+  })
+
+  it('keeps the upload as sent as original.zip, before Virvi is installed', async () => {
+    const zip = sceneZip({ title: 'Moon Base' })
+    const view = (await upload(zip)).json().import
+    const row = await importRow(view.id)
+    expect(row.originalKey).toBe(`imports/${view.id}/original.zip`)
+    const stored = await store.get(row.originalKey!)
+    expect(Buffer.compare(stored!.body, zip)).toBe(0)
+    expect(strFromU8(unzipSync(new Uint8Array(stored!.body))['src/index.ts'])).toBe(MAIN)
   })
 
   it('names a new scene after the World when scene.json has no title', async () => {

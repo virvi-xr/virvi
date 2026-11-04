@@ -76,6 +76,53 @@ describe('retention (Ruling R27)', () => {
     expect((await app.inject({ method: 'GET', url: `/api/imports/${recent}/log`, headers: auth })).statusCode).toBe(200)
   })
 
+  describe('original uploads (Ruling R7)', () => {
+    const under = (id: string) => store.keys().filter((k) => k.startsWith(`imports/${id}/`))
+    /** An import with an original.zip, on the given scene. */
+    async function withOriginal(sceneId: string, status: typeof sceneImports.$inferSelect['status'], finishedAt: Date, updatedAt: Date) {
+      const [row] = await db.insert(sceneImports).values({ userId: user.id, sceneId, worldName: WORLD, kind: 'sdk7', sourceKey: 'x', status, finishedAt, createdAt: finishedAt, updatedAt }).returning()
+      const p = `imports/${row.id}/`
+      await db.update(sceneImports).set({ sourceKey: `${p}source.zip`, originalKey: `${p}original.zip`, logKey: `${p}build.log` }).where(eq(sceneImports.id, row.id))
+      for (const k of ['source.zip', 'original.zip', 'build.log']) await store.put(p + k, Buffer.from(k), 'application/zip')
+      return row.id
+    }
+
+    it('keeps the newest deployed import\'s original past 30 days, deletes its other files and every other original', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const { scene: other } = await createScene(user, 'Other')
+      const t = (days: number) => new Date(now.getTime() - days * DAY)
+      const older = await withOriginal(scene.id, 'deployed', t(60), t(60))
+      const newest = await withOriginal(scene.id, 'deployed', t(40), t(40))
+      const failedAfter = await withOriginal(scene.id, 'failed', t(35), t(35))
+      // Another scene, a parcels import: its own newest
+      const [parcels] = await db.insert(sceneImports).values({
+        userId: user.id, sceneId: other.id, locationKind: 'parcels', base: '0,0', parcels: ['0,0'], kind: 'sdk7', sourceKey: 'x', status: 'deployed', finishedAt: t(45), updatedAt: t(45),
+      }).returning()
+      await store.put(`imports/${parcels.id}/original.zip`, Buffer.from('o'), 'application/zip')
+      await store.put(`imports/${parcels.id}/source.zip`, Buffer.from('s'), 'application/zip')
+      await db.update(sceneImports).set({ originalKey: `imports/${parcels.id}/original.zip` }).where(eq(sceneImports.id, parcels.id))
+      const recentOlder = await withOriginal(other.id, 'deployed', t(50), t(50)) // older than `parcels` by finished_at
+
+      await sweepRetention(now)
+
+      expect(under(older)).toEqual([])
+      expect(under(newest)).toEqual([`imports/${newest}/original.zip`])
+      expect(under(failedAfter)).toEqual([])
+      expect(under(parcels.id)).toEqual([`imports/${parcels.id}/original.zip`])
+      expect(under(recentOlder)).toEqual([])
+      expect((await importRow(older)).originalKey).toBeNull()
+      expect((await importRow(newest)).originalKey).toBe(`imports/${newest}/original.zip`)
+      expect((await importRow(newest)).filesDeletedAt).toEqual(now)
+
+      // A newer deployed import takes over: the old original goes on the next sweep
+      const next = await withOriginal(scene.id, 'deployed', t(1), t(1))
+      await sweepRetention(now)
+      expect(under(newest)).toEqual([])
+      expect((await importRow(newest)).originalKey).toBeNull()
+      expect(under(next)).toHaveLength(3)
+    })
+  })
+
   describe('import files whose rows are gone (account or scene deleted)', () => {
     const put = async (key: string, at: Date) => { await store.put(key, Buffer.from(key), 'application/octet-stream'); store.setModifiedAt(key, at) }
     const under = (id: string) => store.keys().filter((k) => k.startsWith(`imports/${id}/`))

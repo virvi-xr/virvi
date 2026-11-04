@@ -32,7 +32,7 @@ import { importSlotGate, importSlotHooks, releaseImportSlot, uploadDeadlineMs, u
 import { FILES_EXPIRED } from '../services/import/retention.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
 import {
-  createImport, failImport, latestImportFor, loadImportView, OWNER_ERROR_MESSAGES, type SceneImportRow,
+  createImport, failImport, latestImportFor, loadImportView, originalKey, OWNER_ERROR_MESSAGES, type SceneImportRow,
 } from '../services/import/imports.js'
 import { NOT_DEPLOYABLE, notParcelController, startImportDeploy } from '../services/import/import-deploy.js'
 import { DeployerError } from '../services/dcl/world-deployer.js'
@@ -193,6 +193,10 @@ export default async function importRoutes(app: FastifyInstance) {
     // N5: recorded on the import, so the page can say Virvi wasn't added again
     const row = await createImport({ userId: request.user.id, location, kind: folder.kind, scene, virviAlreadyPresent: alreadyInstalled })
     try {
+      // The upload itself, kept for the Virvi-free backup; recorded only once it is stored
+      const original = originalKey(row.id)
+      await getImportStore().put(original, Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0), 'application/zip')
+      await db.update(sceneImports).set({ originalKey: original }).where(eq(sceneImports.id, row.id))
       await getImportStore().put(row.sourceKey, source, 'application/zip')
     } catch (err) {
       request.log.error({ err }, `[scene-import] storing the source of import ${row.id} failed`)
