@@ -506,9 +506,10 @@ export async function settleRefund(paymentId: string): Promise<void> {
     const due = pay.refundDueCents
     try {
       await db.transaction(async (tx) => {
+        // The owner as of this transaction (a merge may have moved the payment since it was read)
         const [cleared] = await tx.update(studioPayments).set({ refundDueCents: 0 })
-          .where(and(eq(studioPayments.id, pay.id), eq(studioPayments.refundDueCents, due))).returning({ id: studioPayments.id })
-        if (cleared) await addCredit(tx, pay.userId, due, 'refund', pay.id, new Date())
+          .where(and(eq(studioPayments.id, pay.id), eq(studioPayments.refundDueCents, due))).returning({ userId: studioPayments.userId })
+        if (cleared) await addCredit(tx, cleared.userId, due, 'refund', pay.id, new Date())
       })
     } catch (err) { // the sweep tries again
       console.error(`[studio] crediting ${due} cents owed by payment ${pay.id} failed:`, err instanceof Error ? err.message : err)

@@ -8,7 +8,7 @@ import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { setFlagMailer } from '../src/studio/scope.js'
 import { addCredit, creditBalance } from '../src/studio/credit.js'
-import { approveReport, grantPayment, refundSplit } from '../src/studio/payments.js'
+import { approveReport, grantPayment, refundSplit, settleRefund } from '../src/studio/payments.js'
 import { sweepStudio } from '../src/studio/sweep.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
@@ -279,6 +279,33 @@ describe('mistake refunds by how each line was paid', () => {
     release()
     await holder
     expect((await res).json()).toMatchObject({ status: 'refunded', creditedCents: 500 })
+  })
+
+  it("a MANA payment's debt goes as credit to whoever owns the payment when it is paid back (a merge may move it)", async () => {
+    const a = await createUser()
+    const b = await createUser()
+    const [pay] = await db.insert(studioPayments).values({
+      userId: a.id, kind: 'topup', status: 'paid', method: 'mana', amountCents: 500, refundDueCents: 500, paidAt: new Date(),
+    }).returning()
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    let locked!: () => void
+    const isLocked = new Promise<void>((r) => { locked = r })
+    // A merge moving the payment to b, holding its row while settleRefund reads it
+    const merge = db.transaction(async (tx) => {
+      await tx.select().from(studioPayments).where(eq(studioPayments.id, pay.id)).for('update')
+      locked()
+      await held
+      await tx.update(studioPayments).set({ userId: b.id }).where(eq(studioPayments.id, pay.id))
+    })
+    await isLocked
+    const settling = settleRefund(pay.id)
+    await new Promise((r) => setTimeout(r, 300))
+    release()
+    await merge
+    await settling
+    expect(await creditBalance(a.id)).toBe(0)
+    expect(await creditBalance(b.id)).toBe(500)
   })
 })
 
