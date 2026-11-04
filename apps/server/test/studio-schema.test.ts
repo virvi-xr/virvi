@@ -15,6 +15,11 @@ import {
   studioPromptCredits,
   studioSetRenders,
   studioEmoteChecks,
+  studioCredits,
+  studioCreditLedger,
+  studioManaTransfers,
+  studioManaScan,
+  studioManaRefunds,
 } from '../src/db/schema.js'
 import { TIER_LIMITS } from '../src/integrations/stripe.js'
 import { BASE_EMOTES, orbitKey, revisionsKey, setViewKey } from '../src/studio/designs.js'
@@ -117,5 +122,26 @@ describe('design studio schema', () => {
     await expect(db.insert(studioEmoteChecks).values(check)).rejects.toMatchObject({ code: '23505' })
     await db.delete(studioDesigns).where(eq(studioDesigns.id, d.id))
     expect(await db.select().from(studioSetRenders)).toEqual([])
+  })
+  it('two pending payments cannot ask for the same MANA amount, but a closed one can share it', async () => {
+    const user = await createUser()
+    const row = (status: string) => ({ userId: user.id, kind: 'topup', amountCents: 500, method: 'mana', manaAmountWei: '1234500000000000000', status })
+    await db.insert(studioPayments).values(row('pending'))
+    await expect(db.insert(studioPayments).values(row('pending'))).rejects.toMatchObject({ code: '23505' })
+    await db.insert(studioPayments).values(row('expired'))
+    expect(await db.select().from(studioPayments)).toHaveLength(2)
+  })
+
+  it('wallet tables take rows with their defaults', async () => {
+    const user = await createUser()
+    const [c] = await db.insert(studioCredits).values({ userId: user.id }).returning()
+    expect(c.balanceCents).toBe(0)
+    await db.insert(studioCreditLedger).values({ userId: user.id, deltaCents: 500, reason: 'refund' })
+    await db.insert(studioManaTransfers).values({ txHash: '0xabc', logIndex: 0, fromAddress: '0x1', amountWei: '1', blockNumber: 5, status: 'unmatched' })
+    await db.insert(studioManaScan).values({ id: 'polygon', lastBlock: 10 })
+    const [r] = await db.insert(studioManaRefunds).values({ userId: user.id, usdCents: 500, toAddress: '0x1', status: 'requested' }).returning()
+    expect(r.txHash).toBeNull()
+    const [pay] = await db.insert(studioPayments).values({ userId: user.id, kind: 'topup', amountCents: 500 }).returning()
+    expect(pay).toMatchObject({ method: 'card', creditHeldCents: 0, manaAmountWei: null })
   })
 })

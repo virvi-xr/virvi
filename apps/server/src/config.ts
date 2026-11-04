@@ -8,6 +8,7 @@
  */
 
 import { resolve } from 'node:path'
+import { getAddress } from 'ethers'
 
 export type VirviMode = 'single' | 'scalable' | 'cloud'
 
@@ -40,6 +41,32 @@ export function sceneBuildRunnerFrom(raw: string | undefined, m: VirviMode): Sce
   if (raw === undefined || raw === '') return m === 'cloud' ? 'fly' : 'off'
   if (raw === 'fly' || raw === 'local' || raw === 'off') return raw
   throw new Error(`SCENE_BUILD_RUNNER must be fly, local or off, not ${raw}`)
+}
+
+/**
+ * Paying for studio work in MANA on Polygon PoS. Off (recipient null) until STUDIO_MANA_RECIPIENT is set; a value that
+ * is not a valid, correctly checksummed address refuses to start. The token default must be confirmed on Polygonscan
+ * before MANA is turned on. A wrong token makes verification fail closed, so nothing is settled by mistake.
+ */
+export function manaSettingsFrom(e: Record<string, string | undefined>) {
+  const rawRecipient = e.STUDIO_MANA_RECIPIENT
+  let recipient: string | null = null
+  if (rawRecipient !== undefined && rawRecipient !== '') {
+    try {
+      recipient = getAddress(rawRecipient)
+    } catch {
+      throw new Error('STUDIO_MANA_RECIPIENT must be a valid, correctly checksummed Polygon address')
+    }
+  }
+  return {
+    recipient,
+    rpcUrl: e.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+    token: e.STUDIO_MANA_TOKEN || '0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4',
+    chainId: 137 as const,
+    quoteTtlMs: 600000 as const, // a quote holds for 10 minutes
+    graceMs: 900000 as const, // a late transaction still settles within 15 minutes after that
+    confirmations: 30 as const,
+  }
 }
 
 /** Design Studio prices in US cents, each a setting (see src/studio/README.md). A bad value refuses to start. */
@@ -251,6 +278,10 @@ export const config = {
   studioCodexModel: env('STUDIO_CODEX_MODEL') || 'gpt-6.1-sol',
   studioGrokModel: env('STUDIO_GROK_MODEL') || 'grok-build-0.1',
   studioPrices: studioPricesFrom(process.env),
+  studioMana: manaSettingsFrom(process.env),
+  // The studio scene's parcel (for example "-12,34"), where the checkout link sends a returning visitor
+  studioSceneParcel: env('STUDIO_SCENE_PARCEL') || null,
+  studioCheckoutLinkMs: 600000, // a one-time checkout link expires after 10 minutes
   // Turn-downs: who hears about an account that keeps sending off-topic work, after how many in how long, and how many
   // mistake refunds per piece are instant before the rest wait for review (src/studio/scope.ts)
   studioFlag: {
