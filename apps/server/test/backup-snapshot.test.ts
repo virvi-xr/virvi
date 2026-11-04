@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { eq, sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { assetLibraryItems, catalogPacks, mediaAssets, roomSets, sceneElementInstances, scenePresets, scenes, streamingServers } from '../src/db/schema.js'
@@ -212,5 +212,24 @@ describe('backupSnapshot', () => {
     expect(banner.type).toBe('ad_space')
     expect(banner.props).toMatchObject({ shape: '16:9' })
     expect(banner.assets.fallbackImage).toMatchObject({ kind: 'link', use: 'texture', url: 'https://example.com/fb.png' })
+  })
+
+  it('only looks up the URLs the preset uses', async () => {
+    for (let i = 0; i < 20; i++) {
+      await db.insert(mediaAssets).values({ ownerId: user.id, filename: `x${i}`, contentType: 'image/png', sizeBytes: 1, publicUrl: `${CDN}/noise/${i}.png` })
+    }
+    await db.insert(mediaAssets).values({ ownerId: user.id, filename: 'mine', contentType: 'image/png', sizeBytes: 1, publicUrl: `${CDN}/u/mine.png` })
+    const e = await createElement(preset.id, { type: 'image', name: 'Mine', properties: { textureSrc: ` ${CDN}/u/mine.png ` } })
+    await place(e.id)
+    const select = vi.spyOn(db, 'select')
+    const snap = await backupSnapshot(scene.id)
+    expect(snap.items[0].assets.texture).toMatchObject({ kind: 'bundle', path: 'images/mine.png' })
+    // three lookups (room sets, uploads, library), each restricted to the preset's URLs
+    expect(select).toHaveBeenCalledTimes(3)
+    select.mockClear()
+    const bare = await createScene(user, 'Empty')
+    await backupSnapshot(bare.scene.id)
+    expect(select).not.toHaveBeenCalled()
+    select.mockRestore()
   })
 })

@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import type { Vec3 } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { assetLibraryItems, catalogPacks, mediaAssets, roomSets, scenePresets, scenes } from '../../db/schema.js'
@@ -47,7 +47,7 @@ const NOT_SHOWN = 'not shown in Decentraland by Virvi today'
 const FOLDER: Record<AssetUse, string> = { model: 'models', texture: 'images', video: 'videos', audio: 'sounds' }
 const CATALOG_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../catalog')
 
-type Pack = typeof catalogPacks.$inferSelect
+type Pack = Pick<typeof catalogPacks.$inferSelect, 'name' | 'license' | 'source' | 'sourceUrl'>
 type Known =
   | { kind: 'bundle'; attribution?: { pack: string; text: string } }
   | { kind: 'reference'; pack: Pack; sourceRef: string | null }
@@ -58,7 +58,8 @@ function tagRows(source: string) {
   if (!rows) {
     try {
       rows = JSON.parse(readFileSync(resolve(CATALOG_DIR, 'tags', `${source}.json`), 'utf8'))
-    } catch {
+    } catch (err) {
+      console.error(`[backup] catalog tag file ${source}.json could not be read; reference links fall back to the pack page:`, (err as Error).message)
       rows = []
     }
     tagFiles.set(source, rows!)
@@ -73,21 +74,43 @@ function sourceUrlFor(pack: Pack, sourceRef: string | null): string {
   return rest ? `${pack.sourceUrl.replace(/\/$/, '')}/blob/HEAD/${rest}` : pack.sourceUrl
 }
 
-async function knownUrls(): Promise<Map<string, Known>> {
+/** Every URL the preset uses, trimmed. */
+function urlsIn(s: ReturnType<typeof serializePreset>): string[] {
+  const out = new Set<string>()
+  const add = (v: unknown) => { const u = normalizeUrl(v); if (u) out.add(u) }
+  for (const el of [...s.models, ...s.images, ...s.videos, ...s.sounds, ...s.adSpaces]) {
+    for (const k of ['modelSrc', 'textureSrc', 'audioSrc', 'liveSrc', 'offImageSrc', 'fallbackImageSrc']) add(el[k])
+    if (Array.isArray(el.playlist)) el.playlist.forEach(add)
+  }
+  return [...out]
+}
+
+/** Classification of the given URLs only (exact match); URLs we do not hold are absent. */
+async function knownUrls(urls: string[]): Promise<Map<string, Known>> {
   const known = new Map<string, Known>()
-  const rooms = await db.select({ url: roomSets.glbUrl }).from(roomSets)
+  if (urls.length === 0) return known
+  const rooms = await db.select({ url: roomSets.glbUrl }).from(roomSets).where(inArray(roomSets.glbUrl, urls))
   for (const r of rooms) known.set(r.url, { kind: 'bundle' })
-  const media = await db.select({ url: mediaAssets.publicUrl }).from(mediaAssets)
+  const media = await db.select({ url: mediaAssets.publicUrl }).from(mediaAssets).where(inArray(mediaAssets.publicUrl, urls))
   for (const m of media) if (m.url) known.set(m.url, { kind: 'bundle' })
   const lib = await db
-    .select({ url: assetLibraryItems.cdnUrl, sourceRef: assetLibraryItems.sourceRef, pack: catalogPacks })
+    .select({
+      url: assetLibraryItems.cdnUrl,
+      sourceRef: assetLibraryItems.sourceRef,
+      packName: catalogPacks.name,
+      license: catalogPacks.license,
+      attribution: catalogPacks.attribution,
+      source: catalogPacks.source,
+      sourceUrl: catalogPacks.sourceUrl,
+    })
     .from(assetLibraryItems)
     .leftJoin(catalogPacks, eq(catalogPacks.id, assetLibraryItems.packId))
+    .where(inArray(assetLibraryItems.cdnUrl, urls))
   for (const l of lib) {
     if (!l.url) continue
-    if (!l.pack) known.set(l.url, { kind: 'bundle' })
-    else if (l.pack.license === 'mit') known.set(l.url, { kind: 'bundle', attribution: { pack: l.pack.name, text: l.pack.attribution } })
-    else known.set(l.url, { kind: 'reference', pack: l.pack, sourceRef: l.sourceRef })
+    if (l.license === null) known.set(l.url, { kind: 'bundle' })
+    else if (l.license === 'mit') known.set(l.url, { kind: 'bundle', attribution: { pack: l.packName!, text: l.attribution! } })
+    else known.set(l.url, { kind: 'reference', pack: { name: l.packName!, license: l.license, source: l.source!, sourceUrl: l.sourceUrl! }, sourceRef: l.sourceRef })
   }
   return known
 }
@@ -169,7 +192,7 @@ export async function backupSnapshot(sceneId: string): Promise<BackupSnapshot> {
   if (!active) return snap
 
   const s = await withLiveStatus(serializePreset(active))
-  const known = await knownUrls()
+  const known = await knownUrls(urlsIn(s))
   const alloc = pathAllocator()
 
   /** Plan for one URL; null when it cannot be carried (a model not hosted by Virvi). */
