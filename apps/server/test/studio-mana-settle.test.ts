@@ -291,6 +291,32 @@ describe('settling MANA payments', () => {
     expect(await creditBalance(u.id)).toBe(2900)
   })
 
+  it('one transfer whose settling fails is recorded unmatched and the scan carries on', async () => {
+    const a = await quoted()
+    const b = await quoted()
+    // a's grant will fail: its line names a revision that doesn't exist
+    const bad = await paymentOf(a.mana.paymentId)
+    await db.update(studioPayments).set({ lines: bad.lines.map((l) => ({ ...l, revisionId: '00000000-0000-4000-8000-000000000000' })) })
+      .where(eq(studioPayments.id, a.mana.paymentId))
+    const ha = pay(a.mana, at(MIN), 0)
+    const hb = pay(b.mana, at(MIN), 30)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(await watchManaTransfers(at(2 * MIN))).toEqual({ matched: 1, unmatched: 1 })
+      expect(err.mock.calls.some((c) => String(c[0]).includes(a.mana.paymentId))).toBe(true)
+    } finally {
+      err.mockRestore()
+    }
+    expect(await paymentOf(b.mana.paymentId)).toMatchObject({ status: 'paid', manaTxHash: hb })
+    // a's claim is let go, so the owner sees it as a candidate and can settle it by hand
+    expect(await paymentOf(a.mana.paymentId)).toMatchObject({ status: 'pending', manaTxHash: null })
+    const [t] = await db.select().from(studioManaTransfers).where(eq(studioManaTransfers.txHash, ha))
+    expect(t).toMatchObject({ status: 'unmatched', paymentId: null })
+    expect(t.note).toContain(a.mana.paymentId)
+    const [scan] = await db.select().from(studioManaScan)
+    expect(scan.lastBlock).toBe(chain.latest - 30)
+  })
+
   it('scans from 2000 blocks back on the first run, then from where it stopped, at most 5000 blocks a call', async () => {
     await watchManaTransfers(T)
     expect(chain.calls.transfersTo).toEqual([{ fromBlock: chain.latest - 2000, toBlock: chain.latest - 30 }])

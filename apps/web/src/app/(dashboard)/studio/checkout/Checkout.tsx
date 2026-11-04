@@ -5,7 +5,7 @@ import { useApi } from '@/lib/api'
 import { getBrowserWallet, useAuth, type Eip1193Provider } from '@/lib/auth'
 import { PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { formatMana, sendMana, walletRejected } from '@/lib/mana'
-import { MANA_IDLE, canQuote, confirmOutcome, manaReducer, manaView, onSent, type ManaEvent, type ManaState } from '@/lib/mana-flow'
+import { MANA_IDLE, canQuote, confirmLoop, manaReducer, manaView, onSent, type ManaEvent, type ManaState } from '@/lib/mana-flow'
 import {
   checkoutReportsKey, checkoutTarget, checkoutTotals, countdown, formatCents, formatCredit, HELD_REPORT_COPY, lineNote, PRICE_LABEL, refusalMessage,
   type CheckoutMethod, type CheckoutResult, type CheckoutTarget, type ManaQuote, type Quote, type StudioUsage,
@@ -225,30 +225,20 @@ export default function Checkout() {
     await confirm(q, hash, mine)
   }
 
-  /** Reports the hash until Polygon has mined it, then follows the payment until it is paid (or closes unpaid). */
+  /** Reports the hash on every poll until the payment is paid (the server settles it on a report), or it can't be. */
   const confirm = async (q: ManaQuote, hash: string, mine: number) => {
-    let claimed = false
-    while (alive.current && latest().step === 'confirming' && latest().attempt === mine) {
-      let outcome: ReturnType<typeof confirmOutcome>
-      try {
-        outcome = claimed
-          ? confirmOutcome({ paymentStatus: (await apiRef.current.getStudioPayment(q.paymentId)).status })
-          : confirmOutcome({ reported: (await apiRef.current.reportStudioManaTx(q.paymentId, hash)).status })
-      } catch (err) {
-        outcome = confirmOutcome({ err: err as never })
-      }
-      if (outcome === 'paid') return finish(q.paymentId)
-      if (outcome === 'claimed') claimed = true
-      else if (typeof outcome === 'object') {
-        if ('txFailed' in outcome) {
-          dispatch({ type: 'txFailed', attempt: mine, text: refusalMessage({ body: { code: 'tx_failed' } }, new Date()).text })
-        } else {
-          const code = outcome.support === 'tx_used' ? 'tx_used' : 'tx_mismatch'
-          dispatch({ type: 'support', attempt: mine, hash, text: refusalMessage({ body: { code } }, new Date()).text })
-        }
-        return
-      }
-      await new Promise((r) => setTimeout(r, POLL_MS))
+    const outcome = await confirmLoop({
+      report: () => apiRef.current.reportStudioManaTx(q.paymentId, hash),
+      active: () => alive.current && latest().step === 'confirming' && latest().attempt === mine,
+      wait: () => new Promise((r) => setTimeout(r, POLL_MS)),
+    })
+    if (outcome === 'paid') return finish(q.paymentId)
+    if (!outcome) return
+    if ('txFailed' in outcome) {
+      dispatch({ type: 'txFailed', attempt: mine, text: refusalMessage({ body: { code: 'tx_failed' } }, new Date()).text })
+    } else {
+      const code = outcome.support === 'tx_used' ? 'tx_used' : 'tx_mismatch'
+      dispatch({ type: 'support', attempt: mine, hash, text: refusalMessage({ body: { code } }, new Date()).text })
     }
   }
 

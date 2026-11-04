@@ -120,6 +120,20 @@ async function settle(paymentId: string, now: Date): Promise<void> {
   await grantPayment(paymentId, null, now)
 }
 
+/**
+ * After settling a payment with a hash failed: true when the payment is paid by that hash after all. Otherwise the
+ * claim is let go, so the payment shows as a candidate for the transfer (settled by hand, or returned), and a
+ * reopened one lapses with the sweep, giving its holds back.
+ */
+async function letGo(paymentId: string, txHash: string): Promise<boolean> {
+  const [p] = await db.select({ status: studioPayments.status, manaTxHash: studioPayments.manaTxHash }).from(studioPayments)
+    .where(eq(studioPayments.id, paymentId))
+  if (p?.status === 'paid' && p.manaTxHash === txHash) return true
+  await db.update(studioPayments).set({ manaTxHash: null })
+    .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.manaTxHash, txHash), ne(studioPayments.status, 'paid')))
+  return false
+}
+
 /** Records the transfer as settling this payment (taking over an unmatched record of it). */
 async function recordMatched(t: ManaTransfer, paymentId: string): Promise<void> {
   await db.insert(studioManaTransfers).values({
@@ -197,8 +211,9 @@ async function paymentFor(t: ManaTransfer, minedAt: Date): Promise<Payment | nul
 /**
  * Scans the recipient's MANA transfers with 30 confirmations, from where the last scan stopped (2000 blocks back on
  * the first run), at most 5000 blocks a call. Each transfer is recorded once: matched (and its payment granted) or
- * unmatched, for the owner to look at. Throws on a chain or database error; the sweep logs it, and the next run picks
- * up from the same block, skipping transfers already recorded.
+ * unmatched, for the owner to look at. A transfer whose payment fails to settle is logged and recorded unmatched with
+ * a note (its claim let go), so the scan carries on. Throws on a chain or database error otherwise; the sweep logs it,
+ * and the next run picks up from the same block, skipping transfers already recorded.
  */
 export async function watchManaTransfers(now: Date, reader?: PolygonReader): Promise<{ matched: number; unmatched: number }> {
   const { recipient, token, confirmations } = config.studioMana
@@ -220,15 +235,30 @@ export async function watchManaTransfers(now: Date, reader?: PolygonReader): Pro
     if (seen) continue
     if (!times.has(t.blockNumber)) times.set(t.blockNumber, await chain.blockTime(t.blockNumber))
     const pay = await paymentFor(t, times.get(t.blockNumber)!)
-    if (pay && (pay.status === 'paid' || (await claim(pay.id, t.txHash)) === 'claimed')) {
-      await settle(pay.id, now)
-      await recordMatched(t, pay.id)
-      out.matched++
-      continue
+    let note: string | null = null
+    if (pay) {
+      try {
+        if (pay.status === 'paid' || (await claim(pay.id, t.txHash)) === 'claimed') {
+          await settle(pay.id, now)
+          await recordMatched(t, pay.id)
+          out.matched++
+          continue
+        }
+      } catch (err) {
+        // One transfer that won't settle must not stall the scan for everyone: it is left to the owner, unmatched
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[studio] MANA transfer ${t.txHash} could not settle payment ${pay.id}:`, msg)
+        if (await letGo(pay.id, t.txHash)) {
+          await recordMatched(t, pay.id)
+          out.matched++
+          continue
+        }
+        note = `the watcher could not settle payment ${pay.id}: ${msg}`
+      }
     }
     await db.insert(studioManaTransfers).values({
       txHash: t.txHash, logIndex: t.logIndex, fromAddress: t.from, amountWei: t.amountWei.toString(), blockNumber: t.blockNumber,
-      status: 'unmatched',
+      status: 'unmatched', note,
     }).onConflictDoNothing()
     out.unmatched++
   }

@@ -71,6 +71,29 @@ export function confirmOutcome(r: { reported?: 'granted' | 'confirming'; payment
   return { support: 'mismatch' }
 }
 
+/**
+ * The page's confirmation loop: it reports the hash on every poll until the payment is paid, or an answer needs a new
+ * price or support. The server settles a claimed transaction on any report of it (idempotently), so the page never
+ * waits on the watcher alone. Null when `active` turns false (the page moved on).
+ */
+export async function confirmLoop(io: {
+  report: () => Promise<{ status: 'granted' | 'confirming' }>
+  active: () => boolean
+  wait: () => Promise<void>
+}): Promise<'paid' | { txFailed: true } | { support: 'tx_used' | 'mismatch' | 'closed' } | null> {
+  while (io.active()) {
+    let outcome: ConfirmOutcome
+    try {
+      outcome = confirmOutcome({ reported: (await io.report()).status })
+    } catch (err) {
+      outcome = confirmOutcome({ err: err as never })
+    }
+    if (outcome === 'paid' || typeof outcome === 'object') return outcome
+    await io.wait()
+  }
+  return null
+}
+
 export type ManaView = {
   quote: ManaQuote | null
   expired: boolean

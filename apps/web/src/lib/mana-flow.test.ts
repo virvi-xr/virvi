@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CONFIRMING, MANA_IDLE, confirmOutcome, manaReducer, manaView, onSent, type ManaEvent, type ManaState } from './mana-flow'
+import { CONFIRMING, MANA_IDLE, confirmLoop, confirmOutcome, manaReducer, manaView, onSent, type ManaEvent, type ManaState } from './mana-flow'
 import type { ManaQuote } from './studio'
 
 const NOW = new Date('2026-11-04T12:00:00Z')
@@ -91,5 +91,37 @@ describe('confirmOutcome', () => {
     expect(confirmOutcome(err(409, 'tx_mismatch'))).toEqual({ support: 'mismatch' })
     expect(confirmOutcome(err(409, 'tx_late'))).toEqual({ support: 'mismatch' })
     expect(confirmOutcome(err(404, 'not_found'))).toEqual({ support: 'mismatch' })
+  })
+})
+
+describe('confirmLoop', () => {
+  it('reports the hash again on every poll while it confirms, until it is granted', async () => {
+    const answers: ('confirming' | 'granted')[] = ['confirming', 'confirming', 'confirming', 'granted']
+    let reports = 0
+    let waits = 0
+    const outcome = await confirmLoop({
+      report: async () => ({ status: answers[reports++] }),
+      active: () => true,
+      wait: async () => { waits++ },
+    })
+    expect(outcome).toBe('paid')
+    expect(reports).toBe(4) // the server settles a claimed transaction on any report: a stalled watcher can't strand the page
+    expect(waits).toBe(3)
+  })
+  it('keeps going through errors that mean ask again, and stops on one that needs support', async () => {
+    const answers = [
+      () => Promise.reject({ status: 503 }),
+      () => Promise.reject({ status: 404, body: { code: 'tx_not_found' } }),
+      () => Promise.reject({ status: 409, body: { code: 'tx_used' } }),
+    ]
+    let n = 0
+    const outcome = await confirmLoop({ report: () => answers[n++](), active: () => true, wait: async () => {} })
+    expect(outcome).toEqual({ support: 'tx_used' })
+    expect(n).toBe(3)
+  })
+  it('stops, with nothing to show, once the page moved on', async () => {
+    let n = 0
+    const outcome = await confirmLoop({ report: async () => ({ status: 'confirming' as const }), active: () => n++ < 2, wait: async () => {} })
+    expect(outcome).toBeNull()
   })
 })
