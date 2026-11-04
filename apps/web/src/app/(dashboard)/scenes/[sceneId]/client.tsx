@@ -9,6 +9,7 @@ import { useSceneRoom } from '@/lib/colyseus'
 import { applyPresetsChange, editingPreset, type PresetsChange } from '@/lib/presets'
 import { PresetBar } from './PresetBar'
 import { PresetSchedules } from './PresetSchedules'
+import { ScreenShowings } from './ScreenShowings'
 import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
 import { RoomSetPanel } from './RoomSetPanel'
@@ -94,6 +95,7 @@ const OFF_TYPES: { value: number; label: string }[] = [
   { value: 2, label: 'Playlist' },
   { value: 4, label: 'Ads' },
   { value: 5, label: 'Playlist + ads' },
+  { value: 6, label: 'Scheduled showings' },
 ]
 
 const AD_SPACE_FORMATS: { value: AdFormats; label: string }[] = [
@@ -387,8 +389,10 @@ function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
 
       {isAdsMode(props.offType ?? 0) && <AdSpaceContent elementId={element.id} refreshKey={adSpaceRefreshKey(props)} api={api} />}
 
-      {/* Playlist */}
-      <div className="space-y-2">
+      {(props.offType ?? 0) === 6 && <ScreenShowings api={api} sceneId={sceneId} elementId={element.id} MediaPicker={MediaPicker} />}
+
+      {/* Playlist (a scheduled screen plays its showings instead) */}
+      {(props.offType ?? 0) !== 6 && <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs text-gray-500">Playlist ({playlist.length} video{playlist.length !== 1 ? 's' : ''}) — loops automatically</span>
         </div>
@@ -434,7 +438,7 @@ function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
             Add
           </button>
         </div>
-      </div>
+      </div>}
 
       {showPicker && (
         <MediaPicker api={api} accept="video/*" onSelect={url => { addToPlaylist(url); setShowPicker(false) }} onClose={() => setShowPicker(false)} />

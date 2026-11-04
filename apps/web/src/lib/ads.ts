@@ -32,6 +32,7 @@ const AD_MODES_HOUSE = 'House ads fill it unless a partner ad is placed on it.'
 export function offImageLabel(offType: number): string | null {
   if (offType === VideoSourceType.IMAGE) return 'Off Image URL'
   if (offType === VideoSourceType.ADS || offType === VideoSourceType.PLAYLIST_ADS) return 'Fallback Image URL (shown when no ad can play)'
+  if (offType === VideoSourceType.SCHEDULED) return 'Holding Image URL (shown between showings)'
   return null
 }
 

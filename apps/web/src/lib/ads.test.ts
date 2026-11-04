@@ -45,6 +45,7 @@ describe('offImageLabel', () => {
     expect(offImageLabel(1)).toBe('Off Image URL')
     expect(offImageLabel(4)).toBe('Fallback Image URL (shown when no ad can play)')
     expect(offImageLabel(5)).toBe('Fallback Image URL (shown when no ad can play)')
+    expect(offImageLabel(6)).toBe('Holding Image URL (shown between showings)')
     for (const t of [0, 2, 3]) expect(offImageLabel(t)).toBeNull()
   })
 })

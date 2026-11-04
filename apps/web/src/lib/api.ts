@@ -338,6 +338,13 @@ export function useApi() {
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
+    /** Scheduled showings on a video screen (LIV-87). */
+    getShowings: (elementId: string) => apiFetch<{ showings: import('./showings').Showing[] }>(`/api/elements/${elementId}/showings`),
+    createShowing: (elementId: string, body: Record<string, unknown>) =>
+      apiFetch<{ showing: import('./showings').Showing }>(`/api/elements/${elementId}/showings`, { method: 'POST', body: JSON.stringify(body) }),
+    updateShowing: (showingId: string, body: Record<string, unknown>) =>
+      apiFetch<{ showing: import('./showings').Showing }>(`/api/showings/${showingId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    deleteShowing: (showingId: string) => apiFetch<void>(`/api/showings/${showingId}`, { method: 'DELETE' }),
     /** Scheduled presets (LIV-86). */
     getPresetSchedules: (sceneId: string) =>
       apiFetch<{ schedules: import('./preset-schedules').PresetSchedule[]; runs: import('./preset-schedules').ScheduleRun[]; status: import('./preset-schedules').LiveStatus; week: import('./preset-schedules').WeekOccurrence[] }>(`/api/scenes/${sceneId}/preset-schedules`),
