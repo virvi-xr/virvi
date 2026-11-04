@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deleteAllInstancesPrompt, withoutInstancesOf } from './instances'
+import { deleteAllInstancesPrompt, deleteElementPrompt, withoutElement, withoutInstancesOf } from './instances'
 
 describe('deleteAllInstancesPrompt', () => {
   it('says how many instances will be removed and that the element stays', () => {
@@ -28,5 +28,32 @@ describe('withoutInstancesOf', () => {
   })
   it('passes a scene that has not loaded through', () => {
     expect(withoutInstancesOf(null, 'a')).toBeNull()
+  })
+})
+
+describe('deleteElementPrompt', () => {
+  it('names the element and says its instances go with it', () => {
+    expect(deleteElementPrompt('Image 1', 0)).toBe("Delete Image 1? This can't be undone.")
+    expect(deleteElementPrompt('Lobby screen', 1)).toBe("Delete Lobby screen and its 1 instance? This can't be undone.")
+    expect(deleteElementPrompt('Chair', 4)).toBe("Delete Chair and its 4 instances? This can't be undone.")
+  })
+})
+
+describe('withoutElement', () => {
+  const scene = {
+    name: 'S',
+    presets: [
+      { id: 'p1', elements: [{ id: 'a', instances: [] }, { id: 'b', instances: [] }] },
+      { id: 'p2', elements: [{ id: 'c', instances: [] }] },
+    ],
+  }
+  it('drops one element from whichever preset holds it and keeps the rest', () => {
+    const next = withoutElement(scene, 'a')!
+    expect(next.presets.map((p) => p.elements.map((e) => e.id))).toEqual([['b'], ['c']])
+    expect(next.name).toBe('S')
+    expect(scene.presets[0].elements).toHaveLength(2) // not mutated
+  })
+  it('passes a scene that has not loaded through', () => {
+    expect(withoutElement(null, 'a')).toBeNull()
   })
 })

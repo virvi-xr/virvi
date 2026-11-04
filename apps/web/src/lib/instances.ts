@@ -19,3 +19,16 @@ export function withoutInstancesOf<E extends WithInstances, S extends SceneLike<
     })),
   }
 }
+
+/** The confirmation shown before deleting an element, which takes its instances with it. */
+export function deleteElementPrompt(name: string, count: number): string {
+  return `Delete ${name}${count ? ` and its ${plural(count, 'instance')}` : ''}? This can't be undone.`
+}
+
+type SceneOf<E extends { id: string }> = { presets: { elements: E[] }[] }
+
+/** The scene without one element (after DELETE /api/elements/:id), unchanged otherwise. */
+export function withoutElement<E extends { id: string }, S extends SceneOf<E>>(scene: S | null, elementId: string): S | null {
+  if (!scene) return scene
+  return { ...scene, presets: scene.presets.map((preset) => ({ ...preset, elements: preset.elements.filter((el) => el.id !== elementId) })) }
+}

@@ -15,7 +15,7 @@ import { RoomSetPanel } from './RoomSetPanel'
 import { sceneHasRoomSet } from '@/lib/room-set'
 import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { imageSourceRow, pastedSource } from '@/lib/image-source'
-import { deleteAllInstancesPrompt, withoutInstancesOf } from '@/lib/instances'
+import { deleteAllInstancesPrompt, deleteElementPrompt, withoutElement, withoutInstancesOf } from '@/lib/instances'
 import { streamForSource, streamOptionLabel, type SceneStream } from '@/lib/streams'
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
@@ -160,6 +160,39 @@ function TextInput({ value, onChange, label, readOnly }: { value: string; onChan
 // Instance Editor
 // ---------------------------------------------------------------------------
 
+/** An element's name and Enabled, with Delete (after a confirmation: its instances go with it). */
+function ElementHeader({ element, onUpdateElement, onDelete }: {
+  element: Element
+  onUpdateElement: (id: string, data: Record<string, any>) => void
+  onDelete: (id: string) => void
+}) {
+  const [confirming, setConfirming] = useState(false)
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <h4 className="font-semibold">{element.name}</h4>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-gray-400">
+            <input type="checkbox" checked={element.enabled}
+              onChange={e => onUpdateElement(element.id, { enabled: e.target.checked })}
+              className="accent-blue-500" />
+            Enabled
+          </label>
+          {!confirming && <button type="button" onClick={() => setConfirming(true)} className="text-xs text-red-400 hover:text-red-300">Delete</button>}
+        </div>
+      </div>
+      {confirming && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-900/60 bg-red-950/30 px-3 py-2" role="alertdialog" aria-label={`Delete ${element.name}`}>
+          <p className="flex-1 text-xs text-red-200">{deleteElementPrompt(element.name, element.instances.length)}</p>
+          <button type="button" onClick={() => { setConfirming(false); onDelete(element.id) }}
+            className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-500">Delete</button>
+          <button type="button" onClick={() => setConfirming(false)} className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700">Cancel</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** An element's instance count, with Add and (after a confirmation) Delete all. */
 function InstancesHeader({ count, onAdd, onDeleteAll }: { count: number; onAdd: () => void; onDeleteAll: () => void }) {
   const [confirming, setConfirming] = useState(false)
@@ -247,7 +280,7 @@ function InstanceEditor({ instance, onUpdate, onDelete }: { instance: Instance; 
 // Video Element Editor
 // ---------------------------------------------------------------------------
 
-function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, api }: {
+function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
   element: Element
   sceneId: string
   onUpdateElement: (id: string, data: Record<string, any>) => void
@@ -255,6 +288,7 @@ function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
+  onDeleteElement: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
 }) {
   const props = element.properties || {}
@@ -321,15 +355,7 @@ function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h4 className="font-semibold">{element.name}</h4>
-        <label className="flex items-center gap-2 text-sm text-gray-400">
-          <input type="checkbox" checked={element.enabled}
-            onChange={e => onUpdateElement(element.id, { enabled: e.target.checked })}
-            className="accent-blue-500" />
-          Enabled
-        </label>
-      </div>
+      <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
 
       <LiveStreamField value={props.liveSrc} onChange={v => updateProp('liveSrc', v)} api={api} sceneId={sceneId} />
 
@@ -675,13 +701,14 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
   )
 }
 
-function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, api }: {
+function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
+  onDeleteElement: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
   sceneId: string
 }) {
@@ -693,15 +720,7 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h4 className="font-semibold">{element.name}</h4>
-        <label className="flex items-center gap-2 text-sm text-gray-400">
-          <input type="checkbox" checked={element.enabled}
-            onChange={e => onUpdateElement(element.id, { enabled: e.target.checked })}
-            className="accent-blue-500" />
-          Enabled
-        </label>
-      </div>
+      <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
 
       <ImageSourceField label="Texture" value={props.textureSrc} onChange={setTexture} api={api} sceneId={sceneId} />
 
@@ -721,13 +740,14 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
 // Ad Space Element Editor
 // ---------------------------------------------------------------------------
 
-function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, api }: {
+function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
+  onDeleteElement: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
   sceneId: string
 }) {
@@ -739,15 +759,7 @@ function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInsta
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h4 className="font-semibold">{element.name}</h4>
-        <label className="flex items-center gap-2 text-sm text-gray-400">
-          <input type="checkbox" checked={element.enabled}
-            onChange={e => onUpdateElement(element.id, { enabled: e.target.checked })}
-            className="accent-blue-500" />
-          Enabled
-        </label>
-      </div>
+      <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
 
       <div className="flex flex-wrap gap-4">
         <div className="flex flex-col gap-1">
@@ -796,7 +808,7 @@ function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInsta
 // Model Element Editor
 // ---------------------------------------------------------------------------
 
-function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, api }: {
+function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   /** The room set rewrote this element's model on the server: show the new URL. */
@@ -805,6 +817,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
+  onDeleteElement: (elementId: string) => void
   api: ReturnType<typeof import('@/lib/api').useApi>
 }) {
   const props = element.properties || {}
@@ -836,15 +849,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h4 className="font-semibold">{element.name}</h4>
-        <label className="flex items-center gap-2 text-sm text-gray-400">
-          <input type="checkbox" checked={element.enabled}
-            onChange={e => onUpdateElement(element.id, { enabled: e.target.checked })}
-            className="accent-blue-500" />
-          Enabled
-        </label>
-      </div>
+      <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
 
       {element.roomSetId && <RoomSetPanel roomSetId={element.roomSetId} onSaved={(url) => onRoomSetSaved(element.id, url)} />}
 
@@ -884,13 +889,14 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
 // Sound Element Editor
 // ---------------------------------------------------------------------------
 
-function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances }: {
+function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement }: {
   element: Element
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
+  onDeleteElement: (elementId: string) => void
 }) {
   const props = element.properties || {}
 
@@ -900,15 +906,7 @@ function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h4 className="font-semibold">{element.name}</h4>
-        <label className="flex items-center gap-2 text-sm text-gray-400">
-          <input type="checkbox" checked={element.enabled}
-            onChange={e => onUpdateElement(element.id, { enabled: e.target.checked })}
-            className="accent-blue-500" />
-          Enabled
-        </label>
-      </div>
+      <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
 
       <TextInput label="Audio URL" value={props.audioSrc || ''} onChange={v => updateProp('audioSrc', v)} />
 
@@ -1648,21 +1646,12 @@ export default function SceneEditorPage() {
     }
   }, [api, activePreset, elements])
 
-  const handleDeleteWidget = useCallback(async (elementId: string) => {
+  const handleDeleteElement = useCallback(async (elementId: string) => {
     try {
       await api.deleteElement(elementId)
-      setScene(prev => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          presets: prev.presets.map(preset => ({
-            ...preset,
-            elements: preset.elements.filter(el => el.id !== elementId),
-          })),
-        }
-      })
+      setScene(prev => withoutElement(prev, elementId))
     } catch (err: any) {
-      console.error('Failed to delete widget:', err)
+      console.error('Failed to delete element:', err)
     }
   }, [api])
 
@@ -1785,7 +1774,7 @@ export default function SceneEditorPage() {
               .map(el => (
                 <WidgetElementEditor key={el.id} element={el}
                   onUpdateElement={handleUpdateElement}
-                  onDelete={handleDeleteWidget} />
+                  onDelete={handleDeleteElement} />
               ))
           )}
         </div>
@@ -1812,6 +1801,7 @@ export default function SceneEditorPage() {
                 onDeleteInstance: handleDeleteInstance,
                 onAddInstance: handleAddInstance,
                 onDeleteAllInstances: handleDeleteAllInstances,
+                onDeleteElement: handleDeleteElement,
               }
 
               switch (el.type) {
