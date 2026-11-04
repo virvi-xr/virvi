@@ -644,7 +644,7 @@ export function useApi() {
     disableGiftCode: (id: string) => apiFetch<void>(`/api/admin/studio/gift-codes/${id}/off`, { method: 'POST' }),
     getAdminStudioReports: () => apiFetch<{ reports: AdminMistakeReport[] }>('/api/admin/studio/reports'),
     approveAdminStudioReport: (id: string) =>
-      apiFetch<{ status: 'refunded'; refundCents: number }>(`/api/admin/studio/reports/${id}/approve`, { method: 'POST' }),
+      apiFetch<{ status: 'refunded'; refundCents: number; creditedCents: number; manaCents: number }>(`/api/admin/studio/reports/${id}/approve`, { method: 'POST' }),
     declineAdminStudioReport: (id: string) => apiFetch<void>(`/api/admin/studio/reports/${id}/decline`, { method: 'POST' }),
 
     // Ads (admin)
@@ -750,7 +750,7 @@ export function useApi() {
       apiFetch<{ prompts: number; finalizes: number }>('/api/studio/gift-codes/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
     buyStudioPrompts: (packs = 1) => apiFetch<{ url: string } | { granted: true; paymentId: string }>('/api/studio/topups', { method: 'POST', body: JSON.stringify({ packs }) }),
     reportStudioMistake: (id: string, category: string, n: number, text: string) =>
-      apiFetch<{ status: 'refunded'; refundCents: number } | { status: 'in_review' }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/report`, { method: 'POST', body: JSON.stringify({ text }) }),
+      apiFetch<{ status: 'refunded'; refundCents: number; creditedCents: number; manaCents: number } | { status: 'in_review' }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/report`, { method: 'POST', body: JSON.stringify({ text }) }),
     retryStudioPackage: (id: string, category: string, n: number) =>
       apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/package/retry`, { method: 'POST' }),
     /** A file for the agent: the body is the file itself (the server reads its contents to tell its type). */

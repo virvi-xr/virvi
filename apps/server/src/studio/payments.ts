@@ -417,13 +417,23 @@ export async function queueFinalize(designId: string, entitlementIds: string[], 
 }
 
 /**
- * Pays back what a payment owes (refundDueCents) through Stripe. A refund Stripe already made for it (an answer that
- * was lost) is recorded rather than repeated; a failed attempt counts up, and its key with it, because Stripe replays
- * a key's first answer, errors included.
+ * Pays back what a payment owes (refundDueCents). A card payment is refunded through Stripe: a refund Stripe already
+ * made for it (an answer that was lost) is recorded rather than repeated; a failed attempt counts up, and its key with
+ * it, because Stripe replays a key's first answer, errors included. A MANA or credit payment's debt goes back as
+ * Virvi credit, once: the debt is cleared in the same transaction.
  */
 export async function settleRefund(paymentId: string): Promise<void> {
   const [pay] = await db.select().from(studioPayments).where(eq(studioPayments.id, paymentId))
   if (!pay || !(pay.refundDueCents > 0)) return
+  if (pay.method === 'mana' || pay.method === 'credit') {
+    const due = pay.refundDueCents
+    await db.transaction(async (tx) => {
+      const [cleared] = await tx.update(studioPayments).set({ refundDueCents: 0 })
+        .where(and(eq(studioPayments.id, pay.id), eq(studioPayments.refundDueCents, due))).returning({ id: studioPayments.id })
+      if (cleared) await addCredit(tx, pay.userId, due, 'refund', pay.id, new Date())
+    })
+    return
+  }
   if (!pay.stripePaymentIntent) {
     console.error(`[studio] payment ${pay.id} owes ${pay.refundDueCents} cents but has no payment intent to refund`)
     return
@@ -463,11 +473,11 @@ export async function handleStudioSession(event: { type: string; data?: { object
 }
 
 /**
- * The customer says a paid revision fixed the agent's own mistake: its line is refunded in full through Stripe, at
- * once and without review (Virvi reviews the log afterwards). A pending report row is the lock, so two clicks refund
- * once; a refund Stripe already made for this entitlement (an answer that was lost) is recorded, not repeated; a
- * refused refund removes the row so the customer can try again, under a new key (Stripe replays a key's first
- * answer, errors included).
+ * The customer says a paid revision fixed the agent's own mistake: its line is refunded in full, the way it was paid
+ * (refundSplit), at once and without review (Virvi reviews the log afterwards). A pending report row is the lock, so
+ * two clicks refund once; a refund Stripe already made for this entitlement (an answer that was lost) is recorded,
+ * not repeated; a refused refund removes the row so the customer can try again, under a new key (Stripe replays a
+ * key's first answer, errors included).
  */
 export async function reportMistake(
   design: Design,
@@ -475,7 +485,7 @@ export async function reportMistake(
   revisionNumber: number,
   text: string,
   now: Date,
-): Promise<{ status: 'refunded'; refundCents: number } | { status: 'in_review' }> {
+): Promise<RefundResult | { status: 'in_review' }> {
   const [row] = await db.select({ e: studioEntitlements, pay: studioPayments })
     .from(studioEntitlements)
     .innerJoin(studioRevisions, eq(studioRevisions.id, studioEntitlements.revisionId))
@@ -485,7 +495,8 @@ export async function reportMistake(
   if (!row) throw new PaymentError(402, 'not_paid')
   const { e, pay } = row
   if (e.kind !== 'revision') throw new PaymentError(409, 'not_a_revision')
-  if (!(e.amountCents > 0) || !pay.stripePaymentIntent) throw new PaymentError(409, 'nothing_charged')
+  if (!(e.amountCents > 0)) throw new PaymentError(409, 'nothing_charged')
+  if (refundSplit(e).stripeCents > 0 && !pay.stripePaymentIntent) throw new PaymentError(409, 'nothing_charged')
   if (!pay.paidAt || now.getTime() - pay.paidAt.getTime() > REPORT_WINDOW_DAYS * 24 * 3600 * 1000) {
     throw new PaymentError(409, 'report_window_closed')
   }
@@ -511,38 +522,66 @@ export async function reportMistake(
   return refundReport(e, pay, lock.id, 'delete')
 }
 
+export type RefundResult = { status: 'refunded'; refundCents: number; creditedCents: number; manaCents: number }
+
 /**
- * Refunds a report's line in full through Stripe and records it. A refund Stripe already made for this entitlement
- * (an answer that was lost) is recorded, not repeated. On a refused refund the report is removed (a customer's
- * instant report, so they can try again) or put back in review (an owner's approval), and 502 is thrown.
+ * How a line's refund goes back, the way it was paid: a card line's card share through Stripe; its credit share, and
+ * all of a MANA or credit line, as Virvi credit. `manaCents` is the share MANA paid (it may later go back as MANA).
+ */
+export function refundSplit(e: { amountCents: number; creditCents: number; method: string }): { stripeCents: number; creditCents: number; manaCents: number } {
+  const credit = Math.min(Math.max(e.creditCents, 0), e.amountCents)
+  if (e.method === 'mana') return { stripeCents: 0, creditCents: credit, manaCents: e.amountCents - credit }
+  if (e.method === 'credit') return { stripeCents: 0, creditCents: e.amountCents, manaCents: 0 }
+  return { stripeCents: e.amountCents - credit, creditCents: credit, manaCents: 0 }
+}
+
+/**
+ * Refunds a report's line in full, the way it was paid (refundSplit), and records it. The Stripe share is refunded
+ * first; a refund Stripe already made for this entitlement (an answer that was lost) is recorded, not repeated. On a
+ * refused refund the report is removed (a customer's instant report, so they can try again) or put back in review
+ * (an owner's approval), and 502 is thrown. The credit share is added in the transaction that marks the report
+ * refunded, and only if this call is the one that marks it, so a retried report never credits twice.
  */
 async function refundReport(
   e: typeof studioEntitlements.$inferSelect, pay: typeof studioPayments.$inferSelect, reportId: string,
   onFailure: 'delete' | 'back_to_review', review?: { by: string; at: Date },
-): Promise<{ status: 'refunded'; refundCents: number }> {
-  let refundId: string
-  try {
-    const stripe = await getStripe()
-    const made = (await stripe.refunds.list({ payment_intent: pay.stripePaymentIntent, limit: 100 })).data as { id: string; metadata?: Record<string, string> }[]
-    const earlier = made.find((r) => r.metadata?.virvi_studio_entitlement_id === e.id)
-    refundId = earlier?.id ?? (await stripe.refunds.create(
-      { payment_intent: pay.stripePaymentIntent, amount: e.amountCents, metadata: { virvi_studio_entitlement_id: e.id, reason: 'agent_mistake' } },
-      { idempotencyKey: `studio-report-${e.id}-${reportId}` },
-    )).id
-  } catch (err) {
-    console.error('[studio] mistake refund failed:', err instanceof Error ? err.message : err)
-    if (onFailure === 'delete') await db.delete(studioMistakeReports).where(eq(studioMistakeReports.id, reportId))
-    else await db.update(studioMistakeReports).set({ status: 'in_review' }).where(eq(studioMistakeReports.id, reportId))
-    throw new PaymentError(502, 'stripe_error')
+): Promise<RefundResult> {
+  const split = refundSplit(e)
+  const creditedCents = split.creditCents + split.manaCents
+  let refundId: string | null = null
+  if (split.stripeCents > 0) {
+    try {
+      const stripe = await getStripe()
+      const made = (await stripe.refunds.list({ payment_intent: pay.stripePaymentIntent!, limit: 100 })).data as { id: string; metadata?: Record<string, string> }[]
+      const earlier = made.find((r) => r.metadata?.virvi_studio_entitlement_id === e.id)
+      refundId = earlier?.id ?? (await stripe.refunds.create(
+        { payment_intent: pay.stripePaymentIntent!, amount: split.stripeCents, metadata: { virvi_studio_entitlement_id: e.id, reason: 'agent_mistake' } },
+        { idempotencyKey: `studio-report-${e.id}-${reportId}` },
+      )).id
+    } catch (err) {
+      console.error('[studio] mistake refund failed:', err instanceof Error ? err.message : err)
+      if (onFailure === 'delete') await db.delete(studioMistakeReports).where(eq(studioMistakeReports.id, reportId))
+      else await db.update(studioMistakeReports).set({ status: 'in_review' }).where(eq(studioMistakeReports.id, reportId))
+      throw new PaymentError(502, 'stripe_error')
+    }
   }
+  const now = review?.at ?? new Date()
   await db.transaction(async (tx) => {
-    await tx.update(studioMistakeReports)
-      .set({ status: 'refunded', stripeRefundId: refundId, ...(review ? { reviewedAt: review.at, reviewedBy: review.by } : {}) })
-      .where(eq(studioMistakeReports.id, reportId))
-    await tx.update(studioPayments).set({ refundedCents: sql`${studioPayments.refundedCents} + ${e.amountCents}` })
-      .where(eq(studioPayments.id, pay.id))
+    const [marked] = await tx.update(studioMistakeReports)
+      .set({
+        status: 'refunded', stripeRefundId: refundId, creditedCents, manaCents: split.manaCents,
+        ...(review ? { reviewedAt: review.at, reviewedBy: review.by } : {}),
+      })
+      .where(and(eq(studioMistakeReports.id, reportId), inArray(studioMistakeReports.status, ['pending', 'approving'])))
+      .returning({ id: studioMistakeReports.id })
+    if (!marked) return // another attempt already recorded this report
+    if (split.stripeCents > 0) {
+      await tx.update(studioPayments).set({ refundedCents: sql`${studioPayments.refundedCents} + ${split.stripeCents}` })
+        .where(eq(studioPayments.id, pay.id))
+    }
+    await addCredit(tx, e.userId, creditedCents, 'refund', reportId, now)
   })
-  return { status: 'refunded', refundCents: e.amountCents }
+  return { status: 'refunded', refundCents: e.amountCents, creditedCents, manaCents: split.manaCents }
 }
 
 /** A design's paid revision of one piece, by revision number, with the piece's name; null when it wasn't paid for. */
@@ -611,8 +650,8 @@ async function mailHeldReport(userId: string, pieceName: string, revision: numbe
     <p><a href="${appUrl('/admin/studio')}">Approve or decline it on the Studio flags page</a>.</p>`)
 }
 
-/** The owner approves a held report: its line is refunded in full, as an instant report would be. */
-export async function approveReport(reportId: string, adminId: string, now: Date): Promise<{ status: 'refunded'; refundCents: number }> {
+/** The owner approves a held report: its line is refunded in full, the way it was paid, as an instant report would be. */
+export async function approveReport(reportId: string, adminId: string, now: Date): Promise<RefundResult> {
   // in_review -> approving is the lock: a second approval finds nothing to approve. An approval that died midway
   // (approving for longer than a refund takes) can be approved again; Stripe's earlier refund is found, not repeated.
   const [lock] = await db.update(studioMistakeReports).set({ status: 'approving', reviewedAt: now })
@@ -621,7 +660,7 @@ export async function approveReport(reportId: string, adminId: string, now: Date
   const [row] = await db.select({ e: studioEntitlements, pay: studioPayments }).from(studioEntitlements)
     .innerJoin(studioPayments, eq(studioPayments.id, studioEntitlements.paymentId))
     .where(eq(studioEntitlements.id, lock.entitlementId))
-  if (!row?.pay.stripePaymentIntent || !(row.e.amountCents > 0)) {
+  if (!row || !(row.e.amountCents > 0) || (refundSplit(row.e).stripeCents > 0 && !row.pay.stripePaymentIntent)) {
     await db.update(studioMistakeReports).set({ status: 'in_review' }).where(eq(studioMistakeReports.id, reportId))
     throw new PaymentError(409, 'nothing_charged')
   }

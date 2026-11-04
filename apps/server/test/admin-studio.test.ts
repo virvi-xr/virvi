@@ -220,7 +220,7 @@ describe('studio admin: flags and pauses', () => {
       expect(list[0].revisionNumber).toBeGreaterThan(3)
       const ok = await review(held[0].id, 'approve')
       expect(ok.statusCode).toBe(200)
-      expect(ok.json()).toEqual({ status: 'refunded', refundCents: 1500 })
+      expect(ok.json()).toEqual({ status: 'refunded', refundCents: 1500, creditedCents: 0, manaCents: 0 })
       expect(stripe.calls.refunds).toHaveLength(3)
       expect((await review(held[0].id, 'approve')).statusCode).toBe(409)
       expect((await review(held[1].id, 'decline')).statusCode).toBe(204)
