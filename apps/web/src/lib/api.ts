@@ -8,7 +8,7 @@ import type { RoomNudge } from './room-set'
 import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
 import type { ArFileFormat, ArMounting } from './ar'
-import type { AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
+import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
 import type { SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
@@ -646,6 +646,18 @@ export function useApi() {
     approveAdminStudioReport: (id: string) =>
       apiFetch<{ status: 'refunded'; refundCents: number; creditedCents: number; manaCents: number }>(`/api/admin/studio/reports/${id}/approve`, { method: 'POST' }),
     declineAdminStudioReport: (id: string) => apiFetch<void>(`/api/admin/studio/reports/${id}/decline`, { method: 'POST' }),
+
+    // MANA the owner sends back, and transfers that matched no payment (admin)
+    getAdminManaRefunds: () => apiFetch<{ refunds: AdminManaRefund[] }>('/api/admin/studio/mana-refunds?status=requested'),
+    getAdminManaRefundQuote: (id: string) => apiFetch<AdminManaRefundQuote>(`/api/admin/studio/mana-refunds/${id}/quote`),
+    markAdminManaRefundSent: (id: string, txHash: string, amountWei: string) =>
+      apiFetch<unknown>(`/api/admin/studio/mana-refunds/${id}/sent`, { method: 'POST', body: JSON.stringify({ txHash, amountWei }) }),
+    declineAdminManaRefund: (id: string) => apiFetch<unknown>(`/api/admin/studio/mana-refunds/${id}/decline`, { method: 'POST' }),
+    getAdminManaTransfers: () => apiFetch<{ transfers: AdminManaTransfer[] }>('/api/admin/studio/mana-transfers?status=unmatched'),
+    settleAdminManaTransfer: (txHash: string, logIndex: number, paymentId: string) =>
+      apiFetch<unknown>(`/api/admin/studio/mana-transfers/${txHash}/${logIndex}/settle`, { method: 'POST', body: JSON.stringify({ paymentId }) }),
+    returnAdminManaTransfer: (txHash: string, logIndex: number, returnTxHash: string) =>
+      apiFetch<unknown>(`/api/admin/studio/mana-transfers/${txHash}/${logIndex}/returned`, { method: 'POST', body: JSON.stringify({ returnTxHash }) }),
 
     // Ads (admin)
     getAdminAdvertiserLeads: () => apiFetch<{ leads: AdminAdvertiserLead[] }>('/api/admin/advertiser-leads'),

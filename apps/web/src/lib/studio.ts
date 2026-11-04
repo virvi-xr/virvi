@@ -2,6 +2,7 @@
  * Design Studio: the page's types (the server's JSON, from apps/server/src/routes/studio.ts and studio/*.ts), its
  * copy, and the pure decisions the studio pages make. Kept free of React so it tests in node.
  */
+import { formatMana } from './mana'
 import type { Tone } from '@/components/ui'
 
 export type StudioKind = 'wearable' | 'emote' | 'scene'
@@ -814,4 +815,82 @@ export function giftCodeStatus(c: Pick<AdminGiftCode, 'disabledAt' | 'expiresAt'
   if (c.expiresAt && new Date(c.expiresAt) <= now) return 'Expired'
   if (c.uses >= c.maxUses) return 'Used up'
   return 'Active'
+}
+
+/** A MANA-back request waiting for the owner (apps/server/src/studio/mana/refunds.ts `listManaRefunds`). */
+export type AdminManaRefund = {
+  id: string
+  user: { id: string; email: string | null; wallet: string | null }
+  usdCents: number
+  toAddress: string
+  createdAt: string
+}
+
+/** What the owner sends for a refund request (the quote route). */
+export type AdminManaRefundQuote = { amountWei: string; token: string; chainId: number; to: string; usdPerMana: number }
+
+/** A MANA payment an unmatched transfer might belong to (apps/server/src/studio/mana/settle.ts `listManaTransfers`). */
+export type AdminManaCandidate = {
+  id: string
+  user: { id: string; email: string | null }
+  kind: string
+  amountCents: number
+  creditHeldCents: number
+  manaAmountWei: string
+  status: string
+  createdAt: string
+  expiresAt: string
+}
+
+export type AdminManaTransfer = {
+  txHash: string
+  logIndex: number
+  fromAddress: string
+  amountWei: string
+  status: string
+  createdAt: string
+  candidates: AdminManaCandidate[]
+}
+
+export const TX_HASH = /^0x[0-9a-fA-F]{64}$/
+
+/**
+ * Unmatched transfers as the page lists them. The server already attaches the payments that might be each one; this
+ * keeps those within 5% of the transfer's amount (the same rule, so a stale list can't offer a far-off payment) and
+ * puts the nearest first.
+ */
+export function adminManaRows(transfers: AdminManaTransfer[]) {
+  const big = (s: string) => BigInt(s)
+  return transfers.map((t) => {
+    const wei = big(t.amountWei)
+    const off = (c: AdminManaCandidate) => { const d = big(c.manaAmountWei) - wei; return d < BigInt(0) ? -d : d }
+    const candidates = t.candidates
+      .filter((c) => off(c) * BigInt(100) <= wei * BigInt(5))
+      .sort((a, b) => { const x = off(a), y = off(b); return x < y ? -1 : x > y ? 1 : 0 })
+    return {
+      ...t,
+      key: `${t.txHash}:${t.logIndex}`,
+      scanUrl: `https://polygonscan.com/tx/${t.txHash}`,
+      mana: formatMana(t.amountWei),
+      candidates,
+    }
+  })
+}
+
+const ADMIN_MANA_WORDS: Record<string, string> = {
+  tx_mismatch: 'That transaction doesn’t hold this amount of MANA to this wallet.',
+  already_decided: 'That request has already been decided.',
+  not_unmatched: 'That transfer has already been dealt with.',
+  already_paid: 'That payment is already paid.',
+  payment_claimed: 'That payment is already claimed by another transaction.',
+  not_open: 'That payment is no longer open.',
+  tx_used: 'That transaction is already recorded against something else.',
+  tx_failed: 'That transaction failed on Polygon.',
+  tx_not_found: 'Polygon doesn’t know that transaction yet. Try again in a moment.',
+}
+
+/** A refused owner action in words for the owner (the customer wording says "contact support"). */
+export function adminManaMessage(err: { status?: number; body?: { code?: string } }): string {
+  const code = err.body?.code
+  return (code && ADMIN_MANA_WORDS[code]) || refusalMessage(err, new Date()).text
 }

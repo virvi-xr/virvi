@@ -2,12 +2,142 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useAuth } from '@/lib/auth'
+import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { Badge, ConfirmAction, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
-import { SCOPE_CATEGORY_WORDS, flagSummary, formatCents, type AdminMistakeReport, type AdminStudioFlag } from '@/lib/studio'
+import { formatMana, sendMana, walletRejected } from '@/lib/mana'
+import {
+  SCOPE_CATEGORY_WORDS, TX_HASH, adminManaMessage, adminManaRows, flagSummary, formatCents,
+  type AdminManaRefund, type AdminMistakeReport, type AdminStudioFlag,
+} from '@/lib/studio'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+const smallButton = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50'
+const inputClass = 'rounded-md border border-gray-800 bg-gray-950 px-3 py-1.5 text-sm'
+const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+
+type Api = ReturnType<typeof useApi>
+
+/** One MANA-back request: Send from the owner's wallet, or Decline after typing DECLINE (no browser dialogs). */
+function RefundRow({ r, api, onChanged }: { r: AdminManaRefund; api: Api; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [declining, setDeclining] = useState(false)
+  const [typed, setTyped] = useState('')
+  // A transaction that left the wallet but isn't recorded yet: kept so the owner can record it again, never send twice
+  const [unrecorded, setUnrecorded] = useState<{ txHash: string; amountWei: string } | null>(null)
+
+  const record = async (txHash: string, amountWei: string) => {
+    if (!TX_HASH.test(txHash)) { setNote('That isn’t a transaction hash.'); return }
+    await api.markAdminManaRefundSent(r.id, txHash, amountWei)
+    await onChanged()
+  }
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true)
+    setNote(null)
+    try { await fn() } catch (e) {
+      setNote(walletRejected(e) ? 'You cancelled it in your wallet. Nothing was sent.' : adminManaMessage(e as { status?: number; body?: { code?: string } }) || (e as Error).message)
+    } finally { setBusy(false) }
+  }
+
+  const send = () => run(async () => {
+    const wallet = getBrowserWallet()
+    if (!wallet) throw new Error('No browser wallet found. Open this page in a browser with your wallet.')
+    const q = await api.getAdminManaRefundQuote(r.id)
+    const hash = await sendMana(wallet, { token: q.token, recipient: q.to, amountWei: q.amountWei })
+    setUnrecorded({ txHash: hash, amountWei: q.amountWei })
+    await record(hash, q.amountWei)
+  })
+
+  return (
+    <li className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium">{r.user.email ?? r.user.id} <span className="text-sm text-gray-500">· {formatCents(r.usdCents)}</span></p>
+          <p className="break-all text-sm text-gray-400">
+            Wallet {r.user.wallet ?? 'none linked'} · send to {r.toAddress} · {dateFmt.format(new Date(r.createdAt))}
+          </p>
+        </div>
+        {!unrecorded && (
+          <div className="flex flex-wrap gap-2">
+            <PrimaryButton type="button" disabled={busy} onClick={send}>Send MANA</PrimaryButton>
+            <button type="button" disabled={busy} onClick={() => { setDeclining(!declining); setTyped('') }} className={smallButton}>Decline</button>
+          </div>
+        )}
+      </div>
+      {declining && !unrecorded && (
+        <form className="mt-3 flex flex-wrap items-center gap-2 text-sm" onSubmit={(e) => { e.preventDefault(); if (typed === 'DECLINE') run(async () => { await api.declineAdminManaRefund(r.id); await onChanged() }) }}>
+          <label htmlFor={`decline-${r.id}`} className="text-gray-400">Type DECLINE to keep their money as Virvi credit</label>
+          <input id={`decline-${r.id}`} value={typed} onChange={(e) => setTyped(e.target.value)} className={inputClass} autoComplete="off" />
+          <button type="submit" disabled={busy || typed !== 'DECLINE'} className="rounded-md bg-red-600/80 px-3 py-1.5 text-white hover:bg-red-600 disabled:opacity-50">Decline request</button>
+        </form>
+      )}
+      {unrecorded && (
+        <div className="mt-3 text-sm">
+          <p className="text-amber-300">Sent {formatMana(unrecorded.amountWei)} in transaction <span className="break-all">{unrecorded.txHash}</span>, but it isn’t recorded yet. Don’t send again.</p>
+          <button type="button" disabled={busy} onClick={() => run(() => record(unrecorded.txHash, unrecorded.amountWei))} className={`${smallButton} mt-2`}>Record it again</button>
+        </div>
+      )}
+      {note && <p className="mt-2 text-sm text-red-400" role="alert">{note}</p>}
+    </li>
+  )
+}
+
+/** One unmatched transfer: settle it with one of its candidate payments, or record the hash it was sent back with. */
+function TransferRow({ t, api, onChanged }: { t: ReturnType<typeof adminManaRows>[number]; api: Api; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [paymentId, setPaymentId] = useState('')
+  const [returning, setReturning] = useState(false)
+  const [hash, setHash] = useState('')
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true)
+    setNote(null)
+    try { await fn(); await onChanged() } catch (e) {
+      setNote(adminManaMessage(e as { status?: number; body?: { code?: string } }))
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <li className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium">{t.mana} <span className="text-sm text-gray-500">· from {short(t.fromAddress)}</span></p>
+          <p className="break-all text-sm text-gray-400">
+            <a href={t.scanUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-white">{t.txHash}</a> · {dateFmt.format(new Date(t.createdAt))}
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <label htmlFor={`pay-${t.key}`} className="sr-only">Payment to settle with</label>
+        <select id={`pay-${t.key}`} value={paymentId} onChange={(e) => setPaymentId(e.target.value)} className={inputClass} disabled={t.candidates.length === 0}>
+          <option value="">{t.candidates.length ? 'Settle with payment…' : 'No payment near this amount'}</option>
+          {t.candidates.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.user.email ?? c.user.id} · {formatMana(c.manaAmountWei)} · {formatCents(c.amountCents)} · {c.status}
+            </option>
+          ))}
+        </select>
+        <button type="button" disabled={busy || !paymentId} onClick={() => run(() => api.settleAdminManaTransfer(t.txHash, t.logIndex, paymentId))} className={smallButton}>Settle</button>
+        <button type="button" disabled={busy} onClick={() => { setReturning(!returning); setHash('') }} className={smallButton}>Mark returned</button>
+      </div>
+      {returning && (
+        <form className="mt-3 flex flex-wrap items-center gap-2 text-sm" onSubmit={(e) => {
+          e.preventDefault()
+          if (!TX_HASH.test(hash.trim())) { setNote('That isn’t a transaction hash (0x and 64 hex characters).'); return }
+          run(() => api.returnAdminManaTransfer(t.txHash, t.logIndex, hash.trim()))
+        }}>
+          <label htmlFor={`ret-${t.key}`} className="text-gray-400">Hash of the transaction that sent it back</label>
+          <input id={`ret-${t.key}`} value={hash} onChange={(e) => setHash(e.target.value)} placeholder="0x…" className={`${inputClass} w-80 max-w-full`} autoComplete="off" />
+          <button type="submit" disabled={busy || !hash.trim()} className={smallButton}>Save</button>
+        </form>
+      )}
+      {note && <p className="mt-2 text-sm text-red-400" role="alert">{note}</p>}
+    </li>
+  )
+}
 
 /**
  * Admin: accounts the studio flagged for repeatedly sending work that isn't a design (dismiss, or pause their studio
@@ -19,15 +149,21 @@ export default function AdminStudioPage() {
   const [status, setStatus] = useState<'open' | 'closed'>('open')
   const [flags, setFlags] = useState<AdminStudioFlag[] | null>(null)
   const [reports, setReports] = useState<AdminMistakeReport[] | null>(null)
+  const [refunds, setRefunds] = useState<AdminManaRefund[] | null>(null)
+  const [transfers, setTransfers] = useState<ReturnType<typeof adminManaRows> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   // useApi gives a new object each render, so the effect keys on the role and the tab, not on load itself
   const load = async () => {
     try {
-      const [f, r] = await Promise.all([api.getAdminStudioFlags(status), api.getAdminStudioReports()])
+      const [f, r, mr, mt] = await Promise.all([
+        api.getAdminStudioFlags(status), api.getAdminStudioReports(), api.getAdminManaRefunds(), api.getAdminManaTransfers(),
+      ])
       setFlags(f.flags)
       setReports(r.reports)
+      setRefunds(mr.refunds)
+      setTransfers(adminManaRows(mt.transfers))
       setError(null)
     } catch (e) {
       setError((e as Error)?.message ?? 'Something went wrong')
@@ -165,6 +301,28 @@ export default function AdminStudioPage() {
                 )}
               </li>
             ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="mana-refunds-title" className="mt-10">
+        <h2 id="mana-refunds-title" className="mb-3 text-lg font-semibold">MANA refunds to send</h2>
+        {!refunds ? <Skeleton rows={1} className="h-16" /> : refunds.length === 0 ? (
+          <p className="text-gray-400">No one is waiting for MANA back.</p>
+        ) : (
+          <ul className="space-y-3">
+            {refunds.map((r) => <RefundRow key={r.id} r={r} api={api} onChanged={load} />)}
+          </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="mana-transfers-title" className="mt-10">
+        <h2 id="mana-transfers-title" className="mb-3 text-lg font-semibold">MANA payments that didn’t match</h2>
+        {!transfers ? <Skeleton rows={1} className="h-16" /> : transfers.length === 0 ? (
+          <p className="text-gray-400">Every MANA payment has matched an order.</p>
+        ) : (
+          <ul className="space-y-3">
+            {transfers.map((t) => <TransferRow key={t.key} t={t} api={api} onChanged={load} />)}
           </ul>
         )}
       </section>

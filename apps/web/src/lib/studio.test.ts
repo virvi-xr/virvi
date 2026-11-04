@@ -6,6 +6,7 @@ import {
 import { formatBytesShort, uploadProblem } from './studio'
 import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudioFlag } from './studio'
 import { giftCodeStatus } from './studio'
+import { adminManaMessage, adminManaRows, type AdminManaTransfer } from './studio'
 import { checkoutHref, checkoutTarget, checkoutTotals, countdown, manaBack } from './studio'
 import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, type StudioDesign, type StudioUsage } from './studio'
 
@@ -635,5 +636,41 @@ describe('manaBack', () => {
     expect(manaBack(report({ manaRefund: 'requested' }))).toEqual({ offer: false, note: 'We’ll send $15.00 of MANA to your wallet. It can take a few days.' })
     expect(manaBack(report({ manaRefund: 'sent' }))).toEqual({ offer: false, note: 'We’ve sent $15.00 of MANA to your wallet.' })
     expect(manaBack(report({ manaRefund: 'declined' }))).toEqual({ offer: false, note: 'We couldn’t send MANA back, so $15.00 stays as Virvi credit.' })
+  })
+})
+
+describe('adminManaRows', () => {
+  const cand = (id: string, wei: string) => ({
+    id, user: { id: 'u', email: null }, kind: 'finalize', amountCents: 500, creditHeldCents: 0, manaAmountWei: wei,
+    status: 'pending', createdAt: '2026-11-04T10:00:00Z', expiresAt: '2026-11-04T10:10:00Z',
+  })
+  const transfer = (over: Partial<AdminManaTransfer>): AdminManaTransfer => ({
+    txHash: '0x' + 'a'.repeat(64), logIndex: 0, fromAddress: '0x' + '1'.repeat(40), amountWei: '100000000000000000000',
+    status: 'unmatched', createdAt: '2026-11-04T10:05:00Z', candidates: [], ...over,
+  })
+
+  it('keeps candidates within 5% of the transfer, nearest first', () => {
+    const [row] = adminManaRows([transfer({ candidates: [
+      cand('far', '120000000000000000000'), cand('near', '100500000000000000000'), cand('edge', '95000000000000000000'),
+      cand('exact', '100000000000000000000'), cand('over', '105000000000000000001'),
+    ] })])
+    expect(row.candidates.map((c) => c.id)).toEqual(['exact', 'near', 'edge'])
+  })
+
+  it('links the transaction on Polygonscan, shows the amount in MANA and a row key', () => {
+    const [row] = adminManaRows([transfer({ logIndex: 3 })])
+    expect(row.scanUrl).toBe('https://polygonscan.com/tx/0x' + 'a'.repeat(64))
+    expect(row.mana).toBe('100.00 MANA')
+    expect(row.key).toBe('0x' + 'a'.repeat(64) + ':3')
+    expect(row.candidates).toEqual([])
+  })
+})
+
+describe('adminManaMessage', () => {
+  it('words the owner-side refusals', () => {
+    expect(adminManaMessage({ body: { code: 'tx_mismatch' } })).toMatch(/amount|wallet/)
+    expect(adminManaMessage({ body: { code: 'already_decided' } })).toMatch(/already/)
+    expect(adminManaMessage({ body: { code: 'payment_claimed' } })).toMatch(/another/)
+    expect(adminManaMessage({ body: { code: 'rate_unavailable' } })).toBe(refusalMessage({ body: { code: 'rate_unavailable' } }, NOW).text)
   })
 })
