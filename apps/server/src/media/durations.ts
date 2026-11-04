@@ -13,7 +13,8 @@ type Opts = {
 
 /**
  * Measures the length of every ready video with none recorded (uploaded before lengths were measured on upload),
- * reading each from its public URL. A video ffprobe can't read is marked `durationProbe: 'failed'` and not retried;
+ * reading each from its public URL. A video ffprobe can't read, or that times out, is marked `durationProbe: 'failed'`
+ * and not retried (so one slow file can't hold up the rest on every boot);
  * if ffprobe is unavailable the run stops and leaves the rest for the next boot.
  */
 export async function backfillVideoDurations(opts: Opts = {}): Promise<{ measured: number; failed: number; stopped: boolean }> {

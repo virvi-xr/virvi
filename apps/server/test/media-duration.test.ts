@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'fs'
+import { createServer } from 'http'
+import type { AddressInfo } from 'net'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { eq } from 'drizzle-orm'
@@ -35,6 +37,23 @@ describe('probeDuration', () => {
   })
   it('calls bytes that are not a video unreadable', async () => {
     expect(await probeDuration(Buffer.alloc(500, 1))).toEqual({ ok: false, reason: 'unreadable' })
+  })
+  it('never follows links inside a fake video (an HLS playlist uploaded as MP4)', async () => {
+    let hits = 0
+    const server = createServer((_req, res) => { hits++; res.end('x') })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const { port } = server.address() as AddressInfo
+    try {
+      const playlist = `#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10.0,\nhttp://127.0.0.1:${port}/seg.ts\n#EXT-X-ENDLIST\n`
+      expect(await probeDuration(Buffer.from(playlist))).toEqual({ ok: false, reason: 'unreadable' })
+      expect(hits).toBe(0)
+    } finally {
+      server.close()
+    }
+  })
+  it('calls a run that times out a timeout', async () => {
+    const big = Buffer.concat(Array.from({ length: 50 }, () => mp4))
+    expect(await probeDuration(big, 1)).toEqual({ ok: false, reason: 'timeout' })
   })
   it('calls a missing ffprobe unavailable', async () => {
     const was = process.env.FFPROBE_PATH
@@ -79,6 +98,22 @@ describe('upload stores a video length', () => {
     const asset = await upload('noise.mp4', 'video/mp4', Buffer.alloc(800, 7))
     expect(asset.status).toBe('ready')
     expect(asset.metadata).toEqual({ durationProbe: 'failed' })
+  })
+
+  it('ignores a length the client sent with the upload', async () => {
+    const user = await createUser()
+    const { reserveMedia, fillMedia } = await import('../src/media/store.js')
+    const was = process.env.FFPROBE_PATH
+    process.env.FFPROBE_PATH = '/nonexistent/ffprobe'
+    try {
+      const r = await reserveMedia(user.id, { filename: 'a.mp4', contentType: 'video/mp4', sizeBytes: mp4.length, metadata: { duration: 9999, durationProbe: 'x', title: 'Mine' } })
+      const stored = await fillMedia(r.id, mp4)
+      expect(stored.status).toBe('ready')
+      expect(stored.metadata).toEqual({ title: 'Mine' })
+    } finally {
+      if (was === undefined) delete process.env.FFPROBE_PATH
+      else process.env.FFPROBE_PATH = was
+    }
   })
 
   it('leaves images alone', async () => {
@@ -135,6 +170,15 @@ describe('backfillVideoDurations', () => {
     expect(res).toEqual({ measured: 0, failed: 0, stopped: true })
     expect(calls).toBe(1)
     expect(await get(a.id)).toBeNull()
+  })
+
+  it('marks a video that times out failed and carries on with the rest', async () => {
+    const a = await insertVideo()
+    const b = await insertVideo()
+    const [first] = [a, b].sort((x, y) => (x.id < y.id ? -1 : 1))
+    const res = await backfillVideoDurations({ probe: async () => ({ ok: false, reason: 'timeout' }) })
+    expect(res).toEqual({ measured: 0, failed: 2, stopped: false })
+    expect(await get(first.id)).toEqual({ durationProbe: 'failed' })
   })
 
   it('works through more videos than one batch', async () => {

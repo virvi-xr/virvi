@@ -71,13 +71,19 @@ export async function fillMedia(assetId: string, buffer: Buffer): Promise<MediaR
 
 /**
  * A video's metadata with its length in seconds (`duration`), which scheduled screens need (LIV-87). A file ffprobe
- * can't read still uploads, marked `durationProbe: 'failed'`; if ffprobe is unavailable it's left for the backfill.
+ * can't read still uploads, marked `durationProbe: 'failed'`; if ffprobe is unavailable or times out it's left
+ * for the backfill. Never fails the upload.
  */
 async function withDuration(metadata: unknown, buffer: Buffer): Promise<Record<string, unknown> | null> {
-  const base = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : null
+  // Only ffprobe sets these: drop any the client sent when reserving the upload
+  const { duration: _d, durationProbe: _p, ...rest } = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)
+    : {}
+  const base = Object.keys(rest).length ? rest : null
   const result = await probeDuration(buffer)
   if (result.ok) return { ...base, duration: result.seconds }
   if (result.reason === 'unreadable') return { ...base, durationProbe: 'failed' }
+  // Unavailable or timed out: the boot backfill tries again
   return base
 }
 
