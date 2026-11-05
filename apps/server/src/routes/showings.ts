@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { canWriteElement, getSceneAccess } from '../auth/permissions.js'
 import { utcToZoned } from '../scenes/schedule-time.js'
+import { fromElement, fromShowing } from '../auth/scene-from.js'
 import { publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
 import {
   findShowingClash, parseShowingInput, planDelay, planEnd, planPlayNow, presentShowing, resolveItems, screenClash, ShowingError, specOfShowing,
@@ -18,6 +19,8 @@ const NEW_ID = '00000000-0000-0000-0000-000000000000'
 /**
  * Scheduled showings on a video screen (LIV-87), web only. Anyone who may edit the screen's playlist may manage its
  * showings: hosts, co-hosts and editors, and booking crew with the `playlist` scope on a screen of their booking.
+ * The Hyperfy HUD may list a screen's showings and use the host controls (delay, end, play now) with its scene pass;
+ * building showings stays web-only.
  */
 export default async function showingRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate)
@@ -79,7 +82,9 @@ export default async function showingRoutes(app: FastifyInstance) {
     throw e
   }
 
-  app.get<{ Params: { elementId: string } }>('/api/elements/:elementId/showings', async (request, reply) => {
+  const hud = (sceneFrom: typeof fromElement) => ({ config: { scenePass: { sceneFrom, hyperfy: true as const } } })
+
+  app.get<{ Params: { elementId: string } }>('/api/elements/:elementId/showings', hud(fromElement), async (request, reply) => {
     const screen = await screenFor(request, reply, request.params.elementId, false)
     if (!screen) return reply
     const rows = await db.select().from(screenShowings).where(eq(screenShowings.elementId, screen.id)).orderBy(asc(screenShowings.createdAt))
@@ -126,7 +131,7 @@ export default async function showingRoutes(app: FastifyInstance) {
    * another show on the screen is refused (409 showing_overlap).
    */
   const adjust = (path: string, plan: (row: ShowingRow, body: Record<string, unknown>, now: Date) => ShowingAdjustment[]) =>
-    app.post<{ Params: { showingId: string } }>(`/api/showings/:showingId/${path}`, async (request, reply) => {
+    app.post<{ Params: { showingId: string } }>(`/api/showings/:showingId/${path}`, hud(fromShowing), async (request, reply) => {
       const row = await ownShowing(request, reply)
       if (!row) return reply
       try {

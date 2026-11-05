@@ -207,3 +207,42 @@ describe('HudView streams panel: off images (LIV-54)', () => {
     expect(calls).toEqual([['chooseImage', 'v1', 'a2'], ['chooseImage', 'v1', ''], ['pickImage', 'v1']])
   })
 })
+
+describe('HudView streams panel: showings (LIV-87)', () => {
+  const NOW = 1_800_000_000_000
+  const scene = { videos: [{ sk: 'v1', name: 'Cinema', offType: 6, instances: [] }, { sk: 'v2', name: 'Lobby', offType: 2, instances: [] }], images: [], models: [], sounds: [] }
+  const draw = (ui: Record<string, unknown>) => {
+    const h = host()
+    const calls: unknown[][] = []
+    const act = new Proxy({}, { get: (_t, name) => (...args: unknown[]) => void calls.push([name, ...args]) }) as HudActions
+    new HudView(h, act).render(hudModel({ ...vmState(), scene: scene as never, now: NOW, ui: { panel: 'streams', ...ui } }))
+    const all = h.created.flatMap((n) => (typeof n.value === 'string' ? [n.value] : []))
+    const buttons = (label: string) => h.created.filter((n) => n.onPointerDown && texts(n).length === 1 && texts(n)[0] === label)
+    return { all, calls, buttons, press: (label: string) => buttons(label)[0].onPointerDown() }
+  }
+
+  it('only Schedule-mode screens get a Showings button', () => {
+    const t = draw({})
+    expect(t.buttons('Showings')).toHaveLength(1)
+    t.press('Showings')
+    expect(t.calls).toEqual([['openShowings', 'v1']])
+  })
+
+  it('an open list shows each showing with the controls that apply', () => {
+    const showingList = [
+      { id: 'a', title: 'Film', enabled: true, upcoming: [{ startsAt: NOW - 60_000, lengthSeconds: 600 }, { startsAt: NOW + 86_400_000, lengthSeconds: 600 }] },
+      { id: 'b', title: 'Shorts', enabled: true, upcoming: [{ startsAt: NOW + 3_600_000, lengthSeconds: 600 }] },
+    ]
+    const t = draw({ showingsFor: 'v1', showingList })
+    for (const s of ['Close showings', 'Film: On now, 9 min left', 'Shorts: Next in 1 h 00 min']) expect(t.all).toContain(s)
+    t.press('End now')
+    t.press('Play now')
+    t.buttons('Delay 5 min')[1].onPointerDown()
+    expect(t.calls).toEqual([['controlShowing', 'a', 'end'], ['controlShowing', 'b', 'play-now'], ['controlShowing', 'b', 'delay']])
+  })
+
+  it('while loading, or with none, says so', () => {
+    expect(draw({ showingsFor: 'v1' }).all).toContain('Loading showings…')
+    expect(draw({ showingsFor: 'v1', showingList: [] }).all).toContain('No showings yet: add them on virvi.io')
+  })
+})

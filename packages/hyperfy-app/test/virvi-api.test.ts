@@ -108,6 +108,34 @@ describe('VirviApi', () => {
     expect((await t.api.saveTransform('i1', T)).ok).toBe(true)
   })
 
+  it("lists a screen's showings with their shows' starts in ms, and sends the host controls (LIV-87)", async () => {
+    const raw = { id: 'sh1', title: 'Film', enabled: true, upcoming: [{ startsAt: '2027-01-15T08:00:00.000Z', lengthSeconds: 600 }] }
+    const t = make([res(200, { showings: [raw, { id: 'sh2', title: null, enabled: false }] }), res(200, { showing: {} }), res(200, { showing: {} }), res(200, { showing: {} })])
+    expect(await t.api.listShowings('v1')).toEqual({
+      ok: true,
+      value: [
+        { id: 'sh1', title: 'Film', enabled: true, upcoming: [{ startsAt: Date.UTC(2027, 0, 15, 8), lengthSeconds: 600 }] },
+        { id: 'sh2', title: '', enabled: false, upcoming: [] },
+      ],
+    })
+    await t.api.controlShowing('sh1', 'delay', 5)
+    await t.api.controlShowing('sh1', 'end')
+    await t.api.controlShowing('sh1', 'play-now')
+    expect(t.calls.map((c) => [c.init.method, c.url])).toEqual([
+      ['GET', 'https://api.example/api/elements/v1/showings'],
+      ['POST', 'https://api.example/api/showings/sh1/delay'],
+      ['POST', 'https://api.example/api/showings/sh1/end'],
+      ['POST', 'https://api.example/api/showings/sh1/play-now'],
+    ])
+    expect(t.calls.slice(1).map(body)).toEqual([{ minutes: 5 }, {}, {}])
+  })
+
+  it("a refused request keeps the server's message", async () => {
+    const t = make([res(409, { error: 'showing_overlap', message: 'That would run into "Late", at 21:05.' }), res(409, { error: 'x' })])
+    expect(await t.api.controlShowing('sh1', 'play-now')).toEqual({ ok: false, reason: 'invalid', message: 'That would run into "Late", at 21:05.' })
+    expect(await t.api.controlShowing('sh1', 'play-now')).toEqual({ ok: false, reason: 'invalid' })
+  })
+
   it('maps 400/404/409 to invalid and 5xx to server', async () => {
     const t = make([res(400), res(404), res(409), res(500), res(502)])
     const r = []

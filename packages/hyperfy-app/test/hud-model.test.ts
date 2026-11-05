@@ -12,6 +12,11 @@ import {
   clearCopiesPrompt,
   offImageChoices,
   offImageLabel,
+  showingRow,
+  showControlAlert,
+  timeLeft,
+  NO_SHOWINGS,
+  SHOWINGS_LOADING,
   clearedAlert,
   chatCommandText,
   chatEntry,
@@ -200,8 +205,8 @@ describe('hudModel', () => {
     })
     const vm = hudModel(state({ scene: sc, ui: { panel: 'streams' } }))
     expect(vm.streams).toEqual([
-      { elementId: 'v1', name: 'Main screen', enableLiveStream: true, isLive: true, source: 'No stream', picking: false, offImage: 'No off image', imagePicking: false },
-      { elementId: 'v2', name: 'Screen', enableLiveStream: false, isLive: false, source: 'No stream', picking: false, offImage: 'No off image', imagePicking: false },
+      { elementId: 'v1', name: 'Main screen', enableLiveStream: true, isLive: true, source: 'No stream', picking: false, offImage: 'No off image', imagePicking: false, scheduled: false, showingsOpen: false },
+      { elementId: 'v2', name: 'Screen', enableLiveStream: false, isLive: false, source: 'No stream', picking: false, offImage: 'No off image', imagePicking: false, scheduled: false, showingsOpen: false },
     ])
     expect(vm.streamOptions).toEqual([])
   })
@@ -640,5 +645,51 @@ describe('off images (LIV-54)', () => {
     expect(empty.imagesNote).toBe('No images in the scene library yet: add one from Assets on virvi.io')
     expect(empty.imageOptions).toEqual([{ id: '', label: 'None', current: true }])
     expect(hudModel(st({ imageList: images })).imageOptions).toEqual([])
+  })
+})
+
+describe('showings in the Streams panel (LIV-87)', () => {
+  const NOW = 1_800_000_000_000
+  const film = (upcoming: Array<[number, number]>, enabled = true) => ({
+    id: 'sh1', title: 'Film', enabled, upcoming: upcoming.map(([startsAt, lengthSeconds]) => ({ startsAt, lengthSeconds })),
+  })
+
+  it('timeLeft reads in minutes, hours and minutes, or days', () => {
+    expect(timeLeft(30_000)).toBe('1 min')
+    expect(timeLeft(23 * 60_000)).toBe('23 min')
+    expect(timeLeft(65 * 60_000)).toBe('1 h 05 min')
+    expect(timeLeft(26 * 3600_000)).toBe('1 day')
+    expect(timeLeft(50 * 3600_000)).toBe('2 days')
+  })
+
+  it('a show on now can be ended or the next delayed; between shows it can be played now', () => {
+    expect(showingRow(film([[NOW - 600_000, 6000], [NOW + 86_400_000, 6000]]), NOW)).toEqual({
+      id: 'sh1', title: 'Film', status: 'On now, 1 h 30 min left', canEnd: true, canPlay: false, canDelay: true,
+    })
+    expect(showingRow(film([[NOW + 65 * 60_000, 6000]]), NOW)).toMatchObject({ status: 'Next in 1 h 05 min', canEnd: false, canPlay: true, canDelay: true })
+    expect(showingRow(film([]), NOW)).toMatchObject({ status: 'Nothing coming up', canPlay: true, canDelay: false })
+  })
+
+  it('a paused showing has no controls', () => {
+    expect(showingRow(film([[NOW + 60_000, 60]], false), NOW)).toEqual({ id: 'sh1', title: 'Film', status: 'Paused on virvi.io', canEnd: false, canPlay: false, canDelay: false })
+  })
+
+  it('Schedule-mode screens get a Showings list, loading or empty notes, and rows', () => {
+    const sc = scene({ videos: [{ sk: 'v1', name: 'Cinema', offType: 6, instances: [] }, { sk: 'v2', name: 'Lobby', offType: 2, instances: [] }] })
+    const closed = hudModel(state({ scene: sc, ui: { panel: 'streams' } }))
+    expect(closed.streams.map((s) => [s.scheduled, s.showingsOpen])).toEqual([[true, false], [false, false]])
+    expect(closed.showingRows).toEqual([])
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', showingsFor: 'v1' } })).showingsNote).toBe(SHOWINGS_LOADING)
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', showingsFor: 'v1', showingList: [] } })).showingsNote).toBe(NO_SHOWINGS)
+    const open = hudModel(state({ scene: sc, now: NOW, ui: { panel: 'streams', showingsFor: 'v1', showingList: [film([[NOW + 60_000, 60]])] } }))
+    expect(open.streams[0].showingsOpen).toBe(true)
+    expect(open.showingsNote).toBeNull()
+    expect(open.showingRows).toEqual([{ id: 'sh1', title: 'Film', status: 'Next in 1 min', canEnd: false, canPlay: true, canDelay: true }])
+  })
+
+  it('says what each control did', () => {
+    expect(showControlAlert('delay', 'Film')).toEqual({ kind: 'info', text: 'Film: the next show starts 5 min later' })
+    expect(showControlAlert('end', '')).toEqual({ kind: 'info', text: 'Untitled showing: ended' })
+    expect(showControlAlert('play-now', 'Film')).toEqual({ kind: 'info', text: 'Film: playing now for everyone' })
   })
 })

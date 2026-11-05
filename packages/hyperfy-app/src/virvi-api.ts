@@ -1,8 +1,10 @@
 import type { Vec3 } from '@virvixr/shared'
+import { parseIsoTime } from './iso-time.js'
 import type { ScriptFetch } from './poller.js'
 
 export type ApiFailure = 'lost' | 'no_access' | 'auth' | 'invalid' | 'server'
-export type ApiResult<T> = { ok: true; value: T } | { ok: false; reason: ApiFailure }
+/** `message`: the server's own words for a refused request (4xx with a `message`), e.g. why a show can't move. */
+export type ApiResult<T> = { ok: true; value: T } | { ok: false; reason: ApiFailure; message?: string }
 
 /** A transform in Virvi coordinates (Decentraland frame, rotation in degrees): no conversion happens here. */
 export interface VirviTransform {
@@ -147,6 +149,29 @@ export class VirviApi {
     return r.ok ? { ok: true, value: { deleted: r.value.deleted ?? 0 } } : r
   }
 
+  /** GET /api/elements/:id/showings: a Schedule-mode screen's showings, each with its shows on now or coming up (LIV-87). */
+  async listShowings(elementId: string): Promise<ApiResult<Array<{ id: string; title: string; enabled: boolean; upcoming: Array<{ startsAt: number; lengthSeconds: number }> }>>> {
+    type Raw = { id: string; title?: string | null; enabled?: boolean; upcoming?: Array<{ startsAt: string; lengthSeconds: number }> }
+    const r = await this.call<{ showings?: Raw[] }>('GET', `/api/elements/${encodeURIComponent(elementId)}/showings`)
+    if (!r.ok) return r
+    return {
+      ok: true,
+      value: (r.value.showings ?? []).map((s) => ({
+        id: s.id,
+        title: s.title ?? '',
+        enabled: s.enabled !== false,
+        upcoming: (s.upcoming ?? [])
+          .map((u) => ({ startsAt: parseIsoTime(u.startsAt), lengthSeconds: u.lengthSeconds }))
+          .filter((u) => Number.isFinite(u.startsAt)),
+      })),
+    }
+  }
+
+  /** POST /api/showings/:id/{delay,end,play-now}: delay the next show by `minutes`, end the one on now, or play now. */
+  controlShowing(showingId: string, control: 'delay' | 'end' | 'play-now', minutes?: number): Promise<ApiResult<unknown>> {
+    return this.call('POST', `/api/showings/${encodeURIComponent(showingId)}/${control}`, control === 'delay' ? { minutes } : {})
+  }
+
   /** GET /api/scenes/:id/library */
   async listLibrary(sceneId: string): Promise<ApiResult<LibraryEntry[]>> {
     const r = await this.call<{ items?: LibraryEntry[] }>('GET', `/api/scenes/${encodeURIComponent(sceneId)}/library`)
@@ -230,7 +255,15 @@ export class VirviApi {
     if (res.status === 401) return 'unauthorized'
     if (res.status === 403) return { ok: false, reason: 'no_access' }
     if (res.status >= 500) return { ok: false, reason: 'server' }
-    if (!res.ok) return { ok: false, reason: 'invalid' }
+    if (!res.ok) {
+      let message: unknown
+      try {
+        message = ((await res.json()) as { message?: unknown } | null)?.message
+      } catch {
+        message = undefined
+      }
+      return typeof message === 'string' && message ? { ok: false, reason: 'invalid', message } : { ok: false, reason: 'invalid' }
+    }
     try {
       return { ok: true, value: (await res.json()) as T }
     } catch {

@@ -7,7 +7,8 @@ import { createSetup } from './helpers/setups.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
 import { issueArPass, issueHyperfyPass } from '../src/auth/scene-pass.js'
 import { db } from '../src/db/connection.js'
-import { arDevices, arSpaces, hyperfyPairings, hyperfyWorlds } from '../src/db/schema.js'
+import { arDevices, arSpaces, hyperfyPairings, hyperfyWorlds, screenShowings } from '../src/db/schema.js'
+import { VideoSourceType } from '@virvixr/shared'
 
 const pass = (u: any, sceneId: string | null, locationId: string | null = null) => tokenFor(u, { kind: 'scene', sceneId, locationId, orgId: null })
 
@@ -302,6 +303,10 @@ describe('scene pass guard', () => {
       'GET /api/scenes/:sceneId/library',
       'POST /api/scenes/:sceneId/library',
       'GET /api/scenes/:sceneId/streams',
+      'GET /api/elements/:elementId/showings',
+      'POST /api/showings/:showingId/delay',
+      'POST /api/showings/:showingId/end',
+      'POST /api/showings/:showingId/play-now',
     ].sort()
 
     /** A live Hyperfy pass for the owner's own scene, plus ids under that scene for the walk. */
@@ -378,6 +383,27 @@ describe('scene pass guard', () => {
       expect(cleared.statusCode).toBe(200)
       expect(cleared.json()).toEqual({ deleted: 2 })
       expect((await app.inject({ method: 'DELETE', url: `/api/elements/${id}`, headers: h })).statusCode).toBe(204)
+    })
+
+    it('the HUD lists a screen\'s showings and plays and ends one (LIV-87), only in its own scene', async () => {
+      const f = await fixture()
+      const h = { authorization: `Bearer ${f.hp}` }
+      const items = [{ url: 'https://cdn.example/film.mp4', duration: 600, kind: 'video' as const }]
+      const screen = await createElement(f.preset.id, { type: 'video', properties: { offType: VideoSourceType.SCHEDULED, playlist: [] } })
+      const [showing] = await db.insert(screenShowings).values({ sceneId: f.scene.id, elementId: screen.id, title: 'Film', items, recurrence: 'once', startDate: '2040-01-01', startTime: '10:00', timezone: 'UTC' }).returning()
+      const list = await app.inject({ method: 'GET', url: `/api/elements/${screen.id}/showings`, headers: h })
+      expect(list.statusCode).toBe(200)
+      expect(list.json().showings.map((s: { id: string }) => s.id)).toEqual([showing.id])
+      expect((await app.inject({ method: 'POST', url: `/api/showings/${showing.id}/play-now`, headers: h })).statusCode).toBe(200)
+      expect((await app.inject({ method: 'POST', url: `/api/showings/${showing.id}/end`, headers: h })).statusCode).toBe(200)
+      // Let in (not 403): its only show is years away, so there is nothing to delay yet
+      expect((await app.inject({ method: 'POST', url: `/api/showings/${showing.id}/delay`, headers: h, payload: { minutes: 5 } })).json()).toMatchObject({ error: 'nothing_to_delay' })
+      // Another scene's showing, even the same owner's: the pass is bound to its own scene
+      const other = await createScene(f.owner, 'Other')
+      const otherScreen = await createElement(other.preset.id, { type: 'video', properties: { offType: VideoSourceType.SCHEDULED, playlist: [] } })
+      const [theirs] = await db.insert(screenShowings).values({ sceneId: other.scene.id, elementId: otherScreen.id, items, recurrence: 'once', startDate: '2040-01-01', startTime: '10:00', timezone: 'UTC' }).returning()
+      expect((await app.inject({ method: 'GET', url: `/api/elements/${otherScreen.id}/showings`, headers: h })).statusCode).toBe(403)
+      expect((await app.inject({ method: 'POST', url: `/api/showings/${theirs.id}/play-now`, headers: h })).statusCode).toBe(403)
     })
   })
 

@@ -1,7 +1,7 @@
 import type { FastifyRequest } from 'fastify'
 import { eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { analyticsScenes, sceneElementInstances, sceneElements, scenePresets, scenePresetSchedules } from '../db/schema.js'
+import { analyticsScenes, sceneElementInstances, sceneElements, scenePresets, scenePresetSchedules, screenShowings } from '../db/schema.js'
 
 /**
  * Resolves the scene a request targets, so `authenticate` can hold a scene pass to its own scene.
@@ -50,6 +50,12 @@ export const fromElement: SceneFrom = async (r) => {
   if (!id) return null
   const e = await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, id), columns: { id: true }, with: { preset: { columns: { sceneId: true } } } })
   return e?.preset?.sceneId ?? null
+}
+export const fromShowing: SceneFrom = async (r) => {
+  const id = param(r, 'showingId')
+  if (!id) return null
+  const s = await db.query.screenShowings.findFirst({ where: eq(screenShowings.id, id), columns: { sceneId: true } })
+  return s?.sceneId ?? null
 }
 export const fromInstance: SceneFrom = async (r) => {
   const id = param(r, 'instanceId')

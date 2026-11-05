@@ -4,7 +4,7 @@
  * stack (bottom centre, click-through). Screen UI takes clicks only while the pointer is unlocked.
  */
 import type { TransformMode } from '@virvixr/core/transform/session'
-import type { AssetTab, Axis, HudViewModel, Panel } from './model.js'
+import { DELAY_STEP_MINUTES, type AssetTab, type Axis, type HudViewModel, type Panel, type ShowControl } from './model.js'
 
 export interface UiNode {
   add(child: UiNode): void
@@ -48,6 +48,9 @@ export interface HudActions {
   pickImage(elementId: string): void
   /** '' clears the off image. */
   chooseImage(elementId: string, imageId: string): void
+  /** Open (or close) a Schedule-mode screen's showings (LIV-87). */
+  openShowings(elementId: string): void
+  controlShowing(showingId: string, control: ShowControl): void
   setTab(tab: AssetTab): void
   choose(id: string): void
   typeField(field: 'search'): void
@@ -332,6 +335,21 @@ export class HudView {
                     ...(vm.imagesNote ? [this.row([this.label(vm.imagesNote, C.dim, 12)])] : []),
                     ...vm.imageOptions.map((o) => this.row([this.button(o.label, () => a.chooseImage(s.elementId, o.id), o.current)])),
                   ]
+                : []),
+              ...(s.scheduled
+                ? [this.row([this.label('Scheduled showings', C.dim, 12), this.button(s.showingsOpen ? 'Close showings' : 'Showings', () => a.openShowings(s.elementId), s.showingsOpen)])]
+                : []),
+              ...(s.showingsOpen
+                ? vm.showingsNote
+                  ? [this.row([this.label(vm.showingsNote, C.dim, 12)])]
+                  : vm.showingRows.flatMap((r) => [
+                      this.row([this.label(`${r.title}: ${r.status}`, C.text, 12)]),
+                      this.row([
+                        ...(r.canEnd ? [this.button('End now', () => a.controlShowing(r.id, 'end'))] : []),
+                        ...(r.canPlay ? [this.button('Play now', () => a.controlShowing(r.id, 'play-now'))] : []),
+                        ...(r.canDelay ? [this.button(`Delay ${DELAY_STEP_MINUTES} min`, () => a.controlShowing(r.id, 'delay'))] : []),
+                      ]),
+                    ])
                 : []),
             ])
           : [this.row([this.label('No screens in this preset', C.dim)])]
