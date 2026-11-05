@@ -314,6 +314,8 @@ describe('MANA back on request, and the owner\'s MANA admin', () => {
       await addRevision(fd, 'hat')
       setManaRateSource(async () => 0.1) // drops the cached rate
       await createFinalizeCheckout(fd, { id: far.id, email: far.email ?? null }, null, {}, T, 'mana')
+      // Payments take their created_at from the database clock; pin them to the test's clock so "near in time" holds on any day
+      await db.update(studioPayments).set({ createdAt: T })
       const res = await adminGet('/api/admin/studio/mana-transfers?status=unmatched')
       expect(res.statusCode).toBe(200)
       const [t] = res.json().transfers
