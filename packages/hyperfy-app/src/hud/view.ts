@@ -38,6 +38,9 @@ export interface HudActions {
   toggleEnabled(elementId: string, enabled: boolean): void
   setPreset(presetId: string): void
   toggleLive(elementId: string, on: boolean): void
+  /** Open (or close) a screen's stream list. */
+  pickStream(elementId: string): void
+  chooseStream(elementId: string, streamId: string): void
   setTab(tab: AssetTab): void
   choose(id: string): void
   typeField(field: 'search'): void
@@ -287,7 +290,7 @@ export class HudView {
         ]
       case 'streams':
         return vm.streams.length
-          ? vm.streams.map((s) =>
+          ? vm.streams.flatMap((s) => [
               this.row([
                 this.label(`${s.name}${s.isLive ? ' (live)' : ''}`),
                 this.button(
@@ -296,7 +299,16 @@ export class HudView {
                   s.enableLiveStream,
                 ),
               ]),
-            )
+              this.row([
+                this.label(s.source, C.dim, 12),
+                this.button(s.picking ? 'Close list' : 'Choose stream', () => a.pickStream(s.elementId), s.picking),
+              ]),
+              ...(s.picking
+                ? vm.streamsNote
+                  ? [this.row([this.label(vm.streamsNote, C.dim, 12)])]
+                  : vm.streamOptions.map((o) => this.row([this.button(o.label, () => a.chooseStream(s.elementId, o.id), o.current)]))
+                : []),
+            ])
           : [this.row([this.label('No screens in this preset', C.dim)])]
       case 'assets': {
         const s = vm.assets

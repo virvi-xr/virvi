@@ -300,6 +300,7 @@ describe('scene pass guard', () => {
       'PUT /api/instances/:instanceId',
       'GET /api/scenes/:sceneId/library',
       'POST /api/scenes/:sceneId/library',
+      'GET /api/scenes/:sceneId/streams',
     ].sort()
 
     /** A live Hyperfy pass for the owner's own scene, plus ids under that scene for the walk. */

@@ -31,6 +31,27 @@ const T = { position: { x: 1, y: 2, z: 3 }, rotation: { x: 0, y: 45, z: 0 }, sca
 const body = (c: Call) => JSON.parse(c.init.body!)
 
 describe('VirviApi', () => {
+  it("lists the scene's streams (LIV-53)", async () => {
+    const s = { id: 's1', name: 'Main Stage', hlsPlaylistUrl: 'https://live/main.m3u8', live: true, mine: false }
+    const t = make([res(200, { streams: [s] })])
+    expect(await t.api.listStreams('sc1')).toEqual({ ok: true, value: [s] })
+    expect(t.calls[0].url).toBe('https://api.example/api/scenes/sc1/streams')
+  })
+
+  it("sets a screen's live source, keeping its other properties (PUT replaces them whole)", async () => {
+    const scene = { scene: { id: 'sc1', activePresetId: 'p1', presets: [{ id: 'p1', name: 'Day', elements: [{ id: 'v1', type: 'video', properties: { offType: 1, liveSrc: 'old', volume: 0.5 } }] }] } }
+    const t = make([res(200, scene), res(200, { element: {} })])
+    expect((await t.api.setLiveSource('sc1', 'v1', 'https://live/main.m3u8')).ok).toBe(true)
+    expect(t.calls.map((c) => [c.init.method, c.url])).toEqual([['GET', 'https://api.example/api/scenes/sc1'], ['PUT', 'https://api.example/api/elements/v1']])
+    expect(body(t.calls[1])).toEqual({ properties: { offType: 1, liveSrc: 'https://live/main.m3u8', volume: 0.5 } })
+  })
+
+  it('a screen no longer in the scene is invalid, and nothing is written', async () => {
+    const t = make([res(200, { scene: { id: 'sc1', presets: [{ id: 'p1', elements: [] }] } })])
+    expect(await t.api.setLiveSource('sc1', 'v1', 'https://live/main.m3u8')).toEqual({ ok: false, reason: 'invalid' })
+    expect(t.calls).toHaveLength(1)
+  })
+
   it('403 on save maps to the no-access reason', async () => {
     const t = make([res(403, { error: 'Forbidden' })])
     expect(await t.api.saveTransform('i1', T)).toEqual({ ok: false, reason: 'no_access' })

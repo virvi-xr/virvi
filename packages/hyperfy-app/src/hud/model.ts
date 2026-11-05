@@ -50,6 +50,22 @@ export type AssetTab = 'library' | 'catalog' | 'link'
 export type Axis = 'x' | 'y' | 'z'
 export type TypingTarget = Axis | 'search'
 
+/** A stream as GET /api/scenes/:id/streams lists it (never the stream key). */
+export interface HudStream { id: string; name: string; hlsPlaylistUrl: string; live: boolean; mine: boolean }
+
+/** "Main Stage (live)", "Editor Cam (offline, yours)": as the dashboard and the Decentraland HUD say it. */
+export const streamOptionLabel = (s: HudStream) => `${s.name} (${s.live ? 'live' : 'offline'}${s.mine ? ', yours' : ''})`
+
+/** What a screen's live source is: one of the scene's streams, a link pasted elsewhere, or nothing. */
+export function streamSourceLabel(liveSrc: string, streams: HudStream[] | null): string {
+  if (!liveSrc) return 'No stream'
+  const s = (streams ?? []).find((x) => x.hlsPlaylistUrl === liveSrc)
+  return s ? streamOptionLabel(s) : 'Custom link'
+}
+
+export const STREAMS_LOADING = 'Loading streams…'
+export const NO_STREAMS = 'No streams yet: set one up on the Streaming page at virvi.io'
+
 export interface AssetEntry {
   id: string
   name: string
@@ -72,6 +88,10 @@ export interface HudUi {
   /** The chosen asset's id. */
   chosen: string | null
   presets: Array<{ id: string; name: string }> | null
+  /** The scene's streams for the Streams panel; null while loading (or not loaded yet). */
+  streamList: HudStream[] | null
+  /** The screen whose stream list is open. */
+  streamPicking: string | null
   typing: { target: TypingTarget; text: string } | null
   /** A link request is on its way (hosted worlds ask their server half). */
   linking: boolean
@@ -89,6 +109,8 @@ export const initialUi = (): HudUi => ({
   linkUrl: '',
   chosen: null,
   presets: null,
+  streamList: null,
+  streamPicking: null,
   typing: null,
   linking: false,
   placing: false,
@@ -141,7 +163,11 @@ export interface HudViewModel {
     }>
     presets: Array<{ id: string; name: string; active: boolean }>
   }
-  streams: Array<{ elementId: string; name: string; enableLiveStream: boolean; isLive: boolean }>
+  streams: Array<{ elementId: string; name: string; enableLiveStream: boolean; isLive: boolean; source: string; picking: boolean }>
+  /** The streams to choose from for the screen being picked for; `current` is the one it plays. */
+  streamOptions: Array<{ id: string; label: string; current: boolean }>
+  /** Shown in place of the options: still loading, or none set up. */
+  streamsNote: string | null
   assets: {
     tabs: AssetTab[]
     tab: AssetTab
@@ -265,7 +291,15 @@ export function hudModel(state: HudState): HudViewModel {
       name: nameOf(v, 'Screen'),
       enableLiveStream: !!v.enableLiveStream,
       isLive: !!v.isLive,
+      source: streamSourceLabel(liveSrcOf(v), ui.streamList),
+      picking: ui.streamPicking === v.sk,
     }))
+  const picked = streams.find((s) => s.picking)
+  const pickedSrc = picked ? liveSrcOf((scene?.videos ?? []).find((v) => v.sk === picked.elementId) ?? {}) : ''
+  const streamOptions = picked
+    ? (ui.streamList ?? []).map((s) => ({ id: s.id, label: streamOptionLabel(s), current: s.hlsPlaylistUrl === pickedSrc }))
+    : []
+  const streamsNote = !picked ? null : ui.streamList === null ? STREAMS_LOADING : ui.streamList.length === 0 ? NO_STREAMS : null
 
   const list = ui.tab === 'library' ? ui.library : ui.tab === 'catalog' ? ui.catalog : []
   const entries = (list ?? [])
@@ -297,6 +331,8 @@ export function hudModel(state: HudState): HudViewModel {
     panel: linked ? ui.panel : null,
     layout: { items, presets },
     streams,
+    streamOptions,
+    streamsNote,
     assets: {
       tabs: ['library', 'catalog', 'link'],
       tab: ui.tab,
@@ -314,6 +350,8 @@ export function hudModel(state: HudState): HudViewModel {
     alerts: state.alerts.slice(-MAX_ALERTS),
   }
 }
+
+const liveSrcOf = (v: Record<string, unknown>) => (typeof v.liveSrc === 'string' ? v.liveSrc.trim() : '')
 
 /** "Stream is live" / "Stream went offline" for each screen whose isLive changed between two snapshots. */
 export function alertsFromSnapshot(

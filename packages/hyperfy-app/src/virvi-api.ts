@@ -111,6 +111,27 @@ export class VirviApi {
     }
   }
 
+  /** GET /api/scenes/:id/streams: the streams a video screen can play (LIV-53). */
+  async listStreams(sceneId: string): Promise<ApiResult<Array<{ id: string; name: string; hlsPlaylistUrl: string; live: boolean; mine: boolean }>>> {
+    const r = await this.call<{ streams?: Array<{ id: string; name: string; hlsPlaylistUrl: string; live: boolean; mine: boolean }> }>('GET', `/api/scenes/${encodeURIComponent(sceneId)}/streams`)
+    return r.ok ? { ok: true, value: r.value.streams ?? [] } : r
+  }
+
+  /**
+   * Sets a video screen's live source. PUT /api/elements replaces properties whole, so the element's current ones are
+   * read from GET /api/scenes/:id first; a screen that's no longer there is 'invalid' and nothing is written.
+   */
+  async setLiveSource(sceneId: string, elementId: string, url: string): Promise<ApiResult<unknown>> {
+    const r = await this.call<{ scene?: { presets?: Array<{ elements?: Array<{ id: string; properties?: Record<string, unknown> | null }> }> } }>(
+      'GET',
+      `/api/scenes/${encodeURIComponent(sceneId)}`,
+    )
+    if (!r.ok) return r
+    const el = (r.value.scene?.presets ?? []).flatMap((p) => p.elements ?? []).find((e) => e.id === elementId)
+    if (!el) return { ok: false, reason: 'invalid' }
+    return this.call('PUT', `/api/elements/${encodeURIComponent(elementId)}`, { properties: { ...(el.properties ?? {}), liveSrc: url } })
+  }
+
   /** GET /api/scenes/:id/library */
   async listLibrary(sceneId: string): Promise<ApiResult<LibraryEntry[]>> {
     const r = await this.call<{ items?: LibraryEntry[] }>('GET', `/api/scenes/${encodeURIComponent(sceneId)}/library`)

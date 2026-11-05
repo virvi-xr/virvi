@@ -196,9 +196,36 @@ describe('hudModel', () => {
     })
     const vm = hudModel(state({ scene: sc, ui: { panel: 'streams' } }))
     expect(vm.streams).toEqual([
-      { elementId: 'v1', name: 'Main screen', enableLiveStream: true, isLive: true },
-      { elementId: 'v2', name: 'Screen', enableLiveStream: false, isLive: false },
+      { elementId: 'v1', name: 'Main screen', enableLiveStream: true, isLive: true, source: 'No stream', picking: false },
+      { elementId: 'v2', name: 'Screen', enableLiveStream: false, isLive: false, source: 'No stream', picking: false },
     ])
+    expect(vm.streamOptions).toEqual([])
+  })
+
+  it('streams: names what each screen plays, and lists the scene streams to choose from (LIV-53)', () => {
+    const sc = scene({
+      videos: [
+        { sk: 'v1', name: 'Main', liveSrc: 'https://live/main.m3u8', instances: [] },
+        { sk: 'v2', name: 'Side', liveSrc: ' https://elsewhere/x.m3u8 ', instances: [] },
+      ],
+    })
+    const streamList = [
+      { id: 's1', name: 'Main Stage', hlsPlaylistUrl: 'https://live/main.m3u8', live: true, mine: false },
+      { id: 's2', name: 'Editor Cam', hlsPlaylistUrl: 'https://live/cam.m3u8', live: false, mine: true },
+    ]
+    const vm = hudModel(state({ scene: sc, ui: { panel: 'streams', streamList, streamPicking: 'v1' } }))
+    expect(vm.streams.map((s) => [s.elementId, s.source, s.picking])).toEqual([
+      ['v1', 'Main Stage (live)', true],
+      ['v2', 'Custom link', false],
+    ])
+    expect(vm.streamOptions).toEqual([
+      { id: 's1', label: 'Main Stage (live)', current: true },
+      { id: 's2', label: 'Editor Cam (offline, yours)', current: false },
+    ])
+    // Still loading, or none set up
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', streamList: null, streamPicking: 'v1' } })).streamsNote).toBe('Loading streams…')
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', streamList: [], streamPicking: 'v1' } })).streamsNote).toBe('No streams yet: set one up on the Streaming page at virvi.io')
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', streamList } })).streamsNote).toBeNull()
   })
 
   it('asset browser: Library, Catalog and Link tabs, the chosen entry, and Place in front of me', () => {

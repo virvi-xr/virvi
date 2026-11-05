@@ -150,6 +150,12 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
         toggleEnabled: (id, on) => void request(api.setEnabled(id, on)),
         setPreset: (id) => void request(api.setPreset(sceneId(), id)),
         toggleLive: (id, on) => void request(api.setLive(id, on)),
+        pickStream: (id) => {
+          const open = ui.streamPicking !== id
+          setUi({ streamPicking: open ? id : null })
+          if (open) void loadStreams()
+        },
+        chooseStream: (id, streamId) => void chooseStream(id, streamId),
         setTab: (tab) => {
           setUi({ tab, chosen: null, typing: null })
           void loadTab(tab)
@@ -328,6 +334,27 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
     const r = await p
     if (!r.ok) pushAlert(failureAlert(r.reason))
     return r.ok
+  }
+
+  /** The scene's streams for the Streams panel (LIV-53). */
+  async function loadStreams(): Promise<void> {
+    const id = sceneId()
+    if (!id) return
+    setUi({ streamList: null })
+    const r = await api.listStreams(id)
+    if (r.ok) setUi({ streamList: r.value })
+    else {
+      setUi({ streamList: [], streamPicking: null })
+      pushAlert(failureAlert(r.reason))
+    }
+  }
+
+  /** The screen plays the chosen stream; the new liveSrc arrives with the next feed snapshot. */
+  async function chooseStream(elementId: string, streamId: string): Promise<void> {
+    const stream = (ui.streamList ?? []).find((s) => s.id === streamId)
+    const id = sceneId()
+    if (!stream || !id) return
+    if (await request(api.setLiveSource(id, elementId, stream.hlsPlaylistUrl))) setUi({ streamPicking: null })
   }
 
   async function loadPresets(): Promise<void> {

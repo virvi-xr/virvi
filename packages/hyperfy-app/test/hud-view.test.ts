@@ -140,3 +140,24 @@ function vmState() {
     alerts: [],
   }
 }
+
+describe('HudView streams panel (LIV-53)', () => {
+  it('shows what each screen plays and lists the streams to choose from', () => {
+    const h = host()
+    const calls: unknown[][] = []
+    const act = new Proxy({}, { get: (_t, name) => (...args: unknown[]) => void calls.push([name, ...args]) }) as HudActions
+    const view = new HudView(h, act)
+    const scene = { videos: [{ sk: 'v1', name: 'Main', liveSrc: 'https://live/main.m3u8', instances: [] }], images: [], models: [], sounds: [] }
+    const streamList = [
+      { id: 's1', name: 'Main Stage', hlsPlaylistUrl: 'https://live/main.m3u8', live: true, mine: false },
+      { id: 's2', name: 'Editor Cam', hlsPlaylistUrl: 'https://live/cam.m3u8', live: false, mine: true },
+    ]
+    view.render(hudModel({ ...vmState(), scene, ui: { panel: 'streams', streamList, streamPicking: 'v1' } }))
+    const all = h.created.flatMap((n) => (typeof n.value === 'string' ? [n.value] : []))
+    for (const t of ['Main Stage (live)', 'Close list', 'Editor Cam (offline, yours)', 'Go live']) expect(all).toContain(t)
+    const press = (label: string) => h.created.find((n) => n.onPointerDown && texts(n).length === 1 && texts(n)[0] === label)!.onPointerDown()
+    press('Editor Cam (offline, yours)')
+    press('Close list')
+    expect(calls).toEqual([['chooseStream', 'v1', 's2'], ['pickStream', 'v1']])
+  })
+})
