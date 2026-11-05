@@ -63,6 +63,29 @@ export function streamSourceLabel(liveSrc: string, streams: HudStream[] | null):
   return s ? streamOptionLabel(s) : 'Custom link'
 }
 
+/** An image from the scene library that can be a screen's off image (LIV-54). */
+export interface HudImage { id: string; name: string; url: string }
+
+/** Image types a screen can show (as the Decentraland HUD offers). */
+const OFF_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+
+/** The scene library's ready images, for the off image list. */
+export function offImageChoices(entries: ReadonlyArray<{ id: string; kind: string; name: string; url: string; status: string; contentType?: unknown }>): HudImage[] {
+  return entries
+    .filter((a) => a.status === 'ready' && !!a.url && a.kind === 'media' && typeof a.contentType === 'string' && OFF_IMAGE_TYPES.has(a.contentType))
+    .map((a) => ({ id: a.id, name: a.name, url: a.url }))
+}
+
+/** "Off image: Poster", by its library name as the dashboard and the Decentraland HUD show it. */
+export function offImageLabel(src: string, images: HudImage[] | null): string {
+  if (!src) return 'No off image'
+  const img = (images ?? []).find((i) => i.url === src)
+  return `Off image: ${img ? img.name : 'from a link'}`
+}
+
+export const IMAGES_LOADING = 'Loading images…'
+export const NO_IMAGES = 'No images in the scene library yet: add one from Assets on virvi.io'
+
 export const STREAMS_LOADING = 'Loading streams…'
 export const NO_STREAMS = 'No streams yet: set one up on the Streaming page at virvi.io'
 
@@ -92,6 +115,10 @@ export interface HudUi {
   streamList: HudStream[] | null
   /** The screen whose stream list is open. */
   streamPicking: string | null
+  /** The scene library's images for off images; null while loading (or not loaded yet). */
+  imageList: HudImage[] | null
+  /** The screen whose off image list is open. */
+  imagePicking: string | null
   /** The object whose "remove every copy" is waiting to be confirmed (LIV-12). */
   clearing: string | null
   typing: { target: TypingTarget; text: string } | null
@@ -113,6 +140,8 @@ export const initialUi = (): HudUi => ({
   presets: null,
   streamList: null,
   streamPicking: null,
+  imageList: null,
+  imagePicking: null,
   clearing: null,
   typing: null,
   linking: false,
@@ -170,11 +199,25 @@ export interface HudViewModel {
     }>
     presets: Array<{ id: string; name: string; active: boolean }>
   }
-  streams: Array<{ elementId: string; name: string; enableLiveStream: boolean; isLive: boolean; source: string; picking: boolean }>
+  streams: Array<{
+    elementId: string
+    name: string
+    enableLiveStream: boolean
+    isLive: boolean
+    source: string
+    picking: boolean
+    /** "Off image: Poster" or "No off image". */
+    offImage: string
+    imagePicking: boolean
+  }>
   /** The streams to choose from for the screen being picked for; `current` is the one it plays. */
   streamOptions: Array<{ id: string; label: string; current: boolean }>
   /** Shown in place of the options: still loading, or none set up. */
   streamsNote: string | null
+  /** The off images to choose from for the screen being picked for, None ('') first; `current` is the one it shows. */
+  imageOptions: Array<{ id: string; label: string; current: boolean }>
+  /** Shown above the options: still loading, or no images in the library. */
+  imagesNote: string | null
   assets: {
     tabs: AssetTab[]
     tab: AssetTab
@@ -304,12 +347,20 @@ export function hudModel(state: HudState): HudViewModel {
       isLive: !!v.isLive,
       source: streamSourceLabel(liveSrcOf(v), ui.streamList),
       picking: ui.streamPicking === v.sk,
+      offImage: offImageLabel(offImageOf(v), ui.imageList),
+      imagePicking: ui.imagePicking === v.sk,
     }))
   const picked = streams.find((s) => s.picking)
   const pickedSrc = picked ? liveSrcOf((scene?.videos ?? []).find((v) => v.sk === picked.elementId) ?? {}) : ''
   const streamOptions = picked
     ? (ui.streamList ?? []).map((s) => ({ id: s.id, label: streamOptionLabel(s), current: s.hlsPlaylistUrl === pickedSrc }))
     : []
+  const imagePicked = (scene?.videos ?? []).find((v) => typeof v.sk === 'string' && v.sk === ui.imagePicking)
+  const imageSrc = imagePicked ? offImageOf(imagePicked) : ''
+  const imageOptions = imagePicked
+    ? [{ id: '', label: 'None', current: !imageSrc }, ...(ui.imageList ?? []).map((i) => ({ id: i.id, label: i.name, current: i.url === imageSrc }))]
+    : []
+  const imagesNote = !imagePicked ? null : ui.imageList === null ? IMAGES_LOADING : ui.imageList.length === 0 ? NO_IMAGES : null
   const streamsNote = !picked ? null : ui.streamList === null ? STREAMS_LOADING : ui.streamList.length === 0 ? NO_STREAMS : null
 
   const list = ui.tab === 'library' ? ui.library : ui.tab === 'catalog' ? ui.catalog : []
@@ -344,6 +395,8 @@ export function hudModel(state: HudState): HudViewModel {
     streams,
     streamOptions,
     streamsNote,
+    imageOptions,
+    imagesNote,
     assets: {
       tabs: ['library', 'catalog', 'link'],
       tab: ui.tab,
@@ -377,6 +430,7 @@ export function clearedAlert(name: string, deleted: number): HudAlert {
 }
 
 const liveSrcOf = (v: Record<string, unknown>) => (typeof v.liveSrc === 'string' ? v.liveSrc.trim() : '')
+const offImageOf = (v: Record<string, unknown>) => (typeof v.offImageSrc === 'string' ? v.offImageSrc.trim() : '')
 
 /** "Stream is live" / "Stream went offline" for each screen whose isLive changed between two snapshots. */
 export function alertsFromSnapshot(

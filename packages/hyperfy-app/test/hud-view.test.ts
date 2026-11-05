@@ -189,3 +189,21 @@ describe('HudView layout panel: clearing copies (LIV-12)', () => {
     expect(t.calls).toEqual([['clearCopies', 'm1'], ['askClear', null]])
   })
 })
+
+describe('HudView streams panel: off images (LIV-54)', () => {
+  it("shows each screen's off image and lets the owner choose one or none", () => {
+    const h = host()
+    const calls: unknown[][] = []
+    const act = new Proxy({}, { get: (_t, name) => (...args: unknown[]) => void calls.push([name, ...args]) }) as HudActions
+    const scene = { videos: [{ sk: 'v1', name: 'Main', offImageSrc: 'https://cdn/poster.png', instances: [] }], images: [], models: [], sounds: [] }
+    const imageList = [{ id: 'a1', name: 'Poster', url: 'https://cdn/poster.png' }, { id: 'a2', name: 'Logo', url: 'https://cdn/logo.jpg' }]
+    new HudView(h, act).render(hudModel({ ...vmState(), scene: scene as never, ui: { panel: 'streams', imageList, imagePicking: 'v1' } }))
+    const all = h.created.flatMap((n) => (typeof n.value === 'string' ? [n.value] : []))
+    for (const t of ['Off image: Poster', 'Close images', 'None', 'Logo', 'Choose stream']) expect(all).toContain(t)
+    const press = (label: string) => h.created.find((n) => n.onPointerDown && texts(n).length === 1 && texts(n)[0] === label)!.onPointerDown()
+    press('Logo')
+    press('None')
+    press('Close images')
+    expect(calls).toEqual([['chooseImage', 'v1', 'a2'], ['chooseImage', 'v1', ''], ['pickImage', 'v1']])
+  })
+})

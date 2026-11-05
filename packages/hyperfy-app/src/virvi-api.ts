@@ -118,10 +118,19 @@ export class VirviApi {
   }
 
   /**
-   * Sets a video screen's live source. PUT /api/elements replaces properties whole, so the element's current ones are
-   * read from GET /api/scenes/:id first; a screen that's no longer there is 'invalid' and nothing is written.
+   * Sets a screen's live source (LIV-53). PUT /api/elements replaces properties whole, so this reads the element's
+   * current properties from the scene first and writes them back with the new value. A screen that is gone is invalid.
    */
-  async setLiveSource(sceneId: string, elementId: string, url: string): Promise<ApiResult<unknown>> {
+  setLiveSource(sceneId: string, elementId: string, url: string): Promise<ApiResult<unknown>> {
+    return this.setProperties(sceneId, elementId, { liveSrc: url })
+  }
+
+  /** Sets (or with '' clears) a screen's off image (LIV-54); '' rather than dropped, so the change reaches the world. */
+  setOffImage(sceneId: string, elementId: string, url: string): Promise<ApiResult<unknown>> {
+    return this.setProperties(sceneId, elementId, { offImageSrc: url })
+  }
+
+  private async setProperties(sceneId: string, elementId: string, patch: Record<string, unknown>): Promise<ApiResult<unknown>> {
     const r = await this.call<{ scene?: { presets?: Array<{ elements?: Array<{ id: string; properties?: Record<string, unknown> | null }> }> } }>(
       'GET',
       `/api/scenes/${encodeURIComponent(sceneId)}`,
@@ -129,7 +138,7 @@ export class VirviApi {
     if (!r.ok) return r
     const el = (r.value.scene?.presets ?? []).flatMap((p) => p.elements ?? []).find((e) => e.id === elementId)
     if (!el) return { ok: false, reason: 'invalid' }
-    return this.call('PUT', `/api/elements/${encodeURIComponent(elementId)}`, { properties: { ...(el.properties ?? {}), liveSrc: url } })
+    return this.call('PUT', `/api/elements/${encodeURIComponent(elementId)}`, { properties: { ...(el.properties ?? {}), ...patch } })
   }
 
   /** DELETE /api/elements/:id/instances: every copy goes in one operation, the element stays (LIV-12). */

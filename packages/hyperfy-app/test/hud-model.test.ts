@@ -10,6 +10,8 @@ import {
   LINK_HINT,
   alertsFromSnapshot,
   clearCopiesPrompt,
+  offImageChoices,
+  offImageLabel,
   clearedAlert,
   chatCommandText,
   chatEntry,
@@ -198,8 +200,8 @@ describe('hudModel', () => {
     })
     const vm = hudModel(state({ scene: sc, ui: { panel: 'streams' } }))
     expect(vm.streams).toEqual([
-      { elementId: 'v1', name: 'Main screen', enableLiveStream: true, isLive: true, source: 'No stream', picking: false },
-      { elementId: 'v2', name: 'Screen', enableLiveStream: false, isLive: false, source: 'No stream', picking: false },
+      { elementId: 'v1', name: 'Main screen', enableLiveStream: true, isLive: true, source: 'No stream', picking: false, offImage: 'No off image', imagePicking: false },
+      { elementId: 'v2', name: 'Screen', enableLiveStream: false, isLive: false, source: 'No stream', picking: false, offImage: 'No off image', imagePicking: false },
     ])
     expect(vm.streamOptions).toEqual([])
   })
@@ -579,5 +581,64 @@ describe('clearing copies (LIV-12)', () => {
     expect(clearedAlert('Chair', 3)).toEqual({ kind: 'info', text: 'Removed 3 copies of Chair' })
     expect(clearedAlert('Lamp', 1)).toEqual({ kind: 'info', text: 'Removed 1 copy of Lamp' })
     expect(clearedAlert('', 0)).toEqual({ kind: 'info', text: 'Unnamed had no copies left' })
+  })
+})
+
+describe('off images (LIV-54)', () => {
+  const linked = { status: 'linked' as const, displayName: 'Ada', sceneId: 's' }
+  const sc = (): SerializedScene => ({
+    sk: 'p1',
+    videos: [
+      { sk: 'v1', name: 'Main', offImageSrc: 'https://cdn/poster.png', instances: [] },
+      { sk: 'v2', name: 'Side', instances: [] },
+    ],
+    images: [],
+    models: [],
+    sounds: [],
+  })
+  const images = [
+    { id: 'a1', name: 'Poster', url: 'https://cdn/poster.png' },
+    { id: 'a2', name: 'Logo', url: 'https://cdn/logo.jpg' },
+  ]
+  const st = (ui: HudState['ui'] = {}): HudState => ({ pairing: linked, edit: edit(), plan: planScene(null), scene: sc(), alerts: [], ui: { panel: 'streams', ...ui } })
+
+  it('only ready library images a screen can show are choices', () => {
+    const entries = [
+      { id: 'a1', kind: 'media', name: 'Poster', url: 'https://cdn/poster.png', status: 'ready', contentType: 'image/png' },
+      { id: 'a3', kind: 'media', name: 'Clip', url: 'https://cdn/clip.mp4', status: 'ready', contentType: 'video/mp4' },
+      { id: 'a4', kind: 'media', name: 'Wip', url: 'https://cdn/wip.png', status: 'processing', contentType: 'image/png' },
+      { id: 'a5', kind: 'model', name: 'Chair', url: 'https://cdn/chair.glb', status: 'ready' },
+      { id: 'a2', kind: 'media', name: 'Logo', url: 'https://cdn/logo.jpg', status: 'ready', contentType: 'image/jpeg' },
+    ] as const
+    expect(offImageChoices([...entries])).toEqual(images)
+  })
+
+  it("labels each screen's off image by its library name", () => {
+    expect(offImageLabel('https://cdn/poster.png', images)).toBe('Off image: Poster')
+    expect(offImageLabel('https://elsewhere/x.png', images)).toBe('Off image: from a link')
+    expect(offImageLabel('https://cdn/poster.png', null)).toBe('Off image: from a link')
+    expect(offImageLabel('', images)).toBe('No off image')
+  })
+
+  it('picking lists the images (the current one marked) plus None', () => {
+    const vm = hudModel(st({ imageList: images, imagePicking: 'v1' }))
+    expect(vm.streams.map((s) => [s.elementId, s.offImage, s.imagePicking])).toEqual([
+      ['v1', 'Off image: Poster', true],
+      ['v2', 'No off image', false],
+    ])
+    expect(vm.imageOptions).toEqual([
+      { id: '', label: 'None', current: false },
+      { id: 'a1', label: 'Poster', current: true },
+      { id: 'a2', label: 'Logo', current: false },
+    ])
+    expect(vm.imagesNote).toBeNull()
+  })
+
+  it('while loading, or with no images, a note instead of a list', () => {
+    expect(hudModel(st({ imagePicking: 'v2' })).imagesNote).toBe('Loading images…')
+    const empty = hudModel(st({ imageList: [], imagePicking: 'v2' }))
+    expect(empty.imagesNote).toBe('No images in the scene library yet: add one from Assets on virvi.io')
+    expect(empty.imageOptions).toEqual([{ id: '', label: 'None', current: true }])
+    expect(hudModel(st({ imageList: images })).imageOptions).toEqual([])
   })
 })

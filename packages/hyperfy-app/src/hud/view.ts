@@ -44,6 +44,10 @@ export interface HudActions {
   /** Open (or close) a screen's stream list. */
   pickStream(elementId: string): void
   chooseStream(elementId: string, streamId: string): void
+  /** Open (or close) a screen's off image list (LIV-54). */
+  pickImage(elementId: string): void
+  /** '' clears the off image. */
+  chooseImage(elementId: string, imageId: string): void
   setTab(tab: AssetTab): void
   choose(id: string): void
   typeField(field: 'search'): void
@@ -318,6 +322,16 @@ export class HudView {
                 ? vm.streamsNote
                   ? [this.row([this.label(vm.streamsNote, C.dim, 12)])]
                   : vm.streamOptions.map((o) => this.row([this.button(o.label, () => a.chooseStream(s.elementId, o.id), o.current)]))
+                : []),
+              this.row([
+                this.label(s.offImage, C.dim, 12),
+                this.button(s.imagePicking ? 'Close images' : 'Choose image', () => a.pickImage(s.elementId), s.imagePicking),
+              ]),
+              ...(s.imagePicking
+                ? [
+                    ...(vm.imagesNote ? [this.row([this.label(vm.imagesNote, C.dim, 12)])] : []),
+                    ...vm.imageOptions.map((o) => this.row([this.button(o.label, () => a.chooseImage(s.elementId, o.id), o.current)])),
+                  ]
                 : []),
             ])
           : [this.row([this.label('No screens in this preset', C.dim)])]

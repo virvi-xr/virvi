@@ -58,6 +58,15 @@ describe('VirviApi', () => {
     expect(t.calls.map((c) => [c.init.method, c.url])).toEqual([['DELETE', 'https://api.example/api/elements/m1/instances']])
   })
 
+  it("sets a screen's off image, keeping its other properties; '' clears it (LIV-54)", async () => {
+    const scene = { scene: { id: 'sc1', presets: [{ id: 'p1', elements: [{ id: 'v1', properties: { offType: 2, liveSrc: 'x', offImageSrc: 'old.png' } }] }] } }
+    const t = make([res(200, scene), res(200, { element: {} }), res(200, scene), res(200, { element: {} })])
+    expect((await t.api.setOffImage('sc1', 'v1', 'https://cdn/poster.png')).ok).toBe(true)
+    expect(body(t.calls[1])).toEqual({ properties: { offType: 2, liveSrc: 'x', offImageSrc: 'https://cdn/poster.png' } })
+    expect((await t.api.setOffImage('sc1', 'v1', '')).ok).toBe(true)
+    expect(body(t.calls[3])).toEqual({ properties: { offType: 2, liveSrc: 'x', offImageSrc: '' } })
+  })
+
   it('403 on save maps to the no-access reason', async () => {
     const t = make([res(403, { error: 'Forbidden' })])
     expect(await t.api.saveTransform('i1', T)).toEqual({ ok: false, reason: 'no_access' })

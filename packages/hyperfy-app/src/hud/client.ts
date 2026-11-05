@@ -30,6 +30,7 @@ import {
   inFrontOf,
   initialUi,
   clearedAlert,
+  offImageChoices,
   pairingAlert,
   placeAsset,
   typeKey,
@@ -155,9 +156,15 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
         toggleLive: (id, on) => void request(api.setLive(id, on)),
         pickStream: (id) => {
           const open = ui.streamPicking !== id
-          setUi({ streamPicking: open ? id : null })
+          setUi({ streamPicking: open ? id : null, imagePicking: null })
           if (open) void loadStreams()
         },
+        pickImage: (id) => {
+          const open = ui.imagePicking !== id
+          setUi({ imagePicking: open ? id : null, streamPicking: null })
+          if (open) void loadImages()
+        },
+        chooseImage: (id, imageId) => void chooseImage(id, imageId),
         chooseStream: (id, streamId) => void chooseStream(id, streamId),
         setTab: (tab) => {
           setUi({ tab, chosen: null, typing: null })
@@ -367,6 +374,27 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
     const r = await api.deleteInstances(elementId)
     if (r.ok) pushAlert(clearedAlert(item?.name ?? '', r.value.deleted))
     else pushAlert(failureAlert(r.reason))
+  }
+
+  /** The scene library's images, for a screen's off image (LIV-54). */
+  async function loadImages(): Promise<void> {
+    const id = sceneId()
+    if (!id) return
+    setUi({ imageList: null })
+    const r = await api.listLibrary(id)
+    if (r.ok) setUi({ imageList: offImageChoices(r.value) })
+    else {
+      setUi({ imageList: [], imagePicking: null })
+      pushAlert(loadFailureAlert(r.reason))
+    }
+  }
+
+  /** The screen shows the chosen image when nothing plays ('' clears it); the change arrives with the next snapshot. */
+  async function chooseImage(elementId: string, imageId: string): Promise<void> {
+    const id = sceneId()
+    const url = imageId ? (ui.imageList ?? []).find((i) => i.id === imageId)?.url : ''
+    if (!id || url === undefined) return
+    if (await request(api.setOffImage(id, elementId, url))) setUi({ imagePicking: null })
   }
 
   async function loadPresets(): Promise<void> {
