@@ -31,6 +31,12 @@ data class RenderItem(
      * last. With one video, [loop] repeats it instead.
      */
     val playlist: List<String> = emptyList(),
+    /** Schedule mode (LIV-87): the screen plays its showings; [resolveScheduled] turns it into what's on now. */
+    val scheduled: Boolean = false,
+    /** Schedule mode: the image between shows, or null for nothing. */
+    val holdingImage: String? = null,
+    /** A scheduled screen's video, once resolved: where the show is, so every visitor sees the same moment. */
+    val play: ScheduledPlay? = null,
 ) {
   enum class Kind { VIDEO, IMAGE, MODEL, AUDIO }
 }
@@ -42,6 +48,7 @@ private const val CLICK_NONE = 0.0
 private const val CLICK_EXTERNAL = 1.0
 private const val OFF_IMAGE = 1.0
 private const val OFF_PLAYLIST = 2.0
+private const val OFF_SCHEDULED = 6.0
 
 // ── JS-ish value helpers ─────────────────────────────────────────────
 
@@ -123,6 +130,8 @@ private data class Media(
     val src: String,
     val loop: Boolean,
     val playlist: List<String> = emptyList(),
+    val scheduled: Boolean = false,
+    val holdingImage: String? = null,
 )
 
 private fun videoMedia(el: JsonObject): Media? {
@@ -133,6 +142,11 @@ private fun videoMedia(el: JsonObject): Media? {
   if (number(el["offType"]) == OFF_PLAYLIST) {
     val playlist = el["playlist"].arr().mapNotNull { supported(it, VIDEO_EXT) }
     return playlist.firstOrNull()?.let { Media(RenderItem.Kind.VIDEO, it, playlist.size == 1, playlist) }
+  }
+  if (number(el["offType"]) == OFF_SCHEDULED) {
+    // A placeholder until resolveScheduled says what's on (the holding image's name, if any)
+    val holding = supported(el["offImageSrc"], IMAGE_EXT)
+    return Media(RenderItem.Kind.VIDEO, holding ?: "", false, scheduled = true, holdingImage = holding)
   }
   if (number(el["offType"]) == OFF_IMAGE) {
     return supported(el["offImageSrc"], IMAGE_EXT)?.let { Media(RenderItem.Kind.IMAGE, it, false) }
@@ -175,6 +189,8 @@ private fun planElements(out: MutableList<RenderItem>, elements: JsonElement?, k
               transform = toSpatialTransform(vec(inst["position"], 0.0), vec(inst["rotation"], 0.0), scale),
               clickUrl = externalUrl(clickOf(inst, el)),
               playlist = media.playlist,
+              scheduled = media.scheduled,
+              holdingImage = media.holdingImage,
           )
       )
     }

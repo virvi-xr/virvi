@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { AR_FEED } from '@virvixr/shared'
+import { AR_FEED, VideoSourceType } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
-import { arMarkers } from '../src/db/schema.js'
+import { arMarkers, screenShowings } from '../src/db/schema.js'
 import { initBus, publishSceneTouched } from '../src/realtime/bus.js'
 import { issueScenePass } from '../src/auth/scene-pass.js'
 import { AR_FEED_LIMIT, setArFeedHoldMs, setArFeedLimiter } from '../src/routes/ar-feed.js'
@@ -97,6 +97,45 @@ describe('AR marker lookup and space feed', () => {
     expect(body.space.sceneId).toBeUndefined()
     expect(body.space.floors[0].markers[0].code).toBe(code)
     expect(body.scene.images).toHaveLength(1)
+  })
+
+  describe('scheduled showings (LIV-87)', () => {
+    const items = [{ url: 'https://cdn.example/film.mp4', duration: 5400, kind: 'video' as const }]
+    let screenId: string
+    beforeEach(async () => {
+      await publish()
+      screenId = (await createElement(presetId, { type: 'video', name: 'Screen', properties: { offType: VideoSourceType.SCHEDULED, playlist: [] } })).id
+      await createElement(presetId, { type: 'video', name: 'Plain', properties: { offType: VideoSourceType.PLAYLIST, playlist: [] } })
+      // Daily at 00:00 UTC, so one is always running or due within the window
+      await db.insert(screenShowings).values({ sceneId, elementId: screenId, title: 'Film', items, recurrence: 'daily', startDate: '2020-01-01', startTime: '00:00', timezone: 'UTC' })
+    })
+
+    it('carries the showings of scheduled screens only, and the server clock', async () => {
+      const before = Date.now()
+      const body = (await feed()).json()
+      expect(body.showings).toHaveLength(1)
+      expect(body.showings[0].elementId).toBe(screenId)
+      expect(body.showings[0].showings[0]).toMatchObject({ title: 'Film', items })
+      expect(body.serverTime).toBeGreaterThanOrEqual(before)
+      expect(body.serverTime).toBeLessThanOrEqual(Date.now())
+    })
+
+    it('the clock does not change the version, so a poll holds; a new showing wakes it', async () => {
+      setArFeedHoldMs(200)
+      const first = (await feed()).json()
+      expect((await feed(first.version)).json().version).toBe(first.version)
+      setArFeedHoldMs(5000)
+      const held = feed(first.version)
+      await sleep(200)
+      const res = await app.inject({
+        method: 'POST', url: `/api/elements/${screenId}/showings`, headers: as(owner),
+        payload: { title: 'Late show', items: [{ url: 'https://cdn.example/late.mp4', duration: 600 }], recurrence: 'daily', startDate: '2020-01-01', startTime: '12:00', timezone: 'UTC' },
+      })
+      expect(res.statusCode).toBe(201)
+      const body = (await held).json()
+      expect(body.version).not.toBe(first.version)
+      expect(body.showings[0].showings.some((s: { title?: string }) => s.title === 'Late show')).toBe(true)
+    })
   })
 
   it('the feed holds until the scene changes', async () => {

@@ -35,8 +35,17 @@ data class ArSpace(val id: String, val name: String, val place: String?, val pub
 
 data class MarkerLookup(val spaceId: String, val floorId: String, val markerId: String, val spaceName: String, val whereText: String?)
 
-/** [version] is opaque; [scene] is the serialized scene for [planScene], or null when the space has none. */
-data class ArFeedSnapshot(val version: String, val space: ArSpace, val scene: JsonObject?)
+/**
+ * [version] is opaque; [scene] is the serialized scene for [planScene], or null when the space has none. [showings] are
+ * the scheduled screens' shows by element id (LIV-87), and [serverTime] the server's clock when it answered (UTC ms).
+ */
+data class ArFeedSnapshot(
+    val version: String,
+    val space: ArSpace,
+    val scene: JsonObject?,
+    val showings: Map<String, List<io.virvi.ar.ShowingInstance>> = emptyMap(),
+    val serverTime: Long? = null,
+)
 
 private fun JsonObject.str(k: String): String? = (this[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
 private fun JsonObject.num(k: String): Double? = (this[k] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull
@@ -91,7 +100,8 @@ fun parseFeed(body: String): ArFeedSnapshot? {
   if ((o["v"] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull != 1) return null
   val version = o.str("version") ?: return null
   val space = parseSpace(o["space"]) ?: return null
-  return ArFeedSnapshot(version, space, o["scene"] as? JsonObject)
+  val serverTime = (o["serverTime"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull
+  return ArFeedSnapshot(version, space, o["scene"] as? JsonObject, io.virvi.ar.parseShowings(o["showings"]), serverTime)
 }
 
 fun parseLookup(body: String): MarkerLookup? {

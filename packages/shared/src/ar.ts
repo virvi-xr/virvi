@@ -1,3 +1,4 @@
+import type { ShowingInstance } from './showings.js'
 import type { SerializedScene } from './hyperfy.js'
 import type { Vec3 } from './types/math.js'
 
@@ -34,10 +35,15 @@ export const AR_FEED = { version: 1, holdMs: 25_000 } as const
 /** The space as the headset gets it: the scene it belongs to is the feed's business, not the app's. */
 export type ArSpaceWire = Omit<ArSpaceView, 'sceneId'>
 
-export type ArFeedResponse = { v: 1; version: string; space: ArSpaceWire; scene: SerializedScene | null }
+/**
+ * `showings`: Schedule-mode screens' shows (LIV-87), as the Hyperfy feed sends them; `serverTime` (UTC ms) lets the
+ * headset play them at the same moment as everyone else. Both are missing when the scene has no scheduled screen.
+ */
+export type ArFeedShowings = { showings?: Array<{ elementId: string; showings: ShowingInstance[] }>; serverTime?: number }
+export type ArFeedResponse = { v: 1; version: string; space: ArSpaceWire; scene: SerializedScene | null } & ArFeedShowings
 
 /** A scene's draft, keyed by scene: what a headset builder polls. `version` is the SHA-256 of `{ scene }`. */
-export type ArSceneFeedResponse = { v: 1; version: string; scene: SerializedScene | null }
+export type ArSceneFeedResponse = { v: 1; version: string; scene: SerializedScene | null } & ArFeedShowings
 
 export type ArMarkerLookup = { spaceId: string; floorId: string; markerId: string; spaceName: string; whereText: string | null }
 

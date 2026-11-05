@@ -294,6 +294,7 @@ Not yet run (no headset was connected). `AssetsTab`, `placeAhead`, `BuilderApi.p
 - [ ] **Place an image.** Place puts it 1 m ahead of the head at eye height, turned to face you (not mirrored, not edge-on), and it is picked (gizmo showing) as soon as the next snapshot arrives. Move it, then Save.
 - [ ] **Place a model.** Same, then move it onto a table (snap) and save.
 - [ ] **Place a video.** It appears as a screen that plays the clip (a one-video playlist); check it in Decentraland too.
+- [ ] **Scheduled showings (LIV-87).** Put a screen in Schedule mode on virvi.io with a showing a few minutes ahead and a holding image. The holding image shows until the start, then the video plays from the start; walk in mid-show (or take the headset off and on) and it joins at the same moment as Decentraland, within a couple of seconds. After the show the holding image comes back.
 - [ ] **In a turned room.** After aligning to a ring so the scene is turned (root yaw not 0), a placed item still lands 1 m in front of you and faces you.
 - [ ] **Shared.** With the switch on Just this place, Place still adds the item to the shared scene (it shows at Decentraland and at other places); the switch applies to its later edits.
 - [ ] **Failure.** Offline, Place leaves nothing behind (no empty element in the scene's Layout).
