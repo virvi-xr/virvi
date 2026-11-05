@@ -140,3 +140,31 @@ export function duplicateShowingForm(s: Showing): ShowingForm {
   }
   return form
 }
+
+/** The same showing for another screen, with the exact lengths the server stored (blank ones left for it to fill). */
+export function copyShowingBody(s: Showing) {
+  return {
+    title: s.title, description: s.description, posterUrl: s.posterUrl,
+    items: s.items.map((i) => ({ url: i.url, kind: i.kind, ...(i.duration > 0 ? { duration: i.duration } : {}) })),
+    recurrence: s.recurrence, weekdays: s.recurrence === 'weekly' ? s.weekdays : [],
+    startDate: s.startDate, startTime: s.startTime, timezone: s.timezone, enabled: s.enabled,
+  }
+}
+
+export interface CopyTarget { id: string; name: string; scheduled: boolean; label: string }
+
+/** The scene's other video screens a showing can be copied to (offType 6 is Schedule mode). */
+export function copyTargets(screens: { id: string; type: string; name?: string | null; properties?: Record<string, any> | null }[], currentId: string): CopyTarget[] {
+  return screens
+    .filter((el) => el.type === 'video' && el.id !== currentId)
+    .map((el) => {
+      const name = el.name?.trim() || 'Video screen'
+      const scheduled = (el.properties?.offType ?? 0) === 6
+      return { id: el.id, name, scheduled, label: scheduled ? name : `${name} (not in Schedule mode)` }
+    })
+}
+
+export function copiedMessage(s: Pick<Showing, 'title'>, to: Pick<CopyTarget, 'name' | 'scheduled'>): string {
+  const done = `Copied ${s.title || 'Untitled showing'} to ${to.name}.`
+  return to.scheduled ? done : `${done} It plays there once ${to.name} is set to Scheduled showings.`
+}

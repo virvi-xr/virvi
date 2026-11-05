@@ -282,8 +282,10 @@ function InstanceEditor({ instance, onUpdate, onDelete }: { instance: Instance; 
 // Video Element Editor
 // ---------------------------------------------------------------------------
 
-function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
+function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
   element: Element
+  /** The preset's video elements (showings can be copied between them). */
+  screens: Element[]
   sceneId: string
   onUpdateElement: (id: string, data: Record<string, any>) => void
   onUpdateInstance: (id: string, data: Partial<Instance>) => void
@@ -389,7 +391,7 @@ function VideoElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
 
       {isAdsMode(props.offType ?? 0) && <AdSpaceContent elementId={element.id} refreshKey={adSpaceRefreshKey(props)} api={api} />}
 
-      {(props.offType ?? 0) === 6 && <ScreenShowings api={api} sceneId={sceneId} elementId={element.id} MediaPicker={MediaPicker} />}
+      {(props.offType ?? 0) === 6 && <ScreenShowings api={api} sceneId={sceneId} elementId={element.id} MediaPicker={MediaPicker} screens={screens} />}
 
       {/* Playlist (a scheduled screen plays its showings instead) */}
       {(props.offType ?? 0) !== 6 && <div className="space-y-2">
@@ -1809,7 +1811,7 @@ export default function SceneEditorPage() {
               }
 
               switch (el.type) {
-                case 'video': return <VideoElementEditor key={el.id} {...editorProps} sceneId={sceneId} api={api} />
+                case 'video': return <VideoElementEditor key={el.id} {...editorProps} sceneId={sceneId} screens={filteredElements} api={api} />
                 case 'image': return <ImageElementEditor key={el.id} {...editorProps} sceneId={sceneId} api={api} />
                 case 'model': return <ModelElementEditor key={el.id} {...editorProps} onRoomSetSaved={handleRoomSetSaved} api={api} />
                 case 'sound': return <SoundElementEditor key={el.id} {...editorProps} />

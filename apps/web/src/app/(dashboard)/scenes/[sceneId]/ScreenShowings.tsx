@@ -5,7 +5,7 @@ import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { formatRunTime, localDate, timezoneOptions, viewerTimezone } from '@/lib/preset-schedules'
 import { formatDuration } from '@/lib/format'
 import {
-  describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
+  copiedMessage, copyShowingBody, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
   type Showing, type ShowingForm, type ShowingFormItem,
 } from '@/lib/showings'
 
@@ -19,7 +19,11 @@ const BTN = 'rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300
  * Scheduled showings (LIV-87): a screen in Schedule mode plays programmes of videos at set times, and everyone in the
  * scene sees the same moment. Hosts, co-hosts, editors and booking crew with the playlist permission (the server checks).
  */
-export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: Api; sceneId: string; elementId: string; MediaPicker: Picker }) {
+export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens = [] }: {
+  api: Api; sceneId: string; elementId: string; MediaPicker: Picker
+  /** The preset's video elements: the other ones are where a showing can be copied to. */
+  screens?: Parameters<typeof copyTargets>[0]
+}) {
   const viewerTz = viewerTimezone()
   const blank = (): ShowingForm => ({
     title: '', description: '', posterUrl: '', items: [], recurrence: 'weekly', weekdays: [new Date().getDay()],
@@ -31,6 +35,10 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
   /** The showing the open form was duplicated from, for the hint above it. */
   const [copiedFrom, setCopiedFrom] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  /** "Copy to…" open on one showing, with the screen chosen so far. */
+  const [copying, setCopying] = useState<{ showingId: string; targetId: string } | null>(null)
+  const [notice, setNotice] = useState('')
+  const targets = copyTargets(screens, elementId)
   const [error, setError] = useState('')
   const [unknown, setUnknown] = useState<string[]>([])
   const [picking, setPicking] = useState(false)
@@ -49,6 +57,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
   const run = async (work: () => Promise<void>) => {
     setBusy(true)
     setError('')
+    setNotice('')
     setUnknown([])
     try {
       await work()
@@ -80,6 +89,15 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
     setEditingId(null)
     load()
   })
+  const copy = (s: Showing, targetId: string) => {
+    const to = targets.find((t) => t.id === targetId)
+    if (!to) return
+    return run(async () => {
+      await api.createShowing(to.id, copyShowingBody(s))
+      setCopying(null)
+      setNotice(copiedMessage(s, to))
+    })
+  }
   const toggle = (s: Showing) => run(async () => { await api.updateShowing(s.id, { enabled: !s.enabled }); load() })
   const remove = (s: Showing) => run(async () => {
     await api.deleteShowing(s.id)
@@ -106,6 +124,10 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
                 <span className="flex gap-2">
                   <button type="button" className={BTN} disabled={busy} onClick={() => { setEditingId(s.id); setCopiedFrom(null); setForm(showingToForm(s)); setError(''); setUnknown([]) }}>Edit</button>
                   <button type="button" className={BTN} disabled={busy} onClick={() => { setEditingId(null); setCopiedFrom(s.title || 'Untitled showing'); setForm(duplicateShowingForm(s)); setError(''); setUnknown([]) }}>Duplicate</button>
+                  {targets.length > 0 && (
+                    <button type="button" className={BTN} disabled={busy} aria-expanded={copying?.showingId === s.id}
+                      onClick={() => { setCopying(copying?.showingId === s.id ? null : { showingId: s.id, targetId: targets[0].id }); setError(''); setNotice('') }}>Copy to…</button>
+                  )}
                   <button type="button" className={BTN} disabled={busy} onClick={() => toggle(s)}>{s.enabled ? 'Pause' : 'Resume'}</button>
                   <button type="button" className={`${BTN} text-red-400`} disabled={busy} onClick={() => remove(s)}>Delete</button>
                 </span>
@@ -113,6 +135,18 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
               <p className="text-xs text-gray-400">{describeShowing(s)}</p>
               <p className="text-xs text-gray-500">{s.items.map((i) => `${name(i.url)}${i.kind === 'ad' ? ' (ad)' : ''}`).join(' → ')}</p>
               {s.enabled && s.nextStarts[0] && <p className="text-xs text-gray-500">Next: {formatRunTime(s.nextStarts[0], s.timezone, viewerTz)}</p>}
+              {copying?.showingId === s.id && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-300">
+                  <label className="flex items-center gap-2">Copy to
+                    <select className={INPUT} value={copying.targetId} onChange={(e) => setCopying({ showingId: s.id, targetId: e.target.value })}>
+                      {targets.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                    </select>
+                  </label>
+                  <button type="button" className={BTN} disabled={busy} onClick={() => void copy(s, copying.targetId)}>Copy</button>
+                  <button type="button" className="text-xs text-gray-400 hover:text-white" onClick={() => setCopying(null)}>Cancel</button>
+                  <span className="w-full text-gray-500">Same programme and times. It's refused if it clashes with a showing already on that screen.</span>
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -197,6 +231,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker }: { api: 
         <button type="button" className={BTN} disabled={busy || showings === null} onClick={() => { setEditingId(null); setCopiedFrom(null); setForm(blank()) }}>Add showing</button>
       )}
 
+      {notice && <p role="status" className="text-sm text-green-400">{notice}</p>}
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       {picking && <MediaPicker api={api} accept="video/*" onSelect={(url) => { addItem(url); setPicking(false) }} onClose={() => setPicking(false)} />}
     </div>

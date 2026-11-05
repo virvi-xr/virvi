@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
+import { copiedMessage, copyShowingBody, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
 
 const form = (extra: Partial<ShowingForm> = {}): ShowingForm => ({
   title: ' Night of the Living Dead ', description: '', posterUrl: '',
@@ -96,5 +96,45 @@ describe('duplicateShowingForm', () => {
     expect(duplicateShowingForm(saved({ recurrence: 'once', startDate: '2026-12-31', startTime: '23:00' }))).toMatchObject({ startDate: '2027-01-01', startTime: '00:45' })
     expect(duplicateShowingForm(saved({ startTime: '23:00' }))).toMatchObject({ weekdays: [6, 0], startTime: '00:45' })
     expect(duplicateShowingForm(saved({ recurrence: 'daily', startTime: '23:00' }))).toMatchObject({ recurrence: 'daily', startTime: '00:45' })
+  })
+})
+
+describe('copy to another screen', () => {
+  const showing: Showing = {
+    id: 'sh1', elementId: 'v1', title: 'Night of the Living Dead', description: null, posterUrl: 'https://cdn/poster.jpg',
+    items: [{ url: 'https://cdn/reel.mp4', duration: 90.5, kind: 'ad' }, { url: 'https://elsewhere/film.mp4', duration: 5754.25, kind: 'video' }],
+    recurrence: 'weekly', startDate: '2026-11-06', startTime: '19:00', weekdays: [5, 6], timezone: 'America/New_York', enabled: false,
+    lengthSeconds: 5844.75, nextStarts: [],
+  }
+
+  it('sends the same showing with its exact lengths, so videos from elsewhere keep theirs', () => {
+    expect(copyShowingBody(showing)).toEqual({
+      title: 'Night of the Living Dead', description: null, posterUrl: 'https://cdn/poster.jpg',
+      items: [{ url: 'https://cdn/reel.mp4', kind: 'ad', duration: 90.5 }, { url: 'https://elsewhere/film.mp4', kind: 'video', duration: 5754.25 }],
+      recurrence: 'weekly', weekdays: [5, 6], startDate: '2026-11-06', startTime: '19:00', timezone: 'America/New_York', enabled: false,
+    })
+  })
+
+  it('leaves out an unknown length rather than sending 0', () => {
+    expect(copyShowingBody({ ...showing, items: [{ url: 'https://cdn/film.mp4', duration: 0, kind: 'video' }] }).items).toEqual([{ url: 'https://cdn/film.mp4', kind: 'video' }])
+  })
+
+  it('offers the other video screens, saying which are not in Schedule mode', () => {
+    const screens = [
+      { id: 'v1', type: 'video', name: 'Main', properties: { offType: 6 } },
+      { id: 'v2', type: 'video', name: 'Lobby', properties: { offType: 6 } },
+      { id: 'v3', type: 'video', name: '', properties: { offType: 0 } },
+      { id: 'i1', type: 'image', name: 'Poster', properties: {} },
+    ]
+    expect(copyTargets(screens, 'v1')).toEqual([
+      { id: 'v2', name: 'Lobby', scheduled: true, label: 'Lobby' },
+      { id: 'v3', name: 'Video screen', scheduled: false, label: 'Video screen (not in Schedule mode)' },
+    ])
+  })
+
+  it('says where it went, and when a screen needs switching to Schedule mode', () => {
+    expect(copiedMessage(showing, { name: 'Lobby', scheduled: true })).toBe('Copied Night of the Living Dead to Lobby.')
+    expect(copiedMessage({ ...showing, title: null }, { name: 'Side', scheduled: false }))
+      .toBe('Copied Untitled showing to Side. It plays there once Side is set to Scheduled showings.')
   })
 })
