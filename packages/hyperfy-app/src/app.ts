@@ -15,7 +15,7 @@ import { runHud } from './hud/client.js'
 import { runLinkRelay } from './link-relay.js'
 import { diffPlans, planScene, type RenderItem } from './plan.js'
 import { FeedPoller } from './poller.js'
-import { newSeekState, scheduledView, seekAction, virviClockOffset, type ScheduledView, type SeekState } from './showings.js'
+import { newSeekState, scheduledSign, scheduledView, seekAction, signLayout, virviClockOffset, type ScheduledView, type SeekState } from './showings.js'
 import type { AppProps, ClientEditHooks, HApp, HNode, HWorld, Matrix4Ctor, ScriptFetch, ScriptSetTimeout } from './sandbox.js'
 import { MODEL_TURN, toHyperfyTransform, toVirviPosition, worldToLocal, type HyperfyTransform } from './transform.js'
 import type { VirviTransform } from './virvi-api.js'
@@ -110,7 +110,15 @@ function runClient(): ClientEditHooks {
    * `track`: for a playlist screen, the index of the playlist video it is showing. `view`/`seek`: for a scheduled
    * screen, what it is showing and its video's seeks.
    */
-  type Shown = { item: RenderItem; node: HNode | null; track: number; view?: ScheduledView; seek?: SeekState }
+  type Shown = {
+    item: RenderItem
+    node: HNode | null
+    track: number
+    view?: ScheduledView
+    seek?: SeekState
+    /** Schedule mode: the countdown / now-showing sign over the screen, and what it says. */
+    sign?: { node: HNode; label: HNode; value: string }
+  }
   let plan: RenderItem[] = []
   const shown = new Map<string, Shown>()
   /** Scheduled screens' showings by element id, and Virvi's clock minus the world's (from the latest snapshot). */
@@ -189,6 +197,7 @@ function runClient(): ClientEditHooks {
       const view = viewOf(item)
       entry.view = view
       watchScreens()
+      updateSign(entry)
       if (view.type === 'none') return
       node = plane(view.type, item, view.src)
       if (view.type === 'video') {
@@ -216,6 +225,46 @@ function runClient(): ClientEditHooks {
     if (!entry) return
     shown.delete(key)
     if (entry.node) app.remove(entry.node)
+    if (entry.sign) app.remove(entry.sign.node)
+  }
+
+  /** Writes a scheduled screen's sign (as Decentraland's), making it on first use and taking it down when it has nothing to say. */
+  const updateSign = (entry: Shown) => {
+    const text = scheduledSign(showings.get(elementOf(entry.item.key)) ?? [], virviNow()) ?? ''
+    if (entry.sign?.value === text) return
+    if (!text) {
+      if (entry.sign) app.remove(entry.sign.node)
+      entry.sign = undefined
+      return
+    }
+    if (!entry.sign) {
+      const t = shownTransform(entry.item)
+      const lay = signLayout(t.scale[0], t.scale[1])
+      // The group carries the screen's place and turn; the sign sits inside it near the screen's bottom edge
+      const group = app.create('group')
+      place(group, entry.item, t)
+      const ui = app.create('ui', {
+        space: 'world',
+        width: lay.width,
+        height: lay.height,
+        pivot: 'bottom-center',
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        borderRadius: 8,
+        padding: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+        pointerEvents: false,
+      })
+      ui.position.fromArray(lay.position)
+      const label = app.create('uitext', { value: text, color: '#ffffff', fontSize: lay.fontSize, fontWeight: 'bold', textAlign: 'center' })
+      ui.add(label)
+      group.add(ui)
+      app.add(group)
+      entry.sign = { node: group, label, value: text }
+      return
+    }
+    entry.sign.label.value = text
+    entry.sign.value = text
   }
 
   /** A scheduled screen changes picture when the show moves on, and keeps its video where the shared show is. */
@@ -226,6 +275,7 @@ function runClient(): ClientEditHooks {
       add(entry.item)
       return
     }
+    updateSign(entry)
     const { node, seek } = entry
     if (view.type !== 'video' || !node || !seek) return
     if (seekAction(seek, Date.now(), view.offset, view.duration, node)) node.time = view.offset

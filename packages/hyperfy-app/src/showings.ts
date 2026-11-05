@@ -2,7 +2,7 @@
  * Scheduled showings on a Hyperfy screen (LIV-87): what a Schedule-mode screen shows at a moment of Virvi's clock, and
  * when to move its video to where the shared show is. Plain functions; app.ts drives them from its screen check.
  */
-import { needsResync, screenStateAt, type ShowingInstance } from '@virvixr/shared'
+import { needsResync, screenStateAt, showingSign, type ShowingInstance } from '@virvixr/shared'
 
 export type ScheduledView =
   | { key: string; type: 'video'; src: string; /** Seconds into the video. */ offset: number; duration: number }
@@ -21,6 +21,32 @@ export function scheduledView(showings: ShowingInstance[], now: number, holdingI
   }
   const key = `between:${holdingImage}`
   return holdingImage ? { key, type: 'image', src: holdingImage } : { key, type: 'none' }
+}
+
+/** The countdown / now-showing line over the screen at Virvi time `now`, as Decentraland shows it; null for none. */
+export function scheduledSign(showings: ShowingInstance[], now: number): string | null {
+  return showingSign(screenStateAt(showings, now))
+}
+
+/** How far up from the screen's bottom edge the sign sits, as a share of its height (Decentraland's too). */
+const SIGN_LIFT = 0.15
+/** World UI is 1 cm a pixel (Hyperfy's default `size`). */
+const PX_PER_M = 100
+
+/**
+ * The sign's world UI for a `w` x `h` m screen: as wide as the screen (at least 2 m), two lines of text in proportion to
+ * the screen's height (10 to 50 px, so 10 to 50 cm), its bottom edge `position` (screen-local, m) a little up from the
+ * screen's bottom edge and just in front of the picture.
+ */
+export function signLayout(w: number, h: number): { width: number; height: number; fontSize: number; position: [number, number, number] } {
+  const ah = Math.abs(h)
+  const fontSize = Math.min(50, Math.max(10, Math.round(ah * 10)))
+  return {
+    width: Math.max(200, Math.round(Math.abs(w) * PX_PER_M)),
+    height: Math.round(fontSize * 1.2 * 2 + 16),
+    fontSize,
+    position: [0, -ah / 2 + ah * SIGN_LIFT, 0.02],
+  }
 }
 
 /**

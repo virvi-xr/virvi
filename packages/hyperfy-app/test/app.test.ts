@@ -318,6 +318,61 @@ describe('the Virvi app script', () => {
     expect(c.added.filter((n) => n.type === 'video' || n.type === 'image')).toHaveLength(0)
   })
 
+  it('client: a scheduled screen shows the countdown and now-showing sign, near its bottom edge, then takes it down', async () => {
+    const c = run({ isServer: false })
+    const T = Date.UTC(2026, 10, 5, 19, 0)
+    const items = [
+      { url: 'https://x/trailer.mp4', duration: 60, kind: 'ad' as const },
+      { url: 'https://x/film.mp4', duration: 600, kind: 'video' as const },
+    ]
+    const at = (secondsIntoShow: number) => {
+      c.clock.worldTime = 1000 + secondsIntoShow
+    }
+    const snap = {
+      v: 1,
+      version: 'a',
+      clockOffsetMs: T - 1000_000,
+      scene: {
+        videos: [{ sk: 'tv', offType: 6, offImageSrc: 'https://x/poster.png', volume: 0.7, instances: [{ sk: 'i1', scale: { x: 4, y: 2, z: 1 } }] }],
+        images: [],
+        models: [],
+        sounds: [],
+      },
+      showings: [{ elementId: 'tv', showings: [{ showingId: 's1', startsAt: T, title: 'Film', items }] }],
+    }
+    const signs = () => c.added.filter((n) => n.type === 'group' && texts(n).length > 0)
+    const sign = () => {
+      expect(signs()).toHaveLength(1)
+      return signs()[0]
+    }
+
+    at(-30)
+    c.handlers.get('virvi:scene')!(snap)
+    expect(texts(sign())).toEqual(['Next: Film\nin 0:30'])
+    const ui = sign().children[0]
+    expect(ui).toMatchObject({ type: 'ui', space: 'world', width: 400, pivot: 'bottom-center', pointerEvents: false })
+    expect(ui.position.toArray()).toEqual([0, -0.7, 0.02])
+
+    // The countdown ticks on the same sign
+    const first = sign()
+    at(-10)
+    await c.tick()
+    expect(sign()).toBe(first)
+    expect(texts(sign())).toEqual(['Next: Film\nin 0:10'])
+
+    at(30)
+    await c.tick()
+    expect(texts(sign())).toEqual(['Film starts in 0:30'])
+    at(65)
+    await c.tick()
+    expect(texts(sign())).toEqual(['Now showing: Film'])
+
+    // Nothing over the film after its first seconds
+    at(120)
+    await c.tick()
+    expect(signs()).toHaveLength(0)
+  })
+
   it('client: a model sits in a group carrying the mapped transform, turned half a circle inside it', async () => {
     const c = run({ isServer: false })
     const snap: HyperfyFeedResponse = {

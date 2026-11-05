@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ShowingInstance } from '@virvixr/shared'
-import { newSeekState, scheduledView, seekAction, virviClockOffset, SHOWING_SETTLE_MS } from '../src/showings.js'
+import { newSeekState, scheduledSign, scheduledView, seekAction, signLayout, virviClockOffset, SHOWING_SETTLE_MS } from '../src/showings.js'
 
 const T0 = Date.UTC(2026, 10, 5, 19, 0)
 const show = (over: Partial<ShowingInstance> = {}): ShowingInstance => ({
@@ -96,5 +96,30 @@ describe('seekAction', () => {
     const st = newSeekState()
     seekAction(st, NOW, 0, 5400, playing(0))
     expect(seekAction(st, NOW + SHOWING_SETTLE_MS + 1, 100, 5400, { playing: false, time: 0, duration: 5400 })).toBe(false)
+  })
+})
+
+describe('scheduledSign', () => {
+  it('counts down to the next showing on the holding image', () => {
+    expect(scheduledSign([show()], T0 - 90_000)).toBe('Next: Film\nin 1:30')
+  })
+  it('counts down to the feature during the ads before it, then names the film briefly', () => {
+    expect(scheduledSign([show()], T0 + 15_000)).toBe('Film starts in 0:45')
+    expect(scheduledSign([show()], T0 + 65_000)).toBe('Now showing: Film')
+    expect(scheduledSign([show()], T0 + 600_000)).toBeNull()
+  })
+  it('says nothing with nothing scheduled', () => {
+    expect(scheduledSign([], T0)).toBeNull()
+  })
+})
+
+describe('signLayout', () => {
+  it('spans the screen, sits near its bottom edge and just in front, with text in proportion', () => {
+    expect(signLayout(4, 2)).toEqual({ width: 400, height: 64, fontSize: 20, position: [0, -0.7, 0.02] })
+  })
+  it('keeps the text readable on tiny screens and in proportion on huge ones', () => {
+    expect(signLayout(0.5, 0.3).fontSize).toBe(10)
+    expect(signLayout(0.5, 0.3).width).toBe(200)
+    expect(signLayout(20, 12).fontSize).toBe(50)
   })
 })
