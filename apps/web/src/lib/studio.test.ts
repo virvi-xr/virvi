@@ -6,6 +6,8 @@ import {
 import { formatBytesShort, uploadProblem } from './studio'
 import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudioFlag } from './studio'
 import { giftCodeStatus } from './studio'
+import { adminActionMessage, readUnrecordedRefunds, writeUnrecordedRefund, adminManaMessage, adminManaRows, type AdminManaTransfer } from './studio'
+import { checkoutHref, checkoutTarget, checkoutTotals, countdown, manaBack } from './studio'
 import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, type StudioDesign, type StudioUsage } from './studio'
 
 const NOW = new Date('2026-10-29T21:55:00Z')
@@ -67,6 +69,15 @@ describe('refusalMessage', () => {
     expect(r('payments_unavailable', {}, 503).text).toBe('Payments aren’t available right now.')
     expect(r('stripe_error', {}, 502).text).toBe('Stripe didn’t answer. Try again in a moment.')
     expect(r('free_finalize_busy').text).toBe('Your free finalize is held by another checkout. Try again in a few minutes.')
+  })
+  it('explains MANA and credit refusals', () => {
+    expect(r('rate_unavailable', {}, 503).text).toBe('MANA pricing is unavailable right now. Try again in a minute, or pay by card.')
+    expect(r('mana_unavailable', {}, 503).text).toBe("MANA payments aren't available.")
+    expect(r('credit_spent').text).toBe('That credit has already been spent.')
+    expect(r('credit_busy').text).toBe('An open checkout is still holding your Virvi credit. Try again in a few minutes.')
+    expect(r('mana_busy', {}, 503).text).toBe('MANA checkout is busy. Try again in a moment.')
+    expect(r('tx_mismatch').text).toBe("That payment didn't match this order. Contact support and we'll sort it out.")
+    expect(r('tx_late').text).toBe(r('tx_mismatch').text)
   })
   it('falls back to plain words for anything else', () => {
     expect(r('who_knows')).toEqual({ text: 'Something went wrong. Try again.' })
@@ -145,6 +156,10 @@ describe('usageLine', () => {
   it('names the plan and the prompts left, and bought prompts when there are any', () => {
     expect(usageLine(u)).toBe('free plan · 3 prompts left today')
     expect(usageLine({ ...u, credits: 7 })).toBe('free plan · 3 prompts left today · 7 bought')
+  })
+  it('adds Virvi credit when the balance is above 0', () => {
+    expect(usageLine({ ...u, creditCents: 1500 })).toBe('free plan · 3 prompts left today · $15.00 credit')
+    expect(usageLine({ ...u, creditCents: 0 })).toBe('free plan · 3 prompts left today')
   })
   it('adds free finalizes when there are any, and those held by an open checkout', () => {
     expect(usageLine({ ...u, freeFinalizes: { available: 1, held: 0 } })).toBe('free plan · 3 prompts left today · 1 free finalize')
@@ -308,7 +323,8 @@ const line = (over: Partial<QuoteLine>): QuoteLine => ({
   category: 'hat', revisionId: 'r1', revisionNumber: 1, pieceName: 'Neon Cap', priceKind: 'first', amountCents: 2900, waived: false, ...over,
 })
 const quote = (lines: QuoteLine[], over: Partial<Quote> = {}): Quote => ({
-  pieces: [], lines, totalCents: lines.reduce((n, l) => n + (l.waived ? 0 : l.amountCents), 0), blocked: [], giftsUsed: 0, reportsHeld: [], notes: [], ...over,
+  pieces: [], lines, totalCents: lines.reduce((n, l) => n + (l.waived ? 0 : l.amountCents), 0), creditCents: 0, dueCents: 0,
+  blocked: [], giftsUsed: 0, reportsHeld: [], notes: [], ...over,
 })
 
 describe('finalizeStrip', () => {
@@ -570,5 +586,126 @@ describe('giftCodeStatus', () => {
 describe('the agent at work', () => {
   it('says the agent is working, never "Building" (a building design would read it as its kind)', () => {
     expect(progressFor([{ type: 'phase', jobId: 'j1', phase: 'building' }], 'j1')).toBe('Agent working…')
+  })
+})
+
+describe('checkout page', () => {
+  const D = '2f1c6a0e-8d3b-4c1a-9f6e-0b7d5e4a3c21'
+  it('reads a design, its optional categories, or a top-up from the query', () => {
+    expect(checkoutTarget(`?design=${D}`)).toEqual({ kind: 'design', designId: D, categories: null })
+    expect(checkoutTarget(`?design=${D}&categories=hat,feet`)).toEqual({ kind: 'design', designId: D, categories: ['hat', 'feet'] })
+    expect(checkoutTarget('?topup=3')).toEqual({ kind: 'topup', packs: 3 })
+    expect(checkoutTarget('?design=nope')).toBeNull()
+    expect(checkoutTarget('?topup=0')).toBeNull()
+    expect(checkoutTarget('?topup=1.5')).toBeNull()
+    expect(checkoutTarget('')).toBeNull()
+  })
+  it('links to itself', () => {
+    expect(checkoutHref({ kind: 'design', designId: D, categories: null })).toBe(`/studio/checkout/?design=${D}`)
+    expect(checkoutHref({ kind: 'topup', packs: 2 })).toBe('/studio/checkout/?topup=2')
+  })
+  it('applies credit to what is left after gifts and waived reports, and names what is due', () => {
+    const lines: QuoteLine[] = [
+      { category: 'hat', revisionId: 'r1', revisionNumber: 2, pieceName: 'Hat', priceKind: 'revision', amountCents: 1500, waived: false },
+      { category: 'feet', revisionId: 'r2', revisionNumber: 1, pieceName: 'Boots', priceKind: 'first', amountCents: 2900, waived: false },
+    ]
+    const q = { pieces: [], lines, totalCents: 4400, creditCents: 1000, dueCents: 3400, blocked: [], giftsUsed: 0, reportsHeld: [], notes: [] } as Quote
+    expect(checkoutTotals(q, [])).toEqual({ totalCents: 4400, creditCents: 1000, dueCents: 3400 })
+    expect(checkoutTotals(q, ['hat'])).toEqual({ totalCents: 2900, creditCents: 1000, dueCents: 1900 })
+    expect(checkoutTotals({ ...q, creditCents: 4400, dueCents: 0 }, ['hat'])).toEqual({ totalCents: 2900, creditCents: 2900, dueCents: 0 })
+  })
+  it('counts down a quote in minutes and seconds, never below zero', () => {
+    expect(countdown(at(10 * MIN), NOW)).toBe('10:00')
+    expect(countdown(at(65_000), NOW)).toBe('1:05')
+    expect(countdown(at(-5000), NOW)).toBe('0:00')
+  })
+})
+
+describe('manaBack', () => {
+  const report = (over: Record<string, unknown> = {}) =>
+    ({ id: 'rep1', status: 'refunded', createdAt: NOW.toISOString(), manaCents: 1500, creditedCents: 1500, manaRefund: null, ...over }) as FinalizedRevision['report']
+  it('offers MANA back for a refunded report with a MANA share and no request yet', () => {
+    expect(manaBack(report())).toEqual({ offer: true, note: null })
+  })
+  it('offers nothing for a card refund or a report not refunded', () => {
+    expect(manaBack(report({ manaCents: 0 }))).toEqual({ offer: false, note: null })
+    expect(manaBack(report({ status: 'in_review' }))).toEqual({ offer: false, note: null })
+    expect(manaBack(null)).toEqual({ offer: false, note: null })
+  })
+  it('says where a request stands', () => {
+    expect(manaBack(report({ manaRefund: 'requested' }))).toEqual({ offer: false, note: 'We’ll send $15.00 of MANA to your wallet. It can take a few days.' })
+    expect(manaBack(report({ manaRefund: 'sent' }))).toEqual({ offer: false, note: 'We’ve sent $15.00 of MANA to your wallet.' })
+    expect(manaBack(report({ manaRefund: 'declined' }))).toEqual({ offer: false, note: 'We couldn’t send MANA back, so $15.00 stays as Virvi credit.' })
+  })
+})
+
+describe('adminManaRows', () => {
+  const cand = (id: string, wei: string) => ({
+    id, user: { id: 'u', email: null }, kind: 'finalize', amountCents: 500, creditHeldCents: 0, manaAmountWei: wei,
+    status: 'pending', createdAt: '2026-11-04T10:00:00Z', expiresAt: '2026-11-04T10:10:00Z',
+  })
+  const transfer = (over: Partial<AdminManaTransfer>): AdminManaTransfer => ({
+    txHash: '0x' + 'a'.repeat(64), logIndex: 0, fromAddress: '0x' + '1'.repeat(40), amountWei: '100000000000000000000',
+    status: 'unmatched', createdAt: '2026-11-04T10:05:00Z', candidates: [], ...over,
+  })
+
+  it('keeps candidates within 5% of the transfer, nearest first', () => {
+    const [row] = adminManaRows([transfer({ candidates: [
+      cand('far', '120000000000000000000'), cand('near', '100500000000000000000'), cand('edge', '95000000000000000000'),
+      cand('exact', '100000000000000000000'), cand('over', '105000000000000000001'),
+    ] })])
+    expect(row.candidates.map((c) => c.id)).toEqual(['exact', 'near', 'edge'])
+  })
+
+  it('links the transaction on Polygonscan, shows the amount in MANA and a row key', () => {
+    const [row] = adminManaRows([transfer({ logIndex: 3 })])
+    expect(row.scanUrl).toBe('https://polygonscan.com/tx/0x' + 'a'.repeat(64))
+    expect(row.mana).toBe('100.00 MANA')
+    expect(row.key).toBe('0x' + 'a'.repeat(64) + ':3')
+    expect(row.candidates).toEqual([])
+  })
+})
+
+describe('adminManaMessage', () => {
+  it('words the owner-side refusals', () => {
+    expect(adminManaMessage({ body: { code: 'tx_mismatch' } })).toMatch(/amount|wallet/)
+    expect(adminManaMessage({ body: { code: 'already_decided' } })).toMatch(/already/)
+    expect(adminManaMessage({ body: { code: 'payment_claimed' } })).toMatch(/another/)
+    expect(adminManaMessage({ body: { code: 'rate_unavailable' } })).toBe(refusalMessage({ body: { code: 'rate_unavailable' } }, NOW).text)
+  })
+})
+
+describe('adminActionMessage', () => {
+  it('says a wallet rejection was a cancel', () => {
+    expect(adminActionMessage({ code: 4001, message: 'User denied' })).toMatch(/cancelled/)
+  })
+  it('uses the owner wording for a coded server refusal', () => {
+    expect(adminActionMessage(Object.assign(new Error('x'), { status: 409, body: { code: 'already_decided' } }))).toMatch(/already been decided/)
+  })
+  it('shows the error’s own text when it carries no API code', () => {
+    expect(adminActionMessage(new Error('No browser wallet found.'))).toBe('No browser wallet found.')
+    expect(adminActionMessage(new Error('Your wallet isn’t on Polygon.'))).toBe('Your wallet isn’t on Polygon.')
+    expect(adminActionMessage(Object.assign(new Error('HTTP 500'), { status: 500, body: { error: 'HTTP 500' } }))).toBe('HTTP 500')
+  })
+})
+
+describe('unrecorded MANA refunds in storage', () => {
+  const memory = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) } }
+  it('keeps, replaces and clears an entry per request', () => {
+    const store = memory()
+    const a = { id: 'a', txHash: '0x' + '1'.repeat(64), amountWei: '5' }
+    writeUnrecordedRefund(store, 'a', a)
+    writeUnrecordedRefund(store, 'b', { id: 'b', txHash: '0x' + '2'.repeat(64), amountWei: '6' })
+    expect(readUnrecordedRefunds(store).map((x) => x.id)).toEqual(['a', 'b'])
+    writeUnrecordedRefund(store, 'a', { ...a, amountWei: '7' })
+    expect(readUnrecordedRefunds(store).find((x) => x.id === 'a')?.amountWei).toBe('7')
+    writeUnrecordedRefund(store, 'a', null)
+    expect(readUnrecordedRefunds(store).map((x) => x.id)).toEqual(['b'])
+  })
+  it('reads junk, missing or throwing storage as empty', () => {
+    expect(readUnrecordedRefunds(null)).toEqual([])
+    expect(readUnrecordedRefunds({ getItem: () => 'nope', setItem: () => {} })).toEqual([])
+    expect(readUnrecordedRefunds({ getItem: () => { throw new Error('blocked') }, setItem: () => {} })).toEqual([])
+    expect(() => writeUnrecordedRefund({ getItem: () => null, setItem: () => { throw new Error('full') } }, 'a', { id: 'a', txHash: 'h', amountWei: '1' })).not.toThrow()
   })
 })

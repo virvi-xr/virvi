@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  formatCents, paidSummary, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
+  formatCents, formatCredit, manaBack, paidSummary, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
   type FinalizedRevision, type StudioPiece,
 } from '@/lib/studio'
 
@@ -75,7 +75,8 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
   const [error, setError] = useState<string | null>(null)
   const [reporting, setReporting] = useState(false)
   const [text, setText] = useState('')
-  const [refunded, setRefunded] = useState<number | null>(null)
+  const [refunded, setRefunded] = useState<{ refundCents: number; creditedCents: number } | null>(null)
+  const mana = manaBack(f.report)
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true)
@@ -101,8 +102,14 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
 
   const report = () => run(async () => {
     const r = await api.reportStudioMistake(designId, category, f.revision, text.trim())
-    if (r.status === 'refunded') setRefunded(r.refundCents)
+    if (r.status === 'refunded') setRefunded({ refundCents: r.refundCents, creditedCents: r.creditedCents ?? 0 })
     setReporting(false)
+    await onChanged()
+  })
+
+  // The MANA share of a refund went back as Virvi credit: it can go back to the wallet as MANA instead
+  const manaInstead = () => run(async () => {
+    await api.requestStudioManaRefund(f.report!.id!)
     await onChanged()
   })
 
@@ -143,7 +150,21 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
           </div>
         </form>
       )}
-      {refunded !== null && <p className="mt-2 text-emerald-300" role="status">Refunded {formatCents(refunded)}.</p>}
+      {refunded !== null && (
+        <p className="mt-2 text-emerald-300" role="status">
+          Refunded {formatCents(refunded.refundCents)}.
+          {refunded.creditedCents > 0 && ` ${formatCredit(refunded.creditedCents)} went to your Virvi credit, for your next checkout.`}
+        </p>
+      )}
+      {mana.offer && (
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <p className="text-gray-300">You paid {formatCredit(f.report!.manaCents!)} of this in MANA.</p>
+          <button type="button" disabled={busy} onClick={manaInstead} className="rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50">
+            Send it back as MANA instead
+          </button>
+        </div>
+      )}
+      {mana.note && <p className="mt-2 text-gray-300" role="status">{mana.note}</p>}
       {f.report && reportCopy(f.report.status) && <p className="mt-2 text-gray-300" role="status">{reportCopy(f.report.status)}</p>}
       {error && <p className="mt-2 text-amber-300" role="alert">{error}</p>}
     </li>

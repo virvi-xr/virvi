@@ -3,17 +3,10 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  checkoutBody, dialogTotal, emoteChecklist, finalizeStrip, formatCents, lineNote, HELD_REPORT_COPY, REPORT_MAX, refusalMessage, reportOk, triangleWarning,
-  type Quote, type QuoteLine, type Refusal, type StudioDetail, type StudioKind,
+  checkoutBody, checkoutHref, checkoutReportsKey, dialogTotal, emoteChecklist, finalizeStrip, formatCents, lineNote, HELD_REPORT_COPY, PRICE_LABEL, REPORT_MAX, reportOk,
+  triangleWarning, type Quote, type StudioDetail, type StudioKind,
 } from '@/lib/studio'
 import { STATE_BADGE, emoteName, type EmoteTarget } from './EmotesStep'
-
-const PRICE_LABEL: Record<QuoteLine['priceKind'], string> = {
-  first: 'First finalize',
-  first_extra: 'Extra piece',
-  revision: 'Revision',
-  revision_extra: 'Revision',
-}
 
 /**
  * Every emote on both body shapes and whether the person has looked: a nudge, never a gate. Opening it renders the
@@ -51,12 +44,12 @@ export function EmoteChecklist({ designId, detail, onOpen }: { designId: string;
 }
 
 type Props = {
-  designId: string; kind: StudioKind; quote: Quote | null; busy: boolean; onChanged: () => Promise<void>
+  designId: string; kind: StudioKind; quote: Quote | null; busy: boolean
   detail: StudioDetail; onOpenEmote: (t: EmoteTarget) => void
 }
 
 /** The finalize strip under the preview, and the dialog that pays for every payable piece at once. */
-export default function Finalize({ designId, kind, quote, busy, onChanged, detail, onOpenEmote }: Props) {
+export default function Finalize({ designId, kind, quote, busy, detail, onOpenEmote }: Props) {
   const [open, setOpen] = useState(false)
   const strip = finalizeStrip(quote, kind)
   return (
@@ -70,7 +63,7 @@ export default function Finalize({ designId, kind, quote, busy, onChanged, detai
         <PrimaryButton type="button" className="mt-3" disabled={busy} onClick={() => setOpen(true)}>{strip.button}</PrimaryButton>
       )}
       {open && quote && (
-        <FinalizeDialog designId={designId} quote={quote} onClose={() => setOpen(false)} onChanged={onChanged}>
+        <FinalizeDialog designId={designId} quote={quote} onClose={() => setOpen(false)}>
           {kind !== 'scene' && <EmoteChecklist designId={designId} detail={detail} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />}
         </FinalizeDialog>
       )}
@@ -78,13 +71,11 @@ export default function Finalize({ designId, kind, quote, busy, onChanged, detai
   )
 }
 
-function FinalizeDialog({ designId, quote, onClose, onChanged, children }: {
-  designId: string; quote: Quote; onClose: () => void; onChanged: () => Promise<void>; children: React.ReactNode
+function FinalizeDialog({ designId, quote, onClose, children }: {
+  designId: string; quote: Quote; onClose: () => void; children: React.ReactNode
 }) {
-  const api = useApi()
   const [reports, setReports] = useState<Record<string, string>>({})
   const [paying, setPaying] = useState(false)
-  const [refusal, setRefusal] = useState<Refusal | null>(null)
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !paying) onClose() }
@@ -103,21 +94,17 @@ function FinalizeDialog({ designId, quote, onClose, onChanged, children }: {
     return next
   })
 
-  const pay = async () => {
+  // Paying happens on the checkout page (card and MANA side by side, credit applied); the reports go with it
+  const pay = () => {
     setPaying(true)
-    setRefusal(null)
     try {
-      const r = await api.finalizeStudio(designId, checkoutBody(reports))
-      if ('url' in r) {
-        window.location.assign(r.url)
-        return
-      }
-      onClose()
-      await onChanged()
-    } catch (err) {
-      setRefusal(refusalMessage(err as never, new Date()))
-      setPaying(false)
+      const body = checkoutBody(reports)
+      if (body.reports) sessionStorage.setItem(checkoutReportsKey(designId), JSON.stringify(body.reports))
+      else sessionStorage.removeItem(checkoutReportsKey(designId))
+    } catch {
+      /* no storage (a private window): the checkout charges the reported lines, which can still be reported after */
     }
+    window.location.assign(checkoutHref({ kind: 'design', designId, categories: null }))
   }
 
   return (
@@ -169,11 +156,10 @@ function FinalizeDialog({ designId, quote, onClose, onChanged, children }: {
           <span className="text-gray-400">Total</span>
           <span className="text-xl font-semibold">{formatCents(total)}</span>
         </div>
-        {refusal && <p className="mt-3 text-sm text-amber-300" role="alert">{refusal.text}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} disabled={paying} className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700">Cancel</button>
           <PrimaryButton type="button" onClick={pay} disabled={paying || incomplete}>
-            {paying ? 'Opening Stripe…' : total > 0 ? `Pay ${formatCents(total)}` : 'Finalize'}
+            {paying ? 'Opening checkout…' : total > 0 ? `Continue to pay ${formatCents(total)}` : 'Continue'}
           </PrimaryButton>
         </div>
       </div>

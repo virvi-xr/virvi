@@ -1707,6 +1707,10 @@ export type PaymentLine = {
   waived: boolean
   gift?: boolean // a first-finalize line paid by a free-finalize credit
   admin?: boolean // free: the customer is a Virvi admin
+  creditCents?: number // how much of the line's charged cents credit paid
+  // Of a MANA payment reopened late in its grace: what neither the credit nor the free finalize it held again, nor its
+  // MANA, paid of the line (ruling R9). The owner absorbs it; it is never refunded or credited back.
+  absorbedCents?: number
   giftCents?: number // how much of it the credit covers (at most the gift cap); missing on older lines: all of it
   footprint?: string // a scene building's footprint, which sets its price
   held?: boolean // a mistake report past the instant limit: charged, and its report waits for the owner
@@ -1724,6 +1728,11 @@ export const studioPayments = pgTable('studio_payments', {
   lines: jsonb('lines').$type<PaymentLine[]>().notNull().default([]),
   prompts: integer('prompts').notNull().default(0), // a top-up's prompts
   giftsHeld: integer('gifts_held').notNull().default(0), // free-finalize credits held for this checkout's gift lines
+  method: text('method').notNull().default('card'), // card | mana | credit
+  creditHeldCents: integer('credit_held_cents').notNull().default(0), // credit held for this checkout until it settles
+  manaAmountWei: text('mana_amount_wei'), // the quoted MANA amount, unique among open quotes
+  manaUsdRate: text('mana_usd_rate'),
+  manaTxHash: text('mana_tx_hash').unique(),
   stripeSessionId: text('stripe_session_id').unique(),
   stripeSessionUrl: text('stripe_session_url'),
   stripePaymentIntent: text('stripe_payment_intent'),
@@ -1736,6 +1745,7 @@ export const studioPayments = pgTable('studio_payments', {
   paidAt: timestamp('paid_at', { withTimezone: true }),
 }, (t) => ({
   userIdx: index('studio_payments_user_idx').on(t.userId, t.createdAt),
+  manaOpenIdx: uniqueIndex('studio_payments_mana_open_idx').on(t.manaAmountWei).where(sql`${t.status} = 'pending'`),
 }))
 
 // A paid revision: its files can be downloaded as the package the finalize job builds
@@ -1748,6 +1758,8 @@ export const studioEntitlements = pgTable('studio_entitlements', {
   category: text('category').notNull(),
   kind: text('kind').notNull(), // first | revision
   amountCents: integer('amount_cents').notNull(), // 0 when waived
+  method: text('method').notNull().default('card'), // card | mana | credit
+  creditCents: integer('credit_cents').notNull().default(0), // the part of amountCents that credit paid
   status: text('status').notNull(), // packaging | ready | failed
   jobId: uuid('job_id'), // the finalize job
   packageKey: text('package_key'),
@@ -1768,11 +1780,68 @@ export const studioMistakeReports = pgTable('studio_mistake_reports', {
   userId: uuid('user_id').notNull(),
   text: text('text').notNull(),
   refundCents: integer('refund_cents').notNull(),
+  creditedCents: integer('credited_cents').notNull().default(0), // refunded as credit
+  manaCents: integer('mana_cents').notNull().default(0), // the part that may go back as MANA
   status: text('status').notNull(), // pending (refund in flight) | refunded | waived | in_review (waits for the owner) | approving (the owner's refund in flight) | declined
   stripeRefundId: text('stripe_refund_id'),
   reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
   reviewedBy: uuid('reviewed_by'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Account credit in USD cents, spent before card or MANA; every change has a ledger row
+export const studioCredits = pgTable('studio_credits', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  balanceCents: integer('balance_cents').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const studioCreditLedger = pgTable('studio_credit_ledger', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  deltaCents: integer('delta_cents').notNull(),
+  reason: text('reason').notNull(), // hold | release | spend | refund | merge | mana_refund_request | mana_refund_declined
+  refId: text('ref_id'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  userIdx: index('studio_credit_ledger_user_idx').on(t.userId, t.createdAt),
+}))
+
+// Every MANA transfer to the studio wallet that the scanner saw; a hash settles at most one payment, ever
+export const studioManaTransfers = pgTable('studio_mana_transfers', {
+  txHash: text('tx_hash').notNull(),
+  logIndex: integer('log_index').notNull(),
+  fromAddress: text('from_address').notNull(),
+  amountWei: text('amount_wei').notNull(),
+  blockNumber: bigint('block_number', { mode: 'number' }).notNull(),
+  // A financial record: it outlives the payment (an account deleted with its payments leaves it unlinked)
+  paymentId: uuid('payment_id').references(() => studioPayments.id, { onDelete: 'set null' }),
+  status: text('status').notNull(), // matched | unmatched | settled_by_hand | returned
+  note: text('note'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.txHash, t.logIndex] }),
+}))
+
+// Where the MANA scanner resumes: one row, id 'polygon'
+export const studioManaScan = pgTable('studio_mana_scan', {
+  id: text('id').primaryKey(),
+  lastBlock: bigint('last_block', { mode: 'number' }).notNull(),
+})
+
+// A customer's request to have MANA-paid money back as MANA, sent by hand by the owner
+export const studioManaRefunds = pgTable('studio_mana_refunds', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  reportId: uuid('report_id').references(() => studioMistakeReports.id, { onDelete: 'set null' }),
+  usdCents: integer('usd_cents').notNull(),
+  toAddress: text('to_address').notNull(),
+  status: text('status').notNull(), // requested | sent | declined
+  manaAmountWei: text('mana_amount_wei'),
+  txHash: text('tx_hash').unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  decidedBy: uuid('decided_by'),
 })
 
 // Bought prompts: used after the day's allowance, never expiring

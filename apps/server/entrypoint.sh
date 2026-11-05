@@ -191,6 +191,38 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio_payments.gifts_held ensured');
       } catch(e) { console.log('[virvi-server] studio_payments.gifts_held:', e.message); }
 
+      // Design Studio credit and MANA: new columns; matches studioPayments, studioEntitlements and studioMistakeReports in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS method TEXT NOT NULL DEFAULT 'card'\`;
+        await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS credit_held_cents INTEGER NOT NULL DEFAULT 0\`;
+        await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS mana_amount_wei TEXT\`;
+        await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS mana_usd_rate TEXT\`;
+        await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS mana_tx_hash TEXT\`;
+        await sql\`DO \$\$ BEGIN ALTER TABLE studio_payments ADD CONSTRAINT studio_payments_mana_tx_hash_unique UNIQUE (mana_tx_hash); EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL; END \$\$\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_payments_mana_open_idx ON studio_payments (mana_amount_wei) WHERE status = 'pending'\`;
+        await sql\`ALTER TABLE studio_entitlements ADD COLUMN IF NOT EXISTS method TEXT NOT NULL DEFAULT 'card'\`;
+        await sql\`ALTER TABLE studio_entitlements ADD COLUMN IF NOT EXISTS credit_cents INTEGER NOT NULL DEFAULT 0\`;
+        await sql\`ALTER TABLE studio_mistake_reports ADD COLUMN IF NOT EXISTS credited_cents INTEGER NOT NULL DEFAULT 0\`;
+        await sql\`ALTER TABLE studio_mistake_reports ADD COLUMN IF NOT EXISTS mana_cents INTEGER NOT NULL DEFAULT 0\`;
+        console.log('[virvi-server] studio credit and MANA columns ensured');
+      } catch(e) { console.log('[virvi-server] studio credit and MANA columns:', e.message); }
+      // Design Studio credit and MANA: new tables; matches studioCredits, studioCreditLedger, studioManaTransfers, studioManaScan and studioManaRefunds
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS studio_credits (user_id UUID PRIMARY KEY CONSTRAINT studio_credits_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, balance_cents INTEGER NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_credit_ledger (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT studio_credit_ledger_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, delta_cents INTEGER NOT NULL, reason TEXT NOT NULL, ref_id TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_credit_ledger_user_idx ON studio_credit_ledger (user_id, created_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_mana_transfers (tx_hash TEXT NOT NULL, log_index INTEGER NOT NULL, from_address TEXT NOT NULL, amount_wei TEXT NOT NULL, block_number BIGINT NOT NULL, payment_id UUID CONSTRAINT studio_mana_transfers_payment_id_studio_payments_id_fk REFERENCES studio_payments(id) ON DELETE SET NULL, status TEXT NOT NULL, note TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT studio_mana_transfers_tx_hash_log_index_pk PRIMARY KEY (tx_hash, log_index))\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_mana_scan (id TEXT PRIMARY KEY, last_block BIGINT NOT NULL)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_mana_refunds (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT studio_mana_refunds_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, report_id UUID CONSTRAINT studio_mana_refunds_report_id_studio_mistake_reports_id_fk REFERENCES studio_mistake_reports(id) ON DELETE SET NULL, usd_cents INTEGER NOT NULL, to_address TEXT NOT NULL, status TEXT NOT NULL, mana_amount_wei TEXT, tx_hash TEXT CONSTRAINT studio_mana_refunds_tx_hash_unique UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), decided_at TIMESTAMPTZ, decided_by UUID)\`;
+        console.log('[virvi-server] studio credit and MANA tables ensured');
+      } catch(e) { console.log('[virvi-server] studio credit and MANA tables:', e.message); }
+      // Design Studio credit and MANA: a transfer and a MANA-back request outlive their payment and report (ON DELETE SET NULL)
+      try {
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'studio_mana_transfers_payment_id_studio_payments_id_fk' AND conrelid = 'studio_mana_transfers'::regclass AND confdeltype <> 'n') THEN ALTER TABLE studio_mana_transfers DROP CONSTRAINT studio_mana_transfers_payment_id_studio_payments_id_fk; ALTER TABLE studio_mana_transfers ADD CONSTRAINT studio_mana_transfers_payment_id_studio_payments_id_fk FOREIGN KEY (payment_id) REFERENCES studio_payments(id) ON DELETE SET NULL; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'studio_mana_refunds_report_id_studio_mistake_reports_id_fk' AND conrelid = 'studio_mana_refunds'::regclass AND confdeltype <> 'n') THEN ALTER TABLE studio_mana_refunds DROP CONSTRAINT studio_mana_refunds_report_id_studio_mistake_reports_id_fk; ALTER TABLE studio_mana_refunds ADD CONSTRAINT studio_mana_refunds_report_id_studio_mistake_reports_id_fk FOREIGN KEY (report_id) REFERENCES studio_mistake_reports(id) ON DELETE SET NULL; END IF; END \$\$\`;
+        console.log('[virvi-server] studio MANA foreign keys ensured');
+      } catch(e) { console.log('[virvi-server] studio MANA foreign keys:', e.message); }
+
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_pairings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), world_id UUID NOT NULL REFERENCES hyperfy_worlds(id) ON DELETE CASCADE, user_id UUID REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT UNIQUE, secret_hash TEXT, hyperfy_player_id TEXT, player_name TEXT, status TEXT NOT NULL DEFAULT 'pending', code_expires_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

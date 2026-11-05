@@ -22,7 +22,7 @@ export interface AuthUser {
   kind?: 'account' | 'scene'
   sceneId?: string | null
   locationId?: string | null
-  via?: 'hyperfy' | 'ar'
+  via?: 'hyperfy' | 'ar' | 'studio'
   pairingId?: string
   worldId?: string
   deviceId?: string
@@ -36,7 +36,7 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: { id: string; email: string | null; role: string; orgId?: string | null; wallet?: string | null; verified?: boolean; guest?: boolean; refresh?: boolean; kind?: 'account' | 'scene'; sceneId?: string | null; locationId?: string | null; via?: 'hyperfy' | 'ar'; pairingId?: string; worldId?: string; deviceId?: string }
+    payload: { id: string; email: string | null; role: string; orgId?: string | null; wallet?: string | null; verified?: boolean; guest?: boolean; refresh?: boolean; kind?: 'account' | 'scene'; sceneId?: string | null; locationId?: string | null; via?: 'hyperfy' | 'ar' | 'studio'; pairingId?: string; worldId?: string; deviceId?: string }
     user: AuthUser
   }
 }
@@ -132,6 +132,14 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     // `ar: 'personal'` routes (the builder's own) take a personal headset's pass only, as room scans do.
     if (decoded.via === 'ar' && request.routeOptions.config?.scenePass?.ar === 'personal' && !(await devicePersonal(decoded.deviceId))) {
       return reply.status(403).send({ error: 'personal_only' })
+    }
+    // The studio scene's pass opens the studio routes (`studio: true`) and nothing else. It is bound to no scene,
+    // so those routes skip the scene check for it; every other route refuses it before the scene check below.
+    if (decoded.via === 'studio') {
+      if (decoded.kind !== 'scene' || !request.routeOptions.config?.scenePass?.studio) {
+        return reply.status(403).send({ error: 'studio_pass_not_allowed' })
+      }
+      return
     }
     if (decoded.kind === 'scene') {
       // Default deny: a scene pass works only on routes that declare how to find their scene,

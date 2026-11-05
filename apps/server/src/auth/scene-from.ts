@@ -1,4 +1,4 @@
-import type { FastifyRequest } from 'fastify'
+import type { FastifyContextConfig, FastifyRequest } from 'fastify'
 import { eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { analyticsScenes, sceneElementInstances, sceneElements, scenePresets, scenePresetSchedules } from '../db/schema.js'
@@ -16,8 +16,10 @@ declare module 'fastify' {
      * `ar: true` does the same for an AR headset pass (via 'ar'), tied to a revocable headset: only the routes the
      * headset uses to read and build opt in. `ar: 'personal'` opts in a personal headset's pass only (a shared one
      * gets 403 `personal_only`): the builder's routes, the same rule as room scans.
+     * `studio: true` lets the Decentraland studio scene's pass (via 'studio') in, without a scene check: it is the only
+     * thing that pass opens (403 `studio_pass_not_allowed` elsewhere). Other scene passes still need `sceneFrom` to match.
      */
-    scenePass?: { sceneFrom: SceneFrom; hyperfy?: true; ar?: true | 'personal' }
+    scenePass?: { sceneFrom: SceneFrom; hyperfy?: true; ar?: true | 'personal'; studio?: true }
   }
 }
 
@@ -27,6 +29,13 @@ const uuidOrNull = (v: unknown) => (typeof v === 'string' && UUID.test(v) ? v : 
 const param = (r: FastifyRequest, n: string) => uuidOrNull((r.params as Record<string, unknown> | undefined)?.[n])
 
 export const isScenePass = (u: { kind?: string } | undefined) => u?.kind === 'scene'
+/** The studio scene's pass (via 'studio'): a scene pass for no scene that opens the studio routes only. */
+export const isStudioPass = (u: { kind?: string; via?: string } | undefined) => u?.kind === 'scene' && u.via === 'studio'
+/**
+ * The route config every studio customer route uses: the studio pass may call it, and no other scene pass can
+ * (`() => null` never matches a scene).
+ */
+export const STUDIO_ROUTE_SCENE_PASS: NonNullable<FastifyContextConfig['scenePass']> = { sceneFrom: () => null, studio: true }
 export const fromParam = (name: string): SceneFrom => (r) => param(r, name)
 export const fromBody = (name: string): SceneFrom => (r) => {
   const body = r.body

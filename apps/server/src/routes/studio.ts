@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioJobs, studioRenders, studioSetRenders } from '../db/schema.js'
+import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders } from '../db/schema.js'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
+import { STUDIO_ROUTE_SCENE_PASS } from '../auth/scene-from.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
 import { verifyRenderFrame, framePath } from '../studio/render-urls.js'
@@ -13,8 +14,10 @@ import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
 import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
-import { createFinalizeCheckout, createTopupCheckout, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError } from '../studio/payments.js'
+import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
+import { reportManaTx } from '../studio/mana/settle.js'
+import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
   designDetail, openDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
@@ -38,6 +41,12 @@ async function studioOn(_request: FastifyRequest, reply: FastifyReply) {
 }
 
 const paymentsOff = (reply: FastifyReply) => reply.status(503).send({ error: 'Payments are not available', code: 'payments_unavailable' })
+
+/** A checkout's way to pay: card (Stripe, the default) or MANA; undefined for anything else. */
+function checkoutMethod(raw: unknown): CheckoutMethod | undefined {
+  if (raw == null) return 'card'
+  return raw === 'card' || raw === 'mana' ? raw : undefined
+}
 
 /** Checkout failures as the page sees them. */
 function checkoutRefusal(reply: FastifyReply, err: unknown) {
@@ -84,13 +93,15 @@ async function openLimit(userId: string) {
 }
 
 export default async function studioRoutes(app: FastifyInstance) {
-  const auth = { preHandler: [authenticate, studioOn] }
-  const work = { preHandler: [authenticate, studioOn, notPaused] }
+  // Every customer route takes the studio scene's pass too (and no other scene pass).
+  const routeConfig = { scenePass: STUDIO_ROUTE_SCENE_PASS }
+  const auth = { preHandler: [authenticate, studioOn], config: routeConfig }
+  const work = { preHandler: [authenticate, studioOn, notPaused], config: routeConfig }
 
   // Not behind notPaused: a paused account may still redeem. Guessing is slow: 10 tries an hour per account.
   app.post('/api/studio/gift-codes/redeem', {
     ...auth,
-    config: { rateLimit: { max: 10, timeWindow: '1 hour', hook: 'preHandler', keyGenerator: (r: FastifyRequest) => r.user.id } },
+    config: { ...auth.config, rateLimit: { max: 10, timeWindow: '1 hour', hook: 'preHandler', keyGenerator: (r: FastifyRequest) => r.user.id } },
   }, async (request, reply) => {
     const b = (request.body ?? {}) as { code?: unknown }
     if (typeof b.code !== 'string' || b.code.length > 100) return reply.status(400).send({ error: 'code must be text' })
@@ -200,7 +211,9 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!d) return notFound(reply)
     try {
       const admin = await isVirviAdmin(request.user.id)
-      return await quoteFinalize(d, null, [], admin ? 0 : await giftsFor(request.user.id, d.id, new Date()), undefined, { admin })
+      const now = new Date()
+      return await quoteFinalize(d, null, [], admin ? 0 : await giftsFor(request.user.id, d.id, now), undefined,
+        { admin, credit: admin ? 0 : await creditFor(request.user.id, d.id, now) })
     } catch (err) {
       if (err instanceof QuoteError) return quoteRefusal(reply, err)
       throw err
@@ -210,9 +223,11 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    // an admin's finalize is granted without Stripe, so it doesn't wait on payments being set up
-    if (!config.stripeSecretKey && !(await isVirviAdmin(request.user.id))) return paymentsOff(reply)
-    const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown }
+    const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown; method?: unknown }
+    const method = checkoutMethod(b.method)
+    if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
+    // an admin's finalize is granted without Stripe, and MANA doesn't use Stripe, so neither waits on it being set up
+    if (method === 'card' && !config.stripeSecretKey && !(await isVirviAdmin(request.user.id))) return paymentsOff(reply)
     let categories: string[] | null = null
     if (b.categories != null) {
       if (!Array.isArray(b.categories) || !b.categories.length || !b.categories.every((c) => typeof c === 'string' && /^[a-z_]{1,32}$/.test(c))) {
@@ -231,7 +246,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       }
     }
     try {
-      return await createFinalizeCheckout(d, { id: request.user.id, email: request.user.email ?? null }, categories, reports, new Date())
+      return await createFinalizeCheckout(d, { id: request.user.id, email: request.user.email ?? null }, categories, reports, new Date(), method)
     } catch (err) {
       return checkoutRefusal(reply, err)
     }
@@ -320,13 +335,55 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/studio/topups', work, async (request, reply) => {
-    if (!config.stripeSecretKey) return paymentsOff(reply)
-    const packs = (request.body as { packs?: unknown } | null)?.packs ?? 1
+    const b = (request.body ?? {}) as { packs?: unknown; method?: unknown }
+    const method = checkoutMethod(b.method)
+    if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
+    if (method === 'card' && !config.stripeSecretKey) return paymentsOff(reply)
+    const packs = b.packs ?? 1
     if (!Number.isInteger(packs) || (packs as number) < 1 || (packs as number) > MAX_PACKS) {
       return reply.status(400).send({ error: `packs must be 1-${MAX_PACKS}` })
     }
     try {
-      return await createTopupCheckout({ id: request.user.id, email: request.user.email ?? null }, packs as number, new Date())
+      return await createTopupCheckout({ id: request.user.id, email: request.user.email ?? null }, packs as number, new Date(), method)
+    } catch (err) {
+      return checkoutRefusal(reply, err)
+    }
+  })
+
+  // A payment's state, for the page to poll while a MANA transaction confirms
+  app.get('/api/studio/payments/:paymentId', auth, async (request, reply) => {
+    const id = (request.params as { paymentId: string }).paymentId
+    const [pay] = UUID.test(id)
+      ? await db.select({
+        status: studioPayments.status, method: studioPayments.method, expiresAt: studioPayments.expiresAt, manaTxHash: studioPayments.manaTxHash,
+      }).from(studioPayments).where(and(eq(studioPayments.id, id), eq(studioPayments.userId, request.user.id)))
+      : []
+    if (!pay) return reply.status(404).send({ error: 'not_found', code: 'not_found' })
+    return pay
+  })
+
+  // The customer's page reports the transaction that pays a MANA payment
+  app.post('/api/studio/payments/:paymentId/mana-tx', auth, async (request, reply) => {
+    const id = (request.params as { paymentId: string }).paymentId
+    if (!UUID.test(id)) return reply.status(404).send({ error: 'not_found', code: 'not_found' })
+    const txHash = ((request.body ?? {}) as { txHash?: unknown }).txHash
+    if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      return reply.status(400).send({ error: 'txHash must be a 0x-prefixed 32-byte hex transaction hash' })
+    }
+    try {
+      return await reportManaTx(request.user.id, id, txHash, new Date())
+    } catch (err) {
+      return checkoutRefusal(reply, err)
+    }
+  })
+
+  // A refunded mistake report's MANA share, asked back as MANA (the owner sends it by hand). Not behind notPaused:
+  // a paused account may still have its money back.
+  app.post('/api/studio/mana-refunds', auth, async (request, reply) => {
+    const reportId = ((request.body ?? {}) as { reportId?: unknown }).reportId
+    if (typeof reportId !== 'string' || !UUID.test(reportId)) return reply.status(400).send({ error: 'reportId must be a report id' })
+    try {
+      return reply.status(201).send(await requestManaRefund(request.user.id, reportId, new Date()))
     } catch (err) {
       return checkoutRefusal(reply, err)
     }

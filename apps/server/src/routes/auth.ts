@@ -14,7 +14,8 @@ import { resolveVerifiedWalletUser } from '../auth/wallet-users.js'
 import { verifyDclSceneRequest, hasDclAuthHeaders } from '../middleware/dcl-auth.js'
 import { bindSceneRequest, type SceneBinding } from '../auth/scene-binding.js'
 import type { SessionClaims } from '../auth/tokens.js'
-import { issueScenePass, sceneClaims } from '../auth/scene-pass.js'
+import { issueScenePass, issueStudioPass, sceneClaims } from '../auth/scene-pass.js'
+import { isOfficialRealm, isWorldRealm } from '../auth/official-realms.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 
@@ -220,6 +221,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
       let verifiedWallet: string | null = null
       let binding: SceneBinding | null = null
+      let studio = false
       let displayName = platformUser?.displayName || platformUser?.name || 'Guest'
 
       // ── Try to verify DCL signed fetch headers ────────────────────────────
@@ -240,13 +242,22 @@ export default async function authRoutes(app: FastifyInstance) {
             request.log.info({ wallet: verifiedWallet, bodySigned: signed.bodySigned }, 'DCL signed fetch verified')
             const localPreview =
               config.mode !== 'cloud' && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(signed.scene.realm.hostname)
-            try {
-              binding = await bindSceneRequest(signed.scene, verifiedWallet, { preview: localPreview })
-              request.log.info({ ctx: { sceneId: signed.scene.sceneId, parcel: signed.scene.parcel, realm: signed.scene.realm }, binding }, 'scene binding')
-            } catch (err) {
-              // Binding trouble degrades to a visitor pass, never a 500 or an account token.
-              request.log.warn({ err: (err as Error).message }, 'scene binding failed; issuing visitor pass')
-              binding = null
+            // The studio scene: its Genesis City parcel, on an official realm (a World or a stranger's realm can claim any parcel).
+            studio =
+              !!config.studioSceneParcel &&
+              signed.scene.parcel === config.studioSceneParcel &&
+              (localPreview || (!isWorldRealm(signed.scene) && (await isOfficialRealm(signed.scene))))
+            if (studio) {
+              request.log.info({ ctx: { parcel: signed.scene.parcel, realm: signed.scene.realm } }, 'studio scene sign-in')
+            } else {
+              try {
+                binding = await bindSceneRequest(signed.scene, verifiedWallet, { preview: localPreview })
+                request.log.info({ ctx: { sceneId: signed.scene.sceneId, parcel: signed.scene.parcel, realm: signed.scene.realm }, binding }, 'scene binding')
+              } catch (err) {
+                // Binding trouble degrades to a visitor pass, never a 500 or an account token.
+                request.log.warn({ err: (err as Error).message }, 'scene binding failed; issuing visitor pass')
+                binding = null
+              }
             }
           }
         } catch (err) {
@@ -301,6 +312,10 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       if (verifiedWallet) await linkWalletGrants(dbUser.id, verifiedWallet)
+
+      if (verifiedWallet && studio) {
+        return reply.send({ ...issueStudioPass(app, dbUser, verifiedWallet), verified: true, studio: true })
+      }
 
       if (verifiedWallet) {
         return reply.send({

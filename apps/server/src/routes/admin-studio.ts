@@ -4,6 +4,26 @@ import { isUuid } from '../auth/scene-from.js'
 import { dismissFlag, listFlags, pauseUser, resumeUser } from '../studio/scope.js'
 import { approveReport, declineReport, heldReports, PaymentError } from '../studio/payments.js'
 import { createGiftCode, disableGiftCode, GiftCodeError, listGiftCodes } from '../studio/gift-codes.js'
+import { declineManaRefund, listManaRefunds, manaRefundQuote, recordManaRefundSent, type ManaRefundStatus } from '../studio/mana/refunds.js'
+import { listManaTransfers, markTransferReturned, settleTransferByHand, type ManaTransferStatus } from '../studio/mana/settle.js'
+
+const TX_HASH = /^0x[0-9a-fA-F]{64}$/
+const REFUND_STATUSES: ManaRefundStatus[] = ['requested', 'sent', 'declined']
+const TRANSFER_STATUSES: ManaTransferStatus[] = ['unmatched', 'matched', 'settled_by_hand', 'returned']
+const MAX_NOTE = 500
+
+/** A refusal from the payment code as the page sees it. */
+function refusal(reply: FastifyReply, err: unknown) {
+  if (err instanceof PaymentError) return reply.status(err.status).send({ error: err.code, code: err.code })
+  throw err
+}
+
+/** The transfer named by the :txHash/:logIndex params, or null. */
+function transferKey(request: FastifyRequest): { txHash: string; logIndex: number } | null {
+  const { txHash, logIndex } = request.params as { txHash: string; logIndex: string }
+  if (!TX_HASH.test(txHash) || !/^(0|[1-9][0-9]{0,5})$/.test(logIndex)) return null
+  return { txHash, logIndex: Number(logIndex) }
+}
 
 /** Admins only: the Studio flags page (src/studio/scope.ts). Accounts that keep sending off-topic work, and pausing them. */
 async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
@@ -56,6 +76,82 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string }
     if (!isUuid(id) || !(await declineReport(id, request.user.id, new Date()))) return reply.status(409).send({ error: 'not_in_review', code: 'not_in_review' })
     return reply.status(204).send()
+  })
+
+  // MANA back on request (src/studio/mana/refunds.ts): the owner sends it from their own wallet, or declines
+  app.get('/api/admin/studio/mana-refunds', admin, async (request, reply) => {
+    const status = (request.query as { status?: string }).status ?? 'requested'
+    if (!REFUND_STATUSES.includes(status as ManaRefundStatus)) return reply.status(400).send({ error: 'unknown status' })
+    return { refunds: await listManaRefunds(status as ManaRefundStatus) }
+  })
+
+  app.get('/api/admin/studio/mana-refunds/:id/quote', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found', code: 'not_found' })
+    try {
+      return await manaRefundQuote(id, new Date())
+    } catch (err) {
+      return refusal(reply, err)
+    }
+  })
+
+  app.post('/api/admin/studio/mana-refunds/:id/sent', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found', code: 'not_found' })
+    const b = (request.body ?? {}) as { txHash?: unknown; amountWei?: unknown }
+    if (typeof b.txHash !== 'string' || !TX_HASH.test(b.txHash)) return reply.status(400).send({ error: 'txHash must be a 0x-prefixed 32-byte hex transaction hash' })
+    if (typeof b.amountWei !== 'string' || !/^[1-9][0-9]{0,40}$/.test(b.amountWei)) return reply.status(400).send({ error: 'amountWei must be a positive whole number of wei' })
+    try {
+      return await recordManaRefundSent(id, b.txHash, BigInt(b.amountWei), request.user.id, new Date())
+    } catch (err) {
+      return refusal(reply, err)
+    }
+  })
+
+  app.post('/api/admin/studio/mana-refunds/:id/decline', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found', code: 'not_found' })
+    try {
+      return await declineManaRefund(id, request.user.id, new Date())
+    } catch (err) {
+      return refusal(reply, err)
+    }
+  })
+
+  // MANA transfers that matched no payment (src/studio/mana/settle.ts): settled by hand, or sent back
+  app.get('/api/admin/studio/mana-transfers', admin, async (request, reply) => {
+    const status = (request.query as { status?: string }).status ?? 'unmatched'
+    if (!TRANSFER_STATUSES.includes(status as ManaTransferStatus)) return reply.status(400).send({ error: 'unknown status' })
+    return { transfers: await listManaTransfers(status as ManaTransferStatus) }
+  })
+
+  app.post('/api/admin/studio/mana-transfers/:txHash/:logIndex/settle', admin, async (request, reply) => {
+    const key = transferKey(request)
+    if (!key) return reply.status(404).send({ error: 'transfer_not_found', code: 'transfer_not_found' })
+    const b = (request.body ?? {}) as { paymentId?: unknown; note?: unknown }
+    if (!isUuid(b.paymentId)) return reply.status(400).send({ error: 'paymentId must be a payment id' })
+    if (b.note !== undefined && b.note !== null && (typeof b.note !== 'string' || b.note.length > MAX_NOTE)) {
+      return reply.status(400).send({ error: `note must be text of at most ${MAX_NOTE} characters` })
+    }
+    try {
+      return await settleTransferByHand(key.txHash, key.logIndex, b.paymentId, request.user.id, typeof b.note === 'string' ? b.note.trim() || null : null, new Date())
+    } catch (err) {
+      return refusal(reply, err)
+    }
+  })
+
+  app.post('/api/admin/studio/mana-transfers/:txHash/:logIndex/returned', admin, async (request, reply) => {
+    const key = transferKey(request)
+    if (!key) return reply.status(404).send({ error: 'transfer_not_found', code: 'transfer_not_found' })
+    const returnTxHash = ((request.body ?? {}) as { returnTxHash?: unknown }).returnTxHash
+    if (typeof returnTxHash !== 'string' || !TX_HASH.test(returnTxHash)) {
+      return reply.status(400).send({ error: 'returnTxHash must be a 0x-prefixed 32-byte hex transaction hash' })
+    }
+    try {
+      return await markTransferReturned(key.txHash, key.logIndex, returnTxHash, request.user.id, new Date())
+    } catch (err) {
+      return refusal(reply, err)
+    }
   })
 
   app.post('/api/admin/studio/gift-codes', admin, async (request, reply) => {

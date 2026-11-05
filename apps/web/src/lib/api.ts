@@ -10,7 +10,7 @@ import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
-import type { AdminGiftCode, AdminMistakeReport, AdminStudioFlag, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
+import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
 import type { SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
@@ -685,8 +685,20 @@ export function useApi() {
     disableGiftCode: (id: string) => apiFetch<void>(`/api/admin/studio/gift-codes/${id}/off`, { method: 'POST' }),
     getAdminStudioReports: () => apiFetch<{ reports: AdminMistakeReport[] }>('/api/admin/studio/reports'),
     approveAdminStudioReport: (id: string) =>
-      apiFetch<{ status: 'refunded'; refundCents: number }>(`/api/admin/studio/reports/${id}/approve`, { method: 'POST' }),
+      apiFetch<{ status: 'refunded'; refundCents: number; creditedCents: number; manaCents: number }>(`/api/admin/studio/reports/${id}/approve`, { method: 'POST' }),
     declineAdminStudioReport: (id: string) => apiFetch<void>(`/api/admin/studio/reports/${id}/decline`, { method: 'POST' }),
+
+    // MANA the owner sends back, and transfers that matched no payment (admin)
+    getAdminManaRefunds: () => apiFetch<{ refunds: AdminManaRefund[] }>('/api/admin/studio/mana-refunds?status=requested'),
+    getAdminManaRefundQuote: (id: string) => apiFetch<AdminManaRefundQuote>(`/api/admin/studio/mana-refunds/${id}/quote`),
+    markAdminManaRefundSent: (id: string, txHash: string, amountWei: string) =>
+      apiFetch<unknown>(`/api/admin/studio/mana-refunds/${id}/sent`, { method: 'POST', body: JSON.stringify({ txHash, amountWei }) }),
+    declineAdminManaRefund: (id: string) => apiFetch<unknown>(`/api/admin/studio/mana-refunds/${id}/decline`, { method: 'POST' }),
+    getAdminManaTransfers: () => apiFetch<{ transfers: AdminManaTransfer[] }>('/api/admin/studio/mana-transfers?status=unmatched'),
+    settleAdminManaTransfer: (txHash: string, logIndex: number, paymentId: string) =>
+      apiFetch<unknown>(`/api/admin/studio/mana-transfers/${txHash}/${logIndex}/settle`, { method: 'POST', body: JSON.stringify({ paymentId }) }),
+    returnAdminManaTransfer: (txHash: string, logIndex: number, returnTxHash: string) =>
+      apiFetch<unknown>(`/api/admin/studio/mana-transfers/${txHash}/${logIndex}/returned`, { method: 'POST', body: JSON.stringify({ returnTxHash }) }),
 
     // Ads (admin)
     getAdminAdvertiserLeads: () => apiFetch<{ leads: AdminAdvertiserLead[] }>('/api/admin/advertiser-leads'),
@@ -785,13 +797,21 @@ export function useApi() {
     requestStudioFinalizeRenders: (id: string) =>
       apiFetch<{ queued: number }>(`/api/studio/designs/${id}/finalize-renders`, { method: 'POST' }),
     getStudioQuote: (id: string) => apiFetch<Quote>(`/api/studio/designs/${id}/finalize`),
-    finalizeStudio: (id: string, body: { categories?: string[]; reports?: Record<string, string> }) =>
-      apiFetch<{ url: string } | { granted: true; paymentId: string }>(`/api/studio/designs/${id}/finalize`, { method: 'POST', body: JSON.stringify(body) }),
+    finalizeStudio: (id: string, body: { categories?: string[]; reports?: Record<string, string>; method: CheckoutMethod }) =>
+      apiFetch<CheckoutResult>(`/api/studio/designs/${id}/finalize`, { method: 'POST', body: JSON.stringify(body) }),
     redeemGiftCode: (code: string) =>
       apiFetch<{ prompts: number; finalizes: number }>('/api/studio/gift-codes/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
-    buyStudioPrompts: (packs = 1) => apiFetch<{ url: string }>('/api/studio/topups', { method: 'POST', body: JSON.stringify({ packs }) }),
+    buyStudioPrompts: (packs: number, method: CheckoutMethod) =>
+      apiFetch<CheckoutResult>('/api/studio/topups', { method: 'POST', body: JSON.stringify({ packs, method }) }),
+    // MANA: report the transaction that pays a quote, then poll the payment until Polygon confirms it
+    reportStudioManaTx: (paymentId: string, txHash: string) =>
+      apiFetch<{ status: 'granted' | 'confirming' }>(`/api/studio/payments/${paymentId}/mana-tx`, { method: 'POST', body: JSON.stringify({ txHash }) }),
+    getStudioPayment: (paymentId: string) =>
+      apiFetch<{ status: 'pending' | 'paid' | 'expired' | string; method: string; expiresAt: string | null; manaTxHash: string | null }>(`/api/studio/payments/${paymentId}`),
+    requestStudioManaRefund: (reportId: string) =>
+      apiFetch<{ id: string; status: 'requested'; usdCents: number }>('/api/studio/mana-refunds', { method: 'POST', body: JSON.stringify({ reportId }) }),
     reportStudioMistake: (id: string, category: string, n: number, text: string) =>
-      apiFetch<{ status: 'refunded'; refundCents: number } | { status: 'in_review' }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/report`, { method: 'POST', body: JSON.stringify({ text }) }),
+      apiFetch<{ status: 'refunded'; refundCents: number; creditedCents: number; manaCents: number } | { status: 'in_review' }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/report`, { method: 'POST', body: JSON.stringify({ text }) }),
     retryStudioPackage: (id: string, category: string, n: number) =>
       apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/package/retry`, { method: 'POST' }),
     /** A file for the agent: the body is the file itself (the server reads its contents to tell its type). */

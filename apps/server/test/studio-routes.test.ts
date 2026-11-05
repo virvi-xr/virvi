@@ -6,6 +6,7 @@ import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, jobFileKey } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { promptStatus } from '../src/studio/quota.js'
+import { addCredit } from '../src/studio/credit.js'
 import { signRenderFrame, verifyRenderFrame } from '../src/studio/render-urls.js'
 import { viewKey } from '../src/studio/designs.js'
 import { resetDb } from './helpers/db.js'
@@ -82,6 +83,22 @@ describe('studio dashboard routes', () => {
     const u = await createUser()
     const usage = (await app.inject({ method: 'GET', url: `${S}/usage`, headers: as(u) })).json()
     expect(usage.topup).toEqual({ cents: 500, prompts: 10 })
+  })
+
+  it('usage names the Virvi credit balance, and whether MANA is on', async () => {
+    const u = await createUser()
+    const prevRecipient = config.studioMana.recipient
+    try {
+      ;(config.studioMana as any).recipient = null
+      const off = (await app.inject({ method: 'GET', url: `${S}/usage`, headers: as(u) })).json()
+      expect(off).toMatchObject({ creditCents: 0, mana: false })
+      await db.transaction((tx) => addCredit(tx, u.id, 1500, 'refund', null, new Date()))
+      ;(config.studioMana as any).recipient = '0x01d871870CbBddE934526E17637c0cfEf0b3b38B'
+      const on = (await app.inject({ method: 'GET', url: `${S}/usage`, headers: as(u) })).json()
+      expect(on).toMatchObject({ creditCents: 1500, mana: true })
+    } finally {
+      ;(config.studioMana as any).recipient = prevRecipient
+    }
   })
 
   it('a finalized design is not open', async () => {

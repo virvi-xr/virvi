@@ -135,7 +135,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, aScene, aEvent,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, designPayment, aScene, aEvent,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -284,6 +284,8 @@ const CASES: Case[] = [
   { route: 'POST /api/studio/designs/:id/set-renders', url: (f) => `/api/studio/designs/${f.design.id}/set-renders`, body: () => ({ bodyShape: 'male', outfit: 'default', emote: 'run' }) },
   { route: 'POST /api/studio/designs/:id/emote-checks', url: (f) => `/api/studio/designs/${f.design.id}/emote-checks`, body: () => ({ emote: 'run', bodyShape: 'male', state: 'fine' }) },
   { route: 'POST /api/studio/designs/:id/clipping', url: (f) => `/api/studio/designs/${f.design.id}/clipping`, body: () => ({ emote: 'run', bodyShape: 'male', outfit: 'default' }) },
+  { route: 'GET /api/studio/payments/:paymentId', url: (f) => `/api/studio/payments/${f.designPayment.id}` },
+  { route: 'POST /api/studio/payments/:paymentId/mana-tx', url: (f) => `/api/studio/payments/${f.designPayment.id}/mana-tx`, body: () => ({ txHash: '0x' + 'ab'.repeat(32) }) },
   { route: 'POST /api/studio/designs/:id/finalize-renders', url: (f) => `/api/studio/designs/${f.design.id}/finalize-renders` },
   { route: 'DELETE /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}` },
   { route: 'PATCH /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}`, body: () => ({ endsAt: null }) },
@@ -349,6 +351,11 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/studio/reports/:id/approve', url: () => `/api/admin/studio/reports/${AD_ID}/approve` },
   { route: 'POST /api/admin/studio/reports/:id/decline', url: () => `/api/admin/studio/reports/${AD_ID}/decline` },
   { route: 'POST /api/admin/studio/gift-codes/:id/off', url: () => `/api/admin/studio/gift-codes/${AD_ID}/off` },
+  { route: 'GET /api/admin/studio/mana-refunds/:id/quote', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/quote` },
+  { route: 'POST /api/admin/studio/mana-refunds/:id/sent', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/sent`, body: () => ({ txHash: '0x' + 'ab'.repeat(32), amountWei: '1' }) },
+  { route: 'POST /api/admin/studio/mana-refunds/:id/decline', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/decline` },
+  { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/settle', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/settle`, body: (f) => ({ paymentId: f.designPayment.id }) },
+  { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/returned', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/returned`, body: () => ({ returnTxHash: '0x' + 'cd'.repeat(32) }) },
   { route: 'GET /api/ad-spaces/:elementId', url: (f) => `/api/ad-spaces/${f.adSpace.id}` },
   { route: 'PUT /api/ad-spaces/:elementId/content', url: (f) => `/api/ad-spaces/${f.adSpace.id}/content`, body: () => ({ content: 'all' }) },
   { route: 'PUT /api/ad-spaces/:elementId/approvals/:adId', url: (f) => `/api/ad-spaces/${f.adSpace.id}/approvals/${AD_ID}`, body: () => ({ decision: 'approved' }) },

@@ -24,6 +24,20 @@ export function issueScenePass(app: FastifyInstance, user: SessionUser, wallet: 
 }
 
 /**
+ * The studio scene's pass: the wallet's user, bound to no scene, for the studio routes only (`scenePass.studio`).
+ * Lives `config.jwtAccessExpiry` with no refresh token, like a scene pass. Its hand-off mints the checkout link.
+ */
+export function issueStudioPass(app: FastifyInstance, user: SessionUser, wallet: string) {
+  const claims: SessionClaims = { ...sceneClaims(user, wallet, { sceneId: null, locationId: null }), via: 'studio' }
+  return {
+    user: { id: user.id, displayName: user.displayName, email: null, role: user.role },
+    accessToken: app.jwt.sign(claims, { expiresIn: config.jwtAccessExpiry }),
+    refreshToken: null,
+    scene: { sceneId: null, locationId: null } as SceneBinding,
+  }
+}
+
+/**
  * A Hyperfy HUD pass: a scene pass for the world's scene, tied to a pairing so revoking the pairing kills it at once.
  * The wallet is the approving user's verified wallet, or null. No refresh token: the HUD renews through its pairing.
  */

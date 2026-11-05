@@ -342,7 +342,7 @@ describe('studio payments', () => {
       const { d, entitlement } = await revised(u)
       const res = await report(u, d.id, 'hat', 2)
       expect(res.statusCode).toBe(200)
-      expect(res.json()).toEqual({ status: 'refunded', refundCents: 1000 })
+      expect(res.json()).toEqual({ status: 'refunded', refundCents: 1000, creditedCents: 0, manaCents: 0 })
       expect(stripe.calls.refunds).toEqual([{
         params: expect.objectContaining({ payment_intent: 'pi_rev', amount: 1000 }),
         opts: { idempotencyKey: expect.stringMatching(new RegExp(`^studio-report-${entitlement.id}-`)) },
