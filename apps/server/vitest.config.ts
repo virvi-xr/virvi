@@ -1,8 +1,16 @@
 import { defineConfig } from 'vitest/config'
-import { resolve, dirname } from 'node:path'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * Uploaded and private files the tests write go to a fresh temp folder, not the default ./uploads and ./private
+ * next to the code (private/ isn't gitignored, and a worktree left them behind).
+ */
+const STORAGE = mkdtempSync(join(tmpdir(), 'virvi-server-test-'))
 
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL || 'postgres://vlm:vlm_dev@localhost:5432/vlm_test'
@@ -26,6 +34,8 @@ export default defineConfig({
       LIFECYCLE_SWEEP_MS: '0',
       DCL_REDEPLOY_SWEEP_MS: '0',
       ANALYTICS_JOBS: 'false',
+      LOCAL_STORAGE_PATH: join(STORAGE, 'uploads'),
+      PRIVATE_STORAGE_PATH: join(STORAGE, 'private'),
     },
   },
 })
