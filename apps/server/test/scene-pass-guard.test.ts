@@ -415,6 +415,7 @@ describe('scene pass guard', () => {
       'PUT /api/elements/:elementId',
       'DELETE /api/elements/:elementId',
       'POST /api/elements/:elementId/instances',
+      'DELETE /api/elements/:elementId/instances',
       'PUT /api/instances/:instanceId',
       'GET /api/scenes/:sceneId/library',
       'POST /api/scenes/:sceneId/library',

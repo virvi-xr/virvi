@@ -63,6 +63,8 @@ describe('the in-world HUD routes take a headset pass', () => {
     ['PUT scene', 'PUT', (i) => `/api/scenes/${i.sceneId}`, () => ({ name: 'Renamed' }), 200],
     // The streams a screen can play (LIV-53): the headset's Stream tab
     ['GET scene streams', 'GET', (i) => `/api/scenes/${i.sceneId}/streams`, undefined, 200],
+    // Clear: every copy of an element, the element stays (LIV-12); as deleting the element, any headset that may build
+    ['DELETE element instances', 'DELETE', (i) => `/api/elements/${i.elementId}/instances`, undefined, 200],
     ['GET scene', 'GET', (i) => `/api/scenes/${i.sceneId}`, undefined, 200],
   ]
 

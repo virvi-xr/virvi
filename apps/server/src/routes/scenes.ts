@@ -740,7 +740,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { elementId: string } }>(
     '/api/elements/:elementId/instances',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
     async (request, reply) => {
       const { elementId } = request.params
 

@@ -43,10 +43,10 @@ final class HudModelTests: XCTestCase {
         XCTAssertEqual(r.rows.count, 12)
         XCTAssertEqual(r.more, 3)
         XCTAssertEqual(LayoutModel.moreLine(r.more), "+3 more — manage them on the dashboard")
-        XCTAssertEqual(r.rows[0], LayoutRow(elementId: "e0", typeTag: "IMA", name: "Pic 0", enabled: true))
+        XCTAssertEqual(r.rows[0], LayoutRow(elementId: "e0", typeTag: "IMA", name: "Pic 0", enabled: true, copies: 0))
         XCTAssertFalse(r.rows[1].enabled)
         XCTAssertEqual(LayoutModel.rows(scene: ["models": [["sk": "m", "name": "", "instances": []]]]).rows[0],
-                       LayoutRow(elementId: "m", typeTag: "MOD", name: "Unnamed", enabled: true))
+                       LayoutRow(elementId: "m", typeTag: "MOD", name: "Unnamed", enabled: true, copies: 0))
         XCTAssertEqual(LayoutModel.rows(scene: [:]).more, 0)
         XCTAssertEqual(LayoutModel.confirmDeleteCopy, "Delete this element and all its copies? This can't be undone.")
     }
@@ -60,6 +60,30 @@ final class HudModelTests: XCTestCase {
         let sent = t.requests.filter { $0.url!.path == "/api/elements/e1" }
         XCTAssertEqual(sent.map(\.httpMethod), ["PUT", "DELETE"])
         XCTAssertEqual(t.bodies("/api/elements/e1").first?["enabled"] as? Bool, false)
+    }
+
+    // MARK: Clear copies (LIV-12)
+
+    func testLayoutRowsCountCopiesAndClearAsksAsTheOtherHudsDo() {
+        let scene: Props = ["models": [["sk": "m", "name": "Chair", "instances": [["sk": "a"], ["sk": "b"], ["sk": "c"]]],
+                                       ["sk": "n", "name": "", "instances": [["sk": "a"]]]]]
+        let rows = LayoutModel.rows(scene: scene).rows
+        XCTAssertEqual(rows.map(\.copies), [3, 1])
+        XCTAssertEqual(LayoutModel.copiesTag(rows[0]), "×3")
+        XCTAssertEqual(LayoutModel.clearPrompt(rows[0]), "Remove all 3 copies of Chair? The object stays. This can't be undone.")
+        XCTAssertEqual(LayoutModel.clearPrompt(rows[1]), "Remove the only copy of Unnamed? The object stays. This can't be undone.")
+        XCTAssertEqual(LayoutModel.clearedLine(name: "Chair", deleted: 3), "Removed 3 copies of Chair")
+        XCTAssertEqual(LayoutModel.clearedLine(name: "Chair", deleted: 1), "Removed 1 copy of Chair")
+        XCTAssertEqual(LayoutModel.clearedLine(name: "Chair", deleted: 0), "Chair had no copies left")
+    }
+
+    func testClearCopiesDeletesEveryInstanceInOneCall() async throws {
+        let t = FakeTransport()
+        t.on("/api/elements/m/instances") { _ in (200, ["deleted": 3]) }
+        let deleted = try await LayoutModel(api: makeApi(t), sceneId: "s1").clearCopies("m")
+        XCTAssertEqual(deleted, 3)
+        XCTAssertEqual(t.requests.last?.httpMethod, "DELETE")
+        XCTAssertEqual(t.count("/api/elements/m/instances"), 1)
     }
 
     func testPlacedMessageTexts() {
