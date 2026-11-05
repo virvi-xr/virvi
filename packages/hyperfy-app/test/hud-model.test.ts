@@ -9,6 +9,15 @@ import {
   ALERT_STREAM_OFFLINE,
   LINK_HINT,
   alertsFromSnapshot,
+  clearCopiesPrompt,
+  offImageChoices,
+  offImageLabel,
+  showingRow,
+  showControlAlert,
+  timeLeft,
+  NO_SHOWINGS,
+  SHOWINGS_LOADING,
+  clearedAlert,
   chatCommandText,
   chatEntry,
   failureAlert,
@@ -177,9 +186,9 @@ describe('hudModel', () => {
     )
     expect(vm.panel).toBe('layout')
     expect(vm.layout.items).toEqual([
-      { elementId: 'v1', kind: 'video', name: 'Main screen', enabled: true },
-      { elementId: 'im1', kind: 'image', name: 'Poster', enabled: false },
-      { elementId: 'm1', kind: 'model', name: 'Tree', enabled: true },
+      { elementId: 'v1', kind: 'video', name: 'Main screen', enabled: true, copies: 1, clearPrompt: null },
+      { elementId: 'im1', kind: 'image', name: 'Poster', enabled: false, copies: 1, clearPrompt: null },
+      { elementId: 'm1', kind: 'model', name: 'Tree', enabled: true, copies: 1, clearPrompt: null },
     ])
     expect(vm.layout.presets).toEqual([
       { id: 'preset-a', name: 'Day', active: true },
@@ -196,9 +205,36 @@ describe('hudModel', () => {
     })
     const vm = hudModel(state({ scene: sc, ui: { panel: 'streams' } }))
     expect(vm.streams).toEqual([
-      { elementId: 'v1', name: 'Main screen', enableLiveStream: true, isLive: true },
-      { elementId: 'v2', name: 'Screen', enableLiveStream: false, isLive: false },
+      { elementId: 'v1', name: 'Main screen', enableLiveStream: true, isLive: true, source: 'No stream', picking: false, offImage: 'No off image', imagePicking: false, scheduled: false, showingsOpen: false },
+      { elementId: 'v2', name: 'Screen', enableLiveStream: false, isLive: false, source: 'No stream', picking: false, offImage: 'No off image', imagePicking: false, scheduled: false, showingsOpen: false },
     ])
+    expect(vm.streamOptions).toEqual([])
+  })
+
+  it('streams: names what each screen plays, and lists the scene streams to choose from (LIV-53)', () => {
+    const sc = scene({
+      videos: [
+        { sk: 'v1', name: 'Main', liveSrc: 'https://live/main.m3u8', instances: [] },
+        { sk: 'v2', name: 'Side', liveSrc: ' https://elsewhere/x.m3u8 ', instances: [] },
+      ],
+    })
+    const streamList = [
+      { id: 's1', name: 'Main Stage', hlsPlaylistUrl: 'https://live/main.m3u8', live: true, mine: false },
+      { id: 's2', name: 'Editor Cam', hlsPlaylistUrl: 'https://live/cam.m3u8', live: false, mine: true },
+    ]
+    const vm = hudModel(state({ scene: sc, ui: { panel: 'streams', streamList, streamPicking: 'v1' } }))
+    expect(vm.streams.map((s) => [s.elementId, s.source, s.picking])).toEqual([
+      ['v1', 'Main Stage (live)', true],
+      ['v2', 'Custom link', false],
+    ])
+    expect(vm.streamOptions).toEqual([
+      { id: 's1', label: 'Main Stage (live)', current: true },
+      { id: 's2', label: 'Editor Cam (offline, yours)', current: false },
+    ])
+    // Still loading, or none set up
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', streamList: null, streamPicking: 'v1' } })).streamsNote).toBe('Loading streams…')
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', streamList: [], streamPicking: 'v1' } })).streamsNote).toBe('No streams yet: set one up on the Streaming page at virvi.io')
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', streamList } })).streamsNote).toBeNull()
   })
 
   it('asset browser: Library, Catalog and Link tabs, the chosen entry, and Place in front of me', () => {
@@ -519,5 +555,141 @@ describe('text fields', () => {
     expect(chatCommandText({ playerId: 'p1', cmd: '/virvi', value: 'https://x/a.glb', args: ['/virvi', 'https://x/a.glb'] })).toBe('https://x/a.glb')
     expect(chatCommandText(null)).toBeNull()
     expect(chatCommandText({ cmd: 'virvi' })).toBe('')
+  })
+})
+
+describe('clearing copies (LIV-12)', () => {
+  const linked = { status: 'linked' as const, displayName: 'Ada', sceneId: 's' }
+  const sc = (): SerializedScene => ({
+    sk: 'p1',
+    videos: [],
+    images: [{ sk: 'i1', name: 'Poster', instances: [] }],
+    models: [{ sk: 'm1', name: 'Chair', instances: [inst('a'), inst('b'), inst('c')] }],
+    sounds: [],
+  })
+  const st = (ui: HudState['ui'] = {}): HudState => ({ pairing: linked, edit: edit(), plan: planScene(null), scene: sc(), alerts: [], ui: { panel: 'layout', ...ui } })
+
+  it('each object shows how many copies it has; only one being cleared asks to confirm', () => {
+    const items = hudModel(st({ clearing: 'm1' })).layout.items
+    expect(items.map((i) => [i.elementId, i.copies, i.clearPrompt])).toEqual([
+      ['i1', 0, null],
+      ['m1', 3, 'Remove all 3 copies of Chair? The object stays. This can\'t be undone.'],
+    ])
+  })
+
+  it('an object with no copies left has nothing to confirm, even if it was being cleared', () => {
+    expect(hudModel(st({ clearing: 'i1' })).layout.items[0].clearPrompt).toBeNull()
+  })
+
+  it('says it plainly for one copy, and after clearing', () => {
+    expect(clearCopiesPrompt({ name: 'Lamp', copies: 1 })).toBe("Remove the only copy of Lamp? The object stays. This can't be undone.")
+    expect(clearedAlert('Chair', 3)).toEqual({ kind: 'info', text: 'Removed 3 copies of Chair' })
+    expect(clearedAlert('Lamp', 1)).toEqual({ kind: 'info', text: 'Removed 1 copy of Lamp' })
+    expect(clearedAlert('', 0)).toEqual({ kind: 'info', text: 'Unnamed had no copies left' })
+  })
+})
+
+describe('off images (LIV-54)', () => {
+  const linked = { status: 'linked' as const, displayName: 'Ada', sceneId: 's' }
+  const sc = (): SerializedScene => ({
+    sk: 'p1',
+    videos: [
+      { sk: 'v1', name: 'Main', offImageSrc: 'https://cdn/poster.png', instances: [] },
+      { sk: 'v2', name: 'Side', instances: [] },
+    ],
+    images: [],
+    models: [],
+    sounds: [],
+  })
+  const images = [
+    { id: 'a1', name: 'Poster', url: 'https://cdn/poster.png' },
+    { id: 'a2', name: 'Logo', url: 'https://cdn/logo.jpg' },
+  ]
+  const st = (ui: HudState['ui'] = {}): HudState => ({ pairing: linked, edit: edit(), plan: planScene(null), scene: sc(), alerts: [], ui: { panel: 'streams', ...ui } })
+
+  it('only ready library images a screen can show are choices', () => {
+    const entries = [
+      { id: 'a1', kind: 'media', name: 'Poster', url: 'https://cdn/poster.png', status: 'ready', contentType: 'image/png' },
+      { id: 'a3', kind: 'media', name: 'Clip', url: 'https://cdn/clip.mp4', status: 'ready', contentType: 'video/mp4' },
+      { id: 'a4', kind: 'media', name: 'Wip', url: 'https://cdn/wip.png', status: 'processing', contentType: 'image/png' },
+      { id: 'a5', kind: 'model', name: 'Chair', url: 'https://cdn/chair.glb', status: 'ready' },
+      { id: 'a2', kind: 'media', name: 'Logo', url: 'https://cdn/logo.jpg', status: 'ready', contentType: 'image/jpeg' },
+    ] as const
+    expect(offImageChoices([...entries])).toEqual(images)
+  })
+
+  it("labels each screen's off image by its library name", () => {
+    expect(offImageLabel('https://cdn/poster.png', images)).toBe('Off image: Poster')
+    expect(offImageLabel('https://elsewhere/x.png', images)).toBe('Off image: from a link')
+    expect(offImageLabel('https://cdn/poster.png', null)).toBe('Off image: from a link')
+    expect(offImageLabel('', images)).toBe('No off image')
+  })
+
+  it('picking lists the images (the current one marked) plus None', () => {
+    const vm = hudModel(st({ imageList: images, imagePicking: 'v1' }))
+    expect(vm.streams.map((s) => [s.elementId, s.offImage, s.imagePicking])).toEqual([
+      ['v1', 'Off image: Poster', true],
+      ['v2', 'No off image', false],
+    ])
+    expect(vm.imageOptions).toEqual([
+      { id: '', label: 'None', current: false },
+      { id: 'a1', label: 'Poster', current: true },
+      { id: 'a2', label: 'Logo', current: false },
+    ])
+    expect(vm.imagesNote).toBeNull()
+  })
+
+  it('while loading, or with no images, a note instead of a list', () => {
+    expect(hudModel(st({ imagePicking: 'v2' })).imagesNote).toBe('Loading images…')
+    const empty = hudModel(st({ imageList: [], imagePicking: 'v2' }))
+    expect(empty.imagesNote).toBe('No images in the scene library yet: add one from Assets on virvi.io')
+    expect(empty.imageOptions).toEqual([{ id: '', label: 'None', current: true }])
+    expect(hudModel(st({ imageList: images })).imageOptions).toEqual([])
+  })
+})
+
+describe('showings in the Streams panel (LIV-87)', () => {
+  const NOW = 1_800_000_000_000
+  const film = (upcoming: Array<[number, number]>, enabled = true) => ({
+    id: 'sh1', title: 'Film', enabled, upcoming: upcoming.map(([startsAt, lengthSeconds]) => ({ startsAt, lengthSeconds })),
+  })
+
+  it('timeLeft reads in minutes, hours and minutes, or days', () => {
+    expect(timeLeft(30_000)).toBe('1 min')
+    expect(timeLeft(23 * 60_000)).toBe('23 min')
+    expect(timeLeft(65 * 60_000)).toBe('1 h 05 min')
+    expect(timeLeft(26 * 3600_000)).toBe('1 day')
+    expect(timeLeft(50 * 3600_000)).toBe('2 days')
+  })
+
+  it('a show on now can be ended or the next delayed; between shows it can be played now', () => {
+    expect(showingRow(film([[NOW - 600_000, 6000], [NOW + 86_400_000, 6000]]), NOW)).toEqual({
+      id: 'sh1', title: 'Film', status: 'On now, 1 h 30 min left', canEnd: true, canPlay: false, canDelay: true,
+    })
+    expect(showingRow(film([[NOW + 65 * 60_000, 6000]]), NOW)).toMatchObject({ status: 'Next in 1 h 05 min', canEnd: false, canPlay: true, canDelay: true })
+    expect(showingRow(film([]), NOW)).toMatchObject({ status: 'Nothing coming up', canPlay: true, canDelay: false })
+  })
+
+  it('a paused showing has no controls', () => {
+    expect(showingRow(film([[NOW + 60_000, 60]], false), NOW)).toEqual({ id: 'sh1', title: 'Film', status: 'Paused on virvi.io', canEnd: false, canPlay: false, canDelay: false })
+  })
+
+  it('Schedule-mode screens get a Showings list, loading or empty notes, and rows', () => {
+    const sc = scene({ videos: [{ sk: 'v1', name: 'Cinema', offType: 6, instances: [] }, { sk: 'v2', name: 'Lobby', offType: 2, instances: [] }] })
+    const closed = hudModel(state({ scene: sc, ui: { panel: 'streams' } }))
+    expect(closed.streams.map((s) => [s.scheduled, s.showingsOpen])).toEqual([[true, false], [false, false]])
+    expect(closed.showingRows).toEqual([])
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', showingsFor: 'v1' } })).showingsNote).toBe(SHOWINGS_LOADING)
+    expect(hudModel(state({ scene: sc, ui: { panel: 'streams', showingsFor: 'v1', showingList: [] } })).showingsNote).toBe(NO_SHOWINGS)
+    const open = hudModel(state({ scene: sc, now: NOW, ui: { panel: 'streams', showingsFor: 'v1', showingList: [film([[NOW + 60_000, 60]])] } }))
+    expect(open.streams[0].showingsOpen).toBe(true)
+    expect(open.showingsNote).toBeNull()
+    expect(open.showingRows).toEqual([{ id: 'sh1', title: 'Film', status: 'Next in 1 min', canEnd: false, canPlay: true, canDelay: true }])
+  })
+
+  it('says what each control did', () => {
+    expect(showControlAlert('delay', 'Film')).toEqual({ kind: 'info', text: 'Film: the next show starts 5 min later' })
+    expect(showControlAlert('end', '')).toEqual({ kind: 'info', text: 'Untitled showing: ended' })
+    expect(showControlAlert('play-now', 'Film')).toEqual({ kind: 'info', text: 'Film: playing now for everyone' })
   })
 })

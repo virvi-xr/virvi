@@ -58,6 +58,7 @@ import io.virvi.ar.api.VisitAnalytics
 import io.virvi.ar.builder.AlignPanel
 import io.virvi.ar.builder.AlignSticks
 import io.virvi.ar.builder.AssetsTab
+import io.virvi.ar.builder.StreamTab
 import io.virvi.ar.builder.BuilderApi
 import io.virvi.ar.builder.BuilderController
 import io.virvi.ar.builder.BuilderHud
@@ -325,6 +326,8 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
                   builder.hudActions,
                   assets = { AssetsTab(state.assets) { e -> builder.place(e) } },
                   roomScan = { RoomScanSection(state.roomScan, roomScan) },
+                  stream = { StreamTab(state.streams, builder.streamActions) },
+                  clear = builder.clearActions,
               )
             }
           },

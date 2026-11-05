@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { eventPresetLabel, eventPresetsFor } from './event-presets'
+import { eventShowingLabel, eventShowingsFor, eventPresetLabel, eventPresetsFor } from './event-presets'
 
 describe('eventPresetsFor', () => {
   const schedules = [
@@ -17,5 +17,17 @@ describe('eventPresetsFor', () => {
   it('says why a schedule is paused', () => {
     expect(eventPresetLabel({ presetName: 'Concert', enabled: true })).toBe('Concert')
     expect(eventPresetLabel({ presetName: 'Concert', enabled: false })).toBe('Concert (paused: the event needs a start and an end time)')
+  })
+})
+
+describe('showings that follow the event (LIV-87)', () => {
+  const rows = [
+    { id: 'a', sceneId: 's1', elementId: 'e1', screenName: 'Big screen', title: 'Film', enabled: true },
+    { id: 'b', sceneId: 's2', elementId: 'e2', screenName: null, title: null, enabled: false },
+  ]
+  it("lists one scene's showings, naming the film and its screen", () => {
+    expect(eventShowingsFor('s1', rows).map(eventShowingLabel)).toEqual(['Film on Big screen'])
+    expect(eventShowingsFor('s2', rows).map(eventShowingLabel)).toEqual(['Untitled showing on Video screen (paused: the event needs a start time)'])
+    expect(eventShowingsFor('s3', undefined)).toEqual([])
   })
 })

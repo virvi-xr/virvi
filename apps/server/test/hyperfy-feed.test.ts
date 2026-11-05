@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRequire } from 'node:module'
 import { eq } from 'drizzle-orm'
-import { HYPERFY_FEED } from '@virvixr/shared'
+import { HYPERFY_FEED, VideoSourceType } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
-import { hyperfyWorlds, scenes } from '../src/db/schema.js'
+import { hyperfyWorlds, scenes, screenShowings } from '../src/db/schema.js'
 import { initBus, sceneFeedTopic } from '../src/realtime/bus.js'
 import { createWorldKey } from '../src/hyperfy/worlds.js'
 import { FEED_LIMIT, setFeedHoldMs, setFeedLimiter } from '../src/routes/hyperfy-feed.js'
@@ -262,5 +262,51 @@ describe('GET /api/hyperfy/feed', () => {
     expect(Date.now() - started).toBeLessThan(1000)
     expect(res.statusCode).toBe(404)
     expect(res.json()).toEqual({ error: 'scene_not_found' })
+  })
+
+  describe('scheduled showings (LIV-87)', () => {
+    const items = [{ url: 'https://cdn.example/film.mp4', duration: 5400, kind: 'video' as const }]
+    let screenId: string
+    beforeEach(async () => {
+      screenId = (await createElement(presetId, { type: 'video', name: 'Screen', properties: { offType: VideoSourceType.SCHEDULED, playlist: [] } })).id
+      await createElement(presetId, { type: 'video', name: 'Plain', properties: { offType: VideoSourceType.PLAYLIST, playlist: [] } })
+      // Daily at 00:00 UTC, so one is always running or due within the window
+      await db.insert(screenShowings).values({ sceneId, elementId: screenId, title: 'Film', items, recurrence: 'daily', startDate: '2020-01-01', startTime: '00:00', timezone: 'UTC' })
+    })
+
+    it('carries the showings of scheduled screens only, and the server clock', async () => {
+      const before = Date.now()
+      const body = (await feed()).json()
+      expect(body.showings).toHaveLength(1)
+      expect(body.showings[0].elementId).toBe(screenId)
+      expect(body.showings[0].showings[0]).toMatchObject({ title: 'Film', items })
+      expect(body.serverTime).toBeGreaterThanOrEqual(before)
+      expect(body.serverTime).toBeLessThanOrEqual(Date.now())
+    })
+
+    it('the clock does not change the version, so a poll holds', async () => {
+      setFeedHoldMs(200)
+      const first = (await feed()).json()
+      const again = (await feed(first.version)).json()
+      expect(again.version).toBe(first.version)
+    })
+
+    it('a showing added through the API wakes a held poll with a new version', async () => {
+      const { version } = (await feed()).json()
+      const held = feed(version)
+      await sleep(200)
+      const started = Date.now()
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/elements/${screenId}/showings`,
+        headers: { authorization: `Bearer ${tokenFor(owner)}` },
+        payload: { title: 'Late show', items: [{ url: 'https://cdn.example/late.mp4', duration: 600 }], recurrence: 'daily', startDate: '2020-01-01', startTime: '12:00', timezone: 'UTC' },
+      })
+      expect(res.statusCode).toBe(201)
+      const body = (await held).json()
+      expect(Date.now() - started).toBeLessThan(1000)
+      expect(body.version).not.toBe(version)
+      expect(body.showings[0].showings.some((s: { title?: string }) => s.title === 'Late show')).toBe(true)
+    })
   })
 })

@@ -16,6 +16,10 @@ final class SceneFeed: ObservableObject {
     @Published private(set) var scene: Props?
     @Published private(set) var version: String?
     @Published private(set) var status: FeedStatus = .idle
+    /// Scheduled screens' shows by element id (LIV-87), set before `scene` so a scene subscriber sees them.
+    private(set) var showings: [String: [ShowingInstance]] = [:]
+    /// The server's clock minus this headset's (ms), from the last answer that carried it.
+    private(set) var serverOffsetMs: Int64 = 0
 
     /// The server holds a poll for about 25 s.
     static let requestTimeout: TimeInterval = 35
@@ -59,6 +63,8 @@ final class SceneFeed: ObservableObject {
                 status = .live
                 if snap.version != version {
                     version = snap.version
+                    showings = snap.showings
+                    if let t = snap.serverTime { serverOffsetMs = t - Int64(Date().timeIntervalSince1970 * 1000) }
                     scene = snap.scene
                 }
                 continue
@@ -83,12 +89,14 @@ final class SceneFeed: ObservableObject {
         }
     }
 
-    /// `{ v: 1, version: string, scene: object | null }`
-    nonisolated static func parse(_ data: Data) -> (version: String, scene: Props?)? {
+    /// `{ v: 1, version: string, scene: object | null, showings?, serverTime? }`
+    nonisolated static func parse(_ data: Data) -> (version: String, scene: Props?, showings: [String: [ShowingInstance]], serverTime: Int64?)? {
         guard let o = (try? JSONSerialization.jsonObject(with: data)) as? Props,
               (o["v"] as? NSNumber)?.intValue == 1,
               let version = o["version"] as? String,
               o.keys.contains("scene") else { return nil }
-        return (version, o["scene"] as? Props)
+        let t = o["serverTime"] as? NSNumber
+        let serverTime = t.flatMap { CFGetTypeID($0) == CFBooleanGetTypeID() ? nil : $0.int64Value }
+        return (version, o["scene"] as? Props, parseShowings(o["showings"]), serverTime)
     }
 }

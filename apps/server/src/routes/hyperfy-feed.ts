@@ -5,7 +5,9 @@ import { db } from '../db/connection.js'
 import { hyperfyWorlds } from '../db/schema.js'
 import { findWorldByKey } from '../hyperfy/worlds.js'
 import { recordHyperfyBatch } from '../hyperfy/analytics.js'
+import { createHash } from 'node:crypto'
 import { sceneSnapshot } from '../hyperfy/snapshot.js'
+import { feedShowings } from '../hyperfy/showings.js'
 import { longPoll } from '../http/long-poll.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
 
@@ -58,7 +60,14 @@ export default async function hyperfyFeedRoutes(app: FastifyInstance) {
       const { sceneId } = world
       return longPoll(request, reply, sceneId, request.query.since, holdMs, async () => {
         const snap = await sceneSnapshot(sceneId)
-        return snap ? { version: snap.version, body: { v: HYPERFY_FEED.version, ...snap } satisfies HyperfyFeedResponse } : null
+        if (!snap) return null
+        const showings = await feedShowings(snap.scene)
+        // Showings change the version; the clock doesn't, or every poll would look like news.
+        const version = showings.length
+          ? createHash('sha256').update(snap.version).update(JSON.stringify(showings)).digest('hex')
+          : snap.version
+        const body: HyperfyFeedResponse = { v: HYPERFY_FEED.version, version, scene: snap.scene, showings, serverTime: Date.now() }
+        return { version, body }
       })
     },
   )

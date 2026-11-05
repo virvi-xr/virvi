@@ -10,6 +10,8 @@ struct LayoutTab: View {
     let onClose: () -> Void
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @State private var confirmDelete: String?
+    /// The element whose "remove every copy" is being confirmed (LIV-12).
+    @State private var confirmClear: String?
     @State private var line: EditLine?
 
     private var editable: Bool { canEdit(builder.role) }
@@ -17,7 +19,7 @@ struct LayoutTab: View {
     var body: some View {
         let (rows, more) = feed.scene.map { LayoutModel.rows(scene: $0) } ?? ([], 0)
         VStack(spacing: 0) {
-            PanelHeader(title: "Scene Layout", subtitle: builder.scene.sceneName) { confirmDelete = nil; onClose() }
+            PanelHeader(title: "Scene Layout", subtitle: builder.scene.sceneName) { confirmDelete = nil; confirmClear = nil; onClose() }
             VStack(alignment: .leading, spacing: 3) {
                 EditLineView(line: line)
                 if editable {
@@ -38,6 +40,9 @@ struct LayoutTab: View {
                 if confirmDelete != nil {
                     Text(LayoutModel.confirmDeleteCopy).font(.system(size: 14)).foregroundStyle(Hud.warning)
                 }
+                if let id = confirmClear, let r = rows.first(where: { $0.elementId == id }) {
+                    Text(LayoutModel.clearPrompt(r)).font(.system(size: 14)).foregroundStyle(Hud.warning)
+                }
             }
             .padding(12)
         }
@@ -47,6 +52,9 @@ struct LayoutTab: View {
         CardRow {
             Text(el.typeTag).font(.system(size: 12, weight: .semibold)).foregroundStyle(Hud.textMuted).frame(width: 40, alignment: .leading)
             Text(el.name).font(.system(size: 16)).foregroundStyle(el.enabled ? Hud.text : Hud.textDim).lineLimit(1)
+            if el.copies > 0 {
+                Text(LayoutModel.copiesTag(el)).font(.system(size: 13)).foregroundStyle(Hud.textMuted)
+            }
             Spacer()
             if !editable {
                 Text(el.enabled ? "ON" : "OFF").font(.system(size: 13, weight: .semibold)).foregroundStyle(el.enabled ? Hud.success : Hud.textDim)
@@ -56,6 +64,12 @@ struct LayoutTab: View {
                     run { try await builder.layout.delete(el.elementId) }
                 }
                 HudButton(label: "Cancel", width: 84, height: 34, fontSize: 14) { confirmDelete = nil }
+            } else if confirmClear == el.elementId {
+                HudButton(label: "Remove", color: Hud.danger, width: 84, height: 34, fontSize: 14) {
+                    confirmClear = nil
+                    clear(el)
+                }
+                HudButton(label: "Cancel", width: 84, height: 34, fontSize: 14) { confirmClear = nil }
             } else {
                 if el.enabled, el.typeTag != "SOU" { // a sound has nothing to look at
                     HudButton(label: "Select", color: Hud.accent, width: 84, height: 34, fontSize: 14) {
@@ -65,7 +79,10 @@ struct LayoutTab: View {
                 HudButton(label: el.enabled ? "Hide" : "Show", color: el.enabled ? Hud.bgHover : Hud.accent, width: 84, height: 34, fontSize: 14) {
                     run { try await builder.layout.setEnabled(el.elementId, !el.enabled) }
                 }
-                HudButton(label: "Delete", color: Hud.danger, width: 84, height: 34, fontSize: 14) { confirmDelete = el.elementId }
+                if el.copies > 0 {
+                    HudButton(label: "Clear", width: 84, height: 34, fontSize: 14) { confirmDelete = nil; confirmClear = el.elementId }
+                }
+                HudButton(label: "Delete", color: Hud.danger, width: 84, height: 34, fontSize: 14) { confirmClear = nil; confirmDelete = el.elementId }
             }
         }
     }
@@ -75,6 +92,19 @@ struct LayoutTab: View {
         builder.space.editing = true
         onClose()
         if !app.buildSpaceOpen { Task { await openImmersiveSpace(id: "build") } }
+    }
+
+    /// Every copy goes, the element stays; the panel says how many went (the copies leave through the feed).
+    private func clear(_ el: LayoutRow) {
+        line = nil
+        Task {
+            do {
+                let n = try await builder.layout.clearCopies(el.elementId)
+                line = EditLine(text: LayoutModel.clearedLine(name: el.name, deleted: n), error: false)
+            } catch {
+                line = EditLine(text: friendlyEditMessage(error), error: true)
+            }
+        }
     }
 
     /// Changes show up through the feed; a failure shows on the panel.

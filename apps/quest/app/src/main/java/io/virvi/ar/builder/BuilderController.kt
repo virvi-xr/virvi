@@ -1,5 +1,6 @@
 package io.virvi.ar.builder
 
+import kotlinx.serialization.json.JsonObject
 import android.os.SystemClock
 import android.util.Log
 import com.meta.spatial.core.Pose
@@ -107,6 +108,9 @@ class BuilderController(
     var note: String? = null
     /** When [BuilderCopy.FINISH_FIRST] (the only note that times out) is taken down. */
     var finishFirstUntil = 0L
+    /** **Clear** is asking (LIV-12), and [note] is what the last clear did (taken down by the next HUD touch). */
+    var confirmingClear = false
+    var noteFromClear = false
   }
 
   private var stage = Stage.OFF
@@ -355,7 +359,10 @@ class BuilderController(
   /** Any HUD action takes "Finish building first" down. */
   private fun hudTouched() {
     val b = build ?: return
-    if (b.note == BuilderCopy.FINISH_FIRST) b.note = null
+    if (b.note == BuilderCopy.FINISH_FIRST || (b.noteFromClear && b.note != null)) {
+      b.note = null
+      b.noteFromClear = false
+    }
   }
 
   /** The AR pass is minted again before it runs out (the cached one is served while it has over a minute left). */
@@ -660,16 +667,123 @@ class BuilderController(
       ui.hud = null
       return
     }
-    val m = hudModel(b.editor.view(), b.tab, hudWarnings(b.booking, b.otherPlaces)).copy(canScanRoom = b.kind == DeviceKind.PERSONAL)
+    val personal = b.kind == DeviceKind.PERSONAL
+    val view = b.editor.view()
+    val m = hudModel(view, b.tab, hudWarnings(b.booking, b.otherPlaces)).copy(canScanRoom = personal, canStream = personal, clear = clearOffer(b, view))
     ui.hud = if (m.message == null && b.note != null) m.copy(message = b.note) else m
   }
 
   /** The HUD's controls, on the current editor (the tab is kept here). */
   val hudActions: BuilderHudActions =
-      EditorHudActions({ hudTouched(); build?.takeIf { stage == Stage.BUILDING }?.editor }) { tab ->
+      EditorHudActions({ hudTouched(); build?.takeIf { stage == Stage.BUILDING }?.also { it.confirmingClear = false }?.editor }) { tab ->
         hudTouched()
-        build?.tab = tab
+        val b = build
+        // The Stream tab is a personal headset's (the server refuses a shared one)
+        if (b != null && (tab != HudTab.STREAM || b.kind == DeviceKind.PERSONAL)) {
+          b.tab = tab
+          if (tab == HudTab.STREAM) loadStreams(b)
+        }
         refreshHud()
+      }
+
+  // ── Clear every copy (LIV-12) ───────────────────────────────────────
+
+  /** The picked item's object and how many copies it has here; only with nothing unsaved, so no edit is lost. */
+  private fun clearOffer(b: Build, view: EditorView): ClearOffer? {
+    val item = view.items.firstOrNull { it.sk == view.picked } ?: return null
+    if (view.edited.isNotEmpty() || view.saving) return null
+    val elementId = item.renderKey.substringBefore(':')
+    val copies = view.items.count { it.renderKey.substringBefore(':') == elementId }
+    return ClearOffer(elementId, item.name, copies, b.confirmingClear)
+  }
+
+  val clearActions: ClearActions =
+      object : ClearActions {
+        override fun ask() = setConfirming(true)
+
+        override fun cancel() = setConfirming(false)
+
+        override fun confirm() {
+          val b = build?.takeIf { stage == Stage.BUILDING } ?: return
+          val offer = clearOffer(b, b.editor.view()) ?: return
+          b.confirmingClear = false
+          val g = generation
+          go {
+            val r = b.api.clearCopies(offer.elementId)
+            if (g != generation) return@go
+            b.note = if (r is BuilderCall.Ok) clearedNote(offer.name, r.value) else CLEAR_FAILED
+            b.noteFromClear = true
+            refreshHud()
+          }
+          refreshHud()
+        }
+
+        private fun setConfirming(on: Boolean) {
+          val b = build?.takeIf { stage == Stage.BUILDING } ?: return
+          hudTouched()
+          b.confirmingClear = on
+          refreshHud()
+        }
+      }
+
+  // ── the Stream tab (LIV-53, LIV-54) ─────────────────────────────────
+
+  /** The live preset's screens, the scene's streams and the library's images; each open of the tab loads them again. */
+  private fun loadStreams(b: Build, keep: StreamsState = StreamsState()) {
+    val g = generation
+    ui.streams = keep.copy(screens = keep.screens, failed = false)
+    go {
+      val sceneId = b.space.sceneId
+      val scene = b.api.scene(sceneId)
+      val streams = b.api.streams(sceneId)
+      val library = b.api.library(sceneId)
+      if (g != generation) return@go
+      ui.streams =
+          if (scene is BuilderCall.Ok) {
+            ui.streams.copy(
+                screens = streamScreens(scene.value),
+                streams = (streams as? BuilderCall.Ok)?.value?.let(::parseSceneStreams) ?: emptyList(),
+                images = (library as? BuilderCall.Ok)?.value?.let(::offImageChoices) ?: emptyList(),
+            )
+          } else ui.streams.copy(screens = null, failed = true)
+    }
+  }
+
+  /** One change to a screen: [change] gets its current properties (read again, as another editor may have changed them). */
+  private fun changeScreen(elementId: String, change: suspend (Build, JsonObject) -> BuilderCall<Unit>) {
+    val b = build?.takeIf { stage == Stage.BUILDING && it.kind == DeviceKind.PERSONAL } ?: return
+    if (ui.streams.busy) return
+    val g = generation
+    ui.streams = ui.streams.copy(busy = true, message = null)
+    go {
+      val scene = b.api.scene(b.space.sceneId)
+      val props = (scene as? BuilderCall.Ok)?.value?.let { elementProperties(it, elementId) }
+      val r = if (props == null) BuilderCall.NotFound else change(b, props)
+      if (g != generation) return@go
+      val next = ui.streams.copy(busy = false, message = if (r is BuilderCall.Ok) null else streamChangeFailed(r))
+      loadStreams(b, if (r is BuilderCall.Ok) next.copy(picking = null) else next)
+    }
+  }
+
+  val streamActions: StreamActions =
+      object : StreamActions {
+        override fun pick(elementId: String, list: StreamPick.List) {
+          val open = StreamPick(elementId, list)
+          ui.streams = ui.streams.copy(picking = if (ui.streams.picking == open) null else open)
+        }
+
+        override fun chooseStream(elementId: String, streamId: String) {
+          val stream = ui.streams.streams.firstOrNull { it.id == streamId } ?: return
+          changeScreen(elementId) { b, props -> b.api.putProperties(elementId, withProperty(props, "liveSrc", stream.hlsPlaylistUrl)) }
+        }
+
+        override fun chooseOffImage(elementId: String, url: String) =
+            changeScreen(elementId) { b, props -> b.api.putProperties(elementId, withProperty(props, "offImageSrc", url)) }
+
+        override fun toggleLive(elementId: String) {
+          val on = ui.streams.screens?.firstOrNull { it.id == elementId }?.liveOn ?: return
+          changeScreen(elementId) { b, _ -> b.api.setLive(elementId, !on) }
+        }
       }
 
   // ── the feed ─────────────────────────────────────────────────────────

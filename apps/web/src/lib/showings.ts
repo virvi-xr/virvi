@@ -20,7 +20,14 @@ export interface Showing {
   enabled: boolean
   lengthSeconds: number
   nextStarts: string[]
+  /** Shows on now or coming up, as players see them (hosts' delays, early ends and plays applied). */
+  upcoming?: Array<{ startsAt: string; lengthSeconds: number }>
+  /** Set: plays once at this event's start, and moves with it (the times are the event's). */
+  eventId?: string | null
 }
+
+/** An event linked to the scene, which a showing can follow. */
+export interface ShowingEvent { id: string; name: string; startTime: string | null; timezone: string | null }
 
 export interface ShowingFormItem {
   url: string
@@ -40,6 +47,8 @@ export interface ShowingForm {
   startTime: string
   timezone: string
   enabled: boolean
+  /** The event it follows, or '' for its own times. */
+  eventId: string
 }
 
 /** Seconds from "1:30:00", "12:34" or "90" (minutes); null for blank or unreadable. */
@@ -79,6 +88,7 @@ export function formToShowingBody(f: ShowingForm) {
     startTime: f.startTime,
     timezone: f.timezone,
     enabled: f.enabled,
+    eventId: f.eventId || null,
   }
 }
 
@@ -87,6 +97,7 @@ export function showingToForm(s: Showing): ShowingForm {
     title: s.title ?? '', description: s.description ?? '', posterUrl: s.posterUrl ?? '',
     items: s.items.map((i) => ({ url: i.url, kind: i.kind, length: Math.round(i.duration) >= 1 ? formatDuration(i.duration) ?? '' : '' })),
     recurrence: s.recurrence, weekdays: s.weekdays, startDate: s.startDate, startTime: s.startTime, timezone: s.timezone, enabled: s.enabled,
+    eventId: s.eventId ?? '',
   }
 }
 
@@ -123,7 +134,8 @@ const pad = (n: number) => String(n).padStart(2, '0')
  * never clashes with the original. Past midnight, a one-off moves to the next day and weekly days move on one.
  */
 export function duplicateShowingForm(s: Showing): ShowingForm {
-  const form = showingToForm(s)
+  // Its own times: following the event, it would start with the original
+  const form = { ...showingToForm(s), eventId: '' }
   const [h, m] = s.startTime.split(':').map(Number)
   const end = h * 60 + m + Math.ceil(programmeLength(s.items) / 60)
   const start = Math.ceil(end / 5) * 5
@@ -167,4 +179,96 @@ export function copyTargets(screens: { id: string; type: string; name?: string |
 export function copiedMessage(s: Pick<Showing, 'title'>, to: Pick<CopyTarget, 'name' | 'scheduled'>): string {
   const done = `Copied ${s.title || 'Untitled showing'} to ${to.name}.`
   return to.scheduled ? done : `${done} It plays there once ${to.name} is set to Scheduled showings.`
+}
+
+/** "2026-11-06" shifted by n days (calendar dates, so daylight saving can't move it). */
+function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+const weekdayOf = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay()
+
+/** The days (0 = Sunday) a showing can be copied to: the ones it isn't already on. A daily showing has none. */
+export function copyDayChoices(s: Pick<Showing, 'recurrence' | 'weekdays' | 'startDate'>): number[] {
+  if (s.recurrence === 'daily') return []
+  const on = s.recurrence === 'once' ? [weekdayOf(s.startDate)] : s.weekdays
+  return [0, 1, 2, 3, 4, 5, 6].filter((d) => !on.includes(d))
+}
+
+/**
+ * Copies of a showing on other days, at the same time. A one-off goes to the next of each chosen day after its date
+ * (one showing per day, by date); a weekly one becomes one more weekly showing on the chosen days it isn't already on.
+ */
+export function copyToDaysBodies(s: Showing, days: number[]): ReturnType<typeof copyShowingBody>[] {
+  const wanted = [...new Set(days)].filter((d) => copyDayChoices(s).includes(d)).sort((a, b) => a - b)
+  if (!wanted.length) return []
+  const body = copyShowingBody(s)
+  if (s.recurrence === 'weekly') return [{ ...body, weekdays: wanted }]
+  const from = weekdayOf(s.startDate)
+  return wanted
+    .map((d) => ({ ...body, startDate: addDays(s.startDate, ((d - from + 7) % 7) || 7) }))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate))
+}
+
+/** The Sunday-to-Saturday week around a date. */
+export function thisWeek(today: string): { start: string; end: string } {
+  const start = addDays(today, -weekdayOf(today))
+  return { start, end: addDays(start, 6) }
+}
+
+/** This week's one-off showings, again 7 days later. Repeating showings already repeat, so they aren't copied. */
+export function nextWeekBodies(showings: Showing[], today: string): ReturnType<typeof copyShowingBody>[] {
+  const { start, end } = thisWeek(today)
+  return showings
+    .filter((s) => s.recurrence === 'once' && s.startDate >= start && s.startDate <= end)
+    .sort((a, b) => `${a.startDate} ${a.startTime}`.localeCompare(`${b.startDate} ${b.startTime}`))
+    .map((s) => ({ ...copyShowingBody(s), startDate: addDays(s.startDate, 7) }))
+}
+
+/** "Copied 2 showings." plus the ones refused for clashing ("Matinee on 2026-11-09"). */
+export function copyResultMessage(copied: number, clashed: string[]): string {
+  const done = `Copied ${copied} ${copied === 1 ? 'showing' : 'showings'}.`
+  if (!clashed.length) return done
+  const one = clashed.length === 1
+  return `${done} Not copied, because ${one ? 'it clashes with a showing' : 'they clash with showings'} already there: ${list(clashed)}.`
+}
+
+// ── Host controls (delay, end, play now) ────────────────────────────────────
+
+export type ShowControl = 'delay' | 'end' | 'play-now'
+/** "Delay" moves the next show this many minutes; pressing again adds more (the server caps it at 3 hours). */
+export const DELAY_STEP_MINUTES = 5
+
+/** The show on now (when it ends) and the next one that hasn't started, from the server's `upcoming`. */
+export function showNow(s: Pick<Showing, 'enabled' | 'upcoming'>, now: number): { on: { endsAt: string } | null; next: string | null } {
+  if (!s.enabled || !s.upcoming) return { on: null, next: null }
+  let on: { endsAt: string } | null = null
+  let next: string | null = null
+  for (const u of s.upcoming) {
+    const start = Date.parse(u.startsAt)
+    const end = start + u.lengthSeconds * 1000
+    if (start <= now && now < end) on ??= { endsAt: new Date(end).toISOString() }
+    else if (start > now) next ??= u.startsAt
+  }
+  return { on, next }
+}
+
+export function showControlMessage(control: ShowControl, title: string | null): string {
+  const name = title || 'Untitled showing'
+  if (control === 'delay') return `${name}: the next show starts ${DELAY_STEP_MINUTES} minutes later.`
+  if (control === 'end') return `${name}: ended. The screen goes back to its holding image.`
+  return `${name}: playing now for everyone in the scene.`
+}
+
+/** The scene's events for the showing form; one with no start time can't be followed yet. */
+export function eventChoices(events: ShowingEvent[]): Array<{ id: string; label: string; disabled: boolean }> {
+  return events.map((e) => ({ id: e.id, label: e.startTime ? e.name : `${e.name} (no start time yet)`, disabled: !e.startTime }))
+}
+
+/** "Follows Premiere" for a showing that follows an event, else null. */
+export function followsEventLabel(s: Pick<Showing, 'eventId'>, events: ShowingEvent[]): string | null {
+  if (!s.eventId) return null
+  const e = events.find((x) => x.id === s.eventId)
+  return e ? `Follows ${e.name}` : 'Follows its event'
 }

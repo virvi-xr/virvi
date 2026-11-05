@@ -22,6 +22,16 @@ interface BuilderSpaceCalls {
   suspend fun place(presetId: String, entry: LibraryEntry, t: ItemTransform): BuilderCall<PlacedItem>
 
   suspend fun savePose(markerId: String, pose: MarkerPose, heightAboveFloorM: Double): BuilderCall<List<String>>
+
+  /** The Stream tab (LIV-53, LIV-54): the scene's streams, a screen's properties, and its live switch. */
+  suspend fun streams(sceneId: String): BuilderCall<JsonObject>
+
+  suspend fun putProperties(elementId: String, properties: JsonObject): BuilderCall<Unit>
+
+  suspend fun setLive(elementId: String, on: Boolean): BuilderCall<Unit>
+
+  /** Every copy of an element in one step (LIV-12); the element stays. The answer is how many went. */
+  suspend fun clearCopies(elementId: String): BuilderCall<Int>
 }
 
 /** [BuilderApi]'s calls for [spaceId]. */
@@ -40,6 +50,14 @@ fun BuilderApi.callsFor(spaceId: String): BuilderSpaceCalls {
 
     override suspend fun savePose(markerId: String, pose: MarkerPose, heightAboveFloorM: Double) =
         api.savePose(spaceId, markerId, pose, heightAboveFloorM)
+
+    override suspend fun streams(sceneId: String) = api.streams(spaceId, sceneId)
+
+    override suspend fun putProperties(elementId: String, properties: JsonObject) = api.putProperties(spaceId, elementId, properties)
+
+    override suspend fun setLive(elementId: String, on: Boolean) = api.setLive(spaceId, elementId, on)
+
+    override suspend fun clearCopies(elementId: String) = api.clearCopies(spaceId, elementId)
   }
 }
 

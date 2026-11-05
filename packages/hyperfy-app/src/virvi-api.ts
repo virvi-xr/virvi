@@ -1,8 +1,10 @@
 import type { Vec3 } from '@virvixr/shared'
+import { parseIsoTime } from './iso-time.js'
 import type { ScriptFetch } from './poller.js'
 
 export type ApiFailure = 'lost' | 'no_access' | 'auth' | 'invalid' | 'server'
-export type ApiResult<T> = { ok: true; value: T } | { ok: false; reason: ApiFailure }
+/** `message`: the server's own words for a refused request (4xx with a `message`), e.g. why a show can't move. */
+export type ApiResult<T> = { ok: true; value: T } | { ok: false; reason: ApiFailure; message?: string }
 
 /** A transform in Virvi coordinates (Decentraland frame, rotation in degrees): no conversion happens here. */
 export interface VirviTransform {
@@ -111,6 +113,65 @@ export class VirviApi {
     }
   }
 
+  /** GET /api/scenes/:id/streams: the streams a video screen can play (LIV-53). */
+  async listStreams(sceneId: string): Promise<ApiResult<Array<{ id: string; name: string; hlsPlaylistUrl: string; live: boolean; mine: boolean }>>> {
+    const r = await this.call<{ streams?: Array<{ id: string; name: string; hlsPlaylistUrl: string; live: boolean; mine: boolean }> }>('GET', `/api/scenes/${encodeURIComponent(sceneId)}/streams`)
+    return r.ok ? { ok: true, value: r.value.streams ?? [] } : r
+  }
+
+  /**
+   * Sets a screen's live source (LIV-53). PUT /api/elements replaces properties whole, so this reads the element's
+   * current properties from the scene first and writes them back with the new value. A screen that is gone is invalid.
+   */
+  setLiveSource(sceneId: string, elementId: string, url: string): Promise<ApiResult<unknown>> {
+    return this.setProperties(sceneId, elementId, { liveSrc: url })
+  }
+
+  /** Sets (or with '' clears) a screen's off image (LIV-54); '' rather than dropped, so the change reaches the world. */
+  setOffImage(sceneId: string, elementId: string, url: string): Promise<ApiResult<unknown>> {
+    return this.setProperties(sceneId, elementId, { offImageSrc: url })
+  }
+
+  private async setProperties(sceneId: string, elementId: string, patch: Record<string, unknown>): Promise<ApiResult<unknown>> {
+    const r = await this.call<{ scene?: { presets?: Array<{ elements?: Array<{ id: string; properties?: Record<string, unknown> | null }> }> } }>(
+      'GET',
+      `/api/scenes/${encodeURIComponent(sceneId)}`,
+    )
+    if (!r.ok) return r
+    const el = (r.value.scene?.presets ?? []).flatMap((p) => p.elements ?? []).find((e) => e.id === elementId)
+    if (!el) return { ok: false, reason: 'invalid' }
+    return this.call('PUT', `/api/elements/${encodeURIComponent(elementId)}`, { properties: { ...(el.properties ?? {}), ...patch } })
+  }
+
+  /** DELETE /api/elements/:id/instances: every copy goes in one operation, the element stays (LIV-12). */
+  async deleteInstances(elementId: string): Promise<ApiResult<{ deleted: number }>> {
+    const r = await this.call<{ deleted?: number }>('DELETE', `/api/elements/${encodeURIComponent(elementId)}/instances`)
+    return r.ok ? { ok: true, value: { deleted: r.value.deleted ?? 0 } } : r
+  }
+
+  /** GET /api/elements/:id/showings: a Schedule-mode screen's showings, each with its shows on now or coming up (LIV-87). */
+  async listShowings(elementId: string): Promise<ApiResult<Array<{ id: string; title: string; enabled: boolean; upcoming: Array<{ startsAt: number; lengthSeconds: number }> }>>> {
+    type Raw = { id: string; title?: string | null; enabled?: boolean; upcoming?: Array<{ startsAt: string; lengthSeconds: number }> }
+    const r = await this.call<{ showings?: Raw[] }>('GET', `/api/elements/${encodeURIComponent(elementId)}/showings`)
+    if (!r.ok) return r
+    return {
+      ok: true,
+      value: (r.value.showings ?? []).map((s) => ({
+        id: s.id,
+        title: s.title ?? '',
+        enabled: s.enabled !== false,
+        upcoming: (s.upcoming ?? [])
+          .map((u) => ({ startsAt: parseIsoTime(u.startsAt), lengthSeconds: u.lengthSeconds }))
+          .filter((u) => Number.isFinite(u.startsAt)),
+      })),
+    }
+  }
+
+  /** POST /api/showings/:id/{delay,end,play-now}: delay the next show by `minutes`, end the one on now, or play now. */
+  controlShowing(showingId: string, control: 'delay' | 'end' | 'play-now', minutes?: number): Promise<ApiResult<unknown>> {
+    return this.call('POST', `/api/showings/${encodeURIComponent(showingId)}/${control}`, control === 'delay' ? { minutes } : {})
+  }
+
   /** GET /api/scenes/:id/library */
   async listLibrary(sceneId: string): Promise<ApiResult<LibraryEntry[]>> {
     const r = await this.call<{ items?: LibraryEntry[] }>('GET', `/api/scenes/${encodeURIComponent(sceneId)}/library`)
@@ -194,7 +255,15 @@ export class VirviApi {
     if (res.status === 401) return 'unauthorized'
     if (res.status === 403) return { ok: false, reason: 'no_access' }
     if (res.status >= 500) return { ok: false, reason: 'server' }
-    if (!res.ok) return { ok: false, reason: 'invalid' }
+    if (!res.ok) {
+      let message: unknown
+      try {
+        message = ((await res.json()) as { message?: unknown } | null)?.message
+      } catch {
+        message = undefined
+      }
+      return typeof message === 'string' && message ? { ok: false, reason: 'invalid', message } : { ok: false, reason: 'invalid' }
+    }
     try {
       return { ok: true, value: (await res.json()) as T }
     } catch {

@@ -11,6 +11,7 @@
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
 import { copyName, nextSwitchText, presetLabel, PRESET_NAME_MAX, type HUDNextSwitch, type HUDPreset } from './presets.js'
 import { clearCopiesPrompt, type HUDLayoutItem } from './layout.js'
+import { DELAY_STEP_MINUTES, NO_SHOWINGS, SHOWINGS_LOADING, showingRow, type HUDShowing, type ShowControl } from './showings.js'
 import { offImageLabel, screenSourceLabel, streamOptionLabel, type HUDImage, type HUDScreen, type HUDStream } from './streams.js'
 import { Color4 } from '@dcl/sdk/math'
 import { engine } from '@dcl/sdk/ecs'
@@ -119,6 +120,11 @@ interface HUDState {
   offImagePicking: string | null
   streamImages: HUDImage[]
   streamBusy: boolean
+  /** The Schedule-mode screen whose showings list is open (LIV-87); its showings, null while loading. */
+  showingsFor: string | null
+  showings: HUDShowing[] | null
+  /** What the last control did, or why it was refused. */
+  showingsNote: { text: string; error: boolean } | null
 }
 
 type SceneRole = 'host' | 'cohost' | 'editor' | 'viewer'
@@ -192,6 +198,9 @@ const state: HUDState = {
   offImagePicking: null,
   streamImages: [],
   streamBusy: false,
+  showingsFor: null,
+  showings: null,
+  showingsNote: null,
 }
 
 // Callbacks
@@ -740,6 +749,7 @@ function NavBar() {
               if (opened && canEdit()) onSceneAction?.('media_refresh')
             } else if (p.type === HUDPanelType.STREAM_CONTROL) {
               state.streamPicking = null
+              state.showingsFor = null
               state.offImagePicking = null
               if (opened && canEdit()) onSceneAction?.('streams_refresh')
             } else if (p.type === HUDPanelType.EVENT_CONTROL) {
@@ -1251,6 +1261,44 @@ function PresetsSection() {
 
 // ---------------------------------------------------------------------------
 // Panel: Stream Control
+// ============================================================================
+
+/** The open screen's showings with End now / Play now / Delay (LIV-87). Times are relative, redrawn every frame. */
+function ShowingsList() {
+  const busy = state.streamBusy
+  const now = Date.now()
+  const press = (control: ShowControl, showingId: string, title: string) => {
+    if (!busy) onSceneAction?.('showings_control', { showingId, control, title })
+  }
+  return (
+    <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', margin: { top: 4 } }}>
+      {state.showingsNote && (
+        <Label value={state.showingsNote.text} fontSize={10} color={state.showingsNote.error ? C.danger : C.success} textAlign="top-left" uiTransform={{ width: '100%', height: 28 }} />
+      )}
+      {state.showings === null && <Label value={SHOWINGS_LOADING} fontSize={10} color={C.textMuted} uiTransform={{ height: 20 }} />}
+      {state.showings !== null && state.showings.length === 0 && <Label value={NO_SHOWINGS} fontSize={10} color={C.textDim} uiTransform={{ height: 20 }} />}
+      {(state.showings ?? []).map((s) => {
+        const row = showingRow(s, now)
+        return (
+          <UiEntity key={row.id} uiTransform={{ width: '100%', flexDirection: 'column', padding: 4, margin: { bottom: 2 } }} uiBackground={{ color: C.bg }}>
+            <Label value={row.title} fontSize={11} color={C.text} textAlign="middle-left" uiTransform={{ height: 18 }} />
+            <Label value={row.status} fontSize={10} color={row.canEnd ? C.success : C.textDim} textAlign="middle-left" uiTransform={{ height: 16 }} />
+            {(row.canEnd || row.canPlay || row.canDelay) && (
+              <UiEntity uiTransform={{ flexDirection: 'row', margin: { top: 2 } }}>
+                {row.canEnd && <Button label="End now" color={C.danger} width={80} height={22} fontSize={10} onPress={() => press('end', row.id, row.title)} />}
+                {row.canPlay && <Button label="Play now" color={C.success} width={80} height={22} fontSize={10} onPress={() => press('play-now', row.id, row.title)} />}
+                {row.canDelay && <UiEntity uiTransform={{ width: 6 }} />}
+                {row.canDelay && <Button label={`Delay ${DELAY_STEP_MINUTES} min`} width={90} height={22} fontSize={10} onPress={() => press('delay', row.id, row.title)} />}
+              </UiEntity>
+            )}
+          </UiEntity>
+        )
+      })}
+    </UiEntity>
+  )
+}
+
+// ============================================================================
 // ---------------------------------------------------------------------------
 
 function StreamControlPanel() {
@@ -1320,6 +1368,19 @@ function StreamControlPanel() {
                     )}
                   </UiEntity>
                 )}
+                {screen.scheduled && (
+                  <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', margin: { top: 4 } }}>
+                    <Label value="Schedule mode" fontSize={10} color={C.textDim} textAlign="middle-left" uiTransform={{ width: 160, height: 24 }} />
+                    <Button label={state.showingsFor === screen.id ? 'Close showings' : 'Showings'} width={90} height={24} fontSize={10}
+                      onPress={() => {
+                        if (state.showingsFor === screen.id) { state.showingsFor = null; return }
+                        state.streamPicking = null
+                        state.offImagePicking = null
+                        onSceneAction?.('showings_open', { elementId: screen.id })
+                      }} />
+                  </UiEntity>
+                )}
+                {screen.scheduled && state.showingsFor === screen.id && <ShowingsList />}
               </UiEntity>
             ))}
           </UiEntity>
@@ -1707,6 +1768,7 @@ export class DclHUDRenderer implements HUDRenderer {
     state.streamsError = null
     if (state.streamPicking && !screens.some((x) => x.id === state.streamPicking)) state.streamPicking = null
     if (state.offImagePicking && !screens.some((x) => x.id === state.offImagePicking)) state.offImagePicking = null
+    if (state.showingsFor && !screens.some((x) => x.id === state.showingsFor && x.scheduled)) state.showingsFor = null
   }
 
   setStreamsError(msg: string | null): void {
@@ -1715,6 +1777,21 @@ export class DclHUDRenderer implements HUDRenderer {
 
   setStreamBusy(busy: boolean): void {
     state.streamBusy = busy
+  }
+
+  /** Open a screen's showings list (null shows "Loading…"), or fill it in. */
+  setShowings(elementId: string, showings: HUDShowing[] | null): void {
+    if (state.showingsFor !== elementId) state.showingsNote = null
+    state.showingsFor = elementId
+    state.showings = showings
+  }
+
+  showingsOpenFor(): string | null {
+    return state.showingsFor
+  }
+
+  setShowingsNote(text: string | null, error = false): void {
+    state.showingsNote = text ? { text, error } : null
   }
 
   /** A stream or off image was chosen: close the list. */

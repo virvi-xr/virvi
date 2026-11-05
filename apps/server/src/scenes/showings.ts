@@ -1,8 +1,9 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { programmeLength, type ProgrammeItem, type ShowingInstance } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { mediaAssets, screenShowings } from '../db/schema.js'
-import { nextStarts, occurrencesBetween, zonedToUtc, type ScheduleSpec } from './schedule-time.js'
+import { events, eventSceneLinks, mediaAssets, sceneElements, screenShowings } from '../db/schema.js'
+import { publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
+import { isTimeZone, nextStarts, occurrencesBetween, utcToZoned, zonedToUtc, type ScheduleSpec } from './schedule-time.js'
 import { parseWhen, type WhenFields } from './preset-schedules.js'
 
 /**
@@ -11,38 +12,134 @@ import { parseWhen, type WhenFields } from './preset-schedules.js'
  * players work from (`screenStateAt` in @virvixr/shared) and checks a screen's showings don't overlap.
  */
 
+/**
+ * A host's change to one show (LIV-87, from the HUD or dashboard), kept on the showing. `occurrence` is the show's
+ * scheduled start (UTC ms), or a played-now show's start. Applied when showings are expanded, so players need nothing new.
+ */
+export type ShowingAdjustment =
+  /** Starts `minutes` later; several add up. */
+  | { kind: 'delay'; occurrence: number; minutes: number }
+  /** Ended early at `at` (UTC ms): the programme is cut there. */
+  | { kind: 'end'; occurrence: number; at: number }
+  /** An extra show of the programme starting at `startsAt`. */
+  | { kind: 'play'; startsAt: number }
+
+export const MAX_DELAY_STEP_MINUTES = 60
+export const MAX_DELAY_TOTAL_MINUTES = 180
+
 export interface ShowingSpec {
   id: string
   items: ProgrammeItem[]
+  adjustments?: ShowingAdjustment[]
   /** A showing's length is its programme's, so the schedule has no duration of its own. */
   schedule: Omit<ScheduleSpec, 'durationMinutes'>
   title?: string
   posterUrl?: string
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DAY = 86_400_000
 /** How far ahead overlaps are checked: a year and a week covers every weekday against every daylight-saving season. */
 export const OVERLAP_HORIZON_DAYS = 371
 
 const spec = (s: ShowingSpec): ScheduleSpec => ({ ...s.schedule, durationMinutes: null })
 
+/** The programme cut `seconds` in: what plays before that point, the last item shortened. */
+function cutItems(items: ProgrammeItem[], seconds: number): ProgrammeItem[] {
+  const out: ProgrammeItem[] = []
+  let used = 0
+  for (const item of items) {
+    if (!(item.duration > 0)) continue
+    const left = seconds - used
+    if (left <= 0) break
+    out.push(left < item.duration ? { ...item, duration: left } : item)
+    used += item.duration
+  }
+  return out
+}
+
+type Instance = ShowingInstance & { occurrence: number }
+const adjustmentTime = (a: ShowingAdjustment) => (a.kind === 'play' ? a.startsAt : a.occurrence)
+
+/** One showing's shows on screen at some point in [from, to], adjustments applied, each with its occurrence. */
+function instancesOf(s: ShowingSpec, from: Date, to: Date): Instance[] {
+  const adj = s.adjustments ?? []
+  const lookback = programmeLength(s.items) * 1000 + MAX_DELAY_TOTAL_MINUTES * 60_000
+  const earliest = from.getTime() - lookback
+  const starts = new Set(occurrencesBetween(spec(s), new Date(earliest), to).map((o) => o.start.getTime()))
+  for (const a of adj) if (a.kind === 'play' && a.startsAt >= earliest && a.startsAt <= to.getTime()) starts.add(a.startsAt)
+  const out: Instance[] = []
+  for (const occurrence of starts) {
+    const delay = adj.reduce((m, a) => (a.kind === 'delay' && a.occurrence === occurrence ? m + a.minutes : m), 0)
+    const startsAt = occurrence + delay * 60_000
+    const end = adj.find((a): a is Extract<ShowingAdjustment, { kind: 'end' }> => a.kind === 'end' && a.occurrence === occurrence)
+    const items = end ? cutItems(s.items, (end.at - startsAt) / 1000) : s.items
+    if (!items.length || startsAt + programmeLength(items) * 1000 <= from.getTime() || startsAt > to.getTime()) continue
+    out.push({
+      showingId: s.id, startsAt, items, occurrence,
+      ...(s.title ? { title: s.title } : {}), ...(s.posterUrl ? { posterUrl: s.posterUrl } : {}),
+    })
+  }
+  return out.sort((a, b) => a.startsAt - b.startsAt)
+}
+
 /**
  * Every instance of the showings that is on screen at some point in [from, to]: those starting in it, and one that
- * started earlier and is still running at `from`. In start order.
+ * started earlier and is still running at `from`. In start order. Hosts' delays, early ends and plays are applied.
  */
 export function showingInstancesBetween(showings: ShowingSpec[], from: Date, to: Date): ShowingInstance[] {
-  const out: ShowingInstance[] = []
-  for (const s of showings) {
-    const lengthMs = programmeLength(s.items) * 1000
-    for (const o of occurrencesBetween(spec(s), new Date(from.getTime() - lengthMs), to)) {
-      if (o.start.getTime() + lengthMs <= from.getTime()) continue
-      out.push({
-        showingId: s.id, startsAt: o.start.getTime(), items: s.items,
-        ...(s.title ? { title: s.title } : {}), ...(s.posterUrl ? { posterUrl: s.posterUrl } : {}),
-      })
+  return showings
+    .flatMap((s) => instancesOf(s, from, to).map(({ occurrence: _o, ...i }) => i))
+    .sort((a, b) => a.startsAt - b.startsAt || a.showingId.localeCompare(b.showingId))
+}
+
+// ── Hosts' changes to single shows ──────────────────────────────────────────
+
+/** Adjustments still worth keeping: their show is under 3 days old (no programme runs over 2 days). */
+const kept = (s: ShowingSpec, now: Date) => (s.adjustments ?? []).filter((a) => adjustmentTime(a) >= now.getTime() - 3 * DAY)
+
+/** The showing's adjustments with its next show (not yet started, within the delivery window) `minutes` later. */
+export function planDelay(s: ShowingSpec, now: Date, minutes: unknown): ShowingAdjustment[] {
+  if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > MAX_DELAY_STEP_MINUTES) {
+    throw new ShowingError(400, 'bad_delay', `Delay by 1 to ${MAX_DELAY_STEP_MINUTES} minutes.`)
+  }
+  const next = instancesOf(s, now, new Date(now.getTime() + SHOWINGS_WINDOW_MS)).find((i) => i.startsAt > now.getTime())
+  if (!next) throw new ShowingError(409, 'nothing_to_delay', 'This showing has no show coming up to delay.')
+  const adj = kept(s, now)
+  const total = minutes + adj.reduce((m, a) => (a.kind === 'delay' && a.occurrence === next.occurrence ? m + a.minutes : m), 0)
+  if (total > MAX_DELAY_TOTAL_MINUTES) throw new ShowingError(409, 'delay_too_long', 'A show can be delayed by up to 3 hours in all.')
+  return [...adj, { kind: 'delay', occurrence: next.occurrence, minutes }]
+}
+
+/** The showing's adjustments with the show that is on now ended at `now`. */
+export function planEnd(s: ShowingSpec, now: Date): ShowingAdjustment[] {
+  const on = instancesOf(s, now, now).find((i) => i.startsAt <= now.getTime() && now.getTime() < i.startsAt + programmeLength(i.items) * 1000)
+  if (!on) throw new ShowingError(409, 'not_playing', "This showing isn't on right now.")
+  const adj = kept(s, now).filter((a) => !(a.kind === 'end' && a.occurrence === on.occurrence))
+  return [...adj, { kind: 'end', occurrence: on.occurrence, at: now.getTime() }]
+}
+
+/** The showing's adjustments with an extra show of its programme starting at `now`. */
+export function planPlayNow(s: ShowingSpec, now: Date): ShowingAdjustment[] {
+  return [...kept(s, now), { kind: 'play', startsAt: now.getTime() }]
+}
+
+/**
+ * After a change to showing `changedId`, the first show on the screen one of its shows now runs into (within the
+ * delivery window from `now`), or null. Clashes that don't involve it are left alone.
+ */
+export function screenClash(showings: ShowingSpec[], changedId: string, now: Date): { showingId: string; title: string | null; at: string } | null {
+  const all = showingInstancesBetween(showings, now, new Date(now.getTime() + SHOWINGS_WINDOW_MS))
+  const endOf = (i: ShowingInstance) => i.startsAt + programmeLength(i.items) * 1000
+  for (let i = 0; i < all.length; i++) {
+    for (let j = i + 1; j < all.length && all[j].startsAt < endOf(all[i]); j++) {
+      const [a, b] = [all[i], all[j]]
+      if (a.showingId !== changedId && b.showingId !== changedId) continue
+      const other = a.showingId === changedId ? b : a
+      return { showingId: other.showingId, title: other.title ?? null, at: new Date(b.startsAt).toISOString() }
     }
   }
-  return out.sort((a, b) => a.startsAt - b.startsAt || a.showingId.localeCompare(b.showingId))
+  return null
 }
 
 export interface ShowingOverlap {
@@ -104,6 +201,8 @@ export interface ShowingInput {
   weekdays: number[]
   timezone: string
   enabled: boolean
+  /** Set: times come from this event (withEventTimes). */
+  eventId: string | null
 }
 
 export const MAX_ITEMS = 50
@@ -137,6 +236,8 @@ export function parseShowingInput(body: Record<string, unknown>, base?: ShowingR
   const description = optText(pick('description'), 2000, 'The description', bad)
   const posterUrl = pick('posterUrl') ?? null
   if (posterUrl !== null && !httpUrl(posterUrl)) throw bad('The poster must be a web address.')
+  const eventId = pick('eventId') ?? null
+  if (eventId !== null && (typeof eventId !== 'string' || !UUID_RE.test(eventId))) throw bad('Choose an event.')
   const enabled = pick('enabled') ?? true
   if (typeof enabled !== 'boolean') throw bad('enabled must be true or false.')
   const raw = pick('items')
@@ -152,7 +253,7 @@ export function parseShowingInput(body: Record<string, unknown>, base?: ShowingR
     return { url: o.url, kind: kind as 'video' | 'ad', duration: d as number | null }
   })
   if (items[items.length - 1].kind === 'ad') throw bad('Ads play before the feature, never after it: end the showing with a video.')
-  return { title, description, posterUrl: posterUrl as string | null, items, enabled, ...when }
+  return { title, description, posterUrl: posterUrl as string | null, items, enabled, eventId: eventId as string | null, ...when }
 }
 
 /**
@@ -175,8 +276,8 @@ export async function resolveItems(items: ShowingInput['items']): Promise<Item[]
   return resolved
 }
 
-export const specOfShowing = (row: Pick<ShowingRow, 'id' | 'items' | 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'timezone' | 'title' | 'posterUrl'>): ShowingSpec => ({
-  id: row.id, items: row.items, title: row.title ?? undefined, posterUrl: row.posterUrl ?? undefined,
+export const specOfShowing = (row: Pick<ShowingRow, 'id' | 'items' | 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'timezone' | 'title' | 'posterUrl'> & { adjustments?: ShowingAdjustment[] }): ShowingSpec => ({
+  id: row.id, items: row.items, title: row.title ?? undefined, posterUrl: row.posterUrl ?? undefined, adjustments: row.adjustments ?? [],
   schedule: { recurrence: row.recurrence, startDate: row.startDate, startTime: row.startTime, weekdays: row.weekdays, timezone: row.timezone },
 })
 
@@ -208,7 +309,89 @@ export function presentShowing(row: ShowingRow, now: Date) {
     ...row,
     lengthSeconds: programmeLength(row.items),
     nextStarts: nextStarts({ ...specOfShowing(row).schedule, durationMinutes: null }, now, 3).map((d) => d.toISOString()),
+    /** The shows on now or coming up within the delivery window, as players will see them (hosts' changes applied). */
+    upcoming: showingInstancesBetween([specOfShowing(row)], now, new Date(now.getTime() + SHOWINGS_WINDOW_MS))
+      .slice(0, 3)
+      .map((i) => ({ startsAt: new Date(i.startsAt).toISOString(), lengthSeconds: programmeLength(i.items) })),
   }
+}
+
+// ── Showings that follow an event ───────────────────────────────────────────
+
+type EventTimes = Pick<typeof events.$inferSelect, 'startTime' | 'timezone'>
+type WhenOf = Pick<ShowingInput, 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'timezone'>
+
+/** One show at the event's start, in the event's timezone; null when the event has no start. */
+export function eventShowTimes(e: EventTimes): WhenOf | null {
+  if (!e.startTime) return null
+  const timezone = e.timezone && isTimeZone(e.timezone) ? e.timezone : 'UTC'
+  const { date, time } = utcToZoned(e.startTime, timezone)
+  return { recurrence: 'once', startDate: date, startTime: time, weekdays: [], timezone }
+}
+
+/**
+ * The body with its times taken from its event (sent, or the showing's own), which must be linked to the scene.
+ * Throws ShowingError(400). A body without an event comes back as it was.
+ */
+export async function withEventTimes(sceneId: string, body: Record<string, unknown>, base?: ShowingRow): Promise<Record<string, unknown>> {
+  const eventId = body.eventId !== undefined ? body.eventId : base?.eventId ?? null
+  if (eventId === null) return body
+  const bad = (message: string) => new ShowingError(400, 'bad_showing', message)
+  if (typeof eventId !== 'string' || !UUID_RE.test(eventId)) throw bad('Choose an event.')
+  const [link] = await db.select({ e: events }).from(eventSceneLinks).innerJoin(events, eq(eventSceneLinks.eventId, events.id))
+    .where(and(eq(eventSceneLinks.sceneId, sceneId), eq(eventSceneLinks.eventId, eventId)))
+  if (!link) throw bad('Link the event to this scene first.')
+  const times = eventShowTimes(link.e)
+  if (!times) throw bad('The event needs a start time.')
+  return { ...body, ...times }
+}
+
+/** Players in the scene get the screen's new showings (after the write). Never throws. */
+export async function publishShowingsChanged(sceneId: string, elementId: string): Promise<void> {
+  await publishVenueEvent({ type: 'showings_changed', sceneId, elementId }).catch((err) => console.error('[showings] publish failed:', err))
+  await publishSceneTouched(sceneId) // wakes the Hyperfy feed's held polls; never throws
+}
+
+/**
+ * After an event's times change, its showings move with it (hosts' changes to the old show are dropped). One whose event
+ * has no start is paused, and resumes when it gets one. Clashes aren't re-checked: the event's time is the host's choice.
+ */
+export async function syncEventShowings(eventId: string): Promise<void> {
+  const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
+  if (!event) return
+  const times = eventShowTimes(event)
+  const rows = await db.select().from(screenShowings).where(eq(screenShowings.eventId, eventId))
+  for (const s of rows) {
+    const moved = !times || s.startDate !== times.startDate || s.startTime !== times.startTime || s.timezone !== times.timezone
+    const set = times ? { ...times, enabled: true } : { enabled: false }
+    await db.update(screenShowings).set({ ...set, ...(moved ? { adjustments: [] } : {}), updatedAt: new Date() }).where(eq(screenShowings.id, s.id))
+    await publishShowingsChanged(s.sceneId, s.elementId)
+  }
+}
+
+/** The event no longer runs at these scenes (unlinked, or deleted: all of them): its showings there pause, keeping their programmes. */
+export async function releaseEventShowings(eventId: string, sceneId?: string): Promise<void> {
+  const rows = await db.update(screenShowings).set({ eventId: null, enabled: false, updatedAt: new Date() })
+    .where(and(eq(screenShowings.eventId, eventId), sceneId ? eq(screenShowings.sceneId, sceneId) : undefined))
+    .returning({ sceneId: screenShowings.sceneId, elementId: screenShowings.elementId })
+  for (const r of rows) await publishShowingsChanged(r.sceneId, r.elementId)
+}
+
+/** The showings following an event, with their screens' names, for the event page. */
+export async function eventShowings(eventId: string) {
+  return db.select({
+    id: screenShowings.id, sceneId: screenShowings.sceneId, elementId: screenShowings.elementId,
+    screenName: sceneElements.name, title: screenShowings.title, enabled: screenShowings.enabled,
+  }).from(screenShowings).innerJoin(sceneElements, eq(screenShowings.elementId, sceneElements.id))
+    .where(eq(screenShowings.eventId, eventId)).orderBy(screenShowings.createdAt)
+}
+
+/** The events linked to a scene, which its showings can follow. */
+export async function sceneEventsForShowings(sceneId: string) {
+  const rows = await db.select({ id: events.id, name: events.name, startTime: events.startTime, timezone: events.timezone })
+    .from(eventSceneLinks).innerJoin(events, eq(eventSceneLinks.eventId, events.id))
+    .where(eq(eventSceneLinks.sceneId, sceneId)).orderBy(events.startTime)
+  return rows.map((r) => ({ ...r, startTime: r.startTime ? r.startTime.toISOString() : null }))
 }
 
 // ── Delivery to in-world players ────────────────────────────────────────────

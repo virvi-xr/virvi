@@ -31,6 +31,42 @@ const T = { position: { x: 1, y: 2, z: 3 }, rotation: { x: 0, y: 45, z: 0 }, sca
 const body = (c: Call) => JSON.parse(c.init.body!)
 
 describe('VirviApi', () => {
+  it("lists the scene's streams (LIV-53)", async () => {
+    const s = { id: 's1', name: 'Main Stage', hlsPlaylistUrl: 'https://live/main.m3u8', live: true, mine: false }
+    const t = make([res(200, { streams: [s] })])
+    expect(await t.api.listStreams('sc1')).toEqual({ ok: true, value: [s] })
+    expect(t.calls[0].url).toBe('https://api.example/api/scenes/sc1/streams')
+  })
+
+  it("sets a screen's live source, keeping its other properties (PUT replaces them whole)", async () => {
+    const scene = { scene: { id: 'sc1', activePresetId: 'p1', presets: [{ id: 'p1', name: 'Day', elements: [{ id: 'v1', type: 'video', properties: { offType: 1, liveSrc: 'old', volume: 0.5 } }] }] } }
+    const t = make([res(200, scene), res(200, { element: {} })])
+    expect((await t.api.setLiveSource('sc1', 'v1', 'https://live/main.m3u8')).ok).toBe(true)
+    expect(t.calls.map((c) => [c.init.method, c.url])).toEqual([['GET', 'https://api.example/api/scenes/sc1'], ['PUT', 'https://api.example/api/elements/v1']])
+    expect(body(t.calls[1])).toEqual({ properties: { offType: 1, liveSrc: 'https://live/main.m3u8', volume: 0.5 } })
+  })
+
+  it('a screen no longer in the scene is invalid, and nothing is written', async () => {
+    const t = make([res(200, { scene: { id: 'sc1', presets: [{ id: 'p1', elements: [] }] } })])
+    expect(await t.api.setLiveSource('sc1', 'v1', 'https://live/main.m3u8')).toEqual({ ok: false, reason: 'invalid' })
+    expect(t.calls).toHaveLength(1)
+  })
+
+  it("removes every copy of an element and says how many went (LIV-12)", async () => {
+    const t = make([res(200, { deleted: 3 })])
+    expect(await t.api.deleteInstances('m1')).toEqual({ ok: true, value: { deleted: 3 } })
+    expect(t.calls.map((c) => [c.init.method, c.url])).toEqual([['DELETE', 'https://api.example/api/elements/m1/instances']])
+  })
+
+  it("sets a screen's off image, keeping its other properties; '' clears it (LIV-54)", async () => {
+    const scene = { scene: { id: 'sc1', presets: [{ id: 'p1', elements: [{ id: 'v1', properties: { offType: 2, liveSrc: 'x', offImageSrc: 'old.png' } }] }] } }
+    const t = make([res(200, scene), res(200, { element: {} }), res(200, scene), res(200, { element: {} })])
+    expect((await t.api.setOffImage('sc1', 'v1', 'https://cdn/poster.png')).ok).toBe(true)
+    expect(body(t.calls[1])).toEqual({ properties: { offType: 2, liveSrc: 'x', offImageSrc: 'https://cdn/poster.png' } })
+    expect((await t.api.setOffImage('sc1', 'v1', '')).ok).toBe(true)
+    expect(body(t.calls[3])).toEqual({ properties: { offType: 2, liveSrc: 'x', offImageSrc: '' } })
+  })
+
   it('403 on save maps to the no-access reason', async () => {
     const t = make([res(403, { error: 'Forbidden' })])
     expect(await t.api.saveTransform('i1', T)).toEqual({ ok: false, reason: 'no_access' })
@@ -70,6 +106,34 @@ describe('VirviApi', () => {
     expect(await t.api.saveTransform('i1', T)).toEqual({ ok: false, reason: 'lost' })
     expect(await t.api.saveTransform('i1', T)).toEqual({ ok: false, reason: 'lost' })
     expect((await t.api.saveTransform('i1', T)).ok).toBe(true)
+  })
+
+  it("lists a screen's showings with their shows' starts in ms, and sends the host controls (LIV-87)", async () => {
+    const raw = { id: 'sh1', title: 'Film', enabled: true, upcoming: [{ startsAt: '2027-01-15T08:00:00.000Z', lengthSeconds: 600 }] }
+    const t = make([res(200, { showings: [raw, { id: 'sh2', title: null, enabled: false }] }), res(200, { showing: {} }), res(200, { showing: {} }), res(200, { showing: {} })])
+    expect(await t.api.listShowings('v1')).toEqual({
+      ok: true,
+      value: [
+        { id: 'sh1', title: 'Film', enabled: true, upcoming: [{ startsAt: Date.UTC(2027, 0, 15, 8), lengthSeconds: 600 }] },
+        { id: 'sh2', title: '', enabled: false, upcoming: [] },
+      ],
+    })
+    await t.api.controlShowing('sh1', 'delay', 5)
+    await t.api.controlShowing('sh1', 'end')
+    await t.api.controlShowing('sh1', 'play-now')
+    expect(t.calls.map((c) => [c.init.method, c.url])).toEqual([
+      ['GET', 'https://api.example/api/elements/v1/showings'],
+      ['POST', 'https://api.example/api/showings/sh1/delay'],
+      ['POST', 'https://api.example/api/showings/sh1/end'],
+      ['POST', 'https://api.example/api/showings/sh1/play-now'],
+    ])
+    expect(t.calls.slice(1).map(body)).toEqual([{ minutes: 5 }, {}, {}])
+  })
+
+  it("a refused request keeps the server's message", async () => {
+    const t = make([res(409, { error: 'showing_overlap', message: 'That would run into "Late", at 21:05.' }), res(409, { error: 'x' })])
+    expect(await t.api.controlShowing('sh1', 'play-now')).toEqual({ ok: false, reason: 'invalid', message: 'That would run into "Late", at 21:05.' })
+    expect(await t.api.controlShowing('sh1', 'play-now')).toEqual({ ok: false, reason: 'invalid' })
   })
 
   it('maps 400/404/409 to invalid and 5xx to server', async () => {

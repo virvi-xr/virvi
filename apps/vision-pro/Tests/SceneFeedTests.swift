@@ -46,6 +46,18 @@ final class SceneFeedTests: XCTestCase {
         XCTAssertNil(SceneFeed.parse(try JSONSerialization.data(withJSONObject: ["v": 2, "version": "z", "scene": NSNull()])))
     }
 
+    func testParseReadsScheduledShowingsAndTheServerClock() throws {
+        var body = feedBody("v1")
+        body["showings"] = [["elementId": "tv", "showings": [["showingId": "s1", "startsAt": 1_800_000_000_000, "items": [["url": "https://x/f.mp4", "duration": 60]]]]]]
+        body["serverTime"] = 1_800_000_000_500
+        let r = try XCTUnwrap(SceneFeed.parse(try JSONSerialization.data(withJSONObject: body)))
+        XCTAssertEqual(r.showings["tv"]?.count, 1)
+        XCTAssertEqual(r.serverTime, 1_800_000_000_500)
+        let plain = try XCTUnwrap(SceneFeed.parse(try JSONSerialization.data(withJSONObject: feedBody("v2"))))
+        XCTAssertTrue(plain.showings.isEmpty)
+        XCTAssertNil(plain.serverTime)
+    }
+
     func testFeedPassesSinceOnNextPoll() async {
         let t = FakeTransport(); mint(t)
         t.script("/feed", [(200, feedBody("v1")), (200, feedBody("v2"))])

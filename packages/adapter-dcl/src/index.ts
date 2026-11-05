@@ -9,6 +9,7 @@ import { DclHUDRenderer, setSceneActionHandler } from './DclHUDRenderer.js'
 import { DclEditMode } from './transform/edit-mode.js'
 import { friendlyEditError, friendlyRenameError, editBlockedMessage, createReconnector, DISCONNECTED } from './edit-errors.js'
 import { applyPresetsChange, friendlyPresetError, nextSwitchFrom, presetsFromScene, type HUDPreset } from './presets.js'
+import { DELAY_STEP_MINUTES, showControlError, showControlNote, showingsFromApi, type ShowControl } from './showings.js'
 import { offImageChoices, screensFromPreset, withLiveSource, withOffImage, type HUDStream } from './streams.js'
 import type { HUDMediaItem } from './DclHUDRenderer.js'
 import { toLayoutItem, withCopies, clearedMessage, type HUDLayoutItem } from './layout.js'
@@ -584,6 +585,43 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           } finally {
             busy = false
             renderer?.setPresetBusy(false)
+          }
+          return
+        }
+
+        // Showings on a Schedule-mode screen (LIV-87): the list, and End now / Play now / Delay for the crew
+        if (action === 'showings_open' || action === 'showings_control') {
+          if (!edits()) return
+          if (action === 'showings_open') {
+            const elementId = String(data?.elementId)
+            renderer?.setShowings(elementId, null)
+            try {
+              renderer?.setShowings(elementId, showingsFromApi(await virvi.httpClient.listShowings(elementId)))
+            } catch (err) {
+              renderer?.setShowings(elementId, [])
+              renderer?.setShowingsNote(showControlError(err, { connected: connected() }), true)
+            }
+            return
+          }
+          if (busy) return
+          busy = true
+          renderer?.setStreamBusy(true)
+          const control = String(data?.control) as ShowControl
+          try {
+            const blocked = await editBlockedMessage({ connected: connected(), canEdit: edits, refreshRole })
+            if (blocked) return renderer?.setShowingsNote(blocked, true)
+            await virvi.httpClient.controlShowing(String(data?.showingId), control, control === 'delay' ? DELAY_STEP_MINUTES : undefined)
+            renderer?.setShowingsNote(showControlNote(control, String(data?.title ?? '')))
+          } catch (err) {
+            renderer?.setShowingsNote(showControlError(err, { connected: connected() }), true)
+          } finally {
+            busy = false
+            renderer?.setStreamBusy(false)
+          }
+          // Show the new times; the screen itself picks the change up from the scene room
+          const elementId = renderer?.showingsOpenFor()
+          if (elementId) {
+            try { renderer?.setShowings(elementId, showingsFromApi(await virvi.httpClient.listShowings(elementId))) } catch { /* keep the list */ }
           }
           return
         }

@@ -86,6 +86,18 @@ describe('planScene', () => {
     expect(item).toMatchObject({ kind: 'image', src: 'https://cdn.example/off.png', width: 4, height: 2 })
   })
 
+  it('schedule mode becomes a scheduled screen holding its off image (LIV-87)', () => {
+    const [item] = planScene(scene({ videos: [video({ offType: 6 })] }))
+    expect(item).toMatchObject({ kind: 'video', src: 'https://cdn.example/off.png', loop: false, playlist: [], schedule: { holdingImage: 'https://cdn.example/off.png' } })
+    const [bare] = planScene(scene({ videos: [video({ offType: 6, offImageSrc: '' })] }))
+    expect(bare.schedule).toEqual({ holdingImage: '' })
+  })
+
+  it('a live stream still wins over schedule mode', () => {
+    const [item] = planScene(scene({ videos: [video({ offType: 6, isLive: true })] }))
+    expect(item.schedule).toBeUndefined()
+  })
+
   it('ad modes and none show nothing', () => {
     for (const offType of [0, 3, 4, 5]) {
       expect(planScene(scene({ videos: [video({ offType })] }))).toEqual([])

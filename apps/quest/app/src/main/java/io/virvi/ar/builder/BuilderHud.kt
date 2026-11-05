@@ -143,6 +143,8 @@ fun BuilderHud(
     actions: BuilderHudActions,
     assets: @Composable () -> Unit = {},
     roomScan: @Composable () -> Unit = {},
+    stream: @Composable () -> Unit = {},
+    clear: ClearActions? = null,
 ) {
   MaterialTheme(colorScheme = darkColorScheme()) {
     Column(
@@ -155,6 +157,8 @@ fun BuilderHud(
       TabRow(selectedTabIndex = model.tab.ordinal) {
         Tab(model.tab == HudTab.LAYOUT, onClick = { actions.selectTab(HudTab.LAYOUT) }, text = { Text("Layout") })
         Tab(model.tab == HudTab.ASSETS, onClick = { actions.selectTab(HudTab.ASSETS) }, text = { Text("Assets") })
+        // Personal headsets only ([BuilderHudModel.canStream])
+        if (model.canStream) Tab(model.tab == HudTab.STREAM, onClick = { actions.selectTab(HudTab.STREAM) }, text = { Text("Stream") })
       }
       Box(Modifier.weight(1f).fillMaxWidth()) {
         when (model.tab) {
@@ -165,9 +169,23 @@ fun BuilderHud(
                 Box(Modifier.weight(1f).fillMaxWidth()) { LayoutList(model.rows, actions) }
               }
           HudTab.ASSETS -> assets()
+          HudTab.STREAM -> stream()
         }
       }
       model.bar?.let { PickedBar(it, actions) }
+      // Clear every copy of the picked item's object (LIV-12), asking first
+      val offer = model.clear
+      if (model.bar != null && offer != null && clear != null) {
+        if (offer.confirming) {
+          Text(clearCopiesPrompt(offer), color = WARN, fontSize = 13.sp)
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { clear.confirm() }) { Text("Remove") }
+            OutlinedButton(onClick = { clear.cancel() }) { Text("Cancel") }
+          }
+        } else {
+          OutlinedButton(onClick = { clear.ask() }) { Text(if (offer.copies == 1) "Clear the only copy" else "Clear all ${offer.copies} copies") }
+        }
+      }
       if (model.confirmingDone) {
         Text(DONE_CONFIRM, color = TEXT, fontSize = 15.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

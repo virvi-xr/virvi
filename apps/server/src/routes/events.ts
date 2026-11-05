@@ -3,6 +3,7 @@ import { eq, and, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { events, eventSceneLinks, eventGiveawayLinks, giveaways, scenePresets } from '../db/schema.js'
 import { dropEventSchedules, eventPresetSchedules, syncEventSchedules } from '../scenes/preset-schedules.js'
+import { eventShowings, releaseEventShowings, syncEventShowings } from '../scenes/showings.js'
 import { authenticate } from '../middleware/auth.js'
 import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
 import { actorFromClaims } from '../auth/actor.js'
@@ -90,7 +91,7 @@ export default async function eventRoutes(app: FastifyInstance) {
       const scenePresetRows = sceneIds.length
         ? await db.select({ id: scenePresets.id, sceneId: scenePresets.sceneId, name: scenePresets.name }).from(scenePresets).where(inArray(scenePresets.sceneId, sceneIds))
         : []
-      return reply.send({ event, presetSchedules: await eventPresetSchedules(eventId), scenePresets: scenePresetRows })
+      return reply.send({ event, presetSchedules: await eventPresetSchedules(eventId), scenePresets: scenePresetRows, showings: await eventShowings(eventId) })
     },
   )
 
@@ -116,7 +117,10 @@ export default async function eventRoutes(app: FastifyInstance) {
       if (timezone !== undefined) updates.timezone = timezone
 
       const [updated] = await db.update(events).set(updates).where(eq(events.id, eventId)).returning()
-      if (startTime !== undefined || endTime !== undefined || timezone !== undefined) await syncEventSchedules(eventId)
+      if (startTime !== undefined || endTime !== undefined || timezone !== undefined) {
+        await syncEventSchedules(eventId)
+        await syncEventShowings(eventId)
+      }
       return reply.send({ event: updated })
     },
   )
@@ -134,6 +138,7 @@ export default async function eventRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
+      await releaseEventShowings(eventId) // paused, not deleted: their programmes stay
       await db.delete(events).where(eq(events.id, eventId))
       return reply.status(204).send()
     },
@@ -228,7 +233,10 @@ export default async function eventRoutes(app: FastifyInstance) {
             eq(eventSceneLinks.sceneId, sceneId),
           ),
         )
-      if (isUuid(sceneId)) await dropEventSchedules(eventId, sceneId)
+      if (isUuid(sceneId)) {
+        await dropEventSchedules(eventId, sceneId)
+        await releaseEventShowings(eventId, sceneId)
+      }
 
       return reply.status(204).send()
     },

@@ -44,11 +44,95 @@ export const SEARCH_PLACEHOLDER = 'Search the catalog'
 export const PLACE_DISTANCE = 2
 const MAX_ALERTS = 3
 export const PAGE_SIZE = 8
+/** VideoSourceType.SCHEDULED (LIV-87). */
+const SCHEDULED = 6
 
 export type Panel = 'layout' | 'streams' | 'assets' | null
 export type AssetTab = 'library' | 'catalog' | 'link'
 export type Axis = 'x' | 'y' | 'z'
 export type TypingTarget = Axis | 'search'
+
+/** A stream as GET /api/scenes/:id/streams lists it (never the stream key). */
+export interface HudStream { id: string; name: string; hlsPlaylistUrl: string; live: boolean; mine: boolean }
+
+/** "Main Stage (live)", "Editor Cam (offline, yours)": as the dashboard and the Decentraland HUD say it. */
+export const streamOptionLabel = (s: HudStream) => `${s.name} (${s.live ? 'live' : 'offline'}${s.mine ? ', yours' : ''})`
+
+/** What a screen's live source is: one of the scene's streams, a link pasted elsewhere, or nothing. */
+export function streamSourceLabel(liveSrc: string, streams: HudStream[] | null): string {
+  if (!liveSrc) return 'No stream'
+  const s = (streams ?? []).find((x) => x.hlsPlaylistUrl === liveSrc)
+  return s ? streamOptionLabel(s) : 'Custom link'
+}
+
+/** An image from the scene library that can be a screen's off image (LIV-54). */
+export interface HudImage { id: string; name: string; url: string }
+
+/** Image types a screen can show (as the Decentraland HUD offers). */
+const OFF_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+
+/** The scene library's ready images, for the off image list. */
+export function offImageChoices(entries: ReadonlyArray<{ id: string; kind: string; name: string; url: string; status: string; contentType?: unknown }>): HudImage[] {
+  return entries
+    .filter((a) => a.status === 'ready' && !!a.url && a.kind === 'media' && typeof a.contentType === 'string' && OFF_IMAGE_TYPES.has(a.contentType))
+    .map((a) => ({ id: a.id, name: a.name, url: a.url }))
+}
+
+/** "Off image: Poster", by its library name as the dashboard and the Decentraland HUD show it. */
+export function offImageLabel(src: string, images: HudImage[] | null): string {
+  if (!src) return 'No off image'
+  const img = (images ?? []).find((i) => i.url === src)
+  return `Off image: ${img ? img.name : 'from a link'}`
+}
+
+export const IMAGES_LOADING = 'Loading images…'
+export const NO_IMAGES = 'No images in the scene library yet: add one from Assets on virvi.io'
+
+/** A screen's showing as the Streams panel uses it (LIV-87): its shows on now or coming up, start in UTC ms. */
+export interface HudShowing {
+  id: string
+  title: string
+  enabled: boolean
+  upcoming: Array<{ startsAt: number; lengthSeconds: number }>
+}
+export type ShowControl = 'delay' | 'end' | 'play-now'
+/** "Delay 5 min" moves the next show this far; pressing again adds more (Virvi caps it at 3 hours). */
+export const DELAY_STEP_MINUTES = 5
+export const SHOWINGS_LOADING = 'Loading showings…'
+export const NO_SHOWINGS = 'No showings yet: add them on virvi.io'
+
+/** How long until something, rounded up: "23 min", "1 h 05 min", "2 days". Relative: the sandbox can't format a clock. */
+export function timeLeft(ms: number): string {
+  const min = Math.max(1, Math.ceil(ms / 60_000))
+  if (min < 60) return `${min} min`
+  if (min < 1440) return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')} min`
+  const d = Math.floor(min / 1440)
+  return `${d} ${d === 1 ? 'day' : 'days'}`
+}
+
+/** One showing's line and which controls apply: End while a show is on, Play now between shows, Delay with one coming up. */
+export function showingRow(s: HudShowing, now: number): { id: string; title: string; status: string; canEnd: boolean; canPlay: boolean; canDelay: boolean } {
+  const title = s.title || 'Untitled showing'
+  if (!s.enabled) return { id: s.id, title, status: 'Paused on virvi.io', canEnd: false, canPlay: false, canDelay: false }
+  const on = s.upcoming.find((u) => u.startsAt <= now && now < u.startsAt + u.lengthSeconds * 1000)
+  const next = s.upcoming.find((u) => u.startsAt > now)
+  const status = on
+    ? `On now, ${timeLeft(on.startsAt + on.lengthSeconds * 1000 - now)} left`
+    : next
+      ? `Next in ${timeLeft(next.startsAt - now)}`
+      : 'Nothing coming up'
+  return { id: s.id, title, status, canEnd: !!on, canPlay: !on, canDelay: !!next }
+}
+
+export function showControlAlert(control: ShowControl, title: string): HudAlert {
+  const name = title || 'Untitled showing'
+  const text =
+    control === 'delay' ? `${name}: the next show starts ${DELAY_STEP_MINUTES} min later` : control === 'end' ? `${name}: ended` : `${name}: playing now for everyone`
+  return { kind: 'info', text }
+}
+
+export const STREAMS_LOADING = 'Loading streams…'
+export const NO_STREAMS = 'No streams yet: set one up on the Streaming page at virvi.io'
 
 export interface AssetEntry {
   id: string
@@ -72,6 +156,19 @@ export interface HudUi {
   /** The chosen asset's id. */
   chosen: string | null
   presets: Array<{ id: string; name: string }> | null
+  /** The scene's streams for the Streams panel; null while loading (or not loaded yet). */
+  streamList: HudStream[] | null
+  /** The screen whose stream list is open. */
+  streamPicking: string | null
+  /** The scene library's images for off images; null while loading (or not loaded yet). */
+  imageList: HudImage[] | null
+  /** The screen whose off image list is open. */
+  imagePicking: string | null
+  /** The Schedule-mode screen whose showings are open, and its showings (null while loading). */
+  showingsFor: string | null
+  showingList: HudShowing[] | null
+  /** The object whose "remove every copy" is waiting to be confirmed (LIV-12). */
+  clearing: string | null
   typing: { target: TypingTarget; text: string } | null
   /** A link request is on its way (hosted worlds ask their server half). */
   linking: boolean
@@ -89,6 +186,13 @@ export const initialUi = (): HudUi => ({
   linkUrl: '',
   chosen: null,
   presets: null,
+  streamList: null,
+  streamPicking: null,
+  imageList: null,
+  imagePicking: null,
+  showingsFor: null,
+  showingList: null,
+  clearing: null,
   typing: null,
   linking: false,
   placing: false,
@@ -101,6 +205,8 @@ export interface HudState {
   scene: SerializedScene | null
   alerts: HudAlert[]
   ui?: Partial<HudUi>
+  /** Date.now() for the showings' "on now" and "next in" lines. */
+  now?: number
 }
 
 export interface HudViewModel {
@@ -138,10 +244,39 @@ export interface HudViewModel {
       kind: 'video' | 'image' | 'model' | 'audio'
       name: string
       enabled: boolean
+      /** How many copies (instances) it has in the scene. */
+      copies: number
+      /** The confirmation to show while it is being cleared, else null. */
+      clearPrompt: string | null
     }>
     presets: Array<{ id: string; name: string; active: boolean }>
   }
-  streams: Array<{ elementId: string; name: string; enableLiveStream: boolean; isLive: boolean }>
+  streams: Array<{
+    elementId: string
+    name: string
+    enableLiveStream: boolean
+    isLive: boolean
+    source: string
+    picking: boolean
+    /** "Off image: Poster" or "No off image". */
+    offImage: string
+    imagePicking: boolean
+    /** In Schedule mode: has a Showings list (LIV-87). */
+    scheduled: boolean
+    showingsOpen: boolean
+  }>
+  /** The open screen's showings, each with its line and controls. */
+  showingRows: Array<ReturnType<typeof showingRow>>
+  /** Shown in place of the rows: still loading, or none. */
+  showingsNote: string | null
+  /** The streams to choose from for the screen being picked for; `current` is the one it plays. */
+  streamOptions: Array<{ id: string; label: string; current: boolean }>
+  /** Shown in place of the options: still loading, or none set up. */
+  streamsNote: string | null
+  /** The off images to choose from for the screen being picked for, None ('') first; `current` is the one it shows. */
+  imageOptions: Array<{ id: string; label: string; current: boolean }>
+  /** Shown above the options: still loading, or no images in the library. */
+  imagesNote: string | null
   assets: {
     tabs: AssetTab[]
     tab: AssetTab
@@ -241,11 +376,15 @@ export function hudModel(state: HudState): HudViewModel {
   for (const [list, kind, fallback] of KINDS) {
     for (const el of scene?.[list] ?? []) {
       if (typeof el.sk !== 'string') continue
+      const name = nameOf(el, fallback)
+      const copies = Array.isArray(el.instances) ? el.instances.length : 0
       items.push({
         elementId: el.sk,
         kind,
-        name: nameOf(el, fallback),
+        name,
         enabled: el.enabled !== false,
+        copies,
+        clearPrompt: ui.clearing === el.sk && copies > 0 ? clearCopiesPrompt({ name, copies }) : null,
       })
     }
   }
@@ -265,7 +404,28 @@ export function hudModel(state: HudState): HudViewModel {
       name: nameOf(v, 'Screen'),
       enableLiveStream: !!v.enableLiveStream,
       isLive: !!v.isLive,
+      source: streamSourceLabel(liveSrcOf(v), ui.streamList),
+      picking: ui.streamPicking === v.sk,
+      offImage: offImageLabel(offImageOf(v), ui.imageList),
+      imagePicking: ui.imagePicking === v.sk,
+      scheduled: v.offType === SCHEDULED,
+      showingsOpen: v.offType === SCHEDULED && ui.showingsFor === v.sk,
     }))
+  const showingsOpen = streams.some((s) => s.showingsOpen)
+  const showingRows = showingsOpen ? (ui.showingList ?? []).map((sh) => showingRow(sh, state.now ?? 0)) : []
+  const showingsNote = !showingsOpen ? null : ui.showingList === null ? SHOWINGS_LOADING : ui.showingList.length === 0 ? NO_SHOWINGS : null
+  const picked = streams.find((s) => s.picking)
+  const pickedSrc = picked ? liveSrcOf((scene?.videos ?? []).find((v) => v.sk === picked.elementId) ?? {}) : ''
+  const streamOptions = picked
+    ? (ui.streamList ?? []).map((s) => ({ id: s.id, label: streamOptionLabel(s), current: s.hlsPlaylistUrl === pickedSrc }))
+    : []
+  const imagePicked = (scene?.videos ?? []).find((v) => typeof v.sk === 'string' && v.sk === ui.imagePicking)
+  const imageSrc = imagePicked ? offImageOf(imagePicked) : ''
+  const imageOptions = imagePicked
+    ? [{ id: '', label: 'None', current: !imageSrc }, ...(ui.imageList ?? []).map((i) => ({ id: i.id, label: i.name, current: i.url === imageSrc }))]
+    : []
+  const imagesNote = !imagePicked ? null : ui.imageList === null ? IMAGES_LOADING : ui.imageList.length === 0 ? NO_IMAGES : null
+  const streamsNote = !picked ? null : ui.streamList === null ? STREAMS_LOADING : ui.streamList.length === 0 ? NO_STREAMS : null
 
   const list = ui.tab === 'library' ? ui.library : ui.tab === 'catalog' ? ui.catalog : []
   const entries = (list ?? [])
@@ -297,6 +457,12 @@ export function hudModel(state: HudState): HudViewModel {
     panel: linked ? ui.panel : null,
     layout: { items, presets },
     streams,
+    streamOptions,
+    streamsNote,
+    imageOptions,
+    imagesNote,
+    showingRows,
+    showingsNote,
     assets: {
       tabs: ['library', 'catalog', 'link'],
       tab: ui.tab,
@@ -314,6 +480,23 @@ export function hudModel(state: HudState): HudViewModel {
     alerts: state.alerts.slice(-MAX_ALERTS),
   }
 }
+
+const unnamed = (name: string) => name || 'Unnamed'
+
+/** The confirmation for "remove every copy, keep the object" (as the dashboard and the Decentraland HUD ask it). */
+export function clearCopiesPrompt(item: { name: string; copies: number }): string {
+  const what = item.copies === 1 ? 'the only copy' : `all ${item.copies} copies`
+  return `Remove ${what} of ${unnamed(item.name)}? The object stays. This can't be undone.`
+}
+
+/** What clearing did: how many copies went. */
+export function clearedAlert(name: string, deleted: number): HudAlert {
+  if (deleted === 0) return { kind: 'info', text: `${unnamed(name)} had no copies left` }
+  return { kind: 'info', text: `Removed ${deleted} ${deleted === 1 ? 'copy' : 'copies'} of ${unnamed(name)}` }
+}
+
+const liveSrcOf = (v: Record<string, unknown>) => (typeof v.liveSrc === 'string' ? v.liveSrc.trim() : '')
+const offImageOf = (v: Record<string, unknown>) => (typeof v.offImageSrc === 'string' ? v.offImageSrc.trim() : '')
 
 /** "Stream is live" / "Stream went offline" for each screen whose isLive changed between two snapshots. */
 export function alertsFromSnapshot(

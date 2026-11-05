@@ -55,6 +55,8 @@ export interface HWorld {
     name: 'command',
     cb: (e: { playerId: string; cmd?: string; value?: string; args?: string[] }) => void,
   ): void
+  /** Seconds on the world's shared clock: the world server's, which each client tracks (server and client). */
+  getTime(): number
   getPlayers(): HPlayer[]
   /** The local player (client) or the player with this id. */
   getPlayer(id?: string): HPlayer | null

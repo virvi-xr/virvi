@@ -21,6 +21,9 @@ import {
 import { toHyperfyTransform } from '../transform.js'
 import { VirviApi, type ApiResult } from '../virvi-api.js'
 import {
+  DELAY_STEP_MINUTES,
+  showControlAlert,
+  type ShowControl,
   alertsFromSnapshot,
   chatCommandText,
   chatEntry,
@@ -29,6 +32,8 @@ import {
   hudModel,
   inFrontOf,
   initialUi,
+  clearedAlert,
+  offImageChoices,
   pairingAlert,
   placeAsset,
   typeKey,
@@ -37,6 +42,9 @@ import {
   type HudUi,
 } from './model.js'
 import { HudView, type UiNode } from './view.js'
+
+/** How often an open showings list redraws, so its "on now" and "next in" times keep counting. */
+const SHOWINGS_REDRAW_MS = 15_000
 
 const LINK_REPLY_MS = 10_000
 const ALERT_MS = 6_000
@@ -143,13 +151,36 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
           controller.state.values && setUi({ typing: { target: axis, text: '' } }),
         typeKey: (prop, char) => void typeInto(prop, char),
         openPanel: (p) => {
-          setUi({ panel: ui.panel === p ? null : p, typing: null })
+          setUi({ panel: ui.panel === p ? null : p, typing: null, clearing: null })
           if (ui.panel === 'layout') void loadPresets()
           if (ui.panel === 'assets') void loadTab(ui.tab)
         },
         toggleEnabled: (id, on) => void request(api.setEnabled(id, on)),
+        askClear: (id) => setUi({ clearing: id }),
+        clearCopies: (id) => void clearCopies(id),
         setPreset: (id) => void request(api.setPreset(sceneId(), id)),
         toggleLive: (id, on) => void request(api.setLive(id, on)),
+        pickStream: (id) => {
+          const open = ui.streamPicking !== id
+          setUi({ streamPicking: open ? id : null, imagePicking: null, showingsFor: null })
+          if (open) void loadStreams()
+        },
+        pickImage: (id) => {
+          const open = ui.imagePicking !== id
+          setUi({ imagePicking: open ? id : null, streamPicking: null, showingsFor: null })
+          if (open) void loadImages()
+        },
+        openShowings: (id) => {
+          const open = ui.showingsFor !== id
+          setUi({ showingsFor: open ? id : null, showingList: null, streamPicking: null, imagePicking: null })
+          if (open) {
+            void loadShowings(id)
+            tickShowings()
+          }
+        },
+        controlShowing: (showingId, c) => void controlShowing(showingId, c),
+        chooseImage: (id, imageId) => void chooseImage(id, imageId),
+        chooseStream: (id, streamId) => void chooseStream(id, streamId),
         setTab: (tab) => {
           setUi({ tab, chosen: null, typing: null })
           void loadTab(tab)
@@ -190,6 +221,7 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
           scene,
           alerts: alerts.map(({ kind, text }) => ({ kind, text })),
           ui,
+          now: Date.now(),
         })
       : null
     const drawn = JSON.stringify(vm)
@@ -328,6 +360,92 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
     const r = await p
     if (!r.ok) pushAlert(failureAlert(r.reason))
     return r.ok
+  }
+
+  /** The scene's streams for the Streams panel (LIV-53). */
+  async function loadStreams(): Promise<void> {
+    const id = sceneId()
+    if (!id) return
+    setUi({ streamList: null })
+    const r = await api.listStreams(id)
+    if (r.ok) setUi({ streamList: r.value })
+    else {
+      setUi({ streamList: [], streamPicking: null })
+      pushAlert(failureAlert(r.reason))
+    }
+  }
+
+  /** The screen plays the chosen stream; the new liveSrc arrives with the next feed snapshot. */
+  async function chooseStream(elementId: string, streamId: string): Promise<void> {
+    const stream = (ui.streamList ?? []).find((s) => s.id === streamId)
+    const id = sceneId()
+    if (!stream || !id) return
+    if (await request(api.setLiveSource(id, elementId, stream.hlsPlaylistUrl))) setUi({ streamPicking: null })
+  }
+
+  /** Removes every copy of an object (LIV-12); the scene's next feed snapshot drops them from the world. */
+  async function clearCopies(elementId: string): Promise<void> {
+    const item = hudModel({ pairing: link, edit: controller.state, plan, scene, alerts: [], ui }).layout.items.find((i) => i.elementId === elementId)
+    setUi({ clearing: null })
+    const r = await api.deleteInstances(elementId)
+    if (r.ok) pushAlert(clearedAlert(item?.name ?? '', r.value.deleted))
+    else pushAlert(failureAlert(r.reason))
+  }
+
+  /** The scene library's images, for a screen's off image (LIV-54). */
+  async function loadImages(): Promise<void> {
+    const id = sceneId()
+    if (!id) return
+    setUi({ imageList: null })
+    const r = await api.listLibrary(id)
+    if (r.ok) setUi({ imageList: offImageChoices(r.value) })
+    else {
+      setUi({ imageList: [], imagePicking: null })
+      pushAlert(loadFailureAlert(r.reason))
+    }
+  }
+
+  /** The screen shows the chosen image when nothing plays ('' clears it); the change arrives with the next snapshot. */
+  async function chooseImage(elementId: string, imageId: string): Promise<void> {
+    const id = sceneId()
+    const url = imageId ? (ui.imageList ?? []).find((i) => i.id === imageId)?.url : ''
+    if (!id || url === undefined) return
+    if (await request(api.setOffImage(id, elementId, url))) setUi({ imagePicking: null })
+  }
+
+  /** A Schedule-mode screen's showings for the Streams panel (LIV-87). */
+  async function loadShowings(elementId: string): Promise<void> {
+    const r = await api.listShowings(elementId)
+    if (ui.showingsFor !== elementId) return // closed or switched while loading
+    if (r.ok) setUi({ showingList: r.value })
+    else {
+      setUi({ showingList: [], showingsFor: null })
+      pushAlert(loadFailureAlert(r.reason))
+    }
+  }
+
+  /** Delay, end or play a showing; players get the change with the next showings Virvi sends. */
+  async function controlShowing(showingId: string, c: ShowControl): Promise<void> {
+    const title = (ui.showingList ?? []).find((s) => s.id === showingId)?.title ?? ''
+    const r = await api.controlShowing(showingId, c, DELAY_STEP_MINUTES)
+    if (r.ok) pushAlert(showControlAlert(c, title))
+    else pushAlert(r.message ? { kind: 'error', text: r.message } : failureAlert(r.reason))
+    if (ui.showingsFor) void loadShowings(ui.showingsFor)
+  }
+
+  /** While a showings list is open, redraw now and then so "On now, 9 min left" keeps counting. */
+  let showingsTicking = false
+  function tickShowings(): void {
+    if (showingsTicking) return
+    showingsTicking = true
+    setTimeout(function tick() {
+      if (!ui.showingsFor) {
+        showingsTicking = false
+        return
+      }
+      redraw()
+      setTimeout(tick, SHOWINGS_REDRAW_MS)
+    }, SHOWINGS_REDRAW_MS)
   }
 
   async function loadPresets(): Promise<void> {

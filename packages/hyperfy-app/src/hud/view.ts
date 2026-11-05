@@ -4,7 +4,7 @@
  * stack (bottom centre, click-through). Screen UI takes clicks only while the pointer is unlocked.
  */
 import type { TransformMode } from '@virvixr/core/transform/session'
-import type { AssetTab, Axis, HudViewModel, Panel } from './model.js'
+import { DELAY_STEP_MINUTES, type AssetTab, type Axis, type HudViewModel, type Panel, type ShowControl } from './model.js'
 
 export interface UiNode {
   add(child: UiNode): void
@@ -36,8 +36,21 @@ export interface HudActions {
   typeKey(prop: string, char: string): void
   openPanel(panel: Exclude<Panel, null>): void
   toggleEnabled(elementId: string, enabled: boolean): void
+  /** Ask to remove every copy of an object (null cancels the question). */
+  askClear(elementId: string | null): void
+  clearCopies(elementId: string): void
   setPreset(presetId: string): void
   toggleLive(elementId: string, on: boolean): void
+  /** Open (or close) a screen's stream list. */
+  pickStream(elementId: string): void
+  chooseStream(elementId: string, streamId: string): void
+  /** Open (or close) a screen's off image list (LIV-54). */
+  pickImage(elementId: string): void
+  /** '' clears the off image. */
+  chooseImage(elementId: string, imageId: string): void
+  /** Open (or close) a Schedule-mode screen's showings (LIV-87). */
+  openShowings(elementId: string): void
+  controlShowing(showingId: string, control: ShowControl): void
   setTab(tab: AssetTab): void
   choose(id: string): void
   typeField(field: 'search'): void
@@ -274,20 +287,28 @@ export class HudView {
             this.row([this.button(p.name, () => a.setPreset(p.id), p.active)]),
           ),
           this.row([this.label('Objects', C.dim)]),
-          ...vm.layout.items.map((i) =>
+          ...vm.layout.items.flatMap((i) => [
             this.row([
               this.label(i.name),
+              ...(i.copies > 0 ? [this.label(`×${i.copies}`, C.dim, 12)] : []),
               this.button(
                 i.enabled ? 'Shown' : 'Hidden',
                 () => a.toggleEnabled(i.elementId, !i.enabled),
                 i.enabled,
               ),
+              ...(i.copies > 0 && !i.clearPrompt ? [this.button('Clear', () => a.askClear(i.elementId))] : []),
             ]),
-          ),
+            ...(i.clearPrompt
+              ? [
+                  this.row([this.label(i.clearPrompt, C.error, 12)]),
+                  this.row([this.button('Remove', () => a.clearCopies(i.elementId), true), this.button('Cancel', () => a.askClear(null))]),
+                ]
+              : []),
+          ]),
         ]
       case 'streams':
         return vm.streams.length
-          ? vm.streams.map((s) =>
+          ? vm.streams.flatMap((s) => [
               this.row([
                 this.label(`${s.name}${s.isLive ? ' (live)' : ''}`),
                 this.button(
@@ -296,7 +317,41 @@ export class HudView {
                   s.enableLiveStream,
                 ),
               ]),
-            )
+              this.row([
+                this.label(s.source, C.dim, 12),
+                this.button(s.picking ? 'Close list' : 'Choose stream', () => a.pickStream(s.elementId), s.picking),
+              ]),
+              ...(s.picking
+                ? vm.streamsNote
+                  ? [this.row([this.label(vm.streamsNote, C.dim, 12)])]
+                  : vm.streamOptions.map((o) => this.row([this.button(o.label, () => a.chooseStream(s.elementId, o.id), o.current)]))
+                : []),
+              this.row([
+                this.label(s.offImage, C.dim, 12),
+                this.button(s.imagePicking ? 'Close images' : 'Choose image', () => a.pickImage(s.elementId), s.imagePicking),
+              ]),
+              ...(s.imagePicking
+                ? [
+                    ...(vm.imagesNote ? [this.row([this.label(vm.imagesNote, C.dim, 12)])] : []),
+                    ...vm.imageOptions.map((o) => this.row([this.button(o.label, () => a.chooseImage(s.elementId, o.id), o.current)])),
+                  ]
+                : []),
+              ...(s.scheduled
+                ? [this.row([this.label('Scheduled showings', C.dim, 12), this.button(s.showingsOpen ? 'Close showings' : 'Showings', () => a.openShowings(s.elementId), s.showingsOpen)])]
+                : []),
+              ...(s.showingsOpen
+                ? vm.showingsNote
+                  ? [this.row([this.label(vm.showingsNote, C.dim, 12)])]
+                  : vm.showingRows.flatMap((r) => [
+                      this.row([this.label(`${r.title}: ${r.status}`, C.text, 12)]),
+                      this.row([
+                        ...(r.canEnd ? [this.button('End now', () => a.controlShowing(r.id, 'end'))] : []),
+                        ...(r.canPlay ? [this.button('Play now', () => a.controlShowing(r.id, 'play-now'))] : []),
+                        ...(r.canDelay ? [this.button(`Delay ${DELAY_STEP_MINUTES} min`, () => a.controlShowing(r.id, 'delay'))] : []),
+                      ]),
+                    ])
+                : []),
+            ])
           : [this.row([this.label('No screens in this preset', C.dim)])]
       case 'assets': {
         const s = vm.assets

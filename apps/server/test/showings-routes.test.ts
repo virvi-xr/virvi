@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { mediaAssets, sceneCollaborators, sceneElements, screenShowings } from '../src/db/schema.js'
+import { screenShowingsMessages } from '../src/scenes/showings.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -154,5 +155,63 @@ describe('screen showings routes', () => {
     const viewer = await createUser()
     await db.insert(sceneCollaborators).values({ sceneId, userId: viewer.id, role: 'viewer' })
     expect((await call(viewer, 'POST', `/api/elements/${screenId}/showings`, fridays('19:00'))).statusCode).toBe(403)
+  })
+
+  describe('host controls for single shows', () => {
+    /** A one-off starting `minutes` from now (UTC, to the minute). */
+    const oneOff = (minutes: number, extra: Record<string, unknown> = {}) => {
+      const d = new Date(Math.ceil((Date.now() + minutes * 60_000) / 60_000) * 60_000)
+      return { title: 'Matinee', items: [{ url: REEL, kind: 'ad', duration: 600 }, { url: FILM }], recurrence: 'once', startDate: d.toISOString().slice(0, 10), startTime: d.toISOString().slice(11, 16), timezone: 'UTC', ...extra, _at: d.getTime() }
+    }
+    const create = async (body: ReturnType<typeof oneOff>) => {
+      const { _at, ...payload } = body
+      const res = await call(owner, 'POST', `/api/elements/${screenId}/showings`, payload)
+      expect(res.statusCode).toBe(201)
+      return { id: res.json().showing.id as string, at: _at }
+    }
+
+    it('delays the next show, and players are sent the new start', async () => {
+      const s = await create(oneOff(120))
+      const res = await call(owner, 'POST', `/api/showings/${s.id}/delay`, { minutes: 15 })
+      expect(res.statusCode).toBe(200)
+      expect(Date.parse(res.json().showing.upcoming[0].startsAt)).toBe(s.at + 15 * 60_000)
+      const [msg] = await screenShowingsMessages([screenId])
+      expect(msg.showings[0].startsAt).toBe(s.at + 15 * 60_000)
+      expect((await call(owner, 'POST', `/api/showings/${s.id}/delay`, { minutes: 0 })).json()).toMatchObject({ error: 'bad_delay' })
+    })
+
+    it('plays a showing now, refuses a second while it is on, and ends it early', async () => {
+      const s = await create(oneOff(300))
+      const before = Date.now()
+      const played = await call(owner, 'POST', `/api/showings/${s.id}/play-now`)
+      expect(played.statusCode).toBe(200)
+      const first = played.json().showing.upcoming[0]
+      expect(Date.parse(first.startsAt)).toBeGreaterThanOrEqual(before)
+      expect(first.lengthSeconds).toBe(6000)
+      const again = await call(owner, 'POST', `/api/showings/${s.id}/play-now`)
+      expect(again.statusCode).toBe(409)
+      expect(again.json().message).toMatch(/on now: end it first/)
+      const ended = await call(owner, 'POST', `/api/showings/${s.id}/end`)
+      expect(ended.statusCode).toBe(200)
+      expect(ended.json().showing.upcoming.map((u: any) => Date.parse(u.startsAt))).toEqual([s.at])
+      expect((await call(owner, 'POST', `/api/showings/${s.id}/end`)).json()).toMatchObject({ error: 'not_playing' })
+    })
+
+    it('refuses a play or delay that would run into the next show, naming it', async () => {
+      const a = await create(oneOff(300, { title: 'Early' }))
+      await create(oneOff(300 + 105, { title: 'Late' })) // 5 min after Early ends
+      const res = await call(owner, 'POST', `/api/showings/${a.id}/delay`, { minutes: 10 })
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toMatchObject({ error: 'showing_overlap' })
+      expect(res.json().message).toMatch(/"Late"/)
+      expect((await call(owner, 'POST', `/api/showings/${a.id}/delay`, { minutes: 5 })).statusCode).toBe(200)
+    })
+
+    it('a paused showing must be resumed first, and strangers get 403', async () => {
+      const s = await create(oneOff(120, { enabled: false }))
+      expect((await call(owner, 'POST', `/api/showings/${s.id}/play-now`)).json()).toMatchObject({ error: 'showing_paused' })
+      const stranger = await createUser()
+      expect((await call(stranger, 'POST', `/api/showings/${s.id}/play-now`)).statusCode).toBe(403)
+    })
   })
 })

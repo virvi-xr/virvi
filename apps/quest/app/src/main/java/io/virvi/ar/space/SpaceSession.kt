@@ -8,6 +8,7 @@ import io.virvi.ar.Vec3
 import io.virvi.ar.api.ArFeedSnapshot
 import io.virvi.ar.api.FeedStatus
 import io.virvi.ar.planScene
+import io.virvi.ar.resolveScheduled
 import io.virvi.ar.ring.CameraIntrinsics
 import io.virvi.ar.ring.RingDetection
 import io.virvi.ar.ring.WallPlane
@@ -36,6 +37,9 @@ interface SceneView {
   fun tick(nowMs: Long)
 
   fun count(): Int
+
+  /** The server's clock minus the headset's wall clock (ms), for scheduled showings (LIV-87). */
+  fun setServerOffset(offsetMs: Long) {}
 }
 
 /** Follows one space's feed (`ArFeed`; a fake in tests). */
@@ -68,6 +72,8 @@ class SpaceSession(
     feed: (onStatus: (FeedStatus) -> Unit, onSnapshot: (ArFeedSnapshot) -> Unit) -> SpaceFeed,
     private val outline: OutlineView,
     private val clock: () -> Long,
+    /** The headset's wall clock (UTC ms); the server's is this plus the offset its last answer showed. */
+    private val wallClock: () -> Long = System::currentTimeMillis,
 ) {
   /** A new snapshot of the running space, after its scene has been applied. */
   var onSnapshot: ((ArFeedSnapshot) -> Unit)? = null
@@ -82,6 +88,10 @@ class SpaceSession(
     private set
 
   private var snapshot: ArFeedSnapshot? = null
+  /** The scene's plan as the feed gives it, and what was last applied (scheduled screens resolved to what's on). */
+  private var basePlan: List<RenderItem> = emptyList()
+  private var applied: List<RenderItem>? = null
+  private var serverOffsetMs = 0L
   private var root: RootPose? = null
   /** The space's rings in view, and each one's step on the newest frame. */
   private val tracks = HashMap<Long, RingLock>()
@@ -93,6 +103,8 @@ class SpaceSession(
   fun start(spaceId: String, token: (() -> String?)? = null) {
     this.spaceId = spaceId
     snapshot = null
+    basePlan = emptyList()
+    applied = null
     feed.start(spaceId, token)
   }
 
@@ -101,6 +113,8 @@ class SpaceSession(
     feed.stop()
     spaceId = null
     snapshot = null
+    basePlan = emptyList()
+    applied = null
     root = null
     resetLocks()
     lockedAt.clear()
@@ -116,7 +130,13 @@ class SpaceSession(
     try {
       if (s.space.id != spaceId) return
       snapshot = s
-      view.apply(planScene(s.scene))
+      basePlan = planScene(s.scene)
+      s.serverTime?.let {
+        serverOffsetMs = it - wallClock()
+        view.setServerOffset(serverOffsetMs)
+      }
+      applied = null
+      applyPlan()
       onSnapshot?.invoke(s)
     } catch (e: Exception) {
       Log.e(TAG, "Snapshot ${s.version} failed", e)
@@ -198,8 +218,17 @@ class SpaceSession(
     outline.flash(at.world, at.headingDeg, marker.diameterMm / 1000.0, clock())
   }
 
-  /** Advances the fade and the outline; call every frame. */
+  /** Applies the plan with scheduled screens as they are now; only a change reaches the view. */
+  private fun applyPlan() {
+    val next = if (basePlan.any { it.scheduled }) resolveScheduled(basePlan, snapshot?.showings ?: emptyMap(), wallClock() + serverOffsetMs) else basePlan
+    if (next == applied) return
+    applied = next
+    view.apply(next)
+  }
+
+  /** Advances the fade and the outline, and moves scheduled screens on with the show; call every frame. */
   fun tick() {
+    if (basePlan.any { it.scheduled }) applyPlan()
     val now = clock()
     view.tick(now)
     outline.tick(now)

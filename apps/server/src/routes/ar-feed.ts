@@ -7,6 +7,7 @@ import { getSceneAccess } from '../auth/permissions.js'
 import { fromSpace, markerByCode, markerSceneByCode, mayBuild, spaceScene } from '../ar/access.js'
 import { fromParam } from '../auth/scene-from.js'
 import { sceneSnapshot } from '../hyperfy/snapshot.js'
+import { feedShowings } from '../hyperfy/showings.js'
 import { arSpaceSnapshot } from '../ar/snapshot.js'
 import { longPoll } from '../http/long-poll.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
@@ -68,6 +69,19 @@ async function isBuilder(request: FastifyRequest, sceneId: string): Promise<bool
   return mayBuild(await getSceneAccess(actorFromClaims(request.user), sceneId))
 }
 
+/**
+ * The scene's scheduled showings and the server clock (LIV-87), as the Hyperfy feed sends them. Showings change the
+ * version (the clock doesn't), so a held poll answers when a showing is edited. None: the version stays the snapshot's.
+ */
+async function withShowings(version: string, scene: Parameters<typeof feedShowings>[0]) {
+  const showings = await feedShowings(scene)
+  if (!showings.length) return { version, extra: {} }
+  return {
+    version: createHash('sha256').update(version).update(JSON.stringify(showings)).digest('hex'),
+    extra: { showings, serverTime: Date.now() },
+  }
+}
+
 export default async function arFeedRoutes(app: FastifyInstance) {
   app.get<{ Params: { code: string } }>(
     '/api/ar/markers/by-code/:code',
@@ -111,8 +125,9 @@ export default async function arFeedRoutes(app: FastifyInstance) {
           const snap = await arSpaceSnapshot(spaceId)
           // Re-checked on every read, so unpublishing ends a visitor's hold with a 404.
           if (!snap || (!snap.space.published && !builder)) return null
-          const body: ArFeedResponse = { v: AR_FEED.version, version: snap.version, space: snap.space, scene: snap.scene }
-          return { version: snap.version, body }
+          const { version, extra } = await withShowings(snap.version, snap.scene)
+          const body: ArFeedResponse = { v: AR_FEED.version, version, space: snap.space, scene: snap.scene, ...extra }
+          return { version, body }
         },
         'not_found',
       )
@@ -140,8 +155,8 @@ export default async function arFeedRoutes(app: FastifyInstance) {
         async () => {
           const snap = await sceneSnapshot(sceneId)
           if (!snap) return null
-          const version = createHash('sha256').update(JSON.stringify({ scene: snap.scene })).digest('hex')
-          const body: ArSceneFeedResponse = { v: AR_FEED.version, version, scene: snap.scene }
+          const { version, extra } = await withShowings(createHash('sha256').update(JSON.stringify({ scene: snap.scene })).digest('hex'), snap.scene)
+          const body: ArSceneFeedResponse = { v: AR_FEED.version, version, scene: snap.scene, ...extra }
           return { version, body }
         },
         'not_found',

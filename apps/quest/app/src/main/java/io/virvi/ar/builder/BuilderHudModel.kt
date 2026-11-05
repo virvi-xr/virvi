@@ -126,7 +126,7 @@ fun builderItems(scene: JsonObject?): List<BuilderItem> {
 
 // ── HUD state ──
 
-enum class HudTab { LAYOUT, ASSETS }
+enum class HudTab { LAYOUT, ASSETS, STREAM }
 
 /** A Layout row: the item's name and kind, a dot when this place has its own adjustment (with **Reset to shared**). */
 data class HudRow(val sk: String, val name: String, val kind: String, val adjusted: Boolean, val picked: Boolean, val edited: Boolean)
@@ -160,7 +160,35 @@ data class BuilderHudModel(
     val confirmingDone: Boolean,
     /** The Layout tab offers **Scan this room**: only on a personal headset (a shared one uploads to someone else's account). */
     val canScanRoom: Boolean = false,
+    /** The **Stream** tab (LIV-53, LIV-54): only on a personal headset, as the server's stream routes are. */
+    val canStream: Boolean = false,
+    /** **Clear** on the picked item's bar (LIV-12): every copy of its object; null when there's nothing to offer. */
+    val clear: ClearOffer? = null,
 )
+
+/** Clear every copy of the picked item's object ([elementId], with [copies] copies); [confirming] while it asks. */
+data class ClearOffer(val elementId: String, val name: String, val copies: Int, val confirming: Boolean)
+
+/** The confirmation for "remove every copy, keep the object" (as the dashboard and the other HUDs ask it). */
+fun clearCopiesPrompt(o: ClearOffer): String {
+  val what = if (o.copies == 1) "the only copy" else "all ${o.copies} copies"
+  return "Remove $what of ${o.name}? The object stays. This can't be undone."
+}
+
+/** What clearing did. */
+fun clearedNote(name: String, deleted: Int): String =
+    if (deleted == 0) "$name had no copies left" else "Removed $deleted ${if (deleted == 1) "copy" else "copies"} of $name"
+
+const val CLEAR_FAILED = "Couldn't remove the copies: try again"
+
+/** What the bar's **Clear** does (the builder controller's [BuilderController.clearActions]). */
+interface ClearActions {
+  fun ask()
+
+  fun cancel()
+
+  fun confirm()
+}
 
 fun kindLabel(element: String): String =
     when (element) {

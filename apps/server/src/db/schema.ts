@@ -1963,10 +1963,18 @@ export const screenShowings = pgTable('screen_showings', {
   weekdays: integer('weekdays').array().notNull().default(sql`'{}'::integer[]`), // weekly: 0 = Sunday
   timezone: text('timezone').notNull(),
   enabled: boolean('enabled').notNull().default(true),
+  /** Hosts' delays, early ends and plays of single shows (ShowingAdjustment in scenes/showings.ts); old ones pruned on write. */
+  adjustments: jsonb('adjustments').$type<import('../scenes/showings.js').ShowingAdjustment[]>().notNull().default(sql`'[]'::jsonb`),
+  /**
+   * Set: the showing plays once at this event's start (in its timezone) and moves with it. Unlinking the scene from the
+   * event, or deleting the event, pauses the showing and clears this; its programme stays.
+   */
+  eventId: uuid('event_id').references(() => events.id, { onDelete: 'set null' }),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   elementIdx: index('screen_showings_element_idx').on(t.elementId),
   sceneIdx: index('screen_showings_scene_idx').on(t.sceneId),
+  eventIdx: index('screen_showings_event_idx').on(t.eventId),
 }))

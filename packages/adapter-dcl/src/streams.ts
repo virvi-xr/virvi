@@ -8,8 +8,11 @@ export interface HUDStream { id: string; name: string; hlsPlaylistUrl: string; l
 
 import type { SceneLibraryItemData } from '@virvixr/shared'
 
-/** `offImageSrc` is the image the screen shows when nothing plays (LIV-54); '' for none. */
-export interface HUDScreen { id: string; name: string; liveSrc: string; liveOn: boolean; offImageSrc: string }
+/**
+ * `offImageSrc` is the image the screen shows when nothing plays (LIV-54); '' for none. `scheduled`: the screen is
+ * in Schedule mode (offType 6) and plays its showings (LIV-87).
+ */
+export interface HUDScreen { id: string; name: string; liveSrc: string; liveOn: boolean; offImageSrc: string; scheduled: boolean }
 
 /** An image from the scene library that can be a screen's off image. */
 export interface HUDImage { id: string; name: string; url: string }
@@ -23,6 +26,7 @@ export function screensFromPreset(preset: { elements?: any[] } | null | undefine
       liveSrc: typeof el.properties?.liveSrc === 'string' ? el.properties.liveSrc.trim() : '',
       liveOn: el.properties?.enableLiveStream === true,
       offImageSrc: typeof el.properties?.offImageSrc === 'string' ? el.properties.offImageSrc.trim() : '',
+      scheduled: el.properties?.offType === 6,
     }))
 }
 

@@ -51,4 +51,16 @@ class ArModelsTest {
     val l = parseLookup("""{"spaceId":"s","floorId":"f","markerId":"m","spaceName":"Loft","whereText":null}""")!!
     assertEquals(MarkerLookup("s", "f", "m", "Loft", null), l)
   }
+
+  @Test
+  fun `parses the showings of scheduled screens and the server clock`() {
+    val body = fixture.trimEnd().removeSuffix("}") +
+        ""","showings":[{"elementId":"tv","showings":[{"showingId":"s1","startsAt":1800000000000,"items":[{"url":"https://x/f.mp4","duration":60}]}]}],"serverTime":1800000000500}"""
+    val snap = parseFeed(body)!!
+    assertEquals(1, snap.showings["tv"]!!.size)
+    assertEquals(1_800_000_000_500L, snap.serverTime)
+    val plain = parseFeed(fixture)!!
+    assertEquals(emptyMap<String, Any>(), plain.showings)
+    assertNull(plain.serverTime)
+  }
 }

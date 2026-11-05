@@ -3,6 +3,7 @@ package io.virvi.ar
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -115,7 +116,23 @@ class SceneRenderer(private val activity: AppSystemActivity) : SceneView, Builde
       val panelId: Int? = null,
       val faded: List<Entity> = emptyList(),
       val sized: Entity? = null,
+      /** A scheduled screen's video (LIV-87): keeps it where the shared show is. */
+      val guard: SeekGuard? = null,
   )
+
+  /** The server's clock minus this headset's (ms), from the feed (LIV-87). */
+  private var serverOffsetMs = 0L
+
+  override fun setServerOffset(offsetMs: Long) {
+    serverOffsetMs = offsetMs
+  }
+
+  /** Server time now (UTC ms). */
+  private fun serverNow(): Long = System.currentTimeMillis() + serverOffsetMs
+
+  /** How far into its video (ms) a scheduled item's show is now, kept inside the video. */
+  private fun expectedMs(play: ScheduledPlay): Long =
+      (serverNow() - play.itemStartsAtMs).coerceIn(0L, Math.round(play.durationS * 1000))
 
   /** Builder edits by item key, and what [setOverrides] last put on each item. */
   private var overrides: Map<String, ItemTransform> = emptyMap()
@@ -216,6 +233,19 @@ class SceneRenderer(private val activity: AppSystemActivity) : SceneView, Builde
   override fun tick(nowMs: Long) {
     fade.tick(nowMs)
     sync()
+    keepScheduledInStep()
+  }
+
+  /** Scheduled videos that have slipped from the shared show are moved back (with [SeekGuard]'s limits). */
+  private fun keepScheduledInStep() {
+    val now = SystemClock.elapsedRealtime()
+    for (s in shown.values) {
+      val play = s.item.play ?: continue
+      val player = s.player ?: continue
+      val guard = s.guard ?: continue
+      val expected = expectedMs(play)
+      if (guard.shouldSeek(now, expected / 1000.0, player.currentPosition / 1000.0, play.durationS, player.isPlaying)) player.seekTo(expected)
+    }
   }
 
   /** Puts [fade]'s state on the entities: alpha on images and videos, and who is drawn. */
@@ -238,7 +268,15 @@ class SceneRenderer(private val activity: AppSystemActivity) : SceneView, Builde
   /** Videos play while they are drawn and the app is in the foreground, and pause otherwise. */
   private fun syncPlayers() {
     val play = appliedMedia && !paused
-    shown.values.forEach { s -> s.player?.playWhenReady = play }
+    shown.values.forEach { s ->
+      val player = s.player ?: return@forEach
+      // A scheduled video that was held (hidden, in the background) rejoins the show where it is now
+      if (play && !player.playWhenReady) s.item.play?.let { p ->
+        player.seekTo(expectedMs(p))
+        s.guard?.restarted(SystemClock.elapsedRealtime())
+      }
+      player.playWhenReady = play
+    }
   }
 
   /** Sets [so]'s alpha: its materials' albedo (images multiply their texture by it) and, for a panel, its layer. */
@@ -340,10 +378,17 @@ class SceneRenderer(private val activity: AppSystemActivity) : SceneView, Builde
     val h = maxOf(Math.abs(item.height), 0.001).toFloat()
     val player =
         ExoPlayer.Builder(activity).build().apply {
-          // A playlist plays each video in turn and, repeating all, goes back to the first after the last.
-          setMediaItems(item.playlist.ifEmpty { listOf(item.src) }.map { MediaItem.fromUri(it) })
-          repeatMode =
-              if (item.loop || item.playlist.size > 1) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+          val play = item.play
+          if (play != null) {
+            // A scheduled show: start where everyone else is (LIV-87), once through
+            setMediaItem(MediaItem.fromUri(item.src), expectedMs(play))
+            repeatMode = Player.REPEAT_MODE_OFF
+          } else {
+            // A playlist plays each video in turn and, repeating all, goes back to the first after the last.
+            setMediaItems(item.playlist.ifEmpty { listOf(item.src) }.map { MediaItem.fromUri(it) })
+            repeatMode =
+                if (item.loop || item.playlist.size > 1) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+          }
           volume = 0f // muted, like the other spikes until Sound is on
           prepare()
           playWhenReady = appliedMedia && !paused
@@ -362,7 +407,8 @@ class SceneRenderer(private val activity: AppSystemActivity) : SceneView, Builde
         )
     )
     val panel = Entity.create(listOf(Panel(id), TransformParent(parent), Transform(Pose())))
-    return Shown(item, listOf(parent, panel), player, id, faded = listOf(panel), sized = panel)
+    val guard = item.play?.let { SeekGuard(SystemClock.elapsedRealtime()) }
+    return Shown(item, listOf(parent, panel), player, id, faded = listOf(panel), sized = panel, guard = guard)
   }
 
   private suspend fun imageMesh(uri: Uri): SceneMesh {

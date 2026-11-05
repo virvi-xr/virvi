@@ -338,12 +338,15 @@ export function useApi() {
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Scheduled showings on a video screen (LIV-87). */
-    getShowings: (elementId: string) => apiFetch<{ showings: import('./showings').Showing[] }>(`/api/elements/${elementId}/showings`),
+    getShowings: (elementId: string) => apiFetch<{ showings: import('./showings').Showing[]; events?: import('./showings').ShowingEvent[] }>(`/api/elements/${elementId}/showings`),
     createShowing: (elementId: string, body: Record<string, unknown>) =>
       apiFetch<{ showing: import('./showings').Showing }>(`/api/elements/${elementId}/showings`, { method: 'POST', body: JSON.stringify(body) }),
     updateShowing: (showingId: string, body: Record<string, unknown>) =>
       apiFetch<{ showing: import('./showings').Showing }>(`/api/showings/${showingId}`, { method: 'PATCH', body: JSON.stringify(body) }),
     deleteShowing: (showingId: string) => apiFetch<void>(`/api/showings/${showingId}`, { method: 'DELETE' }),
+    /** Host controls for single shows: delay the next by `minutes`, end the one on now, or play the programme now. */
+    controlShowing: (showingId: string, control: 'delay' | 'end' | 'play-now', minutes?: number) =>
+      apiFetch<{ showing: import('./showings').Showing }>(`/api/showings/${showingId}/${control}`, { method: 'POST', body: JSON.stringify(control === 'delay' ? { minutes } : {}) }),
     /** Scheduled presets (LIV-86). */
     getPresetSchedules: (sceneId: string) =>
       apiFetch<{ schedules: import('./preset-schedules').PresetSchedule[]; runs: import('./preset-schedules').ScheduleRun[]; status: import('./preset-schedules').LiveStatus; week: import('./preset-schedules').WeekOccurrence[] }>(`/api/scenes/${sceneId}/preset-schedules`),
@@ -758,7 +761,7 @@ export function useApi() {
 
     // Events
     getEvents: () => apiFetch<{ events: any[] }>('/api/events'),
-    getEvent: (id: string) => apiFetch<{ event: any; presetSchedules?: import('./event-presets').EventPresetSchedule[]; scenePresets?: import('./event-presets').ScenePresetOption[] }>(`/api/events/${id}`),
+    getEvent: (id: string) => apiFetch<{ event: any; presetSchedules?: import('./event-presets').EventPresetSchedule[]; scenePresets?: import('./event-presets').ScenePresetOption[]; showings?: import('./event-presets').EventShowing[] }>(`/api/events/${id}`),
     createEvent: (data: { name: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>
       apiFetch<{ event: any }>('/api/events', { method: 'POST', body: JSON.stringify(data) }),
     updateEvent: (id: string, data: { name?: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>
