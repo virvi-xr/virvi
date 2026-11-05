@@ -93,6 +93,42 @@ final class TabModelsTests: XCTestCase {
         XCTAssertEqual(t.count("/api/elements/v9"), 0)
     }
 
+    // MARK: Choose stream (LIV-53)
+
+    func testStreamRowsCarryTheScreensLiveSource() {
+        let rows = StreamModel.streams(scene: scene(#"{"videos":[{"sk":"v1","liveSrc":" https://live/main.m3u8 "}]}"#))
+        XCTAssertEqual(rows.first?.liveSrc, "https://live/main.m3u8")
+    }
+
+    func testLoadsTheScenesStreamsAndNamesThemAsTheDashboardDoes() async throws {
+        let t = FakeTransport()
+        t.on("/api/scenes/s1/streams") { _ in (200, ["streams": [
+            ["id": "a", "name": "Main Stage", "hlsPlaylistUrl": "https://live/main.m3u8", "live": true, "mine": false],
+            ["id": "b", "name": "Editor Cam", "hlsPlaylistUrl": "https://live/cam.m3u8", "live": false, "mine": true],
+            ["id": "bad"],
+        ]]) }
+        let streams = try await StreamModel(api: makeApi(t), sceneId: "s1").loadStreams()
+        XCTAssertEqual(streams.map(\.id), ["a", "b"])
+        XCTAssertEqual(streams.map(StreamModel.optionLabel), ["Main Stage (live)", "Editor Cam (offline, yours)"])
+        let row = { (src: String) in StreamRow(elementId: "v", name: "S", isLive: false, offImageSrc: "", liveSrc: src) }
+        XCTAssertEqual(StreamModel.sourceLabel(row("https://live/main.m3u8"), streams), "Main Stage (live)")
+        XCTAssertEqual(StreamModel.sourceLabel(row("https://elsewhere/x.m3u8"), streams), "Custom link")
+        XCTAssertEqual(StreamModel.sourceLabel(row(""), streams), "No stream")
+    }
+
+    func testChooseStreamSetsTheLiveSourceKeepingTheRest() async throws {
+        let t = FakeTransport()
+        t.on("/api/scenes/s1") { _ in (200, ["scene": ["presets": [["elements": [
+            ["id": "v1", "properties": ["offType": 1, "offImageSrc": "https://x/p.png", "liveSrc": "https://live/old.m3u8"]],
+        ]]]]]) }
+        t.on("/api/elements/v1") { _ in (200, ["element": ["id": "v1"]]) }
+        try await StreamModel(api: makeApi(t), sceneId: "s1").chooseStream("v1", "https://live/main.m3u8")
+        let put = try XCTUnwrap(t.bodies("/api/elements/v1").last?["properties"] as? [String: Any])
+        XCTAssertEqual(put["liveSrc"] as? String, "https://live/main.m3u8")
+        XCTAssertEqual(put["offImageSrc"] as? String, "https://x/p.png")
+        XCTAssertEqual(put["offType"] as? Int, 1)
+    }
+
     func testWorldsEmptyAndLoaded() async throws {
         XCTAssertEqual(WorldsModel.emptyCopy, "No connected worlds")
         let t = FakeTransport()
