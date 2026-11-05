@@ -16,8 +16,8 @@ describe('screensFromPreset', () => {
       ],
     }
     expect(screensFromPreset(preset)).toEqual([
-      { id: 'v1', name: 'Big screen', liveSrc: 'https://live/main.m3u8', liveOn: true, offImageSrc: '' },
-      { id: 'v2', name: 'Video screen', liveSrc: '', liveOn: false, offImageSrc: '' },
+      { id: 'v1', name: 'Big screen', liveSrc: 'https://live/main.m3u8', liveOn: true, offImageSrc: '', scheduled: false },
+      { id: 'v2', name: 'Video screen', liveSrc: '', liveOn: false, offImageSrc: '', scheduled: false },
     ])
     expect(screensFromPreset(null)).toEqual([])
   })

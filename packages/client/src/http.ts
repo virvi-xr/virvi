@@ -407,6 +407,16 @@ export class VirviHttpClient {
     return this._fetch(`/api/elements/${elementId}/live`, { method: 'POST', body: JSON.stringify({ enabled }) })
   }
 
+  /** A Schedule-mode screen's showings, with their next shows (`upcoming`, ISO times; LIV-87). */
+  async listShowings(elementId: string): Promise<{ showings: any[] }> {
+    return this._fetch(`/api/elements/${elementId}/showings`)
+  }
+
+  /** Host controls (LIV-87): delay the next show by `minutes`, end the one on now, or play it now. */
+  async controlShowing(showingId: string, control: 'delay' | 'end' | 'play-now', minutes?: number): Promise<unknown> {
+    return this._fetch(`/api/showings/${showingId}/${control}`, { method: 'POST', body: JSON.stringify(control === 'delay' ? { minutes } : {}) })
+  }
+
   async deleteElement(elementId: string): Promise<void> {
     await this._fetch(`/api/elements/${elementId}`, { method: 'DELETE' })
   }
