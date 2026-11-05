@@ -10,6 +10,7 @@
 
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
 import { copyName, presetLabel, PRESET_NAME_MAX, type HUDPreset } from './presets.js'
+import { screenSourceLabel, streamOptionLabel, type HUDScreen, type HUDStream } from './streams.js'
 import { Color4 } from '@dcl/sdk/math'
 import { engine } from '@dcl/sdk/ecs'
 import type {
@@ -100,6 +101,15 @@ interface HUDState {
   /** New (a copy of the live preset, or blank) or Rename, with the draft name. */
   presetDraft: { mode: 'new' | 'rename'; name: string; copy: boolean; targetId: string | null } | null
   presetBusy: boolean
+
+  // Stream panel (host, co-hosts, editors; LIV-53): which stream each video screen plays
+  streamScreens: HUDScreen[]
+  streams: HUDStream[]
+  streamsLoaded: boolean
+  streamsError: string | null
+  /** The screen whose stream list is open. */
+  streamPicking: string | null
+  streamBusy: boolean
 }
 
 type SceneRole = 'host' | 'cohost' | 'editor' | 'viewer'
@@ -161,6 +171,13 @@ const state: HUDState = {
   presetConfirm: null,
   presetDraft: null,
   presetBusy: false,
+
+  streamScreens: [],
+  streams: [],
+  streamsLoaded: false,
+  streamsError: null,
+  streamPicking: null,
+  streamBusy: false,
 }
 
 // Callbacks
@@ -706,6 +723,9 @@ function NavBar() {
               if (opened) onSceneAction?.('layout_refresh')
             } else if (p.type === HUDPanelType.ASSET_BROWSER) {
               if (opened && canEdit()) onSceneAction?.('media_refresh')
+            } else if (p.type === HUDPanelType.STREAM_CONTROL) {
+              state.streamPicking = null
+              if (opened && canEdit()) onSceneAction?.('streams_refresh')
             } else if (p.type === HUDPanelType.EVENT_CONTROL) {
               state.presetConfirm = null
               state.presetDraft = null
@@ -1178,48 +1198,50 @@ function PresetsSection() {
 // ---------------------------------------------------------------------------
 
 function StreamControlPanel() {
-  const panelState = state.panelStates.get(HUDPanelType.STREAM_CONTROL) as any
-  const streams = panelState?.streams || []
-
+  const busy = state.streamBusy
   return (
     <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
-      <PanelHeader title="Stream Control" onClose={() => { state.activePanel = null }} />
+      <PanelHeader title="Stream" subtitle="Which live stream each screen plays" onClose={() => { state.activePanel = null }} />
       <UiEntity uiTransform={{ padding: 8, flexDirection: 'column' }}>
-        {streams.length === 0 ? (
-          <UiEntity uiTransform={{ padding: 16, alignItems: 'center' }}>
-            <Label value="No active streams" fontSize={12} color={C.textDim} />
-          </UiEntity>
+        {!canEdit() ? (
+          <Label value="Only the host, co-hosts and editors can change streams" fontSize={11} color={C.textDim} uiTransform={{ height: 24 }} />
         ) : (
-          streams.map((stream: any, i: number) => (
-            <UiEntity
-              key={stream.id || i}
-              uiTransform={{
-                width: '100%',
-                height: 52,
-                flexDirection: 'column',
-                padding: 10,
-                margin: { bottom: 2 },
-              }}
-              uiBackground={{ color: C.bgCard }}
-            >
-              <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Label value={stream.isLive ? '* LIVE' : '  OFFLINE'} fontSize={10}
-                  color={stream.isLive ? C.success : C.textDim} />
-                <Label value={stream.name || 'Stream'} fontSize={11} color={C.text}
-                  uiTransform={{ margin: { left: 8 } }} />
+          <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
+            {state.streamsError && (
+              <Label value={state.streamsError} fontSize={10} color={C.danger} textAlign="top-left" uiTransform={{ width: '100%', height: 28 }} />
+            )}
+            {!state.streamsLoaded && !state.streamsError && <Label value="Loading…" fontSize={10} color={C.textMuted} uiTransform={{ height: 20 }} />}
+            {state.streamsLoaded && state.streamScreens.length === 0 && (
+              <Label value="No video screens in this scene" fontSize={11} color={C.textDim} uiTransform={{ height: 24 }} />
+            )}
+            {state.streamScreens.map((screen) => (
+              <UiEntity key={screen.id} uiTransform={{ width: '100%', flexDirection: 'column', padding: 8, margin: { bottom: 2 } }} uiBackground={{ color: C.bgCard }}>
+                <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', height: 20 }}>
+                  <Label value={screen.liveOn ? '* LIVE ON' : '  LIVE OFF'} fontSize={10} color={screen.liveOn ? C.success : C.textDim} />
+                  <Label value={screen.name} fontSize={11} color={C.text} uiTransform={{ margin: { left: 8 } }} />
+                </UiEntity>
+                <Label value={screenSourceLabel(screen, state.streams)} fontSize={10} color={C.textDim} textAlign="middle-left" uiTransform={{ height: 18 }} />
+                <UiEntity uiTransform={{ flexDirection: 'row', margin: { top: 4 } }}>
+                  <Button label={state.streamPicking === screen.id ? 'Close list' : 'Choose stream'} width={100} height={24} fontSize={10}
+                    onPress={() => { state.streamPicking = state.streamPicking === screen.id ? null : screen.id }} />
+                  <UiEntity uiTransform={{ width: 6 }} />
+                  <Button label={screen.liveOn ? 'Turn live off' : 'Turn live on'} color={screen.liveOn ? C.danger : C.success} width={100} height={24} fontSize={10}
+                    onPress={() => { if (!busy) onSceneAction?.('streams_live', { elementId: screen.id, enabled: !screen.liveOn }) }} />
+                </UiEntity>
+                {state.streamPicking === screen.id && (
+                  <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', margin: { top: 4 } }}>
+                    {state.streams.length === 0 ? (
+                      <Label value="No streams yet: set one up on the Streaming page at virvi.io" fontSize={10} color={C.textDim} uiTransform={{ height: 20 }} />
+                    ) : state.streams.map((st) => (
+                      <Button key={st.id} label={streamOptionLabel(st)} width={240} height={24} fontSize={10}
+                        color={st.hlsPlaylistUrl === screen.liveSrc ? C.accent : undefined}
+                        onPress={() => { if (!busy) onSceneAction?.('streams_choose', { elementId: screen.id, streamId: st.id }) }} />
+                    ))}
+                  </UiEntity>
+                )}
               </UiEntity>
-              <UiEntity uiTransform={{ margin: { top: 6 } }}>
-                <Button
-                  label={stream.isLive ? 'Go Offline' : 'Go Live'}
-                  color={stream.isLive ? C.danger : C.success}
-                  onPress={() => onPanelAction?.(HUDPanelType.STREAM_CONTROL, stream.isLive ? 'goOffline' : 'goLive', { streamId: stream.id })}
-                  width={90}
-                  height={26}
-                  fontSize={10}
-                />
-              </UiEntity>
-            </UiEntity>
-          ))
+            ))}
+          </UiEntity>
         )}
       </UiEntity>
     </UiEntity>
@@ -1583,6 +1605,29 @@ export class DclHUDRenderer implements HUDRenderer {
   setActivePreset(id: string): void {
     state.activePresetId = id
     if (state.presetConfirm === id) state.presetConfirm = null
+  }
+
+  // --- Stream panel (called by the createVirvi flow; LIV-53) ---
+
+  setStreams(screens: HUDScreen[], streams: HUDStream[]): void {
+    state.streamScreens = screens
+    state.streams = streams
+    state.streamsLoaded = true
+    state.streamsError = null
+    if (state.streamPicking && !screens.some((x) => x.id === state.streamPicking)) state.streamPicking = null
+  }
+
+  setStreamsError(msg: string | null): void {
+    state.streamsError = msg
+  }
+
+  setStreamBusy(busy: boolean): void {
+    state.streamBusy = busy
+  }
+
+  /** A stream was chosen: close the list. */
+  streamChosen(): void {
+    state.streamPicking = null
   }
 
   setPresetsError(msg: string | null): void {

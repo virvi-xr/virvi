@@ -9,6 +9,7 @@ import { DclHUDRenderer, setSceneActionHandler } from './DclHUDRenderer.js'
 import { DclEditMode } from './transform/edit-mode.js'
 import { friendlyEditError, friendlyRenameError, editBlockedMessage, createReconnector, DISCONNECTED } from './edit-errors.js'
 import { applyPresetsChange, friendlyPresetError, presetsFromScene, type HUDPreset } from './presets.js'
+import { screensFromPreset, withLiveSource, type HUDStream } from './streams.js'
 import type { HUDMediaItem, HUDLayoutItem } from './DclHUDRenderer.js'
 import { locationKeyFor } from '@virvixr/shared'
 import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
@@ -379,6 +380,14 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
         const { scene } = await virvi.httpClient.getScene(sceneId)
         return scene.presets?.find((p) => p.id === scene.activePresetId) ?? null
       }
+      // Stream panel (LIV-53): the live preset's screens and the streams they can play
+      let streams: HUDStream[] = []
+      const refreshStreams = async () => {
+        const [preset, got] = await Promise.all([activePreset(), virvi.httpClient.getSceneStreams(sceneId)])
+        streams = got.streams
+        renderer?.setStreams(screensFromPreset(preset), streams)
+        return preset
+      }
       const refreshLayout = async () => {
         const preset = await activePreset()
         layout = (preset?.elements ?? []).filter((el: any) => LAYOUT_TYPES.has(el.type)).map(toLayoutItem)
@@ -559,6 +568,39 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           } finally {
             busy = false
             renderer?.setPresetBusy(false)
+          }
+          return
+        }
+
+        // Stream panel (LIV-53): host, co-hosts and editors; the server refuses everyone else
+        if (action.startsWith('streams_')) {
+          if (!edits()) return
+          if (action === 'streams_refresh') {
+            try { await refreshStreams() } catch (err) { renderer?.setStreamsError(friendlyEditError(err, { connected: connected() })) }
+            return
+          }
+          if (busy) return
+          busy = true
+          renderer?.setStreamBusy(true)
+          try {
+            const blocked = await editBlockedMessage({ connected: connected(), canEdit: edits, refreshRole })
+            if (blocked) return renderer?.setStreamsError(blocked)
+            const elementId = String(data?.elementId)
+            if (action === 'streams_choose') {
+              const stream = streams.find((s) => s.id === String(data?.streamId))
+              const preset = await activePreset()
+              const element = preset?.elements?.find((el: any) => el.id === elementId)
+              if (!stream || !element) throw new Error('HTTP 404: {"error":"Not found"}')
+              await virvi.httpClient.updateElement(elementId, { properties: withLiveSource(element.properties, stream.hlsPlaylistUrl) })
+              renderer?.streamChosen()
+            }
+            if (action === 'streams_live') await virvi.httpClient.setElementLive(elementId, data?.enabled === true)
+            await refreshStreams()
+          } catch (err) {
+            renderer?.setStreamsError(friendlyEditError(err, { connected: connected() }))
+          } finally {
+            busy = false
+            renderer?.setStreamBusy(false)
           }
           return
         }

@@ -380,6 +380,16 @@ export class VirviHttpClient {
     })
   }
 
+  /** The streams a screen in this scene can play: the scene owner's and your own (never a stream key). */
+  async getSceneStreams(sceneId: string): Promise<{ streams: { id: string; name: string; hlsPlaylistUrl: string; live: boolean; mine: boolean }[] }> {
+    return this._fetch(`/api/scenes/${sceneId}/streams`)
+  }
+
+  /** Turn a video screen's live stream on or off. */
+  async setElementLive(elementId: string, enabled: boolean): Promise<{ element: any }> {
+    return this._fetch(`/api/elements/${elementId}/live`, { method: 'POST', body: JSON.stringify({ enabled }) })
+  }
+
   async deleteElement(elementId: string): Promise<void> {
     await this._fetch(`/api/elements/${elementId}`, { method: 'DELETE' })
   }
