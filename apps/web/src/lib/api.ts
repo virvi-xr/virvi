@@ -379,9 +379,9 @@ export function useApi() {
       apiFetch<MediaNames>(`/api/scenes/${sceneId}/media-names`, { method: 'POST', body: JSON.stringify({ urls }) }),
 
     // Organizations
-    getOrgs: () => apiFetch<{ organizations: any[] }>('/api/orgs'),
-    createOrg: (name: string) => apiFetch<{ organization: any }>('/api/orgs', { method: 'POST', body: JSON.stringify({ name }) }),
-    getOrgMembers: (orgId: string) => apiFetch<{ members: any[] }>(`/api/orgs/${orgId}/members`),
+    getOrgs: () => apiFetch<{ organizations: import('./orgs').OrgSummary[] }>('/api/orgs'),
+    createOrg: (name: string) => apiFetch<{ organization: import('./orgs').OrgSummary }>('/api/orgs', { method: 'POST', body: JSON.stringify({ name }) }),
+    getOrgMembers: (orgId: string) => apiFetch<{ members: import('./orgs').OrgMember[] }>(`/api/orgs/${orgId}/members`),
     inviteToOrg: (orgId: string, email: string, role?: string) => apiFetch<{ invite: any }>(`/api/orgs/${orgId}/invites`, { method: 'POST', body: JSON.stringify({ email, role }) }),
     removeOrgMember: (orgId: string, userId: string) => apiFetch(`/api/orgs/${orgId}/members/${userId}`, { method: 'DELETE' }),
     setActiveOrg: (orgId: string) => apiFetch<{ activeOrgId: string }>(`/api/orgs/${orgId}/active`, { method: 'PUT' }),

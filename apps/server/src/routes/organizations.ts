@@ -1,32 +1,37 @@
 import type { FastifyInstance } from 'fastify'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, count, inArray } from 'drizzle-orm'
 import crypto from 'node:crypto'
 import { db } from '../db/connection.js'
-import { organizations, orgMembers, orgInvites, users } from '../db/schema.js'
+import { organizations, orgMembers, orgInvites, userAuthMethods, users } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { sendOrgInviteEmail } from '../services/email.js'
 
 export default async function organizationRoutes(app: FastifyInstance) {
   // ── GET /api/orgs — list user's organizations ───────────────────────────
 
+  // Flat, as Settings → Your Organizations reads it (LIV-93): the org, your role in it, how many members it has, and
+  // whether it's your active one.
   app.get('/api/orgs', { preHandler: [authenticate] }, async (request) => {
-    const memberships = await db
+    const rows = await db
       .select({
-        orgId: orgMembers.orgId,
+        id: organizations.id,
+        name: organizations.name,
+        slug: organizations.slug,
+        logoUrl: organizations.logoUrl,
         role: orgMembers.role,
-        joinedAt: orgMembers.joinedAt,
-        org: {
-          id: organizations.id,
-          name: organizations.name,
-          slug: organizations.slug,
-          logoUrl: organizations.logoUrl,
-        },
       })
       .from(orgMembers)
       .innerJoin(organizations, eq(orgMembers.orgId, organizations.id))
       .where(eq(orgMembers.userId, request.user.id))
-
-    return { organizations: memberships }
+    const counts = rows.length
+      ? await db.select({ orgId: orgMembers.orgId, n: count() }).from(orgMembers)
+        .where(inArray(orgMembers.orgId, rows.map((r) => r.id))).groupBy(orgMembers.orgId)
+      : []
+    const [me] = await db.select({ activeOrgId: users.activeOrgId }).from(users).where(eq(users.id, request.user.id))
+    const countOf = new Map(counts.map((c) => [c.orgId, Number(c.n)]))
+    return {
+      organizations: rows.map((r) => ({ ...r, memberCount: countOf.get(r.id) ?? 0, isActive: me?.activeOrgId === r.id })),
+    }
   })
 
   // ── POST /api/orgs — create organization ────────────────────────────────
@@ -62,7 +67,10 @@ export default async function organizationRoutes(app: FastifyInstance) {
         await db.update(users).set({ activeOrgId: org.id }).where(eq(users.id, request.user.id))
       }
 
-      return reply.status(201).send({ organization: org })
+      // The org list's shape, so the page can show it at once with the owner's controls
+      return reply.status(201).send({
+        organization: { id: org.id, name: org.name, slug: org.slug, logoUrl: org.logoUrl, role: 'owner', memberCount: 1, isActive: !user.activeOrgId },
+      })
     },
   )
 
@@ -98,22 +106,26 @@ export default async function organizationRoutes(app: FastifyInstance) {
       const membership = await getOrgMembership(request.user.id, orgId)
       if (!membership) return reply.status(403).send({ error: 'Not a member of this organization' })
 
-      const members = await db
+      const rows = await db
         .select({
           userId: orgMembers.userId,
           role: orgMembers.role,
           joinedAt: orgMembers.joinedAt,
-          user: {
-            id: users.id,
-            displayName: users.displayName,
-            email: users.email,
-          },
+          displayName: users.displayName,
+          email: users.email,
         })
         .from(orgMembers)
         .innerJoin(users, eq(orgMembers.userId, users.id))
         .where(eq(orgMembers.orgId, orgId))
+      // A wallet, for members with neither a name nor an email (LIV-93: the page never shows an id)
+      const wallets = rows.length
+        ? await db.select({ userId: userAuthMethods.userId, identifier: userAuthMethods.identifier }).from(userAuthMethods)
+          .where(and(inArray(userAuthMethods.userId, rows.map((r) => r.userId)), eq(userAuthMethods.type, 'wallet')))
+        : []
+      const walletOf = new Map<string, string>()
+      for (const w of wallets) if (!walletOf.has(w.userId)) walletOf.set(w.userId, w.identifier)
 
-      return { members }
+      return { members: rows.map((r) => ({ ...r, walletAddress: walletOf.get(r.userId) ?? null })) }
     },
   )
 

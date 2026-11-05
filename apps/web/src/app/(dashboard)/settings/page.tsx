@@ -1,5 +1,6 @@
 'use client'
 import { useApi } from '@/lib/api'
+import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState } from 'react'
 import { LinkedWallets } from './LinkedWallets'
@@ -56,12 +57,12 @@ const TIER_TONE: Record<string, Tone> = { free: 'neutral', creator: 'info', pro:
 export default function SettingsPage() {
   const { user, token, updateUser, logout } = useAuth()
   const api = useApi()
-  const [orgs, setOrgs] = useState<any[]>([])
+  const [orgs, setOrgs] = useState<OrgSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [newOrgName, setNewOrgName] = useState('')
   const [expandedOrgId, setExpandedOrgId] = useState<string | null>(null)
-  const [members, setMembers] = useState<Record<string, any[]>>({})
+  const [members, setMembers] = useState<Record<string, OrgMember[]>>({})
   const [membersLoading, setMembersLoading] = useState<string | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('member')
@@ -117,7 +118,7 @@ export default function SettingsPage() {
       .then(data => {
         setOrgs(data.organizations)
         // Detect active org — look for one flagged active, or fall back to first
-        const active = data.organizations.find((o: any) => o.isActive) || data.organizations[0]
+        const active = data.organizations.find((o) => o.isActive) || data.organizations[0]
         if (active) setActiveOrgId(active.id)
         setLoading(false)
       })
@@ -264,14 +265,15 @@ export default function SettingsPage() {
       await api.removeOrgMember(orgId, userId)
       setMembers(prev => ({
         ...prev,
-        [orgId]: (prev[orgId] || []).filter((m: any) => m.userId !== userId),
+        [orgId]: (prev[orgId] || []).filter((m) => m.userId !== userId),
       }))
+      setOrgs(prev => prev.map((o) => (o.id === orgId ? { ...o, memberCount: Math.max(0, o.memberCount - 1) } : o)))
     } catch (err: any) {
       setError(err.message)
     }
   }
 
-  const isAdminOrOwner = (org: any) => {
+  const isAdminOrOwner = (org: OrgSummary) => {
     return org.role === 'owner' || org.role === 'admin'
   }
 
@@ -544,10 +546,10 @@ export default function SettingsPage() {
                       <p className="text-sm text-gray-500">No members found.</p>
                     ) : (
                       <div className="space-y-2 mb-4">
-                        {(members[org.id] || []).map((member: any) => (
+                        {(members[org.id] || []).map((member) => (
                           <div key={member.userId} className="flex items-center justify-between rounded-md bg-gray-800 px-3 py-2">
                             <div>
-                              <p className="text-sm text-white">{member.displayName || member.email || member.userId}</p>
+                              <p className="text-sm text-white">{memberLabel(member, user?.id)}</p>
                               <p className="text-xs text-gray-400 capitalize">{member.role}</p>
                             </div>
                             {isAdminOrOwner(org) && member.userId !== user?.id && (
