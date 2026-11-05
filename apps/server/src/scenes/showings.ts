@@ -11,9 +11,25 @@ import { parseWhen, type WhenFields } from './preset-schedules.js'
  * players work from (`screenStateAt` in @virvixr/shared) and checks a screen's showings don't overlap.
  */
 
+/**
+ * A host's change to one show (LIV-87, from the HUD or dashboard), kept on the showing. `occurrence` is the show's
+ * scheduled start (UTC ms), or a played-now show's start. Applied when showings are expanded, so players need nothing new.
+ */
+export type ShowingAdjustment =
+  /** Starts `minutes` later; several add up. */
+  | { kind: 'delay'; occurrence: number; minutes: number }
+  /** Ended early at `at` (UTC ms): the programme is cut there. */
+  | { kind: 'end'; occurrence: number; at: number }
+  /** An extra show of the programme starting at `startsAt`. */
+  | { kind: 'play'; startsAt: number }
+
+export const MAX_DELAY_STEP_MINUTES = 60
+export const MAX_DELAY_TOTAL_MINUTES = 180
+
 export interface ShowingSpec {
   id: string
   items: ProgrammeItem[]
+  adjustments?: ShowingAdjustment[]
   /** A showing's length is its programme's, so the schedule has no duration of its own. */
   schedule: Omit<ScheduleSpec, 'durationMinutes'>
   title?: string
@@ -26,23 +42,102 @@ export const OVERLAP_HORIZON_DAYS = 371
 
 const spec = (s: ShowingSpec): ScheduleSpec => ({ ...s.schedule, durationMinutes: null })
 
+/** The programme cut `seconds` in: what plays before that point, the last item shortened. */
+function cutItems(items: ProgrammeItem[], seconds: number): ProgrammeItem[] {
+  const out: ProgrammeItem[] = []
+  let used = 0
+  for (const item of items) {
+    if (!(item.duration > 0)) continue
+    const left = seconds - used
+    if (left <= 0) break
+    out.push(left < item.duration ? { ...item, duration: left } : item)
+    used += item.duration
+  }
+  return out
+}
+
+type Instance = ShowingInstance & { occurrence: number }
+const adjustmentTime = (a: ShowingAdjustment) => (a.kind === 'play' ? a.startsAt : a.occurrence)
+
+/** One showing's shows on screen at some point in [from, to], adjustments applied, each with its occurrence. */
+function instancesOf(s: ShowingSpec, from: Date, to: Date): Instance[] {
+  const adj = s.adjustments ?? []
+  const lookback = programmeLength(s.items) * 1000 + MAX_DELAY_TOTAL_MINUTES * 60_000
+  const earliest = from.getTime() - lookback
+  const starts = new Set(occurrencesBetween(spec(s), new Date(earliest), to).map((o) => o.start.getTime()))
+  for (const a of adj) if (a.kind === 'play' && a.startsAt >= earliest && a.startsAt <= to.getTime()) starts.add(a.startsAt)
+  const out: Instance[] = []
+  for (const occurrence of starts) {
+    const delay = adj.reduce((m, a) => (a.kind === 'delay' && a.occurrence === occurrence ? m + a.minutes : m), 0)
+    const startsAt = occurrence + delay * 60_000
+    const end = adj.find((a): a is Extract<ShowingAdjustment, { kind: 'end' }> => a.kind === 'end' && a.occurrence === occurrence)
+    const items = end ? cutItems(s.items, (end.at - startsAt) / 1000) : s.items
+    if (!items.length || startsAt + programmeLength(items) * 1000 <= from.getTime() || startsAt > to.getTime()) continue
+    out.push({
+      showingId: s.id, startsAt, items, occurrence,
+      ...(s.title ? { title: s.title } : {}), ...(s.posterUrl ? { posterUrl: s.posterUrl } : {}),
+    })
+  }
+  return out.sort((a, b) => a.startsAt - b.startsAt)
+}
+
 /**
  * Every instance of the showings that is on screen at some point in [from, to]: those starting in it, and one that
- * started earlier and is still running at `from`. In start order.
+ * started earlier and is still running at `from`. In start order. Hosts' delays, early ends and plays are applied.
  */
 export function showingInstancesBetween(showings: ShowingSpec[], from: Date, to: Date): ShowingInstance[] {
-  const out: ShowingInstance[] = []
-  for (const s of showings) {
-    const lengthMs = programmeLength(s.items) * 1000
-    for (const o of occurrencesBetween(spec(s), new Date(from.getTime() - lengthMs), to)) {
-      if (o.start.getTime() + lengthMs <= from.getTime()) continue
-      out.push({
-        showingId: s.id, startsAt: o.start.getTime(), items: s.items,
-        ...(s.title ? { title: s.title } : {}), ...(s.posterUrl ? { posterUrl: s.posterUrl } : {}),
-      })
+  return showings
+    .flatMap((s) => instancesOf(s, from, to).map(({ occurrence: _o, ...i }) => i))
+    .sort((a, b) => a.startsAt - b.startsAt || a.showingId.localeCompare(b.showingId))
+}
+
+// ── Hosts' changes to single shows ──────────────────────────────────────────
+
+/** Adjustments still worth keeping: their show is under 3 days old (no programme runs over 2 days). */
+const kept = (s: ShowingSpec, now: Date) => (s.adjustments ?? []).filter((a) => adjustmentTime(a) >= now.getTime() - 3 * DAY)
+
+/** The showing's adjustments with its next show (not yet started, within the delivery window) `minutes` later. */
+export function planDelay(s: ShowingSpec, now: Date, minutes: unknown): ShowingAdjustment[] {
+  if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > MAX_DELAY_STEP_MINUTES) {
+    throw new ShowingError(400, 'bad_delay', `Delay by 1 to ${MAX_DELAY_STEP_MINUTES} minutes.`)
+  }
+  const next = instancesOf(s, now, new Date(now.getTime() + SHOWINGS_WINDOW_MS)).find((i) => i.startsAt > now.getTime())
+  if (!next) throw new ShowingError(409, 'nothing_to_delay', 'This showing has no show coming up to delay.')
+  const adj = kept(s, now)
+  const total = minutes + adj.reduce((m, a) => (a.kind === 'delay' && a.occurrence === next.occurrence ? m + a.minutes : m), 0)
+  if (total > MAX_DELAY_TOTAL_MINUTES) throw new ShowingError(409, 'delay_too_long', 'A show can be delayed by up to 3 hours in all.')
+  return [...adj, { kind: 'delay', occurrence: next.occurrence, minutes }]
+}
+
+/** The showing's adjustments with the show that is on now ended at `now`. */
+export function planEnd(s: ShowingSpec, now: Date): ShowingAdjustment[] {
+  const on = instancesOf(s, now, now).find((i) => i.startsAt <= now.getTime() && now.getTime() < i.startsAt + programmeLength(i.items) * 1000)
+  if (!on) throw new ShowingError(409, 'not_playing', "This showing isn't on right now.")
+  const adj = kept(s, now).filter((a) => !(a.kind === 'end' && a.occurrence === on.occurrence))
+  return [...adj, { kind: 'end', occurrence: on.occurrence, at: now.getTime() }]
+}
+
+/** The showing's adjustments with an extra show of its programme starting at `now`. */
+export function planPlayNow(s: ShowingSpec, now: Date): ShowingAdjustment[] {
+  return [...kept(s, now), { kind: 'play', startsAt: now.getTime() }]
+}
+
+/**
+ * After a change to showing `changedId`, the first show on the screen one of its shows now runs into (within the
+ * delivery window from `now`), or null. Clashes that don't involve it are left alone.
+ */
+export function screenClash(showings: ShowingSpec[], changedId: string, now: Date): { showingId: string; title: string | null; at: string } | null {
+  const all = showingInstancesBetween(showings, now, new Date(now.getTime() + SHOWINGS_WINDOW_MS))
+  const endOf = (i: ShowingInstance) => i.startsAt + programmeLength(i.items) * 1000
+  for (let i = 0; i < all.length; i++) {
+    for (let j = i + 1; j < all.length && all[j].startsAt < endOf(all[i]); j++) {
+      const [a, b] = [all[i], all[j]]
+      if (a.showingId !== changedId && b.showingId !== changedId) continue
+      const other = a.showingId === changedId ? b : a
+      return { showingId: other.showingId, title: other.title ?? null, at: new Date(b.startsAt).toISOString() }
     }
   }
-  return out.sort((a, b) => a.startsAt - b.startsAt || a.showingId.localeCompare(b.showingId))
+  return null
 }
 
 export interface ShowingOverlap {
@@ -175,8 +270,8 @@ export async function resolveItems(items: ShowingInput['items']): Promise<Item[]
   return resolved
 }
 
-export const specOfShowing = (row: Pick<ShowingRow, 'id' | 'items' | 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'timezone' | 'title' | 'posterUrl'>): ShowingSpec => ({
-  id: row.id, items: row.items, title: row.title ?? undefined, posterUrl: row.posterUrl ?? undefined,
+export const specOfShowing = (row: Pick<ShowingRow, 'id' | 'items' | 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'timezone' | 'title' | 'posterUrl'> & { adjustments?: ShowingAdjustment[] }): ShowingSpec => ({
+  id: row.id, items: row.items, title: row.title ?? undefined, posterUrl: row.posterUrl ?? undefined, adjustments: row.adjustments ?? [],
   schedule: { recurrence: row.recurrence, startDate: row.startDate, startTime: row.startTime, weekdays: row.weekdays, timezone: row.timezone },
 })
 
@@ -208,6 +303,10 @@ export function presentShowing(row: ShowingRow, now: Date) {
     ...row,
     lengthSeconds: programmeLength(row.items),
     nextStarts: nextStarts({ ...specOfShowing(row).schedule, durationMinutes: null }, now, 3).map((d) => d.toISOString()),
+    /** The shows on now or coming up within the delivery window, as players will see them (hosts' changes applied). */
+    upcoming: showingInstancesBetween([specOfShowing(row)], now, new Date(now.getTime() + SHOWINGS_WINDOW_MS))
+      .slice(0, 3)
+      .map((i) => ({ startsAt: new Date(i.startsAt).toISOString(), lengthSeconds: programmeLength(i.items) })),
   }
 }
 

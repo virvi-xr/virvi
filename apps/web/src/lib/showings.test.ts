@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyToDaysBodies, nextWeekBodies, thisWeek, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
+import { showNow, showControlMessage, copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyToDaysBodies, nextWeekBodies, thisWeek, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
 
 const form = (extra: Partial<ShowingForm> = {}): ShowingForm => ({
   title: ' Night of the Living Dead ', description: '', posterUrl: '',
@@ -192,5 +192,30 @@ describe('copy to other days and to next week', () => {
     expect(copyResultMessage(1, [])).toBe('Copied 1 showing.')
     expect(copyResultMessage(1, ['Matinee on 2026-11-09'])).toBe("Copied 1 showing. Not copied, because it clashes with a showing already there: Matinee on 2026-11-09.")
     expect(copyResultMessage(0, ['A on 2026-11-08', 'B on 2026-11-14'])).toBe("Copied 0 showings. Not copied, because they clash with showings already there: A on 2026-11-08 and B on 2026-11-14.")
+  })
+})
+
+describe('host controls', () => {
+  const NOW = Date.parse('2026-11-05T19:30:00Z')
+  const at = (ms: number) => new Date(ms).toISOString()
+  const s = (upcoming: Showing['upcoming']): Pick<Showing, 'enabled' | 'upcoming'> => ({ enabled: true, upcoming })
+
+  it('finds the show on now and the next one that has not started', () => {
+    expect(showNow(s([
+      { startsAt: at(NOW - 600_000), lengthSeconds: 6000 },
+      { startsAt: at(NOW + 86_400_000), lengthSeconds: 6000 },
+    ]), NOW)).toEqual({ on: { endsAt: at(NOW - 600_000 + 6_000_000) }, next: at(NOW + 86_400_000) })
+    expect(showNow(s([{ startsAt: at(NOW + 60_000), lengthSeconds: 60 }]), NOW)).toEqual({ on: null, next: at(NOW + 60_000) })
+  })
+
+  it('a paused showing, or one from an older server without upcoming, has no controls', () => {
+    expect(showNow({ enabled: false, upcoming: [{ startsAt: at(NOW), lengthSeconds: 60 }] }, NOW)).toEqual({ on: null, next: null })
+    expect(showNow({ enabled: true }, NOW)).toEqual({ on: null, next: null })
+  })
+
+  it('says what each control did', () => {
+    expect(showControlMessage('delay', 'Matinee')).toBe('Matinee: the next show starts 5 minutes later.')
+    expect(showControlMessage('end', null)).toBe('Untitled showing: ended. The screen goes back to its holding image.')
+    expect(showControlMessage('play-now', 'Matinee')).toBe('Matinee: playing now for everyone in the scene.')
   })
 })

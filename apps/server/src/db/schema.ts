@@ -1894,6 +1894,8 @@ export const screenShowings = pgTable('screen_showings', {
   weekdays: integer('weekdays').array().notNull().default(sql`'{}'::integer[]`), // weekly: 0 = Sunday
   timezone: text('timezone').notNull(),
   enabled: boolean('enabled').notNull().default(true),
+  /** Hosts' delays, early ends and plays of single shows (ShowingAdjustment in scenes/showings.ts); old ones pruned on write. */
+  adjustments: jsonb('adjustments').$type<import('../scenes/showings.js').ShowingAdjustment[]>().notNull().default(sql`'[]'::jsonb`),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

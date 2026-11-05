@@ -20,6 +20,8 @@ export interface Showing {
   enabled: boolean
   lengthSeconds: number
   nextStarts: string[]
+  /** Shows on now or coming up, as players see them (hosts' delays, early ends and plays applied). */
+  upcoming?: Array<{ startsAt: string; lengthSeconds: number }>
 }
 
 export interface ShowingFormItem {
@@ -220,4 +222,31 @@ export function copyResultMessage(copied: number, clashed: string[]): string {
   if (!clashed.length) return done
   const one = clashed.length === 1
   return `${done} Not copied, because ${one ? 'it clashes with a showing' : 'they clash with showings'} already there: ${list(clashed)}.`
+}
+
+// ── Host controls (delay, end, play now) ────────────────────────────────────
+
+export type ShowControl = 'delay' | 'end' | 'play-now'
+/** "Delay" moves the next show this many minutes; pressing again adds more (the server caps it at 3 hours). */
+export const DELAY_STEP_MINUTES = 5
+
+/** The show on now (when it ends) and the next one that hasn't started, from the server's `upcoming`. */
+export function showNow(s: Pick<Showing, 'enabled' | 'upcoming'>, now: number): { on: { endsAt: string } | null; next: string | null } {
+  if (!s.enabled || !s.upcoming) return { on: null, next: null }
+  let on: { endsAt: string } | null = null
+  let next: string | null = null
+  for (const u of s.upcoming) {
+    const start = Date.parse(u.startsAt)
+    const end = start + u.lengthSeconds * 1000
+    if (start <= now && now < end) on ??= { endsAt: new Date(end).toISOString() }
+    else if (start > now) next ??= u.startsAt
+  }
+  return { on, next }
+}
+
+export function showControlMessage(control: ShowControl, title: string | null): string {
+  const name = title || 'Untitled showing'
+  if (control === 'delay') return `${name}: the next show starts ${DELAY_STEP_MINUTES} minutes later.`
+  if (control === 'end') return `${name}: ended. The screen goes back to its holding image.`
+  return `${name}: playing now for everyone in the scene.`
 }

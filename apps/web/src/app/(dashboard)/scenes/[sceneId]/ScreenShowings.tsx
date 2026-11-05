@@ -5,8 +5,8 @@ import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { formatRunTime, localDate, timezoneOptions, viewerTimezone } from '@/lib/preset-schedules'
 import { formatDuration } from '@/lib/format'
 import {
-  copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyTargets, copyToDaysBodies, nextWeekBodies, describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
-  type Showing, type ShowingForm, type ShowingFormItem,
+  DELAY_STEP_MINUTES, showControlMessage, showNow, copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyTargets, copyToDaysBodies, nextWeekBodies, describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
+  type ShowControl, type Showing, type ShowingForm, type ShowingFormItem,
 } from '@/lib/showings'
 
 type Api = ReturnType<typeof useApi>
@@ -121,6 +121,11 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
   const copyToDays = (s: Showing, days: number[]) => createAll(copyToDaysBodies(s, days), () => setCopyingDays(null))
   const nextWeek = nextWeekBodies(showings ?? [], localDate())
   const copyWeek = () => createAll(nextWeek, () => {})
+  const control = (s: Showing, c: ShowControl) => run(async () => {
+    await api.controlShowing(s.id, c, c === 'delay' ? DELAY_STEP_MINUTES : undefined)
+    setNotice(showControlMessage(c, s.title))
+    load()
+  })
   const toggle = (s: Showing) => run(async () => { await api.updateShowing(s.id, { enabled: !s.enabled }); load() })
   const remove = (s: Showing) => run(async () => {
     await api.deleteShowing(s.id)
@@ -161,7 +166,21 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
               </div>
               <p className="text-xs text-gray-400">{describeShowing(s)}</p>
               <p className="text-xs text-gray-500">{s.items.map((i) => `${name(i.url)}${i.kind === 'ad' ? ' (ad)' : ''}`).join(' → ')}</p>
-              {s.enabled && s.nextStarts[0] && <p className="text-xs text-gray-500">Next: {formatRunTime(s.nextStarts[0], s.timezone, viewerTz)}</p>}
+              {(() => {
+                const live = showNow(s, Date.now())
+                const next = s.upcoming ? live.next : s.nextStarts[0]
+                if (!s.enabled) return null
+                return (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                    {live.on && <span className="text-green-400">On now, until {formatRunTime(live.on.endsAt, s.timezone, viewerTz)}</span>}
+                    {next && <span>Next: {formatRunTime(next, s.timezone, viewerTz)}</span>}
+                    {s.upcoming && (live.on
+                      ? <button type="button" className={BTN} disabled={busy} onClick={() => control(s, 'end')}>End now</button>
+                      : <button type="button" className={BTN} disabled={busy} onClick={() => control(s, 'play-now')}>Play now</button>)}
+                    {s.upcoming && next && <button type="button" className={BTN} disabled={busy} onClick={() => control(s, 'delay')}>Delay next {DELAY_STEP_MINUTES} min</button>}
+                  </div>
+                )
+              })()}
               {copyingDays?.showingId === s.id && (
                 <div className="mt-2 space-y-2 text-xs text-gray-300">
                   <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Copy to days">

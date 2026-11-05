@@ -344,6 +344,9 @@ export function useApi() {
     updateShowing: (showingId: string, body: Record<string, unknown>) =>
       apiFetch<{ showing: import('./showings').Showing }>(`/api/showings/${showingId}`, { method: 'PATCH', body: JSON.stringify(body) }),
     deleteShowing: (showingId: string) => apiFetch<void>(`/api/showings/${showingId}`, { method: 'DELETE' }),
+    /** Host controls for single shows: delay the next by `minutes`, end the one on now, or play the programme now. */
+    controlShowing: (showingId: string, control: 'delay' | 'end' | 'play-now', minutes?: number) =>
+      apiFetch<{ showing: import('./showings').Showing }>(`/api/showings/${showingId}/${control}`, { method: 'POST', body: JSON.stringify(control === 'delay' ? { minutes } : {}) }),
     /** Scheduled presets (LIV-86). */
     getPresetSchedules: (sceneId: string) =>
       apiFetch<{ schedules: import('./preset-schedules').PresetSchedule[]; runs: import('./preset-schedules').ScheduleRun[]; status: import('./preset-schedules').LiveStatus; week: import('./preset-schedules').WeekOccurrence[] }>(`/api/scenes/${sceneId}/preset-schedules`),
