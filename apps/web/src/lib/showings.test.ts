@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { showNow, showControlMessage, copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyToDaysBodies, nextWeekBodies, thisWeek, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
+import { eventChoices, followsEventLabel, showNow, showControlMessage, copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyToDaysBodies, nextWeekBodies, thisWeek, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
 
 const form = (extra: Partial<ShowingForm> = {}): ShowingForm => ({
   title: ' Night of the Living Dead ', description: '', posterUrl: '',
   items: [{ url: 'https://cdn/reel.mp4', kind: 'ad', length: '10:00' }, { url: 'https://cdn/film.mp4', kind: 'video', length: '' }],
-  recurrence: 'weekly', weekdays: [5, 1], startDate: '2026-11-06', startTime: '19:00', timezone: 'America/New_York', enabled: true, ...extra,
+  recurrence: 'weekly', weekdays: [5, 1], startDate: '2026-11-06', startTime: '19:00', timezone: 'America/New_York', enabled: true, eventId: '', ...extra,
 })
 
 describe('parseLength', () => {
@@ -27,7 +27,7 @@ describe('formToShowingBody', () => {
     expect(formToShowingBody(form())).toEqual({
       title: 'Night of the Living Dead', description: null, posterUrl: null,
       items: [{ url: 'https://cdn/reel.mp4', kind: 'ad', duration: 600 }, { url: 'https://cdn/film.mp4', kind: 'video' }],
-      recurrence: 'weekly', weekdays: [1, 5], startDate: '2026-11-06', startTime: '19:00', timezone: 'America/New_York', enabled: true,
+      recurrence: 'weekly', weekdays: [1, 5], startDate: '2026-11-06', startTime: '19:00', timezone: 'America/New_York', enabled: true, eventId: null,
     })
   })
   it('drops weekdays unless weekly', () => {
@@ -217,5 +217,32 @@ describe('host controls', () => {
     expect(showControlMessage('delay', 'Matinee')).toBe('Matinee: the next show starts 5 minutes later.')
     expect(showControlMessage('end', null)).toBe('Untitled showing: ended. The screen goes back to its holding image.')
     expect(showControlMessage('play-now', 'Matinee')).toBe('Matinee: playing now for everyone in the scene.')
+  })
+})
+
+describe('showings that follow an event', () => {
+  const premiere = { id: 'ev1', name: 'Premiere', startTime: '2030-07-05T19:00:00.000Z', timezone: 'Europe/London' }
+  const undated = { id: 'ev2', name: 'Someday', startTime: null, timezone: null }
+
+  it('sends the chosen event, or none', () => {
+    expect(formToShowingBody(form({ eventId: 'ev1' })).eventId).toBe('ev1')
+    expect(formToShowingBody(form()).eventId).toBeNull()
+  })
+  it('a duplicate stands on its own (following the event it would start with the original)', () => {
+    const s = { id: 's1', elementId: 'e', title: 'Film', description: null, posterUrl: null, items: [{ url: 'u', kind: 'video' as const, duration: 3600 }],
+      recurrence: 'once' as const, startDate: '2030-07-05', startTime: '20:00', weekdays: [], timezone: 'Europe/London', enabled: true, lengthSeconds: 3600, nextStarts: [], eventId: 'ev1' }
+    expect(showingToForm(s).eventId).toBe('ev1')
+    expect(duplicateShowingForm(s)).toMatchObject({ eventId: '', startTime: '21:00' })
+  })
+  it('offers the scene\'s events; one with no start time cannot be chosen yet', () => {
+    expect(eventChoices([premiere, undated])).toEqual([
+      { id: 'ev1', label: 'Premiere', disabled: false },
+      { id: 'ev2', label: 'Someday (no start time yet)', disabled: true },
+    ])
+  })
+  it('names the event a showing follows', () => {
+    expect(followsEventLabel({ eventId: 'ev1' }, [premiere])).toBe('Follows Premiere')
+    expect(followsEventLabel({ eventId: 'gone' }, [premiere])).toBe('Follows its event')
+    expect(followsEventLabel({ eventId: null }, [premiere])).toBeNull()
   })
 })

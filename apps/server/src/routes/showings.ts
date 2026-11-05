@@ -7,9 +7,8 @@ import { actorFromClaims } from '../auth/actor.js'
 import { canWriteElement, getSceneAccess } from '../auth/permissions.js'
 import { utcToZoned } from '../scenes/schedule-time.js'
 import { fromElement, fromShowing } from '../auth/scene-from.js'
-import { publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
 import {
-  findShowingClash, parseShowingInput, planDelay, planEnd, planPlayNow, presentShowing, resolveItems, screenClash, ShowingError, specOfShowing,
+  findShowingClash, parseShowingInput, publishShowingsChanged, sceneEventsForShowings, withEventTimes, planDelay, planEnd, planPlayNow, presentShowing, resolveItems, screenClash, ShowingError, specOfShowing,
   type ShowingAdjustment, type ShowingRow,
 } from '../scenes/showings.js'
 
@@ -48,8 +47,9 @@ export default async function showingRoutes(app: FastifyInstance) {
   }
 
   /** Lengths resolved, then no overlap with the screen's other enabled showings. */
-  async function prepare(elementId: string, body: Record<string, unknown>, base: ShowingRow | undefined, tx: Tx) {
-    const input = parseShowingInput(body, base)
+  async function prepare(sceneId: string, elementId: string, body: Record<string, unknown>, base: ShowingRow | undefined, tx: Tx) {
+    // A showing following an event takes the event's start, whatever times were sent
+    const input = parseShowingInput(await withEventTimes(sceneId, body, base), base)
     const items = await resolveItems(input.items)
     const values = { ...input, items }
     if (values.enabled) {
@@ -72,10 +72,7 @@ export default async function showingRoutes(app: FastifyInstance) {
     })
 
   /** Players in the scene get the screen's new showings (after the write). Never fails the request. */
-  const changed = async (sceneId: string, elementId: string) => {
-    await publishVenueEvent({ type: 'showings_changed', sceneId, elementId }).catch((err) => console.error('[showings] publish failed:', err))
-    await publishSceneTouched(sceneId) // wakes the Hyperfy feed's held polls; never throws
-  }
+  const changed = publishShowingsChanged
 
   const fail = (reply: FastifyReply, e: unknown) => {
     if (e instanceof ShowingError) return reply.status(e.status).send({ error: e.code, message: e.message, ...e.extra })
@@ -89,7 +86,8 @@ export default async function showingRoutes(app: FastifyInstance) {
     if (!screen) return reply
     const rows = await db.select().from(screenShowings).where(eq(screenShowings.elementId, screen.id)).orderBy(asc(screenShowings.createdAt))
     const now = new Date()
-    return reply.send({ showings: rows.map((r) => presentShowing(r, now)) })
+    // The scene's events, which a showing can follow (the dashboard's picker)
+    return reply.send({ showings: rows.map((r) => presentShowing(r, now)), events: await sceneEventsForShowings(screen.preset.sceneId) })
   })
 
   app.post<{ Params: { elementId: string } }>('/api/elements/:elementId/showings', async (request, reply) => {
@@ -97,7 +95,7 @@ export default async function showingRoutes(app: FastifyInstance) {
     if (!screen) return reply
     try {
       const row = await locked(screen.id, async (tx) => {
-        const values = await prepare(screen.id, (request.body ?? {}) as Record<string, unknown>, undefined, tx)
+        const values = await prepare(screen.preset.sceneId, screen.id, (request.body ?? {}) as Record<string, unknown>, undefined, tx)
         return (await tx.insert(screenShowings).values({ ...values, sceneId: screen.preset.sceneId, elementId: screen.id, createdBy: request.user.id }).returning())[0]
       })
       await changed(screen.preset.sceneId, screen.id)
@@ -115,7 +113,7 @@ export default async function showingRoutes(app: FastifyInstance) {
         // Re-read under the lock: an edit sent at the same moment may have changed it
         const current = await tx.query.screenShowings.findFirst({ where: eq(screenShowings.id, row.id) })
         if (!current) throw new ShowingError(404, 'not_found', 'Showing not found')
-        const values = await prepare(row.elementId, (request.body ?? {}) as Record<string, unknown>, current, tx)
+        const values = await prepare(row.sceneId, row.elementId, (request.body ?? {}) as Record<string, unknown>, current, tx)
         return (await tx.update(screenShowings).set({ ...values, updatedAt: new Date() }).where(eq(screenShowings.id, row.id)).returning())[0]
       })
       await changed(row.sceneId, row.elementId)

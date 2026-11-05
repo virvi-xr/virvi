@@ -22,7 +22,12 @@ export interface Showing {
   nextStarts: string[]
   /** Shows on now or coming up, as players see them (hosts' delays, early ends and plays applied). */
   upcoming?: Array<{ startsAt: string; lengthSeconds: number }>
+  /** Set: plays once at this event's start, and moves with it (the times are the event's). */
+  eventId?: string | null
 }
+
+/** An event linked to the scene, which a showing can follow. */
+export interface ShowingEvent { id: string; name: string; startTime: string | null; timezone: string | null }
 
 export interface ShowingFormItem {
   url: string
@@ -42,6 +47,8 @@ export interface ShowingForm {
   startTime: string
   timezone: string
   enabled: boolean
+  /** The event it follows, or '' for its own times. */
+  eventId: string
 }
 
 /** Seconds from "1:30:00", "12:34" or "90" (minutes); null for blank or unreadable. */
@@ -81,6 +88,7 @@ export function formToShowingBody(f: ShowingForm) {
     startTime: f.startTime,
     timezone: f.timezone,
     enabled: f.enabled,
+    eventId: f.eventId || null,
   }
 }
 
@@ -89,6 +97,7 @@ export function showingToForm(s: Showing): ShowingForm {
     title: s.title ?? '', description: s.description ?? '', posterUrl: s.posterUrl ?? '',
     items: s.items.map((i) => ({ url: i.url, kind: i.kind, length: Math.round(i.duration) >= 1 ? formatDuration(i.duration) ?? '' : '' })),
     recurrence: s.recurrence, weekdays: s.weekdays, startDate: s.startDate, startTime: s.startTime, timezone: s.timezone, enabled: s.enabled,
+    eventId: s.eventId ?? '',
   }
 }
 
@@ -125,7 +134,8 @@ const pad = (n: number) => String(n).padStart(2, '0')
  * never clashes with the original. Past midnight, a one-off moves to the next day and weekly days move on one.
  */
 export function duplicateShowingForm(s: Showing): ShowingForm {
-  const form = showingToForm(s)
+  // Its own times: following the event, it would start with the original
+  const form = { ...showingToForm(s), eventId: '' }
   const [h, m] = s.startTime.split(':').map(Number)
   const end = h * 60 + m + Math.ceil(programmeLength(s.items) / 60)
   const start = Math.ceil(end / 5) * 5
@@ -249,4 +259,16 @@ export function showControlMessage(control: ShowControl, title: string | null): 
   if (control === 'delay') return `${name}: the next show starts ${DELAY_STEP_MINUTES} minutes later.`
   if (control === 'end') return `${name}: ended. The screen goes back to its holding image.`
   return `${name}: playing now for everyone in the scene.`
+}
+
+/** The scene's events for the showing form; one with no start time can't be followed yet. */
+export function eventChoices(events: ShowingEvent[]): Array<{ id: string; label: string; disabled: boolean }> {
+  return events.map((e) => ({ id: e.id, label: e.startTime ? e.name : `${e.name} (no start time yet)`, disabled: !e.startTime }))
+}
+
+/** "Follows Premiere" for a showing that follows an event, else null. */
+export function followsEventLabel(s: Pick<Showing, 'eventId'>, events: ShowingEvent[]): string | null {
+  if (!s.eventId) return null
+  const e = events.find((x) => x.id === s.eventId)
+  return e ? `Follows ${e.name}` : 'Follows its event'
 }

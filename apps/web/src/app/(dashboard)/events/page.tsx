@@ -1,5 +1,5 @@
 'use client'
-import { eventPresetLabel, eventPresetsFor, type EventPresetSchedule, type ScenePresetOption } from '@/lib/event-presets'
+import { eventPresetLabel, eventPresetsFor, eventShowingLabel, eventShowingsFor, type EventPresetSchedule, type EventShowing, type ScenePresetOption } from '@/lib/event-presets'
 import { presetDisplayName } from '@/lib/presets'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -261,7 +261,7 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
 
   const [event, setEvent] = useState<any>(null)
 
-  const [eventPresets, setEventPresets] = useState<{ eventId: string; schedules: EventPresetSchedule[]; presets: ScenePresetOption[] }>({ eventId, schedules: [], presets: [] })
+  const [eventPresets, setEventPresets] = useState<{ eventId: string; schedules: EventPresetSchedule[]; presets: ScenePresetOption[]; showings: EventShowing[] }>({ eventId, schedules: [], presets: [], showings: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -296,9 +296,9 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
   async function loadEvent() {
     setLoading(true)
     try {
-      const { event: ev, presetSchedules, scenePresets } = await api.getEvent(eventId)
+      const { event: ev, presetSchedules, scenePresets, showings } = await api.getEvent(eventId)
       setEvent(ev)
-      setEventPresets({ eventId, schedules: presetSchedules ?? [], presets: scenePresets ?? [] })
+      setEventPresets({ eventId, schedules: presetSchedules ?? [], presets: scenePresets ?? [], showings: showings ?? [] })
       setEditName(ev.name)
       setEditDesc(ev.description || '')
       setEditStart(ev.startTime ? toLocalInput(ev.startTime) : '')
@@ -484,6 +484,7 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
                   </button>
                 </div>
                 <EventPresets sceneId={link.sceneId} data={eventPresets} onChanged={loadEvent} />
+                <EventShowings sceneId={link.sceneId} showings={eventPresets.showings} />
               </li>
             ))}
           </ul>
@@ -591,6 +592,22 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/** Scheduled showings that play when this event starts in one linked scene (LIV-87); they're set up on the scene's screens. */
+function EventShowings({ sceneId, showings }: { sceneId: string; showings: EventShowing[] }) {
+  const mine = eventShowingsFor(sceneId, showings)
+  if (mine.length === 0) return null
+  return (
+    <div className="mt-2 space-y-1 border-t border-gray-700 pt-2 text-xs text-gray-300">
+      {mine.map((s) => (
+        <div key={s.id} className="flex items-center justify-between">
+          <span>Showing when this event starts: {eventShowingLabel(s)}</span>
+          <Link href={`/scenes/${sceneId}`} className="text-gray-400 hover:text-white">Edit on the scene</Link>
+        </div>
+      ))}
     </div>
   )
 }

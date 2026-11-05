@@ -1,8 +1,9 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { programmeLength, type ProgrammeItem, type ShowingInstance } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { mediaAssets, screenShowings } from '../db/schema.js'
-import { nextStarts, occurrencesBetween, zonedToUtc, type ScheduleSpec } from './schedule-time.js'
+import { events, eventSceneLinks, mediaAssets, sceneElements, screenShowings } from '../db/schema.js'
+import { publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
+import { isTimeZone, nextStarts, occurrencesBetween, utcToZoned, zonedToUtc, type ScheduleSpec } from './schedule-time.js'
 import { parseWhen, type WhenFields } from './preset-schedules.js'
 
 /**
@@ -36,6 +37,7 @@ export interface ShowingSpec {
   posterUrl?: string
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DAY = 86_400_000
 /** How far ahead overlaps are checked: a year and a week covers every weekday against every daylight-saving season. */
 export const OVERLAP_HORIZON_DAYS = 371
@@ -199,6 +201,8 @@ export interface ShowingInput {
   weekdays: number[]
   timezone: string
   enabled: boolean
+  /** Set: times come from this event (withEventTimes). */
+  eventId: string | null
 }
 
 export const MAX_ITEMS = 50
@@ -232,6 +236,8 @@ export function parseShowingInput(body: Record<string, unknown>, base?: ShowingR
   const description = optText(pick('description'), 2000, 'The description', bad)
   const posterUrl = pick('posterUrl') ?? null
   if (posterUrl !== null && !httpUrl(posterUrl)) throw bad('The poster must be a web address.')
+  const eventId = pick('eventId') ?? null
+  if (eventId !== null && (typeof eventId !== 'string' || !UUID_RE.test(eventId))) throw bad('Choose an event.')
   const enabled = pick('enabled') ?? true
   if (typeof enabled !== 'boolean') throw bad('enabled must be true or false.')
   const raw = pick('items')
@@ -247,7 +253,7 @@ export function parseShowingInput(body: Record<string, unknown>, base?: ShowingR
     return { url: o.url, kind: kind as 'video' | 'ad', duration: d as number | null }
   })
   if (items[items.length - 1].kind === 'ad') throw bad('Ads play before the feature, never after it: end the showing with a video.')
-  return { title, description, posterUrl: posterUrl as string | null, items, enabled, ...when }
+  return { title, description, posterUrl: posterUrl as string | null, items, enabled, eventId: eventId as string | null, ...when }
 }
 
 /**
@@ -308,6 +314,84 @@ export function presentShowing(row: ShowingRow, now: Date) {
       .slice(0, 3)
       .map((i) => ({ startsAt: new Date(i.startsAt).toISOString(), lengthSeconds: programmeLength(i.items) })),
   }
+}
+
+// ── Showings that follow an event ───────────────────────────────────────────
+
+type EventTimes = Pick<typeof events.$inferSelect, 'startTime' | 'timezone'>
+type WhenOf = Pick<ShowingInput, 'recurrence' | 'startDate' | 'startTime' | 'weekdays' | 'timezone'>
+
+/** One show at the event's start, in the event's timezone; null when the event has no start. */
+export function eventShowTimes(e: EventTimes): WhenOf | null {
+  if (!e.startTime) return null
+  const timezone = e.timezone && isTimeZone(e.timezone) ? e.timezone : 'UTC'
+  const { date, time } = utcToZoned(e.startTime, timezone)
+  return { recurrence: 'once', startDate: date, startTime: time, weekdays: [], timezone }
+}
+
+/**
+ * The body with its times taken from its event (sent, or the showing's own), which must be linked to the scene.
+ * Throws ShowingError(400). A body without an event comes back as it was.
+ */
+export async function withEventTimes(sceneId: string, body: Record<string, unknown>, base?: ShowingRow): Promise<Record<string, unknown>> {
+  const eventId = body.eventId !== undefined ? body.eventId : base?.eventId ?? null
+  if (eventId === null) return body
+  const bad = (message: string) => new ShowingError(400, 'bad_showing', message)
+  if (typeof eventId !== 'string' || !UUID_RE.test(eventId)) throw bad('Choose an event.')
+  const [link] = await db.select({ e: events }).from(eventSceneLinks).innerJoin(events, eq(eventSceneLinks.eventId, events.id))
+    .where(and(eq(eventSceneLinks.sceneId, sceneId), eq(eventSceneLinks.eventId, eventId)))
+  if (!link) throw bad('Link the event to this scene first.')
+  const times = eventShowTimes(link.e)
+  if (!times) throw bad('The event needs a start time.')
+  return { ...body, ...times }
+}
+
+/** Players in the scene get the screen's new showings (after the write). Never throws. */
+export async function publishShowingsChanged(sceneId: string, elementId: string): Promise<void> {
+  await publishVenueEvent({ type: 'showings_changed', sceneId, elementId }).catch((err) => console.error('[showings] publish failed:', err))
+  await publishSceneTouched(sceneId) // wakes the Hyperfy feed's held polls; never throws
+}
+
+/**
+ * After an event's times change, its showings move with it (hosts' changes to the old show are dropped). One whose event
+ * has no start is paused, and resumes when it gets one. Clashes aren't re-checked: the event's time is the host's choice.
+ */
+export async function syncEventShowings(eventId: string): Promise<void> {
+  const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
+  if (!event) return
+  const times = eventShowTimes(event)
+  const rows = await db.select().from(screenShowings).where(eq(screenShowings.eventId, eventId))
+  for (const s of rows) {
+    const moved = !times || s.startDate !== times.startDate || s.startTime !== times.startTime || s.timezone !== times.timezone
+    const set = times ? { ...times, enabled: true } : { enabled: false }
+    await db.update(screenShowings).set({ ...set, ...(moved ? { adjustments: [] } : {}), updatedAt: new Date() }).where(eq(screenShowings.id, s.id))
+    await publishShowingsChanged(s.sceneId, s.elementId)
+  }
+}
+
+/** The event no longer runs at these scenes (unlinked, or deleted: all of them): its showings there pause, keeping their programmes. */
+export async function releaseEventShowings(eventId: string, sceneId?: string): Promise<void> {
+  const rows = await db.update(screenShowings).set({ eventId: null, enabled: false, updatedAt: new Date() })
+    .where(and(eq(screenShowings.eventId, eventId), sceneId ? eq(screenShowings.sceneId, sceneId) : undefined))
+    .returning({ sceneId: screenShowings.sceneId, elementId: screenShowings.elementId })
+  for (const r of rows) await publishShowingsChanged(r.sceneId, r.elementId)
+}
+
+/** The showings following an event, with their screens' names, for the event page. */
+export async function eventShowings(eventId: string) {
+  return db.select({
+    id: screenShowings.id, sceneId: screenShowings.sceneId, elementId: screenShowings.elementId,
+    screenName: sceneElements.name, title: screenShowings.title, enabled: screenShowings.enabled,
+  }).from(screenShowings).innerJoin(sceneElements, eq(screenShowings.elementId, sceneElements.id))
+    .where(eq(screenShowings.eventId, eventId)).orderBy(screenShowings.createdAt)
+}
+
+/** The events linked to a scene, which its showings can follow. */
+export async function sceneEventsForShowings(sceneId: string) {
+  const rows = await db.select({ id: events.id, name: events.name, startTime: events.startTime, timezone: events.timezone })
+    .from(eventSceneLinks).innerJoin(events, eq(eventSceneLinks.eventId, events.id))
+    .where(eq(eventSceneLinks.sceneId, sceneId)).orderBy(events.startTime)
+  return rows.map((r) => ({ ...r, startTime: r.startTime ? r.startTime.toISOString() : null }))
 }
 
 // ── Delivery to in-world players ────────────────────────────────────────────

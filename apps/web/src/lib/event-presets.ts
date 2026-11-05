@@ -14,3 +14,16 @@ export function eventPresetsFor(sceneId: string, schedules: EventPresetSchedule[
 export function eventPresetLabel(s: Pick<EventPresetSchedule, 'presetName' | 'enabled'>, name: (n: string) => string = (n) => n): string {
   return s.enabled ? name(s.presetName) : `${name(s.presetName)} (paused: the event needs a start and an end time)`
 }
+
+/** A scheduled showing that plays when the event starts (LIV-87), as GET /api/events/:id lists it. */
+export interface EventShowing { id: string; sceneId: string; elementId: string; screenName: string | null; title: string | null; enabled: boolean }
+
+export function eventShowingsFor(sceneId: string, showings: EventShowing[] = []): EventShowing[] {
+  return showings.filter((s) => s.sceneId === sceneId)
+}
+
+/** "Film on Big screen", or "… (paused: the event needs a start time)". */
+export function eventShowingLabel(s: EventShowing): string {
+  const label = `${s.title || 'Untitled showing'} on ${s.screenName || 'Video screen'}`
+  return s.enabled ? label : `${label} (paused: the event needs a start time)`
+}

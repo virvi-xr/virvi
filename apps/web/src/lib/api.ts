@@ -338,7 +338,7 @@ export function useApi() {
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Scheduled showings on a video screen (LIV-87). */
-    getShowings: (elementId: string) => apiFetch<{ showings: import('./showings').Showing[] }>(`/api/elements/${elementId}/showings`),
+    getShowings: (elementId: string) => apiFetch<{ showings: import('./showings').Showing[]; events?: import('./showings').ShowingEvent[] }>(`/api/elements/${elementId}/showings`),
     createShowing: (elementId: string, body: Record<string, unknown>) =>
       apiFetch<{ showing: import('./showings').Showing }>(`/api/elements/${elementId}/showings`, { method: 'POST', body: JSON.stringify(body) }),
     updateShowing: (showingId: string, body: Record<string, unknown>) =>
@@ -749,7 +749,7 @@ export function useApi() {
 
     // Events
     getEvents: () => apiFetch<{ events: any[] }>('/api/events'),
-    getEvent: (id: string) => apiFetch<{ event: any; presetSchedules?: import('./event-presets').EventPresetSchedule[]; scenePresets?: import('./event-presets').ScenePresetOption[] }>(`/api/events/${id}`),
+    getEvent: (id: string) => apiFetch<{ event: any; presetSchedules?: import('./event-presets').EventPresetSchedule[]; scenePresets?: import('./event-presets').ScenePresetOption[]; showings?: import('./event-presets').EventShowing[] }>(`/api/events/${id}`),
     createEvent: (data: { name: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>
       apiFetch<{ event: any }>('/api/events', { method: 'POST', body: JSON.stringify(data) }),
     updateEvent: (id: string, data: { name?: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>

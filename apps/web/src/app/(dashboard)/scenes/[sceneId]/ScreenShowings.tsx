@@ -5,8 +5,8 @@ import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { formatRunTime, localDate, timezoneOptions, viewerTimezone } from '@/lib/preset-schedules'
 import { formatDuration } from '@/lib/format'
 import {
-  DELAY_STEP_MINUTES, showControlMessage, showNow, copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyTargets, copyToDaysBodies, nextWeekBodies, describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
-  type ShowControl, type Showing, type ShowingForm, type ShowingFormItem,
+  DELAY_STEP_MINUTES, eventChoices, followsEventLabel, showControlMessage, showNow, copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyTargets, copyToDaysBodies, nextWeekBodies, describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
+  type ShowControl, type Showing, type ShowingEvent, type ShowingForm, type ShowingFormItem,
 } from '@/lib/showings'
 
 type Api = ReturnType<typeof useApi>
@@ -27,9 +27,11 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
   const viewerTz = viewerTimezone()
   const blank = (): ShowingForm => ({
     title: '', description: '', posterUrl: '', items: [], recurrence: 'weekly', weekdays: [new Date().getDay()],
-    startDate: localDate(), startTime: '19:00', timezone: viewerTz, enabled: true,
+    startDate: localDate(), startTime: '19:00', timezone: viewerTz, enabled: true, eventId: '',
   })
   const [showings, setShowings] = useState<Showing[] | null>(null)
+  /** The scene's events, which a showing can follow. */
+  const [events, setEvents] = useState<ShowingEvent[]>([])
   const [form, setForm] = useState<ShowingForm | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   /** The showing the open form was duplicated from, for the hint above it. */
@@ -51,7 +53,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
 
   const load = useCallback(() => {
     api.getShowings(elementId)
-      .then((r) => setShowings(r.showings))
+      .then((r) => { setShowings(r.showings); setEvents(r.events ?? []) })
       .catch((e: any) => { setShowings([]); setError(e?.status === 403 ? 'You need permission to edit this screen\'s playlist to schedule showings.' : e?.message || 'Could not load showings') })
   }, [api, elementId])
   useEffect(() => { load() }, [load])
@@ -164,7 +166,12 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
                   <button type="button" className={`${BTN} text-red-400`} disabled={busy} onClick={() => remove(s)}>Delete</button>
                 </span>
               </div>
-              <p className="text-xs text-gray-400">{describeShowing(s)}</p>
+              <p className="text-xs text-gray-400">
+                {describeShowing(s)}
+                {followsEventLabel(s, events) && (
+                  <span className="ml-2 rounded bg-blue-900/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-blue-300" title="Change the time on the event's page">{followsEventLabel(s, events)}</span>
+                )}
+              </p>
               <p className="text-xs text-gray-500">{s.items.map((i) => `${name(i.url)}${i.kind === 'ad' ? ' (ad)' : ''}`).join(' → ')}</p>
               {(() => {
                 const live = showNow(s, Date.now())
@@ -226,15 +233,28 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
             <label className="flex items-center gap-2">Title
               <input className={`${INPUT} w-64`} value={form.title} maxLength={200} onChange={(e) => set('title', e.target.value)} placeholder="Night of the Living Dead" />
             </label>
-            <label className="flex items-center gap-2">Repeat
-              <select className={INPUT} value={form.recurrence} onChange={(e) => set('recurrence', e.target.value as ShowingForm['recurrence'])}>
-                <option value="once">Once</option>
-                <option value="daily">Every day</option>
-                <option value="weekly">On chosen days</option>
-              </select>
-            </label>
+            {events.length > 0 && (
+              <label className="flex items-center gap-2">Plays
+                <select className={INPUT} value={form.eventId} onChange={(e) => set('eventId', e.target.value)}>
+                  <option value="">At its own times</option>
+                  {eventChoices(events).map((e) => <option key={e.id} value={e.id} disabled={e.disabled}>When {e.label} starts</option>)}
+                </select>
+              </label>
+            )}
+            {!form.eventId && (
+              <label className="flex items-center gap-2">Repeat
+                <select className={INPUT} value={form.recurrence} onChange={(e) => set('recurrence', e.target.value as ShowingForm['recurrence'])}>
+                  <option value="once">Once</option>
+                  <option value="daily">Every day</option>
+                  <option value="weekly">On chosen days</option>
+                </select>
+              </label>
+            )}
           </div>
-          {form.recurrence === 'weekly' && (
+          {form.eventId && (
+            <p className="text-xs text-gray-400">Plays once when the event starts, in the event's timezone, and moves when the event does. Change the time on the event's page.</p>
+          )}
+          {!form.eventId && form.recurrence === 'weekly' && (
             <div className="flex flex-wrap gap-1" role="group" aria-label="Days">
               {WEEKDAYS.map((d, i) => {
                 const on = form.weekdays.includes(i)
@@ -246,7 +266,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
               })}
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-3 text-sm text-gray-300">
+          {!form.eventId && <div className="flex flex-wrap items-center gap-3 text-sm text-gray-300">
             <label className="flex items-center gap-2">{form.recurrence === 'once' ? 'Date' : 'From'}
               <input type="date" className={INPUT} value={form.startDate} onChange={(e) => set('startDate', e.target.value)} required />
             </label>
@@ -258,7 +278,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
                 {timezoneOptions(form.timezone).map((tz) => <option key={tz} value={tz}>{tz}</option>)}
               </select>
             </label>
-          </div>
+          </div>}
 
           <div className="space-y-1">
             <span className="text-xs text-gray-500">Programme, played in order. Mark trailers and ads as ads; they play before the feature, never after it.</span>
