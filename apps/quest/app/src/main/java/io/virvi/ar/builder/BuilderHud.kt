@@ -143,6 +143,7 @@ fun BuilderHud(
     actions: BuilderHudActions,
     assets: @Composable () -> Unit = {},
     roomScan: @Composable () -> Unit = {},
+    stream: @Composable () -> Unit = {},
 ) {
   MaterialTheme(colorScheme = darkColorScheme()) {
     Column(
@@ -155,6 +156,8 @@ fun BuilderHud(
       TabRow(selectedTabIndex = model.tab.ordinal) {
         Tab(model.tab == HudTab.LAYOUT, onClick = { actions.selectTab(HudTab.LAYOUT) }, text = { Text("Layout") })
         Tab(model.tab == HudTab.ASSETS, onClick = { actions.selectTab(HudTab.ASSETS) }, text = { Text("Assets") })
+        // Personal headsets only ([BuilderHudModel.canStream])
+        if (model.canStream) Tab(model.tab == HudTab.STREAM, onClick = { actions.selectTab(HudTab.STREAM) }, text = { Text("Stream") })
       }
       Box(Modifier.weight(1f).fillMaxWidth()) {
         when (model.tab) {
@@ -165,6 +168,7 @@ fun BuilderHud(
                 Box(Modifier.weight(1f).fillMaxWidth()) { LayoutList(model.rows, actions) }
               }
           HudTab.ASSETS -> assets()
+          HudTab.STREAM -> stream()
         }
       }
       model.bar?.let { PickedBar(it, actions) }

@@ -112,6 +112,18 @@ class BuilderApi(private val api: ArApi, private val auth: DeviceAuth) {
         }
       }
 
+  /** `GET /api/scenes/:sceneId/streams`: the streams a screen can play (never a stream key). Personal headsets only. */
+  suspend fun streams(spaceId: String, sceneId: String): BuilderCall<JsonObject> =
+      call(spaceId, "GET", "/api/scenes/${enc(sceneId)}/streams", null, ::obj)
+
+  /** `PUT /api/elements/:id { properties }`: replaces the element's properties whole. */
+  suspend fun putProperties(spaceId: String, elementId: String, properties: JsonObject): BuilderCall<Unit> =
+      call(spaceId, "PUT", "/api/elements/${enc(elementId)}", buildJsonObject { put("properties", properties) }) { Unit }
+
+  /** `POST /api/elements/:id/live { enabled }`: turns a screen's live stream on or off. Personal headsets only. */
+  suspend fun setLive(spaceId: String, elementId: String, on: Boolean): BuilderCall<Unit> =
+      call(spaceId, "POST", "/api/elements/${enc(elementId)}/live", buildJsonObject { put("enabled", on) }) { Unit }
+
   /** `GET /api/scenes/:sceneId/library`: the models and images the builder can place. */
   suspend fun library(spaceId: String, sceneId: String): BuilderCall<JsonObject> =
       call(spaceId, "GET", "/api/scenes/${enc(sceneId)}/library", null, ::obj)

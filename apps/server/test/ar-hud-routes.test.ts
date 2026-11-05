@@ -61,6 +61,8 @@ describe('the in-world HUD routes take a headset pass', () => {
     ['GET publish-status', 'GET', (i) => `/api/scenes/${i.sceneId}/dcl/publish-status`, undefined, 200],
     ['POST element live', 'POST', (i) => `/api/elements/${i.elementId}/live`, () => ({ enabled: true }), 200],
     ['PUT scene', 'PUT', (i) => `/api/scenes/${i.sceneId}`, () => ({ name: 'Renamed' }), 200],
+    // The streams a screen can play (LIV-53): the headset's Stream tab
+    ['GET scene streams', 'GET', (i) => `/api/scenes/${i.sceneId}/streams`, undefined, 200],
     ['GET scene', 'GET', (i) => `/api/scenes/${i.sceneId}`, undefined, 200],
   ]
 
@@ -82,7 +84,7 @@ describe('the in-world HUD routes take a headset pass', () => {
   })
 
   // The routes this branch opened to a headset need a personal one (as room scans do); the rest keep their behaviour.
-  const PERSONAL = new Set(['PATCH library item', 'DELETE library item', 'POST upload-tokens', 'GET roles', 'POST roles', 'DELETE roles', 'GET publish-status', 'POST element live', 'PUT scene'])
+  const PERSONAL = new Set(['PATCH library item', 'DELETE library item', 'POST upload-tokens', 'GET roles', 'POST roles', 'DELETE roles', 'GET publish-status', 'POST element live', 'PUT scene', 'GET scene streams'])
   const extra: Array<[string, string, (i: Ids) => string, (() => unknown) | undefined, number]> = [
     ['GET scene events', 'GET', (i) => `/api/scenes/${i.sceneId}/events`, undefined, 200],
     ['GET scene feed', 'GET', (i) => `/api/ar/scenes/${i.sceneId}/feed`, undefined, 200],

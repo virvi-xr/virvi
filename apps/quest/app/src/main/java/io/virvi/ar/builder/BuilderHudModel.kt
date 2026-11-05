@@ -126,7 +126,7 @@ fun builderItems(scene: JsonObject?): List<BuilderItem> {
 
 // ── HUD state ──
 
-enum class HudTab { LAYOUT, ASSETS }
+enum class HudTab { LAYOUT, ASSETS, STREAM }
 
 /** A Layout row: the item's name and kind, a dot when this place has its own adjustment (with **Reset to shared**). */
 data class HudRow(val sk: String, val name: String, val kind: String, val adjusted: Boolean, val picked: Boolean, val edited: Boolean)
@@ -160,6 +160,8 @@ data class BuilderHudModel(
     val confirmingDone: Boolean,
     /** The Layout tab offers **Scan this room**: only on a personal headset (a shared one uploads to someone else's account). */
     val canScanRoom: Boolean = false,
+    /** The **Stream** tab (LIV-53, LIV-54): only on a personal headset, as the server's stream routes are. */
+    val canStream: Boolean = false,
 )
 
 fun kindLabel(element: String): String =

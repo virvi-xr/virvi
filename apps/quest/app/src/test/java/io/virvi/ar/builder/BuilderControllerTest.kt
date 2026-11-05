@@ -43,6 +43,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -207,7 +208,28 @@ class BuilderControllerTest {
     val placed = mutableListOf<Triple<String, LibraryEntry, ItemTransform>>()
 
     override suspend fun scene(sceneId: String) =
-        BuilderCall.Ok(json("""{"scene":{"id":"$sceneId","activePresetId":"pr1","presets":[{"id":"pr1","name":"Main"}]}}"""))
+        BuilderCall.Ok(
+            json(
+                """{"scene":{"id":"$sceneId","activePresetId":"pr1","presets":[{"id":"pr1","name":"Main","elements":[
+                  {"id":"v1","type":"video","name":"Big screen","properties":{"offType":1,"enableLiveStream":true,"liveSrc":"https://live/old.m3u8"}}]}]}}"""
+            )
+        )
+
+    val puts = mutableListOf<Pair<String, JsonObject>>()
+    val lives = mutableListOf<Pair<String, Boolean>>()
+
+    override suspend fun streams(sceneId: String) =
+        BuilderCall.Ok(json("""{"streams":[{"id":"s1","name":"Main Stage","hlsPlaylistUrl":"https://live/main.m3u8","live":true,"mine":false}]}"""))
+
+    override suspend fun putProperties(elementId: String, properties: JsonObject): BuilderCall<Unit> {
+      puts += elementId to properties
+      return BuilderCall.Ok(Unit)
+    }
+
+    override suspend fun setLive(elementId: String, on: Boolean): BuilderCall<Unit> {
+      lives += elementId to on
+      return BuilderCall.Ok(Unit)
+    }
 
     override suspend fun sceneSpaces(sceneId: String) = BuilderCall.Ok(listOf(SpaceName("sp-a", "Cafe"), SpaceName("sp-x", "Gallery")))
 
@@ -377,6 +399,42 @@ class BuilderControllerTest {
   @Test fun `a shared headset's HUD has no Scan this room`() {
     toBuilding(DeviceKind.SHARED)
     assertFalse(ui.hud!!.canScanRoom)
+  }
+
+  @Test fun `the Stream tab lists the screens, streams and images, and each change keeps the screen's other properties`() {
+    toBuilding(DeviceKind.PERSONAL)
+    assertTrue(ui.hud!!.canStream)
+    builder.hudActions.selectTab(HudTab.STREAM)
+    dispatcher.drain()
+    assertEquals(HudTab.STREAM, ui.hud!!.tab)
+    val st = ui.streams
+    assertEquals(listOf("Big screen"), st.screens!!.map { it.name })
+    assertEquals(listOf("Main Stage"), st.streams.map { it.name })
+    assertEquals(listOf("Flyer"), st.images.map { it.name })
+    val c = calls.getValue("sp-a")
+
+    builder.streamActions.chooseOffImage("v1", "https://x/flyer.png")
+    dispatcher.drain()
+    val (id, props) = c.puts.last()
+    assertEquals("v1", id)
+    assertEquals(JsonPrimitive("https://x/flyer.png"), props["offImageSrc"])
+    assertEquals(JsonPrimitive(1), props["offType"])
+    assertEquals(JsonPrimitive("https://live/old.m3u8"), props["liveSrc"])
+
+    builder.streamActions.chooseStream("v1", "s1")
+    dispatcher.drain()
+    assertEquals(JsonPrimitive("https://live/main.m3u8"), c.puts.last().second["liveSrc"])
+    assertNull(ui.streams.picking)
+
+    builder.streamActions.toggleLive("v1")
+    dispatcher.drain()
+    assertEquals(listOf("v1" to false), c.lives)
+    assertNull(ui.streams.message)
+  }
+
+  @Test fun `a shared headset's HUD has no Stream tab`() {
+    toBuilding(DeviceKind.SHARED)
+    assertFalse(ui.hud!!.canStream)
   }
 
   @Test fun `with no ring in view the builder picks the space from a list`() {

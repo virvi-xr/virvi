@@ -1,5 +1,6 @@
 package io.virvi.ar.builder
 
+import kotlinx.serialization.json.JsonObject
 import android.os.SystemClock
 import android.util.Log
 import com.meta.spatial.core.Pose
@@ -660,7 +661,8 @@ class BuilderController(
       ui.hud = null
       return
     }
-    val m = hudModel(b.editor.view(), b.tab, hudWarnings(b.booking, b.otherPlaces)).copy(canScanRoom = b.kind == DeviceKind.PERSONAL)
+    val personal = b.kind == DeviceKind.PERSONAL
+    val m = hudModel(b.editor.view(), b.tab, hudWarnings(b.booking, b.otherPlaces)).copy(canScanRoom = personal, canStream = personal)
     ui.hud = if (m.message == null && b.note != null) m.copy(message = b.note) else m
   }
 
@@ -668,8 +670,73 @@ class BuilderController(
   val hudActions: BuilderHudActions =
       EditorHudActions({ hudTouched(); build?.takeIf { stage == Stage.BUILDING }?.editor }) { tab ->
         hudTouched()
-        build?.tab = tab
+        val b = build
+        // The Stream tab is a personal headset's (the server refuses a shared one)
+        if (b != null && (tab != HudTab.STREAM || b.kind == DeviceKind.PERSONAL)) {
+          b.tab = tab
+          if (tab == HudTab.STREAM) loadStreams(b)
+        }
         refreshHud()
+      }
+
+  // ── the Stream tab (LIV-53, LIV-54) ─────────────────────────────────
+
+  /** The live preset's screens, the scene's streams and the library's images; each open of the tab loads them again. */
+  private fun loadStreams(b: Build, keep: StreamsState = StreamsState()) {
+    val g = generation
+    ui.streams = keep.copy(screens = keep.screens, failed = false)
+    go {
+      val sceneId = b.space.sceneId
+      val scene = b.api.scene(sceneId)
+      val streams = b.api.streams(sceneId)
+      val library = b.api.library(sceneId)
+      if (g != generation) return@go
+      ui.streams =
+          if (scene is BuilderCall.Ok) {
+            ui.streams.copy(
+                screens = streamScreens(scene.value),
+                streams = (streams as? BuilderCall.Ok)?.value?.let(::parseSceneStreams) ?: emptyList(),
+                images = (library as? BuilderCall.Ok)?.value?.let(::offImageChoices) ?: emptyList(),
+            )
+          } else ui.streams.copy(screens = null, failed = true)
+    }
+  }
+
+  /** One change to a screen: [change] gets its current properties (read again, as another editor may have changed them). */
+  private fun changeScreen(elementId: String, change: suspend (Build, JsonObject) -> BuilderCall<Unit>) {
+    val b = build?.takeIf { stage == Stage.BUILDING && it.kind == DeviceKind.PERSONAL } ?: return
+    if (ui.streams.busy) return
+    val g = generation
+    ui.streams = ui.streams.copy(busy = true, message = null)
+    go {
+      val scene = b.api.scene(b.space.sceneId)
+      val props = (scene as? BuilderCall.Ok)?.value?.let { elementProperties(it, elementId) }
+      val r = if (props == null) BuilderCall.NotFound else change(b, props)
+      if (g != generation) return@go
+      val next = ui.streams.copy(busy = false, message = if (r is BuilderCall.Ok) null else streamChangeFailed(r))
+      loadStreams(b, if (r is BuilderCall.Ok) next.copy(picking = null) else next)
+    }
+  }
+
+  val streamActions: StreamActions =
+      object : StreamActions {
+        override fun pick(elementId: String, list: StreamPick.List) {
+          val open = StreamPick(elementId, list)
+          ui.streams = ui.streams.copy(picking = if (ui.streams.picking == open) null else open)
+        }
+
+        override fun chooseStream(elementId: String, streamId: String) {
+          val stream = ui.streams.streams.firstOrNull { it.id == streamId } ?: return
+          changeScreen(elementId) { b, props -> b.api.putProperties(elementId, withProperty(props, "liveSrc", stream.hlsPlaylistUrl)) }
+        }
+
+        override fun chooseOffImage(elementId: String, url: String) =
+            changeScreen(elementId) { b, props -> b.api.putProperties(elementId, withProperty(props, "offImageSrc", url)) }
+
+        override fun toggleLive(elementId: String) {
+          val on = ui.streams.screens?.firstOrNull { it.id == elementId }?.liveOn ?: return
+          changeScreen(elementId) { b, _ -> b.api.setLive(elementId, !on) }
+        }
       }
 
   // ── the feed ─────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import io.virvi.ar.builder.AuthState
 import io.virvi.ar.builder.BuilderHudModel
 import io.virvi.ar.builder.BuilderPrompt
 import io.virvi.ar.builder.RingCheckUi
+import io.virvi.ar.builder.StreamsState
 import io.virvi.ar.ring.CameraStatus
 import io.virvi.ar.ring.RING_TEST_MARKERS
 import io.virvi.ar.roomscan.RoomScanUi
@@ -60,6 +61,8 @@ class AppState {
   /** The builder HUD, while building; null hides it. */
   var hud by mutableStateOf<BuilderHudModel?>(null)
   var assets by mutableStateOf(AssetsState(null))
+  /** The builder HUD's Stream tab (personal headsets only). */
+  var streams by mutableStateOf(StreamsState())
   /** The Layout tab's **Scan this room** panel (personal headsets only). */
   var roomScan by mutableStateOf(RoomScanUi())
 
