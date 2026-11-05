@@ -45,3 +45,36 @@ export function friendlyPresetError(err: unknown, opts: { connected?: boolean } 
   }
   return friendlyEditError(err, opts)
 }
+
+// ── The next scheduled switch (LIV-86) ──
+
+/** The next switch the schedules will make; `skippable` when it is a run's start (not a run in progress ending). */
+export interface HUDNextSwitch { at: string; presetId: string | null; scheduleId: string; skippable: boolean }
+
+/** From GET /api/scenes/:id/preset-schedules. */
+export function nextSwitchFrom(res: { schedules?: { id: string; nextRuns?: string[] }[]; status?: { nextSwitch?: { at: string; presetId: string | null; scheduleId: string } | null } } | null | undefined): HUDNextSwitch | null {
+  const n = res?.status?.nextSwitch
+  if (!n) return null
+  const schedule = res?.schedules?.find((s) => s.id === n.scheduleId)
+  return { at: n.at, presetId: n.presetId, scheduleId: n.scheduleId, skippable: !!schedule?.nextRuns?.includes(n.at) }
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** "in 2 h 05 min", "in 40 min", "in 3 days": no clock time, since the HUD can't rely on the visitor's timezone. */
+function inWords(ms: number): string {
+  if (ms <= 0) return 'now'
+  const min = Math.floor(ms / 60_000)
+  if (min < 1) return 'in under a minute'
+  if (min < 60) return `in ${min} min`
+  if (min < 24 * 60) return `in ${Math.floor(min / 60)} h ${pad2(min % 60)} min`
+  const days = Math.floor(min / (24 * 60))
+  return `in ${days} day${days === 1 ? '' : 's'}`
+}
+
+/** "Next switch: Concert in 2 h 05 min"; a run ending with nowhere to return to goes "back to the previous preset". */
+export function nextSwitchText(next: HUDNextSwitch, presets: HUDPreset[], nowMs: number): string {
+  const p = next.presetId ? presets.find((x) => x.id === next.presetId) : null
+  const to = p ? presetLabel(p.name) : 'back to the previous preset'
+  return `Next switch: ${to} ${inWords(Date.parse(next.at) - nowMs)}`
+}

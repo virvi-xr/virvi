@@ -307,6 +307,23 @@ export class VirviHttpClient {
     return this._fetch(`/api/presets/${encodeURIComponent(presetId)}`, { method: 'PATCH', body: JSON.stringify({ name }) })
   }
 
+  /** The scene's preset schedules, recent runs and live status, with the next switch (LIV-86). */
+  async getPresetSchedules(sceneId: string): Promise<{
+    schedules: { id: string; presetId: string; nextRuns: string[]; skippedRuns?: string[] }[]
+    status: { nextSwitch: { at: string; presetId: string | null; scheduleId: string } | null }
+  }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/preset-schedules`)
+  }
+
+  /** Skip one upcoming run of a schedule (the next one when `occurrenceStart` is left out). */
+  async skipPresetScheduleRun(scheduleId: string, occurrenceStart?: string): Promise<{ skipped: string }> {
+    return this._fetch(`/api/preset-schedules/${encodeURIComponent(scheduleId)}/skip`, { method: 'POST', body: JSON.stringify(occurrenceStart ? { occurrenceStart } : {}) })
+  }
+
+  async unskipPresetScheduleRun(scheduleId: string, occurrenceStart: string): Promise<void> {
+    await this._fetch(`/api/preset-schedules/${encodeURIComponent(scheduleId)}/skip?occurrenceStart=${encodeURIComponent(occurrenceStart)}`, { method: 'DELETE' })
+  }
+
   /** Make a preset live: everyone in the scene switches to it. */
   async activatePreset(presetId: string): Promise<{ activePresetId: string }> {
     return this._fetch(`/api/presets/${encodeURIComponent(presetId)}/activate`, { method: 'POST', body: '{}' })

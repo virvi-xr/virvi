@@ -9,7 +9,7 @@
  */
 
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
-import { copyName, presetLabel, PRESET_NAME_MAX, type HUDPreset } from './presets.js'
+import { copyName, nextSwitchText, presetLabel, PRESET_NAME_MAX, type HUDNextSwitch, type HUDPreset } from './presets.js'
 import { clearCopiesPrompt, type HUDLayoutItem } from './layout.js'
 import { offImageLabel, screenSourceLabel, streamOptionLabel, type HUDImage, type HUDScreen, type HUDStream } from './streams.js'
 import { Color4 } from '@dcl/sdk/math'
@@ -104,6 +104,9 @@ interface HUDState {
   /** New (a copy of the live preset, or blank) or Rename, with the draft name. */
   presetDraft: { mode: 'new' | 'rename'; name: string; copy: boolean; targetId: string | null } | null
   presetBusy: boolean
+  /** The next scheduled switch (LIV-86), and the run just skipped here (for Undo). */
+  nextSwitch: HUDNextSwitch | null
+  presetSkipped: { scheduleId: string; at: string } | null
 
   // Stream panel (host, co-hosts, editors; LIV-53): which stream each video screen plays
   streamScreens: HUDScreen[]
@@ -176,6 +179,8 @@ const state: HUDState = {
   presetsLoaded: false,
   presetsError: null,
   presetConfirm: null,
+  nextSwitch: null,
+  presetSkipped: null,
   presetDraft: null,
   presetBusy: false,
 
@@ -1171,6 +1176,23 @@ function PresetsSection() {
         )
       })}
 
+      {state.nextSwitch && (
+        <UiEntity uiTransform={{ width: '100%', height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', margin: { top: 2 } }}>
+          <Label value={nextSwitchText(state.nextSwitch, state.presets, Date.now())} fontSize={10} color={C.textDim} textAlign="middle-left" uiTransform={{ width: 230 }} />
+          {state.nextSwitch.skippable && (
+            <Button label="Skip" width={50} height={24} fontSize={10}
+              onPress={() => { const n = state.nextSwitch; if (n && !state.presetBusy) onSceneAction?.('presets_skip', { scheduleId: n.scheduleId, at: n.at }) }} />
+          )}
+        </UiEntity>
+      )}
+      {state.presetSkipped && Date.parse(state.presetSkipped.at) > Date.now() && (
+        <UiEntity uiTransform={{ width: '100%', height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Label value="Skipped that run. Change schedules on the dashboard." fontSize={10} color={C.textMuted} textAlign="middle-left" uiTransform={{ width: 230 }} />
+          <Button label="Undo" width={50} height={24} fontSize={10}
+            onPress={() => { const s = state.presetSkipped; if (s && !state.presetBusy) onSceneAction?.('presets_unskip', s) }} />
+        </UiEntity>
+      )}
+
       {confirm && (
         <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', margin: { top: 4 } }}>
           <Label value={`Make ${presetLabel(confirm.name)} live? Everyone in the scene sees the change.`} fontSize={10} color={C.warning}
@@ -1659,6 +1681,15 @@ export class DclHUDRenderer implements HUDRenderer {
     if (activeId !== undefined) state.activePresetId = activeId
     state.presetsLoaded = true
     if (state.presetConfirm && !list.some((p) => p.id === state.presetConfirm)) state.presetConfirm = null
+  }
+
+  setNextSwitch(next: HUDNextSwitch | null): void {
+    state.nextSwitch = next
+  }
+
+  /** The run just skipped from the HUD (null after Undo). */
+  setSkipped(skipped: { scheduleId: string; at: string } | null): void {
+    state.presetSkipped = skipped
   }
 
   setActivePreset(id: string): void {

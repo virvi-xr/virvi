@@ -6,13 +6,15 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess } from '../auth/permissions.js'
 import { canManagePresets } from '../scenes/presets.js'
+import { fromParam, fromPresetSchedule } from '../auth/scene-from.js'
 import { describeSchedule, findClash, listSchedules, parseScheduleInput, ScheduleError, skippedStarts, skipRun, specOf, unskipRun, withEventTimes, withRuns, type ScheduleInput } from '../scenes/preset-schedules.js'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
- * Scheduled presets (LIV-86): web only, for the same people who manage presets (hosts, co-hosts, editors). Booking
- * crew and viewers get 403. A schedule may only use presets of its own scene.
+ * Scheduled presets (LIV-86): for the same people who manage presets (hosts, co-hosts, editors). Booking crew and
+ * viewers get 403. A schedule may only use presets of its own scene. The in-world HUD's scene pass may list the
+ * schedules and skip or un-skip a run of its own scene; creating, editing and deleting stay on the dashboard.
  */
 export default async function presetScheduleRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate)
@@ -49,7 +51,7 @@ export default async function presetScheduleRoutes(app: FastifyInstance) {
     throw e
   }
 
-  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/preset-schedules', async (request, reply) => {
+  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/preset-schedules', { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }, async (request, reply) => {
     const { sceneId } = request.params
     if (!UUID_RE.test(sceneId) || !(await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true } }))) return reply.status(404).send({ error: 'Scene not found' })
     if (!(await allowed(request, sceneId))) return reply.status(403).send({ error: 'Forbidden' })
@@ -101,7 +103,7 @@ export default async function presetScheduleRoutes(app: FastifyInstance) {
   })
 
   /** Skip one upcoming run (`occurrenceStart`, or the next one); the sweep passes over it. */
-  app.post<{ Params: { scheduleId: string } }>('/api/preset-schedules/:scheduleId/skip', async (request, reply) => {
+  app.post<{ Params: { scheduleId: string } }>('/api/preset-schedules/:scheduleId/skip', { config: { scenePass: { sceneFrom: fromPresetSchedule } } }, async (request, reply) => {
     const row = await ownSchedule(request, reply)
     if (!row) return reply
     try {
@@ -114,7 +116,7 @@ export default async function presetScheduleRoutes(app: FastifyInstance) {
   })
 
   /** Undo a skip that hasn't come round yet. */
-  app.delete<{ Params: { scheduleId: string }; Querystring: { occurrenceStart?: string } }>('/api/preset-schedules/:scheduleId/skip', async (request, reply) => {
+  app.delete<{ Params: { scheduleId: string }; Querystring: { occurrenceStart?: string } }>('/api/preset-schedules/:scheduleId/skip', { config: { scenePass: { sceneFrom: fromPresetSchedule } } }, async (request, reply) => {
     const row = await ownSchedule(request, reply)
     if (!row) return reply
     try {

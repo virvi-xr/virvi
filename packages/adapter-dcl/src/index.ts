@@ -8,7 +8,7 @@ import { startVirviAnalytics, getAnalyticsSceneRef } from './analytics.js'
 import { DclHUDRenderer, setSceneActionHandler } from './DclHUDRenderer.js'
 import { DclEditMode } from './transform/edit-mode.js'
 import { friendlyEditError, friendlyRenameError, editBlockedMessage, createReconnector, DISCONNECTED } from './edit-errors.js'
-import { applyPresetsChange, friendlyPresetError, presetsFromScene, type HUDPreset } from './presets.js'
+import { applyPresetsChange, friendlyPresetError, nextSwitchFrom, presetsFromScene, type HUDPreset } from './presets.js'
 import { offImageChoices, screensFromPreset, withLiveSource, withOffImage, type HUDStream } from './streams.js'
 import type { HUDMediaItem } from './DclHUDRenderer.js'
 import { toLayoutItem, withCopies, clearedMessage, type HUDLayoutItem } from './layout.js'
@@ -282,12 +282,18 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       let media: SceneLibraryItem[] = []
       let layout: HUDLayoutItem[] = []
       let presets: HUDPreset[] = []
+      // The next scheduled switch (LIV-86). Best effort: without it the presets still work.
+      const refreshNextSwitch = async () => {
+        const res = await virvi.httpClient.getPresetSchedules(sceneId).catch(() => null)
+        renderer?.setNextSwitch(nextSwitchFrom(res))
+      }
       const refreshPresets = async () => {
         const { scene } = await virvi.httpClient.getScene(sceneId)
         const got = presetsFromScene(scene as any)
         presets = got.list
         renderer?.setPresets(presets, got.activeId)
         renderer?.setPresetsError(null)
+        void refreshNextSwitch()
       }
 
       const refresh = async () => {
@@ -358,6 +364,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
         virvi.onActivePresetChanged((id) => {
           renderer?.setActivePreset(id)
           if (edits() && !presets.some((p) => p.id === id)) void refreshPresets().catch(() => {})
+          else if (edits()) void refreshNextSwitch()
         }),
         () => virvi.events.off('connection_lost', onConnectionLost),
         () => reconnector.stop(),
@@ -557,6 +564,14 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
               const { preset } = await virvi.httpClient.createPreset(sceneId, String(data?.name ?? ''), data?.copyOf ? String(data.copyOf) : undefined)
               presets = applyPresetsChange(presets, { action: 'upsert', preset })
               renderer?.setPresets(presets)
+            }
+            if (action === 'presets_skip' || action === 'presets_unskip') {
+              const scheduleId = String(data?.scheduleId)
+              const at = String(data?.at)
+              if (action === 'presets_skip') await virvi.httpClient.skipPresetScheduleRun(scheduleId, at)
+              else await virvi.httpClient.unskipPresetScheduleRun(scheduleId, at)
+              renderer?.setSkipped(action === 'presets_skip' ? { scheduleId, at } : null)
+              await refreshNextSwitch()
             }
             if (action === 'presets_rename') {
               const { preset } = await virvi.httpClient.renamePreset(String(data?.presetId), String(data?.name ?? ''))

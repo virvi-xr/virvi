@@ -320,6 +320,26 @@ describe('scheduled presets (LIV-86)', () => {
       expect((await undo('2030-01-11T20:00:00.000Z', viewer)).statusCode).toBe(403)
     })
 
+    it("the in-world HUD's scene pass can list and skip runs of its own scene only, not change schedules", async () => {
+      const s = (await create(host)).json().schedule
+      const pass = (sceneId: string) => ({ authorization: `Bearer ${tokenFor(host, { kind: 'scene', sceneId, orgId: null })}` })
+      const mine = pass(scene.id)
+      expect((await app.inject({ method: 'GET', url: `/api/scenes/${scene.id}/preset-schedules`, headers: mine })).statusCode).toBe(200)
+      const skipped = await app.inject({ method: 'POST', url: `/api/preset-schedules/${s.id}/skip`, headers: mine, payload: {} })
+      expect(skipped.statusCode).toBe(201)
+      const undo = await app.inject({ method: 'DELETE', url: `/api/preset-schedules/${s.id}/skip?occurrenceStart=${encodeURIComponent(skipped.json().skipped)}`, headers: mine })
+      expect(undo.statusCode).toBe(200)
+      // Changing schedules stays on the dashboard
+      expect((await app.inject({ method: 'PATCH', url: `/api/preset-schedules/${s.id}`, headers: mine, payload: { enabled: false } })).statusCode).toBe(403)
+      expect((await app.inject({ method: 'DELETE', url: `/api/preset-schedules/${s.id}`, headers: mine })).statusCode).toBe(403)
+      expect((await app.inject({ method: 'POST', url: `/api/scenes/${scene.id}/preset-schedules`, headers: mine, payload: body({ startDate: '2031-01-01' }) })).statusCode).toBe(403)
+      // Another scene's pass gets nothing
+      const other = await createScene(host, 'Other')
+      const theirs = pass(other.scene.id)
+      expect((await app.inject({ method: 'GET', url: `/api/scenes/${scene.id}/preset-schedules`, headers: theirs })).statusCode).toBe(403)
+      expect((await app.inject({ method: 'POST', url: `/api/preset-schedules/${s.id}/skip`, headers: theirs, payload: {} })).statusCode).toBe(403)
+    })
+
     it("a paused schedule has no next run to skip", async () => {
       const s = (await create(host, { enabled: false })).json().schedule
       const res = await app.inject({ method: 'POST', url: `/api/preset-schedules/${s.id}/skip`, headers: as(host), payload: {} })
