@@ -9,7 +9,7 @@ import { DclHUDRenderer, setSceneActionHandler } from './DclHUDRenderer.js'
 import { DclEditMode } from './transform/edit-mode.js'
 import { friendlyEditError, friendlyRenameError, editBlockedMessage, createReconnector, DISCONNECTED } from './edit-errors.js'
 import { applyPresetsChange, friendlyPresetError, presetsFromScene, type HUDPreset } from './presets.js'
-import { screensFromPreset, withLiveSource, type HUDStream } from './streams.js'
+import { offImageChoices, screensFromPreset, withLiveSource, withOffImage, type HUDStream } from './streams.js'
 import type { HUDMediaItem } from './DclHUDRenderer.js'
 import { toLayoutItem, withCopies, clearedMessage, type HUDLayoutItem } from './layout.js'
 import { locationKeyFor } from '@virvixr/shared'
@@ -383,9 +383,10 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       // Stream panel (LIV-53): the live preset's screens and the streams they can play
       let streams: HUDStream[] = []
       const refreshStreams = async () => {
-        const [preset, got] = await Promise.all([activePreset(), virvi.httpClient.getSceneStreams(sceneId)])
+        // The scene library's images are the off image choices (LIV-54); without them the stream controls still work
+        const [preset, got, library] = await Promise.all([activePreset(), virvi.httpClient.getSceneStreams(sceneId), virvi.httpClient.getSceneLibrary(sceneId).catch(() => ({ items: [] }))])
         streams = got.streams
-        renderer?.setStreams(screensFromPreset(preset), streams)
+        renderer?.setStreams(screensFromPreset(preset), streams, offImageChoices(library.items))
         return preset
       }
       const refreshLayout = async () => {
@@ -592,6 +593,14 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
               const element = preset?.elements?.find((el: any) => el.id === elementId)
               if (!stream || !element) throw new Error('HTTP 404: {"error":"Not found"}')
               await virvi.httpClient.updateElement(elementId, { properties: withLiveSource(element.properties, stream.hlsPlaylistUrl) })
+              renderer?.streamChosen()
+            }
+            if (action === 'streams_off_image') {
+              const url = typeof data?.url === 'string' ? data.url : ''
+              const preset = await activePreset()
+              const element = preset?.elements?.find((el: any) => el.id === elementId)
+              if (!element) throw new Error('HTTP 404: {"error":"Not found"}')
+              await virvi.httpClient.updateElement(elementId, { properties: withOffImage(element.properties, url) })
               renderer?.streamChosen()
             }
             if (action === 'streams_live') await virvi.httpClient.setElementLive(elementId, data?.enabled === true)

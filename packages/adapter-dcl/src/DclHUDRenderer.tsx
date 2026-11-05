@@ -11,7 +11,7 @@
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
 import { copyName, presetLabel, PRESET_NAME_MAX, type HUDPreset } from './presets.js'
 import { clearCopiesPrompt, type HUDLayoutItem } from './layout.js'
-import { screenSourceLabel, streamOptionLabel, type HUDScreen, type HUDStream } from './streams.js'
+import { offImageLabel, screenSourceLabel, streamOptionLabel, type HUDImage, type HUDScreen, type HUDStream } from './streams.js'
 import { Color4 } from '@dcl/sdk/math'
 import { engine } from '@dcl/sdk/ecs'
 import type {
@@ -112,6 +112,9 @@ interface HUDState {
   streamsError: string | null
   /** The screen whose stream list is open. */
   streamPicking: string | null
+  /** The screen whose off image list is open (LIV-54). */
+  offImagePicking: string | null
+  streamImages: HUDImage[]
   streamBusy: boolean
 }
 
@@ -181,6 +184,8 @@ const state: HUDState = {
   streamsLoaded: false,
   streamsError: null,
   streamPicking: null,
+  offImagePicking: null,
+  streamImages: [],
   streamBusy: false,
 }
 
@@ -730,6 +735,7 @@ function NavBar() {
               if (opened && canEdit()) onSceneAction?.('media_refresh')
             } else if (p.type === HUDPanelType.STREAM_CONTROL) {
               state.streamPicking = null
+              state.offImagePicking = null
               if (opened && canEdit()) onSceneAction?.('streams_refresh')
             } else if (p.type === HUDPanelType.EVENT_CONTROL) {
               state.presetConfirm = null
@@ -1229,7 +1235,7 @@ function StreamControlPanel() {
   const busy = state.streamBusy
   return (
     <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
-      <PanelHeader title="Stream" subtitle="Which live stream each screen plays" onClose={() => { state.activePanel = null }} />
+      <PanelHeader title="Stream" subtitle="Each screen's live stream and off image" onClose={() => { state.activePanel = null }} />
       <UiEntity uiTransform={{ padding: 8, flexDirection: 'column' }}>
         {!canEdit() ? (
           <Label value="Only the host, co-hosts and editors can change streams" fontSize={11} color={C.textDim} uiTransform={{ height: 24 }} />
@@ -1251,7 +1257,7 @@ function StreamControlPanel() {
                 <Label value={screenSourceLabel(screen, state.streams)} fontSize={10} color={C.textDim} textAlign="middle-left" uiTransform={{ height: 18 }} />
                 <UiEntity uiTransform={{ flexDirection: 'row', margin: { top: 4 } }}>
                   <Button label={state.streamPicking === screen.id ? 'Close list' : 'Choose stream'} width={100} height={24} fontSize={10}
-                    onPress={() => { state.streamPicking = state.streamPicking === screen.id ? null : screen.id }} />
+                    onPress={() => { state.offImagePicking = null; state.streamPicking = state.streamPicking === screen.id ? null : screen.id }} />
                   <UiEntity uiTransform={{ width: 6 }} />
                   <Button label={screen.liveOn ? 'Turn live off' : 'Turn live on'} color={screen.liveOn ? C.danger : C.success} width={100} height={24} fontSize={10}
                     onPress={() => { if (!busy) onSceneAction?.('streams_live', { elementId: screen.id, enabled: !screen.liveOn }) }} />
@@ -1265,6 +1271,31 @@ function StreamControlPanel() {
                         color={st.hlsPlaylistUrl === screen.liveSrc ? C.accent : undefined}
                         onPress={() => { if (!busy) onSceneAction?.('streams_choose', { elementId: screen.id, streamId: st.id }) }} />
                     ))}
+                  </UiEntity>
+                )}
+                <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', margin: { top: 4 } }}>
+                  <Label value={offImageLabel(screen, state.streamImages)} fontSize={10} color={C.textDim} textAlign="middle-left" uiTransform={{ width: 160, height: 24 }} />
+                  <Button label={state.offImagePicking === screen.id ? 'Close list' : 'Change'} width={70} height={24} fontSize={10}
+                    onPress={() => { state.streamPicking = null; state.offImagePicking = state.offImagePicking === screen.id ? null : screen.id }} />
+                </UiEntity>
+                {state.offImagePicking === screen.id && (
+                  <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', margin: { top: 4 } }}>
+                    <Label value="Shown when the screen has nothing to play" fontSize={9} color={C.textMuted} uiTransform={{ height: 16 }} />
+                    {state.streamImages.length === 0 && (
+                      <Label value="No images yet: upload one from the Assets panel" fontSize={10} color={C.textDim} uiTransform={{ height: 20 }} />
+                    )}
+                    {state.streamImages.slice(0, 8).map((img) => (
+                      <Button key={img.id} label={img.name} width={240} height={24} fontSize={10}
+                        color={img.url === screen.offImageSrc ? C.accent : undefined}
+                        onPress={() => { if (!busy) onSceneAction?.('streams_off_image', { elementId: screen.id, url: img.url }) }} />
+                    ))}
+                    {state.streamImages.length > 8 && (
+                      <Label value={`+${state.streamImages.length - 8} more: choose them on the dashboard`} fontSize={9} color={C.textMuted} uiTransform={{ height: 16 }} />
+                    )}
+                    {screen.offImageSrc !== '' && (
+                      <Button label="No off image" width={240} height={24} fontSize={10}
+                        onPress={() => { if (!busy) onSceneAction?.('streams_off_image', { elementId: screen.id, url: '' }) }} />
+                    )}
                   </UiEntity>
                 )}
               </UiEntity>
@@ -1637,12 +1668,14 @@ export class DclHUDRenderer implements HUDRenderer {
 
   // --- Stream panel (called by the createVirvi flow; LIV-53) ---
 
-  setStreams(screens: HUDScreen[], streams: HUDStream[]): void {
+  setStreams(screens: HUDScreen[], streams: HUDStream[], images: HUDImage[] = []): void {
     state.streamScreens = screens
     state.streams = streams
+    state.streamImages = images
     state.streamsLoaded = true
     state.streamsError = null
     if (state.streamPicking && !screens.some((x) => x.id === state.streamPicking)) state.streamPicking = null
+    if (state.offImagePicking && !screens.some((x) => x.id === state.offImagePicking)) state.offImagePicking = null
   }
 
   setStreamsError(msg: string | null): void {
@@ -1653,9 +1686,10 @@ export class DclHUDRenderer implements HUDRenderer {
     state.streamBusy = busy
   }
 
-  /** A stream was chosen: close the list. */
+  /** A stream or off image was chosen: close the list. */
   streamChosen(): void {
     state.streamPicking = null
+    state.offImagePicking = null
   }
 
   setPresetsError(msg: string | null): void {
