@@ -28,6 +28,12 @@ struct RenderItem: Equatable {
     /// Playlist mode only (else empty): the videos to play in turn, starting with `src`, back to the first after the
     /// last. With one video, `loop` repeats it instead.
     var playlist: [String] = []
+    /// Schedule mode (LIV-87): the screen plays its showings; `resolveScheduled` turns it into what's on now.
+    var scheduled = false
+    /// Schedule mode: the image between shows, or nil for nothing.
+    var holdingImage: String?
+    /// A scheduled screen's video, once resolved: where the show is, so every visitor sees the same moment.
+    var play: ScheduledPlay?
 }
 
 typealias Props = [String: Any]
@@ -38,6 +44,7 @@ private let CLICK_NONE = 0.0
 private let CLICK_EXTERNAL = 1.0
 private let OFF_IMAGE = 1.0
 private let OFF_PLAYLIST = 2.0
+private let OFF_SCHEDULED = 6.0
 
 // MARK: - JS-ish value helpers
 
@@ -111,19 +118,24 @@ private func clickOf(_ inst: Props, _ el: Props) -> Any? {
     return el["clickEvent"]
 }
 
-private typealias Media = (kind: RenderItem.Kind, src: String, loop: Bool, playlist: [String])
+private typealias Media = (kind: RenderItem.Kind, src: String, loop: Bool, playlist: [String], scheduled: Bool, holding: String?)
 
 private func videoMedia(_ el: Props) -> Media? {
     if truthy(el["isLive"]) && truthy(el["enableLiveStream"]), let live = nonEmptyString(el["liveSrc"]) {
-        return supported(live, VIDEO_EXT).map { (.video, $0, true, []) }
+        return supported(live, VIDEO_EXT).map { (.video, $0, true, [], false, nil) }
     }
     if number(el["offType"]) == OFF_PLAYLIST {
         let playlist = ((el["playlist"] as? [Any]) ?? []).compactMap { supported($0, VIDEO_EXT) }
         guard let first = playlist.first else { return nil }
-        return (.video, first, playlist.count == 1, playlist)
+        return (.video, first, playlist.count == 1, playlist, false, nil)
+    }
+    if number(el["offType"]) == OFF_SCHEDULED {
+        // A placeholder until resolveScheduled says what's on (the holding image's name, if any)
+        let holding = supported(el["offImageSrc"], IMAGE_EXT)
+        return (.video, holding ?? "", false, [], true, holding)
     }
     if number(el["offType"]) == OFF_IMAGE {
-        return supported(el["offImageSrc"], IMAGE_EXT).map { (.image, $0, false, []) }
+        return supported(el["offImageSrc"], IMAGE_EXT).map { (.image, $0, false, [], false, nil) }
     }
     return nil
 }
@@ -131,9 +143,9 @@ private func videoMedia(_ el: Props) -> Media? {
 private func elementMedia(_ kind: RenderItem.Kind, _ el: Props) -> Media? {
     switch kind {
     case .video: return videoMedia(el)
-    case .image: return supported(el["textureSrc"], IMAGE_EXT).map { (.image, $0, false, []) }
-    case .model: return nonEmptyString(el["modelSrc"]).map { (.model, $0, false, []) }
-    case .audio: return nonEmptyString(el["audioSrc"]).map { (.audio, $0, true, []) }
+    case .image: return supported(el["textureSrc"], IMAGE_EXT).map { (.image, $0, false, [], false, nil) }
+    case .model: return nonEmptyString(el["modelSrc"]).map { (.model, $0, false, [], false, nil) }
+    case .audio: return nonEmptyString(el["audioSrc"]).map { (.audio, $0, true, [], false, nil) }
     }
 }
 
@@ -162,7 +174,9 @@ private func planElements(_ out: inout [RenderItem], _ elements: Any?, _ kind: R
                 source: ItemTransform(position: [position.x, position.y, position.z], rotation: [rotation.x, rotation.y, rotation.z],
                                       scale: [scale.x, scale.y, scale.z]),
                 elementKind: kind == .audio ? "sound" : kind.rawValue,
-                playlist: media.playlist
+                playlist: media.playlist,
+                scheduled: media.scheduled,
+                holdingImage: media.holding
             ))
         }
     }

@@ -111,3 +111,4 @@ The simulator has no world tracking, so the owner runs these on the headset:
 7. While you drag, a second editor on the dashboard sees "being moved by".
 8. Revoke the headset on the dashboard. The app returns to pairing.
 9. The gizmo handles are easy to hit from 2–5 m away.
+10. Scheduled showings (LIV-87): put a screen in Schedule mode on virvi.io with a showing a few minutes ahead and a holding image. The holding image shows until the start, then the video plays; reopen the scene mid-show and it joins at the same moment as Decentraland, within a couple of seconds. After the show the holding image comes back.

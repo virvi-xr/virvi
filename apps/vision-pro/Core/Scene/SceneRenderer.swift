@@ -33,6 +33,32 @@ final class SceneRenderer {
     private var tokens: [String: UUID] = [:]
     /// Each video's player, and what keeps it going (its AVPlayerLooper or PlaylistPlayer), by item key.
     private var players: [String: (AVPlayer, AnyObject?)] = [:]
+    /// Scheduled videos' drift guards, by item key (LIV-87).
+    private var guards: [String: SeekGuard] = [:]
+    /// The server's clock minus this headset's (ms), from the feed (LIV-87).
+    var serverOffsetMs: Int64 = 0
+
+    private func serverNow() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) + serverOffsetMs }
+    private func uptimeMs() -> Int64 { Int64(ProcessInfo.processInfo.systemUptime * 1000) }
+    /// How far into its video (s) a scheduled item's show is now, kept inside the video.
+    private func expectedS(_ p: ScheduledPlay) -> Double { min(max(Double(serverNow() - p.itemStartsAtMs) / 1000, 0), p.durationS) }
+    private func seek(_ player: AVPlayer, to seconds: Double) {
+        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    /// Scheduled videos that have slipped from the shared show are moved back (with `SeekGuard`'s limits). Call often.
+    func keepScheduledInStep() {
+        let now = uptimeMs()
+        for item in plan {
+            guard let p = item.play, let (player, _) = players[item.key], let g = guards[item.key] else { continue }
+            let expected = expectedS(p)
+            let actual = player.currentTime().seconds
+            if g.shouldSeek(now: now, expected: expected, actual: actual.isFinite ? actual : 0, duration: p.durationS,
+                            playing: player.timeControlStatus == .playing) {
+                seek(player, to: expected)
+            }
+        }
+    }
 
     init() {
         root.name = "virvi-scene"
@@ -148,6 +174,7 @@ final class SceneRenderer {
         tokens.removeValue(forKey: key)
         shown.removeValue(forKey: key)?.removeFromParent()
         if let (player, _) = players.removeValue(forKey: key) { player.pause() }
+        guards.removeValue(forKey: key)
     }
 
     private func plane(_ item: RenderItem, material: any RealityKit.Material) -> ModelEntity {
@@ -186,7 +213,21 @@ final class SceneRenderer {
         let player: AVPlayer
         var looper: AnyObject?
         let urls = item.playlist.compactMap { URL(string: $0) }
-        if urls.count > 1 {
+        if let p = item.play {
+            // A scheduled show (LIV-87): once through, from where everyone else is. The seek waits until the video can
+            // play (an earlier one isn't kept), and works out the position again then.
+            let playerItem = AVPlayerItem(url: url)
+            let scheduled = AVPlayer(playerItem: playerItem)
+            looper = playerItem.observe(\.status) { [weak self, weak scheduled] it, _ in
+                guard it.status == .readyToPlay else { return }
+                Task { @MainActor in
+                    guard let self, let scheduled else { return }
+                    self.seek(scheduled, to: self.expectedS(p))
+                }
+            }
+            player = scheduled
+            guards[item.key] = SeekGuard(startedAt: uptimeMs())
+        } else if urls.count > 1 {
             let list = PlaylistPlayer(urls: urls)
             looper = list
             player = list.player

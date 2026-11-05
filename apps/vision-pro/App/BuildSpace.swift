@@ -80,7 +80,11 @@ final class BuildSpace: ObservableObject {
     private var handleSize = gizmoHandleSize(distance: 2)
     private var subscriptions: Set<AnyCancellable> = []
 
+    /// The scene's feed, for its scheduled showings and the server clock (LIV-87).
+    private weak var feed: SceneFeed?
+
     init(sceneId: String, feed: SceneFeed, edit: EditSession) {
+        self.feed = feed
         self.sceneId = sceneId
         self.edit = edit
         PlaceHandleComponent.registerComponent()
@@ -102,6 +106,8 @@ final class BuildSpace: ObservableObject {
         renderer.onApplied = { [weak self] d in self?.feedChanged(d) }
         // Every feed change: render, holding the item being edited where the builder has it.
         feed.$scene.sink { [weak self] scene in self?.render(scene) }.store(in: &subscriptions)
+        Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+            .sink { [weak self] _ in self?.scheduleTick() }.store(in: &subscriptions)
         // The selected item's entity follows the session's transform (drags, Exact, Save, and Revert back to the
         // original), looked up by its key each time: the renderer may have rebuilt it.
         edit.$selected.sink { [weak self] s in self?.selectionChanged(s) }.store(in: &subscriptions)
@@ -123,8 +129,34 @@ final class BuildSpace: ObservableObject {
 
     // MARK: - Rendering and selection
 
+    /// The feed's plan, and what was last applied with scheduled screens resolved to what's on (LIV-87).
+    private var basePlan: [RenderItem] = []
+    private var appliedPlan: [RenderItem]?
+
+    private func resolved() -> [RenderItem] {
+        basePlan.contains(where: \.scheduled)
+            ? resolveScheduled(basePlan, feed?.showings ?? [:], now: Int64(Date().timeIntervalSince1970 * 1000) + (feed?.serverOffsetMs ?? 0))
+            : basePlan
+    }
+
+    /// Twice a second: scheduled screens move on with the show, and their videos stay in step with it.
+    private func scheduleTick() {
+        guard basePlan.contains(where: \.scheduled) else { return }
+        let next = resolved()
+        if next != appliedPlan {
+            appliedPlan = next
+            renderer.apply(next, holding: edit.editingKeys)
+            refreshGizmo()
+        }
+        renderer.keepScheduledInStep()
+    }
+
     private func render(_ scene: Props?) {
-        renderer.apply(planScene(scene), holding: edit.editingKeys)
+        basePlan = planScene(scene)
+        renderer.serverOffsetMs = feed?.serverOffsetMs ?? 0
+        let next = resolved()
+        appliedPlan = next
+        renderer.apply(next, holding: edit.editingKeys)
         if let key = pendingSelect, renderer.item(for: key) != nil {
             pendingSelect = nil
             phase = .edit
