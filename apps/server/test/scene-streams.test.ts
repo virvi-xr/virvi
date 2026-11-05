@@ -55,6 +55,18 @@ describe('GET /api/scenes/:sceneId/streams', () => {
     }
   })
 
+  it("the in-world HUD's scene pass lists its own scene's streams, not another scene's", async () => {
+    const owner = await createUser()
+    const { scene } = await createScene(owner)
+    const other = await createScene(owner, 'Other')
+    await stream(owner.id, 'Main Stage', 'live')
+    const pass = (sceneId: string) => ({ authorization: `Bearer ${tokenFor(owner, { kind: 'scene', sceneId, orgId: null })}` })
+    const res = await app.inject({ method: 'GET', url: `/api/scenes/${scene.id}/streams`, headers: pass(scene.id) })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().streams.map((s: any) => s.name)).toEqual(['Main Stage'])
+    expect((await app.inject({ method: 'GET', url: `/api/scenes/${scene.id}/streams`, headers: pass(other.scene.id) })).statusCode).toBe(403)
+  })
+
   it('a malformed scene id is 404', async () => {
     const owner = await createUser()
     expect((await app.inject({ method: 'GET', url: '/api/scenes/nope/streams', headers: as(owner) })).statusCode).toBe(404)

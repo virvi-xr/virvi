@@ -39,8 +39,9 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
   })
 
   // Live streams a video screen can play: the scene owner's (for its editors) and the requester's own, by name.
-  // Only the public playback URL leaves the server, never the stream key. Account sessions only.
-  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/streams', async (request, reply) => {
+  // Only the public playback URL leaves the server, never the stream key. The Decentraland HUD's scene pass may list
+  // its own scene's (its Stream panel, LIV-53).
+  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/streams', { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }, async (request, reply) => {
     const a = await access(request, request.params.sceneId)
     if (!hasScope(a, 'screens')) return reply.status(403).send({ error: 'forbidden' })
     const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, request.params.sceneId), columns: { ownerId: true } })
