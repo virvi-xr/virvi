@@ -10,6 +10,7 @@
 
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
 import { copyName, presetLabel, PRESET_NAME_MAX, type HUDPreset } from './presets.js'
+import { clearCopiesPrompt, type HUDLayoutItem } from './layout.js'
 import { screenSourceLabel, streamOptionLabel, type HUDScreen, type HUDStream } from './streams.js'
 import { Color4 } from '@dcl/sdk/math'
 import { engine } from '@dcl/sdk/ecs'
@@ -82,6 +83,8 @@ interface HUDState {
   layoutFailed: boolean
   editMessage: { text: string; error: boolean; action?: { label: string; action: string } } | null
   confirmDelete: string | null
+  /** The layout row whose "remove every copy" is awaiting confirmation (LIV-12). */
+  confirmClear: string | null
   missingModels: number
   /** The Media Library's Upload view: an upload link (this computer) and its QR (phone), minted on open. */
   upload: UploadViewState
@@ -115,7 +118,7 @@ interface HUDState {
 type SceneRole = 'host' | 'cohost' | 'editor' | 'viewer'
 export type HUDMediaItem = { id: string; name: string; kind: 'image' | 'model'; status: HUDMediaStatus; error?: string }
 export type UploadViewState = { open: boolean; loading: boolean; error: string | null; token: UploadToken | null }
-export type HUDLayoutItem = { id: string; name: string; type: string; enabled: boolean }
+export type { HUDLayoutItem } from './layout.js'
 const canEdit = () => state.sceneRole === 'host' || state.sceneRole === 'cohost' || state.sceneRole === 'editor'
 type RolesData = { hostWallets: string[]; roles: { wallet: string; role: string; displayName?: string | null }[] }
 
@@ -159,6 +162,7 @@ const state: HUDState = {
   layoutFailed: false,
   editMessage: null,
   confirmDelete: null,
+  confirmClear: null,
   missingModels: 0,
   upload: { open: false, loading: false, error: null, token: null },
   renaming: null,
@@ -715,6 +719,7 @@ function NavBar() {
             state.activePanel = state.activePanel === p.type ? null : p.type
             const opened = state.activePanel === p.type
             state.confirmDelete = null
+            state.confirmClear = null
             state.editMessage = null
             if (p.type === HUDPanelType.ROLES) {
               state.confirmTransfer = null
@@ -774,7 +779,7 @@ function SceneLayoutPanel() {
       <PanelHeader
         title="Scene Layout"
         subtitle={state.currentSceneName || undefined}
-        onClose={() => { state.activePanel = null; state.confirmDelete = null }}
+        onClose={() => { state.activePanel = null; state.confirmDelete = null; state.confirmClear = null }}
       />
       <UiEntity uiTransform={{ width: '100%', padding: 8, flexDirection: 'column' }}>
         <EditMessage />
@@ -807,10 +812,13 @@ function SceneLayoutPanel() {
               }}
               uiBackground={{ color: C.bgCard }}
             >
-              <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: editable ? 170 : 260 }}>
+              <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: editable ? 112 : 260 }}>
                 <Label value={el.type.toUpperCase().slice(0, 3)} fontSize={8} color={C.textMuted}
                   uiTransform={{ margin: { right: 6 } }} />
                 <Label value={el.name || 'Unnamed'} fontSize={11} color={el.enabled ? C.text : C.textDim} textAlign="middle-left" />
+                {el.copies > 1 && (
+                  <Label value={`×${el.copies}`} fontSize={9} color={C.textMuted} uiTransform={{ margin: { left: 4 } }} />
+                )}
               </UiEntity>
               {!editable ? (
                 <Label value={el.enabled ? 'ON' : 'OFF'} fontSize={9} color={el.enabled ? C.success : C.textDim} />
@@ -822,14 +830,27 @@ function SceneLayoutPanel() {
                   <UiEntity uiTransform={{ width: 4 }} />
                   <Button label="Cancel" onPress={() => { state.confirmDelete = null }} width={56} height={24} fontSize={10} />
                 </UiEntity>
+              ) : state.confirmClear === el.id ? (
+                <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Button label="Remove" color={C.danger}
+                    onPress={() => { state.confirmClear = null; onSceneAction?.('layout_clear', { elementId: el.id }) }}
+                    width={56} height={24} fontSize={10} />
+                  <UiEntity uiTransform={{ width: 4 }} />
+                  <Button label="Cancel" onPress={() => { state.confirmClear = null }} width={56} height={24} fontSize={10} />
+                </UiEntity>
               ) : (
                 <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Button label={el.enabled ? 'Hide' : 'Show'} color={el.enabled ? undefined : C.accent}
                     onPress={() => onSceneAction?.('layout_toggle', { elementId: el.id, enabled: !el.enabled })}
                     width={56} height={24} fontSize={10} />
                   <UiEntity uiTransform={{ width: 4 }} />
-                  <Button label="Delete" color={C.danger} onPress={() => { state.confirmDelete = el.id }}
+                  <Button label="Delete" color={C.danger} onPress={() => { state.confirmClear = null; state.confirmDelete = el.id }}
                     width={56} height={24} fontSize={10} />
+                  {el.copies > 0 && <UiEntity uiTransform={{ width: 4 }} />}
+                  {el.copies > 0 && (
+                    <Button label="Clear" onPress={() => { state.confirmDelete = null; state.confirmClear = el.id }}
+                      width={52} height={24} fontSize={10} />
+                  )}
                 </UiEntity>
               )}
             </UiEntity>
@@ -839,6 +860,13 @@ function SceneLayoutPanel() {
           <Label value={`+${elements.length - 12} more — manage them on the dashboard`} fontSize={10} color={C.textMuted}
             uiTransform={{ height: 20 }} />
         )}
+        {state.confirmClear && (() => {
+          const item = elements.find((el) => el.id === state.confirmClear)
+          return item ? (
+            <Label value={clearCopiesPrompt(item)} fontSize={10} color={C.warning}
+              textAlign="top-left" uiTransform={{ width: '100%', height: 30 }} />
+          ) : null
+        })()}
         {state.confirmDelete && (
           <Label value="Delete this element and all its copies? This can't be undone." fontSize={10} color={C.warning}
             textAlign="top-left" uiTransform={{ width: '100%', height: 22 }} />
@@ -1658,6 +1686,7 @@ export class DclHUDRenderer implements HUDRenderer {
     state.layoutLoaded = true
     state.layoutFailed = false
     if (state.confirmDelete && !list.some((el) => el.id === state.confirmDelete)) state.confirmDelete = null
+    if (state.confirmClear && !list.some((el) => el.id === state.confirmClear && el.copies > 0)) state.confirmClear = null
   }
 
   /** A media / layout refresh failed: stop showing "Loading…" (the error goes to setEditMessage). */

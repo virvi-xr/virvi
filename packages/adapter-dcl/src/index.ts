@@ -10,7 +10,8 @@ import { DclEditMode } from './transform/edit-mode.js'
 import { friendlyEditError, friendlyRenameError, editBlockedMessage, createReconnector, DISCONNECTED } from './edit-errors.js'
 import { applyPresetsChange, friendlyPresetError, presetsFromScene, type HUDPreset } from './presets.js'
 import { screensFromPreset, withLiveSource, type HUDStream } from './streams.js'
-import type { HUDMediaItem, HUDLayoutItem } from './DclHUDRenderer.js'
+import type { HUDMediaItem } from './DclHUDRenderer.js'
+import { toLayoutItem, withCopies, clearedMessage, type HUDLayoutItem } from './layout.js'
 import { locationKeyFor } from '@virvixr/shared'
 import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
 
@@ -63,7 +64,6 @@ function toHUDMedia(items: SceneLibraryItem[], missingSrcs: string[]): HUDMediaI
   })
 }
 
-const toLayoutItem = (el: any): HUDLayoutItem => ({ id: el.id, name: el.name, type: el.type, enabled: el.enabled !== false })
 
 /**
  * Where a placed item goes: 2 m in front of the player on the XZ plane, turned to face them (to the nearest 90°).
@@ -390,7 +390,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       }
       const refreshLayout = async () => {
         const preset = await activePreset()
-        layout = (preset?.elements ?? []).filter((el: any) => LAYOUT_TYPES.has(el.type)).map(toLayoutItem)
+        layout = (preset?.elements ?? []).filter((el: any) => LAYOUT_TYPES.has(el.type)).map((el: any) => toLayoutItem(el))
         renderer?.setLayout(layout)
       }
       let publishUrl: string | null = null // the Publish action's target, set when a model is placed
@@ -428,7 +428,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           await virvi.httpClient.deleteElement(element.id).catch(() => {})
           throw err
         }
-        layout = [...layout.filter((el) => el.id !== element.id), toLayoutItem(element)]
+        layout = [...layout.filter((el) => el.id !== element.id), { ...toLayoutItem(element), copies: 1 }]
         renderer?.setLayout(layout)
         if (kind === 'image') {
           renderer?.setEditMessage(`Placed ${asset.name}`)
@@ -619,7 +619,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           return
         }
 
-        if (action !== 'media_place' && action !== 'layout_toggle' && action !== 'layout_delete') return
+        if (action !== 'media_place' && action !== 'layout_toggle' && action !== 'layout_delete' && action !== 'layout_clear') return
         if (busy) return
         busy = true
         try {
@@ -633,7 +633,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           if (action === 'media_place') await place(String(data?.assetId))
           if (action === 'layout_toggle') {
             const { element } = await virvi.httpClient.updateElement(String(data?.elementId), { enabled: !!data?.enabled })
-            layout = layout.map((el) => (el.id === element.id ? toLayoutItem(element) : el))
+            layout = layout.map((el) => (el.id === element.id ? toLayoutItem(element, el) : el))
             renderer?.setLayout(layout)
           }
           if (action === 'layout_delete') {
@@ -641,6 +641,15 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
             await virvi.httpClient.deleteElement(id)
             layout = layout.filter((el) => el.id !== id)
             renderer?.setLayout(layout)
+          }
+          if (action === 'layout_clear') {
+            // Every copy of one element goes; the element stays (the dashboard's Delete all, LIV-12)
+            const id = String(data?.elementId)
+            const { deleted } = await virvi.httpClient.deleteElementInstances(id)
+            const name = layout.find((el) => el.id === id)?.name ?? ''
+            layout = withCopies(layout, id, 0)
+            renderer?.setLayout(layout)
+            renderer?.setEditMessage(clearedMessage(name, deleted))
           }
         } catch (err) {
           renderer?.setEditMessage(friendlyEditError(err, { connected: connected() }), true)

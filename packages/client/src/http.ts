@@ -402,6 +402,11 @@ export class VirviHttpClient {
     })
   }
 
+  /** Delete every instance of an element; the element stays (LIV-12). */
+  async deleteElementInstances(elementId: string): Promise<{ deleted: number }> {
+    return this._fetch(`/api/elements/${elementId}/instances`, { method: 'DELETE' })
+  }
+
   async updateInstance(instanceId: string, data: Record<string, unknown>): Promise<{ instance: any }> {
     return this._fetch(`/api/instances/${instanceId}`, {
       method: 'PUT',
