@@ -22,6 +22,11 @@ export type RenderItem = {
   /** The same transform in Virvi coordinates (Decentraland frame, degrees), as edit mode drafts and saves it. */
   virvi: { position: Vec3; rotation: Vec3; scale: Vec3 }
   clickUrl: string | null
+  /**
+   * Schedule mode (LIV-87): the screen plays its showings by the shared clock (app.ts), showing `holdingImage` ('' for
+   * none) between them. `src` is then the holding image.
+   */
+  schedule?: { holdingImage: string }
 }
 
 const VIDEO_EXT = ['mp4', 'm3u8']
@@ -30,6 +35,7 @@ const CLICK_NONE = 0
 const CLICK_EXTERNAL = 1
 const OFF_IMAGE = 1
 const OFF_PLAYLIST = 2
+const OFF_SCHEDULED = 6
 
 type Props = Record<string, unknown>
 
@@ -64,7 +70,7 @@ function clickOf(inst: Props, el: Props): unknown {
   return set ? own : el.clickEvent
 }
 
-type Media = { kind: RenderItem['kind']; src: string; loop: boolean; playlist?: string[] } | null
+type Media = { kind: RenderItem['kind']; src: string; loop: boolean; playlist?: string[]; schedule?: { holdingImage: string } } | null
 
 function videoMedia(el: Props): Media {
   if (el.isLive && el.enableLiveStream && typeof el.liveSrc === 'string' && el.liveSrc) {
@@ -73,6 +79,10 @@ function videoMedia(el: Props): Media {
   if (el.offType === OFF_PLAYLIST) {
     const playlist = (Array.isArray(el.playlist) ? el.playlist : []).filter((src): src is string => supported(src, VIDEO_EXT))
     return playlist.length ? { kind: 'video', src: playlist[0], loop: playlist.length === 1, playlist } : null
+  }
+  if (el.offType === OFF_SCHEDULED) {
+    const holdingImage = supported(el.offImageSrc, IMAGE_EXT) ? el.offImageSrc : ''
+    return { kind: 'video', src: holdingImage, loop: false, schedule: { holdingImage } }
   }
   if (el.offType === OFF_IMAGE) {
     return supported(el.offImageSrc, IMAGE_EXT) ? { kind: 'image', src: el.offImageSrc, loop: false } : null
@@ -121,6 +131,7 @@ function planElements(
         transform: toHyperfyTransform(virvi),
         virvi,
         clickUrl: externalUrl(clickOf(inst, el)),
+        ...(media.schedule ? { schedule: media.schedule } : {}),
       })
     }
   }

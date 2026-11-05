@@ -6,7 +6,7 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { canWriteElement, getSceneAccess } from '../auth/permissions.js'
 import { utcToZoned } from '../scenes/schedule-time.js'
-import { publishVenueEvent } from '../realtime/bus.js'
+import { publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
 import { findShowingClash, parseShowingInput, presentShowing, resolveItems, ShowingError, specOfShowing, type ShowingRow } from '../scenes/showings.js'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -66,8 +66,10 @@ export default async function showingRoutes(app: FastifyInstance) {
     })
 
   /** Players in the scene get the screen's new showings (after the write). Never fails the request. */
-  const changed = (sceneId: string, elementId: string) =>
-    publishVenueEvent({ type: 'showings_changed', sceneId, elementId }).catch((err) => console.error('[showings] publish failed:', err))
+  const changed = async (sceneId: string, elementId: string) => {
+    await publishVenueEvent({ type: 'showings_changed', sceneId, elementId }).catch((err) => console.error('[showings] publish failed:', err))
+    await publishSceneTouched(sceneId) // wakes the Hyperfy feed's held polls; never throws
+  }
 
   const fail = (reply: FastifyReply, e: unknown) => {
     if (e instanceof ShowingError) return reply.status(e.status).send({ error: e.code, message: e.message, ...e.extra })

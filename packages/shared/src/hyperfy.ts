@@ -1,6 +1,7 @@
 /** Shared vocabulary for Hyperfy worlds: the scene feed protocol and the visit analytics batch. */
 
 import type { Adjustment } from './ar.js'
+import type { ShowingInstance } from './showings.js'
 import type { Vec3 } from './types/math.js'
 
 export const HYPERFY_FEED = {
@@ -55,6 +56,13 @@ export interface HyperfyFeedResponse {
   version: string
   /** Null when the scene has no active preset. */
   scene: SerializedScene | null
+  /**
+   * Scheduled showings (LIV-87) for each enabled video screen in Schedule mode, by element id (the element's `sk`),
+   * running now or starting within about a day and a half. Refreshed hourly and on every edit.
+   */
+  showings?: Array<{ elementId: string; showings: ShowingInstance[] }>
+  /** Virvi's clock (UTC ms) when this answer was sent, for `screenStateAt`. Not part of `version`. */
+  serverTime?: number
 }
 
 /** How long a hosted world's data, slug and key are kept after it ends, before the sweep purges it. */

@@ -9,12 +9,13 @@
  *   Hosted worlds link through the server half, which asks the image to vouch for its players (`app.virviVouch`,
  *   server only; the world secret stays in Node); self-run worlds pair from the browser with a code.
  */
-import type { HyperfyFeedResponse, SerializedScene } from '@virvixr/shared'
+import type { HyperfyFeedResponse, SerializedScene, ShowingInstance } from '@virvixr/shared'
 import { clickHandler, renderedItem } from './edit/controller.js'
 import { runHud } from './hud/client.js'
 import { runLinkRelay } from './link-relay.js'
 import { diffPlans, planScene, type RenderItem } from './plan.js'
 import { FeedPoller } from './poller.js'
+import { newSeekState, scheduledView, seekAction, virviClockOffset, type ScheduledView, type SeekState } from './showings.js'
 import type { AppProps, ClientEditHooks, HApp, HNode, HWorld, Matrix4Ctor, ScriptFetch, ScriptSetTimeout } from './sandbox.js'
 import { MODEL_TURN, toHyperfyTransform, toVirviPosition, worldToLocal, type HyperfyTransform } from './transform.js'
 import type { VirviTransform } from './virvi-api.js'
@@ -29,13 +30,15 @@ declare const Matrix4: Matrix4Ctor
 declare const uuid: () => string
 
 const SCENE = 'virvi:scene'
+/** A feed answer as the server half passes it on: plus Virvi's clock minus the world's shared clock (ms), if known. */
+type SceneMessage = HyperfyFeedResponse & { clockOffsetMs?: number }
 
 type V3 = { x: number; y: number; z: number }
 const closeV = (a: V3, b: V3) => Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.y) < 1e-4 && Math.abs(a.z - b.z) < 1e-4
 const sameTransform = (a: VirviTransform, b: VirviTransform) =>
   closeV(a.position, b.position) && closeV(a.rotation, b.rotation) && closeV(a.scale, b.scale)
 const HELLO = 'virvi:hello'
-/** How often playlist screens are checked for a video that has ended (Hyperfy's video node has no "ended" event). */
+/** How often playlist and scheduled screens are checked (Hyperfy's video node has no "ended" event). */
 const PLAYLIST_CHECK_MS = 500
 /** A video stopped within this many seconds of its end has ended. */
 const END_SLACK_S = 0.5
@@ -65,7 +68,7 @@ function runServer(): void {
     console.log('[virvi] set this app\'s world key (from Virvi: Connect your own Hyperfy world)')
     return
   }
-  let latest: HyperfyFeedResponse | null = null
+  let latest: SceneMessage | null = null
 
   new FeedPoller({
     feedUrl,
@@ -73,8 +76,9 @@ function runServer(): void {
     fetch,
     setTimeout,
     onSnapshot: (r) => {
-      latest = r
-      app.send(SCENE, r)
+      // Pinned to the world's shared clock here, so visitors' own clocks don't matter (scheduled showings).
+      latest = typeof r.serverTime === 'number' ? { ...r, clockOffsetMs: virviClockOffset(r.serverTime, world.getTime()) } : r
+      app.send(SCENE, latest)
     },
   }).start()
 
@@ -102,10 +106,19 @@ function runServer(): void {
 export type { ClientEditHooks } from './sandbox.js'
 
 function runClient(): ClientEditHooks {
-  /** `track`: for a playlist screen, the index of the playlist video it is showing. */
-  type Shown = { item: RenderItem; node: HNode | null; track: number }
+  /**
+   * `track`: for a playlist screen, the index of the playlist video it is showing. `view`/`seek`: for a scheduled
+   * screen, what it is showing and its video's seeks.
+   */
+  type Shown = { item: RenderItem; node: HNode | null; track: number; view?: ScheduledView; seek?: SeekState }
   let plan: RenderItem[] = []
   const shown = new Map<string, Shown>()
+  /** Scheduled screens' showings by element id, and Virvi's clock minus the world's (from the latest snapshot). */
+  let showings = new Map<string, ShowingInstance[]>()
+  let clockOffsetMs: number | null = null
+  const virviNow = () => (clockOffsetMs === null ? Date.now() : world.getTime() * 1000 + clockOffsetMs)
+  const elementOf = (key: string) => key.slice(0, key.indexOf(':'))
+  const viewOf = (item: RenderItem) => scheduledView(showings.get(elementOf(item.key)) ?? [], virviNow(), item.schedule?.holdingImage ?? '')
   /** Edit mode's drafts shown in place of the feed transform, by key, until restored. */
   const previews = new Map<string, VirviTransform>()
   let editing = false
@@ -172,7 +185,17 @@ function runClient(): ClientEditHooks {
       return
     }
     let node: HNode
-    if (item.kind === 'audio') {
+    if (item.schedule) {
+      const view = viewOf(item)
+      entry.view = view
+      watchScreens()
+      if (view.type === 'none') return
+      node = plane(view.type, item, view.src)
+      if (view.type === 'video') {
+        node.loop = false
+        entry.seek = newSeekState()
+      }
+    } else if (item.kind === 'audio') {
       node = app.create('audio')
       node.src = item.src
       node.loop = item.loop
@@ -185,7 +208,7 @@ function runClient(): ClientEditHooks {
     entry.node = node
     app.add(node)
     node.play?.()
-    if (item.playlist.length > 1) watchPlaylists()
+    if (item.playlist.length > 1) watchScreens()
   }
 
   const remove = (key: string) => {
@@ -195,11 +218,32 @@ function runClient(): ClientEditHooks {
     if (entry.node) app.remove(entry.node)
   }
 
-  /** Each playlist screen whose video has ended gets a fresh node for the next video (the last is followed by the first). */
+  /** A scheduled screen changes picture when the show moves on, and keeps its video where the shared show is. */
+  const checkScheduled = (entry: Shown) => {
+    const view = viewOf(entry.item)
+    if (view.key !== entry.view?.key) {
+      remove(entry.item.key)
+      add(entry.item)
+      return
+    }
+    const { node, seek } = entry
+    if (view.type !== 'video' || !node || !seek) return
+    if (seekAction(seek, Date.now(), view.offset, view.duration, node)) node.time = view.offset
+  }
+
+  /**
+   * Each playlist screen whose video has ended gets a fresh node for the next video (the last is followed by the
+   * first); scheduled screens follow the clock.
+   */
   let watching = false
-  const checkPlaylists = () => {
+  const checkScreens = () => {
     let any = false
     for (const entry of [...shown.values()]) {
+      if (entry.item.schedule) {
+        any = true
+        checkScheduled(entry)
+        continue
+      }
       const { item, node, track } = entry
       if (item.playlist.length < 2 || !node) continue
       any = true
@@ -208,16 +252,18 @@ function runClient(): ClientEditHooks {
       add(item, (track + 1) % item.playlist.length)
     }
     watching = any
-    if (any) setTimeout(checkPlaylists, PLAYLIST_CHECK_MS)
+    if (any) setTimeout(checkScreens, PLAYLIST_CHECK_MS)
   }
-  const watchPlaylists = () => {
+  const watchScreens = () => {
     if (watching) return
     watching = true
-    setTimeout(checkPlaylists, PLAYLIST_CHECK_MS)
+    setTimeout(checkScreens, PLAYLIST_CHECK_MS)
   }
 
   app.on(SCENE, (data) => {
-    const r = data as HyperfyFeedResponse
+    const r = data as SceneMessage
+    showings = new Map((r?.showings ?? []).map((s) => [s.elementId, s.showings]))
+    if (typeof r?.clockOffsetMs === 'number') clockOffsetMs = r.clockOffsetMs
     let next: RenderItem[]
     try {
       next = planScene(r?.scene ?? null)

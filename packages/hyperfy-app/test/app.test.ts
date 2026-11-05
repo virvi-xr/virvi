@@ -143,6 +143,8 @@ function run(opts: {
   virviVouch?: (req: VouchReq) => Promise<unknown>
   route?: (url: string, body: any) => Res | undefined
 }) {
+  /** The world's shared clock, in seconds (world.getTime()); tests move it. */
+  const clock = { worldTime: 100 }
   const timers: Array<() => void> = []
   const posts: Array<{ url: string; body: any }> = []
   const requests: Array<{ url: string; body: any }> = []
@@ -159,6 +161,7 @@ function run(opts: {
     isServer: opts.isServer,
     isClient: !opts.isServer,
     on: (name: string, cb: (e: any) => void) => worldHandlers.set(name, cb),
+    getTime: () => clock.worldTime,
     getPlayers: () => opts.players ?? [],
     getPlayer: (id?: string) => (id === undefined ? (opts.me ?? null) : ((opts.players ?? []).find((p) => p.id === id) ?? null)),
     load: (_type: string, _url: string) => {
@@ -217,7 +220,7 @@ function run(opts: {
     await settle()
   }
   const update = () => handlers.get('update')?.(1 / 60)
-  return { timers, posts, requests, handlers, worldHandlers, added, created, loads, sent, sentTo, controls, used, settle, tick, update }
+  return { clock, timers, posts, requests, handlers, worldHandlers, added, created, loads, sent, sentTo, controls, used, settle, tick, update }
 }
 
 describe('the Virvi app script', () => {
@@ -238,6 +241,81 @@ describe('the Virvi app script', () => {
     expect(pos.x).toBeCloseTo(1)
     expect(pos.y).toBeCloseTo(0)
     expect(pos.z).toBeCloseTo(2)
+  })
+
+  it('server: passes each feed answer on with Virvi\'s clock pinned to the world\'s shared clock', async () => {
+    const T = Date.UTC(2026, 10, 5, 19, 0)
+    const answer = { v: 1, version: 'a', scene: null, showings: [], serverTime: T }
+    const s = run({ isServer: true, route: (url) => (url.includes('/api/hyperfy/feed') ? res(200, answer) : undefined) })
+    s.clock.worldTime = 250
+    for (let round = 0; round < 3 && !s.sent.some((m) => m.name === 'virvi:scene'); round++) await s.tick()
+    const msg = s.sent.find((m) => m.name === 'virvi:scene')!.data
+    expect(msg).toMatchObject({ version: 'a', clockOffsetMs: T - 250_000 })
+  })
+
+  it('client: a scheduled screen joins the show at the shared second, follows the programme, then shows the holding image', async () => {
+    const c = run({ isServer: false })
+    const T = Date.UTC(2026, 10, 5, 19, 0)
+    const items = [
+      { url: 'https://x/trailer.mp4', duration: 60, kind: 'ad' as const },
+      { url: 'https://x/film.mp4', duration: 600, kind: 'video' as const },
+    ]
+    const at = (secondsIntoShow: number) => {
+      c.clock.worldTime = 1000 + secondsIntoShow
+    }
+    // Virvi time = world time + offset: the show starts at world time 1000 s
+    const snap = (version: string, extra: Record<string, unknown> = {}) => ({
+      v: 1,
+      version,
+      clockOffsetMs: T - 1000_000,
+      scene: {
+        videos: [{ sk: 'tv', offType: 6, offImageSrc: 'https://x/poster.png', volume: 0.7, instances: [{ sk: 'i1', scale: { x: 4, y: 2, z: 1 } }] }],
+        images: [],
+        models: [],
+        sounds: [],
+      },
+      showings: [{ elementId: 'tv', showings: [{ showingId: 's1', startsAt: T, title: 'Film', items }] }],
+      ...extra,
+    })
+    const screen = () => {
+      const shownNow = c.added.filter((n) => n.type === 'video' || n.type === 'image')
+      expect(shownNow).toHaveLength(1)
+      return shownNow[0]
+    }
+
+    at(-30)
+    c.handlers.get('virvi:scene')!(snap('a'))
+    expect(screen()).toMatchObject({ type: 'image', src: 'https://x/poster.png', width: 4, height: 2 })
+
+    // The show starts: the trailer, from the top
+    at(0.2)
+    await c.tick()
+    expect(screen()).toMatchObject({ type: 'video', src: 'https://x/trailer.mp4', loop: false, volume: 0.7 })
+
+    // Someone walks in 5 minutes into the film: it loads, then jumps to the shared second
+    const late = run({ isServer: false })
+    late.clock.worldTime = 1000 + 60 + 300
+    late.handlers.get('virvi:scene')!(snap('a'))
+    const film = late.added.find((n) => n.type === 'video')!
+    expect(film.src).toBe('https://x/film.mp4')
+    await late.tick()
+    expect(film.time).toBeUndefined() // not loaded yet: Hyperfy would ignore the seek
+    Object.assign(film, { playing: true, time: 0, duration: 600 })
+    late.clock.worldTime += 0.5
+    await late.tick()
+    expect(film.time).toBeCloseTo(300.5)
+
+    // The first visitor's screen moves to the film after the trailer, and back to the poster at the end
+    at(61)
+    await c.tick()
+    expect(screen()).toMatchObject({ type: 'video', src: 'https://x/film.mp4' })
+    at(661)
+    await c.tick()
+    expect(screen()).toMatchObject({ type: 'image', src: 'https://x/poster.png' })
+
+    // A screen with no holding image shows nothing between showings
+    c.handlers.get('virvi:scene')!(snap('b', { scene: { ...snap('b').scene, videos: [{ ...snap('b').scene.videos[0], offImageSrc: '' }] } }))
+    expect(c.added.filter((n) => n.type === 'video' || n.type === 'image')).toHaveLength(0)
   })
 
   it('client: a model sits in a group carrying the mapped transform, turned half a circle inside it', async () => {
