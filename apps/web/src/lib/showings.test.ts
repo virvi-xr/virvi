@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { copiedMessage, copyShowingBody, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
+import { copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyToDaysBodies, nextWeekBodies, thisWeek, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, showingToForm, parseLength, previewAt, programmeLength, programmeProblem, type Showing, type ShowingForm } from './showings'
 
 const form = (extra: Partial<ShowingForm> = {}): ShowingForm => ({
   title: ' Night of the Living Dead ', description: '', posterUrl: '',
@@ -136,5 +136,61 @@ describe('copy to another screen', () => {
     expect(copiedMessage(showing, { name: 'Lobby', scheduled: true })).toBe('Copied Night of the Living Dead to Lobby.')
     expect(copiedMessage({ ...showing, title: null }, { name: 'Side', scheduled: false }))
       .toBe('Copied Untitled showing to Side. It plays there once Side is set to Scheduled showings.')
+  })
+})
+
+describe('copy to other days and to next week', () => {
+  const base: Showing = {
+    id: 'sh1', elementId: 'v1', title: 'Matinee', description: null, posterUrl: null,
+    items: [{ url: 'https://cdn/film.mp4', duration: 5400, kind: 'video' }],
+    recurrence: 'once', startDate: '2026-11-06', startTime: '14:00', weekdays: [], timezone: 'America/New_York', enabled: true,
+    lengthSeconds: 5400, nextStarts: [],
+  }
+
+  it('offers the days a showing is not already on; a daily one has none', () => {
+    expect(copyDayChoices(base)).toEqual([0, 1, 2, 3, 4, 6]) // 2026-11-06 is a Friday
+    expect(copyDayChoices({ ...base, recurrence: 'weekly', weekdays: [5, 6] })).toEqual([0, 1, 2, 3, 4])
+    expect(copyDayChoices({ ...base, recurrence: 'daily' })).toEqual([])
+  })
+
+  it('a one-off goes to the next of each chosen day after its date, same time', () => {
+    const bodies = copyToDaysBodies(base, [6, 1])
+    expect(bodies.map((b) => [b.recurrence, b.startDate, b.startTime, b.weekdays])).toEqual([
+      ['once', '2026-11-09', '14:00', []],
+      ['once', '2026-11-07', '14:00', []],
+    ].sort((a, b) => String(a[1]).localeCompare(String(b[1]))))
+    expect(bodies[0].items).toEqual([{ url: 'https://cdn/film.mp4', kind: 'video', duration: 5400 }])
+  })
+
+  it('a weekly one becomes one more weekly showing on the chosen days, leaving out days it is already on', () => {
+    const weekly = { ...base, recurrence: 'weekly' as const, weekdays: [5] }
+    expect(copyToDaysBodies(weekly, [3, 1, 5]).map((b) => [b.recurrence, b.weekdays, b.startDate])).toEqual([['weekly', [1, 3], '2026-11-06']])
+    expect(copyToDaysBodies(weekly, [5])).toEqual([])
+    expect(copyToDaysBodies({ ...base, recurrence: 'daily' }, [1])).toEqual([])
+  })
+
+  it('this week runs Sunday to Saturday around the given day', () => {
+    expect(thisWeek('2026-11-05')).toEqual({ start: '2026-11-01', end: '2026-11-07' })
+    expect(thisWeek('2026-11-01')).toEqual({ start: '2026-11-01', end: '2026-11-07' })
+    expect(thisWeek('2026-11-07')).toEqual({ start: '2026-11-01', end: '2026-11-07' })
+    expect(thisWeek('2026-12-31')).toEqual({ start: '2026-12-27', end: '2027-01-02' })
+  })
+
+  it("copies this week's one-off showings 7 days on; repeating and other weeks' ones stay put", () => {
+    const list: Showing[] = [
+      { ...base, id: 'a', startDate: '2026-11-01' },
+      { ...base, id: 'b', startDate: '2026-11-07', title: 'Late' },
+      { ...base, id: 'c', startDate: '2026-11-08' },
+      { ...base, id: 'd', startDate: '2026-10-31' },
+      { ...base, id: 'e', recurrence: 'weekly', weekdays: [2] },
+    ]
+    expect(nextWeekBodies(list, '2026-11-05').map((b) => [b.title, b.startDate])).toEqual([['Matinee', '2026-11-08'], ['Late', '2026-11-14']])
+  })
+
+  it('says how many were copied and which clashed', () => {
+    expect(copyResultMessage(2, [])).toBe('Copied 2 showings.')
+    expect(copyResultMessage(1, [])).toBe('Copied 1 showing.')
+    expect(copyResultMessage(1, ['Matinee on 2026-11-09'])).toBe("Copied 1 showing. Not copied, because it clashes with a showing already there: Matinee on 2026-11-09.")
+    expect(copyResultMessage(0, ['A on 2026-11-08', 'B on 2026-11-14'])).toBe("Copied 0 showings. Not copied, because they clash with showings already there: A on 2026-11-08 and B on 2026-11-14.")
   })
 })

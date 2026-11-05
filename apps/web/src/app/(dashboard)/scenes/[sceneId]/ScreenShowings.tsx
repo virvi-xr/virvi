@@ -5,7 +5,7 @@ import { mediaLabel, useMediaNames } from '@/lib/media-names'
 import { formatRunTime, localDate, timezoneOptions, viewerTimezone } from '@/lib/preset-schedules'
 import { formatDuration } from '@/lib/format'
 import {
-  copiedMessage, copyShowingBody, copyTargets, describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
+  copiedMessage, copyDayChoices, copyResultMessage, copyShowingBody, copyTargets, copyToDaysBodies, nextWeekBodies, describeShowing, duplicateShowingForm, formToShowingBody, parseLength, previewAt, programmeLength, programmeProblem, showingToForm, WEEKDAYS,
   type Showing, type ShowingForm, type ShowingFormItem,
 } from '@/lib/showings'
 
@@ -38,6 +38,8 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
   /** "Copy to…" open on one showing, with the screen chosen so far. */
   const [copying, setCopying] = useState<{ showingId: string; targetId: string } | null>(null)
   const [notice, setNotice] = useState('')
+  /** "Copy to days…" open on one showing, with the days chosen so far. */
+  const [copyingDays, setCopyingDays] = useState<{ showingId: string; days: number[] } | null>(null)
   const targets = copyTargets(screens, elementId)
   const [error, setError] = useState('')
   const [unknown, setUnknown] = useState<string[]>([])
@@ -98,6 +100,27 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
       setNotice(copiedMessage(s, to))
     })
   }
+  /** Creates each copy in turn; one refused for clashing (409) is listed, any other failure stops. */
+  const createAll = (bodies: ReturnType<typeof copyShowingBody>[], done: () => void) => run(async () => {
+    let copied = 0
+    const clashed: string[] = []
+    for (const b of bodies) {
+      try {
+        await api.createShowing(elementId, b)
+        copied++
+      } catch (e: any) {
+        if (e?.status !== 409) throw e
+        const when = b.recurrence === 'once' ? b.startDate : describeShowing({ ...b, items: [] }).split(' at ')[0]
+        clashed.push(`${b.title || 'Untitled showing'} on ${when}`)
+      }
+    }
+    done()
+    setNotice(copyResultMessage(copied, clashed))
+    load()
+  })
+  const copyToDays = (s: Showing, days: number[]) => createAll(copyToDaysBodies(s, days), () => setCopyingDays(null))
+  const nextWeek = nextWeekBodies(showings ?? [], localDate())
+  const copyWeek = () => createAll(nextWeek, () => {})
   const toggle = (s: Showing) => run(async () => { await api.updateShowing(s.id, { enabled: !s.enabled }); load() })
   const remove = (s: Showing) => run(async () => {
     await api.deleteShowing(s.id)
@@ -124,6 +147,10 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
                 <span className="flex gap-2">
                   <button type="button" className={BTN} disabled={busy} onClick={() => { setEditingId(s.id); setCopiedFrom(null); setForm(showingToForm(s)); setError(''); setUnknown([]) }}>Edit</button>
                   <button type="button" className={BTN} disabled={busy} onClick={() => { setEditingId(null); setCopiedFrom(s.title || 'Untitled showing'); setForm(duplicateShowingForm(s)); setError(''); setUnknown([]) }}>Duplicate</button>
+                  {copyDayChoices(s).length > 0 && (
+                    <button type="button" className={BTN} disabled={busy} aria-expanded={copyingDays?.showingId === s.id}
+                      onClick={() => { setCopyingDays(copyingDays?.showingId === s.id ? null : { showingId: s.id, days: [] }); setError(''); setNotice('') }}>Copy to days…</button>
+                  )}
                   {targets.length > 0 && (
                     <button type="button" className={BTN} disabled={busy} aria-expanded={copying?.showingId === s.id}
                       onClick={() => { setCopying(copying?.showingId === s.id ? null : { showingId: s.id, targetId: targets[0].id }); setError(''); setNotice('') }}>Copy to…</button>
@@ -135,6 +162,25 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
               <p className="text-xs text-gray-400">{describeShowing(s)}</p>
               <p className="text-xs text-gray-500">{s.items.map((i) => `${name(i.url)}${i.kind === 'ad' ? ' (ad)' : ''}`).join(' → ')}</p>
               {s.enabled && s.nextStarts[0] && <p className="text-xs text-gray-500">Next: {formatRunTime(s.nextStarts[0], s.timezone, viewerTz)}</p>}
+              {copyingDays?.showingId === s.id && (
+                <div className="mt-2 space-y-2 text-xs text-gray-300">
+                  <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Copy to days">
+                    {copyDayChoices(s).map((d) => {
+                      const on = copyingDays.days.includes(d)
+                      return (
+                        <button type="button" key={d} aria-pressed={on}
+                          onClick={() => setCopyingDays({ showingId: s.id, days: on ? copyingDays.days.filter((x) => x !== d) : [...copyingDays.days, d] })}
+                          className={`rounded-md border px-2 py-1 text-xs ${on ? 'border-blue-500 bg-blue-600/20 text-white' : 'border-gray-700 text-gray-400'}`}>{WEEKDAYS[d]}</button>
+                      )
+                    })}
+                    <button type="button" className={BTN} disabled={busy || copyingDays.days.length === 0} onClick={() => void copyToDays(s, copyingDays.days)}>Copy</button>
+                    <button type="button" className="text-xs text-gray-400 hover:text-white" onClick={() => setCopyingDays(null)}>Cancel</button>
+                  </div>
+                  <span className="block text-gray-500">{s.recurrence === 'once'
+                    ? 'Same programme and time, on the next of each chosen day after this one.'
+                    : 'Adds one more showing with the same programme and time on the chosen days.'} Days that clash with another showing are skipped.</span>
+                </div>
+              )}
               {copying?.showingId === s.id && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-300">
                   <label className="flex items-center gap-2">Copy to
@@ -228,7 +274,15 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
           </div>
         </form>
       ) : (
-        <button type="button" className={BTN} disabled={busy || showings === null} onClick={() => { setEditingId(null); setCopiedFrom(null); setForm(blank()) }}>Add showing</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={BTN} disabled={busy || showings === null} onClick={() => { setEditingId(null); setCopiedFrom(null); setForm(blank()) }}>Add showing</button>
+          {nextWeek.length > 0 && (
+            <button type="button" className={BTN} disabled={busy} onClick={() => void copyWeek()}
+              title="This week's one-off showings, again 7 days later. Repeating showings already repeat.">
+              Copy this week&apos;s one-offs to next week ({nextWeek.length})
+            </button>
+          )}
+        </div>
       )}
 
       {notice && <p role="status" className="text-sm text-green-400">{notice}</p>}
