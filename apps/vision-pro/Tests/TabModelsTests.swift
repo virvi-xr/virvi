@@ -20,7 +20,7 @@ final class TabModelsTests: XCTestCase {
         {"sk":"p1","name":"Main","videos":[{"sk":"v1","name":"Stage","isLive":true,"enableLiveStream":true},{"sk":"v2","isLive":false},{"name":"nosk"}],"images":[{"sk":"i1"}]}
         """)
         let rows = StreamModel.streams(scene: s)
-        XCTAssertEqual(rows, [StreamRow(elementId: "v1", name: "Stage", isLive: true), StreamRow(elementId: "v2", name: "Screen", isLive: false)])
+        XCTAssertEqual(rows, [StreamRow(elementId: "v1", name: "Stage", isLive: true, offImageSrc: ""), StreamRow(elementId: "v2", name: "Screen", isLive: false, offImageSrc: "")])
         XCTAssertEqual(rows.map { StreamModel.buttonLabel($0) }, ["Go Offline", "Go Live"])
         XCTAssertEqual(StreamModel.emptyCopy, "No active streams")
         XCTAssertTrue(StreamModel.streams(scene: scene("{}")).isEmpty)
@@ -30,6 +30,67 @@ final class TabModelsTests: XCTestCase {
         try await StreamModel(api: makeApi(t), sceneId: "s1").setLive("v2", true)
         XCTAssertEqual(t.requests.last?.httpMethod, "POST")
         XCTAssertEqual(t.bodies("/api/elements/v2/live").first?["enabled"] as? Bool, true)
+    }
+
+    // MARK: Off image (LIV-54)
+
+    private func lib(_ id: String, _ name: String, _ url: String, type: String?, kind: String = "media", status: String = "ready") -> LibraryItem {
+        LibraryItem(id: id, kind: kind, name: name, url: url, contentType: type, status: status, error: nil)
+    }
+
+    func testStreamRowsCarryTheScreensOffImage() {
+        let rows = StreamModel.streams(scene: scene(#"{"videos":[{"sk":"v1","name":"Stage","offImageSrc":" https://x/poster.png "}]}"#))
+        XCTAssertEqual(rows.first?.offImageSrc, "https://x/poster.png")
+    }
+
+    func testOffImageChoicesAreTheLibrarysReadyImages() {
+        let choices = StreamModel.offImageChoices([
+            lib("a", "Poster", "https://x/p.png", type: "image/png"),
+            lib("b", "Loop", "https://x/v.mp4", type: "video/mp4"),
+            lib("c", "Busy", "https://x/c.jpg", type: "image/jpeg", status: "processing"),
+            lib("d", "Chair", "https://x/m.glb", type: "model/gltf-binary", kind: "model"),
+            lib("e", "Anim", "https://x/e.gif", type: "image/gif"),
+            lib("f", "Heic", "https://x/f.heic", type: "image/heic"),
+        ])
+        XCTAssertEqual(choices, [OffImageChoice(id: "a", name: "Poster", url: "https://x/p.png"), OffImageChoice(id: "e", name: "Anim", url: "https://x/e.gif")])
+    }
+
+    func testOffImageLabelNamesItByItsLibraryName() {
+        let images = [OffImageChoice(id: "a", name: "Poster", url: "https://x/p.png")]
+        let row = { (src: String) in StreamRow(elementId: "v", name: "S", isLive: false, offImageSrc: src) }
+        XCTAssertEqual(StreamModel.offImageLabel(row("https://x/p.png"), images), "Off image: Poster")
+        XCTAssertEqual(StreamModel.offImageLabel(row("https://elsewhere/q.png"), images), "Off image: from a link")
+        XCTAssertEqual(StreamModel.offImageLabel(row(""), images), "No off image")
+    }
+
+    func testSetOffImageKeepsTheScreensOtherProperties() async throws {
+        let t = FakeTransport()
+        t.on("/api/scenes/s1") { _ in (200, ["scene": ["presets": [["elements": [
+            ["id": "v1", "properties": ["offType": 1, "playlist": ["https://x/a.mp4"], "offImageSrc": "https://x/old.png"]],
+        ]]]]]) }
+        t.on("/api/elements/v1") { _ in (200, ["element": ["id": "v1"]]) }
+        let model = StreamModel(api: makeApi(t), sceneId: "s1")
+        try await model.setOffImage("v1", "https://x/p.png")
+        let put = try XCTUnwrap(t.bodies("/api/elements/v1").last?["properties"] as? [String: Any])
+        XCTAssertEqual(put["offImageSrc"] as? String, "https://x/p.png")
+        XCTAssertEqual(put["offType"] as? Int, 1)
+        XCTAssertEqual(put["playlist"] as? [String], ["https://x/a.mp4"])
+        XCTAssertEqual(t.requests.last?.httpMethod, "PUT")
+        // Cleared as '' rather than dropped, so the change reaches the world
+        try await model.setOffImage("v1", "")
+        XCTAssertEqual((t.bodies("/api/elements/v1").last?["properties"] as? [String: Any])?["offImageSrc"] as? String, "")
+    }
+
+    func testSetOffImageOnAScreenThatIsGoneFailsAsNotFound() async {
+        let t = FakeTransport()
+        t.on("/api/scenes/s1") { _ in (200, ["scene": ["presets": [["elements": []]]]]) }
+        do {
+            try await StreamModel(api: makeApi(t), sceneId: "s1").setOffImage("v9", "https://x/p.png")
+            XCTFail("expected a failure")
+        } catch {
+            XCTAssertEqual(error as? ApiError, .status(404, code: "not_found"))
+        }
+        XCTAssertEqual(t.count("/api/elements/v9"), 0)
     }
 
     func testWorldsEmptyAndLoaded() async throws {
