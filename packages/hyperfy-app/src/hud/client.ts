@@ -29,6 +29,7 @@ import {
   hudModel,
   inFrontOf,
   initialUi,
+  clearedAlert,
   pairingAlert,
   placeAsset,
   typeKey,
@@ -143,11 +144,13 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
           controller.state.values && setUi({ typing: { target: axis, text: '' } }),
         typeKey: (prop, char) => void typeInto(prop, char),
         openPanel: (p) => {
-          setUi({ panel: ui.panel === p ? null : p, typing: null })
+          setUi({ panel: ui.panel === p ? null : p, typing: null, clearing: null })
           if (ui.panel === 'layout') void loadPresets()
           if (ui.panel === 'assets') void loadTab(ui.tab)
         },
         toggleEnabled: (id, on) => void request(api.setEnabled(id, on)),
+        askClear: (id) => setUi({ clearing: id }),
+        clearCopies: (id) => void clearCopies(id),
         setPreset: (id) => void request(api.setPreset(sceneId(), id)),
         toggleLive: (id, on) => void request(api.setLive(id, on)),
         pickStream: (id) => {
@@ -355,6 +358,15 @@ export function runHud(hooks: ClientEditHooks, sandbox: HudSandbox): void {
     const id = sceneId()
     if (!stream || !id) return
     if (await request(api.setLiveSource(id, elementId, stream.hlsPlaylistUrl))) setUi({ streamPicking: null })
+  }
+
+  /** Removes every copy of an object (LIV-12); the scene's next feed snapshot drops them from the world. */
+  async function clearCopies(elementId: string): Promise<void> {
+    const item = hudModel({ pairing: link, edit: controller.state, plan, scene, alerts: [], ui }).layout.items.find((i) => i.elementId === elementId)
+    setUi({ clearing: null })
+    const r = await api.deleteInstances(elementId)
+    if (r.ok) pushAlert(clearedAlert(item?.name ?? '', r.value.deleted))
+    else pushAlert(failureAlert(r.reason))
   }
 
   async function loadPresets(): Promise<void> {

@@ -36,6 +36,9 @@ export interface HudActions {
   typeKey(prop: string, char: string): void
   openPanel(panel: Exclude<Panel, null>): void
   toggleEnabled(elementId: string, enabled: boolean): void
+  /** Ask to remove every copy of an object (null cancels the question). */
+  askClear(elementId: string | null): void
+  clearCopies(elementId: string): void
   setPreset(presetId: string): void
   toggleLive(elementId: string, on: boolean): void
   /** Open (or close) a screen's stream list. */
@@ -277,16 +280,24 @@ export class HudView {
             this.row([this.button(p.name, () => a.setPreset(p.id), p.active)]),
           ),
           this.row([this.label('Objects', C.dim)]),
-          ...vm.layout.items.map((i) =>
+          ...vm.layout.items.flatMap((i) => [
             this.row([
               this.label(i.name),
+              ...(i.copies > 0 ? [this.label(`×${i.copies}`, C.dim, 12)] : []),
               this.button(
                 i.enabled ? 'Shown' : 'Hidden',
                 () => a.toggleEnabled(i.elementId, !i.enabled),
                 i.enabled,
               ),
+              ...(i.copies > 0 && !i.clearPrompt ? [this.button('Clear', () => a.askClear(i.elementId))] : []),
             ]),
-          ),
+            ...(i.clearPrompt
+              ? [
+                  this.row([this.label(i.clearPrompt, C.error, 12)]),
+                  this.row([this.button('Remove', () => a.clearCopies(i.elementId), true), this.button('Cancel', () => a.askClear(null))]),
+                ]
+              : []),
+          ]),
         ]
       case 'streams':
         return vm.streams.length

@@ -161,3 +161,31 @@ describe('HudView streams panel (LIV-53)', () => {
     expect(calls).toEqual([['chooseStream', 'v1', 's2'], ['pickStream', 'v1']])
   })
 })
+
+describe('HudView layout panel: clearing copies (LIV-12)', () => {
+  const scene = { videos: [], images: [], models: [{ sk: 'm1', name: 'Chair', instances: [{ sk: 'a' }, { sk: 'b' }] }], sounds: [] }
+  const setup = (ui: Record<string, unknown>) => {
+    const h = host()
+    const calls: unknown[][] = []
+    const act = new Proxy({}, { get: (_t, name) => (...args: unknown[]) => void calls.push([name, ...args]) }) as HudActions
+    new HudView(h, act).render(hudModel({ ...vmState(), scene: scene as never, ui: { panel: 'layout', ...ui } }))
+    const all = h.created.flatMap((n) => (typeof n.value === 'string' ? [n.value] : []))
+    const press = (label: string) => h.created.find((n) => n.onPointerDown && texts(n).length === 1 && texts(n)[0] === label)!.onPointerDown()
+    return { all, press, calls }
+  }
+
+  it('shows the copy count and a Clear button that asks first', () => {
+    const t = setup({})
+    expect(t.all).toContain('×2')
+    t.press('Clear')
+    expect(t.calls).toEqual([['askClear', 'm1']])
+  })
+
+  it('while confirming: the prompt, then Remove or Cancel', () => {
+    const t = setup({ clearing: 'm1' })
+    expect(t.all).toContain("Remove all 2 copies of Chair? The object stays. This can't be undone.")
+    t.press('Remove')
+    t.press('Cancel')
+    expect(t.calls).toEqual([['clearCopies', 'm1'], ['askClear', null]])
+  })
+})

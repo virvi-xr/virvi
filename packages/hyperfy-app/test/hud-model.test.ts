@@ -9,6 +9,8 @@ import {
   ALERT_STREAM_OFFLINE,
   LINK_HINT,
   alertsFromSnapshot,
+  clearCopiesPrompt,
+  clearedAlert,
   chatCommandText,
   chatEntry,
   failureAlert,
@@ -177,9 +179,9 @@ describe('hudModel', () => {
     )
     expect(vm.panel).toBe('layout')
     expect(vm.layout.items).toEqual([
-      { elementId: 'v1', kind: 'video', name: 'Main screen', enabled: true },
-      { elementId: 'im1', kind: 'image', name: 'Poster', enabled: false },
-      { elementId: 'm1', kind: 'model', name: 'Tree', enabled: true },
+      { elementId: 'v1', kind: 'video', name: 'Main screen', enabled: true, copies: 1, clearPrompt: null },
+      { elementId: 'im1', kind: 'image', name: 'Poster', enabled: false, copies: 1, clearPrompt: null },
+      { elementId: 'm1', kind: 'model', name: 'Tree', enabled: true, copies: 1, clearPrompt: null },
     ])
     expect(vm.layout.presets).toEqual([
       { id: 'preset-a', name: 'Day', active: true },
@@ -546,5 +548,36 @@ describe('text fields', () => {
     expect(chatCommandText({ playerId: 'p1', cmd: '/virvi', value: 'https://x/a.glb', args: ['/virvi', 'https://x/a.glb'] })).toBe('https://x/a.glb')
     expect(chatCommandText(null)).toBeNull()
     expect(chatCommandText({ cmd: 'virvi' })).toBe('')
+  })
+})
+
+describe('clearing copies (LIV-12)', () => {
+  const linked = { status: 'linked' as const, displayName: 'Ada', sceneId: 's' }
+  const sc = (): SerializedScene => ({
+    sk: 'p1',
+    videos: [],
+    images: [{ sk: 'i1', name: 'Poster', instances: [] }],
+    models: [{ sk: 'm1', name: 'Chair', instances: [inst('a'), inst('b'), inst('c')] }],
+    sounds: [],
+  })
+  const st = (ui: HudState['ui'] = {}): HudState => ({ pairing: linked, edit: edit(), plan: planScene(null), scene: sc(), alerts: [], ui: { panel: 'layout', ...ui } })
+
+  it('each object shows how many copies it has; only one being cleared asks to confirm', () => {
+    const items = hudModel(st({ clearing: 'm1' })).layout.items
+    expect(items.map((i) => [i.elementId, i.copies, i.clearPrompt])).toEqual([
+      ['i1', 0, null],
+      ['m1', 3, 'Remove all 3 copies of Chair? The object stays. This can\'t be undone.'],
+    ])
+  })
+
+  it('an object with no copies left has nothing to confirm, even if it was being cleared', () => {
+    expect(hudModel(st({ clearing: 'i1' })).layout.items[0].clearPrompt).toBeNull()
+  })
+
+  it('says it plainly for one copy, and after clearing', () => {
+    expect(clearCopiesPrompt({ name: 'Lamp', copies: 1 })).toBe("Remove the only copy of Lamp? The object stays. This can't be undone.")
+    expect(clearedAlert('Chair', 3)).toEqual({ kind: 'info', text: 'Removed 3 copies of Chair' })
+    expect(clearedAlert('Lamp', 1)).toEqual({ kind: 'info', text: 'Removed 1 copy of Lamp' })
+    expect(clearedAlert('', 0)).toEqual({ kind: 'info', text: 'Unnamed had no copies left' })
   })
 })

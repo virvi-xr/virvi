@@ -52,6 +52,12 @@ describe('VirviApi', () => {
     expect(t.calls).toHaveLength(1)
   })
 
+  it("removes every copy of an element and says how many went (LIV-12)", async () => {
+    const t = make([res(200, { deleted: 3 })])
+    expect(await t.api.deleteInstances('m1')).toEqual({ ok: true, value: { deleted: 3 } })
+    expect(t.calls.map((c) => [c.init.method, c.url])).toEqual([['DELETE', 'https://api.example/api/elements/m1/instances']])
+  })
+
   it('403 on save maps to the no-access reason', async () => {
     const t = make([res(403, { error: 'Forbidden' })])
     expect(await t.api.saveTransform('i1', T)).toEqual({ ok: false, reason: 'no_access' })

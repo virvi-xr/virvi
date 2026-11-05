@@ -297,6 +297,7 @@ describe('scene pass guard', () => {
       'DELETE /api/elements/:elementId',
       'POST /api/elements/:elementId/live',
       'POST /api/elements/:elementId/instances',
+      'DELETE /api/elements/:elementId/instances',
       'PUT /api/instances/:instanceId',
       'GET /api/scenes/:sceneId/library',
       'POST /api/scenes/:sceneId/library',
@@ -371,6 +372,11 @@ describe('scene pass guard', () => {
       expect(el.statusCode).toBe(201)
       const id = el.json().element.id
       expect((await app.inject({ method: 'POST', url: `/api/elements/${id}/instances`, headers: h, payload: t })).statusCode).toBe(201)
+      expect((await app.inject({ method: 'POST', url: `/api/elements/${id}/instances`, headers: h, payload: t })).statusCode).toBe(201)
+      // Clear every copy, keeping the element (LIV-12)
+      const cleared = await app.inject({ method: 'DELETE', url: `/api/elements/${id}/instances`, headers: h })
+      expect(cleared.statusCode).toBe(200)
+      expect(cleared.json()).toEqual({ deleted: 2 })
       expect((await app.inject({ method: 'DELETE', url: `/api/elements/${id}`, headers: h })).statusCode).toBe(204)
     })
   })

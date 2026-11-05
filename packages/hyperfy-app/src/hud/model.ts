@@ -92,6 +92,8 @@ export interface HudUi {
   streamList: HudStream[] | null
   /** The screen whose stream list is open. */
   streamPicking: string | null
+  /** The object whose "remove every copy" is waiting to be confirmed (LIV-12). */
+  clearing: string | null
   typing: { target: TypingTarget; text: string } | null
   /** A link request is on its way (hosted worlds ask their server half). */
   linking: boolean
@@ -111,6 +113,7 @@ export const initialUi = (): HudUi => ({
   presets: null,
   streamList: null,
   streamPicking: null,
+  clearing: null,
   typing: null,
   linking: false,
   placing: false,
@@ -160,6 +163,10 @@ export interface HudViewModel {
       kind: 'video' | 'image' | 'model' | 'audio'
       name: string
       enabled: boolean
+      /** How many copies (instances) it has in the scene. */
+      copies: number
+      /** The confirmation to show while it is being cleared, else null. */
+      clearPrompt: string | null
     }>
     presets: Array<{ id: string; name: string; active: boolean }>
   }
@@ -267,11 +274,15 @@ export function hudModel(state: HudState): HudViewModel {
   for (const [list, kind, fallback] of KINDS) {
     for (const el of scene?.[list] ?? []) {
       if (typeof el.sk !== 'string') continue
+      const name = nameOf(el, fallback)
+      const copies = Array.isArray(el.instances) ? el.instances.length : 0
       items.push({
         elementId: el.sk,
         kind,
-        name: nameOf(el, fallback),
+        name,
         enabled: el.enabled !== false,
+        copies,
+        clearPrompt: ui.clearing === el.sk && copies > 0 ? clearCopiesPrompt({ name, copies }) : null,
       })
     }
   }
@@ -349,6 +360,20 @@ export function hudModel(state: HudState): HudViewModel {
     },
     alerts: state.alerts.slice(-MAX_ALERTS),
   }
+}
+
+const unnamed = (name: string) => name || 'Unnamed'
+
+/** The confirmation for "remove every copy, keep the object" (as the dashboard and the Decentraland HUD ask it). */
+export function clearCopiesPrompt(item: { name: string; copies: number }): string {
+  const what = item.copies === 1 ? 'the only copy' : `all ${item.copies} copies`
+  return `Remove ${what} of ${unnamed(item.name)}? The object stays. This can't be undone.`
+}
+
+/** What clearing did: how many copies went. */
+export function clearedAlert(name: string, deleted: number): HudAlert {
+  if (deleted === 0) return { kind: 'info', text: `${unnamed(name)} had no copies left` }
+  return { kind: 'info', text: `Removed ${deleted} ${deleted === 1 ? 'copy' : 'copies'} of ${unnamed(name)}` }
 }
 
 const liveSrcOf = (v: Record<string, unknown>) => (typeof v.liveSrc === 'string' ? v.liveSrc.trim() : '')

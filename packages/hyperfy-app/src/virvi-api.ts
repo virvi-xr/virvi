@@ -132,6 +132,12 @@ export class VirviApi {
     return this.call('PUT', `/api/elements/${encodeURIComponent(elementId)}`, { properties: { ...(el.properties ?? {}), liveSrc: url } })
   }
 
+  /** DELETE /api/elements/:id/instances: every copy goes in one operation, the element stays (LIV-12). */
+  async deleteInstances(elementId: string): Promise<ApiResult<{ deleted: number }>> {
+    const r = await this.call<{ deleted?: number }>('DELETE', `/api/elements/${encodeURIComponent(elementId)}/instances`)
+    return r.ok ? { ok: true, value: { deleted: r.value.deleted ?? 0 } } : r
+  }
+
   /** GET /api/scenes/:id/library */
   async listLibrary(sceneId: string): Promise<ApiResult<LibraryEntry[]>> {
     const r = await this.call<{ items?: LibraryEntry[] }>('GET', `/api/scenes/${encodeURIComponent(sceneId)}/library`)
