@@ -215,6 +215,13 @@ class BuilderControllerTest {
             )
         )
 
+    val cleared = mutableListOf<String>()
+
+    override suspend fun clearCopies(elementId: String): BuilderCall<Int> {
+      cleared += elementId
+      return BuilderCall.Ok(2)
+    }
+
     val puts = mutableListOf<Pair<String, JsonObject>>()
     val lives = mutableListOf<Pair<String, Boolean>>()
 
@@ -430,6 +437,37 @@ class BuilderControllerTest {
     dispatcher.drain()
     assertEquals(listOf("v1" to false), c.lives)
     assertNull(ui.streams.message)
+  }
+
+  private val twoPosters =
+      """{"sk":"el1","name":"Poster","textureSrc":"https://x/p.png","instances":[
+        {"sk":"in1","position":{"x":1,"y":1.5,"z":2},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}},
+        {"sk":"in2","position":{"x":3,"y":1.5,"z":2},"rotation":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}}]}"""
+
+  @Test fun `the picked item's bar offers Clear for every copy of its object, asks first, then removes them in one call`() {
+    toBuilding(DeviceKind.SHARED)
+    snapshot("2", scene = sceneOf(twoPosters))
+    builder.hudActions.pick("in1")
+    dispatcher.drain()
+    val offer = ui.hud!!.clear!!
+    assertEquals(ClearOffer("el1", "Poster", 2, confirming = false), offer)
+    builder.clearActions.ask()
+    assertEquals("Remove all 2 copies of Poster? The object stays. This can't be undone.", clearCopiesPrompt(ui.hud!!.clear!!))
+    builder.clearActions.cancel()
+    assertFalse(ui.hud!!.clear!!.confirming)
+    builder.clearActions.ask()
+    builder.clearActions.confirm()
+    dispatcher.drain()
+    assertEquals(listOf("el1"), calls.getValue("sp-a").cleared)
+    assertEquals("Removed 2 copies of Poster", ui.hud!!.message)
+  }
+
+  @Test fun `Clear isn't offered while the picked item has unsaved changes`() {
+    toBuilding(DeviceKind.PERSONAL)
+    builder.hudActions.pick("in1")
+    builder.hudActions.setExact(TransformMode.MOVE, Axis.X, 2.5)
+    dispatcher.drain()
+    assertNull(ui.hud!!.clear)
   }
 
   @Test fun `a shared headset's HUD has no Stream tab`() {

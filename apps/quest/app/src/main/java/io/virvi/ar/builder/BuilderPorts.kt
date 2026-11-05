@@ -29,6 +29,9 @@ interface BuilderSpaceCalls {
   suspend fun putProperties(elementId: String, properties: JsonObject): BuilderCall<Unit>
 
   suspend fun setLive(elementId: String, on: Boolean): BuilderCall<Unit>
+
+  /** Every copy of an element in one step (LIV-12); the element stays. The answer is how many went. */
+  suspend fun clearCopies(elementId: String): BuilderCall<Int>
 }
 
 /** [BuilderApi]'s calls for [spaceId]. */
@@ -53,6 +56,8 @@ fun BuilderApi.callsFor(spaceId: String): BuilderSpaceCalls {
     override suspend fun putProperties(elementId: String, properties: JsonObject) = api.putProperties(spaceId, elementId, properties)
 
     override suspend fun setLive(elementId: String, on: Boolean) = api.setLive(spaceId, elementId, on)
+
+    override suspend fun clearCopies(elementId: String) = api.clearCopies(spaceId, elementId)
   }
 }
 

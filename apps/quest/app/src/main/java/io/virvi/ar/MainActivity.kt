@@ -327,6 +327,7 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
                   assets = { AssetsTab(state.assets) { e -> builder.place(e) } },
                   roomScan = { RoomScanSection(state.roomScan, roomScan) },
                   stream = { StreamTab(state.streams, builder.streamActions) },
+                  clear = builder.clearActions,
               )
             }
           },

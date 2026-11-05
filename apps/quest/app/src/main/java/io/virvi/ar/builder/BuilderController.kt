@@ -108,6 +108,9 @@ class BuilderController(
     var note: String? = null
     /** When [BuilderCopy.FINISH_FIRST] (the only note that times out) is taken down. */
     var finishFirstUntil = 0L
+    /** **Clear** is asking (LIV-12), and [note] is what the last clear did (taken down by the next HUD touch). */
+    var confirmingClear = false
+    var noteFromClear = false
   }
 
   private var stage = Stage.OFF
@@ -356,7 +359,10 @@ class BuilderController(
   /** Any HUD action takes "Finish building first" down. */
   private fun hudTouched() {
     val b = build ?: return
-    if (b.note == BuilderCopy.FINISH_FIRST) b.note = null
+    if (b.note == BuilderCopy.FINISH_FIRST || (b.noteFromClear && b.note != null)) {
+      b.note = null
+      b.noteFromClear = false
+    }
   }
 
   /** The AR pass is minted again before it runs out (the cached one is served while it has over a minute left). */
@@ -662,13 +668,14 @@ class BuilderController(
       return
     }
     val personal = b.kind == DeviceKind.PERSONAL
-    val m = hudModel(b.editor.view(), b.tab, hudWarnings(b.booking, b.otherPlaces)).copy(canScanRoom = personal, canStream = personal)
+    val view = b.editor.view()
+    val m = hudModel(view, b.tab, hudWarnings(b.booking, b.otherPlaces)).copy(canScanRoom = personal, canStream = personal, clear = clearOffer(b, view))
     ui.hud = if (m.message == null && b.note != null) m.copy(message = b.note) else m
   }
 
   /** The HUD's controls, on the current editor (the tab is kept here). */
   val hudActions: BuilderHudActions =
-      EditorHudActions({ hudTouched(); build?.takeIf { stage == Stage.BUILDING }?.editor }) { tab ->
+      EditorHudActions({ hudTouched(); build?.takeIf { stage == Stage.BUILDING }?.also { it.confirmingClear = false }?.editor }) { tab ->
         hudTouched()
         val b = build
         // The Stream tab is a personal headset's (the server refuses a shared one)
@@ -677,6 +684,46 @@ class BuilderController(
           if (tab == HudTab.STREAM) loadStreams(b)
         }
         refreshHud()
+      }
+
+  // ── Clear every copy (LIV-12) ───────────────────────────────────────
+
+  /** The picked item's object and how many copies it has here; only with nothing unsaved, so no edit is lost. */
+  private fun clearOffer(b: Build, view: EditorView): ClearOffer? {
+    val item = view.items.firstOrNull { it.sk == view.picked } ?: return null
+    if (view.edited.isNotEmpty() || view.saving) return null
+    val elementId = item.renderKey.substringBefore(':')
+    val copies = view.items.count { it.renderKey.substringBefore(':') == elementId }
+    return ClearOffer(elementId, item.name, copies, b.confirmingClear)
+  }
+
+  val clearActions: ClearActions =
+      object : ClearActions {
+        override fun ask() = setConfirming(true)
+
+        override fun cancel() = setConfirming(false)
+
+        override fun confirm() {
+          val b = build?.takeIf { stage == Stage.BUILDING } ?: return
+          val offer = clearOffer(b, b.editor.view()) ?: return
+          b.confirmingClear = false
+          val g = generation
+          go {
+            val r = b.api.clearCopies(offer.elementId)
+            if (g != generation) return@go
+            b.note = if (r is BuilderCall.Ok) clearedNote(offer.name, r.value) else CLEAR_FAILED
+            b.noteFromClear = true
+            refreshHud()
+          }
+          refreshHud()
+        }
+
+        private fun setConfirming(on: Boolean) {
+          val b = build?.takeIf { stage == Stage.BUILDING } ?: return
+          hudTouched()
+          b.confirmingClear = on
+          refreshHud()
+        }
       }
 
   // ── the Stream tab (LIV-53, LIV-54) ─────────────────────────────────

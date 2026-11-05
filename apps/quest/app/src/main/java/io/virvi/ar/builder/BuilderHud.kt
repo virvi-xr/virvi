@@ -144,6 +144,7 @@ fun BuilderHud(
     assets: @Composable () -> Unit = {},
     roomScan: @Composable () -> Unit = {},
     stream: @Composable () -> Unit = {},
+    clear: ClearActions? = null,
 ) {
   MaterialTheme(colorScheme = darkColorScheme()) {
     Column(
@@ -172,6 +173,19 @@ fun BuilderHud(
         }
       }
       model.bar?.let { PickedBar(it, actions) }
+      // Clear every copy of the picked item's object (LIV-12), asking first
+      val offer = model.clear
+      if (model.bar != null && offer != null && clear != null) {
+        if (offer.confirming) {
+          Text(clearCopiesPrompt(offer), color = WARN, fontSize = 13.sp)
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { clear.confirm() }) { Text("Remove") }
+            OutlinedButton(onClick = { clear.cancel() }) { Text("Cancel") }
+          }
+        } else {
+          OutlinedButton(onClick = { clear.ask() }) { Text(if (offer.copies == 1) "Clear the only copy" else "Clear all ${offer.copies} copies") }
+        }
+      }
       if (model.confirmingDone) {
         Text(DONE_CONFIRM, color = TEXT, fontSize = 15.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

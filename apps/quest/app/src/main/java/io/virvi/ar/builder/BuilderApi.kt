@@ -124,6 +124,12 @@ class BuilderApi(private val api: ArApi, private val auth: DeviceAuth) {
   suspend fun setLive(spaceId: String, elementId: String, on: Boolean): BuilderCall<Unit> =
       call(spaceId, "POST", "/api/elements/${enc(elementId)}/live", buildJsonObject { put("enabled", on) }) { Unit }
 
+  /** `DELETE /api/elements/:id/instances`: every copy goes or none do, the element stays; `{ deleted }` is how many. */
+  suspend fun clearCopies(spaceId: String, elementId: String): BuilderCall<Int> =
+      call(spaceId, "DELETE", "/api/elements/${enc(elementId)}/instances", null) { body ->
+        ((obj(body)?.get("deleted") as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toIntOrNull()) ?: 0
+      }
+
   /** `GET /api/scenes/:sceneId/library`: the models and images the builder can place. */
   suspend fun library(spaceId: String, sceneId: String): BuilderCall<JsonObject> =
       call(spaceId, "GET", "/api/scenes/${enc(sceneId)}/library", null, ::obj)
