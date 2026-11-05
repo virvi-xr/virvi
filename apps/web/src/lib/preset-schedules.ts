@@ -16,6 +16,8 @@ export interface PresetSchedule {
   /** Set: the times follow this event (change them on the event's page). */
   eventId?: string | null
   nextRuns: string[]
+  /** Upcoming runs skipped ahead of time (they won't switch the preset). */
+  skippedRuns?: string[]
 }
 
 export interface ScheduleRun {
@@ -117,7 +119,7 @@ export function runLabel(r: Pick<ScheduleRun, 'status' | 'outcome'>): string {
     case 'active': return 'Live now'
     case 'held': return 'Waiting for a booking to end'
     case 'overridden': return 'Switched manually'
-    case 'skipped': return 'Missed (the server was offline)'
+    case 'skipped': return r.outcome === 'skipped by hand' ? 'Skipped' : 'Missed (the server was offline)'
     default: return r.outcome === 'finished' || !r.outcome ? 'Finished' : `Ended: ${r.outcome}`
   }
 }
@@ -146,8 +148,8 @@ export function liveStatusText(s: LiveStatus, presetName: (id: string | null) =>
   return { why, next }
 }
 
-export interface WeekOccurrence { scheduleId: string; presetId: string; start: string; end: string | null }
-export interface WeekBlock { scheduleId: string; presetId: string; top: number; height: number; time: string }
+export interface WeekOccurrence { scheduleId: string; presetId: string; start: string; end: string | null; skipped?: boolean }
+export interface WeekBlock { scheduleId: string; presetId: string; top: number; height: number; time: string; skipped?: boolean }
 export interface WeekDay { date: string; label: string; blocks: WeekBlock[] }
 
 /** The local date (YYYY-MM-DD) and minutes past local midnight of an instant in `tz`. */
@@ -176,7 +178,8 @@ export function weekGrid(occurrences: WeekOccurrence[], viewerTz: string, now: D
   const sorted = [...occurrences].sort((a, b) => a.start.localeCompare(b.start))
   sorted.forEach((o, i) => {
     const startMs = Date.parse(o.start)
-    const nextStart = sorted.slice(i + 1).find((x) => Date.parse(x.start) > startMs)
+    // A skipped run doesn't switch, so an open-ended run carries on past it
+    const nextStart = sorted.slice(i + 1).find((x) => Date.parse(x.start) > startMs && !x.skipped)
     const s = localParts(startMs, viewerTz)
     const e = o.end ? localParts(Date.parse(o.end), viewerTz) : nextStart ? localParts(Date.parse(nextStart.start), viewerTz) : { date: addDays(lastDate, 1), minutes: 0 }
     const time = o.end ? `${hhmm(s.minutes)}–${hhmm(e.minutes)}` : `${hhmm(s.minutes)} →`
@@ -185,7 +188,7 @@ export function weekGrid(occurrences: WeekOccurrence[], viewerTz: string, now: D
       const to = date === e.date ? e.minutes : 1440
       const day = grid.find((g) => g.date === date)
       if (!day || to <= from) continue
-      day.blocks.push({ scheduleId: o.scheduleId, presetId: o.presetId, top: (from / 1440) * 100, height: ((to - from) / 1440) * 100, time })
+      day.blocks.push({ scheduleId: o.scheduleId, presetId: o.presetId, top: (from / 1440) * 100, height: ((to - from) / 1440) * 100, time, ...(o.skipped ? { skipped: true } : {}) })
     }
   })
   return grid

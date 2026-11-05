@@ -113,9 +113,24 @@ export function PresetSchedules({ api, sceneId, presets }: { api: Api; sceneId: 
                   <p className="mt-1 text-xs text-gray-500">
                     Then: {s.returnToPresetId ? name(s.returnToPresetId) : 'back to the preset that was live before'}
                   </p>
-                  {s.nextRuns.length > 0 && (
-                    <ul className="mt-1 text-xs text-gray-400">
-                      {s.nextRuns.map((r) => <li key={r}>Next: {formatRunTime(r, s.timezone, viewerTz)}</li>)}
+                  {(s.nextRuns.length > 0 || (s.skippedRuns?.length ?? 0) > 0) && (
+                    <ul className="mt-1 space-y-0.5 text-xs text-gray-400">
+                      {s.nextRuns.map((r) => (
+                        <li key={r} className="flex items-center gap-2">
+                          <span>Next: {formatRunTime(r, s.timezone, viewerTz)}</span>
+                          <button type="button" className="text-gray-500 hover:text-white disabled:opacity-50" disabled={busy}
+                            title="This run won't switch the preset; the ones after it still do"
+                            onClick={() => run(async () => { await api.skipPresetScheduleRun(s.id, r); load() })}>Skip</button>
+                        </li>
+                      ))}
+                      {(s.skippedRuns ?? []).map((r) => (
+                        <li key={`skip-${r}`} className="flex items-center gap-2 text-gray-500">
+                          <span className="line-through">{formatRunTime(r, s.timezone, viewerTz)}</span>
+                          <span>skipped</span>
+                          <button type="button" className="hover:text-white disabled:opacity-50" disabled={busy}
+                            onClick={() => run(async () => { await api.unskipPresetScheduleRun(s.id, r); load() })}>Undo</button>
+                        </li>
+                      ))}
                     </ul>
                   )}
                 </li>
@@ -220,8 +235,8 @@ function WeekView({ week, viewerTz, name, color }: { week: WeekOccurrence[]; vie
         {days.map((d) => (
           <div key={d.date} className="relative h-72 rounded bg-gray-950 ring-1 ring-gray-800">
             {d.blocks.map((b, i) => (
-              <div key={i} title={`${name(b.presetId)}, ${b.time}`}
-                className={`absolute inset-x-0.5 overflow-hidden rounded px-1 text-[10px] leading-tight text-white ${color(b.presetId)}`}
+              <div key={i} title={`${name(b.presetId)}, ${b.time}${b.skipped ? ' (skipped)' : ''}`}
+                className={`absolute inset-x-0.5 overflow-hidden rounded px-1 text-[10px] leading-tight text-white ${color(b.presetId)} ${b.skipped ? 'line-through opacity-40' : ''}`}
                 style={{ top: `${b.top}%`, height: `max(${b.height}%, 0.9rem)` }}>
                 {name(b.presetId)}
               </div>

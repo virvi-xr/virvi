@@ -37,6 +37,7 @@ describe('runLabel', () => {
     expect(runLabel({ status: 'held', outcome: 'held for a booking' })).toBe('Waiting for a booking to end')
     expect(runLabel({ status: 'overridden', outcome: 'switched manually' })).toBe('Switched manually')
     expect(runLabel({ status: 'skipped', outcome: 'x' })).toBe('Missed (the server was offline)')
+    expect(runLabel({ status: 'skipped', outcome: 'skipped by hand' })).toBe('Skipped')
     expect(runLabel({ status: 'ended', outcome: 'finished' })).toBe('Finished')
     expect(runLabel({ status: 'ended', outcome: 'paused' })).toBe('Ended: paused')
   })
@@ -87,6 +88,16 @@ describe('weekGrid', () => {
     const days = weekGrid([occ('2026-11-06T22:00:00Z', '2026-11-07T02:00:00Z')], 'UTC', now)
     expect(days[0].blocks[0]).toMatchObject({ top: (22 / 24) * 100, height: (2 / 24) * 100, time: '22:00–02:00' })
     expect(days[1].blocks[0]).toMatchObject({ top: 0, height: (2 / 24) * 100, time: '22:00–02:00' })
+  })
+
+  it('a skipped run is marked, and an open-ended run before it carries on past it', () => {
+    const skipped = { ...occ('2026-11-07T08:00:00Z', '2026-11-07T09:00:00Z', 'p2'), skipped: true }
+    const days = weekGrid([occ('2026-11-06T20:00:00Z', null), skipped, occ('2026-11-07T10:00:00Z', '2026-11-07T11:00:00Z', 'p2')], 'UTC', now)
+    expect(days[1].blocks.map((b) => [b.presetId, b.top, b.height, b.skipped ?? false])).toEqual([
+      ['p1', 0, (10 / 24) * 100, false],
+      ['p2', (8 / 24) * 100, (1 / 24) * 100, true],
+      ['p2', (10 / 24) * 100, (1 / 24) * 100, false],
+    ])
   })
 
   it('an open-ended run lasts until the next run starts', () => {

@@ -3,7 +3,7 @@ import { DEFAULT_VENUE_RULES, VENUE_ROLE_SCOPES } from '@virvixr/shared'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { accessGrants, bookings, sceneCollaborators, scenePresets, scenePresetScheduleRuns, scenePresetSchedules, scenes, venues } from '../src/db/schema.js'
-import { liveStatus, runPresetScheduleSweep, weekOccurrences } from '../src/scenes/preset-schedules.js'
+import { listSchedules, liveStatus, runPresetScheduleSweep, weekOccurrences } from '../src/scenes/preset-schedules.js'
 import { initBus } from '../src/realtime/bus.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -221,6 +221,34 @@ describe('scheduled presets (LIV-86)', () => {
     })
   })
 
+  describe('skipping a run', () => {
+    const at = (iso: string) => new Date(iso)
+    const skipRow = (scheduleId: string, start: string) => db.insert(scenePresetScheduleRuns).values({
+      scheduleId, sceneId: scene.id, occurrenceStart: at(start), occurrenceEnd: null, status: 'skipped', outcome: 'skipped by hand',
+    })
+
+    it('the sweep leaves a skipped run alone and starts the one after', async () => {
+      const s = await schedule({ recurrence: 'daily', durationMinutes: 60 })
+      await skipRow(s.id, '2026-11-06T20:00:00Z')
+      await runPresetScheduleSweep(at('2026-11-06T20:00:05Z'))
+      expect(await live()).toBe(day.id)
+      await runPresetScheduleSweep(at('2026-11-07T20:00:05Z'))
+      expect(await live()).toBe(concert.id)
+    })
+
+    it('the next switch, next runs and week view pass over it', async () => {
+      const s = await schedule({ recurrence: 'daily', durationMinutes: 60 })
+      await skipRow(s.id, '2026-11-06T20:00:00Z')
+      expect((await liveStatus(scene.id, at('2026-11-06T12:00:00Z'))).nextSwitch).toEqual({ at: '2026-11-07T20:00:00.000Z', presetId: concert.id, scheduleId: s.id })
+      const list = await listSchedules(scene.id, at('2026-11-06T12:00:00Z'))
+      expect(list.schedules[0].nextRuns[0]).toBe('2026-11-07T20:00:00.000Z')
+      expect(list.schedules[0].nextRuns).toHaveLength(5)
+      expect(list.schedules[0].skippedRuns).toEqual(['2026-11-06T20:00:00.000Z'])
+      const week = await weekOccurrences(scene.id, at('2026-11-06T12:00:00Z'), at('2026-11-07T23:00:00Z'))
+      expect(week.map((o) => [o.start, o.skipped])).toEqual([['2026-11-06T20:00:00.000Z', true], ['2026-11-07T20:00:00.000Z', false]])
+    })
+  })
+
   describe('the week ahead', () => {
     it('lists every enabled occurrence starting in the window, with its end, in order', async () => {
       const [night] = await db.insert(scenePresets).values({ sceneId: scene.id, name: 'Night' }).returning()
@@ -229,9 +257,9 @@ describe('scheduled presets (LIV-86)', () => {
       await schedule({ startDate: '2026-11-06', startTime: '10:00', enabled: false })
       const week = await weekOccurrences(scene.id, new Date('2026-11-06T01:00:00Z'), new Date('2026-11-08T00:00:00Z'))
       expect(week).toEqual([
-        { scheduleId: daily.id, presetId: concert.id, start: '2026-11-07T00:00:00.000Z', end: '2026-11-07T01:00:00.000Z' }, // 19:00 EST on the 6th
-        { scheduleId: open.id, presetId: night.id, start: '2026-11-07T02:00:00.000Z', end: null },
-        { scheduleId: daily.id, presetId: concert.id, start: '2026-11-08T00:00:00.000Z', end: '2026-11-08T01:00:00.000Z' },
+        { scheduleId: daily.id, presetId: concert.id, start: '2026-11-07T00:00:00.000Z', end: '2026-11-07T01:00:00.000Z', skipped: false }, // 19:00 EST on the 6th
+        { scheduleId: open.id, presetId: night.id, start: '2026-11-07T02:00:00.000Z', end: null, skipped: false },
+        { scheduleId: daily.id, presetId: concert.id, start: '2026-11-08T00:00:00.000Z', end: '2026-11-08T01:00:00.000Z', skipped: false },
       ])
     })
   })
@@ -256,6 +284,46 @@ describe('scheduled presets (LIV-86)', () => {
       const paused = await app.inject({ method: 'PATCH', url: `/api/preset-schedules/${s.id}`, headers: as(host), payload: { enabled: false } })
       expect(paused.json().schedule).toMatchObject({ enabled: false, nextRuns: [], startTime: '20:00' })
       expect((await app.inject({ method: 'DELETE', url: `/api/preset-schedules/${s.id}`, headers: as(host) })).statusCode).toBe(204)
+    })
+
+    it('skips the next run, or a chosen one, and undoes it', async () => {
+      const s = (await create(host)).json().schedule // Fridays 20:00 London from 2030
+      const skip = (payload: Record<string, unknown> = {}, u = host) => app.inject({ method: 'POST', url: `/api/preset-schedules/${s.id}/skip`, headers: as(u), payload })
+      const first = await skip()
+      expect(first.statusCode).toBe(201)
+      expect(first.json().skipped).toBe('2030-01-04T20:00:00.000Z')
+      expect(first.json().schedule.nextRuns[0]).toBe('2030-01-11T20:00:00.000Z')
+      expect(first.json().schedule.skippedRuns).toEqual(['2030-01-04T20:00:00.000Z'])
+      // "Skip next" again moves on to the next one; a chosen one is skipped as given
+      expect((await skip()).json().skipped).toBe('2030-01-11T20:00:00.000Z')
+      expect((await skip({ occurrenceStart: '2030-02-01T20:00:00.000Z' })).json().skipped).toBe('2030-02-01T20:00:00.000Z')
+      // Not one of its runs, already skipped, or in the past
+      expect((await skip({ occurrenceStart: '2030-02-02T20:00:00.000Z' })).json()).toMatchObject({ error: 'not_a_run', message: "That isn't one of this schedule's runs." })
+      expect((await skip({ occurrenceStart: '2030-02-01T20:00:00.000Z' })).statusCode).toBe(409)
+      expect((await skip({ occurrenceStart: '2020-01-03T20:00:00.000Z' })).json()).toMatchObject({ error: 'not_a_run' })
+      expect((await skip({ occurrenceStart: 'soon' })).statusCode).toBe(400)
+      // Undo
+      const undo = (start: string, u = host) => app.inject({ method: 'DELETE', url: `/api/preset-schedules/${s.id}/skip?occurrenceStart=${encodeURIComponent(start)}`, headers: as(u) })
+      const undone = await undo('2030-01-04T20:00:00.000Z')
+      expect(undone.statusCode).toBe(200)
+      expect(undone.json().schedule.nextRuns[0]).toBe('2030-01-04T20:00:00.000Z')
+      expect(undone.json().schedule.skippedRuns).toEqual(['2030-01-11T20:00:00.000Z', '2030-02-01T20:00:00.000Z'])
+      expect((await undo('2030-01-04T20:00:00.000Z')).statusCode).toBe(404)
+      // Moved to Saturdays: the Friday skips no longer show
+      const moved = await app.inject({ method: 'PATCH', url: `/api/preset-schedules/${s.id}`, headers: as(host), payload: { weekdays: [6] } })
+      expect(moved.json().schedule.skippedRuns).toEqual([])
+      await app.inject({ method: 'PATCH', url: `/api/preset-schedules/${s.id}`, headers: as(host), payload: { weekdays: [5] } })
+      // Viewers can't skip or undo
+      const viewer = await createUser()
+      await db.insert(sceneCollaborators).values({ sceneId: scene.id, userId: viewer.id, role: 'viewer' })
+      expect((await skip({}, viewer)).statusCode).toBe(403)
+      expect((await undo('2030-01-11T20:00:00.000Z', viewer)).statusCode).toBe(403)
+    })
+
+    it("a paused schedule has no next run to skip", async () => {
+      const s = (await create(host, { enabled: false })).json().schedule
+      const res = await app.inject({ method: 'POST', url: `/api/preset-schedules/${s.id}/skip`, headers: as(host), payload: {} })
+      expect(res.json()).toMatchObject({ error: 'not_a_run', message: 'This schedule has no run coming up to skip.' })
     })
 
     it('validates the schedule with clear messages', async () => {

@@ -352,6 +352,11 @@ export function useApi() {
     updatePresetSchedule: (scheduleId: string, body: Record<string, unknown>) =>
       apiFetch<{ schedule: import('./preset-schedules').PresetSchedule }>(`/api/preset-schedules/${scheduleId}`, { method: 'PATCH', body: JSON.stringify(body) }),
     deletePresetSchedule: (scheduleId: string) => apiFetch<void>(`/api/preset-schedules/${scheduleId}`, { method: 'DELETE' }),
+    /** Skip one upcoming run (the next one when `occurrenceStart` is left out). */
+    skipPresetScheduleRun: (scheduleId: string, occurrenceStart?: string) =>
+      apiFetch<{ skipped: string; schedule: import('./preset-schedules').PresetSchedule }>(`/api/preset-schedules/${scheduleId}/skip`, { method: 'POST', body: JSON.stringify(occurrenceStart ? { occurrenceStart } : {}) }),
+    unskipPresetScheduleRun: (scheduleId: string, occurrenceStart: string) =>
+      apiFetch<{ schedule: import('./preset-schedules').PresetSchedule }>(`/api/preset-schedules/${scheduleId}/skip?occurrenceStart=${encodeURIComponent(occurrenceStart)}`, { method: 'DELETE' }),
     /** Scene presets (LIV-84): blank, or a copy of `fromPresetId`. */
     createPreset: (sceneId: string, body: { name: string; fromPresetId?: string }) =>
       apiFetch<{ preset: { id: string; name: string } }>(`/api/scenes/${sceneId}/presets`, { method: 'POST', body: JSON.stringify(body) }),

@@ -154,6 +154,8 @@ const CASES: Case[] = [
   { route: 'POST /api/scenes/:sceneId/preset-schedules', url: (f) => `/api/scenes/${f.scene.id}/preset-schedules`, body: (f) => ({ presetId: f.preset.id, recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC', durationMinutes: 30 }) },
   { route: 'PATCH /api/preset-schedules/:scheduleId', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}`, body: () => ({ enabled: false }) },
   { route: 'DELETE /api/preset-schedules/:scheduleId', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}` },
+  { route: 'POST /api/preset-schedules/:scheduleId/skip', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}/skip`, body: () => ({}) },
+  { route: 'DELETE /api/preset-schedules/:scheduleId/skip', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}/skip?occurrenceStart=2031-01-01T10%3A00%3A00.000Z` },
   { route: 'GET /api/elements/:elementId/showings', url: (f) => `/api/elements/${f.element.id}/showings` },
   { route: 'POST /api/elements/:elementId/showings', url: (f) => `/api/elements/${f.element.id}/showings`, body: () => ({ items: [{ url: 'https://cdn.example/a.mp4', duration: 60 }], recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC' }) },
   { route: 'PATCH /api/showings/:showingId', url: (f) => `/api/showings/${f.showing.id}`, body: () => ({ enabled: false }) },

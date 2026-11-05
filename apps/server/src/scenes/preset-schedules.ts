@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, or } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, ne, or } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { bookings, eventSceneLinks, events, scenePresets, scenePresetScheduleRuns, scenePresetSchedules, scenes, venues } from '../db/schema.js'
 import { publishVenueEvent } from '../realtime/bus.js'
@@ -187,8 +187,66 @@ export function stillScheduled(s: ScheduleRow, now: Date): boolean {
   return !o || o.end === null || o.end > now
 }
 
-export function nextRunsOf(s: ScheduleRow, now: Date, n = 5): string[] {
-  return s.enabled ? nextStarts(specOf(s), now, n).map((d) => d.toISOString()) : []
+/** The next `n` runs, passing over the starts in `skipped` (ms; runs skipped ahead of time). */
+export function nextRunsOf(s: ScheduleRow, now: Date, n = 5, skipped: ReadonlySet<number> = new Set()): string[] {
+  if (!s.enabled) return []
+  return nextStarts(specOf(s), now, n + skipped.size).filter((d) => !skipped.has(d.getTime())).slice(0, n).map((d) => d.toISOString())
+}
+
+// ── Skipping a run ahead of time ─────────────────────────────────────────────
+// A skipped run is a run row with status 'skipped' made before its start: the sweep starts each occurrence only
+// once per (schedule, start), so it passes over it. Undoing it deletes the row.
+
+export const SKIPPED_BY_HAND = 'skipped by hand'
+
+/** Upcoming starts (after `now`) that already have a run row, so won't start: schedule id → start ms. */
+export async function skippedStarts(scheduleIds: string[], now: Date): Promise<Map<string, Set<number>>> {
+  const out = new Map<string, Set<number>>()
+  if (scheduleIds.length === 0) return out
+  const rows = await db.select({ scheduleId: scenePresetScheduleRuns.scheduleId, start: scenePresetScheduleRuns.occurrenceStart })
+    .from(scenePresetScheduleRuns)
+    .where(and(inArray(scenePresetScheduleRuns.scheduleId, scheduleIds), gt(scenePresetScheduleRuns.occurrenceStart, now)))
+  for (const r of rows) {
+    if (!out.has(r.scheduleId)) out.set(r.scheduleId, new Set())
+    out.get(r.scheduleId)!.add(r.start.getTime())
+  }
+  return out
+}
+
+/** A schedule as the API returns it: its next runs (skipped ones left out) and the runs skipped ahead. */
+export function withRuns(s: ScheduleRow, now: Date, skipped: ReadonlySet<number> = new Set()) {
+  // Only starts that are still runs of it (an edit to its time leaves older skips behind, which never match)
+  const real = s.enabled ? [...skipped].filter((ms) => occurrencesBetween(specOf(s), new Date(ms), new Date(ms)).length > 0) : []
+  return { ...s, nextRuns: nextRunsOf(s, now, 5, skipped), skippedRuns: real.sort((a, b) => a - b).map((ms) => new Date(ms).toISOString()) }
+}
+
+/** Skip one upcoming run: the one starting at `start`, or the next one not already skipped. Returns its start. */
+export async function skipRun(s: ScheduleRow, start: Date | null, now = new Date()): Promise<Date> {
+  const skipped = (await skippedStarts([s.id], now)).get(s.id) ?? new Set<number>()
+  let occ: Occurrence | undefined
+  if (start) {
+    if (start <= now) throw new ScheduleError(400, 'not_a_run', "That isn't one of this schedule's runs.")
+    occ = occurrencesBetween(specOf(s), start, start).find((o) => o.start.getTime() === start.getTime())
+    if (!occ) throw new ScheduleError(400, 'not_a_run', "That isn't one of this schedule's runs.")
+  } else {
+    const [next] = nextRunsOf(s, now, 1, skipped)
+    if (next) occ = occurrencesBetween(specOf(s), new Date(next), new Date(next))[0]
+    if (!occ) throw new ScheduleError(400, 'not_a_run', 'This schedule has no run coming up to skip.')
+  }
+  const [row] = await db.insert(scenePresetScheduleRuns)
+    .values({ scheduleId: s.id, sceneId: s.sceneId, occurrenceStart: occ.start, occurrenceEnd: occ.end, status: 'skipped', outcome: SKIPPED_BY_HAND })
+    .onConflictDoNothing().returning({ id: scenePresetScheduleRuns.id })
+  if (!row) throw new ScheduleError(409, 'already_skipped', 'That run is already skipped.')
+  return occ.start
+}
+
+/** Undo a skip that hasn't come round yet. False when there was none. */
+export async function unskipRun(s: ScheduleRow, start: Date, now = new Date()): Promise<boolean> {
+  if (start <= now) return false
+  const gone = await db.delete(scenePresetScheduleRuns)
+    .where(and(eq(scenePresetScheduleRuns.scheduleId, s.id), eq(scenePresetScheduleRuns.occurrenceStart, start), eq(scenePresetScheduleRuns.status, 'skipped')))
+    .returning({ id: scenePresetScheduleRuns.id })
+  return gone.length > 0
 }
 
 // ── The sweep ────────────────────────────────────────────────────────────────
@@ -377,20 +435,29 @@ export async function liveStatus(sceneId: string, now = new Date()): Promise<Liv
   }
 
   let next: LiveStatus['nextSwitch'] = ending
+  const skipped = await skippedStarts(rows.map((s) => s.id), now)
   for (const s of rows) {
-    const [start] = nextStarts(specOf(s), now, 1)
-    if (start && (!next || start.getTime() < Date.parse(next.at))) next = { at: start.toISOString(), presetId: s.presetId, scheduleId: s.id }
+    const [start] = nextRunsOf(s, now, 1, skipped.get(s.id))
+    if (start && (!next || Date.parse(start) < Date.parse(next.at))) next = { at: start, presetId: s.presetId, scheduleId: s.id }
   }
   return { reason, nextSwitch: next }
 }
 
-export interface WeekOccurrence { scheduleId: string; presetId: string; start: string; end: string | null }
+/** `skipped`: it won't run (skipped ahead of time, or already logged as skipped). */
+export interface WeekOccurrence { scheduleId: string; presetId: string; start: string; end: string | null; skipped: boolean }
 
 /** Every enabled schedule's occurrences starting within [from, to], in start order: the dashboard's week view. */
 export async function weekOccurrences(sceneId: string, from: Date, to: Date): Promise<WeekOccurrence[]> {
   const rows = await db.select().from(scenePresetSchedules).where(and(eq(scenePresetSchedules.sceneId, sceneId), eq(scenePresetSchedules.enabled, true)))
+  const skipped = rows.length
+    ? await db.select({ scheduleId: scenePresetScheduleRuns.scheduleId, start: scenePresetScheduleRuns.occurrenceStart }).from(scenePresetScheduleRuns)
+      .where(and(inArray(scenePresetScheduleRuns.scheduleId, rows.map((s) => s.id)), eq(scenePresetScheduleRuns.status, 'skipped')))
+    : []
+  const isSkipped = new Set(skipped.map((r) => `${r.scheduleId}@${r.start.getTime()}`))
   return rows
-    .flatMap((s) => occurrencesBetween(specOf(s), from, to).map((o) => ({ scheduleId: s.id, presetId: s.presetId, start: o.start.toISOString(), end: o.end?.toISOString() ?? null })))
+    .flatMap((s) => occurrencesBetween(specOf(s), from, to).map((o) => ({
+      scheduleId: s.id, presetId: s.presetId, start: o.start.toISOString(), end: o.end?.toISOString() ?? null, skipped: isSkipped.has(`${s.id}@${o.start.getTime()}`),
+    })))
     .sort((a, b) => a.start.localeCompare(b.start))
 }
 
@@ -399,7 +466,8 @@ export async function listSchedules(sceneId: string, now = new Date()) {
   const rows = await db.select().from(scenePresetSchedules).where(eq(scenePresetSchedules.sceneId, sceneId)).orderBy(scenePresetSchedules.createdAt)
   const runs = await db.select().from(scenePresetScheduleRuns).where(eq(scenePresetScheduleRuns.sceneId, sceneId))
     .orderBy(desc(scenePresetScheduleRuns.occurrenceStart)).limit(20)
-  return { schedules: rows.map((s) => ({ ...s, nextRuns: nextRunsOf(s, now) })), runs, status: await liveStatus(sceneId, now), week: await weekOccurrences(sceneId, new Date(now.getTime() - DAY), new Date(now.getTime() + 8 * DAY)) }
+  const skipped = await skippedStarts(rows.map((s) => s.id), now)
+  return { schedules: rows.map((s) => withRuns(s, now, skipped.get(s.id))), runs, status: await liveStatus(sceneId, now), week: await weekOccurrences(sceneId, new Date(now.getTime() - DAY), new Date(now.getTime() + 8 * DAY)) }
 }
 
 /** Enabled schedules that still have runs to come and use the preset (as theirs or as where they return to). */

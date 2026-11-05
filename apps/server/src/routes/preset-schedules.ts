@@ -6,7 +6,7 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess } from '../auth/permissions.js'
 import { canManagePresets } from '../scenes/presets.js'
-import { describeSchedule, findClash, listSchedules, nextRunsOf, parseScheduleInput, ScheduleError, specOf, withEventTimes, type ScheduleInput } from '../scenes/preset-schedules.js'
+import { describeSchedule, findClash, listSchedules, parseScheduleInput, ScheduleError, skippedStarts, skipRun, specOf, unskipRun, withEventTimes, withRuns, type ScheduleInput } from '../scenes/preset-schedules.js'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -29,6 +29,19 @@ export default async function presetScheduleRoutes(app: FastifyInstance) {
       const name = (await db.query.scenePresets.findFirst({ where: eq(scenePresets.id, clash.presetId), columns: { name: true } }))?.name ?? 'a preset'
       throw Object.assign(new ScheduleError(409, 'schedule_overlap', `This overlaps the schedule "${describeSchedule(specOf(clash), name)}".`), { clashId: clash.id })
     }
+  }
+
+  const scheduleOut = async (row: Parameters<typeof withRuns>[0]) => {
+    const now = new Date()
+    return withRuns(row, now, (await skippedStarts([row.id], now)).get(row.id))
+  }
+
+  /** An ISO instant, or null when left out. */
+  const parseStart = (v: unknown): Date | null => {
+    if (v === undefined || v === null || v === '') return null
+    const d = typeof v === 'string' ? new Date(v) : new Date(NaN)
+    if (Number.isNaN(d.getTime())) throw new ScheduleError(400, 'bad_schedule', 'occurrenceStart must be a date and time (ISO 8601).')
+    return d
   }
 
   const fail = (reply: FastifyReply, e: unknown) => {
@@ -54,7 +67,7 @@ export default async function presetScheduleRoutes(app: FastifyInstance) {
       const input = await withEventTimes(sceneId, parseScheduleInput(placeholder))
       await check(sceneId, input)
       const [row] = await db.insert(scenePresetSchedules).values({ sceneId, ...input, createdBy: request.user.id }).returning()
-      return reply.status(201).send({ schedule: { ...row, nextRuns: nextRunsOf(row, new Date()) } })
+      return reply.status(201).send({ schedule: withRuns(row, new Date()) })
     } catch (e) {
       return fail(reply, e)
     }
@@ -81,7 +94,33 @@ export default async function presetScheduleRoutes(app: FastifyInstance) {
       await check(row.sceneId, input, row.id)
       const [updated] = await db.update(scenePresetSchedules).set({ ...input, updatedAt: new Date() }).where(eq(scenePresetSchedules.id, row.id)).returning()
       if (!input.enabled && row.enabled) await endOpenRuns(row.id, 'paused')
-      return reply.send({ schedule: { ...updated, nextRuns: nextRunsOf(updated, new Date()) } })
+      return reply.send({ schedule: await scheduleOut(updated) })
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  /** Skip one upcoming run (`occurrenceStart`, or the next one); the sweep passes over it. */
+  app.post<{ Params: { scheduleId: string } }>('/api/preset-schedules/:scheduleId/skip', async (request, reply) => {
+    const row = await ownSchedule(request, reply)
+    if (!row) return reply
+    try {
+      const start = parseStart((request.body as Record<string, unknown> | null)?.occurrenceStart)
+      const skipped = await skipRun(row, start)
+      return reply.status(201).send({ skipped: skipped.toISOString(), schedule: await scheduleOut(row) })
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  /** Undo a skip that hasn't come round yet. */
+  app.delete<{ Params: { scheduleId: string }; Querystring: { occurrenceStart?: string } }>('/api/preset-schedules/:scheduleId/skip', async (request, reply) => {
+    const row = await ownSchedule(request, reply)
+    if (!row) return reply
+    try {
+      const start = parseStart(request.query.occurrenceStart)
+      if (!start || !(await unskipRun(row, start))) return reply.status(404).send({ error: 'Skipped run not found' })
+      return reply.send({ schedule: await scheduleOut(row) })
     } catch (e) {
       return fail(reply, e)
     }
