@@ -101,11 +101,15 @@ export type StudioSet = {
   freeFixesLeft: Record<string, number>
 }
 
+/** The owner's wall choice; `hidden` is an admin's call, which the owner cannot clear. */
+export type WallState = { shown: boolean; hidden: boolean; marketplaceUrl: string | null }
+
 export type StudioDetail = {
   design: StudioDesign
+  wall: WallState
   pieces: StudioPiece[]
   messages: StudioMessage[]
-  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; fixClipping?: FixClipping | null } | null
+  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; fixClipping?: FixClipping | null; phase?: string | null; progress?: string[] } | null
   set: StudioSet
   lastPrompt: { jobId: string; outcome: string | null; status: string } | null
   uploads: StudioUpload[]
@@ -967,4 +971,10 @@ export function readUnsent(search: string): { text: string; refusal: string } | 
   const q = new URLSearchParams(search)
   const text = q.get('unsent')
   return text ? { text, refusal: q.get('why') ?? '' } : null
+}
+
+/** One shown design on the admin wall list, hidden ones included. */
+export type AdminWallEntry = {
+  designId: string; name: string; kind: StudioKind; creator: string; marketplaceUrl: string | null; shownAt: string
+  hidden: boolean; ownerEmail: string | null
 }

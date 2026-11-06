@@ -141,8 +141,19 @@ export default async function studioWorkerRoutes(app: FastifyInstance) {
       const e = request.body as { type?: unknown; text?: unknown; phase?: unknown } | null
       const job = request.studioJob!
       if (e?.type === 'progress' && typeof e.text === 'string') {
-        await publishStudio(job.designId, { type: 'progress', jobId: job.id, text: e.text.slice(0, MAX_EVENT_TEXT) })
+        const text = e.text.slice(0, MAX_EVENT_TEXT)
+        // Kept for polling clients: the last 5 lines, leaving out `Running:` ones like the website does
+        if (!text.startsWith('Running:')) {
+          await db.execute(sql`
+            UPDATE studio_jobs SET progress = COALESCE((
+              SELECT jsonb_agg(v ORDER BY n) FROM (
+                SELECT v, n FROM jsonb_array_elements(progress || jsonb_build_array(${text}::text)) WITH ORDINALITY AS t(v, n)
+                ORDER BY n DESC LIMIT 5) last5), '[]'::jsonb)
+            WHERE id = ${job.id}`)
+        }
+        await publishStudio(job.designId, { type: 'progress', jobId: job.id, text })
       } else if (e?.type === 'phase' && typeof e.phase === 'string' && /^[a-z_]{1,32}$/.test(e.phase)) {
+        await db.update(studioJobs).set({ phase: e.phase }).where(eq(studioJobs.id, job.id))
         await publishStudio(job.designId, { type: 'phase', jobId: job.id, phase: e.phase })
       } else {
         return reply.status(400).send({ error: 'bad_event' })

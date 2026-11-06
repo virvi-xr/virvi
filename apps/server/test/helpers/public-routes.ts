@@ -45,6 +45,7 @@ export const PUBLIC_EXACT = [
   'GET /api/assets', // public browse list (never reads a bearer)
   'GET /api/assets/:id', // public asset detail
   'GET /api/assets/categories', // public category list
+  'GET /api/studio/wall', // public: the studio wall of fame (shown designs' names, creators and signed preview frames)
   'GET /api/catalog/packs', // public credits list (no bearer)
   'POST /api/advertiser-leads', // public: landing page early-access form (anonymous visitors, never reads a bearer)
   'GET /api/studio/render-frames/*', // the signed frame token is the auth (no bearer)

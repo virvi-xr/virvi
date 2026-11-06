@@ -190,6 +190,19 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS trial_events_blocked_uq ON trial_events (user_id) WHERE kind = 'blocked'\`;
         console.log('[virvi-server] trial_events ensured');
       } catch(e) { console.log('[virvi-server] trial_events:', e.message); }
+      // Studio job phase and latest progress lines, for polling clients; matches studioJobs.phase / progress in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS phase TEXT\`;
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS progress JSONB NOT NULL DEFAULT '[]'::jsonb\`;
+        console.log('[virvi-server] studio_jobs phase and progress ensured');
+      } catch(e) { console.log('[virvi-server] studio_jobs phase and progress:', e.message); }
+      // Studio wall of fame; matches studioDesigns.wallShownAt / wallHiddenAt / wallMarketplaceUrl in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS wall_shown_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS wall_hidden_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS wall_marketplace_url TEXT\`;
+        console.log('[virvi-server] studio wall columns ensured');
+      } catch(e) { console.log('[virvi-server] studio wall columns:', e.message); }
 
       // Studio gift codes; matches studioGiftCodes / studioGiftRedemptions / studioFinalizeCredits in src/db/schema.ts
       try {

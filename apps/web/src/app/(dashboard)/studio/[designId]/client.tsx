@@ -170,7 +170,7 @@ export default function StudioDesignPage() {
             : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} onOpen={openEmote} /></div>}>
           <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'}
             detail={detail} onOpenEmote={openEmote} />
-          <PaidRevisions designId={designId} pieces={detail.pieces} onChanged={reload} kind={detail.design.kind} />
+          <PaidRevisions designId={designId} pieces={detail.pieces} wall={detail.wall} onChanged={reload} kind={detail.design.kind} />
         </Preview>
       </div>
     </div>

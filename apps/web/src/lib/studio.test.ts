@@ -179,6 +179,7 @@ const usage = (over: Partial<StudioUsage> = {}): StudioUsage => ({
 })
 const detail = (over: Partial<StudioDetail> = {}): StudioDetail => ({
   design: { id: 'd1', name: 'Cap', kind: 'wearable', agent: 'claude', status: 'idle', archivedAt: null, lastJobAt: null, finalizedAt: null, createdAt: NOW.toISOString() },
+  wall: { shown: false, hidden: false, marketplaceUrl: null },
   pieces: [], messages: [], activeJob: null, lastPrompt: null, uploads: [],
   set: { revisions: '', views: {}, checks: [], freeFixesLeft: {} }, ...over,
 })

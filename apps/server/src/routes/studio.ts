@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { recordTrialBlocked } from '../auth/trial-events.js'
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import sharp from 'sharp'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads } from '../db/schema.js'
 import { config } from '../config.js'
@@ -9,7 +10,7 @@ import { authenticate } from '../middleware/auth.js'
 import { STUDIO_ROUTE_SCENE_PASS } from '../auth/scene-from.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
-import { verifyRenderFrame, framePath } from '../studio/render-urls.js'
+import { verifyRenderFrame, framePath, framePngPath } from '../studio/render-urls.js'
 import { isVirviAdmin, quoteFinalize, QuoteError } from '../studio/pricing.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
@@ -17,6 +18,7 @@ import { isPaused } from '../studio/scope.js'
 import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
+import { listWall, setWallChoice } from '../studio/wall.js'
 import { storedZip } from '../studio/zip.js'
 import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
@@ -548,10 +550,39 @@ export default async function studioRoutes(app: FastifyInstance) {
     return { queued: await queueFinalizeRenders(d, new Date()) }
   })
 
+  // The owner's choice to show a finalized design on the wall of fame. Not behind notPaused: a paused account may still choose.
+  app.put('/api/studio/designs/:id/wall', auth, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const b = (request.body ?? {}) as { shown?: unknown; marketplaceUrl?: unknown }
+    if (typeof b.shown !== 'boolean') return reply.status(400).send({ error: 'shown must be true or false' })
+    if (b.marketplaceUrl !== undefined && b.marketplaceUrl !== null && typeof b.marketplaceUrl !== 'string') {
+      return reply.status(400).send({ error: 'bad_marketplace_url', code: 'bad_marketplace_url' })
+    }
+    const r = await setWallChoice(d, { shown: b.shown, marketplaceUrl: b.marketplaceUrl }, new Date())
+    return r.ok ? r.wall : reply.status(r.status).send({ error: r.code, code: r.code })
+  })
+
+  // Public: the studio scene reads it with no sign-in. Names, creators and signed preview frames only.
+  app.get('/api/studio/wall', { preHandler: studioOn, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request) => {
+    const q = request.query as { limit?: string; offset?: string }
+    const int = (v: string | undefined, fallback: number) => (v !== undefined && /^-?\d+$/.test(v) ? Number(v) : fallback)
+    const limit = Math.min(24, Math.max(1, int(q.limit, 12)))
+    const offset = Math.max(0, int(q.offset, 0))
+    return { entries: await listWall({ limit, offset }, new Date()) }
+  })
+
   // The signed token is the authority: no bearer. Every check failing is the same 403. A wildcard, not :token, because
   // tokens pass Fastify's 100-character parameter limit.
-  // One view is 36 frames: a page loads hundreds a minute, so frames get their own, higher limit
-  app.get('/api/studio/render-frames/*', { preHandler: studioOn, schema: { hide: true }, config: { rateLimit: { max: 3000, timeWindow: '1 minute' } } }, async (request, reply) => {
+  // One view is 36 frames: a page loads hundreds a minute, so frames get their own, higher limit. PNG requests (which
+  // may convert) count in their own, lower bucket.
+  const wantsPng = (request: FastifyRequest) => (request.query as { fmt?: string } | undefined)?.fmt === 'png'
+  const frameLimit = {
+    timeWindow: '1 minute',
+    max: async (request: FastifyRequest) => (wantsPng(request) ? 600 : 3000),
+    keyGenerator: (request: FastifyRequest) => `${request.ip}${wantsPng(request) ? ':png' : ''}`,
+  }
+  app.get('/api/studio/render-frames/*', { preHandler: studioOn, schema: { hide: true }, config: { rateLimit: frameLimit } }, async (request, reply) => {
     const f = verifyRenderFrame((request.params as { '*': string })['*'], new Date())
     const forbidden = () => reply.status(403).send({ error: 'forbidden' })
     if (!f || !UUID.test(f.jobId) || !UUID.test(f.designId) || !UUID.test(f.revisionId)) return forbidden()
@@ -566,7 +597,22 @@ export default async function studioRoutes(app: FastifyInstance) {
       : await db.select({ frames: studioRenders.frames }).from(studioRenders)
         .where(and(eq(studioRenders.revisionId, f.revisionId), eq(studioRenders.viewKey, f.viewKey), eq(studioRenders.jobId, f.jobId), eq(studioRenders.status, 'ready')))
     if (!render || f.frame >= render.frames) return forbidden()
-    const obj = await getStudioStore().get(jobFileKey(f.designId, f.jobId, framePath(f)))
+    const store = getStudioStore()
+    // ?fmt=png for clients that can't show WebP (Decentraland scenes). Only the encoding changes; the token is still the
+    // authority. The first request converts and stores the PNG beside the WebP; later ones read it.
+    if (wantsPng(request)) {
+      const pngKey = jobFileKey(f.designId, f.jobId, framePngPath(f))
+      const stored = await store.get(pngKey)
+      let png = stored?.body
+      if (!png) {
+        const obj = await store.get(jobFileKey(f.designId, f.jobId, framePath(f)))
+        if (!obj) return reply.status(404).send({ error: 'frame_not_found' })
+        png = await sharp(obj.body).png().toBuffer()
+        await store.put(pngKey, png, 'image/png').catch((err: unknown) => request.log.warn({ err }, 'studio: could not store a PNG frame'))
+      }
+      return reply.type('image/png').header('Cache-Control', 'private, max-age=3600').send(png)
+    }
+    const obj = await store.get(jobFileKey(f.designId, f.jobId, framePath(f)))
     if (!obj) return reply.status(404).send({ error: 'frame_not_found' })
     return reply.type('image/webp').header('Cache-Control', 'private, max-age=3600').send(obj.body)
   })

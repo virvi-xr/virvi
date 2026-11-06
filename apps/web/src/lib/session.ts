@@ -1,6 +1,6 @@
 export interface ScenePass { sceneId: string; locationId: string | null }
 
-function payloadOf(token: string): Record<string, unknown> | null {
+export function payloadOf(token: string): Record<string, unknown> | null {
   const part = token.split('.')[1]
   if (!part) return null
   try {

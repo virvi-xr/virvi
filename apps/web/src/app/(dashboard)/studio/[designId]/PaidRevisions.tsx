@@ -4,10 +4,11 @@ import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
   formatCents, formatCredit, manaBack, paidSummary, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
-  type FinalizedRevision, type StudioPiece,
+  type FinalizedRevision, type StudioPiece, type WallState,
 } from '@/lib/studio'
+import { WALL_BAD_LINK, wallToggleState } from '@/lib/wall'
 
-type Props = { designId: string; pieces: StudioPiece[]; onChanged: () => Promise<void>; kind?: string }
+type Props = { designId: string; pieces: StudioPiece[]; wall: WallState; onChanged: () => Promise<void>; kind?: string }
 
 /** Save a downloaded blob under its file name. */
 function save(blob: Blob, filename: string) {
@@ -24,7 +25,7 @@ function save(blob: Blob, filename: string) {
  * reports. With two or more pieces ready, "Download all" fetches them as one zip; while pieces package, it says how many
  * are ready.
  */
-export default function PaidRevisions({ designId, pieces, onChanged, kind }: Props) {
+export default function PaidRevisions({ designId, pieces, wall, onChanged, kind }: Props) {
   const api = useApi()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -56,6 +57,7 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind }: Pro
         {summary.downloadAll && <PrimaryButton type="button" disabled={busy} onClick={downloadAll}>Download all</PrimaryButton>}
       </div>
       {error && <p className="px-4 pt-3 text-sm text-amber-300" role="alert">{error}</p>}
+      <WallChoice designId={designId} pieces={pieces} wall={wall} onChanged={onChanged} />
       {paid.map((piece) => (
         <section key={piece.category} aria-label={piece.name}>
           {several && <h4 className="px-4 pt-3 text-xs font-medium uppercase tracking-wide text-gray-400">{piece.name}</h4>}
@@ -64,6 +66,51 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind }: Pro
           </ul>
         </section>
       ))}
+    </div>
+  )
+}
+
+/** Opt in to the Made with Virvi Design Studio wall, with an optional Marketplace link saved when the field loses focus. */
+function WallChoice({ designId, pieces, wall, onChanged }: { designId: string; pieces: StudioPiece[]; wall: WallState; onChanged: () => Promise<void> }) {
+  const api = useApi()
+  const toggle = wallToggleState({ pieces })
+  const saved = wall.marketplaceUrl ?? ''
+  const [link, setLink] = useState(saved)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const save = async (body: { shown: boolean; marketplaceUrl?: string | null }) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.setStudioWall(designId, body)
+      await onChanged()
+    } catch (err) {
+      const e = err as { body?: { code?: string } }
+      setError(e.body?.code === 'bad_marketplace_url' ? WALL_BAD_LINK : refusalMessage(err as never, new Date()).text)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2 border-b border-gray-800 px-4 py-3 text-sm">
+      <label className="flex items-center gap-2">
+        <input type="checkbox" checked={wall.shown} disabled={busy || (!wall.shown && !toggle.canShow)}
+          onChange={(e) => save({ shown: e.target.checked })} />
+        <span>Show on the Made with Virvi Design Studio wall</span>
+      </label>
+      {toggle.reason && !wall.shown && <p className="text-xs text-gray-500">{toggle.reason}</p>}
+      {wall.shown && wall.hidden && <p className="text-xs text-gray-500">Virvi has taken this design off the wall.</p>}
+      {wall.shown && (
+        <label className="block">
+          <span className="mb-1 block text-xs text-gray-400">Marketplace link (optional)</span>
+          <input type="url" value={link} maxLength={300} onChange={(e) => setLink(e.target.value)} disabled={busy}
+            onBlur={() => { const next = link.trim(); if (next !== saved) save({ shown: true, marketplaceUrl: next === '' ? null : next }) }}
+            className="w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-1.5 text-white outline-none focus:border-blue-400" />
+        </label>
+      )}
+      {error && <p className="text-amber-300" role="alert">{error}</p>}
     </div>
   )
 }

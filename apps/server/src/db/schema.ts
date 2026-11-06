@@ -1535,6 +1535,11 @@ export const studioDesigns = pgTable('studio_designs', {
   workerTokenHash: text('worker_token_hash').unique(),
   // Set by the first paid finalize: a finalized design no longer counts as open, even while it is revised
   finalizedAt: timestamp('finalized_at', { withTimezone: true }),
+  // The wall of fame: the owner opted a finalized design in (shown), an admin took it down (hidden), and the owner's
+  // link to the design's Marketplace page
+  wallShownAt: timestamp('wall_shown_at', { withTimezone: true }),
+  wallHiddenAt: timestamp('wall_hidden_at', { withTimezone: true }),
+  wallMarketplaceUrl: text('wall_marketplace_url'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   ownerIdx: index('studio_designs_owner_idx').on(t.ownerId),
@@ -1573,6 +1578,9 @@ export const studioJobs = pgTable('studio_jobs', {
   status: text('status').notNull().default('queued'), // queued | taken | done | failed
   payload: jsonb('payload').notNull(), // the contract's Job, without jobId
   result: jsonb('result'),
+  // What the worker last reported, kept so a client that polls (the scene) sees it: the phase, and the last 5 progress lines
+  phase: text('phase'),
+  progress: jsonb('progress').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   // Whether the prompt used the owner's allowance, and on which UTC day (refunds and cost go to that day)
   counted: boolean('counted').notNull().default(false),
   countedDay: date('counted_day', { mode: 'string' }),

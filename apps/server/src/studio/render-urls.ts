@@ -48,3 +48,6 @@ export function verifyRenderFrame(token: string, now: Date): RenderFrame | null 
 /** The frame's path in its job's files, as the contract names it. */
 export const framePath = (f: Pick<RenderFrame, 'category' | 'viewKey' | 'frame'>) =>
   `renders/${f.category}/${f.viewKey}/${String(f.frame).padStart(3, '0')}.webp`
+
+/** The frame's PNG (the server's own conversion, for Decentraland), stored beside its WebP on first request. */
+export const framePngPath = (f: Pick<RenderFrame, 'category' | 'viewKey' | 'frame'>) => framePath(f).replace(/\.webp$/, '.png')

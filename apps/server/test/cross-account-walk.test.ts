@@ -274,6 +274,7 @@ const CASES: Case[] = [
   // design studio
   { route: 'GET /api/studio/designs/:id', url: (f) => `/api/studio/designs/${f.design.id}` },
   { route: 'PATCH /api/studio/designs/:id', url: (f) => `/api/studio/designs/${f.design.id}`, body: () => ({ name: 'pwned', archived: true }) },
+  { route: 'PUT /api/studio/designs/:id/wall', url: (f) => `/api/studio/designs/${f.design.id}/wall`, body: () => ({ shown: true }) },
   { route: 'POST /api/studio/designs/:id/prompts', url: (f) => `/api/studio/designs/${f.design.id}/prompts`, body: () => ({ text: 'pwned' }) },
   { route: 'GET /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize` },
   { route: 'POST /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize`, body: () => ({ reports: { hat: 'pwned pwned pwned' } }) },
@@ -349,6 +350,7 @@ const CASES: Case[] = [
   { route: 'PUT /api/admin/ads/:id/placements', url: () => `/api/admin/ads/${AD_ID}/placements`, body: () => ({ elementIds: [] }) },
   { route: 'GET /api/admin/ads/:id/report', url: () => `/api/admin/ads/${AD_ID}/report` },
   { route: 'POST /api/admin/ads/:id/review', url: () => `/api/admin/ads/${AD_ID}/review`, body: () => ({ decision: 'rejected', reason: 'x' }) },
+  { route: 'POST /api/admin/studio/wall/:designId/hide', url: () => `/api/admin/studio/wall/${AD_ID}/hide`, body: () => ({ hidden: true }) },
   { route: 'POST /api/admin/studio/flags/:id/dismiss', url: () => `/api/admin/studio/flags/${AD_ID}/dismiss` },
   { route: 'POST /api/admin/studio/users/:userId/pause', url: (f) => `/api/admin/studio/users/${f.b.id}/pause` },
   { route: 'DELETE /api/admin/studio/users/:userId/pause', url: (f) => `/api/admin/studio/users/${f.b.id}/pause` },
