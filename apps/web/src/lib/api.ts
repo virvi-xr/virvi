@@ -3,6 +3,7 @@ import { useCallback, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
 import { requestHeaders } from './request-headers'
+import { accountRequired, openSignUp, type BlockedCtx } from './trial'
 import { backupPath } from './backup'
 import type { Plot, RoomSetOptions } from '@virvixr/shared'
 import type { RoomNudge } from './room-set'
@@ -220,7 +221,7 @@ export function isGlbAsset(asset: { contentType?: string; filename?: string }): 
 }
 
 export function useApi() {
-  const { token, logout, renew } = useAuth()
+  const { token, user, logout, renew } = useAuth()
 
   /** A kind-less (pre-scene-pass) session, or a scene pass used outside its scope: drop it so the
    *  dashboard layout sends the user to sign-in once (with `next`), instead of showing an error. */
@@ -228,22 +229,40 @@ export function useApi() {
     if ((status === 401 && err.message === 'Session expired — sign in again') || (status === 403 && err.error === 'scene_pass_not_allowed')) logout()
   }, [logout])
 
-  const apiFetch = useCallback(async <T = any>(path: string, options: RequestInit = {}): Promise<T> => {
-    let res = await fetch(`${API_URL}${path}`, { ...options, headers: requestHeaders(token, options) })
-    // The access token ran out: renew it with the stored refresh token and send the request once more
-    if (res.status === 401 && token) {
-      const fresh = await renew()
-      if (fresh) res = await fetch(`${API_URL}${path}`, { ...options, headers: requestHeaders(fresh, options) })
-    }
-    if (!res.ok) {
+  const apiFetch = useCallback(async <T = any>(path: string, options: RequestInit & { signUpCtx?: BlockedCtx } = {}): Promise<T> => {
+    const { signUpCtx, ...init } = options
+    const send = async (bearer: string | null) => {
+      let res = await fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(bearer, init) })
+      // The access token ran out: renew it with the stored refresh token and send the request once more
+      if (res.status === 401 && bearer) {
+        const fresh = await renew()
+        if (fresh) res = await fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(fresh, init) })
+      }
+      if (res.ok) return { res, err: null as any }
       // Non-JSON error bodies (proxy pages, e.g. a 413 from the edge) become `HTTP <status>`.
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
       dropDeadSession(res.status, err)
-      throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+      return { res, err }
     }
+    const fail = (res: Response, err: any) => Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+    let { res, err } = await send(token)
+    if (!res.ok && user?.trial) {
+      const blocked = accountRequired(fail(res, err))
+      if (blocked) {
+        // A trial hit an account-only action: ask for a sign-up in the page, then carry on with the new session once
+        let fresh: string
+        try {
+          fresh = await openSignUp({ action: blocked.action, ctx: signUpCtx ?? {} })
+        } catch {
+          throw fail(res, err)
+        }
+        ;({ res, err } = await send(fresh))
+      }
+    }
+    if (!res.ok) throw fail(res, err)
     if (res.status === 204) return undefined as T
     return res.json()
-  }, [token, dropDeadSession, renew])
+  }, [token, user?.trial, dropDeadSession, renew])
 
   // One object per session: effects and callbacks that depend on `api` (or one of its functions) run once, not on
   // every render, which would refetch in a loop

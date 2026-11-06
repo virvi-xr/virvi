@@ -24,3 +24,9 @@ export function scenePassAllows(pathname: string, search: string, pass: ScenePas
   const q = new URLSearchParams(search)
   return q.get('scene') === pass.sceneId || (!!pass.locationId && q.get('location') === pass.locationId)
 }
+
+/** An unexpired trial session token (kept by the web app beside account sessions; never a scene pass). */
+export function readTrialSession(token: string, now: number): boolean {
+  const p = payloadOf(token)
+  return !!p && typeof p.exp === 'number' && p.exp * 1000 > now && p.kind === 'trial'
+}

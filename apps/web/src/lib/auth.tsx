@@ -1,7 +1,8 @@
 'use client'
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { API_URL } from './config'
-import { readSession, type ScenePass } from './session'
+import { readSession, readTrialSession, type ScenePass } from './session'
+import { deviceId } from './trial'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -10,6 +11,9 @@ interface User {
   displayName: string
   email: string | null
   role: string
+  /** A signed-out visitor's trial of the Design Studio. */
+  trial?: boolean
+  expiresAt?: string
 }
 
 interface AuthState {
@@ -17,9 +21,14 @@ interface AuthState {
   token: string | null
   loading: boolean
   scenePass: ScenePass | null
-  login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, displayName: string) => Promise<void>
-  loginWithWallet: () => Promise<void>
+  /** Sign in / create an account / sign in with a wallet. From a trial the trial bearer goes along, so the trial's designs move into the account; `fromAction` is the blocked action. Each returns the new access token. */
+  login: (email: string, password: string, fromAction?: string) => Promise<string>
+  register: (email: string, password: string, displayName: string, fromAction?: string) => Promise<string>
+  loginWithWallet: (fromAction?: string) => Promise<string>
+  /** Starts a trial session (a signed-out visitor trying the Design Studio). */
+  startTrial: (turnstileToken: string) => Promise<void>
+  /** The URL for Google or Discord sign-in; from a trial it first fetches a claim ticket so the trial moves into the account. */
+  oauthUrl: (provider: 'google' | 'discord', fromAction?: string) => Promise<string>
   logout: () => void
   /** Swaps the stored refresh token for a new access token: the new token, or null (signed out when refused). */
   renew: () => Promise<string | null>
@@ -90,13 +99,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!data) return
       let token = data.token
       // An access token that ran out is renewed with the stored refresh token before giving up on the session
-      if (!readSession(token, Date.now()).ok && data.refresh) {
+      if (!readSession(token, Date.now()).ok && !readTrialSession(token, Date.now()) && data.refresh) {
         const r = await refreshStoredSession(localStorage, postRefresh)
         if ('token' in r) token = r.token
       }
       // Drop expired, kind-less (pre-scene-pass) and visitor sessions: the user signs in again once.
       const session = readSession(token, Date.now())
-      if (session.ok) {
+      const trial = !session.ok && readTrialSession(token, Date.now())
+      if (trial) {
+        setToken(token)
+        setUser(readStoredAuth(localStorage)?.user as User)
+      } else if (session.ok) {
         setToken(token)
         setUser(data.user as User)
         setScenePass(session.scenePass)
@@ -107,54 +120,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restore().finally(() => setLoading(false))
   }, [])
 
-  const login = useCallback(async (email: string, password: string) => {
-    const res = await fetch(`${API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    })
-    if (!res.ok) {
-      const err = await res.json()
-      throw new Error(err.error || 'Login failed')
-    }
-    const data = await res.json()
+  const trialBearer: Record<string, string> = token && user?.trial ? { Authorization: `Bearer ${token}` } : {}
+
+  const adopt = (data: { accessToken: string; refreshToken?: string; user: User }) => {
     setToken(data.accessToken)
     setUser(data.user)
     setScenePass(null)
     localStorage.setItem(AUTH_KEY, JSON.stringify({ token: data.accessToken, refresh: data.refreshToken, user: data.user }))
-  }, [])
+    return data.accessToken
+  }
 
-  const register = useCallback(async (email: string, password: string, displayName: string) => {
-    const res = await fetch(`${API_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, displayName }),
-    })
-    if (!res.ok) {
-      const err = await res.json()
-      throw new Error(err.error || 'Registration failed')
-    }
-    const data = await res.json()
-    setToken(data.accessToken)
-    setUser(data.user)
-    setScenePass(null)
-    localStorage.setItem(AUTH_KEY, JSON.stringify({ token: data.accessToken, refresh: data.refreshToken, user: data.user }))
-  }, [])
+  const post = (path: string, body: object) =>
+    fetch(`${API_URL}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...trialBearer }, body: JSON.stringify(body) })
 
-  const loginWithWallet = useCallback(async () => {
+  const login = async (email: string, password: string, fromAction?: string) => {
+    const res = await post('/api/auth/login', { email, password, ...(fromAction ? { fromAction } : {}) })
+    if (!res.ok) throw new Error(await errorMessage(res, 'Login failed'))
+    return adopt(await res.json())
+  }
+
+  const register = async (email: string, password: string, displayName: string, fromAction?: string) => {
+    const res = await post('/api/auth/register', { email, password, displayName, ...(fromAction ? { fromAction } : {}) })
+    if (!res.ok) throw new Error(await errorMessage(res, 'Registration failed'))
+    return adopt(await res.json())
+  }
+
+  const loginWithWallet = async (fromAction?: string) => {
     const proof = await signWalletChallenge()
-    const res = await fetch(`${API_URL}/api/auth/wallet/verify`, {
+    const res = await post('/api/auth/wallet/verify', { ...proof, ...(fromAction ? { fromAction } : {}) })
+    if (!res.ok) throw new Error(await errorMessage(res, 'Wallet sign-in failed'))
+    return adopt(await res.json())
+  }
+
+  const startTrial = async (turnstileToken: string) => {
+    const res = await fetch(`${API_URL}/api/auth/trial`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(proof),
+      body: JSON.stringify({ turnstileToken, deviceId: deviceId() }),
     })
-    if (!res.ok) throw new Error(await errorMessage(res, 'Wallet sign-in failed'))
-    const data = await res.json()
-    setToken(data.accessToken)
-    setUser(data.user)
-    setScenePass(null)
-    localStorage.setItem(AUTH_KEY, JSON.stringify({ token: data.accessToken, refresh: data.refreshToken, user: data.user }))
-  }, [])
+    if (!res.ok) throw new Error(await errorMessage(res, 'Could not start a trial'))
+    adopt(await res.json())
+  }
+
+  const oauthUrl = async (provider: 'google' | 'discord', fromAction?: string) => {
+    const base = `${API_URL}/api/auth/${provider}`
+    if (!user?.trial) return base
+    const res = await post('/api/auth/trial/claim', { fromAction })
+    if (!res.ok) throw new Error(await errorMessage(res, 'Could not start sign-in'))
+    const { ticket } = await res.json()
+    return `${base}?claim=${encodeURIComponent(ticket)}`
+  }
 
   const logout = useCallback(() => {
     setToken(null)
@@ -167,6 +182,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const r = await refreshStoredSession(localStorage, postRefresh)
     if ('token' in r) {
       setToken(r.token)
+      // Another tab may have turned the trial into an account: follow the stored session's user
+      const stored = readStoredAuth(localStorage)?.user as User | undefined
+      if (stored) setUser(stored)
       return r.token
     }
     if ('refused' in r) logout()
@@ -191,7 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, scenePass, login, register, loginWithWallet, logout, renew, updateUser }}>
+    <AuthContext.Provider value={{ user, token, loading, scenePass, login, register, loginWithWallet, startTrial, oauthUrl, logout, renew, updateUser }}>
       {children}
     </AuthContext.Provider>
   )
