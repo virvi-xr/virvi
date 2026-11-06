@@ -25,7 +25,6 @@ const ALLOWED = [
   'POST /api/studio/designs/:id/set-renders',
   'POST /api/studio/designs/:id/emote-checks',
   'POST /api/studio/designs/:id/clipping',
-  'POST /api/auth/trial/claim',
 ].sort()
 
 // Routes that are not public but never call `authenticate`: they check their own credential, so a trial bearer

@@ -143,11 +143,11 @@ describe('trial expiry and funnel', () => {
     expect(blocked[0].userId).toBe(t.id)
   })
 
-  it('carries fromAction through the OAuth claim ticket into signed_up', async () => {
+  it('carries fromAction through the OAuth hand-over into signed_up', async () => {
     const t = await makeTrial(0)
-    const claim = await app.inject({ method: 'POST', url: '/api/auth/trial/claim', headers: bearer(t), payload: { fromAction: 'more_prompts' } })
-    expect(claim.statusCode).toBe(200)
-    await finishOAuth(app, { type: 'oauth', identifier: 'google:funnel1', email: 'g@test.dev', displayName: 'G', metadata: {} }, claim.json().ticket)
+    const s = await finishOAuth(app, { type: 'oauth', identifier: 'google:funnel1', email: 'g@test.dev', displayName: 'G', metadata: {} })
+    const res = await app.inject({ method: 'POST', url: '/api/auth/trial/adopt', headers: { authorization: `Bearer ${s.accessToken}` }, payload: { trialToken: issueTrialSession(app, { id: t.id, displayName: t.displayName, role: 'creator', trialLastActiveAt: new Date() }).refreshToken, fromAction: 'more_prompts' } })
+    expect(res.statusCode).toBe(200)
     const signed = (await events()).filter((e) => e.kind === 'signed_up')
     expect(signed).toHaveLength(1)
     expect(signed[0]).toMatchObject({ userId: t.id, action: 'more_prompts' })

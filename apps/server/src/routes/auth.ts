@@ -342,7 +342,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── GET /api/auth/google — Redirect to Google OAuth consent screen ───────
 
-  app.get<{ Querystring: { claim?: string } }>('/api/auth/google', async (request, reply) => {
+  app.get('/api/auth/google', async (request, reply) => {
     if (!config.googleClientId || !config.googleClientSecret) {
       return reply.status(501).send({ error: 'Google OAuth is not configured' })
     }
@@ -357,22 +357,20 @@ export default async function authRoutes(app: FastifyInstance) {
       access_type: 'offline',
       prompt: 'consent',
     })
-    // A visitor's trial claim ticket rides through the provider in `state`
-    if (request.query.claim) params.set('state', request.query.claim)
 
     return reply.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
   })
 
   // ── GET /api/auth/google/callback — Handle the OAuth callback ────────────
 
-  app.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
+  app.get<{ Querystring: { code?: string; error?: string } }>(
     '/api/auth/google/callback',
     async (request, reply) => {
       if (!config.googleClientId || !config.googleClientSecret) {
         return reply.status(501).send({ error: 'Google OAuth is not configured' })
       }
 
-      const { code, error: oauthError, state } = request.query
+      const { code, error: oauthError } = request.query
 
       if (oauthError || !code) {
         return reply.redirect(`${config.publicUrl}/auth/callback?error=${oauthError || 'missing_code'}`)
@@ -411,7 +409,6 @@ export default async function authRoutes(app: FastifyInstance) {
             displayName,
             metadata: { provider: 'google', googleUserId, email, name: payload.name, picture: payload.picture },
           },
-          state,
         )
 
         // Redirect to frontend with tokens
@@ -430,7 +427,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── GET /api/auth/discord — Redirect to Discord OAuth consent screen ──────
 
-  app.get<{ Querystring: { claim?: string } }>('/api/auth/discord', async (request, reply) => {
+  app.get('/api/auth/discord', async (request, reply) => {
     if (!config.discordClientId || !config.discordClientSecret) {
       return reply.status(501).send({ error: 'Discord OAuth is not configured' })
     }
@@ -443,21 +440,20 @@ export default async function authRoutes(app: FastifyInstance) {
       response_type: 'code',
       scope: 'identify email',
     })
-    if (request.query.claim) params.set('state', request.query.claim)
 
     return reply.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`)
   })
 
   // ── GET /api/auth/discord/callback — Handle the OAuth callback ────────────
 
-  app.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
+  app.get<{ Querystring: { code?: string; error?: string } }>(
     '/api/auth/discord/callback',
     async (request, reply) => {
       if (!config.discordClientId || !config.discordClientSecret) {
         return reply.status(501).send({ error: 'Discord OAuth is not configured' })
       }
 
-      const { code, error: oauthError, state } = request.query
+      const { code, error: oauthError } = request.query
 
       if (oauthError || !code) {
         return reply.redirect(`${config.publicUrl}/auth/callback?error=${oauthError || 'missing_code'}`)
@@ -517,7 +513,6 @@ export default async function authRoutes(app: FastifyInstance) {
             displayName,
             metadata: { provider: 'discord', discordUserId, email, username: discordUser.username, avatar: discordUser.avatar },
           },
-          state,
         )
 
         // Redirect to frontend with tokens

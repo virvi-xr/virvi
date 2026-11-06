@@ -68,7 +68,7 @@ export async function convertTrial(trialId: string, set: { email?: string | null
 }
 
 /** The trial's work moves into an existing account and the trial is deleted. */
-export async function mergeTrial(trialId: string, accountId: string, fromAction?: unknown): Promise<void> {
+export async function mergeTrial(trialId: string, accountId: string, fromAction?: unknown): Promise<boolean> {
   const merged = await db.transaction(async (tx) => {
     // Only a row that is still a trial merges (a second sign-in with the same old token finds nothing to move).
     const [trial] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, trialId), eq(users.isTrial, true))).for('update')
@@ -81,6 +81,7 @@ export async function mergeTrial(trialId: string, accountId: string, fromAction?
     return true
   })
   if (merged) recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
+  return merged
 }
 
 export interface OAuthIdentity {
@@ -91,52 +92,36 @@ export interface OAuthIdentity {
   metadata: object
 }
 
-/** The trial a claim ticket names, if the ticket is ours, unexpired, and the trial still exists. */
-async function trialFromTicket(app: FastifyInstance, claim: string | undefined): Promise<{ id: string; fromAction: string | null } | null> {
-  if (!claim) return null
+/**
+ * The trial a token held by this browser names: a trial access or refresh token we signed, expired or not (the session in
+ * the browser is the proof), whose row is still a trial. Else null.
+ */
+export async function trialFromHeldToken(app: FastifyInstance, token: unknown): Promise<string | null> {
+  if (typeof token !== 'string' || !token) return null
+  let claims: { id?: string; kind?: string }
   try {
-    const c = app.jwt.verify<{ id?: string; kind?: string; fromAction?: string }>(claim)
-    if (c.kind !== 'trial_claim' || !c.id) return null
-    const [row] = await db.select({ isTrial: users.isTrial }).from(users).where(eq(users.id, c.id)).limit(1)
-    return row?.isTrial ? { id: c.id, fromAction: cleanAction(c.fromAction) } : null
+    claims = app.jwt.verify(token, { ignoreExpiration: true } as never)
   } catch {
     return null
   }
+  if (claims.kind !== 'trial' || !claims.id) return null
+  const [row] = await db.select({ isTrial: users.isTrial }).from(users).where(eq(users.id, claims.id)).limit(1)
+  return row?.isTrial ? claims.id : null
 }
 
 /**
  * The end of a Google or Discord sign-in: finds or creates the account for this identity and answers with its session.
- * A valid claim ticket turns the visitor's trial into the new account, or moves it into the existing one.
+ * A trial is never carried through the provider (a crafted link could hand someone else's trial to the victim): the web
+ * app's callback page moves the trial it holds with POST /api/auth/trial/adopt.
  */
-export async function finishOAuth(app: FastifyInstance, identity: OAuthIdentity, claim: string | undefined) {
-  const ticket = await trialFromTicket(app, claim)
-  const trialId = ticket?.id
+export async function finishOAuth(app: FastifyInstance, identity: OAuthIdentity) {
   const existing = await db.query.userAuthMethods.findFirst({
     where: and(eq(userAuthMethods.type, 'oauth'), eq(userAuthMethods.identifier, identity.identifier)),
     with: { user: true },
   })
-
-  if (existing) {
-    if (trialId) await mergeTrial(trialId, existing.userId, ticket!.fromAction)
-    return issueAccountSession(app, existing.user)
-  }
+  if (existing) return issueAccountSession(app, existing.user)
 
   const email = identity.email?.toLowerCase() || null
-  if (trialId) {
-    try {
-      const user = await db.transaction(async (tx) => {
-        const converted = await convertTrial(trialId, { email, displayName: identity.displayName }, tx)
-        await tx.insert(userAuthMethods).values({ userId: trialId, type: 'oauth', identifier: identity.identifier, metadata: identity.metadata })
-        return converted
-      })
-      recordTrialEvent('signed_up', trialId, ticket!.fromAction)
-      return issueAccountSession(app, user)
-    } catch (err) {
-      if ((err as Error).message !== 'trial_gone') throw err
-      // The trial vanished between the check and the conversion: fall through to a normal new account.
-    }
-  }
-
   // Auto-promote the first user to admin in single/scalable mode
   let role: 'admin' | 'creator' = 'creator'
   if (config.autoPromoteFirstUser) {

@@ -92,54 +92,61 @@ describe('converting and merging a trial', () => {
     expect(await db.query.users.findFirst({ where: eq(users.id, t2.u.id) })).toBeUndefined()
   })
 
-  const ticketFor = async (t: { headers: Record<string, string> }) =>
-    (await app.inject({ method: 'POST', url: '/api/auth/trial/claim', headers: t.headers })).json().ticket as string
   const identity = (id: string) => ({ type: 'oauth' as const, identifier: `google:${id}`, email: `${id}@g.dev`, displayName: 'G User', metadata: { provider: 'google' } })
+  const adopt = (accountToken: string, trialToken: unknown, fromAction?: string) =>
+    app.inject({ method: 'POST', url: '/api/auth/trial/adopt', headers: { authorization: `Bearer ${accountToken}` }, payload: { trialToken, ...(fromAction ? { fromAction } : {}) } })
 
-  it('Google from a trial with a claim ticket converts; an existing identity merges', async () => {
+  it('after Google sign-in, the browser holding the trial session moves it into the account', async () => {
     const t = await makeTrial({ designs: 1 })
-    const ticket = await ticketFor(t)
-    expect(app.jwt.verify<any>(ticket)).toMatchObject({ id: t.u.id, kind: 'trial_claim' })
-    const s = await finishOAuth(app, identity('new1'), ticket)
-    expect(s.user.id).toBe(t.u.id)
-    expect((await db.select().from(users).where(eq(users.id, t.u.id)))[0]).toMatchObject({ isTrial: false, email: 'new1@g.dev' })
-    expect(await db.query.userAuthMethods.findFirst({ where: eq(userAuthMethods.userId, t.u.id) })).toMatchObject({ identifier: 'google:new1' })
-
-    const t2 = await makeTrial({ designs: 1 })
-    const first = await finishOAuth(app, identity('old1'), undefined)
-    const s2 = await finishOAuth(app, identity('old1'), await ticketFor(t2))
-    expect(s2.user.id).toBe(first.user.id)
-    expect(await owned(first.user.id)).toBe(1)
-    expect(await db.query.users.findFirst({ where: eq(users.id, t2.u.id) })).toBeUndefined()
-  })
-
-  it('a forged or stale claim is ignored', async () => {
-    const t = await makeTrial({ designs: 1 })
-    const forged = createSigner({ key: 'other-secret', expiresIn: 600_000 })({ id: t.u.id, kind: 'trial_claim' })
-    const s = await finishOAuth(app, identity('f1'), forged)
+    const s = await finishOAuth(app, identity('new1'))
     expect(s.user.id).not.toBe(t.u.id)
-    expect((await db.select().from(users).where(eq(users.id, t.u.id)))[0].isTrial).toBe(true)
-    expect(await owned(t.u.id)).toBe(1)
-
-    const ticket = await ticketFor(t)
-    await finishOAuth(app, identity('f2'), ticket)
-    const stale = await finishOAuth(app, identity('f3'), ticket)
-    expect(stale.user.id).not.toBe(t.u.id)
-    expect(await owned(t.u.id)).toBe(1)
-    // garbage and an access token are not tickets
-    expect((await finishOAuth(app, identity('f4'), 'garbage')).user.id).not.toBe(t.u.id)
-    const t2 = await makeTrial()
-    expect((await finishOAuth(app, identity('f5'), t2.accessToken)).user.id).not.toBe(t2.u.id)
+    const res = await adopt(s.accessToken, t.refreshToken, 'more_prompts')
+    expect([res.statusCode, res.json()]).toEqual([200, { moved: true }])
+    expect(await owned(s.user.id)).toBe(1)
+    expect(await db.query.users.findFirst({ where: eq(users.id, t.u.id) })).toBeUndefined()
+    // a second hand-over of the same trial finds nothing to move
+    expect((await adopt(s.accessToken, t.refreshToken)).json()).toEqual({ moved: false })
   })
 
-  it('a claim ticket is not a bearer token, and only a trial can ask for one', async () => {
+  it('an expired trial access token still hands the trial over (the browser holds the session)', async () => {
+    const t = await makeTrial({ designs: 1 })
+    const s = await finishOAuth(app, identity('exp1'))
+    const expired = createSigner({ key: config.jwtSecret, expiresIn: 1 })({ id: t.u.id, kind: 'trial', role: 'creator', displayName: 'Guest' })
+    await new Promise((r) => setTimeout(r, 5))
+    expect((await adopt(s.accessToken, expired)).json()).toEqual({ moved: true })
+    expect(await owned(s.user.id)).toBe(1)
+  })
+
+  it('a forged token, an account token or garbage moves nothing', async () => {
+    const t = await makeTrial({ designs: 1 })
+    const s = await finishOAuth(app, identity('f1'))
+    const forged = createSigner({ key: 'other-secret', expiresIn: 600_000 })({ id: t.u.id, kind: 'trial' })
+    for (const bad of [forged, s.accessToken, 'garbage', 42, undefined]) {
+      const res = await adopt(s.accessToken, bad)
+      expect([res.statusCode, res.json()]).toEqual([200, { moved: false }])
+    }
+    expect(await owned(t.u.id)).toBe(1)
+    expect((await db.select().from(users).where(eq(users.id, t.u.id)))[0].isTrial).toBe(true)
+  })
+
+  it('only an account can take a trial over: a trial bearer or no bearer is refused', async () => {
     const t = await makeTrial()
-    const ticket = await ticketFor(t)
-    const res = await app.inject({ method: 'GET', url: '/api/studio/designs', headers: { authorization: `Bearer ${ticket}` } })
-    expect(res.statusCode).toBe(401)
-    const acct = await createUser()
-    const no = await app.inject({ method: 'POST', url: '/api/auth/trial/claim', headers: { authorization: `Bearer ${tokenFor(acct)}` } })
-    expect(no.statusCode).toBe(403)
+    const t2 = await makeTrial()
+    const asTrial = await adopt(t2.accessToken, t.refreshToken)
+    expect([asTrial.statusCode, asTrial.json().error]).toEqual([403, 'account_required'])
+    const none = await app.inject({ method: 'POST', url: '/api/auth/trial/adopt', payload: { trialToken: t.refreshToken } })
+    expect(none.statusCode).toBe(401)
+  })
+
+  it('an OAuth start link carries no trial: a crafted ?claim= is ignored', async () => {
+    const t = await makeTrial({ designs: 1 })
+    const prev = [config.googleClientId, config.googleClientSecret]
+    ;(config as any).googleClientId = 'cid'; (config as any).googleClientSecret = 'sec'
+    const res = await app.inject({ method: 'GET', url: `/api/auth/google?claim=${t.accessToken}` })
+    ;(config as any).googleClientId = prev[0]; (config as any).googleClientSecret = prev[1]
+    expect(res.statusCode).toBe(302)
+    expect(String(res.headers.location)).not.toContain('state=')
+    expect(await owned(t.u.id)).toBe(1)
   })
 
   it("the trial's old tokens are refused after conversion", async () => {
@@ -173,8 +180,6 @@ describe('converting and merging a trial', () => {
     expect([login.statusCode, login.json().error]).toEqual([401, 'trial_expired'])
     const wallet = await walletVerify(Wallet.createRandom(), expiredTrialHeaders(t))
     expect([wallet.statusCode, wallet.json().error]).toEqual([401, 'trial_expired'])
-    const claim = await app.inject({ method: 'POST', url: '/api/auth/trial/claim', headers: expiredTrialHeaders(t), payload: {} })
-    expect([claim.statusCode, claim.json().error]).toEqual([401, 'trial_expired'])
     expect(await owned(t.u.id)).toBe(1)
   })
 
