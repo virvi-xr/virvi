@@ -38,9 +38,10 @@ export interface SceneImportView {
 export interface SceneImportThumbnail {
   /**
    * What this upload did with its navmapThumbnail: `imported` it became the scene's thumbnail; `kept` the one the owner
-   * uploaded in Virvi stays; `skipped` it couldn't be used (`note` says why); null when it names none.
+   * uploaded in Virvi stays; `skipped` it couldn't be used (`note` says why); `removed` it names none, so an earlier
+   * import's thumbnail was taken off; null when it names none and there was nothing to change.
    */
-  outcome: 'imported' | 'kept' | 'skipped' | null
+  outcome: 'imported' | 'kept' | 'skipped' | 'removed' | null
   note: string | null
   /** The Virvi scene's thumbnail as it is now, and where it came from: `import` (a scene.json) or `upload` (in Virvi). */
   url: string | null

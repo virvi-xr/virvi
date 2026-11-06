@@ -210,7 +210,11 @@ export default async function importRoutes(app: FastifyInstance) {
     // are out of its scope
     if (location.kind === 'world') {
       const thumb = await importSceneThumbnail(row.sceneId, folder)
-      if (thumb.outcome) await db.update(sceneImports).set({ thumbnailOutcome: thumb.outcome, thumbnailNote: thumb.note }).where(eq(sceneImports.id, row.id))
+      try {
+        if (thumb.outcome) await db.update(sceneImports).set({ thumbnailOutcome: thumb.outcome, thumbnailNote: thumb.note }).where(eq(sceneImports.id, row.id))
+      } catch (err) {
+        request.log.error({ err }, `[scene-import] recording the thumbnail of import ${row.id} failed`)
+      }
     }
     try {
       await startBuild(row.id)

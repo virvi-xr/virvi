@@ -166,6 +166,59 @@ describe('scene import: the scene\'s own thumbnail', () => {
     expect(again.thumbnail.outcome).toBe('imported')
   })
 
+  it('a re-import whose scene.json names none removes the earlier import\'s thumbnail and its file', async () => {
+    const first = (await upload(sceneZip({ thumb: 'images/thumb.png', files: { 'images/thumb.png': await image(800, 800) } }))).json().import
+    const old = (await scene(first.sceneId)).thumbnailKey!
+    await done(first.id)
+    const again = (await upload(sceneZip())).json().import
+    const s = await scene(first.sceneId)
+    expect([s.thumbnailUrl, s.thumbnailKey, s.thumbnailBytes, s.thumbnailSource]).toEqual([null, null, null, null])
+    expect(stored(old)).toBe(false)
+    expect(again.thumbnail).toEqual({ outcome: 'removed', note: null, url: null, source: null })
+  })
+
+  it('a re-import whose thumbnail is broken keeps the earlier import\'s, and says so', async () => {
+    const first = (await upload(sceneZip({ thumb: 'images/thumb.png', files: { 'images/thumb.png': await image(800, 800) } }))).json().import
+    const old = (await scene(first.sceneId)).thumbnailKey!
+    await done(first.id)
+    const again = (await upload(sceneZip({ thumb: '../escape.png' }))).json().import
+    expect((await scene(first.sceneId)).thumbnailKey).toBe(old)
+    expect(stored(old)).toBe(true)
+    expect(again.thumbnail.outcome).toBe('skipped')
+    expect(again.thumbnail.note).toMatch(/outside the scene folder\. The one from your earlier import stays\.$/)
+  })
+
+  it('a re-import naming none never touches a thumbnail the owner uploaded', async () => {
+    const first = (await upload(sceneZip())).json().import
+    await done(first.id)
+    await uploadThumbnail(first.sceneId, await image(1280, 720))
+    const mine = (await scene(first.sceneId)).thumbnailKey!
+    const again = (await upload(sceneZip())).json().import
+    const s = await scene(first.sceneId)
+    expect([s.thumbnailKey, s.thumbnailSource]).toEqual([mine, 'upload'])
+    expect(stored(mine)).toBe(true)
+    expect(again.thumbnail.outcome).toBeNull()
+  })
+
+  it('recording the outcome failing never fails the import', async () => {
+    const orig = db.update.bind(db)
+    const spy = vi.spyOn(db, 'update').mockImplementation(((table: Parameters<typeof db.update>[0]) => {
+      const q = orig(table)
+      const set = q.set.bind(q)
+      q.set = ((v: Record<string, unknown>) => {
+        if ('thumbnailOutcome' in v) throw new Error('db down')
+        return set(v as never)
+      }) as typeof q.set
+      return q
+    }) as typeof db.update)
+    try {
+      const res = await upload(sceneZip({ thumb: 'images/thumb.png', files: { 'images/thumb.png': await image(800, 800) } }))
+      expect(res.statusCode).toBe(201)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('a re-import never replaces a thumbnail the owner uploaded in Virvi (nothing is read or downloaded)', async () => {
     const first = (await upload(sceneZip())).json().import
     await done(first.id)

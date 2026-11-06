@@ -254,5 +254,23 @@ export async function removeSceneThumbnail(sceneId: string): Promise<SceneRow | 
   return result?.updated
 }
 
+/**
+ * Takes off a thumbnail that came from an import (LIV-89: the re-imported scene.json names none) and deletes its file;
+ * one uploaded in Virvi is never touched (checked under the row lock). True when one was removed.
+ */
+export async function removeImportedSceneThumbnail(sceneId: string): Promise<boolean> {
+  const old = await db.transaction(async (tx) => {
+    const [locked] = await tx.select({ thumbnailKey: scenes.thumbnailKey, thumbnailSource: scenes.thumbnailSource })
+      .from(scenes).where(eq(scenes.id, sceneId)).for('update')
+    if (!locked?.thumbnailKey || locked.thumbnailSource !== 'import') return null
+    await tx.update(scenes)
+      .set({ thumbnailUrl: null, thumbnailKey: null, thumbnailBytes: null, thumbnailSource: null, updatedAt: new Date() })
+      .where(eq(scenes.id, sceneId))
+    return locked.thumbnailKey
+  })
+  if (old) await deleteQuietly(old)
+  return !!old
+}
+
 /** Deletes a stored thumbnail file (the scene is being deleted). */
 export const deleteThumbnailFile = (key: string | null | undefined) => (key ? deleteQuietly(key) : Promise.resolve())

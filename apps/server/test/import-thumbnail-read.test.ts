@@ -57,6 +57,16 @@ describe('readSceneThumbnail', () => {
     expect(await reason('images')).toMatch(/isn't in the upload/)
   })
 
+  it('a long path is cut short in the note', async () => {
+    const long = 'images/' + 'a'.repeat(5000) + '.png'
+    const r = await readSceneThumbnail(folder(long)) as { reason: string }
+    expect(r.reason.length).toBeLessThan(200)
+    expect(r.reason).toMatch(/^images\/a+… isn't in the upload$/)
+    const out = await readSceneThumbnail(folder('../' + 'b'.repeat(5000))) as { reason: string }
+    expect(out.reason.length).toBeLessThan(200)
+    expect(out.reason).toMatch(/… is outside the scene folder$/)
+  })
+
   it('downloads an https link', async () => {
     const fetchImpl = answering(PNG)
     const r = await readSceneThumbnail(folder('https://cdn.example.com/t.png'), { fetchImpl, lookup: publicLookup })
