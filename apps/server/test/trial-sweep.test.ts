@@ -85,6 +85,19 @@ describe('trial expiry and funnel', () => {
     expect(await sweepTrials(NOW, { fly: fakeFly() })).toEqual({ expired: 1 })
   })
 
+  it('a trial that keeps failing to expire does not hold up the others', async () => {
+    const stuck = await makeTrial(40)
+    const stuckDesign = await createDesign(stuck)
+    const next = await makeTrial(30)
+    const store = memoryStudioStore()
+    const realDelete = store.deletePrefix.bind(store)
+    store.deletePrefix = async (p: string) => { if (p.includes(stuckDesign.id)) throw new Error('storage down'); return realDelete(p) }
+    setStudioStore(store)
+    expect(await sweepTrials(NOW, { fly: fakeFly() }, { batch: 1 })).toEqual({ expired: 1 })
+    expect(await db.select().from(users).where(eq(users.id, next.id))).toEqual([])
+    expect(await db.select().from(users).where(eq(users.id, stuck.id))).toHaveLength(1)
+  })
+
   it('records the funnel', async () => {
     setTurnstileFetch((async () => new Response(JSON.stringify({ success: true }))) as unknown as typeof fetch)
     const started = await app.inject({ method: 'POST', url: '/api/auth/trial', headers: { 'x-forwarded-for': '10.9.0.1' }, payload: { turnstileToken: 't', deviceId: 'device-funnel-xxxxxxx' } })

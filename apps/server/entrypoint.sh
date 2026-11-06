@@ -34,6 +34,9 @@ if [ -n "$DATABASE_URL" ]; then
           await sql.unsafe(\`ALTER TABLE users ADD COLUMN IF NOT EXISTS \${def}\`);
         } catch(e) { console.log('[virvi-server] users trial column:', e.message); }
       }
+      try {
+        await sql\`CREATE INDEX IF NOT EXISTS users_trial_idle_idx ON users (trial_last_active_at, id) WHERE is_trial\`;
+      } catch(e) { console.log('[virvi-server] users trial index:', e.message); }
 
       // org_id columns on all data tables
       const orgIdTables = ['users', 'scenes', 'media_assets', 'events', 'giveaways', 'subscriptions', 'streaming_servers'];

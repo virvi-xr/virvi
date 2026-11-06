@@ -137,7 +137,10 @@ export const users = pgTable('users', {
   trialDeviceHash: text('trial_device_hash'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (t) => ({
+  // the trial sweep's scan: idle trials, oldest first
+  trialIdleIdx: index('users_trial_idle_idx').on(t.trialLastActiveAt, t.id).where(sql`${t.isTrial}`),
+}))
 
 export const usersRelations = relations(users, ({ one, many }) => ({
   authMethods: many(userAuthMethods),
