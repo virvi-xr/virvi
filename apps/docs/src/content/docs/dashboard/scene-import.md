@@ -14,6 +14,9 @@ What `scene.json` says decides the destination:
 - **Worlds:** a scene with a World name deploys to that World.
 - **Genesis City:** a scene with parcels deploys to those parcels.
 
+## Thumbnail
+A thumbnail set on the scene in Virvi (**Settings** on the scene's page) is added to the deployment, and the deployed `scene.json` gets only `display.navmapThumbnail` pointing at it; nothing else in it changes. With no thumbnail set in Virvi, your `scene.json` is deployed as built. The image counts towards the scene's file and storage limits.
+
 ## Who can sign for parcels
 Deploying to parcels is signed with a wallet that can deploy to every parcel in the scene. Any verified wallet on your account that is, for each parcel, one of these will do:
 
