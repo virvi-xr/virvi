@@ -1,4 +1,5 @@
 /** Trial sessions: reading "account required" refusals, the words for them, and the bridge to the sign-up sheet. */
+import { readTrialSession } from './session'
 
 export interface BlockedCtx { designName?: string; revisions?: number; /** The locked page's name, for a nav click. */ label?: string }
 export interface SignUpRequest { action: string; ctx: BlockedCtx; /** Which tab the sheet opens on (default: create account). */ tab?: 'create' | 'signin' }
@@ -69,6 +70,23 @@ export function signedInNote(action: string | null): string | null {
 export function trialEndedOutcome(stored: { token: string; user?: unknown } | null, currentToken: string): 'swap' | 'logout' {
   const user = stored?.user as { trial?: boolean } | null | undefined
   return stored && stored.token !== currentToken && user && !user.trial ? 'swap' : 'logout'
+}
+
+/** A trial access token that has run out, or will within a minute: renew it before it carries the trial into a sign-up. */
+export function trialBearerStale(token: string, now: number): boolean {
+  return !readTrialSession(token, now + 60_000)
+}
+
+const TRIAL_START_COPY: Record<string, string> = {
+  trial_limit: 'Free tries from this network are used up for today. Create a free account to keep going.',
+  bot_check_failed: "We couldn't confirm you're human. Try again.",
+  trials_unavailable: "Free tries aren't available right now. Create a free account to start.",
+  bad_device: 'Something went wrong starting your trial. Reload the page and try again.',
+}
+
+/** A refused trial start (the server's error code) in the page's words. */
+export function trialStartMessage(code: string | undefined): string {
+  return (code && TRIAL_START_COPY[code]) || 'Something went wrong starting your trial. Try again in a moment.'
 }
 
 /** A device id made once and kept: the server counts trials per device. */

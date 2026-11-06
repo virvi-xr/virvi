@@ -4,6 +4,7 @@
  */
 import { formatMana, walletRejected } from './mana'
 import type { Tone } from '@/components/ui'
+import { blockedCopy } from './trial'
 
 export type StudioKind = 'wearable' | 'emote' | 'scene'
 
@@ -221,10 +222,12 @@ const FILE_TOO_LARGE = 'That file is too big: images can be up to 20 MB, 3D file
 
 /** A refused request in the page's words, keyed by the server's `code`. */
 export function refusalMessage(
-  err: { status?: number; body?: { code?: string; error?: string; message?: string; resetsAt?: string; categories?: string[]; emote?: string } },
+  err: { status?: number; body?: { code?: string; error?: string; message?: string; resetsAt?: string; categories?: string[]; emote?: string; action?: string } },
   now: Date,
 ): Refusal {
   const b = err.body ?? {}
+  // A trial closed the sign-up sheet on an account-only action: the sheet's own words
+  if (b.error === 'account_required' && typeof b.action === 'string') return { text: blockedCopy(b.action, {}).title }
   // The trial's shared daily budget is spent: the server's own words
   if (b.error === 'trial_busy' && b.message) return { text: b.message }
   switch (b.code) {
@@ -340,6 +343,8 @@ export const formatCredit = (cents: number) => `$${(cents / 100).toFixed(2)}`
  * `· 1 free finalize` with gifted ones.
  */
 export function usageLine(u: StudioUsage): string {
+  // A trial has one allowance, not a day's: the same words as the composer note
+  if (u.trial || u.plan === 'trial') return `${u.promptsLeft} of ${u.allowance} free prompts left`
   const { available, held } = u.freeFinalizes
   return `${u.plan} plan · ${u.promptsLeft} prompts left today${u.credits > 0 ? ` · ${u.credits} bought` : ''}`
     + ((u.creditCents ?? 0) > 0 ? ` · ${formatCredit(u.creditCents!)} credit` : '')
@@ -950,4 +955,16 @@ export function writeUnrecordedRefund(store: KeyValueStore | null, id: string, e
   if (entry) next.push(entry)
   try { store?.setItem(UNRECORDED_REFUNDS_KEY, JSON.stringify(next)) } catch { /* private window or blocked storage */ }
   return next
+}
+
+/** The design page for a prompt that was not sent (the design was made, the prompt refused): its composer shows the prompt again. */
+export function unsentHref(designId: string, text: string, refusal: string): string {
+  return `/studio/${designId}/?${new URLSearchParams({ unsent: text, why: refusal })}`
+}
+
+/** The unsent prompt (and why) `unsentHref` put in the query, or null. */
+export function readUnsent(search: string): { text: string; refusal: string } | null {
+  const q = new URLSearchParams(search)
+  const text = q.get('unsent')
+  return text ? { text, refusal: q.get('why') ?? '' } : null
 }

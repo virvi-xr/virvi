@@ -6,8 +6,9 @@ import { useAuth } from '@/lib/auth'
 import { BrandMark } from '@/components/BrandMark'
 import { KindPicker } from '@/components/KindPicker'
 import { PrimaryButton } from '@/components/ui'
-import { Turnstile } from '@/components/Turnstile'
-import { refusalMessage, type StudioKind } from '@/lib/studio'
+import { Turnstile, type TurnstileHandle } from '@/components/Turnstile'
+import { trialStartMessage } from '@/lib/trial'
+import { refusalMessage, unsentHref, type StudioKind } from '@/lib/studio'
 
 const MAX_PROMPT = 4000
 const PLACEHOLDERS: Record<StudioKind, string> = {
@@ -26,6 +27,7 @@ export default function TryStudioPage() {
   const [kind, setKind] = useState<StudioKind>('wearable')
   const [text, setText] = useState('')
   const [botToken, setBotToken] = useState<string | null>(null)
+  const turnstile = useRef<TurnstileHandle>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Set once the trial session exists: the effect below runs with an api that carries its token
@@ -42,8 +44,14 @@ export default function TryStudioPage() {
     ;(async () => {
       try {
         const d = await apiRef.current.createStudioDesign({ kind: go.kind, agent: 'claude' })
-        await apiRef.current.sendStudioPrompt(d.id, { text: go.text })
         // The design page is one static page for every id, loaded in full (as the Studio's own links do)
+        try {
+          await apiRef.current.sendStudioPrompt(d.id, { text: go.text })
+        } catch (err) {
+          // The design exists: go to it (its composer has the prompt again) so a retry doesn't start a second design
+          window.location.assign(unsentHref(d.id, go.text, refusalMessage(err as never, new Date()).text || "Your prompt didn't send. Press Send to try again."))
+          return
+        }
         window.location.assign(`/studio/${d.id}/`)
       } catch (err) {
         setError(refusalMessage(err as never, new Date()).text || (err as Error).message)
@@ -62,7 +70,10 @@ export default function TryStudioPage() {
       if (!user) await startTrial(botToken ?? '')
       setGo({ kind, text: t })
     } catch (err) {
-      setError((err as Error).message || 'Could not start your trial. Try again.')
+      setError(trialStartMessage((err as Error).message))
+      // The bot-check token was spent on the refused start: get a fresh one for the retry
+      setBotToken(null)
+      turnstile.current?.reset()
       setBusy(false)
     }
   }
@@ -91,7 +102,7 @@ export default function TryStudioPage() {
             <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} maxLength={MAX_PROMPT} placeholder={PLACEHOLDERS[kind]}
               className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-blue-400" />
           </label>
-          {needsCheck && <Turnstile onToken={setBotToken} />}
+          {needsCheck && <Turnstile onToken={setBotToken} handle={turnstile} />}
           {error && <p className="text-sm text-amber-300" role="alert">{error}</p>}
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-gray-500">Your work is kept for 14 days. Create an account any time to save it.</p>

@@ -8,7 +8,7 @@ import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudi
 import { giftCodeStatus, latestRenderUrl, trialCtx, trialNudge } from './studio'
 import { adminActionMessage, readUnrecordedRefunds, writeUnrecordedRefund, adminManaMessage, adminManaRows, type AdminManaTransfer } from './studio'
 import { checkoutHref, checkoutTarget, checkoutTotals, countdown, manaBack } from './studio'
-import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, type StudioDesign, type StudioUsage } from './studio'
+import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, unsentHref, readUnsent, type StudioDesign, type StudioUsage } from './studio'
 
 const NOW = new Date('2026-10-29T21:55:00Z')
 const at = (ms: number) => new Date(NOW.getTime() + ms).toISOString()
@@ -166,6 +166,10 @@ describe('usageLine', () => {
     expect(usageLine({ ...u, freeFinalizes: { available: 2, held: 0 } })).toBe('free plan · 3 prompts left today · 2 free finalizes')
     expect(usageLine({ ...u, freeFinalizes: { available: 0, held: 1 } })).toBe('free plan · 3 prompts left today · 1 free finalize held by an open checkout')
     expect(usageLine({ ...u, freeFinalizes: { available: 2, held: 2 } })).toBe('free plan · 3 prompts left today · 2 free finalizes · 2 free finalizes held by an open checkout')
+  })
+  it('reads as free prompts out of the allowance for a trial', () => {
+    expect(usageLine({ ...u, plan: 'trial', trial: true, promptsLeft: 2, allowance: 3 })).toBe('2 of 3 free prompts left')
+    expect(usageLine({ ...u, plan: 'trial', promptsLeft: 0, allowance: 3 })).toBe('0 of 3 free prompts left')
   })
 })
 
@@ -743,5 +747,24 @@ describe('latestRenderUrl', () => {
   it('is null with no render yet', () => {
     expect(latestRenderUrl(detail())).toBeNull()
     expect(latestRenderUrl(detail({ pieces: [piece({ a: view('2026-11-05T10:00:00Z', []) })] }))).toBeNull()
+  })
+})
+
+describe('unsent prompt hand-off', () => {
+  it('carries the prompt and why it did not send to the design page, and reads them back', () => {
+    const href = unsentHref('d1', 'A neon jacket & hat', 'Agents are busy. Try again.')
+    expect(href.startsWith('/studio/d1/?')).toBe(true)
+    expect(readUnsent(href.slice(href.indexOf('?')))).toEqual({ text: 'A neon jacket & hat', refusal: 'Agents are busy. Try again.' })
+  })
+  it('is null without a prompt', () => {
+    expect(readUnsent('')).toBeNull()
+    expect(readUnsent('?payment=x')).toBeNull()
+  })
+})
+
+describe('refusalMessage for an account-only action', () => {
+  it('uses the sign-up sheet words when the sheet was closed', () => {
+    expect(refusalMessage({ status: 403, body: { error: 'account_required', action: 'upload_more' } as never }, NOW).text)
+      .toBe('Create a free account to upload more images.')
   })
 })

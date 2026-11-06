@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { trialEndedOutcome, accountRequired, blockedCopy, signedInNote, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
+import { trialEndedOutcome, trialBearerStale, trialStartMessage, accountRequired, blockedCopy, signedInNote, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
 
 describe('accountRequired', () => {
   it('reads the action from an account_required refusal', () => {
@@ -105,5 +105,31 @@ describe('signedInNote', () => {
     expect(signedInNote('nav:/scenes')).toBe("You're signed in")
     expect(signedInNote('POST /nope')).toBe("You're signed in")
     expect(signedInNote(null)).toBeNull()
+  })
+})
+
+describe('trialBearerStale', () => {
+  const tok = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`
+  const NOW = 1_800_000_000_000
+  it('is stale when the trial token has run out or runs out within a minute', () => {
+    expect(trialBearerStale(tok({ kind: 'trial', exp: NOW / 1000 - 5 }), NOW)).toBe(true)
+    expect(trialBearerStale(tok({ kind: 'trial', exp: NOW / 1000 + 30 }), NOW)).toBe(true)
+  })
+  it('is fresh with more than a minute left', () => {
+    expect(trialBearerStale(tok({ kind: 'trial', exp: NOW / 1000 + 600 }), NOW)).toBe(false)
+  })
+})
+
+describe('trialStartMessage', () => {
+  it('words each refusal the server gives', () => {
+    expect(trialStartMessage('trial_limit')).toBe('Free tries from this network are used up for today. Create a free account to keep going.')
+    expect(trialStartMessage('bot_check_failed')).toBe("We couldn't confirm you're human. Try again.")
+    expect(trialStartMessage('trials_unavailable')).toBe("Free tries aren't available right now. Create a free account to start.")
+    expect(trialStartMessage('bad_device')).toBe('Something went wrong starting your trial. Reload the page and try again.')
+  })
+  it('never shows a raw code', () => {
+    for (const code of ['HTTP 500', 'weird_code', '', undefined]) {
+      expect(trialStartMessage(code)).toBe("Something went wrong starting your trial. Try again in a moment.")
+    }
   })
 })

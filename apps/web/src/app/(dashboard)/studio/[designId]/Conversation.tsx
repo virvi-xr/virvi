@@ -5,7 +5,7 @@ import { useApi } from '@/lib/api'
 import { openSignUp } from '@/lib/trial'
 import { PrimaryButton } from '@/components/ui'
 import {
-  agentLabel, canSend, categoryLabel, checkoutHref, composerState, formatCents, latestRenderUrl, trialCtx, trialNudge, initialTicks, progressFor, refusalMessage, slotSelection,
+  agentLabel, canSend, readUnsent, categoryLabel, checkoutHref, composerState, formatCents, latestRenderUrl, trialCtx, trialNudge, initialTicks, progressFor, refusalMessage, slotSelection,
   type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage,
 } from '@/lib/studio'
 import { AgentPicker } from '../AgentPicker'
@@ -25,6 +25,18 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const listRef = useRef<HTMLDivElement>(null)
   const [dropped, setDropped] = useState<File[] | null>(null)
   const [dragging, setDragging] = useState(false)
+
+  // From /try/studio: the design was made but its first prompt was refused; offer it again here
+  useEffect(() => {
+    const unsent = readUnsent(window.location.search)
+    if (!unsent) return
+    setText(unsent.text)
+    if (unsent.refusal) setRefusal({ text: unsent.refusal })
+    const url = new URL(window.location.href)
+    url.searchParams.delete('unsent')
+    url.searchParams.delete('why')
+    window.history.replaceState(window.history.state, '', url.pathname + url.search)
+  }, [])
 
   const composer = composerState(detail, usage, new Date())
   const nudge = trialNudge(usage)
