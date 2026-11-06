@@ -322,7 +322,7 @@ function readme(o: {
   }
 
   const sections: Array<[string, string, string[]]> = []
-  sections.push(['Click events', 'These items have click events in Virvi, which aren\'t in the backup. Add your own pointer events in `src/virvi-baked.ts` if you want them:', snap.withClickEvents.map(clean)])
+  sections.push(['Click events', 'These items\' click actions couldn\'t be carried over (incomplete, or on a screen showing ads). Add your own pointer events in `src/virvi-baked.ts` if you want them:', snap.withClickEvents.map(clean)])
   sections.push(['Other presets', `Only the live preset "${clean(snap.presetName)}" is in the backup. These presets aren't:`, snap.otherPresets.map(clean)])
   const live = snap.items.filter(bakedLive)
   sections.push(['Live streams', 'These screens were live when you downloaded the backup, so they play the stream straight from its address. When the stream ends or moves, the screen goes dark:', unique(live.map((i) => `${clean(i.name)}: ${clean((i.assets.liveSrc as { url: string }).url)}`))])

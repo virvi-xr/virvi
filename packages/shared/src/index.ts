@@ -21,3 +21,4 @@ export * from './room-scan.js'
 export * from './scene-import.js'
 export * from './hud-protocol.js'
 export * from './showings.js'
+export * from './click-actions.js';

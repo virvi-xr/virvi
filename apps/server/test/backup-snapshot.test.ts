@@ -174,7 +174,26 @@ describe('backupSnapshot', () => {
     expect(snap.skipped[0].why).toMatch(/not hosted by Virvi/i)
   })
 
-  it('elements with click events are listed', async () => {
+  it("a click action is carried with each copy (the copy's own wins); one that can't be carried is listed", async () => {
+    const e = await createElement(preset.id, { type: 'image', name: 'Tickets', properties: {} })
+    await db.execute(sql`update scene_elements set click_event = '{"type":1,"externalLink":"https://t.example","hoverText":"Get tickets"}' where id = ${e.id}`)
+    await place(e.id)
+    const own = await place(e.id)
+    await db.execute(sql`update scene_element_instances set click_event = '{"type":5,"teleportTo":"52,-20"}' where id = ${own.id}`)
+    const ads = await createElement(preset.id, { type: 'video', name: 'Ad screen', properties: { offType: 4 } })
+    await db.execute(sql`update scene_elements set click_event = '{"type":1,"externalLink":"https://t.example"}' where id = ${ads.id}`)
+    await place(ads.id)
+    const snap = await backupSnapshot(scene.id)
+    const clicks = snap.items.filter((i) => i.name === 'Tickets').map((i) => i.click).sort((a, b) => a!.type - b!.type)
+    expect(clicks).toEqual([
+      { type: 1, externalLink: 'https://t.example', hoverText: 'Get tickets', showFeedback: false },
+      { type: 5, teleportTo: '52,-20', showFeedback: false },
+    ])
+    expect(snap.items.find((i) => i.name === 'Ad screen')?.click).toBeUndefined()
+    expect(snap.withClickEvents).toEqual(['Ad screen'])
+  })
+
+  it('click actions that cannot be carried are listed', async () => {
     const e = await createElement(preset.id, { type: 'image', name: 'Button', properties: {} })
     const plain = await createElement(preset.id, { type: 'image', name: 'Plain', properties: {} })
     await db.execute(sql`update scene_elements set click_event = '{"type":1,"url":"https://x.test"}' where id = ${e.id}`)

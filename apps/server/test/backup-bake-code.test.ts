@@ -174,7 +174,8 @@ describe('bakeModule', () => {
     const out = bakeModule(fullSnapshot())
     const imports = out.split('\n').filter((l) => /^\s*import\b|require\(/.test(l))
     expect(imports.length).toBeGreaterThan(0)
-    for (const l of imports) expect(l).toMatch(/from '@dcl\/sdk\/(ecs|math)'$/)
+    // Decentraland's own modules only: the SDK, and its ~system actions for click actions
+    for (const l of imports) expect(l).toMatch(/from '(@dcl\/sdk\/(ecs|math)|~system\/(RestrictedActions|UserActionModule))'$/)
     expect(out).not.toMatch(/virvixr|createVirvi|@virvi/i)
   })
 
@@ -194,6 +195,26 @@ describe('bakeModule', () => {
   const dclModules = resolve(here, '../../../dcl-runtime/node_modules')
   const haveSdk = existsSync(join(dclModules, '@dcl/sdk/package.json'))
   if (!haveSdk) console.warn(`[backup-bake-code] compile check skipped: ${dclModules} is absent (run \`cd dcl-runtime && npm ci\`)`)
+
+  it('bakes click actions with their hover text, importing the actions they use (LIV-126)', () => {
+    const out = bake(
+      item('image', { name: 'Tickets', click: { type: 1, externalLink: 'https://t.example/show', hoverText: 'Get tickets', showFeedback: true } }),
+      item('model', { click: { type: 5, teleportTo: '52,-20', showFeedback: false }, assets: { model: bundle('models/door.glb', 'model') } }),
+      item('image', { click: { type: 4, moveTo: { position: { x: 8, y: 0, z: 8 }, cameraTarget: { x: 1, y: 2, z: 3 } }, showFeedback: false } }),
+      item('image', { click: { type: 2, sound: `${CDN}/sounds/ding.mp3`, showFeedback: false }, assets: { clickSound: bundle('sounds/ding.mp3', 'audio') } }),
+    )
+    expect(out).toContain('pointerEventsSystem.onPointerDown({ entity: e, opts: { button: InputAction.IA_POINTER, hoverText: "Get tickets", showFeedback: true } }, () => { void openExternalUrl({ url: "https://t.example/show" }) })')
+    expect(out).toContain('void requestTeleport({ destination: "52,-20" })')
+    expect(out).toContain('void movePlayerTo({ newRelativePosition: Vector3.create(8, 0, 8), cameraTarget: Vector3.create(1, 2, 3) })')
+    expect(out).toContain('AudioSource.createOrReplace(e, { audioClipUrl: "sounds/ding.mp3", playing: true, loop: false, volume: 1 })')
+    expect(out).toContain("import { openExternalUrl, movePlayerTo } from '~system/RestrictedActions'")
+    expect(out).toContain("import { requestTeleport } from '~system/UserActionModule'")
+    expect(out).toMatch(/import \{[^}]*pointerEventsSystem, InputAction[^}]*\} from '@dcl\/sdk\/ecs'/)
+    // Nothing clickable: no pointer code, no action imports
+    const plain = bake(item('image'))
+    expect(plain).not.toContain('pointerEventsSystem')
+    expect(plain).not.toContain('~system')
+  })
 
   it.skipIf(!haveSdk)('the output compiles against @dcl/sdk', () => {
     const dir = mkdtempSync(join(tmpdir(), 'virvi-baked-'))
@@ -231,6 +252,10 @@ function fullSnapshot(): BackupSnapshot {
     item('model', { withCollisions: true, assets: { model: bundle('models/b.glb', 'model') } }),
     item('image', { withCollisions: true, props: { emission: 1, isTransparent: true }, assets: { texture: bundle('images/p.png') } }),
     item('image'),
+    item('image', { click: { type: 1, externalLink: 'https://t.example', hoverText: 'Go', showFeedback: true } }),
+    item('model', { click: { type: 5, teleportTo: '0,0', showFeedback: false }, assets: { model: bundle('models/c.glb', 'model') } }),
+    item('image', { click: { type: 4, moveTo: { position: { x: 1, y: 0, z: 1 } }, showFeedback: false } }),
+    item('image', { click: { type: 2, sound: 'https://s.test/ding.mp3', showFeedback: false } }),
     item('video', { props: { offType: 2, volume: 30 }, assets: { 'playlist.0': bundle('videos/a.mp4', 'video'), 'playlist.1': link('https://v.test/b.mp4') } }),
     item('video', { props: { offType: 2 }, assets: { 'playlist.0': bundle('videos/a.mp4', 'video') } }),
     item('video', { props: { isLive: true, enableLiveStream: true }, assets: { liveSrc: link('https://live.test/s.m3u8') } }),

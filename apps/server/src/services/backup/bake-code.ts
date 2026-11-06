@@ -124,6 +124,37 @@ function bakeItem(it: BakedItem): Baked | null {
   }
 }
 
+const vec3 = (v: { x: number; y: number; z: number }) => `Vector3.create(${num(v.x)}, ${num(v.y)}, ${num(v.z)})`
+
+/** The item's click action (LIV-126), as Virvi's runtime runs it (packages/core src/managers/click.ts). */
+function clickLines(it: BakedItem): string[] {
+  const c = it.click
+  if (!c) return []
+  let run: string
+  switch (c.type) {
+    case 1:
+      run = `openExternalUrl({ url: ${str(c.externalLink ?? '')} })`
+      break
+    case 2: {
+      const sound = it.assets.clickSound ? srcOf(it.assets.clickSound) : c.sound ?? ''
+      run = `AudioSource.createOrReplace(e, { audioClipUrl: ${str(sound)}, playing: true, loop: false, volume: 1 })`
+      break
+    }
+    case 4: {
+      const m = c.moveTo!
+      run = `movePlayerTo({ newRelativePosition: ${vec3(m.position)}${m.cameraTarget ? `, cameraTarget: ${vec3(m.cameraTarget)}` : ''} })`
+      break
+    }
+    case 5:
+      run = `requestTeleport({ destination: ${str(c.teleportTo ?? '')} })`
+      break
+    default:
+      return []
+  }
+  const opts = `{ button: InputAction.IA_POINTER, hoverText: ${str(c.hoverText ?? '')}, showFeedback: ${c.showFeedback === true} }`
+  return [`pointerEventsSystem.onPointerDown({ entity: e, opts: ${opts} }, () => { void ${run} })`]
+}
+
 function scaleOf(it: BakedItem) {
   if (it.type !== 'ad_space') return it.scale
   const shape = typeof it.props.shape === 'string' && Object.hasOwn(HEIGHT_PER_WIDTH, it.props.shape) ? it.props.shape : '16:9'
@@ -171,6 +202,7 @@ export function bakeModule(snap: BackupSnapshot): string {
         `Name.create(e, { value: ${str(it.name)} })`,
         `Transform.create(e, { position: Vector3.create(${num(p.x)}, ${num(p.y)}, ${num(p.z)}), rotation: Quaternion.fromEulerDegrees(${num(r.x)}, ${num(r.y)}, ${num(r.z)}), scale: Vector3.create(${num(s.x)}, ${num(s.y)}, ${num(s.z)}) })`,
         ...baked.lines,
+        ...clickLines(it),
       ].map((l) => `  ${l}`),
       '}',
     ])
@@ -186,12 +218,16 @@ export function bakeModule(snap: BackupSnapshot): string {
   // Import only what the body uses (names and URLs sit inside string literals, so strip those first).
   const code = body.replace(/"(?:[^"\\]|\\.)*"/g, '""')
   const used = (names: string[]) => names.filter((n) => new RegExp(`\\b${n}\\b`).test(code))
-  const ecs = used(['engine', 'Entity', 'Transform', 'Name', 'GltfContainer', 'ColliderLayer', 'MeshRenderer', 'MeshCollider', 'Material', 'VideoPlayer', 'VideoEvent', 'videoEventsSystem', 'VideoState', 'AudioSource'])
+  const ecs = used(['engine', 'Entity', 'Transform', 'Name', 'GltfContainer', 'ColliderLayer', 'MeshRenderer', 'MeshCollider', 'Material', 'VideoPlayer', 'VideoEvent', 'videoEventsSystem', 'VideoState', 'AudioSource', 'pointerEventsSystem', 'InputAction'])
   const math = used(['Vector3', 'Quaternion', 'Color3', 'Color4'])
+  const restricted = used(['openExternalUrl', 'movePlayerTo'])
+  const userActions = used(['requestTeleport'])
   return [
     "// Generated from the scene's live content: plain Decentraland SDK7 code, safe to edit.",
     ...(ecs.length ? [`import { ${ecs.join(', ')} } from '@dcl/sdk/ecs'`] : []),
     ...(math.length ? [`import { ${math.join(', ')} } from '@dcl/sdk/math'`] : []),
+    ...(restricted.length ? [`import { ${restricted.join(', ')} } from '~system/RestrictedActions'`] : []),
+    ...(userActions.length ? [`import { ${userActions.join(', ')} } from '~system/UserActionModule'`] : []),
     '',
     body,
     '',

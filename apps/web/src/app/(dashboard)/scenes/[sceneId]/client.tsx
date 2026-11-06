@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage, isGlbAsset } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { AD_SHAPES, type AdFormats } from '@virvixr/shared'
+import { AD_SHAPES, type AdFormats, type ClickEvent } from '@virvixr/shared'
 import { shapeLabel, offImageLabel, adModeHint, isAdsMode, adSpaceRefreshKey } from '@/lib/ads'
 import AdSpaceContent from '@/components/AdSpaceContent'
 import { useSceneRoom } from '@/lib/colyseus'
@@ -10,6 +10,7 @@ import { applyPresetsChange, editingPreset, type PresetsChange } from '@/lib/pre
 import { PresetBar } from './PresetBar'
 import { PresetSchedules } from './PresetSchedules'
 import { ScreenShowings } from './ScreenShowings'
+import { ClickActionField } from './ClickAction'
 import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
 import { RoomSetPanel } from './RoomSetPanel'
@@ -37,7 +38,12 @@ interface Instance {
   rotation: { x: number; y: number; z: number }
   scale: { x: number; y: number; z: number }
   enabled: boolean
+  /** This copy's own click action (LIV-126); null uses the item's. */
+  clickEvent?: ClickEvent | null
 }
+
+/** `rethrow`: the caller shows the failure (the click action editor shows the server's reason). */
+type SaveOpts = { rethrow?: boolean }
 
 interface Element {
   id: string
@@ -46,6 +52,8 @@ interface Element {
   enabled: boolean
   properties: Record<string, any>
   instances: Instance[]
+  /** What clicking the item does in-world (LIV-126). */
+  clickEvent?: ClickEvent | null
   /** Model elements: the room set behind this model, null for an ordinary model. */
   roomSetId?: string | null
 }
@@ -165,7 +173,7 @@ function TextInput({ value, onChange, label, readOnly }: { value: string; onChan
 /** An element's name and Enabled, with Delete (after a confirmation: its instances go with it). */
 function ElementHeader({ element, onUpdateElement, onDelete }: {
   element: Element
-  onUpdateElement: (id: string, data: Record<string, any>) => void
+  onUpdateElement: (id: string, data: Record<string, any>, opts?: SaveOpts) => void | Promise<void>
   onDelete: (id: string) => void
 }) {
   const [confirming, setConfirming] = useState(false)
@@ -222,7 +230,13 @@ function InstancesHeader({ count, onAdd, onDeleteAll }: { count: number; onAdd: 
   )
 }
 
-function InstanceEditor({ instance, onUpdate, onDelete }: { instance: Instance; onUpdate: (data: Partial<Instance>) => void; onDelete: () => void }) {
+function InstanceEditor({ instance, onUpdate, onDelete, click }: {
+  instance: Instance
+  onUpdate: (data: Partial<Instance>, opts?: SaveOpts) => void | Promise<void>
+  onDelete: () => void
+  /** Items with click actions: the item's own (the copy uses it unless it has one), for the copy's override. */
+  click?: { inherited: ClickEvent | null | undefined; api: ReturnType<typeof import('@/lib/api').useApi> }
+}) {
   const updatePos = (axis: 'x' | 'y' | 'z', v: number) => {
     onUpdate({ position: { ...instance.position, [axis]: v } })
   }
@@ -274,6 +288,11 @@ function InstanceEditor({ instance, onUpdate, onDelete }: { instance: Instance; 
           <NumberInput label="Z" value={instance.scale.z} onChange={v => updateScale('z', v)} />
         </div>
       </div>
+
+      {click && (
+        <ClickActionField value={instance.clickEvent} inherited={click.inherited ?? null} api={click.api} MediaPicker={MediaPicker}
+          onSave={(clickEvent) => onUpdate({ clickEvent }, { rethrow: true })} />
+      )}
     </div>
   )
 }
@@ -287,8 +306,8 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
   /** The preset's video elements (showings can be copied between them). */
   screens: Element[]
   sceneId: string
-  onUpdateElement: (id: string, data: Record<string, any>) => void
-  onUpdateInstance: (id: string, data: Partial<Instance>) => void
+  onUpdateElement: (id: string, data: Record<string, any>, opts?: SaveOpts) => void | Promise<void>
+  onUpdateInstance: (id: string, data: Partial<Instance>, opts?: SaveOpts) => void | Promise<void>
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
@@ -360,6 +379,8 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
       <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
+      <ClickActionField value={element.clickEvent} api={api} MediaPicker={MediaPicker}
+        onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
 
       <LiveStreamField value={props.liveSrc} onChange={v => updateProp('liveSrc', v)} api={api} sceneId={sceneId} />
 
@@ -460,7 +481,8 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
         <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
-            onUpdate={data => onUpdateInstance(inst.id, data)}
+            onUpdate={(data, opts) => onUpdateInstance(inst.id, data, opts)}
+            click={{ inherited: element.clickEvent, api }}
             onDelete={() => onDeleteInstance(inst.id)} />
         ))}
       </div>
@@ -709,8 +731,8 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
 
 function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
   element: Element
-  onUpdateElement: (id: string, data: Record<string, any>) => void
-  onUpdateInstance: (id: string, data: Partial<Instance>) => void
+  onUpdateElement: (id: string, data: Record<string, any>, opts?: SaveOpts) => void | Promise<void>
+  onUpdateInstance: (id: string, data: Partial<Instance>, opts?: SaveOpts) => void | Promise<void>
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
@@ -727,6 +749,8 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
       <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
+      <ClickActionField value={element.clickEvent} api={api} MediaPicker={MediaPicker}
+        onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
 
       <ImageSourceField label="Texture" value={props.textureSrc} onChange={setTexture} api={api} sceneId={sceneId} />
 
@@ -734,7 +758,8 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
         <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
-            onUpdate={data => onUpdateInstance(inst.id, data)}
+            onUpdate={(data, opts) => onUpdateInstance(inst.id, data, opts)}
+            click={{ inherited: element.clickEvent, api }}
             onDelete={() => onDeleteInstance(inst.id)} />
         ))}
       </div>
@@ -748,8 +773,8 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
 
 function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
   element: Element
-  onUpdateElement: (id: string, data: Record<string, any>) => void
-  onUpdateInstance: (id: string, data: Partial<Instance>) => void
+  onUpdateElement: (id: string, data: Record<string, any>, opts?: SaveOpts) => void | Promise<void>
+  onUpdateInstance: (id: string, data: Partial<Instance>, opts?: SaveOpts) => void | Promise<void>
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
@@ -816,10 +841,10 @@ function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInsta
 
 function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement, api }: {
   element: Element
-  onUpdateElement: (id: string, data: Record<string, any>) => void
+  onUpdateElement: (id: string, data: Record<string, any>, opts?: SaveOpts) => void | Promise<void>
   /** The room set rewrote this element's model on the server: show the new URL. */
   onRoomSetSaved: (id: string, modelSrc: string) => void
-  onUpdateInstance: (id: string, data: Partial<Instance>) => void
+  onUpdateInstance: (id: string, data: Partial<Instance>, opts?: SaveOpts) => void | Promise<void>
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
@@ -856,6 +881,8 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
       <ElementHeader element={element} onUpdateElement={onUpdateElement} onDelete={onDeleteElement} />
+      <ClickActionField value={element.clickEvent} api={api} MediaPicker={MediaPicker}
+        onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
 
       {element.roomSetId && <RoomSetPanel roomSetId={element.roomSetId} onSaved={(url) => onRoomSetSaved(element.id, url)} />}
 
@@ -883,7 +910,8 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
         <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
           <InstanceEditor key={inst.id} instance={inst}
-            onUpdate={data => onUpdateInstance(inst.id, data)}
+            onUpdate={(data, opts) => onUpdateInstance(inst.id, data, opts)}
+            click={{ inherited: element.clickEvent, api }}
             onDelete={() => onDeleteInstance(inst.id)} />
         ))}
       </div>
@@ -897,8 +925,8 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
 
 function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDeleteInstance, onAddInstance, onDeleteAllInstances, onDeleteElement }: {
   element: Element
-  onUpdateElement: (id: string, data: Record<string, any>) => void
-  onUpdateInstance: (id: string, data: Partial<Instance>) => void
+  onUpdateElement: (id: string, data: Record<string, any>, opts?: SaveOpts) => void | Promise<void>
+  onUpdateInstance: (id: string, data: Partial<Instance>, opts?: SaveOpts) => void | Promise<void>
   onDeleteInstance: (id: string) => void
   onAddInstance: (elementId: string) => void
   onDeleteAllInstances: (elementId: string) => void
@@ -1002,7 +1030,7 @@ function WidgetValueEditor({ controlType, value, onChange }: { controlType: numb
 
 function WidgetElementEditor({ element, onUpdateElement, onDelete }: {
   element: Element
-  onUpdateElement: (id: string, data: Record<string, any>) => void
+  onUpdateElement: (id: string, data: Record<string, any>, opts?: SaveOpts) => void | Promise<void>
   onDelete: (id: string) => void
 }) {
   const props = element.properties || {}
@@ -1460,7 +1488,7 @@ export default function SceneEditorPage() {
   // Update handlers
   // -----------------------------------------------------------------------
 
-  const handleUpdateElement = useCallback(async (elementId: string, data: Record<string, any>) => {
+  const handleUpdateElement = useCallback(async (elementId: string, data: Record<string, any>, opts?: SaveOpts) => {
     try {
       // The server broadcasts the full element upsert to the scene room after this write.
       await api.updateElement(elementId, data)
@@ -1485,6 +1513,7 @@ export default function SceneEditorPage() {
       })
     } catch (err: any) {
       console.error('Failed to update element:', err)
+      if (opts?.rethrow) throw err
     }
   }, [api])
 
@@ -1499,7 +1528,7 @@ export default function SceneEditorPage() {
     })
   }, [])
 
-  const handleUpdateInstance = useCallback(async (instanceId: string, data: Partial<Instance>) => {
+  const handleUpdateInstance = useCallback(async (instanceId: string, data: Partial<Instance>, opts?: SaveOpts) => {
     try {
       await api.updateInstance(instanceId, data)
 
@@ -1521,6 +1550,7 @@ export default function SceneEditorPage() {
       })
     } catch (err: any) {
       console.error('Failed to update instance:', err)
+      if (opts?.rethrow) throw err
     }
   }, [api])
 

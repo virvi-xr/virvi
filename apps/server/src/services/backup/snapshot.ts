@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { eq, inArray } from 'drizzle-orm'
-import type { Vec3 } from '@virvixr/shared'
+import { checkClickEvent, type ClickEvent, type Vec3 } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { assetLibraryItems, catalogPacks, mediaAssets, roomSets, scenePresets, scenes } from '../../db/schema.js'
 import { withLiveStatus, normalizeUrl } from '../../streaming/live-status.js'
@@ -29,8 +29,10 @@ export interface BakedItem {
   withCollisions: boolean
   /** Non-URL settings only; every URL lives in `assets`. */
   props: Record<string, unknown>
-  /** Keyed by role: model, texture, offImage, liveSrc, `playlist.<n>`, audio, fallbackImage. */
+  /** Keyed by role: model, texture, offImage, liveSrc, `playlist.<n>`, audio, fallbackImage, clickSound. */
   assets: Record<string, AssetPlan>
+  /** What clicking it does (LIV-126), as the live runtime runs it: the copy's own action, else the item's. */
+  click?: ClickEvent
 }
 
 export interface BackupSnapshot {
@@ -39,7 +41,7 @@ export interface BackupSnapshot {
   otherPresets: string[]
   items: BakedItem[]
   skipped: { name: string; type: string; why: string }[]
-  /** Names of baked items whose element or instance has a click event (not baked). */
+  /** Names of baked items whose click action couldn't be carried over (incomplete, or on a screen showing ads). */
   withClickEvents: string[]
 }
 
@@ -208,8 +210,25 @@ export async function backupSnapshot(sceneId: string): Promise<BackupSnapshot> {
   }
 
   const baked = (type: BakedItem['type'], el: SerializedElement, inst: SerializedElement['instances'][number], props: Record<string, unknown>, assets: Record<string, AssetPlan>): BakedItem => {
-    if (hasClick(el.clickEvent) || hasClick(inst.clickEvent)) {
-      if (!snap.withClickEvents.includes(el.name)) snap.withClickEvents.push(el.name)
+    // The copy's own action wins unless it is NONE (packages/core src/managers/click.ts)
+    const ownType = (inst.clickEvent as { type?: unknown } | undefined)?.type
+    const raw = hasClick(inst.clickEvent) && ownType !== 0 ? inst.clickEvent : hasClick(el.clickEvent) ? el.clickEvent : undefined
+    let click: ClickEvent | undefined
+    let itemAssets = assets
+    if (raw !== undefined) {
+      const c = checkClickEvent(raw)
+      // A screen showing ads keeps the ad's click there; sounds and ad spaces have nothing to click
+      const adsMode = type === 'video' && !(props.isLive && props.enableLiveStream && assets.liveSrc) && (props.offType === 4 || props.offType === 5)
+      const clickable = type === 'model' || type === 'image' || (type === 'video' && !adsMode)
+      if (c.ok && c.value && clickable) {
+        click = c.value
+        if (click.sound) {
+          const p = plan(click.sound, 'audio')
+          if (p) itemAssets = { ...assets, clickSound: p }
+        }
+      } else if (!c.ok || (c.value && !clickable)) {
+        if (!snap.withClickEvents.includes(el.name)) snap.withClickEvents.push(el.name)
+      }
     }
     return {
       type, name: el.name,
@@ -217,7 +236,8 @@ export async function backupSnapshot(sceneId: string): Promise<BackupSnapshot> {
       rotation: vec(inst.rotation, { x: 0, y: 0, z: 0 }),
       scale: vec(inst.scale, { x: 1, y: 1, z: 1 }),
       withCollisions: inst.withCollisions,
-      props, assets,
+      props, assets: itemAssets,
+      ...(click ? { click } : {}),
     }
   }
 

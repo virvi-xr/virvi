@@ -1,3 +1,4 @@
+import { checkClickEvent } from '@virvixr/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
@@ -122,6 +123,21 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** Same limit as the New Scene Wizard. */
 const SCENE_NAME_MAX = 120
+
+/**
+ * A click action in the body (LIV-126), checked and tidied in place; false when the reply (400 bad_click) was sent.
+ * Absent stays absent.
+ */
+function tidyClick(body: { clickEvent?: unknown } | null | undefined, reply: FastifyReply): boolean {
+  if (!body || body.clickEvent === undefined) return true
+  const c = checkClickEvent(body.clickEvent)
+  if (!c.ok) {
+    reply.status(400).send({ error: 'bad_click', message: c.error })
+    return false
+  }
+  body.clickEvent = c.value
+  return true
+}
 
 export default async function sceneRoutes(app: FastifyInstance) {
   // All scene routes require authentication
@@ -427,6 +443,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     { config: { scenePass: { sceneFrom: fromPreset, hyperfy: true, ar: true } } },
     async (request, reply) => {
       const { presetId } = request.params
+      if (!tidyClick(request.body, reply)) return reply
       const { type, name, enabled, customId, customRendering, clickEvent, properties } = request.body
 
       if (!type || !name) {
@@ -494,6 +511,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
     async (request, reply) => {
       const { elementId } = request.params
+      if (!tidyClick(request.body, reply)) return reply
 
       const element = await db.query.sceneElements.findFirst({
         where: eq(sceneElements.id, elementId),
@@ -606,6 +624,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
     async (request, reply) => {
       const { elementId } = request.params
+      if (!tidyClick(request.body, reply)) return reply
 
       const element = await db.query.sceneElements.findFirst({
         where: eq(sceneElements.id, elementId),
@@ -664,6 +683,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     { config: { scenePass: { sceneFrom: fromInstance, hyperfy: true, ar: true } } },
     async (request, reply) => {
       const { instanceId } = request.params
+      if (!tidyClick(request.body, reply)) return reply
 
       const instance = await db.query.sceneElementInstances.findFirst({
         where: eq(sceneElementInstances.id, instanceId),
