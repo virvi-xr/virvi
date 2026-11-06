@@ -11,15 +11,19 @@ import { fileURLToPath } from 'node:url'
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
+// npm passes its own settings to scripts as npm_config_* (under `npm publish --dry-run`, a dry run that makes the
+// nested `npm pack` write nothing); the scene's npm gets none of them
+const NPM_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^npm_/i.test(k)))
+
 before(() => execFileSync('pnpm', ['run', 'bundle'], { cwd: PKG, stdio: 'pipe' }), { timeout: 180_000 })
 
 /** Packs the package the way `npm publish` would and npm-installs it into a bare scene beside @dcl/sdk, as a scene's build does. */
 function sceneWithPackedPackage() {
   const scene = fs.mkdtempSync(path.join(os.tmpdir(), 'virvi-dcl-consumer-'))
-  const tarball = execFileSync('npm', ['pack', '--silent', '--pack-destination', scene], { cwd: PKG, encoding: 'utf8' }).trim().split('\n').pop()
+  const tarball = execFileSync('npm', ['pack', '--silent', '--pack-destination', scene], { cwd: PKG, encoding: 'utf8', env: NPM_ENV }).trim().split('\n').pop()
   const sdk = JSON.parse(fs.readFileSync(path.join(PKG, 'package.json'), 'utf8')).devDependencies['@dcl/sdk']
   fs.writeFileSync(path.join(scene, 'package.json'), JSON.stringify({ name: 'bare-scene', private: true }))
-  execFileSync('npm', ['install', '--silent', '--no-audit', '--no-fund', `@dcl/sdk@${sdk}`, `./${tarball}`], { cwd: scene, stdio: 'pipe' })
+  execFileSync('npm', ['install', '--silent', '--no-audit', '--no-fund', `@dcl/sdk@${sdk}`, `./${tarball}`], { cwd: scene, stdio: 'pipe', env: NPM_ENV })
   return scene
 }
 

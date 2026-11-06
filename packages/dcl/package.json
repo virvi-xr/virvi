@@ -12,7 +12,7 @@
     "bundle": "tsc && node build.mjs",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo",
-    "prepublishOnly": "pnpm run bundle",
+    "prepublishOnly": "pnpm run bundle && pnpm test",
     "test": "node --test test/*.test.mjs"
   },
   "peerDependencies": {
