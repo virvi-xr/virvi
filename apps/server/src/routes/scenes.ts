@@ -25,8 +25,9 @@ import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
-import { ThumbnailError, deleteThumbnailFile, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
+import { SceneGone, ThumbnailError, bodyLimitFor, deleteThumbnailFile, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
 import { StoreMediaError } from '../media/store.js'
+import { SCENE_THUMBNAIL_MAX_BYTES } from '@virvixr/shared'
 import { commitRoomSet, deleteOrphanedRoomSets, insertRoomSet, prepareRoomSetForPlacement, RoomSetError, roomSetIdsByElement, sceneOwnedRoomSets, type PreparedRoomSet } from '../room-scan/sets.js'
 
 type ElementChange = Parameters<typeof publishElementChanged>[0]
@@ -343,7 +344,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
   // ── PUT/DELETE /api/scenes/:sceneId/thumbnail — the scene's thumbnail (LIV-88) ──
   // Hosts, co-hosts and editors (scene.edit). The body is { fileData: base64 } of the cropped 16:9 image.
 
-  app.put<{ Params: { sceneId: string }; Body: { fileData?: unknown } }>('/api/scenes/:sceneId/thumbnail', async (request, reply) => {
+  // The body limit is a 2 MB image as base64 plus the JSON around it: Fastify answers 413 before buffering more
+  app.put<{ Params: { sceneId: string }; Body: { fileData?: unknown } }>('/api/scenes/:sceneId/thumbnail', { bodyLimit: bodyLimitFor(SCENE_THUMBNAIL_MAX_BYTES) }, async (request, reply) => {
     const { sceneId } = request.params
     if (!UUID_RE.test(sceneId) || !(await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true } }))) {
       return reply.status(404).send({ error: 'Scene not found' })
@@ -356,6 +358,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       return reply.send({ scene })
     } catch (err) {
       if (err instanceof ThumbnailError) return reply.status(err.status).send({ error: err.code, message: err.message })
+      if (err instanceof SceneGone) return reply.status(404).send({ error: 'Scene not found' })
       if (err instanceof StoreMediaError) return reply.status(err.status).send(err.body)
       throw err
     }

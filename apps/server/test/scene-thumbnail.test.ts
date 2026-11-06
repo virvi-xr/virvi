@@ -14,14 +14,54 @@ async function code(p: Promise<unknown>) {
 }
 
 describe('processSceneThumbnail', () => {
-  it('keeps a 16:9 PNG or JPEG as it is', async () => {
-    const png = await img(1280, 720, 'png')
-    const out = await processSceneThumbnail(png)
+  it('re-encodes every upload: transparency stays PNG, everything else becomes JPEG', async () => {
+    const clear = await img(1280, 720, 'png', true)
+    const out = await processSceneThumbnail(clear)
     expect(out).toMatchObject({ contentType: 'image/png', ext: 'png', width: 1280, height: 720 })
-    expect(out.data.equals(png)).toBe(true)
+    const opaque = await processSceneThumbnail(await img(1280, 720, 'png'))
+    expect(opaque).toMatchObject({ contentType: 'image/jpeg', ext: 'jpg' })
+    expect((await sharp(opaque.data).metadata()).format).toBe('jpeg')
     const jpg = await processSceneThumbnail(await img(1920, 1080, 'jpeg'))
     expect(jpg).toMatchObject({ contentType: 'image/jpeg', ext: 'jpg', width: 1920, height: 1080 })
   })
+
+  it('strips EXIF (GPS included) and anything after the image', async () => {
+    const withGps = await sharp({ create: { width: 1280, height: 720, channels: 3, background: '#3366ff' } })
+      .jpeg()
+      .withExif({ IFD0: { Copyright: 'secret-owner' }, IFD3: { GPSLatitudeRef: 'N', GPSLatitude: '51/1 30/1 0/1' } })
+      .toBuffer()
+    expect((await sharp(withGps).metadata()).exif).toBeDefined()
+    const out = await processSceneThumbnail(withGps)
+    expect((await sharp(out.data).metadata()).exif).toBeUndefined()
+    expect(out.data.includes('secret-owner')).toBe(false)
+
+    const trailing = Buffer.concat([await img(1280, 720, 'png', true), Buffer.from('TRAILING-SECRET')])
+    expect((await processSceneThumbnail(trailing)).data.includes('TRAILING-SECRET')).toBe(false)
+  })
+
+  it('turns an image upright by its EXIF orientation (3 = upside down)', async () => {
+    // Red on top, blue below, then flagged as rotated 180°: upright, blue is on top
+    const top = await sharp({ create: { width: 1280, height: 360, channels: 3, background: '#ff0000' } }).png().toBuffer()
+    const raw = await sharp({ create: { width: 1280, height: 720, channels: 3, background: '#0000ff' } })
+      .composite([{ input: top, top: 0, left: 0 }]).jpeg().toBuffer()
+    const flagged = await sharp(raw).withMetadata({ orientation: 3 }).jpeg().toBuffer()
+    expect((await sharp(flagged).metadata()).orientation).toBe(3)
+    const out = await processSceneThumbnail(flagged)
+    const { data, info } = await sharp(out.data).raw().toBuffer({ resolveWithObject: true })
+    const at = (y: number) => [...data.subarray((y * info.width + 640) * info.channels, (y * info.width + 640) * info.channels + 3)]
+    expect(at(10)[2]).toBeGreaterThan(200) // blue on top
+    expect(at(10)[0]).toBeLessThan(60)
+    expect(at(710)[0]).toBeGreaterThan(200) // red below
+    expect((await sharp(out.data).metadata()).orientation).toBeUndefined()
+  })
+
+  it('refuses an image over 4096 × 4096 pixels in all before decoding it, however small the file', async () => {
+    const huge = await img(5470, 3077, 'png') // 16:9-ish, 16.8 megapixels, a few KB
+    expect(huge.length).toBeLessThan(2 * 1024 * 1024)
+    expect(await code(processSceneThumbnail(huge))).toBe('too_many_pixels')
+    expect(new ThumbnailError('too_many_pixels').status).toBe(413)
+    expect(await code(processSceneThumbnail(await img(5460, 3071, 'png')))).toBe('ok')
+  }, 30_000)
 
   it('stores a WebP as JPEG (PNG when it has transparency): Decentraland shows only PNG and JPEG', async () => {
     const solid = await processSceneThumbnail(await img(1280, 720, 'webp'))

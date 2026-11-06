@@ -7,6 +7,9 @@ import { db } from '../src/db/connection.js'
 import { assetLibraryItems, sceneCollaborators, scenes } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { assertStorageQuota } from '../src/media/quota.js'
+import { SCENE_THUMBNAIL_MAX_BYTES } from '@virvixr/shared'
+import { createStorage } from '../src/storage/index.js'
+import { SceneGone, bodyLimitFor, setSceneThumbnail, setThumbnailStorage } from '../src/scenes/thumbnail.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -43,12 +46,49 @@ describe('scene thumbnail routes', () => {
     const res = await put(s.scene.id, s.editor, await png())
     expect(res.statusCode).toBe(200)
     const { scene } = res.json()
-    expect(scene.thumbnailKey).toMatch(new RegExp(`^scenes/${s.scene.id}/thumbnail-[0-9a-f]{16}\\.png$`))
+    expect(scene.thumbnailKey).toMatch(new RegExp(`^scenes/${s.scene.id}/thumbnail-[0-9a-f]{16}\\.(png|jpg)$`))
     expect(scene.thumbnailUrl).toMatch(new RegExp(`/${scene.thumbnailKey}$`))
     expect(scene.thumbnailBytes).toBeGreaterThan(0)
     expect(stored(scene.thumbnailKey)).toBe(true)
     expect((await row(s.scene.id)).thumbnailUrl).toBe(scene.thumbnailUrl)
     expect((await put(s.scene.id, s.owner, await png(1920, 1080))).statusCode).toBe(200)
+  })
+
+  it('a body over the thumbnail limit is refused with 413 before it is read', async () => {
+    const s = await setup()
+    const res = await app.inject({
+      method: 'PUT', url: `/api/scenes/${s.scene.id}/thumbnail`, headers: as(s.owner),
+      payload: { fileData: 'A'.repeat(Math.ceil((SCENE_THUMBNAIL_MAX_BYTES * 4) / 3) + 8192) },
+    })
+    expect(res.statusCode).toBe(413)
+    expect(res.json().code).toBe('FST_ERR_CTP_BODY_TOO_LARGE') // Fastify's own limit, not the decoded-size check
+    // A full 2 MB image as base64 still fits
+    expect(bodyLimitFor(SCENE_THUMBNAIL_MAX_BYTES)).toBeGreaterThan(Math.ceil((SCENE_THUMBNAIL_MAX_BYTES * 4) / 3) + 20)
+  })
+
+  it('a scene deleted while its thumbnail uploads is 404, and the uploaded file is deleted', async () => {
+    const s = await setup()
+    const keys: string[] = []
+    const real = createStorage()
+    setThumbnailStorage({
+      ...real,
+      upload: async (key, data, type) => {
+        keys.push(key)
+        const url = await real.upload(key, data, type)
+        await db.delete(scenes).where(eq(scenes.id, s.scene.id)) // gone before the row is locked
+        return url
+      },
+      delete: (key) => real.delete(key),
+      getPublicUrl: (key) => real.getPublicUrl(key),
+    })
+    try {
+      await expect(setSceneThumbnail(s.scene.id, await png())).rejects.toBeInstanceOf(SceneGone)
+      expect(keys).toHaveLength(1)
+      expect(stored(keys[0])).toBe(false)
+    } finally {
+      setThumbnailStorage(null)
+    }
+    await expect(setSceneThumbnail('00000000-0000-4000-8000-000000000000', await png())).rejects.toBeInstanceOf(SceneGone)
   })
 
   it('viewers and other accounts are refused; an unknown scene is 404', async () => {

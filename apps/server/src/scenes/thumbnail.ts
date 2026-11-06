@@ -13,23 +13,36 @@ import { scenes } from '../db/schema.js'
 import { assertStorageQuota } from '../media/quota.js'
 import { createStorage, type StorageProvider } from '../storage/index.js'
 
-export type ThumbnailErrorCode = 'too_large' | 'unsupported_type' | 'too_small' | 'wrong_shape'
+export type ThumbnailErrorCode = 'too_large' | 'too_many_pixels' | 'unsupported_type' | 'too_small' | 'wrong_shape'
+
+/** Pixel cap before decoding, so a tiny file can't claim a huge canvas (as branding/images.ts). */
+export const MAX_INPUT_PIXELS = 4096 * 4096
 
 const MESSAGES: Record<ThumbnailErrorCode, string> = {
   too_large: `The image is over ${SCENE_THUMBNAIL_MAX_BYTES / (1024 * 1024)} MB. Use a smaller file.`,
+  too_many_pixels: `The image is over ${Math.floor(MAX_INPUT_PIXELS / 1_000_000)} megapixels. Use one of at most ${SCENE_THUMBNAIL_MAX.width} × ${SCENE_THUMBNAIL_MAX.height} px.`,
   unsupported_type: 'Use a PNG, JPEG or WebP image.',
   too_small: `The thumbnail must be at least ${SCENE_THUMBNAIL_MIN.width} × ${SCENE_THUMBNAIL_MIN.height} px. Use a bigger image.`,
   wrong_shape: 'The thumbnail must be 16:9, the shape Decentraland shows. Crop it first.',
 }
 
+const STATUS: Partial<Record<ThumbnailErrorCode, 413 | 415>> = { too_large: 413, too_many_pixels: 413, unsupported_type: 415 }
+
 export class ThumbnailError extends Error {
-  constructor(public code: ThumbnailErrorCode, public status: 400 | 413 | 415 = code === 'too_large' ? 413 : code === 'unsupported_type' ? 415 : 400) {
+  constructor(public code: ThumbnailErrorCode, public status: 400 | 413 | 415 = STATUS[code] ?? 400) {
     super(MESSAGES[code])
   }
 }
 
-/** Pixel cap before decoding, so a tiny file can't claim a huge canvas. */
-const MAX_INPUT_PIXELS = 8192 * 8192
+/** The scene is gone (deleted before or while its thumbnail was saved). */
+export class SceneGone extends Error {
+  constructor() {
+    super('Scene not found')
+  }
+}
+
+/** The request body limit for a thumbnail upload of at most `maxBytes`: its base64 plus room for the JSON around it. */
+export const bodyLimitFor = (maxBytes: number) => Math.ceil((maxBytes * 4) / 3) + 4096
 
 type Kind = 'png' | 'jpeg' | 'webp'
 
@@ -50,9 +63,10 @@ export interface ProcessedThumbnail {
 }
 
 /**
- * Checks an uploaded thumbnail (at most 2 MB; PNG, JPEG or WebP by its bytes; 16:9; at least 960 × 540) and returns
- * what to store: a PNG or JPEG as sent, a WebP re-encoded as JPEG (PNG when it has transparency), anything over
- * 1920 × 1080 scaled down to it. Throws ThumbnailError.
+ * Checks an uploaded thumbnail (at most 2 MB; PNG, JPEG or WebP by its bytes; at most 4096 × 4096 pixels in all;
+ * 16:9; at least 960 × 540) and re-encodes it, so what is stored and deployed is only the picture: turned upright by
+ * its EXIF orientation, with no metadata (EXIF, GPS, text chunks) and nothing after the image, PNG when it has
+ * transparency and JPEG otherwise, at most 1920 × 1080. Throws ThumbnailError.
  */
 export async function processSceneThumbnail(input: Buffer): Promise<ProcessedThumbnail> {
   if (input.length > SCENE_THUMBNAIL_MAX_BYTES) throw new ThumbnailError('too_large')
@@ -60,11 +74,14 @@ export async function processSceneThumbnail(input: Buffer): Promise<ProcessedThu
   if (!kind) throw new ThumbnailError('unsupported_type')
   let meta: sharp.Metadata
   try {
-    meta = await sharp(input, { failOn: 'error', limitInputPixels: MAX_INPUT_PIXELS }).metadata()
+    // The header only (nothing is decoded); the pixel cap is checked just below, so it can say why
+    meta = await sharp(input, { failOn: 'error', limitInputPixels: false }).metadata()
   } catch {
     throw new ThumbnailError('unsupported_type')
   }
   if (meta.format !== kind || (meta.pages ?? 1) > 1) throw new ThumbnailError('unsupported_type')
+  // From the header alone, before anything is decoded
+  if ((meta.width ?? 0) * (meta.height ?? 0) > MAX_INPUT_PIXELS) throw new ThumbnailError('too_many_pixels')
   // EXIF orientation 5–8 swaps width and height on screen
   const turned = (meta.orientation ?? 1) >= 5
   const width = (turned ? meta.height : meta.width) ?? 0
@@ -72,31 +89,21 @@ export async function processSceneThumbnail(input: Buffer): Promise<ProcessedThu
   if (!isThumbnailShape(width, height)) throw new ThumbnailError('wrong_shape')
   if (width < SCENE_THUMBNAIL_MIN.width || height < SCENE_THUMBNAIL_MIN.height) throw new ThumbnailError('too_small')
 
-  const out: 'png' | 'jpeg' = kind === 'webp' ? (meta.hasAlpha ? 'png' : 'jpeg') : kind
-  const big = width > SCENE_THUMBNAIL_MAX.width || height > SCENE_THUMBNAIL_MAX.height
-  const reencode = kind === 'webp' || big || turned
-  let data = input
-  let size = { width, height }
-  if (reencode) {
-    try {
-      const pipeline = sharp(input, { failOn: 'error', limitInputPixels: MAX_INPUT_PIXELS })
-        .rotate()
-        .resize({ ...SCENE_THUMBNAIL_MAX, fit: 'inside', withoutEnlargement: true })
-      const { data: buf, info } = await (out === 'png' ? pipeline.png() : pipeline.jpeg({ quality: 90 })).toBuffer({ resolveWithObject: true })
-      data = buf
-      size = { width: info.width, height: info.height }
-    } catch {
-      throw new ThumbnailError('unsupported_type')
-    }
-    if (data.length > SCENE_THUMBNAIL_MAX_BYTES) throw new ThumbnailError('too_large')
-  } else {
-    // Only the header was read so far: make sure the image decodes
-    try {
-      await sharp(input, { failOn: 'error', limitInputPixels: MAX_INPUT_PIXELS }).stats()
-    } catch {
-      throw new ThumbnailError('unsupported_type')
-    }
+  const out: 'png' | 'jpeg' = meta.hasAlpha ? 'png' : 'jpeg'
+  let data: Buffer
+  let size: { width: number; height: number }
+  try {
+    // sharp writes no metadata unless asked (withMetadata), so EXIF and text chunks are dropped here
+    const pipeline = sharp(input, { failOn: 'error', limitInputPixels: MAX_INPUT_PIXELS })
+      .rotate()
+      .resize({ ...SCENE_THUMBNAIL_MAX, fit: 'inside', withoutEnlargement: true })
+    const { data: buf, info } = await (out === 'png' ? pipeline.png() : pipeline.jpeg({ quality: 90 })).toBuffer({ resolveWithObject: true })
+    data = buf
+    size = { width: info.width, height: info.height }
+  } catch {
+    throw new ThumbnailError('unsupported_type')
   }
+  if (data.length > SCENE_THUMBNAIL_MAX_BYTES) throw new ThumbnailError('too_large')
   return {
     data,
     contentType: out === 'png' ? 'image/png' : 'image/jpeg',
@@ -124,6 +131,11 @@ type SceneRow = typeof scenes.$inferSelect
 let storage: StorageProvider | null = null
 const store = () => (storage ??= createStorage())
 
+/** Swaps the storage thumbnails are written to (tests); null goes back to the configured one. */
+export function setThumbnailStorage(s: StorageProvider | null): void {
+  storage = s
+}
+
 async function deleteQuietly(key: string) {
   try {
     await store().delete(key)
@@ -134,13 +146,14 @@ async function deleteQuietly(key: string) {
 
 /**
  * Sets the scene's thumbnail from an upload: checked (processSceneThumbnail), charged to the scene owner's storage
- * quota (less the one it replaces), stored, and the old file deleted. Throws ThumbnailError or StoreMediaError.
+ * quota (less the one it replaces), stored, and the old file deleted. Throws ThumbnailError, StoreMediaError or
+ * SceneGone (then nothing is left stored).
  */
 export async function setSceneThumbnail(sceneId: string, upload: Buffer): Promise<SceneRow> {
   const t = await processSceneThumbnail(upload)
   const key = thumbnailStorageKey(sceneId, t)
   const current = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { ownerId: true, thumbnailBytes: true, thumbnailKey: true } })
-  if (!current) throw new Error('Scene not found')
+  if (!current) throw new SceneGone()
   await assertStorageQuota(current.ownerId, t.data.length - (current.thumbnailBytes ?? 0))
   const url = await store().upload(key, t.data, t.contentType)
   let old: string | null = null
@@ -149,7 +162,8 @@ export async function setSceneThumbnail(sceneId: string, upload: Buffer): Promis
     row = await db.transaction(async (tx) => {
       // Serialises replacements of one scene's thumbnail, so each old file is deleted exactly once
       const [locked] = await tx.select({ thumbnailKey: scenes.thumbnailKey }).from(scenes).where(eq(scenes.id, sceneId)).for('update')
-      old = locked?.thumbnailKey ?? null
+      if (!locked) throw new SceneGone() // deleted while the file uploaded
+      old = locked.thumbnailKey
       const [updated] = await tx.update(scenes)
         .set({ thumbnailUrl: url, thumbnailKey: key, thumbnailBytes: t.data.length, updatedAt: new Date() })
         .where(eq(scenes.id, sceneId))
@@ -157,7 +171,8 @@ export async function setSceneThumbnail(sceneId: string, upload: Buffer): Promis
       return updated
     })
   } catch (err) {
-    if (current.thumbnailKey !== key) await deleteQuietly(key)
+    // A scene that's gone keeps nothing; otherwise the file stays only if it was already the scene's thumbnail
+    if (err instanceof SceneGone || current.thumbnailKey !== key) await deleteQuietly(key)
     throw err
   }
   if (old && old !== key) await deleteQuietly(old)

@@ -58,6 +58,10 @@ describe('limits', () => {
     expect(thumbnailError({ message: 'too_small', body: { error: 'too_small', message: 'The thumbnail must be at least 960 × 540 px.' } })).toBe('The thumbnail must be at least 960 × 540 px.')
     expect(thumbnailError({ message: 'storage_limit_reached', body: { error: 'storage_limit_reached', message: 'Your free plan allows up to 500 MB.' } })).toMatch(/500 MB/)
     expect(thumbnailError({ message: 'API error 413', status: 413, body: {} })).toBe('The image is over 2 MB. Use a smaller file.')
+    // Fastify's own body limit (the route's bodyLimit) answers before the server's check
+    expect(thumbnailError({ message: 'Payload Too Large', status: 413, body: { code: 'FST_ERR_CTP_BODY_TOO_LARGE', error: 'Payload Too Large', message: 'Request body is too large' } }))
+      .toBe('The image is over 2 MB. Use a smaller file.')
+    expect(thumbnailError({ message: 'too_many_pixels', status: 413, body: { error: 'too_many_pixels', message: 'The image is over 16 megapixels.' } })).toBe('The image is over 16 megapixels.')
     expect(thumbnailError({ message: 'Forbidden', status: 403, body: { error: 'Forbidden' } })).toBe("Only the scene's hosts and editors can change its thumbnail.")
     expect(thumbnailError(null)).toMatch(/Try again/)
   })

@@ -68,7 +68,9 @@ export const TOO_LARGE_MESSAGE = `The image is over ${SCENE_THUMBNAIL_MAX_BYTES 
 
 /** The server's own words for a failed upload or removal. */
 export function thumbnailError(err: unknown): string {
-  const e = err as { message?: string; status?: number; body?: { message?: unknown } } | null
+  const e = err as { message?: string; status?: number; body?: { message?: unknown; code?: unknown } } | null
+  // Fastify's body limit on the route (its own wording is about the request, not the image)
+  if (e?.status === 413 && e.body?.code === 'FST_ERR_CTP_BODY_TOO_LARGE') return TOO_LARGE_MESSAGE
   if (e?.body && typeof e.body.message === 'string' && e.body.message) return e.body.message
   if (e?.status === 403) return "Only the scene's hosts and editors can change its thumbnail."
   // A body-size refusal before the server's own check (a proxy's 413 page)
