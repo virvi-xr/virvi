@@ -341,6 +341,12 @@ importers:
       esbuild:
         specifier: ^0.27.4
         version: 0.27.4
+      rollup:
+        specifier: 4.60.0
+        version: 4.60.0
+      rollup-plugin-dts:
+        specifier: 6.5.1
+        version: 6.5.1(rollup@4.60.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -588,6 +594,10 @@ packages:
     resolution: {integrity: sha512-iY8yvjE0y651BixKNPgmv1WrQc+GZ142sb0z4gYnChDDY2YqI4P/jsSopBWrKfAt7LOJAkOXt7rC/hms+WclQQ==}
     engines: {node: '>=18.0.0'}
 
+  '@babel/code-frame@8.0.6':
+    resolution: {integrity: sha512-uMHhvmDmwFiLuiozaoRYTZHqMFuu3fem/X9JY78lohAuLoh8LSGGC8JqUzo2cVuBsBxkjMZNk56CE7ock8Xxkw==}
+    engines: {node: ^22.18.0 || >=24.11.0}
+
   '@babel/helper-string-parser@7.27.1':
     resolution: {integrity: sha512-qMlSxKbpRlAridDExk92nSobyDdpPijUq2DW6oDnUqd0iOGxmQjyqhMIihI9+zv4LPyZdRje2cavWPbCbWm3eA==}
     engines: {node: '>=6.9.0'}
@@ -595,6 +605,10 @@ packages:
   '@babel/helper-validator-identifier@7.28.5':
     resolution: {integrity: sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q==}
     engines: {node: '>=6.9.0'}
+
+  '@babel/helper-validator-identifier@8.0.6':
+    resolution: {integrity: sha512-HYx0YmuchRxRSpnjvcNffnPS8DCauKNmnumIuHG3jnQAVewRA7kfJGwF13ayEpSZs7s4R/oBH4eppuXcAQd5JQ==}
+    engines: {node: ^22.18.0 || >=24.11.0}
 
   '@babel/parser@7.28.5':
     resolution: {integrity: sha512-KKBU1VGYR7ORr3At5HAtUQ+TV3SzRCXmA/8OdDZiLDBIZxVyzXuztPjfLd3BV1PRAQGCMWWSHYhL0F8d5uHBDQ==}
@@ -712,6 +726,11 @@ packages:
     peerDependencies:
       '@dcl/ecs': ^7.15.2
 
+  '@dcl/asset-packs@2.25.1':
+    resolution: {integrity: sha512-95bM2sN8INHU9rzRIVpvjnfmmsvA4oAsdUZdF/d4yXRuAluCsiMoBxT3J4bhhGPamgFy8qrr77/iFGPNjSVMbw==}
+    peerDependencies:
+      '@dcl/ecs': ^7.15.2
+
   '@dcl/catalyst-contracts@4.4.2':
     resolution: {integrity: sha512-gJZo3IB8U+jhBJWR0DgoLS+zaUDIb/u79e7Rp+MEM78uH3bvC19S3Dd8lxWEbPXNKlCB0saUptfK/Buw0c1y2Q==}
 
@@ -739,8 +758,8 @@ packages:
   '@dcl/ecs@7.30.1':
     resolution: {integrity: sha512-3ZNB1OStBoEWCw1Fov8zxHPhWzH7UJHXelqUEaEQQKcjuqLffOfFiPrE0gbE+iwvJC3Me6zNIM90s+lBgpP+FQ==}
 
-  '@dcl/ecs@7.31.0':
-    resolution: {integrity: sha512-teCxOTqGljhtUmk8uYNegwsSNZvS8wmWHeolNhhOq7+zlxr74CtByMRJM7Oac880eNc9fnyFTwIlxieNiB1hxQ==}
+  '@dcl/ecs@7.33.0':
+    resolution: {integrity: sha512-l3WnA5iMEdYmFiR8M6umihWnnB03ggpDE1llbqcFlAbHBdrmDvet5fBLDXL/o5dy61mr3frMjIrJSZh3C2vAoQ==}
 
   '@dcl/fetch-component@1.1.2':
     resolution: {integrity: sha512-AzryeK3QwE13NgszhvIx9mib/S5+r3yZOiltFha/4rtJ27cs5TBf+jzQZKDFyhqDFEGBcEqOrJNAKYXCemp85Q==}
@@ -758,11 +777,14 @@ packages:
   '@dcl/inspector@7.36.3':
     resolution: {integrity: sha512-EwvXoZlXvDKZsK2qrRYG+Yia7qKHWgQUqbWY7e6zSVMffRDhhjVyS2FEipgrLqL0YMrTkJcfAsHaNnZgZsnP4A==}
 
+  '@dcl/inspector@7.59.0':
+    resolution: {integrity: sha512-PnkweMY7arJeTWfh/9pptjxQUNRDSk/JVT9e9O43D286D4qJSiSmwRtY4tVY+85pAjySbjzSeF8o7eBznrQxtA==}
+
   '@dcl/js-runtime@7.30.1':
     resolution: {integrity: sha512-3Fzh/RIFOch3pAyzJA91cn2jK8htAuvEazdrEGiFxWBXprc9m3ISiaruTnVmybensdt2i5VFTbHoDnPWoS/4QQ==}
 
-  '@dcl/js-runtime@7.31.0':
-    resolution: {integrity: sha512-jW62BhJr8v1Q0MgPyl0+lUL7wxnvnxQf1PRfapr0yzLWj0KUP5eYSiY5VcX9u0KARVdtbzqjuxyozCOKfHXkzg==}
+  '@dcl/js-runtime@7.33.0':
+    resolution: {integrity: sha512-PDG9G6Hnn0MRIbPHVU5UKIdRW7uNKt5k/6Hn5BN97hfdYgh7NR5zp/xnXlyKFhYIChkphy2uVa/eic/RrcP9dw==}
 
   '@dcl/linker-dapp@0.15.2':
     resolution: {integrity: sha512-aYUCfcQp0eMCZfDt+iV2wMBl3oVMsl68uMz6jSVpnfTFqEqMlCmfeh0uZTr/eVMkSvQl8JUSrsKE1aGSE//bNw==}
@@ -779,6 +801,9 @@ packages:
   '@dcl/protocol@1.0.0-38388253132.commit-8d2c084':
     resolution: {integrity: sha512-IBioxF1fnPb4+LVhKjdrxwOWZqXAB2o9DLJVmSvno2/cBdYALFU2etveucR7oO1nJabc6Nd3vIMWElxrgHerBQ==}
 
+  '@dcl/protocol@1.0.0-40563911091.commit-694568d':
+    resolution: {integrity: sha512-Pp4ZDZ6jWCtwF0omCVq1tjoiZeHorgMSUayaWLVQAr+o6gWmGnsNf8yH2m+2+ppVSZa4HYxpNdomDygjvFGqKA==}
+
   '@dcl/quests-client@1.0.3':
     resolution: {integrity: sha512-VwZbXuHsRbRcboUUlBrauuR7VQ7IQP31rWI7wNKIYfWroTH4Yw7Bby1au9JBPWPayM/zRDij4uSd9pMJtidsqw==}
 
@@ -788,8 +813,8 @@ packages:
   '@dcl/react-ecs@7.30.1':
     resolution: {integrity: sha512-n15NrwRVndndhBI6/kLD4oahSmVJXGgX/Qo5tVbISXyUMQJz6GQWl25IcS0Ad3Uvju1MWzK7hMGxFGiQf5oSSQ==}
 
-  '@dcl/react-ecs@7.31.0':
-    resolution: {integrity: sha512-ivOiZHFC8k4NN7F+cLSxJpYhTUXzunTGosetU45aC2cQO+5UEH/LvEWhLcqK920xIoRchy6zXnr4FuMzG4rwLQ==}
+  '@dcl/react-ecs@7.33.0':
+    resolution: {integrity: sha512-u9H/KLDlQCOMVXngn4XGvjXz2XwSHhwotnLvEA2Yu4ZOASTWqYIZwMWYkTMUW0Xk93Ms3MZnimzszJdeV8L0xQ==}
 
   '@dcl/rpc@1.1.2':
     resolution: {integrity: sha512-HgZe9umoD48ZQRaiKTss+vj/War/HjH/DBnb6pzd5fx2OMInaB1YYso3OZ4dCT/OC0AtNny8Tkb3CUJdYAvj/w==}
@@ -814,16 +839,16 @@ packages:
     engines: {node: '>=22.0.0'}
     hasBin: true
 
-  '@dcl/sdk-commands@7.31.0':
-    resolution: {integrity: sha512-IZVToT6Rp5U8rOuqXWdYwG8H7Qv8MDyyCVgxPkKVOH8xBtcv1fA/e/Y5BlXf9zB2SUw03gLffFKwxVnm4aAv9A==}
+  '@dcl/sdk-commands@7.33.0':
+    resolution: {integrity: sha512-ImM21F+MY8bJzwAZJjhEKQDqf6XaICDI2seeNWAbXtQgno1D+41cEsGiz9qYY9jvZWJjZhj5Q5nM3Fuyfsbr1A==}
     engines: {node: '>=22.0.0'}
     hasBin: true
 
   '@dcl/sdk@7.30.1':
     resolution: {integrity: sha512-ndRWBYhoJKowK9WhruX1SeOoOqwr3ojYyEXJ8dH4WvvAu0MIjKtnB0Zt7vwrZ8WFwnToLvXWg70hMidT0lXjYQ==}
 
-  '@dcl/sdk@7.31.0':
-    resolution: {integrity: sha512-BpCVpzuXpOxJPNW51avTmCwBzAqsRuniF6xiJnTwnwXM9upB9wOA5ggYkmsmG5Ml0BZ8ev2kIqxRoJcQbIthfg==}
+  '@dcl/sdk@7.33.0':
+    resolution: {integrity: sha512-eJ5sghEjZKnPjPoasF+gT3OcGgLyfPMkIvHocODyZS0wF7W9i5yd9zUcdSbzDJhGZPKsg6kiY/svi8mxepBv4g==}
 
   '@dcl/ts-proto@1.154.0':
     resolution: {integrity: sha512-2S5AKMMPVZrVfa/1WRy4/h0niikcbu3Yf6dCoudh7ScG7BsyKAPC3CMg6IJKHzrmWS593UZClq7YJof6Vt4O+w==}
@@ -3269,6 +3294,9 @@ packages:
     resolution: {integrity: sha512-nTjqfcBFEipKdXCv4YDQWCfmcLZKm81ldF0pAopTvyrFGVbcR6P/VAAd5G7N+0tTr8QqiU0tFadD6FK4NtJwOA==}
     engines: {node: '>= 0.6'}
 
+  convert-source-map@2.0.0:
+    resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
+
   cookie-es@1.2.2:
     resolution: {integrity: sha512-+W7VmiVINB+ywl1HGXJXmrqkOhpKrIiVZV6tQuV54ZyQC7MMuBt81Vc336GMLoHBq5hV/F9eXgt5Mnx0Rha5Fg==}
 
@@ -4338,6 +4366,9 @@ packages:
 
   js-sha3@0.8.0:
     resolution: {integrity: sha512-gF1cRrHhIzNfToc802P800N8PpXS+evLLXfsVpowqmAFR9uwbi89WvXg2QspOmXL8QL86J4T1EpFu+yUkwJY3Q==}
+
+  js-tokens@10.0.0:
+    resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -5451,6 +5482,17 @@ packages:
 
   rfdc@1.4.1:
     resolution: {integrity: sha512-q1b3N5QkRUWUl7iyylaaj3kOpIT0N2i9MqIEQXP73GVsN9cw3fdx8X63cEmWhJGi2PPCF23Ijp7ktmd39rawIA==}
+
+  rollup-plugin-dts@6.5.1:
+    resolution: {integrity: sha512-jODTXp3H7MK/Ur/ErtsrQ0G1GvaCmc3du+y5pNrdBMf6d7HlL2Nd/N6TkEr+f75CkUj01zEoEd7y2elH0eHi1Q==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@typescript/typescript6': ^6
+      rollup: ^3 || ^4
+      typescript: ^4.5 || ^5 || ^6 || ^7
+    peerDependenciesMeta:
+      '@typescript/typescript6':
+        optional: true
 
   rollup@4.60.0:
     resolution: {integrity: sha512-yqjxruMGBQJ2gG4HtjZtAfXArHomazDHoFwFFmZZl0r7Pdo7qCIXKqKHZc8yeoMgzJJ+pO6pEEHa+V7uzWlrAQ==}
@@ -6910,9 +6952,18 @@ snapshots:
 
   '@aws/lambda-invoke-store@0.2.4': {}
 
+  '@babel/code-frame@8.0.6':
+    dependencies:
+      '@babel/helper-validator-identifier': 8.0.6
+      js-tokens: 10.0.0
+    optional: true
+
   '@babel/helper-string-parser@7.27.1': {}
 
   '@babel/helper-validator-identifier@7.28.5': {}
+
+  '@babel/helper-validator-identifier@8.0.6':
+    optional: true
 
   '@babel/parser@7.28.5':
     dependencies:
@@ -7063,9 +7114,9 @@ snapshots:
       glob: 11.1.0
       mitt: 3.0.1
 
-  '@dcl/asset-packs@2.22.1(@dcl/ecs@7.31.0)':
+  '@dcl/asset-packs@2.25.1(@dcl/ecs@7.33.0)':
     dependencies:
-      '@dcl/ecs': 7.31.0
+      '@dcl/ecs': 7.33.0
       '@types/glob': 8.1.0
       glob: 11.1.0
       mitt: 3.0.1
@@ -7101,7 +7152,7 @@ snapshots:
 
   '@dcl/ecs@7.30.1': {}
 
-  '@dcl/ecs@7.31.0': {}
+  '@dcl/ecs@7.33.0': {}
 
   '@dcl/fetch-component@1.1.2':
     dependencies:
@@ -7128,17 +7179,17 @@ snapshots:
     transitivePeerDependencies:
       - '@dcl/ecs'
 
-  '@dcl/inspector@7.36.3(@dcl/ecs@7.31.0)':
+  '@dcl/inspector@7.59.0(@dcl/ecs@7.33.0)':
     dependencies:
       '@babel/parser': 7.28.5
-      '@dcl/asset-packs': 2.22.1(@dcl/ecs@7.31.0)
+      '@dcl/asset-packs': 2.25.1(@dcl/ecs@7.33.0)
       ts-deepmerge: 7.0.3
     transitivePeerDependencies:
       - '@dcl/ecs'
 
   '@dcl/js-runtime@7.30.1': {}
 
-  '@dcl/js-runtime@7.31.0': {}
+  '@dcl/js-runtime@7.33.0': {}
 
   '@dcl/linker-dapp@0.15.2': {}
 
@@ -7173,11 +7224,16 @@ snapshots:
       '@dcl/ts-proto': 1.154.0
       protobufjs: 7.2.4
 
+  '@dcl/protocol@1.0.0-40563911091.commit-694568d':
+    dependencies:
+      '@dcl/ts-proto': 1.154.0
+      protobufjs: 7.2.4
+
   '@dcl/quests-client@1.0.3(@well-known-components/interfaces@1.5.2)':
     dependencies:
       '@dcl/protocol': 1.0.0-38388253132.commit-8d2c084
       '@dcl/rpc': 1.1.2
-      '@dcl/sdk': 7.31.0(@well-known-components/interfaces@1.5.2)
+      '@dcl/sdk': 7.33.0(@well-known-components/interfaces@1.5.2)
       mitt: 3.0.1
     transitivePeerDependencies:
       - '@well-known-components/interfaces'
@@ -7194,9 +7250,9 @@ snapshots:
       react: 18.3.1
       react-reconciler: 0.29.2(react@18.3.1)
 
-  '@dcl/react-ecs@7.31.0':
+  '@dcl/react-ecs@7.33.0':
     dependencies:
-      '@dcl/ecs': 7.31.0
+      '@dcl/ecs': 7.33.0
       react: 18.3.1
       react-reconciler: 0.29.2(react@18.3.1)
 
@@ -7276,16 +7332,16 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@dcl/sdk-commands@7.31.0(@well-known-components/interfaces@1.5.2)':
+  '@dcl/sdk-commands@7.33.0(@well-known-components/interfaces@1.5.2)':
     dependencies:
       '@dcl/crypto': 3.7.0
-      '@dcl/ecs': 7.31.0
+      '@dcl/ecs': 7.33.0
       '@dcl/gltf-validator-ts': 1.0.14
       '@dcl/hashing': 1.1.3
-      '@dcl/inspector': 7.36.3(@dcl/ecs@7.31.0)
+      '@dcl/inspector': 7.59.0(@dcl/ecs@7.33.0)
       '@dcl/linker-dapp': 0.16.0
       '@dcl/mini-comms': 1.0.1-20230216163137.commit-a4c75be
-      '@dcl/protocol': 1.0.0-38388253132.commit-8d2c084
+      '@dcl/protocol': 1.0.0-40563911091.commit-694568d
       '@dcl/quests-client': 1.0.3(@well-known-components/interfaces@1.5.2)
       '@dcl/quests-manager': 0.1.4
       '@dcl/rpc': 1.1.2
@@ -7328,13 +7384,13 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@dcl/sdk@7.31.0(@well-known-components/interfaces@1.5.2)':
+  '@dcl/sdk@7.33.0(@well-known-components/interfaces@1.5.2)':
     dependencies:
-      '@dcl/ecs': 7.31.0
+      '@dcl/ecs': 7.33.0
       '@dcl/ecs-math': 2.1.0
-      '@dcl/js-runtime': 7.31.0
-      '@dcl/react-ecs': 7.31.0
-      '@dcl/sdk-commands': 7.31.0(@well-known-components/interfaces@1.5.2)
+      '@dcl/js-runtime': 7.33.0
+      '@dcl/react-ecs': 7.33.0
+      '@dcl/sdk-commands': 7.33.0(@well-known-components/interfaces@1.5.2)
     transitivePeerDependencies:
       - '@well-known-components/interfaces'
       - bufferutil
@@ -9792,6 +9848,8 @@ snapshots:
 
   content-type@1.0.5: {}
 
+  convert-source-map@2.0.0: {}
+
   cookie-es@1.2.2: {}
 
   cookie-signature@1.0.7: {}
@@ -11099,6 +11157,9 @@ snapshots:
   jose@5.10.0: {}
 
   js-sha3@0.8.0: {}
+
+  js-tokens@10.0.0:
+    optional: true
 
   js-tokens@4.0.0: {}
 
@@ -12584,6 +12645,17 @@ snapshots:
   reusify@1.1.0: {}
 
   rfdc@1.4.1: {}
+
+  rollup-plugin-dts@6.5.1(rollup@4.60.0)(typescript@5.9.3):
+    dependencies:
+      '@jridgewell/remapping': 2.3.5
+      '@jridgewell/sourcemap-codec': 1.5.5
+      convert-source-map: 2.0.0
+      magic-string: 0.30.21
+      rollup: 4.60.0
+      typescript: 5.9.3
+    optionalDependencies:
+      '@babel/code-frame': 8.0.6
 
   rollup@4.60.0:
     dependencies:
