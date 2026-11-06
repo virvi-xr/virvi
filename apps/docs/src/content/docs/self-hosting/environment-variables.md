@@ -68,6 +68,23 @@ Nothing is configured for this; a server without the bucket skips it.
 | `STRIPE_PRICE_PRO` | Stripe price ID for Pro tier |
 | `STRIPE_PRICE_STUDIO` | Stripe price ID for Studio tier |
 
+## Guest Trials
+
+Signed-out visitors can try the Design Studio at `/try/studio` (see [Try Without an Account](/getting-started/try-without-an-account/)).
+
+| Variable | Description |
+|----------|-------------|
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret for the bot check on new trials. Without it, cloud mode refuses new trials and other modes skip the check |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Turnstile site key. A web build variable (a Docker build arg in the root `Dockerfile`), not read by the server at runtime |
+| `TRIAL_PROMPTS` | Free prompts per trial, in total (default: `3`) |
+| `TRIAL_COST_CEILING_USD` | Most one trial may cost in model spend (default: `3`) |
+| `TRIAL_DESIGNS` | Designs per trial (default: `2`) |
+| `TRIAL_UPLOAD_BYTES` | Total upload size per trial in bytes (default: `26214400`, 25 MB) |
+| `TRIAL_PER_IP_DAY` | New trials per IP address per day (default: `3`) |
+| `TRIAL_PER_DEVICE_DAY` | New trials per device per day (default: `3`) |
+| `TRIAL_DAILY_BUDGET_USD` | Daily model spend across all trials; once reached, trial prompting pauses until the next day (default: `50`) |
+| `TRIAL_IDLE_DAYS` | Days without use before a trial is removed (default: `14`) |
+
 ## Streaming
 
 | Variable | Description |
