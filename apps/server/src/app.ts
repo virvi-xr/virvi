@@ -170,9 +170,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // Auth routes get stricter rate limits to mitigate brute-force attacks
   await app.register(async (scope) => {
     scope.addHook('onRoute', (routeOptions) => {
+      // A route's own rateLimit (e.g. POST /api/auth/trial) wins over the scope default
+      const own = (routeOptions.config as Record<string, unknown> | undefined)?.rateLimit
       routeOptions.config = {
         ...((routeOptions.config as Record<string, unknown>) || {}),
-        rateLimit: { max: 20, timeWindow: '1 minute' },
+        rateLimit: own ?? { max: 20, timeWindow: '1 minute' },
       }
     })
     // /api/auth/platform checks the signed body hash against request.rawBody
