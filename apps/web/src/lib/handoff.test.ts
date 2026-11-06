@@ -71,9 +71,34 @@ describe('hasAccountSession', () => {
 })
 
 describe('runHandoff with a stored session', () => {
-  it('keeps an existing full session: no exchange, no save, straight to next', async () => {
+  const acct = () => stored({ exp: NOW / 1000 + 60, kind: 'account' })
+  it('a code that exchanges replaces an existing full session', async () => {
     const { calls, d } = deps(200)
-    const r = await runHandoff({ ...d, storedSession: () => stored({ exp: NOW / 1000 + 60, kind: 'account' }), now: () => NOW })
+    const r = await runHandoff({ ...d, storedSession: acct, now: () => NOW })
+    expect(r).toBe('signed-in')
+    expect(d.exchange).toHaveBeenCalledWith('SECRET')
+    expect(d.saveSession).toHaveBeenCalledWith({ token: 'a', refresh: 'r', user: { id: 'u' } })
+    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
+  })
+  it('a failing code (non-200) keeps the existing full session and goes to next', async () => {
+    const { calls, d } = deps(410)
+    const r = await runHandoff({ ...d, storedSession: acct, now: () => NOW })
+    expect(r).toBe('signed-in')
+    expect(d.saveSession).not.toHaveBeenCalled()
+    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
+  })
+  it('a throwing exchange keeps the existing full session and goes to next', async () => {
+    const { calls, d } = deps(200)
+    d.exchange.mockImplementation(async () => { throw new Error('network') })
+    const r = await runHandoff({ ...d, storedSession: acct, now: () => NOW })
+    expect(r).toBe('signed-in')
+    expect(d.saveSession).not.toHaveBeenCalled()
+    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
+  })
+  it('no code and an existing full session: no exchange, straight to next', async () => {
+    const { calls, d } = deps(200)
+    d.href = 'https://virvi.io/auth/handoff/#next=%2Fanalytics%2F%3Fscene%3Dabc'
+    const r = await runHandoff({ ...d, storedSession: acct, now: () => NOW })
     expect(r).toBe('signed-in')
     expect(d.exchange).not.toHaveBeenCalled()
     expect(d.saveSession).not.toHaveBeenCalled()
