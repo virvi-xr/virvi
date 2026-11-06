@@ -170,7 +170,7 @@ describe('runHandoff over an existing account session', () => {
       return 'them'
     })
     expect(await runHandoff({ ...d, storedSession: storedAcct() })).toBe('signed-in')
-    expect(choose).toHaveBeenCalledWith({ them: { id: '0xABcDEf0000000000000000000000000000001234', kind: 'wallet', name: 'Bob' }, stored: { id: '0x1111111111111111111111111111111111111111', kind: 'wallet', name: 'Ada' } })
+    expect(choose).toHaveBeenCalledWith({ them: { id: '0xabcdef0000000000000000000000000000001234', kind: 'wallet', name: 'Bob' }, stored: { id: '0x1111111111111111111111111111111111111111', kind: 'wallet', name: 'Ada' } })
     expect(d.saveSession).toHaveBeenCalledWith({ token: body.accessToken, refresh: 'r2', user: body.user })
     expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
   })
@@ -181,10 +181,10 @@ describe('runHandoff over an existing account session', () => {
     expect(d.saveSession).not.toHaveBeenCalled()
     expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
   })
-  it('names an account with no display name by its full checksummed wallet', async () => {
+  it('names an account with no display name by its full lowercase wallet', async () => {
     const { d, choose } = exch({ accessToken: acctTok('u2', { wallet: '0xabcdef0000000000000000000000000000001234' }), refreshToken: 'r2', user: { id: 'u2', displayName: null } })
     await runHandoff({ ...d, storedSession: storedAcct('u1', null) })
-    expect(choose).toHaveBeenCalledWith({ them: { id: '0xABcDEf0000000000000000000000000000001234', kind: 'wallet', name: null }, stored: { id: '0x1111111111111111111111111111111111111111', kind: 'wallet', name: null } })
+    expect(choose).toHaveBeenCalledWith({ them: { id: '0xabcdef0000000000000000000000000000001234', kind: 'wallet', name: null }, stored: { id: '0x1111111111111111111111111111111111111111', kind: 'wallet', name: null } })
   })
   const expiredAcct = (id = 'u1') => () => JSON.stringify({
     token: acctTok(id, { exp: NOW / 1000 - 60, wallet: '0x1111111111111111111111111111111111111111' }),
@@ -202,7 +202,7 @@ describe('runHandoff over an existing account session', () => {
     const { d, choose } = exch({ accessToken: acctTok('u2', { wallet: '0xabcdef0000000000000000000000000000001234' }), refreshToken: 'r2', user: { id: 'u2', displayName: 'Bob' } })
     choose.mockResolvedValue('stay')
     await runHandoff({ ...d, storedSession: expiredAcct() })
-    expect(choose).toHaveBeenCalledWith({ them: { id: '0xABcDEf0000000000000000000000000000001234', kind: 'wallet', name: 'Bob' }, stored: { id: '0x1111111111111111111111111111111111111111', kind: 'wallet', name: 'Ada' } })
+    expect(choose).toHaveBeenCalledWith({ them: { id: '0xabcdef0000000000000000000000000000001234', kind: 'wallet', name: 'Bob' }, stored: { id: '0x1111111111111111111111111111111111111111', kind: 'wallet', name: 'Ada' } })
     expect(d.saveSession).not.toHaveBeenCalled()
   })
   it('a stored session with neither a valid access token nor a refresh token is no session: replaced without asking', async () => {
@@ -219,7 +219,7 @@ describe('runHandoff over an existing account session', () => {
     await runHandoff({ ...d, storedSession: storedAcct('u1', 'Ada') })
     const { them, stored: mine } = choose.mock.calls[0][0]
     expect(them).not.toEqual(mine)
-    expect(them).toEqual({ id: '0xABcDEf0000000000000000000000000000001234', kind: 'wallet', name: 'Ada' })
+    expect(them).toEqual({ id: '0xabcdef0000000000000000000000000000001234', kind: 'wallet', name: 'Ada' })
   })
   it('an account with no wallet shows its masked email, else "another Virvi account"', async () => {
     const { d, choose } = exch({ accessToken: acctTok('u2', { email: 'mallory@evil.io' }), refreshToken: 'r2', user: { id: 'u2', displayName: 'Ada', email: 'mallory@evil.io' } })
@@ -232,14 +232,14 @@ describe('runHandoff over an existing account session', () => {
     const mine = () => JSON.stringify({ token: acctTok('u1', { wallet: lookalike }), refresh: 'r', user: { id: 'u1', displayName: 'Ada' } })
     await runHandoff({ ...d, storedSession: mine })
     const { them, stored: me } = choose.mock.calls[0][0]
-    expect(them.id).toBe('0xABcDEf0000000000000000000000000000001234')
-    expect(me.id).toBe('0xAbcd000000000000000000000000000000001234')
+    expect(them.id).toBe('0xabcdef0000000000000000000000000000001234')
+    expect(me.id).toBe('0xabcd000000000000000000000000000000001234')
     expect(them.id).not.toBe(me.id)
   })
   it('a display name that looks like an address is dropped from the label', async () => {
     const { d, choose } = exch({ accessToken: acctTok('u2', { wallet: '0xabcdef0000000000000000000000000000001234' }), refreshToken: 'r2', user: { id: 'u2', displayName: '0x1111…1111' } })
     await runHandoff({ ...d, storedSession: storedAcct() })
-    expect(choose.mock.calls[0][0].them).toEqual({ id: '0xABcDEf0000000000000000000000000000001234', kind: 'wallet', name: null })
+    expect(choose.mock.calls[0][0].them).toEqual({ id: '0xabcdef0000000000000000000000000000001234', kind: 'wallet', name: null })
   })
 })
 

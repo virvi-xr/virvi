@@ -1,6 +1,5 @@
 import { signinPath } from './landing-route'
 import { safeNextPath } from './next-path'
-import { checksumAddress } from './eth-address'
 import { payloadOf, readSession } from './session'
 
 export interface HandoffDeps {
@@ -16,7 +15,7 @@ export interface HandoffDeps {
 }
 
 /**
- * How the choice names an account. `id` is the proof, shown first and apart from the name: the full EIP-55 wallet
+ * How the choice names an account. `id` is the proof, shown first and apart from the name: the full lowercase wallet (all 40 hex)
  * (a 4+4 short form can be vanity-ground in minutes), else the masked email, else "another Virvi account" (kind 'none').
  * `name` is the sanitized display name, which anyone can set, so it is only ever shown beside an id.
  */
@@ -45,7 +44,7 @@ const maskEmail = (e: string) => {
 function accountLabel(user: unknown, token: string): AccountLabel {
   const u = (user ?? {}) as { displayName?: unknown; email?: unknown }
   const claims = payloadOf(token) ?? {}
-  const wallet = typeof claims.wallet === 'string' ? checksumAddress(claims.wallet) : null
+  const wallet = typeof claims.wallet === 'string' && /^0x[0-9a-f]{40}$/i.test(claims.wallet) ? claims.wallet.toLowerCase() : null
   if (wallet) return { id: wallet, kind: 'wallet', name: sanitizeName(u.displayName) }
   const emailRaw = typeof claims.email === 'string' && claims.email ? claims.email : typeof u.email === 'string' && u.email ? u.email : null
   const email = emailRaw ? maskEmail(emailRaw) : null
