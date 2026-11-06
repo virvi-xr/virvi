@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
   checkoutBody, checkoutHref, checkoutReportsKey, dialogTotal, emoteChecklist, finalizeStrip, formatCents, lineNote, HELD_REPORT_COPY, PRICE_LABEL, REPORT_MAX, reportOk,
@@ -14,8 +15,10 @@ import { STATE_BADGE, emoteName, type EmoteTarget } from './EmotesStep'
  */
 export function EmoteChecklist({ designId, detail, onOpen }: { designId: string; detail: StudioDetail; onOpen: (t: EmoteTarget) => void }) {
   const api = useApi()
+  const { user } = useAuth()
   useEffect(() => {
-    if (detail.pieces.some((p) => p.revision)) api.requestStudioFinalizeRenders(designId).catch(() => {})
+    // finalize-renders is closed to a trial: asking would open an unrequested sign-up sheet
+    if (!user?.trial && detail.pieces.some((p) => p.revision)) api.requestStudioFinalizeRenders(designId).catch(() => {})
   }, [designId, detail.set.revisions]) // eslint-disable-line react-hooks/exhaustive-deps
   const { rows, checkedCount } = emoteChecklist(detail)
   return (

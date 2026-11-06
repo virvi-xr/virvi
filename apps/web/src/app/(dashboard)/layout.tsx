@@ -178,7 +178,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-100" role="status">
             <span>You're trying Virvi. Create an account to save your work</span>
             {user.expiresAt && <span className="text-blue-200/70">Your trial is kept until {new Date(user.expiresAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>}
-            <button type="button" onClick={() => askSignUp('signup')} className="ml-auto font-medium underline underline-offset-2 hover:text-white">Create account</button>
+            <span className="ml-auto flex items-center gap-3">
+              <button type="button" onClick={() => askSignUp('signin', undefined, 'signin')} className="text-blue-200/80 underline underline-offset-2 hover:text-white">Sign in</button>
+              <button type="button" onClick={() => askSignUp('signup')} className="clip-corner bg-accent px-3 py-1 font-semibold text-accent-ink hover:bg-accent-hover">Sign up</button>
+            </span>
           </div>
         )}
         {signedIn && (
