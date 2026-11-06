@@ -236,7 +236,7 @@ export function sceneTriangleWarning(dest: Destination, all: ModelNeed[]): strin
   const budget = dclBudget(dest.parcels.length)
   const triangles = all.reduce((n, m) => n + (m.triangles ?? 0) * m.instances, 0)
   if (triangles <= budget.triangles) return null
-  const unknown = all.filter((m) => m.triangles == null).length
+  const unknown = all.filter((m) => m.triangles == null && m.kind !== 'thumbnail').length
   const note = unknown > 0 ? ` ${unknown} model${unknown === 1 ? ' has' : 's have'} no triangle count yet and counted as 0.` : ''
   return `Your scene has ${plural(triangles, 'triangle')}, more than the ${budget.triangles.toLocaleString('en-US')} Decentraland recommends for your ` +
     `${plural(dest.parcels.length, 'parcel')}. It still deploys, but it may run slowly for visitors.${note}`
@@ -255,7 +255,7 @@ export async function storageProblem(dest: Destination, pending: ModelNeed[]): P
   }
   if (!stats || bytes <= stats.maxAllowedBytes - stats.usedBytes) return null
   const mb = (n: number) => (n / 1_000_000).toFixed(1)
-  return `The new models need ${mb(bytes)} MB of World storage but only ${mb(Math.max(0, stats.maxAllowedBytes - stats.usedBytes))} MB is left.`
+  return `The new files need ${mb(bytes)} MB of World storage but only ${mb(Math.max(0, stats.maxAllowedBytes - stats.usedBytes))} MB is left.`
 }
 
 /**

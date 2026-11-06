@@ -6,13 +6,18 @@
  * and added, and a wizard-made scene on an older runtime gets the current one. Adopted scenes, and any
  * live scene without Virvi's `virvi` block (not made by the wizard), never have their code or metadata touched.
  * An imported scene (assembleImported) is deployed as its built files plus the scene's Virvi models.
+ *
+ * The scene's thumbnail (LIV-88) travels with the models (`kind: 'thumbnail'`, `images/scene-thumbnail-<hash>.<ext>`)
+ * and becomes `display.navmapThumbnail`. The owner's own scenes (adopted or imported) get only that key and the file,
+ * and only while a thumbnail is set in Virvi; removing it takes Virvi's file and key out on the next deploy.
  */
 import { and, count, eq, inArray } from 'drizzle-orm'
-import { DCL_MAX_FILE_BYTES, localModelFile } from '@virvixr/shared'
+import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, localModelFile } from '@virvixr/shared'
 import { config } from '../../config.js'
 import { db } from '../../db/connection.js'
 import { assetLibraryItems, mediaAssets, sceneElementInstances, sceneElements, scenes } from '../../db/schema.js'
 import { assertPublicHttpUrl } from '../../net/public-url.js'
+import { deployedThumbnailFile } from '../../scenes/thumbnail.js'
 import { buildEntity, dclHash, type ContentRef, type SceneMetadata } from './entity.js'
 import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
 import type { LiveEntity } from './worlds-client.js'
@@ -28,6 +33,20 @@ export interface ModelNeed {
   bytes: number | null
   /** Placed instances of every element using this file (the wizard counts triangles per instance). */
   instances: number
+  /** The scene's thumbnail rather than a model (no element, no instances). */
+  kind?: 'thumbnail'
+  /** pendingModels only: the deployed thumbnail at `file` was removed in Virvi; nothing to fetch. */
+  removed?: true
+}
+
+const THUMBNAIL_NAME = 'Scene thumbnail'
+
+/** The scene's thumbnail as a file to deploy, or null when it has none. */
+async function thumbnailInScene(sceneId: string): Promise<ModelNeed | null> {
+  const s = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { thumbnailKey: true, thumbnailUrl: true, thumbnailBytes: true } })
+  const file = deployedThumbnailFile(s?.thumbnailKey)
+  if (!s?.thumbnailUrl || !file) return null
+  return { elementId: '', name: THUMBNAIL_NAME, url: s.thumbnailUrl, file, triangles: null, bytes: s.thumbnailBytes, instances: 0, kind: 'thumbnail' }
 }
 
 export class ModelRefused extends Error {
@@ -63,8 +82,14 @@ export interface Assembled {
   metadata: SceneMetadata
 }
 
-/** The active preset's Virvi-hosted `.glb` model elements, one per deployed file. */
+/** The active preset's Virvi-hosted `.glb` model elements, one per deployed file, then the scene's thumbnail if it has one. */
 export async function modelsInScene(sceneId: string): Promise<ModelNeed[]> {
+  const thumbnail = await thumbnailInScene(sceneId)
+  const models = await modelElements(sceneId)
+  return thumbnail ? [...models, thumbnail] : models
+}
+
+async function modelElements(sceneId: string): Promise<ModelNeed[]> {
   const rows = await db
     .select({ id: sceneElements.id, name: sceneElements.name, properties: sceneElements.properties })
     .from(sceneElements)
@@ -124,10 +149,38 @@ export async function modelsInScene(sceneId: string): Promise<ModelNeed[]> {
   })
 }
 
-/** Models in the scene that the destination does not hold yet. */
+/**
+ * Models (and the thumbnail) in the scene that the destination does not hold yet; plus, when the scene's thumbnail was
+ * removed after it was deployed, an entry with `removed` for the deployed file, so the scene still has a change to deploy.
+ */
 export async function pendingModels(dest: { sceneId: string; deployedFiles: string[] }): Promise<ModelNeed[]> {
   const have = new Set(dest.deployedFiles.map((f) => f.toLowerCase()))
-  return (await modelsInScene(dest.sceneId)).filter((m) => !have.has(m.file.toLowerCase()))
+  const all = await modelsInScene(dest.sceneId)
+  const pending = all.filter((m) => !have.has(m.file.toLowerCase()))
+  if (!all.some((m) => m.kind === 'thumbnail')) {
+    const stale = dest.deployedFiles.find((f) => DEPLOYED_THUMBNAIL_RE.test(f))
+    if (stale) pending.push({ elementId: '', name: `${THUMBNAIL_NAME} (removed)`, url: '', file: stale, triangles: null, bytes: 0, instances: 0, kind: 'thumbnail', removed: true })
+  }
+  return pending
+}
+
+/**
+ * The metadata with display.navmapThumbnail at the deployed thumbnail `file`, or, with none, without a navmapThumbnail
+ * Virvi set (one naming Virvi's thumbnail path); anything else of the owner's stays. Returns the same object when
+ * nothing changes.
+ */
+function withThumbnail(metadata: SceneMetadata, file: string | null): SceneMetadata {
+  const current = metadata.display?.navmapThumbnail
+  if (file) return current === file ? metadata : { ...metadata, display: { ...metadata.display, navmapThumbnail: file } }
+  if (typeof current !== 'string' || !DEPLOYED_THUMBNAIL_RE.test(current)) return metadata
+  const { navmapThumbnail: _gone, ...display } = metadata.display
+  return { ...metadata, display: display as SceneMetadata['display'] }
+}
+
+/** The scene's thumbnail file among `models`, when the deployment holds it (`deployed`, lowercased paths). */
+function deployedThumbnail(models: ModelNeed[], deployed: Set<string>): string | null {
+  const t = models.find((m) => m.kind === 'thumbnail' && !m.removed)
+  return t && deployed.has(t.file.toLowerCase()) ? t.file : null
 }
 
 /** https, and a host that is ours: the CDN or the public API. Throws ModelRefused otherwise. */
@@ -231,9 +284,10 @@ async function fetchModels(models: ModelNeed[], fetcher: ModelFetcher) {
   const refused: Assembled['refused'] = []
   for (const m of models) {
     try {
-      assertVirviHosted(m.url)
+      const what = m.kind === 'thumbnail' ? 'Thumbnail' : 'Model'
+      assertVirviHosted(m.url, what)
       const bytes = await fetcher(m.url)
-      if (bytes.byteLength > DCL_MAX_FILE_BYTES) throw new ModelRefused('Model is over the 50 MB file limit')
+      if (bytes.byteLength > DCL_MAX_FILE_BYTES) throw new ModelRefused(`${what} is over the 50 MB file limit`)
       got.set(m.file, bytes)
       sources.push({ file: m.file, url: m.url })
     } catch (e) {
@@ -287,12 +341,13 @@ export async function assembleFresh(input: {
   fetch?: ModelFetcher
 }): Promise<Assembled> {
   const { got, sources, refused } = await fetchModels(input.models, input.fetch ?? defaultModelFetcher)
+  const metadata = withThumbnail(input.metadata, deployedThumbnail(input.models, new Set([...got.keys()].map((f) => f.toLowerCase()))))
   const newFiles = new Map<string, Uint8Array>(await runtimeFiles())
-  newFiles.set('scene.json', new TextEncoder().encode(JSON.stringify(input.metadata)))
+  newFiles.set('scene.json', new TextEncoder().encode(JSON.stringify(metadata)))
   for (const [file, bytes] of got) newFiles.set(file, bytes)
   return finish({
-    pointers: input.metadata.scene.parcels,
-    metadata: input.metadata,
+    pointers: metadata.scene.parcels,
+    metadata,
     existing: [],
     newFiles,
     timestamp: input.timestamp,
@@ -358,6 +413,13 @@ export async function assembleRedeploy(input: {
   }
   const renamed = !input.adopted && !!input.title && input.title !== metadata.display?.title
   if (renamed) metadata = { ...metadata, display: { ...metadata.display, title: input.title! } }
+  // The thumbnail: every Virvi thumbnail file but the current one goes, and navmapThumbnail follows what's deployed
+  const thumbFile = input.models.find((m) => m.kind === 'thumbnail' && !m.removed)?.file.toLowerCase()
+  const kept = existing.filter((c) => !DEPLOYED_THUMBNAIL_RE.test(c.file) || c.file.toLowerCase() === thumbFile)
+  const droppedThumbnail = kept.length !== existing.length
+  existing = kept
+  const before = metadata
+  metadata = withThumbnail(metadata, deployedThumbnail(input.models, new Set([...existing.map((c) => c.file), ...got.keys()].map((f) => f.toLowerCase()))))
   return finish({
     pointers: live.pointers,
     metadata,
@@ -368,7 +430,7 @@ export async function assembleRedeploy(input: {
     sources,
     refused,
     models: input.models,
-    changed: got.size > 0 || upgrade || renamed,
+    changed: got.size > 0 || upgrade || renamed || droppedThumbnail || metadata !== before,
   })
 }
 
@@ -396,9 +458,12 @@ export async function assembleImported(input: {
   const { got, sources, refused } = await fetchModels(models, input.fetch ?? defaultModelFetcher)
   const newFiles = new Map(input.files)
   for (const [file, bytes] of got) newFiles.set(file, bytes)
+  // The owner's scene.json changes only when a thumbnail set in Virvi deploys with it: then only navmapThumbnail
+  const thumb = deployedThumbnail(models, new Set([...got.keys()].map((f) => f.toLowerCase())))
+  const metadata = thumb ? withThumbnail(input.metadata, thumb) : input.metadata
   const a = await finish({
-    pointers: input.pointers ?? input.metadata.scene.parcels,
-    metadata: input.metadata,
+    pointers: input.pointers ?? metadata.scene.parcels,
+    metadata,
     existing: [],
     newFiles,
     timestamp: input.timestamp,

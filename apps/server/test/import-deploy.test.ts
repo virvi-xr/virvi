@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm'
 import { zipSync } from 'fflate'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { analyticsScenes, assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneImports } from '../src/db/schema.js'
+import { analyticsScenes, assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../src/db/schema.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { chainSigner, dclHash, virviSigner } from '../src/services/dcl/entity.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
@@ -866,6 +866,52 @@ describe('deploying an imported build', () => {
       expect([r.statusCode, r.json().error]).toEqual([413, 'world_storage_full'])
     })
   })
+  describe('scene thumbnail (LIV-88)', () => {
+    const THUMB = 'images/scene-thumbnail-0123456789abcdef.png'
+    async function withThumbnail(sceneId: string) {
+      const key = `scenes/${sceneId}/thumbnail-0123456789abcdef.png`
+      await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 900_000 }).where(eq(scenes.id, sceneId))
+    }
+
+    it("the deployed scene.json gets only display.navmapThumbnail, and the image is in the deployment", async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      await withThumbnail(scene.id)
+      await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      const e = entityOf()
+      expect(e.metadata).toEqual({ ...JSON.parse(sceneJson()), display: { title: 'Owner Title', navmapThumbnail: THUMB } })
+      expect(e.content.map((c) => c.file)).toContain(THUMB)
+    })
+
+    it('without a thumbnail in Virvi the scene.json is deployed as built', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      expect(entityOf().metadata).toEqual(JSON.parse(sceneJson()))
+    })
+
+    it('counts towards the file budget and the World storage before deploying', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      await withThumbnail(scene.id)
+      const extra: Record<string, Uint8Array> = {}
+      for (let i = 0; i < 196; i++) extra[`assets/f${i}.txt`] = enc(`f${i}`)
+      const crowded = await built({ sceneId: scene.id, files: builtFiles(extra, ['0,0']) })
+      await grantedDest(scene.id, { parcels: ['0,0'] })
+      await expect(deployImport(crowded.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'scene_too_big' })
+
+      await db.delete(dclWorldDestinations)
+      const small = await built({ sceneId: scene.id })
+      const builtBytes = [...builtFiles().values()].reduce((n, b) => n + b.byteLength, 0)
+      worlds.stats.set(user.wallet!, { maxAllowedBytes: builtBytes + 500_000, usedBytes: 0 })
+      await grantedDest(scene.id)
+      await expect(deployImport(small.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'world_storage_full' })
+    })
+  })
+
   it("a re-upload of a scene using more than half the World's storage is not refused: the scene it replaces is credited", async () => {
     const { scene } = await createScene(user, 'Cafe')
     await grantedDest(scene.id)
