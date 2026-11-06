@@ -8,7 +8,7 @@ import { authenticate } from '../middleware/auth.js'
 import { STUDIO_ROUTE_SCENE_PASS } from '../auth/scene-from.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
-import { verifyRenderFrame, framePath } from '../studio/render-urls.js'
+import { verifyRenderFrame, framePath, framePngPath } from '../studio/render-urls.js'
 import { isVirviAdmin, quoteFinalize, QuoteError } from '../studio/pricing.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
@@ -552,8 +552,15 @@ export default async function studioRoutes(app: FastifyInstance) {
 
   // The signed token is the authority: no bearer. Every check failing is the same 403. A wildcard, not :token, because
   // tokens pass Fastify's 100-character parameter limit.
-  // One view is 36 frames: a page loads hundreds a minute, so frames get their own, higher limit
-  app.get('/api/studio/render-frames/*', { preHandler: studioOn, schema: { hide: true }, config: { rateLimit: { max: 3000, timeWindow: '1 minute' } } }, async (request, reply) => {
+  // One view is 36 frames: a page loads hundreds a minute, so frames get their own, higher limit. PNG requests (which
+  // may convert) count in their own, lower bucket.
+  const wantsPng = (request: FastifyRequest) => (request.query as { fmt?: string } | undefined)?.fmt === 'png'
+  const frameLimit = {
+    timeWindow: '1 minute',
+    max: async (request: FastifyRequest) => (wantsPng(request) ? 600 : 3000),
+    keyGenerator: (request: FastifyRequest) => `${request.ip}${wantsPng(request) ? ':png' : ''}`,
+  }
+  app.get('/api/studio/render-frames/*', { preHandler: studioOn, schema: { hide: true }, config: { rateLimit: frameLimit } }, async (request, reply) => {
     const f = verifyRenderFrame((request.params as { '*': string })['*'], new Date())
     const forbidden = () => reply.status(403).send({ error: 'forbidden' })
     if (!f || !UUID.test(f.jobId) || !UUID.test(f.designId) || !UUID.test(f.revisionId)) return forbidden()
@@ -568,13 +575,23 @@ export default async function studioRoutes(app: FastifyInstance) {
       : await db.select({ frames: studioRenders.frames }).from(studioRenders)
         .where(and(eq(studioRenders.revisionId, f.revisionId), eq(studioRenders.viewKey, f.viewKey), eq(studioRenders.jobId, f.jobId), eq(studioRenders.status, 'ready')))
     if (!render || f.frame >= render.frames) return forbidden()
-    const obj = await getStudioStore().get(jobFileKey(f.designId, f.jobId, framePath(f)))
-    if (!obj) return reply.status(404).send({ error: 'frame_not_found' })
-    // ?fmt=png for clients that can't show WebP (Decentraland scenes). Only the encoding changes; the token is still the authority.
-    if ((request.query as { fmt?: string }).fmt === 'png') {
-      const png = await sharp(obj.body).png().toBuffer()
+    const store = getStudioStore()
+    // ?fmt=png for clients that can't show WebP (Decentraland scenes). Only the encoding changes; the token is still the
+    // authority. The first request converts and stores the PNG beside the WebP; later ones read it.
+    if (wantsPng(request)) {
+      const pngKey = jobFileKey(f.designId, f.jobId, framePngPath(f))
+      const stored = await store.get(pngKey)
+      let png = stored?.body
+      if (!png) {
+        const obj = await store.get(jobFileKey(f.designId, f.jobId, framePath(f)))
+        if (!obj) return reply.status(404).send({ error: 'frame_not_found' })
+        png = await sharp(obj.body).png().toBuffer()
+        await store.put(pngKey, png, 'image/png').catch((err: unknown) => request.log.warn({ err }, 'studio: could not store a PNG frame'))
+      }
       return reply.type('image/png').header('Cache-Control', 'private, max-age=3600').send(png)
     }
+    const obj = await store.get(jobFileKey(f.designId, f.jobId, framePath(f)))
+    if (!obj) return reply.status(404).send({ error: 'frame_not_found' })
     return reply.type('image/webp').header('Cache-Control', 'private, max-age=3600').send(obj.body)
   })
 }

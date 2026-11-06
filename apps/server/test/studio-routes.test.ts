@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import sharp from 'sharp'
+
+// sharp passes through, so a test can count the server's conversions
+vi.mock('sharp', async (importOriginal) => {
+  const real = (await importOriginal<{ default: (...a: unknown[]) => unknown }>()).default
+  return { default: vi.fn((...a: unknown[]) => real(...a)) }
+})
 import { db } from '../src/db/connection.js'
 import { studioDesigns, studioJobs, studioMessages, studioPieces, studioPromptCredits, studioRenders, studioRevisions } from '../src/db/schema.js'
 import { config } from '../src/config.js'
@@ -435,6 +441,62 @@ describe('studio dashboard routes', () => {
     const edited = Buffer.from(JSON.stringify({ ...claims, f: 2 })).toString('base64url') + '.' + sig
     expect((await app.inject({ method: 'GET', url: `${S}/render-frames/${edited}?fmt=png` })).statusCode).toBe(403)
     expect((await app.inject({ method: 'GET', url: `${S}/render-frames/garbage?fmt=png` })).statusCode).toBe(403)
+  })
+
+  it('a PNG frame is converted once, stored beside the WebP, and served from the store after that', async () => {
+    const u = await createUser()
+    const { design, jobId } = await builtHat(u)
+    const detail = (await app.inject({ method: 'GET', url: `${S}/designs/${design.id}`, headers: as(u) })).json()
+    const path = new URL(detail.pieces[0].renders['spin-male-default'].urls[0]).pathname
+    const webp = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#0f0' } }).webp().toBuffer()
+    await store.put(jobFileKey(design.id, jobId, 'renders/hat/spin-male-default/000.webp'), webp, 'image/webp')
+    const pngKey = jobFileKey(design.id, jobId, 'renders/hat/spin-male-default/000.png')
+
+    const calls = () => vi.mocked(sharp).mock.calls.length
+    const before = calls()
+    const first = await app.inject({ method: 'GET', url: `${path}?fmt=png` })
+    expect(first.statusCode, first.body).toBe(200)
+    expect(calls()).toBe(before + 1)
+    const cached = await store.get(pngKey)
+    expect(cached?.body.equals(first.rawPayload)).toBe(true)
+
+    const second = await app.inject({ method: 'GET', url: `${path}?fmt=png` })
+    expect(second.statusCode).toBe(200)
+    expect(second.headers['content-type']).toBe('image/png')
+    expect(second.rawPayload.equals(first.rawPayload)).toBe(true)
+    expect(calls()).toBe(before + 1)
+
+    // The token is still the authority: a stored PNG is never served on a bad token
+    const token = path.split('/').pop()!
+    const [body, sig] = token.split('.')
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString())
+    const edited = Buffer.from(JSON.stringify({ ...claims, f: 2 })).toString('base64url') + '.' + sig
+    expect((await app.inject({ method: 'GET', url: `${S}/render-frames/${edited}?fmt=png` })).statusCode).toBe(403)
+    const expired = signRenderFrame({ designId: design.id, revisionId: claims.r, viewKey: 'spin-male-default', category: 'hat', frame: 0, jobId }, new Date(Date.now() - 1000))
+    expect((await app.inject({ method: 'GET', url: `${new URL(expired).pathname}?fmt=png` })).statusCode).toBe(403)
+  })
+
+  it('PNG frames have their own, lower rate limit than plain frames', async () => {
+    const limited = await buildApp({ rateLimit: true, logger: false, backfill: false })
+    await limited.ready()
+    try {
+      const u = await createUser()
+      const { design, jobId } = await builtHat(u)
+      const detail = (await app.inject({ method: 'GET', url: `${S}/designs/${design.id}`, headers: as(u) })).json()
+      const path = new URL(detail.pieces[0].renders['spin-male-default'].urls[0]).pathname
+      const webp = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#00f' } }).webp().toBuffer()
+      await store.put(jobFileKey(design.id, jobId, 'renders/hat/spin-male-default/000.webp'), webp, 'image/webp')
+      const png = await limited.inject({ method: 'GET', url: `${path}?fmt=png` })
+      expect(png.statusCode).toBe(200)
+      expect(png.headers['x-ratelimit-limit']).toBe('600')
+      expect(png.headers['x-ratelimit-remaining']).toBe('599')
+      const plain = await limited.inject({ method: 'GET', url: path })
+      expect(plain.statusCode).toBe(200)
+      expect(plain.headers['x-ratelimit-limit']).toBe('3000')
+      expect(plain.headers['x-ratelimit-remaining']).toBe('2999')
+    } finally {
+      await limited.close()
+    }
   })
 
   it('frame urls stay the same between reads, and a page can load many views', async () => {
