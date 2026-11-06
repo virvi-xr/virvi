@@ -7,7 +7,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { BrandMark } from '@/components/BrandMark'
 
 function SignIn() {
-  const { user, loading, scenePass, login, register, loginWithWallet } = useAuth()
+  const { user, loading, scenePass, login, register, loginWithWallet, oauthUrl } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
   const dest = safeNextPath(searchParams.get('next')) ?? '/scenes'
@@ -50,6 +50,20 @@ function SignIn() {
     } catch (err: any) {
       setError(err.message)
     } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // From a trial, the provider link carries a claim ticket so the trial's designs move into the account
+  const handleOAuth = async (provider: 'google' | 'discord') => {
+    setError('')
+    setSubmitting(true)
+    try {
+      const url = await oauthUrl(provider)
+      rememberNext()
+      window.location.href = url
+    } catch (err: any) {
+      setError(err?.message || 'Something went wrong')
       setSubmitting(false)
     }
   }
@@ -117,16 +131,16 @@ function SignIn() {
                 </button>
               )}
               {providers.google && (
-                <a href={`${API_URL}/api/auth/google`} onClick={rememberNext}
-                  className="block w-full rounded-lg bg-white py-2 text-center font-medium text-gray-900 hover:bg-gray-100">
+                <button type="button" onClick={() => handleOAuth('google')} disabled={submitting}
+                  className="block w-full rounded-lg bg-white py-2 text-center font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-50">
                   Continue with Google
-                </a>
+                </button>
               )}
               {providers.discord && (
-                <a href={`${API_URL}/api/auth/discord`} onClick={rememberNext}
-                  className="block w-full rounded-lg bg-[#5865F2] py-2 text-center font-medium text-white hover:bg-[#4752C4]">
+                <button type="button" onClick={() => handleOAuth('discord')} disabled={submitting}
+                  className="block w-full rounded-lg bg-[#5865F2] py-2 text-center font-medium text-white hover:bg-[#4752C4] disabled:opacity-50">
                   Continue with Discord
-                </a>
+                </button>
               )}
             </div>
           </>
