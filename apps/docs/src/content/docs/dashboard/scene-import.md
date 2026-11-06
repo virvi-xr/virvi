@@ -15,7 +15,11 @@ What `scene.json` says decides the destination:
 - **Genesis City:** a scene with parcels deploys to those parcels.
 
 ## Thumbnail
-A thumbnail set on the scene in Virvi (**Settings** on the scene's page) is added to the deployment, and the deployed `scene.json` gets `display.navmapThumbnail` pointing at it; nothing else in it changes. If your `scene.json` had a `navmapThumbnail` of its own, Virvi's replaces it. With no thumbnail set in Virvi, your `scene.json` is deployed as built. The image counts towards the scene's file and storage limits.
+Importing a World scene takes its own thumbnail, `display.navmapThumbnail` in `scene.json`, as the Virvi scene's thumbnail: it shows on your Scenes list straight away. It can be a file in the scene (a path like `images/thumbnail.png`) or an `https://` link, which Virvi downloads (public addresses only, at most 2 MB). It must be a PNG, JPEG or WebP of at least 64 × 64 px; it is kept in its own shape, never cropped, scaled down only to fit 1920 × 1920, and counts towards your storage. A thumbnail that is missing, isn't an image, points outside the scene folder, can't be downloaded or would go over your storage limit is skipped, and the import page says why; the import itself carries on. The import page shows the thumbnail it picked up with **Replace**, which opens the thumbnail upload. Genesis City parcel imports don't take a thumbnail yet.
+
+Uploading again replaces a thumbnail that came from an earlier import, but never one you uploaded in Virvi. A thumbnail taken from your `scene.json` isn't added to the deployment: your scene already has it, and deploys as built.
+
+A thumbnail you upload in Virvi (**Settings** on the scene's page, or **Replace** on the import page) is added to the deployment, and the deployed `scene.json` gets `display.navmapThumbnail` pointing at it; nothing else in it changes. If your `scene.json` had a `navmapThumbnail` of its own, Virvi's replaces it. The image counts towards the scene's file and storage limits.
 
 Removing the thumbnail in Virvi takes it out on the next deploy, and leaves the scene with no thumbnail: your own `navmapThumbnail` comes back only the next time you deploy an upload. A World built outside Virvi and connected to a scene (not uploaded) works the same way, except that Virvi never redeploys your own scene.json, so its thumbnail doesn't come back until you deploy it yourself.
 

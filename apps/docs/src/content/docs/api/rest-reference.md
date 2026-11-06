@@ -23,7 +23,7 @@ Requests for another account's scenes, deployments, events, giveaways, streams o
 | GET | `/scenes` | Yes | List user's scenes |
 | POST | `/scenes` | Yes | Create scene |
 | GET | `/scenes/:id` | Yes | Get scene with presets + elements |
-| PUT | `/scenes/:sceneId/thumbnail` | Yes | Set the scene's thumbnail: `{ fileData }` (base64). A 16:9 PNG, JPEG or WebP (checked by its bytes), at most 2 MB and at least 960 × 540 px; larger images are scaled to 1920 × 1080 and WebP is stored as JPEG (PNG with transparency). Counts towards the scene owner's storage; replacing deletes the old file. Needs edit access (host, co-host or editor). Returns `{ scene }`. Errors: `400 wrong_shape` / `too_small` / `missing_file`, `413 too_large`, `415 unsupported_type`, `403 storage_limit_reached`, `403`, `404` |
+| PUT | `/scenes/:sceneId/thumbnail` | Yes | Set the scene's thumbnail: `{ fileData }` (base64). A 16:9 PNG, JPEG or WebP (checked by its bytes), at most 2 MB and at least 960 × 540 px; larger images are scaled to 1920 × 1080 and WebP is stored as JPEG (PNG with transparency). Counts towards the scene owner's storage; replacing deletes the old file. Needs edit access (host, co-host or editor). The scene's `thumbnailSource` becomes `upload` (an imported scene's own is `import`, and isn't deployed by Virvi). Returns `{ scene }`. Errors: `400 wrong_shape` / `too_small` / `missing_file`, `413 too_large`, `415 unsupported_type`, `403 storage_limit_reached`, `403`, `404` |
 | DELETE | `/scenes/:sceneId/thumbnail` | Yes | Remove the scene's thumbnail and its file. Returns `{ scene }` |
 | PUT | `/elements/:id` | Yes | Update element |
 | POST | `/scenes/:sceneId/presets` | Yes | Create a preset: `{ name, fromPresetId? }` (blank, or a copy) |
