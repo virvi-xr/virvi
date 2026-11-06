@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { CubeIcon, PaperclipIcon, XSmallIcon } from '@/components/icons'
+import { accountRequired } from '@/lib/trial'
 import { formatBytesShort, refusalMessage, uploadHint, uploadProblem, UPLOAD_ACCEPT, type StudioUpload } from '@/lib/studio'
 
 type Props = { designId: string; kind: string; uploads: StudioUpload[]; disabled: boolean; dropped: File[] | null; onChanged: () => Promise<void> }
@@ -25,7 +26,10 @@ export default function Uploads({ designId, kind, uploads, disabled, dropped, on
       try {
         await api.uploadStudioFile(designId, file)
       } catch (err) {
-        setError(`${file.name}: ${refusalMessage(err as never, new Date()).text}`)
+        const why = refusalMessage(err as never, new Date()).text
+        // A trial that closed the sign-up sheet: say so once and stop, instead of asking again for every file
+        if (accountRequired(err)) { setError(why); break }
+        setError(`${file.name}: ${why}`)
       } finally {
         setSending((s) => s.filter((n) => n !== file.name))
       }

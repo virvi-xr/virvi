@@ -861,11 +861,26 @@ export function useApi() {
     retryStudioPackage: (id: string, category: string, n: number, signUpCtx?: BlockedCtx) =>
       apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/package/retry`, { method: 'POST', signUpCtx }),
     /** A file for the agent: the body is the file itself (the server reads its contents to tell its type). */
-    uploadStudioFile: async (id: string, file: File): Promise<StudioUpload> => {
-      const res = await fetch(`${API_URL}/api/studio/designs/${id}/uploads?name=${encodeURIComponent(file.name)}`, {
-        method: 'POST', body: file, headers: { ...requestHeaders(token, {}), 'Content-Type': 'application/octet-stream' },
-      })
-      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    uploadStudioFile: async (id: string, file: File, signUpCtx?: BlockedCtx): Promise<StudioUpload> => {
+      const send = async (bearer: string | null) => {
+        const res = await fetch(`${API_URL}/api/studio/designs/${id}/uploads?name=${encodeURIComponent(file.name)}`, {
+          method: 'POST', body: file, headers: { ...requestHeaders(bearer, {}), 'Content-Type': 'application/octet-stream' },
+        })
+        return { res, body: await res.json().catch(() => ({ error: `HTTP ${res.status}` })) }
+      }
+      let { res, body } = await send(token)
+      // The access token ran out: renew it (or follow a trial converted in another tab) and send once more
+      if (res.status === 401 && token) {
+        const fresh = body.error === 'trial_ended' ? swapToStoredAccount(token) : await renew()
+        if (fresh) ({ res, body } = await send(fresh))
+      }
+      // A trial at its upload limit: ask for a sign-up in the page, then upload once more with the new session
+      const blocked = !res.ok && user?.trial ? accountRequired({ status: res.status, body }) : null
+      if (blocked) {
+        let fresh: string | null = null
+        try { fresh = await openSignUp({ action: blocked.action, ctx: signUpCtx ?? {} }) } catch {}
+        if (fresh) ({ res, body } = await send(fresh))
+      }
       if (!res.ok) {
         dropDeadSession(res.status, body)
         throw Object.assign(new Error(body.error || `API error ${res.status}`), { status: res.status, body })
@@ -885,5 +900,5 @@ export function useApi() {
     /** Every piece's newest ready package in one zip ("Download all"), through the same kind of authenticated route. */
     downloadStudioPackages: (id: string, signUpCtx?: BlockedCtx): Promise<{ blob: Blob; filename: string }> =>
       downloadBlob(`/api/studio/designs/${id}/packages`, 'design.zip', signUpCtx),
-  }), [apiFetch, downloadBlob, token, dropDeadSession])
+  }), [apiFetch, downloadBlob, token, user?.trial, dropDeadSession, renew, swapToStoredAccount])
 }
