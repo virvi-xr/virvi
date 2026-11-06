@@ -54,7 +54,7 @@ function SignIn() {
     }
   }
 
-  // From a trial, the provider link carries a claim ticket so the trial's designs move into the account
+  // From a trial, this tab keeps the trial so the callback page moves its designs into the account
   const handleOAuth = async (provider: 'google' | 'discord') => {
     setError('')
     setSubmitting(true)

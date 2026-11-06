@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
+import { stashTrialHandover, takeTrialHandover, trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
 
 describe('accountRequired', () => {
   it('reads the action from an account_required refusal', () => {
@@ -143,5 +143,33 @@ describe('trialStartMessage', () => {
     for (const code of ['HTTP 500', 'weird_code', '', undefined]) {
       expect(trialStartMessage(code)).toBe("Something went wrong starting your trial. Try again in a moment.")
     }
+  })
+})
+
+describe('trial hand-over through Google or Discord', () => {
+  const mem = () => {
+    const m = new Map<string, string>()
+    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k), m }
+  }
+  it('keeps the trial refresh token (or the access token) and the action for the callback page, once', () => {
+    const s = mem()
+    stashTrialHandover(s, { token: 'acc', refresh: 'ref', user: { trial: true } }, 'more_prompts')
+    expect(takeTrialHandover(s)).toEqual({ trialToken: 'ref', fromAction: 'more_prompts' })
+    expect(takeTrialHandover(s)).toBeNull()
+    stashTrialHandover(s, { token: 'acc', user: { trial: true } })
+    expect(takeTrialHandover(s)).toEqual({ trialToken: 'acc' })
+  })
+  it('keeps nothing for an account or no session, and clears an old hand-over', () => {
+    const s = mem()
+    stashTrialHandover(s, { token: 'acc', refresh: 'ref', user: { trial: true } })
+    stashTrialHandover(s, { token: 'acc', refresh: 'ref', user: { trial: false } })
+    expect(takeTrialHandover(s)).toBeNull()
+    stashTrialHandover(s, null)
+    expect(takeTrialHandover(s)).toBeNull()
+  })
+  it('ignores a damaged entry', () => {
+    const s = mem()
+    s.setItem('virvi.trialHandover', '{nope')
+    expect(takeTrialHandover(s)).toBeNull()
   })
 })

@@ -2,7 +2,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
-import { deviceId, renewedTrialBearer, trialBearerStale, trialEndedOutcome } from './trial'
+import { deviceId, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome } from './trial'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -27,7 +27,7 @@ interface AuthState {
   loginWithWallet: (fromAction?: string) => Promise<string>
   /** Starts a trial session (a signed-out visitor trying the Design Studio). */
   startTrial: (turnstileToken: string) => Promise<void>
-  /** The URL for Google or Discord sign-in; from a trial it first fetches a claim ticket so the trial moves into the account. */
+  /** The URL for Google or Discord sign-in; from a trial it keeps the trial in this tab for the callback page to move in. */
   oauthUrl: (provider: 'google' | 'discord', fromAction?: string) => Promise<string>
   logout: () => void
   /** Swaps the stored refresh token for a new access token: the new token, or null (signed out when refused). */
@@ -185,12 +185,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const oauthUrl = async (provider: 'google' | 'discord', fromAction?: string) => {
-    const base = `${API_URL}/api/auth/${provider}`
-    if (!user?.trial) return base
-    const res = await post('/api/auth/trial/claim', { fromAction })
-    if (!res.ok) throw new Error(await errorMessage(res, 'Could not start sign-in'))
-    const { ticket } = await res.json()
-    return `${base}?claim=${encodeURIComponent(ticket)}`
+    // From a trial, this tab keeps the trial's token; the callback page moves the trial into the account
+    try { stashTrialHandover(sessionStorage, user?.trial ? readStoredAuth(localStorage) : null, fromAction) } catch {}
+    return `${API_URL}/api/auth/${provider}`
   }
 
   const logout = useCallback(() => {

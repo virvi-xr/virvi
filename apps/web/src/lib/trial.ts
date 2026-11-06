@@ -145,3 +145,30 @@ function settle(): typeof pending {
 
 export function resolveSignUp(token: string): void { settle()?.resolve(token) }
 export function dismissSignUp(): void { settle()?.reject(new Error('closed')) }
+
+const HANDOVER_KEY = 'virvi.trialHandover'
+type KV = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+/**
+ * Before leaving for Google or Discord from a trial: keep the trial's token in this tab (sessionStorage) so the callback
+ * page can move the trial into the account. Nothing travels through the provider, so a crafted sign-in link can't hand
+ * someone else's trial to a victim.
+ */
+export function stashTrialHandover(storage: KV, stored: { token: string; refresh?: string | null; user: unknown } | null, fromAction?: string): void {
+  storage.removeItem(HANDOVER_KEY)
+  if (!stored || !(stored.user as { trial?: boolean } | null)?.trial) return
+  storage.setItem(HANDOVER_KEY, JSON.stringify({ trialToken: stored.refresh || stored.token, ...(fromAction ? { fromAction } : {}) }))
+}
+
+/** The hand-over kept by `stashTrialHandover`, once (it is removed), or null. */
+export function takeTrialHandover(storage: KV): { trialToken: string; fromAction?: string } | null {
+  const raw = storage.getItem(HANDOVER_KEY)
+  storage.removeItem(HANDOVER_KEY)
+  if (!raw) return null
+  try {
+    const v = JSON.parse(raw)
+    return typeof v?.trialToken === 'string' ? v : null
+  } catch {
+    return null
+  }
+}

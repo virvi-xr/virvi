@@ -1,6 +1,8 @@
 'use client'
 import { useSearchParams } from 'next/navigation'
 import { safeNextPath } from '@/lib/next-path'
+import { API_URL } from '@/lib/config'
+import { takeTrialHandover } from '@/lib/trial'
 import { useEffect, useState, Suspense } from 'react'
 
 function CallbackHandler() {
@@ -31,11 +33,21 @@ function CallbackHandler() {
       )
 
       let dest = '/scenes'
+      let handover: ReturnType<typeof takeTrialHandover> = null
       try {
         dest = safeNextPath(sessionStorage.getItem('vlm_next')) ?? '/scenes'
         sessionStorage.removeItem('vlm_next')
+        handover = takeTrialHandover(sessionStorage)
       } catch {}
-      window.location.href = dest
+      // Started from a trial in this tab: move the trial's designs into the account before going on
+      const moved = handover
+        ? fetch(`${API_URL}/api/auth/trial/adopt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(handover),
+          }).catch(() => null)
+        : Promise.resolve(null)
+      moved.finally(() => { window.location.href = dest })
     } catch {
       setError('Invalid authentication token. Please try signing in again.')
     }
