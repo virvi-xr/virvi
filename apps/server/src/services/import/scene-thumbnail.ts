@@ -44,8 +44,22 @@ const MB = (n: number) => `${Math.round(n / (1024 * 1024))} MB`
 const SCHEME = /^[a-z][a-z0-9+.-]+:/i
 const defaultAgent = guardedAgent()
 
-/** The https URL, checked to be public (every address it resolves to). Throws ThumbnailUnusable. */
-async function publicHttps(raw: string, lookup?: Lookup): Promise<URL> {
+const TOO_SLOW = 'its link took too long to answer'
+
+/** `p`, or a rejection once `signal` aborts: dns.lookup (and a stand-in) ignores the signal, so it is raced instead. */
+function bounded<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    p.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+  })
+}
+
+/**
+ * The https URL, checked to be public (every address it resolves to) before `signal` aborts. Throws ThumbnailUnusable.
+ */
+async function publicHttps(raw: string, signal: AbortSignal, lookup?: Lookup): Promise<URL> {
   let u: URL
   try {
     u = new URL(raw)
@@ -54,9 +68,9 @@ async function publicHttps(raw: string, lookup?: Lookup): Promise<URL> {
   }
   if (u.protocol !== 'https:') throw new ThumbnailUnusable('its link must be https')
   try {
-    await assertPublicHttpUrl(u.href, { lookup })
+    await bounded(assertPublicHttpUrl(u.href, { lookup }), signal)
   } catch {
-    throw new ThumbnailUnusable('its link is not a public address')
+    throw new ThumbnailUnusable(signal.aborted ? TOO_SLOW : 'its link is not a public address')
   }
   return u
 }
@@ -64,7 +78,7 @@ async function publicHttps(raw: string, lookup?: Lookup): Promise<URL> {
 /**
  * Downloads a thumbnail from a public https link: every hop (at most 3 redirects, each https) checked to be public, the
  * connection itself refused for a private address, at most `maxBytes` (2 MB) whatever content-length says, within
- * `timeoutMs` (10 s) in all. Throws ThumbnailUnusable.
+ * `timeoutMs` (10 s) in all, DNS lookups included. Throws ThumbnailUnusable.
  */
 export async function downloadThumbnail(url: string, opts: DownloadOptions = {}): Promise<Buffer> {
   const maxBytes = opts.maxBytes ?? SCENE_THUMBNAIL_MAX_BYTES
@@ -73,13 +87,13 @@ export async function downloadThumbnail(url: string, opts: DownloadOptions = {})
   const fetchImpl: FetchLike = opts.fetchImpl ?? (undiciFetch as unknown as FetchLike)
   const dispatcher = opts.lookup ? guardedAgent(opts.lookup) : defaultAgent
   try {
-    let target = await publicHttps(url, opts.lookup)
+    let target = await publicHttps(url, signal, opts.lookup)
     for (let hop = 0; ; hop++) {
       const res = await fetchImpl(target.href, { redirect: 'manual', signal, dispatcher })
       if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
         await res.body?.cancel().catch(() => {})
         if (hop >= MAX_REDIRECTS) throw new ThumbnailUnusable('its link has too many redirects')
-        target = await publicHttps(new URL(res.headers.get('location')!, target).href, opts.lookup)
+        target = await publicHttps(new URL(res.headers.get('location')!, target).href, signal, opts.lookup)
         continue
       }
       if (!res.ok) {
@@ -109,7 +123,7 @@ export async function downloadThumbnail(url: string, opts: DownloadOptions = {})
     }
   } catch (err) {
     if (err instanceof ThumbnailUnusable) throw err
-    if (signal.aborted) throw new ThumbnailUnusable('its link took too long to answer')
+    if (signal.aborted) throw new ThumbnailUnusable(TOO_SLOW)
     throw new ThumbnailUnusable("it couldn't be downloaded")
   }
 }

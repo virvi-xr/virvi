@@ -122,6 +122,20 @@ describe('downloadThumbnail', () => {
     expect(await reason(downloadThumbnail('https://cdn.example.com/t.png', { fetchImpl: hang, lookup: publicLookup, timeoutMs: 50 }))).toMatch(/took too long/)
   })
 
+  it('gives up after its timeout while the DNS lookup never answers, for the link and for a redirect (LIV-133)', async () => {
+    const never = vi.fn(() => new Promise<string[]>(() => {}))
+    const fetchImpl = answering(PNG)
+    const started = Date.now()
+    expect(await reason(downloadThumbnail('https://cdn.example.com/t.png', { fetchImpl, lookup: never, timeoutMs: 50 }))).toMatch(/took too long/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+
+    // The first host resolves; the one it redirects to never does
+    const redirect = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'https://second.example.com/t.png' } }))
+    const lookup = vi.fn((host: string) => (host === 'second.example.com' ? new Promise<string[]>(() => {}) : publicLookup()))
+    expect(await reason(downloadThumbnail('https://first.example.com/t.png', { fetchImpl: redirect, lookup, timeoutMs: 50 }))).toMatch(/took too long/)
+    expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
   it('follows a redirect only to another public https address', async () => {
     const hops = vi.fn(async (url: unknown) => String(url).includes('first')
       ? new Response(null, { status: 302, headers: { location: 'https://second.example.com/t.png' } })
