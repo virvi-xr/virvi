@@ -49,3 +49,23 @@ Uploads appear in the Media Library straight away, newest first, with a status:
 - **✕ Failed:** the reason is shown, for example when a file is too big. Press **Dismiss** to clear it.
 
 Images can be up to 10 MB and models up to 50 MB. An editor's uploads count against the scene owner's storage. iPhone HEIC photos are usually converted to JPEG automatically; if one isn't, choose a JPEG or PNG instead.
+
+## Streams, screens and showings
+
+The Stream panel lists the live preset's video screens. For each one, editors can:
+
+- **Choose stream:** pick one of the scene's streams, labelled "Main Stage (live)" or "Editor Cam (offline, yours)".
+- **Turn live on / off.**
+- **Change** the off image, the picture shown when the screen has nothing to play. It lists the Media Library's ready images (up to 8); **No off image** clears it.
+- **Showings** (screens in Schedule mode): the screen's showings with **End now**, **Play now** and **Delay 5 min**. See [Scheduled Showings](/dashboard/scheduled-showings/).
+
+The Hyperfy HUD's Streams panel, the Quest's builder Stream tab and the Vision Pro's Stream tab have the same stream, live and off-image controls. The Quest's Stream tab is on personal headsets only.
+
+## Clearing copies
+
+In the Layout panel, an item with copies shows how many (×3) and a **Clear** button. Clear asks first, then removes every copy in one step. The item stays, ready to place again.
+
+## Click actions
+
+From `@virvixr/dcl` 2.11.0, the Layout panel's **Click** button sets what clicking an image, model or screen does. See [Click Actions](/dashboard/click-actions/).
+
