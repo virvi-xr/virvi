@@ -8,8 +8,9 @@
  * An imported scene (assembleImported) is deployed as its built files plus the scene's Virvi models.
  *
  * The scene's thumbnail (LIV-88) travels with the models (`kind: 'thumbnail'`, `images/scene-thumbnail-<hash>.<ext>`)
- * and becomes `display.navmapThumbnail`. The owner's own scenes (adopted or imported) get only that key and the file,
- * and only while a thumbnail is set in Virvi; removing it takes Virvi's file and key out on the next deploy.
+ * and becomes `display.navmapThumbnail`. The owner's own scenes (adopted or imported) get only that key (replacing any
+ * of their own) and the file, and only while a thumbnail is set in Virvi; removing it takes Virvi's file and key out on
+ * the next deploy, leaving no navmapThumbnail until an import's next deploy brings its scene.json's back.
  */
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, localModelFile } from '@virvixr/shared'
@@ -166,7 +167,8 @@ export async function pendingModels(dest: { sceneId: string; deployedFiles: stri
 
 /**
  * The metadata with display.navmapThumbnail at the deployed thumbnail `file`, or, with none, without a navmapThumbnail
- * Virvi set (one naming Virvi's thumbnail path); anything else of the owner's stays. Returns the same object when
+ * Virvi set (one naming Virvi's thumbnail path). Setting one replaces an owner's own navmapThumbnail, which removing
+ * Virvi's doesn't bring back (an import's next deploy does, from its scene.json). Returns the same object when
  * nothing changes.
  */
 function withThumbnail(metadata: SceneMetadata, file: string | null): SceneMetadata {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { JPEG_BACKGROUND, paintCrop, cropRect, maxZoom, outputSize, outputType, pickedFileError, sourceTooSmall, thumbnailError } from './scene-thumbnail'
+import { REMOVE_CONFIRM, JPEG_BACKGROUND, paintCrop, cropRect, maxZoom, outputSize, outputType, pickedFileError, sourceTooSmall, thumbnailError } from './scene-thumbnail'
 
 describe('cropRect', () => {
   it('centre-crops a wide image to 16:9 at full height', () => {
@@ -91,5 +91,12 @@ describe('paintCrop', () => {
     const { ctx, calls } = fakeCtx()
     paintCrop(ctx, {} as CanvasImageSource, rect, { width: 1280, height: 720 }, 'image/png')
     expect(calls).toEqual(['drawImage 10,20,1600,900,0,0,1280,720'])
+  })
+})
+
+describe('REMOVE_CONFIRM', () => {
+  it("says a thumbnail the scene had of its own doesn't come back (LIV-88 review M3)", () => {
+    expect(REMOVE_CONFIRM).toMatch(/next deploy/)
+    expect(REMOVE_CONFIRM).toMatch(/own thumbnail.*doesn't come back/)
   })
 })

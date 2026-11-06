@@ -104,3 +104,11 @@ export function paintCrop(
   }
   ctx.drawImage(source, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, size.width, size.height)
 }
+
+/**
+ * The question before removing. Virvi takes its thumbnail out on the next deploy; a scene built outside Virvi that had
+ * a navmapThumbnail of its own (replaced when the Virvi one was set) is left with none, until an imported scene's next
+ * import deploy brings back its scene.json's.
+ */
+export const REMOVE_CONFIRM =
+  "Remove the thumbnail? Decentraland stops showing it after the next deploy. If your scene had its own thumbnail before you set this one, it doesn't come back: the scene is left without one (an imported scene gets its own back the next time you deploy an upload)."

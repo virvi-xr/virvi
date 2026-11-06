@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fileToBase64, type useApi } from '@/lib/api'
 import {
   CENTRED, SCENE_THUMBNAIL_MAX_BYTES, SCENE_THUMBNAIL_MIN, TOO_LARGE_MESSAGE, TOO_SMALL_MESSAGE,
-  cropRect, maxZoom, outputSize, outputType, paintCrop, pickedFileError, sourceTooSmall, thumbnailError, type CropPosition,
+  cropRect, maxZoom, outputSize, outputType, paintCrop, pickedFileError, REMOVE_CONFIRM, sourceTooSmall, thumbnailError, type CropPosition,
 } from '@/lib/scene-thumbnail'
 
 const PREVIEW = { width: 480, height: 270 }
@@ -117,7 +117,7 @@ export function SceneThumbnail({ sceneId, url, api, onChange }: {
   }
 
   const remove = async () => {
-    if (!window.confirm('Remove the thumbnail? Decentraland stops showing it after the next deploy.')) return
+    if (!window.confirm(REMOVE_CONFIRM)) return
     setBusy(true)
     setError('')
     try {
