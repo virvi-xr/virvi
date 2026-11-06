@@ -106,7 +106,7 @@ export type StudioDetail = {
   wall: WallState
   pieces: StudioPiece[]
   messages: StudioMessage[]
-  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; fixClipping?: FixClipping | null } | null
+  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; fixClipping?: FixClipping | null; phase?: string | null; progress?: string[] } | null
   set: StudioSet
   lastPrompt: { jobId: string; outcome: string | null; status: string } | null
   uploads: StudioUpload[]

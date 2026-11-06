@@ -173,6 +173,12 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] scene library columns ensured');
       } catch(e) { console.log('[virvi-server] scene library columns:', e.message); }
 
+      // Studio job phase and latest progress lines, for polling clients; matches studioJobs.phase / progress in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS phase TEXT\`;
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS progress JSONB NOT NULL DEFAULT '[]'::jsonb\`;
+        console.log('[virvi-server] studio_jobs phase and progress ensured');
+      } catch(e) { console.log('[virvi-server] studio_jobs phase and progress:', e.message); }
       // Studio wall of fame; matches studioDesigns.wallShownAt / wallHiddenAt / wallMarketplaceUrl in src/db/schema.ts
       try {
         await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS wall_shown_at TIMESTAMPTZ\`;

@@ -133,6 +133,7 @@ export async function designDetail(d: Design, now: Date) {
   const [active] = await db.select({
     id: studioJobs.id, type: studioJobs.type, status: studioJobs.status,
     fixClipping: sql<FixClipping | null>`${studioJobs.payload}->'fixClipping'`,
+    phase: studioJobs.phase, progress: studioJobs.progress,
   }).from(studioJobs)
     .where(and(eq(studioJobs.designId, d.id), inArray(studioJobs.status, ['queued', 'taken'])))
     .orderBy(sql`CASE WHEN ${studioJobs.type} = 'prompt' THEN 0 ELSE 1 END`, asc(studioJobs.createdAt))

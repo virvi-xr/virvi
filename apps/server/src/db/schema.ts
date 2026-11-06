@@ -1571,6 +1571,9 @@ export const studioJobs = pgTable('studio_jobs', {
   status: text('status').notNull().default('queued'), // queued | taken | done | failed
   payload: jsonb('payload').notNull(), // the contract's Job, without jobId
   result: jsonb('result'),
+  // What the worker last reported, kept so a client that polls (the scene) sees it: the phase, and the last 5 progress lines
+  phase: text('phase'),
+  progress: jsonb('progress').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   // Whether the prompt used the owner's allowance, and on which UTC day (refunds and cost go to that day)
   counted: boolean('counted').notNull().default(false),
   countedDay: date('counted_day', { mode: 'string' }),

@@ -10,7 +10,7 @@ import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { reservePrompt, promptStatus } from '../src/studio/quota.js'
 import { studioTopic } from '../src/studio/events.js'
 import { resetDb } from './helpers/db.js'
-import { testApp, createUser } from './helpers/factories.js'
+import { testApp, createUser, tokenFor } from './helpers/factories.js'
 import { createDesign, issueWorker, queueJob, okResult } from './helpers/studio.js'
 
 const { LocalPresence } = createRequire(import.meta.url)('colyseus') as any
@@ -336,5 +336,41 @@ describe('studio worker routes', () => {
     expect((await app.inject({ method: 'POST', url: `${W}/jobs/${job.id}/events`, headers: auth(token), payload: { type: 'nope' } })).statusCode).toBe(400)
     await new Promise((r) => setTimeout(r, 20))
     expect(seen).toContainEqual({ type: 'progress', jobId: job.id, text: 'Running blender' })
+  })
+
+  describe('polled progress', () => {
+    const detail = async (owner: Awaited<ReturnType<typeof createUser>>, designId: string) =>
+      (await app.inject({ method: 'GET', url: `/api/studio/designs/${designId}`, headers: { authorization: `Bearer ${tokenFor(owner)}` } })).json()
+    const post = (token: string, jobId: string, payload: unknown) =>
+      app.inject({ method: 'POST', url: `${W}/jobs/${jobId}/events`, headers: auth(token), payload: payload as any })
+
+    it('keeps the phase and the last 5 progress lines (without Running:), and still publishes to the room', async () => {
+      const presence = new LocalPresence()
+      initBus(presence as any)
+      const { owner, design, token } = await setup()
+      const job = await queueJob(design)
+      await take(job.id)
+      const seen: any[] = []
+      await presence.subscribe(studioTopic(design.id), (m: unknown) => seen.push(m))
+      expect((await post(token, job.id, { type: 'phase', phase: 'building' })).statusCode).toBe(204)
+      for (const t of ['l1', 'l2', 'Running: x', 'l3', 'l4', 'l5', 'l6', 'l7']) {
+        expect((await post(token, job.id, { type: 'progress', text: t })).statusCode).toBe(204)
+      }
+      const d = await detail(owner, design.id)
+      expect(d.activeJob).toMatchObject({ id: job.id, status: 'taken', phase: 'building', progress: ['l3', 'l4', 'l5', 'l6', 'l7'] })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(seen).toContainEqual({ type: 'phase', jobId: job.id, phase: 'building' })
+      expect(seen).toContainEqual({ type: 'progress', jobId: job.id, text: 'Running: x' })
+    })
+
+    it('a fresh job has no phase and no progress; a done job is not the active job', async () => {
+      const { owner, design, token } = await setup()
+      const job = await queueJob(design)
+      expect((await detail(owner, design.id)).activeJob).toMatchObject({ phase: null, progress: [] })
+      await take(job.id)
+      await post(token, job.id, { type: 'progress', text: 'hello' })
+      await db.update(studioJobs).set({ status: 'done' }).where(eq(studioJobs.id, job.id))
+      expect((await detail(owner, design.id)).activeJob).toBeNull()
+    })
   })
 })
