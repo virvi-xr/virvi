@@ -6,6 +6,7 @@ import { users } from '../db/schema.js'
 import { config } from '../config.js'
 import { sha256 } from '../auth/hash.js'
 import { issueTrialSession } from '../auth/trial.js'
+import { authenticate } from '../middleware/auth.js'
 import { trialsAvailable, verifyTurnstile } from '../auth/turnstile.js'
 
 const DEVICE_ID = /^[A-Za-z0-9_-]{16,64}$/
@@ -45,4 +46,11 @@ export default async function trialRoutes(app: FastifyInstance) {
       return reply.status(201).send(issueTrialSession(app, user))
     },
   )
+
+  // A ticket that carries the visitor's trial through a Google or Discord sign-in (OAuth `state`); 10 minutes.
+  app.post('/api/auth/trial/claim', { preHandler: authenticate, config: { trial: true } }, async (request, reply) => {
+    if (!request.user.trial) return reply.status(403).send({ error: 'not_a_trial' })
+    const ticket = app.jwt.sign({ id: request.user.id, kind: 'trial_claim' } as unknown as Parameters<typeof app.jwt.sign>[0], { expiresIn: '10m' })
+    return reply.send({ ticket })
+  })
 }

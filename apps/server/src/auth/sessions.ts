@@ -18,3 +18,18 @@ export function issueWalletSession(app: FastifyInstance, user: SessionUser, wall
     refreshToken: app.jwt.sign({ ...claims, refresh: true }, { expiresIn: config.jwtRefreshExpiry }),
   }
 }
+
+/** The session a password or OAuth sign-in answers with (no wallet claim). */
+export function issueAccountSession(app: FastifyInstance, user: SessionUser) {
+  return {
+    user: { id: user.id, displayName: user.displayName, email: user.email, role: user.role },
+    accessToken: app.jwt.sign(
+      { id: user.id, email: user.email, role: user.role, orgId: user.activeOrgId || null, verified: true, kind: 'account' as const },
+      { expiresIn: config.jwtAccessExpiry },
+    ),
+    refreshToken: app.jwt.sign(
+      { id: user.id, email: user.email, role: user.role, refresh: true, verified: true, kind: 'account' as const },
+      { expiresIn: config.jwtRefreshExpiry },
+    ),
+  }
+}

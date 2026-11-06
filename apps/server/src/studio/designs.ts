@@ -238,7 +238,7 @@ export async function queuePrompt(
       const r = await reservePrompt(d.ownerId, now, { counted }, tx)
       if (!r.ok) {
         const s = await promptStatus(d.ownerId, now)
-        if (s.trial && r.reason === 'allowance') throw new Refused({ status: 403, body: { error: 'account_required', action: 'more_prompts' } })
+        if (s.trial && (r.reason === 'allowance' || r.reason === 'cost_ceiling')) throw new Refused({ status: 403, body: { error: 'account_required', action: 'more_prompts' } })
         if (r.reason === 'trial_busy') {
           throw new Refused({ status: 429, body: { error: 'trial_busy', message: 'Free tries are busy right now — create an account to keep going.' } })
         }

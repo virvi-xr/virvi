@@ -112,6 +112,9 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     if (decoded.refresh) {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Refresh tokens cannot access the API' })
     }
+    if ((decoded as { kind?: string }).kind === 'trial_claim') {
+      return reply.status(401).send({ error: 'Unauthorized', message: 'A claim ticket is not an access token' })
+    }
     if (decoded.guest) {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Guest tokens cannot access the API' })
     }

@@ -8,6 +8,7 @@ import { config } from '../config.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { authenticate } from '../middleware/auth.js'
 import { linkWalletGrants } from '../auth/permissions.js'
+import { convertTrial, mergeTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { linkVerifiedWallet, resolveVerifiedWalletUser } from '../auth/wallet-users.js'
 import { issueWalletSession } from '../auth/sessions.js'
 
@@ -51,7 +52,7 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
     return reply.send({ nonce, message })
   })
 
-  app.post<{ Body: { address?: string; nonce?: string; signature?: string } }>('/api/auth/wallet/verify', async (request, reply) => {
+  app.post<{ Body: { address?: string; nonce?: string; signature?: string; fromAction?: string } }>('/api/auth/wallet/verify', async (request, reply) => {
     const { address, nonce, signature } = request.body ?? {}
     if (!address || !ADDRESS_RE.test(address) || !nonce || !signature) return reply.status(400).send({ error: 'address, nonce and signature are required' })
     // Single use: delete first so a failed attempt also burns the nonce.
@@ -66,6 +67,26 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: 'Invalid signature' })
     }
     if (recovered !== challenge.address) return reply.status(401).send({ error: 'Invalid signature' })
+
+    // A trial visitor's wallet sign-in converts the trial (new wallet) or moves it into the wallet's account
+    const trialId = await trialFromBearer(app, request)
+    if (trialId) {
+      const known = await db.query.userAuthMethods.findFirst({
+        where: and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, recovered)),
+        with: { user: true },
+      })
+      const verified = !!known && (known.metadata as { verified?: unknown } | null)?.verified === true
+      const user = verified
+        ? await resolveVerifiedWalletUser(recovered, `${recovered.slice(0, 6)}…${recovered.slice(-4)}`, 'account')
+        : await db.transaction(async (tx) => {
+            const converted = await convertTrial(trialId, { displayName: `${recovered.slice(0, 6)}…${recovered.slice(-4)}` }, tx)
+            await tx.insert(userAuthMethods).values({ userId: trialId, type: 'wallet', identifier: recovered, metadata: { verified: true } })
+            return converted
+          })
+      if (user.id !== trialId) await mergeTrial(trialId, user.id)
+      await linkWalletGrants(user.id, recovered)
+      return reply.send(issueWalletSession(app, user, recovered))
+    }
 
     const auth = request.headers.authorization
     // Only an account session may link a wallet; a scene pass is ignored as if absent (it must never link one).

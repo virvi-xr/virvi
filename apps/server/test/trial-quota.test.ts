@@ -145,4 +145,13 @@ describe('trial studio routes', () => {
     expect(out.statusCode).toBe(403)
     expect(out.json()).toEqual({ error: 'account_required', action: 'more_prompts' })
   })
+  it('a trial at its cost ceiling is account_required, not cost_ceiling', async () => {
+    const headers = await trialHeaders()
+    await app.inject({ method: 'POST', url: '/api/studio/designs', headers, payload: { kind: 'wearable', agent: 'claude' } })
+    const id = (await app.inject({ method: 'GET', url: '/api/studio/designs', headers })).json()[0].id
+    const [{ id: uid }] = await db.select({ id: users.id }).from(users)
+    await recordCost(uid, TRIAL_DAY, config.trialCostCeilingUsd)
+    const res = await app.inject({ method: 'POST', url: `/api/studio/designs/${id}/prompts`, headers, payload: { text: 'a cap' } })
+    expect([res.statusCode, res.json()]).toEqual([403, { error: 'account_required', action: 'more_prompts' }])
+  })
 })

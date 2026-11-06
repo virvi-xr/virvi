@@ -17,6 +17,8 @@ import type { SessionClaims } from '../auth/tokens.js'
 import { issueScenePass, issueStudioPass, sceneClaims } from '../auth/scene-pass.js'
 import { isOfficialRealm, isWorldRealm } from '../auth/official-realms.js'
 import { trialClaims } from '../auth/trial.js'
+import { issueAccountSession } from '../auth/sessions.js'
+import { convertTrial, finishOAuth, mergeTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 
@@ -24,11 +26,13 @@ interface RegisterBody {
   email: string
   password: string
   displayName: string
+  fromAction?: string
 }
 
 interface LoginBody {
   email: string
   password: string
+  fromAction?: string
 }
 
 export default async function authRoutes(app: FastifyInstance) {
@@ -62,38 +66,27 @@ export default async function authRoutes(app: FastifyInstance) {
 
     const passwordHash = await bcrypt.hash(password, 12)
 
-    const role = await initialRoleForNewUser()
-
-    const [user] = await db
-      .insert(users)
-      .values({
-        displayName,
-        email: email.toLowerCase(),
-        role,
+    // A trial visitor's sign-up turns the same row into the account (it keeps everything); otherwise a new user
+    const trialId = await trialFromBearer(app, request)
+    let user: typeof users.$inferSelect
+    if (trialId) {
+      user = await db.transaction(async (tx) => {
+        const converted = await convertTrial(trialId, { email: email.toLowerCase(), displayName }, tx)
+        await tx.insert(userAuthMethods).values({ userId: trialId, type: 'email', identifier: email.toLowerCase(), credentialHash: passwordHash })
+        return converted
       })
-      .returning()
+    } else {
+      const role = await initialRoleForNewUser()
+      ;[user] = await db.insert(users).values({ displayName, email: email.toLowerCase(), role }).returning()
+      await db.insert(userAuthMethods).values({
+        userId: user.id,
+        type: 'email',
+        identifier: email.toLowerCase(),
+        credentialHash: passwordHash,
+      })
+    }
 
-    await db.insert(userAuthMethods).values({
-      userId: user.id,
-      type: 'email',
-      identifier: email.toLowerCase(),
-      credentialHash: passwordHash,
-    })
-
-    const accessToken = app.jwt.sign(
-      { id: user.id, email: user.email, role: user.role, orgId: user.activeOrgId || null, verified: true, kind: 'account' as const },
-      { expiresIn: config.jwtAccessExpiry },
-    )
-    const refreshToken = app.jwt.sign(
-      { id: user.id, email: user.email, role: user.role, refresh: true, verified: true, kind: 'account' as const },
-      { expiresIn: config.jwtRefreshExpiry },
-    )
-
-    return reply.status(201).send({
-      user: { id: user.id, displayName: user.displayName, email: user.email, role: user.role },
-      accessToken,
-      refreshToken,
-    })
+    return reply.status(201).send(issueAccountSession(app, user))
   })
 
   // ── POST /api/auth/login ─────────────────────────────────────────────────
@@ -136,20 +129,11 @@ export default async function authRoutes(app: FastifyInstance) {
       user = { ...row, activeOrgId: null }
     }
 
-    const accessToken = app.jwt.sign(
-      { id: user.id, email: user.email, role: user.role, orgId: user.activeOrgId || null, verified: true, kind: 'account' as const },
-      { expiresIn: config.jwtAccessExpiry },
-    )
-    const refreshToken = app.jwt.sign(
-      { id: user.id, email: user.email, role: user.role, refresh: true, verified: true, kind: 'account' as const },
-      { expiresIn: config.jwtRefreshExpiry },
-    )
+    // Signing in from a trial moves the trial's work into this account
+    const trialId = await trialFromBearer(app, request)
+    if (trialId && trialId !== user.id) await mergeTrial(trialId, user.id)
 
-    return reply.send({
-      user: { id: user.id, displayName: user.displayName, email: user.email, role: user.role },
-      accessToken,
-      refreshToken,
-    })
+    return reply.send(issueAccountSession(app, user))
   })
 
   // ── POST /api/auth/refresh ───────────────────────────────────────────────
@@ -356,7 +340,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── GET /api/auth/google — Redirect to Google OAuth consent screen ───────
 
-  app.get('/api/auth/google', async (request, reply) => {
+  app.get<{ Querystring: { claim?: string } }>('/api/auth/google', async (request, reply) => {
     if (!config.googleClientId || !config.googleClientSecret) {
       return reply.status(501).send({ error: 'Google OAuth is not configured' })
     }
@@ -371,20 +355,22 @@ export default async function authRoutes(app: FastifyInstance) {
       access_type: 'offline',
       prompt: 'consent',
     })
+    // A visitor's trial claim ticket rides through the provider in `state`
+    if (request.query.claim) params.set('state', request.query.claim)
 
     return reply.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
   })
 
   // ── GET /api/auth/google/callback — Handle the OAuth callback ────────────
 
-  app.get<{ Querystring: { code?: string; error?: string } }>(
+  app.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
     '/api/auth/google/callback',
     async (request, reply) => {
       if (!config.googleClientId || !config.googleClientSecret) {
         return reply.status(501).send({ error: 'Google OAuth is not configured' })
       }
 
-      const { code, error: oauthError } = request.query
+      const { code, error: oauthError, state } = request.query
 
       if (oauthError || !code) {
         return reply.redirect(`${config.publicUrl}/auth/callback?error=${oauthError || 'missing_code'}`)
@@ -414,70 +400,22 @@ export default async function authRoutes(app: FastifyInstance) {
         const displayName = payload.name || payload.email || 'Google User'
         const identifier = `google:${googleUserId}`
 
-        // Look up existing auth method
-        let authMethod = await db.query.userAuthMethods.findFirst({
-          where: and(
-            eq(userAuthMethods.type, 'oauth'),
-            eq(userAuthMethods.identifier, identifier),
-          ),
-          with: { user: true },
-        })
-
-        let dbUser
-
-        if (authMethod) {
-          // Existing user — log them in
-          dbUser = authMethod.user
-        } else {
-          // New user — create account
-
-          // Auto-promote the first user to admin in single/scalable mode
-          let role: 'admin' | 'creator' = 'creator'
-          if (config.autoPromoteFirstUser) {
-            const userCount = await db.query.users.findFirst()
-            if (!userCount) {
-              role = 'admin'
-            }
-          }
-
-          const [newUser] = await db
-            .insert(users)
-            .values({
-              displayName,
-              email: email?.toLowerCase() || null,
-              role,
-            })
-            .returning()
-
-          await db.insert(userAuthMethods).values({
-            userId: newUser.id,
+        const session = await finishOAuth(
+          app,
+          {
             type: 'oauth',
             identifier,
-            metadata: {
-              provider: 'google',
-              googleUserId,
-              email,
-              name: payload.name,
-              picture: payload.picture,
-            },
-          })
-
-          dbUser = newUser
-        }
-
-        const accessToken = app.jwt.sign(
-          { id: dbUser.id, email: dbUser.email, role: dbUser.role, orgId: dbUser.activeOrgId || null, verified: true, kind: 'account' as const },
-          { expiresIn: config.jwtAccessExpiry },
-        )
-        const refreshToken = app.jwt.sign(
-          { id: dbUser.id, email: dbUser.email, role: dbUser.role, refresh: true, verified: true, kind: 'account' as const },
-          { expiresIn: config.jwtRefreshExpiry },
+            email,
+            displayName,
+            metadata: { provider: 'google', googleUserId, email, name: payload.name, picture: payload.picture },
+          },
+          state,
         )
 
         // Redirect to frontend with tokens
         const params = new URLSearchParams({
-          token: accessToken,
-          refresh: refreshToken,
+          token: session.accessToken,
+          refresh: session.refreshToken,
         })
 
         return reply.redirect(`${config.publicUrl}/auth/callback?${params.toString()}`)
@@ -490,7 +428,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── GET /api/auth/discord — Redirect to Discord OAuth consent screen ──────
 
-  app.get('/api/auth/discord', async (request, reply) => {
+  app.get<{ Querystring: { claim?: string } }>('/api/auth/discord', async (request, reply) => {
     if (!config.discordClientId || !config.discordClientSecret) {
       return reply.status(501).send({ error: 'Discord OAuth is not configured' })
     }
@@ -503,20 +441,21 @@ export default async function authRoutes(app: FastifyInstance) {
       response_type: 'code',
       scope: 'identify email',
     })
+    if (request.query.claim) params.set('state', request.query.claim)
 
     return reply.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`)
   })
 
   // ── GET /api/auth/discord/callback — Handle the OAuth callback ────────────
 
-  app.get<{ Querystring: { code?: string; error?: string } }>(
+  app.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
     '/api/auth/discord/callback',
     async (request, reply) => {
       if (!config.discordClientId || !config.discordClientSecret) {
         return reply.status(501).send({ error: 'Discord OAuth is not configured' })
       }
 
-      const { code, error: oauthError } = request.query
+      const { code, error: oauthError, state } = request.query
 
       if (oauthError || !code) {
         return reply.redirect(`${config.publicUrl}/auth/callback?error=${oauthError || 'missing_code'}`)
@@ -567,70 +506,22 @@ export default async function authRoutes(app: FastifyInstance) {
         const displayName = discordUser.username || 'Discord User'
         const identifier = `discord:${discordUserId}`
 
-        // Look up existing auth method
-        let authMethod = await db.query.userAuthMethods.findFirst({
-          where: and(
-            eq(userAuthMethods.type, 'oauth'),
-            eq(userAuthMethods.identifier, identifier),
-          ),
-          with: { user: true },
-        })
-
-        let dbUser
-
-        if (authMethod) {
-          // Existing user — log them in
-          dbUser = authMethod.user
-        } else {
-          // New user — create account
-
-          // Auto-promote the first user to admin in single/scalable mode
-          let role: 'admin' | 'creator' = 'creator'
-          if (config.autoPromoteFirstUser) {
-            const userCount = await db.query.users.findFirst()
-            if (!userCount) {
-              role = 'admin'
-            }
-          }
-
-          const [newUser] = await db
-            .insert(users)
-            .values({
-              displayName,
-              email: email?.toLowerCase() || null,
-              role,
-            })
-            .returning()
-
-          await db.insert(userAuthMethods).values({
-            userId: newUser.id,
+        const session = await finishOAuth(
+          app,
+          {
             type: 'oauth',
             identifier,
-            metadata: {
-              provider: 'discord',
-              discordUserId,
-              email,
-              username: discordUser.username,
-              avatar: discordUser.avatar,
-            },
-          })
-
-          dbUser = newUser
-        }
-
-        const accessToken = app.jwt.sign(
-          { id: dbUser.id, email: dbUser.email, role: dbUser.role, orgId: dbUser.activeOrgId || null, verified: true, kind: 'account' as const },
-          { expiresIn: config.jwtAccessExpiry },
-        )
-        const refreshToken = app.jwt.sign(
-          { id: dbUser.id, email: dbUser.email, role: dbUser.role, refresh: true, verified: true, kind: 'account' as const },
-          { expiresIn: config.jwtRefreshExpiry },
+            email,
+            displayName,
+            metadata: { provider: 'discord', discordUserId, email, username: discordUser.username, avatar: discordUser.avatar },
+          },
+          state,
         )
 
         // Redirect to frontend with tokens
         const params = new URLSearchParams({
-          token: accessToken,
-          refresh: refreshToken,
+          token: session.accessToken,
+          refresh: session.refreshToken,
         })
 
         return reply.redirect(`${config.publicUrl}/auth/callback?${params.toString()}`)
