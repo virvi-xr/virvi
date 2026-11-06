@@ -72,14 +72,6 @@ describe('hasAccountSession', () => {
 
 describe('runHandoff with a stored session', () => {
   const acct = () => stored({ exp: NOW / 1000 + 60, kind: 'account' })
-  it('a code that exchanges replaces an existing full session', async () => {
-    const { calls, d } = deps(200)
-    const r = await runHandoff({ ...d, storedSession: acct, now: () => NOW })
-    expect(r).toBe('signed-in')
-    expect(d.exchange).toHaveBeenCalledWith('SECRET')
-    expect(d.saveSession).toHaveBeenCalledWith({ token: 'a', refresh: 'r', user: { id: 'u' } })
-    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
-  })
   it('a failing code (non-200) keeps the existing full session and goes to next', async () => {
     const { calls, d } = deps(410)
     const r = await runHandoff({ ...d, storedSession: acct, now: () => NOW })
@@ -109,6 +101,89 @@ describe('runHandoff with a stored session', () => {
       const { d } = deps(200)
       await runHandoff({ ...d, storedSession: () => stored(p), now: () => NOW })
       expect(d.exchange).toHaveBeenCalledWith('SECRET')
+      expect(d.saveSession).toHaveBeenCalled()
+    }
+  })
+})
+
+describe('runHandoff over an existing account session', () => {
+  const acctTok = (id: string, extra: Record<string, unknown> = {}) => tok({ exp: NOW / 1000 + 60, kind: 'account', id, ...extra })
+  const storedAcct = (id = 'u1', displayName: string | null = 'Ada') => () => JSON.stringify({ token: acctTok(id, { wallet: '0x1111111111111111111111111111111111111111' }), refresh: 'r-old', user: { id, displayName } })
+  function exch(body: { accessToken: string; refreshToken: string | null; user: Record<string, unknown> }) {
+    const calls: string[] = []
+    const choose = vi.fn(async (_c: { them: string; stored: string }) => 'them' as 'them' | 'stay')
+    return {
+      calls, choose,
+      d: {
+        href: base,
+        replaceUrl: vi.fn((u: string) => calls.push(`replace:${u}`)),
+        exchange: vi.fn(async (c: string) => { calls.push(`exchange:${c}`); return { status: 200, body } }),
+        saveSession: vi.fn(),
+        go: vi.fn((u: string) => calls.push(`go:${u}`)),
+        choose,
+        now: () => NOW,
+      },
+    }
+  }
+
+  it('a HUD scene code keeps the stored account session (no save) and goes to next', async () => {
+    const { d, calls, choose } = exch({ accessToken: tok({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1', id: 'u1' }), refreshToken: null, user: { id: 'u1', displayName: 'Ada' } })
+    expect(await runHandoff({ ...d, storedSession: storedAcct() })).toBe('signed-in')
+    expect(d.exchange).toHaveBeenCalledWith('SECRET')
+    expect(d.saveSession).not.toHaveBeenCalled()
+    expect(choose).not.toHaveBeenCalled()
+    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
+  })
+  it("a HUD scene code for someone else's account still keeps the stored session, without asking", async () => {
+    const { d, choose } = exch({ accessToken: tok({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1', id: 'u2' }), refreshToken: null, user: { id: 'u2', displayName: 'Bob' } })
+    expect(await runHandoff({ ...d, storedSession: storedAcct() })).toBe('signed-in')
+    expect(d.saveSession).not.toHaveBeenCalled()
+    expect(choose).not.toHaveBeenCalled()
+  })
+  it('a scene code with no stored session is saved as before', async () => {
+    const body = { accessToken: tok({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1', id: 'u1' }), refreshToken: null, user: { id: 'u1' } }
+    const { d } = exch(body)
+    expect(await runHandoff({ ...d, storedSession: () => null })).toBe('signed-in')
+    expect(d.saveSession).toHaveBeenCalledWith({ token: body.accessToken, refresh: null, user: body.user })
+  })
+  it('the same account refreshes the stored session without asking', async () => {
+    const body = { accessToken: acctTok('u1'), refreshToken: 'r-new', user: { id: 'u1', displayName: 'Ada' } }
+    const { d, calls, choose } = exch(body)
+    expect(await runHandoff({ ...d, storedSession: storedAcct() })).toBe('signed-in')
+    expect(choose).not.toHaveBeenCalled()
+    expect(d.saveSession).toHaveBeenCalledWith({ token: body.accessToken, refresh: 'r-new', user: body.user })
+    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
+  })
+  it('a different account asks first, naming both; "Continue as them" saves the new session', async () => {
+    const body = { accessToken: acctTok('u2', { wallet: '0xabcdef0000000000000000000000000000001234' }), refreshToken: 'r2', user: { id: 'u2', displayName: 'Bob' } }
+    const { d, calls, choose } = exch(body)
+    choose.mockImplementation(async () => {
+      expect(d.saveSession).not.toHaveBeenCalled()
+      expect(d.go).not.toHaveBeenCalled()
+      return 'them'
+    })
+    expect(await runHandoff({ ...d, storedSession: storedAcct() })).toBe('signed-in')
+    expect(choose).toHaveBeenCalledWith({ them: 'Bob', stored: 'Ada' })
+    expect(d.saveSession).toHaveBeenCalledWith({ token: body.accessToken, refresh: 'r2', user: body.user })
+    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
+  })
+  it('"Stay signed in" keeps the stored session and goes to next', async () => {
+    const { d, calls, choose } = exch({ accessToken: acctTok('u2'), refreshToken: 'r2', user: { id: 'u2', displayName: 'Bob' } })
+    choose.mockResolvedValue('stay')
+    expect(await runHandoff({ ...d, storedSession: storedAcct() })).toBe('signed-in')
+    expect(d.saveSession).not.toHaveBeenCalled()
+    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
+  })
+  it('names an account with no display name by its short wallet', async () => {
+    const { d, choose } = exch({ accessToken: acctTok('u2', { wallet: '0xabcdef0000000000000000000000000000001234' }), refreshToken: 'r2', user: { id: 'u2', displayName: null } })
+    await runHandoff({ ...d, storedSession: storedAcct('u1', null) })
+    expect(choose).toHaveBeenCalledWith({ them: '0xabcd…1234', stored: '0x1111…1111' })
+  })
+  it('a stored scene pass or expired session is replaced without asking', async () => {
+    for (const p of [{ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1', id: 'u1' }, { exp: NOW / 1000 - 1, kind: 'account', id: 'u1' }]) {
+      const { d, choose } = exch({ accessToken: acctTok('u2'), refreshToken: 'r2', user: { id: 'u2' } })
+      await runHandoff({ ...d, storedSession: () => stored(p) })
+      expect(choose).not.toHaveBeenCalled()
       expect(d.saveSession).toHaveBeenCalled()
     }
   })
