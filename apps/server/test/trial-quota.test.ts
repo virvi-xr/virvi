@@ -1,15 +1,17 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { users, studioTrialSpendDays } from '../src/db/schema.js'
+import { users, studioTrialSpendDays, studioUsageDays } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { TRIAL_DAY, reservePrompt, refundPrompt, recordCost, promptStatus, usageDay } from '../src/studio/quota.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { issueTrialSession } from '../src/auth/trial.js'
+import { convertTrial } from '../src/auth/trial-convert.js'
+import { applyResult, failJobs } from '../src/studio/results.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser } from './helpers/factories.js'
-import { fakeFly } from './helpers/studio.js'
+import { fakeFly, createDesign, queueJob, okResult } from './helpers/studio.js'
 
 const DAY1 = new Date('2026-11-05T12:00:00Z')
 const DAY2 = new Date('2026-11-06T12:00:00Z')
@@ -153,5 +155,43 @@ describe('trial studio routes', () => {
     await recordCost(uid, TRIAL_DAY, config.trialCostCeilingUsd)
     const res = await app.inject({ method: 'POST', url: `/api/studio/designs/${id}/prompts`, headers, payload: { text: 'a cap' } })
     expect([res.statusCode, res.json()]).toEqual([403, { error: 'account_required', action: 'more_prompts' }])
+  })
+})
+
+describe('a trial converted while a job runs', () => {
+  beforeEach(resetDb)
+
+  async function startJob() {
+    const u = await makeTrial()
+    const design = await createDesign(u, { status: 'building', machineId: 'm1' })
+    const r = await reservePrompt(u.id, DAY1, { counted: true }) as { day: string; from: 'allowance' }
+    expect(r.day).toBe(TRIAL_DAY)
+    const job = await queueJob(design, undefined, { counted: true, countedDay: r.day, countedFrom: r.from, status: 'taken' })
+    await convertTrial(u.id, { email: `c${Date.now()}@test.dev`, displayName: 'Now an account' })
+    return { u, job }
+  }
+  const rows = (userId: string) => db.select().from(studioUsageDays).where(eq(studioUsageDays.userId, userId))
+
+  it("books the job's cost on today's usage row, not the trial day", async () => {
+    const { u, job } = await startJob()
+    await applyResult(job.id, okResult(job.id, { costUsd: 0.74 }) as any, DAY2)
+    const r = await rows(u.id)
+    expect(r.map((x) => [x.day, x.prompts, x.costUsd])).toEqual([['2026-11-06', 0, 0.74]])
+  })
+
+  it("an errored job gives nothing back to today's allowance (the trial's prompts were dropped)", async () => {
+    const { u, job } = await startJob()
+    await reservePrompt(u.id, DAY2, { counted: true })
+    await applyResult(job.id, okResult(job.id, { outcome: 'error', error: 'boom', pieces: [], costUsd: 0.2 }) as any, DAY2)
+    const r = await rows(u.id)
+    expect(r.map((x) => [x.day, x.prompts, x.costUsd])).toEqual([['2026-11-06', 1, 0.2]])
+  })
+
+  it('a lost job gives nothing back to today either', async () => {
+    const { u, job } = await startJob()
+    await reservePrompt(u.id, DAY2, { counted: true })
+    await failJobs([job.id], 'The machine stopped.', DAY2)
+    const r = await rows(u.id)
+    expect(r.map((x) => [x.day, x.prompts])).toEqual([['2026-11-06', 1]])
   })
 })

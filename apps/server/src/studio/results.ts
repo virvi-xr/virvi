@@ -2,7 +2,7 @@ import { and, eq, inArray, max, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPieces, studioRenders, studioRevisions, studioSetRenders } from '../db/schema.js'
 import { checkFilePath, jobFileKey } from './store.js'
-import { recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
+import { jobDay, recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
 import { publishStudio } from './events.js'
 import { ORBIT_FRAMES, orbitKeyFor, queueFullOrbit, revisionsKey, type FixClipping, type View } from './designs.js'
 import { hasBuilding, requestSetRender, TOUR_VIEW } from './sets.js'
@@ -170,6 +170,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     const day = job.countedDay ?? utcDay(now)
 
     if (job.type === 'prompt') {
+      const costDay = design ? await jobDay(design.ownerId, job.countedDay, now, tx) : day
       const payload = job.payload as { agent?: string }
       const agent = result.agent ?? payload.agent ?? null
       if (result.reply || result.proposal) {
@@ -207,7 +208,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         if (design && ring > 0 && ring < ORBIT_FRAMES) await queueFullOrbit(tx, design, rev.id, p.category, 'male')
       }
       if (result.pieces.some((p) => p.files?.length)) await cancelSupersededRenders(job.designId, superseded, tx, now)
-      if (design) await recordCost(design.ownerId, day, result.costUsd ?? 0, tx)
+      if (design) await recordCost(design.ownerId, costDay, result.costUsd ?? 0, tx)
       const refunded = (job.counted || job.countedFrom === 'gift') && !!design && (result.outcome === 'error'
         || (result.outcome === 'off_topic' && await offTopicIsFree(tx, design.ownerId, now)))
       if (refunded) await refundPrompt(design!.ownerId, day, job.countedFrom as PromptSource | null, tx)
