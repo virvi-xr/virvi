@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
+import sharp from 'sharp'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders } from '../db/schema.js'
 import { config } from '../config.js'
@@ -569,6 +570,11 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!render || f.frame >= render.frames) return forbidden()
     const obj = await getStudioStore().get(jobFileKey(f.designId, f.jobId, framePath(f)))
     if (!obj) return reply.status(404).send({ error: 'frame_not_found' })
+    // ?fmt=png for clients that can't show WebP (Decentraland scenes). Only the encoding changes; the token is still the authority.
+    if ((request.query as { fmt?: string }).fmt === 'png') {
+      const png = await sharp(obj.body).png().toBuffer()
+      return reply.type('image/png').header('Cache-Control', 'private, max-age=3600').send(png)
+    }
     return reply.type('image/webp').header('Cache-Control', 'private, max-age=3600').send(obj.body)
   })
 }

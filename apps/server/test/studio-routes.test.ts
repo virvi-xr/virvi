@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { eq } from 'drizzle-orm'
+import sharp from 'sharp'
 import { db } from '../src/db/connection.js'
 import { studioDesigns, studioJobs, studioMessages, studioPieces, studioPromptCredits, studioRenders, studioRevisions } from '../src/db/schema.js'
 import { config } from '../src/config.js'
@@ -404,6 +405,36 @@ describe('studio dashboard routes', () => {
     )
     expect((await app.inject({ method: 'GET', url: new URL(crossed).pathname })).statusCode).toBe(403)
     expect((await app.inject({ method: 'GET', url: `${S}/render-frames/garbage` })).statusCode).toBe(403)
+  })
+
+  it('render frames open as PNG with ?fmt=png, and stay WebP otherwise', async () => {
+    const u = await createUser()
+    const { design, jobId } = await builtHat(u)
+    const detail = (await app.inject({ method: 'GET', url: `${S}/designs/${design.id}`, headers: as(u) })).json()
+    const path = new URL(detail.pieces[0].renders['spin-male-default'].urls[0]).pathname
+    const webp = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#f00' } }).webp().toBuffer()
+    await store.put(jobFileKey(design.id, jobId, 'renders/hat/spin-male-default/000.webp'), webp, 'image/webp')
+
+    const png = await app.inject({ method: 'GET', url: `${path}?fmt=png` })
+    expect(png.statusCode, png.body).toBe(200)
+    expect(png.headers['content-type']).toBe('image/png')
+    expect(png.headers['cache-control']).toBe('private, max-age=3600')
+    expect([...png.rawPayload.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47])
+    expect((await sharp(png.rawPayload).metadata()).format).toBe('png')
+
+    for (const q of ['', '?fmt=webp', '?fmt=gif']) {
+      const r = await app.inject({ method: 'GET', url: `${path}${q}` })
+      expect(r.statusCode, q).toBe(200)
+      expect(r.headers['content-type'], q).toBe('image/webp')
+      expect(r.rawPayload.equals(webp), q).toBe(true)
+    }
+
+    const token = path.split('/').pop()!
+    const [body, sig] = token.split('.')
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString())
+    const edited = Buffer.from(JSON.stringify({ ...claims, f: 2 })).toString('base64url') + '.' + sig
+    expect((await app.inject({ method: 'GET', url: `${S}/render-frames/${edited}?fmt=png` })).statusCode).toBe(403)
+    expect((await app.inject({ method: 'GET', url: `${S}/render-frames/garbage?fmt=png` })).statusCode).toBe(403)
   })
 
   it('frame urls stay the same between reads, and a page can load many views', async () => {
