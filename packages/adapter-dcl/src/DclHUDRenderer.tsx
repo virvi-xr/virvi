@@ -11,6 +11,7 @@
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/react-ecs'
 import { copyName, nextSwitchText, presetLabel, PRESET_NAME_MAX, type HUDNextSwitch, type HUDPreset } from './presets.js'
 import { clearCopiesPrompt, type HUDLayoutItem } from './layout.js'
+import { CLICK_KIND_LABELS, CLICKABLE_TYPES, clickDraftOf, clickFromDraft, clickLabel, type ClickDraft } from './clicks.js'
 import { DELAY_STEP_MINUTES, NO_SHOWINGS, SHOWINGS_LOADING, showingRow, type HUDShowing, type ShowControl } from './showings.js'
 import { offImageLabel, screenSourceLabel, streamOptionLabel, type HUDImage, type HUDScreen, type HUDStream } from './streams.js'
 import { Color4 } from '@dcl/sdk/math'
@@ -86,6 +87,9 @@ interface HUDState {
   confirmDelete: string | null
   /** The layout row whose "remove every copy" is awaiting confirmation (LIV-12). */
   confirmClear: string | null
+  /** The item whose click action is being edited (LIV-126), its draft, and why the last save didn't go through. */
+  clicking: { elementId: string; draft: ClickDraft } | null
+  clickError: string | null
   missingModels: number
   /** The Media Library's Upload view: an upload link (this computer) and its QR (phone), minted on open. */
   upload: UploadViewState
@@ -175,6 +179,8 @@ const state: HUDState = {
   editMessage: null,
   confirmDelete: null,
   confirmClear: null,
+  clicking: null,
+  clickError: null,
   missingModels: 0,
   upload: { open: false, loading: false, error: null, token: null },
   renaming: null,
@@ -800,7 +806,7 @@ function SceneLayoutPanel() {
       <PanelHeader
         title="Scene Layout"
         subtitle={state.currentSceneName || undefined}
-        onClose={() => { state.activePanel = null; state.confirmDelete = null; state.confirmClear = null }}
+        onClose={() => { state.activePanel = null; state.confirmDelete = null; state.confirmClear = null; state.clicking = null }}
       />
       <UiEntity uiTransform={{ width: '100%', padding: 8, flexDirection: 'column' }}>
         <EditMessage />
@@ -833,7 +839,7 @@ function SceneLayoutPanel() {
               }}
               uiBackground={{ color: C.bgCard }}
             >
-              <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: editable ? 112 : 260 }}>
+              <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: editable ? (CLICKABLE_TYPES.has(el.type) ? 68 : 112) : 260 }}>
                 <Label value={el.type.toUpperCase().slice(0, 3)} fontSize={8} color={C.textMuted}
                   uiTransform={{ margin: { right: 6 } }} />
                 <Label value={el.name || 'Unnamed'} fontSize={11} color={el.enabled ? C.text : C.textDim} textAlign="middle-left" />
@@ -872,6 +878,17 @@ function SceneLayoutPanel() {
                     <Button label="Clear" onPress={() => { state.confirmDelete = null; state.confirmClear = el.id }}
                       width={52} height={24} fontSize={10} />
                   )}
+                  {CLICKABLE_TYPES.has(el.type) && <UiEntity uiTransform={{ width: 4 }} />}
+                  {CLICKABLE_TYPES.has(el.type) && (
+                    <Button label="Click" color={state.clicking?.elementId === el.id ? C.accent : undefined}
+                      onPress={() => {
+                        state.confirmDelete = null
+                        state.confirmClear = null
+                        state.clickError = null
+                        state.clicking = state.clicking?.elementId === el.id ? null : { elementId: el.id, draft: clickDraftOf(el.click) }
+                      }}
+                      width={40} height={24} fontSize={9} />
+                  )}
                 </UiEntity>
               )}
             </UiEntity>
@@ -892,6 +909,67 @@ function SceneLayoutPanel() {
           <Label value="Delete this element and all its copies? This can't be undone." fontSize={10} color={C.warning}
             textAlign="top-left" uiTransform={{ width: '100%', height: 22 }} />
         )}
+        {editable && state.clicking && <ClickEditor />}
+      </UiEntity>
+    </UiEntity>
+  )
+}
+
+/** One text field of the click editor; `set` writes the draft. */
+function ClickInput({ value, placeholder, width, set }: { value: string; placeholder: string; width: number; set: (v: string) => void }) {
+  return (
+    <Input uiTransform={{ width, height: 28, margin: { right: 4 } }} uiBackground={{ color: C.bgLight }} color={C.text}
+      placeholderColor={C.textMuted} placeholder={placeholder} fontSize={10} value={value} onChange={set} />
+  )
+}
+
+/** What clicking the item does (LIV-126): the same actions as the dashboard's, checked before saving. */
+function ClickEditor() {
+  const c = state.clicking!
+  const item = state.layout.find((el) => el.id === c.elementId)
+  if (!item) return null
+  const d = c.draft
+  const set = (patch: Partial<ClickDraft>) => { if (state.clicking) state.clicking = { ...state.clicking, draft: { ...state.clicking.draft, ...patch } } }
+  const save = () => {
+    const r = clickFromDraft(state.clicking!.draft)
+    if (!r.ok) { state.clickError = r.error; return }
+    state.clickError = null
+    onSceneAction?.('layout_click', { elementId: c.elementId, clickEvent: r.value })
+  }
+  return (
+    <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', padding: 6, margin: { top: 4 } }} uiBackground={{ color: C.bgCard }}>
+      <Label value={`${item.name || 'Unnamed'}: ${clickLabel(item.click)}`} fontSize={10} color={C.textDim} textAlign="middle-left" uiTransform={{ height: 18 }} />
+      <UiEntity uiTransform={{ flexDirection: 'row', margin: { top: 2, bottom: 4 } }}>
+        {CLICK_KIND_LABELS.map(([kind, label]) => (
+          <UiEntity key={kind} uiTransform={{ margin: { right: 3 } }}>
+            <Button label={label} color={d.kind === kind ? C.accent : undefined} onPress={() => set({ kind })} width={54} height={22} fontSize={9} />
+          </UiEntity>
+        ))}
+      </UiEntity>
+      {d.kind === 'link' && <ClickInput value={d.link} placeholder="https://… (Decentraland asks first)" width={280} set={(v) => set({ link: v })} />}
+      {d.kind === 'sound' && <ClickInput value={d.sound} placeholder="https://… an mp3 or ogg" width={280} set={(v) => set({ sound: v })} />}
+      {d.kind === 'teleport' && <ClickInput value={d.teleport} placeholder="Parcel, like 52,-20" width={140} set={(v) => set({ teleport: v })} />}
+      {d.kind === 'move' && (
+        <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Label value="To" fontSize={10} color={C.textDim} uiTransform={{ width: 20 }} />
+          {(['x', 'y', 'z'] as const).map((a, i) => (
+            <UiEntity key={a}>
+              <ClickInput value={d.move[i]} placeholder={a} width={56}
+                set={(v) => { const m = [...d.move] as ClickDraft['move']; m[i] = v; set({ move: m }) }} />
+            </UiEntity>
+          ))}
+        </UiEntity>
+      )}
+      {d.kind !== 'none' && (
+        <UiEntity uiTransform={{ margin: { top: 4 } }}>
+          <ClickInput value={d.hoverText} placeholder="Hover text" width={200} set={(v) => set({ hoverText: v.slice(0, 60) })} />
+        </UiEntity>
+      )}
+      {state.clickError && <Label value={state.clickError} fontSize={10} color={C.danger} textAlign="top-left" uiTransform={{ width: '100%', height: 20 }} />}
+      <UiEntity uiTransform={{ flexDirection: 'row', margin: { top: 4 } }}>
+        <Button label="Save" color={C.accent} onPress={save} width={56} height={24} fontSize={10} />
+        <UiEntity uiTransform={{ width: 4 }} />
+        <Button label="Cancel" onPress={() => { state.clicking = null; state.clickError = null }} width={56} height={24} fontSize={10} />
       </UiEntity>
     </UiEntity>
   )
@@ -1829,6 +1907,16 @@ export class DclHUDRenderer implements HUDRenderer {
     state.layoutFailed = false
     if (state.confirmDelete && !list.some((el) => el.id === state.confirmDelete)) state.confirmDelete = null
     if (state.confirmClear && !list.some((el) => el.id === state.confirmClear && el.copies > 0)) state.confirmClear = null
+    if (state.clicking && !list.some((el) => el.id === state.clicking!.elementId)) state.clicking = null
+  }
+
+  /** A click action was saved (LIV-126): close the editor; or it was refused: say why there. */
+  clickSaved(error: string | null = null): void {
+    if (error) state.clickError = error
+    else {
+      state.clicking = null
+      state.clickError = null
+    }
   }
 
   /** A media / layout refresh failed: stop showing "Loading…" (the error goes to setEditMessage). */

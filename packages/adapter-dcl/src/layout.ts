@@ -1,5 +1,13 @@
 /** One row of the HUD's Scene Layout panel. `copies` is how many instances the element has in the scene. */
-export type HUDLayoutItem = { id: string; name: string; type: string; enabled: boolean; copies: number }
+export type HUDLayoutItem = {
+  id: string
+  name: string
+  type: string
+  enabled: boolean
+  copies: number
+  /** What clicking the item does (LIV-126); null for nothing. */
+  click: import('@virvixr/shared').ClickEvent | null
+}
 
 /**
  * A layout row from a preset element. An element update returns the row without its instances,
@@ -7,7 +15,8 @@ export type HUDLayoutItem = { id: string; name: string; type: string; enabled: b
  */
 export function toLayoutItem(el: any, previous?: HUDLayoutItem): HUDLayoutItem {
   const copies = Array.isArray(el?.instances) ? el.instances.length : previous?.copies ?? 0
-  return { id: el.id, name: el.name, type: el.type, enabled: el.enabled !== false, copies }
+  const click = el?.clickEvent !== undefined ? (el.clickEvent && el.clickEvent.type ? el.clickEvent : null) : previous?.click ?? null
+  return { id: el.id, name: el.name, type: el.type, enabled: el.enabled !== false, copies, click }
 }
 
 export function withCopies(list: HUDLayoutItem[], elementId: string, copies: number): HUDLayoutItem[] {

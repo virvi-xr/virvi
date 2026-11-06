@@ -681,7 +681,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           return
         }
 
-        if (action !== 'media_place' && action !== 'layout_toggle' && action !== 'layout_delete' && action !== 'layout_clear') return
+        if (action !== 'media_place' && action !== 'layout_toggle' && action !== 'layout_delete' && action !== 'layout_clear' && action !== 'layout_click') return
         if (busy) return
         busy = true
         try {
@@ -703,6 +703,18 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
             await virvi.httpClient.deleteElement(id)
             layout = layout.filter((el) => el.id !== id)
             renderer?.setLayout(layout)
+          }
+          if (action === 'layout_click') {
+            // The item's click action (LIV-126); the server checks it and says why it refuses one
+            try {
+              const { element } = await virvi.httpClient.updateElement(String(data?.elementId), { clickEvent: data?.clickEvent ?? null })
+              layout = layout.map((el) => (el.id === element.id ? toLayoutItem(element, el) : el))
+              renderer?.setLayout(layout)
+              renderer?.clickSaved()
+              renderer?.setEditMessage('Click action saved')
+            } catch (err) {
+              renderer?.clickSaved(showControlError(err, { connected: connected() }))
+            }
           }
           if (action === 'layout_clear') {
             // Every copy of one element goes; the element stays (the dashboard's Delete all, LIV-12)
