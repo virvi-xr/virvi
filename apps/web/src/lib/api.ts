@@ -131,6 +131,9 @@ export interface DclPendingModel {
   file: string
   triangles: number | null
   bytes: number | null
+  /** The scene's thumbnail rather than a model (LIV-88); `removed` when it was taken off since the last deploy. */
+  kind?: 'thumbnail'
+  removed?: true
 }
 
 /** A deployment row (the Hyperfy admin code never reaches the browser). */
@@ -305,6 +308,11 @@ export function useApi() {
       apiFetch<{ scene: any }>(`/api/scenes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteScene: (id: string) =>
       apiFetch(`/api/scenes/${id}`, { method: 'DELETE' }),
+    /** The scene's thumbnail (LIV-88): the cropped 16:9 PNG or JPEG, base64. */
+    setSceneThumbnail: (id: string, fileData: string) =>
+      apiFetch<{ scene: any }>(`/api/scenes/${id}/thumbnail`, { method: 'PUT', body: JSON.stringify({ fileData }) }),
+    removeSceneThumbnail: (id: string) =>
+      apiFetch<{ scene: any }>(`/api/scenes/${id}/thumbnail`, { method: 'DELETE' }),
 
     // Scene Collaborators
     getSceneCollaborators: (sceneId: string) =>

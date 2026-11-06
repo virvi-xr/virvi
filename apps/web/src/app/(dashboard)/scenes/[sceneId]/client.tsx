@@ -13,6 +13,7 @@ import { ScreenShowings } from './ScreenShowings'
 import { ClickActionField } from './ClickAction'
 import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
+import { SceneThumbnail } from './SceneThumbnail'
 import { RoomSetPanel } from './RoomSetPanel'
 import { sceneHasRoomSet } from '@/lib/room-set'
 import { mediaLabel, useMediaNames } from '@/lib/media-names'
@@ -30,7 +31,7 @@ import { Badge, PageHeader, Skeleton, type Tone } from '@/components/ui'
 // ---------------------------------------------------------------------------
 
 type ElementType = 'video' | 'image' | 'sound' | 'model' | 'widget' | 'ad_space'
-type TabKey = ElementType | 'moderation' | 'roles' | 'ar'
+type TabKey = ElementType | 'moderation' | 'roles' | 'ar' | 'settings'
 
 interface Instance {
   id: string
@@ -67,6 +68,8 @@ interface Preset {
 interface Scene {
   id: string
   name: string
+  /** LIV-88: shown here and on the Scenes list, and deployed to Decentraland as the scene's navmapThumbnail. */
+  thumbnailUrl?: string | null
   activePresetId?: string | null
   presets: Preset[]
 }
@@ -85,6 +88,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'moderation', label: 'Moderation' },
   { key: 'roles', label: 'Roles' },
   { key: 'ar', label: 'AR spaces' },
+  { key: 'settings', label: 'Settings' },
 ]
 
 const CONTROL_TYPES = [
@@ -1723,7 +1727,14 @@ export default function SceneEditorPage() {
     <div className="space-y-6">
       <PageHeader
         crumbs={['Workspace', { label: 'Scenes', href: '/scenes' }, scene.name]}
-        title={<EditableSceneTitle name={scene.name} onSave={renameScene} />}
+        title={
+          <span className="flex items-center gap-3">
+            {scene.thumbnailUrl && (
+              <img src={scene.thumbnailUrl} alt="" className="aspect-video h-12 shrink-0 rounded border border-gray-700 object-cover" />
+            )}
+            <EditableSceneTitle name={scene.name} onSave={renameScene} />
+          </span>
+        }
         subtitle={
           <>
             {!namePanel && hasConnected(linked) && (
@@ -1768,7 +1779,7 @@ export default function SceneEditorPage() {
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800 pb-px">
         {TABS.map(tab => {
-          const count = tab.key === 'moderation' || tab.key === 'roles' || tab.key === 'ar' ? 0 : elements.filter(el => el.type === tab.key).length
+          const count = tab.key === 'moderation' || tab.key === 'roles' || tab.key === 'ar' || tab.key === 'settings' ? 0 : elements.filter(el => el.type === tab.key).length
           return (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
@@ -1792,6 +1803,12 @@ export default function SceneEditorPage() {
 
       {/* AR spaces tab */}
       {activeTab === 'ar' && <ArSpaces sceneId={sceneId} />}
+
+      {/* Settings tab: the scene's thumbnail (LIV-88) */}
+      {activeTab === 'settings' && (
+        <SceneThumbnail sceneId={sceneId} url={scene.thumbnailUrl ?? null} api={api}
+          onChange={(url) => setScene(prev => prev && { ...prev, thumbnailUrl: url })} />
+      )}
 
       {/* Widget tab */}
       {activeTab === 'widget' && (
@@ -1817,7 +1834,7 @@ export default function SceneEditorPage() {
       )}
 
       {/* Element list (video/image/model/sound) */}
-      {activeTab !== 'moderation' && activeTab !== 'widget' && activeTab !== 'roles' && activeTab !== 'ar' && (
+      {activeTab !== 'moderation' && activeTab !== 'widget' && activeTab !== 'roles' && activeTab !== 'ar' && activeTab !== 'settings' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-400">{ELEMENT_TYPE_LABELS[activeTab as ElementType]}s ({filteredElements.length})</p>

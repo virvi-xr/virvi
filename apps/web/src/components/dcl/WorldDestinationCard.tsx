@@ -121,7 +121,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <p className="text-xs text-gray-500">Models</p>
-          <p className="text-gray-200">{pending === null ? '…' : pendingLine(pending)}</p>
+          <p className="text-gray-200">{pending === null ? '…' : pendingLine(detail!.pending)}</p>
           {pending !== null && pending > 0 && (
             <p className="mt-0.5 text-xs text-gray-500">{detail!.pending.map((m) => m.name).join(', ')}</p>
           )}

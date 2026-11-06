@@ -78,6 +78,8 @@ export interface CommandCenterStatus {
   worlds: Array<{
     sceneId: string
     sceneName: string
+    /** LIV-88; absent from a server that predates it. */
+    sceneThumbnailUrl?: string | null
     platform: string | null
     deploymentStatus: string | null
     visitorCount: number

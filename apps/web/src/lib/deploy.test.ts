@@ -8,6 +8,16 @@ describe('pendingLine', () => {
     expect(pendingLine(1)).toBe('1 model is waiting to go live')
     expect(pendingLine(0)).toBe('Every model in the scene is live.')
   })
+
+  it('counts a thumbnail change apart from the models (LIV-88)', () => {
+    const m = { kind: undefined }
+    const t = { kind: 'thumbnail' as const }
+    expect(pendingLine([m, m])).toBe('2 models are waiting to go live')
+    expect(pendingLine([t])).toBe('The new thumbnail is waiting to go live')
+    expect(pendingLine([{ kind: 'thumbnail' as const, removed: true as const }])).toBe('Removing the thumbnail is waiting to go live')
+    expect(pendingLine([m, t])).toBe('1 model and the new thumbnail are waiting to go live')
+    expect(pendingLine([])).toBe('Everything in the scene is live.')
+  })
 })
 
 describe('modeLabel', () => {

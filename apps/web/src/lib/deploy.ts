@@ -6,9 +6,18 @@ import { shortAddress } from './wizard/helpers'
 import { placeLabel } from './import'
 
 /** "3 models are waiting to go live", or that nothing is. */
-export function pendingLine(count: number): string {
-  if (count === 0) return 'Every model in the scene is live.'
-  return count === 1 ? '1 model is waiting to go live' : `${count} models are waiting to go live`
+/** What's waiting to go live: a count of models, or the pending list (which may hold the scene thumbnail, LIV-88). */
+export function pendingLine(pending: number | Array<{ kind?: 'thumbnail'; removed?: true }>): string {
+  if (typeof pending === 'number') {
+    if (pending === 0) return 'Every model in the scene is live.'
+    return pending === 1 ? '1 model is waiting to go live' : `${pending} models are waiting to go live`
+  }
+  const thumb = pending.find((p) => p.kind === 'thumbnail')
+  const models = pending.length - (thumb ? 1 : 0)
+  if (!thumb) return models === 0 ? 'Everything in the scene is live.' : pendingLine(models)
+  if (models === 0) return thumb.removed ? 'Removing the thumbnail is waiting to go live' : 'The new thumbnail is waiting to go live'
+  const what = thumb.removed ? 'removing the thumbnail' : 'the new thumbnail'
+  return `${models === 1 ? '1 model' : `${models} models`} and ${what} are waiting to go live`
 }
 
 export function modeLabel(dest: Pick<DclDestination, 'mode' | 'grantedAt'>): string {

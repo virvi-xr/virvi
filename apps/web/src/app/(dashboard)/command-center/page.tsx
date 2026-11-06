@@ -244,6 +244,9 @@ function WorldCard({ world }: { world: CommandCenterStatus['worlds'][number] }) 
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3">
+      {world.sceneThumbnailUrl && (
+        <img src={world.sceneThumbnailUrl} alt="" className="aspect-video w-full rounded-md border border-gray-800 object-cover" />
+      )}
       <div className="flex items-start justify-between">
         <div>
           <h3 className="font-semibold text-sm">{world.sceneName}</h3>
