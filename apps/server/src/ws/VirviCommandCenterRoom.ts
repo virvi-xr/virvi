@@ -37,6 +37,8 @@ interface JoinOptions {
 interface WorldStatus {
   sceneId: string
   sceneName: string
+  /** The scene's thumbnail (LIV-88), null when it has none. */
+  sceneThumbnailUrl: string | null
   platform: string | null
   deploymentStatus: string | null
   visitorCount: number
@@ -160,6 +162,7 @@ export class VirviCommandCenterRoom extends Room {
           .select({
             sceneId: scenes.id,
             sceneName: scenes.name,
+            sceneThumbnailUrl: scenes.thumbnailUrl,
             activePreset: scenes.activePresetId,
           })
           .from(eventSceneLinks)
@@ -177,6 +180,7 @@ export class VirviCommandCenterRoom extends Room {
             return {
               sceneId: link.sceneId,
               sceneName: link.sceneName,
+              sceneThumbnailUrl: link.sceneThumbnailUrl,
               platform: deployment?.platform || null,
               deploymentStatus: deployment?.status || null,
               visitorCount: 0, // TODO: count from active Colyseus room clients

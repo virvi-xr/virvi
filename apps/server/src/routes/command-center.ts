@@ -49,6 +49,7 @@ export default async function commandCenterRoutes(app: FastifyInstance) {
         .select({
           sceneId: scenes.id,
           sceneName: scenes.name,
+          sceneThumbnailUrl: scenes.thumbnailUrl,
           activePreset: scenes.activePresetId,
         })
         .from(eventSceneLinks)
@@ -65,6 +66,7 @@ export default async function commandCenterRoutes(app: FastifyInstance) {
           return {
             sceneId: link.sceneId,
             sceneName: link.sceneName,
+            sceneThumbnailUrl: link.sceneThumbnailUrl,
             platform: deployment?.platform || null,
             deploymentStatus: deployment?.status || null,
             deploymentType: deployment?.deploymentType || null,
