@@ -131,6 +131,27 @@
 - [ ] **Step 4: Run the tests.** Expected: PASS. Also run web `tsc`.
 - [ ] **Step 5: Commit** `fix(handoff): a checkout link signs in its own account even when the browser holds another session`.
 
+### Task 3b: Polled progress: a job keeps its phase and latest lines
+
+**Why:** phases and progress lines reach only the `virvi_studio` room (`routes/studio-worker.ts:140-151`), which refuses scene passes, so a polling scene would never see them.
+
+**Files:**
+- Modify: `apps/server/src/db/schema.ts` (`studioJobs`: `phase text null`, `progress jsonb not null default '[]'`), `apps/server/entrypoint.sh` (fallback columns)
+- Modify: `apps/server/src/routes/studio-worker.ts` (events route), `apps/server/src/studio/designs.ts` (`designDetail.activeJob`)
+- Test: `apps/server/test/studio-routes.test.ts` (or the worker-events test file)
+
+**Interfaces:**
+- Produces: `designDetail.activeJob` becomes `{ id, type, status, fixClipping, phase: string | null, progress: string[] }`. `progress` holds the last 5 lines, oldest first, with lines starting `Running:` left out (as the website hides them).
+
+- [ ] **Step 1: Write the failing tests.**
+  - After a worker posts phase `building` and then 7 progress lines (one of them `Running: x`), `GET /api/studio/designs/:id` has `activeJob.phase === 'building'` and the last 5 non-`Running:` lines, in order.
+  - The room events are still published (assert the existing bus spy or test).
+  - A done job is not `activeJob`, which is unchanged behaviour.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.** One `UPDATE` per event: `progress = (progress || jsonb_build_array(text))`, trimmed to its last 5 elements in SQL, or read-modify-write inside the update.
+- [ ] **Step 4: Run the tests and `tsc`.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(studio): a job keeps its phase and latest progress, for clients that poll`.
+
 ---
 
 ## Phase B — the scene (new repo `~/-VLM/virvi-studio-scene`)
@@ -243,7 +264,7 @@
     - `'building'` (with `phase: string | null` and `progress: string[]`)
     - `'needs_input'` (the latest agent message has a `proposal`)
     - `'ready'`, `'failed'` (with `retry: 'resend' | 'continue' | 'fix_checks' | null`), `'finalized'`.
-  - `viewOf(input: { signIn: SignInResult | null; usage: ApiResult<Usage> | null; detail: DesignDetail | null; progress: string[] }): StudioView`.
+  - `viewOf(input: { signIn: SignInResult | null; usage: ApiResult<Usage> | null; detail: DesignDetail | null }): StudioView` (phase and progress come from `detail.activeJob.phase` / `.progress`, Task 3b).
   - `pollDelayMs(view: StudioView, detail: DesignDetail | null, checkoutOpen: boolean): 5000 | 30000`.
   - `needsFullReread(lastFullAt: number, now: number): boolean` (45 min).
   - `class RevealTracker { shouldReveal(designId: string, revisionKey: string | null, view: StudioView): boolean }`.
@@ -256,10 +277,10 @@
   - **`viewOf`:**
     - `guest` → `'guest'`; `not_studio` → `'not_studio'`.
     - `/usage` `404` → `'unavailable'`; `usage.paused` → `'resting'`.
-    - `activeJob {type:'prompt', status:'queued'}` → `'thinking'`; status `'taken'` with a phase `building` event in `progress` → `'building'`.
+    - `activeJob {type:'prompt', status:'queued'}` → `'thinking'`; status `'taken'` with `phase: 'building'` → `'building'` carrying its `progress`.
     - `lastPrompt.outcome` maps as follows: `'needs_input'` → `'needs_input'`; `'error'`/`'timeout'` → `'failed', retry: 'resend'`; `'ceiling'`/`'turns'` → `retry: 'continue'`; a piece whose `revision.checker.pass === false` → `retry: 'fix_checks'`; `'ok'` → `'ready'`.
     - Every piece's `finalized` includes the current revision with `status:'ready'` → `'finalized'`.
-  - **Phases:** the scene has no live events, so `viewOf` reads the phase from `activeJob` and `messages`. Assert `'building'` whenever `activeJob.status === 'taken'`.
+  - **Phases:** `'building'` carries `activeJob.phase` and `activeJob.progress` (Task 3b). A `taken` prompt job whose phase is null → `'thinking'`; any non-null phase → `'building'`.
   - **`pollDelayMs`:** 5000 with `activeJob`, with any render `status:'queued'` or `pending:true`, or with a checkout open; otherwise 30000.
   - **`needsFullReread`:** true at 45 min.
   - **`RevealTracker`:** true once for a new `revisionKey` (`<pieceCategory>:<revisionNumber>` joined) when the view is `'ready'`, then false. True again after a newer revision. On a fresh tracker (a new visit) with a `'ready'` view → true once ("on arrival").
