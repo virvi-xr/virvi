@@ -1,11 +1,14 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { assetLibraryItems, mediaAssets } from '../db/schema.js'
+import { assetLibraryItems, mediaAssets, scenes } from '../db/schema.js'
 import { config } from '../config.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { StoreMediaError } from './store.js'
 
-/** Throws StoreMediaError(storage_limit_reached) when ownerId's media plus asset-library uploads plus addBytes exceed their tier (skipped in self-hosted mode). */
+/**
+ * Throws StoreMediaError(storage_limit_reached) when ownerId's media, asset-library uploads and scene thumbnails plus
+ * addBytes exceed their tier (skipped in self-hosted mode). addBytes may be negative (a smaller replacement).
+ */
 export async function assertStorageQuota(
   ownerId: string,
   addBytes: number,
@@ -24,9 +27,13 @@ export async function assertStorageQuota(
     .from(assetLibraryItems)
     // Design Studio pieces the person paid for (sourceRef studio:…) don't count against their upload storage
     .where(and(eq(assetLibraryItems.uploadedBy, ownerId), sql`coalesce(${assetLibraryItems.sourceRef}, '') NOT LIKE 'studio:%'`))
-  const usedBytes = mediaBytes + libraryBytes
+  const [{ usedBytes: thumbnailBytes }] = await db
+    .select({ usedBytes: sql<number>`coalesce(sum(${scenes.thumbnailBytes}), 0)::bigint`.mapWith(Number) })
+    .from(scenes)
+    .where(eq(scenes.ownerId, ownerId))
+  const usedBytes = mediaBytes + libraryBytes + thumbnailBytes
 
-  if (usedBytes + addBytes > storageLimit) {
+  if (addBytes > 0 && usedBytes + addBytes > storageLimit) {
     throw new StoreMediaError(opts.quotaStatus ?? 403, {
       error: 'storage_limit_reached',
       message:

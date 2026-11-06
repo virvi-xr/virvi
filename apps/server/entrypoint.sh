@@ -210,6 +210,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio_payments.gifts_held ensured');
       } catch(e) { console.log('[virvi-server] studio_payments.gifts_held:', e.message); }
 
+      // Scene thumbnail (LIV-88): matches scenes.thumbnailKey and scenes.thumbnailBytes in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_key TEXT\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_bytes INTEGER\`;
+        console.log('[virvi-server] scenes thumbnail columns ensured');
+      } catch(e) { console.log('[virvi-server] scenes thumbnail columns:', e.message); }
+
       // Design Studio credit and MANA: new columns; matches studioPayments, studioEntitlements and studioMistakeReports in src/db/schema.ts
       try {
         await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS method TEXT NOT NULL DEFAULT 'card'\`;

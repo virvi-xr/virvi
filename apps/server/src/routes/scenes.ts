@@ -25,6 +25,8 @@ import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
+import { ThumbnailError, deleteThumbnailFile, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
+import { StoreMediaError } from '../media/store.js'
 import { commitRoomSet, deleteOrphanedRoomSets, insertRoomSet, prepareRoomSetForPlacement, RoomSetError, roomSetIdsByElement, sceneOwnedRoomSets, type PreparedRoomSet } from '../room-scan/sets.js'
 
 type ElementChange = Parameters<typeof publishElementChanged>[0]
@@ -338,6 +340,38 @@ export default async function sceneRoutes(app: FastifyInstance) {
     },
   )
 
+  // ── PUT/DELETE /api/scenes/:sceneId/thumbnail — the scene's thumbnail (LIV-88) ──
+  // Hosts, co-hosts and editors (scene.edit). The body is { fileData: base64 } of the cropped 16:9 image.
+
+  app.put<{ Params: { sceneId: string }; Body: { fileData?: unknown } }>('/api/scenes/:sceneId/thumbnail', async (request, reply) => {
+    const { sceneId } = request.params
+    if (!UUID_RE.test(sceneId) || !(await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true } }))) {
+      return reply.status(404).send({ error: 'Scene not found' })
+    }
+    if (!hasScope(await accessFor(request, sceneId), 'scene.edit')) return reply.status(403).send({ error: 'Forbidden' })
+    const fileData = request.body?.fileData
+    if (typeof fileData !== 'string' || !fileData) return reply.status(400).send({ error: 'missing_file', message: 'Choose an image to upload.' })
+    try {
+      const scene = await setSceneThumbnail(sceneId, Buffer.from(fileData, 'base64'))
+      return reply.send({ scene })
+    } catch (err) {
+      if (err instanceof ThumbnailError) return reply.status(err.status).send({ error: err.code, message: err.message })
+      if (err instanceof StoreMediaError) return reply.status(err.status).send(err.body)
+      throw err
+    }
+  })
+
+  app.delete<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/thumbnail', async (request, reply) => {
+    const { sceneId } = request.params
+    if (!UUID_RE.test(sceneId) || !(await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true } }))) {
+      return reply.status(404).send({ error: 'Scene not found' })
+    }
+    if (!hasScope(await accessFor(request, sceneId), 'scene.edit')) return reply.status(403).send({ error: 'Forbidden' })
+    const scene = await removeSceneThumbnail(sceneId)
+    if (!scene) return reply.status(404).send({ error: 'Scene not found' })
+    return reply.send({ scene })
+  })
+
   // ── DELETE /api/scenes/:sceneId — delete scene ───────────────────────────
 
   app.delete<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', async (request, reply) => {
@@ -357,6 +391,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     const roomSetsToDelete = await sceneOwnedRoomSets({ sceneId })
     const imports = await importsGoingWith({ sceneId })
     await db.delete(scenes).where(eq(scenes.id, sceneId))
+    await deleteThumbnailFile(scene.thumbnailKey)
     await deleteOrphanedRoomSets(roomSetsToDelete)
     await deleteImportFiles(imports)
     await publishSceneTouched(sceneId) // wake waiting Hyperfy feed polls so they get 404 now

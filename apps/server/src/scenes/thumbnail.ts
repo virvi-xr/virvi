@@ -4,9 +4,14 @@
  */
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
+import { eq } from 'drizzle-orm'
 import {
   SCENE_THUMBNAIL_MAX, SCENE_THUMBNAIL_MAX_BYTES, SCENE_THUMBNAIL_MIN, isThumbnailShape,
 } from '@virvixr/shared'
+import { db } from '../db/connection.js'
+import { scenes } from '../db/schema.js'
+import { assertStorageQuota } from '../media/quota.js'
+import { createStorage, type StorageProvider } from '../storage/index.js'
 
 export type ThumbnailErrorCode = 'too_large' | 'unsupported_type' | 'too_small' | 'wrong_shape'
 
@@ -113,3 +118,66 @@ export function deployedThumbnailFile(storageKey: string | null | undefined): st
   const m = storageKey ? KEY_RE.exec(storageKey) : null
   return m ? `images/scene-thumbnail-${m[1]}.${m[2]}` : null
 }
+
+type SceneRow = typeof scenes.$inferSelect
+
+let storage: StorageProvider | null = null
+const store = () => (storage ??= createStorage())
+
+async function deleteQuietly(key: string) {
+  try {
+    await store().delete(key)
+  } catch (err) {
+    console.error('[scene-thumbnail] could not delete', key, err instanceof Error ? err.message : err)
+  }
+}
+
+/**
+ * Sets the scene's thumbnail from an upload: checked (processSceneThumbnail), charged to the scene owner's storage
+ * quota (less the one it replaces), stored, and the old file deleted. Throws ThumbnailError or StoreMediaError.
+ */
+export async function setSceneThumbnail(sceneId: string, upload: Buffer): Promise<SceneRow> {
+  const t = await processSceneThumbnail(upload)
+  const key = thumbnailStorageKey(sceneId, t)
+  const current = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { ownerId: true, thumbnailBytes: true, thumbnailKey: true } })
+  if (!current) throw new Error('Scene not found')
+  await assertStorageQuota(current.ownerId, t.data.length - (current.thumbnailBytes ?? 0))
+  const url = await store().upload(key, t.data, t.contentType)
+  let old: string | null = null
+  let row: SceneRow
+  try {
+    row = await db.transaction(async (tx) => {
+      // Serialises replacements of one scene's thumbnail, so each old file is deleted exactly once
+      const [locked] = await tx.select({ thumbnailKey: scenes.thumbnailKey }).from(scenes).where(eq(scenes.id, sceneId)).for('update')
+      old = locked?.thumbnailKey ?? null
+      const [updated] = await tx.update(scenes)
+        .set({ thumbnailUrl: url, thumbnailKey: key, thumbnailBytes: t.data.length, updatedAt: new Date() })
+        .where(eq(scenes.id, sceneId))
+        .returning()
+      return updated
+    })
+  } catch (err) {
+    if (current.thumbnailKey !== key) await deleteQuietly(key)
+    throw err
+  }
+  if (old && old !== key) await deleteQuietly(old)
+  return row
+}
+
+/** Takes the scene's thumbnail off and deletes its file. Nothing to remove is fine. */
+export async function removeSceneThumbnail(sceneId: string): Promise<SceneRow | undefined> {
+  const result = await db.transaction(async (tx) => {
+    const [locked] = await tx.select({ thumbnailKey: scenes.thumbnailKey }).from(scenes).where(eq(scenes.id, sceneId)).for('update')
+    if (!locked) return undefined
+    const [updated] = await tx.update(scenes)
+      .set({ thumbnailUrl: null, thumbnailKey: null, thumbnailBytes: null, updatedAt: new Date() })
+      .where(eq(scenes.id, sceneId))
+      .returning()
+    return { updated, old: locked.thumbnailKey }
+  })
+  if (result?.old) await deleteQuietly(result.old)
+  return result?.updated
+}
+
+/** Deletes a stored thumbnail file (the scene is being deleted). */
+export const deleteThumbnailFile = (key: string | null | undefined) => (key ? deleteQuietly(key) : Promise.resolve())

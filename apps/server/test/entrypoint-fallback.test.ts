@@ -22,6 +22,12 @@ describe('entrypoint schema fallback', () => {
     expect(() => execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' })).not.toThrow()
   })
 
+  it('adds the scene thumbnail columns (LIV-88) as schema.ts has them', () => {
+    const script = fallbackScript()
+    expect(script).toContain('ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_key TEXT')
+    expect(script).toContain('ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_bytes INTEGER')
+  })
+
   it('keeps the quotes on room_sets."offset", a reserved word in SQL', () => {
     expect(fallbackScript()).toContain('"offset" JSONB NOT NULL')
   })

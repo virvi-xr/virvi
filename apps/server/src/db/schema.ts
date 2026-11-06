@@ -187,6 +187,10 @@ export const scenes = pgTable('scenes', {
   name: text('name').notNull(),
   description: text('description'),
   thumbnailUrl: text('thumbnail_url'),
+  /** The stored thumbnail (LIV-88), `scenes/<id>/thumbnail-<hash>.<ext>`; null when none. */
+  thumbnailKey: text('thumbnail_key'),
+  /** Its size, counted towards the owner's storage quota. */
+  thumbnailBytes: integer('thumbnail_bytes'),
   activePresetId: uuid('active_preset_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

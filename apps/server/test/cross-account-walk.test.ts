@@ -37,6 +37,7 @@ async function fixtures() {
   const b = await createUser({ wallet: randomWallet() })
   const collaborator = await createUser()
   const { scene, preset } = await createScene(b, 'B scene')
+  await db.update(scenes).set({ thumbnailUrl: 'https://cdn.example/b-thumb.png', thumbnailKey: `scenes/${scene.id}/thumbnail-0123456789abcdef.png`, thumbnailBytes: 10 }).where(eq(scenes.id, scene.id))
   const element = await createElement(preset.id)
   const instance = await createInstance(element.id)
   const adSpace = await createElement(preset.id, { type: 'ad_space', properties: { shape: '1:1', formats: 'both' } })
@@ -149,6 +150,8 @@ const CASES: Case[] = [
   // scenes
   { route: 'GET /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}` },
   { route: 'PUT /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}`, body: () => ({ name: 'pwned' }) },
+  { route: 'PUT /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail`, body: () => ({ fileData: 'AAAA' }) },
+  { route: 'DELETE /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail` },
   { route: 'DELETE /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}` },
   { route: 'POST /api/scenes/:sceneId/presets', url: (f) => `/api/scenes/${f.scene.id}/presets`, body: () => ({ name: 'pwned' }) },
   { route: 'GET /api/scenes/:sceneId/preset-schedules', url: (f) => `/api/scenes/${f.scene.id}/preset-schedules` },
