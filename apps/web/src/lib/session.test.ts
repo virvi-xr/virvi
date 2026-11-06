@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readSession, scenePassAllows } from './session'
+import { readSession, scenePassAllows, trialAllows } from './session'
 
 const tok = (p: Record<string, unknown>) => `x.${Buffer.from(JSON.stringify(p)).toString('base64url')}.y`
 const NOW = 1_800_000_000_000
@@ -32,5 +32,16 @@ describe('scenePassAllows', () => {
     expect(scenePassAllows('/analytics-admin/', '?scene=s1', pass)).toBe(false)
     expect(scenePassAllows('/scenes/', '', pass)).toBe(false)
     expect(scenePassAllows('/settings/', '', pass)).toBe(false)
+  })
+})
+
+describe('trialAllows', () => {
+  it('lets a trial open the Design Studio only', () => {
+    expect(trialAllows('/studio')).toBe(true)
+    expect(trialAllows('/studio/')).toBe(true)
+    expect(trialAllows('/studio/abc')).toBe(true)
+    expect(trialAllows('/scenes')).toBe(false)
+    expect(trialAllows('/settings')).toBe(false)
+    expect(trialAllows('/studio-x')).toBe(false)
   })
 })

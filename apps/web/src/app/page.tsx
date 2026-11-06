@@ -17,7 +17,7 @@ function Landing() {
   const { user, loading, scenePass } = useAuth()
   const router = useRouter()
   const search = useSearchParams().toString()
-  const route = landingRoute({ search: search ? `?${search}` : '', loading, signedIn: !!user, scenePass: !!scenePass })
+  const route = landingRoute({ search: search ? `?${search}` : '', loading, signedIn: !!user, scenePass: !!scenePass, trial: !!user?.trial })
   const go = typeof route === 'object' ? route.go : null
   const [formOpen, setFormOpen] = useState(false)
 

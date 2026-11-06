@@ -73,10 +73,11 @@ export function Doors({ onAdvertise }: { onAdvertise: () => void }) {
           Change screens, streams and events live, without redeploying. Then turn your screens into ad spaces and earn from the campaigns we
           place in them.
         </p>
-        <div className="mt-8">
+        <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
           <a href={signinPath(null, 'register')} className="inline-block rounded-lg border border-gray-600 px-5 py-3 font-semibold text-white hover:border-gray-400 hover:bg-gray-800">
             Start building — it's free
           </a>
+          <a href="/try/studio/" className="text-sm font-medium text-blue-300 underline-offset-4 hover:underline">Try it — no account needed</a>
         </div>
       </div>
     </section>

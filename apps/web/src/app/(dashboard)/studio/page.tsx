@@ -7,8 +7,9 @@ import { Badge, EmptyState, PageHeader, PrimaryButton, Skeleton } from '@/compon
 import { PlusIcon, SparkleIcon } from '@/components/icons'
 import { countLabel } from '@/lib/format'
 import { AgentPicker } from './AgentPicker'
+import { KindPicker } from '@/components/KindPicker'
 import {
-  DEFAULT_AGENT, KIND_CHOICES, agentLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, kindLabel, refusalMessage, relativeTime, usageLine,
+  DEFAULT_AGENT, agentLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, kindLabel, refusalMessage, relativeTime, usageLine,
   type Refusal, type StudioDesign, type StudioKind, type StudioUsage,
 } from '@/lib/studio'
 
@@ -180,14 +181,7 @@ function NewDesign({ onCancel }: { onCancel: () => void }) {
     <form onSubmit={create} className="mb-6 space-y-4 rounded-lg border border-gray-800 bg-gray-900 p-4">
       <fieldset>
         <legend className="mb-2 text-sm text-gray-400">What are you making?</legend>
-        <div role="radiogroup" className="inline-flex rounded-md border border-gray-800 p-0.5 text-sm">
-          {KIND_CHOICES.map(([value, label]) => (
-            <label key={value} className={`cursor-pointer rounded px-3 py-1.5 ${kind === value ? 'bg-white/[0.06] text-white' : 'text-gray-400 hover:text-white'}`}>
-              <input type="radio" name="kind" className="sr-only" value={value} checked={kind === value} onChange={() => setKind(value)} />
-              {label}
-            </label>
-          ))}
-        </div>
+        <KindPicker value={kind} onChange={setKind} />
       </fieldset>
       <fieldset>
         <legend className="mb-2 text-sm text-gray-400">Who builds it?</legend>

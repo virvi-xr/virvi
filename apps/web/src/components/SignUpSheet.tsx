@@ -29,6 +29,7 @@ export function SignUpSheet() {
   useEffect(() => {
     if (!req) return
     setError('')
+    setTab(req.tab ?? 'create')
     setHasWallet(getBrowserWallet() !== null)
     fetch(`${API_URL}/api/auth/providers`).then(r => r.json()).then(setProviders).catch(() => {})
   }, [req])

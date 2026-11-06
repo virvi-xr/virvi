@@ -26,6 +26,8 @@ export type StudioUsage = {
   freeFinalizes: { available: number; held: number }
   creditCents?: number // Virvi credit, in USD cents
   mana?: boolean // Pay with MANA is on (the server has a recipient)
+  trial?: boolean // a signed-out visitor's trial: `left` of `allowance` prompts in total, `openDesignLimit` designs
+  left?: number
 }
 
 export type StudioDesign = {
@@ -219,10 +221,12 @@ const FILE_TOO_LARGE = 'That file is too big: images can be up to 20 MB, 3D file
 
 /** A refused request in the page's words, keyed by the server's `code`. */
 export function refusalMessage(
-  err: { status?: number; body?: { code?: string; resetsAt?: string; categories?: string[]; emote?: string } },
+  err: { status?: number; body?: { code?: string; error?: string; message?: string; resetsAt?: string; categories?: string[]; emote?: string } },
   now: Date,
 ): Refusal {
   const b = err.body ?? {}
+  // The trial's shared daily budget is spent: the server's own words
+  if (b.error === 'trial_busy' && b.message) return { text: b.message }
   switch (b.code) {
     case 'allowance':
       return {
@@ -417,13 +421,34 @@ export const reloadsOn = (e: StudioEvent) =>
   e.type === 'job' && (e.status === 'queued' || e.status === 'done' || e.status === 'failed')
 
 export function composerState(detail: StudioDetail, usage: StudioUsage | null, now: Date): { mode: ComposerMode; note: string } {
-  const note = usage ? `${usage.promptsLeft} prompts left today · ${usage.plan} plan` : ''
+  const note = !usage ? '' : usage.trial ? `${usage.promptsLeft} of ${usage.allowance} free prompts left` : `${usage.promptsLeft} prompts left today · ${usage.plan} plan`
   if (detail.design.archivedAt) return { mode: 'archived', note: 'This design is archived. Unarchive it to keep working on it.' }
   if (usage?.paused) return { mode: 'paused', note: PAUSED_NOTE }
   if (detail.activeJob?.type === 'prompt') return { mode: 'busy', note: 'The agent is still working on your last message.' }
   if (detail.lastPrompt?.outcome === 'ceiling' || detail.lastPrompt?.outcome === 'turns') return { mode: 'continue', note }
   if (usage && usage.promptsLeft <= 0) return { mode: 'out', note: refusalMessage({ body: { code: 'allowance', resetsAt: usage.resetsAt } }, now).text }
   return { mode: 'send', note }
+}
+
+/** The newest ready render's first frame, or null while the design has none. */
+export function latestRenderUrl(detail: Pick<StudioDetail, 'pieces'>): string | null {
+  let best: { at: number; url: string } | null = null
+  for (const p of detail.pieces) for (const v of Object.values(p.renders ?? {})) {
+    if (v.status !== 'ready' || !v.urls?.length) continue
+    const at = Date.parse(v.renderedAt)
+    if (!best || at > best.at) best = { at, url: v.urls[0] }
+  }
+  return best?.url ?? null
+}
+
+/** What a trial is told when it has one free prompt left. */
+export function trialNudge(usage: StudioUsage | null): string | null {
+  return usage?.trial && usage.promptsLeft === 1 ? '1 free prompt left — create an account for 3 a day' : null
+}
+
+/** What the sign-up sheet names when a trial is asked to sign up from a design: its name and the revisions made so far. */
+export function trialCtx(detail: Pick<StudioDetail, 'design' | 'pieces'>): { designName: string; revisions: number } {
+  return { designName: detail.design.name, revisions: detail.pieces.reduce((n, p) => n + (p.revision?.number ?? 0), 0) }
 }
 
 /** The server's view key, `<mode>-<bodyShape>-<outfit>[-<emote>]` (apps/server/src/studio/designs.ts `viewKey`). */

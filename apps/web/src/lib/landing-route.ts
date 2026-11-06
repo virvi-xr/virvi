@@ -11,12 +11,12 @@ export function signinPath(next?: string | null, mode?: 'register'): string {
 
 /**
  * What `/` does: forward old `/?next=` sign-in links, send signed-in users to their scenes,
- * otherwise show the landing page. A scene pass visitor sees the landing page so they can sign in properly.
+ * otherwise show the landing page. A scene pass or trial visitor sees the landing page so they can sign in properly.
  */
-export function landingRoute(a: { search: string; loading: boolean; signedIn: boolean; scenePass: boolean }): { go: string } | 'wait' | 'show' {
+export function landingRoute(a: { search: string; loading: boolean; signedIn: boolean; scenePass: boolean; trial?: boolean }): { go: string } | 'wait' | 'show' {
   const next = safeNextPath(new URLSearchParams(a.search).get('next'))
   if (next) return { go: signinPath(next) }
   if (a.loading) return 'wait'
-  if (a.signedIn && !a.scenePass) return { go: '/scenes' }
+  if (a.signedIn && !a.scenePass && !a.trial) return { go: '/scenes' }
   return 'show'
 }

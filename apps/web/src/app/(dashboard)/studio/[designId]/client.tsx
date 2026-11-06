@@ -23,7 +23,7 @@ const PAYMENT_POLL_MS = 5000
 
 export default function StudioDesignPage() {
   const params = useParams()
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const api = useApi()
   const apiRef = useRef(api)
   apiRef.current = api
@@ -76,7 +76,8 @@ export default function StudioDesignPage() {
     setEvents((prev) => [...prev.slice(-(MAX_EVENTS - 1)), e])
     if (reloadsOn(e)) reload()
   }, [reload])
-  const { connected } = useStudioRoom(designId, token, onEvent)
+  // A trial token is no Colyseus session: it has no live room, and the poll above carries a running job instead
+  const { connected } = useStudioRoom(designId, user?.trial ? null : token, onEvent)
 
   // A reconnect may have missed a job ending: re-read
   const wasConnected = useRef(false)

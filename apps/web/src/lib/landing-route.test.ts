@@ -31,6 +31,8 @@ describe('landingRoute', () => {
 
   it('shows the landing page to a scene pass visitor', () => {
     expect(landingRoute({ ...base, signedIn: true, scenePass: true })).toBe('show')
+    // a trial visitor has no scenes to go to: the landing page (and its Try link) stays
+    expect(landingRoute({ ...base, signedIn: true, trial: true })).toBe('show')
   })
 
   it('shows the landing page to a signed-out visitor', () => {

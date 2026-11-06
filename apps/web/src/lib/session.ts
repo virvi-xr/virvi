@@ -30,3 +30,8 @@ export function readTrialSession(token: string, now: number): boolean {
   const p = payloadOf(token)
   return !!p && typeof p.exp === 'number' && p.exp * 1000 > now && p.kind === 'trial'
 }
+
+/** Pages a trial session may open: the Design Studio and its designs. */
+export function trialAllows(pathname: string): boolean {
+  return pathname === '/studio' || pathname.startsWith('/studio/')
+}

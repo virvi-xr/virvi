@@ -1,7 +1,7 @@
 /** Trial sessions: reading "account required" refusals, the words for them, and the bridge to the sign-up sheet. */
 
-export interface BlockedCtx { designName?: string; revisions?: number }
-export interface SignUpRequest { action: string; ctx: BlockedCtx }
+export interface BlockedCtx { designName?: string; revisions?: number; /** The locked page's name, for a nav click. */ label?: string }
+export interface SignUpRequest { action: string; ctx: BlockedCtx; /** Which tab the sheet opens on (default: create account). */ tab?: 'create' | 'signin' }
 
 /** The refused action when an error is a trial's `403 account_required`, else null. */
 export function accountRequired(err: unknown): { action: string } | null {
@@ -16,6 +16,10 @@ const DEFAULT_TITLE = 'Create a free account to use this.'
 export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; unlocks: string; emphasis?: string } {
   const name = ctx.designName?.trim()
   const revs = ctx.revisions
+  if (action.startsWith('nav:')) {
+    const label = ctx.label?.trim()
+    return { title: `Create a free account to use ${label || 'this'}.`, unlocks: 'Your trial designs move into your account.' }
+  }
   switch (action) {
     case 'POST /api/studio/designs/:id/finalize': {
       const saved = typeof revs === 'number' && revs > 0
@@ -40,6 +44,25 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
     default:
       return { title: DEFAULT_TITLE, unlocks: 'Your trial designs move into your account.' }
   }
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  'POST /api/studio/designs/:id/finalize': 'Finalize',
+  'GET /api/studio/designs/:id/packages': 'Download',
+  'GET /api/studio/designs/:id/pieces/:category/revisions/:number/package': 'Download',
+  'POST /api/studio/designs/:id/pieces/:category/revisions/:number/package/retry': 'Download',
+  'POST /api/studio/topups': 'Buy prompts',
+  'POST /api/studio/gift-codes/redeem': 'Redeem',
+  more_designs: 'New design',
+  more_prompts: 'Send',
+  upload_more: 'Upload',
+}
+
+/** The one-time note after Google or Discord sign-in sent a visitor back; null when there was no blocked action. */
+export function signedInNote(action: string | null): string | null {
+  if (!action) return null
+  const label = ACTION_LABELS[action]
+  return label ? `You're signed in — press ${label} again` : "You're signed in"
 }
 
 /** A trial's tokens were refused as ended: swap to the account session another tab stored, or sign out. */

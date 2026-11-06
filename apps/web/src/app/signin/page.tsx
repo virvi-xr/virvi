@@ -24,7 +24,8 @@ function SignIn() {
   const [providers, setProviders] = useState<{ google: boolean; discord: boolean }>({ google: false, discord: false })
 
   useEffect(() => {
-    if (!loading && user && !scenePass) router.push(dest)
+    // A trial visitor signing in stays here: the sign-in carries their trial designs into the account
+    if (!loading && user && !user.trial && !scenePass) router.push(dest)
   }, [user, loading, scenePass, router])
 
   useEffect(() => {
@@ -68,7 +69,7 @@ function SignIn() {
   }
 
   if (loading) return <div className="flex h-screen items-center justify-center"><p>Loading...</p></div>
-  if (user && !scenePass) return null
+  if (user && !user.trial && !scenePass) return null
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-4">

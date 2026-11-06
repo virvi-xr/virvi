@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { trialEndedOutcome, accountRequired, blockedCopy, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
+import { trialEndedOutcome, accountRequired, blockedCopy, signedInNote, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
 
 describe('accountRequired', () => {
   it('reads the action from an account_required refusal', () => {
@@ -84,5 +84,26 @@ describe('dismissed sign-up', () => {
 describe('blockedCopy emphasis', () => {
   it('returns the design name separately', () => {
     expect(blockedCopy('POST /api/studio/designs/:id/finalize', { designName: 'Neon Jacket', revisions: 4 }).emphasis).toBe('Neon Jacket')
+  })
+})
+
+describe('nav copy', () => {
+  it('names the locked page', () => {
+    expect(blockedCopy('nav:/scenes', { label: 'Scenes' }).title).toBe('Create a free account to use Scenes.')
+    expect(blockedCopy('nav:/scenes', {}).title).toBe('Create a free account to use this.')
+  })
+})
+
+describe('signedInNote', () => {
+  it('asks to press the blocked action again', () => {
+    expect(signedInNote('POST /api/studio/designs/:id/finalize')).toBe("You're signed in — press Finalize again")
+    expect(signedInNote('GET /api/studio/designs/:id/packages')).toBe("You're signed in — press Download again")
+    expect(signedInNote('POST /api/studio/topups')).toBe("You're signed in — press Buy prompts again")
+    expect(signedInNote('more_designs')).toBe("You're signed in — press New design again")
+  })
+  it('says only that they are signed in for a nav click or an unknown action, and nothing for no action', () => {
+    expect(signedInNote('nav:/scenes')).toBe("You're signed in")
+    expect(signedInNote('POST /nope')).toBe("You're signed in")
+    expect(signedInNote(null)).toBeNull()
   })
 })

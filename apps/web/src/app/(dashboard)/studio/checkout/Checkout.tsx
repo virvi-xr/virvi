@@ -2,6 +2,8 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
+import { trialCtx } from '@/lib/studio'
+import type { BlockedCtx } from '@/lib/trial'
 import { getBrowserWallet, useAuth, type Eip1193Provider } from '@/lib/auth'
 import { PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { formatMana, sendMana, walletRejected } from '@/lib/mana'
@@ -57,7 +59,7 @@ function readReports(designId: string): Record<string, string> {
 }
 
 export default function Checkout() {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const api = useApi()
   const apiRef = useRef(api)
   apiRef.current = api
@@ -66,6 +68,8 @@ export default function Checkout() {
   const [reports, setReports] = useState<Record<string, string>>({})
   const [usage, setUsage] = useState<StudioUsage | null>(null)
   const [quote, setQuote] = useState<Quote | null>(null)
+  // A trial's sign-up sheet names the design: its name and revisions
+  const [signUpCtx, setSignUpCtx] = useState<BlockedCtx | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [wallet, setWallet] = useState<Eip1193Provider | null>(null)
   const [cardBusy, setCardBusy] = useState(false)
@@ -102,9 +106,10 @@ export default function Checkout() {
       apiRef.current.getStudioQuote(target.designId)
         .then((q) => { if (!cancelled) setQuote(q) })
         .catch((err) => { if (!cancelled) setLoadError(refusalMessage(err, new Date()).text) })
+      if (user?.trial) apiRef.current.getStudioDesign(target.designId).then((d) => { if (!cancelled) setSignUpCtx(trialCtx(d)) }).catch(() => {})
     }
     return () => { cancelled = true }
-  }, [token, target])
+  }, [token, target, user?.trial])
 
   // The quote's countdown ticks while one is on screen
   const ticking = mana.step === 'sending' || mana.step === 'quoted'
@@ -153,7 +158,7 @@ export default function Checkout() {
       ...(target.categories ? { categories: target.categories } : {}),
       ...(Object.keys(reports).length ? { reports } : {}),
       method,
-    })
+    }, signUpCtx)
     : api.buyStudioPrompts(target.packs, method)
 
   /** Paid: back to the design (its banner follows the payment) or to the studio, where the prompts show up. */

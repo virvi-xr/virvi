@@ -2,9 +2,10 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
+import { openSignUp } from '@/lib/trial'
 import { PrimaryButton } from '@/components/ui'
 import {
-  agentLabel, canSend, categoryLabel, checkoutHref, composerState, formatCents, initialTicks, progressFor, refusalMessage, slotSelection,
+  agentLabel, canSend, categoryLabel, checkoutHref, composerState, formatCents, latestRenderUrl, trialCtx, trialNudge, initialTicks, progressFor, refusalMessage, slotSelection,
   type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage,
 } from '@/lib/studio'
 import { AgentPicker } from '../AgentPicker'
@@ -26,6 +27,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const [dragging, setDragging] = useState(false)
 
   const composer = composerState(detail, usage, new Date())
+  const nudge = trialNudge(usage)
   const active = detail.activeJob?.type === 'prompt' ? detail.activeJob : null
   const failing = detail.pieces.filter((p) => p.revision?.checker?.pass === false)
   const lastMessage = detail.messages[detail.messages.length - 1]
@@ -122,7 +124,9 @@ export default function Conversation({ designId, detail, usage, events, onChange
             <PrimaryButton type="button" disabled={sending} onClick={() => send({ continue: true })}>Continue</PrimaryButton>
           </div>
         )}
-        {composer.mode === 'out' || composer.mode === 'archived' || composer.mode === 'paused' ? (
+        {composer.mode === 'out' && usage?.trial ? (
+          <OutOfPrompts detail={detail} />
+        ) : composer.mode === 'out' || composer.mode === 'archived' || composer.mode === 'paused' ? (
           <div className="text-sm text-gray-400">
             <p>{composer.note}</p>
             {composer.mode === 'out' && usage && <TopupButton usage={usage} onRefusal={setRefusal} />}
@@ -137,7 +141,10 @@ export default function Conversation({ designId, detail, usage, events, onChange
               placeholder={composer.mode === 'busy' ? 'The agent is still working on your last message.' : 'Describe what you want, or what to change'}
               className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-blue-400 disabled:opacity-60" />
             <div className="mt-2 flex items-center justify-between gap-3">
-              <p className="text-xs text-gray-500">{composer.note}</p>
+              <div className="text-xs text-gray-500">
+                <p>{composer.note}</p>
+                {nudge && <p className="mt-0.5 text-amber-300">{nudge}</p>}
+              </div>
               <PrimaryButton type="submit" disabled={!canSend(composer.mode) || sending || !text.trim()}>Send</PrimaryButton>
             </div>
           </form>
@@ -221,5 +228,22 @@ function TopupButton({ usage, onRefusal }: { usage: StudioUsage; onRefusal?: (r:
     <PrimaryButton type="button" className="mt-2" disabled={busy} onClick={buy}>
       Buy {usage.topup.prompts} prompts for {formatCents(usage.topup.cents)}
     </PrimaryButton>
+  )
+}
+
+/** A trial with no free prompts left: the design stays, and an account keeps it going. */
+function OutOfPrompts({ detail }: { detail: StudioDetail }) {
+  const image = latestRenderUrl(detail)
+  const signUp = () => { openSignUp({ action: 'more_prompts', ctx: trialCtx(detail) }).catch(() => {}) }
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-950 p-4 text-sm">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {image && <img src={image} alt={`${detail.design.name}, latest render`} className="mb-3 max-h-48 w-full rounded-md bg-gray-900 object-contain" />}
+      <p className="text-gray-200">Create a free account to keep designing. You'll get your daily prompts (3 a day on Free), and everything you made stays here.</p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <PrimaryButton type="button" onClick={signUp}>Create account</PrimaryButton>
+        <a href="/#features" className="text-blue-300 underline">See plans</a>
+      </div>
+    </div>
   )
 }

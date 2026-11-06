@@ -265,6 +265,29 @@ export function useApi() {
     return res.json()
   }, [token, user?.trial, dropDeadSession, renew, swapToStoredAccount])
 
+  /** An authenticated file download. A trial refused with `account_required` is asked to sign up, then the download is tried once more. */
+  const downloadBlob = useCallback(async (path: string, fallbackName: string, signUpCtx?: BlockedCtx): Promise<{ blob: Blob; filename: string }> => {
+    let res = await fetch(`${API_URL}${path}`, { headers: requestHeaders(token, {}) })
+    if (!res.ok) {
+      let err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      const blocked = user?.trial ? accountRequired({ status: res.status, body: err }) : null
+      if (blocked) {
+        let fresh: string | null = null
+        try { fresh = await openSignUp({ action: blocked.action, ctx: signUpCtx ?? {} }) } catch {}
+        if (fresh) {
+          res = await fetch(`${API_URL}${path}`, { headers: requestHeaders(fresh, {}) })
+          if (!res.ok) err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        }
+      }
+      if (!res.ok) {
+        dropDeadSession(res.status, err)
+        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+      }
+    }
+    const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
+    return { blob: await res.blob(), filename: m?.[1] ?? fallbackName }
+  }, [token, user?.trial, dropDeadSession])
+
   // One object per session: effects and callbacks that depend on `api` (or one of its functions) run once, not on
   // every render, which would refetch in a loop
   return useMemo(() => ({
@@ -820,12 +843,12 @@ export function useApi() {
     requestStudioFinalizeRenders: (id: string) =>
       apiFetch<{ queued: number }>(`/api/studio/designs/${id}/finalize-renders`, { method: 'POST' }),
     getStudioQuote: (id: string) => apiFetch<Quote>(`/api/studio/designs/${id}/finalize`),
-    finalizeStudio: (id: string, body: { categories?: string[]; reports?: Record<string, string>; method: CheckoutMethod }) =>
-      apiFetch<CheckoutResult>(`/api/studio/designs/${id}/finalize`, { method: 'POST', body: JSON.stringify(body) }),
+    finalizeStudio: (id: string, body: { categories?: string[]; reports?: Record<string, string>; method: CheckoutMethod }, signUpCtx?: BlockedCtx) =>
+      apiFetch<CheckoutResult>(`/api/studio/designs/${id}/finalize`, { method: 'POST', body: JSON.stringify(body), signUpCtx }),
     redeemGiftCode: (code: string) =>
       apiFetch<{ prompts: number; finalizes: number }>('/api/studio/gift-codes/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
-    buyStudioPrompts: (packs: number, method: CheckoutMethod) =>
-      apiFetch<CheckoutResult>('/api/studio/topups', { method: 'POST', body: JSON.stringify({ packs, method }) }),
+    buyStudioPrompts: (packs: number, method: CheckoutMethod, signUpCtx?: BlockedCtx) =>
+      apiFetch<CheckoutResult>('/api/studio/topups', { method: 'POST', body: JSON.stringify({ packs, method }), signUpCtx }),
     // MANA: report the transaction that pays a quote, then poll the payment until Polygon confirms it
     reportStudioManaTx: (paymentId: string, txHash: string) =>
       apiFetch<{ status: 'granted' | 'confirming' }>(`/api/studio/payments/${paymentId}/mana-tx`, { method: 'POST', body: JSON.stringify({ txHash }) }),
@@ -835,8 +858,8 @@ export function useApi() {
       apiFetch<{ id: string; status: 'requested'; usdCents: number }>('/api/studio/mana-refunds', { method: 'POST', body: JSON.stringify({ reportId }) }),
     reportStudioMistake: (id: string, category: string, n: number, text: string) =>
       apiFetch<{ status: 'refunded'; refundCents: number; creditedCents: number; manaCents: number } | { status: 'in_review' }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/report`, { method: 'POST', body: JSON.stringify({ text }) }),
-    retryStudioPackage: (id: string, category: string, n: number) =>
-      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/package/retry`, { method: 'POST' }),
+    retryStudioPackage: (id: string, category: string, n: number, signUpCtx?: BlockedCtx) =>
+      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/package/retry`, { method: 'POST', signUpCtx }),
     /** A file for the agent: the body is the file itself (the server reads its contents to tell its type). */
     uploadStudioFile: async (id: string, file: File): Promise<StudioUpload> => {
       const res = await fetch(`${API_URL}/api/studio/designs/${id}/uploads?name=${encodeURIComponent(file.name)}`, {
@@ -857,26 +880,10 @@ export function useApi() {
       return res.blob()
     },
     /** The paid revision's package, through the authenticated route: no package URL is ever put in the page. */
-    downloadStudioPackage: async (id: string, category: string, n: number): Promise<{ blob: Blob; filename: string }> => {
-      const res = await fetch(`${API_URL}/api/studio/designs/${id}/pieces/${category}/revisions/${n}/package`, { headers: requestHeaders(token, {}) })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        dropDeadSession(res.status, err)
-        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
-      }
-      const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
-      return { blob: await res.blob(), filename: m?.[1] ?? `${category}-r${n}.zip` }
-    },
+    downloadStudioPackage: async (id: string, category: string, n: number, signUpCtx?: BlockedCtx): Promise<{ blob: Blob; filename: string }> =>
+      downloadBlob(`/api/studio/designs/${id}/pieces/${category}/revisions/${n}/package`, `${category}-r${n}.zip`, signUpCtx),
     /** Every piece's newest ready package in one zip ("Download all"), through the same kind of authenticated route. */
-    downloadStudioPackages: async (id: string): Promise<{ blob: Blob; filename: string }> => {
-      const res = await fetch(`${API_URL}/api/studio/designs/${id}/packages`, { headers: requestHeaders(token, {}) })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        dropDeadSession(res.status, err)
-        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
-      }
-      const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
-      return { blob: await res.blob(), filename: m?.[1] ?? 'design.zip' }
-    },
-  }), [apiFetch, token, dropDeadSession])
+    downloadStudioPackages: (id: string, signUpCtx?: BlockedCtx): Promise<{ blob: Blob; filename: string }> =>
+      downloadBlob(`/api/studio/designs/${id}/packages`, 'design.zip', signUpCtx),
+  }), [apiFetch, downloadBlob, token, dropDeadSession])
 }

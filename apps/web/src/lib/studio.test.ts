@@ -5,7 +5,7 @@ import {
 } from './studio'
 import { formatBytesShort, uploadProblem } from './studio'
 import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudioFlag } from './studio'
-import { giftCodeStatus } from './studio'
+import { giftCodeStatus, latestRenderUrl, trialCtx, trialNudge } from './studio'
 import { adminActionMessage, readUnrecordedRefunds, writeUnrecordedRefund, adminManaMessage, adminManaRows, type AdminManaTransfer } from './studio'
 import { checkoutHref, checkoutTarget, checkoutTotals, countdown, manaBack } from './studio'
 import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, type StudioDesign, type StudioUsage } from './studio'
@@ -707,5 +707,41 @@ describe('unrecorded MANA refunds in storage', () => {
     expect(readUnrecordedRefunds({ getItem: () => 'nope', setItem: () => {} })).toEqual([])
     expect(readUnrecordedRefunds({ getItem: () => { throw new Error('blocked') }, setItem: () => {} })).toEqual([])
     expect(() => writeUnrecordedRefund({ getItem: () => null, setItem: () => { throw new Error('full') } }, 'a', { id: 'a', txHash: 'h', amountWei: '1' })).not.toThrow()
+  })
+})
+
+describe('trial prompts', () => {
+  const trial = (left: number) => usage({ trial: true, promptsLeft: left, left, allowance: 3 })
+  it('counts the free prompts left', () => {
+    expect(composerState(detail(), trial(3), NOW).note).toBe('3 of 3 free prompts left')
+    expect(composerState(detail(), trial(2), NOW).note).toBe('2 of 3 free prompts left')
+    expect(composerState(detail(), trial(0), NOW).mode).toBe('out')
+  })
+  it('nudges at one left only', () => {
+    expect(trialNudge(trial(1))).toBe('1 free prompt left — create an account for 3 a day')
+    expect(trialNudge(trial(2))).toBeNull()
+    expect(trialNudge(usage({ promptsLeft: 1 }))).toBeNull()
+  })
+  it('shows the budget message from a busy refusal', () => {
+    expect(refusalMessage({ status: 429, body: { error: 'trial_busy', message: 'Free tries are busy right now — create an account to keep going.' } } as never, NOW).text)
+      .toBe('Free tries are busy right now — create an account to keep going.')
+  })
+  it('names the design and counts its revisions for the sign-up sheet', () => {
+    const piece = (n: number) => ({ revision: { number: n } }) as unknown as StudioPiece
+    expect(trialCtx(detail({ pieces: [piece(3), piece(1)] }))).toEqual({ designName: 'Cap', revisions: 4 })
+    expect(trialCtx(detail({ pieces: [{ revision: null } as unknown as StudioPiece] }))).toEqual({ designName: 'Cap', revisions: 0 })
+  })
+})
+
+describe('latestRenderUrl', () => {
+  const view = (renderedAt: string, urls: string[], status = 'ready') => ({ status, frames: urls.length, urls, renderedAt })
+  const piece = (renders: Record<string, ReturnType<typeof view>>) => ({ renders }) as unknown as StudioPiece
+  it('is the newest ready view\'s first frame', () => {
+    const d = detail({ pieces: [piece({ a: view('2026-11-05T10:00:00Z', ['old.png']), b: view('2026-11-05T11:00:00Z', ['new.png', 'x.png']) }), piece({ c: view('2026-11-05T12:00:00Z', ['q.png'], 'queued') })] })
+    expect(latestRenderUrl(d)).toBe('new.png')
+  })
+  it('is null with no render yet', () => {
+    expect(latestRenderUrl(detail())).toBeNull()
+    expect(latestRenderUrl(detail({ pieces: [piece({ a: view('2026-11-05T10:00:00Z', []) })] }))).toBeNull()
   })
 })
