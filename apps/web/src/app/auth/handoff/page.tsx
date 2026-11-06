@@ -1,9 +1,19 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { API_URL } from '@/lib/config'
-import { runHandoff } from '@/lib/handoff'
+import { runHandoff, type AccountLabel } from '@/lib/handoff'
 
-type Choice = { them: string; stored: string; resolve: (pick: 'them' | 'stay') => void }
+type Choice = { them: AccountLabel; stored: AccountLabel; resolve: (pick: 'them' | 'stay') => void }
+
+/** The proof (full wallet or masked email) on its own line in monospace, first; the free-text name after it, plainly. */
+function Account({ a }: { a: AccountLabel }) {
+  return (
+    <span className="block">
+      <span className={a.kind === 'none' ? 'block' : 'block break-all font-mono text-sm text-white'}>{a.id}</span>
+      {a.name && <span className="block text-sm text-gray-400">{a.name}</span>}
+    </span>
+  )
+}
 
 export default function HandoffPage() {
   const started = useRef(false)
@@ -40,13 +50,17 @@ export default function HandoffPage() {
       <meta name="referrer" content="no-referrer" />
       {choice ? (
         <div className="max-w-sm space-y-4 text-center">
-          <p className="text-gray-200">This link signs you in as {choice.them}.</p>
+          <div className="text-gray-200">
+            <p>This link signs you in as:</p>
+            <div className="mt-2 rounded-lg border border-gray-700 px-3 py-2"><Account a={choice.them} /></div>
+          </div>
           <div className="flex flex-col gap-2">
             <button type="button" className="w-full rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700" onClick={() => pick('them')}>
               Continue as them
             </button>
             <button type="button" className="w-full rounded-lg border border-gray-600 px-4 py-2 font-medium text-gray-200 hover:bg-gray-800" onClick={() => pick('stay')}>
-              Stay signed in as {choice.stored}
+              <span className="block">Stay signed in as</span>
+              <Account a={choice.stored} />
             </button>
           </div>
         </div>

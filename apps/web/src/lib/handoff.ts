@@ -1,5 +1,6 @@
 import { signinPath } from './landing-route'
 import { safeNextPath } from './next-path'
+import { checksumAddress } from './eth-address'
 import { payloadOf, readSession } from './session'
 
 export interface HandoffDeps {
@@ -10,30 +11,46 @@ export interface HandoffDeps {
   go: (url: string) => void                      // window.location.href = url (full load so AuthProvider reads the session)
   storedSession?: () => string | null            // localStorage.getItem('virvi_auth')
   /** Asked only when the link signs in a different account than the stored one. Absent → stay. */
-  choose?: (c: { them: string; stored: string }) => Promise<'them' | 'stay'>
+  choose?: (c: { them: AccountLabel; stored: AccountLabel }) => Promise<'them' | 'stay'>
   now?: () => number
 }
 
-const shortWallet = (w: string) => (w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w)
+/**
+ * How the choice names an account. `id` is the proof, shown first and apart from the name: the full EIP-55 wallet
+ * (a 4+4 short form can be vanity-ground in minutes), else the masked email, else "another Virvi account" (kind 'none').
+ * `name` is the sanitized display name, which anyone can set, so it is only ever shown beside an id.
+ */
+export type AccountLabel = { id: string; kind: 'wallet' | 'email' | 'none'; name: string | null }
+
+const NAME_MAX = 40
+
+/**
+ * A display name made safe to show: NFKC-normalized, no control or format characters (bidi overrides and isolates,
+ * zero-width marks), whitespace collapsed, at most 40 characters. Null when empty, or when it contains something that
+ * reads as an address (`0x` and four hex digits), so a name can never pose as the wallet beside it.
+ */
+export function sanitizeName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const clean = raw.normalize('NFKC').replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/\s+/gu, ' ').trim()
+  if (!clean || /0x[0-9a-f]{4}/i.test(clean)) return null
+  const chars = [...clean]
+  return chars.length > NAME_MAX ? `${chars.slice(0, NAME_MAX - 1).join('')}…` : clean
+}
 
 const maskEmail = (e: string) => {
   const at = e.lastIndexOf('@')
   return at > 0 ? `${e[0]}•••${e.slice(at)}` : null
 }
 
-/**
- * What to call an account on the choice. The display name is freely editable (anyone can copy yours), so it is never
- * shown alone: always with the short wallet, else the masked email; with neither, "another Virvi account".
- */
-function accountLabel(user: unknown, token: string): string {
+function accountLabel(user: unknown, token: string): AccountLabel {
   const u = (user ?? {}) as { displayName?: unknown; email?: unknown }
   const claims = payloadOf(token) ?? {}
-  const wallet = typeof claims.wallet === 'string' && claims.wallet ? shortWallet(claims.wallet) : null
+  const wallet = typeof claims.wallet === 'string' ? checksumAddress(claims.wallet) : null
+  if (wallet) return { id: wallet, kind: 'wallet', name: sanitizeName(u.displayName) }
   const emailRaw = typeof claims.email === 'string' && claims.email ? claims.email : typeof u.email === 'string' && u.email ? u.email : null
-  const proof = wallet ?? (emailRaw ? maskEmail(emailRaw) : null)
-  if (!proof) return 'another Virvi account'
-  const name = typeof u.displayName === 'string' ? u.displayName.trim() : ''
-  return name ? `${name} (${proof})` : proof
+  const email = emailRaw ? maskEmail(emailRaw) : null
+  if (email) return { id: email, kind: 'email', name: sanitizeName(u.displayName) }
+  return { id: 'another Virvi account', kind: 'none', name: null }
 }
 
 function userIdOf(user: unknown, token: string): string | null {
