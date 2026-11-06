@@ -55,6 +55,9 @@ export async function setWallChoice(
 const NAMES_TTL_MS = 3600_000
 const names = new Map<string, { label: string | null; at: number }>()
 
+/** For tests: forget every cached DCL name. */
+export const _resetWallNamesCache = () => names.clear()
+
 /** The wallet's first DCL name without `.dcl.eth`, cached an hour per wallet; null when it has none or the directory fails. */
 async function dclName(wallet: string): Promise<string | null> {
   const hit = names.get(wallet)

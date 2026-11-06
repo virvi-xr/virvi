@@ -5,6 +5,7 @@ import { db } from '../src/db/connection.js'
 import { studioDesigns, studioRenders } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { setDclDirectory } from '../src/analytics/dcl-directory.js'
+import { _resetWallNamesCache } from '../src/studio/wall.js'
 import { verifyRenderFrame } from '../src/studio/render-urls.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
@@ -23,6 +24,7 @@ describe('studio wall of fame', () => {
   afterAll(() => { ;(config as any).studioEnabled = prev; setDclDirectory(null) })
   beforeEach(async () => {
     await resetDb()
+    _resetWallNamesCache()
     dir = new FakeDclDirectory()
     setDclDirectory(dir)
     app = await testApp()
