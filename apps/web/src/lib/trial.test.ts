@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountRequired, blockedCopy, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
+import { trialEndedOutcome, accountRequired, blockedCopy, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
 
 describe('accountRequired', () => {
   it('reads the action from an account_required refusal', () => {
@@ -52,5 +52,37 @@ describe('sign-up bridge', () => {
   })
   it('rejects at once when no sheet is mounted', async () => {
     await expect(openSignUp({ action: 'x', ctx: {} })).rejects.toThrow()
+  })
+})
+
+describe('trialEndedOutcome', () => {
+  it('swaps to a stored non-trial session from another token', () => {
+    expect(trialEndedOutcome({ token: 'acct', user: { id: 'u' } }, 'trial')).toBe('swap')
+  })
+  it('signs out when nothing else is stored', () => {
+    expect(trialEndedOutcome(null, 'trial')).toBe('logout')
+    expect(trialEndedOutcome({ token: 'trial', user: { trial: true } }, 'trial')).toBe('logout')
+    expect(trialEndedOutcome({ token: 'other', user: { trial: true } }, 'trial')).toBe('logout')
+  })
+})
+
+describe('dismissed sign-up', () => {
+  it('rejects the pending call and lets the next one start fresh', async () => {
+    const seen: unknown[] = []
+    const off = subscribeSignUp((r) => seen.push(r))
+    const a = openSignUp({ action: 'x', ctx: {} })
+    dismissSignUp()
+    await expect(a).rejects.toThrow('closed')
+    const b = openSignUp({ action: 'y', ctx: {} })
+    expect(b).not.toBe(a)
+    resolveSignUp('t2')
+    await expect(b).resolves.toBe('t2')
+    off()
+  })
+})
+
+describe('blockedCopy emphasis', () => {
+  it('returns the design name separately', () => {
+    expect(blockedCopy('POST /api/studio/designs/:id/finalize', { designName: 'Neon Jacket', revisions: 4 }).emphasis).toBe('Neon Jacket')
   })
 })

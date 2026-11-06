@@ -21,7 +21,7 @@ function load(): Promise<Api> {
   return loading
 }
 
-/** Invisible bot check. Calls onToken with a token, or '' when no site key is configured (the server skips the check then). */
+/** Bot check that only shows if a challenge is needed. Calls onToken with a token, or '' when no site key is configured (the server skips the check then). */
 export function Turnstile({ onToken }: { onToken: (token: string) => void }) {
   const box = useRef<HTMLDivElement>(null)
   const cb = useRef(onToken)
@@ -32,8 +32,15 @@ export function Turnstile({ onToken }: { onToken: (token: string) => void }) {
     let gone = false
     load().then((api) => {
       if (gone || !box.current) return
-      id = api.render(box.current, { sitekey: SITE_KEY, size: 'invisible', callback: (t: string) => cb.current(t) })
-    }).catch(() => {})
+      id = api.render(box.current, {
+        sitekey: SITE_KEY,
+        appearance: 'interaction-only',
+        callback: (t: string) => cb.current(t),
+        // Never leave a waiting caller hanging: an empty token lets the server decide
+        'error-callback': () => { cb.current(''); return true },
+        'timeout-callback': () => cb.current(''),
+      })
+    }).catch(() => { if (!gone) cb.current('') })
     return () => {
       gone = true
       if (id) (window as unknown as { turnstile?: Api }).turnstile?.remove(id)

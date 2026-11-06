@@ -2,7 +2,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
-import { deviceId } from './trial'
+import { deviceId, trialEndedOutcome } from './trial'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -33,6 +33,8 @@ interface AuthState {
   /** Swaps the stored refresh token for a new access token: the new token, or null (signed out when refused). */
   renew: () => Promise<string | null>
   updateUser: (updates: Partial<User>) => void
+  /** A trial ended (converted elsewhere): adopt the account session stored by another tab and return its token, or sign out and return null. */
+  swapToStoredAccount: (staleToken: string) => string | null
 }
 
 const postRefresh = (refreshToken: string) =>
@@ -191,6 +193,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return null
   }, [logout])
 
+  const swapToStoredAccount = useCallback((staleToken: string) => {
+    const stored = readStoredAuth(localStorage)
+    if (stored && trialEndedOutcome(stored, staleToken) === 'swap') {
+      setToken(stored.token)
+      setUser(stored.user as User)
+      setScenePass(null)
+      return stored.token
+    }
+    logout()
+    return null
+  }, [logout])
+
   const updateUser = useCallback((updates: Partial<User>) => {
     setUser(prev => {
       if (!prev) return prev
@@ -209,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, scenePass, login, register, loginWithWallet, startTrial, oauthUrl, logout, renew, updateUser }}>
+    <AuthContext.Provider value={{ user, token, loading, scenePass, login, register, loginWithWallet, startTrial, oauthUrl, logout, renew, updateUser, swapToStoredAccount }}>
       {children}
     </AuthContext.Provider>
   )

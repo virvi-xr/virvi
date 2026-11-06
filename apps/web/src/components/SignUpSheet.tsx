@@ -6,6 +6,12 @@ import { blockedCopy, dismissSignUp, resolveSignUp, subscribeSignUp, type SignUp
 
 const input = 'w-full rounded-lg bg-gray-800 px-4 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500'
 
+function titleWithEmphasis(title: string, emphasis?: string) {
+  const i = emphasis ? title.indexOf(emphasis) : -1
+  if (!emphasis || i < 0) return title
+  return <>{title.slice(0, i)}<em>{emphasis}</em>{title.slice(i + emphasis.length)}</>
+}
+
 /** One sheet for the whole app (mounted in the root layout). It opens only for a trial session, when an account-only action was refused. */
 export function SignUpSheet() {
   const { user, login, register, loginWithWallet, oauthUrl } = useAuth()
@@ -33,7 +39,11 @@ export function SignUpSheet() {
     return () => window.removeEventListener('keydown', onKey)
   }, [req])
 
-  if (!req || !user?.trial) return null
+  // The session stopped being a trial while a sign-up was pending: let the waiting call give up instead of hanging
+  const isTrial = !!user?.trial
+  useEffect(() => { if (req && !isTrial) dismissSignUp() }, [req, isTrial])
+
+  if (!req || !isTrial) return null
   const copy = blockedCopy(req.action, req.ctx)
 
   const run = async (go: () => Promise<string>) => {
@@ -74,7 +84,7 @@ export function SignUpSheet() {
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center" onClick={dismissSignUp}>
       <div role="dialog" aria-modal="true" aria-label="Create a free account" className="w-full max-w-md rounded-xl bg-gray-900 p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-4">
-          <h2 className="text-lg font-semibold">{copy.title}</h2>
+          <h2 className="text-lg font-semibold">{titleWithEmphasis(copy.title, copy.emphasis)}</h2>
           <button type="button" onClick={dismissSignUp} aria-label="Close" className="text-gray-400 hover:text-white">✕</button>
         </div>
         <p className="mt-1 text-sm text-gray-400">{tab === 'signin' ? 'Your trial designs move into this account.' : copy.unlocks}</p>

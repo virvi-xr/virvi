@@ -221,7 +221,7 @@ export function isGlbAsset(asset: { contentType?: string; filename?: string }): 
 }
 
 export function useApi() {
-  const { token, user, logout, renew } = useAuth()
+  const { token, user, logout, renew, swapToStoredAccount } = useAuth()
 
   /** A kind-less (pre-scene-pass) session, or a scene pass used outside its scope: drop it so the
    *  dashboard layout sends the user to sign-in once (with `next`), instead of showing an error. */
@@ -235,7 +235,8 @@ export function useApi() {
       let res = await fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(bearer, init) })
       // The access token ran out: renew it with the stored refresh token and send the request once more
       if (res.status === 401 && bearer) {
-        const fresh = await renew()
+        const ended = (await res.clone().json().catch(() => null))?.error === 'trial_ended'
+        const fresh = ended ? swapToStoredAccount(bearer) : await renew()
         if (fresh) res = await fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(fresh, init) })
       }
       if (res.ok) return { res, err: null as any }
@@ -262,7 +263,7 @@ export function useApi() {
     if (!res.ok) throw fail(res, err)
     if (res.status === 204) return undefined as T
     return res.json()
-  }, [token, user?.trial, dropDeadSession, renew])
+  }, [token, user?.trial, dropDeadSession, renew, swapToStoredAccount])
 
   // One object per session: effects and callbacks that depend on `api` (or one of its functions) run once, not on
   // every render, which would refetch in a loop

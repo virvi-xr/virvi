@@ -12,7 +12,8 @@ export function accountRequired(err: unknown): { action: string } | null {
 
 const DEFAULT_TITLE = 'Create a free account to use this.'
 
-export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; unlocks: string } {
+/** `emphasis` is a part of `title` (the design's name) the sheet shows in italics. */
+export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; unlocks: string; emphasis?: string } {
   const name = ctx.designName?.trim()
   const revs = ctx.revisions
   switch (action) {
@@ -20,7 +21,7 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
       const saved = typeof revs === 'number' && revs > 0
         ? `Your design and its ${revs} revision${revs === 1 ? ' is' : 's are'} saved.`
         : 'Your design is saved.'
-      return { title: `Create a free account to ${name ? `finalize ${name}` : 'finalize this design'}. ${saved}`, unlocks: 'Finalizing turns your design into a finished, wearable-ready set.' }
+      return { title: `Create a free account to ${name ? `finalize ${name}` : 'finalize this design'}. ${saved}`, unlocks: 'Finalizing turns your design into a finished, wearable-ready set.', ...(name ? { emphasis: name } : {}) }
     }
     case 'GET /api/studio/designs/:id/packages':
     case 'GET /api/studio/designs/:id/pieces/:category/revisions/:number/package':
@@ -39,6 +40,12 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
     default:
       return { title: DEFAULT_TITLE, unlocks: 'Your trial designs move into your account.' }
   }
+}
+
+/** A trial's tokens were refused as ended: swap to the account session another tab stored, or sign out. */
+export function trialEndedOutcome(stored: { token: string; user?: unknown } | null, currentToken: string): 'swap' | 'logout' {
+  const user = stored?.user as { trial?: boolean } | null | undefined
+  return stored && stored.token !== currentToken && user && !user.trial ? 'swap' : 'logout'
 }
 
 /** A device id made once and kept: the server counts trials per device. */
