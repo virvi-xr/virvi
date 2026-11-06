@@ -177,6 +177,21 @@ export const VIRVI_ALREADY_PRESENT = "Virvi was already in your scene, so it was
 export const virviNote = (v: Pick<SceneImportView, 'virviAlreadyPresent'>): string | null =>
   v.virviAlreadyPresent ? VIRVI_ALREADY_PRESENT : null
 
+export const THUMBNAIL_KEPT_NOTE = "Your scene.json names a thumbnail too. The one you uploaded in Virvi stays; Replace it here if you'd rather."
+
+/**
+ * LIV-89: what the import page shows of the scene's thumbnail: the one the import picked up from scene.json (or the
+ * owner's, which it kept), why one was skipped, and Replace (LIV-88's upload). Null when scene.json names none.
+ */
+export function importThumbnailShown(v: Pick<SceneImportView, 'thumbnail'>): { label: string; url: string | null; note: string | null; action: 'Replace' | 'Upload' } | null {
+  const t = v.thumbnail
+  if (!t?.outcome) return null
+  const url = t.url
+  const label = !url ? 'Thumbnail: none yet' : t.source === 'import' ? 'Thumbnail: from scene.json' : 'Thumbnail: uploaded in Virvi'
+  const note = t.outcome === 'skipped' ? t.note : t.outcome === 'kept' ? THUMBNAIL_KEPT_NOTE : null
+  return { label, url, note, action: url ? 'Replace' : 'Upload' }
+}
+
 const BUILD_CODES = new Set([
   'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded', 'bad_package_json', 'bad_source_encoding',
   'no_main', 'store_failed',

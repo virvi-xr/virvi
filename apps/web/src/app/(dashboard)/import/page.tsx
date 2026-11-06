@@ -9,7 +9,7 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { signErrorMessage } from '@/lib/deploy'
 import {
-  buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, placeLabel, recentImports, signerPhrase, SIGNERS_UNKNOWN_NOTE, watchImport,
+  buildLogShown, importThumbnailShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, placeLabel, recentImports, signerPhrase, SIGNERS_UNKNOWN_NOTE, watchImport,
 } from '@/lib/import'
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
@@ -19,6 +19,7 @@ import { useWorldSigning, type SigningDestination } from '@/components/dcl/useWo
 import { DownloadLiveButton } from '@/components/dcl/DownloadLiveButton'
 import { DownloadBackupButton } from '@/components/dcl/DownloadBackupButton'
 import { ParcelGrantCard } from '@/components/dcl/ParcelGrantCard'
+import { SceneThumbnail } from '../scenes/[sceneId]/SceneThumbnail'
 
 const secondary = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50'
 const errorBox = 'rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300'
@@ -209,6 +210,9 @@ function ImportContent() {
 
           <ProgressLines lines={importLines(phase!, view?.location ?? null, view ?? undefined)} />
           {view && virviNote(view) && <p className={infoBox}>{virviNote(view)}</p>}
+          {view && importThumbnailShown(view) && (
+            <ImportThumbnail view={view} onChanged={() => api.getSceneImport(view.id).then((x) => setView(x.import)).catch(() => {})} />
+          )}
 
           {phase === 'uploading' && view && <p className="text-gray-400">Your scene is uploaded. Its build starts in a moment.</p>}
           {phase === 'building' && <p className="text-gray-400">Virvi is building your scene. This usually takes a minute or two.</p>}
@@ -286,6 +290,33 @@ function ImportContent() {
       {showPicker && <Picker onFolder={pickFolder} onZip={pickZip} again={!!view} />}
 
       {!id && !sending && <RecentImports />}
+    </div>
+  )
+}
+
+/** LIV-89: the thumbnail the import picked up from scene.json (or why not), with Replace opening LIV-88's upload. */
+function ImportThumbnail({ view, onChanged }: { view: SceneImportView; onChanged: () => void }) {
+  const api = useApi()
+  const [replacing, setReplacing] = useState(false)
+  const shown = importThumbnailShown(view)
+  if (!shown) return null
+  if (replacing) {
+    return (
+      <div className="space-y-2">
+        <SceneThumbnail sceneId={view.sceneId} url={shown.url} source={view.thumbnail.source} openPicker api={api}
+          onChange={() => { setReplacing(false); onChanged() }} />
+        <button type="button" onClick={() => setReplacing(false)} className="text-sm text-gray-400 hover:text-gray-200">Close</button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-start gap-3">
+      {shown.url && <img src={shown.url} alt="Scene thumbnail" className="h-20 max-w-[160px] shrink-0 rounded border border-gray-700 object-contain" />}
+      <div className="min-w-0 space-y-1.5">
+        <p className="text-gray-200">{shown.label}</p>
+        {shown.note && <p className="text-gray-400">{shown.note}</p>}
+        <button type="button" onClick={() => setReplacing(true)} className={secondary}>{shown.action}</button>
+      </div>
     </div>
   )
 }

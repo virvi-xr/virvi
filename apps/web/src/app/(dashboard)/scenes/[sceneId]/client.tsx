@@ -70,6 +70,8 @@ interface Scene {
   name: string
   /** LIV-88: shown here and on the Scenes list, and deployed to Decentraland as the scene's navmapThumbnail. */
   thumbnailUrl?: string | null
+  /** LIV-89: 'import' when it came from an imported scene's own scene.json (not deployed by Virvi). */
+  thumbnailSource?: 'upload' | 'import' | null
   activePresetId?: string | null
   presets: Preset[]
 }
@@ -1806,8 +1808,8 @@ export default function SceneEditorPage() {
 
       {/* Settings tab: the scene's thumbnail (LIV-88) */}
       {activeTab === 'settings' && (
-        <SceneThumbnail sceneId={sceneId} url={scene.thumbnailUrl ?? null} api={api}
-          onChange={(url) => setScene(prev => prev && { ...prev, thumbnailUrl: url })} />
+        <SceneThumbnail sceneId={sceneId} url={scene.thumbnailUrl ?? null} source={scene.thumbnailSource ?? null} api={api}
+          onChange={(url, source) => setScene(prev => prev && { ...prev, thumbnailUrl: url, thumbnailSource: source })} />
       )}
 
       {/* Widget tab */}

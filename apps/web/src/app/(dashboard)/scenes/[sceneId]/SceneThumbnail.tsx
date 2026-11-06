@@ -52,11 +52,15 @@ async function renderCrop(p: Picked, pos: CropPosition): Promise<Blob> {
   return blob
 }
 
-export function SceneThumbnail({ sceneId, url, api, onChange }: {
+export function SceneThumbnail({ sceneId, url, source = null, openPicker = false, api, onChange }: {
   sceneId: string
   url: string | null
+  /** LIV-89: 'import' when it is the imported scene's own (from its scene.json), which Virvi doesn't deploy. */
+  source?: 'upload' | 'import' | null
+  /** Opens the file picker as it appears (the import page's Replace). */
+  openPicker?: boolean
   api: ReturnType<typeof useApi>
-  onChange: (url: string | null) => void
+  onChange: (url: string | null, source: 'upload' | null) => void
 }) {
   const [picked, setPicked] = useState<Picked | null>(null)
   const [pos, setPos] = useState<CropPosition>(CENTRED)
@@ -64,6 +68,9 @@ export function SceneThumbnail({ sceneId, url, api, onChange }: {
   const [error, setError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  // The click that showed this panel lets it open the picker
+  useEffect(() => { if (openPicker) fileRef.current?.click() }, [openPicker])
 
   // Free the picked file's object URL when it's replaced or the panel closes
   useEffect(() => () => { if (picked) URL.revokeObjectURL(picked.objectUrl) }, [picked])
@@ -107,7 +114,7 @@ export function SceneThumbnail({ sceneId, url, api, onChange }: {
     try {
       const blob = await renderCrop(picked, pos)
       const { scene } = await api.setSceneThumbnail(sceneId, await fileToBase64(new File([blob], 'thumbnail', { type: blob.type })))
-      onChange(scene.thumbnailUrl ?? null)
+      onChange(scene.thumbnailUrl ?? null, 'upload')
       setPicked(null)
     } catch (err) {
       setError((err as Error)?.message === 'too_large' ? TOO_LARGE_MESSAGE : thumbnailError(err))
@@ -122,7 +129,7 @@ export function SceneThumbnail({ sceneId, url, api, onChange }: {
     setError('')
     try {
       await api.removeSceneThumbnail(sceneId)
-      onChange(null)
+      onChange(null, null)
     } catch (err) {
       setError(thumbnailError(err))
     } finally {
@@ -147,6 +154,11 @@ export function SceneThumbnail({ sceneId, url, api, onChange }: {
           A 16:9 PNG, JPEG or WebP of at least {SCENE_THUMBNAIL_MIN.width} × {SCENE_THUMBNAIL_MIN.height} px; you crop it to shape below.
           A new or removed thumbnail goes live with the next deploy.
         </p>
+        {source === 'import' && url && (
+          <p className="mt-1 text-sm text-gray-400">
+            This one is your imported scene&apos;s own, from its scene.json, and deploys with the scene as it is. Replace it to deploy yours instead.
+          </p>
+        )}
       </div>
 
       <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
