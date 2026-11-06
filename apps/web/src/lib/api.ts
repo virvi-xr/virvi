@@ -10,7 +10,7 @@ import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
-import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
+import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
 import type { SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
@@ -703,6 +703,11 @@ export function useApi() {
     returnAdminManaTransfer: (txHash: string, logIndex: number, returnTxHash: string) =>
       apiFetch<unknown>(`/api/admin/studio/mana-transfers/${txHash}/${logIndex}/returned`, { method: 'POST', body: JSON.stringify({ returnTxHash }) }),
 
+    // The wall of fame (admin)
+    getAdminStudioWall: () => apiFetch<{ entries: AdminWallEntry[] }>('/api/admin/studio/wall'),
+    hideAdminStudioWallEntry: (designId: string, hidden: boolean) =>
+      apiFetch<{ hidden: boolean }>(`/api/admin/studio/wall/${designId}/hide`, { method: 'POST', body: JSON.stringify({ hidden }) }),
+
     // Ads (admin)
     getAdminAdvertiserLeads: () => apiFetch<{ leads: AdminAdvertiserLead[] }>('/api/admin/advertiser-leads'),
     getAdminAds: (review?: 'pending') => apiFetch<{ ads: AdminAd[] }>(`/api/admin/ads${review ? `?review=${review}` : ''}`),
@@ -785,6 +790,8 @@ export function useApi() {
     getStudioDesign: (id: string) => apiFetch<StudioDetail>(`/api/studio/designs/${id}`),
     updateStudioDesign: (id: string, patch: { name?: string; agent?: string; archived?: boolean }) =>
       apiFetch<StudioDesign>(`/api/studio/designs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    setStudioWall: (id: string, body: { shown: boolean; marketplaceUrl?: string | null }) =>
+      apiFetch<WallState>(`/api/studio/designs/${id}/wall`, { method: 'PUT', body: JSON.stringify(body) }),
     sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean }) =>
       apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', body: JSON.stringify(body) }),
     requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }

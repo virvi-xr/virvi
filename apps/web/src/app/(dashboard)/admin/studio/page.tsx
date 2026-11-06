@@ -8,7 +8,7 @@ import { Badge, ConfirmAction, PageHeader, PrimaryButton, Skeleton } from '@/com
 import { formatMana, sendMana } from '@/lib/mana'
 import {
   SCOPE_CATEGORY_WORDS, TX_HASH, adminActionMessage, adminManaRows, flagSummary, formatCents, readUnrecordedRefunds, writeUnrecordedRefund,
-  type AdminManaRefund, type AdminMistakeReport, type AdminStudioFlag,
+  type AdminManaRefund, type AdminMistakeReport, type AdminStudioFlag, type AdminWallEntry,
 } from '@/lib/studio'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
@@ -92,6 +92,33 @@ function RefundRow({ r, api, onChanged }: { r: AdminManaRefund; api: Api; onChan
   )
 }
 
+/** One design on the wall: Hide takes it off the public wall, Show puts it back. */
+function WallRow({ e, api, onChanged }: { e: AdminWallEntry; api: Api; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  const toggle = async () => {
+    setBusy(true)
+    setNote(null)
+    try { await api.hideAdminStudioWallEntry(e.designId, !e.hidden); await onChanged() } catch (err) {
+      setNote(adminActionMessage(err))
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <li className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium">{e.name} {e.hidden && <Badge tone="warning">Hidden</Badge>}</p>
+          <p className="break-all text-sm text-gray-400">{e.creator} · {e.ownerEmail ?? 'no email'} · {dateFmt.format(new Date(e.shownAt))}</p>
+        </div>
+        <button type="button" disabled={busy} onClick={toggle} className={smallButton}>{e.hidden ? 'Show' : 'Hide'}</button>
+      </div>
+      {note && <p className="mt-2 text-sm text-red-400" role="alert">{note}</p>}
+    </li>
+  )
+}
+
 /** One unmatched transfer: settle it with one of its candidate payments, or record the hash it was sent back with. */
 function TransferRow({ t, api, onChanged }: { t: ReturnType<typeof adminManaRows>[number]; api: Api; onChanged: () => Promise<void> }) {
   const [busy, setBusy] = useState(false)
@@ -159,6 +186,8 @@ export default function AdminStudioPage() {
   const [reports, setReports] = useState<AdminMistakeReport[] | null>(null)
   const [refunds, setRefunds] = useState<AdminManaRefund[] | null>(null)
   const [transfers, setTransfers] = useState<ReturnType<typeof adminManaRows> | null>(null)
+  const [wallEntries, setWallEntries] = useState<AdminWallEntry[] | null>(null)
+  const [wallError, setWallError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -175,6 +204,7 @@ export default function AdminStudioPage() {
       api.getAdminStudioFlags(status).then((f) => { setFlags(f.flags); setFlagsError(null) }, (e) => setFlagsError(text(e))),
       api.getAdminStudioReports().then((r) => { setReports(r.reports); setReportsError(null) }, (e) => setReportsError(text(e))),
       api.getAdminManaRefunds().then((m) => { setRefunds(m.refunds); setRefundsError(null) }, (e) => setRefundsError(text(e))),
+      api.getAdminStudioWall().then((w) => { setWallEntries(w.entries); setWallError(null) }, (e) => setWallError(text(e))),
       api.getAdminManaTransfers().then((m) => { setTransfers(adminManaRows(m.transfers)); setTransfersError(null) }, (e) => setTransfersError(text(e))),
     ])
   }
@@ -336,6 +366,18 @@ export default function AdminStudioPage() {
         ) : (
           <ul className="space-y-3">
             {transfers.map((t) => <TransferRow key={t.key} t={t} api={api} onChanged={load} />)}
+          </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="wall-title" className="mt-10">
+        <h2 id="wall-title" className="mb-3 text-lg font-semibold">Wall of fame</h2>
+        {wallError && <p className="mb-3 text-sm text-red-400" role="alert">{wallError}</p>}
+        {!wallEntries ? (wallError ? null : <Skeleton rows={1} className="h-16" />) : wallEntries.length === 0 ? (
+          <p className="text-gray-400">No one has put a design on the wall yet.</p>
+        ) : (
+          <ul className="space-y-3">
+            {wallEntries.map((e) => <WallRow key={e.designId} e={e} api={api} onChanged={load} />)}
           </ul>
         )}
       </section>

@@ -194,4 +194,76 @@ describe('studio wall of fame', () => {
     const c = getAddress(WALLET)
     expect((await wall()).json().entries[0].creator).toBe(`${c.slice(0, 6)}…${c.slice(-4)}`)
   })
+
+  describe('admin hide', () => {
+    const A = '/api/admin/studio/wall'
+    const adminReq = (u: TestUser, method: 'GET' | 'POST', url: string, payload?: Record<string, unknown>, headers = as(u)) =>
+      app.inject({ method, url, headers, payload: payload as any })
+
+    it('lists every shown entry for an admin, hidden ones included, with the owner email', async () => {
+      const admin = await createUser({ role: 'admin' })
+      const u = await createUser({ email: 'owner@example.com' })
+      await shown(u, { name: 'Visible', at: new Date(Date.UTC(2026, 0, 2)) })
+      const h = await shown(u, { name: 'Hidden', at: new Date(Date.UTC(2026, 0, 1)) })
+      await db.update(studioDesigns).set({ wallHiddenAt: new Date() }).where(eq(studioDesigns.id, h.d.id))
+      const opted = await shown(u, { name: 'Opted out' })
+      await db.update(studioDesigns).set({ wallShownAt: null }).where(eq(studioDesigns.id, opted.d.id))
+      const res = await adminReq(admin, 'GET', A)
+      expect(res.statusCode).toBe(200)
+      const { entries } = res.json()
+      expect(entries.map((e: any) => [e.name, e.hidden, e.ownerEmail])).toEqual([
+        ['Visible', false, 'owner@example.com'], ['Hidden', true, 'owner@example.com'],
+      ])
+      expect(entries[0].frames).toHaveLength(12)
+    })
+
+    it('hiding removes an entry from the public wall and unhiding restores it', async () => {
+      const admin = await createUser({ role: 'admin' })
+      const u = await createUser()
+      const { d } = await shown(u)
+      expect((await adminReq(admin, 'POST', `${A}/${d.id}/hide`, { hidden: true })).json()).toEqual({ hidden: true })
+      expect((await wall()).json().entries).toEqual([])
+      expect((await adminReq(admin, 'POST', `${A}/${d.id}/hide`, { hidden: false })).json()).toEqual({ hidden: false })
+      expect((await wall()).json().entries).toHaveLength(1)
+    })
+
+    it('rejects a bad body or an unknown design', async () => {
+      const admin = await createUser({ role: 'admin' })
+      const u = await createUser()
+      const { d } = await shown(u)
+      expect((await adminReq(admin, 'POST', `${A}/${d.id}/hide`, { hidden: 'yes' })).statusCode).toBe(400)
+      expect((await adminReq(admin, 'POST', `${A}/00000000-0000-4000-8000-000000000000/hide`, { hidden: true })).statusCode).toBe(404)
+      expect((await adminReq(admin, 'POST', `${A}/nope/hide`, { hidden: true })).statusCode).toBe(404)
+    })
+
+    it('refuses a non-admin', async () => {
+      const u = await createUser()
+      const { d } = await shown(u)
+      expect((await adminReq(u, 'GET', A)).statusCode).toBe(403)
+      expect((await adminReq(u, 'POST', `${A}/${d.id}/hide`, { hidden: true })).statusCode).toBe(403)
+    })
+
+    it('refuses the studio pass, even an admin\'s', async () => {
+      const admin = await createUser({ role: 'admin' })
+      const u = await createUser()
+      const { d } = await shown(u)
+      const get = await adminReq(admin, 'GET', A, undefined, studioPass(admin))
+      expect(get.statusCode).toBe(403)
+      expect(get.json().error).toBe('studio_pass_not_allowed')
+      const post = await adminReq(admin, 'POST', `${A}/${d.id}/hide`, { hidden: true }, studioPass(admin))
+      expect(post.statusCode).toBe(403)
+      expect(post.json().error).toBe('studio_pass_not_allowed')
+    })
+
+    it('an owner opting out and back in does not clear an admin hide', async () => {
+      const admin = await createUser({ role: 'admin' })
+      const u = await createUser()
+      const { d } = await shown(u)
+      await adminReq(admin, 'POST', `${A}/${d.id}/hide`, { hidden: true })
+      await put(u, d.id, { shown: false })
+      const back = await put(u, d.id, { shown: true })
+      expect(back.json()).toMatchObject({ shown: true, hidden: true })
+      expect((await wall()).json().entries).toEqual([])
+    })
+  })
 })

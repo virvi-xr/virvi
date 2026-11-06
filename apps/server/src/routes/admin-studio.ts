@@ -3,6 +3,7 @@ import { authenticate } from '../middleware/auth.js'
 import { isUuid } from '../auth/scene-from.js'
 import { dismissFlag, listFlags, pauseUser, resumeUser } from '../studio/scope.js'
 import { approveReport, declineReport, heldReports, PaymentError } from '../studio/payments.js'
+import { listWallForAdmin, setWallHidden } from '../studio/wall.js'
 import { createGiftCode, disableGiftCode, GiftCodeError, listGiftCodes } from '../studio/gift-codes.js'
 import { declineManaRefund, listManaRefunds, manaRefundQuote, recordManaRefundSent, type ManaRefundStatus } from '../studio/mana/refunds.js'
 import { listManaTransfers, markTransferReturned, settleTransferByHand, type ManaTransferStatus } from '../studio/mana/settle.js'
@@ -57,6 +58,17 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
     if (!isUuid(userId)) return reply.status(404).send({ error: 'user_not_found' })
     await resumeUser(userId)
     return reply.status(204).send()
+  })
+
+  // The wall of fame: every shown design, so a bad one can be hidden from the public wall.
+  app.get('/api/admin/studio/wall', admin, async () => ({ entries: await listWallForAdmin(new Date()) }))
+
+  app.post('/api/admin/studio/wall/:designId/hide', admin, async (request, reply) => {
+    const { designId } = request.params as { designId: string }
+    const { hidden } = (request.body ?? {}) as { hidden?: unknown }
+    if (typeof hidden !== 'boolean') return reply.status(400).send({ error: 'hidden must be true or false' })
+    if (!isUuid(designId) || !(await setWallHidden(designId, hidden, new Date()))) return reply.status(404).send({ error: 'design_not_found' })
+    return { hidden }
   })
 
   app.get('/api/admin/studio/reports', admin, async () => ({ reports: await heldReports(new Date()) }))

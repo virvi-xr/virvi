@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { getAddress } from 'ethers'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioEntitlements, userAuthMethods } from '../db/schema.js'
+import { studioDesigns, studioEntitlements, userAuthMethods, users } from '../db/schema.js'
 import { getDclDirectory } from '../analytics/dcl-directory.js'
 import { frameUrlExpiry, signRenderFrame } from './render-urls.js'
 import { ORBIT_RING, viewKey, type Design } from './designs.js'
@@ -92,14 +92,15 @@ const wallView = (kind: string) =>
   kind === 'scene' ? SCENE_ORBIT_KEY : viewKey(kind, { bodyShape: 'male', outfit: 'default', emote: null })
 
 type Row = {
-  id: string; name: string; kind: string; owner_id: string; wall_shown_at: Date | string; wall_marketplace_url: string | null
+  id: string; name: string; kind: string; owner_id: string; wall_shown_at: Date | string; wall_hidden_at: Date | string | null; wall_marketplace_url: string | null
   revision_id: string; category: string; job_id: string; frames: number
 }
 
-export async function listWall(page: { limit: number; offset: number }, now: Date): Promise<WallEntry[]> {
+/** Shown designs with a ready wall view, newest first. The public wall leaves out admin-hidden ones; the admin page keeps them. */
+async function selectWall(page: { limit: number; offset: number }, now: Date, includeHidden: boolean): Promise<(WallEntry & { hidden: boolean; ownerId: string })[]> {
   // Per design: its newest ready entitlement (by paid date), that revision's wall view, which must be ready
   const rows = (await db.execute(sql`
-    SELECT d.id, d.name, d.kind, d.owner_id, d.wall_shown_at, d.wall_marketplace_url,
+    SELECT d.id, d.name, d.kind, d.owner_id, d.wall_shown_at, d.wall_hidden_at, d.wall_marketplace_url,
            n.revision_id, n.category, r.job_id, r.frames
     FROM studio_designs d
     JOIN LATERAL (
@@ -112,7 +113,7 @@ export async function listWall(page: { limit: number; offset: number }, now: Dat
     ) n ON true
     JOIN studio_renders r ON r.revision_id = n.revision_id AND r.status = 'ready' AND r.frames > 0
       AND r.view_key = CASE d.kind WHEN 'scene' THEN ${wallView('scene')} WHEN 'emote' THEN ${wallView('emote')} ELSE ${wallView('wearable')} END
-    WHERE d.wall_shown_at IS NOT NULL AND d.wall_hidden_at IS NULL
+    WHERE d.wall_shown_at IS NOT NULL ${includeHidden ? sql`` : sql`AND d.wall_hidden_at IS NULL`}
     ORDER BY d.wall_shown_at DESC, d.id
     LIMIT ${page.limit} OFFSET ${page.offset}
   `)) as unknown as Row[]
@@ -136,9 +137,32 @@ export async function listWall(page: { limit: number; offset: number }, now: Dat
       creator: creators.get(r.owner_id)!,
       marketplaceUrl: r.wall_marketplace_url,
       shownAt: new Date(r.wall_shown_at).toISOString(),
+      hidden: !!r.wall_hidden_at,
+      ownerId: r.owner_id,
       frames: Array.from({ length: WALL_FRAMES }, (_, i) => signRenderFrame({
         designId: r.id, revisionId: r.revision_id, viewKey: wallView(r.kind), category: r.category, frame: Math.floor(i * n / WALL_FRAMES), jobId: r.job_id,
       }, expires)),
     }
   })
+}
+
+export async function listWall(page: { limit: number; offset: number }, now: Date): Promise<WallEntry[]> {
+  return (await selectWall(page, now, false)).map(({ hidden: _h, ownerId: _o, ...entry }) => entry)
+}
+
+const ADMIN_WALL_LIMIT = 500
+
+/** Every shown entry for the admin page, hidden ones included, with the owner's email. */
+export async function listWallForAdmin(now: Date): Promise<(WallEntry & { hidden: boolean; ownerEmail: string | null })[]> {
+  const rows = await selectWall({ limit: ADMIN_WALL_LIMIT, offset: 0 }, now, true)
+  if (!rows.length) return []
+  const owners = await db.select({ id: users.id, email: users.email }).from(users).where(inArray(users.id, [...new Set(rows.map((r) => r.ownerId))]))
+  const emails = new Map(owners.map((o) => [o.id, o.email]))
+  return rows.map(({ ownerId, ...entry }) => ({ ...entry, ownerEmail: emails.get(ownerId) ?? null }))
+}
+
+/** An admin hides or restores a shown design. Separate from the owner's choice, which never clears it. False when there is no such design. */
+export async function setWallHidden(designId: string, hidden: boolean, now: Date): Promise<boolean> {
+  const updated = await db.update(studioDesigns).set({ wallHiddenAt: hidden ? now : null }).where(eq(studioDesigns.id, designId)).returning({ id: studioDesigns.id })
+  return updated.length > 0
 }

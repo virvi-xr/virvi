@@ -98,8 +98,12 @@ export type StudioSet = {
   freeFixesLeft: Record<string, number>
 }
 
+/** The owner's wall choice; `hidden` is an admin's call, which the owner cannot clear. */
+export type WallState = { shown: boolean; hidden: boolean; marketplaceUrl: string | null }
+
 export type StudioDetail = {
   design: StudioDesign
+  wall: WallState
   pieces: StudioPiece[]
   messages: StudioMessage[]
   activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; fixClipping?: FixClipping | null } | null
@@ -925,4 +929,10 @@ export function writeUnrecordedRefund(store: KeyValueStore | null, id: string, e
   if (entry) next.push(entry)
   try { store?.setItem(UNRECORDED_REFUNDS_KEY, JSON.stringify(next)) } catch { /* private window or blocked storage */ }
   return next
+}
+
+/** One shown design on the admin wall list, hidden ones included. */
+export type AdminWallEntry = {
+  designId: string; name: string; kind: StudioKind; creator: string; marketplaceUrl: string | null; shownAt: string
+  hidden: boolean; ownerEmail: string | null
 }
