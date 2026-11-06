@@ -2,6 +2,7 @@ import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } 
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
 import { itemName } from './naming.js'
+import { bindClick } from './click.js'
 
 // Internal tracking of element config
 interface ImageConfig {
@@ -12,6 +13,8 @@ interface ImageConfig {
   textureSrc?: string
   emission: number
   isTransparent: boolean
+  /** The item's click action (LIV-126). */
+  clickEvent?: unknown
 }
 
 // Internal tracking of element instance -> entity mapping
@@ -25,6 +28,8 @@ interface ImageInstance {
   rotation: { x: number; y: number; z: number }
   scale: { x: number; y: number; z: number }
   withCollisions: boolean
+  /** The copy's own click action, which wins unless its type is NONE. */
+  clickEvent?: unknown
 }
 
 export class ImageManager {
@@ -58,6 +63,7 @@ export class ImageManager {
       textureSrc: data.textureSrc,
       emission: data.emission ?? 0,
       isTransparent: data.isTransparent ?? false,
+      clickEvent: data.clickEvent,
     }
     this.configs.set(config.sk, config)
 
@@ -103,8 +109,10 @@ export class ImageManager {
       rotation,
       scale,
       withCollisions: data.withCollisions ?? false,
+      clickEvent: data.clickEvent,
     }
     this.instances.set(data.sk, instance)
+    bindClick(this.adapter, entity, instance.clickEvent, config.clickEvent)
 
     const key = data.customId || data.sk
     this.storage.images.instances[key] = data
@@ -134,6 +142,12 @@ export class ImageManager {
     if (elementData.isTransparent !== undefined) config.isTransparent = elementData.isTransparent
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
     if (elementData.name !== undefined) config.name = elementData.name
+    if (elementData.clickEvent !== undefined) {
+      config.clickEvent = elementData.clickEvent
+      for (const instance of this.instances.values()) {
+        if (instance.configSk === config.sk) bindClick(this.adapter, instance.entity, instance.clickEvent, config.clickEvent)
+      }
+    }
     // A file-name label follows the file
     if (elementData.name !== undefined || elementData.textureSrc !== undefined) {
       for (const instance of this.instances.values()) {
@@ -178,6 +192,11 @@ export class ImageManager {
 
     if (instanceData.enabled !== undefined) {
       instance.enabled = instanceData.enabled
+    }
+
+    if (instanceData.clickEvent !== undefined) {
+      instance.clickEvent = instanceData.clickEvent
+      bindClick(this.adapter, instance.entity, instance.clickEvent, this.configs.get(instance.configSk)?.clickEvent)
     }
 
     if (instanceData.withCollisions !== undefined) {

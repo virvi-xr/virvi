@@ -4,6 +4,7 @@ import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } 
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
 import { AdSlot } from '../ads/slot.js'
+import { bindClick } from './click.js'
 import type { AdHost } from '../ads/host.js'
 import { itemName } from './naming.js'
 import { add, eulerDegreesToQuat, rotateVector } from '../transform/math.js'
@@ -23,6 +24,8 @@ interface VideoConfig {
   volume: number
   playlistIndex: number
   emission: number
+  /** The item's click action (LIV-126). */
+  clickEvent?: unknown
 }
 
 // Internal tracking of element instance -> entity mapping
@@ -36,6 +39,8 @@ interface VideoInstance {
   rotation: { x: number; y: number; z: number }
   scale: { x: number; y: number; z: number }
   withCollisions: boolean
+  /** The copy's own click action, which wins unless its type is NONE. */
+  clickEvent?: unknown
   /** Ads on this screen in the ads modes (4, 5); it may swap `entity` (see AdSlot). */
   slot?: AdSlot
   playlistIndex: number
@@ -247,6 +252,7 @@ export class VideoManager {
       volume: (data.volume ?? 100) / 100, // Convert 0-100 to 0-1
       playlistIndex: 0,
       emission: data.emission ?? 0.6,
+      clickEvent: data.clickEvent,
       ...carry,
     }
     this.configs.set(config.sk, config)
@@ -289,6 +295,7 @@ export class VideoManager {
       rotation,
       scale,
       withCollisions: data.withCollisions ?? false,
+      clickEvent: data.clickEvent,
       playlistIndex: config.playlistIndex,
       sinceAd: 0,
       mediaToken: 0,
@@ -303,6 +310,14 @@ export class VideoManager {
     this.storage.videos.instances[key] = data
   }
 
+  /** The screen's click action; in the ads modes (not live) the ad's link owns the click, so the item has none. */
+  private syncClick(instance: VideoInstance, config: VideoConfig): void {
+    const live = config.isLive && config.enableLiveStream && !!config.liveSrc
+    const ads = !live && (config.offType === VideoSourceType.ADS || config.offType === VideoSourceType.PLAYLIST_ADS)
+    if (ads) this.adapter.removePointerEvents?.(instance.entity)
+    else bindClick(this.adapter, instance.entity, instance.clickEvent, config.clickEvent)
+  }
+
   private applyMediaState(instance: VideoInstance, config: VideoConfig): void {
     const token = ++instance.mediaToken
     this.stopShowingClock(instance)
@@ -312,6 +327,7 @@ export class VideoManager {
       instance.slot = undefined
     }
     const entity = instance.entity
+    this.syncClick(instance, config)
 
     // Live stream mode
     if (config.isLive && config.enableLiveStream && config.liveSrc) {
@@ -477,6 +493,7 @@ export class VideoManager {
     if (elementData.playlist !== undefined) config.playlist = elementData.playlist
     if (elementData.volume !== undefined) config.volume = elementData.volume / 100
     if (elementData.emission !== undefined) config.emission = elementData.emission
+    if (elementData.clickEvent !== undefined) config.clickEvent = elementData.clickEvent
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
     if (elementData.name !== undefined) {
       config.name = elementData.name
@@ -523,6 +540,12 @@ export class VideoManager {
 
     if (instanceData.enabled !== undefined) {
       instance.enabled = instanceData.enabled
+    }
+
+    if (instanceData.clickEvent !== undefined) {
+      instance.clickEvent = instanceData.clickEvent
+      const config = this.configs.get(instance.configSk)
+      if (config) this.syncClick(instance, config)
     }
 
     if (instanceData.withCollisions !== undefined) {

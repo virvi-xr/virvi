@@ -3,6 +3,7 @@ import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
 import type { EventBus } from '../events/EventBus.js'
 import { itemName } from './naming.js'
+import { bindClick } from './click.js'
 
 // Internal tracking of element config
 interface MeshConfig {
@@ -11,6 +12,8 @@ interface MeshConfig {
   enabled: boolean
   customId?: string
   modelSrc?: string
+  /** The item's click action (LIV-126). */
+  clickEvent?: unknown
 }
 
 // Internal tracking of element instance -> entity mapping
@@ -24,6 +27,8 @@ interface MeshInstance {
   rotation: { x: number; y: number; z: number }
   scale: { x: number; y: number; z: number }
   withCollisions: boolean
+  /** The copy's own click action, which wins unless its type is NONE. */
+  clickEvent?: unknown
 }
 
 export class MeshManager {
@@ -83,6 +88,7 @@ export class MeshManager {
       enabled: data.enabled ?? true,
       customId: data.customId,
       modelSrc: data.modelSrc,
+      clickEvent: data.clickEvent,
     }
     this.configs.set(config.sk, config)
 
@@ -126,8 +132,10 @@ export class MeshManager {
       rotation,
       scale,
       withCollisions: data.withCollisions ?? false,
+      clickEvent: data.clickEvent,
     }
     this.instances.set(data.sk, instance)
+    bindClick(this.adapter, entity, instance.clickEvent, config.clickEvent)
 
     const key = data.customId || data.sk
     this.storage.models.instances[key] = data
@@ -156,6 +164,12 @@ export class MeshManager {
     if (elementData.modelSrc !== undefined) config.modelSrc = elementData.modelSrc
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
     if (elementData.name !== undefined) config.name = elementData.name
+    if (elementData.clickEvent !== undefined) {
+      config.clickEvent = elementData.clickEvent
+      for (const instance of this.instances.values()) {
+        if (instance.configSk === config.sk) bindClick(this.adapter, instance.entity, instance.clickEvent, config.clickEvent)
+      }
+    }
     // A file-name label follows the file
     if (elementData.name !== undefined || elementData.modelSrc !== undefined) {
       for (const instance of this.instances.values()) {
@@ -203,6 +217,11 @@ export class MeshManager {
 
     if (instanceData.enabled !== undefined) {
       instance.enabled = instanceData.enabled
+    }
+
+    if (instanceData.clickEvent !== undefined) {
+      instance.clickEvent = instanceData.clickEvent
+      bindClick(this.adapter, instance.entity, instance.clickEvent, this.configs.get(instance.configSk)?.clickEvent)
     }
 
     if (instanceData.withCollisions !== undefined) {
