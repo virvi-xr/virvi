@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fileToBase64, type useApi } from '@/lib/api'
 import {
   CENTRED, SCENE_THUMBNAIL_MAX_BYTES, SCENE_THUMBNAIL_MIN, TOO_LARGE_MESSAGE, TOO_SMALL_MESSAGE,
-  cropRect, maxZoom, outputSize, outputType, paintCrop, pickedFileError, REMOVE_CONFIRM, sourceTooSmall, thumbnailError, type CropPosition,
+  cropRect, deployNote, maxZoom, outputSize, outputType, paintCrop, pickedFileError, removeConfirm, sourceTooSmall, thumbnailError, type CropPosition,
 } from '@/lib/scene-thumbnail'
 
 const PREVIEW = { width: 480, height: 270 }
@@ -124,7 +124,7 @@ export function SceneThumbnail({ sceneId, url, source = null, openPicker = false
   }
 
   const remove = async () => {
-    if (!window.confirm(REMOVE_CONFIRM)) return
+    if (!window.confirm(removeConfirm(url ? source : null))) return
     setBusy(true)
     setError('')
     try {
@@ -152,11 +152,11 @@ export function SceneThumbnail({ sceneId, url, source = null, openPicker = false
         <p className="mt-1 text-sm text-gray-400">
           Shown on your Scenes list and, once deployed, wherever Decentraland shows your scene (the map and Places).
           A 16:9 PNG, JPEG or WebP of at least {SCENE_THUMBNAIL_MIN.width} × {SCENE_THUMBNAIL_MIN.height} px; you crop it to shape below.
-          A new or removed thumbnail goes live with the next deploy.
+          {deployNote(url ? source : null)}
         </p>
         {source === 'import' && url && (
           <p className="mt-1 text-sm text-gray-400">
-            This one is your imported scene&apos;s own, from its scene.json, and deploys with the scene as it is. Replace it to deploy yours instead.
+            This one is your imported scene&apos;s own, from its scene.json, and deploys with the scene as it is.
           </p>
         )}
       </div>

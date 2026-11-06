@@ -219,6 +219,19 @@ describe('importThumbnailShown (LIV-89)', () => {
     })
   })
 
+  it("the kept note goes once the scene's thumbnail is no longer the owner's upload", () => {
+    expect(t({ outcome: 'kept', note: null, url: null, source: null })).toMatchObject({ note: null, action: 'Upload' })
+    expect(t({ outcome: 'kept', note: null, url: 'https://cdn/i.jpg', source: 'import' })).toMatchObject({ note: null })
+  })
+
+  it('says an earlier import\'s thumbnail was removed because scene.json has none', () => {
+    expect(t({ outcome: 'removed', note: null, url: null, source: null })).toEqual({
+      label: 'Thumbnail: removed (scene.json has none)', url: null, note: null, action: 'Upload',
+    })
+    // Uploaded in Virvi since
+    expect(t({ outcome: 'removed', note: null, url: 'https://cdn/u.jpg', source: 'upload' })).toMatchObject({ label: 'Thumbnail: uploaded in Virvi', action: 'Replace' })
+  })
+
   it("a skipped one shows the note, and an Upload when the scene has none", () => {
     const note = "The scene's thumbnail couldn't be used: images/t.png isn't in the upload."
     expect(t({ outcome: 'skipped', note, url: null, source: null })).toEqual({ label: 'Thumbnail: none yet', url: null, note, action: 'Upload' })

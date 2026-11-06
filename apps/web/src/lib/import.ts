@@ -187,8 +187,11 @@ export function importThumbnailShown(v: Pick<SceneImportView, 'thumbnail'>): { l
   const t = v.thumbnail
   if (!t?.outcome) return null
   const url = t.url
-  const label = !url ? 'Thumbnail: none yet' : t.source === 'import' ? 'Thumbnail: from scene.json' : 'Thumbnail: uploaded in Virvi'
-  const note = t.outcome === 'skipped' ? t.note : t.outcome === 'kept' ? THUMBNAIL_KEPT_NOTE : null
+  const label = !url
+    ? (t.outcome === 'removed' ? 'Thumbnail: removed (scene.json has none)' : 'Thumbnail: none yet')
+    : t.source === 'import' ? 'Thumbnail: from scene.json' : 'Thumbnail: uploaded in Virvi'
+  // The kept note only while the owner's upload is still the scene's thumbnail
+  const note = t.outcome === 'skipped' ? t.note : t.outcome === 'kept' && url && t.source === 'upload' ? THUMBNAIL_KEPT_NOTE : null
   return { label, url, note, action: url ? 'Replace' : 'Upload' }
 }
 

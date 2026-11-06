@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { REMOVE_CONFIRM, JPEG_BACKGROUND, paintCrop, cropRect, maxZoom, outputSize, outputType, pickedFileError, sourceTooSmall, thumbnailError } from './scene-thumbnail'
+import { REMOVE_CONFIRM, deployNote, removeConfirm, JPEG_BACKGROUND, paintCrop, cropRect, maxZoom, outputSize, outputType, pickedFileError, sourceTooSmall, thumbnailError } from './scene-thumbnail'
 
 describe('cropRect', () => {
   it('centre-crops a wide image to 16:9 at full height', () => {
@@ -98,5 +98,21 @@ describe('REMOVE_CONFIRM', () => {
   it("says a thumbnail the scene had of its own doesn't come back (LIV-88 review M3)", () => {
     expect(REMOVE_CONFIRM).toMatch(/next deploy/)
     expect(REMOVE_CONFIRM).toMatch(/own thumbnail.*doesn't come back/)
+  })
+})
+
+describe('what deploying or removing does (LIV-89)', () => {
+  it('an uploaded thumbnail goes live, or goes, with the next deploy', () => {
+    expect(deployNote('upload')).toBe('A new or removed thumbnail goes live with the next deploy.')
+    expect(deployNote(null)).toBe(deployNote('upload'))
+    expect(removeConfirm('upload')).toBe(REMOVE_CONFIRM)
+  })
+
+  it("an imported scene's own: replacing it deploys yours, removing it changes nothing deployed", () => {
+    expect(deployNote('import')).toBe(
+      "A new thumbnail goes live with the next deploy, in place of your scene's own. Removing this one only takes it off Virvi; your deployed scene keeps its own.",
+    )
+    expect(removeConfirm('import')).toMatch(/^Remove the thumbnail from Virvi\? Your deployed scene keeps its own/)
+    expect(removeConfirm('import')).not.toMatch(/stops showing/)
   })
 })

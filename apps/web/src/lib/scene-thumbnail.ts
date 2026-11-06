@@ -112,3 +112,17 @@ export function paintCrop(
  */
 export const REMOVE_CONFIRM =
   "Remove the thumbnail? Decentraland stops showing it after the next deploy. If your scene had its own thumbnail before you set this one, it doesn't come back: the scene is left without one (an imported scene gets its own back the next time you deploy an upload)."
+
+type Source = 'upload' | 'import' | null
+
+/** LIV-89: what the next deploy does with the thumbnail; an imported scene's own isn't deployed by Virvi. */
+export const deployNote = (source: Source): string =>
+  source === 'import'
+    ? "A new thumbnail goes live with the next deploy, in place of your scene's own. Removing this one only takes it off Virvi; your deployed scene keeps its own."
+    : 'A new or removed thumbnail goes live with the next deploy.'
+
+/** The question before Remove: an imported scene's own goes only from Virvi. */
+export const removeConfirm = (source: Source): string =>
+  source === 'import'
+    ? "Remove the thumbnail from Virvi? Your deployed scene keeps its own, from its scene.json; nothing changes in Decentraland. Uploading the scene again brings it back here."
+    : REMOVE_CONFIRM
