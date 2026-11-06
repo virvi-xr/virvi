@@ -11,7 +11,8 @@ export const ANONYMOUS: Actor = Object.freeze({ userId: null, role: 'viewer', wa
 
 /** Normalize JWT claims (or request.user) into an Actor. Only an explicit `verified: true` counts: every token issuer sets it, so a claim-less token is unverified. */
 export function actorFromClaims(c: Partial<SessionClaims> | null | undefined): Actor {
-  if (!c || c.guest || !c.id) return ANONYMOUS
+  // A trial session is no actor: it reaches the Studio routes through request.user, never a scene or room.
+  if (!c || c.guest || !c.id || c.kind === 'trial') return ANONYMOUS
   return {
     userId: c.id,
     role: c.role ?? 'viewer',

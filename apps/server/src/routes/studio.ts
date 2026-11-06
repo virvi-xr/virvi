@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders } from '../db/schema.js'
+import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads } from '../db/schema.js'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { STUDIO_ROUTE_SCENE_PASS } from '../auth/scene-from.js'
@@ -97,6 +97,10 @@ export default async function studioRoutes(app: FastifyInstance) {
   const routeConfig = { scenePass: STUDIO_ROUTE_SCENE_PASS }
   const auth = { preHandler: [authenticate, studioOn], config: routeConfig }
   const work = { preHandler: [authenticate, studioOn, notPaused], config: routeConfig }
+  // The routes a signed-out trial visitor may use (`trial: true`); everything else answers them 403 account_required.
+  const trialRoute = { scenePass: STUDIO_ROUTE_SCENE_PASS, trial: true as const }
+  const trialAuth = { ...auth, config: trialRoute }
+  const trialWork = { ...work, config: trialRoute }
 
   // Not behind notPaused: a paused account may still redeem. Guessing is slow: 10 tries an hour per account.
   app.post('/api/studio/gift-codes/redeem', {
@@ -113,11 +117,11 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
   })
 
-  app.get('/api/studio/usage', auth, async (request) => {
+  app.get('/api/studio/usage', trialAuth, async (request) => {
     return { ...await usage(request.user.id, await openLimit(request.user.id), new Date()), paused: await isPaused(request.user.id) }
   })
 
-  app.post('/api/studio/designs', work, async (request, reply) => {
+  app.post('/api/studio/designs', trialWork, async (request, reply) => {
     const b = (request.body ?? {}) as { kind?: unknown; agent?: unknown; name?: unknown }
     const err = agentError(b.agent)
     if (err) return reply.status(400).send({ error: err })
@@ -137,7 +141,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     return reply.status(201).send(publicDesign(d))
   })
 
-  app.get('/api/studio/designs', auth, async (request) => {
+  app.get('/api/studio/designs', trialAuth, async (request) => {
     const archived = (request.query as { archived?: string }).archived === 'true'
     const rows = await db.select().from(studioDesigns)
       .where(and(eq(studioDesigns.ownerId, request.user.id), archived ? isNotNull(studioDesigns.archivedAt) : isNull(studioDesigns.archivedAt)))
@@ -145,13 +149,13 @@ export default async function studioRoutes(app: FastifyInstance) {
     return rows.map(publicDesign)
   })
 
-  app.get('/api/studio/designs/:id', auth, async (request, reply) => {
+  app.get('/api/studio/designs/:id', trialAuth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     return designDetail(d, new Date())
   })
 
-  app.patch('/api/studio/designs/:id', auth, async (request, reply) => {
+  app.patch('/api/studio/designs/:id', trialAuth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { name?: unknown; agent?: unknown; archived?: unknown }
@@ -178,7 +182,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     return publicDesign(updated)
   })
 
-  app.post('/api/studio/designs/:id/prompts', work, async (request, reply) => {
+  app.post('/api/studio/designs/:id/prompts', trialWork, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; continue?: unknown; fixChecks?: unknown }
@@ -206,7 +210,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     return reply.status(202).send({ jobId: r.jobId })
   })
 
-  app.get('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
+  app.get('/api/studio/designs/:id/finalize', trialAuth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     try {
@@ -252,7 +256,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
   })
 
-  app.post('/api/studio/designs/:id/pieces/:category/revisions/:number/report', auth, async (request, reply) => {
+  app.post('/api/studio/designs/:id/pieces/:category/revisions/:number/report', trialAuth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     if (!config.stripeSecretKey) return paymentsOff(reply)
@@ -393,10 +397,17 @@ export default async function studioRoutes(app: FastifyInstance) {
   await app.register(async (files) => {
     files.removeAllContentTypeParsers()
     files.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: UPLOAD_LIMITS.modelBytes + 1024 }, (_req, body, done) => done(null, body))
-    files.post('/api/studio/designs/:id/uploads', { ...work, bodyLimit: UPLOAD_LIMITS.modelBytes + 1024 }, async (request, reply) => {
+    files.post('/api/studio/designs/:id/uploads', { ...trialWork, bodyLimit: UPLOAD_LIMITS.modelBytes + 1024 }, async (request, reply) => {
       const d = await ownDesign(request)
       if (!d) return notFound(reply)
       const name = (request.query as { name?: unknown }).name
+      // A trial's files total TRIAL_UPLOAD_BYTES across all its designs; more takes an account
+      if (request.user.trial) {
+        const [used] = await db.select({ bytes: sql<number>`coalesce(sum(${studioUploads.size}), 0)::int` }).from(studioUploads)
+          .innerJoin(studioDesigns, eq(studioDesigns.id, studioUploads.designId)).where(eq(studioDesigns.ownerId, request.user.id))
+        const incoming = Buffer.isBuffer(request.body) ? request.body.length : 0
+        if ((used?.bytes ?? 0) + incoming > config.trialUploadBytes) return reply.status(403).send({ error: 'account_required', action: 'upload_more' })
+      }
       try {
         return reply.status(201).send(await addUpload(d, typeof name === 'string' ? name : '', Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0)))
       } catch (err) {
@@ -406,7 +417,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     })
   })
 
-  app.get('/api/studio/designs/:id/uploads/:uploadId', auth, async (request, reply) => {
+  app.get('/api/studio/designs/:id/uploads/:uploadId', trialAuth, async (request, reply) => {
     const d = await ownDesign(request)
     const uploadId = (request.params as { uploadId: string }).uploadId
     const u = d && UUID.test(uploadId) ? await findUpload(d.id, uploadId) : null
@@ -415,14 +426,14 @@ export default async function studioRoutes(app: FastifyInstance) {
     return reply.type(u.contentType).header('Cache-Control', 'private, max-age=3600').header('X-Content-Type-Options', 'nosniff').send(obj.body)
   })
 
-  app.delete('/api/studio/designs/:id/uploads/:uploadId', auth, async (request, reply) => {
+  app.delete('/api/studio/designs/:id/uploads/:uploadId', trialAuth, async (request, reply) => {
     const d = await ownDesign(request)
     const uploadId = (request.params as { uploadId: string }).uploadId
     if (!d || !UUID.test(uploadId) || !(await deleteUpload(d.id, uploadId))) return reply.status(404).send({ error: 'upload_not_found' })
     return reply.status(204).send()
   })
 
-  app.post('/api/studio/designs/:id/renders', work, async (request, reply) => {
+  app.post('/api/studio/designs/:id/renders', trialWork, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { category?: unknown; bodyShape?: unknown; outfit?: unknown; emote?: unknown; mode?: unknown }
@@ -455,7 +466,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   // An emote view with every piece worn: a base emote for a wearable design, the design's own (null) for an emote
-  app.post('/api/studio/designs/:id/set-renders', work, async (request, reply) => {
+  app.post('/api/studio/designs/:id/set-renders', trialWork, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { bodyShape?: unknown; outfit?: unknown; emote?: unknown }
@@ -481,7 +492,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     d.kind === 'emote' ? (emote == null || emote === OWN_EMOTE ? OWN_EMOTE : null)
       : emotesFor(d.kind).includes(emote as string) ? emote as string : null
 
-  app.post('/api/studio/designs/:id/emote-checks', work, async (request, reply) => {
+  app.post('/api/studio/designs/:id/emote-checks', trialWork, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; state?: unknown }
@@ -497,7 +508,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   // "I see clipping": a free fix in the server's words, for an emote view the person has seen
-  app.post('/api/studio/designs/:id/clipping', work, async (request, reply) => {
+  app.post('/api/studio/designs/:id/clipping', trialWork, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; outfit?: unknown }

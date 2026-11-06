@@ -129,11 +129,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await registerJwt(app, config.jwtSecret)
 
   // Every route, with whether it declares a scene-pass resolver and takes Hyperfy or AR passes (AR from a personal headset only) (the scene-pass guard test walks these).
-  const registeredRoutes: Array<{ method: string; url: string; scenePass: boolean; hyperfy: boolean; ar: boolean; arPersonal: boolean }> = []
+  const registeredRoutes: Array<{ method: string; url: string; scenePass: boolean; hyperfy: boolean; ar: boolean; arPersonal: boolean; trial: boolean }> = []
   app.addHook('onRoute', (r) => {
     const methods = Array.isArray(r.method) ? r.method : [r.method]
     const sp = (r.config as { scenePass?: { hyperfy?: boolean; ar?: boolean | 'personal' } } | undefined)?.scenePass
-    for (const m of methods) if (m !== 'HEAD' && m !== 'OPTIONS') registeredRoutes.push({ method: m, url: r.url, scenePass: !!sp, hyperfy: !!sp?.hyperfy, ar: !!sp?.ar, arPersonal: sp?.ar === 'personal' })
+    for (const m of methods) if (m !== 'HEAD' && m !== 'OPTIONS') registeredRoutes.push({ method: m, url: r.url, scenePass: !!sp, hyperfy: !!sp?.hyperfy, ar: !!sp?.ar, arPersonal: sp?.ar === 'personal', trial: !!(r.config as { trial?: boolean } | undefined)?.trial })
   })
   app.decorate('registeredRoutes', registeredRoutes)
 

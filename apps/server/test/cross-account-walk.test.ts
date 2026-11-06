@@ -16,6 +16,7 @@ import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/stor
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { createVenue, createBooking, addGrant } from '../src/venues/service.js'
 import { resetDb } from './helpers/db.js'
+import { issueTrialSession } from '../src/auth/trial.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, randomWallet, type TestUser } from './helpers/factories.js'
 import { createAnalyticsScene } from './helpers/analytics.js'
 import { createSetup } from './helpers/setups.js'
@@ -494,6 +495,25 @@ describe('cross-account route walk', () => {
       if (res.statusCode !== 200) failed.push(`${c.route} → ${res.statusCode}`)
     }
     expect(failed).toEqual([])
+  })
+
+  it("a trial that owns nothing cannot reach B's design through any allowlisted Studio route", async () => {
+    const t = await createUser({ email: null })
+    await db.update(users).set({ isTrial: true, trialLastActiveAt: new Date() }).where(eq(users.id, t.id))
+    const { accessToken } = issueTrialSession(app, { id: t.id, displayName: t.displayName, role: 'creator', trialLastActiveAt: new Date() })
+    const trialRoutes = new Set(((app as any).registeredRoutes as Array<{ method: string; url: string; trial: boolean }>).filter((r) => r.trial).map((r) => `${r.method} ${r.url}`))
+    const own = new Set(['GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs'])
+    const cases = CASES.filter((c) => trialRoutes.has(c.route))
+    expect(cases.length).toBe(trialRoutes.size - own.size)
+    const offenders: string[] = []
+    for (const c of cases) {
+      const before = await snapshot(f)
+      const [method] = c.route.split(' ')
+      const res = await app.inject({ method: method as any, url: c.url(f), headers: { authorization: `Bearer ${accessToken}` }, payload: c.body?.(f) })
+      if (![403, 404].includes(res.statusCode)) offenders.push(`${c.route} → ${res.statusCode} ${res.body.slice(0, 120)}`)
+      else if (JSON.stringify(await snapshot(f)) !== JSON.stringify(before)) offenders.push(`${c.route} → ${res.statusCode} but changed B's data`)
+    }
+    expect(offenders).toEqual([])
   })
 
   it('every collected route with a :param is walked or listed in NOT_CROSS_ACCOUNT', async () => {

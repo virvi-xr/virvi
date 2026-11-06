@@ -19,6 +19,8 @@ declare module 'fastify' {
      * `studio: true` lets the Decentraland studio scene's pass (via 'studio') in, without a scene check: it is the only
      * thing that pass opens (403 `studio_pass_not_allowed` elsewhere). Other scene passes still need `sceneFrom` to match.
      */
+    /** `true` lets a signed-out visitor's trial token (kind 'trial') in. Default closed: every other route answers 403 `account_required`. */
+    trial?: true
     scenePass?: { sceneFrom: SceneFrom; hyperfy?: true; ar?: true | 'personal'; studio?: true }
   }
 }

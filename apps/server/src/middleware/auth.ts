@@ -10,6 +10,8 @@ import { dclHudNeedsRedeploy } from '../auth/hud-protocol.js'
 import { config } from '../config.js'
 import { REDEPLOY_REQUIRED } from '@virvixr/shared'
 
+const TRIAL_TOUCH_MS = 10 * 60_000
+
 export interface AuthUser {
   id: string
   email: string | null
@@ -20,6 +22,8 @@ export interface AuthUser {
   guest?: boolean
   viaApiKey?: boolean
   kind?: 'account' | 'scene' | 'trial'
+  /** True for a signed-out visitor's trial session (kind 'trial'), set only on routes that opt in with `config.trial`. */
+  trial?: boolean
   sceneId?: string | null
   locationId?: string | null
   via?: 'hyperfy' | 'ar' | 'studio'
@@ -110,6 +114,21 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     }
     if (decoded.guest) {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Guest tokens cannot access the API' })
+    }
+    if (decoded.kind === 'trial') {
+      // The row decides: a converted or deleted trial's token is over, whatever the route.
+      const [row] = await db.select({ isTrial: users.isTrial, trialLastActiveAt: users.trialLastActiveAt }).from(users).where(eq(users.id, decoded.id)).limit(1)
+      if (!row?.isTrial) return reply.status(401).send({ error: 'trial_ended' })
+      // Default closed: only routes that opt in with `config.trial` take a trial token.
+      if (!request.routeOptions.config?.trial) {
+        return reply.status(403).send({ error: 'account_required', action: `${request.method} ${request.routeOptions.url}` })
+      }
+      if (!row.trialLastActiveAt || Date.now() - row.trialLastActiveAt.getTime() > TRIAL_TOUCH_MS) {
+        // Fire-and-forget: activity stamping never slows or fails the request
+        db.update(users).set({ trialLastActiveAt: new Date() }).where(eq(users.id, decoded.id)).then(() => {}).catch(() => {})
+      }
+      request.user = { id: decoded.id, email: null, role: decoded.role, orgId: null, kind: 'trial', verified: false, trial: true }
+      return
     }
     if (decoded.kind !== 'account' && decoded.kind !== 'scene') {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Session expired — sign in again' })
