@@ -5,7 +5,7 @@ import { users, studioDesigns, trialEvents } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { sweepTrials } from '../src/auth/trial-sweep.js'
 import { finishOAuth } from '../src/auth/trial-convert.js'
-import { flushTrialEvents } from '../src/auth/trial-events.js'
+import { flushTrialEvents, recordTrialBlocked } from '../src/auth/trial-events.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { setTurnstileFetch } from '../src/auth/turnstile.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
@@ -100,10 +100,14 @@ describe('trial expiry and funnel', () => {
 
     const b1 = await app.inject({ method: 'GET', url: '/api/scenes', headers })
     expect(b1.statusCode).toBe(403)
+    await flushTrialEvents()
     const b2 = await app.inject({ method: 'GET', url: '/api/scenes', headers })
     expect(b2.statusCode).toBe(403)
     // an in-handler refusal after the first one adds none
-    for (let i = 0; i < 2; i++) await app.inject({ method: 'POST', url: '/api/studio/designs', headers, payload: { kind: 'wearable', agent: 'claude' } })
+    for (let i = 0; i < 2; i++) {
+      await flushTrialEvents()
+      await app.inject({ method: 'POST', url: '/api/studio/designs', headers, payload: { kind: 'wearable', agent: 'claude' } })
+    }
     const blocked = (await events()).filter((e) => e.kind === 'blocked')
     expect(blocked).toHaveLength(1)
     expect(blocked[0]).toMatchObject({ userId: user.id, action: 'GET /api/scenes' })
@@ -129,6 +133,14 @@ describe('trial expiry and funnel', () => {
     const signed = (await events()).filter((e) => e.kind === 'signed_up')
     expect(signed).toHaveLength(1)
     expect(signed[0]).toMatchObject({ userId: t.id, action: 'upload_more' })
+  })
+
+  it('records exactly one blocked row when refusals race', async () => {
+    const t = await makeTrial(0)
+    await Promise.all([1, 2, 3, 4, 5].map(async (i) => recordTrialBlocked(t.id, `race_${i}`)))
+    const blocked = (await events()).filter((e) => e.kind === 'blocked')
+    expect(blocked).toHaveLength(1)
+    expect(blocked[0].userId).toBe(t.id)
   })
 
   it('carries fromAction through the OAuth claim ticket into signed_up', async () => {

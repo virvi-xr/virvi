@@ -18,12 +18,12 @@ export function recordTrialEvent(kind: TrialEventKind, userId: string | null, ac
   track(db.insert(trialEvents).values({ kind, userId, action: action ?? null }).then(() => {}))
 }
 
-/** `blocked`, only for this trial's first refusal ever (no `blocked` row for them yet). Fire-and-forget. */
+/** `blocked`, only for this trial's first refusal ever: the partial unique index `trial_events_blocked_uq` makes concurrent refusals collapse to one row. Fire-and-forget. */
 export function recordTrialBlocked(userId: string, action: string | null): void {
   track(db.execute(sql`
     INSERT INTO trial_events (user_id, kind, action)
-    SELECT ${userId}::uuid, 'blocked', ${action}
-    WHERE NOT EXISTS (SELECT 1 FROM trial_events WHERE user_id = ${userId}::uuid AND kind = 'blocked')`))
+    VALUES (${userId}::uuid, 'blocked', ${action})
+    ON CONFLICT (user_id) WHERE kind = 'blocked' DO NOTHING`))
 }
 
 /** Resolves once every funnel write started so far has settled (for tests and a graceful shutdown). */

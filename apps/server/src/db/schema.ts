@@ -1715,6 +1715,8 @@ export const trialEvents = pgTable('trial_events', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   userKindIdx: index('trial_events_user_kind_idx').on(t.userId, t.kind),
+  // at most one `blocked` row per trial (recordTrialBlocked relies on it)
+  blockedUq: uniqueIndex('trial_events_blocked_uq').on(t.userId).where(sql`${t.kind} = 'blocked'`),
 }))
 
 /** One line of a studio checkout: a piece's revision and what it costs (src/studio/pricing.ts). */

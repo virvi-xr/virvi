@@ -184,6 +184,7 @@ if [ -n "$DATABASE_URL" ]; then
       try {
         await sql\`CREATE TABLE IF NOT EXISTS trial_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, kind TEXT NOT NULL, action TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         await sql\`CREATE INDEX IF NOT EXISTS trial_events_user_kind_idx ON trial_events (user_id, kind)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS trial_events_blocked_uq ON trial_events (user_id) WHERE kind = 'blocked'\`;
         console.log('[virvi-server] trial_events ensured');
       } catch(e) { console.log('[virvi-server] trial_events:', e.message); }
 
