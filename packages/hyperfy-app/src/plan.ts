@@ -1,4 +1,4 @@
-import type { SerializedScene, SerializedSceneElement, Vec3 } from '@virvixr/shared'
+import { checkClickEvent, type SerializedScene, type SerializedSceneElement, type Vec3 } from '@virvixr/shared'
 import { toHyperfyTransform } from './transform.js'
 
 export type RenderItem = {
@@ -23,10 +23,32 @@ export type RenderItem = {
   virvi: { position: Vec3; rotation: Vec3; scale: Vec3 }
   clickUrl: string | null
   /**
+   * What clicking does in Hyperfy (LIV-126): open a link, play a sound at the item, or move the visitor to a spot
+   * (app-local Hyperfy coordinates). A teleport to a Decentraland parcel has no meaning here, so it is null.
+   */
+  click: HyperfyClick | null
+  /**
    * Schedule mode (LIV-87): the screen plays its showings by the shared clock (app.ts), showing `holdingImage` ('' for
    * none) between them. `src` is then the holding image.
    */
   schedule?: { holdingImage: string }
+}
+
+export type HyperfyClick =
+  | { kind: 'link'; url: string }
+  | { kind: 'sound'; src: string }
+  | { kind: 'move'; position: [number, number, number] }
+
+/** The click action Hyperfy can run, checked as the server checks it; null for none. */
+function hyperfyClick(raw: unknown): HyperfyClick | null {
+  if (raw === undefined) return null
+  const c = checkClickEvent(raw ?? null)
+  if (!c.ok || !c.value) return null
+  const v = c.value
+  if (v.type === 1 && v.externalLink) return { kind: 'link', url: v.externalLink }
+  if (v.type === 2 && v.sound) return { kind: 'sound', src: v.sound }
+  if (v.type === 4 && v.moveTo) return { kind: 'move', position: toHyperfyTransform({ position: v.moveTo.position, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } }).position }
+  return null
 }
 
 const VIDEO_EXT = ['mp4', 'm3u8']
@@ -131,6 +153,7 @@ function planElements(
         transform: toHyperfyTransform(virvi),
         virvi,
         clickUrl: externalUrl(clickOf(inst, el)),
+        click: hyperfyClick(clickOf(inst, el)),
         ...(media.schedule ? { schedule: media.schedule } : {}),
       })
     }

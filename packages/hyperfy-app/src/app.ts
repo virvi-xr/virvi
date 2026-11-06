@@ -27,6 +27,7 @@ declare const fetch: ScriptFetch
 declare const setTimeout: ScriptSetTimeout
 declare const props: AppProps
 declare const Matrix4: Matrix4Ctor
+declare const Vector3: new (x: number, y: number, z: number) => { toArray(): number[] }
 declare const uuid: () => string
 
 const SCENE = 'virvi:scene'
@@ -133,8 +134,34 @@ function runClient(): ClientEditHooks {
   let select: (key: string) => void = () => {}
   const planListeners: Array<(prev: RenderItem[], next: RenderItem[], scene: SerializedScene | null) => void> = []
 
+  /** Click sounds (LIV-126), one node per item, played where the item is. */
+  const clickSounds = new Map<string, HNode>()
+  const playClickSound = (item: RenderItem, src: string) => {
+    let n = clickSounds.get(item.key)
+    if (!n) {
+      n = app.create('audio')
+      n.position.fromArray(shownTransform(item).position)
+      app.add(n)
+      clickSounds.set(item.key, n)
+    }
+    n.src = src
+    n.loop = false
+    n.volume = 1
+    n.play?.()
+  }
+  /** Moves the visitor to a spot in the scene: app-local, so through the app's own placement in the world. */
+  const moveTo = (p: [number, number, number]) => {
+    const e = app.matrixWorld.elements
+    const w = [0, 1, 2].map((r) => e[r] * p[0] + e[4 + r] * p[1] + e[8 + r] * p[2] + e[12 + r])
+    world.getPlayer()?.teleport?.(new Vector3(w[0], w[1], w[2]))
+  }
   const setClick = (node: HNode, item: RenderItem) => {
-    node.onPointerDown = clickHandler(item, editing, { select: (key) => select(key), open: (url) => world.open(url, true) })
+    node.onPointerDown = clickHandler(item, editing, {
+      select: (key) => select(key),
+      open: (url) => world.open(url, true),
+      sound: (src) => playClickSound(item, src),
+      move: moveTo,
+    })
   }
 
   /** Sets the Virvi transform as the node's local transform. Planes and sounds take no scale: a plane's Virvi

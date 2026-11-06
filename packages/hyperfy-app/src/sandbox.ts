@@ -29,6 +29,8 @@ export interface HPlayer {
   admin?: boolean
   builder?: boolean
   position: { x: number; y: number; z: number }
+  /** Moves the player (the local one directly; others through the server), facing `rotationY` if given. */
+  teleport?: (position: { toArray(): number[] }, rotationY?: number) => void
 }
 export type XYZ = { x: number; y: number; z: number }
 export interface HButton {

@@ -34,6 +34,9 @@ function node(type: string, data: Fake = {}): Fake {
     remove(c: Fake) {
       this.children = this.children.filter((x: Fake) => x !== c)
     },
+    play() {
+      this.played = true
+    },
   }
 }
 
@@ -371,6 +374,27 @@ describe('the Virvi app script', () => {
     at(120)
     await c.tick()
     expect(signs()).toHaveLength(0)
+  })
+
+  it('client: clicking plays an item\'s sound there, or moves the visitor to its spot in the world (LIV-126)', async () => {
+    const teleports: Array<{ position: number[]; rotationY?: number }> = []
+    const me = { id: 'me', position: new Vector3(), teleport: (p: any, r?: number) => teleports.push({ position: p.toArray(), rotationY: r }) }
+    // The app sits 10 m along x
+    const c = run({ isServer: false, me, matrixWorld: new Matrix4().makeTranslation(10, 0, 0) })
+    const img = (sk: string, clickEvent: unknown) => ({ sk, textureSrc: 'https://cdn.example/p.png', instances: [{ sk: 'i', clickEvent, scale: { x: 1, y: 1, z: 1 } }] })
+    c.handlers.get('virvi:scene')!({
+      v: 1, version: 'a', scene: {
+        videos: [], models: [], sounds: [],
+        images: [img('snd', { type: 2, sound: 'https://cdn.example/ding.mp3' }), img('mv', { type: 4, moveTo: { position: { x: 8, y: 1, z: 3 } } })],
+      },
+    })
+    const planes = c.added.filter((n) => n.type === 'image')
+    expect(planes).toHaveLength(2)
+    planes.forEach((p) => p.onPointerDown())
+    const audio = c.added.find((n) => n.type === 'audio')!
+    expect(audio).toMatchObject({ src: 'https://cdn.example/ding.mp3', loop: false })
+    expect(audio.played).toBe(true)
+    expect(teleports).toEqual([{ position: [18, 1, -3], rotationY: undefined }])
   })
 
   it('client: a model sits in a group carrying the mapped transform, turned half a circle inside it', async () => {

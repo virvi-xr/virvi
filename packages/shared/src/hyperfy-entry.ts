@@ -2,3 +2,4 @@
 export * from './hyperfy.js'
 export * from './hyperfy-hud.js'
 export * from './showings.js'
+export * from './click-actions.js'

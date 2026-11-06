@@ -3,6 +3,7 @@
  * @virvixr/core's TransformSession in Virvi coordinates, shows the draft through `preview`, and saves with VirviApi. Drafts
  * and saves stay in Virvi coordinates; only rays are mapped (rays.ts) and the app maps drafts back for display.
  */
+import type { HyperfyClick } from '../plan.js'
 import type { Vec3 } from '@virvixr/shared'
 import type { Axis, Ray } from '@virvixr/core/transform/math'
 import type { ElementKind, Handle, MoveLock, TransformMode, TransformSession } from '@virvixr/core/transform/session'
@@ -86,12 +87,16 @@ export function renderedItem(item: RenderItem): RenderedItem {
  * gets one, which opens the link. Undefined means no handler (so Hyperfy shows no pointer for it).
  */
 export function clickHandler(
-  item: { key: string; clickUrl: string | null },
+  item: { key: string; clickUrl: string | null; click?: HyperfyClick | null },
   editing: boolean,
-  on: { select: (key: string) => void; open: (url: string) => void },
+  on: { select: (key: string) => void; open: (url: string) => void; sound?: (src: string) => void; move?: (position: [number, number, number]) => void },
 ): (() => void) | undefined {
   if (editing) return () => on.select(item.key)
-  const url = item.clickUrl
+  const c = item.click
+  // Click actions (LIV-126); a plan without `click` still opens its link
+  if (c?.kind === 'sound' && on.sound) return () => on.sound!(c.src)
+  if (c?.kind === 'move' && on.move) return () => on.move!(c.position)
+  const url = c?.kind === 'link' ? c.url : item.clickUrl
   return url ? () => on.open(url) : undefined
 }
 

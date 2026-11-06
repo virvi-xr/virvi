@@ -163,6 +163,33 @@ describe('planScene', () => {
     expect(urls).toEqual({ 'im:a': 'https://el.example/', 'im:b': 'https://inst.example/', 'im:c': null })
   })
 
+  it('maps the click actions Hyperfy can run: a link, a sound, a move to a spot (LIV-126)', () => {
+    const s = scene({
+      images: [
+        {
+          sk: 'im',
+          enabled: true,
+          textureSrc: 'https://cdn.example/p.png',
+          instances: [
+            inst('link', { clickEvent: { type: 1, externalLink: 'https://el.example/' } }),
+            inst('sound', { clickEvent: { type: 2, sound: 'https://cdn.example/ding.mp3' } }),
+            inst('move', { clickEvent: { type: 4, moveTo: { position: v(8, 1, 3) } } }),
+            inst('teleport', { clickEvent: { type: 5, teleportTo: '52,-20' } }), // a Decentraland parcel: not in Hyperfy
+            inst('bad', { clickEvent: { type: 2, sound: 'javascript:x' } }),
+          ],
+        },
+      ],
+    })
+    const clicks = Object.fromEntries(planScene(s).map((i) => [i.key, i.click]))
+    expect(clicks).toEqual({
+      'im:link': { kind: 'link', url: 'https://el.example/' },
+      'im:sound': { kind: 'sound', src: 'https://cdn.example/ding.mp3' },
+      'im:move': { kind: 'move', position: [8, 1, -3] },
+      'im:teleport': null,
+      'im:bad': null,
+    })
+  })
+
   it('an instance click of type NONE falls back to the element click', () => {
     const s = scene({
       images: [
