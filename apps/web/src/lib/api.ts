@@ -490,7 +490,7 @@ export function useApi() {
 
     // Admin
     getAdminStats: () => apiFetch<{
-      totalUsers: number; totalOrgs: number; totalScenes: number;
+      totalUsers: number; trialGuests?: number; totalOrgs: number; totalScenes: number;
       totalMedia: number; totalStorageBytes: number;
       activeSubscriptionsByTier: Record<string, number>;
     }>('/api/admin/stats'),

@@ -12,6 +12,7 @@ type Tab = 'users' | 'orgs'
 
 interface Stats {
   totalUsers: number
+  trialGuests?: number
   totalOrgs: number
   totalScenes: number
   totalMedia: number
@@ -184,7 +185,7 @@ export default function AdminPage() {
           <div className="col-span-full"><Skeleton rows={1} /></div>
         ) : stats ? (
           <>
-            <StatCard label="Total Users" value={String(stats.totalUsers)} />
+            <StatCard label="Total Users" value={String(stats.totalUsers)} hint={stats.trialGuests ? `+ ${stats.trialGuests} trial guests` : undefined} />
             <StatCard label="Total Organizations" value={String(stats.totalOrgs)} />
             <StatCard label="Total Scenes" value={String(stats.totalScenes)} />
             <StatCard label="Storage Used" value={formatBytes(stats.totalStorageBytes)} />

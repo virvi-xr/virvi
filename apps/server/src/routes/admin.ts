@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { eq, sql, ilike, or, count, desc } from 'drizzle-orm'
+import { and, eq, sql, ilike, or, count, desc } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
   users,
@@ -87,14 +87,18 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.get('/api/admin/stats', async (_request, reply) => {
     const [
-      [{ totalUsers }],
+      [{ totalUsers, trialGuests }],
       [{ totalOrgs }],
       [{ totalScenes }],
       [{ totalMedia }],
       [{ totalStorageBytes }],
       subscriptionsByTier,
     ] = await Promise.all([
-      db.select({ totalUsers: sql<number>`count(*)::int` }).from(users),
+      // Trial guests are not users: counted apart
+      db.select({
+        totalUsers: sql<number>`(count(*) FILTER (WHERE NOT ${users.isTrial}))::int`,
+        trialGuests: sql<number>`(count(*) FILTER (WHERE ${users.isTrial}))::int`,
+      }).from(users),
       db.select({ totalOrgs: sql<number>`count(*)::int` }).from(organizations),
       db.select({ totalScenes: sql<number>`count(*)::int` }).from(scenes),
       db.select({ totalMedia: sql<number>`count(*)::int` }).from(mediaAssets),
@@ -116,6 +120,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     return reply.send({
       totalUsers,
+      trialGuests,
       totalOrgs,
       totalScenes,
       totalMedia,
@@ -133,12 +138,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     const offset = Number(request.query.offset) || 0
     const search = request.query.search?.trim()
 
-    const conditions = search
-      ? or(
-          ilike(users.displayName, `%${search}%`),
-          ilike(users.email, `%${search}%`),
-        )
-      : undefined
+    // Trial guests are not listed
+    const conditions = and(
+      eq(users.isTrial, false),
+      search ? or(ilike(users.displayName, `%${search}%`), ilike(users.email, `%${search}%`)) : undefined,
+    )
 
     const [rows, [{ total }]] = await Promise.all([
       db
