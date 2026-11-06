@@ -96,6 +96,19 @@ describe('asset library routes', () => {
     expect(await names(admin)).toEqual(['Pub'])
   })
 
+  it('GET /api/assets?scope=public lists public assets only, even the caller\'s own private ones stay out', async () => {
+    const owner = await createUser()
+    await db.insert(assetLibraryItems).values([
+      { name: 'Priv', storageKey: 'p', uploadedBy: owner.id, isPublic: false },
+      { name: 'Pub', storageKey: 'q', uploadedBy: owner.id, isPublic: true },
+    ])
+    const res = await app.inject({ method: 'GET', url: '/api/assets?scope=public', headers: { authorization: `Bearer ${tokenFor(owner)}` } })
+    expect(res.json().assets.map((a: any) => a.name)).toEqual(['Pub'])
+    expect(res.json().total).toBe(1)
+    const bad = await app.inject({ method: 'GET', url: '/api/assets?scope=everything' })
+    expect(bad.statusCode).toBe(400)
+  })
+
   it('sums media and library bytes past 2^31 as numbers', async () => {
     config.allFeaturesUnlocked = false
     const u = await createUser()

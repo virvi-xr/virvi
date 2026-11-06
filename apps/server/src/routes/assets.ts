@@ -1,7 +1,7 @@
 /**
  * Asset Library Routes — Browse, search, and manage 3D assets.
  *
- * GET    /api/assets            — Browse/search asset catalog
+ * GET    /api/assets            — Browse/search asset catalog (?mine=all|studio|uploads, ?scope=public)
  * GET    /api/assets/:id        — Get single asset details
  * POST   /api/assets            — Upload a new asset (authenticated)
  * PUT    /api/assets/:id        — Update asset metadata (authenticated)
@@ -56,6 +56,7 @@ export default async function assetRoutes(app: FastifyInstance) {
       venue?: string
       pack?: string
       mine?: string
+      scope?: string
       maxTriangles?: string
       maxFileSize?: string
       limit?: string
@@ -64,10 +65,12 @@ export default async function assetRoutes(app: FastifyInstance) {
 
     const conditions: any[] = []
 
-    // Public assets, plus the caller's own uploads when authenticated
+    // Public assets, plus the caller's own private ones when authenticated. `scope=public` (the Asset Library's All Assets
+    // view) keeps to public assets only, so it stays clearly different from My Assets.
+    if (query.scope !== undefined && query.scope !== 'public') return reply.status(400).send({ error: 'scope must be public' })
     const caller = optionalAccount(request.headers.authorization)
     conditions.push(
-      caller
+      caller && query.scope !== 'public'
         ? or(eq(assetLibraryItems.isPublic, true), eq(assetLibraryItems.uploadedBy, caller.id))
         : eq(assetLibraryItems.isPublic, true),
     )

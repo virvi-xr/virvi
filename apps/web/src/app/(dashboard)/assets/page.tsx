@@ -9,17 +9,17 @@ import { creditLine, licenseLabel } from '@/lib/catalog'
 import { countLabel, formatBytes, plural } from '@/lib/format'
 import { CubeIcon, GridIcon, LayersIcon, ListIcon, PlusIcon } from '@/components/icons'
 import { RoomAssetDialog } from './RoomAssetDialog'
+import { assetListScope, assetViewHref, readAssetView, visibilityLabel, type AssetView, type MineKind } from '@/lib/asset-views'
 import { Badge, ConfirmAction, EmptyState, PageHeader, PrimaryButton, RowMenu, SearchField, SelectField, useStoredView, ViewToggle, Skeleton } from '@/components/ui'
 
 const VIEW_KEY = 'virvi.assets.view'
 const fieldClass = 'w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-400'
 const assetHref = (id: string) => `/assets?id=${id}`
 
-/** Room-set assets are made from someone's home: they're never public, and say so. */
-const isPrivateRoom = (asset: any) => asset.category === 'room' && asset.isPublic === false
-
-function PrivateBadge({ asset }: { asset: any }) {
-  return isPrivateRoom(asset) ? <Badge tone="violet">Private</Badge> : null
+/** Private assets always say so; `showPublic` (My Assets, the detail page) labels public ones too. */
+function VisibilityBadge({ asset, showPublic = false }: { asset: any; showPublic?: boolean }) {
+  if (asset.isPublic && !showPublic) return null
+  return <Badge tone={asset.isPublic ? 'neutral' : 'violet'}>{visibilityLabel(asset)}</Badge>
 }
 
 function formatTriangles(count: number): string {
@@ -370,7 +370,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
               {/* Badges row */}
               <div className="flex flex-wrap items-center gap-2">
                 {asset.category && <Badge tone="info">{asset.category}</Badge>}
-                <PrivateBadge asset={asset} />
+                <VisibilityBadge asset={asset} showPublic />
                 {asset.tags?.map((tag: string) => <Badge key={tag}>{tag}</Badge>)}
                 {asset.license && <span className="text-xs text-gray-400 first-letter:uppercase">{licenseLabel(asset.license)}</span>}
               </div>
@@ -528,10 +528,12 @@ export default function AssetsPage() {
   const [styleFilter, setStyleFilter] = useState('')
   const [venueFilter, setVenueFilter] = useState('')
   const [packFilter, setPackFilter] = useState('')
-  // '' every asset you can use; 'all' yours; 'studio' made in the Design Studio; 'uploads' the ones you uploaded
-  const [mineFilter, setMineFilter] = useState('')
+  // All Assets (public) or My Assets (yours: everything, Design Studio pieces, or uploads), kept in the link
+  const { view: libraryView, kind: mineKind } = readAssetView(searchParams)
+  const showView = (v: AssetView, k: MineKind = 'all') => router.replace(assetViewHref(v, k))
+  const mine = libraryView === 'mine'
   const [packs, setPacks] = useState<CatalogPack[]>([])
-  const filtering = !!(search || categoryFilter || tagFilter || styleFilter || venueFilter || packFilter || mineFilter)
+  const filtering = !!(search || categoryFilter || tagFilter || styleFilter || venueFilter || packFilter)
 
   /** First page for the current filters, or (more) the next page appended to what's shown. */
   const fetchAssets = useCallback(async (more = false) => {
@@ -545,18 +547,18 @@ export default function AssetsPage() {
       if (styleFilter) params.style = styleFilter
       if (venueFilter) params.venue = venueFilter
       if (packFilter) params.pack = packFilter
-      if (mineFilter) params.mine = mineFilter
+      Object.assign(params, assetListScope(libraryView, mineKind))
       const data = await api.getAssets(params)
       setAssets((prev) => (more ? [...prev, ...data.assets] : data.assets))
       setTotal(data.total)
-      if (!filtering) setLibraryTotal(data.total)
+      if (!filtering && !mine) setLibraryTotal(data.total)
     } catch {
       // ignore
     } finally {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [search, categoryFilter, tagFilter, styleFilter, venueFilter, packFilter, mineFilter, filtering, token, assets.length])
+  }, [search, categoryFilter, tagFilter, styleFilter, venueFilter, packFilter, libraryView, mineKind, mine, filtering, token, assets.length])
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -570,7 +572,7 @@ export default function AssetsPage() {
   useEffect(() => {
     if (!token) return
     fetchAssets()
-  }, [token, search, categoryFilter, tagFilter, styleFilter, venueFilter, packFilter, mineFilter])
+  }, [token, search, categoryFilter, tagFilter, styleFilter, venueFilter, packFilter, libraryView, mineKind])
 
   useEffect(() => {
     if (!token) return
@@ -586,11 +588,12 @@ export default function AssetsPage() {
   }, [searchInput])
 
   const handleUploaded = (asset: any) => {
+    fetchCategories()
+    // A private upload (the default) never shows in All Assets: go to My Assets, where it is
+    if (!mine && !asset.isPublic) { showView('mine'); return }
     setAssets((prev) => [asset, ...prev])
     setTotal((prev) => prev + 1)
     setLibraryTotal((prev) => (prev === null ? prev : prev + 1))
-    // Refresh categories in case new one was added
-    fetchCategories()
   }
 
   const handleDeleted = (id: string) => {
@@ -618,7 +621,6 @@ export default function AssetsPage() {
     setStyleFilter('')
     setVenueFilter('')
     setPackFilter('')
-    setMineFilter('')
   }
 
   const deleteAsset = async (id: string) => {
@@ -658,6 +660,15 @@ export default function AssetsPage() {
       {listError && <p className="mb-4 text-sm text-red-400" role="alert">{listError}</p>}
       {showUpload && <UploadForm onUploaded={handleUploaded} onClose={() => setShowUpload(false)} />}
 
+      <div className="mb-4 inline-flex rounded-md border border-gray-800 p-0.5 text-sm" role="tablist" aria-label="Which assets">
+        {([['All Assets', 'all'], ['My Assets', 'mine']] as const).map(([label, value]) => (
+          <button key={value} type="button" role="tab" aria-selected={libraryView === value} onClick={() => showView(value)}
+            className={`rounded px-3 py-1.5 ${libraryView === value ? 'bg-white/[0.06] text-white' : 'text-gray-400 hover:text-white'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Filters */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <SearchField value={searchInput} onChange={setSearchInput} placeholder="Search assets..." label="Search assets" />
@@ -667,12 +678,13 @@ export default function AssetsPage() {
         </div>
       </div>
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
-        <SelectField value={mineFilter} onChange={setMineFilter} label="Owner">
-          <option value="">All assets</option>
-          <option value="all">My assets</option>
-          <option value="studio">Made in Design Studio</option>
-          <option value="uploads">My uploads</option>
-        </SelectField>
+        {mine && (
+          <SelectField value={mineKind} onChange={(k) => showView('mine', k as MineKind)} label="Show">
+            <option value="all">Everything of mine</option>
+            <option value="studio">Made in Design Studio</option>
+            <option value="uploads">My uploads</option>
+          </SelectField>
+        )}
         <SelectField value={categoryFilter} onChange={setCategoryFilter} label="Category">
           <option value="">All Categories</option>
           {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
@@ -715,6 +727,13 @@ export default function AssetsPage() {
       ) : assets.length === 0 ? (
         filtering ? (
           <p className="py-12 text-center text-gray-500">No assets match your filters.</p>
+        ) : mine ? (
+          <EmptyState icon={<LayersIcon size={40} />}
+            title={mineKind === 'studio' ? 'No Design Studio pieces yet' : mineKind === 'uploads' ? 'No uploads yet' : "You haven't added any assets yet"}
+            body={mineKind === 'studio'
+              ? 'Pieces you finalize in the Design Studio show up here, ready to place in your scenes.'
+              : 'Assets you upload, make from a room scan or finalize in the Design Studio show up here, public or private.'}
+            action={mineKind === 'studio' ? undefined : <PrimaryButton onClick={() => setShowUpload(true)}><PlusIcon size={16} /> Upload Asset</PrimaryButton>} />
         ) : (
           <EmptyState icon={<LayersIcon size={40} />} title="No 3D assets yet"
             body="Upload a .glb model to add it to your library and place it in your scenes."
@@ -722,11 +741,11 @@ export default function AssetsPage() {
         )
       ) : view === 'grid' ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {assets.map((asset) => <AssetCard key={asset.id} asset={asset} onDelete={() => deleteAsset(asset.id)} />)}
+          {assets.map((asset) => <AssetCard key={asset.id} asset={asset} showPublic={mine} onDelete={() => deleteAsset(asset.id)} />)}
         </div>
       ) : (
         <div className="rounded-lg border border-gray-800 bg-gray-900">
-          {assets.map((asset, i) => <AssetRow key={asset.id} asset={asset} first={i === 0} onDelete={() => deleteAsset(asset.id)} />)}
+          {assets.map((asset, i) => <AssetRow key={asset.id} asset={asset} first={i === 0} showPublic={mine} onDelete={() => deleteAsset(asset.id)} />)}
         </div>
       )}
       {!loading && assets.length < total && (
@@ -767,7 +786,7 @@ function assetMenu(asset: any, onDelete: () => void, open: () => void) {
   ]
 }
 
-function AssetCard({ asset, onDelete }: { asset: any; onDelete: () => void }) {
+function AssetCard({ asset, showPublic, onDelete }: { asset: any; showPublic: boolean; onDelete: () => void }) {
   const router = useRouter()
   const license = asset.pack ? licenseLabel(asset.pack.license) : asset.license ? licenseLabel(asset.license) : null
   return (
@@ -780,10 +799,10 @@ function AssetCard({ asset, onDelete }: { asset: any; onDelete: () => void }) {
           <Link href={assetHref(asset.id)} className="min-w-0 truncate pt-1.5 font-semibold hover:text-blue-300" title={asset.name}>{asset.name}</Link>
           <div className="-mr-2"><RowMenu label={`Actions for ${asset.name}`} items={assetMenu(asset, onDelete, () => router.push(assetHref(asset.id)))} /></div>
         </div>
-        {(asset.category || isPrivateRoom(asset)) && (
+        {(asset.category || showPublic || !asset.isPublic) && (
           <div className="mt-1 flex flex-wrap gap-1.5">
             {asset.category && <Badge tone="info">{asset.category}</Badge>}
-            <PrivateBadge asset={asset} />
+            <VisibilityBadge asset={asset} showPublic={showPublic} />
           </div>
         )}
         <p className="mt-2 whitespace-pre font-mono text-xs text-gray-400">{formatStats(asset)}</p>
@@ -799,7 +818,7 @@ function AssetCard({ asset, onDelete }: { asset: any; onDelete: () => void }) {
   )
 }
 
-function AssetRow({ asset, first, onDelete }: { asset: any; first: boolean; onDelete: () => void }) {
+function AssetRow({ asset, first, showPublic, onDelete }: { asset: any; first: boolean; showPublic: boolean; onDelete: () => void }) {
   const router = useRouter()
   return (
     <div className={`flex items-center gap-4 px-4 py-3 ${first ? '' : 'border-t border-gray-800'}`}>
@@ -810,7 +829,7 @@ function AssetRow({ asset, first, onDelete }: { asset: any; first: boolean; onDe
         <p className="flex items-center gap-2">
           <Link href={assetHref(asset.id)} className="truncate font-medium hover:text-blue-300">{asset.name}</Link>
           {asset.category && <Badge tone="info">{asset.category}</Badge>}
-          <PrivateBadge asset={asset} />
+          <VisibilityBadge asset={asset} showPublic={showPublic} />
         </p>
         <p className="truncate text-sm text-gray-500">{asset.pack ? creditLine(asset) : asset.author ? `by ${asset.author}` : asset.description || ''}</p>
       </div>

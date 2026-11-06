@@ -694,10 +694,11 @@ export function useApi() {
       apiFetch<{ sessions: any[] }>(`/api/streaming/${serverId}/sessions`),
 
     // 3D Asset Library
-    getAssets: (params?: { q?: string; category?: string; tag?: string; style?: string; venue?: string; pack?: string; mine?: string; maxTriangles?: string; maxFileSize?: string; limit?: string; offset?: string }) => {
+    getAssets: (params?: { q?: string; category?: string; tag?: string; style?: string; venue?: string; pack?: string; mine?: string; scope?: string; maxTriangles?: string; maxFileSize?: string; limit?: string; offset?: string }) => {
       const query = new URLSearchParams()
       if (params?.q) query.set('q', params.q)
       if (params?.mine) query.set('mine', params.mine)
+      if (params?.scope) query.set('scope', params.scope)
       if (params?.style) query.set('style', params.style)
       if (params?.venue) query.set('venue', params.venue)
       if (params?.pack) query.set('pack', params.pack)
