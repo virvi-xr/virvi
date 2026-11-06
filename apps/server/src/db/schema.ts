@@ -1528,6 +1528,11 @@ export const studioDesigns = pgTable('studio_designs', {
   workerTokenHash: text('worker_token_hash').unique(),
   // Set by the first paid finalize: a finalized design no longer counts as open, even while it is revised
   finalizedAt: timestamp('finalized_at', { withTimezone: true }),
+  // The wall of fame: the owner opted a finalized design in (shown), an admin took it down (hidden), and the owner's
+  // link to the design's Marketplace page
+  wallShownAt: timestamp('wall_shown_at', { withTimezone: true }),
+  wallHiddenAt: timestamp('wall_hidden_at', { withTimezone: true }),
+  wallMarketplaceUrl: text('wall_marketplace_url'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   ownerIdx: index('studio_designs_owner_idx').on(t.ownerId),

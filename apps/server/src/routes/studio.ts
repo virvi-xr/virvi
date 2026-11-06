@@ -15,6 +15,7 @@ import { isPaused } from '../studio/scope.js'
 import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
+import { listWall, setWallChoice } from '../studio/wall.js'
 import { storedZip } from '../studio/zip.js'
 import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
@@ -524,6 +525,28 @@ export default async function studioRoutes(app: FastifyInstance) {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
     return { queued: await queueFinalizeRenders(d, new Date()) }
+  })
+
+  // The owner's choice to show a finalized design on the wall of fame. Not behind notPaused: a paused account may still choose.
+  app.put('/api/studio/designs/:id/wall', auth, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const b = (request.body ?? {}) as { shown?: unknown; marketplaceUrl?: unknown }
+    if (typeof b.shown !== 'boolean') return reply.status(400).send({ error: 'shown must be true or false' })
+    if (b.marketplaceUrl !== undefined && b.marketplaceUrl !== null && typeof b.marketplaceUrl !== 'string') {
+      return reply.status(400).send({ error: 'bad_marketplace_url', code: 'bad_marketplace_url' })
+    }
+    const r = await setWallChoice(d, { shown: b.shown, marketplaceUrl: b.marketplaceUrl }, new Date())
+    return r.ok ? r.wall : reply.status(r.status).send({ error: r.code, code: r.code })
+  })
+
+  // Public: the studio scene reads it with no sign-in. Names, creators and signed preview frames only.
+  app.get('/api/studio/wall', { preHandler: studioOn, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request) => {
+    const q = request.query as { limit?: string; offset?: string }
+    const int = (v: string | undefined, fallback: number) => (v !== undefined && /^-?\d+$/.test(v) ? Number(v) : fallback)
+    const limit = Math.min(24, Math.max(1, int(q.limit, 12)))
+    const offset = Math.max(0, int(q.offset, 0))
+    return { entries: await listWall({ limit, offset }, new Date()) }
   })
 
   // The signed token is the authority: no bearer. Every check failing is the same 403. A wildcard, not :token, because

@@ -173,6 +173,14 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] scene library columns ensured');
       } catch(e) { console.log('[virvi-server] scene library columns:', e.message); }
 
+      // Studio wall of fame; matches studioDesigns.wallShownAt / wallHiddenAt / wallMarketplaceUrl in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS wall_shown_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS wall_hidden_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS wall_marketplace_url TEXT\`;
+        console.log('[virvi-server] studio wall columns ensured');
+      } catch(e) { console.log('[virvi-server] studio wall columns:', e.message); }
+
       // Studio gift codes; matches studioGiftCodes / studioGiftRedemptions / studioFinalizeCredits in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS studio_gift_codes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), code_hash TEXT NOT NULL UNIQUE, code_hint TEXT NOT NULL, note TEXT, prompts INTEGER NOT NULL, finalizes INTEGER NOT NULL, max_uses INTEGER NOT NULL, uses INTEGER NOT NULL DEFAULT 0, expires_at TIMESTAMPTZ, disabled_at TIMESTAMPTZ, created_by UUID REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

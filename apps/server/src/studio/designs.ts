@@ -12,6 +12,7 @@ import { finalizedRevisions } from './payments.js'
 import { creditBalance } from './credit.js'
 import type { Exec } from './quota.js'
 import { setDetail } from './sets.js'
+import { wallState } from './wall.js'
 import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
@@ -142,6 +143,7 @@ export async function designDetail(d: Design, now: Date) {
     .limit(1)
   return {
     design: publicDesign(d),
+    wall: wallState(d),
     pieces: pieces.map((p) => {
       const rev = revs.find((r) => r.id === p.latestRevisionId)
       const views: Record<string, { status: string; frames: number; urls: string[]; renderedAt: Date; pending?: boolean }> = {}

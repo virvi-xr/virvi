@@ -273,6 +273,7 @@ const CASES: Case[] = [
   // design studio
   { route: 'GET /api/studio/designs/:id', url: (f) => `/api/studio/designs/${f.design.id}` },
   { route: 'PATCH /api/studio/designs/:id', url: (f) => `/api/studio/designs/${f.design.id}`, body: () => ({ name: 'pwned', archived: true }) },
+  { route: 'PUT /api/studio/designs/:id/wall', url: (f) => `/api/studio/designs/${f.design.id}/wall`, body: () => ({ shown: true }) },
   { route: 'POST /api/studio/designs/:id/prompts', url: (f) => `/api/studio/designs/${f.design.id}/prompts`, body: () => ({ text: 'pwned' }) },
   { route: 'GET /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize` },
   { route: 'POST /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize`, body: () => ({ reports: { hat: 'pwned pwned pwned' } }) },
