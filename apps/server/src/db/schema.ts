@@ -825,6 +825,12 @@ export const sceneImports = pgTable('scene_imports', {
   thumbnailOutcome: text('thumbnail_outcome').$type<'imported' | 'kept' | 'skipped' | 'removed'>(),
   /** Why a skipped thumbnail couldn't be used, as the import page shows it. */
   thumbnailNote: text('thumbnail_note'),
+  /**
+   * The built scene.json's display.navmapThumbnail when it names a file in the scene (its path, lowercased), recorded
+   * when the import is deployed; null for none or a link (LIV-133). The newest deployed import's is the scene's own
+   * thumbnail file at its destination, which Virvi never removes, even under Virvi's own thumbnail name.
+   */
+  navmapThumbnail: text('navmap_thumbnail'),
 }, (t) => ({
   worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
   userCreatedIdx: index('scene_imports_user_created_idx').on(t.userId, t.createdAt),

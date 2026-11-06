@@ -26,7 +26,8 @@ import { linkLocation } from '../../setup/setups.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { ImportError, worldNameOf } from '../import/scene-zip.js'
 import {
-  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsBesideBuilt, modelsInScene, pendingModels, wizardSceneJson,
+  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsBesideBuilt, modelsInScene, navmapThumbnailFile,
+  ownThumbnailFile, pendingModels, wizardSceneJson,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { keepDeployedFiles } from './deployed-files.js'
@@ -405,6 +406,8 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     assertBuiltPlace(destinationLocation(dest), built)
     // The creator's code runs the npm package, never Virvi's runtime: without Virvi's marker the scene stays adopted
     const { virvi: _virvi, ...metadata } = built
+    // LIV-133: the file its scene.json names as navmapThumbnail is the scene's own once this import is live
+    await db.update(sceneImports).set({ navmapThumbnail: navmapThumbnailFile(built) }).where(eq(sceneImports.id, dest.pendingImportId))
     // Models placed in-world deploy with it, or a re-upload would take them out of the World
     const models = await modelsInScene(dest.sceneId)
     const pointers = dest.kind === 'parcels' ? dest.parcels : undefined
@@ -428,7 +431,8 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     adopted = false
     await db.update(dclWorldDestinations).set({ adopted: false, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
   }
-  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name }), baseEntityId: live.id }
+  const ownThumbnail = await ownThumbnailFile(dest.id)
+  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name, ownThumbnail }), baseEntityId: live.id }
 }
 
 /** Every file in the entity, path and hash, read from the entity file itself. */

@@ -12,12 +12,18 @@
  * of their own) and the file, and only while a thumbnail is set in Virvi; removing it takes Virvi's file and key out on
  * the next deploy, leaving no navmapThumbnail until an import's next deploy brings its scene.json's back. A thumbnail
  * taken from an imported scene's own navmapThumbnail (LIV-89) is never deployed: the scene already has it.
+ *
+ * Ruling (LIV-133): the file an imported scene's own scene.json names as navmapThumbnail (the newest deployed import's,
+ * ownThumbnailFile) is the owner's, never a stale Virvi thumbnail, even under Virvi's `images/scene-thumbnail-<hash>`
+ * name (a re-imported "Download live" zip carries Virvi's deployed one). Only the other Virvi-named files are Virvi's to
+ * remove. Why: a name can be copied but only Virvi's own deploys put a Virvi thumbnail in beside the scene's files, and
+ * the import's scene.json is what says which file is the scene's; so the import deploys, and stays, as it is.
  */
-import { and, count, eq, inArray } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, localModelFile } from '@virvixr/shared'
 import { config } from '../../config.js'
 import { db } from '../../db/connection.js'
-import { assetLibraryItems, mediaAssets, sceneElementInstances, sceneElements, scenes } from '../../db/schema.js'
+import { assetLibraryItems, mediaAssets, sceneElementInstances, sceneElements, sceneImports, scenes } from '../../db/schema.js'
 import { assertPublicHttpUrl } from '../../net/public-url.js'
 import { deployedThumbnailFile } from '../../scenes/thumbnail.js'
 import { buildEntity, dclHash, type ContentRef, type SceneMetadata } from './entity.js'
@@ -155,16 +161,44 @@ async function modelElements(sceneId: string): Promise<ModelNeed[]> {
   })
 }
 
+/** The file `metadata.display.navmapThumbnail` names in the scene, lowercased; null for none or a link. */
+export function navmapThumbnailFile(metadata: { display?: Record<string, unknown> } | undefined): string | null {
+  const raw = metadata?.display?.navmapThumbnail
+  if (typeof raw !== 'string') return null
+  const p = raw.trim().replace(/\\/g, '/')
+  if (!p || /^[a-z][a-z0-9+.-]+:/i.test(p) || p.startsWith('/') || p.includes('\0')) return null
+  const segs = p.split('/').filter((x) => x !== '' && x !== '.')
+  return segs.length && !segs.includes('..') ? segs.join('/').toLowerCase() : null
+}
+
+/**
+ * The scene's own thumbnail file at the destination: what the scene.json of the newest import deployed there names as
+ * navmapThumbnail (lowercased), null when none (or nothing was imported). See the LIV-133 ruling above.
+ */
+export async function ownThumbnailFile(destinationId: string): Promise<string | null> {
+  const [row] = await db.select({ file: sceneImports.navmapThumbnail }).from(sceneImports)
+    .where(and(eq(sceneImports.destinationId, destinationId), eq(sceneImports.status, 'deployed')))
+    .orderBy(desc(sql`coalesce(${sceneImports.finishedAt}, ${sceneImports.createdAt})`), desc(sceneImports.createdAt))
+    .limit(1)
+  return row?.file ?? null
+}
+
+/** A Virvi-named thumbnail file that isn't the scene's own (`own`, lowercased): Virvi's to remove when it isn't current. */
+const virviThumbnailFile = (file: string, own: string | null | undefined) => DEPLOYED_THUMBNAIL_RE.test(file) && file.toLowerCase() !== own
+
 /**
  * Models (and the thumbnail) in the scene that the destination does not hold yet; plus, when the scene's thumbnail was
  * removed after it was deployed, an entry with `removed` for the deployed file, so the scene still has a change to deploy.
+ * A Virvi-named file that is the scene's own (ownThumbnailFile, looked up by the destination's `id`) is never removed.
  */
-export async function pendingModels(dest: { sceneId: string; deployedFiles: string[] }): Promise<ModelNeed[]> {
+export async function pendingModels(dest: { id?: string; sceneId: string; deployedFiles: string[] }): Promise<ModelNeed[]> {
   const have = new Set(dest.deployedFiles.map((f) => f.toLowerCase()))
   const all = await modelsInScene(dest.sceneId)
   const pending = all.filter((m) => !have.has(m.file.toLowerCase()))
-  if (!all.some((m) => m.kind === 'thumbnail')) {
-    const stale = dest.deployedFiles.find((f) => DEPLOYED_THUMBNAIL_RE.test(f))
+  const named = all.some((m) => m.kind === 'thumbnail') ? [] : dest.deployedFiles.filter((f) => DEPLOYED_THUMBNAIL_RE.test(f))
+  if (named.length) {
+    const own = dest.id ? await ownThumbnailFile(dest.id) : null
+    const stale = named.find((f) => virviThumbnailFile(f, own))
     if (stale) pending.push({ elementId: '', name: `${THUMBNAIL_NAME} (removed)`, url: '', file: stale, triangles: null, bytes: 0, instances: 0, kind: 'thumbnail', removed: true })
   }
   return pending
@@ -172,14 +206,14 @@ export async function pendingModels(dest: { sceneId: string; deployedFiles: stri
 
 /**
  * The metadata with display.navmapThumbnail at the deployed thumbnail `file`, or, with none, without a navmapThumbnail
- * Virvi set (one naming Virvi's thumbnail path). Setting one replaces an owner's own navmapThumbnail, which removing
- * Virvi's doesn't bring back (an import's next deploy does, from its scene.json). Returns the same object when
- * nothing changes.
+ * Virvi set (one naming Virvi's thumbnail path other than the scene's own file, `own`). Setting one replaces an owner's
+ * own navmapThumbnail, which removing Virvi's doesn't bring back (an import's next deploy does, from its scene.json).
+ * Returns the same object when nothing changes.
  */
-function withThumbnail(metadata: SceneMetadata, file: string | null): SceneMetadata {
+function withThumbnail(metadata: SceneMetadata, file: string | null, own?: string | null): SceneMetadata {
   const current = metadata.display?.navmapThumbnail
   if (file) return current === file ? metadata : { ...metadata, display: { ...metadata.display, navmapThumbnail: file } }
-  if (typeof current !== 'string' || !DEPLOYED_THUMBNAIL_RE.test(current)) return metadata
+  if (typeof current !== 'string' || !virviThumbnailFile(current, own)) return metadata
   const { navmapThumbnail: _gone, ...display } = metadata.display
   return { ...metadata, display: display as SceneMetadata['display'] }
 }
@@ -386,6 +420,8 @@ export async function assembleRedeploy(input: {
   /** The scene's name: a World Virvi built is redeployed under it when it differs from the live title. An adopted
    *  World keeps its own title, from the owner's scene.json. */
   title?: string
+  /** The scene's own thumbnail file (ownThumbnailFile, lowercased): kept, and kept as navmapThumbnail, whatever its name. */
+  ownThumbnail?: string | null
 }): Promise<Assembled> {
   const { live } = input
   const have = new Set(live.content.map((c) => c.file.toLowerCase()))
@@ -420,13 +456,15 @@ export async function assembleRedeploy(input: {
   }
   const renamed = !input.adopted && !!input.title && input.title !== metadata.display?.title
   if (renamed) metadata = { ...metadata, display: { ...metadata.display, title: input.title! } }
-  // The thumbnail: every Virvi thumbnail file but the current one goes, and navmapThumbnail follows what's deployed
+  // The thumbnail: every Virvi thumbnail file but the current one (and the scene's own) goes, and navmapThumbnail
+  // follows what's deployed
+  const own = input.ownThumbnail?.toLowerCase() ?? null
   const thumbFile = input.models.find((m) => m.kind === 'thumbnail' && !m.removed)?.file.toLowerCase()
-  const kept = existing.filter((c) => !DEPLOYED_THUMBNAIL_RE.test(c.file) || c.file.toLowerCase() === thumbFile)
+  const kept = existing.filter((c) => !virviThumbnailFile(c.file, own) || c.file.toLowerCase() === thumbFile)
   const droppedThumbnail = kept.length !== existing.length
   existing = kept
   const before = metadata
-  metadata = withThumbnail(metadata, deployedThumbnail(input.models, new Set([...existing.map((c) => c.file), ...got.keys()].map((f) => f.toLowerCase()))))
+  metadata = withThumbnail(metadata, deployedThumbnail(input.models, new Set([...existing.map((c) => c.file), ...got.keys()].map((f) => f.toLowerCase()))), own)
   return finish({
     pointers: live.pointers,
     metadata,

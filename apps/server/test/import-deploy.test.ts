@@ -10,7 +10,8 @@ import { analyticsScenes, assetLibraryItems, dclWorldDestinations, sceneDeployme
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { chainSigner, dclHash, virviSigner } from '../src/services/dcl/entity.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
-import { assembleImported, ModelRefused } from '../src/services/dcl/assemble.js'
+import { assembleImported, ModelRefused, pendingModels } from '../src/services/dcl/assemble.js'
+import { BATCH_WINDOW_MS, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
 import {
   DEPLOY_WINDOW_MS, DeployerError, markFailed, prepareSignedDeploy, reconcileStaleDeployments, startVirviDeploy, submitSignedDeploy, whenSettled,
   type SignedBundle,
@@ -909,6 +910,78 @@ describe('deploying an imported build', () => {
       worlds.stats.set(user.wallet!, { maxAllowedBytes: builtBytes + 500_000, usedBytes: 0 })
       await grantedDest(scene.id)
       await expect(deployImport(small.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'world_storage_full' })
+    })
+  })
+
+  describe('a "Download live" zip re-imported keeps its Virvi-named thumbnail (LIV-133)', () => {
+    const OWN = 'images/scene-thumbnail-fedcba9876543210.jpg'
+    const UPLOAD = 'images/scene-thumbnail-0123456789abcdef.png'
+    /** The built files of a downloaded live scene: Virvi's deployed thumbnail, named by its scene.json. */
+    function downloaded(): Map<string, Uint8Array> {
+      const files = builtFiles({ [OWN]: enc('the thumbnail Virvi deployed') })
+      const json = JSON.parse(dec(files.get('scene.json')!))
+      files.set('scene.json', enc(JSON.stringify({ ...json, display: { ...json.display, navmapThumbnail: OWN } })))
+      return files
+    }
+    const later = () => new Date(Date.now() + 2 * BATCH_WINDOW_MS)
+    /** Imports the downloaded zip into `sceneId` and deploys it; the World's destination after. */
+    async function reimport(sceneId: string) {
+      const imp = await built({ sceneId, files: downloaded() })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      expect((await importRow(imp.id)).status).toBe('deployed')
+      goLive()
+      return (await destByWorld())!
+    }
+
+    for (const source of ['import', null] as const) {
+      it(`nothing is pending and nothing redeploys (the scene's thumbnail: ${source ?? 'none'}); a later redeploy keeps the file and navmapThumbnail`, async () => {
+        const { scene, preset } = await createScene(user, 'Cafe')
+        if (source) {
+          // LIV-89 recorded the downloaded thumbnail as the scene's imported one (re-encoded, so under another hash)
+          const key = `scenes/${scene.id}/thumbnail-1111111111111111.jpg`
+          await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 1000, thumbnailSource: source }).where(eq(scenes.id, scene.id))
+        }
+        await grantedDest(scene.id)
+        const dest = await reimport(scene.id)
+        expect(dest.deployedFiles).toContain(OWN)
+        expect(entityOf().metadata.display.navmapThumbnail).toBe(OWN)
+        expect(await pendingModels(dest)).toEqual([])
+        expect(await sweepRedeploys(later(), { fetch: fetcher })).toEqual({ started: 0, marked: 0 })
+        expect(worlds.deployed).toHaveLength(1)
+
+        // A model placed later redeploys the World: the scene's thumbnail stays
+        await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+        const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+        await whenSettled(dep.id)
+        const e = entityOf()
+        expect(worlds.deployed).toHaveLength(2)
+        expect(e.content.map((c) => c.file)).toEqual(expect.arrayContaining([OWN, 'models/virvi/a.glb']))
+        expect(e.metadata.display.navmapThumbnail).toBe(OWN)
+      })
+    }
+
+    it("a thumbnail uploaded in Virvi afterwards, then removed: Virvi's file and navmapThumbnail go, the scene's own file stays", async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      await grantedDest(scene.id)
+      const dest = await reimport(scene.id)
+      const key = `scenes/${scene.id}/thumbnail-0123456789abcdef.png`
+      await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 1000, thumbnailSource: 'upload' }).where(eq(scenes.id, scene.id))
+      expect((await pendingModels(dest)).map((m) => m.file)).toEqual([UPLOAD])
+      await whenSettled((await startVirviDeploy(dest.id, user.id, { fetch: fetcher })).id)
+      expect(entityOf().metadata.display.navmapThumbnail).toBe(UPLOAD)
+      goLive()
+
+      await db.update(scenes).set({ thumbnailKey: null, thumbnailUrl: null, thumbnailBytes: null, thumbnailSource: null }).where(eq(scenes.id, scene.id))
+      const now = (await destByWorld())!
+      expect((await pendingModels(now)).map((m) => [m.file, m.removed])).toEqual([[UPLOAD, true]])
+      await whenSettled((await startVirviDeploy(dest.id, user.id, { fetch: fetcher })).id)
+      const e = entityOf()
+      expect(e.content.map((c) => c.file)).toContain(OWN)
+      expect(e.content.map((c) => c.file)).not.toContain(UPLOAD)
+      expect(e.metadata.display.navmapThumbnail).toBeUndefined()
+      goLive()
+      expect(await pendingModels((await destByWorld())!)).toEqual([])
     })
   })
 
