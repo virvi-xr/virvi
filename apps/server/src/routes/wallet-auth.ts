@@ -8,6 +8,7 @@ import { config } from '../config.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { authenticate } from '../middleware/auth.js'
 import { linkWalletGrants } from '../auth/permissions.js'
+import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
 import { convertTrial, mergeTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { linkVerifiedWallet, resolveVerifiedWalletUser } from '../auth/wallet-users.js'
 import { issueWalletSession } from '../auth/sessions.js'
@@ -75,6 +76,7 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
         where: and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, recovered)),
         with: { user: true },
       })
+      const fromAction = request.body?.fromAction
       const verified = !!known && (known.metadata as { verified?: unknown } | null)?.verified === true
       const user = verified
         ? await resolveVerifiedWalletUser(recovered, `${recovered.slice(0, 6)}…${recovered.slice(-4)}`, 'account')
@@ -83,7 +85,8 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
             await tx.insert(userAuthMethods).values({ userId: trialId, type: 'wallet', identifier: recovered, metadata: { verified: true } })
             return converted
           })
-      if (user.id !== trialId) await mergeTrial(trialId, user.id)
+      if (user.id !== trialId) await mergeTrial(trialId, user.id, fromAction)
+      else recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
       await linkWalletGrants(user.id, recovered)
       return reply.send(issueWalletSession(app, user, recovered))
     }

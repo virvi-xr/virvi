@@ -6,6 +6,7 @@ import { config } from '../config.js'
 import { moveStudioData } from '../studio/merge.js'
 import { TRIAL_DAY } from '../studio/quota.js'
 import { issueAccountSession } from './sessions.js'
+import { recordTrialEvent, cleanAction } from './trial-events.js'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type User = typeof users.$inferSelect
@@ -41,17 +42,19 @@ export async function convertTrial(trialId: string, set: { email?: string | null
 }
 
 /** The trial's work moves into an existing account and the trial is deleted. */
-export async function mergeTrial(trialId: string, accountId: string): Promise<void> {
-  await db.transaction(async (tx) => {
+export async function mergeTrial(trialId: string, accountId: string, fromAction?: unknown): Promise<void> {
+  const merged = await db.transaction(async (tx) => {
     // Only a row that is still a trial merges (a second sign-in with the same old token finds nothing to move).
     const [trial] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, trialId), eq(users.isTrial, true))).for('update')
-    if (!trial) return
+    if (!trial) return false
     // The trial's allowance is not the account's: drop it instead of adding it to the account's counters.
     await tx.delete(studioUsageDays).where(and(eq(studioUsageDays.userId, trialId), eq(studioUsageDays.day, TRIAL_DAY)))
     await moveStudioData(tx, trialId, accountId, new Date())
     await tx.delete(studioUsageDays).where(eq(studioUsageDays.userId, trialId))
     await tx.delete(users).where(eq(users.id, trialId))
+    return true
   })
+  if (merged) recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
 }
 
 export interface OAuthIdentity {
@@ -63,13 +66,13 @@ export interface OAuthIdentity {
 }
 
 /** The trial a claim ticket names, if the ticket is ours, unexpired, and the trial still exists. */
-async function trialFromTicket(app: FastifyInstance, claim: string | undefined): Promise<string | null> {
+async function trialFromTicket(app: FastifyInstance, claim: string | undefined): Promise<{ id: string; fromAction: string | null } | null> {
   if (!claim) return null
   try {
-    const c = app.jwt.verify<{ id?: string; kind?: string }>(claim)
+    const c = app.jwt.verify<{ id?: string; kind?: string; fromAction?: string }>(claim)
     if (c.kind !== 'trial_claim' || !c.id) return null
     const [row] = await db.select({ isTrial: users.isTrial }).from(users).where(eq(users.id, c.id)).limit(1)
-    return row?.isTrial ? c.id : null
+    return row?.isTrial ? { id: c.id, fromAction: cleanAction(c.fromAction) } : null
   } catch {
     return null
   }
@@ -80,14 +83,15 @@ async function trialFromTicket(app: FastifyInstance, claim: string | undefined):
  * A valid claim ticket turns the visitor's trial into the new account, or moves it into the existing one.
  */
 export async function finishOAuth(app: FastifyInstance, identity: OAuthIdentity, claim: string | undefined) {
-  const trialId = await trialFromTicket(app, claim)
+  const ticket = await trialFromTicket(app, claim)
+  const trialId = ticket?.id
   const existing = await db.query.userAuthMethods.findFirst({
     where: and(eq(userAuthMethods.type, 'oauth'), eq(userAuthMethods.identifier, identity.identifier)),
     with: { user: true },
   })
 
   if (existing) {
-    if (trialId) await mergeTrial(trialId, existing.userId)
+    if (trialId) await mergeTrial(trialId, existing.userId, ticket!.fromAction)
     return issueAccountSession(app, existing.user)
   }
 
@@ -99,6 +103,7 @@ export async function finishOAuth(app: FastifyInstance, identity: OAuthIdentity,
         await tx.insert(userAuthMethods).values({ userId: trialId, type: 'oauth', identifier: identity.identifier, metadata: identity.metadata })
         return converted
       })
+      recordTrialEvent('signed_up', trialId, ticket!.fromAction)
       return issueAccountSession(app, user)
     } catch (err) {
       if ((err as Error).message !== 'trial_gone') throw err

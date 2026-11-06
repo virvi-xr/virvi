@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify'
+import { recordTrialBlocked } from '../auth/trial-events.js'
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
@@ -124,6 +125,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
       if (!row?.isTrial) return reply.status(401).send({ error: 'trial_ended' })
       // Default closed: only routes that opt in with `config.trial` take a trial token.
       if (!request.routeOptions.config?.trial) {
+        recordTrialBlocked(decoded.id, `${request.method} ${request.routeOptions.url}`)
         return reply.status(403).send({ error: 'account_required', action: `${request.method} ${request.routeOptions.url}` })
       }
       if (!row.trialLastActiveAt || Date.now() - row.trialLastActiveAt.getTime() > TRIAL_TOUCH_MS) {

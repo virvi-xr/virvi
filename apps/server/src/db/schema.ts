@@ -1706,6 +1706,17 @@ export const studioTrialSpendDays = pgTable('studio_trial_spend_days', {
   costUsd: doublePrecision('cost_usd').notNull().default(0),
 })
 
+/** The signed-out trial funnel. `user_id` is not a foreign key: rows outlive the trial (it is deleted on expiry or merge). */
+export const trialEvents = pgTable('trial_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id'),
+  kind: text('kind').notNull(), // started | prompt | blocked | signed_up | expired
+  action: text('action'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  userKindIdx: index('trial_events_user_kind_idx').on(t.userId, t.kind),
+}))
+
 /** One line of a studio checkout: a piece's revision and what it costs (src/studio/pricing.ts). */
 export type PaymentLine = {
   category: string

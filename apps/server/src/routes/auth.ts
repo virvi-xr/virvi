@@ -18,6 +18,7 @@ import { issueScenePass, issueStudioPass, sceneClaims } from '../auth/scene-pass
 import { isOfficialRealm, isWorldRealm } from '../auth/official-realms.js'
 import { trialClaims } from '../auth/trial.js'
 import { issueAccountSession } from '../auth/sessions.js'
+import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
 import { convertTrial, finishOAuth, mergeTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
@@ -75,6 +76,7 @@ export default async function authRoutes(app: FastifyInstance) {
         await tx.insert(userAuthMethods).values({ userId: trialId, type: 'email', identifier: email.toLowerCase(), credentialHash: passwordHash })
         return converted
       })
+      recordTrialEvent('signed_up', trialId, cleanAction(request.body.fromAction))
     } else {
       const role = await initialRoleForNewUser()
       ;[user] = await db.insert(users).values({ displayName, email: email.toLowerCase(), role }).returning()
@@ -131,7 +133,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // Signing in from a trial moves the trial's work into this account
     const trialId = await trialFromBearer(app, request)
-    if (trialId && trialId !== user.id) await mergeTrial(trialId, user.id)
+    if (trialId && trialId !== user.id) await mergeTrial(trialId, user.id, request.body.fromAction)
 
     return reply.send(issueAccountSession(app, user))
   })

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { recordTrialBlocked } from '../auth/trial-events.js'
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads } from '../db/schema.js'
@@ -133,6 +134,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
     if (await isTrialUser(request.user.id)) {
       if ((await totalDesignCount(request.user.id)) >= config.trialDesigns) {
+        recordTrialBlocked(request.user.id, 'more_designs')
         return reply.status(403).send({ error: 'account_required', action: 'more_designs' })
       }
     } else if ((await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
@@ -412,7 +414,10 @@ export default async function studioRoutes(app: FastifyInstance) {
         const [used] = await db.select({ bytes: sql<number>`coalesce(sum(${studioUploads.size}), 0)::int` }).from(studioUploads)
           .innerJoin(studioDesigns, eq(studioDesigns.id, studioUploads.designId)).where(eq(studioDesigns.ownerId, request.user.id))
         const incoming = Buffer.isBuffer(request.body) ? request.body.length : 0
-        if ((used?.bytes ?? 0) + incoming > config.trialUploadBytes) return reply.status(403).send({ error: 'account_required', action: 'upload_more' })
+        if ((used?.bytes ?? 0) + incoming > config.trialUploadBytes) {
+          recordTrialBlocked(request.user.id, 'upload_more')
+          return reply.status(403).send({ error: 'account_required', action: 'upload_more' })
+        }
       }
       try {
         return reply.status(201).send(await addUpload(d, typeof name === 'string' ? name : '', Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0)))

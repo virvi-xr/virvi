@@ -7,6 +7,7 @@ import { expirePayment, queueFinalize, settleRefund } from './payments.js'
 import { watchManaTransfers } from './mana/settle.js'
 import { config } from '../config.js'
 import { addMissingLibraryRows } from './library.js'
+import { sweepTrials } from '../auth/trial-sweep.js'
 
 /**
  * The Design Studio sweep: fails jobs that will never get a result (refunding counted prompts), restarts machines for
@@ -106,8 +107,11 @@ export function startStudioSweep(ms = STUDIO_SWEEP_MS): void {
   timer = setInterval(() => {
     if (running) return
     running = true
-    sweepStudio(new Date())
+    const now = new Date()
+    sweepStudio(now)
       .catch((err) => console.error('[studio-sweep] failed:', err))
+      .then(() => sweepTrials(now))
+      .catch((err) => console.error('[trial-sweep] failed:', err))
       .finally(() => { running = false })
   }, ms)
   timer.unref?.()

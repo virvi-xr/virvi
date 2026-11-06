@@ -3,7 +3,8 @@ import { listUploads, publicUpload, uploadPaths } from './uploads.js'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioFinalizeCredits, studioJobs, studioPayments, studioMessages, studioPieces, studioRenders, studioRevisions } from '../db/schema.js'
 import { config } from '../config.js'
-import { reservePrompt, promptStatus } from './quota.js'
+import { reservePrompt, promptStatus, TRIAL_DAY } from './quota.js'
+import { recordTrialEvent, recordTrialBlocked } from '../auth/trial-events.js'
 import { ensureWorker } from './machines.js'
 import { failJobs } from './results.js'
 import { publishStudio } from './events.js'
@@ -206,6 +207,7 @@ export async function queuePrompt(
   now: Date,
 ): Promise<{ ok: true; jobId: string } | ({ ok: false } & Refusal)> {
   let jobId: string
+  let trialPrompt = false
   try {
     jobId = await db.transaction(async (tx) => {
       // One prompt at a time: lock the design, then check; the partial unique index backs this up
@@ -244,6 +246,7 @@ export async function queuePrompt(
         }
         throw new Refused({ status: 429, body: { error: r.reason, code: r.reason, resetsAt: s.resetsAt } })
       }
+      trialPrompt = r.day === TRIAL_DAY
       const fix = input.fixClipping
       const text = input.continue ? CONTINUE_TEXT : fix ? clippingText(d.kind, fix) : fixText ?? input.text!
       await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text })
@@ -271,10 +274,14 @@ export async function queuePrompt(
       return job.id
     })
   } catch (err) {
-    if (err instanceof Refused) return { ok: false, ...err.r }
+    if (err instanceof Refused) {
+      if (err.r.body.error === 'account_required') recordTrialBlocked(design.ownerId, String(err.r.body.action ?? 'more_prompts'))
+      return { ok: false, ...err.r }
+    }
     if ((err as { code?: string }).code === '23505') return { ok: false, status: 409, body: { error: 'busy', code: 'busy' } }
     throw err
   }
+  if (trialPrompt) recordTrialEvent('prompt', design.ownerId)
   await publishStudio(design.id, { type: 'job', jobId, status: 'queued' })
   await startWorker(design.id, jobId, now)
   return { ok: true, jobId }

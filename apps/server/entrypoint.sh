@@ -180,6 +180,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] scene library columns ensured');
       } catch(e) { console.log('[virvi-server] scene library columns:', e.message); }
 
+      // Signed-out trial funnel; matches trialEvents in src/db/schema.ts (user_id is deliberately not a foreign key)
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS trial_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID, kind TEXT NOT NULL, action TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS trial_events_user_kind_idx ON trial_events (user_id, kind)\`;
+        console.log('[virvi-server] trial_events ensured');
+      } catch(e) { console.log('[virvi-server] trial_events:', e.message); }
+
       // Studio gift codes; matches studioGiftCodes / studioGiftRedemptions / studioFinalizeCredits in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS studio_trial_spend_days (day DATE PRIMARY KEY, cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0)\`;
