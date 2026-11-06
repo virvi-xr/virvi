@@ -28,6 +28,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] organizations table ensured');
       } catch(e) { console.log('[virvi-server] organizations:', e.message); }
 
+      // trial account columns on users
+      for (const def of ['is_trial BOOLEAN NOT NULL DEFAULT false', 'trial_last_active_at TIMESTAMPTZ', 'trial_ip_hash TEXT', 'trial_device_hash TEXT']) {
+        try {
+          await sql.unsafe(\`ALTER TABLE users ADD COLUMN IF NOT EXISTS \${def}\`);
+        } catch(e) { console.log('[virvi-server] users trial column:', e.message); }
+      }
+
       // org_id columns on all data tables
       const orgIdTables = ['users', 'scenes', 'media_assets', 'events', 'giveaways', 'subscriptions', 'streaming_servers'];
       for (const table of orgIdTables) {

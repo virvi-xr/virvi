@@ -19,7 +19,7 @@ export interface AuthUser {
   verified?: boolean
   guest?: boolean
   viaApiKey?: boolean
-  kind?: 'account' | 'scene'
+  kind?: 'account' | 'scene' | 'trial'
   sceneId?: string | null
   locationId?: string | null
   via?: 'hyperfy' | 'ar' | 'studio'
@@ -36,7 +36,7 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: { id: string; email: string | null; role: string; orgId?: string | null; wallet?: string | null; verified?: boolean; guest?: boolean; refresh?: boolean; kind?: 'account' | 'scene'; sceneId?: string | null; locationId?: string | null; via?: 'hyperfy' | 'ar' | 'studio'; pairingId?: string; worldId?: string; deviceId?: string }
+    payload: { id: string; email: string | null; role: string; orgId?: string | null; wallet?: string | null; verified?: boolean; guest?: boolean; refresh?: boolean; kind?: 'account' | 'scene' | 'trial'; sceneId?: string | null; locationId?: string | null; via?: 'hyperfy' | 'ar' | 'studio'; pairingId?: string; worldId?: string; deviceId?: string }
     user: AuthUser
   }
 }

@@ -16,6 +16,12 @@ function env(key: string): string | undefined {
   return process.env[key]
 }
 
+function numEnv(key: string, fallback: number): number {
+  const n = parseFloat(env(key) ?? '')
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+const intEnv = (key: string, fallback: number) => Math.floor(numEnv(key, fallback))
+
 const mode: VirviMode = (env('VIRVI_MODE') as VirviMode) || 'single'
 
 /**
@@ -179,6 +185,16 @@ export const config = {
   jwtSecret: env('JWT_SECRET') || 'dev-secret-change-me',
   jwtAccessExpiry: env('JWT_ACCESS_EXPIRY') || '15m',
   jwtRefreshExpiry: env('JWT_REFRESH_EXPIRY') || '7d',
+  // Signed-out Design Studio trials (see auth/trial.ts)
+  turnstileSecretKey: env('TURNSTILE_SECRET_KEY') || '',
+  trialPrompts: intEnv('TRIAL_PROMPTS', 3),
+  trialCostCeilingUsd: numEnv('TRIAL_COST_CEILING_USD', 3),
+  trialDesigns: intEnv('TRIAL_DESIGNS', 2),
+  trialUploadBytes: intEnv('TRIAL_UPLOAD_BYTES', 26214400),
+  trialPerIpDay: intEnv('TRIAL_PER_IP_DAY', 3),
+  trialPerDeviceDay: intEnv('TRIAL_PER_DEVICE_DAY', 3),
+  trialDailyBudgetUsd: numEnv('TRIAL_DAILY_BUDGET_USD', 50),
+  trialIdleDays: intEnv('TRIAL_IDLE_DAYS', 14),
   // The oldest Decentraland HUD edit protocol (x-virvi-hud-protocol) allowed to write; older HUDs get 426 redeploy_required.
   // 0 lets every HUD edit, including those deployed before the header. Raise it when a release breaks old HUDs' edits.
   minDclHudProtocol: parseInt(env('MIN_DCL_HUD_PROTOCOL') || '0'),

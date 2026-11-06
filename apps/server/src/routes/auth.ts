@@ -16,6 +16,7 @@ import { bindSceneRequest, type SceneBinding } from '../auth/scene-binding.js'
 import type { SessionClaims } from '../auth/tokens.js'
 import { issueScenePass, issueStudioPass, sceneClaims } from '../auth/scene-pass.js'
 import { isOfficialRealm, isWorldRealm } from '../auth/official-realms.js'
+import { trialClaims } from '../auth/trial.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 
@@ -162,12 +163,12 @@ export default async function authRoutes(app: FastifyInstance) {
     const token = authHeader.slice(7)
 
     try {
-      const decoded = app.jwt.verify<{ id: string; email: string | null; role: string; wallet?: string | null; verified?: boolean; refresh?: boolean; kind?: 'account' | 'scene'; sceneId?: string | null; locationId?: string | null }>(token)
+      const decoded = app.jwt.verify<{ id: string; email: string | null; role: string; wallet?: string | null; verified?: boolean; refresh?: boolean; kind?: 'account' | 'scene' | 'trial'; sceneId?: string | null; locationId?: string | null }>(token)
 
       if (!decoded.refresh) {
         return reply.status(401).send({ error: 'Not a refresh token' })
       }
-      if (decoded.kind !== 'account' && decoded.kind !== 'scene') {
+      if (decoded.kind !== 'account' && decoded.kind !== 'scene' && decoded.kind !== 'trial') {
         return reply.status(401).send({ error: 'Invalid or expired refresh token' })
       }
       // Verified scene passes are never refreshed (none are issued); only local-preview passes are.
@@ -182,6 +183,12 @@ export default async function authRoutes(app: FastifyInstance) {
 
       if (!user) {
         return reply.status(401).send({ error: 'User not found' })
+      }
+
+      if (decoded.kind === 'trial') {
+        // A converted (or swept) trial's tokens end here; the web app swaps to its account tokens.
+        if (!user.isTrial) return reply.status(401).send({ error: 'trial_ended' })
+        return reply.send({ accessToken: app.jwt.sign(trialClaims(user), { expiresIn: config.jwtAccessExpiry }) })
       }
 
       const claims =

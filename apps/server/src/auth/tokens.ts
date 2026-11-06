@@ -1,7 +1,7 @@
 import { createVerifier } from 'fast-jwt'
 import { config } from '../config.js'
 
-export type TokenKind = 'account' | 'scene'
+export type TokenKind = 'account' | 'scene' | 'trial'
 export interface SessionClaims {
   id: string
   email: string | null

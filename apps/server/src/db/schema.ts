@@ -131,6 +131,10 @@ export const users = pgTable('users', {
   email: text('email'),
   role: userRoleEnum('role').notNull().default('creator'),
   activeOrgId: uuid('active_org_id'), // current org context (FK added via migration to avoid circular)
+  isTrial: boolean('is_trial').notNull().default(false), // signed-out visitor's Design Studio trial; cleared on conversion
+  trialLastActiveAt: timestamp('trial_last_active_at', { withTimezone: true }),
+  trialIpHash: text('trial_ip_hash'),
+  trialDeviceHash: text('trial_device_hash'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })

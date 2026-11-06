@@ -19,6 +19,7 @@ const PUBLIC_EXACT = [
   'POST /api/auth/register', // creates an account from email + password; no bearer
   'POST /api/auth/login', // email + password; no bearer
   'POST /api/auth/refresh', // takes a refresh token only; an access token (pass or account) gets 401 "Not a refresh token"
+  'POST /api/auth/trial', // public: Turnstile token + device id; creates a trial session
   'POST /api/auth/platform', // DCL signed fetch; issues the pass
   'GET /api/auth/providers', // static list of enabled sign-in providers
   'POST /api/auth/forgot-password', // email only
