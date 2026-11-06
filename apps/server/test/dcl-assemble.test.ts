@@ -288,6 +288,23 @@ describe('scene thumbnail in a deployment (LIV-88)', () => {
     expect((await pendingModels({ sceneId: scene.id, deployedFiles: ['models/virvi/chair.glb', OLD] })).map((m) => m.file)).toEqual([FILE])
   })
 
+  it("an imported scene's own thumbnail (LIV-89) is never deployed by Virvi, and is no change to deploy", async () => {
+    const user = await createUser()
+    const { scene } = await createScene(user)
+    const key = `scenes/${scene.id}/thumbnail-${HASH}.png`
+    await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 4321, thumbnailSource: 'import' }).where(eq(scenes.id, scene.id))
+    expect(await modelsInScene(scene.id)).toEqual([])
+    expect(await pendingModels({ sceneId: scene.id, deployedFiles: ['images/own.png'] })).toEqual([])
+    // An uploaded one deployed earlier, then replaced by an import's: Virvi's file goes on the next deploy
+    expect((await pendingModels({ sceneId: scene.id, deployedFiles: [OLD] })).map((m) => [m.file, m.removed])).toEqual([[OLD, true]])
+    // Uploaded in Virvi, and LIV-88's rows from before the source was recorded (null): deployed
+    for (const thumbnailSource of ['upload', null] as const) {
+      await db.update(scenes).set({ thumbnailSource }).where(eq(scenes.id, scene.id))
+      expect((await modelsInScene(scene.id)).map((m) => m.file)).toEqual([FILE])
+      expect((await pendingModels({ sceneId: scene.id, deployedFiles: [] })).map((m) => m.file)).toEqual([FILE])
+    }
+  })
+
   it('a fresh deploy includes the image and sets display.navmapThumbnail to it', async () => {
     const metadata = wizardSceneJson({ title: 'T', world: 'w.dcl.eth', base: '0,0', parcels: ['0,0'], spawn: { x: 8, y: 0, z: 8 } })
     const r = await assembleFresh({ metadata, models: [need('a'), thumb()], timestamp: 1, fetch: fetcher() })

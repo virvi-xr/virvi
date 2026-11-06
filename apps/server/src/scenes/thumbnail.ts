@@ -187,7 +187,7 @@ export async function setSceneThumbnail(sceneId: string, upload: Buffer): Promis
       if (!locked) throw new SceneGone() // deleted while the file uploaded
       old = locked.thumbnailKey
       const [updated] = await tx.update(scenes)
-        .set({ thumbnailUrl: url, thumbnailKey: key, thumbnailBytes: t.data.length, updatedAt: new Date() })
+        .set({ thumbnailUrl: url, thumbnailKey: key, thumbnailBytes: t.data.length, thumbnailSource: 'upload', updatedAt: new Date() })
         .where(eq(scenes.id, sceneId))
         .returning()
       return updated
@@ -207,7 +207,7 @@ export async function removeSceneThumbnail(sceneId: string): Promise<SceneRow | 
     const [locked] = await tx.select({ thumbnailKey: scenes.thumbnailKey }).from(scenes).where(eq(scenes.id, sceneId)).for('update')
     if (!locked) return undefined
     const [updated] = await tx.update(scenes)
-      .set({ thumbnailUrl: null, thumbnailKey: null, thumbnailBytes: null, updatedAt: new Date() })
+      .set({ thumbnailUrl: null, thumbnailKey: null, thumbnailBytes: null, thumbnailSource: null, updatedAt: new Date() })
       .where(eq(scenes.id, sceneId))
       .returning()
     return { updated, old: locked.thumbnailKey }

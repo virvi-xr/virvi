@@ -10,7 +10,8 @@
  * The scene's thumbnail (LIV-88) travels with the models (`kind: 'thumbnail'`, `images/scene-thumbnail-<hash>.<ext>`)
  * and becomes `display.navmapThumbnail`. The owner's own scenes (adopted or imported) get only that key (replacing any
  * of their own) and the file, and only while a thumbnail is set in Virvi; removing it takes Virvi's file and key out on
- * the next deploy, leaving no navmapThumbnail until an import's next deploy brings its scene.json's back.
+ * the next deploy, leaving no navmapThumbnail until an import's next deploy brings its scene.json's back. A thumbnail
+ * taken from an imported scene's own navmapThumbnail (LIV-89) is never deployed: the scene already has it.
  */
 import { and, count, eq, inArray } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, localModelFile } from '@virvixr/shared'
@@ -42,11 +43,15 @@ export interface ModelNeed {
 
 const THUMBNAIL_NAME = 'Scene thumbnail'
 
-/** The scene's thumbnail as a file to deploy, or null when it has none. */
+/**
+ * The scene's thumbnail as a file to deploy, or null when it has none or it is an imported scene's own (LIV-89): the
+ * scene's files already carry that one and its scene.json names it, so Virvi adds nothing. Only 'import' is left out,
+ * so a thumbnail from before the source was recorded (null; all were uploads) still deploys.
+ */
 async function thumbnailInScene(sceneId: string): Promise<ModelNeed | null> {
-  const s = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { thumbnailKey: true, thumbnailUrl: true, thumbnailBytes: true } })
+  const s = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { thumbnailKey: true, thumbnailUrl: true, thumbnailBytes: true, thumbnailSource: true } })
   const file = deployedThumbnailFile(s?.thumbnailKey)
-  if (!s?.thumbnailUrl || !file) return null
+  if (!s?.thumbnailUrl || !file || s.thumbnailSource === 'import') return null
   return { elementId: '', name: THUMBNAIL_NAME, url: s.thumbnailUrl, file, triangles: null, bytes: s.thumbnailBytes, instances: 0, kind: 'thumbnail' }
 }
 

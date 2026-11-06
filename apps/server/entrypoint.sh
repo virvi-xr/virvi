@@ -214,6 +214,9 @@ if [ -n "$DATABASE_URL" ]; then
       try {
         await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_key TEXT\`;
         await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_bytes INTEGER\`;
+        // LIV-89: where the thumbnail came from; every thumbnail from before it was recorded was uploaded in Virvi
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_source TEXT\`;
+        await sql\`UPDATE scenes SET thumbnail_source = 'upload' WHERE thumbnail_key IS NOT NULL AND thumbnail_source IS NULL\`;
         console.log('[virvi-server] scenes thumbnail columns ensured');
       } catch(e) { console.log('[virvi-server] scenes thumbnail columns:', e.message); }
 

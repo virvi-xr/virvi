@@ -54,6 +54,16 @@ describe('scene thumbnail routes', () => {
     expect((await put(s.scene.id, s.owner, await png(1920, 1080))).statusCode).toBe(200)
   })
 
+  it('an upload is recorded as uploaded in Virvi (LIV-89), and removing it clears that', async () => {
+    const s = await setup()
+    await db.update(scenes).set({ thumbnailSource: 'import' }).where(eq(scenes.id, s.scene.id))
+    const res = await put(s.scene.id, s.owner, await png())
+    expect(res.json().scene.thumbnailSource).toBe('upload')
+    expect((await row(s.scene.id)).thumbnailSource).toBe('upload')
+    expect((await remove(s.scene.id, s.owner)).statusCode).toBe(200)
+    expect((await row(s.scene.id)).thumbnailSource).toBeNull()
+  })
+
   it('a body over the thumbnail limit is refused with 413 before it is read', async () => {
     const s = await setup()
     const res = await app.inject({

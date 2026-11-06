@@ -191,6 +191,12 @@ export const scenes = pgTable('scenes', {
   thumbnailKey: text('thumbnail_key'),
   /** Its size, counted towards the owner's storage quota. */
   thumbnailBytes: integer('thumbnail_bytes'),
+  /**
+   * Where the thumbnail came from (LIV-89): 'upload' (set in Virvi; deployed as display.navmapThumbnail) or 'import'
+   * (the imported scene's own navmapThumbnail; never deployed by Virvi, replaced by a re-import). Null when there is
+   * none, and on LIV-88's thumbnails from before it was recorded, which are uploads (entrypoint.sh backfills them).
+   */
+  thumbnailSource: text('thumbnail_source').$type<'upload' | 'import'>(),
   activePresetId: uuid('active_preset_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
