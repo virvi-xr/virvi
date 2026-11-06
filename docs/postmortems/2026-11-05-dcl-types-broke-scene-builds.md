@@ -1,6 +1,6 @@
 # Post-mortem: `@virvixr/dcl` types broke every scene that installed it
 
-**Date found:** 2026-11-05 · **Status:** fix built and verified as `@virvixr/dcl` 2.10.1; publish waiting on the owner's npm one-time code · **Severity:** high (a core feature could not work at all; no data lost)
+**Date found:** 2026-11-05 · **Status:** fixed in `@virvixr/dcl` 2.10.1 (published 2026-11-06) · **Severity:** high (a core feature could not work at all; no data lost)
 
 ## Summary
 
@@ -23,7 +23,7 @@ Scene Import installs the package into every uploaded scene, so **every Scene Im
 | 2026-11-04 → 11-06 | 2.7.0, 2.8.0, 2.9.0 and 2.10.0 are published; each carries the same type file. |
 | 2026-11-05 | While filming the Scene Import tutorial on a local copy with the real build runner, every import build fails. The build log shows the four `TS2307` errors in `node_modules/@virvixr/dcl/dist/index.d.ts`. Confirmed on npm for 2.4.0 to 2.10.0. |
 | 2026-11-05 | Fix written and tested (`f6b88dc`), 2.10.1 built from the 2.10.0 release commit plus the fix, and checked end to end: the tutorial's rooftop scene builds with "Type checking completed without errors". |
-| (pending) | 2.10.1 published. Scene Import's `^2.8.0` range picks it up on the next build, with no server deploy. |
+| 2026-11-06 | 2.10.1 published and checked from the registry: `npm install @virvixr/dcl@^2.8.0` (Scene Import's range) resolves to 2.10.1, and the rooftop scene builds with "Type checking completed without errors". No server deploy needed. |
 
 ## Root cause
 
@@ -61,7 +61,7 @@ Each of these alone would have stopped it; none was in place.
   - It also fails if the type file imports anything a scene doesn't have.
   - Against 2.9.0/2.10.0 it reports exactly the four production errors.
 - **No publish without tests** (`4fa4dea`): `prepublishOnly` is now `pnpm run bundle && pnpm test`.
-- **2.10.1 built from a release commit** (`bbdb05d`, on the `.worktrees/dcl-2.10.1` worktree): 2.10.0's release commit plus the fix. Its `dist/index.js` is byte-identical to 2.10.0, so the only change users get is the type file.
+- **2.10.1 published from a release commit** (`bbdb05d`): 2.10.0's release commit plus the fix. Its `dist/index.js` is byte-identical to 2.10.0, so the only change users get is the type file.
 
 ## What we should change (proposed)
 
