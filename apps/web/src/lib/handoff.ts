@@ -16,12 +16,24 @@ export interface HandoffDeps {
 
 const shortWallet = (w: string) => (w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w)
 
-/** What to call an account on the choice: its display name, else its short wallet, else "another account". */
+const maskEmail = (e: string) => {
+  const at = e.lastIndexOf('@')
+  return at > 0 ? `${e[0]}•••${e.slice(at)}` : null
+}
+
+/**
+ * What to call an account on the choice. The display name is freely editable (anyone can copy yours), so it is never
+ * shown alone: always with the short wallet, else the masked email; with neither, "another Virvi account".
+ */
 function accountLabel(user: unknown, token: string): string {
-  const name = (user as { displayName?: unknown } | null)?.displayName
-  if (typeof name === 'string' && name.trim()) return name.trim()
-  const wallet = payloadOf(token)?.wallet
-  return typeof wallet === 'string' && wallet ? shortWallet(wallet) : 'another account'
+  const u = (user ?? {}) as { displayName?: unknown; email?: unknown }
+  const claims = payloadOf(token) ?? {}
+  const wallet = typeof claims.wallet === 'string' && claims.wallet ? shortWallet(claims.wallet) : null
+  const emailRaw = typeof claims.email === 'string' && claims.email ? claims.email : typeof u.email === 'string' && u.email ? u.email : null
+  const proof = wallet ?? (emailRaw ? maskEmail(emailRaw) : null)
+  if (!proof) return 'another Virvi account'
+  const name = typeof u.displayName === 'string' ? u.displayName.trim() : ''
+  return name ? `${name} (${proof})` : proof
 }
 
 function userIdOf(user: unknown, token: string): string | null {
@@ -39,14 +51,26 @@ function parseStored(stored: string | null): { token: string; user: unknown } | 
   }
 }
 
-/** True when `virvi_auth` holds a usable full website session, which a hand-off must never replace with a scene pass. */
+/** A stored refresh token that can still renew the session: unexpired if it is a JWT, merely present if it is opaque. */
+function refreshAlive(refresh: unknown, now: number): boolean {
+  if (typeof refresh !== 'string' || !refresh) return false
+  const exp = payloadOf(refresh)?.exp
+  return typeof exp === 'number' ? exp * 1000 > now : payloadOf(refresh) === null
+}
+
+/**
+ * True when `virvi_auth` holds a full website session, which a hand-off must never replace with a scene pass. That is
+ * an account access token that is unexpired, or expired (they last 15 minutes) with a refresh token that is still live:
+ * AuthProvider renews those silently, so the person is still signed in.
+ */
 export function hasAccountSession(stored: string | null, now: number): boolean {
   if (!stored) return false
   try {
-    const token = JSON.parse(stored)?.token
-    if (typeof token !== 'string') return false
-    const s = readSession(token, now)
-    return s.ok && s.scenePass === null
+    const s = JSON.parse(stored)
+    if (typeof s?.token !== 'string') return false
+    const live = readSession(s.token, now)
+    if (live.ok) return live.scenePass === null
+    return payloadOf(s.token)?.kind === 'account' && refreshAlive(s.refresh, now)
   } catch {
     return false
   }

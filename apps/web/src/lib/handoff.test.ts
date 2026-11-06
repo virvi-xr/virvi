@@ -61,7 +61,12 @@ const stored = (p: Record<string, unknown>) => JSON.stringify({ token: tok(p), r
 describe('hasAccountSession', () => {
   it('is true only for an unexpired account session', () => {
     expect(hasAccountSession(stored({ exp: NOW / 1000 + 60, kind: 'account' }), NOW)).toBe(true)
-    expect(hasAccountSession(stored({ exp: NOW / 1000 - 1, kind: 'account' }), NOW)).toBe(false)
+    // An expired access token with a live refresh token is still signed in (AuthProvider renews it on load)
+    expect(hasAccountSession(stored({ exp: NOW / 1000 - 1, kind: 'account' }), NOW)).toBe(true)
+    expect(hasAccountSession(JSON.stringify({ token: tok({ exp: NOW / 1000 - 1, kind: 'account' }), refresh: tok({ exp: NOW / 1000 + 3600, kind: 'account', refresh: true }) }), NOW)).toBe(true)
+    expect(hasAccountSession(JSON.stringify({ token: tok({ exp: NOW / 1000 - 1, kind: 'account' }), refresh: tok({ exp: NOW / 1000 - 1, kind: 'account', refresh: true }) }), NOW)).toBe(false)
+    expect(hasAccountSession(JSON.stringify({ token: tok({ exp: NOW / 1000 - 1, kind: 'account' }), refresh: null }), NOW)).toBe(false)
+    expect(hasAccountSession(JSON.stringify({ token: tok({ exp: NOW / 1000 - 1, kind: 'scene', sceneId: 's1' }), refresh: 'r' }), NOW)).toBe(false)
     expect(hasAccountSession(stored({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1' }), NOW)).toBe(false)
     expect(hasAccountSession(stored({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: null, via: 'studio' }), NOW)).toBe(false)
     expect(hasAccountSession(stored({ exp: NOW / 1000 + 60 }), NOW)).toBe(false)
@@ -96,10 +101,11 @@ describe('runHandoff with a stored session', () => {
     expect(d.saveSession).not.toHaveBeenCalled()
     expect(calls).toEqual(['replace:/auth/handoff/', 'go:/analytics/?scene=abc'])
   })
-  it('replaces a stored scene pass or expired session as before', async () => {
-    for (const p of [{ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1' }, { exp: NOW / 1000 - 1, kind: 'account' }]) {
+  it('replaces a stored scene pass, or a session with neither a live access token nor a refresh token, as before', async () => {
+    const dead = (p: Record<string, unknown>) => JSON.stringify({ token: tok(p), refresh: null, user: { id: 'u' } })
+    for (const s of [stored({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1' }), dead({ exp: NOW / 1000 - 1, kind: 'account' })]) {
       const { d } = deps(200)
-      await runHandoff({ ...d, storedSession: () => stored(p), now: () => NOW })
+      await runHandoff({ ...d, storedSession: () => s, now: () => NOW })
       expect(d.exchange).toHaveBeenCalledWith('SECRET')
       expect(d.saveSession).toHaveBeenCalled()
     }
@@ -163,7 +169,7 @@ describe('runHandoff over an existing account session', () => {
       return 'them'
     })
     expect(await runHandoff({ ...d, storedSession: storedAcct() })).toBe('signed-in')
-    expect(choose).toHaveBeenCalledWith({ them: 'Bob', stored: 'Ada' })
+    expect(choose).toHaveBeenCalledWith({ them: 'Bob (0xabcd…1234)', stored: 'Ada (0x1111…1111)' })
     expect(d.saveSession).toHaveBeenCalledWith({ token: body.accessToken, refresh: 'r2', user: body.user })
     expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
   })
@@ -179,12 +185,44 @@ describe('runHandoff over an existing account session', () => {
     await runHandoff({ ...d, storedSession: storedAcct('u1', null) })
     expect(choose).toHaveBeenCalledWith({ them: '0xabcd…1234', stored: '0x1111…1111' })
   })
-  it('a stored scene pass or expired session is replaced without asking', async () => {
-    for (const p of [{ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1', id: 'u1' }, { exp: NOW / 1000 - 1, kind: 'account', id: 'u1' }]) {
+  const expiredAcct = (id = 'u1') => () => JSON.stringify({
+    token: acctTok(id, { exp: NOW / 1000 - 60, wallet: '0x1111111111111111111111111111111111111111' }),
+    refresh: tok({ exp: NOW / 1000 + 6 * 86400, kind: 'account', id, refresh: true }),
+    user: { id, displayName: 'Ada' },
+  })
+  it('an expired access token with a live refresh token is NOT overwritten by a scene pass', async () => {
+    const { d, choose, calls } = exch({ accessToken: tok({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1', id: 'u2' }), refreshToken: null, user: { id: 'u2', displayName: 'Bob' } })
+    expect(await runHandoff({ ...d, storedSession: expiredAcct() })).toBe('signed-in')
+    expect(d.saveSession).not.toHaveBeenCalled()
+    expect(choose).not.toHaveBeenCalled()
+    expect(calls.at(-1)).toBe('go:/analytics/?scene=abc')
+  })
+  it('an expired access token with a live refresh token gets the choice for a different account', async () => {
+    const { d, choose } = exch({ accessToken: acctTok('u2', { wallet: '0xabcdef0000000000000000000000000000001234' }), refreshToken: 'r2', user: { id: 'u2', displayName: 'Bob' } })
+    choose.mockResolvedValue('stay')
+    await runHandoff({ ...d, storedSession: expiredAcct() })
+    expect(choose).toHaveBeenCalledWith({ them: 'Bob (0xabcd…1234)', stored: 'Ada (0x1111…1111)' })
+    expect(d.saveSession).not.toHaveBeenCalled()
+  })
+  it('a stored session with neither a valid access token nor a refresh token is no session: replaced without asking', async () => {
+    const dead = JSON.stringify({ token: acctTok('u1', { exp: NOW / 1000 - 60 }), refresh: null, user: { id: 'u1' } })
+    for (const s of [dead, stored({ exp: NOW / 1000 + 60, kind: 'scene', sceneId: 's1', id: 'u1' })]) {
       const { d, choose } = exch({ accessToken: acctTok('u2'), refreshToken: 'r2', user: { id: 'u2' } })
-      await runHandoff({ ...d, storedSession: () => stored(p) })
+      await runHandoff({ ...d, storedSession: () => s })
       expect(choose).not.toHaveBeenCalled()
       expect(d.saveSession).toHaveBeenCalled()
     }
+  })
+  it('two accounts with the same display name get different labels (the name is freely editable)', async () => {
+    const { d, choose } = exch({ accessToken: acctTok('u2', { wallet: '0xabcdef0000000000000000000000000000001234' }), refreshToken: 'r2', user: { id: 'u2', displayName: 'Ada' } })
+    await runHandoff({ ...d, storedSession: storedAcct('u1', 'Ada') })
+    const { them, stored: mine } = choose.mock.calls[0][0]
+    expect(them).not.toBe(mine)
+    expect(them).toBe('Ada (0xabcd…1234)')
+  })
+  it('an account with no wallet shows its masked email, else "another Virvi account"', async () => {
+    const { d, choose } = exch({ accessToken: acctTok('u2', { email: 'mallory@evil.io' }), refreshToken: 'r2', user: { id: 'u2', displayName: 'Ada', email: 'mallory@evil.io' } })
+    await runHandoff({ ...d, storedSession: () => JSON.stringify({ token: acctTok('u1'), refresh: 'r', user: { id: 'u1', displayName: 'Ada' } }) })
+    expect(choose).toHaveBeenCalledWith({ them: 'Ada (m•••@evil.io)', stored: 'another Virvi account' })
   })
 })
