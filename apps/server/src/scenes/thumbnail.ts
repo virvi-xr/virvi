@@ -1,6 +1,8 @@
 /**
  * A scene's thumbnail (LIV-88): checked by its bytes, kept as a 16:9 PNG or JPEG of 960 × 540 to 1920 × 1080, stored
  * under the scene by content hash. Decentraland deploys take it as `images/scene-thumbnail-<hash>.<ext>`.
+ * An imported scene's own navmapThumbnail (LIV-89) is kept in its own shape (IMPORT_THUMBNAIL_RULES) and never deployed
+ * by Virvi: the scene's files already carry it.
  */
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
@@ -18,19 +20,38 @@ export type ThumbnailErrorCode = 'too_large' | 'too_many_pixels' | 'unsupported_
 /** Pixel cap before decoding, so a tiny file can't claim a huge canvas (as branding/images.ts). */
 export const MAX_INPUT_PIXELS = 4096 * 4096
 
-const MESSAGES: Record<ThumbnailErrorCode, string> = {
+type Size = { width: number; height: number }
+
+/** What a thumbnail must be, and the size it is kept at. */
+export interface ThumbnailRules {
+  /** 16:9 (an upload, cropped in the browser), or any shape (an import's own, kept as it is). */
+  shape: '16:9' | 'any'
+  min: Size
+  /** Scaled down to fit inside this, shape kept; never enlarged. */
+  max: Size
+}
+
+/** An upload in Virvi (LIV-88): 16:9, 960 × 540 to 1920 × 1080. */
+export const UPLOAD_THUMBNAIL_RULES: ThumbnailRules = { shape: '16:9', min: SCENE_THUMBNAIL_MIN, max: SCENE_THUMBNAIL_MAX }
+/**
+ * An imported scene's own navmapThumbnail (LIV-89): never cropped, any shape, at least 64 × 64 (below that it is an
+ * icon, not a picture of the scene), scaled down only to fit 1920 × 1920 (so a 16:9 one keeps the upload's 1920 × 1080).
+ */
+export const IMPORT_THUMBNAIL_RULES: ThumbnailRules = { shape: 'any', min: { width: 64, height: 64 }, max: { width: 1920, height: 1920 } }
+
+const MESSAGES: Record<Exclude<ThumbnailErrorCode, 'too_small'>, string> = {
   too_large: `The image is over ${SCENE_THUMBNAIL_MAX_BYTES / (1024 * 1024)} MB. Use a smaller file.`,
   too_many_pixels: `The image is over ${Math.floor(MAX_INPUT_PIXELS / 1_000_000)} megapixels. Use one of at most ${SCENE_THUMBNAIL_MAX.width} × ${SCENE_THUMBNAIL_MAX.height} px.`,
   unsupported_type: 'Use a PNG, JPEG or WebP image.',
-  too_small: `The thumbnail must be at least ${SCENE_THUMBNAIL_MIN.width} × ${SCENE_THUMBNAIL_MIN.height} px. Use a bigger image.`,
   wrong_shape: 'The thumbnail must be 16:9, the shape Decentraland shows. Crop it first.',
 }
+const tooSmall = (min: Size) => `The thumbnail must be at least ${min.width} × ${min.height} px. Use a bigger image.`
 
 const STATUS: Partial<Record<ThumbnailErrorCode, 413 | 415>> = { too_large: 413, too_many_pixels: 413, unsupported_type: 415 }
 
 export class ThumbnailError extends Error {
-  constructor(public code: ThumbnailErrorCode, public status: 400 | 413 | 415 = STATUS[code] ?? 400) {
-    super(MESSAGES[code])
+  constructor(public code: ThumbnailErrorCode, public status: 400 | 413 | 415 = STATUS[code] ?? 400, min: Size = SCENE_THUMBNAIL_MIN) {
+    super(code === 'too_small' ? tooSmall(min) : MESSAGES[code])
   }
 }
 
@@ -63,12 +84,13 @@ export interface ProcessedThumbnail {
 }
 
 /**
- * Checks an uploaded thumbnail (at most 2 MB; PNG, JPEG or WebP by its bytes; at most 4096 × 4096 pixels in all;
- * 16:9; at least 960 × 540) and re-encodes it, so what is stored and deployed is only the picture: turned upright by
- * its EXIF orientation, with no metadata (EXIF, GPS, text chunks) and nothing after the image, PNG when it has
- * transparency and JPEG otherwise, at most 1920 × 1080. Throws ThumbnailError.
+ * Checks a thumbnail (at most 2 MB; PNG, JPEG or WebP by its bytes; at most 4096 × 4096 pixels in all; then `rules`:
+ * an upload's 16:9 of at least 960 × 540 by default) and re-encodes it, so what is stored and deployed is only the
+ * picture: turned upright by its EXIF orientation, with no metadata (EXIF, GPS, text chunks) and nothing after the
+ * image, PNG when it has transparency and JPEG otherwise, scaled down to fit `rules.max` (an upload's 1920 × 1080),
+ * never cropped. Throws ThumbnailError.
  */
-export async function processSceneThumbnail(input: Buffer): Promise<ProcessedThumbnail> {
+export async function processSceneThumbnail(input: Buffer, rules: ThumbnailRules = UPLOAD_THUMBNAIL_RULES): Promise<ProcessedThumbnail> {
   if (input.length > SCENE_THUMBNAIL_MAX_BYTES) throw new ThumbnailError('too_large')
   const kind = magic(input)
   if (!kind) throw new ThumbnailError('unsupported_type')
@@ -86,8 +108,8 @@ export async function processSceneThumbnail(input: Buffer): Promise<ProcessedThu
   const turned = (meta.orientation ?? 1) >= 5
   const width = (turned ? meta.height : meta.width) ?? 0
   const height = (turned ? meta.width : meta.height) ?? 0
-  if (!isThumbnailShape(width, height)) throw new ThumbnailError('wrong_shape')
-  if (width < SCENE_THUMBNAIL_MIN.width || height < SCENE_THUMBNAIL_MIN.height) throw new ThumbnailError('too_small')
+  if (rules.shape === '16:9' && !isThumbnailShape(width, height)) throw new ThumbnailError('wrong_shape')
+  if (width < rules.min.width || height < rules.min.height) throw new ThumbnailError('too_small', 400, rules.min)
 
   const out: 'png' | 'jpeg' = meta.hasAlpha ? 'png' : 'jpeg'
   let data: Buffer
@@ -96,7 +118,7 @@ export async function processSceneThumbnail(input: Buffer): Promise<ProcessedThu
     // sharp writes no metadata unless asked (withMetadata), so EXIF and text chunks are dropped here
     const pipeline = sharp(input, { failOn: 'error', limitInputPixels: MAX_INPUT_PIXELS })
       .rotate()
-      .resize({ ...SCENE_THUMBNAIL_MAX, fit: 'inside', withoutEnlargement: true })
+      .resize({ ...rules.max, fit: 'inside', withoutEnlargement: true })
     const { data: buf, info } = await (out === 'png' ? pipeline.png() : pipeline.jpeg({ quality: 90 })).toBuffer({ resolveWithObject: true })
     data = buf
     size = { width: info.width, height: info.height }

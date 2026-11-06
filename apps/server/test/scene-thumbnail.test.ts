@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import sharp from 'sharp'
 import { SCENE_THUMBNAIL_MAX_BYTES } from '@virvixr/shared'
-import { ThumbnailError, deployedThumbnailFile, processSceneThumbnail, thumbnailStorageKey } from '../src/scenes/thumbnail.js'
+import { IMPORT_THUMBNAIL_RULES, ThumbnailError, deployedThumbnailFile, processSceneThumbnail, thumbnailStorageKey } from '../src/scenes/thumbnail.js'
 
 const img = (w: number, h: number, format: 'png' | 'jpeg' | 'webp' | 'gif', alpha = false) =>
   sharp({ create: { width: w, height: h, channels: alpha ? 4 : 3, background: alpha ? { r: 255, g: 0, b: 0, alpha: 0.5 } : '#3366ff' } })
@@ -99,6 +99,45 @@ describe('processSceneThumbnail', () => {
 
   it('takes a pixel of rounding off 16:9', async () => {
     expect(await code(processSceneThumbnail(await img(1000, 563, 'png')))).toBe('ok')
+  })
+})
+
+describe('processSceneThumbnail with the import rules (LIV-89)', () => {
+  const imported = (b: Buffer) => processSceneThumbnail(b, IMPORT_THUMBNAIL_RULES)
+
+  it('keeps any shape as it is, never cropped or stretched, and takes a small one', async () => {
+    for (const [w, h] of [[1024, 1024], [512, 768], [300, 200], [64, 64], [1280, 720]]) {
+      const out = await imported(await img(w, h, 'png'))
+      expect([out.width, out.height]).toEqual([w, h])
+      const meta = await sharp(out.data).metadata()
+      expect([meta.width, meta.height]).toEqual([w, h])
+    }
+  })
+
+  it('refuses one under 64 × 64, and still caps its size, bytes and pixels', async () => {
+    expect(await code(imported(await img(63, 200, 'png')))).toBe('too_small')
+    expect(await code(imported(await img(200, 63, 'png')))).toBe('too_small')
+    expect((await imported(await img(200, 63, 'png')).catch((e) => e as ThumbnailError)).message).toMatch(/64 × 64/)
+    // Scaled down to fit 1920 × 1920, shape kept
+    const tall = await imported(await img(2000, 4000, 'jpeg'))
+    expect([tall.width, tall.height]).toEqual([960, 1920])
+    const wide = await imported(await img(3840, 2160, 'jpeg'))
+    expect([wide.width, wide.height]).toEqual([1920, 1080])
+    expect(await code(imported(Buffer.concat([await img(200, 200, 'png'), Buffer.alloc(SCENE_THUMBNAIL_MAX_BYTES)])))).toBe('too_large')
+    expect(await code(imported(await img(5470, 3077, 'png')))).toBe('too_many_pixels')
+    expect(await code(imported(await img(300, 300, 'gif')))).toBe('unsupported_type')
+  }, 30_000)
+
+  it('still re-encodes it: no metadata, upright', async () => {
+    const withGps = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#3366ff' } })
+      .jpeg().withExif({ IFD0: { Copyright: 'secret-owner' } }).toBuffer()
+    const out = await imported(withGps)
+    expect((await sharp(out.data).metadata()).exif).toBeUndefined()
+    expect(out.data.includes('secret-owner')).toBe(false)
+    // Orientation 6 (turned 90°): a 400 × 300 file shows as 300 × 400
+    const turned = await sharp(await img(400, 300, 'jpeg')).withMetadata({ orientation: 6 }).jpeg().toBuffer()
+    const up = await imported(turned)
+    expect([up.width, up.height]).toEqual([300, 400])
   })
 })
 
