@@ -92,6 +92,11 @@ export async function openDesignCount(userId: string): Promise<number> {
   return n
 }
 
+export async function totalDesignCount(userId: string): Promise<number> {
+  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(studioDesigns).where(eq(studioDesigns.ownerId, userId))
+  return n
+}
+
 /** Free-finalize credits left, and how many are held by checkouts still open. */
 async function freeFinalizes(userId: string, now: Date) {
   const [bal] = await db.select({ balance: studioFinalizeCredits.balance }).from(studioFinalizeCredits)
@@ -110,9 +115,12 @@ export async function usage(userId: string, limit: number, now: Date) {
     credits: s.credits,
     giftedPrompts: s.gifted,
     freeFinalizes: await freeFinalizes(userId, now),
+    left: s.left,
+    trial: s.trial,
     allowance: s.allowance,
     resetsAt: s.resetsAt,
-    openDesigns: await openDesignCount(userId),
+    // A trial's 2 designs are a total, archived ones included
+    openDesigns: s.trial ? await totalDesignCount(userId) : await openDesignCount(userId),
     openDesignLimit: Number.isFinite(limit) ? limit : null,
     topup: { cents: config.studioPrices.topupCents, prompts: config.studioPrices.topupPrompts },
     creditCents: await creditBalance(userId), // Virvi credit, in USD cents
@@ -230,6 +238,10 @@ export async function queuePrompt(
       const r = await reservePrompt(d.ownerId, now, { counted }, tx)
       if (!r.ok) {
         const s = await promptStatus(d.ownerId, now)
+        if (s.trial && r.reason === 'allowance') throw new Refused({ status: 403, body: { error: 'account_required', action: 'more_prompts' } })
+        if (r.reason === 'trial_busy') {
+          throw new Refused({ status: 429, body: { error: 'trial_busy', message: 'Free tries are busy right now — create an account to keep going.' } })
+        }
         throw new Refused({ status: 429, body: { error: r.reason, code: r.reason, resetsAt: s.resetsAt } })
       }
       const fix = input.fixClipping

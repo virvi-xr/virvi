@@ -1700,6 +1700,12 @@ export const studioUsageDays = pgTable('studio_usage_days', {
   pk: primaryKey({ columns: [t.userId, t.day] }),
 }))
 
+/** What all signed-out trials together have cost on a UTC day (the global trial budget). */
+export const studioTrialSpendDays = pgTable('studio_trial_spend_days', {
+  day: date('day', { mode: 'string' }).primaryKey(),
+  costUsd: doublePrecision('cost_usd').notNull().default(0),
+})
+
 /** One line of a studio checkout: a piece's revision and what it costs (src/studio/pricing.ts). */
 export type PaymentLine = {
   category: string

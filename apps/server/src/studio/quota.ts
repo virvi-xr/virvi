@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioPromptCredits, studioUsageDays } from '../db/schema.js'
+import { studioPromptCredits, studioUsageDays, studioTrialSpendDays, users } from '../db/schema.js'
+import { config } from '../config.js'
 import { getSubscription } from '../integrations/stripe.js'
 
 /**
@@ -22,9 +23,25 @@ function nextUtcMidnight(now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString()
 }
 
-async function limitsFor(userId: string) {
+/** Trials keep their usage on this sentinel day, so their allowance is a total, not per day. */
+export const TRIAL_DAY = '1970-01-01'
+
+export async function isTrialUser(userId: string, exec: Exec = db): Promise<boolean> {
+  const [u] = await exec.select({ isTrial: users.isTrial }).from(users).where(eq(users.id, userId))
+  return !!u?.isTrial
+}
+
+/** The usage day a user's prompts and cost are kept on. */
+export async function usageDay(userId: string, now: Date): Promise<string> {
+  return (await isTrialUser(userId)) ? TRIAL_DAY : utcDay(now)
+}
+
+async function limitsFor(userId: string, exec: Exec = db) {
+  if (await isTrialUser(userId, exec)) {
+    return { trial: true, plan: 'trial', allowance: config.trialPrompts, ceiling: config.trialCostCeilingUsd }
+  }
   const sub = await getSubscription(userId)
-  return { plan: sub.tier as string, allowance: sub.limits.studioPromptsPerDay, ceiling: sub.limits.studioDailyCostCeilingUsd }
+  return { trial: false, plan: sub.tier as string, allowance: sub.limits.studioPromptsPerDay, ceiling: sub.limits.studioDailyCostCeilingUsd }
 }
 
 async function usage(userId: string, day: string, exec: Exec = db) {
@@ -46,18 +63,20 @@ async function giftedBalance(userId: string, exec: Exec = db): Promise<number> {
 }
 
 export async function promptStatus(userId: string, now: Date) {
-  const { plan, allowance, ceiling } = await limitsFor(userId)
-  const { prompts, costUsd } = await usage(userId, utcDay(now))
-  const credits = await creditBalance(userId)
-  const gifted = await giftedBalance(userId)
+  const { trial, plan, allowance, ceiling } = await limitsFor(userId)
+  const { prompts, costUsd } = await usage(userId, trial ? TRIAL_DAY : utcDay(now))
+  // Gifts and credits never apply to a trial
+  const credits = trial ? 0 : await creditBalance(userId)
+  const gifted = trial ? 0 : await giftedBalance(userId)
   return {
     plan,
+    trial,
     allowance,
     used: prompts,
     credits,
     gifted,
     left: Math.max(0, allowance - prompts) + credits + gifted,
-    resetsAt: nextUtcMidnight(now),
+    resetsAt: trial ? null : nextUtcMidnight(now),
     overCostCeiling: costUsd >= ceiling && gifted === 0,
   }
 }
@@ -74,9 +93,14 @@ export async function reservePrompt(
   now: Date,
   opts: { counted: boolean },
   exec: Exec = db,
-): Promise<{ ok: true; day: string; from: PromptSource | null } | { ok: false; reason: 'allowance' | 'cost_ceiling' }> {
-  const { allowance, ceiling } = await limitsFor(userId)
-  const day = utcDay(now)
+): Promise<{ ok: true; day: string; from: PromptSource | null } | { ok: false; reason: 'allowance' | 'cost_ceiling' | 'trial_busy' }> {
+  const { trial, allowance, ceiling } = await limitsFor(userId, exec)
+  const day = trial ? TRIAL_DAY : utcDay(now)
+  if (trial) {
+    // All trials together are capped per UTC day; accounts are never stopped by it
+    const [spend] = await exec.select().from(studioTrialSpendDays).where(eq(studioTrialSpendDays.day, utcDay(now)))
+    if ((spend?.costUsd ?? 0) >= config.trialDailyBudgetUsd) return { ok: false, reason: 'trial_busy' }
+  }
   const inc = opts.counted ? 1 : 0
   const rows = await exec.execute(sql`
     INSERT INTO studio_usage_days (user_id, day, prompts, cost_usd)
@@ -87,6 +111,7 @@ export async function reservePrompt(
     RETURNING prompts`)
   if ((rows as unknown as unknown[]).length) return { ok: true, day, from: opts.counted ? 'allowance' : null }
   const { costUsd } = await usage(userId, day, exec)
+  if (trial) return { ok: false, reason: costUsd >= ceiling ? 'cost_ceiling' : 'allowance' }
   if (opts.counted || costUsd >= ceiling) {
     const gift = await exec.execute(sql`
       UPDATE studio_prompt_credits SET gifted = gifted - 1, updated_at = now()
@@ -122,6 +147,11 @@ export async function refundPrompt(userId: string, day: string, from: PromptSour
 
 export async function recordCost(userId: string, day: string, costUsd: number, exec: Exec = db): Promise<void> {
   if (!(costUsd > 0)) return
+  if (await isTrialUser(userId, exec)) {
+    day = TRIAL_DAY
+    await exec.insert(studioTrialSpendDays).values({ day: utcDay(new Date()), costUsd })
+      .onConflictDoUpdate({ target: studioTrialSpendDays.day, set: { costUsd: sql`${studioTrialSpendDays.costUsd} + ${costUsd}` } })
+  }
   await exec.insert(studioUsageDays).values({ userId, day, prompts: 0, costUsd })
     .onConflictDoUpdate({
       target: [studioUsageDays.userId, studioUsageDays.day],

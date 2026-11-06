@@ -3,6 +3,7 @@ import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads } from '../db/schema.js'
 import { config } from '../config.js'
+import { isTrialUser } from '../studio/quota.js'
 import { authenticate } from '../middleware/auth.js'
 import { STUDIO_ROUTE_SCENE_PASS } from '../auth/scene-from.js'
 import { getSubscription } from '../integrations/stripe.js'
@@ -20,7 +21,7 @@ import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
-  designDetail, openDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
+  designDetail, openDesignCount, totalDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
 } from '../studio/designs.js'
 
 /**
@@ -89,6 +90,7 @@ async function notPaused(request: FastifyRequest, reply: FastifyReply) {
 }
 
 async function openLimit(userId: string) {
+  if (await isTrialUser(userId)) return config.trialDesigns
   return (await getSubscription(userId)).limits.studioOpenDesigns
 }
 
@@ -129,7 +131,11 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (b.name !== undefined && (typeof b.name !== 'string' || !b.name.trim() || b.name.length > MAX_NAME)) {
       return reply.status(400).send({ error: `name must be 1-${MAX_NAME} characters` })
     }
-    if ((await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
+    if (await isTrialUser(request.user.id)) {
+      if ((await totalDesignCount(request.user.id)) >= config.trialDesigns) {
+        return reply.status(403).send({ error: 'account_required', action: 'more_designs' })
+      }
+    } else if ((await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
       return reply.status(403).send({ error: 'Your plan has no room for another open design', code: 'open_design_limit' })
     }
     const [d] = await db.insert(studioDesigns).values({
@@ -171,7 +177,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
     if (b.archived !== undefined) {
       if (typeof b.archived !== 'boolean') return reply.status(400).send({ error: 'archived must be true or false' })
-      if (!b.archived && d.archivedAt && (await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
+      if (!b.archived && d.archivedAt && !(await isTrialUser(request.user.id)) && (await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
         return reply.status(403).send({ error: 'Your plan has no room for another open design', code: 'open_design_limit' })
       }
       set.archivedAt = b.archived ? (d.archivedAt ?? new Date()) : null
