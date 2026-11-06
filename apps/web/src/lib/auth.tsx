@@ -185,9 +185,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const oauthUrl = async (provider: 'google' | 'discord', fromAction?: string) => {
-    // From a trial, this tab keeps the trial's token; the callback page moves the trial into the account
-    try { stashTrialHandover(sessionStorage, user?.trial ? readStoredAuth(localStorage) : null, fromAction) } catch {}
-    return `${API_URL}/api/auth/${provider}`
+    // From a trial, this tab keeps the trial's token; the callback page moves it in when the sign-in brings `state` back
+    let state: string | null = null
+    try { state = stashTrialHandover(sessionStorage, user?.trial ? readStoredAuth(localStorage) : null, fromAction, Date.now()) } catch {}
+    return `${API_URL}/api/auth/${provider}${state ? `?state=${state}` : ''}`
   }
 
   const logout = useCallback(() => {

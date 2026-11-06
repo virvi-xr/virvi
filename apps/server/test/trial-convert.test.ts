@@ -149,6 +149,23 @@ describe('converting and merging a trial', () => {
     expect(await owned(t.u.id)).toBe(1)
   })
 
+  it('an OAuth start passes a well-formed state through, and drops a malformed one', async () => {
+    const prev = [config.googleClientId, config.googleClientSecret]
+    ;(config as any).googleClientId = 'cid'; (config as any).googleClientSecret = 'sec'
+    const ok = await app.inject({ method: 'GET', url: '/api/auth/google?state=AbCdEfGhIjKlMnOpQrStUv_-' })
+    const bad = await app.inject({ method: 'GET', url: '/api/auth/google?state=x.y' })
+    ;(config as any).googleClientId = prev[0]; (config as any).googleClientSecret = prev[1]
+    expect(new URL(String(ok.headers.location)).searchParams.get('state')).toBe('AbCdEfGhIjKlMnOpQrStUv_-')
+    expect(String(bad.headers.location)).not.toContain('state=')
+  })
+
+  it('a trial idle past its expiry is not handed over (the sweep may be removing it)', async () => {
+    const t = await makeTrial({ designs: 1 })
+    await db.update(users).set({ trialLastActiveAt: new Date(Date.now() - (config.trialIdleDays + 1) * 86400_000) }).where(eq(users.id, t.u.id))
+    const s = await finishOAuth(app, identity('idle1'))
+    expect((await adopt(s.accessToken, t.refreshToken)).json()).toEqual({ moved: false })
+  })
+
   it("the trial's old tokens are refused after conversion", async () => {
     const t = await makeTrial()
     await app.inject({ method: 'POST', url: '/api/auth/register', headers: t.headers, payload: { email: 'c@test.dev', password: 'hunter2hunter2', displayName: 'C' } })

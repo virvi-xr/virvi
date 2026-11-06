@@ -105,8 +105,10 @@ export async function trialFromHeldToken(app: FastifyInstance, token: unknown): 
     return null
   }
   if (claims.kind !== 'trial' || !claims.id) return null
-  const [row] = await db.select({ isTrial: users.isTrial }).from(users).where(eq(users.id, claims.id)).limit(1)
-  return row?.isTrial ? claims.id : null
+  const [row] = await db.select({ isTrial: users.isTrial, at: users.trialLastActiveAt }).from(users).where(eq(users.id, claims.id)).limit(1)
+  // A trial idle past its expiry may be mid-sweep (machines and files going): let it go rather than move half of it
+  const cutoff = Date.now() - config.trialIdleDays * 24 * 3600_000
+  return row?.isTrial && row.at && row.at.getTime() >= cutoff ? claims.id : null
 }
 
 /**

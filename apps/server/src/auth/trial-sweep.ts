@@ -17,7 +17,7 @@ const MAX_SCANNED = 500
  */
 export async function sweepTrials(now: Date, deps: Partial<MachineDeps> = {}, opts: { batch?: number } = {}): Promise<{ expired: number }> {
   const cutoff = new Date(now.getTime() - config.trialIdleDays * 24 * 3600_000)
-  const batch = opts.batch ?? BATCH
+  const batch = Math.max(1, opts.batch ?? BATCH)
   let expired = 0
   let scanned = 0
   let after: { at: Date; id: string } | null = null

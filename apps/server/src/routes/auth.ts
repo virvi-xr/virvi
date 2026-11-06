@@ -36,6 +36,9 @@ interface LoginBody {
   fromAction?: string
 }
 
+/** An OAuth `state` from the web app: an opaque random per-tab value, echoed back to /auth/callback. */
+const OAUTH_STATE = /^[A-Za-z0-9_-]{16,64}$/
+
 export default async function authRoutes(app: FastifyInstance) {
   // ── GET /api/auth/providers — which OAuth providers are configured ──────
 
@@ -342,7 +345,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── GET /api/auth/google — Redirect to Google OAuth consent screen ───────
 
-  app.get('/api/auth/google', async (request, reply) => {
+  app.get<{ Querystring: { state?: string } }>('/api/auth/google', async (request, reply) => {
     if (!config.googleClientId || !config.googleClientSecret) {
       return reply.status(501).send({ error: 'Google OAuth is not configured' })
     }
@@ -358,19 +361,22 @@ export default async function authRoutes(app: FastifyInstance) {
       prompt: 'consent',
     })
 
+    // The web app's random per-tab state rides through and comes back to /auth/callback (see trial hand-over)
+    if (OAUTH_STATE.test(request.query.state ?? '')) params.set('state', request.query.state!)
+
     return reply.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
   })
 
   // ── GET /api/auth/google/callback — Handle the OAuth callback ────────────
 
-  app.get<{ Querystring: { code?: string; error?: string } }>(
+  app.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
     '/api/auth/google/callback',
     async (request, reply) => {
       if (!config.googleClientId || !config.googleClientSecret) {
         return reply.status(501).send({ error: 'Google OAuth is not configured' })
       }
 
-      const { code, error: oauthError } = request.query
+      const { code, error: oauthError, state } = request.query
 
       if (oauthError || !code) {
         return reply.redirect(`${config.publicUrl}/auth/callback?error=${oauthError || 'missing_code'}`)
@@ -416,6 +422,7 @@ export default async function authRoutes(app: FastifyInstance) {
           token: session.accessToken,
           refresh: session.refreshToken,
         })
+        if (OAUTH_STATE.test(state ?? '')) params.set('state', state!)
 
         return reply.redirect(`${config.publicUrl}/auth/callback?${params.toString()}`)
       } catch (err) {
@@ -427,7 +434,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── GET /api/auth/discord — Redirect to Discord OAuth consent screen ──────
 
-  app.get('/api/auth/discord', async (request, reply) => {
+  app.get<{ Querystring: { state?: string } }>('/api/auth/discord', async (request, reply) => {
     if (!config.discordClientId || !config.discordClientSecret) {
       return reply.status(501).send({ error: 'Discord OAuth is not configured' })
     }
@@ -441,19 +448,21 @@ export default async function authRoutes(app: FastifyInstance) {
       scope: 'identify email',
     })
 
+    if (OAUTH_STATE.test(request.query.state ?? '')) params.set('state', request.query.state!)
+
     return reply.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`)
   })
 
   // ── GET /api/auth/discord/callback — Handle the OAuth callback ────────────
 
-  app.get<{ Querystring: { code?: string; error?: string } }>(
+  app.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
     '/api/auth/discord/callback',
     async (request, reply) => {
       if (!config.discordClientId || !config.discordClientSecret) {
         return reply.status(501).send({ error: 'Discord OAuth is not configured' })
       }
 
-      const { code, error: oauthError } = request.query
+      const { code, error: oauthError, state } = request.query
 
       if (oauthError || !code) {
         return reply.redirect(`${config.publicUrl}/auth/callback?error=${oauthError || 'missing_code'}`)
@@ -520,6 +529,7 @@ export default async function authRoutes(app: FastifyInstance) {
           token: session.accessToken,
           refresh: session.refreshToken,
         })
+        if (OAUTH_STATE.test(state ?? '')) params.set('state', state!)
 
         return reply.redirect(`${config.publicUrl}/auth/callback?${params.toString()}`)
       } catch (err) {

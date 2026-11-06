@@ -147,27 +147,37 @@ export function resolveSignUp(token: string): void { settle()?.resolve(token) }
 export function dismissSignUp(): void { settle()?.reject(new Error('closed')) }
 
 const HANDOVER_KEY = 'virvi.trialHandover'
+const HANDOVER_TTL_MS = 15 * 60_000
 type KV = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-/**
- * Before leaving for Google or Discord from a trial: keep the trial's token in this tab (sessionStorage) so the callback
- * page can move the trial into the account. Nothing travels through the provider, so a crafted sign-in link can't hand
- * someone else's trial to a victim.
- */
-export function stashTrialHandover(storage: KV, stored: { token: string; refresh?: string | null; user: unknown } | null, fromAction?: string): void {
-  storage.removeItem(HANDOVER_KEY)
-  if (!stored || !(stored.user as { trial?: boolean } | null)?.trial) return
-  storage.setItem(HANDOVER_KEY, JSON.stringify({ trialToken: stored.refresh || stored.token, ...(fromAction ? { fromAction } : {}) }))
+function randomState(): string {
+  const b = new Uint8Array(18)
+  crypto.getRandomValues(b)
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-/** The hand-over kept by `stashTrialHandover`, once (it is removed), or null. */
-export function takeTrialHandover(storage: KV): { trialToken: string; fromAction?: string } | null {
+/**
+ * Before leaving for Google or Discord from a trial: keep the trial's token in this tab (sessionStorage) with a random
+ * `state` for the sign-in to carry. Returns that state (null when there is no trial). Only a callback that brings the same
+ * state back within 15 minutes gets the trial, so neither a crafted sign-in link nor a crafted callback can move it.
+ */
+export function stashTrialHandover(storage: KV, stored: { token: string; refresh?: string | null; user: unknown } | null, fromAction: string | undefined, now: number): string | null {
+  storage.removeItem(HANDOVER_KEY)
+  if (!stored || !(stored.user as { trial?: boolean } | null)?.trial) return null
+  const state = randomState()
+  storage.setItem(HANDOVER_KEY, JSON.stringify({ trialToken: stored.refresh || stored.token, state, at: now, ...(fromAction ? { fromAction } : {}) }))
+  return state
+}
+
+/** The hand-over for the sign-in that returned `state`, once (the entry is always removed), or null. */
+export function takeTrialHandover(storage: KV, state: string | null, now: number): { trialToken: string; fromAction?: string } | null {
   const raw = storage.getItem(HANDOVER_KEY)
   storage.removeItem(HANDOVER_KEY)
-  if (!raw) return null
+  if (!raw || !state) return null
   try {
     const v = JSON.parse(raw)
-    return typeof v?.trialToken === 'string' ? v : null
+    if (typeof v?.trialToken !== 'string' || v.state !== state || typeof v.at !== 'number' || now - v.at > HANDOVER_TTL_MS) return null
+    return { trialToken: v.trialToken, ...(v.fromAction ? { fromAction: v.fromAction } : {}) }
   } catch {
     return null
   }

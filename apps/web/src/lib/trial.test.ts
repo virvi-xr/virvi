@@ -151,25 +151,35 @@ describe('trial hand-over through Google or Discord', () => {
     const m = new Map<string, string>()
     return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k), m }
   }
-  it('keeps the trial refresh token (or the access token) and the action for the callback page, once', () => {
+  const T = 1_800_000_000_000
+  const trial = { token: 'acc', refresh: 'ref', user: { trial: true } }
+  it('hands the trial over only to the sign-in this tab started (state matches), once', () => {
     const s = mem()
-    stashTrialHandover(s, { token: 'acc', refresh: 'ref', user: { trial: true } }, 'more_prompts')
-    expect(takeTrialHandover(s)).toEqual({ trialToken: 'ref', fromAction: 'more_prompts' })
-    expect(takeTrialHandover(s)).toBeNull()
-    stashTrialHandover(s, { token: 'acc', user: { trial: true } })
-    expect(takeTrialHandover(s)).toEqual({ trialToken: 'acc' })
+    const state = stashTrialHandover(s, trial, 'more_prompts', T)!
+    expect(state).toMatch(/^[A-Za-z0-9_-]{22,}$/)
+    expect(takeTrialHandover(s, 'someone-elses-state', T)).toBeNull()
+    expect(takeTrialHandover(s, state, T)).toBeNull() // a wrong state used it up
+    const again = stashTrialHandover(s, trial, undefined, T)!
+    expect(takeTrialHandover(s, again, T + 60_000)).toEqual({ trialToken: 'ref' })
+    expect(takeTrialHandover(s, again, T + 60_000)).toBeNull()
+  })
+  it('a stale hand-over or a callback without state moves nothing', () => {
+    const s = mem()
+    const state = stashTrialHandover(s, trial, undefined, T)!
+    expect(takeTrialHandover(s, state, T + 16 * 60_000)).toBeNull()
+    stashTrialHandover(s, trial, undefined, T)
+    expect(takeTrialHandover(s, null, T)).toBeNull()
   })
   it('keeps nothing for an account or no session, and clears an old hand-over', () => {
     const s = mem()
-    stashTrialHandover(s, { token: 'acc', refresh: 'ref', user: { trial: true } })
-    stashTrialHandover(s, { token: 'acc', refresh: 'ref', user: { trial: false } })
-    expect(takeTrialHandover(s)).toBeNull()
-    stashTrialHandover(s, null)
-    expect(takeTrialHandover(s)).toBeNull()
+    const state = stashTrialHandover(s, trial, undefined, T)!
+    expect(stashTrialHandover(s, { token: 'acc', refresh: 'ref', user: { trial: false } }, undefined, T)).toBeNull()
+    expect(takeTrialHandover(s, state, T)).toBeNull()
+    expect(stashTrialHandover(s, null, undefined, T)).toBeNull()
   })
   it('ignores a damaged entry', () => {
     const s = mem()
     s.setItem('virvi.trialHandover', '{nope')
-    expect(takeTrialHandover(s)).toBeNull()
+    expect(takeTrialHandover(s, 'x', T)).toBeNull()
   })
 })

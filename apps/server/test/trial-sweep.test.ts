@@ -98,6 +98,11 @@ describe('trial expiry and funnel', () => {
     expect(await db.select().from(users).where(eq(users.id, stuck.id))).toHaveLength(1)
   })
 
+  it('a batch size below 1 still finishes', async () => {
+    await makeTrial(30)
+    expect(await sweepTrials(NOW, { fly: fakeFly() }, { batch: 0 })).toEqual({ expired: 1 })
+  })
+
   it('records the funnel', async () => {
     setTurnstileFetch((async () => new Response(JSON.stringify({ success: true }))) as unknown as typeof fetch)
     const started = await app.inject({ method: 'POST', url: '/api/auth/trial', headers: { 'x-forwarded-for': '10.9.0.1' }, payload: { turnstileToken: 't', deviceId: 'device-funnel-xxxxxxx' } })

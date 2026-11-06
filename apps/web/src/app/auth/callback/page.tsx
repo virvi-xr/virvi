@@ -13,6 +13,10 @@ function CallbackHandler() {
     const token = searchParams.get('token')
     const refresh = searchParams.get('refresh')
 
+    // Whatever happens, a trial hand-over waiting in this tab is only for this callback
+    let handover: ReturnType<typeof takeTrialHandover> = null
+    try { handover = takeTrialHandover(sessionStorage, searchParams.get('state'), Date.now()) } catch {}
+
     if (!token || !refresh) {
       setError('Missing authentication parameters. Please try signing in again.')
       return
@@ -20,6 +24,7 @@ function CallbackHandler() {
 
     try {
       const payload = JSON.parse(atob(token.split('.')[1]))
+      // Never copy `trial` from the payload: a session saved here is an account, so it is never handed over as a trial
       const user = {
         id: payload.sub ?? payload.id,
         displayName: payload.displayName ?? payload.name ?? '',
@@ -33,11 +38,9 @@ function CallbackHandler() {
       )
 
       let dest = '/scenes'
-      let handover: ReturnType<typeof takeTrialHandover> = null
       try {
         dest = safeNextPath(sessionStorage.getItem('vlm_next')) ?? '/scenes'
         sessionStorage.removeItem('vlm_next')
-        handover = takeTrialHandover(sessionStorage)
       } catch {}
       // Started from a trial in this tab: move the trial's designs into the account before going on
       const moved = handover
