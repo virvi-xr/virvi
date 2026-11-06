@@ -77,3 +77,30 @@ export function thumbnailError(err: unknown): string {
   if (e?.status === 413 || e?.message === 'too_large') return TOO_LARGE_MESSAGE
   return 'Something went wrong. Try again in a moment.'
 }
+
+/** What a JPEG's transparent areas become (JPEG has no transparency): the dashboard's dark gray (gray-900). */
+export const JPEG_BACKGROUND = '#111827'
+
+/** The 2D-context calls paintCrop makes (a CanvasRenderingContext2D has them all). */
+interface PaintTarget {
+  fillStyle: string | CanvasGradient | CanvasPattern
+  imageSmoothingQuality: ImageSmoothingQuality
+  fillRect(x: number, y: number, w: number, h: number): void
+  drawImage(image: CanvasImageSource, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void
+}
+
+/** Draws the crop `rect` of `source` at `size`; for a JPEG over a solid background first, so transparency isn't black. */
+export function paintCrop(
+  ctx: PaintTarget,
+  source: CanvasImageSource,
+  rect: { sx: number; sy: number; sw: number; sh: number },
+  size: { width: number; height: number },
+  type: 'image/jpeg' | 'image/png',
+): void {
+  ctx.imageSmoothingQuality = 'high'
+  if (type === 'image/jpeg') {
+    ctx.fillStyle = JPEG_BACKGROUND
+    ctx.fillRect(0, 0, size.width, size.height)
+  }
+  ctx.drawImage(source, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, size.width, size.height)
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cropRect, maxZoom, outputSize, outputType, pickedFileError, sourceTooSmall, thumbnailError } from './scene-thumbnail'
+import { JPEG_BACKGROUND, paintCrop, cropRect, maxZoom, outputSize, outputType, pickedFileError, sourceTooSmall, thumbnailError } from './scene-thumbnail'
 
 describe('cropRect', () => {
   it('centre-crops a wide image to 16:9 at full height', () => {
@@ -64,5 +64,32 @@ describe('limits', () => {
     expect(thumbnailError({ message: 'too_many_pixels', status: 413, body: { error: 'too_many_pixels', message: 'The image is over 16 megapixels.' } })).toBe('The image is over 16 megapixels.')
     expect(thumbnailError({ message: 'Forbidden', status: 403, body: { error: 'Forbidden' } })).toBe("Only the scene's hosts and editors can change its thumbnail.")
     expect(thumbnailError(null)).toMatch(/Try again/)
+  })
+})
+
+describe('paintCrop', () => {
+  const fakeCtx = () => {
+    const calls: string[] = []
+    const ctx = {
+      set fillStyle(v: string | CanvasGradient | CanvasPattern) { calls.push(`fillStyle ${String(v)}`) },
+      fillRect: (...a: number[]) => calls.push(`fillRect ${a.join(',')}`),
+      drawImage: (_i: unknown, ...a: number[]) => calls.push(`drawImage ${a.join(',')}`),
+      set imageSmoothingQuality(_v: ImageSmoothingQuality) {},
+    }
+    return { ctx, calls }
+  }
+  const rect = { sx: 10, sy: 20, sw: 1600, sh: 900 }
+
+  it('a JPEG gets a solid background first, so transparent areas are not black', () => {
+    const { ctx, calls } = fakeCtx()
+    paintCrop(ctx, {} as CanvasImageSource, rect, { width: 1280, height: 720 }, 'image/jpeg')
+    expect(calls).toEqual([`fillStyle ${JPEG_BACKGROUND}`, 'fillRect 0,0,1280,720', 'drawImage 10,20,1600,900,0,0,1280,720'])
+    expect(JPEG_BACKGROUND).toBe('#111827')
+  })
+
+  it('a PNG keeps its transparency', () => {
+    const { ctx, calls } = fakeCtx()
+    paintCrop(ctx, {} as CanvasImageSource, rect, { width: 1280, height: 720 }, 'image/png')
+    expect(calls).toEqual(['drawImage 10,20,1600,900,0,0,1280,720'])
   })
 })

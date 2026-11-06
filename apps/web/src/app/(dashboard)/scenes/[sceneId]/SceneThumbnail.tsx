@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fileToBase64, type useApi } from '@/lib/api'
 import {
   CENTRED, SCENE_THUMBNAIL_MAX_BYTES, SCENE_THUMBNAIL_MIN, TOO_LARGE_MESSAGE, TOO_SMALL_MESSAGE,
-  cropRect, maxZoom, outputSize, outputType, pickedFileError, sourceTooSmall, thumbnailError, type CropPosition,
+  cropRect, maxZoom, outputSize, outputType, paintCrop, pickedFileError, sourceTooSmall, thumbnailError, type CropPosition,
 } from '@/lib/scene-thumbnail'
 
 const PREVIEW = { width: 480, height: 270 }
@@ -29,8 +29,8 @@ function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Prom
   return new Promise((resolve) => canvas.toBlob(resolve, type, quality))
 }
 
-/** The crop drawn at its saved size, as PNG or JPEG; a PNG over 2 MB is tried again as JPEG. */
-async function renderCrop(p: Picked, pos: CropPosition): Promise<Blob> {
+/** A canvas of the crop at its saved size, painted for `type`. */
+function cropCanvas(p: Picked, pos: CropPosition, type: 'image/jpeg' | 'image/png'): HTMLCanvasElement {
   const r = cropRect(p.img.naturalWidth, p.img.naturalHeight, pos)
   const size = outputSize(r)
   const canvas = document.createElement('canvas')
@@ -38,11 +38,15 @@ async function renderCrop(p: Picked, pos: CropPosition): Promise<Blob> {
   canvas.height = size.height
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('no_canvas')
-  ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(p.img, r.sx, r.sy, r.sw, r.sh, 0, 0, size.width, size.height)
+  paintCrop(ctx, p.img, r, size, type)
+  return canvas
+}
+
+/** The crop as PNG or JPEG; a PNG over 2 MB is painted again as JPEG (over a solid background). */
+async function renderCrop(p: Picked, pos: CropPosition): Promise<Blob> {
   const type = outputType(p.type)
-  let blob = await toBlob(canvas, type, type === 'image/jpeg' ? 0.9 : undefined)
-  if (blob && blob.size > SCENE_THUMBNAIL_MAX_BYTES && type === 'image/png') blob = await toBlob(canvas, 'image/jpeg', 0.9)
+  let blob = await toBlob(cropCanvas(p, pos, type), type, type === 'image/jpeg' ? 0.9 : undefined)
+  if (blob && blob.size > SCENE_THUMBNAIL_MAX_BYTES && type === 'image/png') blob = await toBlob(cropCanvas(p, pos, 'image/jpeg'), 'image/jpeg', 0.9)
   if (!blob) throw new Error('no_canvas')
   if (blob.size > SCENE_THUMBNAIL_MAX_BYTES) throw Object.assign(new Error('too_large'), { status: 413 })
   return blob
