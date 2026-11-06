@@ -19,7 +19,7 @@ import { isOfficialRealm, isWorldRealm } from '../auth/official-realms.js'
 import { trialClaims } from '../auth/trial.js'
 import { issueAccountSession } from '../auth/sessions.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
-import { convertTrial, finishOAuth, mergeTrial, trialFromBearer } from '../auth/trial-convert.js'
+import { convertTrial, finishOAuth, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 
@@ -46,7 +46,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── POST /api/auth/register ──────────────────────────────────────────────
 
-  app.post<{ Body: RegisterBody }>('/api/auth/register', async (request, reply) => {
+  app.post<{ Body: RegisterBody }>('/api/auth/register', { preHandler: refuseExpiredTrial(app) }, async (request, reply) => {
     const { email, password, displayName } = request.body
 
     if (!email || !password || !displayName) {
@@ -93,7 +93,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── POST /api/auth/login ─────────────────────────────────────────────────
 
-  app.post<{ Body: LoginBody }>('/api/auth/login', async (request, reply) => {
+  app.post<{ Body: LoginBody }>('/api/auth/login', { preHandler: refuseExpiredTrial(app) }, async (request, reply) => {
     const { email, password } = request.body
 
     if (!email || !password) {

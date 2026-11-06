@@ -2,7 +2,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
-import { deviceId, trialEndedOutcome } from './trial'
+import { deviceId, trialBearerStale, trialEndedOutcome } from './trial'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -58,7 +58,9 @@ function toHex(text: string): string {
 
 async function errorMessage(res: Response, fallback: string): Promise<string> {
   try {
-    return (await res.json()).error || fallback
+    const code = (await res.json()).error
+    if (code === 'trial_expired') return 'Your trial session ran out. Reload the page and try again.'
+    return code || fallback
   } catch {
     return fallback
   }
@@ -122,8 +124,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restore().finally(() => setLoading(false))
   }, [])
 
-  const trialBearer: Record<string, string> = token && user?.trial ? { Authorization: `Bearer ${token}` } : {}
-
   const adopt = (data: { accessToken: string; refreshToken?: string; user: User }) => {
     setToken(data.accessToken)
     setUser(data.user)
@@ -132,8 +132,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data.accessToken
   }
 
-  const post = (path: string, body: object) =>
-    fetch(`${API_URL}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...trialBearer }, body: JSON.stringify(body) })
+  /**
+   * A sign-up/sign-in POST. From a trial the trial bearer goes along so the trial moves into the account: a token that ran
+   * out (or is about to) is renewed first, and a `401 trial_expired` renews and sends once more.
+   */
+  const post = async (path: string, body: object) => {
+    const send = (bearer: string | null) =>
+      fetch(`${API_URL}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+        body: JSON.stringify(body),
+      })
+    let bearer = token && user?.trial ? token : null
+    // A refused renewal means the trial is over (signed out): carry on as a plain sign-up
+    if (bearer && trialBearerStale(bearer, Date.now())) bearer = await renew()
+    let res = await send(bearer)
+    if (res.status === 401 && bearer && (await res.clone().json().catch(() => null))?.error === 'trial_expired') {
+      const fresh = await renew()
+      if (fresh) res = await send(fresh)
+    }
+    return res
+  }
 
   const login = async (email: string, password: string, fromAction?: string) => {
     const res = await post('/api/auth/login', { email, password, ...(fromAction ? { fromAction } : {}) })

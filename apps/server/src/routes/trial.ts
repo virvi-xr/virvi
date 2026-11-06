@@ -7,6 +7,7 @@ import { config } from '../config.js'
 import { sha256 } from '../auth/hash.js'
 import { issueTrialSession } from '../auth/trial.js'
 import { authenticate } from '../middleware/auth.js'
+import { refuseExpiredTrial } from '../auth/trial-convert.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
 import { trialsAvailable, verifyTurnstile } from '../auth/turnstile.js'
 
@@ -50,7 +51,7 @@ export default async function trialRoutes(app: FastifyInstance) {
   )
 
   // A ticket that carries the visitor's trial through a Google or Discord sign-in (OAuth `state`); 10 minutes.
-  app.post<{ Body: { fromAction?: string } }>('/api/auth/trial/claim', { preHandler: authenticate, config: { trial: true } }, async (request, reply) => {
+  app.post<{ Body: { fromAction?: string } }>('/api/auth/trial/claim', { preHandler: [refuseExpiredTrial(app), authenticate], config: { trial: true } }, async (request, reply) => {
     if (!request.user.trial) return reply.status(403).send({ error: 'not_a_trial' })
     const fromAction = cleanAction(request.body?.fromAction)
     const ticket = app.jwt.sign({ id: request.user.id, kind: 'trial_claim', ...(fromAction ? { fromAction } : {}) } as unknown as Parameters<typeof app.jwt.sign>[0], { expiresIn: '10m' })

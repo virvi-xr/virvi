@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { users, userAuthMethods, studioUsageDays } from '../db/schema.js'
@@ -24,6 +24,32 @@ export async function trialFromBearer(app: FastifyInstance, request: FastifyRequ
   if (claims.kind !== 'trial' || claims.refresh || !claims.id) return null
   const [row] = await db.select({ isTrial: users.isTrial }).from(users).where(eq(users.id, claims.id)).limit(1)
   return row?.isTrial ? claims.id : null
+}
+
+/**
+ * True when `Authorization` carries a trial access token that fails verification (ran out, most often).
+ * Sign-up and sign-in answer 401 `trial_expired` for it instead of ignoring it, so the web app renews and
+ * retries rather than making a separate account and leaving the trial's work behind.
+ */
+export function expiredTrialBearer(app: FastifyInstance, request: FastifyRequest): boolean {
+  const auth = request.headers.authorization
+  if (!auth?.startsWith('Bearer ')) return false
+  const token = auth.slice(7)
+  const claims = (() => { try { return app.jwt.decode<{ kind?: string; refresh?: boolean }>(token) } catch { return null } })()
+  if (claims?.kind !== 'trial' || claims.refresh) return false
+  try {
+    app.jwt.verify(token)
+    return false
+  } catch {
+    return true
+  }
+}
+
+/** A preHandler: 401 `trial_expired` for a trial bearer that fails verification (see `expiredTrialBearer`). */
+export function refuseExpiredTrial(app: FastifyInstance) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    if (expiredTrialBearer(app, request)) return reply.status(401).send({ error: 'trial_expired' })
+  }
 }
 
 /** The trial becomes a normal account (same id, keeps everything); its trial prompts are dropped so the Free day starts full. */

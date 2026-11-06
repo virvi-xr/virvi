@@ -151,6 +151,33 @@ describe('converting and merging a trial', () => {
     expect([r.statusCode, r.json().error]).toEqual([401, 'trial_ended'])
   })
 
+  /** A trial access token for `t` that ran out a minute ago (signed with the server's own key). */
+  const expiredTrialHeaders = (t: { u: { id: string } }) => {
+    const iat = Math.floor(Date.now() / 1000) - 3600
+    const tok = createSigner({ key: config.jwtSecret })({ id: t.u.id, role: 'creator', kind: 'trial', iat, exp: iat + 60 })
+    return { authorization: `Bearer ${tok}` }
+  }
+
+  it('sign-up with an expired trial bearer is 401 trial_expired, not a separate account', async () => {
+    const t = await makeTrial({ designs: 1 })
+    const res = await app.inject({ method: 'POST', url: '/api/auth/register', headers: expiredTrialHeaders(t), payload: { email: 'late@test.dev', password: 'hunter2hunter2', displayName: 'Late' } })
+    expect([res.statusCode, res.json().error]).toEqual([401, 'trial_expired'])
+    expect(await db.query.userAuthMethods.findFirst({ where: eq(userAuthMethods.identifier, 'late@test.dev') })).toBeUndefined()
+    expect((await db.select().from(users).where(eq(users.id, t.u.id)))[0].isTrial).toBe(true)
+  })
+
+  it('sign-in and wallet sign-in with an expired trial bearer are 401 trial_expired', async () => {
+    const t = await makeTrial({ designs: 1 })
+    await app.inject({ method: 'POST', url: '/api/auth/register', payload: { email: 'acct@test.dev', password: 'hunter2hunter2', displayName: 'Acct' } })
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: expiredTrialHeaders(t), payload: { email: 'acct@test.dev', password: 'hunter2hunter2' } })
+    expect([login.statusCode, login.json().error]).toEqual([401, 'trial_expired'])
+    const wallet = await walletVerify(Wallet.createRandom(), expiredTrialHeaders(t))
+    expect([wallet.statusCode, wallet.json().error]).toEqual([401, 'trial_expired'])
+    const claim = await app.inject({ method: 'POST', url: '/api/auth/trial/claim', headers: expiredTrialHeaders(t), payload: {} })
+    expect([claim.statusCode, claim.json().error]).toEqual([401, 'trial_expired'])
+    expect(await owned(t.u.id)).toBe(1)
+  })
+
   it('TRIAL_DAY usage never lands on the account when merging', async () => {
     const t = await makeTrial({ prompts: 2 })
     const acct = await createUser()
