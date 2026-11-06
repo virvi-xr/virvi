@@ -8,9 +8,9 @@ export function setTurnstileFetch(f: typeof fetch | null) {
   fetchImpl = f
 }
 
-/** True when new trials can be started: a secret is set, or we are not in cloud mode (check skipped). */
+/** True when new trials can be started: TRIALS_ENABLED, and a secret is set or we are not in cloud mode (check skipped). */
 export function trialsAvailable(): boolean {
-  return !!config.turnstileSecretKey || config.mode !== 'cloud'
+  return config.trialsEnabled && (!!config.turnstileSecretKey || config.mode !== 'cloud')
 }
 
 /** Cloudflare Turnstile siteverify. With no secret (non-cloud modes) the check is skipped and passes. */

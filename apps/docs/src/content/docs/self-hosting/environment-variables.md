@@ -74,6 +74,7 @@ Signed-out visitors can try the Design Studio at `/try/studio` (see [Try Without
 
 | Variable | Description |
 |----------|-------------|
+| `TRIALS_ENABLED` | `true` or `false`: whether visitors can start a trial. Default: on in `cloud` mode, off in `single` and `scalable` mode (the Design Studio only runs in cloud mode). Any other value stops the server from starting. Trial guests are never counted as users, and never take the first-account admin role |
 | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret for the bot check on new trials. Without it, cloud mode refuses new trials and other modes skip the check |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Turnstile site key. A web build variable (a Docker build arg in the root `Dockerfile`), not read by the server at runtime |
 | `TRIAL_PROMPTS` | Free prompts per trial, in total (default: `3`) |

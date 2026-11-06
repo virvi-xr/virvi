@@ -30,6 +30,7 @@ export default defineConfig({
       DATABASE_URL: TEST_DATABASE_URL,
       JWT_SECRET: 'test-secret',
       VIRVI_MODE: 'single',
+      TRIALS_ENABLED: 'true', // trial tests run in single mode, where trials default off
       LOG_LEVEL: 'silent',
       LIFECYCLE_SWEEP_MS: '0',
       DCL_REDEPLOY_SWEEP_MS: '0',

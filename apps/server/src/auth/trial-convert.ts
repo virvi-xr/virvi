@@ -6,6 +6,7 @@ import { config } from '../config.js'
 import { moveStudioData } from '../studio/merge.js'
 import { TRIAL_DAY } from '../studio/quota.js'
 import { issueAccountSession } from './sessions.js'
+import { initialRoleForNewUser } from './roles.js'
 import { recordTrialEvent, cleanAction } from './trial-events.js'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -58,9 +59,11 @@ export const isTrialGone = (e: unknown) => e instanceof Error && e.message === '
 /** The trial becomes a normal account (same id, keeps everything); its trial prompts are dropped so the Free day starts full. */
 export async function convertTrial(trialId: string, set: { email?: string | null; displayName: string }, tx?: Tx): Promise<User> {
   const run = async (t: Tx) => {
+    // The trial's row is not an account yet, so a trial converting into the first account gets the first-user role
+    const role = await initialRoleForNewUser(t)
     const [user] = await t
       .update(users)
-      .set({ isTrial: false, trialLastActiveAt: null, displayName: set.displayName, ...(set.email !== undefined ? { email: set.email } : {}), updatedAt: new Date() })
+      .set({ isTrial: false, trialLastActiveAt: null, role, displayName: set.displayName, ...(set.email !== undefined ? { email: set.email } : {}), updatedAt: new Date() })
       .where(and(eq(users.id, trialId), eq(users.isTrial, true)))
       .returning()
     if (!user) throw new Error('trial_gone')
@@ -128,11 +131,7 @@ export async function finishOAuth(app: FastifyInstance, identity: OAuthIdentity)
 
   const email = identity.email?.toLowerCase() || null
   // Auto-promote the first user to admin in single/scalable mode
-  let role: 'admin' | 'creator' = 'creator'
-  if (config.autoPromoteFirstUser) {
-    const anyUser = await db.query.users.findFirst()
-    if (!anyUser) role = 'admin'
-  }
+  const role = await initialRoleForNewUser()
   const [newUser] = await db.insert(users).values({ displayName: identity.displayName, email, role }).returning()
   await db.insert(userAuthMethods).values({ userId: newUser.id, type: 'oauth', identifier: identity.identifier, metadata: identity.metadata })
   return issueAccountSession(app, newUser)

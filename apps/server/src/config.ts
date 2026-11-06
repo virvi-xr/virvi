@@ -40,6 +40,17 @@ function positiveInt(raw: string | undefined, def: number, zeroOk = false): numb
   return n
 }
 
+/**
+ * TRIALS_ENABLED: signed-out Design Studio trials. Unset, they are on in cloud mode and off in single/scalable mode
+ * (the Design Studio only runs in cloud mode, and a self-hosted install has no bot check for them); `true` or `false`
+ * overrides. Another value refuses to start rather than guess.
+ */
+export function trialsEnabledFrom(raw: string | undefined, m: VirviMode): boolean {
+  if (raw === undefined || raw === '') return m === 'cloud'
+  if (raw === 'true' || raw === 'false') return raw === 'true'
+  throw new Error(`TRIALS_ENABLED must be true or false, not ${raw}`)
+}
+
 export type SceneBuildRunner = 'fly' | 'local' | 'off'
 
 /** SCENE_BUILD_RUNNER; a value other than the three refuses to start rather than silently turning builds off. */
@@ -186,6 +197,7 @@ export const config = {
   jwtAccessExpiry: env('JWT_ACCESS_EXPIRY') || '15m',
   jwtRefreshExpiry: env('JWT_REFRESH_EXPIRY') || '7d',
   // Signed-out Design Studio trials (see auth/trial.ts)
+  trialsEnabled: trialsEnabledFrom(env('TRIALS_ENABLED'), mode),
   turnstileSecretKey: env('TURNSTILE_SECRET_KEY') || '',
   trialPrompts: intEnv('TRIAL_PROMPTS', 3),
   trialCostCeilingUsd: numEnv('TRIAL_COST_CEILING_USD', 3),
