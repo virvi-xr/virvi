@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { Wallet } from 'ethers'
 import { createSigner } from 'fast-jwt'
 import { db } from '../src/db/connection.js'
@@ -198,6 +198,67 @@ describe('converting and merging a trial', () => {
     const wallet = await walletVerify(Wallet.createRandom(), expiredTrialHeaders(t))
     expect([wallet.statusCode, wallet.json().error]).toEqual([401, 'trial_expired'])
     expect(await owned(t.u.id)).toBe(1)
+  })
+
+  /**
+   * Runs `request` while another transaction holds the trial row, having already turned it into an account (the winner
+   * of a concurrent conversion): the request reads the trial before the winner commits and converts after.
+   */
+  async function losingConvert<T>(trialId: string, winner: (tx: any) => Promise<void>, request: () => Promise<T>): Promise<T> {
+    let release!: () => void
+    let updated!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    const ready = new Promise<void>((r) => { updated = r })
+    const done = db.transaction(async (tx) => {
+      await tx.update(users).set({ isTrial: false }).where(eq(users.id, trialId))
+      await winner(tx)
+      updated()
+      await held
+    })
+    await ready
+    const res = request()
+    for (let i = 0; i < 200; i++) {
+      const [{ n }] = await db.execute(sql`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`) as unknown as [{ n: number }]
+      if (n > 0) break
+      await new Promise((r) => setTimeout(r, 25))
+    }
+    release()
+    await done
+    return res
+  }
+
+  it('losing a concurrent conversion on sign-up makes a normal account, not a 500', async () => {
+    const t = await makeTrial()
+    const res = await losingConvert(t.u.id, async () => {}, () =>
+      app.inject({ method: 'POST', url: '/api/auth/register', headers: t.headers, payload: { email: 'late@test.dev', password: 'hunter2hunter2', displayName: 'Late' } }))
+    expect(res.statusCode).toBe(201)
+    expect(res.json().user.id).not.toBe(t.u.id)
+    expect(res.json().user.email).toBe('late@test.dev')
+  })
+
+  it('losing a concurrent conversion on sign-up to the same email is 409, not a 500', async () => {
+    const t = await makeTrial()
+    const res = await losingConvert(t.u.id, async (tx) => {
+      await tx.insert(userAuthMethods).values({ userId: t.u.id, type: 'email', identifier: 'same@test.dev', credentialHash: 'x' })
+    }, () => app.inject({ method: 'POST', url: '/api/auth/register', headers: t.headers, payload: { email: 'same@test.dev', password: 'hunter2hunter2', displayName: 'Same' } }))
+    expect([res.statusCode, res.json().error]).toEqual([409, 'Email already registered'])
+  })
+
+  it('losing a concurrent conversion on wallet sign-in signs into the wallet account, not a 500', async () => {
+    const t = await makeTrial()
+    const w = Wallet.createRandom()
+    const fresh = await losingConvert(t.u.id, async () => {}, () => walletVerify(w, t.headers))
+    expect(fresh.statusCode).toBe(200)
+    expect(fresh.json().user.id).not.toBe(t.u.id)
+
+    // The winner linked this same wallet: the loser lands in the account the trial became
+    const t2 = await makeTrial()
+    const w2 = Wallet.createRandom()
+    const same = await losingConvert(t2.u.id, async (tx) => {
+      await tx.insert(userAuthMethods).values({ userId: t2.u.id, type: 'wallet', identifier: w2.address.toLowerCase(), metadata: { verified: true } })
+    }, () => walletVerify(w2, t2.headers))
+    expect(same.statusCode).toBe(200)
+    expect(same.json().user.id).toBe(t2.u.id)
   })
 
   it('TRIAL_DAY usage never lands on the account when merging', async () => {

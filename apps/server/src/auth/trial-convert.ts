@@ -52,6 +52,9 @@ export function refuseExpiredTrial(app: FastifyInstance) {
   }
 }
 
+/** True for convertTrial's error when the row stopped being a trial (a concurrent sign-up converted or merged it first). */
+export const isTrialGone = (e: unknown) => e instanceof Error && e.message === 'trial_gone'
+
 /** The trial becomes a normal account (same id, keeps everything); its trial prompts are dropped so the Free day starts full. */
 export async function convertTrial(trialId: string, set: { email?: string | null; displayName: string }, tx?: Tx): Promise<User> {
   const run = async (t: Tx) => {

@@ -19,7 +19,7 @@ import { isOfficialRealm, isWorldRealm } from '../auth/official-realms.js'
 import { trialClaims } from '../auth/trial.js'
 import { issueAccountSession } from '../auth/sessions.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
-import { convertTrial, finishOAuth, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
+import { convertTrial, finishOAuth, isTrialGone, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 
@@ -72,15 +72,23 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // A trial visitor's sign-up turns the same row into the account (it keeps everything); otherwise a new user
     const trialId = await trialFromBearer(app, request)
-    let user: typeof users.$inferSelect
+    let user: typeof users.$inferSelect | undefined
     if (trialId) {
+      // A concurrent sign-up may have converted the trial first: then this one is a sign-up without a trial
       user = await db.transaction(async (tx) => {
         const converted = await convertTrial(trialId, { email: email.toLowerCase(), displayName }, tx)
         await tx.insert(userAuthMethods).values({ userId: trialId, type: 'email', identifier: email.toLowerCase(), credentialHash: passwordHash })
         return converted
-      })
-      recordTrialEvent('signed_up', trialId, cleanAction(request.body.fromAction))
-    } else {
+      }).catch((e) => { if (isTrialGone(e)) return undefined; throw e })
+      if (user) recordTrialEvent('signed_up', trialId, cleanAction(request.body.fromAction))
+    }
+    if (!user) {
+      if (trialId) {
+        const taken = await db.query.userAuthMethods.findFirst({
+          where: and(eq(userAuthMethods.type, 'email'), eq(userAuthMethods.identifier, email.toLowerCase())),
+        })
+        if (taken) return reply.status(409).send({ error: 'Email already registered' })
+      }
       const role = await initialRoleForNewUser()
       ;[user] = await db.insert(users).values({ displayName, email: email.toLowerCase(), role }).returning()
       await db.insert(userAuthMethods).values({
