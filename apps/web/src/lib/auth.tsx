@@ -2,7 +2,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
-import { deviceId, trialBearerStale, trialEndedOutcome } from './trial'
+import { deviceId, renewedTrialBearer, trialBearerStale, trialEndedOutcome } from './trial'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -144,11 +144,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(body),
       })
     let bearer = token && user?.trial ? token : null
-    // A refused renewal means the trial is over (signed out): carry on as a plain sign-up
-    if (bearer && trialBearerStale(bearer, Date.now())) bearer = await renew()
+    // A refused renewal means the trial is over (signed out): carry on as a plain sign-up. An unreachable server throws.
+    const renewed = async () => renewedTrialBearer(await renew(), !!readStoredAuth(localStorage))
+    if (bearer && trialBearerStale(bearer, Date.now())) bearer = await renewed()
     let res = await send(bearer)
     if (res.status === 401 && bearer && (await res.clone().json().catch(() => null))?.error === 'trial_expired') {
-      const fresh = await renew()
+      const fresh = await renewed()
       if (fresh) res = await send(fresh)
     }
     return res

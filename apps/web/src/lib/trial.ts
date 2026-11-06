@@ -77,6 +77,17 @@ export function trialBearerStale(token: string, now: number): boolean {
   return !readTrialSession(token, now + 60_000)
 }
 
+/**
+ * The bearer to carry into a sign-up after renewing a stale trial token. A refused renewal (session gone) means the trial
+ * is over: carry on as a plain sign-up. A renewal that could not reach the server keeps the session: stop, because a plain
+ * sign-up then would leave the trial's work behind.
+ */
+export function renewedTrialBearer(fresh: string | null, sessionKept: boolean): string | null {
+  if (fresh) return fresh
+  if (sessionKept) throw new Error("Couldn't reach Virvi. Check your connection and try again.")
+  return null
+}
+
 const TRIAL_START_COPY: Record<string, string> = {
   trial_limit: 'Free tries from this network are used up for today. Create a free account to keep going.',
   bot_check_failed: "We couldn't confirm you're human. Try again.",

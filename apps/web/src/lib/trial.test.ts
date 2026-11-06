@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { trialEndedOutcome, trialBearerStale, trialStartMessage, accountRequired, blockedCopy, signedInNote, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
+import { trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
 
 describe('accountRequired', () => {
   it('reads the action from an account_required refusal', () => {
@@ -117,6 +117,18 @@ describe('trialBearerStale', () => {
   })
   it('is fresh with more than a minute left', () => {
     expect(trialBearerStale(tok({ kind: 'trial', exp: NOW / 1000 + 600 }), NOW)).toBe(false)
+  })
+})
+
+describe('renewedTrialBearer', () => {
+  it('uses the renewed token', () => {
+    expect(renewedTrialBearer('fresh', true)).toBe('fresh')
+  })
+  it('drops the bearer when the renewal was refused (the session is gone)', () => {
+    expect(renewedTrialBearer(null, false)).toBeNull()
+  })
+  it('stops instead of signing up without the trial when the server could not be reached', () => {
+    expect(() => renewedTrialBearer(null, true)).toThrow("Couldn't reach Virvi. Check your connection and try again.")
   })
 })
 
