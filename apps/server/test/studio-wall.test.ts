@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { getAddress } from 'ethers'
 import { db } from '../src/db/connection.js'
-import { studioDesigns, studioRenders } from '../src/db/schema.js'
+import { studioDesigns, studioRenders, userAuthMethods } from '../src/db/schema.js'
+import { resolveVerifiedWalletUser, linkVerifiedWallet } from '../src/auth/wallet-users.js'
 import { config } from '../src/config.js'
 import { setDclDirectory } from '../src/analytics/dcl-directory.js'
 import { _resetWallNamesCache } from '../src/studio/wall.js'
@@ -185,6 +186,48 @@ describe('studio wall of fame', () => {
     const checksummed = getAddress(WALLET)
     expect(creator('B')).toBe(`${checksummed.slice(0, 6)}…${checksummed.slice(-4)}`)
     expect(creator('C')).toBe('A Virvi creator')
+  })
+
+  describe('an owner with several wallets', () => {
+    const OLD = '0x2222222222222222222222222222222222222222'
+    const short = (w: string) => { const c = getAddress(w); return `${c.slice(0, 6)}…${c.slice(-4)}` }
+    async function twoWallets() {
+      const u = await createUser({ wallet: OLD })
+      await db.update(userAuthMethods).set({ createdAt: new Date(Date.UTC(2025, 0, 1)), updatedAt: new Date(Date.UTC(2025, 0, 1)) }).where(eq(userAuthMethods.identifier, OLD))
+      expect(await linkVerifiedWallet(u.id, WALLET)).toBe('linked')
+      return u
+    }
+
+    it("names the wallet the owner last signed in with, never another wallet's DCL name", async () => {
+      const u = await twoWallets()
+      dir.ownedNames.set(OLD, ['someone-else.dcl.eth'])
+      await shown(u)
+      expect((await wall()).json().entries[0].creator).toBe(short(WALLET))
+    })
+
+    it("uses the last-used wallet's DCL name when it has one", async () => {
+      const u = await twoWallets()
+      dir.ownedNames.set(OLD, ['old.dcl.eth'])
+      dir.ownedNames.set(WALLET, ['mine.dcl.eth'])
+      await shown(u)
+      expect((await wall()).json().entries[0].creator).toBe('mine')
+    })
+
+    it('signing in with an older wallet makes it the one the wall names', async () => {
+      const u = await twoWallets()
+      dir.ownedNames.set(OLD, ['old.dcl.eth'])
+      expect((await resolveVerifiedWalletUser(OLD, 'x', 'visitor')).id).toBe(u.id)
+      await shown(u)
+      expect((await wall()).json().entries[0].creator).toBe('old')
+    })
+
+    it('with no verified wallet, falls back to any linked wallet', async () => {
+      const u = await createUser()
+      await db.insert(userAuthMethods).values({ userId: u.id, type: 'wallet', identifier: OLD, metadata: { verified: false } })
+      dir.ownedNames.set(OLD, ['legacy.dcl.eth'])
+      await shown(u)
+      expect((await wall()).json().entries[0].creator).toBe('legacy')
+    })
   })
 
   it('falls back to the short wallet when the directory is down', async () => {

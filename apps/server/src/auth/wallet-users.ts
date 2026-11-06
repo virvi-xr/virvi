@@ -21,6 +21,8 @@ export async function resolveVerifiedWalletUser(wallet: string, displayName: str
   const w = wallet.toLowerCase()
   const existing = await findWalletMethod(w)
   if (existing && isVerified(existing)) {
+    // updated_at marks the wallet the account last signed in with (the wall of fame names that one)
+    await db.update(userAuthMethods).set({ updatedAt: new Date() }).where(eq(userAuthMethods.id, existing.id))
     if (as === 'visitor' || existing.user.role !== 'viewer') return existing.user
     const [promoted] = await db.update(users).set({ role: 'creator', updatedAt: new Date() }).where(eq(users.id, existing.user.id)).returning()
     return promoted

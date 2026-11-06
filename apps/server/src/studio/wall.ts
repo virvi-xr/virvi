@@ -78,13 +78,29 @@ const shortWallet = (wallet: string) => {
   return `${w.slice(0, 6)}…${w.slice(-4)}`
 }
 
-/** What the wall calls a creator: a DCL name, else a short wallet, else a plain label. Never an email or display name. */
-export async function creatorLabel(_user: { id: string }, wallets: string[]): Promise<string> {
-  for (const w of wallets) {
+/**
+ * What the wall calls a creator: a DCL name, else a short wallet, else a plain label. Never an email or display name.
+ * With a primary wallet (the verified one last signed in with) only that wallet is named, so the label never names a
+ * wallet the owner didn't sign in with. Only with no primary are the other linked wallets tried, oldest first.
+ */
+export async function creatorLabel(_user: { id: string }, wallets: { primary: string | null; others: string[] }): Promise<string> {
+  if (wallets.primary) return (await dclName(wallets.primary)) ?? shortWallet(wallets.primary)
+  for (const w of wallets.others) {
     const name = await dclName(w)
     if (name) return name
   }
-  return wallets.length ? shortWallet(wallets[0]) : 'A Virvi creator'
+  return wallets.others.length ? shortWallet(wallets.others[0]) : 'A Virvi creator'
+}
+
+type WalletMethod = { userId: string; wallet: string; metadata: unknown; createdAt: Date; updatedAt: Date }
+
+/** An owner's primary wallet (verified, most recently signed in with; updated_at), and the rest oldest first. */
+export function ownerWallets(methods: WalletMethod[], userId: string): { primary: string | null; others: string[] } {
+  const mine = methods.filter((m) => m.userId === userId && !m.wallet.startsWith('preview:'))
+  const verified = mine.filter((m) => (m.metadata as { verified?: unknown } | null)?.verified === true)
+  const primary = verified.reduce<WalletMethod | null>((best, m) => (!best || m.updatedAt > best.updatedAt ? m : best), null)
+  const others = mine.filter((m) => m !== primary).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map((m) => m.wallet)
+  return { primary: primary?.wallet ?? null, others }
 }
 
 /** The view a design's wall tile spins: its own kind's default, from the paid revision. */
@@ -120,11 +136,14 @@ async function selectWall(page: { limit: number; offset: number }, now: Date, in
   if (!rows.length) return []
 
   const owners = [...new Set(rows.map((r) => r.owner_id))]
-  const methods = await db.select({ userId: userAuthMethods.userId, wallet: userAuthMethods.identifier }).from(userAuthMethods)
+  const methods = await db.select({
+    userId: userAuthMethods.userId, wallet: userAuthMethods.identifier, metadata: userAuthMethods.metadata,
+    createdAt: userAuthMethods.createdAt, updatedAt: userAuthMethods.updatedAt,
+  }).from(userAuthMethods)
     .where(and(eq(userAuthMethods.type, 'wallet'), inArray(userAuthMethods.userId, owners)))
     .orderBy(asc(userAuthMethods.createdAt))
   const creators = new Map<string, string>()
-  for (const o of owners) creators.set(o, await creatorLabel({ id: o }, methods.filter((m) => m.userId === o).map((m) => m.wallet)))
+  for (const o of owners) creators.set(o, await creatorLabel({ id: o }, ownerWallets(methods, o)))
 
   const expires = frameUrlExpiry(now)
   return rows.map((r) => {
