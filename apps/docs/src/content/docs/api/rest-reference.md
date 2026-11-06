@@ -46,6 +46,11 @@ Requests for another account's scenes, deployments, events, giveaways, streams o
 | DELETE | `/assets/:id` | Yes | Delete asset |
 | GET | `/assets/categories` | No | List categories |
 
+`GET /assets` lists public assets, plus your own private ones when you send a token. To narrow it:
+
+- `scope=public` lists public assets only, even when you're signed in.
+- `mine=all`, `mine=studio` or `mine=uploads` lists only your own assets: all of them, only Design Studio pieces, or only the rest. A signed-out request gets an empty list.
+
 ## Deployment
 
 | Method | Path | Auth | Description |
