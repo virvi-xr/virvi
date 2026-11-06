@@ -5,7 +5,7 @@ import { db } from '../db/connection.js'
 import { users } from '../db/schema.js'
 import { config } from '../config.js'
 import { sha256 } from '../auth/hash.js'
-import { issueTrialSession } from '../auth/trial.js'
+import { issueTrialSession, trialIpKey } from '../auth/trial.js'
 import { authenticate } from '../middleware/auth.js'
 import { mergeTrial, trialFromHeldToken } from '../auth/trial-convert.js'
 import { recordTrialEvent } from '../auth/trial-events.js'
@@ -26,7 +26,7 @@ export default async function trialRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'bot_check_failed' })
       }
 
-      const ipHash = sha256(request.ip)
+      const ipHash = sha256(trialIpKey(request.ip))
       const deviceHash = sha256(deviceId)
       const now = new Date()
       const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))

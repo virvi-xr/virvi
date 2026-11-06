@@ -79,6 +79,14 @@ describe('trial sessions', () => {
     expect(again.json().error).toBe('trial_limit')
   })
 
+  it('counts every IPv6 address in a /64 toward the same daily limit', async () => {
+    setTurnstileFetch(okFetch)
+    for (let i = 1; i <= 3; i++) expect((await start(dev(`v6${i}`), `2001:db8:77:1::${i}`)).statusCode).toBe(201)
+    const fourth = await start(dev('v64'), '2001:db8:77:1:ffff::9')
+    expect([fourth.statusCode, fourth.json().error]).toEqual([429, 'trial_limit'])
+    expect((await start(dev('v65'), '2001:db8:77:2::1')).statusCode).toBe(201)
+  })
+
   it('refreshes a trial session; a converted trial\'s refresh is refused', async () => {
     setTurnstileFetch(okFetch)
     const body = (await start(dev('refresh'), '10.5.0.1')).json()
