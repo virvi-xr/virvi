@@ -79,8 +79,15 @@ export function sameLocation(loc: ImportLocation) {
 
 const pgArray = (items: string[]) => sql`ARRAY[${sql.join(items.map((p) => sql`${p}`), sql`, `)}]::text[]`
 
-/** `deployment` is the import's deployment row, needed to tell whether an awaiting signature has expired. */
-export function importView(row: SceneImportRow, logTail: string | null, deployment: DeploymentRow | null = null, now = Date.now()): SceneImportView {
+type SceneThumbnail = Pick<typeof scenes.$inferSelect, 'thumbnailUrl' | 'thumbnailSource'>
+
+/**
+ * `deployment` is the import's deployment row, needed to tell whether an awaiting signature has expired; `scene` the
+ * scene's thumbnail as it is now (LIV-89: the import page shows it, whoever set it since).
+ */
+export function importView(
+  row: SceneImportRow, logTail: string | null, deployment: DeploymentRow | null = null, now = Date.now(), scene: SceneThumbnail | null = null,
+): SceneImportView {
   return {
     id: row.id,
     sceneId: row.sceneId,
@@ -96,6 +103,13 @@ export function importView(row: SceneImportRow, logTail: string | null, deployme
     logTail,
     filesExpired: row.filesDeletedAt !== null,
     virviAlreadyPresent: row.virviAlreadyPresent,
+    thumbnail: {
+      outcome: row.thumbnailOutcome ?? null,
+      note: row.thumbnailNote,
+      url: scene?.thumbnailUrl ?? null,
+      // LIV-88's thumbnails from before the source was recorded are uploads
+      source: scene?.thumbnailUrl ? (scene.thumbnailSource ?? 'upload') : null,
+    },
     createdAt: row.createdAt.toISOString(),
   }
 }
@@ -111,15 +125,16 @@ export async function readLogTail(row: SceneImportRow): Promise<string | null> {
   return tail.subarray(nl >= 0 && nl < tail.length - 1 ? nl + 1 : 0).toString('utf8')
 }
 
-/** The view with its log tail and, while it waits for a signature, its deployment. */
+/** The view with its log tail, its scene's thumbnail and, while it waits for a signature, its deployment. */
 export async function loadImportView(row: SceneImportRow): Promise<SceneImportView> {
-  const [logTail, deployment] = await Promise.all([
+  const [logTail, deployment, scene] = await Promise.all([
     readLogTail(row),
     row.status === 'awaiting_signature' && row.deploymentId
       ? db.query.sceneDeployments.findFirst({ where: eq(sceneDeployments.id, row.deploymentId), columns: { status: true, assetBundle: true, createdAt: true } })
       : Promise.resolve(undefined),
+    db.query.scenes.findFirst({ where: eq(scenes.id, row.sceneId), columns: { thumbnailUrl: true, thumbnailSource: true } }),
   ])
-  return importView(row, logTail, deployment ?? null)
+  return importView(row, logTail, deployment ?? null, Date.now(), scene ?? null)
 }
 
 /** The newest import of a World whose Virvi scene the caller may reuse (checked by the caller). */

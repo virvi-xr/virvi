@@ -821,6 +821,10 @@ export const sceneImports = pgTable('scene_imports', {
   filesDeletedAt: timestamp('files_deleted_at', { withTimezone: true }),
   /** The upload already started Virvi itself, so installVirvi added no code (only the dependency range and the icon). */
   virviAlreadyPresent: boolean('virvi_already_present').notNull().default(false),
+  /** What the upload did with its scene.json's navmapThumbnail (LIV-89): 'imported' | 'kept' | 'skipped'; null: none named. */
+  thumbnailOutcome: text('thumbnail_outcome').$type<'imported' | 'kept' | 'skipped'>(),
+  /** Why a skipped thumbnail couldn't be used, as the import page shows it. */
+  thumbnailNote: text('thumbnail_note'),
 }, (t) => ({
   worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
   userCreatedIdx: index('scene_imports_user_created_idx').on(t.userId, t.createdAt),

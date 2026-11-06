@@ -30,7 +30,21 @@ export interface SceneImportView {
   filesExpired: boolean
   /** The scene already started Virvi itself, so Virvi wasn't added again. */
   virviAlreadyPresent: boolean
+  /** The scene's own thumbnail (LIV-89, scene.json display.navmapThumbnail) and the Virvi scene's thumbnail now. */
+  thumbnail: SceneImportThumbnail
   createdAt: string
+}
+
+export interface SceneImportThumbnail {
+  /**
+   * What this upload did with its navmapThumbnail: `imported` it became the scene's thumbnail; `kept` the one the owner
+   * uploaded in Virvi stays; `skipped` it couldn't be used (`note` says why); null when it names none.
+   */
+  outcome: 'imported' | 'kept' | 'skipped' | null
+  note: string | null
+  /** The Virvi scene's thumbnail as it is now, and where it came from: `import` (a scene.json) or `upload` (in Virvi). */
+  url: string | null
+  source: 'upload' | 'import' | null
 }
 
 /** The largest zip an import accepts. */

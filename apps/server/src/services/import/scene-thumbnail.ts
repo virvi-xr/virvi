@@ -3,8 +3,13 @@
  * link, read here and kept as the Virvi scene's thumbnail. Nothing about it ever fails an import: a thumbnail that is
  * missing, unreadable or unsafe is skipped with a note the import page shows.
  */
+import { eq } from 'drizzle-orm'
 import { fetch as undiciFetch } from 'undici'
 import { SCENE_THUMBNAIL_MAX_BYTES } from '@virvixr/shared'
+import { db } from '../../db/connection.js'
+import { scenes } from '../../db/schema.js'
+import { StoreMediaError } from '../../media/store.js'
+import { SceneGone, ThumbnailError, importMayReplace, setImportedSceneThumbnail, type ThumbnailErrorCode } from '../../scenes/thumbnail.js'
 import { assertPublicHttpUrl } from '../../net/public-url.js'
 import { guardedAgent, type Lookup } from '../../net/public-agent.js'
 import { safeSegments, type SceneFolder } from './scene-zip.js'
@@ -144,5 +149,55 @@ export async function readSceneThumbnail(folder: SceneFolder, opts: DownloadOpti
   } catch (err) {
     if (err instanceof ThumbnailUnusable) return { kind: 'unusable', reason: err.reason }
     throw err
+  }
+}
+
+let downloadDefaults: DownloadOptions = {}
+
+/** Tests: what downloads go through (a mocked fetch, a fake DNS); null goes back to the real ones. */
+export function setThumbnailDownloadOptions(o: DownloadOptions | null): void {
+  downloadDefaults = o ?? {}
+}
+
+/** What an import did with its scene's thumbnail, kept on the import row. */
+export interface ImportThumbnailResult {
+  /** imported: it is the Virvi scene's thumbnail now; kept: the owner's uploaded one stays; skipped: see note; null: none named. */
+  outcome: 'imported' | 'kept' | 'skipped' | null
+  note: string | null
+}
+
+const UNUSABLE: Record<ThumbnailErrorCode, string> = {
+  too_large: `it is over ${MB(SCENE_THUMBNAIL_MAX_BYTES)}`,
+  too_many_pixels: 'it is over 16 megapixels',
+  unsupported_type: "it isn't a PNG, JPEG or WebP image",
+  too_small: 'it is smaller than 64 × 64 px',
+  wrong_shape: "it isn't 16:9", // not checked for imports
+}
+
+const skipped = (reason: string): ImportThumbnailResult => ({ outcome: 'skipped', note: `The scene's thumbnail couldn't be used: ${reason}.` })
+
+/**
+ * Makes the imported scene's display.navmapThumbnail the Virvi scene's thumbnail (LIV-89), unless the owner uploaded
+ * their own in Virvi (then nothing is read or downloaded). Never throws: whatever goes wrong is skipped with a note.
+ */
+export async function importSceneThumbnail(sceneId: string, folder: SceneFolder): Promise<ImportThumbnailResult> {
+  try {
+    const raw = (folder.sceneJson.display as { navmapThumbnail?: unknown } | undefined)?.navmapThumbnail
+    if (raw === undefined || raw === null || raw === '') return { outcome: null, note: null }
+    const current = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { thumbnailKey: true, thumbnailSource: true } })
+    if (!current) return { outcome: null, note: null }
+    if (!importMayReplace(current)) return { outcome: 'kept', note: null }
+    const read = await readSceneThumbnail(folder, downloadDefaults)
+    if (read.kind === 'none') return { outcome: null, note: null }
+    if (read.kind === 'unusable') return skipped(read.reason)
+    return (await setImportedSceneThumbnail(sceneId, read.data)) ? { outcome: 'imported', note: null } : { outcome: 'kept', note: null }
+  } catch (err) {
+    if (err instanceof ThumbnailError) return skipped(UNUSABLE[err.code])
+    if (err instanceof StoreMediaError && (err.body as { error?: unknown }).error === 'storage_limit_reached') {
+      return skipped('it would go over your storage limit')
+    }
+    if (err instanceof SceneGone) return { outcome: null, note: null }
+    console.error(`[scene-import] the thumbnail of scene ${sceneId} couldn't be stored:`, err instanceof Error ? err.message : err)
+    return skipped("it couldn't be stored just now")
   }
 }

@@ -99,6 +99,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS files_deleted_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS original_key TEXT\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS virvi_already_present BOOLEAN NOT NULL DEFAULT FALSE\`;
+        await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS thumbnail_outcome TEXT, ADD COLUMN IF NOT EXISTS thumbnail_note TEXT\`;
         await sql\`ALTER TABLE scene_imports ALTER COLUMN world_name DROP NOT NULL\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS location_kind dcl_destination_kind NOT NULL DEFAULT 'world', ADD COLUMN IF NOT EXISTS base TEXT, ADD COLUMN IF NOT EXISTS parcels TEXT[] NOT NULL DEFAULT '{}'::text[]\`;
         await sql\`CREATE INDEX IF NOT EXISTS scene_imports_world_status_idx ON scene_imports (world_name, status)\`;

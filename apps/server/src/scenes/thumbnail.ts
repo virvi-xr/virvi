@@ -166,16 +166,23 @@ async function deleteQuietly(key: string) {
   }
 }
 
+type Current = Pick<SceneRow, 'thumbnailKey' | 'thumbnailSource'>
+
+/** The row was taken by a thumbnail the caller may not replace while this one was stored. */
+class Kept extends Error {}
+
 /**
- * Sets the scene's thumbnail from an upload: checked (processSceneThumbnail), charged to the scene owner's storage
- * quota (less the one it replaces), stored, and the old file deleted. Throws ThumbnailError, StoreMediaError or
- * SceneGone (then nothing is left stored).
+ * Stores `t` as the scene's thumbnail from `source` when `mayReplace` allows it over the current one (checked first,
+ * then again under the row lock): charged to the owner's storage quota (less the one it replaces), stored, the old file
+ * deleted. Null when the current thumbnail stays (nothing is left stored). Throws StoreMediaError or SceneGone.
  */
-export async function setSceneThumbnail(sceneId: string, upload: Buffer): Promise<SceneRow> {
-  const t = await processSceneThumbnail(upload)
+async function storeThumbnail(sceneId: string, t: ProcessedThumbnail, source: 'upload' | 'import', mayReplace: (c: Current) => boolean): Promise<SceneRow | null> {
   const key = thumbnailStorageKey(sceneId, t)
-  const current = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { ownerId: true, thumbnailBytes: true, thumbnailKey: true } })
+  const current = await db.query.scenes.findFirst({
+    where: eq(scenes.id, sceneId), columns: { ownerId: true, thumbnailBytes: true, thumbnailKey: true, thumbnailSource: true },
+  })
   if (!current) throw new SceneGone()
+  if (!mayReplace(current)) return null
   await assertStorageQuota(current.ownerId, t.data.length - (current.thumbnailBytes ?? 0))
   const url = await store().upload(key, t.data, t.contentType)
   let old: string | null = null
@@ -183,22 +190,53 @@ export async function setSceneThumbnail(sceneId: string, upload: Buffer): Promis
   try {
     row = await db.transaction(async (tx) => {
       // Serialises replacements of one scene's thumbnail, so each old file is deleted exactly once
-      const [locked] = await tx.select({ thumbnailKey: scenes.thumbnailKey }).from(scenes).where(eq(scenes.id, sceneId)).for('update')
+      const [locked] = await tx.select({ thumbnailKey: scenes.thumbnailKey, thumbnailSource: scenes.thumbnailSource })
+        .from(scenes).where(eq(scenes.id, sceneId)).for('update')
       if (!locked) throw new SceneGone() // deleted while the file uploaded
+      if (!mayReplace(locked)) throw new Kept()
       old = locked.thumbnailKey
       const [updated] = await tx.update(scenes)
-        .set({ thumbnailUrl: url, thumbnailKey: key, thumbnailBytes: t.data.length, thumbnailSource: 'upload', updatedAt: new Date() })
+        .set({ thumbnailUrl: url, thumbnailKey: key, thumbnailBytes: t.data.length, thumbnailSource: source, updatedAt: new Date() })
         .where(eq(scenes.id, sceneId))
         .returning()
       return updated
     })
   } catch (err) {
-    // A scene that's gone keeps nothing; otherwise the file stays only if it was already the scene's thumbnail
+    // A scene that's gone keeps nothing; otherwise the file stays only if it is the scene's thumbnail
+    if (err instanceof Kept) {
+      const now = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { thumbnailKey: true } })
+      if (now?.thumbnailKey !== key) await deleteQuietly(key)
+      return null
+    }
     if (err instanceof SceneGone || current.thumbnailKey !== key) await deleteQuietly(key)
     throw err
   }
   if (old && old !== key) await deleteQuietly(old)
   return row
+}
+
+/**
+ * Sets the scene's thumbnail from an upload in Virvi: checked (processSceneThumbnail), charged to the scene owner's
+ * storage quota (less the one it replaces), stored, and the old file deleted. Throws ThumbnailError, StoreMediaError or
+ * SceneGone (then nothing is left stored).
+ */
+export async function setSceneThumbnail(sceneId: string, upload: Buffer): Promise<SceneRow> {
+  return (await storeThumbnail(sceneId, await processSceneThumbnail(upload), 'upload', () => true))!
+}
+
+/**
+ * Whether an import may set the scene's thumbnail (LIV-89): it has none, or the one it has came from an import. One
+ * uploaded in Virvi, including LIV-88's from before the source was recorded (null), is the owner's and stays.
+ */
+export const importMayReplace = (c: Current) => !c.thumbnailKey || c.thumbnailSource === 'import'
+
+/**
+ * Sets the scene's thumbnail from its imported scene.json (LIV-89), kept in its own shape (IMPORT_THUMBNAIL_RULES), and
+ * only where importMayReplace allows; the one it replaces is deleted. Null when the owner's own stays. Throws
+ * ThumbnailError, StoreMediaError or SceneGone.
+ */
+export async function setImportedSceneThumbnail(sceneId: string, image: Buffer): Promise<SceneRow | null> {
+  return storeThumbnail(sceneId, await processSceneThumbnail(image, IMPORT_THUMBNAIL_RULES), 'import', importMayReplace)
 }
 
 /** Takes the scene's thumbnail off and deletes its file. Nothing to remove is fine. */

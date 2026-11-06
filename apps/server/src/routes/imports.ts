@@ -28,6 +28,7 @@ import { parcelControl } from '../services/dcl/parcel-control.js'
 import { getImportStore } from '../storage/private-store.js'
 import { ImportError, readSceneZip, type SceneFolder } from '../services/import/scene-zip.js'
 import { installVirvi } from '../services/import/install-virvi.js'
+import { importSceneThumbnail } from '../services/import/scene-thumbnail.js'
 import { importSlotGate, importSlotHooks, releaseImportSlot, uploadDeadlineMs, uploadWork, UPLOAD_TOO_SLOW } from '../services/import/import-work.js'
 import { FILES_EXPIRED } from '../services/import/retention.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
@@ -204,6 +205,12 @@ export default async function importRoutes(app: FastifyInstance) {
       request.log.error({ err }, `[scene-import] storing the source of import ${row.id} failed`)
       await failImport(row.id, 'store_failed', "The upload couldn't be stored. Try again in a few minutes.")
       return reply.status(500).send({ error: 'store_failed', message: "The upload couldn't be stored. Try again in a few minutes.", importId: row.id })
+    }
+    // LIV-89: the scene's own thumbnail becomes the Virvi scene's (never fails the import). Genesis City parcel imports
+    // are out of its scope
+    if (location.kind === 'world') {
+      const thumb = await importSceneThumbnail(row.sceneId, folder)
+      if (thumb.outcome) await db.update(sceneImports).set({ thumbnailOutcome: thumb.outcome, thumbnailNote: thumb.note }).where(eq(sceneImports.id, row.id))
     }
     try {
       await startBuild(row.id)
