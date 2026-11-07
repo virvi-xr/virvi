@@ -25,6 +25,16 @@
  * alone is no change to deploy (`changed` ignores it, and pendingModels never lists it) — why: moves and removals don't
  * trigger a redeploy today, and redeploying on snapshot drift is LIV-135's to decide, with its own cadence; a
  * placements-only "change" would make Redeploy now and the sweep sign or upload for it.
+ *
+ * LIV-135 part 3: the owner's own scenes get the same file. An import (assembleImported) carries it for the Virvi models
+ * it ships, and an adopted scene's redeploy that goes ahead rewrites it as above, beside the owner's files: their code
+ * and scene.json are never changed for it. It does nothing until the owner's code calls `placeDeployedModels()`
+ * (@virvixr/dcl 2.11.0+) before `createVirvi(...)`.
+ * Ruling (LIV-135 part 3): `virvi/placements.json` is Virvi's file in every scene, so a copy of it in an upload (a
+ * re-imported "Download live" zip) or in an adopted scene's live entity is replaced by the current one, or dropped when
+ * nothing is placed — why: only Virvi writes that path (the owner's files the LIV-133 rule keeps are the ones their
+ * scene.json names), and a stale snapshot would place copies that were since moved or deleted, or whose models the
+ * deployment no longer holds.
  */
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, PLACEMENTS_FILE, encodePlacements, localModelFile, type Placement, type Vec3 } from '@virvixr/shared'
@@ -240,6 +250,9 @@ export function placementsFile(placements: Placement[], deployed: Iterable<strin
   }
   return bytes
 }
+
+/** Virvi's placements file, whatever the case of its path. */
+export const isPlacementsFile = (file: string) => file.toLowerCase() === PLACEMENTS_FILE
 
 /** The file `metadata.display.navmapThumbnail` names in the scene, lowercased; null for none or a link. */
 export function navmapThumbnailFile(metadata: { display?: Record<string, unknown> } | undefined): string | null {
@@ -506,7 +519,7 @@ export async function assembleRedeploy(input: {
   title?: string
   /** The scene's own thumbnail file (ownThumbnailFile, lowercased): kept, and kept as navmapThumbnail, whatever its name. */
   ownThumbnail?: string | null
-  /** The scene's placed copies (placementsInScene): a Virvi-built scene's `virvi/placements.json` when it deploys. */
+  /** The scene's placed copies (placementsInScene): `virvi/placements.json`, rewritten when the deploy goes ahead. */
   placements?: Placement[]
 }): Promise<Assembled> {
   const { live } = input
@@ -552,10 +565,11 @@ export async function assembleRedeploy(input: {
   const before = metadata
   metadata = withThumbnail(metadata, deployedThumbnail(input.models, new Set([...existing.map((c) => c.file), ...got.keys()].map((f) => f.toLowerCase()))), own)
   const changed = got.size > 0 || upgrade || renamed || droppedThumbnail || metadata !== before
-  // A Virvi-built scene that deploys gets its placements rewritten (kept by hash when the same); see the LIV-134 ruling
-  if (changed && !input.adopted && !!metadata.virvi) {
-    const prior = existing.find((c) => c.file.toLowerCase() === PLACEMENTS_FILE)
-    existing = existing.filter((c) => c.file.toLowerCase() !== PLACEMENTS_FILE)
+  // A scene that deploys gets its placements rewritten (kept by hash when the same); see the LIV-134 ruling. An adopted
+  // scene too (LIV-135 part 3): the file sits beside the owner's, and nothing else of theirs changes for it.
+  if (changed) {
+    const prior = existing.find((c) => isPlacementsFile(c.file))
+    existing = existing.filter((c) => !isPlacementsFile(c.file))
     const bytes = placementsFile(input.placements ?? [], [...existing.map((c) => c.file), ...newFiles.keys()])
     if (bytes && prior && prior.file === PLACEMENTS_FILE && prior.hash === (await dclHash(bytes))) existing.push(prior)
     else if (bytes) newFiles.set(PLACEMENTS_FILE, bytes)
@@ -584,6 +598,7 @@ export function modelsBesideBuilt(models: ModelNeed[], builtPaths: Iterable<stri
  * An imported scene, built elsewhere: the entity is its built files plus the Virvi scene's models placed in-world (a
  * built file at the same path wins), every one new. Models are fetched and refused as in a redeploy. It replaces
  * whatever is live at its parcels, so nothing is kept from the live entity, and its code and scene.json are the owner's.
+ * Virvi adds `virvi/placements.json` for the placed copies of the Virvi models the deployment holds (none: no file).
  */
 export async function assembleImported(input: {
   files: Map<string, Uint8Array>
@@ -593,11 +608,16 @@ export async function assembleImported(input: {
   fetch?: ModelFetcher
   /** The entity's pointers; scene.parcels by default. */
   pointers?: string[]
+  /** The scene's placed copies (placementsInScene): `virvi/placements.json` for the Virvi models it ships (LIV-135). */
+  placements?: Placement[]
 }): Promise<Assembled> {
   const models = modelsBesideBuilt(input.models ?? [], input.files.keys())
   const { got, sources, refused } = await fetchModels(models, input.fetch ?? defaultModelFetcher)
-  const newFiles = new Map(input.files)
+  // Virvi's own placements file is never taken from the upload; see the LIV-135 part 3 ruling
+  const newFiles = new Map([...input.files].filter(([file]) => !isPlacementsFile(file)))
   for (const [file, bytes] of got) newFiles.set(file, bytes)
+  const placements = placementsFile(input.placements ?? [], newFiles.keys())
+  if (placements) newFiles.set(PLACEMENTS_FILE, placements)
   // The owner's scene.json changes only when a thumbnail set in Virvi deploys with it: then only navmapThumbnail
   const thumb = deployedThumbnail(models, new Set([...got.keys()].map((f) => f.toLowerCase())))
   const metadata = thumb ? withThumbnail(input.metadata, thumb) : input.metadata

@@ -3,15 +3,15 @@
  * the runtime can create them before it talks to Virvi (Decentraland's LOD/map builder runs scenes with no network).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { PLACEMENTS_FILE, decodePlacements, type Placement } from '@virvixr/shared'
+import { PLACEMENTS_FILE, decodePlacements, encodePlacements, type Placement } from '@virvixr/shared'
 import { eq } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { sceneElementInstances, sceneElements, scenePresets } from '../src/db/schema.js'
 import {
-  assembleFresh, assembleRedeploy, pendingModels, placementsInScene, wizardSceneJson, PLACEMENTS_MAX_BYTES, type ModelNeed,
+  assembleFresh, assembleImported, assembleRedeploy, pendingModels, placementsInScene, wizardSceneJson, PLACEMENTS_MAX_BYTES, type ModelNeed,
 } from '../src/services/dcl/assemble.js'
-import { dclHash } from '../src/services/dcl/entity.js'
+import { dclHash, type SceneMetadata } from '../src/services/dcl/entity.js'
 import { runtimeFiles, DCL_RUNTIME_VERSION } from '../src/services/dcl/runtime.js'
 import type { LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { createUser, createScene, createElement } from './helpers/factories.js'
@@ -40,6 +40,17 @@ function placementsOf(r: Awaited<ReturnType<typeof assembleFresh>>): Placement[]
   if (!ref) return null
   const bytes = r.files.get(ref.hash)
   return bytes ? decodePlacements(dec(bytes)) : []
+}
+
+/** Every content entry of the deployment's entity. */
+function entityContent(r: Awaited<ReturnType<typeof assembleFresh>>): Array<{ file: string; hash: string }> {
+  return (JSON.parse(dec(r.files.get(r.entityId)!)) as { content: Array<{ file: string; hash: string }> }).content
+}
+
+/** The paths the deployment uploads (not kept by hash). */
+function newPaths(r: Awaited<ReturnType<typeof assembleFresh>>): Set<string> {
+  const kept = new Set(r.existing.map((c) => c.file))
+  return new Set(entityContent(r).map((c) => c.file).filter((f) => !kept.has(f)))
 }
 
 /** A live wizard World on the current runtime with a.glb, plus `extra` content. */
@@ -162,12 +173,87 @@ describe('assembleRedeploy and the placements', () => {
     expect(placementsOf(r)).toEqual([at('i1', 'a')])
   })
 
-  it("never touches an adopted scene's files", async () => {
-    const l = await live()
-    delete (l.metadata as { virvi?: unknown }).virvi
-    const r = await assembleRedeploy({ live: l, adopted: true, models: [need('a'), need('b')], timestamp: 1, fetch: fetcher(), placements: [at('i1', 'a')] })
+  // LIV-135 part 3: an adopted scene (the owner's own code) gets the same file beside its own, never its code or scene.json
+  async function adoptedLive(extra: Array<{ file: string; hash: string }> = []): Promise<LiveEntity> {
+    return {
+      id: 'bafyowner', pointers: ['0,0'], metadata: { display: { title: 'Theirs' }, owner: '', main: 'bin/index.js', scene: { parcels: ['0,0'], base: '0,0' } } as LiveEntity['metadata'],
+      content: [
+        { file: 'bin/index.js', hash: await dclHash(enc('owner code')) },
+        { file: 'scene.json', hash: await dclHash(enc('owner scene')) },
+        { file: 'models/virvi/a.glb', hash: await dclHash(enc('a')) },
+        ...extra,
+      ],
+    }
+  }
+
+  it("an adopted scene that deploys gets the file beside its own files; its code and scene.json are untouched", async () => {
+    const l = await adoptedLive()
+    const r = await assembleRedeploy({ live: l, adopted: true, models: [need('a'), need('b')], timestamp: 1, fetch: fetcher(), placements: [at('i1', 'a'), at('i2', 'b')], title: 'Virvi name' })
+    expect(r.changed).toBe(true)
+    expect(placementsOf(r)).toEqual([at('i1', 'a'), at('i2', 'b')])
+    expect(r.metadata).toEqual(l.metadata)
+    for (const c of l.content) expect(r.existing).toContainEqual(c)
+    expect([...newPaths(r)].sort()).toEqual(['models/virvi/b.glb', PLACEMENTS_FILE])
+  })
+
+  it('an adopted scene: a placements-only difference is no change to deploy', async () => {
+    const r = await assembleRedeploy({ live: await adoptedLive(), adopted: true, models: [need('a')], timestamp: 1, fetch: fetcher(), placements: [at('i1', 'a')] })
+    expect(r.changed).toBe(false)
+    expect(r.deployedFiles).not.toContain(PLACEMENTS_FILE)
+  })
+
+  it("an adopted scene that deploys with nothing placed drops Virvi's stale file, and only that", async () => {
+    const stale = { file: PLACEMENTS_FILE, hash: await dclHash(enc('old')) }
+    const l = await adoptedLive([stale])
+    const r = await assembleRedeploy({ live: l, adopted: true, models: [need('a'), need('b')], timestamp: 1, fetch: fetcher(), placements: [] })
     expect(r.changed).toBe(true)
     expect(r.deployedFiles).not.toContain(PLACEMENTS_FILE)
+    for (const c of l.content.filter((c) => c !== stale)) expect(r.existing).toContainEqual(c)
+  })
+})
+
+describe('assembleImported writes the placements (LIV-135 part 3)', () => {
+  const ownerJson = () => ({ display: { title: 'Theirs' }, owner: '', main: 'bin/index.js', scene: { parcels: ['0,0'], base: '0,0' } }) as SceneMetadata
+  const built = (extra: Record<string, string> = {}) => new Map<string, Uint8Array>([
+    ['scene.json', enc(JSON.stringify(ownerJson()))], ['bin/index.js', enc('owner code')], ['models/Tree.glb', enc('tree')],
+    ...Object.entries(extra).map(([k, v]) => [k, enc(v)] as [string, Uint8Array]),
+  ])
+
+  it("adds the file beside the owner's files for the Virvi models it ships, and leaves their files and scene.json as they are", async () => {
+    const files = built()
+    const r = await assembleImported({
+      files, metadata: ownerJson(), timestamp: 1, fetch: fetcher(),
+      models: [need('a'), need('x', 'https://evil.example/x.glb')],
+      placements: [at('i1', 'a'), at('i2', 'x'), at('i3', 'tree', { src: 'models/virvi/tree.glb' })],
+    })
+    expect(r.refused.map((m) => m.file)).toEqual(['models/virvi/x.glb'])
+    expect(placementsOf(r)).toEqual([at('i1', 'a')])
+    expect(r.metadata).toEqual(ownerJson())
+    expect(r.deployedFiles).toEqual(['bin/index.js', 'models/tree.glb', 'models/virvi/a.glb', 'scene.json', PLACEMENTS_FILE])
+    const content = entityContent(r)
+    for (const [file, bytes] of files) expect(content.find((c) => c.file === file)?.hash).toBe(await dclHash(bytes))
+    expect(r.added).toEqual(['models/virvi/a.glb']) // added lists models only
+  })
+
+  it("a copy of a model the owner's build already has at Virvi's path is placed too (the built file is what's deployed)", async () => {
+    const r = await assembleImported({ files: built({ 'models/virvi/A.glb': 'built a' }), metadata: ownerJson(), timestamp: 1, fetch: fetcher(), models: [need('a')], placements: [at('i1', 'a')] })
+    expect(placementsOf(r)).toEqual([at('i1', 'a', { src: 'models/virvi/A.glb' })])
+  })
+
+  it('writes nothing when no Virvi GLB is placed in the deployment', async () => {
+    for (const placements of [[], [at('i1', 'a')]]) {
+      const r = await assembleImported({ files: built(), metadata: ownerJson(), timestamp: 1, fetch: fetcher(), models: placements.length ? [] : [need('a')], placements })
+      expect(r.deployedFiles).not.toContain(PLACEMENTS_FILE)
+    }
+  })
+
+  it('a snapshot carried in the upload (a re-imported "Download live" zip) is replaced by the current one, or dropped when nothing is placed', async () => {
+    const stale = encodePlacements([at('old', 'a')])
+    const now = await assembleImported({ files: built({ [PLACEMENTS_FILE]: stale }), metadata: ownerJson(), timestamp: 1, fetch: fetcher(), models: [need('a')], placements: [at('i1', 'a')] })
+    expect(placementsOf(now)).toEqual([at('i1', 'a')])
+    expect(now.deployedFiles.filter((f) => f === PLACEMENTS_FILE)).toHaveLength(1)
+    const none = await assembleImported({ files: built({ 'Virvi/Placements.json': stale }), metadata: ownerJson(), timestamp: 1, fetch: fetcher(), models: [need('a')], placements: [] })
+    expect(none.deployedFiles).not.toContain(PLACEMENTS_FILE)
   })
 })
 

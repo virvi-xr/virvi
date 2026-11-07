@@ -27,7 +27,7 @@ import { getImportStore } from '../../storage/private-store.js'
 import { ImportError, worldNameOf } from '../import/scene-zip.js'
 import {
   assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsBesideBuilt, modelsInScene, navmapThumbnailFile,
-  ownThumbnailFile, pendingModels, placementsInScene, wizardSceneJson, PLACEMENTS_MAX_BYTES,
+  isPlacementsFile, ownThumbnailFile, pendingModels, placementsFile, placementsInScene, wizardSceneJson, PLACEMENTS_MAX_BYTES,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { keepDeployedFiles } from './deployed-files.js'
@@ -293,10 +293,14 @@ const MIB = 1024 * 1024
  */
 export async function assertImportFits(dest: Destination): Promise<void> {
   const prefix = await pendingImportPrefix(dest)
-  const files = await getImportStore().list(prefix)
-  const models = modelsBesideBuilt(await modelsInScene(dest.sceneId), files.map((f) => f.key.slice(prefix.length)))
+  // An upload's own copy of Virvi's placements file is replaced (assembleImported), so it isn't counted
+  const files = (await getImportStore().list(prefix)).filter((f) => !isPlacementsFile(f.key.slice(prefix.length)))
+  const paths = files.map((f) => f.key.slice(prefix.length))
+  const models = modelsBesideBuilt(await modelsInScene(dest.sceneId), paths)
+  // Virvi's placements file (LIV-135), as the deploy will build it from the files above
+  const placements = placementsFile(await placementsInScene(dest.sceneId), [...paths, ...models.map((m) => m.file)])
   const budget = dclBudget(dest.parcels.length)
-  const count = files.length + models.length
+  const count = files.length + models.length + (placements ? 1 : 0)
   if (count > budget.files) {
     throw new ImportError(413, 'scene_too_big', `Your scene has ${plural(count, 'file')}, over the ${budget.files.toLocaleString('en-US')} your ${plural(dest.parcels.length, 'parcel')} allow. Remove some files to deploy it.`)
   }
@@ -305,7 +309,7 @@ export async function assertImportFits(dest: Destination): Promise<void> {
   if (big) {
     throw new ImportError(413, 'file_too_big', `${big.key.slice(prefix.length)} is ${(big.size / MIB).toFixed(1)} MB, over Decentraland's ${DCL_MAX_FILE_BYTES / MIB} MB limit for one file.`)
   }
-  const bytes = files.reduce((n, f) => n + f.size, 0) + models.reduce((n, m) => n + (m.bytes ?? 0), 0)
+  const bytes = files.reduce((n, f) => n + f.size, 0) + models.reduce((n, m) => n + (m.bytes ?? 0), 0) + (placements?.byteLength ?? 0)
   if (dest.kind === 'parcels') {
     const max = PARCEL_MAX_BYTES_PER_PARCEL * dest.parcels.length
     if (bytes > max) {
@@ -409,10 +413,11 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     const { virvi: _virvi, ...metadata } = built
     // LIV-133: the file its scene.json names as navmapThumbnail is the scene's own once this import is live
     await db.update(sceneImports).set({ navmapThumbnail: navmapThumbnailFile(built) }).where(eq(sceneImports.id, dest.pendingImportId))
-    // Models placed in-world deploy with it, or a re-upload would take them out of the World
+    // Models placed in-world deploy with it, or a re-upload would take them out of the World; and their placements (LIV-135)
     const models = await modelsInScene(dest.sceneId)
+    const placements = await placementsInScene(dest.sceneId)
     const pointers = dest.kind === 'parcels' ? dest.parcels : undefined
-    return { assembled: await assembleImported({ files, metadata, timestamp, models, fetch, pointers }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
+    return { assembled: await assembleImported({ files, metadata, timestamp, models, fetch, pointers, placements }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
   }
   const live = await liveBaseFor(dest)
   const models = await modelsInScene(dest.sceneId)
@@ -465,11 +470,13 @@ async function retimestamp(a: Assembled, timestamp: number): Promise<{ a: Assemb
 
 async function describeNewFiles(a: Assembled, storedPrefix?: string): Promise<NewFileSource[]> {
   const models = new Map(a.newFileSources.map((s) => [s.file, s]))
-  // An import: the built files from the store, the scene's models by URL
+  // An import: the built files from the store, the scene's models by URL, Virvi's placements inline (never the upload's)
   if (storedPrefix) {
     return [...contentOf(a)].map(([file, hash]) => {
       const model = models.get(file)
-      return model ? { file, hash, url: model.url } : { file, hash, storageKey: storedPrefix + file }
+      if (model) return { file, hash, url: model.url }
+      if (file === PLACEMENTS_FILE) return inlineSource(file, hash, a.files.get(hash)!)
+      return { file, hash, storageKey: storedPrefix + file }
     })
   }
   const existing = new Set(a.existing.map((e) => e.file))
@@ -481,15 +488,21 @@ async function describeNewFiles(a: Assembled, storedPrefix?: string): Promise<Ne
     if (model) { out.push({ file, hash, url: model.url }); continue }
     const rt = runtime.get(file)
     if (rt && (await dclHash(rt)) === hash) { out.push({ file, hash, runtimeVersion: DCL_RUNTIME_VERSION }); continue }
-    const bytes = a.files.get(hash)!
-    // The placements file (LIV-134) is generated from the scene, which may change before the owner signs: kept inline
-    if (bytes.byteLength > (file === PLACEMENTS_FILE ? PLACEMENTS_MAX_BYTES : INLINE_MAX_BYTES)) {
-      console.error('[world-deployer] generated file too big to keep for signing:', file, bytes.byteLength)
-      throw new DeployerError(500, 'deploy_failed', GENERIC_FAILURE)
-    }
-    out.push({ file, hash, base64: Buffer.from(bytes).toString('base64') })
+    out.push(inlineSource(file, hash, a.files.get(hash)!))
   }
   return out
+}
+
+/**
+ * A generated file kept inline for signing. The placements file (LIV-134) is generated from the scene, which may change
+ * before the owner signs, so it is kept inline up to its own cap.
+ */
+function inlineSource(file: string, hash: string, bytes: Uint8Array): NewFileSource {
+  if (bytes.byteLength > (file === PLACEMENTS_FILE ? PLACEMENTS_MAX_BYTES : INLINE_MAX_BYTES)) {
+    console.error('[world-deployer] generated file too big to keep for signing:', file, bytes.byteLength)
+    throw new DeployerError(500, 'deploy_failed', GENERIC_FAILURE)
+  }
+  return { file, hash, base64: Buffer.from(bytes).toString('base64') }
 }
 
 async function rebuildNewFiles(sources: NewFileSource[], fetch: ModelFetcher): Promise<Map<string, Uint8Array>> {
