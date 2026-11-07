@@ -67,6 +67,17 @@ export function signedInNote(action: string | null): string | null {
 }
 
 /** A trial's tokens were refused as ended: swap to the account session another tab stored, or sign out. */
+export type SignUpButton = { id: 'wallet' | 'google' | 'discord'; label: string }
+
+/** The sheet's other ways in, on both tabs: Google and Discord create the account or sign in to it alike. */
+export function signUpButtons(tab: 'create' | 'signin', providers: { google: boolean; discord: boolean }, hasWallet: boolean): SignUpButton[] {
+  const out: SignUpButton[] = []
+  if (hasWallet) out.push({ id: 'wallet', label: tab === 'create' ? 'Continue with wallet' : 'Sign in with wallet' })
+  if (providers.google) out.push({ id: 'google', label: 'Continue with Google' })
+  if (providers.discord) out.push({ id: 'discord', label: 'Continue with Discord' })
+  return out
+}
+
 export function trialEndedOutcome(stored: { token: string; user?: unknown } | null, currentToken: string): 'swap' | 'logout' {
   const user = stored?.user as { trial?: boolean } | null | undefined
   return stored && stored.token !== currentToken && user && !user.trial ? 'swap' : 'logout'

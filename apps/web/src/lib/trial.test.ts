@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stashTrialHandover, takeTrialHandover, trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
+import { stashTrialHandover, takeTrialHandover, trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, signUpButtons, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
 
 describe('accountRequired', () => {
   it('reads the action from an account_required refusal', () => {
@@ -181,5 +181,21 @@ describe('trial hand-over through Google or Discord', () => {
     const s = mem()
     s.setItem('virvi.trialHandover', '{nope')
     expect(takeTrialHandover(s, 'x', T)).toBeNull()
+  })
+})
+
+describe('signUpButtons', () => {
+  const both = { google: true, discord: true }
+  it('shows Google and Discord on both tabs', () => {
+    expect(signUpButtons('create', both, false).map((b) => b.id)).toEqual(['google', 'discord'])
+    expect(signUpButtons('signin', both, false).map((b) => b.id)).toEqual(['google', 'discord'])
+  })
+  it('puts the wallet first and names it for the tab', () => {
+    expect(signUpButtons('create', both, true)[0]).toEqual({ id: 'wallet', label: 'Continue with wallet' })
+    expect(signUpButtons('signin', both, true)[0]).toEqual({ id: 'wallet', label: 'Sign in with wallet' })
+  })
+  it('leaves out providers that are not configured', () => {
+    expect(signUpButtons('signin', { google: false, discord: true }, false)).toEqual([{ id: 'discord', label: 'Continue with Discord' }])
+    expect(signUpButtons('create', { google: false, discord: false }, false)).toEqual([])
   })
 })

@@ -2,7 +2,13 @@
 import { useEffect, useState } from 'react'
 import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
-import { blockedCopy, dismissSignUp, resolveSignUp, subscribeSignUp, type SignUpRequest } from '@/lib/trial'
+import { blockedCopy, signUpButtons, dismissSignUp, resolveSignUp, subscribeSignUp, type SignUpRequest } from '@/lib/trial'
+
+const BUTTON_STYLE = {
+  wallet: 'bg-orange-500 text-white hover:bg-orange-600',
+  google: 'bg-white text-gray-900 hover:bg-gray-100',
+  discord: 'bg-[#5865F2] text-white hover:bg-[#4752C4]',
+} as const
 
 const input = 'w-full rounded-lg bg-gray-800 px-4 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500'
 
@@ -46,6 +52,7 @@ export function SignUpSheet() {
 
   if (!req || !isTrial) return null
   const copy = blockedCopy(req.action, req.ctx)
+  const buttons = signUpButtons(tab, providers, hasWallet)
 
   const run = async (go: () => Promise<string>) => {
     setError('')
@@ -107,22 +114,13 @@ export function SignUpSheet() {
           </button>
         </form>
 
-        {(hasWallet || (tab === 'create' && (providers.google || providers.discord))) && (
+        {buttons.length > 0 && (
           <div className="mt-3 space-y-2">
-            {hasWallet && (
-              <button type="button" disabled={busy} onClick={() => run(() => loginWithWallet(req.action))}
-                className="block w-full rounded-lg bg-orange-500 py-2 text-center font-medium text-white hover:bg-orange-600 disabled:opacity-50">
-                {tab === 'create' ? 'Continue with wallet' : 'Sign in with wallet'}
-              </button>
-            )}
-            {tab === 'create' && providers.google && (
-              <button type="button" disabled={busy} onClick={() => oauth('google')}
-                className="block w-full rounded-lg bg-white py-2 text-center font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-50">Continue with Google</button>
-            )}
-            {tab === 'create' && providers.discord && (
-              <button type="button" disabled={busy} onClick={() => oauth('discord')}
-                className="block w-full rounded-lg bg-[#5865F2] py-2 text-center font-medium text-white hover:bg-[#4752C4] disabled:opacity-50">Continue with Discord</button>
-            )}
+            {buttons.map((b) => (
+              <button key={b.id} type="button" disabled={busy}
+                onClick={() => (b.id === 'wallet' ? run(() => loginWithWallet(req.action)) : oauth(b.id))}
+                className={`block w-full rounded-lg py-2 text-center font-medium disabled:opacity-50 ${BUTTON_STYLE[b.id]}`}>{b.label}</button>
+            ))}
           </div>
         )}
       </div>
