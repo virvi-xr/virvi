@@ -128,7 +128,7 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
             <Badge tone="success">{f.report.status === 'waived' ? 'Waived' : 'Refunded'}</Badge>
           )}
           {actions.packaging && <span className="text-gray-400">Packaging…</span>}
-          {actions.download && scene && <a href="/assets" className="text-blue-300 underline">In your asset library</a>}
+          {actions.download && scene && <a href="/assets" className="text-blue-300 underline">In your 3D Asset Library</a>}
           {actions.download && <PrimaryButton type="button" disabled={busy} onClick={download}>Download</PrimaryButton>}
           {actions.retry && <PrimaryButton type="button" disabled={busy} onClick={retry}>Try again</PrimaryButton>}
           {actions.report === 'open' && !reporting && refunded === null && (

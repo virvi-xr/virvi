@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage, isGlbAsset } from '@/lib/api'
+import { ASSET_LIBRARY } from '@/lib/libraries'
 import { useAuth } from '@/lib/auth'
 import { AD_SHAPES, type AdFormats, type ClickEvent } from '@virvixr/shared'
 import { shapeLabel, offImageLabel, adModeHint, isAdsMode, adSpaceRefreshKey } from '@/lib/ads'
@@ -511,6 +512,8 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  // Picking a model lists the GLBs already in Media; new models upload to the 3D Asset Library instead (LIV-132)
+  const modelsOnly = !!accept && accept.split(',').every(t => ['.glb', 'model/gltf-binary'].includes(t.trim().toLowerCase()))
 
   // `accept` is a comma-separated list like an <input accept>: "image/*", "model/gltf-binary", ".glb".
   // GLBs match by content type or by a .glb filename (old uploads may be stored as octet-stream).
@@ -552,12 +555,12 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div className="w-full max-w-2xl max-h-[80vh] rounded-lg border border-gray-700 bg-gray-900 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-          <h3 className="font-semibold">Media Library</h3>
+          <h3 className="font-semibold">{modelsOnly ? 'GLBs in your Media Library' : 'Media Library'}</h3>
           <div className="flex items-center gap-2">
-            <label className={`rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+            {!modelsOnly && <label className={`rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
               {uploading ? 'Uploading...' : 'Upload New'}
               <input ref={fileRef} type="file" accept={accept} onChange={handleUpload} className="hidden" />
-            </label>
+            </label>}
             <button onClick={onClose} className="text-gray-400 hover:text-white text-lg px-2">&times;</button>
           </div>
         </div>
@@ -566,7 +569,7 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
           {loading ? (
             <Skeleton rows={2} className="h-12" />
           ) : assets.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-8">No media yet. Upload one above.</p>
+            <p className="text-gray-500 text-sm text-center py-8">{modelsOnly ? 'No GLBs in your Media Library. Use Upload GLB: new models go in the 3D Asset Library.' : 'No media yet. Upload one above.'}</p>
           ) : (
             <div className="grid grid-cols-3 gap-3">
               {assets.map((asset: any) => (
@@ -873,12 +876,13 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
     setUploading(true)
     setUploadError('')
     try {
+      // New models go in the 3D Asset Library, private to you (LIV-132)
       const base64 = await fileToBase64(file)
-      const { asset } = await api.uploadMedia(file.name, mediaContentType(file), base64)
-      setModel(asset.publicUrl)
+      const { asset } = await api.uploadAsset({ name: file.name.replace(/\.glb$/i, '') || file.name, fileData: base64, contentType: 'model/gltf-binary', filename: file.name })
+      setModel(asset.cdnUrl)
     } catch (err: any) {
       console.error('Upload failed:', err)
-      setUploadError(uploadErrorMessage(err))
+      setUploadError(['unsupported_type', 'too_large', 'HTTP 413'].includes(err?.message) ? 'Only GLB models (≤ 50 MB)' : (err?.message || 'Upload failed'))
     }
     setUploading(false)
     if (fileRef.current) fileRef.current.value = ''
@@ -905,6 +909,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
           </button>
         </div>
         {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
+        <p className="text-xs text-gray-500">Upload GLB adds the model to your 3D Asset Library. {ASSET_LIBRARY.uploadHelp}</p>
         <p className="text-xs text-gray-500">GLBs need <code className="text-gray-400">npx @virvixr/dcl sync</code> + a redeploy before they appear in-world.</p>
       </div>
 

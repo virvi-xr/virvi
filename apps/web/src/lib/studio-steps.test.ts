@@ -144,7 +144,7 @@ describe('scene designs', () => {
 
 describe('scene finalize', () => {
   it('says the pieces go into the asset library', () => {
-    expect(finalizeStrip(null, 'scene').unlocks).toMatch(/asset library/)
+    expect(finalizeStrip(null, 'scene').unlocks).toMatch(/3D Asset Library/)
   })
 })
 

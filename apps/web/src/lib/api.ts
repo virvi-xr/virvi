@@ -208,15 +208,8 @@ export interface AdminArReport {
   createdAt: string
 }
 
-export const MEDIA_UPLOAD_RULES = 'Only PNG, JPG, WebP, GIF (≤ 10 MB), GLB (≤ 50 MB) or MP4/WebM video (≤ 70 MB)'
-
-/** Human-readable message for a failed media upload. */
-export function uploadErrorMessage(err: any): string {
-  const msg = err?.message || ''
-  // 'HTTP 413' is a non-JSON 413 (e.g. a proxy's body-size page) — still a size problem.
-  if (msg === 'unsupported_type' || msg === 'too_large' || msg === 'HTTP 413') return MEDIA_UPLOAD_RULES
-  return msg || 'Upload failed'
-}
+// The Media Library's rules and messages live with the libraries' wording
+export { MEDIA_UPLOAD_RULES, uploadErrorMessage } from './libraries'
 
 /** True if a media asset is a GLB model (old uploads may be stored as octet-stream). */
 export function isGlbAsset(asset: { contentType?: string; filename?: string }): boolean {

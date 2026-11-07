@@ -9,12 +9,14 @@ import { signinPath } from '@/lib/landing-route'
 import { useStudioAvailable } from '@/lib/use-studio'
 import Link from 'next/link'
 import { BrandMark } from '@/components/BrandMark'
+import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
 import {
   BroadcastIcon, CalendarIcon, ChartIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LockIcon, LogoutIcon, MediaIcon,
   ScenesIcon, ShieldIcon, SparkleIcon,
 } from '@/components/icons'
 
-type NavItem = { href: string; label: string; icon: (p: { size?: number }) => React.ReactElement }
+/** `description` shows as the item's tooltip (what the page is for, where the label alone is ambiguous). */
+type NavItem = { href: string; label: string; icon: (p: { size?: number }) => React.ReactElement; description?: string }
 type NavSection = { label: string; items: NavItem[] }
 
 const baseNavSections: NavSection[] = [
@@ -30,8 +32,8 @@ const baseNavSections: NavSection[] = [
   {
     label: 'Tools',
     items: [
-      { href: '/media', label: 'Media', icon: MediaIcon },
-      { href: '/assets', label: 'Assets', icon: LayersIcon },
+      { href: '/media', label: 'Media', icon: MediaIcon, description: `${MEDIA_LIBRARY.name}: ${MEDIA_LIBRARY.purpose.toLowerCase()}` },
+      { href: '/assets', label: 'Assets', icon: LayersIcon, description: `${ASSET_LIBRARY.name}: ${ASSET_LIBRARY.purpose}` },
       { href: '/streaming', label: 'Streaming', icon: BroadcastIcon },
       { href: '/deploy', label: 'Deploy', icon: CubeIcon },
       { href: '/analytics', label: 'Analytics', icon: ChartIcon },
@@ -120,11 +122,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {navSections.map((section, i) => (
             <div key={section.label} className={`flex gap-1 md:block ${i > 0 ? 'md:mt-5 md:border-t md:border-gray-800 md:pt-5' : ''}`}>
               <p className="hidden px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-gray-500 md:block">{section.label}</p>
-              {section.items.map(({ href, label, icon: NavIcon }) => {
+              {section.items.map(({ href, label, icon: NavIcon, description }) => {
                 const active = pathname.startsWith(href) || Object.entries(NAV_PARENT).some(([child, parent]) => parent === href && pathname.startsWith(child))
                 if (trial && href !== '/studio') {
                   return (
-                    <button key={href} type="button" onClick={() => askSignUp(`nav:${href}`, label)}
+                    <button key={href} type="button" title={description} onClick={() => askSignUp(`nav:${href}`, label)}
                       className="relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-gray-500 transition-colors hover:bg-white/[0.03] hover:text-gray-300 md:mb-0.5">
                       <span className="text-gray-600"><NavIcon size={18} /></span>
                       {label}
@@ -134,7 +136,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   )
                 }
                 return (
-                  <Link key={href} href={href} aria-current={active ? 'page' : undefined}
+                  <Link key={href} href={href} title={description} aria-current={active ? 'page' : undefined}
                     className={`relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors md:mb-0.5 ${active ? 'bg-white/[0.05] text-white' : 'text-gray-400 hover:bg-white/[0.03] hover:text-white'}`}>
                     {active && <span className="absolute inset-y-1.5 left-0 hidden w-0.5 rounded-full bg-accent md:block" />}
                     <span className={active ? 'text-accent' : 'text-gray-500'}><NavIcon size={18} /></span>

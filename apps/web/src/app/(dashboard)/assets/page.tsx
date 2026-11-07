@@ -1,5 +1,6 @@
 'use client'
 import { useApi, fileToBase64 } from '@/lib/api'
+import { ASSET_LIBRARY } from '@/lib/libraries'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -168,7 +169,8 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
             </div>
           </div>
           {error && <p className="text-sm text-red-400" role="alert">{error}</p>}
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <p className="mr-auto max-w-md text-xs text-gray-500">{ASSET_LIBRARY.uploadHelp}</p>
             <button type="button" onClick={onClose} className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700">
               Cancel
             </button>
@@ -450,7 +452,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
 
 // ── Add to scene ────────────────────────────────────────────────────────────
 
-/** Links the model into one of your scenes' Media Library (catalog models use no storage). */
+/** Links the model into one of your scenes' library, ready to place (catalog models use no storage). */
 function AddToScene({ assetId }: { assetId: string }) {
   const api = useApi()
   const [scenes, setScenes] = useState<any[] | null>(null)
@@ -472,7 +474,7 @@ function AddToScene({ assetId }: { assetId: string }) {
     try {
       await api.addModelToSceneLibrary(sceneId, assetId)
       const name = scenes?.find((s) => s.id === sceneId)?.name ?? 'the scene'
-      setMessage({ text: `Added to ${name}'s Media Library`, error: false })
+      setMessage({ text: `Added to ${name}, ready to place`, error: false })
     } catch (err: any) {
       setMessage({ text: err.message === 'pack_disabled' ? 'This pack is no longer available' : err.message === 'forbidden' ? "You can't add models to that scene" : 'Could not add the model', error: true })
     } finally {
@@ -484,7 +486,7 @@ function AddToScene({ assetId }: { assetId: string }) {
   if (scenes.length === 0) return <p className="text-xs text-gray-500">Create a scene to add this model to it.</p>
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
-      <p className="text-xs text-gray-500 mb-2">Add to a scene&apos;s Media Library</p>
+      <p className="text-xs text-gray-500 mb-2">Add to a scene, ready to place</p>
       <div className="flex gap-2">
         <select value={sceneId} onChange={(e) => setSceneId(e.target.value)} className="flex-1 rounded-md bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-400 border border-gray-800">
           {scenes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -642,14 +644,17 @@ export default function AssetsPage() {
         crumbs={['Tools', 'Assets']}
         title="3D Asset Library"
         count={libraryTotal === null ? undefined : countLabel(libraryTotal)}
-        subtitle="Browse and manage your 3D assets."
+        subtitle={<>{ASSET_LIBRARY.purpose}. Images and video go in the <Link href="/media" className="text-blue-300 underline">Media Library</Link>.</>}
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col items-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <button type="button" onClick={() => setShowRoomAsset(true)}
               className="rounded-md border border-gray-700 px-3 py-2 text-sm text-gray-200 hover:border-gray-600 hover:bg-white/[0.04]">
               Make an asset from a room scan
             </button>
             <PrimaryButton onClick={() => setShowUpload(!showUpload)}><PlusIcon size={16} /> Upload Asset</PrimaryButton>
+          </div>
+            <p className="max-w-md text-right text-xs text-gray-500">GLB models (≤ 50 MB). New uploads are private to you.</p>
           </div>
         }
       />
