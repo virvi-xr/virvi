@@ -9,13 +9,17 @@ const runtime = vi.hoisted(() => ({ content: [] as Array<{ file: string; hash: s
 vi.mock('~system/Runtime', () => ({
   getSceneInformation: async () => ({ urn: 'u', baseUrl: '', content: runtime.content, metadataJson: '{}' }),
   readFile: async () => { throw new Error('not deployed') },
+  getExplorerInformation: async () => ({ agent: 'test', platform: 'desktop', configurations: {} }),
 }))
+// The package entry (an owner's import) loads the SDK's platform glue, which wants the explorer's engine API
+vi.mock('~system/EngineApi', () => ({ subscribe: async () => ({}), crdtGetState: async () => ({ data: [] }), crdtSendToRenderer: async () => ({ data: [] }), sendBatch: async () => ({ events: [] }) }))
 
 import { engine, Transform, GltfContainer, Entity } from '@dcl/sdk/ecs'
 import { Quaternion } from '@dcl/sdk/math'
 import { SceneManager, EventBus, VirviStorageImpl } from '@virvixr/core'
 import { PLACEMENTS_FILE, encodePlacements, type Placement } from '@virvixr/shared'
 import { DclAdapter } from '../src/DclAdapter.js'
+import * as entry from '../src/index.js'
 import { placeDeployedModels, placeModels, adoptPlaced, releasePlaced, resetPlacedForTests, utf8, PLACEMENTS_READ_TIMEOUT_S } from '../src/placements.js'
 
 const at = (i: string, over: Partial<Placement> = {}): Placement => ({
@@ -196,5 +200,51 @@ describe('handoff to the live scene', () => {
     await liveScene()
     expect(models()).toHaveLength(1)
     expect(adoptPlaced('i1')).toBe(models()[0].e as Entity)
+  })
+})
+
+// LIV-135 part 3: an owner's own scene (adopted or imported) calls these from the package entry, in its own main()
+describe("an owner's own scene", () => {
+  const chairSrc = 'https://cdn.virvi.io/u/Chair.glb'
+  const instance = (sk: string) => ({ sk, enabled: true, position: { x: 1, y: 0, z: 2 }, rotation: { x: 0, y: 90, z: 0 }, scale: { x: 2, y: 2, z: 2 }, withCollisions: false })
+  const preset = (instances: unknown[]) => ({ sk: 'p1', models: [{ sk: 'chair', name: 'Chair', enabled: true, modelSrc: chairSrc, instances }] })
+  /** What createVirvi builds: the entry's DclAdapter under a SceneManager. */
+  async function liveScene() {
+    runtime.content = [{ file: 'models/virvi/Chair.glb', hash: 'h' }]
+    const adapter = new entry.DclAdapter()
+    await adapter.getSceneInfo()
+    return new SceneManager(adapter, VirviStorageImpl.create(), new EventBus())
+  }
+  /** The owner's own model, made by their code. */
+  function ownModel() {
+    const e = engine.addEntity()
+    Transform.create(e, { position: { x: 8, y: 0, z: 8 } })
+    GltfContainer.create(e, { src: 'models/Tree.glb' })
+    return e
+  }
+
+  it('placeDeployedModels() from the entry, awaited before the live scene, hands its copies to the live scene', async () => {
+    const tree = ownModel()
+    expect(await entry.placeDeployedModels(async () => file([at('i1')]))).toBe(1)
+    const placed = models().find((m) => m.src === 'models/virvi/Chair.glb')!.e
+    await flush()
+    const scene = await liveScene()
+    scene.handlePresetUpdate({ action: 'init', scenePreset: preset([instance('i1')]) })
+    const updates = await flush()
+    expect(models().map((m) => m.e).sort()).toEqual([tree, placed].sort())
+    expect(updates.filter(([, , c]) => c === GltfContainer.componentId || c === Transform.componentId)).toEqual([])
+    expect(updates.filter(([type]) => type === 3 /* DELETE_ENTITY */)).toEqual([])
+  })
+
+  it('without placeDeployedModels() nothing changes: the live scene makes its copies, and leaves the owner\'s entities alone', async () => {
+    const tree = ownModel()
+    const scene = await liveScene()
+    scene.handlePresetUpdate({ action: 'init', scenePreset: preset([instance('i1')]) })
+    const got = models()
+    expect(got).toHaveLength(2)
+    expect(got.find((m) => m.e === tree)?.src).toBe('models/Tree.glb')
+    expect(got.find((m) => m.e !== tree)?.src).toBe('models/virvi/Chair.glb')
+    scene.handlePresetChange({ scenePreset: { sk: 'p2', models: [] } })
+    expect(models().map((m) => m.e)).toEqual([tree])
   })
 })
