@@ -14,6 +14,9 @@ import {
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
 import { DEPLOY_LINE, WALLET_PROMPT } from '@/lib/wizard/trial-deploy'
+import { importLimitNote, importMaxBytes } from '@/lib/trial-scene'
+import { openSignUp } from '@/lib/trial'
+import { LockIcon } from '@/components/icons'
 import { Badge, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { ProgressLines } from '@/components/wizard/ProgressLines'
 import { useWorldSigning, type SigningDestination } from '@/components/dcl/useWorldSigning'
@@ -25,7 +28,6 @@ import { SceneThumbnail } from '../scenes/[sceneId]/SceneThumbnail'
 const secondary = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50'
 const errorBox = 'rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300'
 const infoBox = 'rounded-md border border-blue-900/60 bg-blue-950/40 px-3 py-2 text-blue-200'
-const MAX_MB = SCENE_IMPORT_MAX_BYTES / 1024 / 1024
 
 export default function ImportPage() {
   return (
@@ -54,6 +56,8 @@ function ImportContent() {
   const [prepared, setPrepared] = useState<Prepared | null>(null)
   const [dest, setDest] = useState<(SigningDestination & { kind?: 'world' | 'parcels'; ownerWallet: string }) | null>(null)
   const signing = useWorldSigning(dest)
+  const trial = !!user?.trial
+  const maxBytes = importMaxBytes(trial, SCENE_IMPORT_MAX_BYTES)
 
   // Follow the import in the URL until it is live or failed (a reload picks it up again)
   useEffect(() => {
@@ -76,9 +80,11 @@ function ImportContent() {
   }, [id])
 
   const upload = async (zip: Blob) => {
-    if (zip.size > SCENE_IMPORT_MAX_BYTES) {
+    if (zip.size > maxBytes) {
       setSending(null)
-      setUploadError({ message: `The zip is larger than ${MAX_MB} MB. Remove large files the scene doesn't use, then try again.`, importId: null })
+      setUploadError({ message: `The zip is larger than ${maxBytes / 1024 / 1024} MB. Remove large files the scene doesn't use, then try again.`, importId: null })
+      // A trial's cap: the sheet offers an account, which takes larger zips
+      if (trial && zip.size <= SCENE_IMPORT_MAX_BYTES) openSignUp({ action: 'import_larger', ctx: {} }).catch(() => {})
       return
     }
     setSending({ step: 'uploading' })
@@ -226,7 +232,7 @@ function ImportContent() {
           <ProgressLines lines={importLines(phase!, view?.location ?? null, view ?? undefined)} />
           {view && virviNote(view) && <p className={infoBox}>{virviNote(view)}</p>}
           {view && importThumbnailShown(view) && (
-            <ImportThumbnail view={view} onChanged={() => api.getSceneImport(view.id).then((x) => setView(x.import)).catch(() => {})} />
+            <ImportThumbnail view={view} trial={trial} onChanged={() => api.getSceneImport(view.id).then((x) => setView(x.import)).catch(() => {})} />
           )}
 
           {phase === 'uploading' && view && <p className="text-gray-400">Your scene is uploaded. Its build starts in a moment.</p>}
@@ -292,7 +298,7 @@ function ImportContent() {
             </>
           )}
 
-          {view && view.location.kind === 'parcels' && view.destinationId && (phase === 'ready' || phase === 'live' || phase === 'failed') && (
+          {view && !trial && view.location.kind === 'parcels' && view.destinationId && (phase === 'ready' || phase === 'live' || phase === 'failed') && (
             <ParcelGrantCard destinationId={view.destinationId} onChanged={() => setWatchKey((k) => k + 1)} />
           )}
 
@@ -307,7 +313,7 @@ function ImportContent() {
         </div>
       )}
 
-      {showPicker && <Picker onFolder={pickFolder} onZip={pickZip} again={!!view} />}
+      {showPicker && <Picker onFolder={pickFolder} onZip={pickZip} again={!!view} maxMb={maxBytes / 1024 / 1024} note={importLimitNote(trial)} />}
 
       {!id && !sending && <RecentImports />}
     </div>
@@ -315,7 +321,7 @@ function ImportContent() {
 }
 
 /** LIV-89: the thumbnail the import picked up from scene.json (or why not), with Replace opening LIV-88's upload. */
-function ImportThumbnail({ view, onChanged }: { view: SceneImportView; onChanged: () => void }) {
+function ImportThumbnail({ view, trial, onChanged }: { view: SceneImportView; trial: boolean; onChanged: () => void }) {
   const api = useApi()
   const [replacing, setReplacing] = useState(false)
   const shown = importThumbnailShown(view)
@@ -335,7 +341,15 @@ function ImportThumbnail({ view, onChanged }: { view: SceneImportView; onChanged
       <div className="min-w-0 space-y-1.5">
         <p className="text-gray-200">{shown.label}</p>
         {shown.note && <p className="text-gray-400">{shown.note}</p>}
-        <button type="button" onClick={() => setReplacing(true)} className={secondary}>{shown.action}</button>
+        {trial ? (
+          // Setting a thumbnail is account-only (PUT /api/scenes/:id/thumbnail)
+          <button type="button" onClick={() => openSignUp({ action: 'nav:scene/settings', ctx: { label: 'a custom thumbnail' } }).catch(() => {})}
+            className={`${secondary} inline-flex items-center gap-1.5`}>
+            <LockIcon size={13} /> {shown.action}<span className="sr-only">(needs a free account)</span>
+          </button>
+        ) : (
+          <button type="button" onClick={() => setReplacing(true)} className={secondary}>{shown.action}</button>
+        )}
       </div>
     </div>
   )
@@ -381,7 +395,7 @@ function RecentImports() {
 }
 
 /** The scene folder (the folder picker) or its .zip. */
-function Picker({ onFolder, onZip, again }: { onFolder: (f: File[]) => void; onZip: (f: File[]) => void; again: boolean }) {
+function Picker({ onFolder, onZip, again, maxMb, note }: { onFolder: (f: File[]) => void; onZip: (f: File[]) => void; again: boolean; maxMb: number; note: string | null }) {
   const folder = useRef<HTMLInputElement>(null)
   // React has no prop for the folder picker's attribute
   useEffect(() => { folder.current?.setAttribute('webkitdirectory', '') }, [])
@@ -396,9 +410,10 @@ function Picker({ onFolder, onZip, again }: { onFolder: (f: File[]) => void; onZ
       <div>
         <p className="text-base font-medium text-white">{again ? 'Upload again' : 'Choose your scene'}</p>
         <p className="mt-1 text-gray-400">
-          Pick the scene&apos;s folder, the one with scene.json in it, or a .zip of it (up to {MAX_MB} MB). Virvi zips the folder here
+          Pick the scene&apos;s folder, the one with scene.json in it, or a .zip of it (up to {maxMb} MB). Virvi zips the folder here
           and leaves node_modules, bin and .git on your computer.
         </p>
+        {note && <p className="mt-2 text-amber-200/80">{note}</p>}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <label className={again ? `${secondary} cursor-pointer` : 'clip-corner inline-flex cursor-pointer items-center gap-1.5 bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink hover:bg-accent-hover'}>

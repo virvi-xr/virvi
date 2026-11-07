@@ -25,6 +25,9 @@ import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnect
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Badge, PageHeader, Skeleton, type Tone } from '@/components/ui'
+import { LockIcon } from '@/components/icons'
+import { LockedSection, askSceneSignUp } from '@/components/TrialLock'
+import { offTypeLocked, sceneTabLocked } from '@/lib/trial-scene'
 
 
 // ---------------------------------------------------------------------------
@@ -126,6 +129,9 @@ const ELEMENT_TYPE_LABELS: Record<ElementType, string> = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** A trial's session (LIV-91): its account-only parts are shown locked and never fetched. */
+const useTrial = () => !!useAuth().user?.trial
 
 function NumberInput({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
   const [local, setLocal] = useState(String(value))
@@ -323,8 +329,9 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
 }) {
   const props = element.properties || {}
   const playlist: string[] = props.playlist || []
-  // The playlist stores URLs only: names are looked up, so a rename in the Media Library shows here
-  const names = useMediaNames(api, sceneId, playlist)
+  const trial = useTrial()
+  // The playlist stores URLs only: names are looked up, so a rename in the Media Library shows here (not for a trial)
+  const names = useMediaNames(api, sceneId, sceneTabLocked('media-names', trial) ? [] : playlist)
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
@@ -404,7 +411,9 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
           onChange={e => updateProp('offType', parseInt(e.target.value))}
           className="w-48 rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800">
           {OFF_TYPES.map(t => (
-            <option key={t.value} value={t.value}>{t.label}</option>
+            <option key={t.value} value={t.value} disabled={offTypeLocked(t.value, trial)}>
+              {t.label}{offTypeLocked(t.value, trial) ? ' (needs a free account)' : ''}
+            </option>
           ))}
         </select>
       </div>
@@ -417,9 +426,13 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
         <p className="text-xs text-gray-500">{adModeHint(props.offType ?? 0)}</p>
       )}
 
-      {isAdsMode(props.offType ?? 0) && <AdSpaceContent elementId={element.id} refreshKey={adSpaceRefreshKey(props)} api={api} />}
+      {isAdsMode(props.offType ?? 0) && (sceneTabLocked('ads', trial)
+        ? <LockedSection tab="ads" label="Ads" />
+        : <AdSpaceContent elementId={element.id} refreshKey={adSpaceRefreshKey(props)} api={api} />)}
 
-      {(props.offType ?? 0) === 6 && <ScreenShowings api={api} sceneId={sceneId} elementId={element.id} MediaPicker={MediaPicker} screens={screens} />}
+      {(props.offType ?? 0) === 6 && (sceneTabLocked('showings', trial)
+        ? <LockedSection tab="showings" label="Scheduled showings" />
+        : <ScreenShowings api={api} sceneId={sceneId} elementId={element.id} MediaPicker={MediaPicker} screens={screens} />)}
 
       {/* Playlist (a scheduled screen plays its showings instead) */}
       {(props.offType ?? 0) !== 6 && <div className="space-y-2">
@@ -613,11 +626,14 @@ function LiveStreamField({ value, onChange, api, sceneId }: {
 }) {
   const [streams, setStreams] = useState<SceneStream[] | null>(null)
   const [urlInput, setUrlInput] = useState('')
+  // A trial pastes a URL: Virvi streams are account-only, so they are neither listed nor offered
+  const streamsLocked = sceneTabLocked('streams', useTrial())
   useEffect(() => {
+    if (streamsLocked) return
     let live = true
     api.getSceneStreams(sceneId).then(r => { if (live) setStreams(r.streams) }).catch(() => { if (live) setStreams([]) })
     return () => { live = false }
-  }, [api, sceneId])
+  }, [api, sceneId, streamsLocked])
   const chosen = streamForSource(value, streams)
 
   const handlePaste = () => {
@@ -673,7 +689,7 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
   api: ReturnType<typeof import('@/lib/api').useApi>
   sceneId: string
 }) {
-  const names = useMediaNames(api, sceneId, value ? [value] : [])
+  const names = useMediaNames(api, sceneId, value && !sceneTabLocked('media-names', useTrial()) ? [value] : [])
   const row = imageSourceRow(value, names)
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
@@ -861,6 +877,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
   api: ReturnType<typeof import('@/lib/api').useApi>
 }) {
   const props = element.properties || {}
+  const trial = useTrial()
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
@@ -894,7 +911,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
       <ClickActionField value={element.clickEvent} api={api} MediaPicker={MediaPicker}
         onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
 
-      {element.roomSetId && <RoomSetPanel roomSetId={element.roomSetId} onSaved={(url) => onRoomSetSaved(element.id, url)} />}
+      {element.roomSetId && !sceneTabLocked('room-set', trial) && <RoomSetPanel roomSetId={element.roomSetId} onSaved={(url) => onRoomSetSaved(element.id, url)} />}
 
       <div className="space-y-2">
         <TextInput label="Model URL" value={props.modelSrc || ''} onChange={setModel} />
@@ -1377,15 +1394,18 @@ export default function SceneEditorPage() {
   const searchParams = useSearchParams()
   const sceneId = (searchParams.get('id') || params.sceneId) as string
   const { token, user } = useAuth()
+  const trial = !!user?.trial
   const api = useApi()
-  const { room, connected, sendMessage } = useSceneRoom(sceneId, token)
+  // A trial token is no Colyseus session: a trial edits through the API only (no live updates, no moderation)
+  const live = !sceneTabLocked('realtime', trial)
+  const { room, connected, sendMessage } = useSceneRoom(sceneId, live ? token : null)
 
   const [scene, setScene] = useState<Scene | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('video')
   const [copied, setCopied] = useState(false)
-  const { connected: linked, reload: reloadConnected } = useConnected(sceneId)
+  const { connected: linked, reload: reloadConnected } = useConnected(sceneId, !sceneTabLocked('destinations', trial) && !sceneTabLocked('hyperfy', trial) && !sceneTabLocked('ar', trial))
   /** The name before this visit's last rename, while "Use the new name everywhere?" can still compare against it. */
   const [renamedFrom, setRenamedFrom] = useState<string | null>(null)
   const [namePanel, setNamePanel] = useState(false)
@@ -1757,12 +1777,12 @@ export default function SceneEditorPage() {
             </div>
           </>
         }
-        actions={
+        actions={live ? (
           <Badge tone={connected ? 'success' : 'neutral'}>
             <span className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-600'}`} />
             {connected ? 'Connected' : 'Disconnected'}
           </Badge>
-        }
+        ) : undefined}
       />
 
       {namePanel && linked && hasConnected(linked) && (
@@ -1779,14 +1799,26 @@ export default function SceneEditorPage() {
         onCreated={(id) => { setEditingPresetId(id); reloadScene() }}
         onRenamed={(id, name) => setScene(prev => prev && applyPresetsChange(prev, { action: 'upsert', preset: { id, name } }))}
         onDeleted={(id) => { setEditingPresetId(null); setScene(prev => prev && applyPresetsChange(prev, { action: 'delete', presetId: id })) }}
-        onMadeLive={(id) => setScene(prev => prev && { ...prev, activePresetId: id })} />
+        onMadeLive={(id) => setScene(prev => prev && { ...prev, activePresetId: id })}
+        schedules={!sceneTabLocked('schedules', trial)} />
 
-      <PresetSchedules api={api} sceneId={sceneId} presets={scene.presets.map(p => ({ id: p.id, name: p.name }))} />
+      {sceneTabLocked('schedules', trial)
+        ? <LockedSection tab="schedules" label="Preset schedules" detail="Make a preset go live on its own at set times. This needs a free account." />
+        : <PresetSchedules api={api} sceneId={sceneId} presets={scene.presets.map(p => ({ id: p.id, name: p.name }))} />}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800 pb-px">
         {TABS.map(tab => {
           const count = tab.key === 'moderation' || tab.key === 'roles' || tab.key === 'ar' || tab.key === 'settings' ? 0 : elements.filter(el => el.type === tab.key).length
+          if (sceneTabLocked(tab.key, trial)) {
+            return (
+              <button key={tab.key} type="button" onClick={() => askSceneSignUp(tab.key, tab.label)}
+                className="flex items-center gap-1.5 rounded-t-lg px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-800/50 hover:text-gray-400">
+                {tab.label} <LockIcon size={13} />
+                <span className="sr-only">(needs a free account)</span>
+              </button>
+            )
+          }
           return (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
@@ -1878,7 +1910,9 @@ export default function SceneEditorPage() {
       )}
 
       {/* Collaborators */}
-      <CollaboratorsSection sceneId={sceneId} api={api} currentUserId={user?.id || ''} />
+      {sceneTabLocked('collaborators', trial)
+        ? <LockedSection tab="collaborators" label="Collaborators" detail="Invite people to edit this scene with you. This needs a free account." />
+        : <CollaboratorsSection sceneId={sceneId} api={api} currentUserId={user?.id || ''} />}
     </div>
   )
 }

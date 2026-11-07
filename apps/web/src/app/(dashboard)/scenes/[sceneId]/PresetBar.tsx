@@ -15,8 +15,10 @@ const INPUT = 'rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-sm t
  * New, Rename, Duplicate, Delete and Make live. Server refusals (e.g. "This is the default preset for venue X") show
  * under the bar.
  */
-export function PresetBar({ api, sceneId, presets, activePresetId, editingId, onSelect, onCreated, onRenamed, onDeleted, onMadeLive }: {
+export function PresetBar({ api, sceneId, presets, activePresetId, editingId, onSelect, onCreated, onRenamed, onDeleted, onMadeLive, schedules = true }: {
   api: Api
+  /** false: don't read the schedules for the live line (a trial: schedules are account-only). */
+  schedules?: boolean
   sceneId: string
   presets: PresetItem[]
   activePresetId: string | null
@@ -38,12 +40,13 @@ export function PresetBar({ api, sceneId, presets, activePresetId, editingId, on
 
   // Why the live preset is live (LIV-86). Only hosts, co-hosts and editors can read schedules; others see no line.
   useEffect(() => {
+    if (!schedules) return
     let gone = false
     const load = () => api.getPresetSchedules(sceneId).then((r) => { if (!gone) setStatus(r.status) }).catch(() => { if (!gone) setStatus(null) })
     load()
     const timer = setInterval(load, 60_000)
     return () => { gone = true; clearInterval(timer) }
-  }, [api, sceneId, activePresetId])
+  }, [api, sceneId, activePresetId, schedules])
   const statusText = status && liveStatusText(status, (id) => {
     const p = presets.find((x) => x.id === id)
     return p ? presetDisplayName(p.name) : null

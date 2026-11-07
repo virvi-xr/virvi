@@ -77,18 +77,20 @@ export interface Connected {
   ar: ArSpaceView[]
 }
 
-/** The scene's Worlds, Hyperfy worlds and AR spaces. A list the caller may not see (e.g. Hyperfy for an editor) is empty. */
-export function useConnected(sceneId: string) {
+/** The scene's Worlds, Hyperfy worlds and AR spaces. A list the caller may not see (e.g. Hyperfy for an editor) is empty.
+ *  `enabled` false (a trial: all three are account-only) fetches nothing and shows nothing connected. */
+export function useConnected(sceneId: string, enabled = true) {
   const api = useApi()
   const [connected, setConnected] = useState<Connected | null>(null)
   const reload = useCallback(async () => {
+    if (!enabled) { setConnected({ dcl: [], hyperfy: [], ar: [] }); return }
     const [dcl, hyperfy, ar] = await Promise.all([
       api.getSceneDclDestinations(sceneId).then((r) => r.destinations).catch(() => []),
       api.getHyperfyWorlds(sceneId).then((r) => r.worlds).catch(() => []),
       api.getArSpaces(sceneId).catch(() => []),
     ])
     setConnected({ dcl, hyperfy, ar })
-  }, [sceneId, api.getSceneDclDestinations, api.getHyperfyWorlds, api.getArSpaces])
+  }, [sceneId, enabled, api.getSceneDclDestinations, api.getHyperfyWorlds, api.getArSpaces])
   useEffect(() => { reload() }, [reload])
   return { connected, reload }
 }

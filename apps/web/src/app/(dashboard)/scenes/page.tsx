@@ -9,6 +9,7 @@ import { ArrowUpRightIcon, CheckIcon, CopyIcon, GridIcon, ListIcon, PlusIcon, Sc
 import { EmptyState, InlineDescription, PageHeader, SearchField, useStoredView, ViewToggle, Skeleton } from '@/components/ui'
 import { filterScenes, placeholderHues, shortId } from '@/lib/scenes'
 import { countLabel, plural } from '@/lib/format'
+import { sceneListActions, TRIAL_SCENE_NOTE } from '@/lib/trial-scene'
 
 type Scene = { id: string; name: string; description?: string | null; thumbnailUrl?: string | null; relationship?: string }
 const RELATIONSHIP_LABEL: Record<string, string> = { cohost: 'Co-host', editor: 'Editor', viewer: 'Viewer' }
@@ -29,7 +30,9 @@ export default function ScenesPage() {
 }
 
 function ScenesContent() {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
+  const trial = !!user?.trial
+  const actions = sceneListActions(trial)
   const api = useApi()
   const searchParams = useSearchParams()
   const selectedSceneId = searchParams.get('id')
@@ -79,14 +82,16 @@ function ScenesContent() {
         subtitle="Manage your virtual worlds."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => setShowCreate(!showCreate)} className="rounded-md bg-gray-800 px-4 py-2.5 text-sm hover:bg-gray-700">Blank scene</button>
+            {actions.includes('blank') && (
+              <button type="button" onClick={() => setShowCreate(!showCreate)} className="rounded-md bg-gray-800 px-4 py-2.5 text-sm hover:bg-gray-700">Blank scene</button>
+            )}
             <Link href="/import" className={IMPORT_CLASS}><UploadIcon size={16} /> Import scene</Link>
             <Link href="/scenes/new" className={NEW_SCENE_CLASS}><PlusIcon size={16} /> New scene</Link>
           </div>
         }
       />
 
-      {showCreate && (
+      {showCreate && actions.includes('blank') && (
         <form onSubmit={handleCreate} className="mb-6 flex flex-wrap gap-2 rounded-lg border border-gray-800 bg-gray-900 p-3">
           <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
             placeholder="Blank scene name" autoFocus
@@ -123,11 +128,11 @@ function ScenesContent() {
         <p className="py-12 text-center text-gray-500">No scenes match “{query.trim()}”.</p>
       ) : view === 'grid' ? (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 min-[1900px]:grid-cols-3">
-          {shown.map(scene => <SceneCard key={scene.id} scene={scene} onDescribe={saveDescription} />)}
+          {shown.map(scene => <SceneCard key={scene.id} scene={scene} trial={trial} onDescribe={saveDescription} />)}
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
-          {shown.map((scene, i) => <SceneRow key={scene.id} scene={scene} first={i === 0} />)}
+          {shown.map((scene, i) => <SceneRow key={scene.id} scene={scene} trial={trial} first={i === 0} />)}
         </div>
       )}
     </div>
@@ -176,7 +181,12 @@ function RoleBadge({ scene }: { scene: Scene }) {
   return <span className="rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-400">{RELATIONSHIP_LABEL[scene.relationship] ?? scene.relationship}</span>
 }
 
-function SceneCard({ scene, onDescribe }: { scene: Scene; onDescribe: (id: string, description: string) => Promise<void> }) {
+/** A trial's scenes are kept only while the trial lasts. */
+function TrialNote() {
+  return <p className="mt-1 text-xs text-amber-200/80">{TRIAL_SCENE_NOTE}</p>
+}
+
+function SceneCard({ scene, trial, onDescribe }: { scene: Scene; trial: boolean; onDescribe: (id: string, description: string) => Promise<void> }) {
   return (
     <article className="corner-notch relative flex flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900 transition-colors hover:border-gray-700">
       <Link href={sceneHref(scene.id)} tabIndex={-1} aria-hidden="true"><ScenePreview scene={scene} className="h-52 w-full" /></Link>
@@ -185,6 +195,7 @@ function SceneCard({ scene, onDescribe }: { scene: Scene; onDescribe: (id: strin
           <Link href={sceneHref(scene.id)} className="hover:text-blue-300">{scene.name}</Link>
           <RoleBadge scene={scene} />
         </h2>
+        {trial && <TrialNote />}
         <InlineDescription value={scene.description} canEdit={canDescribe(scene)} onSave={d => onDescribe(scene.id, d)}
           label="Scene description" placeholder="What happens in this scene?" />
       </div>
@@ -198,7 +209,7 @@ function SceneCard({ scene, onDescribe }: { scene: Scene; onDescribe: (id: strin
   )
 }
 
-function SceneRow({ scene, first }: { scene: Scene; first: boolean }) {
+function SceneRow({ scene, trial, first }: { scene: Scene; trial: boolean; first: boolean }) {
   return (
     <div className={`flex items-center gap-4 px-4 py-3 ${first ? '' : 'border-t border-gray-800'}`}>
       <Link href={sceneHref(scene.id)} tabIndex={-1} aria-hidden="true" className="shrink-0 overflow-hidden rounded">
@@ -210,6 +221,7 @@ function SceneRow({ scene, first }: { scene: Scene; first: boolean }) {
           <RoleBadge scene={scene} />
         </p>
         <p className="truncate text-sm text-gray-500">{scene.description || 'No description'}</p>
+        {trial && <TrialNote />}
       </div>
       <div className="hidden md:block"><CopyId id={scene.id} /></div>
       <Link href={sceneHref(scene.id)} aria-label={`Open ${scene.name}`} className="shrink-0 rounded p-2 text-gray-400 hover:bg-white/[0.05] hover:text-blue-300">
