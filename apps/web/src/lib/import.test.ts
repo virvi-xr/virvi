@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { SceneImportStatus, SceneImportView } from '@virvixr/shared'
-import { buildLogShown, importThumbnailShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, placeLabel, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
+import { sceneMoveNotice, buildLogShown, importThumbnailShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, placeLabel, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
 
 const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   id: 'imp-1',
@@ -242,5 +242,23 @@ describe('importThumbnailShown (LIV-89)', () => {
 
   it('nothing when scene.json names none', () => {
     expect(t({ outcome: null, note: null, url: 'https://cdn/u.jpg', source: 'upload' })).toBeNull()
+  })
+})
+
+describe('sceneMoveNotice', () => {
+  const move = { id: 'scene-2', name: 'Cafe', sandboxSceneName: 'My guest cafe' }
+  it("names the account's scene the deploy uses and where the guest edits stay", () => {
+    expect(sceneMoveNotice(view({ sandbox: true, usesScene: move }))).toBe(
+      "This World already uses your scene Cafe. Virvi deploys with that scene's layout; your guest edits stay on My guest cafe in your Scenes.",
+    )
+  })
+  it('says parcels for a Genesis City import', () => {
+    expect(sceneMoveNotice(view({ sandbox: true, usesScene: move, location: { kind: 'parcels', base: '1,1', parcels: ['1,1'] } }))).toBe(
+      "These parcels already use your scene Cafe. Virvi deploys with that scene's layout; your guest edits stay on My guest cafe in your Scenes.",
+    )
+  })
+  it('says nothing without a move, or once the import is no sandbox', () => {
+    expect(sceneMoveNotice(view({ sandbox: true }))).toBeNull()
+    expect(sceneMoveNotice(view({ sandbox: false, usesScene: move }))).toBeNull()
   })
 })

@@ -21,6 +21,7 @@ export type DemoApi = Pick<RealApi, (typeof DEMO_METHODS)[number]>
 const PREFIX = 'virvi.demo.'
 export const demoStorageKey = (trialId: string) => `${PREFIX}${trialId}`
 const VERSION = 1
+const EDITABLE_LISTS = ['events', 'eventScenes', 'eventGiveaways', 'giveaways', 'items', 'claims'] as const satisfies ReadonlyArray<keyof DemoEditable>
 const PAGE = 25
 
 /** Forgets every demo kept in this browser (the trial ended, or the person signed out). */
@@ -95,7 +96,8 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
       const raw = opts.storage?.getItem(key)
       if (raw) {
         const v = JSON.parse(raw)
-        if (v?.v === VERSION && v.data && Array.isArray(v.data.events)) return v.data as DemoEditable
+        // Every list the demo keeps, or none of it: a partial store (an older shape, a hand edit) is the sample again
+        if (v?.v === VERSION && v.data && EDITABLE_LISTS.every((k) => Array.isArray(v.data[k]))) return v.data as DemoEditable
       }
     } catch {}
     return structuredClone(editable(base))

@@ -28,6 +28,17 @@ export function placeLabel(loc: ImportLocation): string {
   return loc.parcels.length > 1 ? `Genesis City ${loc.base} (${loc.parcels.length} parcels)` : `Genesis City ${loc.base}`
 }
 
+/**
+ * A sandbox import whose deploy moves it onto the account's existing scene for its place (the view's `usesScene`): what
+ * the page says before the deploy, which then waits for a click. Null when the deploy keeps the import's own scene.
+ */
+export function sceneMoveNotice(v: Pick<SceneImportView, 'sandbox' | 'usesScene' | 'location'>): string | null {
+  const move = v.sandbox ? v.usesScene : undefined
+  if (!move) return null
+  const place = v.location.kind === 'world' ? 'This World already uses' : 'These parcels already use'
+  return `${place} your scene ${move.name}. Virvi deploys with that scene's layout; your guest edits stay on ${move.sandboxSceneName} in your Scenes.`
+}
+
 /** Who signs the deploy, for the page's copy. */
 export const signerPhrase = (loc: ImportLocation): string =>
   loc.kind === 'world' ? `the wallet that owns ${loc.world}` : 'the wallet that owns or operates these parcels'

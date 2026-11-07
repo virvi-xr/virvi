@@ -9,7 +9,7 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { signErrorMessage } from '@/lib/deploy'
 import {
-  buildLogShown, importThumbnailShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, placeLabel, recentImports, signerPhrase, SIGNERS_UNKNOWN_NOTE, watchImport,
+  buildLogShown, importThumbnailShown, sceneMoveNotice, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, placeLabel, recentImports, signerPhrase, SIGNERS_UNKNOWN_NOTE, watchImport,
 } from '@/lib/import'
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
@@ -54,6 +54,8 @@ function ImportContent() {
   const [busy, setBusy] = useState<null | 'connect' | 'deploy' | 'sign'>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [prepared, setPrepared] = useState<Prepared | null>(null)
+  /** The deploy moved the import onto the account's existing scene for its place: said again after the deploy. */
+  const [moved, setMoved] = useState<string | null>(null)
   const [dest, setDest] = useState<(SigningDestination & { kind?: 'world' | 'parcels'; ownerWallet: string }) | null>(null)
   const signing = useWorldSigning(dest)
   const trial = !!user?.trial
@@ -76,6 +78,7 @@ function ImportContent() {
   useEffect(() => {
     if (!id) setView(null)
     setPrepared(null)
+    setMoved(null)
     setActionError(null)
   }, [id])
 
@@ -150,6 +153,14 @@ function ImportContent() {
       setBusy('connect')
       try {
         await loginWithWallet('deploy')
+        // The account may already use a scene for this place, which the deploy would take: say so, and wait for a
+        // click (the page shows the notice and "Continue and deploy" as the account)
+        const fresh = (await api.getSceneImport(view.id)).import
+        if (sceneMoveNotice(fresh)) {
+          setView(fresh)
+          setBusy(null)
+          return
+        }
       } catch (err) {
         setActionError(importFailure(err).message)
         setBusy(null)
@@ -159,6 +170,7 @@ function ImportContent() {
     setBusy('deploy')
     try {
       const r = await api.deploySceneImport(view.id)
+      setMoved(r.usesScene ? sceneMoveNotice({ sandbox: true, usesScene: r.usesScene, location: view.location }) : null)
       if (r.payload) {
         setPrepared({ deploymentId: r.deployment.id, payload: r.payload })
         const destinationId = (r.deployment.destinationId as string | null | undefined) ?? view.destinationId
@@ -194,6 +206,7 @@ function ImportContent() {
 
   const phase = view ? importPhase(view) : sending ? 'uploading' : null
   const trialDeploy = !!view?.sandbox && !!user?.trial
+  const moveNotice = view && !trialDeploy ? sceneMoveNotice(view) : null
   const canSign = !!view && phase === 'sign' && !!prepared && prepared.deploymentId === view.deploymentId && !!dest
   const showPicker = !sending && (!id || phase === 'live' || phase === 'failed' || (!view && !!watchError))
 
@@ -249,8 +262,9 @@ function ImportContent() {
                   {signerPhrase(view.location)}. It goes live a minute or so later.
                 </p>
               )}
+              {moveNotice && <p className={infoBox} role="status">{moveNotice}</p>}
               <PrimaryButton type="button" onClick={deploy} disabled={busy !== null}>
-                {busy === 'connect' ? 'Check your wallet…' : busy === 'deploy' ? 'Preparing the deploy…' : trialDeploy ? 'Connect your wallet and deploy' : 'Deploy'}
+                {busy === 'connect' ? 'Check your wallet…' : busy === 'deploy' ? 'Preparing the deploy…' : trialDeploy ? 'Connect your wallet and deploy' : moveNotice ? 'Continue and deploy' : 'Deploy'}
               </PrimaryButton>
               {busy === 'connect' && <p className={infoBox} role="status">{WALLET_PROMPT}</p>}
             </>
@@ -273,6 +287,7 @@ function ImportContent() {
             <p className={infoBox} role="status">Check your wallet: sign once with {signerPhrase(view.location)}.</p>
           )}
 
+          {moved && phase !== 'ready' && <p className={infoBox}>{moved}</p>}
           {phase === 'deploying' && <p className="text-gray-400">Deploying to Decentraland. It is usually live within a minute.</p>}
 
           {phase === 'live' && view && (

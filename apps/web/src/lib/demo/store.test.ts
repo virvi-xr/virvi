@@ -90,6 +90,20 @@ describe('createDemoApi', () => {
     expect((await c.getEvents()).events).toHaveLength(3)
   })
 
+  it('a stored demo missing any of its lists falls back to the sample data', async () => {
+    const lists = ['events', 'eventScenes', 'eventGiveaways', 'giveaways', 'items', 'claims'] as const
+    for (const missing of lists) {
+      const storage = memoryStorage()
+      const full = Object.fromEntries(lists.map((k) => [k, []]))
+      storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 1, data: { ...full, [missing]: { not: 'a list' } } }))
+      const api = createDemoApi({ trialId: 't1', now: () => NOW, storage })
+      // the sample giveaway and its claims are there, not a crash
+      const { giveaways } = await api.getGiveaways()
+      expect(giveaways.length, missing).toBe(1)
+      expect((await api.getGiveawayClaims(giveaways[0].id)).claims.length, missing).toBe(5)
+    }
+  })
+
   it('a method the demo lacks rejects account_required with demo:<name>', async () => {
     const refused: string[] = []
     const api = overlayDemoApi({ getScene: () => Promise.resolve('real') } as Record<string, (...a: any[]) => any>,

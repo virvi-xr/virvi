@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { HyperfyPairingSummary } from '@virvixr/shared'
-import { approvalPrompt, pairingErrorMessage, pairingRowLabel, pairingCodeFromPath, headsetPairingCodeFromPath, headsetErrorMessage, headsetPairHref } from './pairing'
+import { headsetSignInPrompt, approvalPrompt, pairingErrorMessage, pairingRowLabel, pairingCodeFromPath, headsetPairingCodeFromPath, headsetErrorMessage, headsetPairHref } from './pairing'
 
 const apiErr = (message: string, status: number, body: Record<string, unknown>) => Object.assign(new Error(message), { status, body })
 
@@ -96,5 +96,16 @@ describe('headsetPairHref', () => {
   it('is null for nothing typed', () => {
     expect(headsetPairHref('  ')).toBeNull()
     expect(headsetPairHref('-')).toBeNull()
+  })
+})
+
+describe('headsetSignInPrompt', () => {
+  it('an account approves a headset into its account', () => {
+    expect(headsetSignInPrompt('Quest 3', false)).toBe('"Quest 3" wants to sign in to your account.')
+    expect(headsetSignInPrompt(null, false)).toBe('A headset wants to sign in to your account.')
+  })
+  it('a trial approves it into its trial', () => {
+    expect(headsetSignInPrompt('Quest 3', true)).toBe('"Quest 3" wants to sign in to your trial.')
+    expect(headsetSignInPrompt(null, true)).toBe('A headset wants to sign in to your trial.')
   })
 })

@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
 import { requestHeaders } from './request-headers'
-import { accountRequired, openSignUp, sendRecovering, type BlockedCtx } from './trial'
+import { accountRequired, openSignUp, readTextRecovering, sendRecovering, type BlockedCtx } from './trial'
 import { backupPath } from './backup'
 import type { Plot, RoomSetOptions } from '@virvixr/shared'
 import type { RoomNudge } from './room-set'
@@ -12,7 +12,7 @@ import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
 import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
-import type { SceneImportView } from '@virvixr/shared'
+import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
@@ -637,18 +637,11 @@ function useRealApi() {
     /** The caller's own last 10 imports, any scene, newest first. */
     listMySceneImports: () => apiFetch<{ imports: SceneImportView[] }>('/api/imports'),
     /** The whole build log, as text. */
-    getSceneImportLog: async (id: string): Promise<string> => {
-      const res = await fetch(`${API_URL}/api/imports/${id}/log`, { headers: requestHeaders(token, {}) })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        dropDeadSession(res.status, err)
-        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
-      }
-      return res.text()
-    },
+    getSceneImportLog: (id: string): Promise<string> =>
+      readTextRecovering((b) => fetch(`${API_URL}/api/imports/${id}/log`, { headers: requestHeaders(b, {}) }), token, { swapToStoredAccount, renew }, dropDeadSession),
     /** 200 with the `payload` to sign (then `submitDeploySignature`), or 202 with just the deployment: Virvi deploys. */
     deploySceneImport: (id: string) =>
-      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/imports/${id}/deploy`, { method: 'POST' }),
+      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string; usesScene?: SceneImportMove }>(`/api/imports/${id}/deploy`, { method: 'POST' }),
     /** What a World deployment put live, as a zip: through the authenticated route, never a plain link. */
     downloadDeployFiles: async (deploymentId: string): Promise<{ blob: Blob; filename: string }> => {
       const res = await fetch(`${API_URL}/api/deploy/${deploymentId}/files.zip`, { headers: requestHeaders(token, {}) })

@@ -4,7 +4,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { scenePassAllows, trialAllows } from '@/lib/session'
-import { openSignUp, signedInNote, trialNav } from '@/lib/trial'
+import { openSignUp, signedInNote, takeMovedHeadsetNotice, trialNav } from '@/lib/trial'
 import { signinPath } from '@/lib/landing-route'
 import { useStudioAvailable } from '@/lib/use-studio'
 import Link from 'next/link'
@@ -52,6 +52,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const apiNow = useApi()
   const [sceneTitle, setSceneTitle] = useState('this scene')
   const [signedIn, setSignedIn] = useState<string | null>(null)
+  const [headsetMoved, setHeadsetMoved] = useState<string | null>(null)
   const router = useRouter()
   const pathname = usePathname()
 
@@ -84,6 +85,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (from === null) return
       sessionStorage.removeItem('virvi.signedInFrom')
       setSignedIn(signedInNote(from))
+    } catch {}
+  }, [user])
+
+  // A sign-in that moved the trial's paired headset onto the account: say so once
+  useEffect(() => {
+    if (!user || user.trial) return
+    try {
+      const note = takeMovedHeadsetNotice(localStorage)
+      if (note) setHeadsetMoved(note)
     } catch {}
   }, [user])
 
@@ -193,6 +203,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-emerald-500/40 px-4 py-2 text-sm text-emerald-200" role="status">
             <span>{signedIn}</span>
             <button type="button" onClick={() => setSignedIn(null)} aria-label="Dismiss" className="text-emerald-300 hover:text-white">✕</button>
+          </div>
+        )}
+        {headsetMoved && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-emerald-500/40 px-4 py-2 text-sm text-emerald-200" role="status">
+            <span>{headsetMoved}</span>
+            <button type="button" onClick={() => setHeadsetMoved(null)} aria-label="Dismiss" className="text-emerald-300 hover:text-white">✕</button>
           </div>
         )}
         {locked ? (

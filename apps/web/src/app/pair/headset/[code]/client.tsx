@@ -6,7 +6,7 @@ import { formatPairingCode, type ArDeviceKind } from '@virvixr/shared'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { signinPath } from '@/lib/landing-route'
-import { headsetErrorMessage, headsetPairingCodeFromPath } from '@/lib/pairing'
+import { headsetErrorMessage, headsetPairingCodeFromPath, headsetSignInPrompt } from '@/lib/pairing'
 import { pairChoices } from '@/lib/trial-scene'
 
 type Phase = 'loading' | 'ready' | 'approving' | 'done' | 'error'
@@ -79,7 +79,7 @@ export default function HeadsetPairClient() {
         {(phase === 'ready' || phase === 'approving') && (
           <>
             <p className="mb-4 text-sm text-gray-200">
-              {deviceName ? `"${deviceName}" wants to sign in to your account.` : 'A headset wants to sign in to your account.'} What kind of headset is it?
+              {headsetSignInPrompt(deviceName, trial)} What kind of headset is it?
             </p>
             <div className="space-y-3">
               {choices.map(c => (

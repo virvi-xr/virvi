@@ -2,7 +2,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
-import { deviceId, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome, type TrialEntry } from './trial'
+import { deviceId, noteMovedHeadsets, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome, type TrialEntry } from './trial'
 import { adoptDraftOnSignIn, clearDraft } from './wizard/draft'
 import { clearDemoStores } from './demo/store'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
@@ -135,6 +135,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** `trialCarried`: the request carried this tab's trial into the account, so the trial's wizard draft goes with it. */
   const adopt = (data: { accessToken: string; refreshToken?: string; user: User }, trialCarried = false) => {
     adoptDraftOnSignIn(user, data.user, trialCarried)
+    // A merge moved the trial's paired headset onto the account: the dashboard says so once
+    noteMovedHeadsets(localStorage, data)
     // The trial ended here (it became an account): its demos go
     if (user?.trial && !data.user.trial) dropDemos()
     setToken(data.accessToken)

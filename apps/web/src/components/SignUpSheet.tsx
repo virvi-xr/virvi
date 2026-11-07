@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
-import { blockedCopy, signUpButtons, dismissSignUp, resolveSignUp, signUpAutoDismiss, subscribeSignUp, type SignUpRequest } from '@/lib/trial'
+import { blockedCopy, signUpButtons, dismissSignUp, resolveSignUp, signUpAutoDismiss, subscribeSignUp, SIGN_IN_UNLOCKS, type SignUpRequest } from '@/lib/trial'
 
 const BUTTON_STYLE = {
   wallet: 'bg-orange-500 text-white hover:bg-orange-600',
@@ -102,7 +102,7 @@ export function SignUpSheet() {
           <h2 className="text-lg font-semibold">{titleWithEmphasis(copy.title, copy.emphasis)}</h2>
           <button type="button" onClick={dismissSignUp} aria-label="Close" className="text-gray-400 hover:text-white">✕</button>
         </div>
-        <p className="mt-1 text-sm text-gray-400">{tab === 'signin' ? 'Your trial designs move into this account.' : copy.unlocks}</p>
+        <p className="mt-1 text-sm text-gray-400">{tab === 'signin' ? SIGN_IN_UNLOCKS : copy.unlocks}</p>
 
         <div className="mt-4 flex gap-2 text-sm" role="tablist">
           {([['create', 'Create account'], ['signin', 'Sign in']] as const).map(([id, label]) => (

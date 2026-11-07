@@ -22,7 +22,7 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
   }
   if (action.startsWith('nav:')) {
     const label = ctx.label?.trim()
-    return { title: `Create a free account to use ${label || 'this'}.`, unlocks: 'Your trial designs move into your account.' }
+    return { title: `Create a free account to use ${label || 'this'}.`, unlocks: 'Your trial designs and scenes move into your account.' }
   }
   switch (action) {
     case 'POST /api/studio/designs/:id/finalize': {
@@ -72,7 +72,7 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
     case 'upload_more':
       return { title: 'Create a free account to upload more images.', unlocks: 'Accounts can add more reference images to a design.' }
     default:
-      return { title: DEFAULT_TITLE, unlocks: 'Your trial designs move into your account.' }
+      return { title: DEFAULT_TITLE, unlocks: 'Your trial designs and scenes move into your account.' }
   }
 }
 
@@ -136,6 +136,50 @@ export async function sendRecovering(
   const fresh = ended ? deps.swapToStoredAccount(bearer) : await deps.renew()
   return fresh ? send(fresh) : res
 }
+
+/**
+ * A text read (an import's build log) sent as apiFetch sends: a token that ran out is renewed, a trial that became an
+ * account (`401 trial_ended`) is sent once more as that account. A refusal throws `{ status, body }` after `onError`.
+ */
+export async function readTextRecovering(
+  send: (bearer: string | null) => Promise<Response>,
+  bearer: string | null,
+  deps: { swapToStoredAccount: (staleToken: string) => string | null; renew: () => Promise<string | null> },
+  onError?: (status: number, body: any) => void,
+): Promise<string> {
+  const res = await sendRecovering(send, bearer, deps)
+  if (res.ok) return res.text()
+  const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+  onError?.(res.status, err)
+  throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+}
+
+const HEADSET_MOVED_KEY = 'virvi.notice.headsetMoved'
+type NoticeStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+/** A sign-in answer's `movedHeadsets` (a merge moved the trial's paired headsets onto the account): kept for one notice. */
+export function noteMovedHeadsets(storage: Pick<Storage, 'setItem'>, body: unknown): void {
+  const n = (body as { movedHeadsets?: unknown } | null)?.movedHeadsets
+  if (typeof n === 'number' && n > 0) {
+    try { storage.setItem(HEADSET_MOVED_KEY, String(n)) } catch {}
+  }
+}
+
+/** The moved-headset notice, once: reading it clears it. */
+export function takeMovedHeadsetNotice(storage: NoticeStorage): string | null {
+  let n = 0
+  try {
+    n = Number(storage.getItem(HEADSET_MOVED_KEY) ?? 0)
+    storage.removeItem(HEADSET_MOVED_KEY)
+  } catch {}
+  if (!(n > 0)) return null
+  return n === 1
+    ? 'Your paired headset is now on your account. You can remove it in Settings.'
+    : 'Your paired headsets are now on your account. You can remove them in Settings.'
+}
+
+/** The sign-in tab's line in the sign-up sheet. */
+export const SIGN_IN_UNLOCKS = 'Your trial designs and scenes move into this account.'
 
 /** A trial access token that has run out, or will within a minute: renew it before it carries the trial into a sign-up. */
 export function trialBearerStale(token: string, now: number): boolean {
