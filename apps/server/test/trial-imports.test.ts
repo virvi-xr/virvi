@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { request as httpRequest } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { Wallet } from 'ethers'
 import { and, eq } from 'drizzle-orm'
 import { zipSync, strToU8 } from 'fflate'
@@ -7,6 +9,9 @@ import { db } from '../src/db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports, scenes, userAuthMethods, users } from '../src/db/schema.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setBuildRunner, type BuildRunner } from '../src/services/import/build-runner.js'
+import { importLimits, trialUploadWork, uploadWork, IMPORTS_BUSY } from '../src/services/import/import-work.js'
+import { createAnalyticsScene } from './helpers/analytics.js'
+import { createSetup } from './helpers/setups.js'
 import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
 import { setDclDirectory } from '../src/analytics/dcl-directory.js'
 import { ownThumbnailFile } from '../src/services/dcl/assemble.js'
@@ -271,9 +276,15 @@ describe('trial (guest) scene imports: a sandbox that never touches the real pla
     const t = await makeTrial()
     await db.update(users).set({ trialImports: 1 }).where(eq(users.id, t.u.id))
     const [r1, r2] = await Promise.all([upload(sceneZip(), t.h), upload(sceneZip({ world: 'other.dcl.eth' }), t.h)])
-    expect([r1.statusCode, r2.statusCode].sort()).toEqual([201, 403])
-    expect([r1, r2].find((r) => r.statusCode === 403)!.json()).toEqual({ error: 'account_required', action: 'more_imports' })
+    // the second is refused by the guests' single upload slot (503) or, past it, by the reservation (403 more_imports)
+    const codes = [r1.statusCode, r2.statusCode].sort()
+    expect(codes[0]).toBe(201)
+    expect([403, 503]).toContain(codes[1])
     expect(await db.select().from(sceneImports).where(eq(sceneImports.userId, t.u.id))).toHaveLength(1)
+    // the reservation itself is atomic, whatever the slots do
+    const t2 = await makeTrial()
+    await db.update(users).set({ trialImports: 1 }).where(eq(users.id, t2.u.id))
+    expect((await Promise.all([reserveTrialImport(t2.u.id), reserveTrialImport(t2.u.id), reserveTrialImport(t2.u.id)])).filter(Boolean)).toHaveLength(1)
   })
 
   it('reserveTrialImport only counts for trials, up to TRIAL_IMPORTS', async () => {
@@ -388,5 +399,143 @@ describe('trial (guest) scene imports: a sandbox that never touches the real pla
     // the guest's import is on its own scene, so B's scene's source is still B's import's
     expect((await sceneSourceFor(mine.sceneId, { userId: b.id, fullAccess: true })).origin).toBe('original')
     expect((await importRow(id)).sceneId).not.toBe(mine.sceneId)
+  })
+
+  describe('fix round 1: upload slots and the claim', () => {
+    /** Starts an upload on a real socket that sends `sent` bytes of a declared `length` and then stalls; resolves when the server answers or closes. */
+    async function stalledUpload(headers: Record<string, string>, length = 100_000, sent = 100) {
+      const { port } = app.server.address() as AddressInfo
+      return new Promise<string>((resolve) => {
+        const req = httpRequest({
+          host: '127.0.0.1', port, method: 'POST', path: '/api/imports',
+          headers: { ...headers, 'content-type': 'application/zip', 'content-length': String(length) },
+        }, (res) => {
+          let body = ''
+          res.on('data', (c) => { body += c })
+          res.on('end', () => resolve(`status ${res.statusCode} ${body}`))
+          res.on('error', () => resolve(`status ${res.statusCode}`))
+        })
+        req.on('error', (e) => resolve(`error ${(e as NodeJS.ErrnoException).code}`))
+        req.write(Buffer.alloc(sent))
+      })
+    }
+
+    it('a trial at its import limit is refused before it takes an upload slot', async () => {
+      const t = await makeTrial()
+      await db.update(users).set({ trialImports: config.trialImports }).where(eq(users.id, t.u.id))
+      // both shared slots taken: the limit still answers first, so it never needed one
+      const held = [uploadWork.tryTake()!, uploadWork.tryTake()!]
+      try {
+        const res = await upload(sceneZip(), t.h)
+        expect([res.statusCode, res.json()]).toEqual([403, { error: 'account_required', action: 'more_imports' }])
+        expect(trialUploadWork.inUse()).toBe(0)
+      } finally {
+        held.forEach((r) => r())
+      }
+      expect(uploadWork.inUse()).toBe(0)
+    })
+
+    it("a trial's chunked upload (no Content-Length) is refused before a slot", async () => {
+      const t = await makeTrial()
+      await app.listen({ port: 0, host: '127.0.0.1' })
+      const { port } = app.server.address() as AddressInfo
+      const ended = await new Promise<string>((resolve) => {
+        const req = httpRequest({ host: '127.0.0.1', port, method: 'POST', path: '/api/imports', headers: { ...t.h, 'content-type': 'application/zip', 'transfer-encoding': 'chunked' } }, (res) => {
+          let body = ''
+          res.on('data', (c) => { body += c })
+          res.on('end', () => resolve(`status ${res.statusCode} ${body}`))
+        })
+        req.on('error', (e) => resolve(`error ${(e as NodeJS.ErrnoException).code}`))
+        req.write(sceneZip())
+        req.end()
+      })
+      expect(ended).toBe(`status 411 ${JSON.stringify({ error: 'length_required', message: 'Send the zip with its Content-Length.' })}`)
+      expect(uploadWork.inUse()).toBe(0)
+      expect(trialUploadWork.inUse()).toBe(0)
+      expect(await db.select().from(sceneImports)).toHaveLength(0)
+    })
+
+    it("trials share one upload slot: a second guest's upload is busy while an account still gets one", async () => {
+      const saved = importLimits.uploadBodyMs
+      importLimits.uploadBodyMs = 1500
+      await app.listen({ port: 0, host: '127.0.0.1' })
+      try {
+        const t1 = await makeTrial()
+        const t2 = await makeTrial()
+        const first = stalledUpload(t1.h)
+        await vi.waitFor(() => expect(trialUploadWork.inUse()).toBe(1))
+        expect(uploadWork.inUse()).toBe(1)
+        const second = await upload(sceneZip(), t2.h)
+        expect([second.statusCode, second.json()]).toEqual([503, { error: 'imports_busy', message: IMPORTS_BUSY }])
+        const acct = await upload(sceneZip(), auth(b))
+        expect(acct.statusCode).toBe(201)
+        expect(await first).toMatch(/^status 408/)
+        await vi.waitFor(() => expect([trialUploadWork.inUse(), uploadWork.inUse()]).toEqual([0, 0]))
+        expect((await db.select().from(users).where(eq(users.id, t1.u.id)))[0].trialImports).toBe(0)
+        // the slot came back: the second guest can upload now
+        expect((await upload(sceneZip(), t2.h)).statusCode).toBe(201)
+        expect([trialUploadWork.inUse(), uploadWork.inUse()]).toEqual([0, 0])
+      } finally {
+        importLimits.uploadBodyMs = saved
+      }
+    })
+
+    it('the import view says whether it is a sandbox', async () => {
+      const t = await makeTrial()
+      expect((await upload(sceneZip(), t.h)).json().import.sandbox).toBe(true)
+      expect((await upload(sceneZip(), auth(b))).json().import.sandbox).toBe(false)
+    })
+
+    it("a claim joins the World's destination scene when the account can manage it, as an upload would", async () => {
+      const t = await makeTrial()
+      const id = (await upload(sceneZip(), t.h)).json().import.id
+      await makeBuilt(id)
+      const sandboxScene = (await importRow(id)).sceneId
+      const acct = await convert(t.u.id)
+      worlds.deployers.set(B_WORLD, { owner: acct.wallet, deployers: [] })
+      // the account's own scene is connected to the World
+      const { scene } = await createScene(acct, 'Connected')
+      await db.insert(dclWorldDestinations).values({
+        sceneId: scene.id, ownerUserId: acct.id, ownerWallet: acct.wallet!, worldName: B_WORLD, base: '0,0', parcels: ['0,0'], mode: 'sign',
+      })
+      const r = await app.inject({ method: 'POST', url: `/api/imports/${id}/deploy`, headers: auth(acct) })
+      expect(r.statusCode).toBe(200)
+      expect(await importRow(id)).toMatchObject({ sandbox: false, sceneId: scene.id, status: 'awaiting_signature' })
+      expect((await destByWorld())).toMatchObject({ sceneId: scene.id, pendingImportId: id })
+      // the guest's sandbox scene stays (it may hold the guest's layout)
+      expect(await db.select().from(scenes).where(eq(scenes.id, sandboxScene))).toHaveLength(1)
+    })
+
+    it("a claim refuses a World set up under someone else's Virvi scene, and changes nothing", async () => {
+      const mine = await bImport('built')
+      const loc = await createAnalyticsScene({ kind: 'world', locationKey: `world:${B_WORLD}`, worldName: B_WORLD, baseParcel: '0,0', parcels: ['0,0'] })
+      await createSetup(loc.id, mine.sceneId)
+      const t = await makeTrial()
+      const id = (await upload(sceneZip(), t.h)).json().import.id
+      await makeBuilt(id)
+      const acct = await convert(t.u.id)
+      worlds.deployers.set(B_WORLD, { owner: acct.wallet, deployers: [] })
+      const r = await app.inject({ method: 'POST', url: `/api/imports/${id}/deploy`, headers: auth(acct) })
+      expect([r.statusCode, r.json()]).toEqual([409, { error: 'world_set_up_elsewhere', message: "This World is set up under a Virvi scene you can't manage." }])
+      expect(await importRow(id)).toMatchObject({ sandbox: true, status: 'built' })
+      expect((await importRow(mine.id)).status).toBe('built')
+    })
+
+    it("a claim refuses parcels set up under someone else's Virvi scene", async () => {
+      const { scene } = await createScene(b, 'B parcels')
+      const loc = await createAnalyticsScene({ kind: 'parcels', locationKey: 'gc:5,5', baseParcel: '5,5', parcels: ['5,5'] })
+      await createSetup(loc.id, scene.id)
+      const t = await makeTrial()
+      const res = await upload(sceneZip({ world: null, parcels: ['5,5'] }), t.h)
+      expect(res.statusCode).toBe(201)
+      const id = res.json().import.id
+      await db.update(sceneImports).set({ status: 'built' }).where(eq(sceneImports.id, id))
+      const wallet = randomWallet()
+      const acct = await convert(t.u.id, wallet)
+      dir.rights.set('5,5', { owner: acct.wallet!, operator: null, updateOperator: null, updateManagers: [], approvedForAll: [] })
+      const r = await app.inject({ method: 'POST', url: `/api/imports/${id}/deploy`, headers: auth(acct) })
+      expect([r.statusCode, r.json().error]).toEqual([409, 'parcels_set_up_elsewhere'])
+      expect((await importRow(id)).sandbox).toBe(true)
+    })
   })
 })

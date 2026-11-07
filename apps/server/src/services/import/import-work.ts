@@ -49,6 +49,8 @@ export function slots(max: number) {
 }
 
 export const uploadWork = slots(IMPORT_CONCURRENCY)
+/** Trials (guests) together hold at most one of the upload slots, taken alongside a shared one, so an account always has one. */
+export const trialUploadWork = slots(1)
 export const resultWork = slots(IMPORT_CONCURRENCY)
 
 interface ImportSlot {

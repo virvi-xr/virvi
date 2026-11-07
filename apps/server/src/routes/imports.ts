@@ -21,7 +21,7 @@ import { zipSync } from 'fflate'
 import { PARCEL_RE, SCENE_IMPORT_MAX_BYTES, type ImportLocation } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
-import { analyticsScenes, dclWorldDestinations, sceneImports, scenes } from '../db/schema.js'
+import { analyticsScenes, dclWorldDestinations, sceneImports, scenes, users } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
@@ -35,11 +35,13 @@ import { getImportStore } from '../storage/private-store.js'
 import { ImportError, readSceneZip, type SceneFolder } from '../services/import/scene-zip.js'
 import { installVirvi } from '../services/import/install-virvi.js'
 import { importSceneThumbnail } from '../services/import/scene-thumbnail.js'
-import { importSlotGate, importSlotHooks, releaseImportSlot, uploadDeadlineMs, uploadWork, UPLOAD_TOO_SLOW } from '../services/import/import-work.js'
+import {
+  importSlotGate, importSlotHooks, IMPORTS_BUSY, releaseImportSlot, trialUploadWork, uploadDeadlineMs, uploadWork, UPLOAD_TOO_SLOW,
+} from '../services/import/import-work.js'
 import { FILES_EXPIRED } from '../services/import/retention.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
 import {
-  claimSandboxImport, createImport, failImport, latestImportFor, loadImportView, originalKey, OWNER_ERROR_MESSAGES, reserveTrialImport, type SceneImportRow,
+  claimSandboxImport, createImport, failImport, latestImportFor, loadImportView, locationOf, originalKey, OWNER_ERROR_MESSAGES, reserveTrialImport, type SceneImportRow,
 } from '../services/import/imports.js'
 import { NOT_DEPLOYABLE, notParcelController, placeOwner, startImportDeploy } from '../services/import/import-deploy.js'
 import { DeployerError } from '../services/dcl/world-deployer.js'
@@ -75,12 +77,28 @@ function refuseTrial(request: FastifyRequest, reply: FastifyReply, action: strin
   return reply.status(403).send({ error: 'account_required', action })
 }
 
-/** Refuses a trial's upload larger than TRIAL_IMPORT_MAX_BYTES by its Content-Length, before the body is read. */
-async function trialSizeGate(request: FastifyRequest, reply: FastifyReply) {
+/** The trial upload slot each guest upload holds (trialUploadWork), given back with the shared one. */
+const trialSlots = new WeakMap<FastifyRequest, () => void>()
+const releaseTrialSlot = (request: FastifyRequest) => trialSlots.get(request)?.()
+
+/**
+ * A trial's upload, before its body is read or a shared slot is taken: it must declare its Content-Length (411
+ * length_required; a chunked body would be buffered before the cap applies), within TRIAL_IMPORT_MAX_BYTES
+ * (import_larger), with an import left (more_imports), and only one guest upload runs at a time (503 imports_busy), so
+ * guests never hold every upload slot.
+ */
+async function trialGate(request: FastifyRequest, reply: FastifyReply) {
   if (!request.user?.trial) return
   const raw = request.headers['content-length']
-  const n = raw !== undefined && /^\d+$/.test(raw.trim()) ? Number(raw) : 0
-  if (n > config.trialImportMaxBytes) return refuseTrial(request, reply, 'import_larger')
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) {
+    return reply.status(411).send({ error: 'length_required', message: 'Send the zip with its Content-Length.' })
+  }
+  if (Number(raw) > config.trialImportMaxBytes) return refuseTrial(request, reply, 'import_larger')
+  const [u] = await db.select({ n: users.trialImports }).from(users).where(eq(users.id, request.user.id))
+  if (!u || u.n >= config.trialImports) return refuseTrial(request, reply, 'more_imports')
+  const release = trialUploadWork.tryTake()
+  if (!release) return reply.status(503).send({ error: 'imports_busy', message: IMPORTS_BUSY })
+  trialSlots.set(request, release)
 }
 
 /** Refuses before the body is read: no builds here means nothing is stored. */
@@ -116,7 +134,7 @@ async function manageable(request: FastifyRequest, sceneIds: string[], refusal: 
  * setup on any overlapping parcel (409 parcels_in_use, parcels_set_up_elsewhere), the destinations' scene first; parcels
  * that overlap several different Virvi scenes are refused (409 parcels_in_use, naming them) rather than one picked.
  */
-async function sceneFor(request: FastifyRequest, location: ImportLocation, folder: SceneFolder): Promise<{ id: string } | { newName: string }> {
+async function sceneFor(request: FastifyRequest, location: ImportLocation, newName: () => string): Promise<{ id: string } | { newName: string }> {
   let used: string | null
   let setupScene: string | null
   if (location.kind === 'world') {
@@ -140,7 +158,7 @@ async function sceneFor(request: FastifyRequest, location: ImportLocation, folde
   if (setupScene) return { id: setupScene }
   const last = await latestImportFor(location)
   if (last && (await full(request, last.sceneId))) return { id: last.sceneId }
-  return { newName: sceneName(folder, location.kind === 'world' ? location.world : `Genesis City ${location.base}`) }
+  return { newName: newName() }
 }
 
 /** The import when the caller made it or has full access on its scene; 404 otherwise (never says whether it exists). */
@@ -168,6 +186,9 @@ export default async function importRoutes(app: FastifyInstance) {
     upload.addHook('preHandler', importSlotHooks.preHandler)
     upload.addHook('onResponse', importSlotHooks.onResponse)
     upload.addHook('onRequestAbort', importSlotHooks.onRequestAbort)
+    // A guest's trial slot comes back with the shared one: at the response, or when a body never finished
+    upload.addHook('onResponse', async (request) => { releaseTrialSlot(request) })
+    upload.addHook('onRequestAbort', async (request) => { if (!request.importSlot?.bodyRead) releaseTrialSlot(request) })
     upload.setErrorHandler(async (err: FastifyError, _request, reply) => {
       if (err.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
         return reply.status(413).send({ error: 'too_big', message: `The zip is larger than ${SCENE_IMPORT_MAX_BYTES / 1024 / 1024} MB.` })
@@ -180,7 +201,7 @@ export default async function importRoutes(app: FastifyInstance) {
       error: 'upload_too_slow', message: UPLOAD_TOO_SLOW,
     })
     upload.post('/api/imports', {
-      onRequest: [authenticate, trialSizeGate, buildsGate, slot], bodyLimit: SCENE_IMPORT_MAX_BYTES, config: { trial: true },
+      onRequest: [authenticate, trialGate, buildsGate, slot], bodyLimit: SCENE_IMPORT_MAX_BYTES, config: { trial: true },
     }, async (request, reply) => handle(reply, async () => {
       try {
         return await uploadImport(request, reply)
@@ -189,6 +210,7 @@ export default async function importRoutes(app: FastifyInstance) {
         throw err
       } finally {
         releaseImportSlot(request)
+        releaseTrialSlot(request)
       }
     }))
   })
@@ -223,9 +245,8 @@ export default async function importRoutes(app: FastifyInstance) {
       checkParcels(location)
       if (!trial) await requireParcelController(request.user.id, location)
     }
-    const scene = trial
-      ? { newName: sceneName(folder, location.kind === 'world' ? location.world : `Genesis City ${location.base}`) }
-      : await sceneFor(request, location, folder)
+    const newName = () => sceneName(folder, location.kind === 'world' ? location.world : `Genesis City ${location.base}`)
+    const scene = trial ? { newName: newName() } : await sceneFor(request, location, newName)
     // Counted once the zip reads, failed builds included; atomic, so two at once with one left can't both pass
     if (trial && !(await reserveTrialImport(request.user.id))) throw new TrialRefusal('more_imports')
     // The upload as the import reads it (node_modules/, .git/, bin/, __MACOSX/ already dropped), kept for the backup
@@ -282,10 +303,12 @@ export default async function importRoutes(app: FastifyInstance) {
     reads.post<{ Params: { id: string } }>('/api/imports/:id/deploy', async (request, reply) => handle(reply, async () => {
       let row = await importFor(request, request.params.id)
       if (!(await loadImportView(row)).canDeploy) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
-      // A converted guest's sandbox import takes its place only once its account may deploy there (a refusal changes nothing)
+      // A converted guest's sandbox import takes its place only once its account may deploy there (a refusal changes
+      // nothing), on the scene an upload by this account would get: the place's manageable scene, else its own
       if (row.sandbox) {
         await placeOwner(row, request.user.id)
-        row = await claimSandboxImport(row)
+        const target = await sceneFor(request, locationOf(row), () => '')
+        row = await claimSandboxImport(row, 'id' in target ? target.id : row.sceneId)
       }
       const started = (await startImportDeploy(row, request.user.id))!
       if (started.mode === 'virvi') return reply.status(202).send({ deployment: publicDeployment(started.deployment) })

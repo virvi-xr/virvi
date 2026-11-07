@@ -30,6 +30,11 @@ export interface SceneImportView {
   filesExpired: boolean
   /** The scene already started Virvi itself, so Virvi wasn't added again. */
   virviAlreadyPresent: boolean
+  /**
+   * A trial's (guest's) import (LIV-91): it hasn't touched its place. Deploying it takes an account, which then claims
+   * the place for it.
+   */
+  sandbox: boolean
   /** The scene's own thumbnail (LIV-89, scene.json display.navmapThumbnail) and the Virvi scene's thumbnail now. */
   thumbnail: SceneImportThumbnail
   createdAt: string

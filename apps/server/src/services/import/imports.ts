@@ -107,6 +107,7 @@ export function importView(
     logTail,
     filesExpired: row.filesDeletedAt !== null,
     virviAlreadyPresent: row.virviAlreadyPresent,
+    sandbox: row.sandbox,
     thumbnail: {
       outcome: row.thumbnailOutcome ?? null,
       note: row.thumbnailNote,
@@ -232,11 +233,12 @@ export async function createImport(input: {
 /**
  * Brings a sandbox import into its place, as an upload would have (createImport): under the location's lock, 409
  * import_in_progress while another import runs there, 409 world_in_use / parcels_in_use when the place is connected to
- * another Virvi scene, then the place's built and awaiting imports are superseded and this one becomes a real import,
- * dated now so it is the place's newest. The caller has checked that its account may deploy there. A no-op for a real
- * import.
+ * a Virvi scene other than `sceneId`, then the place's built and awaiting imports are superseded and this one becomes a
+ * real import of `sceneId`, dated now so it is the place's newest. The caller has checked that its account may deploy
+ * there and resolved `sceneId` as an upload would (the routes' sceneFor): the place's manageable scene, else the
+ * import's own. A no-op for a real import.
  */
-export async function claimSandboxImport(row: SceneImportRow): Promise<SceneImportRow> {
+export async function claimSandboxImport(row: SceneImportRow, sceneId: string = row.sceneId): Promise<SceneImportRow> {
   if (!row.sandbox) return row
   const loc = locationOf(row)
   const { claimed, superseded } = await db.transaction(async (tx) => {
@@ -248,7 +250,7 @@ export async function claimSandboxImport(row: SceneImportRow): Promise<SceneImpo
         loc.kind === 'world'
           ? eq(dclWorldDestinations.worldName, loc.world)
           : and(eq(dclWorldDestinations.kind, 'parcels'), sql`${dclWorldDestinations.parcels} && ${pgArray(loc.parcels)}`),
-        ne(dclWorldDestinations.sceneId, row.sceneId),
+        ne(dclWorldDestinations.sceneId, sceneId),
       ),
       columns: { id: true },
     })
@@ -259,7 +261,8 @@ export async function claimSandboxImport(row: SceneImportRow): Promise<SceneImpo
     }
     const superseded = await takePlace(tx, loc, row.id)
     const now = new Date()
-    const [claimed] = await tx.update(sceneImports).set({ sandbox: false, createdAt: now, updatedAt: now })
+    // The sandbox's own scene stays when the import moves: it is the account's now, and may hold the guest's layout
+    const [claimed] = await tx.update(sceneImports).set({ sandbox: false, sceneId, createdAt: now, updatedAt: now })
       .where(and(eq(sceneImports.id, row.id), eq(sceneImports.sandbox, true))).returning()
     return { claimed, superseded }
   })
