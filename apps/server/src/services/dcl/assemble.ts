@@ -18,9 +18,16 @@
  * name (a re-imported "Download live" zip carries Virvi's deployed one). Only the other Virvi-named files are Virvi's to
  * remove. Why: a name can be copied but only Virvi's own deploys put a Virvi thumbnail in beside the scene's files, and
  * the import's scene.json is what says which file is the scene's; so the import deploys, and stays, as it is.
+ *
+ * A Virvi-built scene also deploys `virvi/placements.json` (LIV-134, placementsFile): the placed copies of every model
+ * the deployment holds, which the runtime creates before it talks to Virvi, so Decentraland's LOD/map builder sees them.
+ * Ruling (LIV-134): it is rewritten from the scene on every Virvi-built deploy that goes ahead, but a difference in it
+ * alone is no change to deploy (`changed` ignores it, and pendingModels never lists it) — why: moves and removals don't
+ * trigger a redeploy today, and redeploying on snapshot drift is LIV-135's to decide, with its own cadence; a
+ * placements-only "change" would make Redeploy now and the sweep sign or upload for it.
  */
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
-import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, localModelFile } from '@virvixr/shared'
+import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, PLACEMENTS_FILE, encodePlacements, localModelFile, type Placement, type Vec3 } from '@virvixr/shared'
 import { config } from '../../config.js'
 import { db } from '../../db/connection.js'
 import { assetLibraryItems, mediaAssets, sceneElementInstances, sceneElements, sceneImports, scenes } from '../../db/schema.js'
@@ -159,6 +166,79 @@ async function modelElements(sceneId: string): Promise<ModelNeed[]> {
       instances: p.instances,
     }
   })
+}
+
+/**
+ * Largest placements file a deployment carries (~6,000 copies). A scene with more keeps the first copies that fit: the
+ * map and distant view miss the rest, the live scene doesn't. Also the most a mode B bundle keeps inline for it.
+ */
+export const PLACEMENTS_MAX_BYTES = 512 * 1024
+
+const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
+function vec3(raw: unknown, d: number): Vec3 {
+  const v = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  return { x: num(v.x, d), y: num(v.y, d), z: num(v.z, d) }
+}
+
+/**
+ * Every enabled copy of the active preset's enabled Virvi-hosted `.glb` model elements, in element then copy order,
+ * with `src` the model's `models/virvi/<basename>` path (placementsFile keeps those the deployment holds).
+ * Ruling (LIV-134): each copy's own stored transform, parents not resolved — why: the live runtime (MeshManager)
+ * ignores parentInstanceId and places every copy by its own transform, so the snapshot shows what visitors see, and
+ * adopting the live copy changes nothing.
+ */
+export async function placementsInScene(sceneId: string): Promise<Placement[]> {
+  const rows = await db
+    .select({
+      elementId: sceneElements.id, properties: sceneElements.properties, instanceId: sceneElementInstances.id,
+      position: sceneElementInstances.position, rotation: sceneElementInstances.rotation, scale: sceneElementInstances.scale,
+      collisions: sceneElementInstances.withCollisions,
+    })
+    .from(sceneElements)
+    .innerJoin(scenes, eq(scenes.activePresetId, sceneElements.presetId))
+    .innerJoin(sceneElementInstances, eq(sceneElementInstances.elementId, sceneElements.id))
+    .where(and(eq(scenes.id, sceneId), eq(sceneElements.type, 'model'), eq(sceneElements.enabled, true), eq(sceneElementInstances.enabled, true)))
+    .orderBy(sceneElements.createdAt, sceneElements.id, sceneElementInstances.createdAt, sceneElementInstances.id)
+  const out: Placement[] = []
+  for (const r of rows) {
+    const url = (r.properties as { modelSrc?: unknown } | null)?.modelSrc
+    const src = typeof url === 'string' ? localModelFile(url) : null
+    if (!src) continue
+    out.push({
+      instanceId: r.instanceId, elementId: r.elementId, src,
+      position: vec3(r.position, 0), rotation: vec3(r.rotation, 0), scale: vec3(r.scale, 1), collisions: r.collisions,
+    })
+  }
+  return out
+}
+
+/**
+ * The placements file for a deployment holding `deployed` (its content paths): the copies of models it holds, `src`
+ * set to the path as deployed (what the runtime resolves a model to), at most PLACEMENTS_MAX_BYTES. Null when nothing
+ * is placed. Refused, unsynced and non-glb models are never in it: they are not deployed.
+ */
+export function placementsFile(placements: Placement[], deployed: Iterable<string>): Uint8Array | null {
+  const byLower = new Map([...deployed].map((f) => [f.toLowerCase(), f]))
+  const list = placements.flatMap((p) => {
+    const src = byLower.get(p.src.toLowerCase())
+    return src ? [{ ...p, src }] : []
+  })
+  if (list.length === 0) return null
+  let bytes = new TextEncoder().encode(encodePlacements(list))
+  if (bytes.byteLength > PLACEMENTS_MAX_BYTES) {
+    // Too many copies: keep the first ones that fit (binary search on the count)
+    let lo = 0
+    let hi = list.length
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2)
+      if (new TextEncoder().encode(encodePlacements(list.slice(0, mid))).byteLength <= PLACEMENTS_MAX_BYTES) lo = mid
+      else hi = mid - 1
+    }
+    if (lo === 0) return null
+    console.warn(`[assemble] placements cut to ${lo} of ${list.length} copies to stay within ${PLACEMENTS_MAX_BYTES} bytes`)
+    bytes = new TextEncoder().encode(encodePlacements(list.slice(0, lo)))
+  }
+  return bytes
 }
 
 /** The file `metadata.display.navmapThumbnail` names in the scene, lowercased; null for none or a link. */
@@ -380,12 +460,16 @@ export async function assembleFresh(input: {
   models: ModelNeed[]
   timestamp: number
   fetch?: ModelFetcher
+  /** The scene's placed copies (placementsInScene), written to `virvi/placements.json`. */
+  placements?: Placement[]
 }): Promise<Assembled> {
   const { got, sources, refused } = await fetchModels(input.models, input.fetch ?? defaultModelFetcher)
   const metadata = withThumbnail(input.metadata, deployedThumbnail(input.models, new Set([...got.keys()].map((f) => f.toLowerCase()))))
   const newFiles = new Map<string, Uint8Array>(await runtimeFiles())
   newFiles.set('scene.json', new TextEncoder().encode(JSON.stringify(metadata)))
   for (const [file, bytes] of got) newFiles.set(file, bytes)
+  const placements = placementsFile(input.placements ?? [], newFiles.keys())
+  if (placements) newFiles.set(PLACEMENTS_FILE, placements)
   return finish({
     pointers: metadata.scene.parcels,
     metadata,
@@ -422,6 +506,8 @@ export async function assembleRedeploy(input: {
   title?: string
   /** The scene's own thumbnail file (ownThumbnailFile, lowercased): kept, and kept as navmapThumbnail, whatever its name. */
   ownThumbnail?: string | null
+  /** The scene's placed copies (placementsInScene): a Virvi-built scene's `virvi/placements.json` when it deploys. */
+  placements?: Placement[]
 }): Promise<Assembled> {
   const { live } = input
   const have = new Set(live.content.map((c) => c.file.toLowerCase()))
@@ -465,6 +551,15 @@ export async function assembleRedeploy(input: {
   existing = kept
   const before = metadata
   metadata = withThumbnail(metadata, deployedThumbnail(input.models, new Set([...existing.map((c) => c.file), ...got.keys()].map((f) => f.toLowerCase()))), own)
+  const changed = got.size > 0 || upgrade || renamed || droppedThumbnail || metadata !== before
+  // A Virvi-built scene that deploys gets its placements rewritten (kept by hash when the same); see the LIV-134 ruling
+  if (changed && !input.adopted && !!metadata.virvi) {
+    const prior = existing.find((c) => c.file.toLowerCase() === PLACEMENTS_FILE)
+    existing = existing.filter((c) => c.file.toLowerCase() !== PLACEMENTS_FILE)
+    const bytes = placementsFile(input.placements ?? [], [...existing.map((c) => c.file), ...newFiles.keys()])
+    if (bytes && prior && prior.file === PLACEMENTS_FILE && prior.hash === (await dclHash(bytes))) existing.push(prior)
+    else if (bytes) newFiles.set(PLACEMENTS_FILE, bytes)
+  }
   return finish({
     pointers: live.pointers,
     metadata,
@@ -475,7 +570,7 @@ export async function assembleRedeploy(input: {
     sources,
     refused,
     models: input.models,
-    changed: got.size > 0 || upgrade || renamed || droppedThumbnail || metadata !== before,
+    changed,
   })
 }
 

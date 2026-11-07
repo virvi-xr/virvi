@@ -841,3 +841,4 @@ export { SHIFT_ACTION } from './transform/input.js'
 export type { VirviInitConfig }
 export { startVirviAnalytics, stopVirviAnalytics, DclAnalyticsProbe, getAnalyticsSceneRef } from './analytics.js'
 export { HUD_ICON_SRC } from './hud/icon.js'
+export { placeDeployedModels } from './placements.js'

@@ -33,6 +33,14 @@ export interface VirviPlatformAdapter {
 
   // --- Entity Lifecycle ---
   createEntity(): EntityHandle;
+  /**
+   * Optional: an entity the platform created for this item before live state arrived (Decentraland's deployed
+   * placements snapshot, LIV-134), handed over once, or null. A manager uses it instead of createEntity for the same
+   * instance id, so the item isn't removed and created again.
+   */
+  adoptEntity?(instanceId: string): EntityHandle | null;
+  /** Optional: live state has arrived; remove every such entity no manager adopted. */
+  releaseUnadopted?(): void;
   /** Optional: give the entity a display name, which analytics report for clicks on it. Without it, clicks on Virvi items are anonymous. */
   setName?(entity: EntityHandle, name: string): void;
   destroyEntity(handle: EntityHandle): void;

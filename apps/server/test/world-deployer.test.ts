@@ -5,7 +5,8 @@ import { Wallet } from 'ethers'
 import { and, eq, isNull } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { analyticsScenes, assetLibraryItems, dclWorldDestinations, locationSetups, sceneDeployments, scenes } from '../src/db/schema.js'
+import { analyticsScenes, assetLibraryItems, dclWorldDestinations, locationSetups, sceneDeployments, sceneElementInstances, sceneElements, scenes } from '../src/db/schema.js'
+import { PLACEMENTS_FILE, decodePlacements } from '@virvixr/shared'
 import { chainSigner, verifyChain, virviSigner } from '../src/services/dcl/entity.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
@@ -298,6 +299,63 @@ describe('prepareSignedDeploy / submitSignedDeploy (mode B)', () => {
     await submitSignedDeploy(prep.deployment.id, chain, { fetch: fetcher })
     await expect(submitSignedDeploy(prep.deployment.id, chain, { fetch: fetcher })).rejects.toMatchObject({ status: 409 })
     expect(fake.deployed).toHaveLength(1)
+  })
+})
+
+describe('the placements snapshot (LIV-134)', () => {
+  /** `n` placed copies of the scene's first model element. */
+  async function place(presetId: string, n: number) {
+    const el = await db.query.sceneElements.findFirst({ where: eq(sceneElements.presetId, presetId) })
+    const rows = Array.from({ length: n }, (_, i) => ({ elementId: el!.id, position: { x: i % 32, y: 0, z: Math.floor(i / 32) }, rotation: { x: 0, y: 90, z: 0 } }))
+    await db.insert(sceneElementInstances).values(rows)
+    return el!
+  }
+  const placementsSent = (i = 0) => {
+    const d = fake.deployed[i]
+    const ref = (JSON.parse(dec(d.files.get(d.entityId)!)).content as Array<{ file: string; hash: string }>).find((c) => c.file === PLACEMENTS_FILE)
+    return ref ? decodePlacements(dec(d.files.get(ref.hash)!)) : null
+  }
+
+  it('a mode A deploy ships the placed copies with the runtime', async () => {
+    const { user, preset, dest } = await setup()
+    const el = await place(preset.id, 2)
+    const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+    await whenSettled(dep.id)
+    expect((await destRow(dest.id)).deployedFiles).toEqual(['bin/index.js', 'images/virvi/hud-v.png', 'models/virvi/a.glb', 'scene.json', PLACEMENTS_FILE])
+    expect(placementsSent()!.map((p) => [p.elementId, p.src, p.position])).toEqual([
+      [el.id, 'models/virvi/a.glb', { x: 0, y: 0, z: 0 }],
+      [el.id, 'models/virvi/a.glb', { x: 1, y: 0, z: 0 }],
+    ])
+  })
+
+  it('a mode B deploy keeps a large snapshot to sign, and the World gets exactly the signed entity', async () => {
+    const { owner, user, preset, dest } = await setup({ mode: 'sign' })
+    await place(preset.id, 1200) // well over the 64 KB other generated files may take
+    const parcels = Array.from({ length: 8 }, (_, x) => `${x},0`) // room for 1,200 models
+    await db.update(dclWorldDestinations).set({ parcels }).where(eq(dclWorldDestinations.id, dest.id))
+    const prep = await prepareSignedDeploy(dest.id, user.id, { fetch: fetcher })
+    const kept = ((prep.deployment.assetBundle as { newFiles: Array<{ file: string; base64?: string }> }).newFiles).find((f) => f.file === PLACEMENTS_FILE)
+    expect(Buffer.from(kept!.base64!, 'base64').byteLength).toBeGreaterThan(64 * 1024)
+    // Moving a copy after prepare changes nothing that was signed
+    await db.update(sceneElementInstances).set({ position: { x: 99, y: 0, z: 99 } })
+    const done = await submitSignedDeploy(prep.deployment.id, await ownerChain(owner, prep.payload), { fetch: fetcher })
+    expect(done.status).toBe('deployed')
+    expect(fake.deployed[0].entityId).toBe(prep.payload)
+    expect(placementsSent()).toHaveLength(1200)
+    expect(placementsSent()!.some((p) => p.position.x === 99)).toBe(false)
+  })
+
+  it('moving a copy alone is nothing to deploy (LIV-135 decides on drift redeploys)', async () => {
+    const { user, preset, dest } = await setup()
+    await place(preset.id, 1)
+    await whenSettled((await startVirviDeploy(dest.id, user.id, { fetch: fetcher })).id)
+    goLive()
+    await db.update(sceneElementInstances).set({ position: { x: 5, y: 0, z: 5 } })
+    const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+    await whenSettled(dep.id)
+    expect(fake.deployed).toHaveLength(1)
+    expect((await depRow(dep.id)).errorMessage).toMatch(/already has everything/)
+    expect((await destRow(dest.id)).deployedFiles).toContain(PLACEMENTS_FILE)
   })
 })
 

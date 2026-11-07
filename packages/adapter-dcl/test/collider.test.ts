@@ -5,7 +5,7 @@ const sdk = vi.hoisted(() => {
   const gltf = new Map<number, any>()
   const colliders = new Map<number, any>()
   const stub = () => ({})
-  const component = { createOrReplace: stub, getMutableOrNull: stub, has: () => false, deleteFrom: stub }
+  const component = { createOrReplace: stub, getMutableOrNull: stub, getOrNull: () => null, has: () => false, deleteFrom: stub }
   return {
     gltf,
     colliders,
@@ -15,6 +15,7 @@ const sdk = vi.hoisted(() => {
       GltfContainer: {
         createOrReplace: (e: number, v: any) => void gltf.set(e, { ...v }),
         getMutableOrNull: (e: number) => gltf.get(e) ?? null,
+        getOrNull: (e: number) => gltf.get(e) ?? null,
         has: (e: number) => gltf.has(e),
         deleteFrom: (e: number) => void gltf.delete(e),
       },

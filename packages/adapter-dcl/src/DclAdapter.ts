@@ -40,6 +40,7 @@ import type {
   Quat,
 } from '@virvixr/shared'
 import { localModelFile, DCL_HUD_PROTOCOL } from '@virvixr/shared'
+import { adoptPlaced, releasePlaced } from './placements.js'
 
 export class DclAdapter implements VirviPlatformAdapter {
   /** Sent with every request, so the server can tell an old HUD to redeploy (426 redeploy_required). */
@@ -248,6 +249,15 @@ export class DclAdapter implements VirviPlatformAdapter {
     return engine.addEntity()
   }
 
+  /** A model the runtime placed from the deployed snapshot (placements.ts), handed over once. */
+  adoptEntity(instanceId: string): EntityHandle | null {
+    return adoptPlaced(instanceId)
+  }
+
+  releaseUnadopted(): void {
+    releasePlaced()
+  }
+
   setName(entity: EntityHandle, name: string): void {
     Name.createOrReplace(entity as Entity, { value: name })
   }
@@ -282,11 +292,15 @@ export class DclAdapter implements VirviPlatformAdapter {
 
   setTransform(entity: EntityHandle, transform: TransformData): void {
     const { position, rotation, scale } = transform
-    Transform.createOrReplace(entity as Entity, {
+    const next = {
       position: Vector3.create(position.x, position.y, position.z),
       rotation: Quaternion.fromEulerDegrees(rotation.x, rotation.y, rotation.z),
       scale: Vector3.create(scale.x, scale.y, scale.z),
-    })
+    }
+    // The same transform again (an adopted placed model) sends nothing
+    const t = Transform.getOrNull(entity as Entity)
+    if (t && !t.parent && sameVec(t.position, next.position) && sameVec(t.scale, next.scale) && sameVec(t.rotation, next.rotation) && t.rotation.w === next.rotation.w) return
+    Transform.createOrReplace(entity as Entity, next)
   }
 
   // ---------------------------------------------------------------------------
@@ -305,6 +319,9 @@ export class DclAdapter implements VirviPlatformAdapter {
   setGltfModel(entity: EntityHandle, src: string): void {
     // A model with collisions keeps them across a model swap (createOrReplace would drop the mask)
     const mask = this.meshCollisionMasks.get(entity as Entity)
+    // The same model again (an adopted placed model) sends nothing, so the explorer doesn't load it again
+    const current = GltfContainer.getOrNull(entity as Entity)
+    if (current && current.src === src && (current.visibleMeshesCollisionMask || 0) === (mask || 0) && !current.invisibleMeshesCollisionMask) return
     GltfContainer.createOrReplace(entity as Entity, mask ? { src, visibleMeshesCollisionMask: mask } : { src })
   }
 
@@ -556,8 +573,10 @@ export class DclAdapter implements VirviPlatformAdapter {
         // tripped over). The mask is kept so it's applied when the model loads or is swapped.
         const mask = layers.reduce((m, l) => m | l, 0)
         this.meshCollisionMasks.set(entity as Entity, mask)
-        const gltf = GltfContainer.getMutableOrNull(entity as Entity)
-        if (gltf) gltf.visibleMeshesCollisionMask = mask
+        if (GltfContainer.getOrNull(entity as Entity)?.visibleMeshesCollisionMask !== mask) {
+          const gltf = GltfContainer.getMutableOrNull(entity as Entity)
+          if (gltf) gltf.visibleMeshesCollisionMask = mask
+        }
         try {
           MeshCollider.deleteFrom(entity as Entity)
         } catch {
@@ -729,3 +748,5 @@ export class DclAdapter implements VirviPlatformAdapter {
     engine.removeSystem(update)
   }
 }
+
+const sameVec = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => a.x === b.x && a.y === b.y && a.z === b.z

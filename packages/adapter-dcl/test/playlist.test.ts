@@ -29,7 +29,7 @@ const sdk = vi.hoisted(() => {
   const VideoEvent = { has: (e: number) => states.has(e) }
   const videoEventsSystem = { getVideoState: (e: number) => states.get(e) }
   const stub = () => ({})
-  const component = { createOrReplace: stub, getMutableOrNull: stub, has: () => false, deleteFrom: stub }
+  const component = { createOrReplace: stub, getMutableOrNull: stub, getOrNull: () => null, has: () => false, deleteFrom: stub }
   return {
     VS_LOADING,
     VS_PLAYING,

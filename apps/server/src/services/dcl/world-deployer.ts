@@ -17,7 +17,7 @@
  * accepted nothing, back to `built` (or `failed` for a PERMANENT error), all through `markFailed` (Ruling R19).
  */
 import { and, eq, inArray, isNull, lt, lte, or, sql, TransactionRollbackError } from 'drizzle-orm'
-import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, dclBudget, parseParcel, type ImportLocation } from '@virvixr/shared'
+import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, PLACEMENTS_FILE, dclBudget, parseParcel, type ImportLocation } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
 import { DirectoryUnavailableError } from '../../analytics/dcl-directory.js'
@@ -27,7 +27,7 @@ import { getImportStore } from '../../storage/private-store.js'
 import { ImportError, worldNameOf } from '../import/scene-zip.js'
 import {
   assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsBesideBuilt, modelsInScene, navmapThumbnailFile,
-  ownThumbnailFile, pendingModels, wizardSceneJson,
+  ownThumbnailFile, pendingModels, placementsInScene, wizardSceneJson, PLACEMENTS_MAX_BYTES,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { keepDeployedFiles } from './deployed-files.js'
@@ -415,13 +415,14 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
   }
   const live = await liveBaseFor(dest)
   const models = await modelsInScene(dest.sceneId)
+  const placements = await placementsInScene(dest.sceneId)
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
   if (dest.lastEntityId == null && !dest.adopted) {
     const metadata = wizardSceneJson({
       title: scene?.name ?? worldOf(dest), world: worldOf(dest), base: dest.base, parcels: dest.parcels,
       spawn: dest.spawn ?? defaultSpawn(dest.parcels),
     })
-    return { assembled: await assembleFresh({ metadata, models, timestamp, fetch }), baseEntityId: live?.id ?? null }
+    return { assembled: await assembleFresh({ metadata, models, timestamp, fetch, placements }), baseEntityId: live?.id ?? null }
   }
   if (!live) throw new DeployerError(409, 'no_live_scene', say(dest, 'Your World has no scene to add models to', 'These parcels have no scene to add models to'))
   let adopted = dest.adopted
@@ -432,7 +433,7 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     await db.update(dclWorldDestinations).set({ adopted: false, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
   }
   const ownThumbnail = await ownThumbnailFile(dest.id)
-  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name, ownThumbnail }), baseEntityId: live.id }
+  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name, ownThumbnail, placements }), baseEntityId: live.id }
 }
 
 /** Every file in the entity, path and hash, read from the entity file itself. */
@@ -480,7 +481,8 @@ async function describeNewFiles(a: Assembled, storedPrefix?: string): Promise<Ne
     const rt = runtime.get(file)
     if (rt && (await dclHash(rt)) === hash) { out.push({ file, hash, runtimeVersion: DCL_RUNTIME_VERSION }); continue }
     const bytes = a.files.get(hash)!
-    if (bytes.byteLength > INLINE_MAX_BYTES) {
+    // The placements file (LIV-134) is generated from the scene, which may change before the owner signs: kept inline
+    if (bytes.byteLength > (file === PLACEMENTS_FILE ? PLACEMENTS_MAX_BYTES : INLINE_MAX_BYTES)) {
       console.error('[world-deployer] generated file too big to keep for signing:', file, bytes.byteLength)
       throw new DeployerError(500, 'deploy_failed', GENERIC_FAILURE)
     }

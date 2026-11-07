@@ -39,11 +39,13 @@ test('a Decentraland scene with only @dcl/sdk type-checks against the packed pac
   const scene = sceneWithPackedPackage()
   fs.mkdirSync(path.join(scene, 'src'))
   fs.writeFileSync(path.join(scene, 'src/index.ts'), [
-    "import { createVirvi, type Virvi, type VirviInitConfig } from '@virvixr/dcl'",
-    'export function main() {',
+    "import { createVirvi, placeDeployedModels, type Virvi, type VirviInitConfig } from '@virvixr/dcl'",
+    'export async function main() {',
+    '  const placed: number = await placeDeployedModels()',
     '  const config: VirviInitConfig | undefined = undefined',
     '  const virvi: Promise<Virvi> = createVirvi(config)',
     '  void virvi',
+    '  void placed',
     '}',
   ].join('\n'))
   fs.writeFileSync(path.join(scene, 'tsconfig.json'), JSON.stringify({
