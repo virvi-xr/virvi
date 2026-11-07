@@ -13,7 +13,6 @@ You can try the Design Studio before you sign up. Go to `/try/studio` on virvi.i
 - Send **3 free prompts** in total (not per day).
 - Render and preview your designs.
 - Upload small files, up to **25 MB** in total.
-- Report a mistake if the Studio gets something wrong.
 
 ## What needs a free account
 
@@ -23,7 +22,7 @@ You can try the Design Studio before you sign up. Go to `/try/studio` on virvi.i
 - Gift codes
 - More designs or more prompts
 
-When you hit one of these, the sign-up sheet opens right where you are. Once you've signed up, you carry on with what you were doing.
+When you hit one of these, the sign-up sheet opens right where you are. If you sign up or sign in with email or a wallet, what you were doing carries on by itself. With Google or Discord, you come back to the page you were on and a note tells you which button to press again.
 
 ## When you sign up
 
