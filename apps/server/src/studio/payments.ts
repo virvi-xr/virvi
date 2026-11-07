@@ -1,13 +1,13 @@
-import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql, type SQLWrapper } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
-  studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioManaRefunds, studioMistakeReports, studioPayments, studioPieces, studioPromptCredits,
+  studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioManaRefunds, studioMistakeReports, studioPayments, studioPieces, studioPromptCredits,
   studioRenders, studioRevisions, users, type PaymentLine,
 } from '../db/schema.js'
 import { config } from '../config.js'
 import { ensureCustomer, getStripe } from '../integrations/stripe.js'
 import { allocateCredit, chargedCents, dueCentsOf, instantReportsUsed, isVirviAdmin, priceLines, quoteFinalize, QuoteError } from './pricing.js'
-import { addCredit, creditBalance, takeCredit } from './credit.js'
+import { addCredit, takeCredit } from './credit.js'
 import { startWorker, type Design } from './designs.js'
 import type { Exec } from './quota.js'
 import { publishStudio } from './events.js'
@@ -173,11 +173,22 @@ export async function expireOpen(pays: { id: string; method: string; stripeSessi
  * (waiting for confirmations): its holds are spent, not available.
  */
 export async function creditFor(userId: string, designId: string | null, now: Date, exec: Exec = db): Promise<number> {
-  const [held] = await exec.select({ n: sql<number>`coalesce(sum(${studioPayments.creditHeldCents}), 0)::int` }).from(studioPayments)
+  const held = exec.select({ n: sql<number>`coalesce(sum(${studioPayments.creditHeldCents}), 0)` }).from(studioPayments)
     .where(and(eq(studioPayments.userId, userId),
       designId ? and(eq(studioPayments.designId, designId), eq(studioPayments.kind, 'finalize')) : eq(studioPayments.kind, 'topup'),
       eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now), isNull(studioPayments.manaTxHash)))
-  return (await creditBalance(userId, exec)) + held.n
+  const balance = exec.select({ n: studioCredits.balanceCents }).from(studioCredits).where(eq(studioCredits.userId, userId))
+  return availableOf(exec, balance, held)
+}
+
+/**
+ * A balance plus what open checkouts hold, read in one statement so both come from one snapshot. Read apart, a
+ * checkout committing in between (the credit moving from the balance to its hold) is counted twice, and the quote
+ * then expires that checkout to take over a credit that isn't there.
+ */
+async function availableOf(exec: Exec, balance: SQLWrapper, held: SQLWrapper): Promise<number> {
+  const [row] = await exec.execute<{ n: number }>(sql`SELECT (coalesce((${balance}), 0) + (${held}))::int AS n`) as unknown as { n: number }[]
+  return row.n
 }
 
 /**
@@ -185,12 +196,12 @@ export async function creditFor(userId: string, designId: string | null, now: Da
  * checkouts hold (a new checkout takes those over).
  */
 export async function giftsFor(userId: string, designId: string, now: Date, exec: Exec = db): Promise<number> {
-  const [bal] = await exec.select({ balance: studioFinalizeCredits.balance }).from(studioFinalizeCredits)
+  const balance = exec.select({ n: studioFinalizeCredits.balance }).from(studioFinalizeCredits)
     .where(eq(studioFinalizeCredits.userId, userId))
-  const [held] = await exec.select({ n: sql<number>`coalesce(sum(${studioPayments.giftsHeld}), 0)::int` }).from(studioPayments)
+  const held = exec.select({ n: sql<number>`coalesce(sum(${studioPayments.giftsHeld}), 0)` }).from(studioPayments)
     .where(and(eq(studioPayments.userId, userId), eq(studioPayments.designId, designId), eq(studioPayments.kind, 'finalize'),
       eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now), isNull(studioPayments.manaTxHash)))
-  return (bal?.balance ?? 0) + held.n
+  return availableOf(exec, balance, held)
 }
 
 /**
