@@ -28,6 +28,11 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] organizations table ensured');
       } catch(e) { console.log('[virvi-server] organizations:', e.message); }
 
+      // streaming_servers.scene_id: deleting a scene unlinks its streaming server (was no action, so the delete failed)
+      try {
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'streaming_servers_scene_id_scenes_id_fk' AND confdeltype <> 'n') THEN ALTER TABLE streaming_servers DROP CONSTRAINT streaming_servers_scene_id_scenes_id_fk; ALTER TABLE streaming_servers ADD CONSTRAINT streaming_servers_scene_id_scenes_id_fk FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE SET NULL; END IF; END \$\$\`;
+      } catch(e) { console.log('[virvi-server] streaming_servers scene fk:', e.message); }
+
       // trial account columns on users
       for (const def of ['is_trial BOOLEAN NOT NULL DEFAULT false', 'trial_last_active_at TIMESTAMPTZ', 'trial_ip_hash TEXT', 'trial_device_hash TEXT']) {
         try {

@@ -863,7 +863,7 @@ export const streamingServers = pgTable('streaming_servers', {
   hlsPlaylistUrl: text('hls_playlist_url'), // e.g. https://cdn.virvi.io/streams/{id}/playlist.m3u8
   region: text('region').default('us-east-1'),
   infrastructureId: text('infrastructure_id'), // ECS task ARN, Fly machine ID, etc.
-  sceneId: uuid('scene_id').references(() => scenes.id), // optional: auto-link to a scene's video
+  sceneId: uuid('scene_id').references(() => scenes.id, { onDelete: 'set null' }), // optional: auto-link to a scene's video; deleting the scene unlinks it
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
