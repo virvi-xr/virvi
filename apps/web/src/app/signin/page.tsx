@@ -2,6 +2,7 @@
 import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
 import { safeNextPath } from '@/lib/next-path'
+import { startOAuth } from '@/lib/oauth-start'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
 import { BrandMark } from '@/components/BrandMark'
@@ -59,9 +60,7 @@ function SignIn() {
     setError('')
     setSubmitting(true)
     try {
-      const url = await oauthUrl(provider)
-      rememberNext()
-      window.location.href = url
+      await startOAuth(provider, { oauthUrl: (p) => oauthUrl(p), remember: rememberNext, navigate: (url) => { window.location.href = url } })
     } catch (err: any) {
       setError(err?.message || 'Something went wrong')
       setSubmitting(false)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stashTrialHandover, takeTrialHandover, trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, signUpButtons, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp } from './trial'
+import { stashTrialHandover, takeTrialHandover, trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, signUpButtons, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp, beginTrial, signUpAutoDismiss } from './trial'
 
 describe('accountRequired', () => {
   it('reads the action from an account_required refusal', () => {
@@ -197,5 +197,48 @@ describe('signUpButtons', () => {
   it('leaves out providers that are not configured', () => {
     expect(signUpButtons('signin', { google: false, discord: true }, false)).toEqual([{ id: 'discord', label: 'Continue with Discord' }])
     expect(signUpButtons('create', { google: false, discord: false }, false)).toEqual([])
+  })
+})
+
+describe('beginTrial (/try/studio Start)', () => {
+  const deps = (over: Partial<Parameters<typeof beginTrial>[0]> = {}) => {
+    const calls = { start: [] as string[], resets: 0 }
+    const opts = {
+      signedIn: false,
+      botToken: 'tok' as string | null,
+      startTrial: async (t: string) => { calls.start.push(t) },
+      resetBotCheck: () => { calls.resets++ },
+      ...over,
+    }
+    return { opts, calls }
+  }
+  it('starts a trial with the bot-check token and keeps the check', async () => {
+    const { opts, calls } = deps()
+    expect(await beginTrial(opts)).toEqual({ ok: true })
+    expect(calls.start).toEqual(['tok'])
+    expect(calls.resets).toBe(0)
+  })
+  it('skips the start for a session that already exists', async () => {
+    const { opts, calls } = deps({ signedIn: true })
+    expect(await beginTrial(opts)).toEqual({ ok: true })
+    expect(calls.start).toEqual([])
+  })
+  it('after a refused start, resets the bot check (its token was spent) and says why', async () => {
+    const { opts, calls } = deps({ startTrial: async () => { throw new Error('trial_limit') } })
+    expect(await beginTrial(opts)).toEqual({ ok: false, error: trialStartMessage('trial_limit') })
+    expect(calls.resets).toBe(1)
+  })
+})
+
+describe('signUpAutoDismiss', () => {
+  it('gives up a pending sign-up once the session is no longer a trial', () => {
+    expect(signUpAutoDismiss({ pending: true, isTrial: false, submitting: false })).toBe(true)
+  })
+  it('waits while a sign-up or sign-in from the sheet is in flight: that call resolves the pending action itself', () => {
+    expect(signUpAutoDismiss({ pending: true, isTrial: false, submitting: true })).toBe(false)
+  })
+  it('does nothing for a trial or with nothing pending', () => {
+    expect(signUpAutoDismiss({ pending: true, isTrial: true, submitting: false })).toBe(false)
+    expect(signUpAutoDismiss({ pending: false, isTrial: false, submitting: false })).toBe(false)
   })
 })

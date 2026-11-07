@@ -7,8 +7,8 @@ import { BrandMark } from '@/components/BrandMark'
 import { KindPicker } from '@/components/KindPicker'
 import { PrimaryButton } from '@/components/ui'
 import { Turnstile, type TurnstileHandle } from '@/components/Turnstile'
-import { trialStartMessage } from '@/lib/trial'
-import { refusalMessage, unsentHref, type StudioKind } from '@/lib/studio'
+import { beginTrial } from '@/lib/trial'
+import { keepUnsent, refusalMessage, type StudioKind } from '@/lib/studio'
 
 const MAX_PROMPT = 4000
 const PLACEHOLDERS: Record<StudioKind, string> = {
@@ -49,7 +49,10 @@ export default function TryStudioPage() {
           await apiRef.current.sendStudioPrompt(d.id, { text: go.text })
         } catch (err) {
           // The design exists: go to it (its composer has the prompt again) so a retry doesn't start a second design
-          window.location.assign(unsentHref(d.id, go.text, refusalMessage(err as never, new Date()).text || "Your prompt didn't send. Press Send to try again."))
+          let store: Storage | null = null
+          try { store = sessionStorage } catch { /* blocked storage */ }
+          keepUnsent(store, d.id, go.text, refusalMessage(err as never, new Date()).text || "Your prompt didn't send. Press Send to try again.")
+          window.location.assign(`/studio/${d.id}/`)
           return
         }
         window.location.assign(`/studio/${d.id}/`)
@@ -66,14 +69,16 @@ export default function TryStudioPage() {
     if (!t || busy || loading) return
     setBusy(true)
     setError(null)
-    try {
-      if (!user) await startTrial(botToken ?? '')
-      setGo({ kind, text: t })
-    } catch (err) {
-      setError(trialStartMessage((err as Error).message))
+    const began = await beginTrial({
+      signedIn: !!user,
+      botToken,
+      startTrial,
       // The bot-check token was spent on the refused start: get a fresh one for the retry
-      setBotToken(null)
-      turnstile.current?.reset()
+      resetBotCheck: () => { setBotToken(null); turnstile.current?.reset() },
+    })
+    if (began.ok) setGo({ kind, text: t })
+    else {
+      setError(began.error)
       setBusy(false)
     }
   }

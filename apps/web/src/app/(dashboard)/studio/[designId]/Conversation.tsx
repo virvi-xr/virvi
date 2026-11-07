@@ -5,7 +5,7 @@ import { useApi } from '@/lib/api'
 import { openSignUp } from '@/lib/trial'
 import { PrimaryButton } from '@/components/ui'
 import {
-  agentLabel, canSend, readUnsent, categoryLabel, checkoutHref, composerState, formatCents, latestRenderUrl, trialCtx, trialNudge, initialTicks, progressFor, refusalMessage, slotSelection,
+  agentLabel, canSend, takeUnsent, categoryLabel, checkoutHref, composerState, formatCents, latestRenderUrl, trialCtx, trialNudge, initialTicks, progressFor, refusalMessage, slotSelection,
   type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage,
 } from '@/lib/studio'
 import { AgentPicker } from '../AgentPicker'
@@ -26,17 +26,15 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const [dropped, setDropped] = useState<File[] | null>(null)
   const [dragging, setDragging] = useState(false)
 
-  // From /try/studio: the design was made but its first prompt was refused; offer it again here
+  // From /try/studio: the design was made but its first prompt was refused; offer it again here (read once, then gone)
   useEffect(() => {
-    const unsent = readUnsent(window.location.search)
+    let store: Storage | null = null
+    try { store = sessionStorage } catch { /* blocked storage */ }
+    const unsent = takeUnsent(store, designId)
     if (!unsent) return
     setText(unsent.text)
     if (unsent.refusal) setRefusal({ text: unsent.refusal })
-    const url = new URL(window.location.href)
-    url.searchParams.delete('unsent')
-    url.searchParams.delete('why')
-    window.history.replaceState(window.history.state, '', url.pathname + url.search)
-  }, [])
+  }, [designId])
 
   const composer = composerState(detail, usage, new Date())
   const nudge = trialNudge(usage)

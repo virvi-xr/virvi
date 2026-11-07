@@ -957,14 +957,24 @@ export function writeUnrecordedRefund(store: KeyValueStore | null, id: string, e
   return next
 }
 
-/** The design page for a prompt that was not sent (the design was made, the prompt refused): its composer shows the prompt again. */
-export function unsentHref(designId: string, text: string, refusal: string): string {
-  return `/studio/${designId}/?${new URLSearchParams({ unsent: text, why: refusal })}`
+type RemovableStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+const unsentKey = (designId: string) => `virvi.unsent.${designId}`
+
+/** Keeps a prompt that was not sent (the design was made, the prompt refused) for that design's page, whose composer
+ *  shows it again. Session storage, not the URL: a prompt is up to 4000 characters and shouldn't sit in history or logs. */
+export function keepUnsent(store: RemovableStore | null, designId: string, text: string, refusal: string): void {
+  try { store?.setItem(unsentKey(designId), JSON.stringify({ text, refusal })) } catch { /* private window or blocked storage */ }
 }
 
-/** The unsent prompt (and why) `unsentHref` put in the query, or null. */
-export function readUnsent(search: string): { text: string; refusal: string } | null {
-  const q = new URLSearchParams(search)
-  const text = q.get('unsent')
-  return text ? { text, refusal: q.get('why') ?? '' } : null
+/** The unsent prompt (and why) `keepUnsent` kept for this design, once: it is removed as it is read. */
+export function takeUnsent(store: RemovableStore | null, designId: string): { text: string; refusal: string } | null {
+  try {
+    const raw = store?.getItem(unsentKey(designId))
+    if (raw == null) return null
+    store!.removeItem(unsentKey(designId))
+    const v = JSON.parse(raw) as { text?: unknown; refusal?: unknown }
+    return typeof v?.text === 'string' && v.text ? { text: v.text, refusal: typeof v.refusal === 'string' ? v.refusal : '' } : null
+  } catch {
+    return null
+  }
 }

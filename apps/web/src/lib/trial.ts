@@ -111,6 +111,24 @@ export function trialStartMessage(code: string | undefined): string {
   return (code && TRIAL_START_COPY[code]) || 'Something went wrong starting your trial. Try again in a moment.'
 }
 
+/** /try/studio's Start: makes the trial session unless one exists. A refused start spent the bot-check token, so the check
+ *  is reset for the retry. */
+export async function beginTrial(opts: {
+  signedIn: boolean
+  botToken: string | null
+  startTrial: (botToken: string) => Promise<unknown>
+  resetBotCheck: () => void
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (opts.signedIn) return { ok: true }
+  try {
+    await opts.startTrial(opts.botToken ?? '')
+    return { ok: true }
+  } catch (err) {
+    opts.resetBotCheck()
+    return { ok: false, error: trialStartMessage((err as Error)?.message) }
+  }
+}
+
 /** A device id made once and kept: the server counts trials per device. */
 export function deviceId(storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage): string {
   try {
@@ -152,6 +170,13 @@ function settle(): typeof pending {
   pending = null
   listener?.(null)
   return p
+}
+
+/** The sign-up sheet gives up a pending request once the session stops being a trial (signed in elsewhere, logged out),
+ *  but not while its own sign-up or sign-in is in flight: that call adopts the new user first and then resolves the request,
+ *  and giving up in between would reject the blocked action instead of retrying it. */
+export function signUpAutoDismiss(s: { pending: boolean; isTrial: boolean; submitting: boolean }): boolean {
+  return s.pending && !s.isTrial && !s.submitting
 }
 
 export function resolveSignUp(token: string): void { settle()?.resolve(token) }

@@ -1,8 +1,8 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
-import { blockedCopy, signUpButtons, dismissSignUp, resolveSignUp, subscribeSignUp, type SignUpRequest } from '@/lib/trial'
+import { blockedCopy, signUpButtons, dismissSignUp, resolveSignUp, signUpAutoDismiss, subscribeSignUp, type SignUpRequest } from '@/lib/trial'
 
 const BUTTON_STYLE = {
   wallet: 'bg-orange-500 text-white hover:bg-orange-600',
@@ -30,6 +30,8 @@ export function SignUpSheet() {
   const [busy, setBusy] = useState(false)
   const [providers, setProviders] = useState<{ google: boolean; discord: boolean }>({ google: false, discord: false })
   const [hasWallet, setHasWallet] = useState(false)
+  // Set synchronously around the sheet's own sign-up/sign-in: the new user can land (and this re-render) before it resolves
+  const submitting = useRef(false)
 
   useEffect(() => subscribeSignUp(setReq), [])
   useEffect(() => {
@@ -48,7 +50,10 @@ export function SignUpSheet() {
 
   // The session stopped being a trial while a sign-up was pending: let the waiting call give up instead of hanging
   const isTrial = !!user?.trial
-  useEffect(() => { if (req && !isTrial) dismissSignUp() }, [req, isTrial])
+  // (not while the sheet's own call is in flight: it resolves the request itself, so the blocked action is retried)
+  useEffect(() => {
+    if (signUpAutoDismiss({ pending: !!req, isTrial, submitting: submitting.current })) dismissSignUp()
+  }, [req, isTrial, busy])
 
   if (!req || !isTrial) return null
   const copy = blockedCopy(req.action, req.ctx)
@@ -57,11 +62,13 @@ export function SignUpSheet() {
   const run = async (go: () => Promise<string>) => {
     setError('')
     setBusy(true)
+    submitting.current = true
     try {
       resolveSignUp(await go())
     } catch (err: any) {
       setError(err?.code === 4001 ? 'Wallet sign-in cancelled' : err?.message || 'Something went wrong')
     } finally {
+      submitting.current = false
       setBusy(false)
     }
   }
