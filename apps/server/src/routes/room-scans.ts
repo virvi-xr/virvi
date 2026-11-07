@@ -10,7 +10,7 @@ import { plotForLayout } from '../room-scan/plot.js'
 
 /**
  * Room scans: a personal headset uploads its scanned layout (layout JSON only, never images); the owner lists, reads
- * and deletes them from their account. Every route answers 404 to anyone but the owner.
+ * and deletes them from their account. Every route answers 404 to anyone but the owner. A trial lists, reads and deletes its own.
  */
 export const SHARED_DEVICE_MESSAGE = 'Room scans need a personal headset. This one is shared.'
 
@@ -43,7 +43,7 @@ export default async function roomScanRoutes(app: FastifyInstance) {
     },
   )
 
-  app.get('/api/room-scans', { preHandler: [authenticate] }, async (request) => {
+  app.get('/api/room-scans', { preHandler: [authenticate], config: { trial: true } }, async (request) => {
     const rows = await db.select().from(roomScans).where(eq(roomScans.userId, request.user.id)).orderBy(desc(roomScans.createdAt), desc(roomScans.id))
     return {
       scans: rows.map((s) => ({
@@ -58,14 +58,14 @@ export default async function roomScanRoutes(app: FastifyInstance) {
     }
   })
 
-  app.get<{ Params: { id: string } }>('/api/room-scans/:id', { preHandler: [authenticate] }, async (request, reply) => {
+  app.get<{ Params: { id: string } }>('/api/room-scans/:id', { preHandler: [authenticate], config: { trial: true } }, async (request, reply) => {
     if (!isUuid(request.params.id)) return reply.status(404).send({ error: 'not_found' })
     const [scan] = await db.select().from(roomScans).where(and(eq(roomScans.id, request.params.id), eq(roomScans.userId, request.user.id)))
     if (!scan) return reply.status(404).send({ error: 'not_found' })
     return { scan }
   })
 
-  app.delete<{ Params: { id: string } }>('/api/room-scans/:id', { preHandler: [authenticate] }, async (request, reply) => {
+  app.delete<{ Params: { id: string } }>('/api/room-scans/:id', { preHandler: [authenticate], config: { trial: true } }, async (request, reply) => {
     if (!isUuid(request.params.id)) return reply.status(404).send({ error: 'not_found' })
     const deleted = await db
       .delete(roomScans)

@@ -12,14 +12,17 @@ import { recordTrialEvent } from '../auth/trial-events.js'
 import { trialsAvailable, verifyTurnstile } from '../auth/turnstile.js'
 
 const DEVICE_ID = /^[A-Za-z0-9_-]{16,64}$/
+/** Where the trial started (`/try` or `/try/scene`), kept on its `started` funnel row. */
+const ENTRIES = new Set(['studio', 'scene'])
 
 export default async function trialRoutes(app: FastifyInstance) {
-  // Start a signed-out Design Studio trial: bot check, per-IP and per-device daily limits, then a trial user + session.
-  app.post<{ Body: { turnstileToken?: string; deviceId?: string } }>(
+  // Start a signed-out trial (Design Studio or scene builder): bot check, per-IP and per-device daily limits, then a trial
+  // user + session. `entry` ('studio' | 'scene') is recorded on the funnel; anything else is ignored.
+  app.post<{ Body: { turnstileToken?: string; deviceId?: string; entry?: unknown } }>(
     '/api/auth/trial',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
     async (request, reply) => {
-      const { turnstileToken, deviceId } = request.body ?? {}
+      const { turnstileToken, deviceId, entry } = request.body ?? {}
       if (typeof deviceId !== 'string' || !DEVICE_ID.test(deviceId)) return reply.status(400).send({ error: 'bad_device' })
       if (!trialsAvailable()) return reply.status(503).send({ error: 'trials_unavailable' })
       if (!(await verifyTurnstile(typeof turnstileToken === 'string' ? turnstileToken : undefined, request.ip))) {
@@ -45,7 +48,7 @@ export default async function trialRoutes(app: FastifyInstance) {
         .insert(users)
         .values({ displayName: 'Guest', email: null, role: 'creator', isTrial: true, trialLastActiveAt: now, trialIpHash: ipHash, trialDeviceHash: deviceHash })
         .returning()
-      recordTrialEvent('started', user.id)
+      recordTrialEvent('started', user.id, typeof entry === 'string' && ENTRIES.has(entry) ? entry : null)
       return reply.status(201).send(issueTrialSession(app, user))
     },
   )

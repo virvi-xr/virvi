@@ -47,7 +47,8 @@ export default async function assetRoutes(app: FastifyInstance) {
   const storage = createStorage()
 
   // ── Browse / Search ───────────────────────────────────────────────────
-  app.get('/api/assets', async (request, reply) => {
+  // Browsing is public; a trial bearer reads as signed out (public assets only). `config.trial` marks it as open to trials.
+  app.get('/api/assets', { config: { trial: true } }, async (request, reply) => {
     const query = request.query as {
       q?: string
       category?: string
@@ -152,7 +153,7 @@ export default async function assetRoutes(app: FastifyInstance) {
   })
 
   // ── Get Single Asset ──────────────────────────────────────────────────
-  app.get('/api/assets/:id', async (request, reply) => {
+  app.get('/api/assets/:id', { config: { trial: true } }, async (request, reply) => {
     const { id } = request.params as { id: string }
 
     const asset = await db.query.assetLibraryItems.findFirst({
@@ -339,7 +340,7 @@ export default async function assetRoutes(app: FastifyInstance) {
   )
 
   // ── List Categories ───────────────────────────────────────────────────
-  app.get('/api/assets/categories', async (_request, reply) => {
+  app.get('/api/assets/categories', { config: { trial: true } }, async (_request, reply) => {
     const result = await db
       .select({ category: assetLibraryItems.category })
       .from(assetLibraryItems)

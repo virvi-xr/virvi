@@ -505,7 +505,10 @@ describe('cross-account route walk', () => {
     await db.update(users).set({ isTrial: true, trialLastActiveAt: new Date() }).where(eq(users.id, t.id))
     const { accessToken } = issueTrialSession(app, { id: t.id, displayName: t.displayName, role: 'creator', trialLastActiveAt: new Date() })
     const trialRoutes = new Set(((app as any).registeredRoutes as Array<{ method: string; url: string; trial: boolean }>).filter((r) => r.trial).map((r) => `${r.method} ${r.url}`))
-    const own = new Set(['GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes'])
+    const own = new Set([
+      'GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes',
+      'GET /api/wizard/catalog', 'GET /api/wizard/options', 'GET /api/room-scans', 'GET /api/hyperfy/slots', 'GET /api/assets', 'GET /api/assets/categories',
+    ])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
     expect(cases.length).toBe(trialRoutes.size - own.size)
     const offenders: string[] = []

@@ -2,7 +2,8 @@
  * New Scene Wizard routes.
  *
  * GET  /api/wizard/catalog — curated themes and category chips, resolved against the live catalog
- * GET  /api/wizard/options — what this account can pick (Virvi-signed deploys, Hyperfy, scene allowance)
+ * GET  /api/wizard/options — what this account can pick (Virvi-signed deploys, Hyperfy, scene allowance); a trial gets `trial: true`, no limit
+ * (catalog and options take a trial token; the save does not)
  * POST /api/wizard/scenes  — create the whole scene (preset, models, placements, library links) in one call;
  *                            `dcl: false` (Hyperfy/AR only) skips Decentraland's triangle and entity budget
  */
@@ -73,7 +74,8 @@ interface BootstrapBody {
 export default async function wizardRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate)
 
-  app.get('/api/wizard/catalog', async (_request, reply) => {
+  // A trial walks the wizard up to Deploy: it reads the catalog and options, but the save below needs an account.
+  app.get('/api/wizard/catalog', { config: { trial: true } }, async (_request, reply) => {
     const refs = [...THEMES.flatMap((t) => t.items), ...CATEGORY_CHIPS.flatMap((c) => c.picks)]
     const rows = await db
       .select()
@@ -107,15 +109,19 @@ export default async function wizardRoutes(app: FastifyInstance) {
     })
   })
 
-  app.get('/api/wizard/options', async (request, reply) => {
+  app.get('/api/wizard/options', { config: { trial: true } }, async (request, reply) => {
     const signer = virviSigner()
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(scenes)
       .where(eq(scenes.ownerId, request.user.id))
+    const dcl = { virviDeploys: !!signer, virviAddress: signer?.address ?? null }
+    const hyperfy = { allowed: true, requiredTier: 'free' } // the wizard is open to everyone
+    // A trial's scenes are its own sandbox: no plan limit applies until it becomes an account
+    if (request.user.trial) return reply.send({ dcl, hyperfy, scenes: { used: count, limit: null }, trial: true })
     return reply.send({
-      dcl: { virviDeploys: !!signer, virviAddress: signer?.address ?? null },
-      hyperfy: { allowed: true, requiredTier: 'free' }, // the wizard is open to everyone
+      dcl,
+      hyperfy,
       scenes: {
         used: count,
         limit: config.allFeaturesUnlocked ? null : (await getSubscription(request.user.id)).limits.scenes,

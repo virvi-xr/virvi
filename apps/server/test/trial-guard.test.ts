@@ -41,6 +41,16 @@ const ALLOWED = [
   'PUT /api/instances/:instanceId',
   'DELETE /api/instances/:instanceId',
   'DELETE /api/elements/:elementId/instances',
+  'GET /api/wizard/catalog',
+  'GET /api/wizard/options',
+  'GET /api/room-scans',
+  'GET /api/room-scans/:id',
+  'DELETE /api/room-scans/:id',
+  'GET /api/room-scans/:id/preview.glb',
+  'GET /api/hyperfy/slots',
+  'GET /api/assets',
+  'GET /api/assets/:id',
+  'GET /api/assets/categories',
 ].sort()
 
 // Routes that are not public but never call `authenticate`: they check their own credential, so a trial bearer
