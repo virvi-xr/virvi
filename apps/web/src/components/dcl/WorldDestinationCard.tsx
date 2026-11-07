@@ -13,6 +13,7 @@ import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
 import { DownloadLiveButton } from './DownloadLiveButton'
 import { DownloadBackupButton } from './DownloadBackupButton'
+import { MapDataLine } from './MapDataLine'
 
 interface Detail {
   /** Over the triangles Decentraland recommends: shown, never a stop. */
@@ -137,6 +138,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
               <DownloadBackupButton sceneId={dest.sceneId} destinationId={dest.id} className={secondary} />
             </div>
           )}
+          <MapDataLine destination={dest} />
         </div>
       </div>
 

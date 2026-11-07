@@ -118,3 +118,22 @@ export function publishCopy(d: Pick<DclDestination, 'kind' | 'worldName' | 'base
     notSigned: "This World is set to let Virvi deploy, but the permission isn't signed yet.",
   }
 }
+
+/**
+ * LIV-135: whether Decentraland built a map snapshot (its Initial Scene State) for what Virvi last deployed. Null when
+ * that was never checked, or what's live now isn't the entity that was checked (Use the live version).
+ */
+export function mapView(d: Pick<DclDestination, 'kind' | 'lastEntityId' | 'mapStatus' | 'mapEntityId' | 'mapAssets'>): {
+  line: string; tone: 'muted' | 'warning'; help: string
+} | null {
+  if (!d.mapStatus || d.mapStatus === 'unknown' || !d.mapEntityId || d.mapEntityId !== d.lastEntityId) return null
+  const help = d.kind === 'parcels'
+    ? 'The map photo itself only changes when Decentraland re-captures the map, which they do by hand now and then.'
+    : "The map photo itself only changes when Decentraland re-captures the map (by hand, now and then), and Worlds don't have a satellite map yet."
+  if (d.mapStatus === 'ready') {
+    const n = d.mapAssets
+    return { line: n == null ? 'Map data: ready' : `Map data: ready (${n} ${n === 1 ? 'model' : 'models'})`, tone: 'muted', help }
+  }
+  if (d.mapStatus === 'pending') return { line: 'Map data: waiting for Decentraland', tone: 'muted', help }
+  return { line: "No map data — Decentraland didn't build a map snapshot for this deploy", tone: 'warning', help }
+}

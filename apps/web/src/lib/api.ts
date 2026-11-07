@@ -119,9 +119,16 @@ export interface DclDestination {
   pendingSince: string | null
   adopted: boolean
   spawn: { x: number; y: number; z: number } | null
+  /** LIV-135: whether Decentraland built a map snapshot for `mapEntityId` (absent on older responses: unknown). */
+  mapStatus?: DclMapStatus
+  mapEntityId?: string | null
+  mapAssets?: number | null
+  mapCheckedAt?: string | null
   createdAt: string
   updatedAt: string
 }
+
+export type DclMapStatus = 'pending' | 'ready' | 'none' | 'unknown'
 
 /** A model in the scene that the World doesn't have yet. */
 export interface DclPendingModel {

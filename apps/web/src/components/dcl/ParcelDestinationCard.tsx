@@ -12,6 +12,7 @@ import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
 import { DownloadLiveButton } from './DownloadLiveButton'
 import { DownloadBackupButton } from './DownloadBackupButton'
+import { MapDataLine } from './MapDataLine'
 import { ParcelGrantCard } from './ParcelGrantCard'
 
 const button = 'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
@@ -101,6 +102,7 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
             <DownloadBackupButton sceneId={dest.sceneId} destinationId={dest.id} className={secondary} />
           </div>
         )}
+        <MapDataLine destination={dest} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
