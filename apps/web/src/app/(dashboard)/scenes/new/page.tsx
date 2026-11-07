@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import { useApi, type WizardCatalog, type WizardOptions } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { canAdvance, initialState, wizardReducer, type WizardState, type WizardStep } from '@/lib/wizard/state'
+import { clearDraft, loadDraft, saveDraft } from '@/lib/wizard/draft'
 import { emptyMemory, wizardErrorMessage, type RunMemory } from '@/lib/wizard/run'
 import { plotLabel } from '@/lib/wizard/helpers'
 import { PageHeader } from '@/components/ui'
@@ -33,7 +34,7 @@ const STEPS: Array<{ id: WizardStep; title: string }> = [
 function summary(step: WizardStep, s: WizardState): string {
   switch (step) {
     case 'where':
-      return [s.name.trim(), s.roomSet && 'Room scan', s.destinations.dcl?.world, s.destinations.hyperfy && 'Hyperfy', s.destinations.ar && 'Virvi AR'].filter(Boolean).join(' · ')
+      return [s.name.trim(), s.roomSet && 'Room scan', s.destinations.dcl?.world ?? (s.dclLater && 'Decentraland'), s.destinations.hyperfy && 'Hyperfy', s.destinations.ar && 'Virvi AR'].filter(Boolean).join(' · ')
     case 'size':
       return s.plot ? `${plotLabel(s.plot)}${s.roomSet ? ', fits your scan' : ''}` : 'Guide plot'
     case 'assets':
@@ -46,9 +47,12 @@ function summary(step: WizardStep, s: WizardState): string {
 }
 
 export default function NewScenePage() {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
+  const trial = !!user?.trial
   const api = useApi()
-  const [state, dispatch] = useReducer(wizardReducer, initialState)
+  // A draft kept in this browser (a trial's, or one an account brought along when it signed up) picks up where it was left.
+  // The page renders only once the session is read (the layout waits), so this runs in the browser.
+  const [state, dispatch] = useReducer(wizardReducer, initialState, (init) => loadDraft(Date.now()) ?? init)
   const [catalog, setCatalog] = useState<WizardCatalog | null>(null)
   const [options, setOptions] = useState<WizardOptions | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -64,6 +68,17 @@ export default function NewScenePage() {
   const roomPreview = useRoomSetPreview(state.roomSet, dispatch)
   const locked = running || !!memory.current.sceneId
 
+  // A trial's wizard lives in this browser until it signs up or deploys: kept on each change, and gone once a run has made the
+  // scene (the server has it then). Signing up keeps it; signing out clears it (lib/auth).
+  useEffect(() => {
+    if (memory.current.sceneId) clearDraft()
+    else if (trial) saveDraft(state, Date.now())
+  }, [state, trial])
+  const onRunning = useCallback((on: boolean) => {
+    setRunning(on)
+    if (memory.current.sceneId) clearDraft()
+  }, [])
+
   const loadNames = useCallback(() => {
     setNames({ status: 'loading' })
     api.getDclNames()
@@ -77,13 +92,15 @@ export default function NewScenePage() {
     Promise.all([api.getWizardCatalog(), api.getWizardOptions()])
       .then(([c, o]) => { if (!stale) { setCatalog(c); setOptions(o) } })
       .catch((err) => { if (!stale) setLoadError(wizardErrorMessage(err)) })
-    loadNames()
+    // A trial has no linked wallets: it connects one at Deploy
+    if (!trial) loadNames()
     return () => { stale = true }
-  }, [token])
+  }, [token, trial])
 
   const at = STEPS.findIndex((s) => s.id === state.step)
   const { dcl, hyperfy, ar } = state.destinations
-  const whereReady = (!dcl?.hasScene || replaceOk) && !contractBlocked && (!hyperfy || !!hyperfy.name.trim()) && (!ar || !!ar.name.trim())
+  // An account carrying a trial's "Decentraland World" picks the World here (or skips Decentraland)
+  const whereReady = (trial || !state.dclLater) && (!dcl?.hasScene || replaceOk) && !contractBlocked && (!hyperfy || !!hyperfy.name.trim()) && (!ar || !!ar.name.trim())
   const ready = canAdvance(state) && (state.step !== 'where' || whereReady)
   const next = () => {
     setSelectedKey(null)
@@ -98,7 +115,7 @@ export default function NewScenePage() {
     size: <SizeStep state={state} dispatch={dispatch} />,
     assets: <AssetsStep state={state} dispatch={dispatch} catalog={catalog} />,
     arrange: <ArrangeStep state={state} dispatch={dispatch} roomPreview={roomPreview} selectedKey={selectedKey} setSelectedKey={setSelectedKey} moveSpawn={moveSpawn} setMoveSpawn={setMoveSpawn} />,
-    deploy: <DeployStep state={state} dispatch={dispatch} options={options} memory={memory.current} onRunning={setRunning} />,
+    deploy: <DeployStep state={state} dispatch={dispatch} options={options} memory={memory.current} onRunning={onRunning} />,
   }
 
   return (

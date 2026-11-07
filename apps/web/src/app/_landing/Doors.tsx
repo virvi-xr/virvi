@@ -78,6 +78,7 @@ export function Doors({ onAdvertise }: { onAdvertise: () => void }) {
             Start building — it's free
           </a>
           <a href="/try/studio/" className="text-sm font-medium text-blue-300 underline-offset-4 hover:underline">Try it — no account needed</a>
+          <a href="/try/scene/" className="text-sm font-medium text-blue-300 underline-offset-4 hover:underline">Build a scene — no account needed</a>
         </div>
       </div>
     </section>

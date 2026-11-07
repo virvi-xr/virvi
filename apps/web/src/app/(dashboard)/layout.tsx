@@ -4,7 +4,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { scenePassAllows, trialAllows } from '@/lib/session'
-import { openSignUp, signedInNote } from '@/lib/trial'
+import { openSignUp, signedInNote, trialNav } from '@/lib/trial'
 import { signinPath } from '@/lib/landing-route'
 import { useStudioAvailable } from '@/lib/use-studio'
 import Link from 'next/link'
@@ -48,15 +48,16 @@ const ADMIN_ITEM: NavItem = { href: '/admin', label: 'Admin', icon: ShieldIcon }
 const STUDIO_ITEM: NavItem = { href: '/studio', label: 'Design Studio', icon: SparkleIcon }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, logout, scenePass } = useAuth()
+  const { user, loading, logout, signOut, scenePass } = useAuth()
   const apiNow = useApi()
   const [sceneTitle, setSceneTitle] = useState('this scene')
   const [signedIn, setSignedIn] = useState<string | null>(null)
   const router = useRouter()
   const pathname = usePathname()
 
-  // A trial has the Design Studio only: everything else stays visible but locked. It calls no account-only route from here
-  // (no scene title, org or notification fetches), and the studio probe is on a route trials may use.
+  // A trial has the Design Studio and Scenes; Analytics, Events and Giveaways open their demos; everything else stays visible
+  // but locked. It calls no account-only route from here (no scene title, org or notification fetches), and the studio probe
+  // is on a route trials may use.
   const trial = !!user?.trial
   const studioOn = useStudioAvailable()
   const navSections = useMemo(() => {
@@ -123,8 +124,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div key={section.label} className={`flex gap-1 md:block ${i > 0 ? 'md:mt-5 md:border-t md:border-gray-800 md:pt-5' : ''}`}>
               <p className="hidden px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-gray-500 md:block">{section.label}</p>
               {section.items.map(({ href, label, icon: NavIcon, description }) => {
-                const active = pathname.startsWith(href) || Object.entries(NAV_PARENT).some(([child, parent]) => parent === href && pathname.startsWith(child))
-                if (trial && href !== '/studio') {
+                const open = trial ? trialNav(href) : { href, demo: false }
+                if (!open) {
                   return (
                     <button key={href} type="button" title={description} onClick={() => askSignUp(`nav:${href}`, label)}
                       className="relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-gray-500 transition-colors hover:bg-white/[0.03] hover:text-gray-300 md:mb-0.5">
@@ -135,12 +136,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     </button>
                   )
                 }
+                const active = pathname.startsWith(open.href) || Object.entries(NAV_PARENT).some(([child, parent]) => parent === open.href && pathname.startsWith(child))
                 return (
-                  <Link key={href} href={href} title={description} aria-current={active ? 'page' : undefined}
+                  <Link key={href} href={open.href} title={description} aria-current={active ? 'page' : undefined}
                     className={`relative flex shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-sm transition-colors md:mb-0.5 ${active ? 'bg-white/[0.05] text-white' : 'text-gray-400 hover:bg-white/[0.03] hover:text-white'}`}>
                     {active && <span className="absolute inset-y-1.5 left-0 hidden w-0.5 rounded-full bg-accent md:block" />}
                     <span className={active ? 'text-accent' : 'text-gray-500'}><NavIcon size={18} /></span>
                     {label}
+                    {open.demo && <span className="ml-auto rounded border border-gray-700 px-1.5 py-px text-[10px] font-medium uppercase tracking-wider text-gray-400">Demo</span>}
                   </Link>
                 )
               })}
@@ -160,11 +163,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <button type="button" onClick={() => askSignUp('signin', undefined, 'signin')} className="hover:text-white">Sign in</button>
               </p>
             ) : (
-              <button onClick={logout} className="text-xs text-gray-500 hover:text-white">Sign Out</button>
+              <button onClick={signOut} className="text-xs text-gray-500 hover:text-white">Sign Out</button>
             )}
           </div>
           {!trial && (
-            <button onClick={logout} aria-label="Sign out" className="rounded-md p-1.5 text-gray-500 hover:bg-white/[0.05] hover:text-white">
+            <button onClick={signOut} aria-label="Sign out" className="rounded-md p-1.5 text-gray-500 hover:bg-white/[0.05] hover:text-white">
               <LogoutIcon size={18} />
             </button>
           )}
@@ -196,11 +199,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="mx-auto mt-10 max-w-md text-center">
             <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-900 text-gray-400"><LockIcon size={22} /></span>
             <h1 className="text-xl font-semibold">This needs a free account</h1>
-            <p className="mt-2 text-sm text-gray-400">You're trying the Design Studio. Create an account to open the rest of Virvi. Your trial designs come with you.</p>
+            <p className="mt-2 text-sm text-gray-400">You're trying Virvi. Create an account to open the rest of it. Your trial designs and scenes come with you.</p>
             <div className="mt-5 flex items-center justify-center gap-3">
               <button type="button" onClick={() => askSignUp(`nav:${pathname}`, 'this page')}
                 className="clip-corner bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink hover:bg-accent-hover">Sign up</button>
-              <Link href="/studio" className="text-sm text-blue-300 underline">Back to the Design Studio</Link>
+              <Link href="/scenes" className="text-sm text-blue-300 underline">Back to your scenes</Link>
             </div>
           </div>
         ) : children}

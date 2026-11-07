@@ -50,6 +50,12 @@ export function headsetPairingCodeFromPath(pathname: string, paramCode: string |
   return m ? normalizePairingCode(decode(m[1])) : null
 }
 
+/** The headset pairing page for a code someone typed, or null when nothing usable was typed (a full page load: one static page). */
+export function headsetPairHref(typed: string): string | null {
+  const code = normalizePairingCode(typed)
+  return code ? `/pair/headset/${encodeURIComponent(code)}/` : null
+}
+
 export function headsetErrorMessage(err: unknown): string {
   const e = err instanceof Error ? (err as ApiError) : null
   if (e?.body?.error === 'unverified') return 'Verify your email before approving a headset.'

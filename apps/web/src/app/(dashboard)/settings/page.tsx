@@ -55,7 +55,7 @@ function UsageBar({ label, current, limit, formatValue }: {
 const TIER_TONE: Record<string, Tone> = { free: 'neutral', creator: 'info', pro: 'violet', studio: 'warning', enterprise: 'success' }
 
 export default function SettingsPage() {
-  const { user, token, updateUser, logout } = useAuth()
+  const { user, token, updateUser, signOut } = useAuth()
   const api = useApi()
   const [orgs, setOrgs] = useState<OrgSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -331,7 +331,7 @@ export default function SettingsPage() {
     setDeleteLoading(true)
     try {
       await api.deleteAccount(deletePassword)
-      logout()
+      signOut()
     } catch (err: any) {
       setDeleteError(err.message)
       setDeleteLoading(false)

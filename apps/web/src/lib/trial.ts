@@ -1,7 +1,7 @@
 /** Trial sessions: reading "account required" refusals, the words for them, and the bridge to the sign-up sheet. */
 import { readTrialSession } from './session'
 
-export interface BlockedCtx { designName?: string; revisions?: number; /** The locked page's name, for a nav click. */ label?: string }
+export interface BlockedCtx { designName?: string; revisions?: number; /** The locked page's name, for a nav click. */ label?: string; /** The wizard's scene, for the save. */ sceneName?: string }
 export interface SignUpRequest { action: string; ctx: BlockedCtx; /** Which tab the sheet opens on (default: create account). */ tab?: 'create' | 'signin' }
 
 /** The refused action when an error is a trial's `403 account_required`, else null. */
@@ -17,6 +17,9 @@ const DEFAULT_TITLE = 'Create a free account to use this.'
 export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; unlocks: string; emphasis?: string } {
   const name = ctx.designName?.trim()
   const revs = ctx.revisions
+  if (action.startsWith('demo:')) {
+    return { title: 'Create a free account to use this with your own scenes.', unlocks: 'Your trial scenes move into your account.' }
+  }
   if (action.startsWith('nav:')) {
     const label = ctx.label?.trim()
     return { title: `Create a free account to use ${label || 'this'}.`, unlocks: 'Your trial designs move into your account.' }
@@ -36,6 +39,32 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
       return { title: 'Create a free account to get more prompts.', unlocks: 'Accounts can top up prompts and keep designing.' }
     case 'POST /api/studio/gift-codes/redeem':
       return { title: 'Create a free account to redeem a gift code.', unlocks: 'Gift codes add prompts to your account.' }
+    case 'POST /api/wizard/scenes': {
+      const scene = ctx.sceneName?.trim()
+      return {
+        title: `Create a free account to save ${scene || 'your scene'}. Your layout is kept.`,
+        unlocks: 'Your scene, its layout and your room scans move into your account, ready to deploy.',
+        ...(scene ? { emphasis: scene } : {}),
+      }
+    }
+    case 'POST /api/imports/:id/deploy':
+      return { title: 'Create a free account to deploy your import.', unlocks: 'Your imported scene moves into your account and deploys to your World.' }
+    case 'GET /api/scenes/:sceneId/backup.zip':
+      return { title: 'Create a free account to download your scene.', unlocks: 'Accounts can download a backup of any scene they own.' }
+    case 'more_imports':
+      return { title: "Create a free account to import more scenes. You've used your trial's imports.", unlocks: 'Your imported scenes move into your account.' }
+    case 'import_larger':
+      return { title: 'Create a free account to import a scene this big.', unlocks: 'Accounts can import larger scene zips.' }
+    case 'more_scans':
+      return { title: 'Create a free account to keep more room scans.', unlocks: 'Your room scans move into your account, and you can keep more.' }
+    case 'shared_headset':
+      return { title: 'Create a free account to pair a shared headset.', unlocks: 'A trial can pair a personal headset; accounts can pair shared ones too.' }
+    case 'element_type':
+      return { title: 'Create a free account to add this kind of element.', unlocks: 'A trial can add models, images, videos and sounds; accounts can add everything.' }
+    case 'room_set':
+      return { title: 'Create a free account to add a room set to a scene.', unlocks: 'Your scenes and room scans move into your account.' }
+    case 'hyperfy_hosting':
+      return { title: 'Create a free account to have Virvi host a Hyperfy world.', unlocks: 'Accounts get hosted Hyperfy worlds with their plan.' }
     case 'more_designs':
       return { title: 'Create a free account to start another design.', unlocks: 'Accounts can keep more designs open at once.' }
     case 'more_prompts':
@@ -57,6 +86,14 @@ const ACTION_LABELS: Record<string, string> = {
   more_designs: 'New design',
   more_prompts: 'Send',
   upload_more: 'Upload',
+  'POST /api/wizard/scenes': 'Create and deploy',
+  'POST /api/imports/:id/deploy': 'Deploy',
+  'GET /api/scenes/:sceneId/backup.zip': 'Download',
+  more_imports: 'Import',
+  import_larger: 'Import',
+  shared_headset: 'Approve',
+  element_type: 'Add',
+  room_set: 'Add',
 }
 
 /** The one-time note after Google or Discord sign-in sent a visitor back; null when there was no blocked action. */
@@ -99,6 +136,17 @@ export function renewedTrialBearer(fresh: string | null, sessionKept: boolean): 
   return null
 }
 
+export type TrialEntry = 'studio' | 'scene'
+
+/** Where a dashboard nav item goes for a trial: open as is, to its demo (badged "Demo"), or locked (null). */
+const TRIAL_OPEN = new Set(['/studio', '/scenes'])
+const TRIAL_DEMOS = new Set(['/analytics', '/events', '/giveaways'])
+export function trialNav(href: string): { href: string; demo: boolean } | null {
+  if (TRIAL_OPEN.has(href)) return { href, demo: false }
+  if (TRIAL_DEMOS.has(href)) return { href: `/demo${href}`, demo: true }
+  return null
+}
+
 const TRIAL_START_COPY: Record<string, string> = {
   trial_limit: 'Free tries from this network are used up for today. Create a free account to keep going.',
   bot_check_failed: "We couldn't confirm you're human. Try again.",
@@ -111,17 +159,18 @@ export function trialStartMessage(code: string | undefined): string {
   return (code && TRIAL_START_COPY[code]) || 'Something went wrong starting your trial. Try again in a moment.'
 }
 
-/** /try/studio's Start: makes the trial session unless one exists. A refused start spent the bot-check token, so the check
- *  is reset for the retry. */
+/** /try/studio's and /try/scene's Start: makes the trial session unless one exists. A refused start spent the bot-check
+ *  token, so the check is reset for the retry. `entry` says which page started it (the server's funnel records it). */
 export async function beginTrial(opts: {
   signedIn: boolean
   botToken: string | null
-  startTrial: (botToken: string) => Promise<unknown>
+  entry?: TrialEntry
+  startTrial: (botToken: string, entry?: TrialEntry) => Promise<unknown>
   resetBotCheck: () => void
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   if (opts.signedIn) return { ok: true }
   try {
-    await opts.startTrial(opts.botToken ?? '')
+    await (opts.entry ? opts.startTrial(opts.botToken ?? '', opts.entry) : opts.startTrial(opts.botToken ?? ''))
     return { ok: true }
   } catch (err) {
     opts.resetBotCheck()

@@ -31,7 +31,12 @@ export function readTrialSession(token: string, now: number): boolean {
   return !!p && typeof p.exp === 'number' && p.exp * 1000 > now && p.kind === 'trial'
 }
 
-/** Pages a trial session may open: the Design Studio and its designs. */
+/** Pages a trial session may open: the Design Studio, its scenes and the scene wizard, imports, and the demo views. */
 export function trialAllows(pathname: string): boolean {
-  return pathname === '/studio' || pathname.startsWith('/studio/')
+  const p = pathname.replace(/\/+$/, '')
+  if (p === '/studio' || p.startsWith('/studio/')) return true
+  if (p === '/scenes' || p === '/import') return true
+  // `/scenes/new` and `/scenes/<id>`
+  if (/^\/scenes\/[^/]+$/.test(p)) return true
+  return /^\/demo\/[^/]+$/.test(p)
 }

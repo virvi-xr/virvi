@@ -247,3 +247,43 @@ describe('room set', () => {
     expect(canAdvance({ ...chosen(), step: 'size' })).toBe(true)
   })
 })
+
+describe('dclLater (a trial picks Decentraland without a wallet yet)', () => {
+  const named = (s: WizardState) => wizardReducer(s, { type: 'setName', name: 'Ramen Bar' })
+  it('starts off', () => {
+    expect(initialState.dclLater).toBe(false)
+  })
+  it('dclLater advances Where and needs a plot on Size', () => {
+    let s = named(wizardReducer(initialState, { type: 'setDclLater', on: true }))
+    expect(s.dclLater).toBe(true)
+    expect(canAdvance(s)).toBe(true)
+    s = wizardReducer(s, { type: 'goTo', step: 'size' })
+    expect(canAdvance(s)).toBe(false)
+    s = wizardReducer(s, { type: 'setPlot', plot: { width: 1, depth: 1, base: { x: 0, y: 0 } } })
+    expect(canAdvance(s)).toBe(true)
+  })
+  it('turning it on clears a picked World', () => {
+    const s = wizardReducer(wizardReducer(initialState, { type: 'setDcl', dcl }), { type: 'setDclLater', on: true })
+    expect(s.destinations.dcl).toBeNull()
+    expect(s.dclLater).toBe(true)
+  })
+  it('picking a World clears dclLater', () => {
+    const s = wizardReducer(wizardReducer(initialState, { type: 'setDclLater', on: true }), { type: 'setDcl', dcl })
+    expect(s.dclLater).toBe(false)
+    expect(s.destinations.dcl).toEqual(dcl)
+  })
+  it('the hard budget applies with dclLater', () => {
+    let s = wizardReducer(initialState, { type: 'setDclLater', on: true })
+    s = wizardReducer(s, { type: 'setPlot', plot: { width: 1, depth: 1, base: { x: 0, y: 0 } } })
+    const t = wizardReducer(s, {
+      type: 'applyTheme', themeId: 't',
+      items: Array.from({ length: 182 }, () => ({ asset: asset('a', 1), x: 0.5, z: 0.5, rotationY: 0 })),
+    })
+    expect(t.items).toHaveLength(180)
+    expect(t.lastDropped).toBe(2)
+    expect(stateBudget(wizardReducer(s, { type: 'addAsset', asset: asset('big', 10_001) })).warning).toMatch(/10,001 triangles/)
+  })
+  it('Where does not advance with nothing chosen', () => {
+    expect(canAdvance(named(initialState))).toBe(false)
+  })
+})

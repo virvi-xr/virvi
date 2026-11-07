@@ -37,6 +37,8 @@ export interface WizardOptions {
   dcl: { virviDeploys: boolean; virviAddress: string | null }
   hyperfy: { allowed: boolean; requiredTier: string }
   scenes: { used: number; limit: number | null }
+  /** Set for a trial session: it walks the wizard up to Deploy. */
+  trial?: true
 }
 
 export interface WizardSceneBody {
@@ -532,8 +534,9 @@ export function useApi() {
     getWizardCatalog: () => apiFetch<WizardCatalog>('/api/wizard/catalog'),
     getWizardOptions: () => apiFetch<WizardOptions>('/api/wizard/options'),
     /** 400 (incl. `unmeasured_asset`, `invalid_plot`), 403 `scene_limit_reached`, 422 `over_budget` ({ message, triangles, limit } on err.body). */
-    bootstrapWizardScene: (data: WizardSceneBody) =>
-      apiFetch<{ sceneId: string }>('/api/wizard/scenes', { method: 'POST', body: JSON.stringify(data) }),
+    /** The wizard's save. A trial is asked to sign up first; `ctx.sceneName` names the scene on the sheet. */
+    bootstrapWizardScene: (data: WizardSceneBody, signUpCtx?: BlockedCtx) =>
+      apiFetch<{ sceneId: string }>('/api/wizard/scenes', { method: 'POST', body: JSON.stringify(data), signUpCtx }),
 
     // Room scans and room sets
     getRoomScans: () => apiFetch<{ scans: RoomScanSummary[] }>('/api/room-scans'),

@@ -15,6 +15,11 @@ export interface WizardState {
     hyperfy: null | { kind: 'self' | 'hosted'; name: string }
     ar: null | { name: string }
   }
+  /**
+   * A trial chose "Decentraland World" without a wallet: the World is picked at Deploy, when the wallet is connected.
+   * Decentraland's limits apply as if one were chosen.
+   */
+  dclLater: boolean
   plot: Plot | null
   /**
    * The room scan the scene starts from: its plot is fixed by the scan. `triangles` is the generated set's count,
@@ -37,7 +42,10 @@ export interface WizardState {
 }
 
 export type WizardAction =
+  /** Picking a World clears `dclLater`. */
   | { type: 'setDcl'; dcl: WizardState['destinations']['dcl'] }
+  /** On clears a picked World. */
+  | { type: 'setDclLater'; on: boolean }
   | { type: 'setHyperfy'; hyperfy: WizardState['destinations']['hyperfy'] }
   | { type: 'setAr'; ar: WizardState['destinations']['ar'] }
   /** Ignored while a room set is chosen: the scan fixes the plot. */
@@ -72,6 +80,7 @@ export function defaultSpawn(plot: Plot): { x: number; z: number } {
 export const initialState: WizardState = {
   step: 'where',
   destinations: { dcl: null, hyperfy: null, ar: null },
+  dclLater: false,
   plot: null,
   roomSet: null,
   themeId: null,
@@ -90,10 +99,15 @@ export function effectivePlot(state: WizardState): Plot {
   return state.plot ?? GUIDE_PLOT
 }
 
+/** Decentraland is a destination: a World is picked, or will be at Deploy. */
+export function goesToDcl(state: WizardState): boolean {
+  return !!state.destinations.dcl || state.dclLater
+}
+
 /** Budget for the current items; hard limits apply only with a Decentraland destination. */
 export function stateBudget(state: WizardState, items = state.items) {
   const dcl = state.destinations.dcl
-  return budgetStatus(items, dcl ? state.plot : null, dcl?.storage ?? null, state.roomSet && { triangles: state.roomSet.triangles })
+  return budgetStatus(items, goesToDcl(state) ? state.plot : null, dcl?.storage ?? null, state.roomSet && { triangles: state.roomSet.triangles })
 }
 
 function clampSpawn(plot: Plot, s: { x: number; z: number }) {
@@ -104,7 +118,7 @@ function clampSpawn(plot: Plot, s: { x: number; z: number }) {
 /** Decentraland limits apply only with a dcl destination and a chosen plot; otherwise every item stays. */
 function fitIfLimited(state: WizardState, items: PlacedItem[], plot: Plot | null) {
   const room = state.roomSet && { triangles: state.roomSet.triangles }
-  return state.destinations.dcl && plot ? fitToBudget(items, plot, room) : { items, dropped: 0 }
+  return goesToDcl(state) && plot ? fitToBudget(items, plot, room) : { items, dropped: 0 }
 }
 
 /** Moves to `plot`: items are clamped inside it and fitted to its budget, and a default spawn follows it. */
@@ -126,7 +140,14 @@ function withPlot(state: WizardState, plot: Plot): WizardState {
 export function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   switch (action.type) {
     case 'setDcl':
-      return { ...state, destinations: { ...state.destinations, dcl: action.dcl }, notice: null }
+      return { ...state, destinations: { ...state.destinations, dcl: action.dcl }, dclLater: action.dcl ? false : state.dclLater, notice: null }
+    case 'setDclLater':
+      return {
+        ...state,
+        dclLater: action.on,
+        destinations: action.on ? { ...state.destinations, dcl: null } : state.destinations,
+        notice: null,
+      }
     case 'setHyperfy': {
       // Turned on (again): it starts from the scene name and follows it until the user types their own.
       const fresh = !state.destinations.hyperfy && !!action.hyperfy
@@ -220,9 +241,9 @@ export function canAdvance(state: WizardState): boolean {
   const { dcl, hyperfy, ar } = state.destinations
   switch (state.step) {
     case 'where':
-      return !!state.name.trim() && !!(dcl || hyperfy || ar)
+      return !!state.name.trim() && !!(dcl || state.dclLater || hyperfy || ar)
     case 'size':
-      return dcl ? !!state.roomSet || state.plot !== null : true
+      return goesToDcl(state) ? !!state.roomSet || state.plot !== null : true
     case 'assets':
     case 'arrange':
       return stateBudget(state).over === null

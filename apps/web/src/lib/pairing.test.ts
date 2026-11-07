@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { HyperfyPairingSummary } from '@virvixr/shared'
-import { approvalPrompt, pairingErrorMessage, pairingRowLabel, pairingCodeFromPath, headsetPairingCodeFromPath, headsetErrorMessage } from './pairing'
+import { approvalPrompt, pairingErrorMessage, pairingRowLabel, pairingCodeFromPath, headsetPairingCodeFromPath, headsetErrorMessage, headsetPairHref } from './pairing'
 
 const apiErr = (message: string, status: number, body: Record<string, unknown>) => Object.assign(new Error(message), { status, body })
 
@@ -86,5 +86,15 @@ describe('headsetErrorMessage', () => {
   })
   it('falls back', () => {
     expect(headsetErrorMessage(new Error('x'))).toBe('Something went wrong. Try again in a moment.')
+  })
+})
+
+describe('headsetPairHref', () => {
+  it('normalises the typed code into the pairing page', () => {
+    expect(headsetPairHref(' abc-234 ')).toBe('/pair/headset/ABC234/')
+  })
+  it('is null for nothing typed', () => {
+    expect(headsetPairHref('  ')).toBeNull()
+    expect(headsetPairHref('-')).toBeNull()
   })
 })

@@ -17,6 +17,7 @@ const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   logTail: null,
   filesExpired: false,
   virviAlreadyPresent: false,
+  sandbox: false,
   thumbnail: { outcome: null, note: null, url: null, source: null },
   createdAt: '2026-11-01T00:00:00Z',
   ...over,

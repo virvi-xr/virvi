@@ -2,14 +2,16 @@
 import { useState, type Dispatch } from 'react'
 import { dclBudget, plotParcels, type Plot } from '@virvixr/shared'
 import { clampSide, MAX_PLOT_SIDE, plotLabel, PLOT_CHOICES, storageLine } from '@/lib/wizard/helpers'
-import { GUIDE_PLOT, stateBudget, type WizardAction, type WizardState } from '@/lib/wizard/state'
+import { GUIDE_PLOT, goesToDcl, stateBudget, type WizardAction, type WizardState } from '@/lib/wizard/state'
 
 const n = (v: number) => v.toLocaleString('en-US')
 const plotOf = (width: number, depth: number): Plot => ({ width, depth, base: { x: 0, y: 0 } })
 
 export function SizeStep({ state, dispatch }: { state: WizardState; dispatch: Dispatch<WizardAction> }) {
   const dcl = state.destinations.dcl
-  const current = state.plot ?? (dcl ? null : GUIDE_PLOT)
+  // Decentraland's limits apply once it's a destination, even before the World is picked (a trial picks it at Deploy)
+  const toDcl = goesToDcl(state)
+  const current = state.plot ?? (toDcl ? null : GUIDE_PLOT)
   const isPreset = (p: Plot | null) => !!p && p.width === p.depth && (PLOT_CHOICES as readonly number[]).includes(p.width)
   const [custom, setCustom] = useState(() => !!current && !isPreset(current))
   const [w, setW] = useState(current?.width ?? 4)
@@ -24,13 +26,13 @@ export function SizeStep({ state, dispatch }: { state: WizardState; dispatch: Di
   const on = 'border-blue-400 bg-blue-400/10 text-white'
   const off = 'border-gray-800 bg-gray-950 text-gray-300 hover:border-gray-700'
 
-  const budget = current && dcl ? dclBudget(plotParcels(current).length) : null
+  const budget = current && toDcl ? dclBudget(plotParcels(current).length) : null
   const storage = dcl?.storage
   const room = state.roomSet
 
   return (
     <div className="space-y-4">
-      {!dcl && !room && <p className="text-sm text-gray-400">Used as a guide for placing things. Hyperfy and Virvi AR have no hard edges.</p>}
+      {!toDcl && !room && <p className="text-sm text-gray-400">Used as a guide for placing things. Hyperfy and Virvi AR have no hard edges.</p>}
       {room ? (
         <div className="rounded-md border border-blue-400 bg-blue-400/10 px-3 py-2.5 text-sm">
           <span className="block font-medium text-white">{plotLabel(room.plot)}</span>

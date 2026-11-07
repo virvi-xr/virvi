@@ -2,7 +2,8 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
-import { deviceId, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome } from './trial'
+import { deviceId, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome, type TrialEntry } from './trial'
+import { clearDraft } from './wizard/draft'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -11,7 +12,7 @@ interface User {
   displayName: string
   email: string | null
   role: string
-  /** A signed-out visitor's trial of the Design Studio. */
+  /** A signed-out visitor's trial (the Design Studio and the scene builder). */
   trial?: boolean
   expiresAt?: string
 }
@@ -25,11 +26,14 @@ interface AuthState {
   login: (email: string, password: string, fromAction?: string) => Promise<string>
   register: (email: string, password: string, displayName: string, fromAction?: string) => Promise<string>
   loginWithWallet: (fromAction?: string) => Promise<string>
-  /** Starts a trial session (a signed-out visitor trying the Design Studio). */
-  startTrial: (turnstileToken: string) => Promise<void>
+  /** Starts a trial session (a signed-out visitor trying Virvi); `entry` is the page it started from. */
+  startTrial: (turnstileToken: string, entry?: TrialEntry) => Promise<void>
   /** The URL for Google or Discord sign-in; from a trial it keeps the trial in this tab for the callback page to move in. */
   oauthUrl: (provider: 'google' | 'discord', fromAction?: string) => Promise<string>
   logout: () => void
+  /** The person signing out: also forgets this browser's wizard draft. (Not for a session that merely ended: a trial that
+   *  became an account keeps its draft.) */
+  signOut: () => void
   /** Swaps the stored refresh token for a new access token: the new token, or null (signed out when refused). */
   renew: () => Promise<string | null>
   updateUser: (updates: Partial<User>) => void
@@ -174,11 +178,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return adopt(await res.json())
   }
 
-  const startTrial = async (turnstileToken: string) => {
+  const startTrial = async (turnstileToken: string, entry?: TrialEntry) => {
     const res = await fetch(`${API_URL}/api/auth/trial`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ turnstileToken, deviceId: deviceId() }),
+      body: JSON.stringify({ turnstileToken, deviceId: deviceId(), ...(entry ? { entry } : {}) }),
     })
     if (!res.ok) throw new Error(await errorMessage(res, 'Could not start a trial'))
     adopt(await res.json())
@@ -197,6 +201,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setScenePass(null)
     localStorage.removeItem(AUTH_KEY)
   }, [])
+
+  const signOut = useCallback(() => {
+    clearDraft()
+    logout()
+  }, [logout])
 
   const renew = useCallback(async () => {
     const r = await refreshStoredSession(localStorage, postRefresh)
@@ -241,7 +250,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, scenePass, login, register, loginWithWallet, startTrial, oauthUrl, logout, renew, updateUser, swapToStoredAccount }}>
+    <AuthContext.Provider value={{ user, token, loading, scenePass, login, register, loginWithWallet, startTrial, oauthUrl, logout, signOut, renew, updateUser, swapToStoredAccount }}>
       {children}
     </AuthContext.Provider>
   )

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stashTrialHandover, takeTrialHandover, trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, signUpButtons, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp, beginTrial, signUpAutoDismiss } from './trial'
+import { stashTrialHandover, takeTrialHandover, trialEndedOutcome, trialBearerStale, renewedTrialBearer, trialStartMessage, accountRequired, blockedCopy, signedInNote, signUpButtons, openSignUp, subscribeSignUp, resolveSignUp, dismissSignUp, beginTrial, signUpAutoDismiss, trialNav } from './trial'
 
 describe('accountRequired', () => {
   it('reads the action from an account_required refusal', () => {
@@ -227,6 +227,53 @@ describe('beginTrial (/try/studio Start)', () => {
     const { opts, calls } = deps({ startTrial: async () => { throw new Error('trial_limit') } })
     expect(await beginTrial(opts)).toEqual({ ok: false, error: trialStartMessage('trial_limit') })
     expect(calls.resets).toBe(1)
+  })
+})
+
+describe('beginTrial entry', () => {
+  it('passes the entry along with the bot-check token', async () => {
+    const seen: unknown[][] = []
+    const r = await beginTrial({ signedIn: false, botToken: 'tok', entry: 'scene', startTrial: async (...a: unknown[]) => { seen.push(a) }, resetBotCheck: () => {} })
+    expect(r).toEqual({ ok: true })
+    expect(seen).toEqual([['tok', 'scene']])
+  })
+})
+
+describe('blockedCopy for scenes, imports, scans and demos', () => {
+  it('names the scene for the save, and keeps the layout', () => {
+    const c = blockedCopy('POST /api/wizard/scenes', { sceneName: 'Ramen Bar' })
+    expect(c.title).toBe('Create a free account to save Ramen Bar. Your layout is kept.')
+    expect(c.emphasis).toBe('Ramen Bar')
+  })
+  it('has a save line without a name', () => {
+    const c = blockedCopy('POST /api/wizard/scenes', { sceneName: '  ' })
+    expect(c.title).toBe('Create a free account to save your scene. Your layout is kept.')
+    expect(c.emphasis).toBeUndefined()
+  })
+  it('has copy for every phase 2 refusal', () => {
+    for (const a of ['POST /api/imports/:id/deploy', 'GET /api/scenes/:sceneId/backup.zip', 'more_imports', 'import_larger', 'more_scans', 'shared_headset', 'element_type', 'room_set']) {
+      const c = blockedCopy(a, {})
+      expect(c.title, a).not.toBe('Create a free account to use this.')
+      expect(c.unlocks.length, a).toBeGreaterThan(0)
+    }
+  })
+  it('a demo action asks for an account to use it with your own scenes', () => {
+    expect(blockedCopy('demo:createEvent', {}).title).toBe('Create a free account to use this with your own scenes.')
+  })
+  it('names the button to press again after sign-in', () => {
+    expect(signedInNote('POST /api/wizard/scenes')).toBe("You're signed in — press Create and deploy again")
+    expect(signedInNote('more_imports')).toBe("You're signed in — press Import again")
+  })
+})
+
+describe('trialNav', () => {
+  it('opens the Studio and Scenes, sends Analytics, Events and Giveaways to their demos, and locks the rest', () => {
+    expect(trialNav('/studio')).toEqual({ href: '/studio', demo: false })
+    expect(trialNav('/scenes')).toEqual({ href: '/scenes', demo: false })
+    expect(trialNav('/analytics')).toEqual({ href: '/demo/analytics', demo: true })
+    expect(trialNav('/events')).toEqual({ href: '/demo/events', demo: true })
+    expect(trialNav('/giveaways')).toEqual({ href: '/demo/giveaways', demo: true })
+    for (const h of ['/command-center', '/media', '/assets', '/streaming', '/deploy', '/settings', '/admin']) expect(trialNav(h), h).toBeNull()
   })
 })
 
