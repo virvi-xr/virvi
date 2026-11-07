@@ -13,6 +13,7 @@ import {
 } from '@/lib/import'
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
+import { DEPLOY_LINE, WALLET_PROMPT } from '@/lib/wizard/trial-deploy'
 import { Badge, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { ProgressLines } from '@/components/wizard/ProgressLines'
 import { useWorldSigning, type SigningDestination } from '@/components/dcl/useWorldSigning'
@@ -39,7 +40,7 @@ type Sending = { step: 'zipping'; files: number } | { step: 'uploading' }
 type Prepared = { deploymentId: string; payload: string }
 
 function ImportContent() {
-  const { token } = useAuth()
+  const { token, user, loginWithWallet } = useAuth()
   const api = useApi()
   const router = useRouter()
   const id = useSearchParams().get('id') ?? ''
@@ -48,7 +49,7 @@ function ImportContent() {
   const [uploadError, setUploadError] = useState<{ message: string; importId: string | null } | null>(null)
   const [watchError, setWatchError] = useState<string | null>(null)
   const [watchKey, setWatchKey] = useState(0)
-  const [busy, setBusy] = useState<null | 'deploy' | 'sign'>(null)
+  const [busy, setBusy] = useState<null | 'connect' | 'deploy' | 'sign'>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [prepared, setPrepared] = useState<Prepared | null>(null)
   const [dest, setDest] = useState<(SigningDestination & { kind?: 'world' | 'parcels'; ownerWallet: string }) | null>(null)
@@ -134,9 +135,22 @@ function ImportContent() {
   /** Rulings R1, R3: a World without Virvi's permission waits for this; 200 means the wallet signs, 202 that Virvi deploys. */
   const deploy = async () => {
     if (!view) return
-    setBusy('deploy')
     setActionError(null)
     signing.reset()
+    // A trial's sandbox import: the wallet signs in first (creating the account, or moving the trial into the wallet's own),
+    // and the deploy claims the import for that account. This render's `api` still holds the trial's token: the server's
+    // `401 trial_ended` sends it again as the account (Ruling R5).
+    if (trialDeploy) {
+      setBusy('connect')
+      try {
+        await loginWithWallet('deploy')
+      } catch (err) {
+        setActionError(importFailure(err).message)
+        setBusy(null)
+        return
+      }
+    }
+    setBusy('deploy')
     try {
       const r = await api.deploySceneImport(view.id)
       if (r.payload) {
@@ -173,6 +187,7 @@ function ImportContent() {
   }
 
   const phase = view ? importPhase(view) : sending ? 'uploading' : null
+  const trialDeploy = !!view?.sandbox && !!user?.trial
   const canSign = !!view && phase === 'sign' && !!prepared && prepared.deploymentId === view.deploymentId && !!dest
   const showPicker = !sending && (!id || phase === 'live' || phase === 'failed' || (!view && !!watchError))
 
@@ -220,13 +235,18 @@ function ImportContent() {
           {phase === 'ready' && view && (
             <>
               {view.errorMessage && view.errorMessage !== actionError && <p className={errorBox} role="alert">{view.errorMessage}</p>}
-              <p className="text-gray-400">
-                Your scene is built. Deploy it to {placeLabel(view.location)}: unless Virvi deploys there for you, you sign once with{' '}
-                {signerPhrase(view.location)}. It goes live a minute or so later.
-              </p>
+              {trialDeploy ? (
+                <p className="text-gray-400">Your scene is built. {DEPLOY_LINE}</p>
+              ) : (
+                <p className="text-gray-400">
+                  Your scene is built. Deploy it to {placeLabel(view.location)}: unless Virvi deploys there for you, you sign once with{' '}
+                  {signerPhrase(view.location)}. It goes live a minute or so later.
+                </p>
+              )}
               <PrimaryButton type="button" onClick={deploy} disabled={busy !== null}>
-                {busy === 'deploy' ? 'Preparing the deploy…' : 'Deploy'}
+                {busy === 'connect' ? 'Check your wallet…' : busy === 'deploy' ? 'Preparing the deploy…' : trialDeploy ? 'Connect your wallet and deploy' : 'Deploy'}
               </PrimaryButton>
+              {busy === 'connect' && <p className={infoBox} role="status">{WALLET_PROMPT}</p>}
             </>
           )}
 

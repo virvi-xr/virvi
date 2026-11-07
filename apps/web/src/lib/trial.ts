@@ -120,6 +120,23 @@ export function trialEndedOutcome(stored: { token: string; user?: unknown } | nu
   return stored && stored.token !== currentToken && user && !user.trial ? 'swap' : 'logout'
 }
 
+/**
+ * Sends a request and, on a 401 with a bearer, once more with a fresh one: a `trial_ended` (the trial became an account,
+ * here or in another tab) follows the stored account session, anything else renews. Ruling R5: this is how calls still
+ * holding the trial's token after a wallet sign-in at Deploy carry on as the account.
+ */
+export async function sendRecovering(
+  send: (bearer: string | null) => Promise<Response>,
+  bearer: string | null,
+  deps: { swapToStoredAccount: (staleToken: string) => string | null; renew: () => Promise<string | null> },
+): Promise<Response> {
+  const res = await send(bearer)
+  if (res.status !== 401 || !bearer) return res
+  const ended = (await res.clone().json().catch(() => null))?.error === 'trial_ended'
+  const fresh = ended ? deps.swapToStoredAccount(bearer) : await deps.renew()
+  return fresh ? send(fresh) : res
+}
+
 /** A trial access token that has run out, or will within a minute: renew it before it carries the trial into a sign-up. */
 export function trialBearerStale(token: string, now: number): boolean {
   return !readTrialSession(token, now + 60_000)

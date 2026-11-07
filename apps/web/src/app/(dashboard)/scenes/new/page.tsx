@@ -139,7 +139,7 @@ export default function NewScenePage() {
     size: <SizeStep state={state} dispatch={dispatch} />,
     assets: <AssetsStep state={state} dispatch={dispatch} catalog={catalog} />,
     arrange: <ArrangeStep state={state} dispatch={dispatch} roomPreview={roomPreview} selectedKey={selectedKey} setSelectedKey={setSelectedKey} moveSpawn={moveSpawn} setMoveSpawn={setMoveSpawn} />,
-    deploy: <DeployStep state={state} dispatch={dispatch} options={options} memory={memory.current} onRunning={onRunning} />,
+    deploy: <DeployStep state={state} dispatch={dispatch} options={options} memory={memory.current} onRunning={onRunning} names={names} />,
   }
 
   return (

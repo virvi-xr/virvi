@@ -3,7 +3,7 @@ import { useCallback, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
 import { requestHeaders } from './request-headers'
-import { accountRequired, openSignUp, type BlockedCtx } from './trial'
+import { accountRequired, openSignUp, sendRecovering, type BlockedCtx } from './trial'
 import { backupPath } from './backup'
 import type { Plot, RoomSetOptions } from '@virvixr/shared'
 import type { RoomNudge } from './room-set'
@@ -225,6 +225,17 @@ export function isGlbAsset(asset: { contentType?: string; filename?: string }): 
   return asset.contentType === 'model/gltf-binary' || !!asset.filename?.toLowerCase().endsWith('.glb')
 }
 
+/**
+ * The Worlds of the session `bearer` belongs to. Deploy uses it right after a trial's wallet sign-in, with the token the
+ * sign-in returned: the page's own `api` still holds the trial's until it re-renders.
+ */
+export async function fetchDclNames(bearer: string): Promise<{ wallets: Array<{ address: string; names: DclWorld[] }> }> {
+  const res = await fetch(`${API_URL}/api/dcl/names`, { headers: requestHeaders(bearer, {}) })
+  if (res.ok) return res.json()
+  const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+  throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+}
+
 export function useApi() {
   const { token, user, logout, renew, swapToStoredAccount } = useAuth()
 
@@ -237,13 +248,8 @@ export function useApi() {
   const apiFetch = useCallback(async <T = any>(path: string, options: RequestInit & { signUpCtx?: BlockedCtx } = {}): Promise<T> => {
     const { signUpCtx, ...init } = options
     const send = async (bearer: string | null) => {
-      let res = await fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(bearer, init) })
-      // The access token ran out: renew it with the stored refresh token and send the request once more
-      if (res.status === 401 && bearer) {
-        const ended = (await res.clone().json().catch(() => null))?.error === 'trial_ended'
-        const fresh = ended ? swapToStoredAccount(bearer) : await renew()
-        if (fresh) res = await fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(fresh, init) })
-      }
+      // The access token ran out: renew it with the stored refresh token (or follow the account a trial became) and send once more
+      const res = await sendRecovering((b) => fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(b, init) }), bearer, { swapToStoredAccount, renew })
       if (res.ok) return { res, err: null as any }
       // Non-JSON error bodies (proxy pages, e.g. a 413 from the edge) become `HTTP <status>`.
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
