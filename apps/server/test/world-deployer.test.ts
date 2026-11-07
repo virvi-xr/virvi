@@ -322,7 +322,8 @@ describe('the placements snapshot (LIV-134)', () => {
     const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
     await whenSettled(dep.id)
     expect((await destRow(dest.id)).deployedFiles).toEqual(['bin/index.js', 'images/virvi/hud-v.png', 'models/virvi/a.glb', 'scene.json', PLACEMENTS_FILE])
-    expect(placementsSent()!.map((p) => [p.elementId, p.src, p.position])).toEqual([
+    // One insert: both copies share createdAt, so their order is the ids' (random)
+    expect(placementsSent()!.map((p) => [p.elementId, p.src, p.position]).sort((a, b) => (a[2] as { x: number }).x - (b[2] as { x: number }).x)).toEqual([
       [el.id, 'models/virvi/a.glb', { x: 0, y: 0, z: 0 }],
       [el.id, 'models/virvi/a.glb', { x: 1, y: 0, z: 0 }],
     ])
