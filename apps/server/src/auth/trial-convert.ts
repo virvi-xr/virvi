@@ -74,20 +74,23 @@ export async function convertTrial(trialId: string, set: { email?: string | null
   return tx ? run(tx) : db.transaction(run)
 }
 
-/** The trial's work (Studio, scenes, imports, room scans, headsets) moves into an existing account and the trial is deleted. */
-export async function mergeTrial(trialId: string, accountId: string, fromAction?: unknown): Promise<boolean> {
+/**
+ * The trial's work (Studio, scenes, imports, room scans, headsets) moves into an existing account and the trial is
+ * deleted. False when there was no trial left to merge; else how many headsets moved.
+ */
+export async function mergeTrial(trialId: string, accountId: string, fromAction?: unknown): Promise<false | { headsets: number }> {
   const merged = await db.transaction(async (tx) => {
     // Only a row that is still a trial merges (a second sign-in with the same old token finds nothing to move).
     const [trial] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, trialId), eq(users.isTrial, true))).for('update')
-    if (!trial) return false
+    if (!trial) return false as const
     // The trial's allowance is not the account's: drop it instead of adding it to the account's counters.
     await tx.delete(studioUsageDays).where(and(eq(studioUsageDays.userId, trialId), eq(studioUsageDays.day, TRIAL_DAY)))
     await moveStudioData(tx, trialId, accountId, new Date())
     // Scenes, imports, room scans and headsets cascade with the trial row: they move first
-    await moveTrialSceneData(tx, trialId, accountId)
+    const moved = await moveTrialSceneData(tx, trialId, accountId)
     await tx.delete(studioUsageDays).where(eq(studioUsageDays.userId, trialId))
     await tx.delete(users).where(eq(users.id, trialId))
-    return true
+    return moved
   })
   if (merged) recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
   return merged
@@ -100,6 +103,10 @@ export interface OAuthIdentity {
   displayName: string
   metadata: object
 }
+
+/** The sign-in answer's `movedHeadsets`: present only when a merge moved paired headsets onto the account. */
+export const movedHeadsetsField = (merged: false | { headsets: number } | null | undefined): { movedHeadsets?: number } =>
+  merged && merged.headsets > 0 ? { movedHeadsets: merged.headsets } : {}
 
 /**
  * The trial a token held by this browser names: a trial access or refresh token we signed, expired or not (the session in

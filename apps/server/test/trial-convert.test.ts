@@ -284,7 +284,7 @@ describe('converting and merging a trial', () => {
       const t = await makeTrial({ designs: 0 })
       const d = await withSceneData(t)
       const account = await createUser()
-      expect(await mergeTrial(t.u.id, account.id)).toBe(true)
+      expect(await mergeTrial(t.u.id, account.id)).toEqual({ headsets: 1 })
       await expectOwnedBy(d, account.id)
       expect(await db.query.users.findFirst({ where: eq(users.id, t.u.id) })).toBeUndefined()
     })
@@ -296,6 +296,8 @@ describe('converting and merging a trial', () => {
       const known = await createUser({ wallet: w.address })
       const res = await walletVerify(w, t.headers)
       expect([res.statusCode, res.json().user.id]).toEqual([200, known.id])
+      // the page tells the user their paired headset came along
+      expect(res.json().movedHeadsets).toBe(1)
       await expectOwnedBy(d, known.id)
       expect(await db.query.users.findFirst({ where: eq(users.id, t.u.id) })).toBeUndefined()
     })
@@ -305,8 +307,26 @@ describe('converting and merging a trial', () => {
       const d = await withSceneData(t)
       const res = await app.inject({ method: 'POST', url: '/api/auth/register', headers: t.headers, payload: { email: 'keep@test.dev', password: 'hunter2hunter2', displayName: 'Keep' } })
       expect(res.statusCode).toBe(201)
+      expect(res.json().movedHeadsets).toBeUndefined()
       await expectOwnedBy(d, t.u.id)
       expect((await db.select().from(users).where(eq(users.id, t.u.id)))[0].isTrial).toBe(false)
+    })
+
+    it('email sign-in and the Google hand-over say how many headsets moved', async () => {
+      const t = await makeTrial({ designs: 0 })
+      await withSceneData(t)
+      await app.inject({ method: 'POST', url: '/api/auth/register', payload: { email: 'hs@test.dev', password: 'hunter2hunter2', displayName: 'Hs' } })
+      const res = await app.inject({ method: 'POST', url: '/api/auth/login', headers: t.headers, payload: { email: 'hs@test.dev', password: 'hunter2hunter2' } })
+      expect([res.statusCode, res.json().movedHeadsets]).toEqual([200, 1])
+      // a plain sign-in moves nothing and says nothing
+      const again = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'hs@test.dev', password: 'hunter2hunter2' } })
+      expect(again.json().movedHeadsets).toBeUndefined()
+
+      const t2 = await makeTrial({ designs: 0 })
+      await withSceneData(t2)
+      const s = await finishOAuth(app, identity('hs2'))
+      const adopted = await adopt(s.accessToken, t2.refreshToken)
+      expect([adopted.statusCode, adopted.json()]).toEqual([200, { moved: true, movedHeadsets: 1 }])
     })
 
     it("every scene moves, whatever the account already holds (no plan limits scenes; quotas stop new work, not moved work)", async () => {
@@ -315,7 +335,7 @@ describe('converting and merging a trial', () => {
       const t = await makeTrial({ designs: 0 })
       await createScene(t.u as any, 'Guest 1')
       await createScene(t.u as any, 'Guest 2')
-      expect(await mergeTrial(t.u.id, account.id)).toBe(true)
+      expect(await mergeTrial(t.u.id, account.id)).toEqual({ headsets: 0 })
       expect((await db.select().from(scenes).where(eq(scenes.ownerId, account.id))).map((s) => s.name).sort()).toEqual(['Guest 1', 'Guest 2', 'Mine'])
     })
   })

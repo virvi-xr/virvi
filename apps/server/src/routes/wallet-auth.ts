@@ -9,7 +9,7 @@ import { actorFromClaims } from '../auth/actor.js'
 import { authenticate } from '../middleware/auth.js'
 import { linkWalletGrants } from '../auth/permissions.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
-import { convertTrial, isTrialGone, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
+import { convertTrial, isTrialGone, mergeTrial, movedHeadsetsField, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { linkVerifiedWallet, resolveVerifiedWalletUser } from '../auth/wallet-users.js'
 import { issueWalletSession } from '../auth/sessions.js'
 import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
@@ -48,10 +48,10 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
           return converted
         }).catch((e) => { if (isTrialGone(e)) return null; throw e })
     if (!user) return null
-    if (user.id !== trialId) await mergeTrial(trialId, user.id, fromAction)
-    else recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
+    const merged = user.id !== trialId ? await mergeTrial(trialId, user.id, fromAction) : false
+    if (user.id === trialId) recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
     await linkWalletGrants(user.id, recovered)
-    return issueWalletSession(app, user, recovered)
+    return { ...issueWalletSession(app, user, recovered), ...movedHeadsetsField(merged) }
   }
 
   app.post<{ Body: { address?: string } }>('/api/auth/wallet/challenge', async (request, reply) => {

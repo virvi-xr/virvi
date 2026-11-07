@@ -18,7 +18,7 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { zipSync } from 'fflate'
-import { PARCEL_RE, SCENE_IMPORT_MAX_BYTES, type ImportLocation } from '@virvixr/shared'
+import { PARCEL_RE, SCENE_IMPORT_MAX_BYTES, type ImportLocation, type SceneImportMove } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
 import { analyticsScenes, dclWorldDestinations, sceneImports, scenes, users } from '../db/schema.js'
@@ -159,6 +159,29 @@ async function sceneFor(request: FastifyRequest, location: ImportLocation, newNa
   const last = await latestImportFor(location)
   if (last && (await full(request, last.sceneId))) return { id: last.sceneId }
   return { newName: newName() }
+}
+
+/**
+ * When an account's deploy of a sandbox import would move it onto another of the account's scenes (the place's
+ * manageable scene, as sceneFor resolves it): that scene, and the sandbox scene it leaves. Null otherwise, and when
+ * sceneFor refuses (the deploy says why).
+ */
+async function sceneMoveOf(row: SceneImportRow, targetId: string | null): Promise<SceneImportMove | null> {
+  if (!targetId || targetId === row.sceneId) return null
+  const rows = await db.select({ id: scenes.id, name: scenes.name }).from(scenes).where(inArray(scenes.id, [targetId, row.sceneId]))
+  const target = rows.find((r) => r.id === targetId)
+  if (!target) return null
+  return { id: target.id, name: target.name, sandboxSceneName: rows.find((r) => r.id === row.sceneId)?.name ?? '' }
+}
+
+async function sandboxTarget(request: FastifyRequest, row: SceneImportRow): Promise<string | null> {
+  try {
+    const target = await sceneFor(request, locationOf(row), () => '')
+    return 'id' in target ? target.id : null
+  } catch (err) {
+    if (err instanceof ImportError) return null
+    throw err
+  }
 }
 
 /** The import when the caller made it or has full access on its scene; 404 otherwise (never says whether it exists). */
@@ -305,14 +328,18 @@ export default async function importRoutes(app: FastifyInstance) {
       if (!(await loadImportView(row)).canDeploy) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
       // A converted guest's sandbox import takes its place only once its account may deploy there (a refusal changes
       // nothing), on the scene an upload by this account would get: the place's manageable scene, else its own
+      // The page told the user before this (the import view's usesScene); the answer names the scene too
+      let usesScene: SceneImportMove | null = null
       if (row.sandbox) {
         await placeOwner(row, request.user.id)
         const target = await sceneFor(request, locationOf(row), () => '')
+        usesScene = await sceneMoveOf(row, 'id' in target ? target.id : null)
         row = await claimSandboxImport(row, 'id' in target ? target.id : row.sceneId)
       }
       const started = (await startImportDeploy(row, request.user.id))!
-      if (started.mode === 'virvi') return reply.status(202).send({ deployment: publicDeployment(started.deployment) })
-      return reply.send({ deployment: publicDeployment(started.deployment), payload: started.payload, expiresAt: started.expiresAt })
+      const moved = usesScene ? { usesScene } : {}
+      if (started.mode === 'virvi') return reply.status(202).send({ deployment: publicDeployment(started.deployment), ...moved })
+      return reply.send({ deployment: publicDeployment(started.deployment), payload: started.payload, expiresAt: started.expiresAt, ...moved })
     }))
 
     // A trial lists and reads its own imports (importFor and full() give it nothing else); deploying takes an account
@@ -333,7 +360,11 @@ export default async function importRoutes(app: FastifyInstance) {
     }))
 
     reads.get<{ Params: { id: string } }>('/api/imports/:id', trialRead, async (request, reply) => handle(reply, async () => {
-      return reply.send({ import: await loadImportView(await importFor(request, request.params.id)) })
+      const row = await importFor(request, request.params.id)
+      const view = await loadImportView(row)
+      // An account about to deploy a sandbox import learns first that it moves onto the place's existing scene
+      const usesScene = row.sandbox && !request.user.trial ? await sceneMoveOf(row, await sandboxTarget(request, row)) : null
+      return reply.send({ import: usesScene ? { ...view, usesScene } : view })
     }))
 
     reads.get<{ Params: { id: string } }>('/api/imports/:id/log', trialRead, async (request, reply) => handle(reply, async () => {

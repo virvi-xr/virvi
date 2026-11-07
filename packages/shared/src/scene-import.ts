@@ -38,6 +38,19 @@ export interface SceneImportView {
   /** The scene's own thumbnail (LIV-89, scene.json display.navmapThumbnail) and the Virvi scene's thumbnail now. */
   thumbnail: SceneImportThumbnail
   createdAt: string
+  /**
+   * A sandbox import read by an account (single-import read only): the account's scene this place already uses, which
+   * the deploy moves the import onto (its own sandbox scene, `sandboxSceneName`, stays in the account with the guest's
+   * edits). Absent when the deploy keeps the import's own scene.
+   */
+  usesScene?: SceneImportMove
+}
+
+/** The account's existing scene a sandbox import's deploy moves onto, and the import's own (guest) scene it leaves. */
+export interface SceneImportMove {
+  id: string
+  name: string
+  sandboxSceneName: string
 }
 
 export interface SceneImportThumbnail {

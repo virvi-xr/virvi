@@ -7,7 +7,7 @@ import { config } from '../config.js'
 import { sha256 } from '../auth/hash.js'
 import { issueTrialSession, trialIpKey } from '../auth/trial.js'
 import { authenticate } from '../middleware/auth.js'
-import { mergeTrial, trialFromHeldToken } from '../auth/trial-convert.js'
+import { mergeTrial, movedHeadsetsField, trialFromHeldToken } from '../auth/trial-convert.js'
 import { recordTrialEvent } from '../auth/trial-events.js'
 import { trialsAvailable, verifyTurnstile } from '../auth/turnstile.js'
 
@@ -61,8 +61,8 @@ export default async function trialRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const trialId = await trialFromHeldToken(app, request.body?.trialToken)
       if (!trialId || trialId === request.user.id) return reply.send({ moved: false })
-      const moved = await mergeTrial(trialId, request.user.id, request.body?.fromAction)
-      return reply.send({ moved })
+      const merged = await mergeTrial(trialId, request.user.id, request.body?.fromAction)
+      return reply.send({ moved: !!merged, ...movedHeadsetsField(merged) })
     },
   )
 }

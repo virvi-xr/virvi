@@ -13,14 +13,17 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
  * claims it for its place when it deploys it), room scans and sets, and headsets. Scenes stay personal (org_id null).
  * Nothing is checked against the account's limits: they stop new work, not moved work (no plan limits scenes).
  */
-export async function moveTrialSceneData(tx: Tx, fromUserId: string, toUserId: string): Promise<void> {
-  if (fromUserId === toUserId) return
+export async function moveTrialSceneData(tx: Tx, fromUserId: string, toUserId: string): Promise<{ headsets: number }> {
+  if (fromUserId === toUserId) return { headsets: 0 }
   await tx.update(scenes).set({ ownerId: toUserId }).where(eq(scenes.ownerId, fromUserId))
   await tx.update(sceneImports).set({ userId: toUserId }).where(eq(sceneImports.userId, fromUserId))
   await tx.update(roomScans).set({ userId: toUserId }).where(eq(roomScans.userId, fromUserId))
   await tx.update(roomSets).set({ userId: toUserId }).where(eq(roomSets.userId, fromUserId))
-  await tx.update(arDevices).set({ userId: toUserId }).where(eq(arDevices.userId, fromUserId))
+  // A moved personal headset mints passes for the account's scenes from now on (intended: the same person signed in);
+  // the count lets the sign-in tell them, and Settings removes it
+  const headsets = await tx.update(arDevices).set({ userId: toUserId }).where(eq(arDevices.userId, fromUserId)).returning({ id: arDevices.id })
   await tx.update(sceneLibrary).set({ addedBy: toUserId }).where(eq(sceneLibrary.addedBy, fromUserId))
+  return { headsets: headsets.length }
 }
 
 export interface TrialLeftovers {

@@ -19,7 +19,7 @@ import { isOfficialRealm, isWorldRealm } from '../auth/official-realms.js'
 import { trialClaims } from '../auth/trial.js'
 import { issueAccountSession } from '../auth/sessions.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
-import { convertTrial, finishOAuth, isTrialGone, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
+import { convertTrial, finishOAuth, isTrialGone, mergeTrial, movedHeadsetsField, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
@@ -145,9 +145,9 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // Signing in from a trial moves the trial's work into this account
     const trialId = await trialFromBearer(app, request)
-    if (trialId && trialId !== user.id) await mergeTrial(trialId, user.id, request.body.fromAction)
+    const merged = trialId && trialId !== user.id ? await mergeTrial(trialId, user.id, request.body.fromAction) : false
 
-    return reply.send(issueAccountSession(app, user))
+    return reply.send({ ...issueAccountSession(app, user), ...movedHeadsetsField(merged) })
   })
 
   // ── POST /api/auth/refresh ───────────────────────────────────────────────

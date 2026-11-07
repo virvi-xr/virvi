@@ -506,6 +506,42 @@ describe('trial (guest) scene imports: a sandbox that never touches the real pla
       expect(await db.select().from(scenes).where(eq(scenes.id, sandboxScene))).toHaveLength(1)
     })
 
+    it("an account learns before and at deploy that a sandbox import moves onto its existing scene for the World", async () => {
+      const t = await makeTrial()
+      const id = (await upload(sceneZip(), t.h)).json().import.id
+      await makeBuilt(id)
+      const sandboxScene = (await db.select().from(scenes).where(eq(scenes.id, (await importRow(id)).sceneId)))[0]
+      // the guest's own read never names an account scene
+      expect((await app.inject({ method: 'GET', url: `/api/imports/${id}`, headers: t.h })).json().import.usesScene).toBeUndefined()
+      const acct = await convert(t.u.id)
+      worlds.deployers.set(B_WORLD, { owner: acct.wallet, deployers: [] })
+      // nothing to move onto yet: the view says nothing
+      expect((await app.inject({ method: 'GET', url: `/api/imports/${id}`, headers: auth(acct) })).json().import.usesScene).toBeUndefined()
+      const { scene } = await createScene(acct, 'Connected')
+      await db.insert(dclWorldDestinations).values({
+        sceneId: scene.id, ownerUserId: acct.id, ownerWallet: acct.wallet!, worldName: B_WORLD, base: '0,0', parcels: ['0,0'], mode: 'sign',
+      })
+      const move = { id: scene.id, name: 'Connected', sandboxSceneName: sandboxScene.name }
+      const read = await app.inject({ method: 'GET', url: `/api/imports/${id}`, headers: auth(acct) })
+      expect(read.json().import.usesScene).toEqual(move)
+      // reading changes nothing
+      expect(await importRow(id)).toMatchObject({ sandbox: true, sceneId: sandboxScene.id })
+      const r = await app.inject({ method: 'POST', url: `/api/imports/${id}/deploy`, headers: auth(acct) })
+      expect(r.statusCode).toBe(200)
+      expect(r.json().usesScene).toEqual(move)
+    })
+
+    it("a sandbox import deployed on its own scene names no other scene", async () => {
+      const t = await makeTrial()
+      const id = (await upload(sceneZip(), t.h)).json().import.id
+      await makeBuilt(id)
+      const acct = await convert(t.u.id)
+      worlds.deployers.set(B_WORLD, { owner: acct.wallet, deployers: [] })
+      const r = await app.inject({ method: 'POST', url: `/api/imports/${id}/deploy`, headers: auth(acct) })
+      expect(r.statusCode).toBe(200)
+      expect(r.json().usesScene).toBeUndefined()
+    })
+
     it("a merged guest's sandbox import is claimed when the account deploys it; the emptied scene stays the account's", async () => {
       const t = await makeTrial()
       const id = (await upload(sceneZip(), t.h)).json().import.id
@@ -513,7 +549,7 @@ describe('trial (guest) scene imports: a sandbox that never touches the real pla
       const sandboxScene = (await importRow(id)).sceneId
       const acct = await createUser({ wallet: randomWallet() })
       worlds.deployers.set(B_WORLD, { owner: acct.wallet, deployers: [] })
-      expect(await mergeTrial(t.u.id, acct.id)).toBe(true)
+      expect(await mergeTrial(t.u.id, acct.id)).toEqual({ headsets: 0 })
       expect(await importRow(id)).toMatchObject({ userId: acct.id, sandbox: true })
       const { scene } = await createScene(acct, 'Connected')
       await db.insert(dclWorldDestinations).values({

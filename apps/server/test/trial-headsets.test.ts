@@ -6,6 +6,7 @@ import { arDevices, arSpaces, roomScans, users } from '../src/db/schema.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { issueArPass } from '../src/auth/scene-pass.js'
 import { config } from '../src/config.js'
+import { mergeTrial } from '../src/auth/trial-convert.js'
 import { saveRoomScan } from '../src/routes/room-scans.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -123,6 +124,24 @@ describe('trial headsets and secret-auth scan upload', () => {
     await db.update(users).set({ isTrial: false }).where(eq(users.id, t.u.id))
     const res = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/pass`, payload: { secret: SECRET, sceneId: scene.id } })
     expect(res.statusCode).toBe(200)
+  })
+
+  it("a trial's personal headset moved by a merge mints passes for the account's scenes (intended: the same person signed in)", async () => {
+    const t = await makeTrial()
+    const deviceId = await pairWith(t.token)
+    const acct = await createUser({ wallet: randomWallet() })
+    const { scene: own } = await createScene(acct, 'Account scene')
+    const { scene: imported } = await createScene(t.u, 'Imported')
+    expect(await mergeTrial(t.u.id, acct.id)).toEqual({ headsets: 1 })
+    expect((await db.select().from(arDevices).where(eq(arDevices.id, deviceId)))[0]).toMatchObject({ userId: acct.id, kind: 'personal', status: 'claimed' })
+    // the account's own scene, and the scene the trial brought, both mint now; a stranger's still doesn't
+    for (const scene of [own, imported]) {
+      const res = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/pass`, payload: { secret: SECRET, sceneId: scene.id } })
+      expect(res.statusCode, scene.name).toBe(200)
+    }
+    const { scene: theirs } = await createScene(await createUser(), 'Not theirs')
+    const res = await app.inject({ method: 'POST', url: `/api/ar/devices/${deviceId}/pass`, payload: { secret: SECRET, sceneId: theirs.id } })
+    expect(res.statusCode).toBe(403)
   })
 
   it('a headset uploads a scan with its secret, to its approver only', async () => {
