@@ -15,7 +15,7 @@ import { createVirvi, placeDeployedModels } from '@virvixr/dcl'
 import { getSceneInformation } from '~system/Runtime'
 
 async function main() {
-  await placeDeployedModels() // never throws; places nothing without a snapshot
+  await placeDeployedModels() // never throws; places nothing without a snapshot; gives up after 5 s of frames
   try {
     const info = await getSceneInformation({})
     const virvi = JSON.parse(info.metadataJson || '{}').virvi ?? {}

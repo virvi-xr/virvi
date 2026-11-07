@@ -16,7 +16,7 @@ import { Quaternion } from '@dcl/sdk/math'
 import { SceneManager, EventBus, VirviStorageImpl } from '@virvixr/core'
 import { PLACEMENTS_FILE, encodePlacements, type Placement } from '@virvixr/shared'
 import { DclAdapter } from '../src/DclAdapter.js'
-import { placeDeployedModels, placeModels, adoptPlaced, releasePlaced, resetPlacedForTests, utf8 } from '../src/placements.js'
+import { placeDeployedModels, placeModels, adoptPlaced, releasePlaced, resetPlacedForTests, utf8, PLACEMENTS_READ_TIMEOUT_S } from '../src/placements.js'
 
 const at = (i: string, over: Partial<Placement> = {}): Placement => ({
   instanceId: i, elementId: 'chair', src: 'models/virvi/Chair.glb',
@@ -66,6 +66,66 @@ describe('placeDeployedModels', () => {
   it('decodes UTF-8 without TextDecoder', () => {
     const s = 'models/virvi/Café-椅子-🪑.glb'
     expect(utf8(new TextEncoder().encode(s))).toBe(s)
+  })
+})
+
+describe('a deployed-file read that stalls', () => {
+  /** A read that settles only when the test says so. */
+  function stalled() {
+    let resolve!: (b: Uint8Array) => void
+    const read = vi.fn(() => new Promise<Uint8Array>((r) => { resolve = r }))
+    return { read, resolve: (list: Placement[]) => resolve(file(list)) }
+  }
+  /** Runs engine frames of `dt` seconds until `done()` or `max` frames; returns how many ran. */
+  async function frames(dt: number, max: number, done: () => boolean) {
+    let n = 0
+    while (n < max && !done()) { await engine.update(dt); await new Promise((r) => setImmediate(r)); n++ }
+    return n
+  }
+
+  it(`gives up after ${PLACEMENTS_READ_TIMEOUT_S} s of engine frames, so the scene still connects`, async () => {
+    const { read } = stalled()
+    let result: number | undefined
+    void placeDeployedModels(read).then((n) => { result = n })
+    const ran = await frames(0.1, 1000, () => result !== undefined)
+    expect(result).toBe(0)
+    // Not before the timeout (frames of 0.1 s), and not long after it
+    expect(ran).toBeGreaterThanOrEqual(PLACEMENTS_READ_TIMEOUT_S * 10 - 1)
+    expect(ran).toBeLessThanOrEqual(PLACEMENTS_READ_TIMEOUT_S * 10 + 2)
+  })
+
+  it('a read that wins leaves no timer running', async () => {
+    const add = vi.spyOn(engine, 'addSystem')
+    const remove = vi.spyOn(engine, 'removeSystem')
+    expect(await placeDeployedModels(async () => file([at('i1')]))).toBe(1)
+    await frames(0.1, 3, () => false)
+    expect(add).toHaveBeenCalledTimes(1)
+    expect(remove).toHaveBeenCalledWith(add.mock.calls[0][0])
+    add.mockRestore()
+    remove.mockRestore()
+  })
+
+  it('a read that settles after the timeout but before live state still places, and live state adopts it', async () => {
+    const { read, resolve } = stalled()
+    let done = false
+    void placeDeployedModels(read).then(() => { done = true })
+    await frames(1, 100, () => done)
+    resolve([at('i1')])
+    await new Promise((r) => setImmediate(r))
+    expect(models()).toHaveLength(1)
+    expect(adoptPlaced('i1')).toBe(models()[0].e)
+  })
+
+  it('a read that settles after live state took over places nothing, leaving no orphans', async () => {
+    const { read, resolve } = stalled()
+    let done = false
+    void placeDeployedModels(read).then(() => { done = true })
+    await frames(1, 100, () => done)
+    releasePlaced() // the live scene's init
+    resolve([at('i1'), at('i2')])
+    await new Promise((r) => setImmediate(r))
+    expect(models()).toEqual([])
+    expect(adoptPlaced('i1')).toBeNull()
   })
 })
 

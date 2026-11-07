@@ -6,7 +6,9 @@
  * Transform and a GltfContainer whose src is a deployed file. That is the scene's Initial Scene State, which the map
  * photo and the distant view are made of. With nothing placed, abgen publishes no ISS and the parcel stays blank.
  *
- * The prelude below follows abgen's crate/src/lodgen/scenerun/prelude.js and driver.rs (read 2026-11-07). The scene
+ * The prelude below follows abgen's crate/src/lodgen/scenerun/prelude.js and driver.rs as of decentraland/abgen main
+ * 542a686ae7f8348a789eebe365406f07f7dd466a (read 2026-11-07; last changed in 7000bd2fb9fe4c4d00e85ef84f1d907ea6a28504 and
+ * 84b267163d5a8cba9dec3f9b0e03cc7c0d9dd715). The scene
  * runs in a fresh node:vm context: no setTimeout, TextDecoder or URL, as in the QuickJS sandbox. The CRDT the scene
  * sends to the "renderer" is replayed into a fresh @dcl/ecs engine to read the resulting state.
  */
@@ -16,6 +18,7 @@ import vm from 'node:vm'
 import { Engine, components } from '@dcl/sdk/ecs'
 import { Quaternion } from '@dcl/sdk/math'
 import { PLACEMENTS_FILE, encodePlacements, type Placement } from '@virvixr/shared'
+import { PLACEMENTS_READ_TIMEOUT_S } from '../src/placements.js'
 
 const ROOT = new URL('../../../', import.meta.url)
 const VERSION = /export const DCL_RUNTIME_VERSION = (\d+)/.exec(readFileSync(new URL('apps/server/src/services/dcl/runtime.ts', ROOT), 'utf8'))![1]
@@ -26,9 +29,9 @@ const PRELUDE = `
 globalThis.global = globalThis;
 globalThis.__abgen_module = { exports: {} };
 globalThis.console = { log() {}, info() {}, debug() {}, trace() {}, warn() {}, warning() {}, error() {} };
-globalThis.fetch = async () => ({ status: 200, json: async () => undefined, text: async () => '' });
+globalThis.fetch = async (url) => { __abgen.network('fetch ' + url); return { status: 200, json: async () => undefined, text: async () => '' } };
 globalThis.WebSocket = class WebSocket {
-  constructor(url) { this.url = url } onmessage() {} send() {} onclose() {} onerror() {} onopen() {} close() {}
+  constructor(url) { this.url = url; __abgen.network('ws ' + url) } onmessage() {} send() {} onclose() {} onerror() {} onopen() {} close() {}
   readyState = 0; CLOSED = 1; CLOSING = 0; CONNECTING = 0; OPEN = 0;
 };
 const __immediates = [];
@@ -58,7 +61,7 @@ const __modules = {
     isServer: async () => ({ isServer: false }),
   },
   UserIdentity: { getUserData: async () => ({ data: { displayName: 'empty', publicKey: 'empty', hasConnectedWeb3: true, userId: 'empty', version: 0 } }), getUserPublicKey: ok },
-  SignedFetch: { signedFetch: async () => ({ ok: false, status: 404, statusText: 'invalid lod server', headers: {}, body: '' }), getHeaders: async () => ({ headers: {} }) },
+  SignedFetch: { signedFetch: async (r) => (__abgen.network('signedFetch ' + (r && r.url)), { ok: false, status: 404, statusText: 'invalid lod server', headers: {}, body: '' }), getHeaders: async () => ({ headers: {} }) },
   Runtime: {
     getWorldTime: async () => ({ seconds: Date.now() / 1000 }),
     getExplorerInformation: async () => ({ agent: 'lod-server', platform: 'lod-server-platform', configurations: {} }),
@@ -66,7 +69,7 @@ const __modules = {
     readFile: async ({ fileName }) => __abgen.readFile(fileName),
     getSceneInformation: async () => ({
       urn: 'https://none', baseUrl: 'https://none', content: [],
-      metadataJson: JSON.stringify({ display: { title: '', favicon: '' }, owner: '', contact: { name: '', email: '' }, main: 'bin/game.js', tags: [], scene: { parcels: ['-,-'], base: '-,-' } }),
+      metadataJson: __abgen.metadataJson || JSON.stringify({ display: { title: '', favicon: '' }, owner: '', contact: { name: '', email: '' }, main: 'bin/game.js', tags: [], scene: { parcels: ['-,-'], base: '-,-' } }),
     }),
   },
   RestrictedActions: { triggerEmote: ok, movePlayerTo: ok, changeRealm: ok, openExternalUrl: ok, openNftDialog: ok, setCommunicationsAdapter: ok, teleportTo: ok, triggerSceneEmote: ok },
@@ -96,21 +99,30 @@ const FRAME_DT_MS = 100 / 3
 /** Lets every pending job run, as QuickJS's pump does between abgen's calls. */
 const pump = () => new Promise<void>((r) => setImmediate(r))
 
-/** Runs `code` like abgen does; returns the CRDT it sent and what it logged. */
-async function runLikeAbgen(code: string, files: Map<string, Uint8Array>) {
+/**
+ * Runs `code` like abgen does; returns the CRDT it sent, what it logged and the network calls it made, each with the
+ * frame it happened in. Outside abgen's own conditions, for the startup-timeout check: `hangReads` never settles a
+ * readFile (a stalled content fetch), `metadataJson` replaces the made-up metadata, `frames` runs more timed frames.
+ */
+async function runLikeAbgen(code: string, files: Map<string, Uint8Array>, opts: { hangReads?: boolean; metadataJson?: string; frames?: number } = {}) {
   const sent: Uint8Array[] = []
   const logs: string[] = []
   const reads: string[] = []
+  const network: Array<{ call: string; frame: number }> = []
+  let frame = -1
   const ctx = vm.createContext({
     __abgen: {
       sendToRenderer: (data: Uint8Array) => sent.push(new Uint8Array(data)),
       readFile: (name: string) => {
         reads.push(name)
+        if (opts.hangReads) return new Promise(() => {})
         const content = files.get(name)
         if (!content) throw new Error(`file not found: ${name}`)
         return { content, hash: 'bafy' }
       },
       log: (s: string) => logs.push(s),
+      network: (call: string) => network.push({ call, frame }),
+      metadataJson: opts.metadataJson,
     },
   })
   vm.runInContext(PRELUDE, ctx)
@@ -124,12 +136,14 @@ async function runLikeAbgen(code: string, files: Map<string, Uint8Array>) {
   await pump()
   const tick = async (kind: string, dt: number) => { await (ctx.__tick as (k: string, d: number) => Promise<void>)(kind, dt); await pump() }
   await tick('start', 0)
+  frame = 0
   await tick('update', 0)
-  for (let i = 0; i < TIMED_FRAMES; i++) {
+  for (let i = 0; i < (opts.frames ?? TIMED_FRAMES); i++) {
+    frame = i + 1
     ;(ctx.__advanceClock as (ms: number) => void)(FRAME_DT_MS)
     await tick('update', FRAME_DT_MS / 1000)
   }
-  return { sent, logs, reads, evalError }
+  return { sent, logs, reads, network, evalError }
 }
 
 /** The scene state the CRDT describes: entities with a Transform and a GltfContainer. */
@@ -181,7 +195,24 @@ describe(`runtime v${VERSION} in a Decentraland LOD sandbox`, () => {
     expect(placed.find((p) => p.src.endsWith('Tower.glb'))).toMatchObject({ mask: 2, t: { position: { x: 8, y: 0, z: 8 } } })
   })
 
-  it('places nothing, and still runs, in a deployment without a snapshot (a scene from before v10)', async () => {
+  it('never touches the network in the LOD run (it returns at the missing virvi block)', async () => {
+    const run = await runLikeAbgen(BUNDLE, deployment([copy('i1', 'models/virvi/Chair.glb')]))
+    expect(run.network).toEqual([])
+  })
+
+  it(`still connects to Virvi when the snapshot read stalls, after ${PLACEMENTS_READ_TIMEOUT_S} s of frames and not before`, async () => {
+    const metadataJson = JSON.stringify({ main: 'bin/index.js', scene: { parcels: ['0,0'], base: '0,0' }, virvi: { runtime: Number(VERSION), apiUrl: 'https://virvi.test', wssUrl: 'wss://virvi.test' } })
+    const timeoutFrames = Math.ceil((PLACEMENTS_READ_TIMEOUT_S * 1000) / FRAME_DT_MS)
+    const run = await runLikeAbgen(BUNDLE, deployment([copy('i1', 'models/virvi/Chair.glb')]), { hangReads: true, metadataJson, frames: timeoutFrames + 30 })
+    expect(run.evalError).toBeNull()
+    expect(run.reads).toContain(PLACEMENTS_FILE)
+    expect(run.network.length).toBeGreaterThan(0)
+    expect(run.network[0].frame).toBeGreaterThanOrEqual(timeoutFrames - 1)
+    expect(run.network[0].frame).toBeLessThanOrEqual(timeoutFrames + 2)
+    expect(await placedModels(run.sent)).toEqual([])
+  })
+
+  it('places nothing, and still runs, in a deployment without a snapshot (a v10 scene with no models)', async () => {
     const run = await runLikeAbgen(BUNDLE, deployment(null))
     expect(run.evalError).toBeNull()
     expect(await placedModels(run.sent)).toEqual([])

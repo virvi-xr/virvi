@@ -68,17 +68,49 @@ const readDeployedFile: DeployedFileReader = async (fileName) => {
 }
 
 /**
+ * How long, in engine time, startup waits for the snapshot before connecting without it. Counted from frames, since
+ * Decentraland's LOD sandbox has no timers; there the read settles in the first frame, well inside its 90 (3 s).
+ */
+export const PLACEMENTS_READ_TIMEOUT_S = 5
+
+/** Resolves once `seconds` of engine frames have run, or as soon as `stop()` says so; its system is then removed. */
+function framesElapsed(seconds: number, stop: () => boolean): Promise<void> {
+  return new Promise((resolve) => {
+    let elapsed = 0
+    const timer = (dt: number) => {
+      elapsed += dt
+      if (!stop() && elapsed < seconds) return
+      engine.removeSystem(timer)
+      resolve()
+    }
+    engine.addSystem(timer)
+  })
+}
+
+/**
  * Places the scene's deployed snapshot; returns how many models were placed. A scene without one (or an unreadable
  * one) places nothing and carries on. Never throws. Await it before connecting to Virvi, so the live scene can adopt.
+ *
+ * Ruling (LIV-134 review): a read that hasn't settled after PLACEMENTS_READ_TIMEOUT_S of frames resolves 0, so a
+ * stalled content fetch never keeps the scene from connecting. A read that settles later still goes through
+ * placeModels — why: before live state arrives the copies are adopted as usual, and once it has (releasePlaced)
+ * placeModels places nothing, so a late snapshot can neither duplicate nor orphan anything, while a scene whose Virvi
+ * API is down still gets its buildings.
  */
-export async function placeDeployedModels(read: DeployedFileReader = readDeployedFile): Promise<number> {
-  try {
-    const bytes = await read(PLACEMENTS_FILE)
-    if (!bytes || !bytes.length) return 0
-    return placeModels(decodePlacements(utf8(bytes)))
-  } catch {
-    return 0 // no snapshot deployed (readFile throws for a missing file)
-  }
+export async function placeDeployedModels(read: DeployedFileReader = readDeployedFile, timeoutSeconds = PLACEMENTS_READ_TIMEOUT_S): Promise<number> {
+  let settled = false
+  const reading = (async () => {
+    try {
+      const bytes = await read(PLACEMENTS_FILE)
+      if (!bytes || !bytes.length) return 0
+      return placeModels(decodePlacements(utf8(bytes)))
+    } catch {
+      return 0 // no snapshot deployed (readFile throws for a missing file)
+    } finally {
+      settled = true
+    }
+  })()
+  return Promise.race([reading, framesElapsed(timeoutSeconds, () => settled).then(() => 0)])
 }
 
 /** Hands over the placed entity for this instance (once); null when none is waiting. */
