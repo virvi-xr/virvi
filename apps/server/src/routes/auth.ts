@@ -22,6 +22,7 @@ import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
 import { convertTrial, finishOAuth, isTrialGone, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
+import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
 
 interface RegisterBody {
   email: string
@@ -49,7 +50,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── POST /api/auth/register ──────────────────────────────────────────────
 
-  app.post<{ Body: RegisterBody }>('/api/auth/register', { preHandler: refuseExpiredTrial(app) }, async (request, reply) => {
+  app.post<{ Body: RegisterBody }>('/api/auth/register', { preHandler: refuseExpiredTrial(app), config: { rateLimit: CREDENTIAL_RATE_LIMIT } }, async (request, reply) => {
     const { email, password, displayName } = request.body
 
     if (!email || !password || !displayName) {
@@ -104,7 +105,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── POST /api/auth/login ─────────────────────────────────────────────────
 
-  app.post<{ Body: LoginBody }>('/api/auth/login', { preHandler: refuseExpiredTrial(app) }, async (request, reply) => {
+  app.post<{ Body: LoginBody }>('/api/auth/login', { preHandler: refuseExpiredTrial(app), config: { rateLimit: CREDENTIAL_RATE_LIMIT } }, async (request, reply) => {
     const { email, password } = request.body
 
     if (!email || !password) {
@@ -575,7 +576,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.put<{ Body: { currentPassword: string; newPassword: string } }>(
     '/api/auth/password',
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate], config: { rateLimit: CREDENTIAL_RATE_LIMIT } },
     async (request, reply) => {
       const { currentPassword, newPassword } = request.body
 
@@ -619,6 +620,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.post<{ Body: { email: string } }>(
     '/api/auth/forgot-password',
+    { config: { rateLimit: CREDENTIAL_RATE_LIMIT } },
     async (request, reply) => {
       const { email } = request.body
 
@@ -659,6 +661,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.post<{ Body: { token: string; newPassword: string } }>(
     '/api/auth/reset-password',
+    { config: { rateLimit: CREDENTIAL_RATE_LIMIT } },
     async (request, reply) => {
       const { token, newPassword } = request.body
 

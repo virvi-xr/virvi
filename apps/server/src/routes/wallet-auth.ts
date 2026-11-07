@@ -12,6 +12,7 @@ import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
 import { convertTrial, isTrialGone, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { linkVerifiedWallet, resolveVerifiedWalletUser } from '../auth/wallet-users.js'
 import { issueWalletSession } from '../auth/sessions.js'
+import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
 const TTL_MS = 5 * 60_000
@@ -77,7 +78,7 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
     return reply.send({ nonce, message })
   })
 
-  app.post<{ Body: { address?: string; nonce?: string; signature?: string; fromAction?: string } }>('/api/auth/wallet/verify', { preHandler: refuseExpiredTrial(app) }, async (request, reply) => {
+  app.post<{ Body: { address?: string; nonce?: string; signature?: string; fromAction?: string } }>('/api/auth/wallet/verify', { preHandler: refuseExpiredTrial(app), config: { rateLimit: CREDENTIAL_RATE_LIMIT } }, async (request, reply) => {
     const { address, nonce, signature } = request.body ?? {}
     if (!address || !ADDRESS_RE.test(address) || !nonce || !signature) return reply.status(400).send({ error: 'address, nonce and signature are required' })
     // Single use: delete first so a failed attempt also burns the nonce.

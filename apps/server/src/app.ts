@@ -167,16 +167,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   console.log('[virvi-server] API docs available at /api/docs')
 
   // ── API Routes ───────────────────────────────────────────────────────────
-  // Auth routes get stricter rate limits to mitigate brute-force attacks
+  // Auth routes. Credential-guessing routes (login, register, password reset/change, wallet verify) set their own
+  // CREDENTIAL_RATE_LIMIT and trial start sets its own: a scope onRoute default would run after @fastify/rate-limit's
+  // root hook and never apply (LIV-136).
   await app.register(async (scope) => {
-    scope.addHook('onRoute', (routeOptions) => {
-      // A route's own rateLimit (e.g. POST /api/auth/trial) wins over the scope default
-      const own = (routeOptions.config as Record<string, unknown> | undefined)?.rateLimit
-      routeOptions.config = {
-        ...((routeOptions.config as Record<string, unknown>) || {}),
-        rateLimit: own ?? { max: 20, timeWindow: '1 minute' },
-      }
-    })
     // /api/auth/platform checks the signed body hash against request.rawBody
     withRawJson(scope)
     await scope.register(authRoutes)
