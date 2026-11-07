@@ -84,28 +84,67 @@ const inRange = (iso: string, q: AnalyticsRangeQuery) => {
 }
 const tally = (values: string[]) => values.reduce<Record<string, number>>((m, v) => ((m[v] = (m[v] ?? 0) + 1), m), {})
 
-export function createDemoApi(opts: { trialId: string; now: () => number; storage?: Storage }): DemoApi {
+const NO_ORIGIN = 'https://demo.invalid'
+
+/**
+ * A giveaway item's image as the demo keeps it (LIV-138): a `data:image/` URL, or a relative or same-origin http(s) URL;
+ * anything else is null (the page then shows no picture), so a guest's demo never loads an outside address.
+ */
+export function demoImageUrl(url: unknown, origin?: string | null): string | null {
+  if (typeof url !== 'string' || url === '') return null
+  if (/^data:image\//i.test(url)) return url
+  const home = origin || NO_ORIGIN
+  try {
+    const u = new URL(url, home)
+    return (u.protocol === 'https:' || u.protocol === 'http:') && u.origin === new URL(home).origin ? url : null
+  } catch {
+    return null
+  }
+}
+
+export function createDemoApi(opts: { trialId: string; now: () => number; storage?: Storage; origin?: string | null }): DemoApi {
   const key = demoStorageKey(opts.trialId)
   const base: DemoData = demoFixtures(opts.now())
+  const origin = opts.origin !== undefined ? opts.origin : typeof location !== 'undefined' ? location.origin : null
+  const sampleEvent = new Map(base.events.map((e) => [e.id, e]))
   const editable = (d: DemoData): DemoEditable => ({
     events: d.events, eventScenes: d.eventScenes, eventGiveaways: d.eventGiveaways, giveaways: d.giveaways, items: d.items, claims: d.claims,
   })
 
-  const load = (): DemoEditable => {
+  /**
+   * The sample events the guest hasn't edited are the sample's again, placed around this visit's `now` (LIV-138), so the
+   * live one is still live days later. `sampleEvents` lists them; a store from before it counts a sample event the guest
+   * never saved (updatedAt still its createdAt) as untouched.
+   */
+  const reanchor = (data: DemoEditable, kept: unknown): Set<string> => {
+    const untouched = new Set(
+      Array.isArray(kept)
+        ? kept.filter((id): id is string => typeof id === 'string')
+        : data.events.filter((e) => sampleEvent.has(e.id) && e.updatedAt === e.createdAt).map((e) => e.id),
+    )
+    for (const id of [...untouched]) if (!sampleEvent.has(id)) untouched.delete(id)
+    data.events = data.events.map((e) => (untouched.has(e.id) ? structuredClone(sampleEvent.get(e.id)!) : e))
+    for (const item of data.items) item.imageUrl = demoImageUrl(item.imageUrl, origin)
+    return untouched
+  }
+  const load = (): { data: DemoEditable; untouched: Set<string> } => {
     try {
       const raw = opts.storage?.getItem(key)
       if (raw) {
         const v = JSON.parse(raw)
         // Every list the demo keeps, or none of it: a partial store (an older shape, a hand edit) is the sample again
-        if (v?.v === VERSION && v.data && EDITABLE_LISTS.every((k) => Array.isArray(v.data[k]))) return v.data as DemoEditable
+        if (v?.v === VERSION && v.data && EDITABLE_LISTS.every((k) => Array.isArray(v.data[k]))) {
+          const data = v.data as DemoEditable
+          return { data, untouched: reanchor(data, v.sampleEvents) }
+        }
       }
     } catch {}
-    return structuredClone(editable(base))
+    return { data: structuredClone(editable(base)), untouched: new Set(sampleEvent.keys()) }
   }
   // Kept in memory too: a browser that refuses storage (private window, full) still gets a working demo for the visit
-  let state = load()
+  const { data: state, untouched } = load()
   const save = () => {
-    try { opts.storage?.setItem(key, JSON.stringify({ v: VERSION, data: state })) } catch {}
+    try { opts.storage?.setItem(key, JSON.stringify({ v: VERSION, data: state, sampleEvents: [...untouched] })) } catch {}
   }
   const write = <R>(fn: (s: DemoEditable) => R): R => {
     const out = fn(state)
@@ -230,6 +269,7 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
       if (!e) return Promise.reject(notFound())
       return done({
         event: write(() => {
+          untouched.delete(id)
           if (data.name !== undefined) e.name = data.name
           if (data.description !== undefined) e.description = data.description
           if (data.startTime !== undefined) e.startTime = data.startTime ? new Date(data.startTime).toISOString() : null
@@ -243,6 +283,7 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
     deleteEvent: (id) => {
       if (!eventOf(id)) return Promise.reject(notFound())
       write((s) => {
+        untouched.delete(id)
         s.events = s.events.filter((e) => e.id !== id)
         s.eventScenes = s.eventScenes.filter((l) => l.eventId !== id)
         s.eventGiveaways = s.eventGiveaways.filter((l) => l.eventId !== id)
@@ -307,7 +348,7 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
     addGiveawayItem: (giveawayId, data) => {
       if (!giveawayOf(giveawayId)) return Promise.reject(notFound())
       const item = {
-        id: newId('item'), giveawayId, name: data.name ?? null, imageUrl: data.imageUrl ?? null,
+        id: newId('item'), giveawayId, name: data.name ?? null, imageUrl: demoImageUrl(data.imageUrl, origin),
         contractAddress: data.contractAddress ?? null, tokenId: data.tokenId ?? null, metadata: data.metadata ?? null, createdAt: stamp(),
       }
       write((s) => { s.items.push(item) })

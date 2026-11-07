@@ -90,6 +90,73 @@ describe('createDemoApi', () => {
     expect((await c.getEvents()).events).toHaveLength(3)
   })
 
+  it('sample events keep their place relative to now on a later visit; guest-made and edited events keep their times (LIV-138)', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(NOW)
+      const storage = memoryStorage()
+      const first = createDemoApi({ trialId: 't1', now: () => Date.now(), storage })
+      const mine = (await first.createEvent({ name: 'My launch', startTime: new Date(NOW + DAY).toISOString(), timezone: 'UTC' })).event
+      await first.updateEvent('demo-event-3', { name: 'Builders meetup' })
+      const editedBefore = (await first.getEvent('demo-event-3')).event
+
+      vi.setSystemTime(NOW + 3 * DAY)
+      const later = createDemoApi({ trialId: 't1', now: () => Date.now(), storage })
+      const { events } = await later.getEvents()
+      const byId = new Map(events.map((e: any) => [e.id, e]))
+      const walk = byId.get('demo-event-2')!
+      const t = Date.now()
+      // Still on now, as the sample has it
+      expect(Date.parse(walk.startTime!)).toBeLessThanOrEqual(t)
+      expect(Date.parse(walk.endTime!)).toBeGreaterThan(t)
+      expect(walk).toEqual(demoFixtures(t).events[1])
+      expect(byId.get('demo-event-1')).toEqual(demoFixtures(t).events[0])
+      // The guest's own and edited events are as they left them
+      expect(byId.get(mine.id)).toEqual(mine)
+      const edited = byId.get('demo-event-3')!
+      expect([edited.name, edited.startTime, edited.endTime]).toEqual(['Builders meetup', editedBefore.startTime, editedBefore.endTime])
+      expect(events).toHaveLength(4)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a store from before the marker re-anchors only the sample events it never edited', async () => {
+    const storage = memoryStorage()
+    const old = demoFixtures(NOW)
+    const edited = { ...old.events[2], name: 'Renamed', updatedAt: new Date(NOW + 1000).toISOString() }
+    const { location, scene, visits, cells, hotspots, ...data } = old
+    storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 1, data: { ...data, events: [old.events[0], old.events[1], edited] } }))
+    const later = NOW + 3 * DAY
+    const { events } = await createDemoApi({ trialId: 't1', now: () => later, storage }).getEvents()
+    expect(events[1]).toEqual(demoFixtures(later).events[1])
+    expect(events[2]).toEqual(edited)
+  })
+
+  it('a giveaway item image is kept only when it is a data: or same-origin URL (LIV-138)', async () => {
+    const api = createDemoApi({ trialId: 't1', now: () => NOW, storage: memoryStorage(), origin: 'https://virvi.io' })
+    const add = async (imageUrl: string | undefined) => (await api.addGiveawayItem('demo-giveaway-1', { name: 'X', imageUrl })).item.imageUrl
+    expect(await add('data:image/png;base64,iVBORw0KGgo=')).toBe('data:image/png;base64,iVBORw0KGgo=')
+    expect(await add('/uploads/a.png')).toBe('/uploads/a.png')
+    expect(await add('images/a.png')).toBe('images/a.png')
+    expect(await add('https://virvi.io/media/a.png')).toBe('https://virvi.io/media/a.png')
+    for (const bad of ['https://tracker.example/pixel.png', '//tracker.example/p.png', 'http://virvi.io/a.png', 'javascript:alert(1)', ' https://x.example/a.png', 'blob:https://virvi.io/abc']) {
+      expect([bad, await add(bad)]).toEqual([bad, null])
+    }
+    expect(await add(undefined)).toBeNull()
+    const { giveaway } = await api.getGiveaway('demo-giveaway-1')
+    expect(giveaway.items.filter((i: any) => i.imageUrl?.includes('tracker'))).toEqual([])
+  })
+
+  it('a stored item with an outside image comes back without it', async () => {
+    const storage = memoryStorage()
+    const { location, scene, visits, cells, hotspots, ...data } = demoFixtures(NOW)
+    data.items[0] = { ...data.items[0], imageUrl: 'https://tracker.example/p.png' }
+    storage.setItem(demoStorageKey('t1'), JSON.stringify({ v: 1, data }))
+    const { giveaway } = await createDemoApi({ trialId: 't1', now: () => NOW, storage, origin: 'https://virvi.io' }).getGiveaway('demo-giveaway-1')
+    expect(giveaway.items[0].imageUrl).toBeNull()
+  })
+
   it('a stored demo missing any of its lists falls back to the sample data', async () => {
     const lists = ['events', 'eventScenes', 'eventGiveaways', 'giveaways', 'items', 'claims'] as const
     for (const missing of lists) {
