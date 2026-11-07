@@ -4,6 +4,7 @@ import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
 import { deviceId, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome, type TrialEntry } from './trial'
 import { adoptDraftOnSignIn, clearDraft } from './wizard/draft'
+import { clearDemoStores } from './demo/store'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -40,6 +41,9 @@ interface AuthState {
   /** A trial ended (converted elsewhere): adopt the account session stored by another tab and return its token, or sign out and return null. */
   swapToStoredAccount: (staleToken: string) => string | null
 }
+
+/** Demo state (`virvi.demo.<trialId>`) lives only as long as the trial in this browser. */
+const dropDemos = () => { try { clearDemoStores(localStorage) } catch {} }
 
 const postRefresh = (refreshToken: string) =>
   fetch(`${API_URL}/api/auth/refresh`, { method: 'POST', headers: { Authorization: `Bearer ${refreshToken}` } })
@@ -131,6 +135,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** `trialCarried`: the request carried this tab's trial into the account, so the trial's wizard draft goes with it. */
   const adopt = (data: { accessToken: string; refreshToken?: string; user: User }, trialCarried = false) => {
     adoptDraftOnSignIn(user, data.user, trialCarried)
+    // The trial ended here (it became an account): its demos go
+    if (user?.trial && !data.user.trial) dropDemos()
     setToken(data.accessToken)
     setUser(data.user)
     setScenePass(null)
@@ -201,6 +207,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = useCallback(() => {
+    // Signed out, or the session ended (`trial_ended` with no account to follow, a refused renewal): demos go too
+    dropDemos()
     setToken(null)
     setUser(null)
     setScenePass(null)
@@ -228,6 +236,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const swapToStoredAccount = useCallback((staleToken: string) => {
     const stored = readStoredAuth(localStorage)
     if (stored && trialEndedOutcome(stored, staleToken) === 'swap') {
+      // `trial_ended`: the trial became the stored account, so its demos go
+      dropDemos()
       setToken(stored.token)
       setUser(stored.user as User)
       setScenePass(null)

@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useMemo } from 'react'
+import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
 import { requestHeaders } from './request-headers'
@@ -14,6 +14,7 @@ import type { ArFileFormat, ArMounting } from './ar'
 import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
 import type { SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
+import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
@@ -236,7 +237,27 @@ export async function fetchDclNames(bearer: string): Promise<{ wallets: Array<{ 
   throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
 }
 
-export function useApi() {
+/**
+ * Set by `<DemoApiProvider>` (the guest demos under `/demo/*`): `useApi()` inside it answers from the in-browser demo and
+ * refuses everything else, and `useDemoPrefix()` keeps the pages' own links under `/demo`. Null everywhere else.
+ */
+export const DemoApiContext = createContext<{ api: DemoApi; onRefused: (action: string) => void } | null>(null)
+
+/** `/demo` inside a demo, else ''. Pages that link to themselves (`/events?id=`) put it in front. */
+export function useDemoPrefix(): '' | '/demo' {
+  return useContext(DemoApiContext) ? '/demo' : ''
+}
+
+/** The api `useApi()` returns: the real one's shape, which a demo keeps. */
+export type Api = ReturnType<typeof useRealApi>
+
+export function useApi(): Api {
+  const real = useRealApi()
+  const demo = useContext(DemoApiContext)
+  return useMemo(() => (demo ? overlayDemoApi(real, demo.api, demo.onRefused) : real), [real, demo])
+}
+
+function useRealApi() {
   const { token, user, logout, renew, swapToStoredAccount } = useAuth()
 
   /** A kind-less (pre-scene-pass) session, or a scene pass used outside its scope: drop it so the

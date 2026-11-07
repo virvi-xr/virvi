@@ -70,7 +70,7 @@ Nothing is configured for this; a server without the bucket skips it.
 
 ## Guest Trials
 
-Signed-out visitors can try the Design Studio at `/try/studio` (see [Try Without an Account](/getting-started/try-without-an-account/)).
+Signed-out visitors can try the Design Studio at `/try/studio` and the scene builder, import, room scans and demos at `/try/scene` (see [Try Without an Account](/getting-started/try-without-an-account/)).
 
 | Variable | Description |
 |----------|-------------|
@@ -81,6 +81,9 @@ Signed-out visitors can try the Design Studio at `/try/studio` (see [Try Without
 | `TRIAL_COST_CEILING_USD` | Most one trial may cost in model spend (default: `3`) |
 | `TRIAL_DESIGNS` | Designs per trial (default: `2`) |
 | `TRIAL_UPLOAD_BYTES` | Total upload size per trial in bytes (default: `26214400`, 25 MB) |
+| `TRIAL_IMPORTS` | Scene imports per trial, ever; failed imports count (default: `2`) |
+| `TRIAL_IMPORT_MAX_BYTES` | Largest scene zip a trial may import, in bytes (default: `26214400`, 25 MB) |
+| `TRIAL_ROOM_SCANS` | Room scans a trial may hold at once (default: `5`) |
 | `TRIAL_PER_IP_DAY` | New trials per IP address per day (default: `3`) |
 | `TRIAL_PER_DEVICE_DAY` | New trials per device per day (default: `3`) |
 | `TRIAL_DAILY_BUDGET_USD` | Daily model spend across all trials; once reached, trial prompting pauses until the next day (default: `50`) |
