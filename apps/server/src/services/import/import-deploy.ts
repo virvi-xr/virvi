@@ -83,6 +83,16 @@ async function parcelOwner(userId: string, parcels: string[]): Promise<string> {
   return wallet
 }
 
+/**
+ * The caller's wallet that may deploy where the import was uploaded for: the World's owner (403 not_world_owner) or the
+ * parcels' controller (403 not_parcel_controller). Checked before a sandbox import is claimed, so a refused claim
+ * changes nothing.
+ */
+export async function placeOwner(row: SceneImportRow, userId: string): Promise<string> {
+  const loc = locationOf(row)
+  return loc.kind === 'world' ? worldOwner(userId, loc.world) : parcelOwner(userId, loc.parcels)
+}
+
 /** Why no verified wallet of the importer may deploy: a parcel none of them controls, or no single one controls them all. */
 export const notParcelController = (missing: string | null) => missing
   ? `None of your verified wallets can deploy to parcel ${missing}.`
@@ -162,6 +172,8 @@ async function startFailed(importId: string, err: unknown): Promise<void> {
 export async function startImportDeploy(
   row: SceneImportRow, by: string, opts: { virviOnly?: boolean; claimed?: boolean } & DeployOptions = {},
 ): Promise<StartedImportDeploy | null> {
+  // A sandbox import is claimed for its place first (claimSandboxImport); until then it deploys nowhere
+  if (row.sandbox) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
   const from = row.status
   const startable = from === 'built' || from === 'awaiting_signature' || (opts.claimed && from === 'deploying' && !row.deploymentId)
   if (!startable) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
@@ -230,12 +242,14 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
 export async function deployImport(importId: string, opts: DeployOptions = {}): Promise<void> {
   const row = await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, importId) })
   if (row?.status !== 'built') return
+  // A trial's sandbox import never deploys on its own, wherever it names (an account deploys it after claiming it)
+  if (row.sandbox) return
   const loc = locationOf(row)
   const dest = await destinationOf(row, loc)
   if (!grantedFor(dest, loc) || !virviSignerFor(dest.kind)) return
   // Ruling R24: claimed before anything slow, so the creator is never offered a Deploy this is already doing
   const [claimed] = await db.update(sceneImports).set({ status: 'deploying', updatedAt: new Date() })
-    .where(and(eq(sceneImports.id, importId), eq(sceneImports.status, 'built'), isNull(sceneImports.deploymentId)))
+    .where(and(eq(sceneImports.id, importId), eq(sceneImports.status, 'built'), isNull(sceneImports.deploymentId), eq(sceneImports.sandbox, false)))
     .returning()
   if (!claimed) return
   const started = await startImportDeploy(claimed, claimed.userId, { virviOnly: true, claimed: true, fetch: opts.fetch })

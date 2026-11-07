@@ -135,6 +135,8 @@ export const users = pgTable('users', {
   trialLastActiveAt: timestamp('trial_last_active_at', { withTimezone: true }),
   trialIpHash: text('trial_ip_hash'),
   trialDeviceHash: text('trial_device_hash'),
+  /** Scene imports this trial has started, failed ones included (TRIAL_IMPORTS caps it; reserveTrialImport). */
+  trialImports: integer('trial_imports').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -843,6 +845,11 @@ export const sceneImports = pgTable('scene_imports', {
    * thumbnail file at its destination, which Virvi never removes, even under Virvi's own thumbnail name.
    */
   navmapThumbnail: text('navmap_thumbnail'),
+  /**
+   * A trial's (guest's) import (LIV-91): it never locks, blocks or supersedes its place, is never its place's latest
+   * import and never deploys on its own. An account clears it when it deploys the import (claimSandboxImport).
+   */
+  sandbox: boolean('sandbox').notNull().default(false),
 }, (t) => ({
   worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
   userCreatedIdx: index('scene_imports_user_created_idx').on(t.userId, t.createdAt),

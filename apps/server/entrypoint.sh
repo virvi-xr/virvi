@@ -34,7 +34,7 @@ if [ -n "$DATABASE_URL" ]; then
       } catch(e) { console.log('[virvi-server] streaming_servers scene fk:', e.message); }
 
       // trial account columns on users
-      for (const def of ['is_trial BOOLEAN NOT NULL DEFAULT false', 'trial_last_active_at TIMESTAMPTZ', 'trial_ip_hash TEXT', 'trial_device_hash TEXT']) {
+      for (const def of ['is_trial BOOLEAN NOT NULL DEFAULT false', 'trial_last_active_at TIMESTAMPTZ', 'trial_ip_hash TEXT', 'trial_device_hash TEXT', 'trial_imports INTEGER NOT NULL DEFAULT 0']) {
         try {
           await sql.unsafe(\`ALTER TABLE users ADD COLUMN IF NOT EXISTS \${def}\`);
         } catch(e) { console.log('[virvi-server] users trial column:', e.message); }
@@ -106,6 +106,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS virvi_already_present BOOLEAN NOT NULL DEFAULT FALSE\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS thumbnail_outcome TEXT, ADD COLUMN IF NOT EXISTS thumbnail_note TEXT\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS navmap_thumbnail TEXT\`;
+        await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS sandbox BOOLEAN NOT NULL DEFAULT FALSE\`;
         await sql\`ALTER TABLE scene_imports ALTER COLUMN world_name DROP NOT NULL\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS location_kind dcl_destination_kind NOT NULL DEFAULT 'world', ADD COLUMN IF NOT EXISTS base TEXT, ADD COLUMN IF NOT EXISTS parcels TEXT[] NOT NULL DEFAULT '{}'::text[]\`;
         await sql\`CREATE INDEX IF NOT EXISTS scene_imports_world_status_idx ON scene_imports (world_name, status)\`;

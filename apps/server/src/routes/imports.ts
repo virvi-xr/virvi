@@ -9,17 +9,23 @@
  * POST /api/imports/:id/deploy   — start its deploy (Virvi-signed on a granted World, else returns what to sign)
  *
  * Open to every plan (no feature gate). The build box's own routes are in import-build.ts.
+ *
+ * A trial (guest) uploads, lists and reads its imports (LIV-91): its upload is a sandbox import of a new scene, for any
+ * World or parcels without an ownership check, at most TRIAL_IMPORTS of them and TRIAL_IMPORT_MAX_BYTES each. A sandbox
+ * import never touches its place (imports.ts); deploying it takes an account, which claims it for the place first.
  */
 
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { zipSync } from 'fflate'
 import { PARCEL_RE, SCENE_IMPORT_MAX_BYTES, type ImportLocation } from '@virvixr/shared'
+import { config } from '../config.js'
 import { db } from '../db/connection.js'
 import { analyticsScenes, dclWorldDestinations, sceneImports, scenes } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
+import { recordTrialBlocked } from '../auth/trial-events.js'
 import { isUuid } from '../auth/scene-from.js'
 import { getActiveSetup } from '../setup/setups.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
@@ -33,9 +39,9 @@ import { importSlotGate, importSlotHooks, releaseImportSlot, uploadDeadlineMs, u
 import { FILES_EXPIRED } from '../services/import/retention.js'
 import { buildsAvailable, startBuild } from '../services/import/build-runner.js'
 import {
-  createImport, failImport, latestImportFor, loadImportView, originalKey, OWNER_ERROR_MESSAGES, type SceneImportRow,
+  claimSandboxImport, createImport, failImport, latestImportFor, loadImportView, originalKey, OWNER_ERROR_MESSAGES, reserveTrialImport, type SceneImportRow,
 } from '../services/import/imports.js'
-import { NOT_DEPLOYABLE, notParcelController, startImportDeploy } from '../services/import/import-deploy.js'
+import { NOT_DEPLOYABLE, notParcelController, placeOwner, startImportDeploy } from '../services/import/import-deploy.js'
 import { DeployerError } from '../services/dcl/world-deployer.js'
 import { ownerFor, RouteError } from './dcl-destinations.js'
 import { publicDeployment } from './deploy.js'
@@ -57,6 +63,24 @@ async function handle(reply: FastifyReply, fn: () => Promise<unknown>) {
     if (err instanceof RouteError) return reply.status(err.status).send({ error: err.code, message: ROUTE_MESSAGES[err.code], ...err.extra })
     throw err
   }
+}
+
+/** A trial's refusal: 403 account_required with what it tried (and the funnel's first refusal recorded). */
+class TrialRefusal extends Error {
+  constructor(readonly action: string) { super(action) }
+}
+
+function refuseTrial(request: FastifyRequest, reply: FastifyReply, action: string) {
+  recordTrialBlocked(request.user.id, action)
+  return reply.status(403).send({ error: 'account_required', action })
+}
+
+/** Refuses a trial's upload larger than TRIAL_IMPORT_MAX_BYTES by its Content-Length, before the body is read. */
+async function trialSizeGate(request: FastifyRequest, reply: FastifyReply) {
+  if (!request.user?.trial) return
+  const raw = request.headers['content-length']
+  const n = raw !== undefined && /^\d+$/.test(raw.trim()) ? Number(raw) : 0
+  if (n > config.trialImportMaxBytes) return refuseTrial(request, reply, 'import_larger')
 }
 
 /** Refuses before the body is read: no builds here means nothing is stored. */
@@ -126,6 +150,13 @@ async function importFor(request: FastifyRequest, id: string): Promise<SceneImpo
   return row
 }
 
+/** scene.json must list at least one valid parcel, its base among them (422 bad_scene_json). */
+function checkParcels(location: Extract<ImportLocation, { kind: 'parcels' }>): void {
+  if (!location.parcels.length || !location.parcels.every((p) => PARCEL_RE.test(p)) || !location.parcels.includes(location.base)) {
+    throw new ImportError(422, 'bad_scene_json', 'scene.json needs at least one valid parcel, and its base must be one of them.')
+  }
+}
+
 const reload = async (id: string) => (await db.query.sceneImports.findFirst({ where: eq(sceneImports.id, id) }))!
 
 export default async function importRoutes(app: FastifyInstance) {
@@ -148,9 +179,14 @@ export default async function importRoutes(app: FastifyInstance) {
     const slot = importSlotGate(uploadWork, (request) => uploadDeadlineMs(request.headers['content-length']), {
       error: 'upload_too_slow', message: UPLOAD_TOO_SLOW,
     })
-    upload.post('/api/imports', { onRequest: [authenticate, buildsGate, slot], bodyLimit: SCENE_IMPORT_MAX_BYTES }, async (request, reply) => handle(reply, async () => {
+    upload.post('/api/imports', {
+      onRequest: [authenticate, trialSizeGate, buildsGate, slot], bodyLimit: SCENE_IMPORT_MAX_BYTES, config: { trial: true },
+    }, async (request, reply) => handle(reply, async () => {
       try {
         return await uploadImport(request, reply)
+      } catch (err) {
+        if (err instanceof TrialRefusal) return refuseTrial(request, reply, err.action)
+        throw err
       } finally {
         releaseImportSlot(request)
       }
@@ -159,9 +195,6 @@ export default async function importRoutes(app: FastifyInstance) {
 
   /** The importer's verified wallets must deploy to every parcel: 403 not_parcel_controller, 503 when Decentraland can't answer. */
   async function requireParcelController(userId: string, location: Extract<ImportLocation, { kind: 'parcels' }>) {
-    if (!location.parcels.length || !location.parcels.every((p) => PARCEL_RE.test(p)) || !location.parcels.includes(location.base)) {
-      throw new ImportError(422, 'bad_scene_json', 'scene.json needs at least one valid parcel, and its base must be one of them.')
-    }
     try {
       const control = await parcelControl(await verifiedWalletsOf(userId), location.parcels)
       if (!control.wallet) {
@@ -177,14 +210,24 @@ export default async function importRoutes(app: FastifyInstance) {
 
   /** The upload, once its body is in: checks, Virvi installed, stored, build started. */
   async function uploadImport(request: FastifyRequest, reply: FastifyReply) {
-    const folder = readSceneZip(Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0))
+    const trial = !!request.user.trial
+    const body = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0)
+    // A chunked body has no Content-Length for trialSizeGate: its bytes are checked here
+    if (trial && body.length > config.trialImportMaxBytes) throw new TrialRefusal('import_larger')
+    const folder = readSceneZip(body)
     const location = folder.location
+    // A trial's import is a sandbox: no ownership check and always a new scene, since it never touches the place
     if (location.kind === 'world') {
-      await ownerFor(request.user.id, location.world)
+      if (!trial) await ownerFor(request.user.id, location.world)
     } else {
-      await requireParcelController(request.user.id, location)
+      checkParcels(location)
+      if (!trial) await requireParcelController(request.user.id, location)
     }
-    const scene = await sceneFor(request, location, folder)
+    const scene = trial
+      ? { newName: sceneName(folder, location.kind === 'world' ? location.world : `Genesis City ${location.base}`) }
+      : await sceneFor(request, location, folder)
+    // Counted once the zip reads, failed builds included; atomic, so two at once with one left can't both pass
+    if (trial && !(await reserveTrialImport(request.user.id))) throw new TrialRefusal('more_imports')
     // The upload as the import reads it (node_modules/, .git/, bin/, __MACOSX/ already dropped), kept for the backup
     const kept = zipSync(Object.fromEntries(folder.files), { level: 0 })
     const { files, alreadyInstalled } = await installVirvi(folder)
@@ -194,7 +237,7 @@ export default async function importRoutes(app: FastifyInstance) {
     const source = Buffer.from(zipped.buffer, zipped.byteOffset, zipped.byteLength)
 
     // N5: recorded on the import, so the page can say Virvi wasn't added again
-    const row = await createImport({ userId: request.user.id, location, kind: folder.kind, scene, virviAlreadyPresent: alreadyInstalled })
+    const row = await createImport({ userId: request.user.id, location, kind: folder.kind, scene, virviAlreadyPresent: alreadyInstalled, sandbox: trial })
     try {
       // The creator's own files, kept for the Virvi-free backup; recorded only once they are stored
       const original = originalKey(row.id)
@@ -237,14 +280,21 @@ export default async function importRoutes(app: FastifyInstance) {
 
     // Ruling R1: the creator starts the deploy of a built import (or one whose signature window passed)
     reads.post<{ Params: { id: string } }>('/api/imports/:id/deploy', async (request, reply) => handle(reply, async () => {
-      const row = await importFor(request, request.params.id)
+      let row = await importFor(request, request.params.id)
       if (!(await loadImportView(row)).canDeploy) throw new ImportError(409, 'not_deployable', NOT_DEPLOYABLE)
+      // A converted guest's sandbox import takes its place only once its account may deploy there (a refusal changes nothing)
+      if (row.sandbox) {
+        await placeOwner(row, request.user.id)
+        row = await claimSandboxImport(row)
+      }
       const started = (await startImportDeploy(row, request.user.id))!
       if (started.mode === 'virvi') return reply.status(202).send({ deployment: publicDeployment(started.deployment) })
       return reply.send({ deployment: publicDeployment(started.deployment), payload: started.payload, expiresAt: started.expiresAt })
     }))
 
-    reads.get<{ Querystring: { sceneId?: string } }>('/api/imports', async (request, reply) => handle(reply, async () => {
+    // A trial lists and reads its own imports (importFor and full() give it nothing else); deploying takes an account
+    const trialRead = { config: { trial: true as const } }
+    reads.get<{ Querystring: { sceneId?: string } }>('/api/imports', trialRead, async (request, reply) => handle(reply, async () => {
       const { sceneId } = request.query
       if (sceneId === undefined) {
         const rows = await db.select().from(sceneImports).where(eq(sceneImports.userId, request.user.id))
@@ -259,11 +309,11 @@ export default async function importRoutes(app: FastifyInstance) {
       return reply.send({ imports: await Promise.all(rows.map(loadImportView)) })
     }))
 
-    reads.get<{ Params: { id: string } }>('/api/imports/:id', async (request, reply) => handle(reply, async () => {
+    reads.get<{ Params: { id: string } }>('/api/imports/:id', trialRead, async (request, reply) => handle(reply, async () => {
       return reply.send({ import: await loadImportView(await importFor(request, request.params.id)) })
     }))
 
-    reads.get<{ Params: { id: string } }>('/api/imports/:id/log', async (request, reply) => handle(reply, async () => {
+    reads.get<{ Params: { id: string } }>('/api/imports/:id/log', trialRead, async (request, reply) => handle(reply, async () => {
       const row = await importFor(request, request.params.id)
       if (row.filesDeletedAt) return reply.status(410).send({ error: 'files_expired', message: FILES_EXPIRED })
       const obj = row.logKey ? await getImportStore().getStream(row.logKey) : null

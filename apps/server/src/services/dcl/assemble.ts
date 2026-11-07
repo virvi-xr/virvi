@@ -270,7 +270,7 @@ export function navmapThumbnailFile(metadata: { display?: Record<string, unknown
  */
 export async function ownThumbnailFile(destinationId: string): Promise<string | null> {
   const [row] = await db.select({ file: sceneImports.navmapThumbnail }).from(sceneImports)
-    .where(and(eq(sceneImports.destinationId, destinationId), eq(sceneImports.status, 'deployed')))
+    .where(and(eq(sceneImports.destinationId, destinationId), eq(sceneImports.status, 'deployed'), eq(sceneImports.sandbox, false)))
     .orderBy(desc(sql`coalesce(${sceneImports.finishedAt}, ${sceneImports.createdAt})`), desc(sceneImports.createdAt))
     .limit(1)
   return row?.file ?? null

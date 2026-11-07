@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import type { ImportLocation, SceneImportView } from '@virvixr/shared'
+import { config } from '../../config.js'
 import { db } from '../../db/connection.js'
-import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
+import { dclWorldDestinations, sceneDeployments, sceneImports, scenes, users } from '../../db/schema.js'
 import { insertSceneWithDefaultPreset } from '../../scenes/create.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { DEPLOY_WINDOW_MS, DeployerError, markFailed } from '../dcl/world-deployer.js'
@@ -70,11 +71,14 @@ export async function lockLocation(tx: Pick<typeof db, 'execute'>, loc: ImportLo
   }
 }
 
-/** Rows of the same location: the World's name, or any shared parcel. */
+/**
+ * Real (not sandbox) rows of the same location: the World's name, or any shared parcel. A trial's sandbox import is
+ * never one of them, so it never holds, supersedes or outranks an account's import there.
+ */
 export function sameLocation(loc: ImportLocation) {
   return loc.kind === 'world'
-    ? and(eq(sceneImports.locationKind, 'world'), eq(sceneImports.worldName, loc.world))
-    : and(eq(sceneImports.locationKind, 'parcels'), sql`${sceneImports.parcels} && ${pgArray(loc.parcels)}`)
+    ? and(eq(sceneImports.locationKind, 'world'), eq(sceneImports.worldName, loc.world), eq(sceneImports.sandbox, false))
+    : and(eq(sceneImports.locationKind, 'parcels'), sql`${sceneImports.parcels} && ${pgArray(loc.parcels)}`, eq(sceneImports.sandbox, false))
 }
 
 const pgArray = (items: string[]) => sql`ARRAY[${sql.join(items.map((p) => sql`${p}`), sql`, `)}]::text[]`
@@ -137,13 +141,49 @@ export async function loadImportView(row: SceneImportRow): Promise<SceneImportVi
   return importView(row, logTail, deployment ?? null, Date.now(), scene ?? null)
 }
 
-/** The newest import of a World whose Virvi scene the caller may reuse (checked by the caller). */
+/** The newest real (not sandbox) import of a World whose Virvi scene the caller may reuse (checked by the caller). */
 export async function latestImportFor(location: ImportLocation | string): Promise<SceneImportRow | null> {
   const loc = asLocation(location)
   const where = loc.kind === 'world'
-    ? and(eq(sceneImports.locationKind, 'world'), eq(sceneImports.worldName, loc.world))
-    : and(eq(sceneImports.locationKind, 'parcels'), eq(sceneImports.base, loc.base))
+    ? and(eq(sceneImports.locationKind, 'world'), eq(sceneImports.worldName, loc.world), eq(sceneImports.sandbox, false))
+    : and(eq(sceneImports.locationKind, 'parcels'), eq(sceneImports.base, loc.base), eq(sceneImports.sandbox, false))
   return (await db.query.sceneImports.findFirst({ where, orderBy: [desc(sceneImports.createdAt)] })) ?? null
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
+type Superseded = Array<{ id: string; deploymentId: string | null }>
+
+/**
+ * Takes `loc` for a new import, inside `tx` and its location lock: an import that is uploaded, building or deploying
+ * refuses it (409 import_in_progress); those that are built or awaiting a signature (other than `except`) are failed as
+ * superseded, and no destination waits on them any more. Their prepared deployments are failed by `failSuperseded` once
+ * the transaction is over.
+ */
+async function takePlace(tx: Tx, loc: ImportLocation, except?: string): Promise<Superseded> {
+  await lockLocation(tx, loc)
+  const busy = await tx.query.sceneImports.findFirst({
+    where: and(sameLocation(loc), inArray(sceneImports.status, [...BLOCKING])),
+    columns: { id: true },
+  })
+  if (busy) throw new ImportError(409, 'import_in_progress', loc.kind === 'world' ? 'This World already has an import under way. Wait for it to finish, then upload again.' : 'These parcels already have an import under way. Wait for it to finish, then upload again.')
+  const now = new Date()
+  const superseded = await tx.update(sceneImports).set({
+    status: 'failed', errorCode: 'superseded', errorMessage: SUPERSEDED_MESSAGE, buildTokenHash: null, finishedAt: now, updatedAt: now,
+  }).where(and(sameLocation(loc), inArray(sceneImports.status, [...SUPERSEDED]), except ? ne(sceneImports.id, except) : undefined))
+    .returning({ id: sceneImports.id, deploymentId: sceneImports.deploymentId })
+  // Ruling R16: the World never waits on a superseded import
+  if (superseded.length) {
+    await tx.update(dclWorldDestinations).set({ pendingImportId: null, updatedAt: now })
+      .where(inArray(dclWorldDestinations.pendingImportId, superseded.map((s) => s.id)))
+  }
+  return superseded
+}
+
+/** A superseded import's prepared deploy can no longer be signed (the signed submit also checks the import). */
+async function failSuperseded(superseded: Superseded): Promise<void> {
+  for (const s of superseded) {
+    if (s.deploymentId) await markFailed(s.deploymentId, new DeployerError(409, 'superseded', SUPERSEDED_MESSAGE), 'awaiting_signature')
+  }
 }
 
 /**
@@ -151,6 +191,8 @@ export async function latestImportFor(location: ImportLocation | string): Promis
  * deploying refuses it (409 import_in_progress); one that is built or awaiting a signature is failed as superseded, and
  * its prepared deployment with it.
  * `scene` is an existing Virvi scene's id, or the name of a new one (with a Default preset) for the importer.
+ * `sandbox` (a trial's upload) takes none of that: no lock, no busy check, nothing superseded, always a new scene; the
+ * row is invisible to its place until an account claims it (claimSandboxImport).
  */
 export async function createImport(input: {
   userId: string
@@ -160,28 +202,15 @@ export async function createImport(input: {
   kind: 'creator-hub' | 'sdk7'
   scene: { id: string } | { newName: string }
   virviAlreadyPresent?: boolean
+  sandbox?: boolean
 }): Promise<SceneImportRow> {
   const id = randomUUID()
   const loc = input.location ?? (input.world ? asLocation(input.world) : null)
   if (!loc) throw new Error('createImport needs a location or a world')
+  const sandbox = input.sandbox ?? false
+  if (sandbox && 'id' in input.scene) throw new Error('a sandbox import always gets a new scene')
   const { row, superseded } = await db.transaction(async (tx) => {
-    await lockLocation(tx, loc)
-    const busy = await tx.query.sceneImports.findFirst({
-      where: and(sameLocation(loc), inArray(sceneImports.status, [...BLOCKING])),
-      columns: { id: true },
-    })
-    if (busy) throw new ImportError(409, 'import_in_progress', loc.kind === 'world' ? 'This World already has an import under way. Wait for it to finish, then upload again.' : 'These parcels already have an import under way. Wait for it to finish, then upload again.')
-    const now = new Date()
-    const superseded = await tx.update(sceneImports).set({
-      status: 'failed', errorCode: 'superseded', errorMessage: SUPERSEDED_MESSAGE, buildTokenHash: null, finishedAt: now, updatedAt: now,
-    }).where(and(sameLocation(loc), inArray(sceneImports.status, [...SUPERSEDED])))
-      .returning({ id: sceneImports.id, deploymentId: sceneImports.deploymentId })
-    // Ruling R16: the World never waits on a superseded import
-    if (superseded.length) {
-      await tx.update(dclWorldDestinations).set({ pendingImportId: null, updatedAt: now })
-        .where(inArray(dclWorldDestinations.pendingImportId, superseded.map((s) => s.id)))
-    }
-
+    const superseded = sandbox ? [] : await takePlace(tx, loc)
     let sceneId: string
     if ('id' in input.scene) {
       sceneId = input.scene.id
@@ -192,14 +221,61 @@ export async function createImport(input: {
       id, userId: input.userId, sceneId, ...(loc.kind === 'world' ? { worldName: loc.world } : { locationKind: 'parcels' as const, base: loc.base, parcels: loc.parcels }),
       kind: input.kind, sourceKey: sourceKey(id),
       virviAlreadyPresent: input.virviAlreadyPresent ?? false,
+      sandbox,
     }).returning()
     return { row, superseded }
   })
-  // A superseded import's prepared deploy can no longer be signed (the signed submit also checks the import)
-  for (const s of superseded) {
-    if (s.deploymentId) await markFailed(s.deploymentId, new DeployerError(409, 'superseded', SUPERSEDED_MESSAGE), 'awaiting_signature')
-  }
+  await failSuperseded(superseded)
   return row
+}
+
+/**
+ * Brings a sandbox import into its place, as an upload would have (createImport): under the location's lock, 409
+ * import_in_progress while another import runs there, 409 world_in_use / parcels_in_use when the place is connected to
+ * another Virvi scene, then the place's built and awaiting imports are superseded and this one becomes a real import,
+ * dated now so it is the place's newest. The caller has checked that its account may deploy there. A no-op for a real
+ * import.
+ */
+export async function claimSandboxImport(row: SceneImportRow): Promise<SceneImportRow> {
+  if (!row.sandbox) return row
+  const loc = locationOf(row)
+  const { claimed, superseded } = await db.transaction(async (tx) => {
+    await lockLocation(tx, loc)
+    const fresh = await tx.query.sceneImports.findFirst({ where: eq(sceneImports.id, row.id) })
+    if (!fresh?.sandbox) return { claimed: fresh ?? row, superseded: [] as Superseded }
+    const elsewhere = await tx.query.dclWorldDestinations.findFirst({
+      where: and(
+        loc.kind === 'world'
+          ? eq(dclWorldDestinations.worldName, loc.world)
+          : and(eq(dclWorldDestinations.kind, 'parcels'), sql`${dclWorldDestinations.parcels} && ${pgArray(loc.parcels)}`),
+        ne(dclWorldDestinations.sceneId, row.sceneId),
+      ),
+      columns: { id: true },
+    })
+    if (elsewhere) {
+      throw loc.kind === 'world'
+        ? new ImportError(409, 'world_in_use', "This World is connected to a Virvi scene you can't manage.")
+        : new ImportError(409, 'parcels_in_use', "These parcels are connected to a Virvi scene you can't manage.")
+    }
+    const superseded = await takePlace(tx, loc, row.id)
+    const now = new Date()
+    const [claimed] = await tx.update(sceneImports).set({ sandbox: false, createdAt: now, updatedAt: now })
+      .where(and(eq(sceneImports.id, row.id), eq(sceneImports.sandbox, true))).returning()
+    return { claimed, superseded }
+  })
+  await failSuperseded(superseded)
+  return claimed
+}
+
+/**
+ * Counts one more import for a trial, atomically: false once it has started TRIAL_IMPORTS (or it isn't a trial), so
+ * two uploads at once with one left can't both pass.
+ */
+export async function reserveTrialImport(userId: string): Promise<boolean> {
+  const rows = await db.update(users).set({ trialImports: sql`${users.trialImports} + 1` })
+    .where(and(eq(users.id, userId), eq(users.isTrial, true), sql`${users.trialImports} < ${config.trialImports}`))
+    .returning({ id: users.id })
+  return rows.length > 0
 }
 
 /**

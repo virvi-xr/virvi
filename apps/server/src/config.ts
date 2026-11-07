@@ -203,6 +203,9 @@ export const config = {
   trialCostCeilingUsd: numEnv('TRIAL_COST_CEILING_USD', 3),
   trialDesigns: intEnv('TRIAL_DESIGNS', 2),
   trialUploadBytes: intEnv('TRIAL_UPLOAD_BYTES', 26214400),
+  // Scene imports a trial may start, ever (failed ones included), and the largest zip it may upload
+  trialImports: intEnv('TRIAL_IMPORTS', 2),
+  trialImportMaxBytes: intEnv('TRIAL_IMPORT_MAX_BYTES', 26214400),
   trialPerIpDay: intEnv('TRIAL_PER_IP_DAY', 3),
   trialPerDeviceDay: intEnv('TRIAL_PER_DEVICE_DAY', 3),
   trialDailyBudgetUsd: numEnv('TRIAL_DAILY_BUDGET_USD', 50),
