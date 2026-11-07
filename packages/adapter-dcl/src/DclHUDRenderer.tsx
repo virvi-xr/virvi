@@ -976,7 +976,7 @@ function ClickEditor() {
 }
 
 // ---------------------------------------------------------------------------
-// Panel: Asset Browser (the signed-in user's Media library)
+// Panel: Asset Browser (the scene's library: its images and models, shown as the Media Library panel)
 // ---------------------------------------------------------------------------
 
 // Badge per HUD status: a marker and a word (the marker carries the color)
@@ -1108,7 +1108,7 @@ function AssetBrowserPanel() {
   const editable = canEdit()
   return (
     <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
-      <PanelHeader title="Media Library" subtitle="Images and GLB models"
+      <PanelHeader title="Media Library" subtitle="This scene's images and models"
         onClose={() => { if (state.upload.open) closeUploadView(); state.activePanel = null }} />
       <UiEntity uiTransform={{ width: '100%', padding: 8, flexDirection: 'column' }}>
         {!editable ? (

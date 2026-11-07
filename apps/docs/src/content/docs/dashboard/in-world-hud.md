@@ -31,7 +31,7 @@ While you hold an item, other editors see "being moved by" and your name on it a
 
 ## Uploading from in-world
 
-Editors can add images and GLB models to the scene's Media Library while standing in it.
+Editors can add images and GLB models to the scene's library (the HUD's **Media Library** panel) while standing in it. This panel is the scene's own list; on the dashboard, images and video live in the Media Library and 3D models in the 3D Asset Library (see [Media Library and 3D Asset Library](/dashboard/media-library/)).
 
 Open the Media Library panel and press **Upload**. The panel shows:
 
@@ -39,7 +39,7 @@ Open the Media Library panel and press **Upload**. The panel shows:
 - **A QR code:** scan it with your phone to upload a photo from your camera roll.
 - **The link and a 6-character code**, in case you'd rather type it in.
 
-Each link lasts 30 minutes and allows 10 uploads. Press **New link** for a fresh one. Only you can see the code; it's drawn in your own HUD, never in the scene. The link can only upload files to this scene's library. It doesn't sign anyone in.
+Each link lasts 30 minutes and allows 10 uploads. Press **New link** for a fresh one. Only you can see the code; it's drawn in your own HUD, never in the scene. The link can only upload files to this scene's library. It doesn't sign anyone in. Uploaded files are stored at unguessable links: anyone with a file's link can open it.
 
 Uploads appear in the Media Library straight away, newest first, with a status:
 

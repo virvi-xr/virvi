@@ -43,7 +43,7 @@ Requests for another account's scenes, deployments, events, giveaways, streams o
 |--------|------|------|-------------|
 | GET | `/assets` | No | Browse/search asset library |
 | GET | `/assets/:id` | No | Get single asset |
-| POST | `/assets` | Yes | Upload new asset |
+| POST | `/assets` | Yes | Upload a GLB model to the 3D Asset Library. Private unless `isPublic: true` is sent |
 | PUT | `/assets/:id` | Yes | Update asset metadata |
 | DELETE | `/assets/:id` | Yes | Delete asset |
 | GET | `/assets/categories` | No | List categories |
