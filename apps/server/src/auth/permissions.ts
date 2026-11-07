@@ -68,6 +68,12 @@ export function bookingWindowAt(b: { startsAt: Date; endsAt: Date }, rules: Venu
 }
 
 export async function getSceneAccess(actor: Actor, sceneId: string, at = new Date()): Promise<SceneAccess> {
+  // A trial owns its own scenes and nothing else: no admin, collaborator, role or grant paths.
+  if (actor.trial) {
+    if (!actor.userId) return NONE
+    const own = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { ownerId: true } })
+    return own?.ownerId === actor.userId ? full('owner') : NONE
+  }
   if (!actor.userId || !actor.verified) return NONE
   if (actor.role === 'admin') return full('admin')
 

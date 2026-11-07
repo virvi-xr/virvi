@@ -14,6 +14,7 @@ import {
 import { authenticate } from '../middleware/auth.js'
 import type { AuthUser } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
+import { recordTrialBlocked } from '../auth/trial-events.js'
 import { getSceneAccess, hasScope, isFullAccess, isHostAccess, canWriteElement, diffKeys } from '../auth/permissions.js'
 import { config } from '../config.js'
 import { publishElementChanged, publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
@@ -127,6 +128,25 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Same limit as the New Scene Wizard. */
 const SCENE_NAME_MAX = 120
 
+/** The element types a trial may make; the rest (ad spaces, widgets, NFTs, custom) need an account. */
+const TRIAL_ELEMENT_TYPES = new Set(['model', 'image', 'video', 'sound'])
+
+/**
+ * Why a trial may not make or change an element like this (an `account_required` action), or null when it may.
+ * Any room-set GLB counts as placing a room set: it's the same test `prepareRoomSetForPlacement` starts with.
+ */
+function trialElementRefusal(type: unknown, properties: unknown): 'element_type' | 'room_set' | null {
+  if (typeof type !== 'string' || !TRIAL_ELEMENT_TYPES.has(type)) return 'element_type'
+  const src = (properties as { modelSrc?: unknown } | null | undefined)?.modelSrc
+  if (typeof src === 'string' && src.includes('/room-sets/')) return 'room_set'
+  return null
+}
+
+function refuseTrial(request: FastifyRequest, reply: FastifyReply, action: string) {
+  recordTrialBlocked(request.user.id, action)
+  return reply.status(403).send({ error: 'account_required', action })
+}
+
 /**
  * A click action in the body (LIV-126), checked and tidied in place; false when the reply (400 bad_click) was sent.
  * Absent stays absent.
@@ -151,8 +171,13 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   // ── GET /api/scenes — list user's scenes ─────────────────────────────────
 
-  app.get('/api/scenes', { config: { scenePass: { sceneFrom: boundScene } } }, async (request, reply) => {
+  app.get('/api/scenes', { config: { scenePass: { sceneFrom: boundScene }, trial: true } }, async (request, reply) => {
     const actor = actorFromClaims(request.user)
+    // A trial sees the scenes it owns, never collaborations or roles (its access is owner-only).
+    if (actor.trial && actor.userId) {
+      const own = await db.query.scenes.findMany({ where: eq(scenes.ownerId, actor.userId), orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)] })
+      return reply.send({ scenes: own.map((s) => ({ ...s, relationship: 'owner' as const })) })
+    }
     if (!actor.userId || !actor.verified) return reply.send({ scenes: [] })
     const owned = await db.query.scenes.findMany({
       where: eq(scenes.ownerId, request.user.id),
@@ -250,7 +275,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   // ── GET /api/scenes/:sceneId — get scene with full nested data ───────────
 
-  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: true } } }, async (request, reply) => {
+  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: true }, trial: true } }, async (request, reply) => {
     const { sceneId } = request.params
 
     const scene = await db.query.scenes.findFirst({
@@ -302,7 +327,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.put<{ Params: { sceneId: string }; Body: Partial<CreateSceneBody> & { activePresetId?: string } }>(
     '/api/scenes/:sceneId',
-    { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: 'personal' } } },
+    { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: 'personal' }, trial: true } },
     async (request, reply) => {
       const { sceneId } = request.params
       const { name, description, activePresetId } = request.body
@@ -377,7 +402,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   // ── DELETE /api/scenes/:sceneId — delete scene ───────────────────────────
 
-  app.delete<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', async (request, reply) => {
+  app.delete<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', { config: { trial: true } }, async (request, reply) => {
     const { sceneId } = request.params
 
     const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) })
@@ -406,7 +431,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { sceneId: string }; Body: { name?: unknown; fromPresetId?: unknown } }>(
     '/api/scenes/:sceneId/presets',
-    { config: { scenePass: { sceneFrom: fromParam('sceneId') } } },
+    { config: { scenePass: { sceneFrom: fromParam('sceneId') }, trial: true } },
     async (request, reply) => {
       const { sceneId } = request.params
       const body = request.body ?? {}
@@ -440,7 +465,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { presetId: string }; Body: { name?: unknown } }>(
     '/api/presets/:presetId',
-    { config: { scenePass: { sceneFrom: fromPreset } } },
+    { config: { scenePass: { sceneFrom: fromPreset }, trial: true } },
     async (request, reply) => {
       const preset = await managedPreset(request, reply)
       if (!preset) return reply
@@ -451,7 +476,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
   )
 
   // Web only: deleting stays off the in-world HUD, so it can't happen by accident there (no scene pass).
-  app.delete<{ Params: { presetId: string } }>('/api/presets/:presetId', async (request, reply) => {
+  app.delete<{ Params: { presetId: string } }>('/api/presets/:presetId', { config: { trial: true } }, async (request, reply) => {
     const preset = await managedPreset(request, reply)
     if (!preset) return reply
     const refusal = await deleteRefusal(preset)
@@ -465,7 +490,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { presetId: string } }>(
     '/api/presets/:presetId/activate',
-    { config: { scenePass: { sceneFrom: fromPreset } } },
+    { config: { scenePass: { sceneFrom: fromPreset }, trial: true } },
     async (request, reply) => {
       const preset = await managedPreset(request, reply)
       if (!preset) return reply
@@ -478,7 +503,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { presetId: string }; Body: CreateElementBody }>(
     '/api/presets/:presetId/elements',
-    { config: { scenePass: { sceneFrom: fromPreset, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromPreset, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { presetId } = request.params
       if (!tidyClick(request.body, reply)) return reply
@@ -497,6 +522,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
       if (!hasScope(await accessFor(request, preset.sceneId), 'scene.edit')) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
+      const trialRefusal = request.user.trial ? trialElementRefusal(type, properties) : null
+      if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
 
       // A room-set asset gets the scene's own copy of its set (generated and uploaded before the transaction)
       let prepared: PreparedRoomSet | null = null
@@ -546,7 +573,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.put<{ Params: { elementId: string }; Body: Partial<CreateElementBody> }>(
     '/api/elements/:elementId',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
       if (!tidyClick(request.body, reply)) return reply
@@ -567,6 +594,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
       if (!canWriteElement(access, element, { propertyKeys, fieldKeys })) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
+      const trialRefusal = request.user.trial ? trialElementRefusal(request.body.type ?? element.type, request.body.properties) : null
+      if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
 
       const updates: Record<string, unknown> = { updatedAt: new Date() }
       for (const key of ['type', 'name', 'enabled', 'customId', 'customRendering', 'clickEvent', 'properties'] as const) {
@@ -594,7 +623,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { elementId: string }; Body: { enabled?: unknown } }>(
     '/api/elements/:elementId/live',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: 'personal' } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: 'personal' }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
       const enabled = request.body?.enabled
@@ -627,7 +656,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { elementId: string } }>(
     '/api/elements/:elementId',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
 
@@ -659,7 +688,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { elementId: string }; Body: CreateInstanceBody }>(
     '/api/elements/:elementId/instances',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
       if (!tidyClick(request.body, reply)) return reply
@@ -718,7 +747,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.put<{ Params: { instanceId: string }; Body: UpdateInstanceBody }>(
     '/api/instances/:instanceId',
-    { config: { scenePass: { sceneFrom: fromInstance, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromInstance, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { instanceId } = request.params
       if (!tidyClick(request.body, reply)) return reply
@@ -769,7 +798,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { instanceId: string } }>(
     '/api/instances/:instanceId',
-    { config: { scenePass: { sceneFrom: fromInstance } } },
+    { config: { scenePass: { sceneFrom: fromInstance }, trial: true } },
     async (request, reply) => {
       const { instanceId } = request.params
 
@@ -798,7 +827,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { elementId: string } }>(
     '/api/elements/:elementId/instances',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
 

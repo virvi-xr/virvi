@@ -7,7 +7,7 @@ import { db } from '../src/db/connection.js'
 import { users, studioDesigns } from '../src/db/schema.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
-import { actorFromClaims, ANONYMOUS } from '../src/auth/actor.js'
+import { actorFromClaims } from '../src/auth/actor.js'
 
 const ALLOWED = [
   'GET /api/studio/usage',
@@ -25,6 +25,22 @@ const ALLOWED = [
   'POST /api/studio/designs/:id/set-renders',
   'POST /api/studio/designs/:id/emote-checks',
   'POST /api/studio/designs/:id/clipping',
+  'GET /api/scenes',
+  'GET /api/scenes/:sceneId',
+  'PUT /api/scenes/:sceneId',
+  'DELETE /api/scenes/:sceneId',
+  'POST /api/scenes/:sceneId/presets',
+  'PATCH /api/presets/:presetId',
+  'DELETE /api/presets/:presetId',
+  'POST /api/presets/:presetId/activate',
+  'POST /api/presets/:presetId/elements',
+  'PUT /api/elements/:elementId',
+  'POST /api/elements/:elementId/live',
+  'DELETE /api/elements/:elementId',
+  'POST /api/elements/:elementId/instances',
+  'PUT /api/instances/:instanceId',
+  'DELETE /api/instances/:instanceId',
+  'DELETE /api/elements/:elementId/instances',
 ].sort()
 
 // Routes that are not public but never call `authenticate`: they check their own credential, so a trial bearer
@@ -87,14 +103,15 @@ describe('trial guard', () => {
     const gone = await app.inject({ method: 'GET', url: '/api/studio/designs', headers: h })
     expect([gone.statusCode, gone.json().error]).toEqual([401, 'trial_ended'])
     // Also on a route that is not allowlisted: ended wins over account_required
-    const other = await app.inject({ method: 'GET', url: '/api/scenes', headers: h })
+    const other = await app.inject({ method: 'POST', url: '/api/scenes', headers: h, payload: { name: 'x' } })
     expect([other.statusCode, other.json().error]).toEqual([401, 'trial_ended'])
   })
 
-  it('a trial token is no Colyseus session and no actor', async () => {
+  it('a trial token is no Colyseus session; its actor is an unverified trial creator', async () => {
     const t = await makeTrial(app)
     expect(verifySessionToken(t.accessToken)).toBeNull()
-    expect(actorFromClaims({ id: t.u.id, kind: 'trial', role: 'creator', email: null })).toBe(ANONYMOUS)
+    expect(actorFromClaims({ id: t.u.id, kind: 'trial', role: 'admin', email: null, wallet: '0xAB', verified: true }))
+      .toEqual({ userId: t.u.id, role: 'creator', wallet: null, verified: false, trial: true })
   })
 
   it('sets request.user.trial and refreshes trialLastActiveAt only when stale', async () => {

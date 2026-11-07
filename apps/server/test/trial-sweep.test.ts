@@ -116,10 +116,10 @@ describe('trial expiry and funnel', () => {
     expect(p.statusCode).toBeLessThan(300)
     expect((await events()).filter((e) => e.kind === 'prompt').map((e) => e.userId)).toEqual([user.id])
 
-    const b1 = await app.inject({ method: 'GET', url: '/api/scenes', headers })
+    const b1 = await app.inject({ method: 'POST', url: '/api/scenes', headers, payload: { name: 'x' } })
     expect(b1.statusCode).toBe(403)
     await flushTrialEvents()
-    const b2 = await app.inject({ method: 'GET', url: '/api/scenes', headers })
+    const b2 = await app.inject({ method: 'POST', url: '/api/scenes', headers, payload: { name: 'x' } })
     expect(b2.statusCode).toBe(403)
     // an in-handler refusal after the first one adds none
     for (let i = 0; i < 2; i++) {
@@ -128,7 +128,7 @@ describe('trial expiry and funnel', () => {
     }
     const blocked = (await events()).filter((e) => e.kind === 'blocked')
     expect(blocked).toHaveLength(1)
-    expect(blocked[0]).toMatchObject({ userId: user.id, action: 'GET /api/scenes' })
+    expect(blocked[0]).toMatchObject({ userId: user.id, action: 'POST /api/scenes' })
 
     const reg = await app.inject({ method: 'POST', url: '/api/auth/register', headers, payload: { email: 'f@test.dev', password: 'hunter2hunter2', displayName: 'F', fromAction: 'more_prompts' } })
     expect(reg.statusCode).toBe(201)

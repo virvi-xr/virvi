@@ -500,12 +500,12 @@ describe('cross-account route walk', () => {
     expect(failed).toEqual([])
   })
 
-  it("a trial that owns nothing cannot reach B's design through any allowlisted Studio route", async () => {
+  it("a trial that owns nothing cannot reach B's design or scene through any allowlisted route", async () => {
     const t = await createUser({ email: null })
     await db.update(users).set({ isTrial: true, trialLastActiveAt: new Date() }).where(eq(users.id, t.id))
     const { accessToken } = issueTrialSession(app, { id: t.id, displayName: t.displayName, role: 'creator', trialLastActiveAt: new Date() })
     const trialRoutes = new Set(((app as any).registeredRoutes as Array<{ method: string; url: string; trial: boolean }>).filter((r) => r.trial).map((r) => `${r.method} ${r.url}`))
-    const own = new Set(['GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs'])
+    const own = new Set(['GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes'])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
     expect(cases.length).toBe(trialRoutes.size - own.size)
     const offenders: string[] = []
