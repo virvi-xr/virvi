@@ -177,6 +177,20 @@ class ArApi(baseUrl: String, private val userAgentVersion: Int = 1) {
       send("POST", path, null, body, parse)
 
   /**
+   * A `POST` authed by the headset secret in [body] (no bearer), with [answer] for the route's own non-2xx answers as
+   * in [bearer]; other statuses map as for the device routes.
+   */
+  internal suspend fun <T> deviceCall(
+      path: String,
+      body: JsonObject,
+      answer: (status: Int, body: String) -> T? = { _, _ -> null },
+      parse: (String) -> T?,
+  ): BuilderCall<T> = send("POST", path, null, body, parse, answer)
+
+  /** [path] segment escaping, for callers outside this class. */
+  internal fun pathSegment(s: String) = enc(s)
+
+  /**
    * A builder call made with an AR pass ([token]); see `DeviceAuth.withPass`. 2xx is parsed by [parse] (a body of
    * "" for a 204). A non-2xx status for which [answer] gives a value is [BuilderCall.Ok] with it (for answers
    * that are part of the route's contract, like a 409); other statuses map as for the device routes.

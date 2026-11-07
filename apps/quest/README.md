@@ -55,7 +55,9 @@ Builder mode's own panels (`BuilderCopy` in `builder/BuilderController.kt`) and 
 - A space link while building: "Finish building first (Done) to open another space"
 - The menu's owner items: "Keep the scene loaded between visitors" and "Sign out" (the brief's names)
 
-**Scan this room** (`RoomScanCopy` in `roomscan/RoomScanApi.kt`). "Room scans need a personal headset. This one is shared." is the plan's copy.
+**Scan this room** (`RoomScanCopy` in `roomscan/RoomScanApi.kt`). "Room scans need a personal headset. This one is shared." and the trial cap line are the plan's copy. A personal headset offers it on the HUD's Layout tab while building (uploads with that space's AR pass) and on the builder panel's space list, even with no spaces (uploads with the headset secret; this is how a trial scans).
+
+- A trial at its cap: "Your trial holds 5 room scans. Create a free account on virvi.io to keep more."
 
 - No rooms set up: "No rooms are set up on this headset yet", with **Set up my space**
 - Uploading: "Uploading…"; done: "Uploaded “<name>”: pick it on virvi.io to build a set from it"

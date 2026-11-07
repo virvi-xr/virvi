@@ -222,7 +222,10 @@ class BuilderController(
       }
     }
     stage = Stage.CHOOSING
-    prompt = if (spaces.isEmpty()) BuilderPrompt(BuilderCopy.NO_SPACES) else BuilderPrompt(BuilderCopy.CHOOSE_SPACE, spaces)
+    val personal = (auth.state.value as? AuthState.Paired)?.kind == DeviceKind.PERSONAL
+    prompt =
+        if (spaces.isEmpty()) BuilderPrompt(BuilderCopy.NO_SPACES, scanRoom = personal)
+        else BuilderPrompt(BuilderCopy.CHOOSE_SPACE, spaces, scanRoom = personal)
   }
 
   /** A space from the pick list. */

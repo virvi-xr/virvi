@@ -235,6 +235,8 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
             scope,
             read = ::readRoomScanInput,
             upload = roomScanApi::upload,
+            uploadWithDevice = roomScanApi::uploadWithDevice,
+            // The space being built's pass; with none (the space list, or a trial with no spaces) the headset secret.
             spaceId = { builder.buildingSpaceId },
             setUpSpace = ::setUpSpace,
             show = { state.roomScan = it },
@@ -313,7 +315,15 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
           composePanel(R.id.space_page, 0.5f, 0.4f) { SpacePage(state, ::closeSpacePage) },
           composePanel(R.id.pairing_panel, 0.45f, 0.5f) { state.pairing?.let { PairingPanel(it) { builder.cancelPairing() } } },
           composePanel(R.id.builder_prompt, 0.5f, 0.5f) {
-            state.builderPrompt?.let { BuilderPromptPanel(it, { s -> builder.pickSpace(s) }, { builder.cancel() }) }
+            state.builderPrompt?.let {
+              BuilderPromptPanel(
+                  it,
+                  { s -> builder.pickSpace(s) },
+                  { builder.cancel() },
+                  scanOpen = state.roomScan.open,
+                  scanRoom = { RoomScanSection(state.roomScan, roomScan) },
+              )
+            }
           },
           composePanel(R.id.align_panel, 0.5f, 0.45f) {
             state.align?.let { AlignPanel(it.state, it.notes, { builder.saveAlignment() }, { builder.closeAlign() }) }

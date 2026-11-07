@@ -475,6 +475,32 @@ class BuilderControllerTest {
     assertFalse(ui.hud!!.canStream)
   }
 
+  @Test fun `a personal headset's space list offers Scan this room, even with no spaces`() {
+    auth.pair(DeviceKind.PERSONAL)
+    auth.spacesAnswer = BuilderCall.Ok(emptyList())
+    builder.open()
+    assertFalse(ui.builderPrompt!!.scanRoom) // not while finding
+    dispatcher.drain()
+    assertEquals(BuilderCopy.NO_SPACES, ui.builderPrompt?.text)
+    assertTrue(ui.builderPrompt!!.scanRoom)
+  }
+
+  @Test fun `a personal headset's pick list offers Scan this room`() {
+    auth.pair(DeviceKind.PERSONAL)
+    auth.spacesAnswer = BuilderCall.Ok(listOf(spaceA, spaceB))
+    builder.open()
+    dispatcher.drain()
+    assertTrue(ui.builderPrompt!!.scanRoom)
+  }
+
+  @Test fun `a shared headset's pick list doesn't offer Scan this room`() {
+    auth.pair(DeviceKind.SHARED)
+    auth.spacesAnswer = BuilderCall.Ok(listOf(spaceA, spaceB))
+    builder.open()
+    dispatcher.drain()
+    assertFalse(ui.builderPrompt!!.scanRoom)
+  }
+
   @Test fun `with no ring in view the builder picks the space from a list`() {
     auth.pair(DeviceKind.PERSONAL)
     auth.spacesAnswer = BuilderCall.Ok(listOf(spaceA, spaceB))

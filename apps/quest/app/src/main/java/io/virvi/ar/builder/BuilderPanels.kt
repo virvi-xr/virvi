@@ -24,17 +24,25 @@ import io.virvi.ar.api.DeviceSpace
 
 /**
  * The builder panel: [prompt]'s line ("Finding your spaces…", a failure, or "Look at a ring of <space>"), the spaces
- * to choose from when it has some ([onPick]), and its button ([onCancel]: **Cancel**, or **Close** for a notice).
+ * to choose from when it has some ([onPick]), **Scan this room** ([scanRoom], when [BuilderPrompt.scanRoom]: a
+ * personal headset, with or without spaces; the list is hidden while the scan is open, [scanOpen]), and its button
+ * ([onCancel]: **Cancel**, or **Close** for a notice).
  */
 @Composable
-fun BuilderPromptPanel(prompt: BuilderPrompt, onPick: (DeviceSpace) -> Unit, onCancel: () -> Unit) {
+fun BuilderPromptPanel(
+    prompt: BuilderPrompt,
+    onPick: (DeviceSpace) -> Unit,
+    onCancel: () -> Unit,
+    scanOpen: Boolean = false,
+    scanRoom: @Composable () -> Unit = {},
+) {
   MaterialTheme(colorScheme = darkColorScheme()) {
     Column(
         Modifier.fillMaxSize().background(Color(0xF0101420), RoundedCornerShape(16.dp)).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
       Text(prompt.text, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-      if (prompt.spaces.isNotEmpty()) {
+      if (prompt.spaces.isNotEmpty() && !(prompt.scanRoom && scanOpen)) {
         Column(
             Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -46,6 +54,7 @@ fun BuilderPromptPanel(prompt: BuilderPrompt, onPick: (DeviceSpace) -> Unit, onC
           }
         }
       }
+      if (prompt.scanRoom) scanRoom()
       OutlinedButton(onClick = onCancel) { Text(prompt.button) }
     }
   }
