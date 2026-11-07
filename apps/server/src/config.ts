@@ -206,6 +206,8 @@ export const config = {
   // Scene imports a trial may start, ever (failed ones included), and the largest zip it may upload
   trialImports: intEnv('TRIAL_IMPORTS', 2),
   trialImportMaxBytes: intEnv('TRIAL_IMPORT_MAX_BYTES', 26214400),
+  // Room scans a trial may hold at once (deleting one makes room)
+  trialRoomScans: intEnv('TRIAL_ROOM_SCANS', 5),
   trialPerIpDay: intEnv('TRIAL_PER_IP_DAY', 3),
   trialPerDeviceDay: intEnv('TRIAL_PER_DEVICE_DAY', 3),
   trialDailyBudgetUsd: numEnv('TRIAL_DAILY_BUDGET_USD', 50),

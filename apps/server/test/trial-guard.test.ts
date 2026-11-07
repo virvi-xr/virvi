@@ -55,6 +55,10 @@ const ALLOWED = [
   'GET /api/imports',
   'GET /api/imports/:id',
   'GET /api/imports/:id/log',
+  'GET /api/ar/pair/:code',
+  'POST /api/ar/pair/:code/approve',
+  'GET /api/ar/devices',
+  'DELETE /api/ar/devices/:id',
 ].sort()
 
 // Routes that are not public but never call `authenticate`: they check their own credential, so a trial bearer

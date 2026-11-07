@@ -30,6 +30,8 @@ const H = 3600_000
 const AD_ID = '00000000-0000-4000-8000-000000000001'
 const PUBLIC_TARGET = { parcels: ['0,0'], contentServer: 'https://1.1.1.1' }
 const B_PARCEL = '-40,-40'
+/** A well-formed pairing code nobody started. */
+const GUESSED_CODE = 'ZZZZZZ'
 
 /** Everything below is B's, except `aScene`/`aEvent`, which A owns and uses to reach for B's ids in a body. */
 async function fixtures() {
@@ -227,7 +229,11 @@ const CASES: Case[] = [
   { route: 'POST /api/ar/devices/:id/end', url: (f) => `/api/ar/devices/${f.arDevice.id}/end`, body: () => ({ secret: 'guess' }) },
   { route: 'POST /api/ar/devices/:id/spaces', url: (f) => `/api/ar/devices/${f.arDevice.id}/spaces`, body: () => ({ secret: 'guess' }) },
   { route: 'POST /api/ar/devices/:id/scenes', url: (f) => `/api/ar/devices/${f.arDevice.id}/scenes`, body: () => ({ secret: 'guess' }) },
+  { route: 'POST /api/ar/devices/:id/room-scans', url: (f) => `/api/ar/devices/${f.arDevice.id}/room-scans`, body: () => ({ secret: 'guess', name: 'pwned', layout: {} }) },
   { route: 'DELETE /api/ar/devices/:id', url: (f) => `/api/ar/devices/${f.arDevice.id}` },
+  // The pairing code is the auth (any signed-in account or trial holding it may approve): a guessed code finds nothing.
+  { route: 'GET /api/ar/pair/:code', url: () => `/api/ar/pair/${GUESSED_CODE}` },
+  { route: 'POST /api/ar/pair/:code/approve', url: () => `/api/ar/pair/${GUESSED_CODE}/approve`, body: () => ({ kind: 'personal' }) },
   // deploy
   { route: 'GET /api/deploy/:id', url: (f) => `/api/deploy/${f.dcl.id}` },
   { route: 'GET /api/deploy/:id/files.zip', url: (f) => `/api/deploy/${f.liveDeploy.id}/files.zip` },
@@ -378,8 +384,6 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
   'GET /api/hyperfy/pair/:code': 'the pairing code is the auth: any signed-in user holding it sees the approval page',
   'POST /api/hyperfy/pair/:code/approve': 'the pairing code is the auth; approval checks the approver\'s own edit access to the world\'s scene (a stranger refuses the code, which is rate limited)',
   'POST /api/hyperfy/pair/:code/claim': 'the pairing code plus the browser secret is the auth',
-  'GET /api/ar/pair/:code': 'the pairing code is the auth: any signed-in account holding it sees the approval page',
-  'POST /api/ar/pair/:code/approve': "the pairing code is the auth; the headset then acts only with the approver's own build access, checked at each mint (rate limited)",
   'POST /api/ar/pair/:code/claim': 'the pairing code plus the headset secret is the auth',
   'POST /api/orgs/accept-invite': 'invite token only; the token names the org',
   'GET /api/auth/google/callback': 'OAuth callback; no bearer',
@@ -493,7 +497,8 @@ describe('cross-account route walk', () => {
 
   it("B's own token reads every GET case (the fixtures are real, so A's refusals are not misses)", async () => {
     const failed: string[] = []
-    for (const c of CASES.filter((c) => c.route.startsWith('GET ') && !c.route.includes('/hyperfy/') && !c.route.includes('/admin/'))) {
+    // (a pairing code case is a guess, so nobody's to read)
+    for (const c of CASES.filter((c) => c.route.startsWith('GET ') && !c.route.includes('/hyperfy/') && !c.route.includes('/admin/') && !c.route.includes('/ar/pair/'))) {
       const res = await app.inject({ method: 'GET', url: c.url(f), headers: { authorization: `Bearer ${tokenFor(f.b)}` } })
       if (res.statusCode !== 200) failed.push(`${c.route} → ${res.statusCode}`)
     }
@@ -508,7 +513,7 @@ describe('cross-account route walk', () => {
     const own = new Set([
       'GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes',
       'GET /api/wizard/catalog', 'GET /api/wizard/options', 'GET /api/room-scans', 'GET /api/hyperfy/slots', 'GET /api/assets', 'GET /api/assets/categories',
-      'POST /api/imports', 'GET /api/imports',
+      'POST /api/imports', 'GET /api/imports', 'GET /api/ar/devices',
     ])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
     expect(cases.length).toBe(trialRoutes.size - own.size)
