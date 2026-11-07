@@ -3,7 +3,7 @@ import { createContext, useContext, useState, useEffect, useCallback, ReactNode 
 import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
 import { deviceId, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome, type TrialEntry } from './trial'
-import { clearDraft } from './wizard/draft'
+import { adoptDraftOnSignIn, clearDraft } from './wizard/draft'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -128,7 +128,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restore().finally(() => setLoading(false))
   }, [])
 
-  const adopt = (data: { accessToken: string; refreshToken?: string; user: User }) => {
+  /** `trialCarried`: the request carried this tab's trial into the account, so the trial's wizard draft goes with it. */
+  const adopt = (data: { accessToken: string; refreshToken?: string; user: User }, trialCarried = false) => {
+    adoptDraftOnSignIn(user, data.user, trialCarried)
     setToken(data.accessToken)
     setUser(data.user)
     setScenePass(null)
@@ -138,7 +140,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   /**
    * A sign-up/sign-in POST. From a trial the trial bearer goes along so the trial moves into the account: a token that ran
-   * out (or is about to) is renewed first, and a `401 trial_expired` renews and sends once more.
+   * out (or is about to) is renewed first, and a `401 trial_expired` renews and sends once more. `carried` says whether the
+   * request that answered went with the trial's bearer.
    */
   const post = async (path: string, body: object) => {
     const send = (bearer: string | null) =>
@@ -152,30 +155,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const renewed = async () => renewedTrialBearer(await renew(), !!readStoredAuth(localStorage))
     if (bearer && trialBearerStale(bearer, Date.now())) bearer = await renewed()
     let res = await send(bearer)
+    let carried = !!bearer
     if (res.status === 401 && bearer && (await res.clone().json().catch(() => null))?.error === 'trial_expired') {
       const fresh = await renewed()
       if (fresh) res = await send(fresh)
+      carried = !!fresh
     }
-    return res
+    return { res, carried }
   }
 
   const login = async (email: string, password: string, fromAction?: string) => {
-    const res = await post('/api/auth/login', { email, password, ...(fromAction ? { fromAction } : {}) })
+    const { res, carried } = await post('/api/auth/login', { email, password, ...(fromAction ? { fromAction } : {}) })
     if (!res.ok) throw new Error(await errorMessage(res, 'Login failed'))
-    return adopt(await res.json())
+    return adopt(await res.json(), carried)
   }
 
   const register = async (email: string, password: string, displayName: string, fromAction?: string) => {
-    const res = await post('/api/auth/register', { email, password, displayName, ...(fromAction ? { fromAction } : {}) })
+    const { res, carried } = await post('/api/auth/register', { email, password, displayName, ...(fromAction ? { fromAction } : {}) })
     if (!res.ok) throw new Error(await errorMessage(res, 'Registration failed'))
-    return adopt(await res.json())
+    return adopt(await res.json(), carried)
   }
 
   const loginWithWallet = async (fromAction?: string) => {
     const proof = await signWalletChallenge()
-    const res = await post('/api/auth/wallet/verify', { ...proof, ...(fromAction ? { fromAction } : {}) })
+    const { res, carried } = await post('/api/auth/wallet/verify', { ...proof, ...(fromAction ? { fromAction } : {}) })
     if (!res.ok) throw new Error(await errorMessage(res, 'Wallet sign-in failed'))
-    return adopt(await res.json())
+    return adopt(await res.json(), carried)
   }
 
   const startTrial = async (turnstileToken: string, entry?: TrialEntry) => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readSession, scenePassAllows, trialAllows } from './session'
+import { readSession, scenePassAllows, tokenUserId, trialAllows } from './session'
 
 const tok = (p: Record<string, unknown>) => `x.${Buffer.from(JSON.stringify(p)).toString('base64url')}.y`
 const NOW = 1_800_000_000_000
@@ -45,5 +45,13 @@ describe('trialAllows', () => {
     for (const p of ['/settings', '/deploy', '/scenes-x', '/studio-x', '/scenes/a/b', '/imports', '/demo', '/analytics', '/events']) {
       expect(trialAllows(p), p).toBe(false)
     }
+  })
+})
+
+describe('tokenUserId', () => {
+  it('reads the user id from a token', () => {
+    expect(tokenUserId(tok({ id: 'u1', kind: 'trial' }))).toBe('u1')
+    expect(tokenUserId(tok({ sub: 'u2' }))).toBe('u2')
+    expect(tokenUserId('garbage')).toBeNull()
   })
 })

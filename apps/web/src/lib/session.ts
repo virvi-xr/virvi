@@ -9,6 +9,13 @@ function payloadOf(token: string): Record<string, unknown> | null {
   } catch { return null }
 }
 
+/** The user a session token is for (`id`, or `sub`), or null. */
+export function tokenUserId(token: string): string | null {
+  const p = payloadOf(token)
+  const id = p?.id ?? p?.sub
+  return typeof id === 'string' && id ? id : null
+}
+
 /** A stored session is usable only if unexpired and of a known kind. Visitor passes (no scene) are never kept. */
 export function readSession(token: string, now: number): { ok: false } | { ok: true; scenePass: ScenePass | null } {
   const p = payloadOf(token)

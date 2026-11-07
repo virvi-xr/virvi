@@ -50,9 +50,10 @@ export default function NewScenePage() {
   const { token, user } = useAuth()
   const trial = !!user?.trial
   const api = useApi()
-  // A draft kept in this browser (a trial's, or one an account brought along when it signed up) picks up where it was left.
-  // The page renders only once the session is read (the layout waits), so this runs in the browser.
-  const [state, dispatch] = useReducer(wizardReducer, initialState, (init) => loadDraft(Date.now()) ?? init)
+  // A draft kept in this browser picks up where it was left: this trial's, or the one its account brought along when it
+  // signed up (lib/wizard/draft drops anyone else's). The page renders only once the session is read (the layout waits),
+  // so this runs in the browser.
+  const [state, dispatch] = useReducer(wizardReducer, initialState, (init) => (user ? loadDraft(Date.now(), user.id) : null) ?? init)
   const [catalog, setCatalog] = useState<WizardCatalog | null>(null)
   const [options, setOptions] = useState<WizardOptions | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -68,15 +69,38 @@ export default function NewScenePage() {
   const roomPreview = useRoomSetPreview(state.roomSet, dispatch)
   const locked = running || !!memory.current.sceneId
 
-  // A trial's wizard lives in this browser until it signs up or deploys: kept on each change, and gone once a run has made the
-  // scene (the server has it then). Signing up keeps it; signing out clears it (lib/auth).
+  // A trial's wizard lives in this browser until it signs up or deploys: kept half a second after the last change (not on
+  // every drag step), and gone once a run has made the scene (the server has it then). Signing up hands it to the account;
+  // signing out clears it (lib/auth). A save still waiting when the page goes is made then.
+  const pendingSave = useRef<(() => void) | null>(null)
   useEffect(() => {
-    if (memory.current.sceneId) clearDraft()
-    else if (trial) saveDraft(state, Date.now())
-  }, [state, trial])
+    if (memory.current.sceneId) {
+      pendingSave.current = null
+      clearDraft()
+      return
+    }
+    if (!trial || !user) {
+      pendingSave.current = null
+      return
+    }
+    const owner = user.id
+    // Cancelled once it is no longer the waiting save (a newer one, or the scene now exists)
+    const save = () => { if (pendingSave.current !== save) return; pendingSave.current = null; saveDraft(state, Date.now(), owner) }
+    pendingSave.current = save
+    const t = setTimeout(save, 500)
+    return () => clearTimeout(t)
+  }, [state, trial, user?.id])
+  useEffect(() => {
+    const flush = () => pendingSave.current?.()
+    window.addEventListener('pagehide', flush)
+    return () => { window.removeEventListener('pagehide', flush); flush() }
+  }, [])
   const onRunning = useCallback((on: boolean) => {
     setRunning(on)
-    if (memory.current.sceneId) clearDraft()
+    if (memory.current.sceneId) {
+      pendingSave.current = null
+      clearDraft()
+    }
   }, [])
 
   const loadNames = useCallback(() => {
