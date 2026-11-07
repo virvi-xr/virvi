@@ -91,6 +91,18 @@ describe('afterDeploy starts the map checks', () => {
     await deploy(d, 'bafyparcels')
     expect((await row(d.id)).mapStatus).toBe('pending')
   })
+
+  // LIV-135 part 3: Virvi's deploys to the owner's own scenes (imports, adopted redeploys) carry the placements too
+  it("an adopted or imported destination that Virvi deploys to is checked like any other", async () => {
+    const d = await destination()
+    await db.update(dclWorldDestinations).set({ adopted: true, lastEntityId: 'bafyowner' }).where(eq(dclWorldDestinations.id, d.id))
+    // Adopted without a Virvi deploy: never checked
+    await sweepMapStatus(min(2), { check: ready(1) })
+    expect(await row(d.id)).toMatchObject({ mapStatus: 'unknown', mapEntityId: null })
+    await deploy({ ...d, adopted: true }, 'bafyvirvi')
+    await sweepMapStatus(min(2), { check: ready(4) })
+    expect(await row(d.id)).toMatchObject({ mapStatus: 'ready', mapEntityId: 'bafyvirvi', mapAssets: 4 })
+  })
 })
 
 describe('nextMapCheckAt', () => {
