@@ -64,11 +64,19 @@ describe('POST /api/media/upload', () => {
     expect(res.statusCode).toBe(201)
     expect(res.json().asset.contentType).toBe('image/png')
   })
-  it('stores octet-stream .glb as model/gltf-binary', async () => {
-    const res = await upload('duck.glb', 'application/octet-stream', 1024)
-    expect(res.statusCode).toBe(201)
-    expect(res.json().asset.contentType).toBe('model/gltf-binary')
-    expect(res.json().asset.storageKey).toMatch(/\.glb$/)
+  // LIV-132: the Media library holds images and video; 3D models go in the 3D Asset Library
+  it.each([
+    ['duck.glb', 'application/octet-stream'],
+    ['DUCK.GLB', 'model/gltf-binary'],
+    ['duck.gltf', 'model/gltf+json'],
+    ['duck.gltf', 'application/octet-stream'],
+    ['duck', 'model/gltf-binary'],
+  ])('refuses 3D model %s (%s), pointing to the 3D Asset Library, and stores nothing', async (filename, contentType) => {
+    const res = await upload(filename, contentType, 1024)
+    expect(res.statusCode).toBe(415)
+    expect(res.json().error).toBe('use_asset_library')
+    expect(res.json().message).toMatch(/3D Asset Library/)
+    expect(await db.select().from(mediaAssets)).toHaveLength(0)
   })
   it('accepts a small MP4 and stores it as .mp4', async () => {
     const res = await upload('clip.mp4', 'video/mp4', 1024)
@@ -86,9 +94,27 @@ describe('POST /api/media/upload', () => {
     expect(res.statusCode).toBe(413)
     expect(res.json().error).toBe('too_large')
   })
-  it('rejects a 51 MB GLB with 413', async () => {
+  it('refuses a 51 MB GLB as a model, not for its size', async () => {
     const res = await upload('big.glb', 'model/gltf-binary', 51 * 1024 * 1024)
-    expect(res.statusCode).toBe(413)
+    expect(res.statusCode).toBe(415)
+    expect(res.json().error).toBe('use_asset_library')
+  })
+})
+
+// Ruling (LIV-132): only the Media library's own upload refuses models. The scene library upload (SDK) and phone
+// uploads from the in-world HUD still take GLBs until they have an Asset Library route of their own.
+describe('scene-level uploads keep taking GLBs', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(() => app.close())
+
+  it('POST /api/scenes/:id/library/upload still stores a GLB', async () => {
+    const owner = await createUser(); const { scene } = await createScene(owner)
+    const res = await app.inject({
+      method: 'POST', url: `/api/scenes/${scene.id}/library/upload`, headers: { authorization: `Bearer ${tokenFor(owner)}` },
+      payload: { filename: 'duck.glb', contentType: 'model/gltf-binary', data: Buffer.alloc(64, 1).toString('base64') },
+    })
+    expect(res.statusCode).toBe(201)
   })
 })
 
