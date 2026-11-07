@@ -7,7 +7,7 @@ import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
 import { connectExtras, jumpInUrl, progressLines, runWizard, wizardErrorMessage, type Phase, type RunMemory, type RunPlan, type RunUpdate } from '@/lib/wizard/run'
 import { effectivePlot, type WizardAction, type WizardState } from '@/lib/wizard/state'
-import { autoPickWorld, connectForDeploy, DEPLOY_LINE, deployGate, noWorldMessage, WALLET_PROMPT, type WalletNames } from '@/lib/wizard/trial-deploy'
+import { connectForDeploy, connectOutcome, DEPLOY_LINE, deployGate, noWorldMessage, WALLET_PROMPT, type WalletNames } from '@/lib/wizard/trial-deploy'
 import { shortAddress } from '@/lib/wizard/helpers'
 import { Badge, PrimaryButton } from '@/components/ui'
 import { CONTRACT_WALLET_MESSAGE, type NamesState } from './WhereStep'
@@ -92,8 +92,6 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
   // A World picked here that has a scene is replaced only once that's confirmed, as on Where
   const [pickedHere, setPickedHere] = useState(false)
   const [replaceOk, setReplaceOk] = useState(false)
-  // Set when the wallet sign-in found the one World: the run starts once the page has re-rendered as the account
-  const [startWhenReady, setStartWhenReady] = useState(false)
 
   const atLimit = !memory.sceneId && !!options && options.scenes.limit !== null && options.scenes.used >= options.scenes.limit
   const running = view.status === 'running'
@@ -185,21 +183,15 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
       const { wallets } = await connectForDeploy({ loginWithWallet, names: fetchDclNames })
       if (!alive.current) return
       setConnected(wallets)
-      const only = autoPickWorld(wallets)
-      if (only && (await pick(only.world, only.wallet))) setStartWhenReady(true)
+      // The lone empty World is filled in and the step stops there: the deploy mode and Create and deploy are the user's
+      const out = connectOutcome(wallets)
+      if (out.kind === 'picked') await pick(out.world, out.wallet)
     } catch (err) {
       if (alive.current) setConnectError(wizardErrorMessage(err))
     } finally {
       if (alive.current) setConnecting(false)
     }
   }
-
-  // After the wallet sign-in this render holds the account's session, so the run (and its Ruling R5 fallback) goes as the account
-  useEffect(() => {
-    if (!startWhenReady || trial || !dcl || view.status === 'running') return
-    setStartWhenReady(false)
-    if (state.name.trim() && !atLimit) start()
-  }, [startWhenReady, trial, dcl, view.status])
 
   const pickList = connected ?? (names.status === 'ready' ? names.wallets : null)
   const listed = (pickList ?? []).flatMap((w) => w.names.map((n) => ({ ...n, wallet: w.address })))
@@ -319,10 +311,10 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
           ) : listed.length === 0 ? (
             <p className="text-gray-400">Your linked wallets don&apos;t own a Decentraland NAME. Connect the wallet that owns your World on Where, or skip Decentraland.</p>
           ) : (
-            <ul className="space-y-2" role="radiogroup" aria-label="Your Worlds">
+            <ul className="space-y-2" aria-label="Your Worlds">
               {listed.map((n) => (
                 <li key={n.world}>
-                  <button type="button" role="radio" aria-checked={false} disabled={checking !== null} onClick={() => { pick(n, n.wallet) }}
+                  <button type="button" disabled={checking !== null || connecting} onClick={() => { pick(n, n.wallet) }}
                     className="flex w-full items-center justify-between gap-3 rounded-md border border-gray-800 bg-gray-950 px-3 py-2.5 text-left hover:border-gray-700 disabled:opacity-60">
                     <span className="min-w-0">
                       <span className="block truncate font-medium text-white">{n.world}</span>
@@ -362,7 +354,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
       )}
 
       {!done && gate === 'deploy' && (
-        <PrimaryButton type="button" onClick={start} disabled={running || atLimit || !state.name.trim() || confirmPending || startWhenReady}>
+        <PrimaryButton type="button" onClick={start} disabled={running || atLimit || !state.name.trim() || confirmPending}>
           {running ? 'Working…' : view.status === 'failed' ? 'Try again' : 'Create and deploy'}
         </PrimaryButton>
       )}

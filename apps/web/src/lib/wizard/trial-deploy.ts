@@ -37,6 +37,23 @@ export function noWorldMessage(wallets: WalletNames): string | null {
 }
 
 /**
+ * What Deploy does once the wallet has signed in: fill in the lone empty World ('picked'), list the Worlds ('choose'), or
+ * say there is none ('none'). It never starts the run: the deploy mode (whether Virvi may deploy to the World for you)
+ * is the user's choice, made on the step before they click Create and deploy.
+ */
+export type ConnectOutcome =
+  | { kind: 'picked'; world: DclWorld; wallet: string }
+  | { kind: 'choose' }
+  | { kind: 'none'; message: string }
+
+export function connectOutcome(wallets: WalletNames): ConnectOutcome {
+  const message = noWorldMessage(wallets)
+  if (message) return { kind: 'none', message }
+  const only = autoPickWorld(wallets)
+  return only ? { kind: 'picked', ...only } : { kind: 'choose' }
+}
+
+/**
  * What Deploy needs before its normal button: a trial that chose Decentraland connects its wallet ('wallet'); an account
  * carrying that choice (a converted trial, or a draft it adopted) picks a World or skips Decentraland ('world'). Otherwise
  * the normal deploy ('deploy'); a trial without Decentraland is asked to sign up by the save itself.

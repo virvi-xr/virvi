@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DclWorld } from '../api'
 import { trialEndedOutcome, sendRecovering } from '../trial'
-import { autoPickWorld, connectForDeploy, deployGate, DEPLOY_LINE, NO_WORLD_MESSAGE, noWorldMessage, WALLET_PROMPT } from './trial-deploy'
+import { autoPickWorld, connectForDeploy, connectOutcome, deployGate, DEPLOY_LINE, NO_WORLD_MESSAGE, noWorldMessage, WALLET_PROMPT } from './trial-deploy'
 
 const world = (name: string, hasScene = false): DclWorld => ({ world: name, hasScene, footprint: null, storage: null })
 
@@ -109,5 +109,20 @@ describe('after the wallet turns the trial into an account', () => {
     const res = await sendRecovering(send, 'trial-token', { swapToStoredAccount: () => null, renew: async () => null })
     expect(res.status).toBe(401)
     expect(send).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('connectOutcome', () => {
+  it('fills in the lone empty World and stops there: the deploy mode is chosen and Create and deploy clicked by the user', () => {
+    const out = connectOutcome([{ address: '0x2', names: [world('solo.dcl.eth')] }])
+    expect(out).toEqual({ kind: 'picked', world: world('solo.dcl.eth'), wallet: '0x2' })
+    expect(out).not.toHaveProperty('start')
+  })
+  it('lists the Worlds when there is more than one, or the lone one has a scene', () => {
+    expect(connectOutcome([{ address: '0x1', names: [world('a.dcl.eth'), world('b.dcl.eth')] }])).toEqual({ kind: 'choose' })
+    expect(connectOutcome([{ address: '0x1', names: [world('busy.dcl.eth', true)] }])).toEqual({ kind: 'choose' })
+  })
+  it('with no World, the account is ready and the no-NAME line says what next', () => {
+    expect(connectOutcome([{ address: '0x1', names: [] }])).toEqual({ kind: 'none', message: NO_WORLD_MESSAGE })
   })
 })
