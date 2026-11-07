@@ -8,6 +8,7 @@ import { getSceneAccess } from '../auth/permissions.js'
 import type { Actor } from '../auth/actor.js'
 import { isUuid } from '../auth/scene-from.js'
 import { issueArPass } from '../auth/scene-pass.js'
+import { trialExpiresAt } from '../auth/trial.js'
 import { sameHash, sha256 } from '../auth/hash.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
 import { mayBuild, sceneRoleOfAccess, spaceScene } from './access.js'
@@ -242,11 +243,16 @@ export async function listDeviceSpaces(deviceId: string, secret: string, now = n
 /**
  * The approver a headset's room scan is saved to, with its id and secret: a live personal headset only. Its expiry
  * slides forward like a mint's. This is how a trial's headset scans (it mints no pass); an account's may use it too.
+ * A trial approver idle past TRIAL_IDLE_DAYS (not swept yet) counts as revoked.
  */
 export async function deviceForScanUpload(deviceId: string, secret: string, now = new Date()): Promise<{ userId: string } | 'bad_secret' | 'device_revoked' | 'personal_only'> {
   const device = await liveDevice(deviceId, secret, now)
   if (typeof device === 'string') return device
   if (device.kind !== 'personal') return 'personal_only'
+  // A trial idle past its expiry is on its way out (the sweep may be removing it): its headset is done too
+  const [approver] = await db.select({ isTrial: users.isTrial, at: users.trialLastActiveAt }).from(users).where(eq(users.id, device.userId!))
+  if (!approver) return 'device_revoked'
+  if (approver.isTrial && (!approver.at || trialExpiresAt(approver.at) <= now)) return 'device_revoked'
   const [bumped] = await db
     .update(arDevices)
     .set({ lastUsedAt: now, expiresAt: new Date(now.getTime() + AR_PAIRING.personalIdleTtlMs) })

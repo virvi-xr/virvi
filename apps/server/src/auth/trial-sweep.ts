@@ -5,13 +5,15 @@ import { config } from '../config.js'
 import { destroyWorker, type MachineDeps } from '../studio/machines.js'
 import { getStudioStore } from '../studio/store.js'
 import { recordTrialEvent } from './trial-events.js'
+import { releaseTrialLeftovers, trialLeftovers } from './trial-data.js'
 
 const BATCH = 100
 /** Rows looked at per run, failures included, so a run stays bounded when many trials keep failing. */
 const MAX_SCANNED = 500
 
 /**
- * Removes trials idle for TRIAL_IDLE_DAYS: their Studio machines and files, then the user (designs cascade).
+ * Removes trials idle for TRIAL_IDLE_DAYS: their Studio machines and files, then the user (designs, scenes, imports,
+ * room scans and headsets cascade), then their imports' build machines and files and their scenes' thumbnails.
  * Only rows still `is_trial` qualify, so an account that converted is never touched. Oldest first, at most 100 expired per
  * run; a trial that fails to expire is retried next run but paged past now, so it never holds up the ones behind it.
  */
@@ -43,6 +45,8 @@ export async function sweepTrials(now: Date, deps: Partial<MachineDeps> = {}, op
 
 async function expireTrial(id: string, cutoff: Date, deps: Partial<MachineDeps>): Promise<boolean> {
   try {
+    // Read before the delete (the rows cascade); released only once the row is really gone
+    const leftovers = await trialLeftovers(id)
     const designs = await db.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.ownerId, id))
     for (const d of designs) {
       await destroyWorker(d.id, deps)
@@ -51,6 +55,8 @@ async function expireTrial(id: string, cutoff: Date, deps: Partial<MachineDeps>)
     // Re-check the row in the delete: a trial that converted since the select is kept
     const gone = await db.delete(users).where(and(eq(users.id, id), eq(users.isTrial, true), lt(users.trialLastActiveAt, cutoff))).returning({ id: users.id })
     if (!gone.length) return false
+    // A trial that converted since keeps its builds and files; one that is gone frees them
+    await releaseTrialLeftovers(leftovers)
     recordTrialEvent('expired', id)
     return true
   } catch (err) {

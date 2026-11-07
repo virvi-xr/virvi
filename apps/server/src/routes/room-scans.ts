@@ -26,7 +26,7 @@ type SavedScan = { id: string; name: string; createdAt: Date }
  * Validates and stores a scan for `userId`. A trial holds at most TRIAL_ROOM_SCANS at once: the count and the insert
  * run in one transaction holding the user's row lock, so uploads at once with one slot left can't both pass.
  */
-export async function saveRoomScan(userId: string, name: unknown, layout: unknown): Promise<{ status: 201; scan: SavedScan } | { status: 400 | 403; body: Record<string, unknown> }> {
+export async function saveRoomScan(userId: string, name: unknown, layout: unknown): Promise<{ status: 201; scan: SavedScan } | { status: 400 | 401 | 403; body: Record<string, unknown> }> {
   if (typeof name !== 'string' || name.length < 1 || name.length > 120) {
     return { status: 400, body: { error: 'invalid_name', message: 'Name must be 1 to 120 characters' } }
   }
@@ -37,7 +37,9 @@ export async function saveRoomScan(userId: string, name: unknown, layout: unknow
   }
   const scan = await db.transaction(async (tx) => {
     const [owner] = await tx.select({ isTrial: users.isTrial }).from(users).where(eq(users.id, userId)).for('update')
-    if (owner?.isTrial) {
+    // The approver's row went (the trial sweep, an account deletion) after the headset was checked: nothing to save to
+    if (!owner) return 'gone' as const
+    if (owner.isTrial) {
       const [{ held }] = await tx.select({ held: count() }).from(roomScans).where(eq(roomScans.userId, userId))
       if (held >= config.trialRoomScans) return null
     }
@@ -47,6 +49,7 @@ export async function saveRoomScan(userId: string, name: unknown, layout: unknow
       .returning({ id: roomScans.id, name: roomScans.name, createdAt: roomScans.createdAt })
     return row
   })
+  if (scan === 'gone') return { status: 401, body: { error: 'device_revoked' } }
   if (!scan) {
     recordTrialBlocked(userId, 'more_scans')
     return { status: 403, body: { error: 'account_required', action: 'more_scans' } }

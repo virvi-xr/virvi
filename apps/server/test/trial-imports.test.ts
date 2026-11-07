@@ -16,7 +16,7 @@ import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
 import { setDclDirectory } from '../src/analytics/dcl-directory.js'
 import { ownThumbnailFile } from '../src/services/dcl/assemble.js'
 import { issueTrialSession } from '../src/auth/trial.js'
-import { convertTrial } from '../src/auth/trial-convert.js'
+import { convertTrial, mergeTrial } from '../src/auth/trial-convert.js'
 import { latestImportFor, reserveTrialImport, SUPERSEDED_MESSAGE } from '../src/services/import/imports.js'
 import { deployImport } from '../src/services/import/import-deploy.js'
 import { sweepRetention } from '../src/services/import/retention.js'
@@ -504,6 +504,26 @@ describe('trial (guest) scene imports: a sandbox that never touches the real pla
       expect((await destByWorld())).toMatchObject({ sceneId: scene.id, pendingImportId: id })
       // the guest's sandbox scene stays (it may hold the guest's layout)
       expect(await db.select().from(scenes).where(eq(scenes.id, sandboxScene))).toHaveLength(1)
+    })
+
+    it("a merged guest's sandbox import is claimed when the account deploys it; the emptied scene stays the account's", async () => {
+      const t = await makeTrial()
+      const id = (await upload(sceneZip(), t.h)).json().import.id
+      await makeBuilt(id)
+      const sandboxScene = (await importRow(id)).sceneId
+      const acct = await createUser({ wallet: randomWallet() })
+      worlds.deployers.set(B_WORLD, { owner: acct.wallet, deployers: [] })
+      expect(await mergeTrial(t.u.id, acct.id)).toBe(true)
+      expect(await importRow(id)).toMatchObject({ userId: acct.id, sandbox: true })
+      const { scene } = await createScene(acct, 'Connected')
+      await db.insert(dclWorldDestinations).values({
+        sceneId: scene.id, ownerUserId: acct.id, ownerWallet: acct.wallet!, worldName: B_WORLD, base: '0,0', parcels: ['0,0'], mode: 'sign',
+      })
+      const r = await app.inject({ method: 'POST', url: `/api/imports/${id}/deploy`, headers: auth(acct) })
+      expect(r.statusCode).toBe(200)
+      expect(await importRow(id)).toMatchObject({ sandbox: false, sceneId: scene.id })
+      // Ruling: the scene the import left is a normal scene of the account (it may hold the guest's layout)
+      expect((await db.select().from(scenes).where(eq(scenes.id, sandboxScene)))[0]).toMatchObject({ ownerId: acct.id })
     })
 
     it("a claim refuses a World set up under someone else's Virvi scene, and changes nothing", async () => {

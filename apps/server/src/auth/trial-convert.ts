@@ -8,6 +8,7 @@ import { TRIAL_DAY } from '../studio/quota.js'
 import { issueAccountSession } from './sessions.js'
 import { initialRoleForNewUser } from './roles.js'
 import { recordTrialEvent, cleanAction } from './trial-events.js'
+import { moveTrialSceneData } from './trial-data.js'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type User = typeof users.$inferSelect
@@ -73,7 +74,7 @@ export async function convertTrial(trialId: string, set: { email?: string | null
   return tx ? run(tx) : db.transaction(run)
 }
 
-/** The trial's work moves into an existing account and the trial is deleted. */
+/** The trial's work (Studio, scenes, imports, room scans, headsets) moves into an existing account and the trial is deleted. */
 export async function mergeTrial(trialId: string, accountId: string, fromAction?: unknown): Promise<boolean> {
   const merged = await db.transaction(async (tx) => {
     // Only a row that is still a trial merges (a second sign-in with the same old token finds nothing to move).
@@ -82,6 +83,8 @@ export async function mergeTrial(trialId: string, accountId: string, fromAction?
     // The trial's allowance is not the account's: drop it instead of adding it to the account's counters.
     await tx.delete(studioUsageDays).where(and(eq(studioUsageDays.userId, trialId), eq(studioUsageDays.day, TRIAL_DAY)))
     await moveStudioData(tx, trialId, accountId, new Date())
+    // Scenes, imports, room scans and headsets cascade with the trial row: they move first
+    await moveTrialSceneData(tx, trialId, accountId)
     await tx.delete(studioUsageDays).where(eq(studioUsageDays.userId, trialId))
     await tx.delete(users).where(eq(users.id, trialId))
     return true

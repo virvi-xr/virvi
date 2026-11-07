@@ -166,6 +166,21 @@ describe('trial headsets and secret-auth scan upload', () => {
     expect(await db.select().from(roomScans)).toHaveLength(0)
   })
 
+  it("a trial idle past its expiry (not yet swept) is a revoked headset's approver: nothing is saved", async () => {
+    const t = await makeTrial()
+    const d = await deviceRow(t.u.id)
+    await db.update(users).set({ trialLastActiveAt: new Date(Date.now() - (config.trialIdleDays + 1) * 86400_000) }).where(eq(users.id, t.u.id))
+    const res = await upload(d.id, { secret: SECRET, name: 'Lounge', layout: layout() })
+    expect([res.statusCode, res.json()]).toEqual([401, { error: 'device_revoked' }])
+    expect(await db.select().from(roomScans)).toHaveLength(0)
+  })
+
+  it('a scan for an approver whose row is gone (the sweep won the race) is refused, not a 500', async () => {
+    const saved = await saveRoomScan('00000000-0000-4000-8000-00000000000a', 'Lounge', layout())
+    expect(saved).toEqual({ status: 401, body: { error: 'device_revoked' } })
+    expect(await db.select().from(roomScans)).toHaveLength(0)
+  })
+
   it("an account's personal headset uploads with its secret too, to the account", async () => {
     const owner = await createUser({ wallet: randomWallet() })
     const d = await deviceRow(owner.id)

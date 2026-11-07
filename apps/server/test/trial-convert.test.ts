@@ -3,14 +3,14 @@ import { eq, sql } from 'drizzle-orm'
 import { Wallet } from 'ethers'
 import { createSigner } from 'fast-jwt'
 import { db } from '../src/db/connection.js'
-import { users, userAuthMethods, studioDesigns, studioUsageDays } from '../src/db/schema.js'
+import { users, userAuthMethods, studioDesigns, studioUsageDays, scenes, sceneImports, roomScans, arDevices } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { TRIAL_DAY, reservePrompt } from '../src/studio/quota.js'
 import { issueTrialSession } from '../src/auth/trial.js'
-import { finishOAuth } from '../src/auth/trial-convert.js'
+import { finishOAuth, mergeTrial } from '../src/auth/trial-convert.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { resetDb } from './helpers/db.js'
-import { testApp, createUser, tokenFor } from './helpers/factories.js'
+import { testApp, createUser, createScene, tokenFor } from './helpers/factories.js'
 import { createDesign } from './helpers/studio.js'
 
 describe('converting and merging a trial', () => {
@@ -259,6 +259,65 @@ describe('converting and merging a trial', () => {
     }, () => walletVerify(w2, t2.headers))
     expect(same.statusCode).toBe(200)
     expect(same.json().user.id).toBe(t2.u.id)
+  })
+
+  describe('scenes, imports, scans and headsets (phase 2)', () => {
+    const scanLayout = (): any => ({ version: 1, rooms: [{ label: 'R', floor: [[0, 0], [4, 0], [4, 3], [0, 3]], floorY: 0, ceilingHeight: 2.5, walls: [], objects: [], anchor: { source: 'quest-mruk', roomId: 'r', floorAnchorId: null, floorPose: { position: [0, 0, 0], yaw: 0 } } }] })
+
+    /** A trial with an import's scene (sandbox import, thumbnail), a room scan and an approved personal headset. */
+    async function withSceneData(t: { u: { id: string } }) {
+      const { scene } = await createScene(t.u as any, 'Imported')
+      const [imp] = await db.insert(sceneImports).values({ userId: t.u.id, sceneId: scene.id, worldName: 'x.dcl.eth', kind: 'sdk7', sourceKey: 'imports/x/source.zip', status: 'built', sandbox: true }).returning()
+      const [scan] = await db.insert(roomScans).values({ userId: t.u.id, name: 'Lounge', source: 'quest-mruk', layout: scanLayout() }).returning()
+      const [device] = await db.insert(arDevices).values({ userId: t.u.id, secretHash: 'h', kind: 'personal', status: 'claimed', codeExpiresAt: new Date(), expiresAt: new Date(Date.now() + 3600_000) }).returning()
+      return { scene, imp, scan, device }
+    }
+    async function expectOwnedBy(d: Awaited<ReturnType<typeof withSceneData>>, userId: string) {
+      expect((await db.select().from(scenes).where(eq(scenes.id, d.scene.id)))[0]).toMatchObject({ ownerId: userId, orgId: null })
+      // a guest's import stays sandbox: the account claims it for its place when it deploys it
+      expect((await db.select().from(sceneImports).where(eq(sceneImports.id, d.imp.id)))[0]).toMatchObject({ userId, sceneId: d.scene.id, sandbox: true })
+      expect((await db.select().from(roomScans).where(eq(roomScans.id, d.scan.id)))[0].userId).toBe(userId)
+      expect((await db.select().from(arDevices).where(eq(arDevices.id, d.device.id)))[0]).toMatchObject({ userId, status: 'claimed' })
+    }
+
+    it('signing in from a trial moves its scenes, imports, scans and headsets', async () => {
+      const t = await makeTrial({ designs: 0 })
+      const d = await withSceneData(t)
+      const account = await createUser()
+      expect(await mergeTrial(t.u.id, account.id)).toBe(true)
+      await expectOwnedBy(d, account.id)
+      expect(await db.query.users.findFirst({ where: eq(users.id, t.u.id) })).toBeUndefined()
+    })
+
+    it("wallet sign-in from a trial at Deploy merges into the wallet's account", async () => {
+      const t = await makeTrial({ designs: 0 })
+      const d = await withSceneData(t)
+      const w = Wallet.createRandom()
+      const known = await createUser({ wallet: w.address })
+      const res = await walletVerify(w, t.headers)
+      expect([res.statusCode, res.json().user.id]).toEqual([200, known.id])
+      await expectOwnedBy(d, known.id)
+      expect(await db.query.users.findFirst({ where: eq(users.id, t.u.id) })).toBeUndefined()
+    })
+
+    it('email sign-up keeps them on the same id', async () => {
+      const t = await makeTrial({ designs: 0 })
+      const d = await withSceneData(t)
+      const res = await app.inject({ method: 'POST', url: '/api/auth/register', headers: t.headers, payload: { email: 'keep@test.dev', password: 'hunter2hunter2', displayName: 'Keep' } })
+      expect(res.statusCode).toBe(201)
+      await expectOwnedBy(d, t.u.id)
+      expect((await db.select().from(users).where(eq(users.id, t.u.id)))[0].isTrial).toBe(false)
+    })
+
+    it("every scene moves, whatever the account already holds (no plan limits scenes; quotas stop new work, not moved work)", async () => {
+      const account = await createUser()
+      await createScene(account, 'Mine')
+      const t = await makeTrial({ designs: 0 })
+      await createScene(t.u as any, 'Guest 1')
+      await createScene(t.u as any, 'Guest 2')
+      expect(await mergeTrial(t.u.id, account.id)).toBe(true)
+      expect((await db.select().from(scenes).where(eq(scenes.ownerId, account.id))).map((s) => s.name).sort()).toEqual(['Guest 1', 'Guest 2', 'Mine'])
+    })
   })
 
   it('TRIAL_DAY usage never lands on the account when merging', async () => {
