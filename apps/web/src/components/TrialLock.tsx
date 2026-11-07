@@ -2,7 +2,7 @@
 // A part of a page a trial can't use: a lock, what it is, and the sign-up sheet on click. Its data is never fetched.
 import { LockIcon } from '@/components/icons'
 import { openSignUp } from '@/lib/trial'
-import { sceneLockRequest } from '@/lib/trial-scene'
+import { sceneLockRequest, TRIAL_LOCK_LABELS } from '@/lib/trial-scene'
 
 export function askSceneSignUp(tab: string, label: string) {
   openSignUp(sceneLockRequest(tab, label)).catch(() => {})
@@ -19,6 +19,15 @@ export function LockedSection({ tab, label, detail }: { tab: string; label: stri
         <span className="block text-xs text-gray-500">{detail ?? 'This needs a free account.'}</span>
       </span>
       <span className="shrink-0 text-xs text-blue-300">Sign up</span>
+    </button>
+  )
+}
+
+/** A locked button in place of an account-only one (Upload, Media Library): a lock, its own text, the sheet on click. */
+export function LockedButton({ tab, children, className }: { tab: keyof typeof TRIAL_LOCK_LABELS; children: React.ReactNode; className: string }) {
+  return (
+    <button type="button" onClick={() => askSceneSignUp(tab, TRIAL_LOCK_LABELS[tab])} className={`${className} inline-flex items-center gap-1.5`}>
+      <LockIcon size={13} /> {children}<span className="sr-only">(needs a free account)</span>
     </button>
   )
 }

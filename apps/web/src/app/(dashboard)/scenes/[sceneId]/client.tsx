@@ -26,8 +26,8 @@ import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Badge, PageHeader, Skeleton, type Tone } from '@/components/ui'
 import { LockIcon } from '@/components/icons'
-import { LockedSection, askSceneSignUp } from '@/components/TrialLock'
-import { offTypeLocked, sceneTabLocked } from '@/lib/trial-scene'
+import { LockedButton, LockedSection, askSceneSignUp } from '@/components/TrialLock'
+import { offTypeLocked, sceneTabLocked, TRIAL_LOCK_LABELS } from '@/lib/trial-scene'
 
 
 // ---------------------------------------------------------------------------
@@ -460,14 +460,22 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
         )}
 
         <div className="flex items-center gap-2">
-          <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer shrink-0 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-            {uploading ? 'Uploading...' : 'Upload'}
-            <input ref={fileRef} type="file" accept="video/*" multiple onChange={handleUpload} className="hidden" />
-          </label>
-          <button onClick={() => setShowPicker(true)}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">
-            Media Library
-          </button>
+          {sceneTabLocked('uploads', trial) ? (
+            <LockedButton tab="uploads" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">Upload</LockedButton>
+          ) : (
+            <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer shrink-0 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              {uploading ? 'Uploading...' : 'Upload'}
+              <input ref={fileRef} type="file" accept="video/*" multiple onChange={handleUpload} className="hidden" />
+            </label>
+          )}
+          {sceneTabLocked('media-library', trial) ? (
+            <LockedButton tab="media-library" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">Media Library</LockedButton>
+          ) : (
+            <button onClick={() => setShowPicker(true)}
+              className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">
+              Media Library
+            </button>
+          )}
         </div>
         {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
 
@@ -514,7 +522,19 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
 // Media Library Picker
 // ---------------------------------------------------------------------------
 
-function MediaPicker({ api, accept, onSelect, onClose }: {
+/** A trial has no Media library (GET /api/media is account-only): opening a picker opens the sign-up sheet instead and
+ *  closes, so pickers reached from other parts (a click action's sound) never fetch it either. */
+function MediaPicker(props: Parameters<typeof LibraryPicker>[0]) {
+  const trial = useTrial()
+  return sceneTabLocked('media-library', trial) ? <LockedPicker onClose={props.onClose} /> : <LibraryPicker {...props} />
+}
+
+function LockedPicker({ onClose }: { onClose: () => void }) {
+  useEffect(() => { askSceneSignUp('media-library', TRIAL_LOCK_LABELS['media-library']); onClose() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  return null
+}
+
+function LibraryPicker({ api, accept, onSelect, onClose }: {
   api: ReturnType<typeof import('@/lib/api').useApi>
   accept?: string
   onSelect: (url: string) => void
@@ -627,7 +647,8 @@ function LiveStreamField({ value, onChange, api, sceneId }: {
   const [streams, setStreams] = useState<SceneStream[] | null>(null)
   const [urlInput, setUrlInput] = useState('')
   // A trial pastes a URL: Virvi streams are account-only, so they are neither listed nor offered
-  const streamsLocked = sceneTabLocked('streams', useTrial())
+  const trial = useTrial()
+  const streamsLocked = sceneTabLocked('streams', trial)
   useEffect(() => {
     if (streamsLocked) return
     let live = true
@@ -689,7 +710,8 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
   api: ReturnType<typeof import('@/lib/api').useApi>
   sceneId: string
 }) {
-  const names = useMediaNames(api, sceneId, value && !sceneTabLocked('media-names', useTrial()) ? [value] : [])
+  const trial = useTrial()
+  const names = useMediaNames(api, sceneId, value && !sceneTabLocked('media-names', trial) ? [value] : [])
   const row = imageSourceRow(value, names)
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
@@ -732,14 +754,22 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <label className={`shrink-0 cursor-pointer rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600 ${uploading ? 'pointer-events-none opacity-50' : ''}`}>
-          {uploading ? 'Uploading...' : 'Upload'}
-          <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
-        </label>
-        <button type="button" onClick={() => setShowPicker(true)}
-          className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">
-          Media Library
-        </button>
+        {sceneTabLocked('uploads', trial) ? (
+          <LockedButton tab="uploads" className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">Upload</LockedButton>
+        ) : (
+          <label className={`shrink-0 cursor-pointer rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600 ${uploading ? 'pointer-events-none opacity-50' : ''}`}>
+            {uploading ? 'Uploading...' : 'Upload'}
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
+          </label>
+        )}
+        {sceneTabLocked('media-library', trial) ? (
+          <LockedButton tab="media-library" className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">Media Library</LockedButton>
+        ) : (
+          <button type="button" onClick={() => setShowPicker(true)}
+            className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">
+            Media Library
+          </button>
+        )}
         <input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handlePaste() }} onBlur={handlePaste}
           placeholder="or paste an image URL" aria-label={`${label}: paste an image URL`}
@@ -916,14 +946,22 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
       <div className="space-y-2">
         <TextInput label="Model URL" value={props.modelSrc || ''} onChange={setModel} />
         <div className="flex items-center gap-2">
-          <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-            {uploading ? 'Uploading...' : 'Upload GLB'}
-            <input ref={fileRef} type="file" accept=".glb,model/gltf-binary" onChange={handleUpload} className="hidden" />
-          </label>
-          <button onClick={() => setShowPicker(true)}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">
-            Choose from Media
-          </button>
+          {sceneTabLocked('uploads', trial) ? (
+            <LockedButton tab="uploads" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">Upload GLB</LockedButton>
+          ) : (
+            <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              {uploading ? 'Uploading...' : 'Upload GLB'}
+              <input ref={fileRef} type="file" accept=".glb,model/gltf-binary" onChange={handleUpload} className="hidden" />
+            </label>
+          )}
+          {sceneTabLocked('media-library', trial) ? (
+            <LockedButton tab="media-library" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">Choose from Media</LockedButton>
+          ) : (
+            <button onClick={() => setShowPicker(true)}
+              className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">
+              Choose from Media
+            </button>
+          )}
         </div>
         {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
         <p className="text-xs text-gray-500">Upload GLB adds the model to your 3D Asset Library. {ASSET_LIBRARY.uploadHelp}</p>

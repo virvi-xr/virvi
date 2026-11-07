@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { importLimitNote, importMaxBytes, offTypeLocked, pairChoices, sceneListActions, sceneLockRequest, sceneTabLocked, TRIAL_SCENE_NOTE, TRIAL_SCENE_TABS } from './trial-scene'
+import { importLimitNote, TRIAL_LOCK_LABELS, importMaxBytes, offTypeLocked, pairChoices, sceneListActions, sceneLockRequest, sceneTabLocked, TRIAL_SCENE_NOTE, TRIAL_SCENE_TABS } from './trial-scene'
 
 describe('sceneTabLocked', () => {
   it('opens the name, presets and elements (and the trial element types) for a trial', () => {
@@ -63,5 +63,19 @@ describe('scenes list', () => {
   })
   it('says the scene is held for the trial', () => {
     expect(TRIAL_SCENE_NOTE).toBe('Held for your trial — create an account to keep it')
+  })
+})
+
+describe('uploads and the Media library', () => {
+  it('are locked on sight for a trial, open for an account', () => {
+    for (const t of ['uploads', 'media-library']) {
+      expect(sceneTabLocked(t, true)).toBe(true)
+      expect(sceneTabLocked(t, false)).toBe(false)
+    }
+  })
+  it('name what the sheet unlocks', () => {
+    expect(TRIAL_LOCK_LABELS.uploads).toBe('uploads')
+    expect(TRIAL_LOCK_LABELS['media-library']).toBe('your Media library')
+    expect(sceneLockRequest('uploads', TRIAL_LOCK_LABELS.uploads)).toEqual({ action: 'nav:scene/uploads', ctx: { label: 'uploads' } })
   })
 })
