@@ -31,6 +31,7 @@ import {
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { keepDeployedFiles } from './deployed-files.js'
+import { startMapChecks } from './map-status.js'
 import { buildEntity, chainSigner, dclHash, verifyChain, virviSignerFor, type AuthChain, type ContentRef, type SceneMetadata, type VirviSigner } from './entity.js'
 import { parcelControl, readParcelRights } from './parcel-control.js'
 import { GRANT_REVOKED_MESSAGE, grantMissing, isAccessRefusal } from './parcel-grant.js'
@@ -602,6 +603,8 @@ export async function afterDeploy(
       .update(dclWorldDestinations)
       .set({ lastEntityId: entityId, deployedFiles: deployedFiles.map((f) => f.toLowerCase()), status: 'ok', statusDetail: null, pendingSince: null, updatedAt: now })
       .where(eq(dclWorldDestinations.id, dest.id))
+    // LIV-135: look for the map snapshot Decentraland may build for this entity
+    await startMapChecks(tx, dest.id, entityId, now)
     await tx
       .update(sceneDeployments)
       .set({

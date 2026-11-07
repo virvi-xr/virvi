@@ -117,6 +117,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] scene_imports ensured');
       } catch(e) { console.log('[virvi-server] scene_imports:', e.message); }
 
+      // LIV-135 map data (abgen Initial Scene State) per destination; matches dclWorldDestinations.map* in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE dcl_world_destinations ADD COLUMN IF NOT EXISTS map_status TEXT NOT NULL DEFAULT 'unknown', ADD COLUMN IF NOT EXISTS map_entity_id TEXT, ADD COLUMN IF NOT EXISTS map_assets INTEGER, ADD COLUMN IF NOT EXISTS map_since TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS map_check_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS map_checked_at TIMESTAMPTZ\`;
+        await sql\`CREATE INDEX IF NOT EXISTS dcl_destinations_map_due ON dcl_world_destinations (map_check_at) WHERE map_status = 'pending'\`;
+        console.log('[virvi-server] dcl_world_destinations map columns ensured');
+      } catch(e) { console.log('[virvi-server] dcl_world_destinations map columns:', e.message); }
+
       // Hyperfy worlds; matches hyperfyWorlds in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_worlds (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scene_id UUID NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'self', key_hash TEXT NOT NULL UNIQUE, key_prefix TEXT NOT NULL, last_seen_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

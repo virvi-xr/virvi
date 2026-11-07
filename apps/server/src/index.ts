@@ -9,6 +9,7 @@ import { runMigrations } from './db/migrate.js'
 import { buildApp } from './app.js'
 import { startLifecycleSweep } from './venues/lifecycle.js'
 import { startDclRedeploySweep } from './services/dcl/redeploy-sweep.js'
+import { startDclMapSweep } from './services/dcl/map-status.js'
 import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
 import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
@@ -85,6 +86,10 @@ async function main() {
   if (config.dclRedeploySweepMs > 0) {
     startDclRedeploySweep(config.dclRedeploySweepMs)
     console.log(`[virvi-server] Decentraland redeploy sweep every ${config.dclRedeploySweepMs}ms`)
+  }
+  if (config.dclMapSweepMs > 0) {
+    startDclMapSweep(config.dclMapSweepMs)
+    console.log(`[virvi-server] Decentraland map data sweep every ${config.dclMapSweepMs}ms`)
   }
   if (hyperfyHosting().available) {
     startHostedWorldSweep(SWEEP_INTERVAL_MS)

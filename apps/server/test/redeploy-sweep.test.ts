@@ -112,6 +112,11 @@ async function deployedOnce() {
 }
 
 describe('sweepRedeploys', () => {
+  it('a deploy that went live starts the map data checks for its entity (LIV-135)', async () => {
+    const { dest } = await deployedOnce()
+    expect(await destRow(dest.id)).toMatchObject({ mapStatus: 'pending', mapEntityId: fake.deployed[0].entityId, mapAssets: null })
+  })
+
   it('waits out the batch window: not at 30 s, deployed at 61 s', async () => {
     const { dest } = await setup()
     expect(await sweepAndSettle(at(0))).toMatchObject({ started: 0 })

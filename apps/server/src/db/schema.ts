@@ -740,6 +740,9 @@ export const dclDestinationModeEnum = pgEnum('dcl_destination_mode', ['virvi', '
 export const dclDestinationKindEnum = pgEnum('dcl_destination_kind', ['world', 'parcels'])
 export const dclDestinationStatusEnum = pgEnum('dcl_destination_status', ['ok', 'needs_review', 'over_budget', 'unreachable'])
 
+/** pending: waiting for abgen; ready: published; none: not published within the check window; unknown: never checked. */
+export type MapStatus = 'pending' | 'ready' | 'none' | 'unknown'
+
 /** A Decentraland World a scene deploys to. Virvi never holds the owner's key. */
 export const dclWorldDestinations = pgTable('dcl_world_destinations', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -764,10 +767,19 @@ export const dclWorldDestinations = pgTable('dcl_world_destinations', {
   adopted: boolean('adopted').notNull().default(false), // true = the owner's own scene code, never touched
   spawn: jsonb('spawn').$type<{ x: number; y: number; z: number }>(), // metres, plot-relative; null = plot centre
   pendingImportId: uuid('pending_import_id').references((): AnyPgColumn => sceneImports.id, { onDelete: 'set null' }), // an uploaded scene waiting on this World
+  // LIV-135: whether Decentraland's abgen published an Initial Scene State (the map/LOD snapshot) for mapEntityId, the
+  // entity Virvi last deployed. 'unknown' = never checked (deployed before this, or not by Virvi); see services/dcl/map-status.ts
+  mapStatus: text('map_status').$type<MapStatus>().notNull().default('unknown'),
+  mapEntityId: text('map_entity_id'),
+  mapAssets: integer('map_assets'), // models in the snapshot; null when not ready (or too big to count)
+  mapSince: timestamp('map_since', { withTimezone: true }), // when mapEntityId went live: the check schedule counts from here
+  mapCheckAt: timestamp('map_check_at', { withTimezone: true }), // next check due; null once ready or given up
+  mapCheckedAt: timestamp('map_checked_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   sceneIdx: index('dcl_world_destinations_scene_idx').on(t.sceneId),
+  mapDueIdx: index('dcl_destinations_map_due').on(t.mapCheckAt).where(sql`map_status = 'pending'`),
   parcelsBaseUq: uniqueIndex('dcl_destinations_parcels_base').on(t.base).where(sql`kind = 'parcels'`),
 }))
 

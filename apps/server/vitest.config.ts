@@ -34,6 +34,9 @@ export default defineConfig({
       LOG_LEVEL: 'silent',
       LIFECYCLE_SWEEP_MS: '0',
       DCL_REDEPLOY_SWEEP_MS: '0',
+      DCL_MAP_SWEEP_MS: '0',
+      // Never the real abgen CDN: tests inject a fetcher, and a default one that slipped through fails fast
+      DCL_MAP_MANIFEST_URL: 'http://127.0.0.1:9/abgen-manifests',
       ANALYTICS_JOBS: 'false',
       LOCAL_STORAGE_PATH: join(STORAGE, 'uploads'),
       PRIVATE_STORAGE_PATH: join(STORAGE, 'private'),

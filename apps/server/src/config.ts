@@ -362,6 +362,9 @@ export const config = {
   // How often the venue booking lifecycle sweep runs (0 disables, used in tests)
   lifecycleSweepMs: parseInt(env('LIFECYCLE_SWEEP_MS') || '5000'),
   dclRedeploySweepMs: parseInt(env('DCL_REDEPLOY_SWEEP_MS') || '30000'),
+  // LIV-135: checks whether Decentraland built a map snapshot (Initial Scene State) for each new deploy (0 disables)
+  dclMapSweepMs: parseInt(env('DCL_MAP_SWEEP_MS') || '60000'),
+  dclMapManifestUrl: (env('DCL_MAP_MANIFEST_URL') || 'https://abgen-cdn.decentraland.org/LOD/lods-unity/manifests').replace(/\/+$/, ''),
 
   // Analytics background jobs (session close, rollups, retention); disabled in tests
   analyticsJobsEnabled: env('ANALYTICS_JOBS') !== 'false',
