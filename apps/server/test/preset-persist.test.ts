@@ -62,4 +62,25 @@ describe('persistPresetUpdate merges properties', () => {
     expect(r.position).toEqual({ x: 5, y: 5, z: 5 })
     expect(r.properties).toEqual({ tint: 'red' })
   })
+
+  it('instance create keeps a parent in the same preset and drops any other (LIV-138)', async () => {
+    const { c, el } = await setup({ textureSrc: 'https://x/a.png' })
+    const parent = await createInstance(el.id)
+    const stranger = await createUser()
+    const foreign = await createScene(stranger)
+    const foreignInst = await createInstance((await createElement(foreign.preset.id)).id)
+    const make = (id: string, p: string) =>
+      c.room.send('scene_preset_update', {
+        action: 'create', element: 'image', instance: true,
+        elementData: { sk: el.id }, instanceData: { sk: id, elementId: el.id, parent: p, position: { x: 1, y: 1, z: 1 } },
+      })
+    const good = '11111111-1111-4111-8111-111111111111'
+    const bad = '22222222-2222-4222-8222-222222222222'
+    make(good, parent.id)
+    make(bad, foreignInst.id)
+    await settle()
+    const inst = async (id: string) => (await db.query.sceneElementInstances.findFirst({ where: eq(sceneElementInstances.id, id) }))!
+    expect((await inst(good)).parentInstanceId).toBe(parent.id)
+    expect((await inst(bad)).parentInstanceId).toBeNull()
+  })
 })

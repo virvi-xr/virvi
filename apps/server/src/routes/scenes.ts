@@ -25,6 +25,7 @@ import { getSubscription } from '../integrations/stripe.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
+import { checkParentInstance } from '../scenes/instance-parent.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
 import { SceneGone, ThumbnailError, bodyLimitFor, deleteThumbnailFile, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
 import { StoreMediaError } from '../media/store.js'
@@ -139,6 +140,17 @@ function trialElementRefusal(type: unknown, properties: unknown): 'element_type'
   if (typeof type !== 'string' || !TRIAL_ELEMENT_TYPES.has(type)) return 'element_type'
   const src = (properties as { modelSrc?: unknown } | null | undefined)?.modelSrc
   if (typeof src === 'string' && src.includes('/room-sets/')) return 'room_set'
+  return null
+}
+
+function trialElementChangeRefusal(
+  element: { type: string; properties: unknown },
+  body: { type?: unknown; properties?: unknown },
+): 'element_type' | 'room_set' | null {
+  if (body.type !== undefined && body.type !== element.type && trialElementRefusal(body.type, null) === 'element_type') return 'element_type'
+  const src = (body.properties as { modelSrc?: unknown } | null | undefined)?.modelSrc
+  const before = (element.properties as { modelSrc?: unknown } | null | undefined)?.modelSrc
+  if (src !== before && typeof src === 'string' && src.includes('/room-sets/')) return 'room_set'
   return null
 }
 
@@ -594,7 +606,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
       if (!canWriteElement(access, element, { propertyKeys, fieldKeys })) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
-      const trialRefusal = request.user.trial ? trialElementRefusal(request.body.type ?? element.type, request.body.properties) : null
+      // A trial may keep what an element already is (a locked type, a room set placed before); only a new one is refused (LIV-138)
+      const trialRefusal = request.user.trial ? trialElementChangeRefusal(element, request.body) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
 
       const updates: Record<string, unknown> = { updatedAt: new Date() }
@@ -714,6 +727,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
         withCollisions,
         properties,
       } = request.body
+      const parent = await checkParentInstance(element.presetId, parentInstanceId)
+      if (!parent.ok) return reply.status(400).send({ error: 'bad_parent', message: parent.message })
 
       const [instance] = await db
         .insert(sceneElementInstances)
@@ -726,7 +741,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
           rotation: rotation ?? null,
           scale: scale ?? null,
           clickEvent: clickEvent ?? null,
-          parentInstanceId: parentInstanceId || null,
+          parentInstanceId: parent.parentInstanceId,
           withCollisions: withCollisions ?? false,
           properties: properties ?? null,
         })
@@ -770,11 +785,15 @@ export default async function sceneRoutes(app: FastifyInstance) {
         'rotation',
         'scale',
         'clickEvent',
-        'parentInstanceId',
         'withCollisions',
         'properties',
       ] as const) {
         if (request.body[key] !== undefined) updates[key] = request.body[key]
+      }
+      if (request.body.parentInstanceId !== undefined) {
+        const parent = await checkParentInstance(instance.element.presetId, request.body.parentInstanceId, instanceId)
+        if (!parent.ok) return reply.status(400).send({ error: 'bad_parent', message: parent.message })
+        updates.parentInstanceId = parent.parentInstanceId
       }
 
       const [updated] = await db

@@ -30,6 +30,7 @@ import { normalizeUrl, withLiveStatus, withLiveVideo } from '../streaming/live-s
 import { VideoSourceType, type VenueAccessMessage } from '@virvixr/shared'
 import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
+import { checkParentInstance } from '../scenes/instance-parent.js'
 
 interface JoinOptions {
   sessionToken: string
@@ -737,6 +738,10 @@ export class VirviSceneRoom extends Room {
       // Create a new instance
       const elementId = target.elementId
       if (!elementId) return
+      // Same parent rule as the REST routes (LIV-138); the copy is already broadcast, so a bad parent is dropped, not refused
+      const owner = await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, elementId), columns: { presetId: true } })
+      if (!owner) return
+      const parent = await checkParentInstance(owner.presetId, instanceData.parent)
 
       await db.insert(sceneElementInstances).values({
         id: instanceData.sk || instanceData.id || undefined,
@@ -748,7 +753,7 @@ export class VirviSceneRoom extends Room {
         rotation: instanceData.rotation || null,
         scale: instanceData.scale || null,
         clickEvent: instanceData.clickEvent || null,
-        parentInstanceId: instanceData.parent || null,
+        parentInstanceId: parent.ok ? parent.parentInstanceId : null,
         withCollisions: instanceData.withCollisions ?? false,
         properties: this.extractProperties(instanceData),
       })

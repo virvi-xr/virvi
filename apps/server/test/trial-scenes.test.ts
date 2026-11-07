@@ -86,6 +86,27 @@ describe('trial scenes', () => {
     expect([put.statusCode, put.json()]).toEqual([403, { error: 'account_required', action: 'room_set' }])
   })
 
+  it('a trial edits an element whose type is locked or whose room set came from before; it only refuses new ones (LIV-138)', async () => {
+    const t = await makeTrial()
+    const locked = await createElement(t.presetId, { type: 'widget', name: 'Old widget', properties: { value: 1 } })
+    const rename = await call('PUT', `/api/elements/${locked.id}`, t.h, { name: 'Renamed', type: 'widget' })
+    expect([rename.statusCode, rename.json().element?.name]).toEqual([200, 'Renamed'])
+    const bare = await call('PUT', `/api/elements/${locked.id}`, t.h, { name: 'Again' })
+    expect(bare.statusCode).toBe(200)
+
+    const model = await createElement(t.presetId, { type: 'model', name: 'M', properties: { modelSrc: 'https://cdn.test/m.glb' } })
+    const toAd = await call('PUT', `/api/elements/${model.id}`, t.h, { type: 'ad_space' })
+    expect([toAd.statusCode, toAd.json()]).toEqual([403, { error: 'account_required', action: 'element_type' }])
+
+    const roomSrc = 'https://cdn.test/room-sets/abc/set.glb'
+    const toRoom = await call('PUT', `/api/elements/${model.id}`, t.h, { properties: { modelSrc: roomSrc } })
+    expect([toRoom.statusCode, toRoom.json()]).toEqual([403, { error: 'account_required', action: 'room_set' }])
+
+    const room = await createElement(t.presetId, { type: 'model', name: 'Room', properties: { modelSrc: roomSrc } })
+    const keep = await call('PUT', `/api/elements/${room.id}`, t.h, { name: 'Lobby', properties: { modelSrc: roomSrc } })
+    expect([keep.statusCode, keep.json().element?.name]).toEqual([200, 'Lobby'])
+  })
+
   it("a trial's actor never reaches admin", async () => {
     const t = await makeTrial('admin')
     await db.update(users).set({ role: 'admin' }).where(eq(users.id, t.u.id))
