@@ -34,6 +34,43 @@ const virvi = await createVirvi()
 
 That's it. All scene elements configured in the Virvi dashboard render automatically.
 
+## Show your Virvi models on the Decentraland map
+
+For scenes that run your own code: uploaded through [Scene Import](/dashboard/scene-import/), or built elsewhere and connected to a Virvi scene. Scenes Virvi builds for you already do this.
+
+```typescript
+import { createVirvi, placeDeployedModels } from '@virvixr/dcl'
+
+export async function main() {
+  await placeDeployedModels()
+  await createVirvi()
+}
+```
+
+This needs `@virvixr/dcl` 2.11.0 or later.
+
+**Why it's needed.** Decentraland builds the map and the distant view of your scene from a snapshot. To take it, Decentraland runs your scene for a few seconds with no network, so models Virvi adds while the scene is live never get in.
+
+**What it does:**
+- When Virvi deploys your scene, it adds one file next to yours, `virvi/placements.json`. It lists where each placed copy of the Virvi models in that deploy goes.
+- `placeDeployedModels()` reads that file and places those models straight away. Decentraland's snapshot then has them, and visitors see them before Virvi connects.
+- When `createVirvi()` connects, it takes those models over without loading them again. It removes any you've deleted since, or that belong to another preset.
+
+Without the file (nothing placed, or a deploy from before this existed), it places nothing. It never throws, and it stops waiting after 5 seconds.
+
+Import both functions from `@virvixr/dcl`, and `await` the first before calling `createVirvi()`. Called once Virvi has loaded the scene, `placeDeployedModels()` does nothing. If you never call it, nothing changes.
+
+**When the file changes:**
+- Virvi writes the file every time it deploys the scene: a new upload, or a redeploy when you add models. It only lists models that are in that deploy.
+- Moving a model in Virvi doesn't redeploy the scene on its own. Until the next deploy, the snapshot keeps the earlier positions.
+- Virvi never changes your code or `scene.json` for this. A `virvi/placements.json` inside an upload (a "Download live" zip has one) is replaced with the current one.
+
+**The map photo.** Decentraland re-captures the map by hand, now and then. So even with the snapshot ready, the map picture may take a while to change. Worlds don't have a satellite map yet.
+
+**How to check:**
+- **On the dashboard:** the destination's card has a **Map data** line under **Last deploy**. It says *ready (N models)*, *waiting for Decentraland*, or that Decentraland didn't build a snapshot. Virvi checks for 24 hours after each deploy it makes. A scene you deploy yourself shows no Map data line until Virvi deploys it.
+- **Directly:** open `https://abgen-cdn.decentraland.org/LOD/lods-unity/manifests/<entityId>_InitialSceneState.json` with the deploy's entity id. A 200 whose `assets` list your models means the snapshot is ready.
+
 ## Configuration
 
 ```typescript
