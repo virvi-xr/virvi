@@ -89,6 +89,14 @@ def test_closing_asks_for_listing_fields_on_wearables_only():
     assert '"rarity"' not in emote and '"loop": true | false' in emote
 
 
+def test_closing_has_emotes_pose_legs_with_ik_and_check_limb_overlaps():
+    emote = closing('emote', None)
+    for words in ('emotelib', "`leg`", "`reach`", 'limb_overlaps', 'left leg against right leg'):
+        assert words in emote
+    for other in (closing('wearable', ['hat']), closing('scene', None)):
+        assert 'emotelib' not in other and 'limb_overlaps' not in other
+
+
 def test_pieces_are_read_into_the_stage(tmp_path, skills):
     cap(tmp_path / 'design')
     pieces, _, error = collect(tmp_path / 'design', 'wearable', {}, stage=tmp_path / 'stage')

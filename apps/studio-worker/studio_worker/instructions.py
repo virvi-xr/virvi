@@ -42,11 +42,14 @@ def closing(kind: str, selected_slots: list[str] | None, agent: str | None = Non
         check = ('Run the skills\' checks on every piece you changed and fix every FAIL: check_scene_model.py for each '
                  'piece (with --sittables for anything sittable), and check_walk.py with route.json for the building.')
     elif kind == 'emote':
-        what = 'Build one Decentraland emote. Its folder is out/emote/.'
+        what = ('Build one Decentraland emote. Its folder is out/emote/. Pose with the skill\'s emotelib: the legs with '
+                '`leg` IK and the arms with `reach`, never raw rotations on the leg bones.')
         layout = LAYOUT % ', "loop": true | false'
         look = ('Before you finish, run `studio-preview out/emote` and open the images it prints: check the hands, '
                 'limbs and props through the animation and fix any clipping you see.')
-        check = 'Run the emote checker (check_emote.py) on the GLB and fix every FAIL.'
+        check = ('Run the emote checker (check_emote.py) on the GLB and fix every FAIL. Run emotelib\'s `limb_overlaps` '
+                 'on every frame, left leg against right leg and each arm against the torso and legs, and fix every '
+                 'overlap: limbs that touch on purpose rest against each other, never pass through.')
     else:
         what = (f'Build only these slots: {", ".join(selected_slots)}.' if selected_slots else
                 'If the idea is settled enough to build, build it.')
