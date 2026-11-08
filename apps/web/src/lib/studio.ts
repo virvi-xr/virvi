@@ -88,7 +88,12 @@ export type StudioMessage = {
   proposal: StudioProposal | null
   jobId: string | null
   createdAt: string
+  /** A Virvi admin wrote it, helping on the design: shown as Virvi support, never as the owner's words. */
+  support?: boolean
 }
+
+/** Whose design a Virvi admin is helping on (the server sends it only to an admin who isn't the owner). */
+export type StudioSupportView = { ownerId: string; ownerName: string | null; ownerEmail: string | null; trial: boolean }
 
 /** A clipping fix's emote view (the server's `fixClipping`). */
 export type FixClipping = { emote: string; bodyShape: 'male' | 'female'; outfit: string }
@@ -112,6 +117,8 @@ export type StudioDetail = {
   set: StudioSet
   lastPrompt: { jobId: string; outcome: string | null; status: string } | null
   uploads: StudioUpload[]
+  /** Present when a Virvi admin is viewing someone else's design (Virvi support). */
+  support?: StudioSupportView
 }
 
 /** A file the owner gave the agent (the server's `publicUpload`). */
@@ -431,9 +438,16 @@ export const canSend = (mode: ComposerMode) => mode === 'send' || mode === 'cont
 export const reloadsOn = (e: StudioEvent) =>
   e.type === 'job' && (e.status === 'queued' || e.status === 'done' || e.status === 'failed')
 
+/** Under the message box for a Virvi admin helping on someone else's design: no allowance meter, nothing is used. */
+export const SUPPORT_NOTE = 'Messages you send as Virvi support are free: they don’t use their prompts or yours.'
+
 export function composerState(detail: StudioDetail, usage: StudioUsage | null, now: Date): { mode: ComposerMode; note: string } {
-  const note = !usage ? '' : usage.trial ? `${usage.promptsLeft} of ${usage.allowance} free prompts left` : `${usage.promptsLeft} prompts left today · ${usage.plan} plan`
-  if (detail.design.archivedAt) return { mode: 'archived', note: 'This design is archived. Unarchive it to keep working on it.' }
+  // Support: the usage the page has is the admin's own, which doesn't apply here
+  if (detail.support) usage = null
+  const note = detail.support ? SUPPORT_NOTE : !usage ? '' : usage.trial ? `${usage.promptsLeft} of ${usage.allowance} free prompts left` : `${usage.promptsLeft} prompts left today · ${usage.plan} plan`
+  if (detail.design.archivedAt) {
+    return { mode: 'archived', note: detail.support ? 'This design is archived. Only its owner can unarchive it.' : 'This design is archived. Unarchive it to keep working on it.' }
+  }
   if (usage?.paused) return { mode: 'paused', note: PAUSED_NOTE }
   if (detail.activeJob?.type === 'prompt') return { mode: 'busy', note: 'The agent is still working on your last message.' }
   if (detail.lastPrompt?.outcome === 'ceiling' || detail.lastPrompt?.outcome === 'turns') return { mode: 'continue', note }

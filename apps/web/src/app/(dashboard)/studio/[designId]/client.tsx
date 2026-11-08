@@ -10,6 +10,7 @@ import {
   designBadge, designIdFromPath, kindLabel, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn, selectionCategories, wornState,
   type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioSet, type StudioUsage, type WornState,
 } from '@/lib/studio'
+import { designControls, supportBanner } from '@/lib/studio-support'
 import Conversation from './Conversation'
 import Preview from './Preview'
 import Finalize, { EmoteChecklist } from './Finalize'
@@ -157,16 +158,22 @@ export default function StudioDesignPage() {
 
   const d = detail.design
   const badge = designBadge(d)
+  const controls = designControls(detail)
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
-        crumbs={[{ label: 'Design Studio', href: '/studio' }, d.name]}
+        crumbs={detail.support ? [{ label: 'Studio admin', href: '/admin/studio' }, d.name] : [{ label: 'Design Studio', href: '/studio' }, d.name]}
         title={d.name}
         subtitle={<span className="flex flex-wrap items-center gap-2">{kindLabel(d.kind)} <Badge tone={badge.tone}>{badge.label}</Badge></span>}
-        actions={<RowMenu label="Design actions" items={[d.archivedAt
+        actions={controls.designMenu ? <RowMenu label="Design actions" items={[d.archivedAt
           ? { label: 'Unarchive', onSelect: () => setArchived(false) }
-          : { label: 'Archive', onSelect: () => setArchived(true), confirm: 'Archive this design?' }]} />}
+          : { label: 'Archive', onSelect: () => setArchived(true), confirm: 'Archive this design?' }]} /> : undefined}
       />
+      {detail.support && (
+        <p className="mb-4 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" role="status">
+          {supportBanner(detail.support)}
+        </p>
+      )}
       {notice && (
         <p className="mb-4 text-sm text-amber-300" role="alert">
           {notice.text} {notice.action === 'settings' && <Link href="/settings" className="underline">Settings</Link>}
@@ -182,11 +189,14 @@ export default function StudioDesignPage() {
         <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}
           step={step} onStep={setStep} emoteTarget={emoteTarget} worn={worn}
           finalizeStep={detail.design.kind === 'scene'
-            ? <p className="p-4 text-sm text-gray-300">Each piece you finalize goes into your 3D Models, private to you, ready to place in a scene.</p>
+            ? <p className="p-4 text-sm text-gray-300">{detail.support
+              ? 'Each piece finalized goes into the owner’s 3D Models, private to them, ready to place in a scene.'
+              : 'Each piece you finalize goes into your 3D Models, private to you, ready to place in a scene.'}</p>
             : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={openEmote} /></div>}>
           <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'}
-            detail={detail} onOpenEmote={openEmote} selected={selected} onSelected={setSelected} worn={worn} />
-          <PaidRevisions designId={designId} pieces={detail.pieces} onChanged={reload} kind={detail.design.kind} />
+            detail={detail} onOpenEmote={openEmote} selected={selected} onSelected={setSelected} worn={worn}
+            support={detail.support} onChanged={reload} />
+          <PaidRevisions designId={designId} pieces={detail.pieces} onChanged={reload} kind={detail.design.kind} owner={controls.reports} />
         </Preview>
       </div>
     </div>

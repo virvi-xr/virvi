@@ -8,6 +8,7 @@ import {
   agentLabel, canSend, takeUnsent, categoryLabel, checkoutHref, composerState, formatCents, latestRenderUrl, trialCtx, trialNudge, initialTicks, progressFor, refusalMessage, slotSelection,
   type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage,
 } from '@/lib/studio'
+import { designControls, messageIsViewers, messageLabel } from '@/lib/studio-support'
 import { AgentPicker } from '../AgentPicker'
 import Markdown from './Markdown'
 import Uploads from './Uploads'
@@ -37,7 +38,9 @@ export default function Conversation({ designId, detail, usage, events, onChange
   }, [designId])
 
   const composer = composerState(detail, usage, new Date())
-  const nudge = trialNudge(usage)
+  const controls = designControls(detail)
+  // Support's own allowance is no business of this design's
+  const nudge = detail.support ? null : trialNudge(usage)
   const active = detail.activeJob?.type === 'prompt' ? detail.activeJob : null
   const failing = detail.pieces.filter((p) => p.revision?.checker?.pass === false)
   const lastMessage = detail.messages[detail.messages.length - 1]
@@ -86,7 +89,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }}
       onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropped([...e.dataTransfer.files]) } setDragging(false) }}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 p-3">
-        <AgentPicker name="design-agent" value={detail.design.agent} onChange={switchAgent} disabled={!!active || sending} />
+        <AgentPicker name="design-agent" value={detail.design.agent} onChange={switchAgent} disabled={!!active || sending || !controls.switchAgent} />
       </div>
 
       <div ref={listRef} className="flex max-h-[60vh] min-h-64 flex-1 flex-col gap-3 overflow-y-auto p-4">
@@ -98,7 +101,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
           </p>
         )}
         {detail.messages.map((m) => (
-          <Message key={m.id} m={m}>
+          <Message key={m.id} m={m} label={messageLabel(m, detail)} viewers={messageIsViewers(m, detail)}>
             {m === openProposal && m.proposal && (
               <ProposalPicker proposal={m.proposal} disabled={sending || composer.mode === 'out' || composer.mode === 'paused'}
                 onBuild={(slots) => send({ text: `Build these: ${slots.map(categoryLabel).join(', ')}`, selectedSlots: slots })} />
@@ -120,8 +123,8 @@ export default function Conversation({ designId, detail, usage, events, onChange
       </div>
 
       <div className="border-t border-gray-800 p-3">
-        <Uploads designId={designId} kind={detail.design.kind} uploads={detail.uploads ?? []} disabled={composer.mode === 'archived' || composer.mode === 'paused'} dropped={dropped} onChanged={onChanged} />
-        {refusal && <RefusalLine refusal={refusal} usage={usage} onFix={() => send({ fixChecks: true })} />}
+        <Uploads designId={designId} kind={detail.design.kind} uploads={detail.uploads ?? []} disabled={composer.mode === 'archived' || composer.mode === 'paused'} dropped={dropped} onChanged={onChanged} readOnly={!controls.uploads} />
+        {refusal && <RefusalLine refusal={refusal} usage={controls.topup ? usage : null} onFix={() => send({ fixChecks: true })} />}
         {failing.length > 0 && !active && (
           <button type="button" disabled={sending} onClick={() => send({ fixChecks: true })}
             className="mb-2 rounded-md border border-amber-500/40 px-3 py-1.5 text-sm text-amber-200 hover:bg-amber-500/10 disabled:opacity-50">
@@ -139,7 +142,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
         ) : composer.mode === 'out' || composer.mode === 'archived' || composer.mode === 'paused' ? (
           <div className="text-sm text-gray-400">
             <p>{composer.note}</p>
-            {composer.mode === 'out' && usage && <TopupButton usage={usage} onRefusal={setRefusal} />}
+            {composer.mode === 'out' && usage && controls.topup && <TopupButton usage={usage} onRefusal={setRefusal} />}
           </div>
         ) : (
           <form onSubmit={(e) => { e.preventDefault(); submit() }}>
@@ -148,7 +151,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
               disabled={composer.mode === 'busy'}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
-              placeholder={composer.mode === 'busy' ? 'The agent is still working on your last message.' : 'Describe what you want, or what to change'}
+              placeholder={composer.mode === 'busy' ? 'The agent is still working on your last message.' : detail.support ? 'Message the agent as Virvi support' : 'Describe what you want, or what to change'}
               className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-blue-400 disabled:opacity-60" />
             <div className="mt-2 flex items-center justify-between gap-3">
               <div className="text-xs text-gray-500">
@@ -164,13 +167,15 @@ export default function Conversation({ designId, detail, usage, events, onChange
   )
 }
 
-function Message({ m, children }: { m: StudioMessage; children?: React.ReactNode }) {
+/** `label`: who said it, when it is said (messageLabel); `viewers`: on the right, as the viewer's own words. */
+function Message({ m, label, viewers, children }: { m: StudioMessage; label: string | null; viewers: boolean; children?: React.ReactNode }) {
   if (m.role === 'system') return <p className="self-center px-4 text-center text-xs text-gray-500">{m.text}</p>
-  const mine = m.role === 'user'
+  const words = m.role === 'user'
+  const tone = m.support ? 'bg-emerald-600/15 text-emerald-50 border border-emerald-500/30' : words ? 'bg-blue-600/20 text-blue-50' : 'border border-gray-800 bg-gray-950 text-gray-200'
   return (
-    <div className={`max-w-[85%] break-words rounded-lg px-3 py-2 text-sm ${mine ? 'self-end whitespace-pre-wrap bg-blue-600/20 text-blue-50' : 'self-start border border-gray-800 bg-gray-950 text-gray-200'}`}>
-      {!mine && <p className="mb-1 text-xs text-gray-500">{agentLabel(m.agent)}</p>}
-      {mine ? m.text : <Markdown text={m.text} />}
+    <div className={`max-w-[85%] break-words rounded-lg px-3 py-2 text-sm ${viewers ? 'self-end' : 'self-start'} ${words ? 'whitespace-pre-wrap' : ''} ${tone}`}>
+      {label && <p className={`mb-1 text-xs ${m.support ? 'font-medium text-emerald-300' : 'text-gray-500'}`}>{label}</p>}
+      {words ? m.text : <Markdown text={m.text} />}
       {children}
     </div>
   )

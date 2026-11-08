@@ -7,7 +7,7 @@ import {
   type FinalizedRevision, type StudioPiece,
 } from '@/lib/studio'
 
-type Props = { designId: string; pieces: StudioPiece[]; onChanged: () => Promise<void>; kind?: string }
+type Props = { designId: string; pieces: StudioPiece[]; onChanged: () => Promise<void>; kind?: string; owner?: boolean }
 
 /** Save a downloaded blob under its file name. */
 function save(blob: Blob, filename: string) {
@@ -22,9 +22,10 @@ function save(blob: Blob, filename: string) {
 /**
  * Every paid piece's revisions, whichever tab is selected: download, a free retry when packaging failed, and mistake
  * reports. With two or more pieces ready, "Download all" fetches them as one zip; while pieces package, it says how many
- * are ready.
+ * are ready. `owner`: the owner is looking (false for Virvi support), so mistake reports, MANA back and their 3D Models
+ * link show.
  */
-export default function PaidRevisions({ designId, pieces, onChanged, kind }: Props) {
+export default function PaidRevisions({ designId, pieces, onChanged, kind, owner = true }: Props) {
   const api = useApi()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,7 +61,7 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind }: Pro
         <section key={piece.category} aria-label={piece.name}>
           {several && <h4 className="px-4 pt-3 text-xs font-medium uppercase tracking-wide text-gray-400">{piece.name}</h4>}
           <ul className="divide-y divide-gray-800">
-            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} />)}
+            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} owner={owner} />)}
           </ul>
         </section>
       ))}
@@ -68,7 +69,7 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind }: Pro
   )
 }
 
-function PaidRevision({ designId, category, f, onChanged, scene }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean }) {
+function PaidRevision({ designId, category, f, onChanged, scene, owner }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean; owner: boolean }) {
   const api = useApi()
   const actions = revisionActions(f, new Date())
   const [busy, setBusy] = useState(false)
@@ -128,10 +129,10 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
             <Badge tone="success">{f.report.status === 'waived' ? 'Waived' : 'Refunded'}</Badge>
           )}
           {actions.packaging && <span className="text-gray-400">Packaging…</span>}
-          {actions.download && scene && <a href="/assets" className="text-blue-300 underline">In your 3D Models</a>}
+          {actions.download && scene && owner && <a href="/assets" className="text-blue-300 underline">In your 3D Models</a>}
           {actions.download && <PrimaryButton type="button" disabled={busy} onClick={download}>Download</PrimaryButton>}
           {actions.retry && <PrimaryButton type="button" disabled={busy} onClick={retry}>Try again</PrimaryButton>}
-          {actions.report === 'open' && !reporting && refunded === null && (
+          {owner && actions.report === 'open' && !reporting && refunded === null && (
             <button type="button" onClick={() => setReporting(true)} className="text-gray-400 underline hover:text-white">Report a mistake</button>
           )}
         </div>
@@ -156,7 +157,7 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
           {refunded.creditedCents > 0 && ` ${formatCredit(refunded.creditedCents)} went to your Virvi credit, for your next checkout.`}
         </p>
       )}
-      {mana.offer && (
+      {owner && mana.offer && (
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <p className="text-gray-300">You paid {formatCredit(f.report!.manaCents!)} of this in MANA.</p>
           <button type="button" disabled={busy} onClick={manaInstead} className="rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50">

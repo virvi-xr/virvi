@@ -6,8 +6,9 @@ import { Badge, PrimaryButton } from '@/components/ui'
 import {
   canReport, checkoutBody, checkoutHref, checkoutReportsKey, dialogTotal, emoteChecklist, finalizeChoices, finalizeStrip, formatCents, initialSelection,
   latestOnly, lineNote, HELD_REPORT_COPY, PRICE_LABEL, REPORT_MAX, refusalMessage, reportOk, selectionCategories, selectionProblem, toggleSelection,
-  triangleWarning, wornDetail, type Quote, type StudioDetail, type StudioKind, type WornState,
+  triangleWarning, wornDetail, type Quote, type StudioDetail, type StudioKind, type StudioSupportView, type WornState,
 } from '@/lib/studio'
+import { supportFinalizeLabel, supportOwnerName } from '@/lib/studio-support'
 import { NONE_TICKED, STATE_BADGE, WORN_NOTE, emoteName, type EmoteTarget } from './EmotesStep'
 
 /**
@@ -64,10 +65,12 @@ type Props = {
   /** The ticked pieces (null: not chosen yet, so every payable piece), kept by the page while the dialog closes. */
   selected: string[] | null; onSelected: (categories: string[] | null) => void
   worn: WornState
+  /** Virvi support finalizing for the owner: free, at once, no checkout page; then the page re-reads the design. */
+  support?: StudioSupportView; onChanged?: () => Promise<void>
 }
 
 /** The finalize strip under the preview, and the dialog that pays for the ticked pieces (every payable one at first). */
-export default function Finalize({ designId, kind, quote, busy, detail, onOpenEmote, selected, onSelected, worn }: Props) {
+export default function Finalize({ designId, kind, quote, busy, detail, onOpenEmote, selected, onSelected, worn, support, onChanged }: Props) {
   const [open, setOpen] = useState(false)
   const strip = finalizeStrip(quote, kind)
   return (
@@ -82,7 +85,7 @@ export default function Finalize({ designId, kind, quote, busy, detail, onOpenEm
       )}
       {open && quote && (
         <FinalizeDialog designId={designId} quote={quote} selected={selected ?? initialSelection(quote)} onSelected={onSelected}
-          onClose={() => { setOpen(false); onSelected(null) }}>
+          onClose={() => { setOpen(false); onSelected(null) }} support={support} onChanged={onChanged}>
           {kind !== 'scene' && <EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />}
         </FinalizeDialog>
       )}
@@ -90,8 +93,9 @@ export default function Finalize({ designId, kind, quote, busy, detail, onOpenEm
   )
 }
 
-function FinalizeDialog({ designId, quote, selected, onSelected, onClose, children }: {
+function FinalizeDialog({ designId, quote, selected, onSelected, onClose, children, support, onChanged }: {
   designId: string; quote: Quote; selected: string[]; onSelected: (categories: string[]) => void; onClose: () => void; children: React.ReactNode
+  support?: StudioSupportView; onChanged?: () => Promise<void>
 }) {
   const api = useApi()
   const [reports, setReports] = useState<Record<string, string>>({})
@@ -134,7 +138,24 @@ function FinalizeDialog({ designId, quote, selected, onSelected, onClose, childr
 
   // Paying happens on the checkout page (card and MANA side by side, credit applied); the ticked pieces go in its
   // link, the reports with it
+  const [payError, setPayError] = useState<string | null>(null)
+  // Support: the ticked pieces are finalized for the owner here and now, free
+  const finalizeForOwner = async () => {
+    setPaying(true)
+    setPayError(null)
+    try {
+      await api.finalizeStudio(designId, { ...(chosen ? { categories: chosen } : {}), method: 'card' })
+      await onChanged?.()
+      onClose()
+    } catch (err) {
+      setPayError(refusalMessage(err as never, new Date()).text)
+    } finally {
+      setPaying(false)
+    }
+  }
+
   const pay = () => {
+    if (support) { finalizeForOwner(); return }
     setPaying(true)
     const body = checkoutBody(Object.fromEntries(reported.map((c) => [c, reports[c]])), chosen)
     try {
@@ -150,7 +171,11 @@ function FinalizeDialog({ designId, quote, selected, onSelected, onClose, childr
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !paying) onClose() }}>
       <div role="dialog" aria-modal="true" aria-labelledby="finalize-title" className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
         <h2 id="finalize-title" className="text-lg font-semibold">Finalize</h2>
-        <p className="mt-1 text-sm text-gray-400">Tick the pieces to finalize now. You can keep working on the rest and finalize them later.</p>
+        <p className="mt-1 text-sm text-gray-400">
+          {support
+            ? `Tick the pieces to finalize for ${supportOwnerName(support)}. They’re theirs at once, as if they had paid, and nobody is charged.`
+            : 'Tick the pieces to finalize now. You can keep working on the rest and finalize them later.'}
+        </p>
         <ul className="mt-4 divide-y divide-gray-800">
           {finalizeChoices(quote).map((c) => {
             const ticked = c.pickable && selected.includes(c.category)
@@ -180,7 +205,7 @@ function FinalizeDialog({ designId, quote, selected, onSelected, onClose, childr
                     </p>
                   )}
                 </div>
-                {l && canReport(l, selected) && (
+                {l && !support && canReport(l, selected) && (
                   <label className="mt-2 flex items-center gap-2 text-sm text-gray-300">
                     <input type="checkbox" checked={c.category in reports} onChange={() => toggleReport(c.category)} />
                     This revision fixes the agent’s mistake
@@ -208,10 +233,11 @@ function FinalizeDialog({ designId, quote, selected, onSelected, onClose, childr
         </div>
         {problem && <p className="mt-2 text-sm text-amber-300" role="status">{problem}</p>}
         {!problem && quoteError && <p className="mt-2 text-sm text-amber-300" role="alert">{quoteError}</p>}
+        {payError && <p className="mt-2 text-sm text-amber-300" role="alert">{payError}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} disabled={paying} className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700">Cancel</button>
           <PrimaryButton type="button" onClick={pay} disabled={paying || incomplete || !!problem || total === null}>
-            {paying ? 'Opening checkout…' : total ? `Continue to pay ${formatCents(total)}` : 'Continue'}
+            {support ? supportFinalizeLabel(support, paying) : paying ? 'Opening checkout…' : total ? `Continue to pay ${formatCents(total)}` : 'Continue'}
           </PrimaryButton>
         </div>
       </div>

@@ -11,6 +11,7 @@ import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
+import { adminDesignsQuery, type AdminDesign } from './studio-support'
 import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
@@ -783,6 +784,9 @@ function useRealApi() {
     setCatalogPackEnabled: (id: string, enabled: boolean) =>
       apiFetch<{ pack: CatalogPack }>(`/api/admin/catalog/packs/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
 
+    // Everyone's designs (admin: Virvi support opens them on the design page)
+    getAdminStudioDesigns: (query: { q?: string; kind?: string; cursor?: string | null } = {}) =>
+      apiFetch<{ designs: AdminDesign[]; nextCursor: string | null }>(`/api/admin/studio/designs${adminDesignsQuery(query)}`),
     // Studio flags (admin)
     getAdminStudioFlags: (status: 'open' | 'closed') => apiFetch<{ flags: AdminStudioFlag[] }>(`/api/admin/studio/flags?status=${status}`),
     dismissAdminStudioFlag: (id: string) => apiFetch<void>(`/api/admin/studio/flags/${id}/dismiss`, { method: 'POST' }),
