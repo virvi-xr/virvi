@@ -30,6 +30,8 @@ export type StudioRevision = {
   tags: RatingTag[]
   note: string | null
   tryAgain: 'available' | 'used' | null
+  /** Every piece it changed is still at the revision it made: Finalize this would pay for this revision. */
+  current?: boolean
 }
 
 /**
@@ -70,6 +72,22 @@ export function finalizeThis(categories: string[], quote: Quote | null): string[
   const payable = quote.pieces.filter((p) => p.state === 'payable').map((p) => p.category)
   const mine = categories.filter((c) => payable.includes(c)).sort()
   return mine.length ? mine : null
+}
+
+export const CHANGED_LATER = 'This was changed later — finalize uses the latest version.'
+export const FINALIZE_BUSY = 'You can finalize once the agent finishes.'
+
+/**
+ * What a 👍 offers besides Keep going: Finalize this with the revision's pieces ticked, only while every piece it
+ * changed is still at it (else a note that finalize uses the latest version); disabled with a reason while the agent
+ * works; nothing when none of its pieces can be finalized now.
+ */
+export function finalizeOffer(rev: Pick<StudioRevision, 'categories' | 'current'>, quote: Quote | null, busy: boolean):
+  | { kind: 'finalize'; categories: string[] } | { kind: 'busy'; categories: string[]; note: string } | { kind: 'changed'; note: string } | { kind: 'none' } {
+  if (rev.current === false) return { kind: 'changed', note: CHANGED_LATER }
+  const categories = finalizeThis(rev.categories, quote)
+  if (!categories) return { kind: 'none' }
+  return busy ? { kind: 'busy', categories, note: FINALIZE_BUSY } : { kind: 'finalize', categories }
 }
 
 /** The agent a new design starts on: the admin's default for the kind, else the page's own. */

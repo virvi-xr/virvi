@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  canRate, canTryAgain, draftKind, finalizeThis, lastFullWeek, leaderLine, lessonFits, lessonState, ratingBody, ratingSummary, ratingsQuery, rateLabel,
+  canRate, canTryAgain, draftKind, finalizeOffer, finalizeThis, lastFullWeek, leaderLine, lessonFits, lessonState, ratingBody, ratingSummary, ratingsQuery, rateLabel,
   revisionUnder, shiftWeek, skillLesson, startingAgent, weekLabel, weekStartOf, type StudioRevision,
 } from './studio-ratings'
 import type { Quote, StudioMessage } from './studio'
@@ -43,6 +43,15 @@ describe('rating bodies and Finalize this', () => {
     expect(finalizeThis(['mask', 'hat'], quote)).toEqual(['hat'])
     expect(finalizeThis(['mask'], quote)).toBeNull()
     expect(finalizeThis(['hat'], null)).toBeNull()
+  })
+
+  it('offers Finalize this only while the revision is still current, and waits while the agent works', () => {
+    const quote = { pieces: [{ category: 'hat', state: 'payable' }, { category: 'mask', state: 'entitled' }] } as unknown as Quote
+    expect(finalizeOffer({ categories: ['hat'], current: true }, quote, false)).toEqual({ kind: 'finalize', categories: ['hat'] })
+    expect(finalizeOffer({ categories: ['hat'], current: false }, quote, false))
+      .toEqual({ kind: 'changed', note: 'This was changed later — finalize uses the latest version.' })
+    expect(finalizeOffer({ categories: ['hat'], current: true }, quote, true)).toMatchObject({ kind: 'busy', categories: ['hat'] })
+    expect(finalizeOffer({ categories: ['mask'], current: true }, quote, false)).toEqual({ kind: 'none' })
   })
 
   it('the free try-again goes whenever nothing is running, even out of prompts', () => {

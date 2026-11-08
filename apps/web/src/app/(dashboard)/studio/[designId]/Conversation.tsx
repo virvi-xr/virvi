@@ -115,7 +115,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
                   onBuild={(slots) => send({ text: `Build these: ${slots.map(categoryLabel).join(', ')}`, selectedSlots: slots })} />
               )}
               {rev && (
-                <Rating designId={designId} rev={rev} canRate={canRate(detail)} quote={quote} canPrompt={canTryAgain(composer.mode, !!active || sending)}
+                <Rating designId={designId} rev={rev} canRate={canRate(detail)} quote={quote} canPrompt={canTryAgain(composer.mode, !!active || sending)} busy={!!active}
                   onChanged={onChanged} onFinalize={(c) => onFinalize?.(c)} onKeepGoing={() => document.getElementById('studio-prompt')?.focus()} />
               )}
             </Message>

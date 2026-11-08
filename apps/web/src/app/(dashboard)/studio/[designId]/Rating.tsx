@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useApi } from '@/lib/api'
 import { refusalMessage, type Quote } from '@/lib/studio'
 import {
-  NOTE_MAX, RATING_TAGS, THANKS, TRY_AGAIN, TRY_AGAIN_NOTE, UP_PROMPT, finalizeThis, ratingBody, ratingSummary, type StudioRevision,
+  NOTE_MAX, RATING_TAGS, THANKS, TRY_AGAIN, TRY_AGAIN_NOTE, UP_PROMPT, finalizeOffer, ratingBody, ratingSummary, type StudioRevision,
 } from '@/lib/studio-ratings'
 
 type Props = {
@@ -12,8 +12,10 @@ type Props = {
   /** The owner rates; support only sees the owner's rating. */
   canRate: boolean
   quote: Quote | null
-  /** A prompt can be sent now (nothing running, prompts allowed). */
+  /** The free try-again can go now (nothing running, the design open). */
   canPrompt: boolean
+  /** The agent is working: Finalize waits. */
+  busy: boolean
   onChanged: () => Promise<void>
   onFinalize: (categories: string[]) => void
   onKeepGoing: () => void
@@ -22,7 +24,7 @@ type Props = {
 const pill = (on: boolean) => `rounded-md border px-2 py-1 text-sm ${on ? 'border-blue-400 bg-blue-500/15 text-white' : 'border-gray-800 text-gray-400 hover:text-white'} disabled:opacity-50`
 
 /** 👍 / 👎 under an agent reply that changed pieces, and what follows each (LIV-142). */
-export default function Rating({ designId, rev, canRate, quote, canPrompt, onChanged, onFinalize, onKeepGoing }: Props) {
+export default function Rating({ designId, rev, canRate, quote, canPrompt, busy: running, onChanged, onFinalize, onKeepGoing }: Props) {
   const api = useApi()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +71,7 @@ export default function Rating({ designId, rev, canRate, quote, canPrompt, onCha
     if (await run(() => api.rateStudioRevision(designId, rev.jobId, ratingBody('down', tags, note)))) setStep('thanks')
   }
   const tryAgain = () => run(() => api.tryStudioRevisionAgain(designId, rev.jobId)).then((ok) => { if (ok) setStep(null) })
-  const finalizable = finalizeThis(rev.categories, quote)
+  const offer = finalizeOffer(rev, quote, running)
 
   return (
     <div className="mt-2 border-t border-gray-800 pt-2 text-sm">
@@ -82,11 +84,14 @@ export default function Rating({ designId, rev, canRate, quote, canPrompt, onCha
       {step === 'up' && rev.rating === 'up' && (
         <div className="mt-2 flex flex-wrap items-center gap-2" role="status">
           <span className="text-gray-300">{UP_PROMPT}</span>
-          {finalizable && (
-            <button type="button" onClick={() => { setStep(null); onFinalize(finalizable) }} className="rounded-md bg-blue-600 px-3 py-1 text-white hover:bg-blue-500">Finalize this</button>
+          {(offer.kind === 'finalize' || offer.kind === 'busy') && (
+            <button type="button" disabled={offer.kind === 'busy'} title={offer.kind === 'busy' ? offer.note : undefined}
+              onClick={() => { if (offer.kind === 'finalize') { setStep(null); onFinalize(offer.categories) } }}
+              className="rounded-md bg-blue-600 px-3 py-1 text-white hover:bg-blue-500 disabled:opacity-50">Finalize this</button>
           )}
           <button type="button" onClick={() => { setStep(null); onKeepGoing() }} className="rounded-md bg-gray-800 px-3 py-1 hover:bg-gray-700">Keep going</button>
           <button type="button" aria-label="Dismiss" onClick={() => setStep(null)} className="text-gray-500 hover:text-white">✕</button>
+          {(offer.kind === 'changed' || offer.kind === 'busy') && <span className="basis-full text-xs text-gray-500">{offer.note}</span>}
         </div>
       )}
 
