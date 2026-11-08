@@ -132,7 +132,7 @@ export async function restoredName(ownerId: string, name: string, sceneId: strin
 async function adoptOrgScene(tx: Tx, sceneId: string, orgId: string, to: string) {
   const now = new Date()
   // Only what this scene alone uses: an event or a media item another scene links to stays the org's (shared), and
-  // goes to whoever still uses it when the org is purged (purgeDeletedOrgs)
+  // stays with the user who made it when the org is purged (purgeDeletedOrgs)
   const linkedEvents = tx.select({ id: eventSceneLinks.eventId }).from(eventSceneLinks).where(eq(eventSceneLinks.sceneId, sceneId))
   const movedEvents = await tx.update(events).set({ ownerId: to, orgId: null, updatedAt: now })
     .where(and(
@@ -262,29 +262,30 @@ export async function purgeDeletedScenes(now: Date, deps?: Partial<HostingDeps>)
 
 /** Deleted organizations with no scene left deleted for them (all purged or restored) go for good, with what's left of theirs. */
 export async function purgeDeletedOrgs(): Promise<number> {
-  const due = db.select({ id: organizations.id }).from(organizations).where(and(
-    isNotNull(organizations.deletedAt),
-    sql`NOT EXISTS (SELECT 1 FROM scenes WHERE scenes.deleted_org_id = ${organizations.id} OR scenes.org_id = ${organizations.id})`,
-  ))
-  // What restored scenes still use of the org's (an event or media item several scenes shared) goes to the owner of a
-  // scene using it rather than away with the org: events, then their giveaways, then library media
-  await db.execute(sql`
-    UPDATE events e SET org_id = NULL, updated_at = now(), owner_id = (
-      SELECT s.owner_id FROM event_scene_links l JOIN scenes s ON s.id = l.scene_id WHERE l.event_id = e.id ORDER BY s.created_at LIMIT 1)
-    WHERE e.org_id IN (${due}) AND EXISTS (SELECT 1 FROM event_scene_links l WHERE l.event_id = e.id)`)
-  await db.execute(sql`
-    UPDATE giveaways g SET org_id = NULL, owner_id = (
-      SELECT e.owner_id FROM event_giveaway_links gl JOIN events e ON e.id = gl.event_id WHERE gl.giveaway_id = g.id AND e.org_id IS NULL ORDER BY e.created_at LIMIT 1)
-    WHERE g.org_id IN (${due}) AND EXISTS (SELECT 1 FROM event_giveaway_links gl JOIN events e ON e.id = gl.event_id WHERE gl.giveaway_id = g.id AND e.org_id IS NULL)`)
-  await db.execute(sql`
-    UPDATE media_assets m SET org_id = NULL, owner_id = (
-      SELECT s.owner_id FROM scene_library l JOIN scenes s ON s.id = l.scene_id WHERE l.media_asset_id = m.id ORDER BY s.created_at LIMIT 1)
-    WHERE m.org_id IN (${due}) AND EXISTS (SELECT 1 FROM scene_library l WHERE l.media_asset_id = m.id)`)
-  const gone = await db.delete(organizations).where(and(
-    isNotNull(organizations.deletedAt),
-    sql`NOT EXISTS (SELECT 1 FROM scenes WHERE scenes.deleted_org_id = ${organizations.id} OR scenes.org_id = ${organizations.id})`,
-  )).returning({ id: organizations.id })
-  return gone.length
+  return db.transaction(async (tx) => {
+    // The orgs to purge, locked, re-checked here: deleted, and no scene left that belongs (or belonged) to them
+    const due = (await tx.select({ id: organizations.id }).from(organizations).where(and(
+      isNotNull(organizations.deletedAt),
+      sql`NOT EXISTS (SELECT 1 FROM scenes WHERE scenes.deleted_org_id = ${organizations.id} OR scenes.org_id = ${organizations.id})`,
+    )).for('update')).map((o) => o.id)
+    if (!due.length) return 0
+    const ids = sql.join(due.map((id) => sql`${id}::uuid`), sql`, `)
+    // What a surviving scene still uses of the org's (an event or a media item several scenes shared, an event a scene
+    // outside the org linked) stays with the user who made it, an org member, never with a scene's owner: the org is
+    // only cleared. (owner_id is required and goes with its user, so a row whose maker is gone is gone already.)
+    await tx.execute(sql`
+      UPDATE events e SET org_id = NULL, updated_at = now()
+      WHERE e.org_id IN (${ids}) AND EXISTS (SELECT 1 FROM event_scene_links l WHERE l.event_id = e.id)`)
+    await tx.execute(sql`
+      UPDATE giveaways g SET org_id = NULL
+      WHERE g.org_id IN (${ids})
+        AND EXISTS (SELECT 1 FROM event_giveaway_links gl JOIN events e ON e.id = gl.event_id WHERE gl.giveaway_id = g.id AND e.org_id IS NULL)`)
+    await tx.execute(sql`
+      UPDATE media_assets m SET org_id = NULL
+      WHERE m.org_id IN (${ids}) AND EXISTS (SELECT 1 FROM scene_library l WHERE l.media_asset_id = m.id)`)
+    const gone = await tx.delete(organizations).where(inArray(organizations.id, due)).returning({ id: organizations.id })
+    return gone.length
+  })
 }
 
 export const PURGE_SWEEP_MS = DAY_MS

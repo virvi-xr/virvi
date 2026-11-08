@@ -346,13 +346,14 @@ describe('deleting a scene (LIV-83)', () => {
     expect((await db.select().from(giveaways).where(eq(giveaways.id, prize.id)))[0].orgId).toBe(org.id)
     expect((await db.select().from(mediaAssets).where(eq(mediaAssets.id, media.id)))[0].orgId).toBe(org.id)
 
-    // B goes for good; then the org does, and what A still uses goes to A's owner instead of away with it
+    // B goes for good; then the org does, and what A still uses stays instead of going away with it
     await db.update(scenes).set({ deletedAt: new Date(Date.now() - 31 * DAY) }).where(eq(scenes.id, b.id))
     await purgeDeletedScenes(new Date())
     expect(await db.select().from(organizations).where(eq(organizations.id, org.id))).toEqual([])
-    expect(await ev(shared.id)).toMatchObject({ ownerId: orgAdmin.id, orgId: null })
-    expect((await db.select().from(giveaways).where(eq(giveaways.id, prize.id)))[0]).toMatchObject({ orgId: null, ownerId: orgAdmin.id })
-    expect((await db.select().from(mediaAssets).where(eq(mediaAssets.id, media.id)))[0]).toMatchObject({ ownerId: orgAdmin.id, orgId: null })
+    // ... to the org member who made them (not to whoever owns the scene using them)
+    expect(await ev(shared.id)).toMatchObject({ ownerId: owner.id, orgId: null })
+    expect((await db.select().from(giveaways).where(eq(giveaways.id, prize.id)))[0]).toMatchObject({ orgId: null, ownerId: owner.id })
+    expect((await db.select().from(mediaAssets).where(eq(mediaAssets.id, media.id)))[0]).toMatchObject({ ownerId: owner.id, orgId: null })
     expect(await db.select().from(sceneLibrary).where(eq(sceneLibrary.sceneId, a.id))).toHaveLength(1)
   })
 
@@ -377,5 +378,25 @@ describe('deleting a scene (LIV-83)', () => {
     const ok = await call(owner, 'POST', `/api/scenes/${scene.id}/restore`)
     expect(ok.statusCode, ok.body).toBe(200)
     expect(await sceneRow(scene.id)).toMatchObject({ deletedAt: null, purgingAt: null })
+  })
+  it("at the org's purge, its event and media in an outsider's scene go back to the member who made them, never to the outsider", async () => {
+    const platformAdmin = await createUser({ role: 'admin' })
+    const outsider = await createUser()
+    const [org] = await db.insert(organizations).values({ name: 'Lend Co', slug: `org-${Date.now()}`, billingOwnerId: owner.id }).returning()
+    await db.insert(orgMembers).values({ orgId: org.id, userId: owner.id, role: 'owner' })
+    const theirs = (await createScene(outsider, 'Outsider scene')).scene
+    const [event] = await db.insert(events).values({ ownerId: owner.id, orgId: org.id, name: 'Org night' }).returning()
+    await db.insert(eventSceneLinks).values({ eventId: event.id, sceneId: theirs.id })
+    const [media] = await db.insert(mediaAssets).values({ ownerId: owner.id, orgId: org.id, filename: 'o.png', contentType: 'image/png', sizeBytes: 1, storageKey: 'media/o/o.png', publicUrl: 'https://cdn.example/o.png' }).returning()
+    await db.insert(sceneLibrary).values({ sceneId: theirs.id, mediaAssetId: media.id })
+    const [unused] = await db.insert(events).values({ ownerId: owner.id, orgId: org.id, name: 'Unused' }).returning()
+
+    expect((await call(platformAdmin, 'DELETE', `/api/admin/orgs/${org.id}`)).statusCode).toBe(204)
+    await purgeDeletedScenes(new Date())
+    expect(await db.select().from(organizations).where(eq(organizations.id, org.id))).toEqual([])
+    expect((await db.select().from(events).where(eq(events.id, event.id)))[0]).toMatchObject({ ownerId: owner.id, orgId: null })
+    expect((await db.select().from(mediaAssets).where(eq(mediaAssets.id, media.id)))[0]).toMatchObject({ ownerId: owner.id, orgId: null })
+    expect(await db.select().from(eventSceneLinks).where(eq(eventSceneLinks.sceneId, theirs.id))).toHaveLength(1)
+    expect(await db.select().from(events).where(eq(events.id, unused.id))).toEqual([])
   })
 })
