@@ -15,6 +15,7 @@ import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGif
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
+import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
@@ -346,8 +347,20 @@ function useRealApi() {
       apiFetch<{ scene: any; preset: any }>('/api/scenes', { method: 'POST', body: JSON.stringify({ name, description }) }),
     updateScene: (id: string, data: Record<string, any>) =>
       apiFetch<{ scene: any }>(`/api/scenes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    deleteScene: (id: string) =>
-      apiFetch(`/api/scenes/${id}`, { method: 'DELETE' }),
+    // Deleting a scene (LIV-83): soft delete, Recently deleted, restore, delete forever, removals
+    getDeletePlan: (id: string) => apiFetch<DeletePlan>(`/api/scenes/${id}/delete-plan`),
+    /** `remove`: ids from the plan's `running` to shut down or remove. */
+    deleteScene: (id: string, remove: string[] = []) =>
+      apiFetch<DeleteResult>(`/api/scenes/${id}`, { method: 'DELETE', body: JSON.stringify({ remove }) }),
+    getDeletedScenes: () => apiFetch<{ scenes: DeletedScene[] }>('/api/scenes/deleted'),
+    restoreScene: (id: string) => apiFetch<{ scene: any; notRestored: Removal[] }>(`/api/scenes/${id}/restore`, { method: 'POST', body: '{}' }),
+    /** "Delete forever now": `name` must be the scene's. */
+    purgeScene: (id: string, name: string) => apiFetch(`/api/scenes/${id}/purge`, { method: 'POST', body: JSON.stringify({ name }) }),
+    retryRemoval: (sceneId: string, removalId: string) =>
+      apiFetch<{ removal: Removal }>(`/api/scenes/${sceneId}/removals/${removalId}/retry`, { method: 'POST', body: '{}' }),
+    getRemovalSign: (sceneId: string, removalId: string) => apiFetch<RemovalSignRequest>(`/api/scenes/${sceneId}/removals/${removalId}/sign`),
+    submitRemovalSignature: (sceneId: string, removalId: string, body: { chain: unknown; timestamp?: number }) =>
+      apiFetch<{ removal: Removal }>(`/api/scenes/${sceneId}/removals/${removalId}/signature`, { method: 'POST', body: JSON.stringify(body) }),
     /** The scene's thumbnail (LIV-88): the cropped 16:9 PNG or JPEG, base64. */
     setSceneThumbnail: (id: string, fileData: string) =>
       apiFetch<{ scene: any }>(`/api/scenes/${id}/thumbnail`, { method: 'PUT', body: JSON.stringify({ fileData }) }),

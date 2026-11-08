@@ -16,6 +16,7 @@ import { FrameField } from './FrameField'
 import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
 import { SceneThumbnail } from './SceneThumbnail'
+import { DeleteSceneSection } from './DeleteSceneSection'
 import { RoomSetPanel } from './RoomSetPanel'
 import { sceneHasRoomSet } from '@/lib/room-set'
 import { mediaLabel, useMediaNames } from '@/lib/media-names'
@@ -1922,8 +1923,11 @@ export default function SceneEditorPage() {
 
       {/* Settings tab: the scene's thumbnail (LIV-88) */}
       {activeTab === 'settings' && (
-        <SceneThumbnail sceneId={sceneId} url={scene.thumbnailUrl ?? null} source={scene.thumbnailSource ?? null} api={api}
-          onChange={(url, source) => setScene(prev => prev && { ...prev, thumbnailUrl: url, thumbnailSource: source })} />
+        <>
+          <SceneThumbnail sceneId={sceneId} url={scene.thumbnailUrl ?? null} source={scene.thumbnailSource ?? null} api={api}
+            onChange={(url, source) => setScene(prev => prev && { ...prev, thumbnailUrl: url, thumbnailSource: source })} />
+          <DeleteSceneSection sceneId={sceneId} />
+        </>
       )}
 
       {/* Widget tab */}
