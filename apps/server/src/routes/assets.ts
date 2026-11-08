@@ -24,6 +24,7 @@ import { classifyUpload, extensionFor } from '../storage/upload-policy.js'
 import { assertStorageQuota } from '../media/quota.js'
 import { StoreMediaError } from '../media/store.js'
 import { verifySessionToken } from '../auth/tokens.js'
+import { isVirviAdmin } from '../auth/admin.js'
 import { generateThumbnail } from '../services/thumbnails.js'
 import { releaseRoomSetObject } from '../room-scan/sets.js'
 import { withoutUploadCode } from '../library/model-uploads.js'
@@ -166,7 +167,9 @@ export default async function assetRoutes(app: FastifyInstance) {
 
     // Private assets are visible to their uploader and admins only
     const caller = optionalAccount(request.headers.authorization)
-    const visible = asset && (asset.isPublic || (caller && (asset.uploadedBy === caller.id || caller.role === 'admin')))
+    // An admin claim is checked against the database, so a demoted admin's old token sees only what anyone sees
+    const visible = asset && (asset.isPublic || (caller && (asset.uploadedBy === caller.id
+      || (caller.role === 'admin' && await isVirviAdmin(caller.id)))))
     if (!asset || !visible) {
       return reply.status(404).send({ error: 'Asset not found' })
     }

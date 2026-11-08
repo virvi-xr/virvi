@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { assetLibraryItems, mediaAssets } from '../src/db/schema.js'
+import { assetLibraryItems, mediaAssets, users } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { resetDb } from './helpers/db.js'
 import { assertStorageQuota } from '../src/media/quota.js'
@@ -42,6 +42,15 @@ describe('asset library routes', () => {
     const res = await post(u, {})
     expect(res.statusCode).toBe(403)
     expect(res.json().error).toBe('storage_limit_reached')
+  })
+
+  it('GET /api/assets/:id: a demoted admin\'s old token no longer shows private assets', async () => {
+    const owner = await createUser(); const admin = await createUser({ role: 'admin' })
+    const token = tokenFor(admin)
+    await db.update(users).set({ role: 'creator' }).where(eq(users.id, admin.id))
+    const [priv] = await db.insert(assetLibraryItems).values({ name: 'P', storageKey: 'p', uploadedBy: owner.id, isPublic: false }).returning()
+    const res = await app.inject({ method: 'GET', url: `/api/assets/${priv.id}`, headers: { authorization: `Bearer ${token}` } })
+    expect(res.statusCode).toBe(404)
   })
 
   it('GET /api/assets/:id hides private assets from anonymous callers and other users', async () => {
