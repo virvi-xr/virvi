@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import { and, eq, sql, ilike, or, count, desc, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
@@ -17,18 +17,10 @@ import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { softDeleteOrg } from '../scenes/deleted.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authenticate } from '../middleware/auth.js'
+import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
 
-/**
- * Reusable preHandler that ensures the authenticated user has the 'admin' role.
- * Must be used AFTER `authenticate` so that `request.user` is populated.
- */
-async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  if (request.user.role !== 'admin') {
-    return reply.status(403).send({ error: 'Forbidden', message: 'Admin access required' })
-  }
-}
 
 export default async function adminRoutes(app: FastifyInstance) {
   // All admin routes require authentication + admin role

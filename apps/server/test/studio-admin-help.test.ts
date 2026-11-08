@@ -12,7 +12,13 @@ import { setStripe } from '../src/integrations/stripe.js'
 import { SUPPORT_PREFIX } from '../src/studio/designs.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, randomWallet, type TestUser } from './helpers/factories.js'
-import { addRevision, createDesign, fakeFly, fakeStripe, issueWorker, okResult } from './helpers/studio.js'
+import { addRevision, createDesign, fakeFly, fakePolygon, fakeStripe, issueWorker, okResult } from './helpers/studio.js'
+import { createFinalizeCheckout } from '../src/studio/payments.js'
+import { creditBalance } from '../src/studio/credit.js'
+import { setManaRateSource } from '../src/studio/mana/rate.js'
+import { type ManaQuote } from '../src/studio/mana/quote.js'
+import { setPolygon } from '../src/studio/mana/polygon.js'
+import { watchManaTransfers } from '../src/studio/mana/settle.js'
 
 const S = '/api/studio'
 
@@ -132,7 +138,7 @@ describe('Virvi support: admins help on anyone’s design', () => {
       expect((await app.inject({ method: 'GET', url: `${S}/designs/${d.id}`, headers: as(owner) })).json().support).toBeUndefined()
     })
 
-    it('others, a token claiming admin, a scene pass and an API key of an admin get 404', async () => {
+    it('others, a token claiming admin and a scene pass get 404; an admin’s API key is an admin’s', async () => {
       const d = await createDesign(owner)
       const stranger = await createUser()
       const get = (headers: Record<string, string>) => app.inject({ method: 'GET', url: `${S}/designs/${d.id}`, headers })
@@ -142,7 +148,8 @@ describe('Virvi support: admins help on anyone’s design', () => {
       expect((await get(as(admin, { kind: 'scene', via: 'studio', sceneId: null }))).statusCode).toBe(404)
       const key = await app.inject({ method: 'POST', url: '/api/keys', headers: as(admin), payload: { name: 'admin key' } })
       expect(key.statusCode).toBe(201)
-      expect((await get({ authorization: `Bearer ${key.json().key}` })).statusCode).toBe(404)
+      // An admin's own API key is an admin's on every admin route, so on support too (one check: src/auth/admin.ts)
+      expect((await get({ authorization: `Bearer ${key.json().key}` })).statusCode).toBe(200)
     })
 
     it('an admin’s prompt is free for everyone, records the admin, and shows as Virvi support', async () => {
@@ -266,6 +273,26 @@ describe('Virvi support: admins help on anyone’s design', () => {
       expect(seen.design.finalizedPieces).toBe(1)
     })
 
+    it('support downloads and retries the owner’s packages; a stranger can’t', async () => {
+      const d = await createDesign(owner)
+      await addRevision(d, 'hat')
+      await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/finalize`, headers: as(admin), payload: { categories: ['hat'] } })
+      const [e] = await db.select().from(studioEntitlements)
+      const store = memoryStudioStore()
+      setStudioStore(store)
+      await store.put('designs/x/final/hat/package.zip', Buffer.from('PK-hat'), 'application/zip')
+      await db.update(studioEntitlements).set({ status: 'ready', packageKey: 'designs/x/final/hat/package.zip' }).where(eq(studioEntitlements.id, e.id))
+      const url = `${S}/designs/${d.id}/pieces/hat/revisions/1/package`
+      const got = await app.inject({ method: 'GET', url, headers: as(admin) })
+      expect(got.statusCode).toBe(200)
+      expect(got.body).toBe('PK-hat')
+      const stranger = await createUser()
+      expect((await app.inject({ method: 'GET', url, headers: as(stranger) })).statusCode).toBe(404)
+      await db.update(studioEntitlements).set({ status: 'failed' }).where(eq(studioEntitlements.id, e.id))
+      expect((await app.inject({ method: 'POST', url: `${url}/retry`, headers: as(stranger) })).statusCode).toBe(404)
+      expect((await app.inject({ method: 'POST', url: `${url}/retry`, headers: as(admin) })).statusCode).toBe(202)
+    })
+
     it('a stranger’s finalize, even claiming admin, is 404 and nothing is granted', async () => {
       const d = await createDesign(owner)
       await addRevision(d, 'hat')
@@ -274,5 +301,71 @@ describe('Virvi support: admins help on anyone’s design', () => {
       expect(res.statusCode).toBe(404)
       expect(await db.select().from(studioPayments)).toEqual([])
     })
+  })
+})
+
+describe('support’s finalize closes the owner’s open checkouts for those pieces', () => {
+  const RECIPIENT = '0x01d871870CbBddE934526E17637c0cfEf0b3b38B'
+  const T = new Date('2026-11-04T12:00:00Z')
+  let stripe: ReturnType<typeof fakeStripe>
+  let chain: ReturnType<typeof fakePolygon>
+  const prev = { enabled: config.studioEnabled, image: config.studioWorkerImage, key: config.stripeSecretKey, recipient: config.studioMana.recipient }
+  beforeAll(() => {
+    ;(config as any).studioEnabled = true
+    ;(config as any).studioWorkerImage = 'registry.fly.io/vlm-studio-worker:test'
+    ;(config as any).stripeSecretKey = 'sk_test_studio'
+  })
+  afterAll(() => {
+    ;(config as any).studioEnabled = prev.enabled
+    ;(config as any).studioWorkerImage = prev.image
+    ;(config as any).stripeSecretKey = prev.key
+    ;(config.studioMana as any).recipient = prev.recipient
+    setStripe(null); setMachineDeps(null); setStudioStore(null); setManaRateSource(null); setPolygon(null)
+  })
+  beforeEach(async () => {
+    await resetDb()
+    ;(config.studioMana as any).recipient = RECIPIENT
+    setManaRateSource(async () => 0.25)
+    stripe = fakeStripe()
+    setStripe(stripe)
+    setMachineDeps({ fly: fakeFly() })
+    setStudioStore(memoryStudioStore())
+    chain = fakePolygon({ t0: T })
+    setPolygon(chain)
+  })
+  const paymentOf = async (id: string) => (await db.select().from(studioPayments).where(eq(studioPayments.id, id)))[0]
+
+  it('expires the card and MANA checkouts covering a finalized piece, leaves others, and a late MANA transfer comes back as credit', async () => {
+    const owner = await createUser()
+    const admin = await createUser({ role: 'admin' })
+    const d = await createDesign(owner)
+    await addRevision(d, 'hat')
+    await addRevision(d, 'upper_body')
+    const ownerUser = { id: owner.id, email: owner.email ?? null }
+    const card = await createFinalizeCheckout(d, ownerUser, ['hat'], {}, T, 'card') as { url: string }
+    expect(card.url).toBeTruthy()
+    const { mana } = await createFinalizeCheckout(d, ownerUser, ['hat'], {}, T, 'mana') as { mana: ManaQuote }
+    const other = await createFinalizeCheckout(d, ownerUser, ['upper_body'], {}, T, 'card') as { url: string }
+    const pays = await db.select().from(studioPayments)
+    const cardPay = pays.find((p) => p.method === 'card' && p.lines.some((l) => l.category === 'hat'))!
+    const otherPay = pays.find((p) => p.lines.some((l) => l.category === 'upper_body'))!
+    expect(other.url).toBeTruthy()
+
+    const later = new Date(T.getTime() + 60_000)
+    expect(await createFinalizeCheckout(d, ownerUser, ['hat'], {}, later, 'card', { byAdminId: admin.id })).toMatchObject({ granted: true })
+    expect(stripe.calls.expired).toEqual([cardPay.stripeSessionId])
+    expect(await paymentOf(cardPay.id)).toMatchObject({ status: 'expired' })
+    expect(await paymentOf(mana.paymentId)).toMatchObject({ status: 'expired' })
+    expect(await paymentOf(otherPay.id)).toMatchObject({ status: 'pending' })
+
+    // The owner had already sent the MANA: the existing path reopens and grants it, and owes the piece back as credit
+    const hash = chain.send({ to: RECIPIENT, amountWei: BigInt(mana.amountWei), at: new Date(T.getTime() + 2 * 60_000) })
+    chain.advance(30)
+    expect(await watchManaTransfers(new Date(T.getTime() + 3 * 60_000))).toEqual({ matched: 1, unmatched: 0 })
+    expect(hash).toBeTruthy()
+    expect(await paymentOf(mana.paymentId)).toMatchObject({ status: 'paid' })
+    const ents = await db.select().from(studioEntitlements).where(eq(studioEntitlements.category, 'hat'))
+    expect(ents).toHaveLength(1)
+    expect(await creditBalance(owner.id)).toBe((await paymentOf(mana.paymentId)).amountCents)
   })
 })

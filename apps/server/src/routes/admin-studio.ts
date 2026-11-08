@@ -6,7 +6,7 @@ import { approveReport, declineReport, heldReports, PaymentError } from '../stud
 import { createGiftCode, disableGiftCode, GiftCodeError, listGiftCodes } from '../studio/gift-codes.js'
 import { declineManaRefund, listManaRefunds, manaRefundQuote, recordManaRefundSent, type ManaRefundStatus } from '../studio/mana/refunds.js'
 import { listManaTransfers, markTransferReturned, settleTransferByHand, type ManaTransferStatus } from '../studio/mana/settle.js'
-import { isVirviAdmin } from '../studio/pricing.js'
+import { requireAdmin } from '../auth/admin.js'
 import { decodeCursor, DESIGN_KINDS, listAdminDesigns } from '../studio/admin-designs.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
@@ -28,17 +28,9 @@ function transferKey(request: FastifyRequest): { txHash: string; logIndex: numbe
   return { txHash, logIndex: Number(logIndex) }
 }
 
-/**
- * Admins only: the Studio admin page (flags and pauses, reports, MANA, gift codes, everyone's designs). The role is
- * the token's and the database's both: a token minted before a demotion opens nothing.
- */
-async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  if (request.user.role !== 'admin' || request.user.kind !== 'account' || !(await isVirviAdmin(request.user.id))) {
-    return reply.status(403).send({ error: 'Forbidden', message: 'Admin access required' })
-  }
-}
 
 export default async function adminStudioRoutes(app: FastifyInstance) {
+  // Admins only (the database's role: src/auth/admin.ts): the Studio admin page
   const admin = { preHandler: [authenticate, requireAdmin] }
 
   // Everyone's designs, trial ones included, to open and help with (Virvi support, on the design's own page)

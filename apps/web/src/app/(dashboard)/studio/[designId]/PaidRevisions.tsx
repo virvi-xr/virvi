@@ -22,8 +22,8 @@ function save(blob: Blob, filename: string) {
 /**
  * Every paid piece's revisions, whichever tab is selected: download, a free retry when packaging failed, and mistake
  * reports. With two or more pieces ready, "Download all" fetches them as one zip; while pieces package, it says how many
- * are ready. `owner`: the owner is looking (false for Virvi support), so mistake reports, MANA back and their 3D Models
- * link show.
+ * are ready. `owner`: the owner is looking (false for Virvi support), so mistake reports and their outcome, MANA back
+ * and their 3D Models link show.
  */
 export default function PaidRevisions({ designId, pieces, onChanged, kind, owner = true }: Props) {
   const api = useApi()
@@ -165,8 +165,8 @@ function PaidRevision({ designId, category, f, onChanged, scene, owner }: { desi
           </button>
         </div>
       )}
-      {mana.note && <p className="mt-2 text-gray-300" role="status">{mana.note}</p>}
-      {f.report && reportCopy(f.report.status) && <p className="mt-2 text-gray-300" role="status">{reportCopy(f.report.status)}</p>}
+      {owner && mana.note && <p className="mt-2 text-gray-300" role="status">{mana.note}</p>}
+      {owner && f.report && reportCopy(f.report.status) && <p className="mt-2 text-gray-300" role="status">{reportCopy(f.report.status)}</p>}
       {error && <p className="mt-2 text-amber-300" role="alert">{error}</p>}
     </li>
   )

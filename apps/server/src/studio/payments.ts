@@ -256,8 +256,12 @@ export async function createFinalizeCheckout(
   // The rate before anything is expired or held, so a refusal leaves everything as it was
   const rate = method === 'mana' && quote.dueCents > 0 ? await requireRate(now) : null
   // A new MANA quote replaces this design's open ones; any checkout takes over the free finalizes and credit it needs
+  // Support finalizing for the owner also closes the owner's own open checkouts for any of those pieces, so they
+  // aren't charged for what is now free. One Stripe won't expire (already paid), and a MANA transfer that still comes
+  // in for an expired quote, are granted as a duplicate: the line is owed back (MANA's share as Virvi credit).
+  const covers = (p: typeof open[number]) => p.kind === 'finalize' && p.lines.some((l) => quote.lines.some((q) => q.category === l.category))
   await expireOpen(open.filter((p) => (method === 'mana' && p.method === 'mana')
-    || (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0)), now)
+    || (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0) || (!!byAdminId && covers(p))), now)
 
   const expiresAt = new Date(now.getTime() + (method === 'mana' ? config.studioMana.quoteTtlMs : CHECKOUT_TTL_MS))
   const { pay, lines, mana } = await db.transaction(async (tx) => {

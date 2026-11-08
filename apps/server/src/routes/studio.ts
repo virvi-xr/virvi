@@ -11,6 +11,7 @@ import { getSubscription } from '../integrations/stripe.js'
 import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
 import { verifyRenderFrame, framePath } from '../studio/render-urls.js'
 import { isVirviAdmin, quoteFinalize, QuoteError } from '../studio/pricing.js'
+import { isAdminRequest } from '../auth/admin.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
@@ -72,14 +73,8 @@ type Access = { d: Design; support: boolean }
 /** The routes a Virvi admin may use on anyone's design: reading it, prompting, renders and checks, finalizing, packages. */
 const SUPPORT = { allowAdmin: true }
 
-/**
- * Whether the request is a Virvi admin who may help on other people's designs: an account session on the dashboard
- * (no scene pass, trial or API key), with the admin role read from the database, never the token.
- */
-async function canSupport(request: FastifyRequest): Promise<boolean> {
-  const u = request.user
-  return u.kind === 'account' && !u.via && !u.viaApiKey && !u.trial && await isVirviAdmin(u.id)
-}
+/** Whether the request may help on other people's designs: the same admin check as every admin route. */
+const canSupport = isAdminRequest
 
 async function designAccess(request: FastifyRequest, opts: { allowAdmin?: boolean } = {}): Promise<Access | null> {
   const id = (request.params as { id: string }).id

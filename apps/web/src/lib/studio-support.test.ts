@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { composerState, SUPPORT_NOTE, type StudioDetail, type StudioSupportView, type StudioUsage } from './studio'
+import { composerState, PAUSED_NOTE, SUPPORT_NOTE, type StudioDetail, type StudioSupportView, type StudioUsage } from './studio'
 import {
   SUPPORT_LABEL, adminDesignOwner, adminDesignsQuery, designControls, messageIsViewers, messageLabel, pieceCountLabel, supportBanner,
   supportFinalizeLabel, supportOwnerName,
@@ -67,11 +67,13 @@ describe('designControls', () => {
 })
 
 describe('composerState for support', () => {
-  it('shows no allowance meter, and the admin’s own usage never stops them', () => {
+  it('shows no allowance meter, and the admin’s own allowance never stops them', () => {
     const d = detail({ support: support() })
     expect(composerState(d, usage({ promptsLeft: 0 }), NOW)).toEqual({ mode: 'send', note: SUPPORT_NOTE })
-    expect(composerState(d, usage({ paused: true }), NOW).mode).toBe('send')
     expect(composerState(d, null, NOW)).toEqual({ mode: 'send', note: SUPPORT_NOTE })
+  })
+  it('respects the admin’s own studio pause, as the server does', () => {
+    expect(composerState(detail({ support: support() }), usage({ paused: true }), NOW)).toEqual({ mode: 'paused', note: PAUSED_NOTE })
   })
   it('still waits for a running prompt, offers Continue, and leaves unarchiving to the owner', () => {
     expect(composerState(detail({ support: support(), activeJob: { id: 'j', type: 'prompt', status: 'taken' } }), null, NOW).mode).toBe('busy')

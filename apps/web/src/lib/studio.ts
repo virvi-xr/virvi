@@ -442,13 +442,15 @@ export const reloadsOn = (e: StudioEvent) =>
 export const SUPPORT_NOTE = 'Messages you send as Virvi support are free: they don’t use their prompts or yours.'
 
 export function composerState(detail: StudioDetail, usage: StudioUsage | null, now: Date): { mode: ComposerMode; note: string } {
-  // Support: the usage the page has is the admin's own, which doesn't apply here
+  // The viewer's own pause: the server refuses new work then, Virvi support's included
+  const paused = !!usage?.paused
+  // Support: otherwise the usage the page has is the admin's own, which doesn't apply here
   if (detail.support) usage = null
   const note = detail.support ? SUPPORT_NOTE : !usage ? '' : usage.trial ? `${usage.promptsLeft} of ${usage.allowance} free prompts left` : `${usage.promptsLeft} prompts left today · ${usage.plan} plan`
   if (detail.design.archivedAt) {
     return { mode: 'archived', note: detail.support ? 'This design is archived. Only its owner can unarchive it.' : 'This design is archived. Unarchive it to keep working on it.' }
   }
-  if (usage?.paused) return { mode: 'paused', note: PAUSED_NOTE }
+  if (paused) return { mode: 'paused', note: PAUSED_NOTE }
   if (detail.activeJob?.type === 'prompt') return { mode: 'busy', note: 'The agent is still working on your last message.' }
   if (detail.lastPrompt?.outcome === 'ceiling' || detail.lastPrompt?.outcome === 'turns') return { mode: 'continue', note }
   if (usage && usage.promptsLeft <= 0) return { mode: 'out', note: refusalMessage({ body: { code: 'allowance', resetsAt: usage.resetsAt } }, now).text }
