@@ -8,9 +8,10 @@ import { declineManaRefund, listManaRefunds, manaRefundQuote, recordManaRefundSe
 import { listManaTransfers, markTransferReturned, settleTransferByHand, type ManaTransferStatus } from '../studio/mana/settle.js'
 import { requireAdmin } from '../auth/admin.js'
 import { decodeCursor, DESIGN_KINDS, listAdminDesigns } from '../studio/admin-designs.js'
-import { lastFullWeek, listDownRatings, markRating, parseWeek, weekDigest } from '../studio/rating-review.js'
+import { lastFullWeek, listDownRatings, markRating, MIN_SAMPLE, parseWeek, ratesBetween, weekDigest } from '../studio/rating-review.js'
 import { TAG_KEYS } from '../studio/ratings.js'
 import { createLesson, deleteLesson, isLessonKind, LessonError, lessonText, listLessons, updateLesson } from '../studio/lessons.js'
+import { DEFAULT_AGENTS, kindDefaultsDetail, setKindDefault } from '../studio/defaults.js'
 import { DRAFT_BATCH_MAX, draftingAvailable, draftLesson } from '../studio/lesson-drafts.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
@@ -147,6 +148,26 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string }
     if (!isUuid(id) || !(await deleteLesson(id))) return reply.status(404).send({ error: 'lesson_not_found' })
     return reply.status(204).send()
+  })
+
+  // The agent new designs of each kind start on, with the last four weeks' 👍 rates to choose it by. Set by hand only.
+  const RATES_DAYS = 28
+  app.get('/api/admin/studio/defaults', admin, async () => {
+    const now = new Date()
+    return {
+      defaults: await kindDefaultsDetail(),
+      rates: await ratesBetween(new Date(now.getTime() - RATES_DAYS * 24 * 3600_000), now),
+      ratesDays: RATES_DAYS, minSample: MIN_SAMPLE, agents: DEFAULT_AGENTS,
+    }
+  })
+
+  app.put('/api/admin/studio/defaults/:kind', admin, async (request, reply) => {
+    const { kind } = request.params as { kind: string }
+    if (!isLessonKind(kind)) return reply.status(404).send({ error: 'unknown kind' })
+    const agent = (request.body as { agent?: unknown } | null)?.agent
+    if (!(DEFAULT_AGENTS as readonly unknown[]).includes(agent)) return reply.status(400).send({ error: 'agent must be claude, codex or grok' })
+    await setKindDefault(kind, agent as string, request.user.id, new Date())
+    return { defaults: await kindDefaultsDetail() }
   })
 
   app.get('/api/admin/studio/flags', admin, async (request) => {

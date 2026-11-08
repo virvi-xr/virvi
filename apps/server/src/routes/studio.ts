@@ -19,6 +19,7 @@ import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordChec
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
+import { kindDefaults } from '../studio/defaults.js'
 import { clearRating, downRating, feedbackText, findRevision, parseRating, rateRevision, type RatingTag } from '../studio/ratings.js'
 import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
@@ -300,6 +301,9 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
   })
+
+  // The agent a new design of each kind starts on, when an admin set one (null: the page's own default)
+  app.get('/api/studio/defaults', trialAuth, async () => ({ agents: await kindDefaults() }))
 
   app.get('/api/studio/designs/:id/finalize', trialAuth, async (request, reply) => {
     // Support's quote is an admin's: every line free

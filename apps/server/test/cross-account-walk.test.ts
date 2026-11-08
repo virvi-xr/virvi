@@ -388,6 +388,7 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/studio/reports/:id/approve', url: () => `/api/admin/studio/reports/${AD_ID}/approve` },
   { route: 'POST /api/admin/studio/reports/:id/decline', url: () => `/api/admin/studio/reports/${AD_ID}/decline` },
   { route: 'POST /api/admin/studio/gift-codes/:id/off', url: () => `/api/admin/studio/gift-codes/${AD_ID}/off` },
+  { route: 'PUT /api/admin/studio/defaults/:kind', url: () => '/api/admin/studio/defaults/wearable', body: () => ({ agent: 'grok' }) },
   { route: 'PATCH /api/admin/studio/lessons/:id', url: () => `/api/admin/studio/lessons/${AD_ID}`, body: () => ({ enabled: false }) },
   { route: 'DELETE /api/admin/studio/lessons/:id', url: () => `/api/admin/studio/lessons/${AD_ID}` },
   { route: 'PATCH /api/admin/studio/ratings/:id', url: (f) => `/api/admin/studio/ratings/${f.designRating.id}`, body: () => ({ handled: true }) },
@@ -541,7 +542,7 @@ describe('cross-account route walk', () => {
     const own = new Set([
       'GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes',
       'GET /api/wizard/catalog', 'GET /api/wizard/options', 'GET /api/room-scans', 'GET /api/hyperfy/slots', 'GET /api/assets', 'GET /api/assets/categories',
-      'POST /api/imports', 'GET /api/imports', 'GET /api/ar/devices', 'GET /api/scenes/deleted',
+      'POST /api/imports', 'GET /api/imports', 'GET /api/ar/devices', 'GET /api/scenes/deleted', 'GET /api/studio/defaults',
     ])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
     expect(cases.length).toBe(trialRoutes.size - own.size)

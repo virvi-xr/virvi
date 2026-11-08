@@ -29,6 +29,7 @@ const ALLOWED = [
   'PUT /api/studio/designs/:id/revisions/:jobId/rating',
   'DELETE /api/studio/designs/:id/revisions/:jobId/rating',
   'POST /api/studio/designs/:id/revisions/:jobId/try-again',
+  'GET /api/studio/defaults',
   'GET /api/scenes',
   'GET /api/scenes/:sceneId',
   'GET /api/scenes/:sceneId/delete-plan',
