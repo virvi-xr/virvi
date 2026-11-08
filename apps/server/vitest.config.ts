@@ -38,6 +38,8 @@ export default defineConfig({
       // Never the real abgen CDN: tests inject a fetcher, and a default one that slipped through fails fast
       DCL_MAP_MANIFEST_URL: 'http://127.0.0.1:9/abgen-manifests',
       ANALYTICS_JOBS: 'false',
+      ERROR_JOBS: 'false',
+      ERROR_FLUSH_MS: '0',
       LOCAL_STORAGE_PATH: join(STORAGE, 'uploads'),
       PRIVATE_STORAGE_PATH: join(STORAGE, 'private'),
     },

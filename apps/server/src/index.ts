@@ -21,8 +21,11 @@ import { deployImport } from './services/import/import-deploy.js'
 import { hyperfyHosting } from './services/hyperfy/infrastructure.js'
 import { startAnalyticsJobs } from './analytics/jobs.js'
 import { initBus } from './realtime/bus.js'
+import { installProcessErrorHandlers, startErrorJobs } from './errors/jobs.js'
 
 async function main() {
+  // LIV-66: an exception nothing caught is recorded before the process exits, as it always has
+  installProcessErrorHandlers()
   assertProductionSecrets({ mode: config.mode, nodeEnv: process.env.NODE_ENV, jwtSecret: config.jwtSecret })
   console.log(`[virvi-server] Starting in "${config.mode}" mode`)
 
@@ -113,6 +116,8 @@ async function main() {
   console.log('[virvi-server] Video length backfill 2 min after boot')
   startAnalyticsJobs()
   console.log('[virvi-server] Analytics jobs started')
+  startErrorJobs()
+  console.log(`[virvi-server] Error reporting: release ${config.release}, Linear filing ${config.linearApiKey && config.linearTeamId ? 'on' : 'off'}`)
 
   console.log(`[virvi-server] Ready at ${config.publicUrl}`)
 }

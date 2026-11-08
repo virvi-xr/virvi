@@ -39,6 +39,7 @@ import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
 import { CatalystError, contentServerFor } from './catalyst-client.js'
 import { getWorldsClient, WorldsError, type LiveEntity } from './worlds-client.js'
 import { worldOf } from './world-of.js'
+import { recordJobFailure } from '../../errors/record.js'
 
 /** The server's limit, inside Decentraland's ~5-minute entity timestamp window. */
 export const DEPLOY_WINDOW_MS = 240_000
@@ -577,6 +578,7 @@ export async function markFailed(
     .set({ status: 'failed', errorMessage: message, ...(extra.assetBundle !== undefined ? { assetBundle: extra.assetBundle } : {}) })
     .where(and(eq(sceneDeployments.id, deploymentId), ...(onlyIf ? [eq(sceneDeployments.status, onlyIf)] : [])))
     .returning({ id: sceneDeployments.id })
+  if (failed.length) recordJobFailure('deploy', err instanceof Error ? err : new Error(message))
   if (failed.length) await importDeployFailed([deploymentId], { code: errorCodeOf(err), message: extra.importMessage ?? message })
 }
 

@@ -2197,3 +2197,129 @@ export const sceneRemovals = pgTable('scene_removals', {
   sceneIdx: index('scene_removals_scene_idx').on(t.sceneId),
   targetUq: uniqueIndex('scene_removals_scene_target_uq').on(t.sceneId, t.targetId),
 }))
+
+// ── Error reporting (LIV-66) ────────────────────────────────────────────────
+// Errors from the web app and the server, grouped by signature (@virvixr/shared errorSignature). Raw events are kept 30
+// days, per-signature hourly counts 400 days (src/errors/retention.ts). Users are counted by a salted hash only.
+
+export const errorSignatures = pgTable('error_signatures', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  hash: text('hash').notNull(), // sha256 of `signature`, 32 hex digits
+  signature: text('signature').notNull(),
+  source: text('source').notNull(), // web | server
+  kind: text('kind').notNull(), // api | crash | exception | rejection | console | server_5xx | server_exception | job
+  status: integer('status'),
+  route: text('route'),
+  errorType: text('error_type'),
+  message: text('message'),
+  expected: text('expected'), // an EXPECTED_4XX reason: charted, never filed
+  firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  firstRelease: text('first_release'),
+  lastRelease: text('last_release'),
+  totalCount: bigint('total_count', { mode: 'number' }).notNull().default(0),
+  // Marked fixed on the Errors page (the stand-in for "its Linear issue is Done"); an event after it is a regression
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolvedBy: uuid('resolved_by'),
+  regressedAt: timestamp('regressed_at', { withTimezone: true }),
+  userReports: integer('user_reports').notNull().default(0),
+  // Auto-filing (src/errors/filing.ts): one Linear issue per signature
+  linearIssueId: text('linear_issue_id'),
+  linearIssueKey: text('linear_issue_key'),
+  linearIssueUrl: text('linear_issue_url'),
+  linearFiledAt: timestamp('linear_filed_at', { withTimezone: true }),
+  linearFiledReason: text('linear_filed_reason'),
+  linearCommentedAt: timestamp('linear_commented_at', { withTimezone: true }),
+  linearQuietAt: timestamp('linear_quiet_at', { withTimezone: true }),
+  linearRegressionAt: timestamp('linear_regression_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  hashUq: uniqueIndex('error_signatures_hash_uq').on(t.hash),
+  lastSeenIdx: index('error_signatures_last_seen_idx').on(t.lastSeenAt),
+  firstSeenIdx: index('error_signatures_first_seen_idx').on(t.firstSeenAt),
+}))
+
+export const errorEvents = pgTable('error_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  source: text('source').notNull(),
+  kind: text('kind').notNull(),
+  release: text('release'),
+  route: text('route'), // the page (web) or route template (server)
+  method: text('method'),
+  path: text('path'),
+  status: integer('status'),
+  requestId: text('request_id'),
+  browser: text('browser'),
+  os: text('os'),
+  userHash: text('user_hash'),
+  orgId: uuid('org_id'),
+  sceneId: uuid('scene_id'),
+  count: integer('count').notNull().default(1),
+  userFacing: boolean('user_facing').notNull().default(false),
+  errorType: text('error_type'),
+  message: text('message'),
+  stack: text('stack'),
+  errorBody: jsonb('error_body'),
+  breadcrumbs: jsonb('breadcrumbs'),
+}, (t) => ({
+  signatureIdx: index('error_events_signature_idx').on(t.signatureId, t.occurredAt),
+  requestIdx: index('error_events_request_idx').on(t.requestId),
+  receivedIdx: index('error_events_received_idx').on(t.receivedAt),
+}))
+
+export const errorHourly = pgTable('error_hourly', {
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  hour: timestamp('hour', { withTimezone: true }).notNull(),
+  count: integer('count').notNull().default(0),
+  users: integer('users').notNull().default(0), // distinct user hashes that hour
+  stored: integer('stored').notNull().default(0), // raw events kept that hour (sampling)
+}, (t) => ({
+  pk: primaryKey({ columns: [t.signatureId, t.hour] }),
+  hourIdx: index('error_hourly_hour_idx').on(t.hour),
+}))
+
+// Breakdowns per hour: dim is release | route | browser | os | org
+export const errorHourlyDims = pgTable('error_hourly_dims', {
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  hour: timestamp('hour', { withTimezone: true }).notNull(),
+  dim: text('dim').notNull(),
+  value: text('value').notNull(),
+  count: integer('count').notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.signatureId, t.hour, t.dim, t.value] }),
+  hourIdx: index('error_hourly_dims_hour_idx').on(t.hour),
+}))
+
+// Which user hashes hit a signature in an hour (affected-user counts); kept 30 days
+export const errorHourlyUsers = pgTable('error_hourly_users', {
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  hour: timestamp('hour', { withTimezone: true }).notNull(),
+  userHash: text('user_hash').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.signatureId, t.hour, t.userHash] }),
+  hourIdx: index('error_hourly_users_hour_idx').on(t.hour),
+}))
+
+// What a user said they were doing, sent from a crash screen's Report form (with their account: they chose to send it)
+export const errorReports = pgTable('error_reports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  description: text('description').notNull(),
+  payload: jsonb('payload').notNull(),
+  release: text('release'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  signatureIdx: index('error_reports_signature_idx').on(t.signatureId, t.createdAt),
+}))
+
+// Filing thresholds tuned on the Errors page (one row, id 'default'); unset keys use src/errors/settings.ts defaults
+export const errorSettings = pgTable('error_settings', {
+  id: text('id').primaryKey(),
+  thresholds: jsonb('thresholds').notNull().default({}),
+  updatedBy: uuid('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})

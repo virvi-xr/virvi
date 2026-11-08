@@ -170,6 +170,12 @@ export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY
   return null
 }
 
+/** The build SHA a release is known by: VIRVI_RELEASE, else RAILWAY_GIT_COMMIT_SHA or SOURCE_COMMIT, cut to 12; else 'dev'. */
+export function releaseFrom(e: Record<string, string | undefined>): string {
+  const raw = (e.VIRVI_RELEASE || e.RAILWAY_GIT_COMMIT_SHA || e.SOURCE_COMMIT || '').trim()
+  return /^[A-Za-z0-9._-]+$/.test(raw) ? raw.slice(0, 12) : 'dev'
+}
+
 export const config = {
   mode,
 
@@ -382,6 +388,35 @@ export const config = {
   catalystUrl: env('DCL_CATALYST_URL') || 'https://peer.decentraland.org',
   dclLandSubgraphUrl: env('DCL_LAND_SUBGRAPH_URL') || 'https://subgraph.decentraland.org/land-manager',
   worldsUrl: env('DCL_WORLDS_URL') || 'https://worlds-content-server.decentraland.org',
+
+  // ── Error reporting (LIV-66, src/errors/) ─────────────────────────────
+  // The build this server runs (the Errors page's "since deploy"): VIRVI_RELEASE, else Railway's commit SHA, else 'dev'
+  release: releaseFrom(process.env),
+  // ERROR_REPORTING=false stops recording (the ingest endpoint still answers 202 and drops what it gets)
+  errorReportingEnabled: env('ERROR_REPORTING') !== 'false',
+  // How often buffered error events are written (0 disables the flusher; tests flush by hand)
+  errorFlushMs: intEnv('ERROR_FLUSH_MS', 2000),
+  // Retention purge and Linear filing passes; disabled in tests
+  errorJobsEnabled: env('ERROR_JOBS') !== 'false',
+  // Filing to Linear is off until both are set. Env only: never logged, never returned
+  linearApiKey: env('LINEAR_API_KEY') || null,
+  linearTeamId: env('LINEAR_TEAM_ID') || null,
+  // Optional: the team's Triage state, labels (comma-separated, e.g. the Bug label) and the Bug template for new issues
+  linearTriageStateId: env('LINEAR_TRIAGE_STATE_ID') || null,
+  linearLabelIds: (env('LINEAR_LABEL_IDS') || '').split(',').map((s) => s.trim()).filter(Boolean),
+  linearTemplateId: env('LINEAR_TEMPLATE_ID') || null,
+  // Filing thresholds; each can be changed on the Errors page (stored in error_settings)
+  errorThresholds: {
+    newMinUsers: 2, // a new signature in a release hitting this many users
+    severeMinUsers: 3, // a 5xx or crash hitting this many users in an hour...
+    severeMinCount: 10, // ...or happening this many times in an hour
+    spikeFactor: 3, // this many times its usual rate for that hour of the week
+    spikeMinBaseline: 1, // "usual" is never taken as less than this many an hour
+    spikeMinCount: 5, // and a spike needs at least this many in the hour
+    spikeHistoryWeeks: 4, // how many past weeks make "usual"
+    quietDays: 7, // no events this long after being marked fixed: noted as quiet
+    filing: true, // file at all (when Linear is set up)
+  },
 
   // ── Dashboard ───────────────────────────────────────────────────────────
   dashboardDir: env('DASHBOARD_DIR') || './dashboard',

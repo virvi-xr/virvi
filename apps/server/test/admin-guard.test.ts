@@ -42,6 +42,8 @@ describe('the admin role comes from the database', () => {
     ['GET', '/api/admin/advertiser-leads'],
     ['GET', '/api/admin/studio/flags'],
     ['GET', '/api/admin/studio/designs'],
+    ['GET', '/api/admin/errors'],
+    ['GET', '/api/admin/error-settings'],
   ]
 
   it('an admin’s token works on every admin route while they are one', async () => {

@@ -17,6 +17,7 @@ import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
 import { storageUsedBytes } from '../media/quota.js'
 import { verifyWebhookEvent } from '../billing/webhook-verify.js'
+import { recordJobFailure } from '../errors/record.js'
 import {
   createCheckoutSession,
   createPortalSession,
@@ -167,6 +168,7 @@ export default async function billingRoutes(app: FastifyInstance) {
         await handleWebhookEvent(event)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
+        recordJobFailure(`payment_webhook ${String(event?.type ?? 'unknown').slice(0, 60)}`, err)
         return reply.status(500).send({ error: `Webhook processing failed: ${message}` })
       }
 

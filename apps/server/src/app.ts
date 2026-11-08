@@ -63,6 +63,10 @@ import presetScheduleRoutes from './routes/preset-schedules.js'
 import { registerDeletedSceneGuard } from './auth/deleted-scene-guard.js'
 import sceneDeleteRoutes from './routes/scene-delete.js'
 import showingRoutes from './routes/showings.js'
+import errorRoutes from './routes/errors.js'
+import adminErrorRoutes from './routes/admin-errors.js'
+import { recordServerResponse } from './errors/record.js'
+import { errorUserHash } from './errors/user-hash.js'
 import { db } from './db/connection.js'
 import { sql } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
@@ -79,6 +83,9 @@ const SERVER_VERSION = '2.0.0'
  */
 export const redactPairingCode = (url: string) =>
   url.replace(/^(\/api\/(?:hyperfy|ar)\/pair\/)[^/?#]+/, '$1:code').replace(/^(\/(?:pair\/(?:headset\/)?|s\/))[^/?#]+/, '$1:code')
+
+/** The response header carrying the request ID (Fastify's genReqId) */
+export const REQUEST_ID_HEADER = 'x-request-id'
 
 /** The metric label for a request no route matched (404s, the SPA fallback): fixed, so a url never becomes a label. */
 export const UNMATCHED_ROUTE = 'unmatched'
@@ -116,6 +123,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(fastifyCors, {
     origin: true,
     credentials: false,
+    exposedHeaders: [REQUEST_ID_HEADER], // the web app joins its error reports to the server's by it
+  })
+
+  // LIV-66: every response carries its request ID; every 5xx is recorded with it (and the exception behind it)
+  app.addHook('onRequest', async (request, reply) => {
+    reply.header(REQUEST_ID_HEADER, request.id)
+  })
+  app.addHook('onError', async (request, _reply, error) => {
+    ;(request as { thrownError?: unknown }).thrownError = error
+  })
+  app.addHook('onResponse', async (request, reply) => {
+    if (reply.statusCode < 500 || request.url.startsWith('/api/errors')) return
+    const u = request.user as { id?: string; kind?: string; orgId?: string | null; via?: string } | undefined
+    const counted = u?.id && !u.via && (u.kind === 'account' || u.kind === 'trial')
+    recordServerResponse({
+      status: reply.statusCode,
+      method: request.method,
+      routeTemplate: request.routeOptions?.url || UNMATCHED_ROUTE,
+      requestId: request.id,
+      userHash: counted ? errorUserHash(u.id!) : null,
+      orgId: counted ? u.orgId ?? null : null,
+    }, (request as { thrownError?: unknown }).thrownError)
   })
 
   // Rate limiting (global): API calls only. The dashboard's own files, uploads and well-known files don't count, or a
@@ -247,6 +276,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(studioRoutes)
   await app.register(importBuildRoutes)
   await app.register(importRoutes)
+  await app.register(errorRoutes)
+  await app.register(adminErrorRoutes)
 
   // GET /api/instance (mode, version, branding) and the admin branding routes
   await app.register(brandingRoutes, { version: SERVER_VERSION })
