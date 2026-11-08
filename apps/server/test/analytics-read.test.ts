@@ -258,6 +258,24 @@ describe('analytics read API', () => {
       })
     })
 
+    it('children of a disabled instance, or of an instance of a disabled element, are left out (never drawn at the wrong spot)', async () => {
+      const { owner, preset, s } = await linked()
+      const table = await createElement(preset.id, { type: 'model', name: 'Table' })
+      const lamp = await createElement(preset.id, { type: 'model', name: 'Lamp' })
+      const off = await createElement(preset.id, { type: 'image', name: 'Off poster', properties: {} })
+      await db.update(sceneElements).set({ enabled: false }).where(eq(sceneElements.id, off.id))
+      const [hiddenTable] = await db.insert(sceneElementInstances).values({ elementId: table.id, enabled: false, position: { x: 20, y: 0, z: 10 } }).returning()
+      const [onLamp] = await db.insert(sceneElementInstances).values({ elementId: lamp.id, position: { x: 0, y: 2, z: 0 }, parentInstanceId: hiddenTable.id }).returning()
+      await db.insert(sceneElementInstances).values({ elementId: lamp.id, position: { x: 0, y: 1, z: 0 }, parentInstanceId: onLamp.id })
+      const [poster] = await db.insert(sceneElementInstances).values({ elementId: off.id, position: { x: 5, y: 0, z: 5 } }).returning()
+      await db.insert(sceneElementInstances).values({ elementId: lamp.id, position: { x: 0, y: 1, z: 0 }, parentInstanceId: poster.id })
+      const [standing] = await db.insert(sceneElementInstances).values({ elementId: table.id, position: { x: 3, y: 0, z: 3 } }).returning()
+      await db.insert(sceneElementInstances).values({ elementId: lamp.id, position: { x: 0, y: 1, z: 0 }, parentInstanceId: standing.id })
+      const items = (await get(owner, `/api/analytics/locations/${s.id}/layout`)).json().layout.items
+      expect(items).toHaveLength(2)
+      expect(items.map((i: { parentId: string | null }) => i.parentId).sort()).toEqual([null, standing.id].sort())
+    })
+
     it('a model whose GLB is not a web URL comes without src (drawn as its footprint)', async () => {
       const { owner, preset, s } = await linked()
       const m = await createElement(preset.id, { type: 'model', name: 'Local', properties: { modelSrc: 'models/house.glb' } })

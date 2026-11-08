@@ -38,8 +38,36 @@ function dims(raw: unknown): Vec3 | null {
 }
 
 /**
- * The scene's live preset: every instance of its enabled elements (disabled instances only as parents others are
- * placed under, so children still land where they are in-world; they aren't drawn). Null without a live preset.
+ * The items to draw: those whose whole parent chain is here and enabled. A child of a disabled instance, or of an
+ * instance of a disabled element (never loaded), is left out rather than drawn in scene coordinates at the wrong spot.
+ * The cap keeps parents before children (by depth), so it never keeps a child whose parent it cut.
+ */
+export function resolveLayout(raw: Array<LayoutItem & { enabled: boolean }>, max: number): LayoutItem[] {
+  const byId = new Map(raw.map((i) => [i.id, i]))
+  const depth = new Map<string, number | null>()
+  const depthOf = (id: string, seen: Set<string>): number | null => {
+    if (depth.has(id)) return depth.get(id)!
+    const i = byId.get(id)
+    let d: number | null = null
+    if (i?.enabled && !seen.has(id)) {
+      seen.add(id)
+      const p = i.parentId === null ? -1 : depthOf(i.parentId, seen)
+      d = p === null ? null : p + 1
+    }
+    depth.set(id, d)
+    return d
+  }
+  const kept: Array<{ item: LayoutItem; depth: number }> = []
+  for (const { enabled: _enabled, ...item } of raw) {
+    const d = depthOf(item.id, new Set())
+    if (d !== null) kept.push({ item, depth: d })
+  }
+  return kept.sort((a, b) => a.depth - b.depth).slice(0, max).map((k) => k.item)
+}
+
+/**
+ * The scene's live preset: every enabled instance of its enabled elements whose parents are drawn too (see
+ * resolveLayout). Null without a live preset.
  */
 export async function sceneLayout(virviSceneId: string): Promise<{ items: LayoutItem[] } | null> {
   const [row] = await db.select({ presetId: scenes.activePresetId }).from(scenes).where(and(eq(scenes.id, virviSceneId), liveScene()))
@@ -60,13 +88,13 @@ export async function sceneLayout(virviSceneId: string): Promise<{ items: Layout
       if (a.cdnUrl && !sizes.get(a.cdnUrl)) sizes.set(a.cdnUrl, dims(a.dimensions))
     }
   }
-  const items: LayoutItem[] = []
+  const items: Array<LayoutItem & { enabled: boolean }> = []
   for (const e of elements) {
     for (const i of e.instances) {
-      if (!i.enabled) continue
       const src = srcOf.get(e.id) ?? null
       items.push({
         id: i.id,
+        enabled: i.enabled,
         parentId: i.parentInstanceId,
         type: e.type,
         name: e.name,
@@ -78,5 +106,5 @@ export async function sceneLayout(virviSceneId: string): Promise<{ items: Layout
       })
     }
   }
-  return { items: items.slice(0, MAX_ITEMS) }
+  return { items: resolveLayout(items, MAX_ITEMS) }
 }
