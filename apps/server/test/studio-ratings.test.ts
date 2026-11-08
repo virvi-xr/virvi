@@ -174,6 +174,16 @@ describe('rating Design Studio revisions', () => {
       expect((await detail(owner, d.id)).revisions.find((r: any) => r.jobId === jobId).tryAgain).toBe('used')
     })
 
+    it('goes even when the owner is out of prompts, and takes nothing from them', async () => {
+      const d = await createDesign(owner)
+      const jobId = await revision(d)
+      await rate(owner, d.id, jobId, { rating: 'down', tags: ['quality'] })
+      await db.update(studioUsageDays).set({ prompts: 3 }).where(eq(studioUsageDays.userId, owner.id))
+      expect((await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/prompts`, headers: as(owner), payload: { text: 'more' } })).statusCode).toBe(429)
+      expect((await tryAgain(owner, d.id, jobId)).statusCode).toBe(202)
+      expect((await usageRows())[0].prompts).toBe(3)
+    })
+
     it('keeps the per-prompt safety limits: busy, paused, past the cost ceiling (without taking a gift)', async () => {
       const d = await createDesign(owner)
       const jobId = await revision(d)
