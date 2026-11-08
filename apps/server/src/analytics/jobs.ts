@@ -1,4 +1,4 @@
-import { and, eq, gte, isNull, lt, lte, sql } from 'drizzle-orm'
+import { and, eq, gte, isNull, like, lt, lte, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
   analyticsCopresenceDaily,
@@ -297,6 +297,60 @@ export async function runRetention(now = new Date()): Promise<{ deleted: number 
   return { deleted }
 }
 
+/** analytics_job_runs name of the once-only height backfill; `<name>:<location id>` rows record progress while it runs. */
+export const HEATMAP_BACKFILL_JOB = 'heatmap-height-backfill'
+
+/**
+ * Once only (LIV-85): re-run the daily heatmap rollup, which now records floor heights, for every day still fully
+ * inside each location's retention, so recent history gets heights. Older days, and the day the retention cutoff
+ * falls in (part of its raw positions may be gone), keep their height-less cells. rollupDay replaces a day's cells
+ * under a per-day lock, so a rerun or a concurrent rollup changes nothing; the job itself runs under the
+ * analytics job lock. Locations that fail are retried on the next run; the job is marked done once none fail.
+ * Returns null when it has already run.
+ */
+export async function runHeatmapHeightBackfill(
+  now = new Date(),
+  rollup: (sceneId: string, day: string, now?: Date) => Promise<void> = rollupDay,
+): Promise<{ scenes: number; days: number; failed: number } | null> {
+  const [done] = await db.select().from(analyticsJobRuns).where(eq(analyticsJobRuns.name, HEATMAP_BACKFILL_JOB))
+  if (done) return null
+  const today = now.toISOString().slice(0, 10)
+  const progress = new Set(
+    (await db.select({ name: analyticsJobRuns.name }).from(analyticsJobRuns).where(like(analyticsJobRuns.name, `${HEATMAP_BACKFILL_JOB}:%`))).map((r) => r.name),
+  )
+  let scenesDone = 0
+  let days = 0
+  let failed = 0
+  for (const scene of await db.select().from(analyticsScenes)) {
+    const key = `${HEATMAP_BACKFILL_JOB}:${scene.id}`
+    if (progress.has(key)) continue
+    try {
+      const retention = await retentionDaysFor(scene)
+      const firstDay = Number.isFinite(retention) ? new Date(Math.ceil((now.getTime() - retention * DAY) / DAY) * DAY) : null
+      const rows = rowsOf<{ day: string }>(
+        await db.execute(sql`
+          select distinct to_char(occurred_at at time zone 'UTC', 'YYYY-MM-DD') as day from analytics_positions
+          where scene_id = ${scene.id}${firstDay ? sql` and occurred_at >= ${ts(firstDay)}` : sql``}
+          order by 1`),
+      )
+      for (const { day } of rows) {
+        await rollup(scene.id, day, now)
+        days++
+      }
+      await db.insert(analyticsJobRuns).values({ name: key, lastRunDay: today }).onConflictDoNothing()
+      scenesDone++
+    } catch (err) {
+      failed++
+      console.error(`[virvi-server] heatmap height backfill failed for ${scene.id}:`, err)
+    }
+  }
+  if (!failed) {
+    await db.insert(analyticsJobRuns).values({ name: HEATMAP_BACKFILL_JOB, lastRunDay: today }).onConflictDoNothing()
+    await db.delete(analyticsJobRuns).where(like(analyticsJobRuns.name, `${HEATMAP_BACKFILL_JOB}:%`))
+  }
+  return { scenes: scenesDone, days, failed }
+}
+
 const dailyJobs: Array<{ name: string; fn: (now: Date) => Promise<unknown> }> = [{ name: 'retention', fn: runRetention }]
 
 export function registerDailyJob(name: string, fn: (now: Date) => Promise<unknown>): void {
@@ -332,6 +386,8 @@ export function startAnalyticsJobs(): () => void {
   every(30_000, 71001, 'session-close', () => runSessionCloseSweep())
   every(5 * 60_000, 71002, 'rollups', () => runRollups())
   every(60 * 60_000, 71003, 'daily', () => runDailyJobs())
+  // Once only; afterwards each tick is a single lookup of its done record.
+  every(60 * 60_000, 71004, 'heatmap-height-backfill', () => runHeatmapHeightBackfill())
   // Kick every job once shortly after boot so restarts never skip a cycle.
   const kick = setTimeout(() => {
     for (const t of kicks) void t()
