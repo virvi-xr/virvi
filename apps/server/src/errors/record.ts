@@ -6,16 +6,17 @@ import {
 } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { config } from '../config.js'
+import { ERROR_BUDGETS, takeNewSignature, takeStoredEvent } from './limits.js'
 
 /**
  * The error recorder (LIV-66). Requests and jobs only push into an in-memory buffer; a flusher writes it every
- * ERROR_FLUSH_MS as a few upserts per signature and hour (src/index.ts starts it). Every first occurrence is stored in
- * full; after SAMPLE_PER_HOUR stored events a signature's hour is only counted. Writes are additive, so several server
- * instances can flush at once. Nothing here throws to its caller: a reporting failure is logged and dropped.
+ * ERROR_FLUSH_MS as a few upserts per signature and hour (src/index.ts starts it). Writes are additive, so several
+ * server instances can flush at once. Everything stored is bounded by limits.ts: new signatures per address and
+ * instance (the rest fold into a counted-only overflow signature), a cap on distinct signatures, and full events only
+ * for a signature's first occurrence plus a few a day. Nothing here throws to its caller, and one bad record or
+ * signature never drops the rest of a batch.
  */
 
-/** Raw events stored per signature per hour; the rest of that hour is counted only. */
-export const SAMPLE_PER_HOUR = 5
 /** The most records waiting to be written; past it new ones are dropped (and counted in `dropped`). */
 const MAX_BUFFER = 10_000
 const HOUR_MS = 3_600_000
@@ -42,6 +43,9 @@ export interface ErrorRecord {
   userHash: string | null
   orgId: string | null
   sceneId: string | null
+  /** The sender's address key (limits.ts ipKey) and its day-salted hash ('ip:…'), for budgets and distinct-address counts. */
+  ipKey: string | null
+  ipHash: string | null
   count: number
   repeat: boolean
   userFacing: boolean
@@ -75,6 +79,8 @@ export interface ClientContext {
   os: string
   userHash: string | null
   orgId: string | null
+  ipKey: string | null
+  ipHash: string | null
 }
 
 /** A validated browser event (checkErrorBatch) as a record. */
@@ -101,7 +107,9 @@ export function clientRecord(e: ClientErrorEvent, ctx: ClientContext, receivedAt
     userHash: ctx.userHash,
     orgId: uuidOrNull(ctx.orgId),
     sceneId: uuidOrNull(e.sceneId),
-    count: e.count ?? 1,
+    ipKey: ctx.ipKey,
+    ipHash: ctx.ipHash,
+    count: Math.min(e.count ?? 1, ERROR_LIMITS.maxCount),
     repeat: !!e.repeat,
     userFacing: !!e.userFacing,
     errorType: e.errorType ?? null,
@@ -120,12 +128,12 @@ export function recordClientEvents(events: ClientErrorEvent[], ctx: ClientContex
 function errorParts(err: unknown): { errorType: string; message: string; stack: string | null } {
   if (err instanceof Error) {
     return {
-      errorType: err.name || 'Error',
-      message: redactText(err.message ?? '').slice(0, ERROR_LIMITS.maxMessage),
-      stack: err.stack ? redactText(err.stack).slice(0, ERROR_LIMITS.maxStack) : null,
+      errorType: (err.name || 'Error').slice(0, 60),
+      message: redactText(String(err.message ?? '').slice(0, ERROR_LIMITS.maxMessage)),
+      stack: err.stack ? redactText(err.stack.slice(0, ERROR_LIMITS.maxStack)) : null,
     }
   }
-  return { errorType: 'Error', message: redactText(String(err)).slice(0, ERROR_LIMITS.maxMessage), stack: null }
+  return { errorType: 'Error', message: redactText(String(err).slice(0, ERROR_LIMITS.maxMessage)), stack: null }
 }
 
 interface ServerFields {
@@ -155,6 +163,7 @@ function serverRecord(kind: 'server_5xx' | 'server_exception' | 'job', err: unkn
     occurredAt: now, receivedAt: now, release: config.release,
     route: f.routeTemplate ?? null, method: f.method ?? null, path: f.routeTemplate ?? null, requestId: f.requestId ?? null,
     browser: null, os: null, userHash: f.userHash ?? null, orgId: uuidOrNull(f.orgId), sceneId: uuidOrNull(f.sceneId),
+    ipKey: null, ipHash: null,
     count: 1, repeat: false, userFacing: false,
     errorType: parts?.errorType ?? null, message: parts?.message ?? null, stack: parts?.stack ?? null,
     errorBody: null, breadcrumbs: null,
@@ -176,11 +185,48 @@ export function recordJobFailure(job: string, err: unknown, f: { sceneId?: strin
   try { push(serverRecord('job', err instanceof Error ? err : new Error(String(err)), { ...f, job })) } catch { /* ignore */ }
 }
 
+// ── Bounding ───────────────────────────────────────────────────────────────
+
+/** The counted-only signature a record folds into past a budget. */
+export function overflowRecord(r: ErrorRecord): ErrorRecord {
+  const signature = `overflow ${r.kind}`
+  return {
+    ...r, hash: signatureHash(signature), signature, status: null, routeTemplate: null, normalizedMessage: null, expected: 'overflow',
+    route: null, method: null, path: null, requestId: null, errorType: null, message: null, stack: null, errorBody: null, breadcrumbs: null,
+    repeat: true,
+  }
+}
+
+/** A record cut to fit ERROR_BUDGETS.maxStoredEventBytes: the oldest breadcrumbs go first, then the stack, then the body. */
+export function boundRecord(r: ErrorRecord): ErrorRecord {
+  const size = (x: ErrorRecord) => {
+    try { return JSON.stringify({ m: x.message, s: x.stack, b: x.errorBody, c: x.breadcrumbs, r: x.route, p: x.path }).length } catch { return Infinity }
+  }
+  const cap = ERROR_BUDGETS.maxStoredEventBytes
+  if (size(r) <= cap) return r
+  const out = { ...r, breadcrumbs: r.breadcrumbs ? [...r.breadcrumbs] : null }
+  while (out.breadcrumbs && out.breadcrumbs.length > 5 && size(out) > cap) out.breadcrumbs.shift()
+  if (size(out) > cap && out.stack) out.stack = out.stack.slice(0, 1500)
+  if (size(out) > cap) out.errorBody = null
+  while (out.breadcrumbs && out.breadcrumbs.length && size(out) > cap) out.breadcrumbs.shift()
+  return out
+}
+
 // ── Flushing ───────────────────────────────────────────────────────────────
 
 const ts = (d: Date) => sql`${d.toISOString()}::timestamptz`
 const rowsOf = <T>(r: unknown) => r as unknown as T[]
 const hourOf = (d: Date) => new Date(Math.floor(d.getTime() / HOUR_MS) * HOUR_MS)
+
+let signatureTotal = { n: 0, at: 0 }
+/** How many signatures exist (cached a minute; bumped as this instance adds some). */
+async function signatureCount(): Promise<number> {
+  if (Date.now() - signatureTotal.at > 60_000) {
+    const [row] = rowsOf<{ n: number }>(await db.execute(sql`SELECT count(*)::int AS n FROM error_signatures`))
+    signatureTotal = { n: Number(row.n), at: Date.now() }
+  }
+  return signatureTotal.n
+}
 
 async function writeSignature(group: ErrorRecord[]): Promise<string> {
   const first = group[0]
@@ -205,76 +251,154 @@ async function writeSignature(group: ErrorRecord[]): Promise<string> {
   return row.id
 }
 
-async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[]): Promise<void> {
+/** Distinct breakdown values seen per signature-hour by this instance (past the cap a value counts as "other"). */
+const dimValues = new Map<string, Set<string>>()
+let dimHour = 0
+function dimValue(signatureId: string, hour: Date, dim: string, value: string): string {
+  if (hour.getTime() !== dimHour) { dimHour = hour.getTime(); dimValues.clear() }
+  const key = `${signatureId}\u0000${dim}`
+  const seen = dimValues.get(key) ?? new Set<string>()
+  dimValues.set(key, seen)
+  if (seen.has(value)) return value
+  if (seen.size >= ERROR_BUDGETS.maxDimValuesPerSignatureHour) return 'other'
+  seen.add(value)
+  return value
+}
+
+async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], isNew: boolean): Promise<void> {
   const count = group.reduce((n, r) => n + r.count, 0)
   await db.execute(sql`
     INSERT INTO error_hourly (signature_id, hour, count) VALUES (${signatureId}, ${ts(hour)}, ${count})
     ON CONFLICT (signature_id, hour) DO UPDATE SET count = error_hourly.count + excluded.count`)
 
-  const hashes = [...new Set(group.map((r) => r.userHash).filter((h): h is string => !!h))]
+  // Distinct users (hashed account ids) and distinct addresses (day-salted 'ip:' hashes) that hour
+  const hashes = [...new Set(group.flatMap((r) => [r.userHash, r.ipHash]).filter((h): h is string => !!h))]
   if (hashes.length) {
     const added = rowsOf<{ user_hash: string }>(await db.execute(sql`
       INSERT INTO error_hourly_users (signature_id, hour, user_hash)
       VALUES ${sql.join(hashes.map((h) => sql`(${signatureId}, ${ts(hour)}, ${h})`), sql`, `)}
       ON CONFLICT DO NOTHING RETURNING user_hash`))
+    const ips = added.filter((a) => a.user_hash.startsWith('ip:')).length
+    const users = added.length - ips
     if (added.length) {
-      await db.execute(sql`UPDATE error_hourly SET users = users + ${added.length} WHERE signature_id = ${signatureId} AND hour = ${ts(hour)}`)
+      await db.execute(sql`UPDATE error_hourly SET users = users + ${users}, ips = ips + ${ips} WHERE signature_id = ${signatureId} AND hour = ${ts(hour)}`)
     }
   }
 
   const dims = new Map<string, { dim: string; value: string; count: number }>()
   for (const r of group) {
-    for (const [dim, value] of [['release', r.release], ['route', r.route], ['browser', r.browser], ['os', r.os], ['org', r.orgId]] as const) {
-      if (!value) continue
+    const route = r.source === 'web' && r.route ? routeTemplate(r.route) : r.route
+    for (const [dim, raw] of [['release', r.release], ['route', route], ['browser', r.browser], ['os', r.os], ['org', r.orgId]] as const) {
+      if (!raw) continue
+      const value = dimValue(signatureId, hour, dim, raw.slice(0, 200))
       const key = `${dim}\u0000${value}`
-      const d = dims.get(key) ?? { dim, value: value.slice(0, 200), count: 0 }
+      const d = dims.get(key) ?? { dim, value, count: 0 }
       d.count += r.count
       dims.set(key, d)
     }
   }
   for (const d of dims.values()) {
-    if (!d.count) continue // a report's own event counts nothing
+    if (!d.count) continue
     await db.execute(sql`
       INSERT INTO error_hourly_dims (signature_id, hour, dim, value, count) VALUES (${signatureId}, ${ts(hour)}, ${d.dim}, ${d.value}, ${d.count})
       ON CONFLICT (signature_id, hour, dim, value) DO UPDATE SET count = error_hourly_dims.count + excluded.count`)
   }
 
-  // Sampling: reserve up to SAMPLE_PER_HOUR stored slots for this hour, then store that many full events
-  const candidates = group.filter((r) => !r.repeat).slice(0, SAMPLE_PER_HOUR)
+  // Full events: a new signature's first occurrence, then at most storedPerSignatureDay a day, within the address and instance budgets
+  const candidates = group.filter((r) => !r.repeat && r.expected !== 'overflow').slice(0, ERROR_BUDGETS.storedPerSignatureDay)
   if (!candidates.length) return
+  const day = hour.toISOString().slice(0, 10)
   const [slot] = rowsOf<{ before: number; after: number }>(await db.execute(sql`
-    WITH old AS (SELECT stored FROM error_hourly WHERE signature_id = ${signatureId} AND hour = ${ts(hour)} FOR UPDATE)
-    UPDATE error_hourly h SET stored = LEAST(h.stored + ${candidates.length}, ${SAMPLE_PER_HOUR})
-    FROM old WHERE h.signature_id = ${signatureId} AND h.hour = ${ts(hour)}
-    RETURNING old.stored AS before, h.stored AS after`))
-  const keep = slot ? Number(slot.after) - Number(slot.before) : 0
+    WITH old AS (SELECT CASE WHEN stored_day = ${day}::date THEN stored_today ELSE 0 END AS n FROM error_signatures WHERE id = ${signatureId} FOR UPDATE)
+    UPDATE error_signatures s SET stored_day = ${day}::date, stored_today = LEAST(old.n + ${candidates.length}, ${ERROR_BUDGETS.storedPerSignatureDay})
+    FROM old WHERE s.id = ${signatureId}
+    RETURNING old.n AS before, s.stored_today AS after`))
+  let keep = slot ? Number(slot.after) - Number(slot.before) : 0
+  if (isNew && keep < 1) keep = 1
   for (const r of candidates.slice(0, keep)) {
-    await db.execute(sql`
-      INSERT INTO error_events (signature_id, occurred_at, received_at, source, kind, release, route, method, path, status, request_id,
-        browser, os, user_hash, org_id, scene_id, count, user_facing, error_type, message, stack, error_body, breadcrumbs)
-      VALUES (${signatureId}, ${ts(r.occurredAt)}, ${ts(r.receivedAt)}, ${r.source}, ${r.kind}, ${r.release}, ${r.route}, ${r.method},
-        ${r.path}, ${r.status}, ${r.requestId}, ${r.browser}, ${r.os}, ${r.userHash}, ${r.orgId}, ${r.sceneId}, ${r.count},
-        ${r.userFacing}, ${r.errorType}, ${r.message}, ${r.stack},
-        ${r.errorBody == null ? null : JSON.stringify(r.errorBody)}::jsonb, ${r.breadcrumbs ? JSON.stringify(r.breadcrumbs) : null}::jsonb)`)
+    if (!takeStoredEvent(r.ipKey)) continue
+    const e = boundRecord(r)
+    try {
+      await db.execute(sql`
+        INSERT INTO error_events (signature_id, occurred_at, received_at, source, kind, release, route, method, path, status, request_id,
+          browser, os, user_hash, org_id, scene_id, count, user_facing, error_type, message, stack, error_body, breadcrumbs)
+        VALUES (${signatureId}, ${ts(e.occurredAt)}, ${ts(e.receivedAt)}, ${e.source}, ${e.kind}, ${e.release}, ${e.route}, ${e.method},
+          ${e.path}, ${e.status}, ${e.requestId}, ${e.browser}, ${e.os}, ${e.userHash}, ${e.orgId}, ${e.sceneId}, ${e.count},
+          ${e.userFacing}, ${e.errorType}, ${e.message}, ${e.stack},
+          ${e.errorBody == null ? null : JSON.stringify(e.errorBody)}::jsonb, ${e.breadcrumbs ? JSON.stringify(e.breadcrumbs) : null}::jsonb)`)
+    } catch (err) {
+      console.error('[errors] storing an error event failed:', err instanceof Error ? err.message : err)
+    }
   }
 }
 
-/** Writes one signature's records now (the report endpoint uses this so a description finds its signature). */
+/**
+ * Admits records to signatures: a known signature always; a new one only within the address and instance budgets and
+ * under the cap on distinct signatures (server-side ones too, under the cap). The rest become overflow records.
+ */
+async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; fresh: Set<string> }> {
+  const hashes = [...new Set(records.map((r) => r.hash))]
+  const known = new Set(rowsOf<{ hash: string }>(await db.execute(sql`
+    SELECT hash FROM error_signatures WHERE hash IN (${sql.join(hashes.map((h) => sql`${h}`), sql`, `)})`)).map((r) => r.hash))
+  let total = await signatureCount()
+  const fresh = new Set<string>()
+  const out: ErrorRecord[] = []
+  for (const r of records) {
+    if (known.has(r.hash) || fresh.has(r.hash) || r.expected === 'overflow') { out.push(r); continue }
+    const ok = total < ERROR_BUDGETS.maxSignatures && (r.source === 'server' || takeNewSignature(r.ipKey, r.receivedAt.getTime()))
+    if (ok) {
+      fresh.add(r.hash)
+      total++
+      signatureTotal.n++
+      out.push(r)
+    } else {
+      out.push(overflowRecord(r))
+    }
+  }
+  return { records: out, fresh }
+}
+
+/** Writes records now. Returns each written signature's id by hash. One failing signature or event is logged and skipped. */
 export async function writeRecords(records: ErrorRecord[]): Promise<Map<string, string>> {
   const ids = new Map<string, string>()
+  if (!records.length) return ids
+  const { records: admitted, fresh } = await admit(records)
   const bySig = new Map<string, ErrorRecord[]>()
-  for (const r of records) bySig.set(r.hash, [...(bySig.get(r.hash) ?? []), r])
+  for (const r of admitted) bySig.set(r.hash, [...(bySig.get(r.hash) ?? []), r])
   for (const [hash, group] of bySig) {
-    const id = await writeSignature(group)
-    ids.set(hash, id)
-    const byHour = new Map<number, ErrorRecord[]>()
-    for (const r of group) {
-      const h = hourOf(r.receivedAt).getTime()
-      byHour.set(h, [...(byHour.get(h) ?? []), r])
+    try {
+      const id = await writeSignature(group)
+      ids.set(hash, id)
+      const byHour = new Map<number, ErrorRecord[]>()
+      for (const r of group) {
+        const h = hourOf(r.receivedAt).getTime()
+        byHour.set(h, [...(byHour.get(h) ?? []), r])
+      }
+      let first = fresh.has(hash)
+      for (const [h, g] of byHour) {
+        await writeHour(id, new Date(h), g, first)
+        first = false
+      }
+    } catch (err) {
+      console.error('[errors] writing an error signature failed:', err instanceof Error ? err.message : err)
     }
-    for (const [h, g] of byHour) await writeHour(id, new Date(h), g)
   }
   return ids
+}
+
+/**
+ * The signature a crash report belongs to, without counting it: no new event, no last-seen, no regression, no
+ * affected user. A new signature is made only within the same budgets (else the report joins the overflow one).
+ */
+export async function reportSignature(r: ErrorRecord): Promise<string | null> {
+  const { records: [a] } = await admit([r])
+  await db.execute(sql`
+    INSERT INTO error_signatures (hash, signature, source, kind, status, route, error_type, message, expected, first_release, last_release, total_count)
+    VALUES (${a.hash}, ${a.signature}, ${a.source}, ${a.kind}, ${a.status}, ${a.routeTemplate}, ${a.errorType}, ${a.normalizedMessage}, ${a.expected},
+      ${a.release}, ${a.release}, 0)
+    ON CONFLICT (hash) DO NOTHING`)
+  const [row] = rowsOf<{ id: string }>(await db.execute(sql`SELECT id FROM error_signatures WHERE hash = ${a.hash}`))
+  return row?.id ?? null
 }
 
 let flushing: Promise<void> | null = null
@@ -293,7 +417,7 @@ export function flushErrors(): Promise<void> {
 }
 
 /** Test hooks. */
-export function resetErrorBuffer(): void { buffer = []; dropped = 0 }
+export function resetErrorBuffer(): void { buffer = []; dropped = 0; signatureTotal = { n: 0, at: 0 }; dimValues.clear() }
 export const bufferedErrorCount = () => buffer.length
 export const droppedErrorCount = () => dropped
 

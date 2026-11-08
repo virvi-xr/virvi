@@ -77,4 +77,18 @@ describe('entrypoint schema fallback: error reporting', () => {
       expect(await constraints(SCHEMA, 'error_events')).toEqual(await constraints('public', 'error_events'))
     })
   })
+
+  it('upgrades error tables made before fix round 1 (32-bit counters, hourly sampling) to the current shape', async () => {
+    const statements = fallbackBlocks('Error reporting')
+    await scratch(async () => {
+      await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.error_signatures (LIKE public.error_signatures INCLUDING ALL)`))
+      await db.execute(sql.raw(`ALTER TABLE ${SCHEMA}.error_signatures DROP COLUMN stored_day, DROP COLUMN stored_today`))
+      await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.error_hourly (signature_id UUID NOT NULL CONSTRAINT error_hourly_signature_id_error_signatures_id_fk REFERENCES ${SCHEMA}.error_signatures(id) ON DELETE CASCADE, hour TIMESTAMPTZ NOT NULL, count INTEGER NOT NULL DEFAULT 0, users INTEGER NOT NULL DEFAULT 0, stored INTEGER NOT NULL DEFAULT 0, CONSTRAINT error_hourly_signature_id_hour_pk PRIMARY KEY (signature_id, hour))`))
+      await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.error_hourly_dims (signature_id UUID NOT NULL CONSTRAINT error_hourly_dims_signature_id_error_signatures_id_fk REFERENCES ${SCHEMA}.error_signatures(id) ON DELETE CASCADE, hour TIMESTAMPTZ NOT NULL, dim TEXT NOT NULL, value TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, CONSTRAINT error_hourly_dims_signature_id_hour_dim_value_pk PRIMARY KEY (signature_id, hour, dim, value))`))
+      await runFallback(statements)
+      for (const t of ['error_signatures', 'error_hourly', 'error_hourly_dims']) {
+        expect(await columns(SCHEMA, t), t).toEqual(await columns('public', t))
+      }
+    })
+  })
 })

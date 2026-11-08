@@ -5,15 +5,16 @@ import { db } from '../src/db/connection.js'
 import { errorSignatures, errorHourly } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { clientRecord, writeRecords, recordServerResponse, flushErrors, resetErrorBuffer } from '../src/errors/record.js'
+import { resetErrorBudgets } from '../src/errors/limits.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
 
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
 const ORG = '11111111-2222-4333-8444-555555555555'
-const ctx = (user: string | null, release = config.release, browser = 'Chrome 131') => ({ release, browser, os: 'macOS', userHash: user, orgId: ORG })
+const ctx = (user: string | null, release = config.release, browser = 'Chrome 131') => ({ release, browser, os: 'macOS', userHash: user, orgId: ORG, ipKey: '198.51.100.1', ipHash: 'ip:198.51.100.1' })
 const crash = (over: Partial<ClientErrorEvent> = {}): ClientErrorEvent => ({
-  kind: 'crash', t: Date.now(), route: '/scenes', errorType: 'TypeError', message: 'Cannot read item 4', requestId: 'req-join',
+  kind: 'crash', t: Date.now(), route: '/scenes', errorType: 'TypeError', message: 'Cannot read item 4', requestId: '0b1c2d3e-0000-4000-8000-0000000000a1',
   breadcrumbs: [{ t: Date.now(), type: 'nav', path: '/scenes' }], ...over,
 })
 
@@ -24,6 +25,7 @@ describe('admin Errors page routes', () => {
   beforeEach(async () => {
     await resetDb()
     resetErrorBuffer()
+    resetErrorBudgets()
     app = await testApp()
     admin = await createUser({ role: 'admin' })
     creator = await createUser()
@@ -88,7 +90,7 @@ describe('admin Errors page routes', () => {
   it('shows a signature’s timeline, breakdowns, events, joined server events and reports; and marks it fixed', async () => {
     await writeRecords([clientRecord(crash(), ctx('a'))])
     await writeRecords([clientRecord(crash(), ctx('b', config.release, 'Firefox 132'))])
-    recordServerResponse({ status: 500, method: 'PUT', routeTemplate: '/api/scenes/:sceneId', requestId: 'req-join' }, new Error('db down'))
+    recordServerResponse({ status: 500, method: 'PUT', routeTemplate: '/api/scenes/:sceneId', requestId: '0b1c2d3e-0000-4000-8000-0000000000a1' }, new Error('db down'))
     await flushErrors()
     const [sig] = await db.select().from(errorSignatures).where(eq(errorSignatures.kind, 'crash'))
     await app.inject({ method: 'POST', url: '/api/errors/reports', headers: { authorization: `Bearer ${tokenFor(creator)}` }, payload: { v: 1, description: 'Saving', event: crash() } })
@@ -96,10 +98,10 @@ describe('admin Errors page routes', () => {
     const res = await get(`/api/admin/errors/${sig.id}`)
     expect(res.statusCode).toBe(200)
     const d = res.json()
-    // the reporter counts as affected; their report doesn't count the crash again
-    expect(d.totals).toEqual({ day: 2, week: 2, usersWeek: 3 })
+    // a report counts nothing: no event, no affected user
+    expect(d.totals).toEqual({ day: 2, week: 2, usersWeek: 2 })
     expect(d.timeline).toHaveLength(1)
-    expect(d.timeline[0]).toMatchObject({ count: 2, users: 3 })
+    expect(d.timeline[0]).toMatchObject({ count: 2, users: 2 })
     expect(d.hourOfDay.reduce((a: number, b: number) => a + b, 0)).toBe(2)
     expect(d.breakdowns.browser.map((b: any) => b.value).sort()).toEqual(['Chrome 131', 'Firefox 132'])
     expect(d.breakdowns.release).toEqual([{ value: config.release, count: 2 }])
@@ -107,7 +109,7 @@ describe('admin Errors page routes', () => {
     expect(d.breakdowns.org).toEqual([{ value: ORG, count: 2 }])
     expect(d.events).toHaveLength(2)
     expect(d.events[0].breadcrumbs).toEqual([expect.objectContaining({ type: 'nav', path: '/scenes' })])
-    expect(d.requestIds).toEqual(['req-join'])
+    expect(d.requestIds).toEqual(['0b1c2d3e-0000-4000-8000-0000000000a1'])
     expect(d.joined).toEqual([expect.objectContaining({ source: 'server', signature: 'server_5xx 500 PUT /api/scenes/:sceneId' })])
     expect(d.reports).toEqual([expect.objectContaining({ description: 'Saving', from: creator.email })])
     expect((await get('/api/admin/errors/00000000-0000-4000-8000-000000000000')).statusCode).toBe(404)

@@ -17,8 +17,8 @@ export const ERROR_LIMITS = {
   maxLabel: 80,
   maxPath: 300,
   maxDescription: 1000,
-  /** Repeats a single event may stand for. */
-  maxCount: 10_000,
+  /** Repeats a single event may stand for (the browser folds repeats within a few seconds; anything above is noise). */
+  maxCount: 20,
   /** A client clock further off than this is replaced by the server's. */
   maxClockSkewMs: 86_400_000,
 } as const
@@ -74,19 +74,45 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Paths whose next segment is a credential (pairing, upload and space codes): logged as `:code`. */
 const CODE_PATHS = /^((?:https?:\/\/[^/]+)?\/(?:api\/(?:hyperfy|ar)\/pair|pair\/headset|pair|u|s|api\/upload)\/)(?!headset(?:\/|$))[^/?#]+/
 
-/** Tokens, emails, wallet addresses, signatures, card numbers and query strings out of a piece of text. */
+const SECRET_KEYS = 'token|code|key|secret|session|sig|signature|password|passwd|pwd|auth|apikey|api_key|access_token|refresh_token|client_secret'
+// Every pattern is linear: each starts behind a lookbehind that admits one start per run, or has a bounded quantifier
+// (an adversarial 64 KB input is timed in apps/server/test/errors-shared.test.ts).
+const RE = {
+  jwt: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*)?/g,
+  bearer: /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi,
+  virvi: /(?<![A-Za-z0-9_])virvi_[A-Za-z0-9_-]+/g,
+  stripe: /(?<![A-Za-z0-9_])(?:(?:sk|pk|rk)_(?:live|test)_|whsec_)[A-Za-z0-9]+/g,
+  keyValue: new RegExp(`(?<![A-Za-z0-9_])(${SECRET_KEYS})=[^\\s&"'<>,;]+`, 'gi'),
+  email: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24}(?![A-Za-z])/g,
+  hex: /(?<![0-9A-Za-z])0x[0-9a-fA-F]{64,}(?![0-9A-Za-z])/g,
+  wallet: /(?<![0-9A-Za-z])0x[0-9a-fA-F]{40}(?![0-9A-Za-z])/g,
+  query: /(?<=[A-Za-z0-9_/.~%-])[?#][^\s"'<>]+/g,
+  card: /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g,
+  opaque: /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])/g,
+}
+
+function opaqueToken(m: string): boolean {
+  if (UUID.test(m)) return false
+  const digit = /\d/.test(m)
+  if (m.length >= 32) return digit && /[A-Za-z]/.test(m)
+  return digit && /[a-z]/.test(m) && /[A-Z]/.test(m)
+}
+
+/** Tokens, emails, wallet addresses, signatures, card numbers, secrets in key=value and query strings out of a piece of text. */
 export function redactText(input: string): string {
-  return input
-    .replace(/eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g, '[token]')
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [token]')
-    .replace(/\bvirvi_[A-Za-z0-9_-]+/g, '[token]')
-    .replace(/\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]+|\bwhsec_[A-Za-z0-9]+/g, '[token]')
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
-    .replace(/\b0x[0-9a-fA-F]{64,}\b/g, '[hex]')
-    .replace(/\b0x[0-9a-fA-F]{40}\b/g, '[wallet]')
-    .replace(/((?:https?:\/\/|\/)[^\s?#"'<>]*)[?#][^\s"'<>]*/g, '$1')
-    .replace(/\b(?:\d[ -]?){12,18}\d\b/g, '[number]')
-    .replace(/[A-Za-z0-9_-]{32,}/g, (m) => (UUID.test(m) || !/\d/.test(m) || !/[A-Za-z]/.test(m) ? m : '[token]'))
+  let s = input
+    .replace(RE.jwt, '[token]')
+    .replace(RE.bearer, '$1 [token]')
+    .replace(RE.virvi, '[token]')
+    .replace(RE.stripe, '[token]')
+    .replace(RE.keyValue, '$1=[redacted]')
+  if (s.includes('@')) s = s.replace(RE.email, '[email]')
+  return s
+    .replace(RE.hex, '[hex]')
+    .replace(RE.wallet, '[wallet]')
+    .replace(RE.query, '')
+    .replace(RE.card, '[number]')
+    .replace(RE.opaque, (m) => (opaqueToken(m) ? '[token]' : m))
 }
 
 /** A URL or path without its query or hash, with credential codes replaced. */
@@ -117,7 +143,7 @@ export function redactValue(value: unknown, depth = 0): unknown {
 
 /** A path as a route: ids, numbers, hex and credential codes replaced, no query. */
 export function routeTemplate(path: string): string {
-  let p = path.replace(/[?#].*$/, '').replace(/^https?:\/\/[^/]+/, '')
+  let p = path.slice(0, 2000).replace(/[?#].*$/, '').replace(/^https?:\/\/[^/]+/, '')
   p = p.replace(CODE_PATHS, '$1:code')
   return p
     .split('/')
@@ -135,7 +161,7 @@ export function routeTemplate(path: string): string {
 
 /** A message with ids and numbers stripped (and redacted), so errors that differ only in them read the same. */
 export function normalizeMessage(message: string): string {
-  return redactText(message)
+  return redactText(message.slice(0, 2000))
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<id>')
     .replace(/\b0x[0-9a-f]+\b/gi, '<hex>')
     .replace(/\d+(?:\.\d+)?/g, '<n>')
@@ -144,23 +170,53 @@ export function normalizeMessage(message: string): string {
     .slice(0, 200)
 }
 
-/** The top stack frame as `function (file)`, without the origin, line, column or a build's chunk hash. */
+const FRAME_LOC = /^(?:(?:https?|file|webpack|blob):\/\/|\/)/
+
+/** A frame's file without origin, query, line and column, and without a build's chunk hash or numeric chunk id. */
+function frameFile(loc: string): string {
+  const file = loc
+    .replace(/:\d+(?::\d+)?$/, '')
+    .replace(/^[a-z]+:\/\/[^/]*/i, '')
+    .replace(/[?#].*$/, '')
+  const slash = file.lastIndexOf('/')
+  const dir = file.slice(0, slash + 1)
+  const base = file.slice(slash + 1)
+  if (/^[0-9a-f]+(?:-[0-9a-f]+)*\.js$/i.test(base)) return `${dir}<chunk>.js` // webpack's numbered and hashed shared chunks
+  return dir + base.replace(/[-.][0-9a-f]{8,}(?=\.js$)/i, '')
+}
+
+/** A frame's function as a stable name: an `[as alias]` (property names survive minifying), else a name longer than a mangled one. */
+function frameName(fn: string | null): string {
+  if (!fn) return '<anonymous>'
+  const alias = /\[as ([^\]]{1,80})\]/.exec(fn)?.[1]
+  if (alias) return alias
+  const name = fn.replace(/^(?:async|new) /, '').split(' ')[0].split('.').pop() ?? ''
+  return name.length > 3 && name !== 'Object' && name !== '<anonymous>' ? name.slice(0, 80) : '<anonymous>'
+}
+
+/**
+ * The top stack frame of our code as `function (file)`: no origin, line, column, chunk hash or mangled name, so the
+ * same bug keeps one signature across deploys. Reads Chrome (`at fn (url:l:c)`) and Firefox/Safari (`fn@url:l:c`)
+ * frames, including Next's route-group paths with parentheses.
+ */
 export function topFrame(stack: string | undefined): string | null {
   if (!stack) return null
-  for (const raw of stack.split('\n')) {
-    const line = raw.trim()
+  for (const raw of stack.slice(0, ERROR_LIMITS.maxStack).split('\n').slice(0, 30)) {
+    const line = raw.trim().slice(0, 1000)
     let fn: string | null = null
-    let loc: string | null = null
-    let m = /^at (?:(.+?) \()?((?:https?|file|webpack|blob):\/\/?[^)]+?|\/[^)]+?)\)?$/.exec(line)
-    if (m) { fn = m[1] ?? null; loc = m[2] }
-    else if ((m = /^([^@\s]*)@((?:https?|file|webpack|blob):\/\/?.+)$/.exec(line))) { fn = m[1] || null; loc = m[2] }
-    if (!loc) continue
-    const file = loc
-      .replace(/:\d+(?::\d+)?$/, '')
-      .replace(/^[a-z]+:\/\/[^/]*/i, '')
-      .replace(/[?#].*$/, '')
-      .replace(/[-.][0-9a-f]{8,}(?=\.js$)/i, '')
-    return `${(fn || '<anonymous>').replace(/^async /, '')} (${file})`
+    let loc: string
+    if (line.startsWith('at ')) {
+      const body = line.slice(3)
+      const open = body.indexOf(' (')
+      if (open >= 0 && body.endsWith(')')) { fn = body.slice(0, open); loc = body.slice(open + 2, -1) } else loc = body
+    } else {
+      const at = line.indexOf('@')
+      if (at < 0) continue
+      fn = line.slice(0, at) || null
+      loc = line.slice(at + 1)
+    }
+    if (!FRAME_LOC.test(loc)) continue
+    return `${frameName(fn)} (${frameFile(loc)})`
   }
   return null
 }
@@ -251,7 +307,9 @@ const optStr = (v: unknown, max: number): string | undefined | false =>
   v === undefined || v === null ? undefined : typeof v === 'string' ? v.slice(0, max) : false
 const optInt = (v: unknown, min: number, max: number): number | undefined | false =>
   v === undefined || v === null ? undefined : Number.isInteger(v) && (v as number) >= min && (v as number) <= max ? (v as number) : false
-const RELEASE = /^[A-Za-z0-9._-]{1,64}$/
+/** A release is a commit SHA (lowercase hex) or `dev`; it is kept to 12 characters, as the server's. */
+const RELEASE = /^(?:dev|[0-9a-f]{7,40})$/
+const releaseOf = (v: unknown) => (typeof v === 'string' && RELEASE.test(v) ? v.slice(0, 12) : null)
 
 function errorBodyOf(v: unknown): unknown {
   if (v === undefined) return undefined
@@ -278,7 +336,7 @@ function checkCrumb(c: unknown, nowMs: number): Breadcrumb | string {
   if (method !== undefined) out.method = (method as string).toUpperCase()
   if (status !== undefined) out.status = status as number
   if (ms !== undefined) out.ms = ms as number
-  if (requestId !== undefined) out.requestId = requestId as string
+  if (requestId !== undefined && UUID.test(requestId as string)) out.requestId = requestId as string
   return out
 }
 
@@ -316,7 +374,7 @@ function checkEvent(e: unknown, nowMs: number): ClientErrorEvent | string {
   if (fields.sceneId && UUID.test(fields.sceneId)) out.sceneId = fields.sceneId
   if (fields.method) out.method = fields.method.toUpperCase()
   if (fields.path) out.path = redactUrl(fields.path)
-  if (fields.requestId) out.requestId = fields.requestId
+  if (fields.requestId && UUID.test(fields.requestId)) out.requestId = fields.requestId
   if (fields.errorType) out.errorType = redactText(fields.errorType)
   if (fields.message) out.message = redactText(fields.message)
   if (fields.stack) out.stack = redactText(fields.stack)
@@ -335,7 +393,7 @@ export type ErrorBatchCheck = { ok: true; release: string | null; events: Client
 export function checkErrorBatch(input: unknown, nowMs: number): ErrorBatchCheck {
   if (!isObj(input)) return { ok: false, error: 'batch must be an object' }
   if (input.v !== 1) return { ok: false, error: 'v must be 1' }
-  const release = typeof input.release === 'string' && RELEASE.test(input.release) ? input.release : null
+  const release = releaseOf(input.release)
   if (!Array.isArray(input.events) || input.events.length < 1 || input.events.length > ERROR_LIMITS.maxEvents) {
     return { ok: false, error: `events must contain 1-${ERROR_LIMITS.maxEvents} items` }
   }
@@ -361,6 +419,6 @@ export function checkErrorReport(input: unknown, nowMs: number): ErrorReportChec
   if (description.length > ERROR_LIMITS.maxDescription) return { ok: false, error: `description must be at most ${ERROR_LIMITS.maxDescription} characters` }
   const event = checkEvent(input.event, nowMs)
   if (typeof event === 'string') return { ok: false, error: event }
-  const release = typeof input.release === 'string' && RELEASE.test(input.release) ? input.release : null
+  const release = releaseOf(input.release)
   return { ok: true, release, description, event }
 }

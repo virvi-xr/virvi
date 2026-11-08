@@ -13,7 +13,7 @@ import { createUser, tokenFor } from './helpers/factories.js'
 
 const CHROME = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const now = () => Date.now()
-const apiEvent = (over: Record<string, unknown> = {}) => ({ kind: 'api', t: now(), route: '/scenes', method: 'GET', path: '/api/scenes/3f2b8c1e-1d2a-4b3c-9d8e-0123456789ab', status: 500, requestId: 'req-1', ...over })
+const apiEvent = (over: Record<string, unknown> = {}) => ({ kind: 'api', t: now(), route: '/scenes', method: 'GET', path: '/api/scenes/3f2b8c1e-1d2a-4b3c-9d8e-0123456789ab', status: 500, requestId: '0b1c2d3e-0000-4000-8000-000000000001', ...over })
 const crash = (over: Record<string, unknown> = {}) => ({
   kind: 'crash', t: now(), route: '/scenes', errorType: 'TypeError', message: 'Cannot read item 4', userFacing: true,
   stack: 'TypeError: Cannot read item 4\n    at renderList (https://virvi.io/_next/static/chunks/page-3a9f0c2b1d4e5f60.js:1:2)',
@@ -38,13 +38,13 @@ describe('error ingest (POST /api/errors)', () => {
   it('takes a batch from a signed-in user and records it grouped, with a hashed user, the token’s org and the browser', async () => {
     const u = await createUser()
     const orgId = '11111111-2222-4333-8444-555555555555'
-    const res = await send({ v: 1, release: 'abc123', events: [apiEvent({ userId: 'spoofed', orgId: '99999999-2222-4333-8444-555555555555' }), apiEvent({ path: '/api/scenes/aaaaaaaa-1d2a-4b3c-9d8e-0123456789ab', requestId: 'req-2' })] },
+    const res = await send({ v: 1, release: 'abc1234', events: [apiEvent({ userId: 'spoofed', orgId: '99999999-2222-4333-8444-555555555555' }), apiEvent({ path: '/api/scenes/aaaaaaaa-1d2a-4b3c-9d8e-0123456789ab', requestId: '0b1c2d3e-0000-4000-8000-000000000002' })] },
       { authorization: `Bearer ${tokenFor(u, { orgId })}` })
     expect(res.statusCode).toBe(202)
     await flushErrors()
     const sigs = await db.select().from(errorSignatures)
     expect(sigs).toHaveLength(1)
-    expect(sigs[0]).toMatchObject({ signature: 'api 500 GET /api/scenes/:id', source: 'web', kind: 'api', status: 500, totalCount: 2, firstRelease: 'abc123', expected: null })
+    expect(sigs[0]).toMatchObject({ signature: 'api 500 GET /api/scenes/:id', source: 'web', kind: 'api', status: 500, totalCount: 2, firstRelease: 'abc1234', expected: null })
     const events = await db.select().from(errorEvents)
     expect(events).toHaveLength(2)
     for (const e of events) {
@@ -53,13 +53,15 @@ describe('error ingest (POST /api/errors)', () => {
       expect(e.orgId).toBe(orgId)
       expect(e.browser).toBe('Chrome 131')
       expect(e.os).toBe('macOS')
-      expect(e.release).toBe('abc123')
+      expect(e.release).toBe('abc1234')
     }
     const [hour] = await db.select().from(errorHourly)
-    expect(hour).toMatchObject({ count: 2, users: 1, stored: 2 })
-    expect(await db.select().from(errorHourlyUsers)).toHaveLength(1)
+    expect(hour).toMatchObject({ count: 2, users: 1, ips: 1 })
+    const marks = (await db.select().from(errorHourlyUsers)).map((r) => r.userHash)
+    expect(marks.filter((h) => !h.startsWith('ip:'))).toEqual([errorUserHash(u.id)])
+    expect(marks.filter((h) => h.startsWith('ip:'))).toHaveLength(1) // a day-salted address hash, never the address
     const dims = await db.select().from(errorHourlyDims)
-    expect(dims.map((d) => `${d.dim}=${d.value}:${d.count}`).sort()).toEqual(['browser=Chrome 131:2', `org=${orgId}:2`, 'os=macOS:2', 'release=abc123:2', 'route=/scenes:2'])
+    expect(dims.map((d) => `${d.dim}=${d.value}:${d.count}`).sort()).toEqual(['browser=Chrome 131:2', `org=${orgId}:2`, 'os=macOS:2', 'release=abc1234:2', 'route=/scenes:2'])
   })
 
   it('takes a guest’s and a trial’s reports too, counting the trial as a user', async () => {
@@ -80,16 +82,16 @@ describe('error ingest (POST /api/errors)', () => {
     expect(hour.users).toBe(1)
   })
 
-  it('stores the first occurrences and only counts repeats and the rest of a busy hour', async () => {
+  it('stores the first occurrences and only counts repeats and the rest of a busy day', async () => {
     const events = Array.from({ length: 8 }, (_, i) => crash({ message: `Cannot read item ${i}` }))
     await send({ v: 1, events })
     await send({ v: 1, events: [crash({ repeat: true, count: 40 })] })
     await flushErrors()
     const [sig] = await db.select().from(errorSignatures)
-    expect(sig.totalCount).toBe(48)
+    expect(sig.totalCount).toBe(28) // a client count is capped at 20
     expect(await db.select().from(errorEvents)).toHaveLength(5)
     const [hour] = await db.select().from(errorHourly)
-    expect(hour).toMatchObject({ count: 48, stored: 5 })
+    expect(hour).toMatchObject({ count: 28 })
   })
 
   it('marks expected 4xx and never takes typed text or bodies beyond the redacted error body', async () => {
@@ -163,13 +165,13 @@ describe('error ingest (POST /api/errors)', () => {
   it('a crash screen report attaches the description to the signature, with the account of a signed-in sender', async () => {
     const u = await createUser()
     const res = await app.inject({ method: 'POST', url: '/api/errors/reports', headers: { authorization: `Bearer ${tokenFor(u)}`, 'user-agent': CHROME },
-      payload: { v: 1, release: 'abc123', description: 'Saving my scene', event: crash() } })
+      payload: { v: 1, release: 'abc1234', description: 'Saving my scene', event: crash() } })
     expect(res.statusCode).toBe(201)
     const [sig] = await db.select().from(errorSignatures)
     expect(sig.userReports).toBe(1)
     expect(sig.signature).toContain('crash TypeError')
     const [report] = await db.select().from(errorReports)
-    expect(report).toMatchObject({ signatureId: sig.id, userId: u.id, description: 'Saving my scene', release: 'abc123' })
+    expect(report).toMatchObject({ signatureId: sig.id, userId: u.id, description: 'Saving my scene', release: 'abc1234' })
     expect((report.payload as any).event.breadcrumbs).toHaveLength(2)
     const guest = await app.inject({ method: 'POST', url: '/api/errors/reports', payload: { v: 1, description: 'Clicking save', event: crash() } })
     expect(guest.statusCode).toBe(201)

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { errorSignatures, errorEvents, errorHourly, errorHourlyDims, errorHourlyUsers, errorReports } from '../src/db/schema.js'
 import { purgeErrors, RAW_DAYS, COUNT_DAYS } from '../src/errors/retention.js'
@@ -34,5 +35,20 @@ describe('error retention', () => {
     // a long-quiet signature goes, unless it has its Linear issue
     expect((await db.select().from(errorSignatures)).map((s) => s.id).sort()).toEqual([filed.id, live.id].sort())
     expect(old.id).toBeTruthy()
+  })
+})
+
+describe('error job lock (M7)', () => {
+  it('runs on one holder at a time, with no transaction open while it works', async () => {
+    const { withLock } = await import('../src/errors/jobs.js')
+    let inner: unknown = 'not run'
+    const outer = await withLock('errors:test', async () => {
+      const [{ state }] = (await db.execute(sql`SELECT count(*)::int AS state FROM pg_stat_activity WHERE state = 'idle in transaction' AND datname = current_database()`)) as unknown as Array<{ state: number }>
+      inner = await withLock('errors:test', async () => 'second')
+      return state
+    })
+    expect(outer).toBe(0)
+    expect(inner).toBeNull()
+    expect(await withLock('errors:test', async () => 'again')).toBe('again')
   })
 })

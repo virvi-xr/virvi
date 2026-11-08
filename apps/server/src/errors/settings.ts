@@ -16,6 +16,8 @@ const RULES: Record<Exclude<keyof Thresholds, 'filing'>, Rule> = {
   spikeMinCount: { min: 1, max: 1_000_000, int: true },
   spikeHistoryWeeks: { min: 1, max: 8, int: true },
   quietDays: { min: 1, max: 90, int: true },
+  maxIssuesPerPass: { min: 1, max: 50, int: true },
+  maxIssuesPerDay: { min: 1, max: 500, int: true },
 }
 
 export function checkThresholds(input: unknown): { ok: true; value: Partial<Thresholds> } | { ok: false; error: string } {

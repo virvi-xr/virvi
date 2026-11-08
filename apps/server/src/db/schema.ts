@@ -2223,6 +2223,9 @@ export const errorSignatures = pgTable('error_signatures', {
   resolvedBy: uuid('resolved_by'),
   regressedAt: timestamp('regressed_at', { withTimezone: true }),
   userReports: integer('user_reports').notNull().default(0),
+  // Full events stored today (limits.ts storedPerSignatureDay)
+  storedDay: date('stored_day'),
+  storedToday: integer('stored_today').notNull().default(0),
   // Auto-filing (src/errors/filing.ts): one Linear issue per signature
   linearIssueId: text('linear_issue_id'),
   linearIssueKey: text('linear_issue_key'),
@@ -2273,9 +2276,9 @@ export const errorEvents = pgTable('error_events', {
 export const errorHourly = pgTable('error_hourly', {
   signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
   hour: timestamp('hour', { withTimezone: true }).notNull(),
-  count: integer('count').notNull().default(0),
-  users: integer('users').notNull().default(0), // distinct user hashes that hour
-  stored: integer('stored').notNull().default(0), // raw events kept that hour (sampling)
+  count: bigint('count', { mode: 'number' }).notNull().default(0),
+  users: bigint('users', { mode: 'number' }).notNull().default(0), // distinct user hashes that hour
+  ips: bigint('ips', { mode: 'number' }).notNull().default(0), // distinct addresses that hour (day-salted 'ip:' hashes)
 }, (t) => ({
   pk: primaryKey({ columns: [t.signatureId, t.hour] }),
   hourIdx: index('error_hourly_hour_idx').on(t.hour),
@@ -2287,13 +2290,13 @@ export const errorHourlyDims = pgTable('error_hourly_dims', {
   hour: timestamp('hour', { withTimezone: true }).notNull(),
   dim: text('dim').notNull(),
   value: text('value').notNull(),
-  count: integer('count').notNull().default(0),
+  count: bigint('count', { mode: 'number' }).notNull().default(0),
 }, (t) => ({
   pk: primaryKey({ columns: [t.signatureId, t.hour, t.dim, t.value] }),
   hourIdx: index('error_hourly_dims_hour_idx').on(t.hour),
 }))
 
-// Which user hashes hit a signature in an hour (affected-user counts); kept 30 days
+// Which user hashes, and day-salted address hashes ('ip:…'), hit a signature in an hour (affected-user and distinct-address counts); kept 30 days
 export const errorHourlyUsers = pgTable('error_hourly_users', {
   signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
   hour: timestamp('hour', { withTimezone: true }).notNull(),

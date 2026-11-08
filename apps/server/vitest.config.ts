@@ -40,6 +40,8 @@ export default defineConfig({
       ANALYTICS_JOBS: 'false',
       ERROR_JOBS: 'false',
       ERROR_FLUSH_MS: '0',
+      LINEAR_API_KEY: '', // never the real Linear from a developer shell
+      LINEAR_TEAM_ID: '',
       LOCAL_STORAGE_PATH: join(STORAGE, 'uploads'),
       PRIVATE_STORAGE_PATH: join(STORAGE, 'private'),
     },

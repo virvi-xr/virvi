@@ -10,6 +10,8 @@ const HOUR = 3_600_000
 const DAY = 24 * HOUR
 const ts = (d: Date) => sql`${d.toISOString()}::timestamptz`
 const rowsOf = <T>(r: unknown) => r as unknown as T[]
+/** error_hourly_users rows that are users, not day-salted address markers ('ip:…'). */
+export const USER_ROW = sql`user_hash NOT LIKE 'ip:%'`
 const iso = (v: unknown) => (v == null ? null : new Date(v as string).toISOString())
 
 export interface SignatureSummary {
@@ -59,8 +61,8 @@ const summary = (r: SigRow): SignatureSummary => ({
 /** Every signature with events since `from`, with its count and distinct users there. */
 async function windowed(from: Date, where = sql`TRUE`): Promise<SignatureSummary[]> {
   return rowsOf<SigRow>(await db.execute(sql`
-    WITH c AS (SELECT signature_id, sum(count)::int AS count FROM error_hourly WHERE hour >= ${ts(from)} GROUP BY 1),
-         u AS (SELECT signature_id, count(DISTINCT user_hash)::int AS users FROM error_hourly_users WHERE hour >= ${ts(from)} GROUP BY 1)
+    WITH c AS (SELECT signature_id, sum(count)::bigint AS count FROM error_hourly WHERE hour >= ${ts(from)} GROUP BY 1),
+         u AS (SELECT signature_id, count(DISTINCT user_hash)::int AS users FROM error_hourly_users WHERE hour >= ${ts(from)} AND ${USER_ROW} GROUP BY 1)
     SELECT s.*, c.count, coalesce(u.users, 0) AS users
     FROM c JOIN error_signatures s ON s.id = c.signature_id LEFT JOIN u ON u.signature_id = c.signature_id
     WHERE ${where}
@@ -94,7 +96,7 @@ export async function errorsOverview(now: Date, t: Thresholds) {
 
   const newRows = rowsOf<SigRow>(await db.execute(sql`
     SELECT s.*, s.total_count AS count,
-      (SELECT count(DISTINCT user_hash) FROM error_hourly_users u WHERE u.signature_id = s.id)::int AS users
+      (SELECT count(DISTINCT user_hash) FROM error_hourly_users u WHERE u.signature_id = s.id AND ${USER_ROW})::int AS users
     FROM error_signatures s WHERE s.first_seen_at >= ${ts(new Date(now.getTime() - 7 * DAY))} AND s.expected IS NULL
     ORDER BY s.first_seen_at DESC LIMIT 50`)).map((r) => ({ ...summary(r), sinceDeploy: r.first_release === config.release }))
 
@@ -132,16 +134,16 @@ export async function signatureDetail(id: string, now: Date, days = 7) {
   const hourly = rowsOf<{ hour: string; count: number; users: number }>(await db.execute(sql`
     SELECT hour, count, users FROM error_hourly WHERE signature_id = ${id}::uuid AND hour >= ${ts(from)} ORDER BY hour`))
   const dimRows = rowsOf<{ dim: string; value: string; count: number }>(await db.execute(sql`
-    SELECT dim, value, sum(count)::int AS count FROM error_hourly_dims WHERE signature_id = ${id}::uuid AND hour >= ${ts(from)}
+    SELECT dim, value, sum(count)::bigint AS count FROM error_hourly_dims WHERE signature_id = ${id}::uuid AND hour >= ${ts(from)}
     GROUP BY dim, value ORDER BY count DESC`))
   const breakdowns = Object.fromEntries(DIMS.map((d) => [d, dimRows.filter((r) => r.dim === d).slice(0, 20).map((r) => ({ value: r.value, count: Number(r.count) }))]))
   const hourOfDay = Array(24).fill(0) as number[]
   for (const h of hourly) hourOfDay[new Date(h.hour).getUTCHours()] += Number(h.count)
   const [totals] = rowsOf<{ day: number; week: number; users_week: number }>(await db.execute(sql`
     SELECT
-      (SELECT coalesce(sum(count), 0) FROM error_hourly WHERE signature_id = ${id}::uuid AND hour >= ${ts(new Date(now.getTime() - DAY))})::int AS day,
-      (SELECT coalesce(sum(count), 0) FROM error_hourly WHERE signature_id = ${id}::uuid AND hour >= ${ts(new Date(now.getTime() - 7 * DAY))})::int AS week,
-      (SELECT count(DISTINCT user_hash) FROM error_hourly_users WHERE signature_id = ${id}::uuid AND hour >= ${ts(new Date(now.getTime() - 7 * DAY))})::int AS users_week`))
+      (SELECT coalesce(sum(count), 0) FROM error_hourly WHERE signature_id = ${id}::uuid AND hour >= ${ts(new Date(now.getTime() - DAY))})::bigint AS day,
+      (SELECT coalesce(sum(count), 0) FROM error_hourly WHERE signature_id = ${id}::uuid AND hour >= ${ts(new Date(now.getTime() - 7 * DAY))})::bigint AS week,
+      (SELECT count(DISTINCT user_hash) FROM error_hourly_users WHERE signature_id = ${id}::uuid AND hour >= ${ts(new Date(now.getTime() - 7 * DAY))} AND ${USER_ROW})::int AS users_week`))
   const events = rowsOf<SigRow>(await db.execute(sql`
     SELECT id, occurred_at, received_at, source, kind, release, route, method, path, status, request_id, browser, os, org_id, scene_id,
       count, user_facing, error_type, message, stack, error_body, breadcrumbs

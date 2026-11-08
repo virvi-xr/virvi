@@ -1,9 +1,10 @@
 import { sql } from 'drizzle-orm'
+import { redactText } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { getLinearClient, type LinearClient } from './linear.js'
 import { getThresholds, type Thresholds } from './settings.js'
 import { findSpikes } from './spikes.js'
-import { signatureDetail, type SignatureDetail } from './queries.js'
+import { signatureDetail, USER_ROW, type SignatureDetail } from './queries.js'
 
 /**
  * Filing errors as Linear bugs (LIV-66 §3). Off unless LINEAR_API_KEY and LINEAR_TEAM_ID are set (linear.ts) and the
@@ -15,15 +16,20 @@ import { signatureDetail, type SignatureDetail } from './queries.js'
 export type FilingReason = 'new' | 'severe' | 'spike' | 'regression'
 
 export interface FilingStats {
+  source: 'web' | 'server'
   expected: string | null
   kind: string
   status: number | null
   /** First seen in the last 7 days. */
   isNew: boolean
   usersSinceFirstSeen: number
-  /** The most users / events in the current or the last full hour. */
+  /** The most users, distinct addresses and events in the current or the last full hour. */
   hourUsers: number
+  hourIps: number
   hourCount: number
+  /** Distinct users and addresses in the last 24 hours. */
+  dayUsers: number
+  dayIps: number
   spiking: boolean
   /** Came back after being marked fixed, and not marked fixed again. */
   regressed: boolean
@@ -31,15 +37,22 @@ export interface FilingStats {
 
 const SEVERE_KINDS = new Set(['crash', 'exception', 'rejection', 'server_exception', 'server_5xx'])
 
-/** Why a signature with no issue yet should get one, or null. Expected 4xx are filed only as a spike. */
+/**
+ * Why a signature with no issue yet should get one, or null. Expected 4xx are filed only as a spike; overflow never.
+ * What one browser alone can claim never files: a browser error needs a signed-in user or two addresses in the last
+ * day, and it is severe by distinct users or addresses, never by the counts browsers send.
+ */
 export function filingReason(s: FilingStats, t: Thresholds): FilingReason | null {
-  if (!t.filing) return null
+  if (!t.filing || s.expected === 'overflow') return null
+  const web = s.source === 'web'
+  if (web && s.dayUsers < 1 && s.dayIps < 2) return null
   if (s.spiking) return 'spike'
   if (s.expected) return null
   if (s.regressed) return 'regression'
   if (s.isNew && s.usersSinceFirstSeen >= t.newMinUsers) return 'new'
   const severe = SEVERE_KINDS.has(s.kind) || (s.status ?? 0) >= 500
-  if (severe && (s.hourUsers >= t.severeMinUsers || s.hourCount >= t.severeMinCount)) return 'severe'
+  if (!severe) return null
+  if (web ? s.hourUsers >= t.severeMinUsers || s.hourIps >= t.severeMinUsers : s.hourUsers >= t.severeMinUsers || s.hourCount >= t.severeMinCount) return 'severe'
   return null
 }
 
@@ -95,28 +108,35 @@ export function issueContent(d: SignatureDetail, reason: FilingReason, extra: { 
     lines.push('')
   }
   lines.push('### Request IDs', d.requestIds.length ? d.requestIds.slice(0, 10).map((r) => `\`${r}\``).join(', ') : '—', '')
-  if (d.reports.length) lines.push(`### What users said (${d.reports.length})`, d.reports.slice(0, 5).map((r) => `- ${r.description.replace(/\n/g, ' ')}`).join('\n'))
+  if (d.reports.length) lines.push(`### What users said (${d.reports.length})`, d.reports.slice(0, 5).map((r) => `- ${redactText(r.description).replace(/\n/g, ' ')}`).join('\n'))
   return { title, description: lines.join('\n') }
 }
 
 async function candidateStats(now: Date, spikes: Set<string>): Promise<Array<FilingStats & { id: string }>> {
   const h0 = new Date(Math.floor(now.getTime() / HOUR) * HOUR)
   const rows = rowsOf<Record<string, unknown>>(await db.execute(sql`
-    SELECT s.id, s.expected, s.kind, s.status, s.first_seen_at, s.regressed_at, s.resolved_at,
-      (SELECT count(DISTINCT user_hash) FROM error_hourly_users u WHERE u.signature_id = s.id)::int AS users_since,
-      (SELECT coalesce(max(users), 0) FROM error_hourly h WHERE h.signature_id = s.id AND h.hour >= ${ts(new Date(h0.getTime() - HOUR))})::int AS hour_users,
-      (SELECT coalesce(max(count), 0) FROM error_hourly h WHERE h.signature_id = s.id AND h.hour >= ${ts(new Date(h0.getTime() - HOUR))})::int AS hour_count
+    SELECT s.id, s.source, s.expected, s.kind, s.status, s.first_seen_at, s.regressed_at, s.resolved_at,
+      (SELECT count(DISTINCT user_hash) FROM error_hourly_users u WHERE u.signature_id = s.id AND ${USER_ROW})::int AS users_since,
+      (SELECT count(DISTINCT user_hash) FILTER (WHERE ${USER_ROW}) FROM error_hourly_users u WHERE u.signature_id = s.id AND u.hour >= ${ts(new Date(now.getTime() - DAY))})::int AS day_users,
+      (SELECT count(DISTINCT user_hash) FILTER (WHERE NOT ${USER_ROW}) FROM error_hourly_users u WHERE u.signature_id = s.id AND u.hour >= ${ts(new Date(now.getTime() - DAY))})::int AS day_ips,
+      (SELECT coalesce(max(users), 0) FROM error_hourly h WHERE h.signature_id = s.id AND h.hour >= ${ts(new Date(h0.getTime() - HOUR))})::bigint AS hour_users,
+      (SELECT coalesce(max(ips), 0) FROM error_hourly h WHERE h.signature_id = s.id AND h.hour >= ${ts(new Date(h0.getTime() - HOUR))})::bigint AS hour_ips,
+      (SELECT coalesce(max(count), 0) FROM error_hourly h WHERE h.signature_id = s.id AND h.hour >= ${ts(new Date(h0.getTime() - HOUR))})::bigint AS hour_count
     FROM error_signatures s
     WHERE s.linear_issue_id IS NULL AND (s.last_seen_at >= ${ts(new Date(now.getTime() - 2 * HOUR))} OR (s.regressed_at IS NOT NULL AND s.resolved_at IS NULL))`))
   return rows.map((r) => ({
     id: r.id as string,
+    source: r.source === 'server' ? 'server' : 'web',
     expected: (r.expected as string | null) ?? null,
     kind: r.kind as string,
     status: (r.status as number | null) ?? null,
     isNew: new Date(r.first_seen_at as string).getTime() >= now.getTime() - 7 * DAY,
     usersSinceFirstSeen: Number(r.users_since),
     hourUsers: Number(r.hour_users),
+    hourIps: Number(r.hour_ips),
     hourCount: Number(r.hour_count),
+    dayUsers: Number(r.day_users),
+    dayIps: Number(r.day_ips),
     spiking: spikes.has(r.id as string),
     regressed: !!r.regressed_at && !r.resolved_at,
   }))
@@ -133,9 +153,14 @@ export async function runFilingPass(now = new Date(), client: LinearClient | nul
   const spikes = await findSpikes(now, t)
   const spikeSet = new Set(spikes.map((s) => s.signatureId))
 
+  const [today] = rowsOf<{ n: number }>(await db.execute(sql`
+    SELECT count(*)::int AS n FROM error_signatures WHERE linear_filed_at >= ${ts(new Date(now.getTime() - DAY))}`))
+  let budget = Math.min(t.maxIssuesPerPass, t.maxIssuesPerDay - Number(today.n))
   for (const c of await candidateStats(now, spikeSet)) {
     const reason = filingReason(c, t)
     if (!reason) continue
+    if (budget <= 0) break
+    budget--
     try {
       const detail = await signatureDetail(c.id, now)
       if (!detail) continue

@@ -1,19 +1,29 @@
-import { sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { config } from '../config.js'
 import { flushErrors, recordServerException, startErrorFlusher } from './record.js'
 import { purgeErrors } from './retention.js'
 import { runFilingPass } from './filing.js'
 
-const rowsOf = <T>(r: unknown) => r as unknown as T[]
+type Reserved = ((strings: TemplateStringsArray, ...v: unknown[]) => Promise<Array<Record<string, unknown>>>) & { release(): void }
 
-/** Runs fn only on the instance that wins the named advisory lock (a no-op on the others). */
-async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
-  return db.transaction(async (tx) => {
-    const [row] = rowsOf<{ locked: boolean }>(await tx.execute(sql`SELECT pg_try_advisory_xact_lock(hashtext(${name})) AS locked`))
+/**
+ * Runs fn only on the instance that wins the named advisory lock (a no-op on the others). The lock is a session lock
+ * on a reserved connection, so no transaction stays open while fn waits on Linear.
+ */
+export async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
+  const client = (db as unknown as { $client: { reserve(): Promise<Reserved> } }).$client
+  const conn = await client.reserve()
+  try {
+    const [row] = await conn`SELECT pg_try_advisory_lock(hashtext(${name})) AS locked`
     if (!row?.locked) return null
-    return fn()
-  })
+    try {
+      return await fn()
+    } finally {
+      await conn`SELECT pg_advisory_unlock(hashtext(${name}))`
+    }
+  } finally {
+    conn.release()
+  }
 }
 
 export const PURGE_EVERY_MS = 60 * 60_000

@@ -43,7 +43,7 @@ describe('topFrame', () => {
   })
   it('reads a Firefox frame and an anonymous one', () => {
     expect(topFrame('renderList@https://virvi.io/_next/static/chunks/main-0011223344556677.js:3:9')).toBe('renderList (/_next/static/chunks/main.js)')
-    expect(topFrame('Error: x\n    at https://virvi.io/_next/static/chunks/9f.js:1:1')).toBe('<anonymous> (/_next/static/chunks/9f.js)')
+    expect(topFrame('Error: x\n    at https://virvi.io/_next/static/chunks/9f.js:1:1')).toBe('<anonymous> (/_next/static/chunks/<chunk>.js)')
   })
   it('is null without a stack', () => {
     expect(topFrame(undefined)).toBeNull()
@@ -138,14 +138,14 @@ describe('checkErrorBatch', () => {
   const now = Date.parse('2026-11-08T12:00:00Z')
   const api = { kind: 'api', t: now, route: '/scenes', method: 'GET', path: '/api/scenes', status: 500, requestId: 'r1' }
   it('takes a well-formed batch and redacts every string again', () => {
-    const r = checkErrorBatch({ v: 1, release: 'abc123', events: [
+    const r = checkErrorBatch({ v: 1, release: 'abc1234', events: [
       api,
       { kind: 'crash', t: now, route: '/scenes?x=me@x.com', errorType: 'TypeError', message: 'for me@x.com', stack: 'at f (https://virvi.io/a.js:1:1)',
         breadcrumbs: [{ t: now, type: 'click', label: 'Save me@x.com' }, { t: now, type: 'api', method: 'GET', path: '/api/x?token=1', status: 500, ms: 12, requestId: 'r' }] },
     ] }, now)
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.release).toBe('abc123')
+    expect(r.release).toBe('abc1234')
     expect(r.events[1].route).toBe('/scenes')
     expect(r.events[1].message).toBe('for [email]')
     expect(r.events[1].breadcrumbs?.[0].label).toBe('Save [email]')
@@ -182,5 +182,87 @@ describe('checkErrorReport', () => {
     expect(r.ok && r.description).toBe('Saving my scene')
     expect(checkErrorReport({ v: 1, description: 'x'.repeat(ERROR_LIMITS.maxDescription + 1), event }, now).ok).toBe(false)
     expect(checkErrorReport({ v: 1, description: 'x' }, now).ok).toBe(false)
+  })
+})
+
+// ── Fix round 1 ──────────────────────────────────────────────────────────────
+
+describe('redaction gaps (M3)', () => {
+  it('drops a query string with no slash before it, two-part JWTs, key=value secrets and shorter mixed tokens', () => {
+    expect(redactText('back to callback?code=SECRET123 now')).toBe('back to callback now')
+    expect(redactText('jwt eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IjEyMyJ9 end')).toBe('jwt [token] end')
+    expect(redactText('failed with token=abcd1234efgh and session=abcdef, Code=99')).toBe('failed with token=[redacted] and session=[redacted], Code=[redacted]')
+    expect(redactText('id Ab3dE6gH9jK2mN5pQ8rS1t')).toBe('id [token]')
+    expect(redactText('plain words stay: Why? Because.')).toBe('plain words stay: Why? Because.')
+    expect(redactText('issue #123 and page#frag')).toBe('issue #123 and page')
+  })
+})
+
+describe('redaction runs in linear time (I1)', () => {
+  const N = 64 * 1024
+  const ADVERSARIAL = [
+    '/'.repeat(N), '@'.repeat(N), 'a'.repeat(N), 'a@'.repeat(N / 2), 'eyJ'.repeat(N / 3), 'eyJ' + 'a'.repeat(N),
+    '0x'.repeat(N / 2), '0'.repeat(N), '1 '.repeat(N / 2), '?'.repeat(N), '/a'.repeat(N / 2) + '?', 'x.'.repeat(N / 2) + '@',
+    'a'.repeat(N - 1) + '@', 'token='.repeat(N / 6), 'Ab1'.repeat(N / 3), 'at f (' + '('.repeat(N) + ')',
+  ]
+  it('64 KB of adversarial text takes well under 50 ms per pattern family', () => {
+    for (const s of ADVERSARIAL) {
+      const t0 = performance.now()
+      redactText(s)
+      normalizeMessage(s)
+      topFrame(s)
+      routeTemplate(s)
+      const ms = performance.now() - t0
+      expect(ms, `${s.slice(0, 12)}… took ${ms.toFixed(1)} ms`).toBeLessThan(50)
+    }
+  })
+  it('a 64 KB adversarial batch validates in well under 100 ms', () => {
+    const stack = 'Error\n' + '    at f (https://virvi.io/' + '/'.repeat(3900) + ')\n'
+    const ev = { kind: 'exception', t: Date.now(), message: '@'.repeat(ERROR_LIMITS.maxMessage), stack, route: '/'.repeat(300), breadcrumbs: Array(30).fill({ t: 1, type: 'click', label: 'a@'.repeat(40) }) }
+    const t0 = performance.now()
+    const r = checkErrorBatch({ v: 1, events: Array(ERROR_LIMITS.maxEvents).fill(ev) }, Date.now())
+    for (const e of r.ok ? r.events : []) errorSignature(e)
+    expect(performance.now() - t0).toBeLessThan(100)
+  })
+})
+
+describe('top frames are stable across builds (I5)', () => {
+  // The same bug in two production builds: different chunk hashes, mangled names, chunk ids and line numbers
+  const BUILD_A = `TypeError: Cannot read properties of undefined (reading 'name')
+    at Object.nR [as onClick] (https://virvi.io/_next/static/chunks/app/(dashboard)/scenes/%5BsceneId%5D/page-3a9f0c2b1d4e5f60.js:1:9991)
+    at eT (https://virvi.io/_next/static/chunks/5748-aeb20f71ad358c32.js:1:23)`
+  const BUILD_B = `TypeError: Cannot read properties of undefined (reading 'name')
+    at Object.kQ [as onClick] (https://virvi.io/_next/static/chunks/app/(dashboard)/scenes/%5BsceneId%5D/page-77ab01cd99ef2345.js:1:10450)
+    at aZ (https://virvi.io/_next/static/chunks/4417-0011223344556677.js:1:99)`
+  it('parses route-group paths and keeps the stable parts', () => {
+    expect(topFrame(BUILD_A)).toBe('onClick (/_next/static/chunks/app/(dashboard)/scenes/%5BsceneId%5D/page.js)')
+    expect(topFrame(BUILD_B)).toBe(topFrame(BUILD_A))
+  })
+  it('gives one signature for the same crash in two builds', () => {
+    const sig = (stack: string) => errorSignature({ kind: 'crash', errorType: 'TypeError', message: "Cannot read properties of undefined (reading 'name')", stack })
+    expect(sig(BUILD_A)).toBe(sig(BUILD_B))
+  })
+  it('drops mangled names and numeric chunk ids, keeps real names', () => {
+    expect(topFrame('Error\n    at eT (https://virvi.io/_next/static/chunks/5748-aeb20f71ad358c32.js:1:23)')).toBe('<anonymous> (/_next/static/chunks/<chunk>.js)')
+    expect(topFrame('Error\n    at saveScene (https://virvi.io/_next/static/chunks/app/page-aeb20f71ad358c32.js:1:23)')).toBe('saveScene (/_next/static/chunks/app/page.js)')
+    expect(topFrame('Error\n    at async Promise.all (index 0)\n    at load (https://virvi.io/_next/static/chunks/main-app-0011223344556677.js:2:3)')).toBe('load (/_next/static/chunks/main-app.js)')
+    expect(topFrame('Error\n    at handler (/app/apps/server/dist/routes/scenes.js:10:5)\n    at node:internal/x:1:1')).toBe('handler (/app/apps/server/dist/routes/scenes.js)')
+  })
+})
+
+describe('client claims are only taken in the right format (M4) and counts are small (I2)', () => {
+  const now = Date.now()
+  const api = { kind: 'api', t: now, method: 'GET', path: '/api/x', status: 500 }
+  it('takes a release that looks like a commit SHA or dev, and a request ID that is a UUID', () => {
+    const r = checkErrorBatch({ v: 1, release: 'ABCDEF1234567890', events: [{ ...api, requestId: 'not-a-uuid' }] }, now)
+    expect(r.ok && r.release).toBe(null)
+    expect(r.ok && r.events[0].requestId).toBeUndefined()
+    const ok = checkErrorBatch({ v: 1, release: 'abcdef1234567890', events: [{ ...api, requestId: '3f2b8c1e-1d2a-4b3c-9d8e-0123456789ab' }] }, now)
+    expect(ok.ok && ok.release).toBe('abcdef123456')
+    expect(ok.ok && ok.events[0].requestId).toBe('3f2b8c1e-1d2a-4b3c-9d8e-0123456789ab')
+    expect(checkErrorBatch({ v: 1, release: 'dev', events: [api] }, now).ok && true).toBe(true)
+  })
+  it('a client count is capped at 20', () => {
+    expect(ERROR_LIMITS.maxCount).toBe(20)
   })
 })

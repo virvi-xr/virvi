@@ -408,13 +408,15 @@ export const config = {
   // Filing thresholds; each can be changed on the Errors page (stored in error_settings)
   errorThresholds: {
     newMinUsers: 2, // a new signature in a release hitting this many users
-    severeMinUsers: 3, // a 5xx or crash hitting this many users in an hour...
-    severeMinCount: 10, // ...or happening this many times in an hour
+    severeMinUsers: 3, // a 5xx or crash hitting this many users in an hour (for browser errors: users or addresses)...
+    severeMinCount: 10, // ...or a server-side one happening this many times in an hour (browser counts never count)
     spikeFactor: 3, // this many times its usual rate for that hour of the week
     spikeMinBaseline: 1, // "usual" is never taken as less than this many an hour
     spikeMinCount: 5, // and a spike needs at least this many in the hour
     spikeHistoryWeeks: 4, // how many past weeks make "usual"
     quietDays: 7, // no events this long after being marked fixed: noted as quiet
+    maxIssuesPerPass: 5, // the most issues one filing pass makes (the rest wait for the next pass, or the page)
+    maxIssuesPerDay: 20, // and the most in a day
     filing: true, // file at all (when Linear is set up)
   },
 

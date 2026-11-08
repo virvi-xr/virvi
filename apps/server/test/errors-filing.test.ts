@@ -3,7 +3,8 @@ import { eq } from 'drizzle-orm'
 import type { ClientErrorEvent } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
 import { errorSignatures, errorHourly } from '../src/db/schema.js'
-import { clientRecord, writeRecords } from '../src/errors/record.js'
+import { clientRecord, writeRecords, recordServerResponse, flushErrors, resetErrorBuffer } from '../src/errors/record.js'
+import { resetErrorBudgets } from '../src/errors/limits.js'
 import { runFilingPass, setOnErrorIssueFiled } from '../src/errors/filing.js'
 import { setLinearClient, getLinearClient, type LinearClient } from '../src/errors/linear.js'
 import { saveThresholds } from '../src/errors/settings.js'
@@ -27,10 +28,10 @@ class FakeLinear implements LinearClient {
 const crash = (over: Partial<ClientErrorEvent> = {}): ClientErrorEvent => ({
   kind: 'crash', t: Date.now(), route: '/scenes', errorType: 'TypeError', message: 'Cannot read item 4',
   stack: 'TypeError: x\n    at renderList (https://virvi.io/_next/static/chunks/page-3a9f0c2b1d4e5f60.js:1:2)',
-  requestId: 'req-abc', breadcrumbs: [{ t: Date.now(), type: 'click', label: 'Save scene' }, { t: Date.now(), type: 'api', method: 'PUT', path: '/api/scenes/x', status: 500, ms: 31, requestId: 'req-abc' }],
+  requestId: '0b1c2d3e-0000-4000-8000-0000000000ab', breadcrumbs: [{ t: Date.now(), type: 'click', label: 'Save scene' }, { t: Date.now(), type: 'api', method: 'PUT', path: '/api/scenes/x', status: 500, ms: 31, requestId: '0b1c2d3e-0000-4000-8000-0000000000ab' }],
   ...over,
 })
-const ctx = (user: string | null, release = config.release) => ({ release, browser: 'Chrome 131', os: 'macOS', userHash: user, orgId: null })
+const ctx = (user: string | null, release = config.release, ip = '198.51.100.1') => ({ release, browser: 'Chrome 131', os: 'macOS', userHash: user, orgId: null, ipKey: ip, ipHash: `ip:${ip}` })
 const record = (e: ClientErrorEvent, user: string | null, at = new Date(), release?: string) => writeRecords([clientRecord(e, ctx(user, release), at)])
 
 describe('auto-filing to Linear (off by default)', () => {
@@ -38,6 +39,8 @@ describe('auto-filing to Linear (off by default)', () => {
   const filedHook: string[] = []
   beforeEach(async () => {
     await resetDb()
+    resetErrorBuffer()
+    resetErrorBudgets()
     linear = new FakeLinear()
     setLinearClient(linear)
     filedHook.length = 0
@@ -67,7 +70,7 @@ describe('auto-filing to Linear (off by default)', () => {
     expect(description).toContain('2 users affected')
     expect(description).toContain('click: Save scene')
     expect(description).toContain('api: PUT /api/scenes/x → 500 (31ms)')
-    expect(description).toContain('`req-abc`')
+    expect(description).toContain('`0b1c2d3e-0000-4000-8000-0000000000ab`')
     expect(description).toContain(`release ${config.release}`)
     expect(filedHook).toEqual(['LIV-901']) // the LIV-51 hook point
     const [sig] = await db.select().from(errorSignatures)
@@ -84,11 +87,12 @@ describe('auto-filing to Linear (off by default)', () => {
     expect(linear.comments).toHaveLength(1)
   })
 
-  it('a 5xx hitting 10 times in an hour is filed', async () => {
-    const api: ClientErrorEvent = { kind: 'api', t: Date.now(), method: 'GET', path: '/api/scenes', status: 502 }
-    await writeRecords([{ ...clientRecord(api, ctx(null)), count: 9 }])
+  it('a server 5xx happening 10 times in an hour is filed', async () => {
+    for (let i = 0; i < 9; i++) recordServerResponse({ status: 502, method: 'GET', routeTemplate: '/api/scenes' })
+    await flushErrors()
     expect((await runFilingPass()).filed).toBe(0)
-    await record(api, null)
+    recordServerResponse({ status: 502, method: 'GET', routeTemplate: '/api/scenes' })
+    await flushErrors()
     expect((await runFilingPass()).filed).toBe(1)
   })
 
@@ -118,7 +122,7 @@ describe('auto-filing to Linear (off by default)', () => {
     await writeRecords([{ ...clientRecord(warn, ctx(null), new Date(h0 - 40 * DAY)), count: 1 }])
     const [sig] = await db.select().from(errorSignatures)
     for (let w = 1; w <= 4; w++) await db.insert(errorHourly).values({ signatureId: sig.id, hour: new Date(h0 - w * 7 * DAY), count: 4 })
-    await writeRecords([{ ...clientRecord(warn, ctx(null), at), count: 11 }])
+    await writeRecords([{ ...clientRecord(warn, ctx(null), at), count: 10 }, { ...clientRecord(warn, ctx(null, config.release, '198.51.100.2'), at), count: 1 }])
     expect((await runFilingPass(at)).filed).toBe(0)
     await writeRecords([{ ...clientRecord(warn, ctx(null), at), count: 1 }])
     expect((await runFilingPass(at)).filed).toBe(1)
