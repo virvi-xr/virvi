@@ -5,8 +5,9 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { getBrowserWallet } from '@/lib/auth'
 import { wizardErrorMessage } from '@/lib/wizard/run'
+import { ConfirmAction } from '@/components/ui'
 import {
-  checkboxNote, chosenIds, deleteIntro, eventLine, expectedSigner, initialChecks, nameMatches, removalStatusText, signRemoval, unfinished,
+  checkboxNote, chosenIds, seenEntities, deleteIntro, eventLine, expectedSigner, initialChecks, nameMatches, removalStatusText, signRemoval, unfinished,
   upcomingWarning, type DeletePlan, type DeleteResult, type Removal,
 } from '@/lib/scene-delete'
 
@@ -38,7 +39,7 @@ export function RemovalList({ sceneId, removals, onChange }: { sceneId: string; 
     const session = await startSignSession(wallet, { expectedAddress: expectedSigner(first) ?? undefined })
     return signRemoval(sceneId, r.id, session, api)
   })
-  const retry = (r: Removal) => run(r, async () => (await api.retryRemoval(sceneId, r.id)).removal)
+  const retry = (r: Removal, confirm = false) => run(r, async () => (await api.retryRemoval(sceneId, r.id, confirm)).removal)
 
   if (!removals.length) return null
   return (
@@ -53,8 +54,17 @@ export function RemovalList({ sceneId, removals, onChange }: { sceneId: string; 
             {r.status === 'failed' && (
               <button type="button" disabled={busy === r.id} onClick={() => retry(r)} className={smallButton}>{busy === r.id ? 'Trying…' : 'Retry'}</button>
             )}
+            {r.status === 'needs_review' && (
+              <>
+                <button type="button" disabled={busy === r.id} onClick={() => retry(r)} className={smallButton}>{busy === r.id ? 'Checking…' : 'Check again'}</button>
+                <ConfirmAction prompt="Remove what's live there now, even though Virvi didn't build it?" confirmLabel="Remove anyway" disabled={busy === r.id}
+                  onConfirm={() => retry(r, true)} className="rounded-md px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-50">
+                  Remove anyway
+                </ConfirmAction>
+              </>
+            )}
           </div>
-          <p className={`mt-1 text-xs ${r.status === 'failed' ? 'text-red-300' : r.status === 'done' ? 'text-gray-500' : 'text-amber-200/80'}`}>{removalStatusText(r)}</p>
+          <p className={`mt-1 text-xs ${r.status === 'failed' || r.status === 'needs_review' ? 'text-red-300' : r.status === 'done' ? 'text-gray-500' : 'text-amber-200/80'}`}>{removalStatusText(r)}</p>
           {errors[r.id] && <p className="mt-1 text-xs text-red-300" role="alert">{errors[r.id]}</p>}
         </li>
       ))}
@@ -93,7 +103,7 @@ export function DeleteSceneDialog({ sceneId, onClose, onDeleted }: { sceneId: st
     setBusy(true)
     setError(null)
     try {
-      const r = await api.deleteScene(sceneId, chosenIds(checks))
+      const r = await api.deleteScene(sceneId, chosenIds(checks), seenEntities(plan.running, checks))
       if (unfinished(r.removals).length) setResult(r)
       else onDeleted(r)
     } catch (err) {

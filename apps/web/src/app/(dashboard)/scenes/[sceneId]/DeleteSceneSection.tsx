@@ -12,7 +12,6 @@ export function DeleteSceneSection({ sceneId }: { sceneId: string }) {
       <h2 id="delete-scene-heading" className="text-base font-semibold">Delete this scene</h2>
       <p className="mt-1 text-sm text-gray-400">
         You can restore it for 30 days from Recently deleted on the Scenes page. You choose which hosted worlds and deployments to shut down or remove.
-        Only the scene&apos;s host, or an admin of its organization, can delete it.
       </p>
       <button type="button" onClick={() => setOpen(true)} className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500">Delete scene…</button>
       {open && <DeleteSceneDialog sceneId={sceneId} onClose={() => setOpen(false)} onDeleted={() => router.push(`/scenes?deleted=${sceneId}`)} />}

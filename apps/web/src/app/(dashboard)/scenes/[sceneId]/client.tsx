@@ -80,6 +80,8 @@ interface Scene {
   thumbnailSource?: 'upload' | 'import' | null
   activePresetId?: string | null
   presets: Preset[]
+  /** LIV-83: the caller may delete it (its host, an owner or admin of its organization). */
+  canDelete?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -1926,7 +1928,7 @@ export default function SceneEditorPage() {
         <>
           <SceneThumbnail sceneId={sceneId} url={scene.thumbnailUrl ?? null} source={scene.thumbnailSource ?? null} api={api}
             onChange={(url, source) => setScene(prev => prev && { ...prev, thumbnailUrl: url, thumbnailSource: source })} />
-          <DeleteSceneSection sceneId={sceneId} />
+          {scene.canDelete && <DeleteSceneSection sceneId={sceneId} />}
         </>
       )}
 

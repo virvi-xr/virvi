@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  checkboxNote, chosenIds, deleteIntro, eventLine, initialChecks, nameMatches, purgeDateText, removalStatusText, restoredNote, signRemoval,
+  checkboxNote, chosenIds, seenEntities, deleteIntro, eventLine, initialChecks, nameMatches, purgeDateText, removalStatusText, restoredNote, signRemoval,
   unfinished, upcomingWarning, type Removal, type RemovalSignApi, type RunningItem,
 } from './scene-delete'
 
@@ -12,6 +12,10 @@ describe('delete dialog checkboxes', () => {
     const checks = initialChecks([item({ id: 'a' }), item({ id: 'b', defaultChecked: false, ownContent: true }), item({ id: 'h', kind: 'hosted_world', label: 'Shut down moon' })])
     expect(checks).toEqual({ a: true, b: false, h: true })
     expect(chosenIds(checks)).toEqual(['a', 'h'])
+    // What the dialog saw live goes with the ticked Decentraland lines only
+    const running = [item({ id: 'a', liveEntityId: 'bafy1' }), item({ id: 'b', liveEntityId: null }), item({ id: 'h', kind: 'hosted_world' })]
+    expect(seenEntities(running, { a: true, b: true, h: true })).toEqual({ a: 'bafy1', b: null })
+    expect(seenEntities(running, { a: false, b: true })).toEqual({ b: null })
   })
 
   it('say what ticking and unticking each kind does', () => {
@@ -20,8 +24,10 @@ describe('delete dialog checkboxes', () => {
     expect(checkboxNote(item({ kind: 'hyperfy_world' }), true)).toBe('Virvi stops serving this world. Remove the Virvi app inside Hyperfy as well.')
     expect(checkboxNote(item({}), false)).toBe('Left up as it is. It shows nothing from Virvi while the scene is deleted.')
     expect(checkboxNote(item({ ownContent: true }), false)).toMatch(/^What's live there is your own scene, so it's left as it is/)
-    expect(checkboxNote(item({ ownContent: true, needsSignature: true }), true))
-      .toBe("What's live there is your own scene: this removes your own work too. The scene is taken off the World, signed with your wallet, and it's disconnected from this scene so you can use it elsewhere. Restoring doesn't bring it back.")
+    expect(checkboxNote(item({ ownContent: true, needsSignature: true, reason: "Your World now shows a scene Virvi didn't build." }), true))
+      .toBe("Your World now shows a scene Virvi didn't build. Ticking this removes it too. The scene is taken off the World, signed with your wallet, and it's disconnected from this scene so you can use it elsewhere. Restoring doesn't bring it back.")
+    expect(checkboxNote(item({ ownContent: true, reason: "Your World now shows a scene Virvi didn't build." }), false))
+      .toBe("Your World now shows a scene Virvi didn't build. So it's left as it is: it shows nothing from Virvi while this scene is deleted.")
     expect(checkboxNote(item({ kind: 'dcl_parcels' }), true)).toMatch(/^An empty scene is published over the parcels, and it's disconnected/)
   })
 })
@@ -62,8 +68,9 @@ describe('removals', () => {
     expect(removalStatusText(removal({}))).toBe('Done')
     expect(removalStatusText(removal({ status: 'awaiting_signature' }))).toBe('Waiting for your wallet to sign')
     expect(removalStatusText(removal({ status: 'failed', errorMessage: 'Decentraland refused it: Unauthorized' }))).toBe("Didn't work: Decentraland refused it: Unauthorized")
-    const list = [removal({ id: '1' }), removal({ id: '2', status: 'failed' }), removal({ id: '3', status: 'awaiting_signature' })]
-    expect(unfinished(list).map((r) => r.id)).toEqual(['2', '3'])
+    expect(removalStatusText(removal({ status: 'needs_review', errorMessage: 'Your World changed outside Virvi.' }))).toBe('Your World changed outside Virvi.')
+    const list = [removal({ id: '1' }), removal({ id: '2', status: 'failed' }), removal({ id: '3', status: 'awaiting_signature' }), removal({ id: '4', status: 'needs_review' })]
+    expect(unfinished(list).map((r) => r.id)).toEqual(['2', '3', '4'])
   })
 
   it('a restore says what did not come back', () => {

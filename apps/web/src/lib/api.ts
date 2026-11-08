@@ -350,14 +350,15 @@ function useRealApi() {
     // Deleting a scene (LIV-83): soft delete, Recently deleted, restore, delete forever, removals
     getDeletePlan: (id: string) => apiFetch<DeletePlan>(`/api/scenes/${id}/delete-plan`),
     /** `remove`: ids from the plan's `running` to shut down or remove. */
-    deleteScene: (id: string, remove: string[] = []) =>
-      apiFetch<DeleteResult>(`/api/scenes/${id}`, { method: 'DELETE', body: JSON.stringify({ remove }) }),
+    deleteScene: (id: string, remove: string[] = [], seen: Record<string, string | null> = {}) =>
+      apiFetch<DeleteResult>(`/api/scenes/${id}`, { method: 'DELETE', body: JSON.stringify({ remove, seen }) }),
     getDeletedScenes: () => apiFetch<{ scenes: DeletedScene[] }>('/api/scenes/deleted'),
     restoreScene: (id: string) => apiFetch<{ scene: any; notRestored: Removal[] }>(`/api/scenes/${id}/restore`, { method: 'POST', body: '{}' }),
     /** "Delete forever now": `name` must be the scene's. */
     purgeScene: (id: string, name: string) => apiFetch(`/api/scenes/${id}/purge`, { method: 'POST', body: JSON.stringify({ name }) }),
-    retryRemoval: (sceneId: string, removalId: string) =>
-      apiFetch<{ removal: Removal }>(`/api/scenes/${sceneId}/removals/${removalId}/retry`, { method: 'POST', body: '{}' }),
+    /** `confirm`: "Remove anyway" for a removal whose live content changed. */
+    retryRemoval: (sceneId: string, removalId: string, confirm = false) =>
+      apiFetch<{ removal: Removal }>(`/api/scenes/${sceneId}/removals/${removalId}/retry`, { method: 'POST', body: JSON.stringify(confirm ? { confirm: true } : {}) }),
     getRemovalSign: (sceneId: string, removalId: string) => apiFetch<RemovalSignRequest>(`/api/scenes/${sceneId}/removals/${removalId}/sign`),
     submitRemovalSignature: (sceneId: string, removalId: string, body: { chain: unknown; timestamp?: number }) =>
       apiFetch<{ removal: Removal }>(`/api/scenes/${sceneId}/removals/${removalId}/signature`, { method: 'POST', body: JSON.stringify(body) }),

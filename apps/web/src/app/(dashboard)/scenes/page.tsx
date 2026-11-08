@@ -15,8 +15,8 @@ import { filterScenes, placeholderHues, shortId } from '@/lib/scenes'
 import { countLabel, plural } from '@/lib/format'
 import { sceneListActions, TRIAL_SCENE_NOTE } from '@/lib/trial-scene'
 
-type Scene = { id: string; name: string; description?: string | null; thumbnailUrl?: string | null; relationship?: string }
-const RELATIONSHIP_LABEL: Record<string, string> = { cohost: 'Co-host', editor: 'Editor', viewer: 'Viewer' }
+type Scene = { id: string; name: string; description?: string | null; thumbnailUrl?: string | null; relationship?: string; canDelete?: boolean; orgName?: string }
+const RELATIONSHIP_LABEL: Record<string, string> = { cohost: 'Co-host', editor: 'Editor', viewer: 'Viewer', org_admin: 'Organization' }
 const VIEW_KEY = 'virvi.scenes.view'
 /** PrimaryButton's look, on a link to the New Scene Wizard. */
 const NEW_SCENE_CLASS = 'clip-corner inline-flex items-center gap-1.5 bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink transition-colors hover:bg-accent-hover'
@@ -24,8 +24,10 @@ const NEW_SCENE_CLASS = 'clip-corner inline-flex items-center gap-1.5 bg-accent 
 const IMPORT_CLASS = 'inline-flex items-center gap-1.5 rounded-md bg-gray-800 px-4 py-2.5 text-sm hover:bg-gray-700'
 /** Only owners and co-hosts can change a scene's details. */
 const canDescribe = (s: Scene) => !s.relationship || s.relationship === 'owner' || s.relationship === 'cohost'
-/** The list offers Delete on the scenes you own (an org admin deletes an org scene from its Settings). */
-const canDelete = (s: Scene) => !s.relationship || s.relationship === 'owner'
+/** Delete is offered where the server says the caller may delete: their own scenes, and their organizations' as an owner or admin. */
+const canDelete = (s: Scene) => s.canDelete ?? (!s.relationship || s.relationship === 'owner')
+/** An org admin sees the org's scenes to delete them; opening one needs a role of their own. */
+const canOpen = (s: Scene) => s.relationship !== 'org_admin'
 
 type Toast = { text: string; restoreId?: string }
 
@@ -251,7 +253,8 @@ function CopyId({ id }: { id: string }) {
 
 function RoleBadge({ scene }: { scene: Scene }) {
   if (!scene.relationship || scene.relationship === 'owner') return null
-  return <span className="rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-400">{RELATIONSHIP_LABEL[scene.relationship] ?? scene.relationship}</span>
+  const label = scene.relationship === 'org_admin' && scene.orgName ? `Organization: ${scene.orgName}` : RELATIONSHIP_LABEL[scene.relationship] ?? scene.relationship
+  return <span className="rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-400">{label}</span>
 }
 
 /** A trial's scenes are kept only while the trial lasts. */
@@ -286,9 +289,11 @@ function SceneCard({ scene, trial, onDescribe, onDelete }: { scene: Scene; trial
         <CopyId id={scene.id} />
         <div className="flex shrink-0 items-center gap-1">
           <DeleteButton scene={scene} onDelete={onDelete} />
-          <Link href={sceneHref(scene.id)} className="flex shrink-0 items-center gap-1.5 text-sm text-gray-200 hover:text-blue-300">
-            Open scene <ArrowUpRightIcon size={16} />
-          </Link>
+          {canOpen(scene) && (
+            <Link href={sceneHref(scene.id)} className="flex shrink-0 items-center gap-1.5 text-sm text-gray-200 hover:text-blue-300">
+              Open scene <ArrowUpRightIcon size={16} />
+            </Link>
+          )}
         </div>
       </footer>
     </article>

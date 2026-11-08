@@ -11,6 +11,10 @@ export interface RunningItem {
   defaultChecked: boolean
   needsSignature: boolean
   ownContent?: boolean
+  /** Why a Decentraland line starts unticked ("Your World now shows a scene Virvi didn't build."). */
+  reason?: string
+  /** The live entity the dialog showed: sent back with the delete, so nothing else is removed. */
+  liveEntityId?: string | null
 }
 
 export interface UpcomingEvent {
@@ -32,7 +36,7 @@ export interface Removal {
   id: string
   kind: RemovalKind
   label: string
-  status: 'pending' | 'awaiting_signature' | 'done' | 'failed'
+  status: 'pending' | 'awaiting_signature' | 'done' | 'failed' | 'needs_review'
   errorMessage: string | null
   finishedAt: string | null
 }
@@ -68,6 +72,11 @@ export function chosenIds(checks: Record<string, boolean>): string[] {
   return Object.entries(checks).filter(([, on]) => on).map(([id]) => id)
 }
 
+/** What the dialog showed live on each ticked Decentraland line, for the delete's `seen`. */
+export function seenEntities(running: RunningItem[], checks: Record<string, boolean>): Record<string, string | null> {
+  return Object.fromEntries(running.filter((r) => checks[r.id] && r.liveEntityId !== undefined).map((r) => [r.id, r.liveEntityId ?? null]))
+}
+
 const isDcl = (k: RemovalKind) => k === 'dcl_world' || k === 'dcl_parcels'
 
 /** The line under a checkbox: what ticking (or leaving it unticked) does. */
@@ -83,11 +92,12 @@ export function checkboxNote(item: RunningItem, checked: boolean): string {
       : 'Stays connected, but shows nothing from Virvi while the scene is deleted.'
   }
   if (!checked) {
+    if (item.reason) return `${item.reason} So it's left as it is: it shows nothing from Virvi while this scene is deleted.`
     return item.ownContent
       ? "What's live there is your own scene, so it's left as it is. It shows nothing from Virvi while this scene is deleted."
       : 'Left up as it is. It shows nothing from Virvi while the scene is deleted.'
   }
-  const own = item.ownContent ? "What's live there is your own scene: this removes your own work too. " : ''
+  const own = item.ownContent ? `${item.reason ?? "What's live there is your own scene."} Ticking this removes it too. ` : ''
   const where = item.kind === 'dcl_parcels' ? 'An empty scene is published over the parcels' : 'The scene is taken off the World'
   const sign = item.needsSignature ? ', signed with your wallet' : ''
   return `${own}${where}${sign}, and it's disconnected from this scene so you can use it elsewhere. Restoring doesn't bring it back.`
@@ -128,14 +138,15 @@ export function nameMatches(typed: string, name: string): boolean {
 export function removalStatusText(r: Removal): string {
   switch (r.status) {
     case 'done': return 'Done'
-    case 'awaiting_signature': return 'Waiting for your wallet to sign'
+    case 'awaiting_signature': return r.errorMessage ?? 'Waiting for your wallet to sign'
     case 'failed': return r.errorMessage ? `Didn't work: ${r.errorMessage}` : "Didn't work"
+    case 'needs_review': return r.errorMessage ?? "What's live there changed, so Virvi left it as it is"
     default: return 'Working…'
   }
 }
 
 /** Removals still to do: they get Sign or Retry. */
-export const unfinished = (removals: Removal[]) => removals.filter((r) => r.status === 'failed' || r.status === 'awaiting_signature')
+export const unfinished = (removals: Removal[]) => removals.filter((r) => r.status === 'failed' || r.status === 'awaiting_signature' || r.status === 'needs_review')
 
 /** The toast after a delete: "Deleted Gallery." (Restore is its action). */
 export function deletedToast(name: string): string {
