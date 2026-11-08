@@ -144,7 +144,7 @@ export default function CompanionUploadClient() {
         <div style={styles.card}>
           <h1 style={styles.title}>Upload Link</h1>
           <p style={styles.error}>{error}</p>
-          <p style={styles.hint}>Make a new upload link from the 3D Models panel in your HUD.</p>
+          <p style={styles.hint}>Make a new upload link from the Scene Library panel in your HUD.</p>
         </div>
       </div>
     )
@@ -217,7 +217,7 @@ export default function CompanionUploadClient() {
         )}
 
         <p style={styles.footer}>
-          Uploads appear in the 3D Models panel in your HUD.
+          Uploads appear in the Scene Library panel in your HUD.
         </p>
       </div>
     </div>

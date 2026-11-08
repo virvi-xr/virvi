@@ -1,6 +1,6 @@
 import type { SceneLibraryChangeData, SceneLibraryItemData } from '@virvixr/shared'
 
-/** What the HUD's 3D Models panel (the scene's library) shows for an item. */
+/** What the HUD's Scene Library panel (the scene's library) shows for an item. */
 export type HUDMediaStatus = 'uploading' | 'processing' | 'available' | 'needs_sync' | 'failed'
 
 /**

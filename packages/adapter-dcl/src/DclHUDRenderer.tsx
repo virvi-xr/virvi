@@ -77,7 +77,7 @@ interface HUDState {
   roleDraftRole: 'cohost' | 'editor' | 'viewer'
   confirmTransfer: string | null
 
-  // The scene's library (the 3D Models panel) + layout editing (host, co-hosts, editors)
+  // The scene's library (the Scene Library panel) + layout editing (host, co-hosts, editors)
   media: HUDMediaItem[]
   mediaLoaded: boolean
   /** The last media/layout load failed (the error is in editMessage) — show that, not "Loading…". */
@@ -96,9 +96,9 @@ interface HUDState {
   framing: { elementId: string; draft: FrameSettings } | null
   frameError: string | null
   missingModels: number
-  /** The 3D Models panel's Upload view: an upload link (this computer) and its QR (phone), minted on open. */
+  /** The Scene Library panel's Upload view: an upload link (this computer) and its QR (phone), minted on open. */
   upload: UploadViewState
-  /** The 3D Models panel row being renamed, with the draft name. */
+  /** The Scene Library panel row being renamed, with the draft name. */
   renaming: { id: string; draft: string } | null
 
   // In-world transform editing (editors); mirrored from DclEditMode.state
@@ -711,8 +711,8 @@ const ACTION_STATS = '__stats'
 function NavBar() {
   const panels: Array<{ type: HUDPanelType | typeof ACTION_STATS; label: string }> = [
     { type: HUDPanelType.SCENE_LAYOUT, label: 'Layout' },
-    // The 3D Models panel: "3D Models" doesn't fit a tab once there are eight
-    { type: HUDPanelType.ASSET_BROWSER, label: 'Models' },
+    // The Scene Library panel (the scene's models and images): "Scene Library" doesn't fit a tab once there are eight
+    { type: HUDPanelType.ASSET_BROWSER, label: 'Library' },
     { type: HUDPanelType.EVENT_CONTROL, label: 'Events' },
     { type: HUDPanelType.STREAM_CONTROL, label: 'Stream' },
     { type: HUDPanelType.WORLD_STATUS, label: 'Worlds' },
@@ -1072,7 +1072,7 @@ function ClickEditor() {
 }
 
 // ---------------------------------------------------------------------------
-// Panel: Asset Browser (the scene's library: its models and images, shown as the 3D Models panel, LIV-132)
+// Panel: Asset Browser (the scene's library: its models and images, shown as the Scene Library panel, LIV-132)
 // ---------------------------------------------------------------------------
 
 // Badge per HUD status: a marker and a word (the marker carries the color)
@@ -1204,7 +1204,7 @@ function AssetBrowserPanel() {
   const editable = canEdit()
   return (
     <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
-      <PanelHeader title="3D Models" subtitle="This scene's models and images"
+      <PanelHeader title="Scene Library" subtitle="This scene's models and images"
         onClose={() => { if (state.upload.open) closeUploadView(); state.activePanel = null }} />
       <UiEntity uiTransform={{ width: '100%', padding: 8, flexDirection: 'column' }}>
         {!editable ? (
@@ -1989,7 +1989,7 @@ export class DclHUDRenderer implements HUDRenderer {
     state.presetsError = null
   }
 
-  // --- The scene's library (3D Models panel) + layout editing (called by the createVirvi flow) ---
+  // --- The scene's library (Scene Library panel) + layout editing (called by the createVirvi flow) ---
 
   setMedia(list: HUDMediaItem[]): void {
     state.media = list
