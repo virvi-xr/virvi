@@ -317,7 +317,7 @@ export async function runFilingPass(now = new Date(), client: LinearClient | nul
   if (!client) return { filed: 0, comments: 0, failed: 0, skipped: 'not_configured' }
   const t = await getThresholds()
   if (!t.filing) return { filed: 0, comments: 0, failed: 0, skipped: 'off' }
-  // Linear rate-limited us or was down: wait before calling again (filing, reports and the Done sync alike)
+  // Linear rate-limited us, was down or refused the key: wait before calling again (the Done sync checks it too)
   if (linearPaused(now.getTime())) return { filed: 0, comments: 0, failed: 0, skipped: 'backoff' }
   const result: FilingResult = { filed: 0, comments: 0, failed: 0 }
   /** A transient Linear failure ends the pass and starts the backoff. */

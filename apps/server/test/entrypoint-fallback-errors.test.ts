@@ -32,7 +32,7 @@ function fallbackBlocks(label: string): string[] {
 }
 
 const SCHEMA = 'fallback_errors'
-const NEW_TABLES = ['error_signatures', 'error_events', 'error_hourly', 'error_hourly_dims', 'error_hourly_users', 'error_reports', 'error_settings', 'error_budget', 'error_releases', 'error_ip_keys', 'error_prompt_state', 'error_prompt_known']
+const NEW_TABLES = ['error_signatures', 'error_events', 'error_hourly', 'error_hourly_dims', 'error_hourly_users', 'error_reports', 'error_settings', 'error_budget', 'error_releases', 'error_ip_keys', 'error_prompt_state', 'error_prompt_asked', 'error_prompt_known']
 
 type Col = { column_name: string; data_type: string; udt_name: string; is_nullable: string; column_default: string | null }
 const columns = async (schema: string, table: string) => (await db.execute(sql`

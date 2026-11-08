@@ -6,14 +6,17 @@ import { config } from '../config.js'
  */
 export interface LinearIssueState { id: string; stateType: string; completedAt: string | null; canceledAt?: string | null }
 
-/** A failed Linear call. `transient`: a rate limit, a 5xx or the network; the jobs then back off (linearPaused). */
+/**
+ * A failed Linear call. `transient` ("stop and back off"): a rate limit, a 5xx, the network, or the key being refused
+ * (401, 403, AUTHENTICATION_ERROR: nothing can succeed until it is fixed); the jobs then back off (linearPaused).
+ */
 export class LinearError extends Error {
   constructor(message: string, public status: number | null, public transient: boolean) { super(message) }
 }
 
 /** Whether an error from a Linear call means "try later": a transient LinearError, or the network / a timeout. */
 export function isTransientLinearError(err: unknown): boolean {
-  if (err instanceof LinearError) return err.transient
+  if (err instanceof LinearError) return err.transient || err.status === 401 || err.status === 403
   const name = (err as { name?: string } | null)?.name
   return name === 'TypeError' || name === 'AbortError' || name === 'TimeoutError'
 }
@@ -60,7 +63,9 @@ export function httpLinearClient(opts: {
     }
     const body = await res.json().catch(() => ({})) as { data?: T; errors?: Array<{ message?: string; extensions?: { code?: string } }> }
     if (!res.ok || body.errors?.length || !body.data) {
-      const limited = res.status === 429 || res.status >= 500 || body.errors?.some((e) => e.extensions?.code === 'RATELIMITED')
+      const codes = (body.errors ?? []).map((e) => e.extensions?.code)
+      const limited = res.status === 429 || res.status >= 500 || res.status === 401 || res.status === 403
+        || codes.includes('RATELIMITED') || codes.includes('AUTHENTICATION_ERROR') || codes.includes('FORBIDDEN')
       throw new LinearError(`Linear ${res.status}: ${body.errors?.[0]?.message ?? 'no data'}`, res.status, !!limited)
     }
     return body.data

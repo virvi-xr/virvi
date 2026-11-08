@@ -2335,14 +2335,21 @@ export const errorReports = pgTable('error_reports', {
   postedIdx: index('error_reports_posted_idx').on(t.linearPostedAt),
 }))
 
-// Report prompts per account (§4): when they were last asked, and whether they turned prompts off. Guests and trials
+// The account's "Ask me about errors" setting (§4): a preference only, nothing about any error. Guests and trials
 // keep theirs in the browser.
 export const errorPromptState = pgTable('error_prompt_state', {
   userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
-  askedAt: timestamp('asked_at', { withTimezone: true }),
   optedOut: boolean('opted_out').notNull().default(false),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+// When an account (by its error user hash, never its id) was last asked about an error; kept 30 days
+export const errorPromptAsked = pgTable('error_prompt_asked', {
+  userHash: text('user_hash').primaryKey(),
+  askedAt: timestamp('asked_at', { withTimezone: true }).notNull(),
+}, (t) => ({
+  askedIdx: index('error_prompt_asked_asked_idx').on(t.askedAt),
+}))
 
 // "We know about this" was shown to this account (by its error user hash) for this signature: once each
 export const errorPromptKnown = pgTable('error_prompt_known', {

@@ -111,8 +111,9 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Asking only when it helps:</strong> to ask you at most once a day, and to say &ldquo;we know about this&rdquo; only once
-            for each problem, we keep when we last asked your account and whether you turned asking off, and for 30 days which problems
-            we told it about (by the account hash above); if you're not signed in, this browser keeps it.
+            for each problem, we keep when we last asked you and which problems we told you about by the account hash above (never your
+            account itself), for 30 days, and on your account only whether you turned asking off; if you're not signed in, this browser
+            keeps it.
           </li>
           <li>
             <strong>Our issue tracker:</strong> when automatic bug filing is turned on, the details of errors that keep happening (the redacted

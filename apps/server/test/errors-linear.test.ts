@@ -210,6 +210,29 @@ describe('Linear phase 2', () => {
       expect(linear.comments).toHaveLength(4)
     })
 
+    it('a revoked or wrong Linear key stops the pass and backs off; reports are never marked refused (N2)', async () => {
+      const u = await createUser()
+      const { signatureId, report } = await reportOn(crash(), u.id)
+      await db.update(errorSignatures).set({ linearIssueId: 'issue-x', linearFiledAt: new Date(Date.now() - HOUR) }).where(eq(errorSignatures.id, signatureId))
+      linear.failComment = new LinearError('Linear 401: Authentication required', 401, false)
+      await runFilingPass()
+      const [r] = await db.select().from(errorReports).where(eq(errorReports.id, report.id))
+      expect([r.linearSkipped, r.linearPostedAt]).toEqual([null, null])
+      expect((await runFilingPass()).skipped).toBe('backoff')
+      linear.failComment = null
+      await runFilingPass(new Date(Date.now() + 6 * 60_000))
+      expect(linear.comments).toHaveLength(1)
+    })
+
+    it('the HTTP client treats 401, 403 and AUTHENTICATION_ERROR as stop-and-back-off', async () => {
+      const { isTransientLinearError } = await import('../src/errors/linear.js')
+      for (const [status, body] of [[401, {}], [403, {}], [200, { errors: [{ message: 'x', extensions: { code: 'AUTHENTICATION_ERROR' } }] }]] as const) {
+        const client = httpLinearClient({ apiKey: 'k', teamId: 't', fetch: (async () => new Response(JSON.stringify(body), { status })) as typeof fetch })
+        const err = await client.createComment('i', 'b').catch((e) => e)
+        expect(isTransientLinearError(err), String(status)).toBe(true)
+      }
+    })
+
     it('a comment Linear refuses for good is marked skipped, and failures count toward the pass cap', async () => {
       const u = await createUser()
       const { signatureId, report } = await reportOn(crash(), u.id)
@@ -343,11 +366,31 @@ describe('Linear phase 2', () => {
       expect((await db.select().from(errorSignatures))[0].resolvedAt).toBeNull()
     })
 
-    it('an issue closed as Canceled or Duplicate counts as closed (M3)', async () => {
+    it("an issue closed as Canceled, Won't fix or Duplicate closes the link without marking it fixed (M3, N5)", async () => {
       await filed()
       linear.states.set('issue-1', { id: 'issue-1', stateType: 'canceled', completedAt: null, canceledAt: new Date().toISOString() })
-      expect((await syncLinearDone()).resolved).toBe(1)
-      expect((await db.select().from(errorSignatures))[0].resolvedAt).toBeTruthy()
+      const r = await syncLinearDone()
+      expect([r.resolved, r.unlinked]).toEqual([0, 1])
+      const [s] = await db.select().from(errorSignatures)
+      expect(s).toMatchObject({ resolvedAt: null, regressedAt: null, linearIssueId: null, linearIssueKey: null })
+      // so it can be filed again later, as a new issue (here: a spike of new users)
+      await writeRecords([clientRecord(crash(), ctx('u3', '198.51.100.3'))])
+      await writeRecords([clientRecord(crash(), ctx('u4', '198.51.100.4'))])
+      expect((await runFilingPass(new Date(Date.now() + 60_000))).filed).toBe(1)
+      expect(linear.issues).toHaveLength(2)
+    })
+
+    it('the Done sync honours the backoff and starts it on a transient failure (N3)', async () => {
+      await filed()
+      const states = linear.issueStates.bind(linear)
+      linear.issueStates = async () => { throw new LinearError('Linear 503', 503, true) }
+      const r = await syncLinearDone()
+      expect(r.checked).toBe(0)
+      linear.issueStates = states
+      expect((await syncLinearDone()).skipped).toBe('backoff')
+      expect((await runFilingPass()).skipped).toBe('backoff')
+      expect(linear.stateCalls).toHaveLength(0)
+      expect((await syncLinearDone(new Date(Date.now() + 6 * 60_000))).skipped).toBeUndefined()
     })
 
     it('asks Linear in batches of 50, and does nothing with filing off or no key', async () => {

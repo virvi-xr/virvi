@@ -6,7 +6,8 @@ import { errorUserHash } from './user-hash.js'
 /**
  * "Should I ask?" (LIV-66 §4). The browser asks after an error broke something the user was doing; the answer comes
  * from what the signature already has (descriptions since its last fix, an open Linear issue) and, for an account,
- * its prompt state here (asked in the last 24 hours, prompts turned off, "we know about this" already shown). Guests
+ * its prompt state here: asked in the last 24 hours and "we know about this" already shown, both by the account's
+ * error user hash (kept 30 days), and its prompts-off setting by account id (a preference, tied to no error). Guests
  * and trials get the facts and keep their own state in the browser. Asking never makes a signature or counts an event.
  */
 
@@ -64,7 +65,7 @@ export async function promptFor(
   const userHash = errorUserHash(accountId)
   const [st] = rowsOf<{ exists: boolean; asked_at: string | null; opted_out: boolean | null; known: boolean }>(await db.execute(sql`
     SELECT EXISTS (SELECT 1 FROM users WHERE id = ${accountId}::uuid) AS exists,
-      (SELECT asked_at FROM error_prompt_state WHERE user_id = ${accountId}::uuid) AS asked_at,
+      (SELECT asked_at FROM error_prompt_asked WHERE user_hash = ${userHash}) AS asked_at,
       (SELECT opted_out FROM error_prompt_state WHERE user_id = ${accountId}::uuid) AS opted_out,
       ${id ? sql`EXISTS (SELECT 1 FROM error_prompt_known WHERE signature_id = ${id}::uuid AND user_hash = ${userHash})` : sql`false`} AS known`))
   if (!st?.exists) return { ...base, prompt: promptDecision(e.userFacing, facts, empty, now.getTime()), saved: false }
@@ -72,12 +73,14 @@ export async function promptFor(
   let prompt = promptDecision(e.userFacing, facts, state, now.getTime())
   if (prompt === 'ask') {
     const since = new Date(now.getTime() - PROMPT_INTERVAL_MS).toISOString()
-    const took = rowsOf<{ user_id: string }>(await db.execute(sql`
-      INSERT INTO error_prompt_state (user_id, asked_at, updated_at)
-      SELECT ${accountId}::uuid, ${now.toISOString()}::timestamptz, NOW() WHERE EXISTS (SELECT 1 FROM users WHERE id = ${accountId}::uuid)
-      ON CONFLICT (user_id) DO UPDATE SET asked_at = excluded.asked_at, updated_at = NOW()
-        WHERE NOT error_prompt_state.opted_out AND (error_prompt_state.asked_at IS NULL OR error_prompt_state.asked_at <= ${since}::timestamptz)
-      RETURNING user_id`))
+    // Kept by the account hash, never the account id: nothing ties the account itself to the error (R1)
+    const took = rowsOf<{ user_hash: string }>(await db.execute(sql`
+      INSERT INTO error_prompt_asked (user_hash, asked_at)
+      SELECT ${userHash}, ${now.toISOString()}::timestamptz
+      WHERE EXISTS (SELECT 1 FROM users WHERE id = ${accountId}::uuid)
+        AND NOT EXISTS (SELECT 1 FROM error_prompt_state WHERE user_id = ${accountId}::uuid AND opted_out)
+      ON CONFLICT (user_hash) DO UPDATE SET asked_at = excluded.asked_at WHERE error_prompt_asked.asked_at <= ${since}::timestamptz
+      RETURNING user_hash`))
     // Another tab took it a moment ago: as if asked just now
     if (!took.length) prompt = promptDecision(e.userFacing, facts, { ...state, askedAt: now.getTime() }, now.getTime())
   }

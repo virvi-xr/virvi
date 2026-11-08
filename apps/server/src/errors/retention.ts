@@ -31,6 +31,7 @@ export async function purgeErrors(now = new Date()) {
   await db.execute(sql`DELETE FROM error_reports WHERE created_at < ${ts(counts)} AND screenshot_key IS NULL`)
   // "We know about this" marks hold an account hash: kept 30 days like the others (then it may show once more)
   await db.execute(sql`DELETE FROM error_prompt_known WHERE shown_at < ${ts(raw)}`)
+  await db.execute(sql`DELETE FROM error_prompt_asked WHERE asked_at < ${ts(raw)}`)
   // Browser signatures only anonymous addresses ever hit, never filed or reported, go after 30 quiet days (with their rows)
   const anonymous = n(await db.execute(sql`
     DELETE FROM error_signatures WHERE source = 'web' AND NOT seen_users AND linear_issue_id IS NULL AND user_reports = 0

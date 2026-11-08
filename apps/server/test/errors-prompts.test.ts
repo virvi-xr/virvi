@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { db } from '../src/db/connection.js'
-import { users, errorSignatures, errorReports, errorPromptState, errorPromptKnown } from '../src/db/schema.js'
+import { users, errorSignatures, errorReports, errorPromptState, errorPromptKnown, errorPromptAsked } from '../src/db/schema.js'
+import { errorUserHash } from '../src/errors/user-hash.js'
 import { buildApp } from '../src/app.js'
 import { resetErrorBuffer, clientRecord, writeRecords } from '../src/errors/record.js'
 import { registerRelease, resetErrorBudgets } from '../src/errors/limits.js'
@@ -68,11 +69,15 @@ describe('report prompts (POST /api/errors/prompt)', () => {
     const u = await createUser()
     const t = tokenFor(u)
     expect((await ask(saveFailed(), t)).json()).toMatchObject({ prompt: 'ask', saved: true })
-    const [st] = await db.select().from(errorPromptState).where(eq(errorPromptState.userId, u.id))
+    // kept by the account hash only: nothing keyed by the real account id (R1)
+    expect(await db.select().from(errorPromptState)).toHaveLength(0)
+    const [st] = await db.select().from(errorPromptAsked)
+    expect(st.userHash).toBe(errorUserHash(u.id))
+    expect(JSON.stringify(st)).not.toContain(u.id)
     expect(st.askedAt).toBeTruthy()
     // a different error the next minute: not asked again
     expect((await ask(saveFailed({ status: 502 }), t)).json().prompt).toBe('none')
-    await db.update(errorPromptState).set({ askedAt: new Date(Date.now() - 25 * HOUR) }).where(eq(errorPromptState.userId, u.id))
+    await db.update(errorPromptAsked).set({ askedAt: new Date(Date.now() - 25 * HOUR) })
     expect((await ask(saveFailed(), t)).json().prompt).toBe('ask')
   })
 
@@ -106,6 +111,7 @@ describe('report prompts (POST /api/errors/prompt)', () => {
     // its prompt check is answered like a guest's
     expect((await ask(saveFailed(), accessToken)).json()).toMatchObject({ prompt: 'ask', saved: false })
     expect(await db.select().from(errorPromptState)).toHaveLength(0)
+    expect(await db.select().from(errorPromptAsked)).toHaveLength(0)
   })
 
   it('a signature with 3 descriptions is never asked about: "we know about this", once per account', async () => {
@@ -118,7 +124,7 @@ describe('report prompts (POST /api/errors/prompt)', () => {
     resetPromptFacts()
     expect((await ask(saveFailed(), t)).json().prompt).toBe('none')
     // and no "asked" was used up
-    expect(await db.select().from(errorPromptState)).toHaveLength(0)
+    expect(await db.select().from(errorPromptAsked)).toHaveLength(0)
     // a guest gets the facts to decide with
     expect((await ask(saveFailed())).json()).toMatchObject({ prompt: 'known', saved: false, facts: { reports: 3 } })
   })
@@ -163,6 +169,12 @@ describe('report prompts (POST /api/errors/prompt)', () => {
     ])
     await purgeErrors(new Date())
     expect((await db.select().from(errorPromptKnown)).map((r) => r.userHash)).toEqual(['new'])
+  })
+
+  it('ask times (an account hash) are kept 30 days (R1)', async () => {
+    await db.insert(errorPromptAsked).values([{ userHash: 'old', askedAt: new Date(Date.now() - 31 * 24 * HOUR) }, { userHash: 'new', askedAt: new Date() }])
+    await purgeErrors(new Date())
+    expect((await db.select().from(errorPromptAsked)).map((r) => r.userHash)).toEqual(['new'])
   })
 
   it('caches what it knows about a signature for a minute', async () => {
