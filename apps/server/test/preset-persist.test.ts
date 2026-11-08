@@ -49,6 +49,19 @@ describe('persistPresetUpdate merges properties', () => {
     expect((await row(el.id)).properties).toEqual({ textureSrc: 'https://x/c.png' })
   })
 
+  it('a frame sent through the room is stored tidied, and one it could not draw is dropped (LIV-129)', async () => {
+    const { c, el } = await setup({ textureSrc: 'https://x/a.png' })
+    c.room.send('scene_preset_update', { action: 'update', element: 'image', elementData: { sk: el.id, frame: { enabled: true, style: 'classic', color: '#ABCDEF' } } })
+    await settle()
+    expect((await row(el.id)).properties).toEqual({ textureSrc: 'https://x/a.png', frame: { enabled: true, style: 'classic', color: '#abcdef', thickness: 6 } })
+    c.room.send('scene_preset_update', { action: 'update', element: 'image', elementData: { sk: el.id, frame: { enabled: true, style: 'ornate' }, textureSrc: 'https://x/b.png' } })
+    await settle()
+    expect((await row(el.id)).properties).toEqual({ textureSrc: 'https://x/b.png', frame: { enabled: true, style: 'classic', color: '#abcdef', thickness: 6 } })
+    c.room.send('scene_preset_update', { action: 'update', element: 'image', elementData: { sk: el.id, frame: null } })
+    await settle()
+    expect((await row(el.id)).properties).toEqual({ textureSrc: 'https://x/b.png', frame: null })
+  })
+
   it('instance update keeps existing properties when only position is sent', async () => {
     const { c, el } = await setup({ textureSrc: 'https://x/a.png' })
     const inst = await createInstance(el.id)

@@ -1,4 +1,4 @@
-import { checkClickEvent } from '@virvixr/shared'
+import { checkClickEvent, checkFrame, FRAMEABLE_TYPES } from '@virvixr/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
@@ -171,6 +171,29 @@ function tidyClick(body: { clickEvent?: unknown } | null | undefined, reply: Fas
     return false
   }
   body.clickEvent = c.value
+  return true
+}
+
+/** JSON with object keys sorted: a stored jsonb value comes back with its keys reordered. */
+const canonicalJson = (v: unknown): string =>
+  JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x))
+
+/**
+ * A frame (LIV-129) being added or changed is checked and stored tidied (null removes it); one sent back as it was
+ * stored (the HUD and AR apps resend every property) is left alone. Only images and video screens have one.
+ */
+function tidyFrame(type: unknown, before: unknown, body: { properties?: unknown } | null | undefined, reply: FastifyReply): boolean {
+  const props = body?.properties
+  if (!props || typeof props !== 'object' || Array.isArray(props) || !('frame' in props)) return true
+  const p = props as Record<string, unknown>
+  const stored = before && typeof before === 'object' ? (before as Record<string, unknown>).frame : undefined
+  if (canonicalJson(p.frame) === canonicalJson(stored)) return true
+  const bad = (message: string) => { reply.status(400).send({ error: 'bad_frame', message }); return false }
+  if (p.frame !== null && (typeof type !== 'string' || !FRAMEABLE_TYPES.has(type))) return bad('Only images and video screens can have a frame.')
+  const c = checkFrame(p.frame)
+  if (!c.ok) return bad(c.error)
+  if (c.value) p.frame = c.value
+  else delete p.frame
   return true
 }
 
@@ -536,6 +559,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       }
       const trialRefusal = request.user.trial ? trialElementRefusal(type, properties) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
+      if (!tidyFrame(type, null, request.body, reply)) return reply
 
       // A room-set asset gets the scene's own copy of its set (generated and uploaded before the transaction)
       let prepared: PreparedRoomSet | null = null
@@ -609,6 +633,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       // A trial may keep what an element already is (a locked type, a room set placed before); only a new one is refused (LIV-138)
       const trialRefusal = request.user.trial ? trialElementChangeRefusal(element, request.body) : null
       if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
+      if (!tidyFrame(request.body.type ?? element.type, element.properties, request.body, reply)) return reply
 
       const updates: Record<string, unknown> = { updatedAt: new Date() }
       for (const key of ['type', 'name', 'enabled', 'customId', 'customRendering', 'clickEvent', 'properties'] as const) {

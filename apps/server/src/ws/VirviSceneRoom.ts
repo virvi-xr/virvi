@@ -27,7 +27,7 @@ import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget
 import { getSceneLibraryItem } from '../library/scene-library.js'
 import { venueTopic, publishSceneTouched, STREAMS_TOPIC, type VenueEvent, type StreamStatusEvent } from '../realtime/bus.js'
 import { normalizeUrl, withLiveStatus, withLiveVideo } from '../streaming/live-status.js'
-import { VideoSourceType, type VenueAccessMessage } from '@virvixr/shared'
+import { VideoSourceType, checkFrame, type VenueAccessMessage } from '@virvixr/shared'
 import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
@@ -819,7 +819,14 @@ export class VirviSceneRoom extends Room {
    * Everything else goes into the properties JSONB column.
    */
   private extractProperties(data: Record<string, unknown>): Record<string, unknown> {
-    return propertiesOf(data)
+    const out = propertiesOf(data)
+    // A frame (LIV-129) is stored tidied, as the REST routes store it; one no runtime could draw is dropped
+    if ('frame' in out) {
+      const c = checkFrame(out.frame)
+      if (c.ok) out.frame = c.value
+      else delete out.frame
+    }
+    return out
   }
 
   /**
