@@ -147,7 +147,8 @@ export async function rollupDay(sceneId: string, day: string, now = new Date()):
     // One heatmap replace at a time, whoever runs it: the regular rollups and the height backfill can meet here, and
     // during a rolling deploy so can the pre-LIV-85 code, which takes no lock of its own. This mode conflicts with
     // itself and with the row-exclusive lock any delete or insert takes, so a second replace (old code or new) waits
-    // for the first to commit and its delete then sees, and removes, the first's rows. Reads are not blocked.
+    // for the first to commit and its delete then sees, and removes, the first's rows. Reads are not blocked. The
+    // transaction holds only the heatmap replace; copresence is recomputed in its own, after the lock is released.
     await tx.execute(sql`lock table analytics_heatmap_daily in share row exclusive mode`)
     await tx.delete(analyticsHeatmapDaily).where(and(eq(analyticsHeatmapDaily.sceneId, sceneId), eq(analyticsHeatmapDaily.day, day)))
     await tx.execute(sql`
@@ -162,7 +163,9 @@ export async function rollupDay(sceneId: string, day: string, now = new Date()):
           and abs(x) < 32768 and abs(z) < 32768
       ) p
       group by 3, 4, 5`)
+  })
 
+  await db.transaction(async (tx) => {
     await tx.delete(analyticsCopresenceDaily).where(and(eq(analyticsCopresenceDaily.sceneId, sceneId), eq(analyticsCopresenceDaily.day, day)))
     await tx.execute(sql`
       insert into analytics_copresence_daily (scene_id, day, visitor_a, visitor_b, overlap_sec)
@@ -304,7 +307,7 @@ export const HEATMAP_BACKFILL_JOB = 'heatmap-height-backfill'
  * Once only (LIV-85): re-run the daily heatmap rollup, which now records floor heights, for every day still fully
  * inside each location's retention, so recent history gets heights. Older days, the day the retention cutoff falls
  * in, and the day of the oldest raw position left (part of its positions may be gone) keep their height-less cells. rollupDay replaces a day's cells
- * under a per-day lock, so a rerun or a concurrent rollup changes nothing; the job itself runs under the
+ * under the heatmap table lock, so a rerun or a concurrent rollup changes nothing; the job itself runs under the
  * analytics job lock. Locations that fail are retried on the next run; the job is marked done once none fail.
  * Returns null when it has already run.
  */

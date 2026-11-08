@@ -162,6 +162,34 @@ describe('analytics jobs', () => {
     expect(await db.select().from(analyticsHeatmapDaily)).toHaveLength(1)
   })
 
+  it('the heatmap table lock is released before the copresence recompute', async () => {
+    const s = await createAnalyticsScene()
+    const a = await insertSession(s.id, { startedAt: at(0), lastSeenAt: at(10) })
+    await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: a.id, seq: 1, occurredAt: at(0), x: 1, y: 0.9, z: 1 })
+    // Hold copresence so the rollup stalls there, then ask for the heatmap lock without waiting.
+    let release!: () => void
+    let ready!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const begun = new Promise<void>((r) => (ready = r))
+    const holder = db.transaction(async (tx) => {
+      await tx.execute(sql`lock table analytics_copresence_daily in access exclusive mode`)
+      ready()
+      await held
+    })
+    await begun
+    const rollup = rollupDay(s.id, '2026-10-01')
+    try {
+      await new Promise((r) => setTimeout(r, 400))
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`lock table analytics_heatmap_daily in share row exclusive mode nowait`)
+      })
+      expect(await db.select().from(analyticsHeatmapDaily)).toHaveLength(1)
+    } finally {
+      release()
+      await Promise.all([holder, rollup])
+    }
+  })
+
   it('the heatmap key is the cell and its floor: a second row for both is refused, another floor is not', async () => {
     const s = await createAnalyticsScene()
     const row = { sceneId: s.id, day: '2026-10-01', cellX: 1, cellZ: 1, cellY: 0, dwellSec: 1, visits: 1 }
