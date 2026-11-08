@@ -11,7 +11,13 @@ import { TimeSeriesChart } from '@/components/analytics/TimeSeriesChart'
 import { BarList } from '@/components/analytics/BarList'
 import { ParcelMap } from '@/components/analytics/ParcelMap'
 import { Toggle } from '@/components/analytics/Toggle'
-import { HeatmapPanel } from '@/components/analytics/HeatmapPanel'
+import dynamic from 'next/dynamic'
+
+// The heatmap's views (bird's-eye layout, 3D) load with the heatmap's data, so the page's first load doesn't grow.
+const HeatmapPanel = dynamic(() => import('@/components/analytics/HeatmapPanel').then((m) => m.HeatmapPanel), {
+  ssr: false,
+  loading: () => <div className="mx-auto aspect-square w-full max-w-xl animate-pulse rounded-lg bg-gray-950" aria-label="Loading the heatmap" />,
+})
 import { Section, type SectionState } from '@/components/analytics/Section'
 import { full } from '@/components/analytics/format'
 import { tenureLabel } from './LocationList'

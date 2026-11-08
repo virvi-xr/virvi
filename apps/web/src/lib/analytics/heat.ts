@@ -4,15 +4,12 @@
 import { bandRangeM } from '@virvixr/shared/dist/heatmap-height.js'
 import type { HeatCell } from './types'
 
-export type HeatMetric = 'dwell' | 'visits'
-export const HEAT_STEPS = 6
+import { cellValue, colourStep, HEAT_STEPS, type HeatMetric } from './heat-scale'
+
+export { cellValue, colourStep, HEAT_STEPS, type HeatMetric }
 /** Above this many cells the 3D view drops the faintest colour steps. */
 export const MAX_3D_CELLS = 20_000
 
-export const cellValue = (c: { dwellSec: number; visits: number }, metric: HeatMetric) => (metric === 'dwell' ? c.dwellSec : c.visits)
-
-/** Quantise v against max into 0..5 (6 sequential steps); v <= 0 is not drawn. */
-export const colourStep = (v: number, max: number) => Math.min(HEAT_STEPS - 1, Math.floor((v / max) * HEAT_STEPS))
 
 /** The floor a cell is drawn on: a cell without a height is at ground level. */
 export const floorOf = (c: HeatCell) => c.cellY ?? 0

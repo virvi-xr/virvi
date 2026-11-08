@@ -8,6 +8,7 @@ import { placeLayout } from '@/lib/analytics/layout'
 import { formatDuration } from '@/lib/analytics/labels'
 import { hasWebGL } from '@/lib/webgl'
 import { ParcelMap } from './ParcelMap'
+import { useBirdsEyeLayers } from './BirdsEyeLayers'
 import { full } from './format'
 
 // three.js loads only when someone opens 3D, so the analytics page's first load doesn't grow.
@@ -35,6 +36,7 @@ export function HeatmapPanel({ parcels, baseParcel, kind, data, metric, live, la
   const [floor, setFloor] = useState<number | 'all'>('all')
   const placed = useMemo(() => (layout ? placeLayout(layout) : null), [layout])
   const flat = useMemo(() => flattenCells(data.cells), [data.cells])
+  const layers = useBirdsEyeLayers(placed)
   const v = heatView({ heatmap3d: data.heatmap3d, webgl: !!webgl && !failed, cells: data.cells, chosen })
   const note = webgl === null ? null : failed && v.view === '2d' && chosen !== '2d' ? "3D couldn't start in this browser, so here's the 2D map." : v.note
   const floors = useMemo(() => floorsOf(data.cells), [data.cells])
@@ -111,7 +113,7 @@ export function HeatmapPanel({ parcels, baseParcel, kind, data, metric, live, la
         </>
       ) : (
         <div className="mx-auto max-w-xl">
-          <ParcelMap parcels={parcels} baseParcel={baseParcel} cells={flat} metric={metric} layout={placed} />
+          <ParcelMap parcels={parcels} baseParcel={baseParcel} cells={flat} metric={metric} layers={layers} />
         </div>
       )}
     </div>
