@@ -6,6 +6,7 @@ import type { AnalyticsLocation, AnalyticsSession, AnalyticsSummary, HeatmapData
 import { rangeQuery, type RangeKey, type RangeQuery } from '@/lib/analytics/range'
 import { formatDuration, visitorLabel } from '@/lib/analytics/labels'
 import { isNoAccess } from '@/lib/analytics/view'
+import { loadLayout } from '@/lib/analytics/layout-fetch'
 import { StatCard } from '@/components/analytics/StatCard'
 import { TimeSeriesChart } from '@/components/analytics/TimeSeriesChart'
 import { BarList } from '@/components/analytics/BarList'
@@ -26,6 +27,7 @@ import { Badge, PageHeader, tableHead } from '@/components/ui'
 const LIVE_MS = 15_000
 const LIVE_ERROR_MS = 60_000
 const EMPTY_NOTE = 'No visits recorded yet'
+const ignore = () => {}
 
 type Api = ReturnType<typeof useApi>
 type Series = 'uniqueVisitors' | 'sessions' | 'peakConcurrency'
@@ -151,12 +153,9 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
     denied,
   )
   const [heat, retryHeat] = useRequest<HeatmapData>(qKey, () => apiRef.current.getAnalyticsHeatmap(id, { from: q!.from, to: q!.to }), denied)
-  // The linked scene's layout under the heatmap; without one (or if it can't load) the map is just the parcels.
-  const [layout] = useRequest<LayoutItem[] | null>(
-    location.virviSceneId ? id : null,
-    async () => (await apiRef.current.getAnalyticsLayout(id)).layout?.items ?? null,
-    denied,
-  )
+  // The linked scene's layout under the heatmap; without one, or if it can't load for any reason (an older server
+  // answers 404), the map is just the parcels and the dashboard carries on: loadLayout never rejects.
+  const [layout] = useRequest<LayoutItem[] | null>(location.virviSceneId ? id : null, () => loadLayout(() => apiRef.current.getAnalyticsLayout(id)), ignore)
   const ended = !!location.until
   const live = useLive(apiRef, id, !ended, denied)
 
