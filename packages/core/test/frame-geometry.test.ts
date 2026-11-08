@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { FRAME_MAT, defaultFrame, type FrameSettings } from '@virvixr/shared'
 import { ItemFrame, frameParts, framePartTransforms } from '../src/managers/frame.js'
+import { eulerDegreesToQuat, rotateVector } from '../src/transform/math.js'
 
 const frame = (over: Partial<FrameSettings> = {}): FrameSettings => ({ ...defaultFrame(), ...over })
 const one = { x: 1, y: 1, z: 1 }
@@ -44,34 +45,54 @@ describe('frameParts (bar transforms around a picture)', () => {
     close(big[0].scale.y, 0.4)
   })
 
-  it('Classic stands further out in front (-z) than Thin', () => {
-    const thin = frameParts(frame({ style: 'thin', thickness: 5 }), { x: 2, y: 2, z: 1 })
-    const classic = frameParts(frame({ style: 'classic', thickness: 5 }), { x: 2, y: 2, z: 1 })
-    const front = (p: (typeof thin)[number]) => bounds(p)[4]
-    expect(front(classic[0])).toBeLessThan(front(thin[0]))
-    expect(classic[0].scale.z).toBeGreaterThan(thin[0].scale.z)
+  it('bars are centred on the picture plane, so a frame reads the same from both sides; Classic is the deepest', () => {
+    const at = (style: FrameSettings['style']) => frameParts(frame({ style, thickness: 5 }), { x: 2, y: 2, z: 1 })
+    for (const style of ['thin', 'classic', 'gallery'] as const) {
+      for (const p of at(style)) close(p.position.z, 0)
+    }
+    expect(at('classic')[0].scale.z).toBeGreaterThan(at('thin')[0].scale.z)
+    expect(at('classic')[0].scale.z).toBeGreaterThan(at('gallery')[0].scale.z)
   })
 
-  it('Gallery puts a mat plane just behind the picture and the bars around the mat', () => {
+  it('bars never stand out more than 2 cm either side of the picture, however thick (no poking through walls)', () => {
+    for (const style of ['thin', 'classic', 'gallery'] as const) {
+      const bar = frameParts(frame({ style, thickness: 20 }), { x: 6, y: 3, z: 1 })[0]
+      expect(bar.scale.z / 2).toBeLessThanOrEqual(0.02 + 1e-9)
+    }
+    // a small, slim frame is shallower than the cap: in proportion to its width
+    expect(frameParts(frame({ thickness: 1 }), { x: 1, y: 0.5, z: 1 })[0].scale.z).toBeLessThan(0.02)
+  })
+
+  it('Gallery puts a mat in four strips around the picture, in its plane and never over it, and the bars around the mat', () => {
     const scale = { x: 3, y: 2, z: 1 }
     const parts = frameParts(frame({ style: 'gallery', thickness: 2, color: '#000000' }), scale)
-    expect(parts.map((p) => p.role)).toEqual(['top', 'bottom', 'left', 'right', 'mat'])
-    const mat = parts[4]
+    expect(parts.map((p) => p.role)).toEqual(['top', 'bottom', 'left', 'right', 'mat', 'mat', 'mat', 'mat'])
+    const mats = parts.filter((p) => p.role === 'mat')
     const m = (FRAME_MAT.width / 100) * 2
-    expect(mat).toMatchObject({ shape: 'plane', color: FRAME_MAT.color })
-    close(mat.scale.x, 3 + 2 * m)
-    close(mat.scale.y, 2 + 2 * m)
-    expect(mat.position.z).toBeGreaterThan(0) // behind: the picture's front is -z
-    expect(mat.position.z).toBeLessThan(bounds(parts[0])[5]) // and inside the bars' depth, so no gap shows
+    let area = 0
+    for (const mat of mats) {
+      expect(mat).toMatchObject({ shape: 'plane', color: FRAME_MAT.color })
+      close(mat.position.z, 0)
+      const [x0, x1, y0, y1] = bounds(mat)
+      // never inside the picture: each strip lies wholly beyond one of its edges
+      const outside = x1 <= -1.5 + 1e-9 || x0 >= 1.5 - 1e-9 || y1 <= -1 + 1e-9 || y0 >= 1 - 1e-9
+      expect(outside).toBe(true)
+      // and within the mat band
+      expect(Math.max(Math.abs(x0), Math.abs(x1))).toBeLessThanOrEqual(1.5 + m + 1e-9)
+      expect(Math.max(Math.abs(y0), Math.abs(y1))).toBeLessThanOrEqual(1 + m + 1e-9)
+      area += mat.scale.x * mat.scale.y
+    }
+    // together they fill the band exactly (no gaps, no overlaps)
+    close(area, (3 + 2 * m) * (2 + 2 * m) - 3 * 2)
     close(bounds(parts[2])[1], -(1.5 + m)) // the left bar's inner edge is the mat's edge
     expect(parts.slice(0, 4).every((p) => p.color === '#000000')).toBe(true)
   })
 
-  it('stays within about 50 triangles: 4 boxes (12 each) and at most one plane (2)', () => {
+  it('stays small: 4 boxes (12 triangles each), and Gallery\'s 4 mat planes (2 each)', () => {
     for (const style of ['thin', 'classic', 'gallery'] as const) {
       const parts = frameParts(frame({ style }), { x: 2, y: 1, z: 1 })
       const tris = parts.reduce((n, p) => n + (p.shape === 'box' ? 12 : 2), 0)
-      expect(tris).toBeLessThanOrEqual(50)
+      expect(tris).toBe(style === 'gallery' ? 56 : 48)
     }
   })
 
@@ -97,6 +118,40 @@ describe('framePartTransforms (world placement)', () => {
     expect(right.transform.rotation).toEqual({ x: 0, y: 90, z: 0 })
     expect(right.transform.scale).toEqual(flat.transform.scale)
   })
+})
+
+describe('framePartTransforms from either side', () => {
+  /** A part's centre in the picture's own axes, recovered from its world placement. */
+  const localOf = (world: { x: number; y: number; z: number }, t: { position: any; rotation: any }) => {
+    const q = eulerDegreesToQuat(t.rotation)
+    const d = { x: world.x - t.position.x, y: world.y - t.position.y, z: world.z - t.position.z }
+    const axis = (v: { x: number; y: number; z: number }) => rotateVector(q, v)
+    const dot = (a: any, b: any) => a.x * b.x + a.y * b.y + a.z * b.z
+    return { x: dot(d, axis({ x: 1, y: 0, z: 0 })), y: dot(d, axis({ x: 0, y: 1, z: 0 })), z: dot(d, axis({ x: 0, y: 0, z: 1 })) }
+  }
+  const placements = [
+    // the HUD's Media Library place: in front of the player, turned to face them (yaw + 180)
+    { name: 'HUD placement (yaw + 180)', rotation: { x: 0, y: 37 + 180, z: 0 } },
+    // a wall snap: turned to face along the wall's normal, tilted a little
+    { name: 'wall snap', rotation: { x: -12, y: 90, z: 0 } },
+  ]
+  for (const { name, rotation } of placements) {
+    it(`a Gallery frame on a ${name} keeps the mat in the picture plane and off the picture, with the bars centred on it`, () => {
+      const t = { position: { x: 8, y: 1.6, z: 8 }, rotation, scale: { x: 2, y: 1.2, z: 1 } }
+      const parts = framePartTransforms(frame({ style: 'gallery', thickness: 4 }), t)
+      for (const p of parts) {
+        const l = localOf(p.transform.position, t)
+        close(l.z, 0) // in the picture plane: nothing between the picture and a viewer on either side
+        close(l.x, p.position.x)
+        close(l.y, p.position.y)
+        expect(p.transform.rotation).toEqual(rotation)
+        if (p.role === 'mat') {
+          const [x0, x1, y0, y1] = [l.x - p.scale.x / 2, l.x + p.scale.x / 2, l.y - p.scale.y / 2, l.y + p.scale.y / 2]
+          expect(x1 <= -1 + 1e-9 || x0 >= 1 - 1e-9 || y1 <= -0.6 + 1e-9 || y0 >= 0.6 - 1e-9).toBe(true)
+        }
+      }
+    })
+  }
 })
 
 describe('ItemFrame', () => {
@@ -133,9 +188,9 @@ describe('ItemFrame', () => {
     const f = new ItemFrame(a)
     f.draw(frame(), at())
     f.draw(frame({ style: 'gallery' }), at())
-    expect(live.size).toBe(5)
+    expect(live.size).toBe(8)
     f.draw(frame({ style: 'gallery', color: '#ff0000' }), at())
-    expect(live.size).toBe(5)
+    expect(live.size).toBe(8)
     expect(a.setSolidShape).toHaveBeenLastCalledWith(expect.any(Number), 'plane', expect.anything())
     f.draw(null, at())
     expect(live.size).toBe(0)
