@@ -26,3 +26,4 @@ export * from './click-actions.js';
 export * from './scene-thumbnail.js'
 export * from './placements.js'
 export * from './frames.js'
+export * from './errors.js'
