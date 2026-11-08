@@ -21,7 +21,8 @@ import { config } from '../config.js'
 import { verifySessionToken, type SessionClaims } from '../auth/tokens.js'
 import { pairingActive, pairingLive } from '../hyperfy/pairing.js'
 import { deviceActive, deviceLive } from '../ar/devices.js'
-import { ANONYMOUS, actorFromClaims, type Actor } from '../auth/actor.js'
+import { ANONYMOUS, type Actor } from '../auth/actor.js'
+import { checkedActor } from '../auth/admin.js'
 import { getSceneAccess, hasScope, isFullAccess, toVenueAccessMessage, type SceneAccess } from '../auth/permissions.js'
 import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget } from './scene-guard.js'
 import { getSceneLibraryItem } from '../library/scene-library.js'
@@ -132,7 +133,7 @@ export class VirviSceneRoom extends Room {
     if (await VirviSceneRoom.linkedPassRevoked(claims)) return ANONYMOUS
     if (claims?.kind === 'scene') this.passExpiry.set(_client.sessionId, ((claims as { exp?: number }).exp ?? 0) * 1000)
     this.setLink(_client.sessionId, claims)
-    return actorFromClaims(claims)
+    return checkedActor(claims) // an admin claim is checked against the database
   }
 
   onCreate(options: JoinOptions) {

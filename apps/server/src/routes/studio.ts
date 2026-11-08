@@ -23,7 +23,7 @@ import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
-  designDetail, openDesignCount, totalDesignCount, publicDesign, publicDesigns, queuePrompt, requestOrbit, requestRender, usage, type Design, type FixClipping, type View,
+  designDetail, openDesignCount, ownerWords, totalDesignCount, publicDesign, publicDesigns, queuePrompt, requestOrbit, requestRender, usage, type Design, type FixClipping, type View,
 } from '../studio/designs.js'
 
 /**
@@ -248,7 +248,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       if (!r.ok) return reply.status(r.status).send(r.body)
       return reply.status(202).send({ jobId: r.jobId })
     }
-    if (!cont && (typeof b.text !== 'string' || !b.text.trim() || b.text.length > MAX_PROMPT)) {
+    if (!cont && (typeof b.text !== 'string' || !ownerWords(b.text) || b.text.length > MAX_PROMPT)) {
       return reply.status(400).send({ error: `text must be 1-${MAX_PROMPT} characters` })
     }
     let slots: string[] | null = null

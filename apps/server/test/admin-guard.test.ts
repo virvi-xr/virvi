@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { events, users } from '../src/db/schema.js'
@@ -6,6 +6,13 @@ import { config } from '../src/config.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
 import { createDesign } from './helpers/studio.js'
+
+// Counts the role reads `authenticate` makes (the guard's own reads go through the real function inside the module)
+const roleReads = vi.hoisted(() => ({ n: 0 }))
+vi.mock('../src/auth/admin.js', async (original) => {
+  const real = await original<typeof import('../src/auth/admin.js')>()
+  return { ...real, sessionRole: async (...args: Parameters<typeof real.sessionRole>) => { roleReads.n++; return real.sessionRole(...args) } }
+})
 
 /**
  * Admin power is the database's role, read on every request: a token minted before a demotion opens no admin route
@@ -73,4 +80,20 @@ describe('the admin role comes from the database', () => {
     expect((await call('GET', '/api/admin/studio/designs', token)).statusCode).toBe(200)
     expect((await call('GET', `/api/studio/designs/${design.id}`, token)).statusCode).toBe(200)
   })
+
+  it('authenticate reads the role only for a token that claims admin', async () => {
+    roleReads.n = 0
+    expect((await call('GET', '/api/studio/designs', tokenFor(other))).statusCode).toBe(200)
+    expect((await call('GET', '/api/scenes', tokenFor(other))).statusCode).toBe(200)
+    expect(roleReads.n).toBe(0)
+    expect((await call('GET', '/api/studio/designs', tokenFor(admin))).statusCode).toBe(200)
+    expect(roleReads.n).toBe(1)
+  })
+
+  it('a token claiming admin for a user who is gone keeps no admin power', async () => {
+    const token = tokenFor(admin)
+    await db.delete(users).where(eq(users.id, admin.id))
+    expect((await call('GET', `/api/events/${(await db.insert(events).values({ ownerId: other.id, name: 'x' }).returning())[0].id}`, token)).statusCode).toBe(403)
+  })
 })
+

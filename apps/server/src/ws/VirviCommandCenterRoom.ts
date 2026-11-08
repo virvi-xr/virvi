@@ -24,7 +24,8 @@ import {
 } from '../db/schema.js'
 import { dispatchPlatformCallbacks } from '../integrations/platform-hooks.js'
 import { verifySessionToken } from '../auth/tokens.js'
-import { actorFromClaims, type Actor } from '../auth/actor.js'
+import { type Actor } from '../auth/actor.js'
+import { checkedActor } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { accessibleSceneIds } from '../routes/command-center.js'
 
@@ -53,7 +54,7 @@ export class VirviCommandCenterRoom extends Room {
 
   async onAuth(_client: Client, options: JoinOptions): Promise<Actor> {
     const claims = verifySessionToken(options?.sessionToken)
-    const actor = actorFromClaims(claims)
+    const actor = await checkedActor(claims) // an admin claim is checked against the database
     // Account sessions only: no anonymous visitors, no scene passes, no unverified wallets.
     if (claims?.kind !== 'account' || !actor.userId || !actor.verified) throw new Error('Unauthorized')
     return actor

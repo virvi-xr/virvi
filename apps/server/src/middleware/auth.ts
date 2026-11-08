@@ -9,10 +9,10 @@ import { pairingLive } from '../hyperfy/pairing.js'
 import { deviceLive, devicePersonal } from '../ar/devices.js'
 import { dclHudNeedsRedeploy } from '../auth/hud-protocol.js'
 import { config } from '../config.js'
+import { sessionRole } from '../auth/admin.js'
 import { REDEPLOY_REQUIRED } from '@virvixr/shared'
 
 const TRIAL_TOUCH_MS = 10 * 60_000
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export interface AuthUser {
   id: string
@@ -139,12 +139,9 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     if (decoded.kind !== 'account' && decoded.kind !== 'scene') {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Session expired — sign in again' })
     }
-    // The role is the database's, not the token's: a demotion (or a promotion) counts at once, for every check that
-    // reads request.user.role. A token for a user who is gone keeps no admin power.
-    const [row] = UUID_RE.test(decoded.id)
-      ? await db.select({ role: users.role }).from(users).where(eq(users.id, decoded.id)).limit(1)
-      : []
-    request.user = { ...decoded, role: row?.role ?? (decoded.role === 'admin' ? 'viewer' : decoded.role) }
+    // A token claiming admin is checked against the database, so a demotion counts at once for every check that reads
+    // request.user.role (src/auth/admin.ts sessionRole); any other claim is used as it is, with no read
+    request.user = decoded.role === 'admin' ? { ...decoded, role: await sessionRole(decoded.id, decoded.role) } : decoded
     if (decoded.via === 'hyperfy' && !(decoded.pairingId && (await pairingLive(decoded.pairingId)))) {
       return reply.status(401).send({ error: 'pairing_revoked' })
     }

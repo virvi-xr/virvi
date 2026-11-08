@@ -37,6 +37,9 @@ export const RENDER_LIMITS = { timeoutSec: 300, maxTurns: 80, costCeilingUsd: 3 
 export const CONTINUE_TEXT = 'Continue where you stopped.'
 /** What the agent sees before a Virvi admin's own words, so it knows support wrote them, not the designer. */
 export const SUPPORT_PREFIX = '[Virvi support] '
+const TYPED_PREFIX = /^(\s*\[\s*virvi\s+support\s*\]\s*)+/i
+/** An owner's words as the agent gets them: a "[Virvi support]" they typed at the start is dropped, so only support's prompts carry it. */
+export const ownerWords = (text: string) => text.replace(TYPED_PREFIX, '').trim()
 export const START_FAILED = 'The studio machine could not start.'
 export const fixChecksText = (categories: string[]) =>
   `Fix every FAIL the checker reported for: ${categories.join(', ')}. Change nothing else.`
@@ -305,7 +308,7 @@ export async function queuePrompt(
       await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text, byAdminId: support })
       // Support's own words reach the agent marked as theirs; never scope-checked (that is for the designer's words)
       const ownWords = !input.continue && !fix && !fixText
-      const prompt = fix ? clippingInstruction(d.kind, fix) : support && ownWords ? `${SUPPORT_PREFIX}${text}` : text
+      const prompt = fix ? clippingInstruction(d.kind, fix) : !ownWords ? text : support ? `${SUPPORT_PREFIX}${ownerWords(text)}` : ownerWords(text)
       const [job] = await tx.insert(studioJobs).values({
         designId: d.id,
         type: 'prompt',

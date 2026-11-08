@@ -15,7 +15,8 @@ import { db } from '../db/connection.js'
 import { studioDesigns } from '../db/schema.js'
 import { config } from '../config.js'
 import { verifySessionToken } from '../auth/tokens.js'
-import { actorFromClaims, type Actor } from '../auth/actor.js'
+import { type Actor } from '../auth/actor.js'
+import { checkedActor } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { studioTopic, type StudioEvent } from '../studio/events.js'
 import { isVirviAdmin } from '../studio/pricing.js'
@@ -31,7 +32,7 @@ export class VirviStudioRoom extends Room {
 
   async onAuth(_client: Client, options: JoinOptions): Promise<Actor> {
     const claims = verifySessionToken(options?.sessionToken)
-    const actor = actorFromClaims(claims)
+    const actor = await checkedActor(claims)
     // Account sessions only: no anonymous visitors, no scene passes, no unverified wallets.
     if (!config.studioEnabled || claims?.kind !== 'account' || !actor.userId || !actor.verified) throw new Error('Unauthorized')
     if (!options?.designId || !isUuid(options.designId) || options.designId !== this.designId) throw new Error('Unauthorized')
