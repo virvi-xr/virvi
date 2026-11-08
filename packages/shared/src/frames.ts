@@ -77,15 +77,25 @@ export function checkFrame(raw: unknown): FrameCheck {
   return { ok: true, value: { enabled: r.enabled, style: r.style, color, thickness } }
 }
 
-/** The frame to draw, or null for none. Lenient: a bad colour falls back to the style's, a thickness is held in range. */
-export function frameOf(raw: unknown): FrameSettings | null {
+/**
+ * A stored frame as runtimes read it, switched on or off; null when it isn't a frame at all (no object, unknown style).
+ * Lenient: a bad colour falls back to the style's, a thickness is held in range. Editors show this, so they show what
+ * is drawn even for a frame stored outside the rules.
+ */
+export function readFrame(raw: unknown): FrameSettings | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
-  if (r.enabled !== true || !isStyle(r.style)) return null
+  if (!isStyle(r.style)) return null
   const d = FRAME_DEFAULTS[r.style]
   const color = typeof r.color === 'string' && HEX.test(r.color) ? r.color.toLowerCase() : d.color
   const t = typeof r.thickness === 'number' && Number.isFinite(r.thickness) ? r.thickness : d.thickness
-  return { enabled: true, style: r.style, color, thickness: Math.min(FRAME_THICKNESS.max, Math.max(FRAME_THICKNESS.min, t)) }
+  return { enabled: r.enabled === true, style: r.style, color, thickness: Math.min(FRAME_THICKNESS.max, Math.max(FRAME_THICKNESS.min, t)) }
+}
+
+/** The frame to draw, or null for none (also for one switched off). */
+export function frameOf(raw: unknown): FrameSettings | null {
+  const f = readFrame(raw)
+  return f?.enabled ? f : null
 }
 
 /** A new frame: Thin, with its defaults, switched on. */

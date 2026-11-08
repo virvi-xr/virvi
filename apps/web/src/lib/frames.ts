@@ -3,7 +3,7 @@
  * Checked with the shared checkFrame the server uses; saved in the element's properties as `frame`.
  */
 import {
-  FRAME_STYLES, FRAME_STYLE_LABELS, FRAME_SWATCHES, FRAME_THICKNESS, checkFrame, defaultFrame, withFrameStyle,
+  FRAME_STYLES, FRAME_STYLE_LABELS, FRAME_SWATCHES, FRAME_THICKNESS, checkFrame, defaultFrame, readFrame, withFrameStyle,
   type FrameSettings, type FrameStyle,
 } from '@virvixr/shared'
 
@@ -14,10 +14,12 @@ export const FRAME_CHOICES: { choice: FrameChoice; label: string }[] = [
   ...FRAME_STYLES.map((s) => ({ choice: s, label: FRAME_STYLE_LABELS[s] })),
 ]
 
-/** The saved frame to edit, or a Thin one switched off (also for one that can't be read). */
+/**
+ * The saved frame to edit, as the runtime draws it (one stored outside the rules is held in range, so saving it makes
+ * it valid), or a Thin one switched off when there is none or it can't be read.
+ */
 export function frameFormOf(raw: unknown): FrameSettings {
-  const c = raw === undefined || raw === null ? null : checkFrame(raw)
-  return c?.ok && c.value ? c.value : { ...defaultFrame(), enabled: false }
+  return readFrame(raw) ?? { ...defaultFrame(), enabled: false }
 }
 
 export function frameChoiceOf(form: FrameSettings): FrameChoice {

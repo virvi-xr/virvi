@@ -50,5 +50,8 @@ describe('HUD frame editing', () => {
     expect(row.frame).toEqual(defaultFrame('gallery'))
     expect(toLayoutItem({ id: 'e1', name: 'Poster', type: 'image', enabled: false }, row).frame).toEqual(defaultFrame('gallery'))
     expect(toLayoutItem({ id: 'e2', name: 'Bad', type: 'image', properties: { frame: 'gold' } }).frame).toBeNull()
+    // stored outside the rules: shown as drawn (thickness held at the most), not as no frame
+    expect(toLayoutItem({ id: 'e3', name: 'Old', type: 'image', properties: { frame: { enabled: true, style: 'thin', thickness: 99 } } }).frame)
+      .toEqual({ ...defaultFrame(), thickness: FRAME_THICKNESS.max })
   })
 })

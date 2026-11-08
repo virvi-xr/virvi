@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DCL_ENTITIES_PER_PARCEL, FRAME_DEFAULTS, FRAME_THICKNESS, RUNTIME_ENTITY_RESERVE, checkFrame, dclBudget, defaultFrame, frameEntitiesIn, frameEntityCount, frameOf, frameColorRgb, withFrameStyle } from '@virvixr/shared'
+import { DCL_ENTITIES_PER_PARCEL, FRAME_DEFAULTS, FRAME_THICKNESS, RUNTIME_ENTITY_RESERVE, checkFrame, dclBudget, defaultFrame, frameEntitiesIn, frameEntityCount, frameOf, frameColorRgb, readFrame, withFrameStyle } from '@virvixr/shared'
 
 /** Frames around images and video screens (LIV-129): what may be saved, and what a runtime draws. */
 describe('checkFrame', () => {
@@ -87,5 +87,14 @@ describe('frame entities in the Decentraland budget', () => {
   it('the parcel entity limit is 200 per parcel, and authoring keeps the runtime reserve back', () => {
     expect(DCL_ENTITIES_PER_PARCEL).toBe(200)
     expect(dclBudget(2).entities).toBe(400 - RUNTIME_ENTITY_RESERVE)
+  })
+})
+
+describe('readFrame (what editors show)', () => {
+  it('keeps a frame switched off, and shows one stored outside the rules as it is drawn', () => {
+    expect(readFrame({ enabled: false, style: 'gallery', color: '#ABCDEF', thickness: 3 })).toEqual({ enabled: false, style: 'gallery', color: '#abcdef', thickness: 3 })
+    expect(readFrame({ enabled: true, style: 'thin', thickness: 99 })).toEqual({ ...defaultFrame(), thickness: FRAME_THICKNESS.max })
+    expect(readFrame({ enabled: true, style: 'ornate' })).toBeNull()
+    expect(readFrame('gold')).toBeNull()
   })
 })

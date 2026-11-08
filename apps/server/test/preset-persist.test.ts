@@ -62,6 +62,26 @@ describe('persistPresetUpdate merges properties', () => {
     expect((await row(el.id)).properties).toEqual({ textureSrc: 'https://x/b.png', frame: null })
   })
 
+  it('the room keeps frames to images and video screens: not on a model, an ad space or a copy (LIV-129)', async () => {
+    const owner = await createUser()
+    const { scene, preset } = await createScene(owner)
+    const model = await createElement(preset.id, { type: 'model', name: 'M', properties: { modelSrc: 'm.glb' } })
+    const ad = await createElement(preset.id, { type: 'ad_space', name: 'A', properties: { shape: '16:9' } })
+    const img = await createElement(preset.id, { type: 'image', name: 'I', properties: { textureSrc: 'a.png' } })
+    const inst = await createInstance(img.id)
+    const c = await joinScene(gs.url, scene.id, tokenFor(owner))
+    await c.waitFor('scene_preset_update')
+    const frame = { enabled: true, style: 'thin', color: '#1c1c1c', thickness: 2 }
+    // a model claiming to be an image is still a model
+    c.room.send('scene_preset_update', { action: 'update', element: 'image', elementData: { sk: model.id, frame, modelSrc: 'n.glb' } })
+    c.room.send('scene_preset_update', { action: 'update', element: 'ad_space', elementData: { sk: ad.id, frame } })
+    c.room.send('scene_preset_update', { action: 'update', element: 'image', instance: true, elementData: { sk: img.id }, instanceData: { sk: inst.id, frame, tint: 'red' } })
+    await settle()
+    expect((await row(model.id)).properties).toEqual({ modelSrc: 'n.glb' })
+    expect((await row(ad.id)).properties).toEqual({ shape: '16:9' })
+    expect((await db.query.sceneElementInstances.findFirst({ where: eq(sceneElementInstances.id, inst.id) }))!.properties).toEqual({ tint: 'red' })
+  })
+
   it('instance update keeps existing properties when only position is sent', async () => {
     const { c, el } = await setup({ textureSrc: 'https://x/a.png' })
     const inst = await createInstance(el.id)

@@ -8,6 +8,8 @@ describe('frame form', () => {
     expect(frameFormOf(undefined)).toEqual({ ...defaultFrame(), enabled: false })
     expect(frameFormOf({ enabled: true, style: 'gallery', color: '#AABBCC', thickness: 4 })).toEqual({ enabled: true, style: 'gallery', color: '#aabbcc', thickness: 4 })
     expect(frameFormOf('nonsense')).toEqual({ ...defaultFrame(), enabled: false })
+    // stored outside the rules: the form shows what is drawn, so saving it makes it valid
+    expect(frameFormOf({ enabled: true, style: 'classic', thickness: 99, color: 'brown' })).toEqual({ enabled: true, style: 'classic', color: FRAME_DEFAULTS.classic.color, thickness: FRAME_THICKNESS.max })
   })
 
   it('offers None and the three styles, and shows which is chosen', () => {
@@ -42,5 +44,6 @@ describe('frame form', () => {
     expect(frameSummary({ ...defaultFrame(), enabled: false })).toBe('None')
     expect(frameSummary(defaultFrame('classic'))).toBe('Classic · Wood · 6%')
     expect(frameSummary({ ...defaultFrame(), color: '#123456' })).toBe('Thin · #123456 · 2%')
+    expect(frameSummary({ enabled: true, style: 'thin', thickness: 99 })).toBe('Thin · Black · 20%')
   })
 })

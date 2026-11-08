@@ -3,7 +3,7 @@
  * Classic or Gallery, a colour swatch and a thickness. Pure (no @dcl/sdk), so it is unit-tested; checked with the
  * shared checkFrame the server uses.
  */
-import { FRAMEABLE_TYPES, FRAME_STYLE_LABELS, FRAME_THICKNESS, checkFrame, defaultFrame, withFrameStyle, type FrameCheck, type FrameSettings, type FrameStyle } from '@virvixr/shared'
+import { FRAMEABLE_TYPES, FRAME_STYLE_LABELS, FRAME_THICKNESS, checkFrame, defaultFrame, readFrame, withFrameStyle, type FrameCheck, type FrameSettings, type FrameStyle } from '@virvixr/shared'
 
 /** Element types that take a frame. */
 export const FRAMEABLE = FRAMEABLE_TYPES
@@ -43,9 +43,7 @@ export function withFrame(properties: Record<string, unknown> | null | undefined
   return { ...(properties ?? {}), frame }
 }
 
-/** A stored frame as the HUD shows it; null for none or one it can't read. */
+/** A stored frame as the HUD shows it: as the runtime draws it (held in range), on or off; null for none. */
 export function storedFrame(raw: unknown): FrameSettings | null {
-  if (raw === undefined || raw === null) return null
-  const c = checkFrame(raw)
-  return c.ok ? c.value : null
+  return readFrame(raw)
 }

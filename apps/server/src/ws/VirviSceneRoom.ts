@@ -27,7 +27,7 @@ import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget
 import { getSceneLibraryItem } from '../library/scene-library.js'
 import { venueTopic, publishSceneTouched, STREAMS_TOPIC, type VenueEvent, type StreamStatusEvent } from '../realtime/bus.js'
 import { normalizeUrl, withLiveStatus, withLiveVideo } from '../streaming/live-status.js'
-import { VideoSourceType, checkFrame, type VenueAccessMessage } from '@virvixr/shared'
+import { FRAMEABLE_TYPES, VideoSourceType, checkFrame, type VenueAccessMessage } from '@virvixr/shared'
 import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
@@ -732,7 +732,7 @@ export class VirviSceneRoom extends Room {
         customId: elementData.customId || null,
         customRendering: elementData.customRendering ?? false,
         clickEvent: elementData.clickEvent || null,
-        properties: this.extractProperties(elementData),
+        properties: this.extractProperties(elementData, element || 'custom'),
       })
     } else if (action === 'create' && instance && instanceData) {
       // Create a new instance
@@ -755,7 +755,7 @@ export class VirviSceneRoom extends Room {
         clickEvent: instanceData.clickEvent || null,
         parentInstanceId: parent.ok ? parent.parentInstanceId : null,
         withCollisions: instanceData.withCollisions ?? false,
-        properties: this.extractProperties(instanceData),
+        properties: this.extractProperties(instanceData, null),
       })
     } else if (action === 'update' && !instance) {
       // Update an element
@@ -768,10 +768,11 @@ export class VirviSceneRoom extends Room {
         if (elementData.enabled !== undefined) updates.enabled = elementData.enabled
         if (elementData.customId !== undefined) updates.customId = elementData.customId
         if (elementData.clickEvent !== undefined) updates.clickEvent = elementData.clickEvent
-        const extracted = this.extractProperties(elementData)
-        if (Object.keys(extracted).length > 0) {
+        if (Object.keys(propertiesOf(elementData)).length > 0) {
           const row = await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, elementId) })
-          updates.properties = { ...((row?.properties as Record<string, unknown> | null) ?? {}), ...extracted }
+          // The stored type decides whether a frame is kept, never the message's
+          const extracted = this.extractProperties(elementData, row?.type ?? null)
+          if (Object.keys(extracted).length > 0) updates.properties = { ...((row?.properties as Record<string, unknown> | null) ?? {}), ...extracted }
         }
       }
 
@@ -789,7 +790,7 @@ export class VirviSceneRoom extends Room {
         if (instanceData.enabled !== undefined) updates.enabled = instanceData.enabled
         if (instanceData.clickEvent !== undefined) updates.clickEvent = instanceData.clickEvent
         if (instanceData.withCollisions !== undefined) updates.withCollisions = instanceData.withCollisions
-        const extracted = this.extractProperties(instanceData)
+        const extracted = this.extractProperties(instanceData, null)
         if (Object.keys(extracted).length > 0) {
           const row = await db.query.sceneElementInstances.findFirst({ where: eq(sceneElementInstances.id, instanceId) })
           updates.properties = { ...((row?.properties as Record<string, unknown> | null) ?? {}), ...extracted }
@@ -818,12 +819,13 @@ export class VirviSceneRoom extends Room {
    * Known structural fields (sk, name, enabled, position, etc.) are removed.
    * Everything else goes into the properties JSONB column.
    */
-  private extractProperties(data: Record<string, unknown>): Record<string, unknown> {
+  private extractProperties(data: Record<string, unknown>, elementType: string | null): Record<string, unknown> {
     const out = propertiesOf(data)
-    // A frame (LIV-129) is stored tidied, as the REST routes store it; one no runtime could draw is dropped
+    // A frame (LIV-129) is stored tidied, as the REST routes store it, and only on an image or video screen's element
+    // (`elementType` null: an instance, which has none); one no runtime could draw is dropped
     if ('frame' in out) {
-      const c = checkFrame(out.frame)
-      if (c.ok) out.frame = c.value
+      const c = elementType && FRAMEABLE_TYPES.has(elementType) ? checkFrame(out.frame) : null
+      if (c?.ok) out.frame = c.value
       else delete out.frame
     }
     return out

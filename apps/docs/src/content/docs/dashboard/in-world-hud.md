@@ -73,3 +73,5 @@ From `@virvixr/dcl` 2.11.0, the Layout panel's **Click** button sets what clicki
 ## Frames
 
 From `@virvixr/dcl` 2.12.0, the Layout panel's **Frame** button puts a frame around an image or video screen: **Off**, **Thin** (one slim modern border), **Classic** (a deeper, raised border, wood by default) or **Gallery** (a white mat with a slim frame around it), with a colour swatch and a thickness. Press **Save** and the frame shows at once, on every copy of the item. Thickness is a share of the picture's shorter side, so the frame stays in proportion when you resize it. The scene editor's image and video screen cards have the same **Frame** setting, with any colour. Ad spaces have no frame.
+
+A frame shows the same from both sides of the picture. Each framed copy adds 4 objects to the scene (8 for Gallery), and these count toward Decentraland's object limit for your parcels: publishing tells you if frames take the scene over it, and in-world a frame that would go over the limit is left off. The picture itself still shows.
