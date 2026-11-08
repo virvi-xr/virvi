@@ -1,7 +1,8 @@
 /**
  * VirviStudioRoom — live progress for one Design Studio design.
  *
- * Clients join filtered by designId; only the design's owner, on a verified account session, may join. The room
+ * Clients join filtered by designId; only the design's owner, or a Virvi admin helping on it (the role read from the
+ * database), on a verified account session, may join. The room
  * relays the design's bus topic (studio/events.ts) as `studio_event` messages. Clients send nothing.
  */
 
@@ -17,6 +18,7 @@ import { verifySessionToken } from '../auth/tokens.js'
 import { actorFromClaims, type Actor } from '../auth/actor.js'
 import { isUuid } from '../auth/scene-from.js'
 import { studioTopic, type StudioEvent } from '../studio/events.js'
+import { isVirviAdmin } from '../studio/pricing.js'
 
 interface JoinOptions {
   sessionToken?: string
@@ -34,7 +36,7 @@ export class VirviStudioRoom extends Room {
     if (!config.studioEnabled || claims?.kind !== 'account' || !actor.userId || !actor.verified) throw new Error('Unauthorized')
     if (!options?.designId || !isUuid(options.designId) || options.designId !== this.designId) throw new Error('Unauthorized')
     const [design] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, options.designId))
-    if (!design || design.ownerId !== actor.userId) throw new Error('Unauthorized')
+    if (!design || (design.ownerId !== actor.userId && !(await isVirviAdmin(actor.userId)))) throw new Error('Unauthorized')
     return actor
   }
 

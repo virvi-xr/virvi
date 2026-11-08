@@ -276,6 +276,14 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio MANA foreign keys ensured');
       } catch(e) { console.log('[virvi-server] studio MANA foreign keys:', e.message); }
 
+      // Design Studio admin help: who in Virvi support sent a prompt or granted a finalize; matches studioJobs, studioMessages and studioPayments in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS by_admin_id UUID\`;
+        await sql\`ALTER TABLE studio_messages ADD COLUMN IF NOT EXISTS by_admin_id UUID\`;
+        await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS by_admin_id UUID\`;
+        console.log('[virvi-server] studio admin help columns ensured');
+      } catch(e) { console.log('[virvi-server] studio admin help columns:', e.message); }
+
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_pairings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), world_id UUID NOT NULL REFERENCES hyperfy_worlds(id) ON DELETE CASCADE, user_id UUID REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT UNIQUE, secret_hash TEXT, hyperfy_player_id TEXT, player_name TEXT, status TEXT NOT NULL DEFAULT 'pending', code_expires_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

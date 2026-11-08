@@ -48,6 +48,15 @@ describe('VirviStudioRoom', () => {
     await expect(joinStudio(gs.url, 'not-a-uuid', tokenFor(owner))).rejects.toThrow()
   })
 
+  it('a Virvi admin helping (the role read from the database) joins anyone’s design; a token only claiming it does not', async () => {
+    const owner = await createUser()
+    const design = await createDesign(owner)
+    const admin = await createUser({ role: 'admin' })
+    const s = await joinStudio(gs.url, design.id, tokenFor(admin))
+    expect(s).toBeTruthy()
+    await expect(joinStudio(gs.url, design.id, tokenFor(await createUser(), { role: 'admin' }))).rejects.toThrow()
+  })
+
   it("scene passes and guests can't join", async () => {
     const owner = await createUser()
     const design = await createDesign(owner)

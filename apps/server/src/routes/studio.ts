@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { recordTrialBlocked } from '../auth/trial-events.js'
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads } from '../db/schema.js'
+import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { isTrialUser } from '../studio/quota.js'
 import { authenticate } from '../middleware/auth.js'
@@ -26,8 +26,9 @@ import {
 } from '../studio/designs.js'
 
 /**
- * The dashboard's Design Studio API. A design belongs to its owner alone: anyone else gets 404. Files never leave
- * through here, only signed render-frame URLs (render-urls.ts).
+ * The dashboard's Design Studio API. A design belongs to its owner alone: anyone else gets 404, except a Virvi admin
+ * helping on the routes that say so (Virvi support: `designAccess(request, SUPPORT)`). Files never leave through here,
+ * only signed render-frame URLs (render-urls.ts) and a paid revision's package.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -66,11 +67,44 @@ const slugOf = (name: string, fallback: string) =>
 /** "Download all" holds the packages in memory while it zips them: past this, download them one by one. */
 const DOWNLOAD_ALL_MAX_BYTES = 500 * 1024 * 1024
 
-async function ownDesign(request: FastifyRequest): Promise<Design | null> {
+/** A design the request may use, and whether it is a Virvi admin helping on someone else's (support). */
+type Access = { d: Design; support: boolean }
+/** The routes a Virvi admin may use on anyone's design: reading it, prompting, renders and checks, finalizing, packages. */
+const SUPPORT = { allowAdmin: true }
+
+/**
+ * Whether the request is a Virvi admin who may help on other people's designs: an account session on the dashboard
+ * (no scene pass, trial or API key), with the admin role read from the database, never the token.
+ */
+async function canSupport(request: FastifyRequest): Promise<boolean> {
+  const u = request.user
+  return u.kind === 'account' && !u.via && !u.viaApiKey && !u.trial && await isVirviAdmin(u.id)
+}
+
+async function designAccess(request: FastifyRequest, opts: { allowAdmin?: boolean } = {}): Promise<Access | null> {
   const id = (request.params as { id: string }).id
   if (!UUID.test(id)) return null
-  const [d] = await db.select().from(studioDesigns).where(and(eq(studioDesigns.id, id), eq(studioDesigns.ownerId, request.user.id)))
-  return d ?? null
+  const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, id))
+  if (!d) return null
+  if (d.ownerId === request.user.id) return { d, support: false }
+  if (opts.allowAdmin && await canSupport(request)) return { d, support: true }
+  return null
+}
+
+/** The owner's design, for the routes that stay the owner's alone (rename, archive, uploads, mistake reports). */
+async function ownDesign(request: FastifyRequest): Promise<Design | null> {
+  return (await designAccess(request))?.d ?? null
+}
+
+/** A design the request may use on a support route, or null (404). */
+async function supportDesign(request: FastifyRequest): Promise<Design | null> {
+  return (await designAccess(request, SUPPORT))?.d ?? null
+}
+
+/** What the page shows a Virvi admin helping on someone else's design: whose it is. */
+async function supportView(d: Design) {
+  const [u] = await db.select({ displayName: users.displayName, email: users.email, isTrial: users.isTrial }).from(users).where(eq(users.id, d.ownerId))
+  return { ownerId: d.ownerId, ownerName: u?.displayName ?? null, ownerEmail: u?.email ?? null, trial: !!u?.isTrial }
 }
 
 const OPEN_LIMIT = 'Your plan has no room for another open design. Designs with pieces left to finalize count as open: finalize or archive one to make room.'
@@ -173,9 +207,10 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.get('/api/studio/designs/:id', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
-    return designDetail(d, new Date())
+    const a = await designAccess(request, SUPPORT)
+    if (!a) return notFound(reply)
+    const detail = await designDetail(a.d, new Date())
+    return a.support ? { ...detail, support: await supportView(a.d) } : detail
   })
 
   app.patch('/api/studio/designs/:id', trialAuth, async (request, reply) => {
@@ -206,13 +241,15 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/studio/designs/:id/prompts', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
+    const a = await designAccess(request, SUPPORT)
+    if (!a) return notFound(reply)
+    const d = a.d
+    const byAdminId = a.support ? request.user.id : undefined
     const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; continue?: unknown; fixChecks?: unknown }
     const cont = b.continue === true
     const fixChecks = b.fixChecks === true
     if (fixChecks) {
-      const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixChecks: true }, new Date())
+      const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixChecks: true, byAdminId }, new Date())
       if (!r.ok) return reply.status(r.status).send(r.body)
       return reply.status(202).send({ jobId: r.jobId })
     }
@@ -228,13 +265,14 @@ export default async function studioRoutes(app: FastifyInstance) {
       }
       slots = [...new Set(b.selectedSlots as string[])]
     }
-    const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont }, new Date())
+    const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
   })
 
   app.get('/api/studio/designs/:id/finalize', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
+    // Support's quote is an admin's: every line free
+    const d = await supportDesign(request)
     if (!d) return notFound(reply)
     // The dialog re-quotes as pieces are ticked: the total, free finalizes and first-piece prices are the server's
     const categories = chosenCategories((request.query as { categories?: unknown }).categories, 'query')
@@ -251,9 +289,20 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
+    const a = await designAccess(request, SUPPORT)
+    if (!a) return notFound(reply)
+    const d = a.d
     const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown; method?: unknown }
+    if (a.support) {
+      // A Virvi admin finalizing for the owner: free, granted at once, the owner's as if they had paid
+      const chosen = chosenCategories(b.categories, 'body')
+      if (chosen === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+      try {
+        return await createFinalizeCheckout(d, { id: d.ownerId, email: null }, chosen, {}, new Date(), 'card', { byAdminId: request.user.id })
+      } catch (err) {
+        return checkoutRefusal(reply, err)
+      }
+    }
     const method = checkoutMethod(b.method)
     if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
     // an admin's finalize is granted without Stripe, and MANA doesn't use Stripe, so neither waits on it being set up
@@ -296,7 +345,7 @@ export default async function studioRoutes(app: FastifyInstance) {
 
   /** The piece's paid revision from the route params, or the refusal already sent. */
   async function paidRevision(request: FastifyRequest, reply: FastifyReply) {
-    const d = await ownDesign(request)
+    const d = await supportDesign(request)
     if (!d) return void notFound(reply)
     const { category, number } = request.params as { category: string; number: string }
     if (!/^[a-z_]{1,32}$/.test(category) || !/^[1-9][0-9]{0,5}$/.test(number)) return void reply.status(400).send({ error: 'unknown revision' })
@@ -308,7 +357,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   // "Download all": every piece's newest ready package in one zip, to its owner. With the route below, the only ways
   // a model file leaves.
   app.get('/api/studio/designs/:id/packages', auth, async (request, reply) => {
-    const d = await ownDesign(request)
+    const d = await supportDesign(request)
     if (!d) return notFound(reply)
     const ready = await readyPackages(d.id)
     if (!ready.length) return reply.status(409).send({ error: 'nothing_ready', code: 'nothing_ready' })
@@ -442,7 +491,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.get('/api/studio/designs/:id/uploads/:uploadId', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
+    const d = await supportDesign(request)
     const uploadId = (request.params as { uploadId: string }).uploadId
     const u = d && UUID.test(uploadId) ? await findUpload(d.id, uploadId) : null
     const obj = u ? await getStudioStore().get(uploadKey(u.designId, u.id)) : null
@@ -458,7 +507,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/studio/designs/:id/renders', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
+    const d = await supportDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { category?: unknown; bodyShape?: unknown; outfit?: unknown; emote?: unknown; mode?: unknown }
     if (d.kind === 'scene') {
@@ -491,7 +540,7 @@ export default async function studioRoutes(app: FastifyInstance) {
 
   // An emote view with every piece worn: a base emote for a wearable design, the design's own (null) for an emote
   app.post('/api/studio/designs/:id/set-renders', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
+    const d = await supportDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { bodyShape?: unknown; outfit?: unknown; emote?: unknown; categories?: unknown }
     if (d.kind === 'scene') {  // the building's walk-through, the one design-level view a scene design has
@@ -520,7 +569,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       : emotesFor(d.kind).includes(emote as string) ? emote as string : null
 
   app.post('/api/studio/designs/:id/emote-checks', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
+    const d = await supportDesign(request)
     if (!d) return notFound(reply)
     const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; state?: unknown; categories?: unknown }
     const emote = checkedEmote(d, b.emote)
@@ -538,8 +587,9 @@ export default async function studioRoutes(app: FastifyInstance) {
 
   // "I see clipping": a free fix in the server's words, for an emote view the person has seen
   app.post('/api/studio/designs/:id/clipping', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
+    const a = await designAccess(request, SUPPORT)
+    if (!a) return notFound(reply)
+    const d = a.d
     const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; outfit?: unknown; categories?: unknown }
     const emote = checkedEmote(d, b.emote)
     if (!emote) return reply.status(400).send({ error: 'unknown emote' })
@@ -556,7 +606,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       eq(studioSetRenders.status, 'ready'))) : []
     if (!seen) return reply.status(409).send({ error: 'not_seen', code: 'not_seen' })
     if (await freeFixesLeft(d.id, emote) <= 0) return reply.status(409).send({ error: 'clipping_fix_limit', code: 'clipping_fix_limit' })
-    const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixClipping: fix }, new Date())
+    const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixClipping: fix, byAdminId: a.support ? request.user.id : undefined }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     await recordCheck(d.id, revisions, emote, fix.bodyShape, 'clipping')
     return reply.status(202).send({ jobId: r.jobId })
@@ -564,7 +614,7 @@ export default async function studioRoutes(app: FastifyInstance) {
 
   // Opening Finalize: every emote on both bodies, so the checklist fills while the person looks
   app.post('/api/studio/designs/:id/finalize-renders', work, async (request, reply) => {
-    const d = await ownDesign(request)
+    const d = await supportDesign(request)
     if (!d) return notFound(reply)
     const categories = chosenCategories((request.body as { categories?: unknown } | null)?.categories, 'body')
     if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
@@ -574,7 +624,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   // The emote step for Finalize's selection (`?categories=a,b`): views and checks of the chosen and finalized pieces
   // worn together. Without it, the whole set's, as the design detail has it.
   app.get('/api/studio/designs/:id/set', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
+    const d = await supportDesign(request)
     if (!d) return notFound(reply)
     const categories = chosenCategories((request.query as { categories?: unknown }).categories, 'query')
     if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })

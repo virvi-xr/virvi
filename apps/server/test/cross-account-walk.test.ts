@@ -375,6 +375,7 @@ const CASES: Case[] = [
   { route: 'PUT /api/admin/ads/:id/placements', url: () => `/api/admin/ads/${AD_ID}/placements`, body: () => ({ elementIds: [] }) },
   { route: 'GET /api/admin/ads/:id/report', url: () => `/api/admin/ads/${AD_ID}/report` },
   { route: 'POST /api/admin/ads/:id/review', url: () => `/api/admin/ads/${AD_ID}/review`, body: () => ({ decision: 'rejected', reason: 'x' }) },
+  { route: 'GET /api/admin/studio/designs', url: (f) => `/api/admin/studio/designs?q=${f.b.id}` },
   { route: 'POST /api/admin/studio/flags/:id/dismiss', url: () => `/api/admin/studio/flags/${AD_ID}/dismiss` },
   { route: 'POST /api/admin/studio/users/:userId/pause', url: (f) => `/api/admin/studio/users/${f.b.id}/pause` },
   { route: 'DELETE /api/admin/studio/users/:userId/pause', url: (f) => `/api/admin/studio/users/${f.b.id}/pause` },

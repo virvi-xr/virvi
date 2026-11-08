@@ -6,11 +6,14 @@ import { approveReport, declineReport, heldReports, PaymentError } from '../stud
 import { createGiftCode, disableGiftCode, GiftCodeError, listGiftCodes } from '../studio/gift-codes.js'
 import { declineManaRefund, listManaRefunds, manaRefundQuote, recordManaRefundSent, type ManaRefundStatus } from '../studio/mana/refunds.js'
 import { listManaTransfers, markTransferReturned, settleTransferByHand, type ManaTransferStatus } from '../studio/mana/settle.js'
+import { isVirviAdmin } from '../studio/pricing.js'
+import { decodeCursor, DESIGN_KINDS, listAdminDesigns } from '../studio/admin-designs.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 const REFUND_STATUSES: ManaRefundStatus[] = ['requested', 'sent', 'declined']
 const TRANSFER_STATUSES: ManaTransferStatus[] = ['unmatched', 'matched', 'settled_by_hand', 'returned']
 const MAX_NOTE = 500
+const MAX_QUERY = 200
 
 /** A refusal from the payment code as the page sees it. */
 function refusal(reply: FastifyReply, err: unknown) {
@@ -25,15 +28,30 @@ function transferKey(request: FastifyRequest): { txHash: string; logIndex: numbe
   return { txHash, logIndex: Number(logIndex) }
 }
 
-/** Admins only: the Studio flags page (src/studio/scope.ts). Accounts that keep sending off-topic work, and pausing them. */
+/**
+ * Admins only: the Studio admin page (flags and pauses, reports, MANA, gift codes, everyone's designs). The role is
+ * the token's and the database's both: a token minted before a demotion opens nothing.
+ */
 async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  if (request.user.role !== 'admin') {
+  if (request.user.role !== 'admin' || request.user.kind !== 'account' || !(await isVirviAdmin(request.user.id))) {
     return reply.status(403).send({ error: 'Forbidden', message: 'Admin access required' })
   }
 }
 
 export default async function adminStudioRoutes(app: FastifyInstance) {
   const admin = { preHandler: [authenticate, requireAdmin] }
+
+  // Everyone's designs, trial ones included, to open and help with (Virvi support, on the design's own page)
+  app.get('/api/admin/studio/designs', admin, async (request, reply) => {
+    const { q, kind, cursor } = request.query as { q?: unknown; kind?: unknown; cursor?: unknown }
+    if (q !== undefined && (typeof q !== 'string' || q.length > MAX_QUERY)) return reply.status(400).send({ error: `q must be at most ${MAX_QUERY} characters` })
+    if (kind !== undefined && kind !== '' && !(DESIGN_KINDS as readonly unknown[]).includes(kind)) {
+      return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
+    }
+    const at = cursor === undefined || cursor === '' ? null : typeof cursor === 'string' ? decodeCursor(cursor) : null
+    if (cursor !== undefined && cursor !== '' && !at) return reply.status(400).send({ error: 'unknown cursor' })
+    return listAdminDesigns({ q: q as string | undefined, kind: (kind as string | undefined) || null, cursor: at })
+  })
 
   app.get('/api/admin/studio/flags', admin, async (request) => {
     const status = (request.query as { status?: string }).status === 'closed' ? 'closed' : 'open'

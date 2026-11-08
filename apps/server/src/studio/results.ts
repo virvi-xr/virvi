@@ -226,13 +226,14 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         if (design && ring > 0 && ring < ORBIT_FRAMES) await queueFullOrbit(tx, design, rev.id, p.category, 'male')
       }
       if (result.pieces.some((p) => p.files?.length)) await cancelSupersededRenders(job.designId, superseded, tx, now)
-      if (design) await recordCost(design.ownerId, costDay, result.costUsd ?? 0, tx)
+      // Support's prompt (a Virvi admin's) is Virvi's spend: it goes on nobody's day, the trials' budget included
+      if (design && !job.byAdminId) await recordCost(design.ownerId, costDay, result.costUsd ?? 0, tx)
       const refunded = (job.counted || job.countedFrom === 'gift') && !!design && (result.outcome === 'error'
         || (result.outcome === 'off_topic' && await offTopicIsFree(tx, design.ownerId, now)))
       if (refunded) await refundPrompt(design!.ownerId, day, job.countedFrom as PromptSource | null, tx)
       const note = systemNote(result, refunded)
       if (note) await tx.insert(studioMessages).values({ designId: job.designId, role: 'system', text: note, jobId: job.id })
-      if ((result.outcome === 'off_topic' || result.outcome === 'declined') && result.scope && design) {
+      if ((result.outcome === 'off_topic' || result.outcome === 'declined') && result.scope && design && !job.byAdminId) {
         await logScopeEvent(tx, {
           userId: design.ownerId, designId: design.id, jobId: job.id, by: result.scope.by, category: result.scope.category,
           note: result.scope.note, message: String((job.payload as { prompt?: unknown }).prompt ?? ''),
@@ -312,7 +313,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         .catch((err) => console.error('[studio] walk-through render failed:', err instanceof Error ? err.message : err))
     }
   }
-  if (result.outcome === 'off_topic' || result.outcome === 'declined') {
+  if ((result.outcome === 'off_topic' || result.outcome === 'declined') && !job.byAdminId) {
     const [d] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, job.designId))
     if (d) await maybeFlag(d.ownerId, now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
   }

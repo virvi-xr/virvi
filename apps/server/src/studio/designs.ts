@@ -35,6 +35,8 @@ export function promptLimits(agent: string, kind = 'wearable'): typeof PROMPT_LI
 }
 export const RENDER_LIMITS = { timeoutSec: 300, maxTurns: 80, costCeilingUsd: 3 }
 export const CONTINUE_TEXT = 'Continue where you stopped.'
+/** What the agent sees before a Virvi admin's own words, so it knows support wrote them, not the designer. */
+export const SUPPORT_PREFIX = '[Virvi support] '
 export const START_FAILED = 'The studio machine could not start.'
 export const fixChecksText = (categories: string[]) =>
   `Fix every FAIL the checker reported for: ${categories.join(', ')}. Change nothing else.`
@@ -218,7 +220,10 @@ export async function designDetail(d: Design, now: Date) {
         finalized: finalized.filter((f) => f.category === p.category).map(({ category: _c, ...f }) => f),
       }
     }),
-    messages: messages.map((m) => ({ id: m.id, role: m.role, agent: m.agent, text: m.text, proposal: m.proposal, jobId: m.jobId, createdAt: m.createdAt })),
+    // `support`: a Virvi admin wrote it (shown as Virvi support); who, is for the audit, not the page
+    messages: messages.map((m) => ({
+      id: m.id, role: m.role, agent: m.agent, text: m.text, proposal: m.proposal, jobId: m.jobId, createdAt: m.createdAt, support: !!m.byAdminId,
+    })),
     uploads: (await listUploads(d.id)).map(publicUpload),
     activeJob: active ?? null,
     set: await setDetail(d, now),
@@ -243,9 +248,14 @@ export async function startWorker(designId: string, jobId: string, now: Date): P
   }
 }
 
+/**
+ * `byAdminId`: a Virvi admin helping on the owner's design (Virvi support). Their prompt takes nothing from anyone's
+ * allowance, gifts, credits or trial quota, and the cost ceiling doesn't stop it; the per-prompt limits, one prompt at
+ * a time and an archived design's refusal still apply. The job and the message record the admin.
+ */
 export async function queuePrompt(
   design: Design,
-  input: { text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping },
+  input: { text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping; byAdminId?: string },
   now: Date,
 ): Promise<{ ok: true; jobId: string } | ({ ok: false } & Refusal)> {
   let jobId: string
@@ -277,9 +287,10 @@ export async function queuePrompt(
         if (!categories.length) throw new Refused({ status: 409, body: { error: 'nothing_to_fix', code: 'nothing_to_fix' } })
         fixText = fixChecksText(categories)
       }
-      // A clipping report is the agent's mistake too: free, in the server's words
-      const counted = !input.continue && !input.fixChecks && !input.fixClipping
-      const r = await reservePrompt(d.ownerId, now, { counted }, tx)
+      // A clipping report is the agent's mistake too: free, in the server's words. Support's prompts are never counted.
+      const support = input.byAdminId ?? null
+      const counted = !support && !input.continue && !input.fixChecks && !input.fixClipping
+      const r = support ? { ok: true as const, day: null, from: null } : await reservePrompt(d.ownerId, now, { counted }, tx)
       if (!r.ok) {
         const s = await promptStatus(d.ownerId, now)
         if (s.trial && (r.reason === 'allowance' || r.reason === 'cost_ceiling')) throw new Refused({ status: 403, body: { error: 'account_required', action: 'more_prompts' } })
@@ -291,7 +302,10 @@ export async function queuePrompt(
       trialPrompt = r.day === TRIAL_DAY
       const fix = input.fixClipping
       const text = input.continue ? CONTINUE_TEXT : fix ? clippingText(d.kind, fix) : fixText ?? input.text!
-      await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text })
+      await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text, byAdminId: support })
+      // Support's own words reach the agent marked as theirs; never scope-checked (that is for the designer's words)
+      const ownWords = !input.continue && !fix && !fixText
+      const prompt = fix ? clippingInstruction(d.kind, fix) : support && ownWords ? `${SUPPORT_PREFIX}${text}` : text
       const [job] = await tx.insert(studioJobs).values({
         designId: d.id,
         type: 'prompt',
@@ -300,7 +314,7 @@ export async function queuePrompt(
           kind: d.kind,
           agent: d.agent,
           model: modelFor(d.agent),
-          prompt: fix ? clippingInstruction(d.kind, fix) : text,
+          prompt,
           selectedSlots: input.selectedSlots,
           limits: promptLimits(d.agent, d.kind),
           render: null,
@@ -311,6 +325,7 @@ export async function queuePrompt(
         counted,
         countedDay: r.day,
         countedFrom: r.from,
+        byAdminId: support,
       }).returning({ id: studioJobs.id })
       await tx.update(studioDesigns).set({ status: 'building', lastJobAt: now }).where(eq(studioDesigns.id, d.id))
       return job.id

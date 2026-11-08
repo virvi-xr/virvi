@@ -1650,6 +1650,8 @@ export const studioJobs = pgTable('studio_jobs', {
   counted: boolean('counted').notNull().default(false),
   countedDay: date('counted_day', { mode: 'string' }),
   countedFrom: text('counted_from'), // allowance | gift | credit: where a counted prompt is given back to
+  // A prompt a Virvi admin sent on the owner's design (Virvi support): never counted, its cost on nobody's allowance
+  byAdminId: uuid('by_admin_id'),
   // A render nobody is waiting on (the rest of an Inspect sphere): jobs/next hands these out after the others
   background: boolean('background').notNull().default(false),
   takenAt: timestamp('taken_at', { withTimezone: true }),
@@ -1671,6 +1673,8 @@ export const studioMessages = pgTable('studio_messages', {
   text: text('text').notNull(),
   jobId: uuid('job_id'),
   proposal: jsonb('proposal'),
+  // A user message a Virvi admin wrote (shown as Virvi support, never as the owner's words)
+  byAdminId: uuid('by_admin_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   designIdx: index('studio_messages_design_idx').on(t.designId, t.createdAt),
@@ -1839,6 +1843,8 @@ export const studioPayments = pgTable('studio_payments', {
   // Owed back (a duplicate, or an overcharge found at grant time) until Stripe confirms it; the sweep retries
   refundDueCents: integer('refund_due_cents').notNull().default(0),
   refundAttempts: integer('refund_attempts').notNull().default(0),
+  // A finalize a Virvi admin granted on the owner's behalf, free (the payment is the owner's; this is who granted it)
+  byAdminId: uuid('by_admin_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   paidAt: timestamp('paid_at', { withTimezone: true }),

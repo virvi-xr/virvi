@@ -217,6 +217,10 @@ export async function giftsFor(userId: string, designId: string, now: Date, exec
  * 10 minutes. An open MANA quote for the same lines with more than 2 minutes left is handed out again; otherwise this
  * design's open MANA quotes are expired (giving back their holds) and a new one is made. It is refused with MANA off
  * (mana_unavailable) or no fresh rate (rate_unavailable) before anything is held.
+ *
+ * `byAdminId`: a Virvi admin finalizing on `user`'s (the owner's) behalf. It is an admin's finalize, every line free
+ * and no gift or credit of anyone's spent, granted at once without Stripe or MANA; the payment and entitlements are the
+ * owner's, as if they had paid, and the payment records the admin. Reports don't apply (they are the owner's).
  */
 export async function createFinalizeCheckout(
   design: Design,
@@ -225,11 +229,14 @@ export async function createFinalizeCheckout(
   reports: Record<string, string>,
   now: Date,
   method: CheckoutMethod = 'card',
+  opts: { byAdminId?: string } = {},
 ): Promise<CheckoutResult> {
+  const byAdminId = opts.byAdminId ?? null
+  if (byAdminId) { reports = {}; method = 'card' }
   if (method === 'mana') requireMana()
   const waived = Object.keys(reports)
   const withReports = (lines: PaymentLine[]) => lines.map((l) => (l.waived || l.held ? { ...l, reportText: reports[l.category] } : l))
-  const admin = await isVirviAdmin(user.id)
+  const admin = byAdminId ? true : await isVirviAdmin(user.id)
   const quote = await quoteFinalize(design, categories, waived, admin ? 0 : await giftsFor(user.id, design.id, now), db,
     { admin, credit: admin ? 0 : await creditFor(user.id, design.id, now) })
   if (!quote.lines.length) throw new QuoteError('nothing_to_pay', categories ?? [])
@@ -265,7 +272,7 @@ export async function createFinalizeCheckout(
     if (q.giftsUsed < quote.giftsUsed) throw new PaymentError(409, 'free_finalize_busy')
     const [pay] = await tx.insert(studioPayments).values({
       userId: user.id, designId: design.id, kind: 'finalize', amountCents: q.totalCents, lines: withReports(q.lines), giftsHeld: q.giftsUsed,
-      ...(q.totalCents > 0 ? { expiresAt, method } : {}),
+      byAdminId, ...(q.totalCents > 0 ? { expiresAt, method } : {}),
     }).returning()
     if (q.giftsUsed > 0) {
       await tx.update(studioFinalizeCredits).set({ balance: sql`${studioFinalizeCredits.balance} - ${q.giftsUsed}`, updatedAt: now })
@@ -278,6 +285,11 @@ export async function createFinalizeCheckout(
     const mana = method === 'mana' && held.dueCents > 0 ? await quoteMana(tx, pay, held.creditCents, held.dueCents, rate) : null
     return { pay: { ...pay, dueCents: held.dueCents }, lines: held.lines, mana }
   })
+  // An admin's finalize for someone else never reaches Stripe or MANA, whatever the quote says
+  if (byAdminId && pay.dueCents !== 0) {
+    await dropPayment(pay.id, now)
+    throw new PaymentError(409, 'not_free')
+  }
   if (pay.dueCents === 0) {
     try {
       await grantPayment(pay.id, null, now)
