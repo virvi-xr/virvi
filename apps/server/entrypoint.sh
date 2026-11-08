@@ -197,11 +197,15 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ready'\`;
         await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS error TEXT\`;
         await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS upload_code TEXT\`;
-        // uploaded_by: deleting an account leaves its public models ownerless (was no action, so the delete failed)
-        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'asset_library_items_uploaded_by_users_id_fk' AND confdeltype <> 'n') THEN ALTER TABLE asset_library_items DROP CONSTRAINT asset_library_items_uploaded_by_users_id_fk; ALTER TABLE asset_library_items ADD CONSTRAINT asset_library_items_uploaded_by_users_id_fk FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL; END IF; END \$\$\`;
         await sql\`ALTER TABLE studio_entitlements ADD COLUMN IF NOT EXISTS asset_item_ids JSONB\`;
         console.log('[virvi-server] scene library columns ensured');
       } catch(e) { console.log('[virvi-server] scene library columns:', e.message); }
+
+      // uploaded_by: deleting an account leaves its public models ownerless (was no action, so the delete failed)
+      try {
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'asset_library_items_uploaded_by_users_id_fk' AND confdeltype <> 'n') THEN ALTER TABLE asset_library_items DROP CONSTRAINT asset_library_items_uploaded_by_users_id_fk; ALTER TABLE asset_library_items ADD CONSTRAINT asset_library_items_uploaded_by_users_id_fk FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL; END IF; END \$\$\`;
+        console.log('[virvi-server] asset_library_items.uploaded_by is ON DELETE SET NULL');
+      } catch(e) { console.log('[virvi-server] asset_library_items.uploaded_by:', e.message); }
 
       // Signed-out trial funnel; matches trialEvents in src/db/schema.ts (user_id is deliberately not a foreign key)
       try {
