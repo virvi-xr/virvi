@@ -8,6 +8,7 @@ import { watchManaTransfers } from './mana/settle.js'
 import { config } from '../config.js'
 import { addMissingLibraryRows } from './library.js'
 import { sweepTrials } from '../auth/trial-sweep.js'
+import { sendWeeklyDigest } from './rating-review.js'
 
 /**
  * The Design Studio sweep: fails jobs that will never get a result (refunding counted prompts), restarts machines for
@@ -112,6 +113,9 @@ export function startStudioSweep(ms = STUDIO_SWEEP_MS): void {
       .catch((err) => console.error('[studio-sweep] failed:', err))
       .then(() => sweepTrials(now))
       .catch((err) => console.error('[trial-sweep] failed:', err))
+      // The ratings digest for admins, once a week (LIV-142); a week already dealt with is a single read
+      .then(() => sendWeeklyDigest(now))
+      .catch((err) => console.error('[studio-digest] failed:', err))
       .finally(() => { running = false })
   }, ms)
   timer.unref?.()

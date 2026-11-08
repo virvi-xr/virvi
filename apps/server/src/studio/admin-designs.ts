@@ -20,7 +20,7 @@ export type AdminDesign = {
 
 /** The cursor is the last row's activity (Postgres's text, so no microseconds are lost) and id. */
 type Cursor = { at: string; id: string }
-const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url')
+export const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url')
 export function decodeCursor(raw: string): Cursor | null {
   try {
     const c = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Partial<Cursor>

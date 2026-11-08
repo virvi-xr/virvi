@@ -8,6 +8,8 @@ import { declineManaRefund, listManaRefunds, manaRefundQuote, recordManaRefundSe
 import { listManaTransfers, markTransferReturned, settleTransferByHand, type ManaTransferStatus } from '../studio/mana/settle.js'
 import { requireAdmin } from '../auth/admin.js'
 import { decodeCursor, DESIGN_KINDS, listAdminDesigns } from '../studio/admin-designs.js'
+import { lastFullWeek, listDownRatings, markRating, parseWeek, weekDigest } from '../studio/rating-review.js'
+import { TAG_KEYS } from '../studio/ratings.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 const REFUND_STATUSES: ManaRefundStatus[] = ['requested', 'sent', 'declined']
@@ -43,6 +45,45 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
     const at = cursor === undefined || cursor === '' ? null : typeof cursor === 'string' ? decodeCursor(cursor) : null
     if (cursor !== undefined && cursor !== '' && !at) return reply.status(400).send({ error: 'unknown cursor' })
     return listAdminDesigns({ q: q as string | undefined, kind: (kind as string | undefined) || null, cursor: at })
+  })
+
+  // 👎 revisions to review (LIV-142), newest first
+  app.get('/api/admin/studio/ratings', admin, async (request, reply) => {
+    const q = request.query as Record<string, unknown>
+    const text = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null)
+    const kind = text(q.kind)
+    if (kind && !(DESIGN_KINDS as readonly string[]).includes(kind)) return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
+    const tag = text(q.tag)
+    if (tag && !(TAG_KEYS as string[]).includes(tag)) return reply.status(400).send({ error: 'unknown tag' })
+    const agent = text(q.agent)
+    const model = text(q.model)
+    if ((agent && agent.length > MAX_QUERY) || (model && model.length > MAX_QUERY)) return reply.status(400).send({ error: 'agent and model must be short' })
+    const handled = q.handled === 'true' ? true : q.handled === 'false' ? false : null
+    if (q.handled !== undefined && q.handled !== '' && handled === null) return reply.status(400).send({ error: 'handled must be true or false' })
+    const cursor = text(q.cursor)
+    const at = cursor ? decodeCursor(cursor) : null
+    if (cursor && !at) return reply.status(400).send({ error: 'unknown cursor' })
+    return listDownRatings({ kind, agent, model, tag, handled }, at, new Date())
+  })
+
+  app.patch('/api/admin/studio/ratings/:id', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'rating_not_found' })
+    const b = (request.body ?? {}) as { handled?: unknown; autoCheck?: unknown }
+    if ((b.handled !== undefined && typeof b.handled !== 'boolean') || (b.autoCheck !== undefined && typeof b.autoCheck !== 'boolean')) {
+      return reply.status(400).send({ error: 'handled and autoCheck must be true or false' })
+    }
+    if (b.handled === undefined && b.autoCheck === undefined) return reply.status(400).send({ error: 'nothing to change' })
+    const r = await markRating(id, request.user.id, { handled: b.handled as boolean | undefined, autoCheck: b.autoCheck as boolean | undefined }, new Date())
+    return r ?? reply.status(404).send({ error: 'rating_not_found' })
+  })
+
+  // The weekly ratings digest: `week` is its Monday (YYYY-MM-DD, UTC); without it, the last full week
+  app.get('/api/admin/studio/digest', admin, async (request, reply) => {
+    const raw = (request.query as { week?: unknown }).week
+    const week = raw === undefined || raw === '' ? lastFullWeek(new Date()) : parseWeek(raw)
+    if (!week) return reply.status(400).send({ error: 'week must be a Monday, as YYYY-MM-DD' })
+    return weekDigest(week)
   })
 
   app.get('/api/admin/studio/flags', admin, async (request) => {

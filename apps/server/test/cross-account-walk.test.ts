@@ -116,7 +116,7 @@ async function fixtures() {
   const [designPiece] = await db.insert(studioPieces).values({ designId: design.id, category: 'hat', name: 'B cap' }).returning()
   const [designRev] = await db.insert(studioRevisions).values({ pieceId: designPiece.id, number: 1, jobId: designJob.id, changeKind: 'new', meta: {}, files: [] }).returning()
   await db.update(studioPieces).set({ latestRevisionId: designRev.id }).where(eq(studioPieces.id, designPiece.id))
-  await db.insert(studioRatings).values({ jobId: designJob.id, designId: design.id, userId: b.id, rating: 'down', tags: ['broken'], kind: 'wearable' })
+  const [designRating] = await db.insert(studioRatings).values({ jobId: designJob.id, designId: design.id, userId: b.id, rating: 'down', tags: ['broken'], kind: 'wearable' }).returning()
   // B paid for revision 1 as a revision (so a report would refund it); its package is ready to download
   const [designPayment] = await db.insert(studioPayments).values({
     userId: b.id, designId: design.id, kind: 'finalize', status: 'paid', amountCents: 1000, paidAt: new Date(), stripePaymentIntent: 'pi_b',
@@ -150,7 +150,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designUpload, designPayment, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -388,6 +388,7 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/studio/reports/:id/approve', url: () => `/api/admin/studio/reports/${AD_ID}/approve` },
   { route: 'POST /api/admin/studio/reports/:id/decline', url: () => `/api/admin/studio/reports/${AD_ID}/decline` },
   { route: 'POST /api/admin/studio/gift-codes/:id/off', url: () => `/api/admin/studio/gift-codes/${AD_ID}/off` },
+  { route: 'PATCH /api/admin/studio/ratings/:id', url: (f) => `/api/admin/studio/ratings/${f.designRating.id}`, body: () => ({ handled: true }) },
   { route: 'GET /api/admin/studio/mana-refunds/:id/quote', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/quote` },
   { route: 'POST /api/admin/studio/mana-refunds/:id/sent', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/sent`, body: () => ({ txHash: '0x' + 'ab'.repeat(32), amountWei: '1' }) },
   { route: 'POST /api/admin/studio/mana-refunds/:id/decline', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/decline` },
