@@ -4,7 +4,7 @@ import { db } from '../db/connection.js'
 import { mediaAssets } from '../db/schema.js'
 import { assertStorageQuota } from './quota.js'
 import { createStorage } from '../storage/index.js'
-import { classifyUpload, extensionFor } from '../storage/upload-policy.js'
+import { classifyUpload, extensionFor, isModelFile } from '../storage/upload-policy.js'
 import { isVideo, probeDuration } from './probe.js'
 
 const storage = createStorage()
@@ -17,6 +17,12 @@ export class StoreMediaError extends Error {
 
 type MediaRow = typeof mediaAssets.$inferSelect
 
+/** Images & Video holds images and video only (LIV-132): 3D models go in 3D Models (the asset library). */
+export const USE_ASSET_LIBRARY = {
+  error: 'use_asset_library',
+  message: '3D models go in 3D Models, not Images & Video: upload GLB files on the 3D Models page.',
+} as const
+
 /**
  * Step 1 of an upload: classify the declared file, quota-check it against ownerId, and record it as 'uploading'
  * (no bytes stored yet). Throws StoreMediaError for refusals, leaving no row.
@@ -26,8 +32,11 @@ export async function reserveMedia(
   file: { filename: string; contentType: string; sizeBytes: number; metadata?: Record<string, unknown> },
   opts: { quotaMessage?: string; quotaStatus?: number } = {},
 ): Promise<MediaRow> {
+  // Every way into Images & Video refuses models: in-world uploads send them to 3D Models (library/model-uploads.ts)
+  if (isModelFile(file.filename, file.contentType)) throw new StoreMediaError(415, { ...USE_ASSET_LIBRARY })
   const verdict = classifyUpload(file.filename, file.contentType, file.sizeBytes)
   if (!verdict.ok) throw new StoreMediaError(verdict.status, { error: verdict.error })
+  if (verdict.contentType === 'model/gltf-binary') throw new StoreMediaError(415, { ...USE_ASSET_LIBRARY })
   await assertStorageQuota(ownerId, file.sizeBytes, opts)
   const [asset] = await db.insert(mediaAssets).values({
     ownerId,

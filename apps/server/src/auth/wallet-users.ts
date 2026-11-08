@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { accessGrants, mediaAssets, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
+import { accessGrants, assetLibraryItems, mediaAssets, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
 import { moveStudioData } from '../studio/merge.js'
 import { initialRoleForNewUser } from './roles.js'
 
@@ -44,6 +44,7 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string) 
     await moveStudioData(tx, shellId, userId, new Date())
     const owns = (await tx.query.scenes.findFirst({ where: eq(scenes.ownerId, shellId), columns: { id: true } }))
       || (await tx.query.mediaAssets.findFirst({ where: eq(mediaAssets.ownerId, shellId), columns: { id: true } }))
+      || (await tx.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.uploadedBy, shellId), columns: { id: true } }))
     const rest = await tx.query.userAuthMethods.findFirst({ where: eq(userAuthMethods.userId, shellId), columns: { id: true } })
     if (!owns && !rest) await tx.delete(users).where(eq(users.id, shellId))
   })

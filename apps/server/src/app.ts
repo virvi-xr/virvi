@@ -19,6 +19,7 @@ import sceneRoutes from './routes/scenes.js'
 import sceneRoleRoutes from './routes/scene-roles.js'
 import sceneLibraryRoutes from './routes/scene-library.js'
 import { runStartupBackfill } from './library/scene-library.js'
+import { moveMediaModels } from './library/move-media-models.js'
 import eventRoutes from './routes/events.js'
 import sceneEventRoutes from './routes/scene-events.js'
 import giveawayRoutes from './routes/giveaways.js'
@@ -93,7 +94,7 @@ function serializeReq(request: FastifyRequest) {
 
 export interface BuildAppOptions {
   rateLimit?: boolean
-  /** Set false to skip the one-time scene library backfill at startup (tests). */
+  /** Set false to skip the startup data jobs (scene library backfill, moving models out of media) (tests). */
   backfill?: boolean
   logger?: boolean
   /** Test hook: capture log output. */
@@ -189,7 +190,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(presetScheduleRoutes)
   await app.register(showingRoutes)
   if (opts.backfill !== false) {
-    runStartupBackfill().catch((err) => app.log.warn({ err }, 'scene library backfill failed'))
+    // Then move 3D models still in Images & Video to 3D Models (LIV-132): every boot, a no-op once none are left
+    runStartupBackfill()
+      .catch((err) => app.log.warn({ err }, 'scene library backfill failed'))
+      .then(() => moveMediaModels())
+      .then((n) => { if (n.moved || n.dropped) app.log.info(n, 'moved 3D models from media to the asset library') })
+      .catch((err) => app.log.warn({ err }, 'moving 3D models out of media failed'))
   }
   await app.register(analyticsClaimSignedRoutes)
   await app.register(setupRoutes)

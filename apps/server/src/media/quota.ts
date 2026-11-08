@@ -6,18 +6,10 @@ import { getSubscription } from '../integrations/stripe.js'
 import { StoreMediaError } from './store.js'
 
 /**
- * Throws StoreMediaError(storage_limit_reached) when ownerId's media, asset-library uploads and scene thumbnails plus
- * addBytes exceed their tier (skipped in self-hosted mode). addBytes may be negative (a smaller replacement).
+ * What counts toward ownerId's storage: Images & Video files, their own 3D Models uploads (paid Design Studio pieces
+ * excluded) and scene thumbnails. Moving a model between the two libraries leaves the total unchanged.
  */
-export async function assertStorageQuota(
-  ownerId: string,
-  addBytes: number,
-  opts: { quotaMessage?: string; quotaStatus?: number } = {},
-): Promise<void> {
-  if (config.allFeaturesUnlocked) return
-  const sub = await getSubscription(ownerId)
-  const storageLimit = sub.limits.storageBytes
-
+export async function storageUsedBytes(ownerId: string): Promise<number> {
   const [{ usedBytes: mediaBytes }] = await db
     .select({ usedBytes: sql<number>`coalesce(sum(${mediaAssets.sizeBytes}), 0)::bigint`.mapWith(Number) })
     .from(mediaAssets)
@@ -31,7 +23,22 @@ export async function assertStorageQuota(
     .select({ usedBytes: sql<number>`coalesce(sum(${scenes.thumbnailBytes}), 0)::bigint`.mapWith(Number) })
     .from(scenes)
     .where(eq(scenes.ownerId, ownerId))
-  const usedBytes = mediaBytes + libraryBytes + thumbnailBytes
+  return mediaBytes + libraryBytes + thumbnailBytes
+}
+
+/**
+ * Throws StoreMediaError(storage_limit_reached) when ownerId's storage (storageUsedBytes) plus addBytes exceeds their
+ * tier (skipped in self-hosted mode). addBytes may be negative (a smaller replacement).
+ */
+export async function assertStorageQuota(
+  ownerId: string,
+  addBytes: number,
+  opts: { quotaMessage?: string; quotaStatus?: number } = {},
+): Promise<void> {
+  if (config.allFeaturesUnlocked) return
+  const sub = await getSubscription(ownerId)
+  const storageLimit = sub.limits.storageBytes
+  const usedBytes = await storageUsedBytes(ownerId)
 
   if (addBytes > 0 && usedBytes + addBytes > storageLimit) {
     throw new StoreMediaError(opts.quotaStatus ?? 403, {

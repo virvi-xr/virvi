@@ -680,6 +680,11 @@ export const assetLibraryItems = pgTable('asset_library_items', {
   contentHash: text('content_hash'), // sha256 of the GLB
   // A Design Studio scene piece's dcl-sittables seats (FurnitureModel), kept for seating in Virvi later
   sittables: jsonb('sittables'),
+  // 'uploading' | 'processing' | 'ready' | 'failed': in-world (two-step) uploads; everything else is stored ready.
+  // An unfinished item has no cdnUrl yet (its storageKey is where the file will go).
+  status: text('status').notNull().default('ready'),
+  error: text('error'),
+  uploadCode: text('upload_code'), // the companion upload code that reserved it (its data post must match)
 }, (t) => ({
   packRefUq: uniqueIndex('asset_library_items_pack_ref').on(t.packId, t.sourceRef),
   contentHashIdx: index('asset_library_items_content_hash_idx').on(t.contentHash),
@@ -1363,7 +1368,7 @@ export const authHandoffCodes = pgTable('auth_handoff_codes', {
 })
 
 // ── Scene Library ────────────────────────────────────────────────────────────
-// One shared media library per scene. Items stay in the owner's account (media_assets / asset_library_items) and are linked here.
+// One shared library per scene: images and video (media_assets) and 3D models (asset_library_items) stay in their owner's account and are linked here.
 
 export const sceneLibrary = pgTable(
   'scene_library',

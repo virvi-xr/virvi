@@ -11,9 +11,10 @@
 import { FastifyInstance } from 'fastify'
 import { eq, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { mediaAssets, scenes, streamingSessions } from '../db/schema.js'
+import { scenes, streamingSessions } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
+import { storageUsedBytes } from '../media/quota.js'
 import { verifyWebhookEvent } from '../billing/webhook-verify.js'
 import {
   createCheckoutSession,
@@ -107,11 +108,8 @@ export default async function billingRoutes(app: FastifyInstance) {
         .from(scenes)
         .where(eq(scenes.ownerId, request.user.id))
 
-      // Sum storage bytes
-      const [storageSum] = await db
-        .select({ total: sql<number>`coalesce(sum(${mediaAssets.sizeBytes}), 0)` })
-        .from(mediaAssets)
-        .where(eq(mediaAssets.ownerId, request.user.id))
+      // Storage used: the same total the upload quota checks (Images & Video, 3D Models uploads, thumbnails)
+      const storageBytes = await storageUsedBytes(request.user.id)
 
       // Sum streaming minutes this billing period
       let streamMinutes = 0
@@ -132,7 +130,7 @@ export default async function billingRoutes(app: FastifyInstance) {
         tier: sub.tier,
         usage: {
           scenes: Number(sceneCount.count),
-          storageBytes: Number(storageSum.total),
+          storageBytes,
           streamMinutes,
         },
         limits: sub.limits,

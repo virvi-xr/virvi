@@ -105,8 +105,10 @@ export default async function assetRoutes(app: FastifyInstance) {
       conditions.push(arrayContains(assetLibraryItems.tags, [query.tag]))
     }
 
-    // Catalog: switched-off packs are hidden from browsing
+    // Catalog: switched-off packs are hidden from browsing. In-world uploads still in flight (or failed) have no file
+    // to place yet: the scene's library shows those
     conditions.push(browsableAsset())
+    conditions.push(eq(assetLibraryItems.status, 'ready'))
     if (query.style) conditions.push(eq(assetLibraryItems.style, query.style))
     if (query.venue) conditions.push(arrayContains(assetLibraryItems.venueTags, [query.venue]))
     if (query.pack) conditions.push(eq(assetLibraryItems.packId, query.pack))

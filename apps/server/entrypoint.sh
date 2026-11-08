@@ -194,6 +194,9 @@ if [ -n "$DATABASE_URL" ]; then
       // Design Studio scene pieces in the asset library; matches assetLibraryItems.sittables and studioEntitlements.assetItemIds
       try {
         await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS sittables JSONB\`;
+        await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ready'\`;
+        await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS error TEXT\`;
+        await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS upload_code TEXT\`;
         await sql\`ALTER TABLE studio_entitlements ADD COLUMN IF NOT EXISTS asset_item_ids JSONB\`;
         console.log('[virvi-server] scene library columns ensured');
       } catch(e) { console.log('[virvi-server] scene library columns:', e.message); }

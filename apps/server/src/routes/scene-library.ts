@@ -8,6 +8,8 @@ import { getSceneAccess, hasScope, isFullAccess } from '../auth/permissions.js'
 import { fromParam, isScenePass, isUuid } from '../auth/scene-from.js'
 import { getSceneLibraryItem, linkToScene, listSceneLibrary, resolveMediaNames, uploadDestination } from '../library/scene-library.js'
 import { storeMedia, StoreMediaError } from '../media/store.js'
+import { storeModel } from '../library/model-uploads.js'
+import { isModelFile } from '../storage/upload-policy.js'
 import { publishLibraryChanged } from '../realtime/bus.js'
 import { PackDisabledError } from '../catalog/visibility.js'
 
@@ -72,6 +74,7 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
           // Your own upload, or a public catalog model (linkToScene refuses one in a switched-off pack)
           where: and(
             eq(assetLibraryItems.id, assetItemId!),
+            eq(assetLibraryItems.status, 'ready'),
             or(...(isScenePass(request.user) ? [] : [eq(assetLibraryItems.uploadedBy, request.user.id)]), and(eq(assetLibraryItems.isPublic, true), isNotNull(assetLibraryItems.packId))),
           ),
         })
@@ -88,16 +91,18 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
     const { sceneId, id } = request.params
     const row = await db.query.sceneLibrary.findFirst({ where: and(eq(sceneLibrary.id, id), eq(sceneLibrary.sceneId, sceneId)) })
     if (!row) return reply.status(404).send({ error: 'Not found' })
-    const media = row.mediaAssetId
+    // An upload's status is on its file: a media row (images, video) or an asset-library item (3D models)
+    const file = row.mediaAssetId
       ? await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, row.mediaAssetId), columns: { status: true } })
-      : null
+      : await db.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.id, row.assetItemId!), columns: { status: true } })
     const a = await access(request, sceneId)
     // Any editor may dismiss a failed upload (the HUD shows Dismiss on every failed row)
-    const allowed = isFullAccess(a) || (hasScope(a, 'scene.edit') && (row.addedBy === request.user.id || media?.status === 'failed'))
+    const allowed = isFullAccess(a) || (hasScope(a, 'scene.edit') && (row.addedBy === request.user.id || file?.status === 'failed'))
     if (!allowed) return reply.status(403).send({ error: 'forbidden' })
     // Dismissing a failed or abandoned upload removes the file record too (the cascade drops the link)
-    if (media && (media.status === 'failed' || media.status === 'uploading')) {
-      await db.delete(mediaAssets).where(eq(mediaAssets.id, row.mediaAssetId!))
+    if (file && (file.status === 'failed' || file.status === 'uploading')) {
+      if (row.mediaAssetId) await db.delete(mediaAssets).where(eq(mediaAssets.id, row.mediaAssetId))
+      else await db.delete(assetLibraryItems).where(eq(assetLibraryItems.id, row.assetItemId!))
     } else {
       await db.delete(sceneLibrary).where(eq(sceneLibrary.id, id))
     }
@@ -117,8 +122,21 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
     const a = await access(request, sceneId)
     const allowed = isFullAccess(a) || (hasScope(a, 'scene.edit') && row.bookingId === null)
     if (!allowed) return reply.status(403).send({ error: 'forbidden' })
-    if (!row.mediaAssetId) return reply.status(400).send({ error: 'Catalog models can only be renamed on the dashboard' })
-    const media = await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, row.mediaAssetId) })
+    if (row.assetItemId) {
+      // A 3D model: the scene's own uploads (the owner's, or a renter's for their booking) rename here; catalog and
+      // other people's shared models don't
+      const model = await db.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.id, row.assetItemId) })
+      if (!model) return reply.status(404).send({ error: 'Not found' })
+      if (model.packId) return reply.status(400).send({ error: 'Catalog models can only be renamed on the dashboard' })
+      const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { ownerId: true } })
+      const ours = model.uploadedBy !== null && (model.uploadedBy === scene?.ownerId || (row.bookingId !== null && model.uploadedBy === row.addedBy))
+      if (!ours) return reply.status(400).send({ error: "Only its owner can rename this model, on the dashboard's 3D Models page" })
+      if (model.status !== 'ready') return reply.status(409).send({ error: "That file isn't ready yet" })
+      await db.update(assetLibraryItems).set({ name: trimmed }).where(eq(assetLibraryItems.id, model.id))
+      await publishLibraryChanged(sceneId, id)
+      return reply.send({ item: await getSceneLibraryItem(sceneId, id) })
+    }
+    const media = await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, row.mediaAssetId!) })
     if (!media) return reply.status(404).send({ error: 'Not found' })
     if (media.status !== 'ready') return reply.status(409).send({ error: "That file isn't ready yet" })
     const ext = /\.[A-Za-z0-9]{1,5}$/.exec(media.filename)?.[0] ?? ''
@@ -137,11 +155,14 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
       if (!filename || !contentType || !data) return reply.status(400).send({ error: 'filename, contentType and data are required' })
       const dest = await uploadDestination(actorFromClaims(request.user), sceneId)
       if (!dest) return reply.status(403).send({ error: 'forbidden' })
+      const file = { filename, contentType, data: Buffer.from(data, 'base64') }
+      const opts = { quotaStatus: 413, quotaMessage: dest.bookingId ? undefined : "The scene owner's storage is full" }
       try {
-        const m = await storeMedia(dest.ownerId, { filename, contentType, data: Buffer.from(data, 'base64') }, { quotaStatus: 413, quotaMessage: dest.bookingId ? undefined : "The scene owner's storage is full" })
-        await linkToScene(sceneId, { mediaAssetId: m.id }, request.user.id, dest.bookingId)
-        const item = (await listSceneLibrary(sceneId)).find((i) => i.url === m.publicUrl)
-        return reply.status(201).send({ item })
+        // 3D models go in 3D Models (private to the account they land in), images and video in Images & Video (LIV-132)
+        const linkId = isModelFile(filename, contentType)
+          ? await linkToScene(sceneId, { assetItemId: (await storeModel(dest.ownerId, file, opts)).id }, request.user.id, dest.bookingId)
+          : await linkToScene(sceneId, { mediaAssetId: (await storeMedia(dest.ownerId, file, opts)).id }, request.user.id, dest.bookingId)
+        return reply.status(201).send({ item: await getSceneLibraryItem(sceneId, linkId) })
       } catch (e) {
         if (e instanceof StoreMediaError) return reply.status(e.status).send(e.body)
         throw e

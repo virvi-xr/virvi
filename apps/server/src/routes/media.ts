@@ -4,14 +4,10 @@ import { db } from '../db/connection.js'
 import { mediaAssets } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { createStorage } from '../storage/index.js'
-import { storeMedia, StoreMediaError } from '../media/store.js'
+import { storeMedia, StoreMediaError, USE_ASSET_LIBRARY } from '../media/store.js'
 import { isModelFile } from '../storage/upload-policy.js'
 
-/** The Media library holds images and video only (LIV-132): 3D models go in the 3D Asset Library. */
-export const USE_ASSET_LIBRARY = {
-  error: 'use_asset_library',
-  message: '3D models go in the 3D Asset Library: upload GLB files on the Assets page.',
-} as const
+export { USE_ASSET_LIBRARY }
 
 const storage = createStorage()
 
@@ -29,7 +25,7 @@ export default async function mediaRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'filename, contentType, and data (base64) are required' })
       }
 
-      // Only this upload (the Media library's own) refuses models: scene library and phone uploads still take them
+      // Images & Video takes no models (storeMedia refuses them too; this answers before the bytes are decoded)
       if (isModelFile(filename, contentType)) return reply.status(415).send(USE_ASSET_LIBRARY)
 
       try {
