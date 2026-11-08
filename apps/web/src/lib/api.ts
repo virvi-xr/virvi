@@ -3,6 +3,8 @@ import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
 import { requestHeaders } from './request-headers'
+import { reporter } from './errors/reporter'
+import type { ErrorDetail, ErrorSettings, ErrorsOverview, ErrorThresholds } from './errors/admin'
 import { accountRequired, openSignUp, readTextRecovering, sendRecovering, type BlockedCtx } from './trial'
 import { backupPath } from './backup'
 import type { Plot, RoomSetOptions } from '@virvixr/shared'
@@ -283,11 +285,19 @@ function useRealApi() {
   const apiFetch = useCallback(async <T = any>(path: string, options: RequestInit & { signUpCtx?: BlockedCtx } = {}): Promise<T> => {
     const { signUpCtx, ...init } = options
     const send = async (bearer: string | null) => {
+      const started = performance.now()
+      const method = init.method ?? 'GET'
       // The access token ran out: renew it with the stored refresh token (or follow the account a trial became) and send once more
       const res = await sendRecovering((b) => fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(b, init) }), bearer, { swapToStoredAccount, renew })
-      if (res.ok) return { res, err: null as any }
+      const done = { method, path, status: res.status, ms: performance.now() - started, requestId: res.headers.get('x-request-id') }
+      if (res.ok) {
+        reporter.apiDone({ ...done, ok: true })
+        return { res, err: null as any }
+      }
       // Non-JSON error bodies (proxy pages, e.g. a 413 from the edge) become `HTTP <status>`.
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      // LIV-66: every non-OK response is recorded, with the error body only (never the request's)
+      reporter.apiDone({ ...done, ok: false, body: err })
       dropDeadSession(res.status, err)
       return { res, err }
     }
@@ -326,6 +336,7 @@ function useRealApi() {
         }
       }
       if (!res.ok) {
+        reporter.apiDone({ method: 'GET', path, status: res.status, ms: 0, requestId: res.headers.get('x-request-id'), ok: false, body: err })
         dropDeadSession(res.status, err)
         throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
       }
@@ -785,6 +796,14 @@ function useRealApi() {
     // Catalog packs: public list (credits, pack filter); admins switch packs on and off
     getCatalogPacks: () => apiFetch<{ packs: CatalogPack[] }>('/api/catalog/packs'),
     getAdminCatalogPacks: () => apiFetch<{ packs: CatalogPack[] }>('/api/admin/catalog/packs'),
+    // Errors (admin, LIV-66)
+    getAdminErrors: () => apiFetch<ErrorsOverview>('/api/admin/errors'),
+    getAdminError: (id: string, days = 7) => apiFetch<ErrorDetail>(`/api/admin/errors/${id}?days=${days}`),
+    setAdminErrorResolved: (id: string, resolved: boolean) =>
+      apiFetch<{ id: string; resolvedAt: string | null }>(`/api/admin/errors/${id}`, { method: 'PATCH', body: JSON.stringify({ resolved }) }),
+    getAdminErrorSettings: () => apiFetch<ErrorSettings>('/api/admin/error-settings'),
+    saveAdminErrorSettings: (change: Partial<ErrorThresholds>) =>
+      apiFetch<{ thresholds: ErrorThresholds }>('/api/admin/error-settings', { method: 'PUT', body: JSON.stringify(change) }),
     setCatalogPackEnabled: (id: string, enabled: boolean) =>
       apiFetch<{ pack: CatalogPack }>(`/api/admin/catalog/packs/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
 

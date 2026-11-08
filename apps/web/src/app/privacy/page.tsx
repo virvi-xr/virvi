@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: 'Privacy',
-  description: 'What Virvi collects in Decentraland scenes and from the advertiser early-access form, and how to have it removed.',
+  description: 'What Virvi collects in Decentraland scenes, in error reports and from the advertiser early-access form, and how to have it removed.',
 }
 
 // Keep in step with apps/docs/src/content/docs/privacy.md
@@ -78,6 +78,21 @@ export default function PrivacyPage() {
           or delete for a single visitor. A builder can revoke a paired headset on virvi.io, which stops it from editing. To ask for your data to be
           deleted, or for help, email{' '}
           <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a>.
+        </p>
+
+        <h2>Error reporting</h2>
+        <p>
+          When something goes wrong on virvi.io, the page and our server record the error so we can find and fix it. A report holds the error
+          message, the page, the build of Virvi, your browser and operating system, your organization and scene ids, the time, and the last few
+          things you did: pages you opened, the names of buttons and links you clicked, and the requests the page made (their address, result and
+          timing). Before anything leaves your browser, tokens, email addresses, wallet addresses and the query part of web addresses are removed.
+          It never includes what you type, passwords, wallet signatures, payment details, or what the page sent or received, other than the error
+          message that came back. You're counted by a keyed hash of your account id, so we can see how many people an error reached without
+          storing who. Error reports are kept for 30 days; hourly counts of each kind of error, with no identity, are kept for 400 days.
+        </p>
+        <p>
+          If a page breaks, you can press Report and tell us what you were doing. That report is sent only when you press Submit, shows you
+          exactly what will be sent first, and is sent with your account if you're signed in so we can follow up.
         </p>
 
         <h2>Advertiser early access</h2>
