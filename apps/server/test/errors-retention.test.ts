@@ -10,7 +10,7 @@ const DAY = 86_400_000
 describe('error retention', () => {
   beforeEach(async () => { await resetDb() })
 
-  it('keeps raw events and user hashes 30 days and hourly counts 400 days', async () => {
+  it('keeps raw events, user hashes and breakdowns 30 days and hourly counts 400 days', async () => {
     expect(RAW_DAYS).toBe(30)
     expect(COUNT_DAYS).toBe(400)
     const now = new Date('2026-11-08T12:00:00Z')
@@ -29,7 +29,7 @@ describe('error retention', () => {
     expect(r.events).toBe(1)
     expect((await db.select().from(errorEvents)).length).toBe(1)
     expect((await db.select().from(errorHourly)).length).toBe(1)
-    expect((await db.select().from(errorHourlyDims)).length).toBe(1)
+    expect((await db.select().from(errorHourlyDims)).length).toBe(0) // breakdowns: 30 days
     expect((await db.select().from(errorHourlyUsers)).map((u) => u.userHash)).toEqual(['u2'])
     expect((await db.select().from(errorReports)).map((u) => u.description)).toEqual(['new'])
     // a long-quiet signature goes, unless it has its Linear issue

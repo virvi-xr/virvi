@@ -92,12 +92,13 @@ export default function PrivacyPage() {
         <ul className="list-disc pl-5">
           <li>
             <strong>How you're counted:</strong> by a keyed hash of your account id, so we can see how many people an error reached without
-            storing who. To count how many different places an error comes from, we also keep a keyed hash of your network address that changes
-            every day. Your address itself is never stored.
+            storing who. To count how many different places an error comes from, we also keep a hash of your network address made with a random
+            key that changes every day. The key and those hashes are deleted after 2 days, after which they can't be traced back to an address or
+            linked to another day. Your address itself is never stored.
           </li>
           <li>
-            <strong>How long:</strong> error details and those hashes are kept for 30 days. Hourly counts of each kind of error, with no identity,
-            are kept for 400 days.
+            <strong>How long:</strong> error details, the account hashes and the breakdowns by page, browser and release are kept for 30 days.
+            Hourly counts of each kind of error, with no identity, are kept for 400 days.
           </li>
           <li>
             <strong>If you send a report:</strong> when a page breaks it records the error without your account. If you press Report, you see

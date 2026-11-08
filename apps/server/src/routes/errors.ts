@@ -32,11 +32,11 @@ export function reporterOf(request: FastifyRequest): { userId: string | null; or
   return { userId: null, orgId: null }
 }
 
-function contextOf(request: FastifyRequest, release: string | null) {
+async function contextOf(request: FastifyRequest, release: string | null) {
   const who = reporterOf(request)
   const { browser, os } = parseUserAgent(request.headers['user-agent'])
   const ip = ipKey(request.ip)
-  return { who, ctx: { release, browser, os, userHash: who.userId ? errorUserHash(who.userId) : null, orgId: who.orgId, ipKey: ip, ipHash: errorIpHash(ip) } }
+  return { who, ctx: { release, browser, os, userHash: who.userId ? errorUserHash(who.userId) : null, orgId: who.orgId, ipKey: ip, ipHash: await errorIpHash(ip) } }
 }
 
 /** The stored copy of a report's event, cut like a stored event (oldest breadcrumbs, then the stack). */
@@ -56,7 +56,7 @@ export default async function errorRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const checked = checkErrorBatch(request.body, Date.now())
     if (!checked.ok) return reply.status(400).send({ error: checked.error })
-    if (config.errorReportingEnabled) recordClientEvents(checked.events, contextOf(request, checked.release).ctx)
+    if (config.errorReportingEnabled) recordClientEvents(checked.events, (await contextOf(request, checked.release)).ctx)
     return reply.status(202).send({ accepted: checked.events.length })
   })
 
@@ -69,7 +69,7 @@ export default async function errorRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const checked = checkErrorReport(request.body, Date.now())
     if (!checked.ok) return reply.status(400).send({ error: checked.error })
-    const { who, ctx } = contextOf(request, checked.release)
+    const { who, ctx } = await contextOf(request, checked.release)
     if (!takeReport(ctx.ipKey)) return reply.status(429).send({ error: 'rate_limited', retryAfter: 3600 })
     // The report's signature, found or made without counting anything: no event, recurrence or affected user
     const record = clientRecord(checked.event, ctx)

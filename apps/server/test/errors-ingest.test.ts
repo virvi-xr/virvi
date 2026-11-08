@@ -6,6 +6,7 @@ import { users, errorSignatures, errorEvents, errorHourly, errorHourlyDims, erro
 import { buildApp } from '../src/app.js'
 import { config } from '../src/config.js'
 import { flushErrors, resetErrorBuffer, recordJobFailure, bufferedErrorCount } from '../src/errors/record.js'
+import { registerRelease, resetErrorBudgets } from '../src/errors/limits.js'
 import { errorUserHash } from '../src/errors/user-hash.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { resetDb } from './helpers/db.js'
@@ -25,6 +26,8 @@ describe('error ingest (POST /api/errors)', () => {
   beforeEach(async () => {
     await resetDb()
     resetErrorBuffer()
+    resetErrorBudgets()
+    await registerRelease('abc1234') // a release the server has run, so browsers on it are believed
     app = await buildApp({ rateLimit: false, logger: false, backfill: false })
     app.get('/api/test-boom', async () => { throw new TypeError('boom 42 happened') })
     app.get('/api/test-503', async (_r, reply) => reply.status(503).send({ error: 'down' }))

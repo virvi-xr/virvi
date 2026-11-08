@@ -6,7 +6,8 @@ import {
 } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { config } from '../config.js'
-import { ERROR_BUDGETS, takeNewSignature, takeStoredEvent } from './limits.js'
+import { resetIpKeys } from './user-hash.js'
+import { DayBudget, ERROR_BUDGETS, knownReleases, takeNewSignature, takeStoredEvent } from './limits.js'
 
 /**
  * The error recorder (LIV-66). Requests and jobs only push into an in-memory buffer; a flusher writes it every
@@ -217,15 +218,27 @@ export function boundRecord(r: ErrorRecord): ErrorRecord {
 const ts = (d: Date) => sql`${d.toISOString()}::timestamptz`
 const rowsOf = <T>(r: unknown) => r as unknown as T[]
 const hourOf = (d: Date) => new Date(Math.floor(d.getTime() / HOUR_MS) * HOUR_MS)
+const THIRTY_DAYS = 30 * 24 * HOUR_MS
 
 let signatureTotal = { n: 0, at: 0 }
-/** How many signatures exist (cached a minute; bumped as this instance adds some). */
+/** Browser signatures seen in the last 30 days (cached a minute; bumped as this instance adds some). Server ones aren't capped. */
 async function signatureCount(): Promise<number> {
   if (Date.now() - signatureTotal.at > 60_000) {
-    const [row] = rowsOf<{ n: number }>(await db.execute(sql`SELECT count(*)::int AS n FROM error_signatures`))
+    const [row] = rowsOf<{ n: number }>(await db.execute(sql`
+      SELECT count(*)::int AS n FROM error_signatures
+      WHERE source = 'web' AND expected IS DISTINCT FROM 'overflow' AND last_seen_at >= ${ts(new Date(Date.now() - THIRTY_DAYS))}`))
     signatureTotal = { n: Number(row.n), at: Date.now() }
   }
   return signatureTotal.n
+}
+
+/** A browser's claims clamped: a release the server hasn't run is "unknown"; a browser is family and a plausible major. */
+function clampWeb(r: ErrorRecord, known: Set<string>): ErrorRecord {
+  if (r.source !== 'web') return r
+  const release = known.has(r.release) ? r.release : 'unknown'
+  const m = /^(.+) (\d+)$/.exec(r.browser ?? '')
+  const browser = m && Number(m[2]) > 200 ? `${m[1]} other` : r.browser
+  return release === r.release && browser === r.browser ? r : { ...r, release, browser }
 }
 
 async function writeSignature(group: ErrorRecord[]): Promise<string> {
@@ -251,46 +264,65 @@ async function writeSignature(group: ErrorRecord[]): Promise<string> {
   return row.id
 }
 
-/** Distinct breakdown values seen per signature-hour by this instance (past the cap a value counts as "other"). */
+/** Distinct breakdown values seen per signature-hour by this instance, bounded in all (past a cap a value is "other"). */
 const dimValues = new Map<string, Set<string>>()
 let dimHour = 0
+let dimTotal = 0
 function dimValue(signatureId: string, hour: Date, dim: string, value: string): string {
-  if (hour.getTime() !== dimHour) { dimHour = hour.getTime(); dimValues.clear() }
+  if (hour.getTime() !== dimHour) { dimHour = hour.getTime(); dimValues.clear(); dimTotal = 0 }
   const key = `${signatureId}\u0000${dim}`
-  const seen = dimValues.get(key) ?? new Set<string>()
-  dimValues.set(key, seen)
-  if (seen.has(value)) return value
-  if (seen.size >= ERROR_BUDGETS.maxDimValuesPerSignatureHour) return 'other'
-  seen.add(value)
+  const seen = dimValues.get(key)
+  if (seen?.has(value)) return value
+  if ((seen?.size ?? 0) >= ERROR_BUDGETS.maxDimValuesPerSignatureHour || dimTotal >= ERROR_BUDGETS.maxDimKeysInMemory) return 'other'
+  if (seen) seen.add(value)
+  else dimValues.set(key, new Set([value]))
+  dimTotal++
   return value
 }
 
-async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], isNew: boolean): Promise<void> {
+/** Adds `n` to a counter row, making it only if the day's budget for `budgetKey` allows. False when it neither existed nor could be made. */
+async function bump(budget: DayBudget, budgetKey: keyof typeof ERROR_BUDGETS.db, update: ReturnType<typeof sql>, insert: ReturnType<typeof sql>): Promise<boolean> {
+  if (rowsOf(await db.execute(update)).length) return true
+  if (!budget.take(budgetKey, 1, ERROR_BUDGETS.db[budgetKey])) return false
+  await db.execute(insert)
+  return true
+}
+
+async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], isNew: boolean, budget: DayBudget): Promise<void> {
   const count = group.reduce((n, r) => n + r.count, 0)
+  // The hourly row was checked (or budgeted) by the plan: here it is only made or added to
   await db.execute(sql`
     INSERT INTO error_hourly (signature_id, hour, count) VALUES (${signatureId}, ${ts(hour)}, ${count})
     ON CONFLICT (signature_id, hour) DO UPDATE SET count = error_hourly.count + excluded.count`)
 
-  // Distinct users (hashed account ids) and distinct addresses (day-salted 'ip:' hashes) that hour
+  // Distinct users (hashed account ids) and distinct addresses (day-keyed 'ip:' hashes) that hour, within the day's row budget
   const hashes = [...new Set(group.flatMap((r) => [r.userHash, r.ipHash]).filter((h): h is string => !!h))]
   if (hashes.length) {
-    const added = rowsOf<{ user_hash: string }>(await db.execute(sql`
-      INSERT INTO error_hourly_users (signature_id, hour, user_hash)
-      VALUES ${sql.join(hashes.map((h) => sql`(${signatureId}, ${ts(hour)}, ${h})`), sql`, `)}
-      ON CONFLICT DO NOTHING RETURNING user_hash`))
-    const ips = added.filter((a) => a.user_hash.startsWith('ip:')).length
-    const users = added.length - ips
-    if (added.length) {
-      await db.execute(sql`UPDATE error_hourly SET users = users + ${users}, ips = ips + ${ips} WHERE signature_id = ${signatureId} AND hour = ${ts(hour)}`)
+    const present = new Set(rowsOf<{ user_hash: string }>(await db.execute(sql`
+      SELECT user_hash FROM error_hourly_users WHERE signature_id = ${signatureId} AND hour = ${ts(hour)}
+        AND user_hash IN (${sql.join(hashes.map((h) => sql`${h}`), sql`, `)})`)).map((r) => r.user_hash))
+    const fresh = hashes.filter((h) => !present.has(h))
+    const allowed = fresh.slice(0, budget.take('users', fresh.length, ERROR_BUDGETS.db.users))
+    if (allowed.length) {
+      const added = rowsOf<{ user_hash: string }>(await db.execute(sql`
+        INSERT INTO error_hourly_users (signature_id, hour, user_hash)
+        VALUES ${sql.join(allowed.map((h) => sql`(${signatureId}, ${ts(hour)}, ${h})`), sql`, `)}
+        ON CONFLICT DO NOTHING RETURNING user_hash`))
+      const ips = added.filter((a) => a.user_hash.startsWith('ip:')).length
+      const users = added.length - ips
+      if (added.length) {
+        await db.execute(sql`UPDATE error_hourly SET users = users + ${users}, ips = ips + ${ips} WHERE signature_id = ${signatureId} AND hour = ${ts(hour)}`)
+      }
+      if (users) await db.execute(sql`UPDATE error_signatures SET seen_users = true WHERE id = ${signatureId} AND NOT seen_users`)
     }
   }
 
   const dims = new Map<string, { dim: string; value: string; count: number }>()
   for (const r of group) {
-    const route = r.source === 'web' && r.route ? routeTemplate(r.route) : r.route
+    const route = r.source === 'web' && r.route ? routeTemplate(r.route).slice(0, 100) : r.route
     for (const [dim, raw] of [['release', r.release], ['route', route], ['browser', r.browser], ['os', r.os], ['org', r.orgId]] as const) {
       if (!raw) continue
-      const value = dimValue(signatureId, hour, dim, raw.slice(0, 200))
+      const value = dimValue(signatureId, hour, dim, raw.slice(0, 100))
       const key = `${dim}\u0000${value}`
       const d = dims.get(key) ?? { dim, value, count: 0 }
       d.count += r.count
@@ -299,12 +331,13 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
   }
   for (const d of dims.values()) {
     if (!d.count) continue
-    await db.execute(sql`
-      INSERT INTO error_hourly_dims (signature_id, hour, dim, value, count) VALUES (${signatureId}, ${ts(hour)}, ${d.dim}, ${d.value}, ${d.count})
-      ON CONFLICT (signature_id, hour, dim, value) DO UPDATE SET count = error_hourly_dims.count + excluded.count`)
+    await bump(budget, 'dims',
+      sql`UPDATE error_hourly_dims SET count = count + ${d.count} WHERE signature_id = ${signatureId} AND hour = ${ts(hour)} AND dim = ${d.dim} AND value = ${d.value} RETURNING 1`,
+      sql`INSERT INTO error_hourly_dims (signature_id, hour, dim, value, count) VALUES (${signatureId}, ${ts(hour)}, ${d.dim}, ${d.value}, ${d.count})
+        ON CONFLICT (signature_id, hour, dim, value) DO UPDATE SET count = error_hourly_dims.count + excluded.count`)
   }
 
-  // Full events: a new signature's first occurrence, then at most storedPerSignatureDay a day, within the address and instance budgets
+  // Full events: a new signature's first occurrence, then at most storedPerSignatureDay a day, within every budget
   const candidates = group.filter((r) => !r.repeat && r.expected !== 'overflow').slice(0, ERROR_BUDGETS.storedPerSignatureDay)
   if (!candidates.length) return
   const day = hour.toISOString().slice(0, 10)
@@ -316,7 +349,7 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
   let keep = slot ? Number(slot.after) - Number(slot.before) : 0
   if (isNew && keep < 1) keep = 1
   for (const r of candidates.slice(0, keep)) {
-    if (!takeStoredEvent(r.ipKey)) continue
+    if (!takeStoredEvent(r.ipKey) || !budget.take('events', 1, ERROR_BUDGETS.db.events)) continue
     const e = boundRecord(r)
     try {
       await db.execute(sql`
@@ -333,20 +366,24 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
 }
 
 /**
- * Admits records to signatures: a known signature always; a new one only within the address and instance budgets and
- * under the cap on distinct signatures (server-side ones too, under the cap). The rest become overflow records.
+ * Admits records to signatures: a known signature always; a new browser one only within the address and instance
+ * budgets and under the cap on recently seen browser signatures; a server one always. The rest become overflow
+ * records. Returns the known signatures' ids by hash.
  */
-async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; fresh: Set<string> }> {
+async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; fresh: Set<string>; existing: Map<string, string> }> {
   const hashes = [...new Set(records.map((r) => r.hash))]
-  const known = new Set(rowsOf<{ hash: string }>(await db.execute(sql`
-    SELECT hash FROM error_signatures WHERE hash IN (${sql.join(hashes.map((h) => sql`${h}`), sql`, `)})`)).map((r) => r.hash))
+  const existing = new Map(rowsOf<{ hash: string; id: string }>(await db.execute(sql`
+    SELECT hash, id FROM error_signatures WHERE hash IN (${sql.join(hashes.map((h) => sql`${h}`), sql`, `)})`)).map((r) => [r.hash, r.id]))
   let total = await signatureCount()
   const fresh = new Set<string>()
   const out: ErrorRecord[] = []
   for (const r of records) {
-    if (known.has(r.hash) || fresh.has(r.hash) || r.expected === 'overflow') { out.push(r); continue }
-    const ok = total < ERROR_BUDGETS.maxSignatures && (r.source === 'server' || takeNewSignature(r.ipKey, r.receivedAt.getTime()))
-    if (ok) {
+    if (existing.has(r.hash) || fresh.has(r.hash) || r.expected === 'overflow' || r.source === 'server') {
+      if (r.source === 'server' && !existing.has(r.hash)) fresh.add(r.hash)
+      out.push(r)
+      continue
+    }
+    if (total < ERROR_BUDGETS.maxSignatures && takeNewSignature(r.ipKey, r.receivedAt.getTime())) {
       fresh.add(r.hash)
       total++
       signatureTotal.n++
@@ -355,34 +392,85 @@ async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; 
       out.push(overflowRecord(r))
     }
   }
-  return { records: out, fresh }
+  return { records: out, fresh, existing }
 }
 
-/** Writes records now. Returns each written signature's id by hash. One failing signature or event is logged and skipped. */
+const groupBy = <T>(xs: T[], key: (x: T) => string | number) => {
+  const m = new Map<string | number, T[]>()
+  for (const x of xs) m.set(key(x), [...(m.get(key(x)) ?? []), x])
+  return m
+}
+
+/** Counted-only records (overflow): the signature's total and its hourly count, nothing else. */
+async function writeOverflow(records: ErrorRecord[], ids: Map<string, string>): Promise<void> {
+  for (const [hash, group] of groupBy(records.map((r) => (r.expected === 'overflow' ? r : overflowRecord(r))), (r) => r.hash)) {
+    try {
+      const id = await writeSignature(group as ErrorRecord[])
+      ids.set(hash as string, id)
+      for (const [h, g] of groupBy(group as ErrorRecord[], (r) => hourOf(r.receivedAt).getTime())) {
+        const n = g.reduce((a, r) => a + r.count, 0)
+        await db.execute(sql`
+          INSERT INTO error_hourly (signature_id, hour, count) VALUES (${id}, ${ts(new Date(h as number))}, ${n})
+          ON CONFLICT (signature_id, hour) DO UPDATE SET count = error_hourly.count + excluded.count`)
+      }
+    } catch (err) {
+      console.error('[errors] writing an overflow count failed:', err instanceof Error ? err.message : err)
+    }
+  }
+}
+
+/**
+ * Writes records now. Returns each written signature's id by hash. One failing signature or event is logged and
+ * skipped. Rows are made only within the day's budgets (DayBudget, shared by every instance); what doesn't fit is
+ * counted in the overflow signature.
+ */
 export async function writeRecords(records: ErrorRecord[]): Promise<Map<string, string>> {
   const ids = new Map<string, string>()
   if (!records.length) return ids
-  const { records: admitted, fresh } = await admit(records)
-  const bySig = new Map<string, ErrorRecord[]>()
-  for (const r of admitted) bySig.set(r.hash, [...(bySig.get(r.hash) ?? []), r])
-  for (const [hash, group] of bySig) {
+  const known = await knownReleases()
+  const { records: admitted, fresh, existing } = await admit(records.map((r) => clampWeb(r, known)))
+  const shKeys = admitted.filter((r) => r.source === 'web' && r.ipHash && r.expected !== 'overflow').map((r) => `sh:${r.ipHash}`)
+  const budget = await DayBudget.load(['events', 'hourly', 'dims', 'users', ...shKeys])
+  const folded: ErrorRecord[] = []
+  const touched = new Set<string>()
+
+  for (const [hash, group] of groupBy(admitted, (r) => r.hash)) {
+    if (group[0].expected === 'overflow') { folded.push(...group); continue }
     try {
-      const id = await writeSignature(group)
-      ids.set(hash, id)
-      const byHour = new Map<number, ErrorRecord[]>()
-      for (const r of group) {
-        const h = hourOf(r.receivedAt).getTime()
-        byHour.set(h, [...(byHour.get(h) ?? []), r])
+      const known = existing.get(hash as string) ?? null
+      const plan: Array<[Date, ErrorRecord[]]> = []
+      for (const [h, g] of groupBy(group, (r) => hourOf(r.receivedAt).getTime())) {
+        const hour = new Date(h as number)
+        const ipHashes = [...new Set(g.map((r) => r.ipHash).filter((x): x is string => !!x))]
+        const present = known && ipHashes.length ? new Set(rowsOf<{ user_hash: string }>(await db.execute(sql`
+          SELECT user_hash FROM error_hourly_users WHERE signature_id = ${known} AND hour = ${ts(hour)}
+            AND user_hash IN (${sql.join(ipHashes.map((x) => sql`${x}`), sql`, `)})`)).map((r) => r.user_hash)) : new Set<string>()
+        // An address touching a signature-hour it hasn't yet today uses one of its signature-hours for the day
+        const keep: ErrorRecord[] = []
+        for (const r of g) {
+          const t = r.ipHash ? `${hash}|${h}|${r.ipHash}` : ''
+          if (r.source !== 'web' || !r.ipHash || present.has(r.ipHash) || touched.has(t)) { keep.push(r); continue }
+          if (budget.take(`sh:${r.ipHash}`, 1, ERROR_BUDGETS.signatureHoursPerIpDay)) { touched.add(t); keep.push(r) } else folded.push(r)
+        }
+        if (!keep.length) continue
+        const hourExists = known ? rowsOf(await db.execute(sql`SELECT 1 FROM error_hourly WHERE signature_id = ${known} AND hour = ${ts(hour)}`)).length > 0 : false
+        if (!hourExists && keep[0].source === 'web' && !budget.take('hourly', 1, ERROR_BUDGETS.db.hourly)) { folded.push(...keep); continue }
+        plan.push([hour, keep])
       }
-      let first = fresh.has(hash)
-      for (const [h, g] of byHour) {
-        await writeHour(id, new Date(h), g, first)
+      if (!plan.length) continue
+      const id = await writeSignature(plan.flatMap(([, k]) => k))
+      ids.set(hash as string, id)
+      let first = fresh.has(hash as string)
+      for (const [hour, keep] of plan) {
+        await writeHour(id, hour, keep, first, budget)
         first = false
       }
     } catch (err) {
       console.error('[errors] writing an error signature failed:', err instanceof Error ? err.message : err)
     }
   }
+  await writeOverflow(folded, ids)
+  await budget.save().catch((err) => console.error('[errors] saving the error budget failed:', err instanceof Error ? err.message : err))
   return ids
 }
 
@@ -391,7 +479,7 @@ export async function writeRecords(records: ErrorRecord[]): Promise<Map<string, 
  * affected user. A new signature is made only within the same budgets (else the report joins the overflow one).
  */
 export async function reportSignature(r: ErrorRecord): Promise<string | null> {
-  const { records: [a] } = await admit([r])
+  const { records: [a] } = await admit([clampWeb(r, await knownReleases())])
   await db.execute(sql`
     INSERT INTO error_signatures (hash, signature, source, kind, status, route, error_type, message, expected, first_release, last_release, total_count)
     VALUES (${a.hash}, ${a.signature}, ${a.source}, ${a.kind}, ${a.status}, ${a.routeTemplate}, ${a.errorType}, ${a.normalizedMessage}, ${a.expected},
@@ -417,7 +505,7 @@ export function flushErrors(): Promise<void> {
 }
 
 /** Test hooks. */
-export function resetErrorBuffer(): void { buffer = []; dropped = 0; signatureTotal = { n: 0, at: 0 }; dimValues.clear() }
+export function resetErrorBuffer(): void { buffer = []; dropped = 0; signatureTotal = { n: 0, at: 0 }; dimValues.clear(); dimTotal = 0; resetIpKeys() }
 export const bufferedErrorCount = () => buffer.length
 export const droppedErrorCount = () => dropped
 

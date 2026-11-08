@@ -342,7 +342,7 @@ if [ -n "$DATABASE_URL" ]; then
       } catch(e) { console.log('[virvi-server] heatmap cell_y:', e.message); }
       // Error reporting (LIV-66); matches errorSignatures, errorEvents, errorHourly, errorHourlyDims, errorHourlyUsers, errorReports and errorSettings in src/db/schema.ts
       try {
-        await sql\`CREATE TABLE IF NOT EXISTS error_signatures (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hash TEXT NOT NULL, signature TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, status INTEGER, route TEXT, error_type TEXT, message TEXT, expected TEXT, first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), first_release TEXT, last_release TEXT, total_count BIGINT NOT NULL DEFAULT 0, resolved_at TIMESTAMPTZ, resolved_by UUID, regressed_at TIMESTAMPTZ, user_reports INTEGER NOT NULL DEFAULT 0, linear_issue_id TEXT, linear_issue_key TEXT, linear_issue_url TEXT, linear_filed_at TIMESTAMPTZ, linear_filed_reason TEXT, linear_commented_at TIMESTAMPTZ, linear_quiet_at TIMESTAMPTZ, linear_regression_at TIMESTAMPTZ, stored_day DATE, stored_today INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_signatures (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hash TEXT NOT NULL, signature TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, status INTEGER, route TEXT, error_type TEXT, message TEXT, expected TEXT, first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), first_release TEXT, last_release TEXT, total_count BIGINT NOT NULL DEFAULT 0, resolved_at TIMESTAMPTZ, resolved_by UUID, regressed_at TIMESTAMPTZ, user_reports INTEGER NOT NULL DEFAULT 0, linear_issue_id TEXT, linear_issue_key TEXT, linear_issue_url TEXT, linear_filed_at TIMESTAMPTZ, linear_filed_reason TEXT, linear_commented_at TIMESTAMPTZ, linear_quiet_at TIMESTAMPTZ, linear_regression_at TIMESTAMPTZ, stored_day DATE, stored_today INTEGER NOT NULL DEFAULT 0, seen_users BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS error_signatures_hash_uq ON error_signatures (hash)\`;
         await sql\`CREATE INDEX IF NOT EXISTS error_signatures_last_seen_idx ON error_signatures (last_seen_at)\`;
         await sql\`CREATE INDEX IF NOT EXISTS error_signatures_first_seen_idx ON error_signatures (first_seen_at)\`;
@@ -359,13 +359,19 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE TABLE IF NOT EXISTS error_reports (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), signature_id UUID NOT NULL CONSTRAINT error_reports_signature_id_error_signatures_id_fk REFERENCES error_signatures(id) ON DELETE CASCADE, user_id UUID CONSTRAINT error_reports_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, description TEXT NOT NULL, payload JSONB NOT NULL, release TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         await sql\`CREATE INDEX IF NOT EXISTS error_reports_signature_idx ON error_reports (signature_id, created_at)\`;
         // Fix round 1 upgrades of tables made before it: 64-bit counters, per-day sampling and distinct addresses
-        await sql\`ALTER TABLE error_signatures ADD COLUMN IF NOT EXISTS stored_day DATE\`;
-        await sql\`ALTER TABLE error_signatures ADD COLUMN IF NOT EXISTS stored_today INTEGER NOT NULL DEFAULT 0\`;
-        await sql\`ALTER TABLE error_hourly ALTER COLUMN count TYPE BIGINT\`;
-        await sql\`ALTER TABLE error_hourly ALTER COLUMN users TYPE BIGINT\`;
-        await sql\`ALTER TABLE error_hourly ADD COLUMN IF NOT EXISTS ips BIGINT NOT NULL DEFAULT 0\`;
-        await sql\`ALTER TABLE error_hourly DROP COLUMN IF EXISTS stored\`;
-        await sql\`ALTER TABLE error_hourly_dims ALTER COLUMN count TYPE BIGINT\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'stored_day') THEN ALTER TABLE error_signatures ADD COLUMN stored_day DATE; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'stored_today') THEN ALTER TABLE error_signatures ADD COLUMN stored_today INTEGER NOT NULL DEFAULT 0; END IF; END \$\$\`;
+        // Each ALTER runs only when needed: an ALTER TABLE locks the table even when it changes nothing (N3)
+        await sql\`DO \$\$ BEGIN IF (SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly' AND column_name = 'count') = 'integer' THEN ALTER TABLE error_hourly ALTER COLUMN count TYPE BIGINT; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF (SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly' AND column_name = 'users') = 'integer' THEN ALTER TABLE error_hourly ALTER COLUMN users TYPE BIGINT; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly' AND column_name = 'ips') THEN ALTER TABLE error_hourly ADD COLUMN ips BIGINT NOT NULL DEFAULT 0; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly' AND column_name = 'stored') THEN ALTER TABLE error_hourly DROP COLUMN stored; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF (SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly_dims' AND column_name = 'count') = 'integer' THEN ALTER TABLE error_hourly_dims ALTER COLUMN count TYPE BIGINT; END IF; END \$\$\`;
+        // Fix round 2: shared daily budgets, known releases, per-day address keys, and who has hit a signature
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'seen_users') THEN ALTER TABLE error_signatures ADD COLUMN seen_users BOOLEAN NOT NULL DEFAULT false; END IF; END \$\$\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_budget (day DATE NOT NULL, key TEXT NOT NULL, n BIGINT NOT NULL DEFAULT 0, CONSTRAINT error_budget_day_key_pk PRIMARY KEY (day, key))\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_releases (release TEXT PRIMARY KEY, seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_ip_keys (day DATE PRIMARY KEY, key TEXT NOT NULL)\`;
         await sql\`CREATE TABLE IF NOT EXISTS error_settings (id TEXT PRIMARY KEY, thresholds JSONB NOT NULL DEFAULT '{}'::jsonb, updated_by UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         console.log('[virvi-server] error reporting tables ensured');
       } catch(e) { console.log('[virvi-server] error reporting tables:', e.message); }

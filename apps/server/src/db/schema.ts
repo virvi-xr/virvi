@@ -2226,6 +2226,8 @@ export const errorSignatures = pgTable('error_signatures', {
   // Full events stored today (limits.ts storedPerSignatureDay)
   storedDay: date('stored_day'),
   storedToday: integer('stored_today').notNull().default(0),
+  // A signed-in user (not only anonymous addresses) has hit it; anonymous-only, never-filed ones go after 30 quiet days
+  seenUsers: boolean('seen_users').notNull().default(false),
   // Auto-filing (src/errors/filing.ts): one Linear issue per signature
   linearIssueId: text('linear_issue_id'),
   linearIssueKey: text('linear_issue_key'),
@@ -2325,4 +2327,26 @@ export const errorSettings = pgTable('error_settings', {
   thresholds: jsonb('thresholds').notNull().default({}),
   updatedBy: uuid('updated_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Daily row budgets shared by every instance (src/errors/limits.ts DayBudget): global keys and per-address keys
+// ('sh:<day-salted address hash>'). Kept 2 days.
+export const errorBudget = pgTable('error_budget', {
+  day: date('day').notNull(),
+  key: text('key').notNull(),
+  n: bigint('n', { mode: 'number' }).notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.day, t.key] }),
+}))
+
+// Releases the server has run (registered at boot and daily): a browser's release counts only if it is one of these
+export const errorReleases = pgTable('error_releases', {
+  release: text('release').primaryKey(),
+  seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// The random key of each day's address hashes ('ip:…'); deleted after 2 days, which makes those hashes unlinkable
+export const errorIpKeys = pgTable('error_ip_keys', {
+  day: date('day').primaryKey(),
+  key: text('key').notNull(),
 })

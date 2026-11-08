@@ -32,7 +32,7 @@ function fallbackBlocks(label: string): string[] {
 }
 
 const SCHEMA = 'fallback_errors'
-const NEW_TABLES = ['error_signatures', 'error_events', 'error_hourly', 'error_hourly_dims', 'error_hourly_users', 'error_reports', 'error_settings']
+const NEW_TABLES = ['error_signatures', 'error_events', 'error_hourly', 'error_hourly_dims', 'error_hourly_users', 'error_reports', 'error_settings', 'error_budget', 'error_releases', 'error_ip_keys']
 
 type Col = { column_name: string; data_type: string; udt_name: string; is_nullable: string; column_default: string | null }
 const columns = async (schema: string, table: string) => (await db.execute(sql`
@@ -82,12 +82,40 @@ describe('entrypoint schema fallback: error reporting', () => {
     const statements = fallbackBlocks('Error reporting')
     await scratch(async () => {
       await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.error_signatures (LIKE public.error_signatures INCLUDING ALL)`))
-      await db.execute(sql.raw(`ALTER TABLE ${SCHEMA}.error_signatures DROP COLUMN stored_day, DROP COLUMN stored_today`))
+      await db.execute(sql.raw(`ALTER TABLE ${SCHEMA}.error_signatures DROP COLUMN stored_day, DROP COLUMN stored_today, DROP COLUMN seen_users`))
       await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.error_hourly (signature_id UUID NOT NULL CONSTRAINT error_hourly_signature_id_error_signatures_id_fk REFERENCES ${SCHEMA}.error_signatures(id) ON DELETE CASCADE, hour TIMESTAMPTZ NOT NULL, count INTEGER NOT NULL DEFAULT 0, users INTEGER NOT NULL DEFAULT 0, stored INTEGER NOT NULL DEFAULT 0, CONSTRAINT error_hourly_signature_id_hour_pk PRIMARY KEY (signature_id, hour))`))
       await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.error_hourly_dims (signature_id UUID NOT NULL CONSTRAINT error_hourly_dims_signature_id_error_signatures_id_fk REFERENCES ${SCHEMA}.error_signatures(id) ON DELETE CASCADE, hour TIMESTAMPTZ NOT NULL, dim TEXT NOT NULL, value TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, CONSTRAINT error_hourly_dims_signature_id_hour_dim_value_pk PRIMARY KEY (signature_id, hour, dim, value))`))
       await runFallback(statements)
       for (const t of ['error_signatures', 'error_hourly', 'error_hourly_dims']) {
         expect(await columns(SCHEMA, t), t).toEqual(await columns('public', t))
+      }
+    })
+  })
+
+  it('leaves 64-bit columns alone on later boots, so it never waits on a lock a running server holds (N3)', async () => {
+    const statements = fallbackBlocks('Error reporting')
+    await scratch(async () => {
+      await runFallback(statements)
+      let release!: () => void
+      const held = new Promise<void>((r) => { release = r })
+      let locked!: () => void
+      const isLocked = new Promise<void>((r) => { locked = r })
+      // Another session reading error_hourly (as a running flusher would) holds a share lock until released
+      const holder = db.transaction(async (tx) => {
+        await tx.execute(sql.raw(`SELECT count(*) FROM ${SCHEMA}.error_hourly, ${SCHEMA}.error_signatures, ${SCHEMA}.error_hourly_dims`))
+        locked()
+        await held
+      })
+      await isLocked
+      try {
+        await db.transaction(async (tx) => {
+          await tx.execute(sql.raw(`SET LOCAL lock_timeout = '300ms'`))
+          await tx.execute(sql.raw(`SET LOCAL search_path TO ${SCHEMA}, public`))
+          for (const s of statements) await tx.execute(sql.raw(s))
+        })
+      } finally {
+        release()
+        await holder
       }
     })
   })

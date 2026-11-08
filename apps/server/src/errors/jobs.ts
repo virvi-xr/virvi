@@ -2,6 +2,7 @@ import { db } from '../db/connection.js'
 import { config } from '../config.js'
 import { flushErrors, recordServerException, startErrorFlusher } from './record.js'
 import { purgeErrors } from './retention.js'
+import { registerRelease } from './limits.js'
 import { runFilingPass } from './filing.js'
 
 type Reserved = ((strings: TemplateStringsArray, ...v: unknown[]) => Promise<Array<Record<string, unknown>>>) & { release(): void }
@@ -57,7 +58,9 @@ export function startErrorJobs(): () => void {
     first.unref()
     timers.push(first)
   }
-  every(PURGE_EVERY_MS, 'purge', () => purgeErrors(new Date()))
+  // This server's release is believed from browsers; re-registered with each purge so it never ages out while running
+  registerRelease().catch((err) => console.error('[errors] registering the release failed:', err instanceof Error ? err.message : err))
+  every(PURGE_EVERY_MS, 'purge', async () => { await registerRelease(); return purgeErrors(new Date()) })
   every(FILING_EVERY_MS, 'filing', () => runFilingPass(new Date()))
   return () => { for (const t of timers) clearTimeout(t) }
 }
