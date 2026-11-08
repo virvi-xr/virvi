@@ -52,7 +52,7 @@ describe('error budgets (C1)', () => {
   })
 
   it('past the global cap on distinct signatures, new ones are counted as overflow only', async () => {
-    ERROR_BUDGETS.maxSignatures = 3
+    ERROR_BUDGETS.maxSignatures = 5 // anonymous browsers may fill 3 (anonymousShare)
     for (let i = 0; i < 5; i++) await writeRecords([clientRecord(crash(words(i)), ctx(`198.51.100.${i + 1}`))])
     const sigs = await db.select().from(errorSignatures)
     expect(sigs.filter((s) => s.expected !== 'overflow')).toHaveLength(3)

@@ -21,6 +21,11 @@ import { config } from '../config.js'
  * state, plus hourly rows (400 days, but anonymous-only browser signatures and their rows go after 30 quiet days).
  * One address: at most 100 signature-hours, about 2,500 rows and 50 events, about 0.9 MB a day.
  *
+ * Anonymous browsers (no server-verified account or trial) may use at most 60% of every shared budget, of the
+ * instance's new-signature and stored-event budgets and of the signature cap; the rest is kept for signed-in users,
+ * so a flood can't blind reporting for them. Signed-in users aren't held to an address's signature-hours. Server-side
+ * records (5xx, uncaught exceptions, failed jobs) use their own `server:` budgets of the same sizes.
+ *
  * Breakdown values are clamped: the release must be one the server has run (else "unknown"), routes are templated
  * and cut to 100 characters, a browser is family and major version (a major over 200 is "other"), and at most 10
  * values per breakdown per signature-hour (and 20,000 tracked in memory per instance), the rest "other".
@@ -40,7 +45,18 @@ export const ERROR_BUDGETS = {
   signatureHoursPerIpDay: 100,
   maxTrackedKeys: 100_000,
   db: { events: 1000, hourly: 5000, dims: 50_000, users: 50_000 },
+  /** The share of each budget (and of the signature cap) anonymous browser traffic may use; the rest is kept for signed-in users. */
+  anonymousShare: 0.6,
 }
+
+/**
+ * Who a record speaks for: `server` (5xx, uncaught exceptions, failed jobs: trusted, with budgets of their own),
+ * `user` (a browser with a server-verified account or trial), or `anon` (any other browser).
+ */
+export type Trust = 'server' | 'user' | 'anon'
+
+/** Anonymous use may reach anonymousShare of a limit; signed-in use the whole of it. */
+export const anonLimit = (limit: number) => Math.floor(limit * ERROR_BUDGETS.anonymousShare)
 
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
@@ -70,15 +86,22 @@ class WindowCounter {
 let hourly = new WindowCounter(HOUR)
 let daily = new WindowCounter(DAY)
 
-/** A new signature from this address: within its hourly budget and the instance's. */
-export function takeNewSignature(ip: string | null, now = Date.now()): boolean {
-  if (ip && hourly.take(`sig:${ip}`, 1, ERROR_BUDGETS.newSignaturesPerIpHour, now) < 1) return false
+/** A new browser signature: anonymous ones within the address's hourly budget and their share of the instance's. */
+export function takeNewSignature(ip: string | null, now = Date.now(), trust: Trust = 'anon'): boolean {
+  if (trust === 'anon') {
+    if (ip && hourly.take(`sig:${ip}`, 1, ERROR_BUDGETS.newSignaturesPerIpHour, now) < 1) return false
+    if (hourly.take('sig:anon', 1, anonLimit(ERROR_BUDGETS.newSignaturesPerHour), now) < 1) return false
+  }
   return hourly.take('sig:*', 1, ERROR_BUDGETS.newSignaturesPerHour, now) === 1
 }
 
-/** A full event stored from this address today (server events pass `null` and use only the instance budget). */
-export function takeStoredEvent(ip: string | null, now = Date.now()): boolean {
-  if (ip && daily.take(`ev:${ip}`, 1, ERROR_BUDGETS.storedEventsPerIpDay, now) < 1) return false
+/** A full event stored today: anonymous ones within the address's budget and their share; server ones on their own budget. */
+export function takeStoredEvent(ip: string | null, now = Date.now(), trust: Trust = 'anon'): boolean {
+  if (trust === 'server') return daily.take('ev:server', 1, ERROR_BUDGETS.storedEventsPerDay, now) === 1
+  if (trust === 'anon') {
+    if (ip && daily.take(`ev:${ip}`, 1, ERROR_BUDGETS.storedEventsPerIpDay, now) < 1) return false
+    if (daily.take('ev:anon', 1, anonLimit(ERROR_BUDGETS.storedEventsPerDay), now) < 1) return false
+  }
   return daily.take('ev:*', 1, ERROR_BUDGETS.storedEventsPerDay, now) === 1
 }
 
@@ -123,6 +146,21 @@ export class DayBudget {
     const got = Math.max(0, Math.min(n, limit - have))
     if (got) this.used.set(key, (this.used.get(key) ?? 0) + got)
     return got
+  }
+
+  /**
+   * Takes from a shared budget by trust: server records from their own `server:<key>`; anonymous ones from
+   * `anon:<key>` (anonymousShare of the limit) and the shared key; signed-in ones from the shared key, whose last
+   * part only they can reach.
+   */
+  takeFor(key: keyof typeof ERROR_BUDGETS.db, n: number, trust: Trust): number {
+    const limit = ERROR_BUDGETS.db[key]
+    if (trust === 'server') return this.take(`server:${key}`, n, limit)
+    if (trust === 'anon') {
+      const got = this.take(`anon:${key}`, n, anonLimit(limit))
+      return got ? this.take(key, got, limit) : 0
+    }
+    return this.take(key, n, limit)
   }
 
   async save(): Promise<void> {

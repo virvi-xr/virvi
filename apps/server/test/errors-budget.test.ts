@@ -107,7 +107,7 @@ describe('the distinct-signature cap (N1)', () => {
   afterEach(() => { Object.assign(ERROR_BUDGETS, JSON.parse(JSON.stringify(saved))); restart() })
 
   it('counts only signatures seen in the last 30 days', async () => {
-    ERROR_BUDGETS.maxSignatures = 2
+    ERROR_BUDGETS.maxSignatures = 4 // anonymous browsers may fill 2
     await writeRecords(msgs.slice(0, 2).map((m) => clientRecord(exception(m), ctx('198.51.100.1'))))
     await db.update(errorSignatures).set({ lastSeenAt: new Date(Date.now() - 40 * DAY) })
     restart()
@@ -116,7 +116,7 @@ describe('the distinct-signature cap (N1)', () => {
   })
 
   it('never folds a server-side error into overflow', async () => {
-    ERROR_BUDGETS.maxSignatures = 1
+    ERROR_BUDGETS.maxSignatures = 2 // anonymous browsers may fill 1, and do
     await writeRecords([clientRecord(exception(msgs[0]), ctx('198.51.100.1'))])
     recordServerResponse({ status: 500, method: 'GET', routeTemplate: '/api/a' }, new Error('x'))
     recordServerResponse({ status: 503, method: 'GET', routeTemplate: '/api/b' })
@@ -185,5 +185,80 @@ describe('rate-limit keys (N2)', () => {
     ERROR_BUDGETS.maxTrackedKeys = 3
     resetErrorBudgets()
     for (const ip of ['a', 'b', 'c', 'd', 'e']) expect(takeNewSignature(ip), ip).toBe(true)
+  })
+})
+
+describe('anonymous traffic can only use part of each budget (R2-1)', () => {
+  const saved = JSON.parse(JSON.stringify(ERROR_BUDGETS))
+  beforeEach(async () => { await resetDb(); restart() })
+  afterEach(() => { Object.assign(ERROR_BUDGETS, JSON.parse(JSON.stringify(saved))); restart() })
+  const user = 'a'.repeat(32)
+
+  it('the starve probe: anonymous traffic used its share; a signed-in user’s new crash still gets its signature, event and count', async () => {
+    const day = new Date().toISOString().slice(0, 10)
+    const anon = (k: keyof typeof ERROR_BUDGETS.db) => Math.floor(ERROR_BUDGETS.db[k] * 0.6)
+    for (const k of ['hourly', 'events', 'dims', 'users'] as const) {
+      await db.execute(sql`INSERT INTO error_budget (day, key, n) VALUES (${day}::date, ${k}, ${anon(k)}), (${day}::date, ${`anon:${k}`}, ${anon(k)})`)
+    }
+    // anonymous: nothing more
+    await writeRecords([clientRecord(exception('attacker noise'), ctx('203.0.113.9'))])
+    expect((await db.select().from(errorSignatures)).map((s) => s.signature)).toEqual(['overflow exception'])
+    // signed in: still recorded in full
+    await writeRecords([clientRecord({ kind: 'crash', t: Date.now(), route: '/x', errorType: 'TypeError', message: 'real bug in save' }, ctx('203.0.113.5', { userHash: user }))])
+    const [real] = await db.select().from(errorSignatures).where(eq(errorSignatures.kind, 'crash'))
+    expect(real.signature).toBe('crash TypeError: real bug in save')
+    expect(await db.select().from(errorEvents).where(eq(errorEvents.signatureId, real.id))).toHaveLength(1)
+    const [hour] = await db.select().from(errorHourly).where(eq(errorHourly.signatureId, real.id))
+    expect(Number(hour.users)).toBe(1)
+    expect((await db.select().from(errorHourlyDims).where(eq(errorHourlyDims.signatureId, real.id))).length).toBeGreaterThan(0)
+  })
+
+  it('anonymous use stops at 60% of a budget', async () => {
+    ERROR_BUDGETS.db = { ...ERROR_BUDGETS.db, hourly: 10 }
+    ERROR_BUDGETS.signatureHoursPerIpDay = 100
+    for (let i = 0; i < 4; i++) await writeRecords(msgs.slice(i * 4, i * 4 + 4).map((m) => clientRecord(exception(m), ctx(`198.51.100.${i + 1}`))))
+    const real = (await db.select().from(errorSignatures)).filter((s) => s.expected !== 'overflow')
+    expect(real).toHaveLength(6)
+    // users can use the rest
+    await writeRecords(msgs.slice(16, 20).map((m) => clientRecord(exception(m), ctx('198.51.100.9', { userHash: user }))))
+    expect((await db.select().from(errorSignatures)).filter((s) => s.expected !== 'overflow')).toHaveLength(10)
+  })
+
+  it('anonymous browsers can fill only 60% of the distinct-signature cap', async () => {
+    ERROR_BUDGETS.maxSignatures = 5
+    await writeRecords(msgs.slice(0, 5).map((m, i) => clientRecord(exception(m), ctx(`198.51.100.${i + 1}`))))
+    expect((await db.select().from(errorSignatures)).filter((s) => s.expected !== 'overflow')).toHaveLength(3)
+    await writeRecords([clientRecord(exception(msgs[10]), ctx('198.51.100.9', { userHash: user }))])
+    expect((await db.select().from(errorSignatures)).filter((s) => s.expected !== 'overflow')).toHaveLength(4)
+  })
+
+  it('server-side errors are never blocked by the browser budgets', async () => {
+    const day = new Date().toISOString().slice(0, 10)
+    for (const k of ['hourly', 'events', 'dims', 'users'] as const) {
+      await db.execute(sql`INSERT INTO error_budget (day, key, n) VALUES (${day}::date, ${k}, ${ERROR_BUDGETS.db[k]}), (${day}::date, ${`anon:${k}`}, ${ERROR_BUDGETS.db[k]})`)
+    }
+    recordServerResponse({ status: 500, method: 'GET', routeTemplate: '/api/a' }, new Error('db down'))
+    await flushErrors()
+    const [s] = await db.select().from(errorSignatures)
+    expect(s.signature).toBe('server_5xx 500 GET /api/a')
+    expect(await db.select().from(errorEvents)).toHaveLength(1)
+    expect(await db.select().from(errorHourly)).toHaveLength(1)
+  })
+})
+
+describe('flusher (pile-up)', () => {
+  beforeEach(async () => { await resetDb(); restart() })
+  it('a tick while a flush runs is skipped, not queued', async () => {
+    const { flushTick } = await import('../src/errors/record.js')
+    recordServerResponse({ status: 500, method: 'GET', routeTemplate: '/api/a' })
+    const running = flushErrors()
+    recordServerResponse({ status: 500, method: 'GET', routeTemplate: '/api/a' })
+    expect(flushTick()).toBe(false)
+    expect(flushTick()).toBe(false)
+    await running
+    expect(flushTick()).toBe(true)
+    await flushErrors()
+    const [s] = await db.select().from(errorSignatures)
+    expect(Number(s.totalCount)).toBe(2)
   })
 })

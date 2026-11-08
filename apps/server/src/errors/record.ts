@@ -7,7 +7,7 @@ import {
 import { db } from '../db/connection.js'
 import { config } from '../config.js'
 import { resetIpKeys } from './user-hash.js'
-import { DayBudget, ERROR_BUDGETS, knownReleases, takeNewSignature, takeStoredEvent } from './limits.js'
+import { DayBudget, ERROR_BUDGETS, anonLimit, knownReleases, takeNewSignature, takeStoredEvent, type Trust } from './limits.js'
 
 /**
  * The error recorder (LIV-66). Requests and jobs only push into an in-memory buffer; a flusher writes it every
@@ -220,16 +220,23 @@ const rowsOf = <T>(r: unknown) => r as unknown as T[]
 const hourOf = (d: Date) => new Date(Math.floor(d.getTime() / HOUR_MS) * HOUR_MS)
 const THIRTY_DAYS = 30 * 24 * HOUR_MS
 
-let signatureTotal = { n: 0, at: 0 }
-/** Browser signatures seen in the last 30 days (cached a minute; bumped as this instance adds some). Server ones aren't capped. */
-async function signatureCount(): Promise<number> {
+const trustOf = (r: ErrorRecord): Trust => (r.source === 'server' ? 'server' : r.userHash ? 'user' : 'anon')
+/** A group speaks for its most trusted record: one signed-in user's event makes its signature-hour theirs. */
+const groupTrust = (g: ErrorRecord[]): Trust => (g.some((r) => r.source === 'server') ? 'server' : g.some((r) => r.userHash) ? 'user' : 'anon')
+
+let signatureTotal = { n: 0, anon: 0, at: 0 }
+/**
+ * Browser signatures seen in the last 30 days, and how many of them only anonymous browsers hit (cached a minute;
+ * bumped as this instance adds some). Server ones aren't capped.
+ */
+async function signatureCount(): Promise<{ n: number; anon: number }> {
   if (Date.now() - signatureTotal.at > 60_000) {
-    const [row] = rowsOf<{ n: number }>(await db.execute(sql`
-      SELECT count(*)::int AS n FROM error_signatures
+    const [row] = rowsOf<{ n: number; anon: number }>(await db.execute(sql`
+      SELECT count(*)::int AS n, (count(*) FILTER (WHERE NOT seen_users))::int AS anon FROM error_signatures
       WHERE source = 'web' AND expected IS DISTINCT FROM 'overflow' AND last_seen_at >= ${ts(new Date(Date.now() - THIRTY_DAYS))}`))
-    signatureTotal = { n: Number(row.n), at: Date.now() }
+    signatureTotal = { n: Number(row.n), anon: Number(row.anon), at: Date.now() }
   }
-  return signatureTotal.n
+  return signatureTotal
 }
 
 /** A browser's claims clamped: a release the server hasn't run is "unknown"; a browser is family and a plausible major. */
@@ -281,14 +288,15 @@ function dimValue(signatureId: string, hour: Date, dim: string, value: string): 
 }
 
 /** Adds `n` to a counter row, making it only if the day's budget for `budgetKey` allows. False when it neither existed nor could be made. */
-async function bump(budget: DayBudget, budgetKey: keyof typeof ERROR_BUDGETS.db, update: ReturnType<typeof sql>, insert: ReturnType<typeof sql>): Promise<boolean> {
+async function bump(budget: DayBudget, budgetKey: keyof typeof ERROR_BUDGETS.db, trust: Trust, update: ReturnType<typeof sql>, insert: ReturnType<typeof sql>): Promise<boolean> {
   if (rowsOf(await db.execute(update)).length) return true
-  if (!budget.take(budgetKey, 1, ERROR_BUDGETS.db[budgetKey])) return false
+  if (!budget.takeFor(budgetKey, 1, trust)) return false
   await db.execute(insert)
   return true
 }
 
 async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], isNew: boolean, budget: DayBudget): Promise<void> {
+  const trust = groupTrust(group)
   const count = group.reduce((n, r) => n + r.count, 0)
   // The hourly row was checked (or budgeted) by the plan: here it is only made or added to
   await db.execute(sql`
@@ -302,7 +310,8 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
       SELECT user_hash FROM error_hourly_users WHERE signature_id = ${signatureId} AND hour = ${ts(hour)}
         AND user_hash IN (${sql.join(hashes.map((h) => sql`${h}`), sql`, `)})`)).map((r) => r.user_hash))
     const fresh = hashes.filter((h) => !present.has(h))
-    const allowed = fresh.slice(0, budget.take('users', fresh.length, ERROR_BUDGETS.db.users))
+    // A user's own row is theirs to make; an address row uses the group's share
+    const allowed = fresh.filter((h) => budget.takeFor('users', 1, h.startsWith('ip:') ? trust : trust === 'server' ? 'server' : 'user') === 1)
     if (allowed.length) {
       const added = rowsOf<{ user_hash: string }>(await db.execute(sql`
         INSERT INTO error_hourly_users (signature_id, hour, user_hash)
@@ -331,7 +340,7 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
   }
   for (const d of dims.values()) {
     if (!d.count) continue
-    await bump(budget, 'dims',
+    await bump(budget, 'dims', trust,
       sql`UPDATE error_hourly_dims SET count = count + ${d.count} WHERE signature_id = ${signatureId} AND hour = ${ts(hour)} AND dim = ${d.dim} AND value = ${d.value} RETURNING 1`,
       sql`INSERT INTO error_hourly_dims (signature_id, hour, dim, value, count) VALUES (${signatureId}, ${ts(hour)}, ${d.dim}, ${d.value}, ${d.count})
         ON CONFLICT (signature_id, hour, dim, value) DO UPDATE SET count = error_hourly_dims.count + excluded.count`)
@@ -349,7 +358,7 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
   let keep = slot ? Number(slot.after) - Number(slot.before) : 0
   if (isNew && keep < 1) keep = 1
   for (const r of candidates.slice(0, keep)) {
-    if (!takeStoredEvent(r.ipKey) || !budget.take('events', 1, ERROR_BUDGETS.db.events)) continue
+    if (!takeStoredEvent(r.ipKey, r.receivedAt.getTime(), trustOf(r)) || !budget.takeFor('events', 1, trustOf(r))) continue
     const e = boundRecord(r)
     try {
       await db.execute(sql`
@@ -374,7 +383,9 @@ async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; 
   const hashes = [...new Set(records.map((r) => r.hash))]
   const existing = new Map(rowsOf<{ hash: string; id: string }>(await db.execute(sql`
     SELECT hash, id FROM error_signatures WHERE hash IN (${sql.join(hashes.map((h) => sql`${h}`), sql`, `)})`)).map((r) => [r.hash, r.id]))
-  let total = await signatureCount()
+  const counts = await signatureCount()
+  let total = counts.n
+  let anon = counts.anon
   const fresh = new Set<string>()
   const out: ErrorRecord[] = []
   for (const r of records) {
@@ -383,10 +394,14 @@ async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; 
       out.push(r)
       continue
     }
-    if (total < ERROR_BUDGETS.maxSignatures && takeNewSignature(r.ipKey, r.receivedAt.getTime())) {
+    // Anonymous browsers may fill only their share of the cap; signed-in users the rest
+    const trust = trustOf(r)
+    const room = total < ERROR_BUDGETS.maxSignatures && (trust !== 'anon' || anon < anonLimit(ERROR_BUDGETS.maxSignatures))
+    if (room && takeNewSignature(r.ipKey, r.receivedAt.getTime(), trust)) {
       fresh.add(r.hash)
       total++
       signatureTotal.n++
+      if (trust === 'anon') { anon++; signatureTotal.anon++ }
       out.push(r)
     } else {
       out.push(overflowRecord(r))
@@ -430,7 +445,7 @@ export async function writeRecords(records: ErrorRecord[]): Promise<Map<string, 
   const known = await knownReleases()
   const { records: admitted, fresh, existing } = await admit(records.map((r) => clampWeb(r, known)))
   const shKeys = admitted.filter((r) => r.source === 'web' && r.ipHash && r.expected !== 'overflow').map((r) => `sh:${r.ipHash}`)
-  const budget = await DayBudget.load(['events', 'hourly', 'dims', 'users', ...shKeys])
+  const budget = await DayBudget.load([...(['events', 'hourly', 'dims', 'users'] as const).flatMap((k) => [k, `anon:${k}`, `server:${k}`]), ...shKeys])
   const folded: ErrorRecord[] = []
   const touched = new Set<string>()
 
@@ -449,12 +464,13 @@ export async function writeRecords(records: ErrorRecord[]): Promise<Map<string, 
         const keep: ErrorRecord[] = []
         for (const r of g) {
           const t = r.ipHash ? `${hash}|${h}|${r.ipHash}` : ''
-          if (r.source !== 'web' || !r.ipHash || present.has(r.ipHash) || touched.has(t)) { keep.push(r); continue }
+          // Signed-in users and server records aren't held to an address's signature-hours
+          if (r.source !== 'web' || r.userHash || !r.ipHash || present.has(r.ipHash) || touched.has(t)) { keep.push(r); continue }
           if (budget.take(`sh:${r.ipHash}`, 1, ERROR_BUDGETS.signatureHoursPerIpDay)) { touched.add(t); keep.push(r) } else folded.push(r)
         }
         if (!keep.length) continue
         const hourExists = known ? rowsOf(await db.execute(sql`SELECT 1 FROM error_hourly WHERE signature_id = ${known} AND hour = ${ts(hour)}`)).length > 0 : false
-        if (!hourExists && keep[0].source === 'web' && !budget.take('hourly', 1, ERROR_BUDGETS.db.hourly)) { folded.push(...keep); continue }
+        if (!hourExists && !budget.takeFor('hourly', 1, groupTrust(keep))) { folded.push(...keep); continue }
         plan.push([hour, keep])
       }
       if (!plan.length) continue
@@ -505,14 +521,21 @@ export function flushErrors(): Promise<void> {
 }
 
 /** Test hooks. */
-export function resetErrorBuffer(): void { buffer = []; dropped = 0; signatureTotal = { n: 0, at: 0 }; dimValues.clear(); dimTotal = 0; resetIpKeys() }
+export function resetErrorBuffer(): void { buffer = []; dropped = 0; signatureTotal = { n: 0, anon: 0, at: 0 }; dimValues.clear(); dimTotal = 0; resetIpKeys() }
 export const bufferedErrorCount = () => buffer.length
 export const droppedErrorCount = () => dropped
+
+/** The interval's tick: skipped while a flush is still running (nothing queues behind it). True when it started one. */
+export function flushTick(): boolean {
+  if (flushing) return false
+  void flushErrors()
+  return true
+}
 
 let flushTimer: NodeJS.Timeout | null = null
 export function startErrorFlusher(ms = config.errorFlushMs): void {
   if (flushTimer || ms <= 0) return
-  flushTimer = setInterval(() => { void flushErrors() }, ms)
+  flushTimer = setInterval(flushTick, ms)
   flushTimer.unref()
 }
 export function stopErrorFlusher(): void {
