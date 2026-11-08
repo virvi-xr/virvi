@@ -63,7 +63,8 @@ class Reporter {
       }
       this.add(errorEvent('rejection', reason, this.ctx()))
     })
-    // console.error from our own code. Deferred a tick, so an error a crash screen or the handlers above report isn't counted twice
+    // console.error from our own code. Deferred a second, so an error a crash screen (whose effect runs after React logs
+    // it) or the handlers above report isn't counted twice
     const original = console.error.bind(console)
     console.error = (...args: unknown[]) => {
       original(...args)
@@ -76,7 +77,7 @@ class Reporter {
         setTimeout(() => {
           if (err && this.captured.has(err)) return
           this.add(errorEvent('console', thrown, ctx))
-        }, 0)
+        }, 1000)
       } catch { /* ignore */ }
     }
     document.addEventListener('click', (ev) => {
