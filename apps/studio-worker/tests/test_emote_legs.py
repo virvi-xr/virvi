@@ -130,3 +130,130 @@ def test_real_rig_seated_passes():
 def test_real_wave_emote_passes():
     r = emote_legs.check(FIXTURES / 'wave.glb')
     assert r is not None and not r.crossing and r.samples >= 30
+
+
+# ---- fix round 1
+def test_cubicspline_with_flat_tangents_eases_between_keys(tmp_path):
+    r = check(tmp_path, [REST, crossed(), REST], times=[0, 1, 2], interpolation='CUBICSPLINE')
+    assert r.crossing and all(0.3 < h.t < 1.7 for h in r.hits)
+    assert not check(tmp_path, [REST, SEATED, REST], times=[0, 1, 2], interpolation='CUBICSPLINE').crossing
+
+
+def _restride(path, normalized_int16=False):
+    """Rewrite every rotation output into its own strided bufferView (float VEC4 with 4 bytes of padding, or
+    normalized int16 VEC4 with 4 bytes of padding)."""
+    import numpy as np
+    g, blob = gf.read_glb(path)
+    outs = {s['output'] for a in g['animations'] for s in a['samplers']
+            if g['accessors'][s['output']]['type'] == 'VEC4'}
+    for i in outs:
+        acc = g['accessors'][i]
+        v = g['bufferViews'][acc['bufferView']]
+        vals = np.frombuffer(bytes(blob[v['byteOffset']:v['byteOffset'] + v['byteLength']]), np.float32).reshape(-1, 4)
+        if normalized_int16:
+            items, ctype, stride = np.round(vals * 32767).astype(np.int16), 5122, 12
+        else:
+            items, ctype, stride = vals, 5126, 20
+        rows = b''.join(r.tobytes() + b'\xab' * (stride - r.nbytes) for r in items)
+        while len(blob) % 4:
+            blob.append(0)
+        g['bufferViews'].append({'buffer': 0, 'byteOffset': len(blob), 'byteLength': len(rows), 'byteStride': stride})
+        blob.extend(rows)
+        acc.update(bufferView=len(g['bufferViews']) - 1, componentType=ctype, **({'normalized': True} if normalized_int16 else {}))
+    gf.write_glb(path, g, blob)
+    return path
+
+
+@pytest.mark.parametrize('int16', [False, True], ids=['float', 'normalized-int16'])
+def test_strided_rotation_accessors_read_the_same(tmp_path, int16):
+    path = _restride(gf.emote(tmp_path / 'e.glb', [REST, crossed(), crossed(0.15)]), int16)
+    r = emote_legs.check(path)
+    assert r.crossing and all(0.3 < h.t < 1.9 for h in r.hits)
+    assert not emote_legs.check(_restride(gf.emote(tmp_path / 's.glb', [REST, SEATED]), int16)).crossing
+
+
+def test_integers_are_only_normalized_when_flagged(tmp_path):
+    path = _restride(gf.emote(tmp_path / 'e.glb', [REST, crossed()]), normalized_int16=True)
+    g, blob = gf.read_glb(path)
+    for acc in g['accessors']:
+        acc.pop('normalized', None)  # int16 read raw: quaternions of ~32767 that normalize to the same rotation
+    gf.write_glb(path, g, blob)
+    assert emote_legs._accessor(g, blob, next(i for i, a in enumerate(g['accessors']) if a['componentType'] == 5122)).max() > 1000
+
+
+def _standing_ankles_crossed():
+    import numpy as np
+    # right leg straight, its ankle 10 cm in front of the left one; left leg straight down
+    hip, ankle = np.array([-8.91, 0, 0]), np.array([8.91, -85.6, 10])
+    d = (ankle - hip) / np.linalg.norm(ankle - hip)
+    down = np.array([0, -1, 0])
+    axis = np.cross(down, d)
+    return {'Avatar_RightUpLeg': gf.quat(axis, np.degrees(np.arccos(down @ d)))}
+
+
+def test_standing_with_the_ankles_crossed_passes(tmp_path):
+    pose = _standing_ankles_crossed()
+    assert not check(tmp_path, [REST, pose, pose, REST]).crossing
+
+
+def test_the_clip_named_avatar_wins_over_a_stale_one(tmp_path):
+    path = gf.emote(tmp_path / 'e.glb', [REST, crossed(), REST], times=[0, 1, 2])
+    g, blob = gf.read_glb(path)
+    stale = json.loads(json.dumps(g['animations'][0]))
+    stale['name'] = 'Action'
+    stale['channels'] += [dict(stale['channels'][0])]  # more chain channels than the real clip
+    g['animations'].insert(0, stale)
+    gf.write_glb(path, g, blob)
+    assert emote_legs.check(path).clip == 'Test_Avatar'
+
+
+def test_several_clips_none_named_avatar_give_no_verdict(tmp_path):
+    path = gf.emote(tmp_path / 'e.glb', [REST, crossed()], name='Test')
+    g, blob = gf.read_glb(path)
+    g['animations'][0]['name'] = 'Reading'
+    g['animations'].append({**json.loads(json.dumps(g['animations'][0])), 'name': 'Action'})
+    gf.write_glb(path, g, blob)
+    assert emote_legs.check(path) is None
+    g['animations'] = g['animations'][:1]  # one clip, whatever its name, is the clip
+    gf.write_glb(path, g, blob)
+    assert emote_legs.check(path).crossing
+
+
+def test_a_parent_cycle_gives_no_verdict(tmp_path):
+    path = gf.emote(tmp_path / 'e.glb', [REST, crossed()])
+    g, blob = gf.read_glb(path)
+    g['nodes'].append({'name': 'Loop', 'children': [0]})
+    g['nodes'][0].setdefault('children', []).append(len(g['nodes']) - 1)
+    gf.write_glb(path, g, blob)
+    assert emote_legs.check(path) is None
+
+
+def test_a_very_deep_chain_gives_no_verdict(tmp_path):
+    path = gf.emote(tmp_path / 'e.glb', [REST, crossed()])
+    g, blob = gf.read_glb(path)
+    below = 0
+    for _ in range(3000):
+        g['nodes'].append({'name': 'Wrap', 'children': [below]})
+        below = len(g['nodes']) - 1
+    g['scenes'][0]['nodes'] = [below]
+    gf.write_glb(path, g, blob)
+    assert emote_legs.check(path) is None
+
+
+def test_any_error_inside_the_check_is_no_verdict(tmp_path, monkeypatch, capsys):
+    path = gf.emote(tmp_path / 'e.glb', [REST, crossed()])
+    monkeypatch.setattr(emote_legs, '_joints', lambda *a: (_ for _ in ()).throw(RuntimeError('boom')))
+    assert emote_legs.check(path) is None
+    assert 'boom' in capsys.readouterr().err
+
+
+def test_an_oversized_or_odd_file_is_not_read(tmp_path, monkeypatch):
+    import os
+    path = gf.emote(tmp_path / 'e.glb', [REST, crossed()])
+    monkeypatch.setattr(emote_legs, 'MAX_BYTES', 100)
+    assert emote_legs.check(path) is None
+    monkeypatch.undo()
+    os.mkfifo(tmp_path / 'fifo.glb')
+    assert emote_legs.check(tmp_path / 'fifo.glb') is None  # returns at once instead of blocking on the pipe
+    os.symlink(path, tmp_path / 'link.glb')
+    assert emote_legs.check(tmp_path / 'link.glb') is None

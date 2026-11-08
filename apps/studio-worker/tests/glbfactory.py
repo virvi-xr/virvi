@@ -153,6 +153,8 @@ def emote(path, keys, times=None, name='Test', prop=False, drop=(), interpolatio
         t = add(times, 'SCALAR')
         samplers, channels = [], []
         for node, prop_path, values in tracks:
+            if interpolation == 'CUBICSPLINE':  # in-tangent, value, out-tangent per key; flat tangents
+                values = [row for v in values for row in (np.zeros(len(v)), v, np.zeros(len(v)))]
             samplers.append({'input': t, 'output': add(values, 'VEC4' if prop_path == 'rotation' else 'VEC3'),
                              'interpolation': interpolation})
             channels.append({'sampler': len(samplers) - 1, 'target': {'node': idx[node], 'path': prop_path}})
@@ -170,10 +172,24 @@ def emote(path, keys, times=None, name='Test', prop=False, drop=(), interpolatio
     gltf = {'asset': {'version': '2.0'}, 'scene': 0, 'scenes': [{'nodes': roots}], 'nodes': gnodes,
             'animations': animations, 'accessors': accessors, 'bufferViews': views,
             'buffers': [{'byteLength': len(blob)}]}
-    js = json.dumps(gltf).encode()
-    js += b' ' * (-len(js) % 4)
+    return write_glb(path, gltf, blob)
+
+
+def read_glb(path):
+    """(glTF JSON, BIN bytes) of a GLB, for tests that edit one."""
+    b = open(path, 'rb').read()
+    n = struct.unpack('<I', b[12:16])[0]
+    bn = struct.unpack('<I', b[20 + n:24 + n])[0]
+    return json.loads(b[20:20 + n]), bytearray(b[28 + n:28 + n + bn])
+
+
+def write_glb(path, gltf, blob):
+    blob = bytearray(blob)
     while len(blob) % 4:
         blob.append(0)
+    gltf['buffers'] = [{'byteLength': len(blob)}]
+    js = json.dumps(gltf).encode()
+    js += b' ' * (-len(js) % 4)
     out = struct.pack('<III', 0x46546C67, 2, 28 + len(js) + len(blob)) + struct.pack('<II', len(js), 0x4E4F534A) + js + \
         struct.pack('<II', len(blob), 0x004E4942) + bytes(blob)
     with open(path, 'wb') as fh:

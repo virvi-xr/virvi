@@ -15,10 +15,15 @@ other at the knee and 2.4 cm at the ankle, which is passing through, never resti
 squats, kneeling and sitting keep the lines 17 cm or more apart. Distances are in the official rig's cm, scaled by
 the GLB's own thigh length, so a rig exported in metres reads the same.
 
-No verdict (None) when the file isn't a GLB this can read, has no animation, or lacks one of the leg bones.
+No verdict (None) when the file isn't a regular GLB file this can read (or is over MAX_BYTES), has no animation or no
+single avatar clip, lacks one of the leg bones, or nests them in a parent cycle or more than MAX_DEPTH deep. Any error
+inside the check is no verdict too, logged to stderr: the check never fails a prompt.
 """
 import json
+import os
+import stat
 import struct
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,7 +33,8 @@ THIGH_CM = 44.89  # the official avatar's thigh, hip joint to knee
 THRESHOLD_CM = {'thighs': 6.0, 'shins': 5.0}
 EVEN_SAMPLES = 30
 MAX_SAMPLES = 240
-MAX_BYTES = 64 * 1024 * 1024
+MAX_BYTES = 64 * 1024 * 1024  # an emote GLB is at most a few MB
+MAX_DEPTH = 64  # nodes from the scene root down to a foot; deeper (or a parent cycle) is no verdict
 SIDES = ('Left', 'Right')
 CHAIN = ['Avatar_Hips'] + [f'Avatar_{s}{b}' for s in SIDES for b in ('UpLeg', 'Leg', 'Foot')]
 PAIRS = {'thighs': ('UpLeg', 'Leg'), 'shins': ('Leg', 'Foot')}
@@ -90,11 +96,19 @@ class _Unreadable(Exception):
 
 
 def check(path: Path) -> LegCheck | None:
+    """The check on a file: a regular file only (never through a symlink, never blocking on a pipe), at most MAX_BYTES."""
     try:
-        data = Path(path).read_bytes() if Path(path).stat().st_size <= MAX_BYTES else b''
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return None
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as f:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
+                return None
+            data = f.read(MAX_BYTES + 1)
     except OSError:
         return None
-    return check_bytes(data)
+    return check_bytes(data) if len(data) <= MAX_BYTES else None
 
 
 def check_bytes(data: bytes) -> LegCheck | None:
@@ -102,6 +116,9 @@ def check_bytes(data: bytes) -> LegCheck | None:
         return _check(*_parse(data))
     except (_Unreadable, KeyError, IndexError, TypeError, ValueError, struct.error, json.JSONDecodeError,
             UnicodeDecodeError, AttributeError):
+        return None
+    except Exception as e:  # whatever an agent's file does to the check, it is no verdict, never a failed prompt
+        print(f'[worker] emote leg check skipped: {type(e).__name__}: {e}', file=sys.stderr)
         return None
 
 
@@ -138,7 +155,7 @@ def _accessor(gltf, blob, i) -> np.ndarray:
     raw = np.frombuffer(blob, np.uint8, stride * (count - 1) + item, start)
     rows = np.lib.stride_tricks.as_strided(raw, (count, item), (stride, 1))
     out = np.ascontiguousarray(rows).view(dtype).reshape(count, width).astype(float)
-    if norm and acc.get('normalized', acc['componentType'] != 5126):
+    if norm and acc.get('normalized'):
         out = np.maximum(out / norm, -1.0)
     return out
 
@@ -156,19 +173,24 @@ def _check(gltf, blob) -> LegCheck | None:
                           (f'Avatar_{s}Foot', f'Avatar_{s}Leg')):
             if parent.get(index[child]) != index[up]:
                 return None
-    needed = set()
+    paths = {}  # bone -> its node indices from the scene root down, without recursion
     for b in CHAIN:
-        i = index[b]
-        while i is not None and i not in needed:
-            needed.add(i)
+        path, i = [], index[b]
+        while i is not None:
+            if i in path or len(path) >= MAX_DEPTH:
+                return None
+            path.append(i)
             i = parent.get(i)
+        paths[b] = path[::-1]
+    needed = {i for p in paths.values() for i in p}
     clips = gltf.get('animations') or []
-    if not clips:
-        return None
-
-    def relevant(a):
-        return sum(1 for ch in a.get('channels') or [] if ch.get('target', {}).get('node') in needed)
-    clip = max(clips, key=lambda a: (relevant(a), str(a.get('name', '')).endswith('_Avatar')))
+    avatar = [a for a in clips if str(a.get('name', '')).endswith('_Avatar')]
+    if len(avatar) == 1:
+        clip = avatar[0]  # <Name>_Avatar, beside a <Name>_Prop or a stale clip the agent left
+    elif len(clips) == 1 and not avatar:
+        clip = clips[0]
+    else:
+        return None  # no clip, or no telling which one is the avatar's
     tracks, all_times, key_times = {}, [], []
     for ch in clip.get('channels') or []:
         target = ch.get('target') or {}
@@ -195,14 +217,14 @@ def _check(gltf, blob) -> LegCheck | None:
         keys = [keys[int(i)] for i in np.linspace(0, len(keys) - 1, MAX_SAMPLES - EVEN_SAMPLES)]
     times = sorted({round(float(t), 4) for t in np.linspace(t0, t1, EVEN_SAMPLES)} | set(keys))
 
-    rest = _joints(nodes, index, parent, {})
+    rest = _joints(nodes, paths, {})
     unit = np.mean([np.linalg.norm(rest[f'Avatar_{s}Leg'] - rest[f'Avatar_{s}UpLeg']) for s in SIDES]) / THIGH_CM
     if not np.isfinite(unit) or unit <= 0:
         return None
     result = LegCheck(clip=str(clip.get('name', '')), samples=len(times), _times=times)
     for t in times:
         pose = {k: _sample(tr, t) for k, tr in tracks.items()}
-        j = _joints(nodes, index, parent, pose)
+        j = _joints(nodes, paths, pose)
         for pair, (a, b) in PAIRS.items():
             d = _segments(j[f'Avatar_Left{a}'], j[f'Avatar_Left{b}'], j[f'Avatar_Right{a}'], j[f'Avatar_Right{b}']) / unit
             if d < THRESHOLD_CM[pair]:
@@ -210,27 +232,31 @@ def _check(gltf, blob) -> LegCheck | None:
     return result
 
 
-def _joints(nodes, index, parent, pose) -> dict:
-    """World positions of the chain's joints (each bone node's origin)."""
+def _joints(nodes, paths, pose) -> dict:
+    """World positions of the chain's joints (each bone node's origin), walking each root-to-bone path."""
     world = {}
+    out = {}
+    for b, path in paths.items():
+        m = np.eye(4)
+        for i in path:
+            if i not in world:
+                world[i] = m @ _local(nodes[i], i, pose)
+            m = world[i]
+        out[b] = m[:3, 3]
+    return out
 
-    def matrix(i):
-        if i in world:
-            return world[i]
-        nd = nodes[i]
-        animated = any((i, p) in pose for p in ('translation', 'rotation', 'scale'))
-        if 'matrix' in nd and not animated:
-            local = np.array(nd['matrix'], float).reshape(4, 4).T
-        else:
-            t = pose.get((i, 'translation'), nd.get('translation', [0, 0, 0]))
-            r = pose.get((i, 'rotation'), nd.get('rotation', [0, 0, 0, 1]))
-            s = pose.get((i, 'scale'), nd.get('scale', [1, 1, 1]))
-            local = np.eye(4)
-            local[:3, :3] = _rot(r) * np.asarray(s, float)
-            local[:3, 3] = t
-        world[i] = local if parent.get(i) is None else matrix(parent[i]) @ local
-        return world[i]
-    return {b: matrix(index[b])[:3, 3] for b in CHAIN}
+
+def _local(nd, i, pose) -> np.ndarray:
+    animated = any((i, p) in pose for p in ('translation', 'rotation', 'scale'))
+    if 'matrix' in nd and not animated:
+        return np.array(nd['matrix'], float).reshape(4, 4).T
+    t = pose.get((i, 'translation'), nd.get('translation', [0, 0, 0]))
+    r = pose.get((i, 'rotation'), nd.get('rotation', [0, 0, 0, 1]))
+    s = pose.get((i, 'scale'), nd.get('scale', [1, 1, 1]))
+    local = np.eye(4)
+    local[:3, :3] = _rot(r) * np.asarray(s, float)
+    local[:3, 3] = t
+    return local
 
 
 def _rot(q) -> np.ndarray:
