@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ASSET_LIBRARY, MEDIA_LIBRARY, MEDIA_UPLOAD_RULES, isModelFile, splitModelFiles, uploadErrorMessage } from './libraries'
+import { ASSET_LIBRARY, MEDIA_LIBRARY, MEDIA_UPLOAD_RULES, asPickerModel, isModelFile, splitModelFiles, uploadErrorMessage } from './libraries'
 
 describe('the two libraries (LIV-132)', () => {
   it('says what each library is for', () => {
@@ -36,8 +36,8 @@ describe('isModelFile', () => {
 })
 
 describe('uploadErrorMessage', () => {
-  it('points a refused model to the 3D Asset Library', () => {
-    expect(uploadErrorMessage({ message: 'use_asset_library' })).toMatch(/3D Asset Library/)
+  it('points a refused model to 3D Models', () => {
+    expect(uploadErrorMessage({ message: 'use_asset_library' })).toMatch(/3D Models page/)
   })
   it('keeps the old messages', () => {
     expect(uploadErrorMessage({ message: 'unsupported_type' })).toBe(MEDIA_UPLOAD_RULES)
@@ -45,5 +45,15 @@ describe('uploadErrorMessage', () => {
     expect(uploadErrorMessage({ message: 'HTTP 413' })).toBe(MEDIA_UPLOAD_RULES)
     expect(uploadErrorMessage({ message: 'boom' })).toBe('boom')
     expect(uploadErrorMessage({})).toBe('Upload failed')
+  })
+
+  it('names the libraries Images & Video and 3D Models (LIV-132)', () => {
+    expect(MEDIA_LIBRARY.name).toBe('Images & Video')
+    expect(ASSET_LIBRARY.name).toBe('3D Models')
+    expect(ASSET_LIBRARY.uploadHelp).toMatch(/My Models/)
+  })
+
+  it('lists a 3D Models item in the model picker as a GLB at its URL', () => {
+    expect(asPickerModel({ id: 'a1', name: 'Chair', cdnUrl: 'https://cdn/x.glb' })).toEqual({ id: 'a1', filename: 'Chair', publicUrl: 'https://cdn/x.glb', contentType: 'model/gltf-binary' })
   })
 })

@@ -23,7 +23,7 @@ export function LockedSection({ tab, label, detail }: { tab: string; label: stri
   )
 }
 
-/** A locked button in place of an account-only one (Upload, Media Library): a lock, its own text, the sheet on click. */
+/** A locked button in place of an account-only one (Upload, Images & Video): a lock, its own text, the sheet on click. */
 export function LockedButton({ tab, children, className }: { tab: keyof typeof TRIAL_LOCK_LABELS; children: React.ReactNode; className: string }) {
   return (
     <button type="button" onClick={() => askSceneSignUp(tab, TRIAL_LOCK_LABELS[tab])} className={`${className} inline-flex items-center gap-1.5`}>

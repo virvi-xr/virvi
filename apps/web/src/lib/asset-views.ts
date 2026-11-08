@@ -1,6 +1,6 @@
-/** The 3D Asset Library's two views: All Assets (public only) and My Assets (yours, public and private). */
+/** 3D Models' two views: All Models (public only) and My Models (yours, public and private). */
 export type AssetView = 'all' | 'mine'
-/** Within My Assets: everything of yours, only Design Studio pieces, or only your uploads. */
+/** Within My Models: everything of yours, only Design Studio pieces, or only your uploads. */
 export type MineKind = 'all' | 'studio' | 'uploads'
 
 const KINDS: MineKind[] = ['all', 'studio', 'uploads']
@@ -17,7 +17,7 @@ export function assetViewHref(view: AssetView, kind: MineKind): string {
   return kind === 'all' ? '/assets?view=mine' : `/assets?view=mine&kind=${kind}`
 }
 
-/** The list request's filter for a view: All Assets never includes private assets, even your own. */
+/** The list request's filter for a view: All Models never includes private assets, even your own. */
 export function assetListScope(view: AssetView, kind: MineKind): { scope: 'public' } | { mine: MineKind } {
   return view === 'all' ? { scope: 'public' } : { mine: kind }
 }

@@ -613,7 +613,7 @@ export function pieceTabStatus(piece: StudioPiece, detail: StudioDetail): 'ready
 const UNLOCKS: Record<StudioKind, string> = {
   wearable: 'Finalize to get the GLBs, thumbnail, Builder settings, listing text, curation report, renders and a promo clip.',
   emote: 'Finalize to get the GLB, thumbnail, emote report, renders and a promo clip.',
-  scene: 'Finalize to add each piece to your 3D Asset Library, ready to place in a scene, and get its GLB, thumbnail, renders, seats and check report.',
+  scene: 'Finalize to add each piece to your 3D Models, ready to place in a scene, and get its GLB, thumbnail, renders, seats and check report.',
 }
 
 /** The strip under the preview: what finalizing unlocks, its price, and the pieces the checker blocks. */

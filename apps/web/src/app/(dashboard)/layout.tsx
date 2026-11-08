@@ -32,8 +32,8 @@ const baseNavSections: NavSection[] = [
   {
     label: 'Tools',
     items: [
-      { href: '/media', label: 'Media', icon: MediaIcon, description: `${MEDIA_LIBRARY.name}: ${MEDIA_LIBRARY.purpose.toLowerCase()}` },
-      { href: '/assets', label: 'Assets', icon: LayersIcon, description: `${ASSET_LIBRARY.name}: ${ASSET_LIBRARY.purpose}` },
+      { href: '/media', label: MEDIA_LIBRARY.name, icon: MediaIcon, description: MEDIA_LIBRARY.subtitle },
+      { href: '/assets', label: ASSET_LIBRARY.name, icon: LayersIcon, description: ASSET_LIBRARY.subtitle },
       { href: '/streaming', label: 'Streaming', icon: BroadcastIcon },
       { href: '/deploy', label: 'Deploy', icon: CubeIcon },
       { href: '/analytics', label: 'Analytics', icon: ChartIcon },

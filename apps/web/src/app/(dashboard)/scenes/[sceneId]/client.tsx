@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage, isGlbAsset } from '@/lib/api'
-import { ASSET_LIBRARY } from '@/lib/libraries'
+import { ASSET_LIBRARY, MEDIA_LIBRARY, asPickerModel } from '@/lib/libraries'
 import { useAuth } from '@/lib/auth'
 import { AD_SHAPES, type AdFormats, type ClickEvent } from '@virvixr/shared'
 import { shapeLabel, offImageLabel, adModeHint, isAdsMode, adSpaceRefreshKey } from '@/lib/ads'
@@ -331,7 +331,7 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
   const props = element.properties || {}
   const playlist: string[] = props.playlist || []
   const trial = useTrial()
-  // The playlist stores URLs only: names are looked up, so a rename in the Media Library shows here (not for a trial)
+  // The playlist stores URLs only: names are looked up, so a rename in Images & Video shows here (not for a trial)
   const names = useMediaNames(api, sceneId, sceneTabLocked('media-names', trial) ? [] : playlist)
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
@@ -470,11 +470,11 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
             </label>
           )}
           {sceneTabLocked('media-library', trial) ? (
-            <LockedButton tab="media-library" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">Media Library</LockedButton>
+            <LockedButton tab="media-library" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">{MEDIA_LIBRARY.name}</LockedButton>
           ) : (
             <button onClick={() => setShowPicker(true)}
               className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">
-              Media Library
+              {MEDIA_LIBRARY.name}
             </button>
           )}
         </div>
@@ -522,10 +522,10 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
 }
 
 // ---------------------------------------------------------------------------
-// Media Library Picker
+// Library Picker: Images & Video, or your 3D Models when picking a model
 // ---------------------------------------------------------------------------
 
-/** A trial has no Media library (GET /api/media is account-only): opening a picker opens the sign-up sheet instead and
+/** A trial has no Images & Video (GET /api/media is account-only): opening a picker opens the sign-up sheet instead and
  *  closes, so pickers reached from other parts (a click action's sound) never fetch it either. */
 function MediaPicker(props: Parameters<typeof LibraryPicker>[0]) {
   const trial = useTrial()
@@ -548,7 +548,7 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
-  // Picking a model lists the GLBs already in Media; new models upload to the 3D Asset Library instead (LIV-132)
+  // Picking a model lists your 3D Models (LIV-132); everything else lists Images & Video
   const modelsOnly = !!accept && accept.split(',').every(t => ['.glb', 'model/gltf-binary'].includes(t.trim().toLowerCase()))
 
   // `accept` is a comma-separated list like an <input accept>: "image/*", "model/gltf-binary", ".glb".
@@ -564,8 +564,11 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
   }
 
   useEffect(() => {
-    api.getMedia().then(data => {
-      setAssets(data.assets.filter(matchesAccept))
+    const load = modelsOnly
+      ? api.getAssets({ mine: 'all', limit: '100' }).then(data => data.assets.map(asPickerModel))
+      : api.getMedia().then(data => data.assets.filter(matchesAccept))
+    load.then(list => {
+      setAssets(list)
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [])
@@ -591,7 +594,7 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div className="w-full max-w-2xl max-h-[80vh] rounded-lg border border-gray-700 bg-gray-900 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-          <h3 className="font-semibold">{modelsOnly ? 'GLBs in your Media Library' : 'Media Library'}</h3>
+          <h3 className="font-semibold">{modelsOnly ? `Your ${ASSET_LIBRARY.name}` : MEDIA_LIBRARY.name}</h3>
           <div className="flex items-center gap-2">
             {!modelsOnly && <label className={`rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
               {uploading ? 'Uploading...' : 'Upload New'}
@@ -605,7 +608,7 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
           {loading ? (
             <Skeleton rows={2} className="h-12" />
           ) : assets.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-8">{modelsOnly ? 'No GLBs in your Media Library. Use Upload GLB: new models go in the 3D Asset Library.' : 'No media yet. Upload one above.'}</p>
+            <p className="text-gray-500 text-sm text-center py-8">{modelsOnly ? 'No models in your 3D Models yet. Use Upload GLB to add one.' : 'No images or video yet. Upload one above.'}</p>
           ) : (
             <div className="grid grid-cols-3 gap-3">
               {assets.map((asset: any) => (
@@ -701,10 +704,10 @@ function LiveStreamField({ value, onChange, api, sceneId }: {
 }
 
 // ---------------------------------------------------------------------------
-// Image field: upload, pick from the Media Library, or paste a URL
+// Image field: upload, pick from Images & Video, or paste a URL
 // ---------------------------------------------------------------------------
 
-/** An image an element shows (texture, ad fallback, video off image), named as it is in the Media Library. */
+/** An image an element shows (texture, ad fallback, video off image), named as it is in Images & Video. */
 function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
   label: string
   value: string | undefined
@@ -766,11 +769,11 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
           </label>
         )}
         {sceneTabLocked('media-library', trial) ? (
-          <LockedButton tab="media-library" className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">Media Library</LockedButton>
+          <LockedButton tab="media-library" className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">{MEDIA_LIBRARY.name}</LockedButton>
         ) : (
           <button type="button" onClick={() => setShowPicker(true)}
             className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">
-            Media Library
+            {MEDIA_LIBRARY.name}
           </button>
         )}
         <input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)}
@@ -928,7 +931,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
     setUploading(true)
     setUploadError('')
     try {
-      // New models go in the 3D Asset Library, private to you (LIV-132)
+      // New models go in 3D Models, private to you (LIV-132)
       const base64 = await fileToBase64(file)
       const { asset } = await api.uploadAsset({ name: file.name.replace(/\.glb$/i, '') || file.name, fileData: base64, contentType: 'model/gltf-binary', filename: file.name })
       setModel(asset.cdnUrl)
@@ -960,16 +963,16 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
             </label>
           )}
           {sceneTabLocked('media-library', trial) ? (
-            <LockedButton tab="media-library" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">Choose from Media</LockedButton>
+            <LockedButton tab="media-library" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">Choose from 3D Models</LockedButton>
           ) : (
             <button onClick={() => setShowPicker(true)}
               className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">
-              Choose from Media
+              Choose from 3D Models
             </button>
           )}
         </div>
         {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
-        <p className="text-xs text-gray-500">Upload GLB adds the model to your 3D Asset Library. {ASSET_LIBRARY.uploadHelp}</p>
+        <p className="text-xs text-gray-500">Upload GLB adds the model to your 3D Models. {ASSET_LIBRARY.uploadHelp}</p>
         <p className="text-xs text-gray-500">GLBs need <code className="text-gray-400">npx @virvixr/dcl sync</code> + a redeploy before they appear in-world.</p>
       </div>
 

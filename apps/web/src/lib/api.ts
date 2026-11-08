@@ -229,7 +229,7 @@ export interface AdminArReport {
   createdAt: string
 }
 
-// The Media Library's rules and messages live with the libraries' wording
+// Images & Video's rules and messages live with the libraries' wording
 export { MEDIA_UPLOAD_RULES, uploadErrorMessage } from './libraries'
 
 /** True if a media asset is a GLB model (old uploads may be stored as octet-stream). */
@@ -465,7 +465,7 @@ function useRealApi() {
     resetBranding: () => apiFetch<void>('/api/instance/branding', { method: 'DELETE' }),
     getSceneStreams: (sceneId: string) =>
       apiFetch<{ streams: import('./streams').SceneStream[] }>(`/api/scenes/${sceneId}/streams`),
-    /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
+    /** Current Images & Video names for media URLs placed in a scene (a playlist stores URLs only). */
     getMediaNames: (sceneId: string, urls: string[]) =>
       apiFetch<MediaNames>(`/api/scenes/${sceneId}/media-names`, { method: 'POST', body: JSON.stringify({ urls }) }),
 
@@ -741,7 +741,7 @@ function useRealApi() {
     getStreamingSessions: (serverId: string) =>
       apiFetch<{ sessions: any[] }>(`/api/streaming/${serverId}/sessions`),
 
-    // 3D Asset Library
+    // 3D Models (the asset library)
     getAssets: (params?: { q?: string; category?: string; tag?: string; style?: string; venue?: string; pack?: string; mine?: string; scope?: string; maxTriangles?: string; maxFileSize?: string; limit?: string; offset?: string }) => {
       const query = new URLSearchParams()
       if (params?.q) query.set('q', params.q)

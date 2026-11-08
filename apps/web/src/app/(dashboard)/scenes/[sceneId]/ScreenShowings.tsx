@@ -291,14 +291,14 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
                   <option value="ad">Ad / trailer</option>
                 </select>
                 <input className={`${INPUT} w-24`} value={it.length} onChange={(e) => setItem(i, { length: e.target.value })}
-                  placeholder="auto" aria-label="Length (h:mm:ss)" title="Leave blank for Media Library videos: their length was measured on upload. Enter it for videos from elsewhere." />
+                  placeholder="auto" aria-label="Length (h:mm:ss)" title="Leave blank for videos from Images & Video: their length was measured on upload. Enter it for videos from elsewhere." />
                 <button type="button" className="text-xs text-gray-400 hover:text-white disabled:opacity-30" disabled={i === 0} onClick={() => moveItem(i, -1)} aria-label="Move up">↑</button>
                 <button type="button" className="text-xs text-gray-400 hover:text-white disabled:opacity-30" disabled={i === form.items.length - 1} onClick={() => moveItem(i, 1)} aria-label="Move down">↓</button>
                 <button type="button" className="text-xs text-red-400 hover:text-red-300" onClick={() => set('items', form.items.filter((_, j) => j !== i))}>Remove</button>
               </div>
             ))}
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={BTN} onClick={() => setPicking(true)}>Add from Media Library</button>
+              <button type="button" className={BTN} onClick={() => setPicking(true)}>Add from Images &amp; Video</button>
               <input className={`${INPUT} flex-1`} value={urlInput} onChange={(e) => setUrlInput(e.target.value)} placeholder="Or paste a video URL"
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (urlInput.trim()) { addItem(urlInput.trim()); setUrlInput('') } } }} />
             </div>
@@ -336,7 +336,7 @@ function Preview({ form, name }: { form: ShowingForm; name: (url: string) => str
   const [minutes, setMinutes] = useState('14')
   const items = form.items.map((i) => ({ url: i.url, kind: i.kind, duration: parseLength(i.length) ?? 0 }))
   const known = items.length > 0 && items.every((i) => i.duration > 0)
-  if (!known) return items.length ? <p className="text-xs text-gray-500">Lengths of Media Library videos are filled in when you save.</p> : null
+  if (!known) return items.length ? <p className="text-xs text-gray-500">Lengths of videos from Images &amp; Video are filled in when you save.</p> : null
   const total = formatDuration(programmeLength(items))
   const at = Math.max(0, Number(minutes) || 0) * 60
   return (

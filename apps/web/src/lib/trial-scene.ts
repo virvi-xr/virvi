@@ -15,9 +15,9 @@ export function sceneTabLocked(tab: string, trial: boolean): boolean {
   return trial && !TRIAL_SCENE_TABS.includes(tab)
 }
 
-/** What a locked upload or Media library button names in the sheet ("Create a free account to use <label>."). Both are
+/** What a locked upload or Images & Video button names in the sheet ("Create a free account to use <label>."). Both are
  *  account-only (`/api/media`, `/api/media/upload`, `POST /api/assets`) and, like every key not in TRIAL_SCENE_TABS, locked. */
-export const TRIAL_LOCK_LABELS = { uploads: 'uploads', 'media-library': 'your Media library' } as const
+export const TRIAL_LOCK_LABELS = { uploads: 'uploads', 'media-library': 'Images & Video' } as const
 
 /** The sign-up sheet a locked tab or section opens. */
 export function sceneLockRequest(tab: string, label: string): SignUpRequest {

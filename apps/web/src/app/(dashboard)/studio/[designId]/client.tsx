@@ -182,7 +182,7 @@ export default function StudioDesignPage() {
         <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}
           step={step} onStep={setStep} emoteTarget={emoteTarget} worn={worn}
           finalizeStep={detail.design.kind === 'scene'
-            ? <p className="p-4 text-sm text-gray-300">Each piece you finalize goes into your 3D Asset Library, private to you, ready to place in a scene.</p>
+            ? <p className="p-4 text-sm text-gray-300">Each piece you finalize goes into your 3D Models, private to you, ready to place in a scene.</p>
             : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={openEmote} /></div>}>
           <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'}
             detail={detail} onOpenEmote={openEmote} selected={selected} onSelected={setSelected} worn={worn} />

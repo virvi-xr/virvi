@@ -66,7 +66,7 @@ describe('scenes list', () => {
   })
 })
 
-describe('uploads and the Media library', () => {
+describe('uploads and Images & Video', () => {
   it('are locked on sight for a trial, open for an account', () => {
     for (const t of ['uploads', 'media-library']) {
       expect(sceneTabLocked(t, true)).toBe(true)
@@ -75,7 +75,7 @@ describe('uploads and the Media library', () => {
   })
   it('name what the sheet unlocks', () => {
     expect(TRIAL_LOCK_LABELS.uploads).toBe('uploads')
-    expect(TRIAL_LOCK_LABELS['media-library']).toBe('your Media library')
+    expect(TRIAL_LOCK_LABELS['media-library']).toBe('Images & Video')
     expect(sceneLockRequest('uploads', TRIAL_LOCK_LABELS.uploads)).toEqual({ action: 'nav:scene/uploads', ctx: { label: 'uploads' } })
   })
 })

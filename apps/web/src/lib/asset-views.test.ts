@@ -4,7 +4,7 @@ import { readAssetView, assetViewHref, assetListScope, visibilityLabel } from '.
 const sp = (q: string) => new URLSearchParams(q)
 
 describe('asset library views', () => {
-  it('reads the view from the link, defaulting to All Assets', () => {
+  it('reads the view from the link, defaulting to All Models', () => {
     expect(readAssetView(sp(''))).toEqual({ view: 'all', kind: 'all' })
     expect(readAssetView(sp('view=mine'))).toEqual({ view: 'mine', kind: 'all' })
     expect(readAssetView(sp('view=mine&kind=studio'))).toEqual({ view: 'mine', kind: 'studio' })
@@ -17,7 +17,7 @@ describe('asset library views', () => {
     expect(assetViewHref('mine', 'uploads')).toBe('/assets?view=mine&kind=uploads')
     expect(assetViewHref('all', 'studio')).toBe('/assets')
   })
-  it('All Assets asks for public assets only; My Assets for the caller\'s own', () => {
+  it('All Models asks for public models only; My Models for the caller\'s own', () => {
     expect(assetListScope('all', 'all')).toEqual({ scope: 'public' })
     expect(assetListScope('mine', 'all')).toEqual({ mine: 'all' })
     expect(assetListScope('mine', 'studio')).toEqual({ mine: 'studio' })

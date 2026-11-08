@@ -46,7 +46,7 @@ export default function MediaPage() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
-    // 3D models go in the 3D Asset Library: skip them, upload the rest
+    // 3D models go in 3D Models: skip them, upload the rest
     const { media, models } = splitModelFiles(Array.from(files))
     setError(models.length ? `${models.map(f => f.name).join(', ')}: ${MODEL_NOT_MEDIA}` : null)
     if (media.length === 0) {
@@ -93,10 +93,10 @@ export default function MediaPage() {
         onChange={handleUpload}
       />
       <PageHeader
-        crumbs={['Tools', 'Media']}
-        title="Media Library"
+        crumbs={['Tools', MEDIA_LIBRARY.name]}
+        title={MEDIA_LIBRARY.name}
         count={loading ? undefined : countLabel(assets.length)}
-        subtitle={<>{MEDIA_LIBRARY.purpose}. 3D models go in the <Link href="/assets" className="text-blue-300 underline">3D Asset Library</Link>.</>}
+        subtitle={<>{MEDIA_LIBRARY.purpose}. 3D models go in <Link href="/assets" className="text-blue-300 underline">3D Models</Link>.</>}
         actions={
           <div className="flex flex-col items-end gap-2">
             <PrimaryButton onClick={upload} disabled={uploading}><PlusIcon size={16} /> {uploading ? 'Uploading...' : 'Upload File'}</PrimaryButton>
@@ -106,7 +106,7 @@ export default function MediaPage() {
         }
       />
 
-      {error && <p className="mb-4 text-sm text-red-400" role="alert">{error}{error.includes(MODEL_NOT_MEDIA) && <> <Link href="/assets" className="underline">Open the 3D Asset Library</Link></>}</p>}
+      {error && <p className="mb-4 text-sm text-red-400" role="alert">{error}{error.includes(MODEL_NOT_MEDIA) && <> <Link href="/assets" className="underline">Open 3D Models</Link></>}</p>}
 
       {!loading && assets.length > 0 && (
         <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -130,8 +130,8 @@ export default function MediaPage() {
           {[0, 1, 2].map(i => <div key={i} className="h-80 animate-pulse rounded-lg border border-gray-800 bg-gray-900" />)}
         </div>
       ) : assets.length === 0 ? (
-        <EmptyState icon={<MediaIcon size={40} />} title="No media yet"
-          body="Images and video you upload here can be placed in any of your scenes. 3D models go in the 3D Asset Library."
+        <EmptyState icon={<MediaIcon size={40} />} title="No images or video yet"
+          body="Images and video you upload here can be placed in any of your scenes. 3D models go in 3D Models."
           action={<PrimaryButton onClick={upload} disabled={uploading}><PlusIcon size={16} /> Upload File</PrimaryButton>} />
       ) : shown.length === 0 ? (
         <p className="py-12 text-center text-gray-500">No files match.</p>
