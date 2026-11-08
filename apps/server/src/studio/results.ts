@@ -272,10 +272,12 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
   if (!job) return 'already'
   const fix = (job.payload as { fixClipping?: FixClipping }).fixClipping
   if (job.type === 'prompt' && fix && result.outcome === 'ok') {
-    // A clipping fix renders the emote it fixed again straight away, for the new pieces
+    // A clipping fix renders the emote it fixed again straight away, for the new pieces (Finalize's selection, if it
+    // was that view)
     const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, job.designId))
     if (d) {
-      await requestSetRender(d, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : fix.emote } as View, now)
+      await requestSetRender(d, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : fix.emote } as View, now,
+        { categories: fix.categories ?? null })
         .catch((err) => console.error('[studio] fix re-render failed:', err instanceof Error ? err.message : err))
     }
   }

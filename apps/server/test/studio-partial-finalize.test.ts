@@ -335,6 +335,16 @@ describe('finalizing some of the pieces', () => {
       expect((fix.payload as any).fixClipping).toEqual({ emote: 'dance', bodyShape: 'female', outfit: 'default', categories: ['feet', 'hat'] })
       const sel = (await app.inject({ method: 'GET', url: `${S}/designs/${d.id}/set?categories=hat,feet`, headers: as(u) })).json()
       expect(sel.checks).toEqual([{ emote: 'dance', bodyShape: 'female', state: 'clipping' }])
+      // the fix lands: that view is rendered again, for the same pieces
+      const [row] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id))
+      const token = await issueWorker(row, row.machineId ?? 'm-test')
+      await db.update(studioJobs).set({ status: 'taken', takenAt: new Date() }).where(eq(studioJobs.id, fix.id))
+      const done = await app.inject({ method: 'POST', url: `${S}/worker/jobs/${fix.id}/result`, headers: { authorization: `Bearer ${token}` }, payload: okResult(fix.id) as any })
+      expect(done.statusCode).toBe(204)
+      const again = (await setJobs(d.id)).filter((j) => j.status === 'queued')
+      expect(again.map((j) => (j.payload as any).render)).toEqual([
+        { set: true, bodyShape: 'female', outfit: 'default', emote: 'dance', categories: ['feet', 'hat'] },
+      ])
     })
 
     it('a selection of every piece is the whole set, as before', async () => {
