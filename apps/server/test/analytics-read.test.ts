@@ -192,6 +192,16 @@ describe('analytics read API', () => {
       }
     })
 
+    it('live positions carry y only on plans with the 3D heatmap', async () => {
+      config.allFeaturesUnlocked = false
+      const { owner, s } = await owned()
+      const sess = await insertSession(s.id, { lastSeenAt: new Date() })
+      await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: sess.id, seq: 1, occurredAt: new Date(), x: 1, y: 3.9, z: 2 })
+      expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json().positions).toEqual([{ x: 1, z: 2 }])
+      await db.insert(subscriptions).values({ userId: owner.id, tier: 'creator' })
+      expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json().positions).toEqual([{ x: 1, y: 3.9, z: 2 }])
+    })
+
     it("the plan is the linked scene owner's: creator and up get heights", async () => {
       config.allFeaturesUnlocked = false
       const { owner, s } = await owned()

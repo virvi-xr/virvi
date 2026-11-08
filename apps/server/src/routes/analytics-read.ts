@@ -250,7 +250,12 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
         ).sort((a, b) => Number(a.x) - Number(b.x) || Number(a.z) - Number(b.z))
       : []
     // y is as the platform reports it (Decentraland: about 0.9 m above the feet; see heatmap-height in @virvixr/shared).
-    return reply.send({ count: ids.length, positions: positions.map((p) => ({ x: Number(p.x), y: Number(p.y), z: Number(p.z) })) })
+    // Heights are part of the 3D heatmap, so only plans with it get y.
+    const withY = positions.length > 0 && (await heatmap3dFor(scene.tenureSceneId))
+    return reply.send({
+      count: ids.length,
+      positions: positions.map((p) => (withY ? { x: Number(p.x), y: Number(p.y), z: Number(p.z) } : { x: Number(p.x), z: Number(p.z) })),
+    })
   })
 
   app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string; level?: string } }>('/api/analytics/locations/:id/heatmap', { config: { scenePass: { sceneFrom: fromAnalyticsLocation } } }, async (request, reply) => {
