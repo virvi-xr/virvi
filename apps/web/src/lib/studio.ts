@@ -248,7 +248,7 @@ export function refusalMessage(
     case 'not_seen':
       return { text: 'Play that emote first, then report what you see.' }
     case 'open_design_limit':
-      return { text: 'Your plan has room for one open design. Archive or finalize the one you have, or upgrade.', action: 'settings' }
+      return { text: 'Your plan has room for one open design. A design with pieces left to finalize still counts. Archive it or finalize the rest, or upgrade.', action: 'settings' }
     case 'checks_failed':
       return {
         text: `${joinAnd((b.categories ?? []).map(categoryLabel)) || 'A piece'} failed the checker. Ask the agent to fix it: it doesn’t use a prompt.`,

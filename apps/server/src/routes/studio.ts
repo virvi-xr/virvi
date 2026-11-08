@@ -73,6 +73,7 @@ async function ownDesign(request: FastifyRequest): Promise<Design | null> {
   return d ?? null
 }
 
+const OPEN_LIMIT = 'Your plan has no room for another open design. Designs with pieces left to finalize count as open: finalize or archive one to make room.'
 const CATEGORY = /^[a-z_]{1,32}$/
 const BAD_CATEGORIES = 'categories must be piece categories'
 
@@ -152,7 +153,7 @@ export default async function studioRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'account_required', action: 'more_designs' })
       }
     } else if ((await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
-      return reply.status(403).send({ error: 'Your plan has no room for another open design', code: 'open_design_limit' })
+      return reply.status(403).send({ error: OPEN_LIMIT, code: 'open_design_limit' })
     }
     const [d] = await db.insert(studioDesigns).values({
       ownerId: request.user.id,
@@ -194,7 +195,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (b.archived !== undefined) {
       if (typeof b.archived !== 'boolean') return reply.status(400).send({ error: 'archived must be true or false' })
       if (!b.archived && d.archivedAt && !(await isTrialUser(request.user.id)) && (await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
-        return reply.status(403).send({ error: 'Your plan has no room for another open design', code: 'open_design_limit' })
+        return reply.status(403).send({ error: OPEN_LIMIT, code: 'open_design_limit' })
       }
       set.archivedAt = b.archived ? (d.archivedAt ?? new Date()) : null
     }

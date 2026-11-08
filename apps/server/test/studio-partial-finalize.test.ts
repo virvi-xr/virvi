@@ -215,6 +215,54 @@ describe('finalizing some of the pieces', () => {
     expect((await usage(u)).openDesigns).toBe(0)
   })
 
+  describe('which designs count as open (fix round 1, I1)', () => {
+    it('everything ticked with a blocked piece closes the design, as before', async () => {
+      const u = await createUser()
+      const d = await createDesign(u)
+      await addRevision(d, 'hat')
+      await addRevision(d, 'upper_body')
+      await addRevision(d, 'feet', { pass: false, failures: 1, warnings: 0 })
+      expect((await finalize(u, d.id)).statusCode).toBe(200)
+      await paid((await pendingPayment(d.id)).id)
+      expect((await entitlements(d.id)).map((e) => e.category).sort()).toEqual(['hat', 'upper_body'])
+      expect((await usage(u)).openDesigns).toBe(0)
+      // once the boots pass the checker they can be finalized: the design is open again until they are
+      await addRevision(d, 'feet')
+      expect((await usage(u)).openDesigns).toBe(1)
+    })
+
+    it('finalizing 1 of 3 finalizable pieces leaves the design open', async () => {
+      const u = await createUser()
+      const d = await createDesign(u)
+      for (const c of ['feet', 'hat', 'upper_body']) await addRevision(d, c)
+      await finalize(u, d.id, { categories: ['hat'] })
+      await paid((await pendingPayment(d.id)).id)
+      expect((await usage(u)).openDesigns).toBe(1)
+    })
+
+    it('a finalized design that gains a piece stays closed until the piece has a revision', async () => {
+      const u = await createUser()
+      const d = await createDesign(u)
+      await entitle(d, await addRevision(d, 'hat'))
+      expect((await usage(u)).openDesigns).toBe(0)
+      await db.insert(studioPieces).values({ designId: d.id, category: 'feet', name: 'Neon boots' })
+      expect((await usage(u)).openDesigns).toBe(0)
+      await addRevision(d, 'feet')
+      expect((await usage(u)).openDesigns).toBe(1)
+    })
+  })
+
+  it('the open-design limit says partly finalized designs count', async () => {
+    const u = await createUser()
+    const d = await collection(u)
+    await entitle(d, await latest(d.id, 'hat'))
+    const res = await app.inject({ method: 'POST', url: `${S}/designs`, headers: as(u), payload: { kind: 'wearable', agent: 'claude' } })
+    expect(res.json()).toEqual({
+      error: 'Your plan has no room for another open design. Designs with pieces left to finalize count as open: finalize or archive one to make room.',
+      code: 'open_design_limit',
+    })
+  })
+
   it('archiving a partly finalized design frees its slot', async () => {
     const u = await createUser()
     const d = await collection(u)

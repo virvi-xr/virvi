@@ -119,11 +119,14 @@ export async function publicDesigns(rows: Design[]) {
 }
 
 /**
- * Fully finalized: paid for (finalizedAt) with no piece left unfinalized. A partly finalized design is still open
- * (LIV-81: it counts toward the open-design limit until every piece is finalized).
+ * Closed: paid for (finalizedAt) with no piece left that could be finalized now. A piece counts once it is finalized
+ * at some revision; one the checker blocks, or with no revision yet, can't be paid for, so it doesn't hold the design
+ * open (everything ticked closes a design as it always did). A partly finalized design with payable pieces left is
+ * still open (LIV-81: it counts toward the open-design limit).
  */
 const fullyFinalized = sql`(studio_designs.finalized_at IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM studio_pieces p WHERE p.design_id = studio_designs.id AND p.latest_revision_id IS NOT NULL
+  SELECT 1 FROM studio_pieces p JOIN studio_revisions r ON r.id = p.latest_revision_id
+  WHERE p.design_id = studio_designs.id AND (r.checker->>'pass') IS DISTINCT FROM 'false'
     AND NOT EXISTS (SELECT 1 FROM studio_entitlements e WHERE e.design_id = p.design_id AND e.category = p.category)))`
 
 export async function openDesignCount(userId: string): Promise<number> {

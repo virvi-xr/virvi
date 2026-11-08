@@ -54,7 +54,7 @@ describe('refusalMessage', () => {
   })
   it('points the open-design limit at settings', () => {
     expect(r('open_design_limit', {}, 403)).toEqual({
-      text: 'Your plan has room for one open design. Archive or finalize the one you have, or upgrade.',
+      text: 'Your plan has room for one open design. A design with pieces left to finalize still counts. Archive it or finalize the rest, or upgrade.',
       action: 'settings',
     })
   })
