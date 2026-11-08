@@ -5,8 +5,9 @@ import type { ImportLocation, Plot, RoomSetOptions } from '@virvixr/shared'
 import type { Eip1193Provider } from '../auth'
 import type { AuthChain, SignSession } from '../dcl-sign'
 import { hyperfyErrorMessage } from '../hyperfy'
+import { connectedSceneFromError, worldInUseView } from '../world-disconnect'
 import type {
-  DclDeployment, DclDestination, DclDestinationMode, DclGrantRequests, DclRevokeRequests, DclSignedSubmission, WizardSceneBody,
+  ConnectedScene, DclDeployment, DclDestination, DclDestinationMode, DclGrantRequests, DclRevokeRequests, DclSignedSubmission, WizardSceneBody,
 } from '../api'
 
 type ApiError = Error & { status?: number; code?: number; body?: { error?: string; message?: string } }
@@ -48,6 +49,7 @@ const CODE_MESSAGES: Record<string, string> = {
   invalid_spawn: 'The arrival point has to be inside the plot.',
   scene_limit_reached: 'Your plan has no room for another scene. Upgrade in Settings to make more.',
   not_found: "That couldn't be found. Reload the page and try again.",
+  forbidden: 'You need full access to this scene to do that. Ask its owner.',
 }
 
 /** A plain sentence for any failure in the wizard; never a raw error code. */
@@ -180,9 +182,12 @@ export interface RunDeps {
   cancelled?: () => boolean
 }
 
-/** A failure the run stops on. `partial` marks grant_partial, which the page shows on its own. */
+/**
+ * A failure the run stops on. `partial` marks grant_partial, which the page shows on its own; `worldInUse` is the scene
+ * that holds the World (409 world_in_use), for the page's disconnect.
+ */
 export class RunError extends Error {
-  constructor(message: string, public readonly partial = false) {
+  constructor(message: string, public readonly partial = false, public readonly worldInUse: ConnectedScene | null = null) {
     super(message)
     this.name = 'RunError'
   }
@@ -203,6 +208,9 @@ export async function runWizard(plan: RunPlan, mem: RunMemory, deps: RunDeps, on
   const fail = (err: unknown): never => {
     if (err instanceof RunError) throw err
     if (errorCode(err) === 'grant_partial') throw new RunError(GRANT_PARTIAL_MESSAGE, true)
+    const held = connectedSceneFromError(err)
+    const view = held && plan.dcl ? worldInUseView(plan.dcl.world, held) : null
+    if (held && view) throw new RunError(view.text, false, held)
     throw new RunError(wizardErrorMessage(err))
   }
 

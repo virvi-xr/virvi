@@ -457,6 +457,14 @@ function DeployContent() {
       offerGrant: new Set([...w.offerGrant, dest.id]),
     })
 
+  // A World disconnected from the scene: its card goes (the deploy history stays below with the scene's)
+  const [worldNotice, setWorldNotice] = useState<string | null>(null)
+  useEffect(() => setWorldNotice(null), [selectedSceneId])
+  const disconnected = (dest: DclDestination, notice: string) => {
+    setWorlds((w) => w && { ...w, destinations: w.destinations.filter((d) => d.id !== dest.id) })
+    setWorldNotice(notice)
+  }
+
   const handleSceneChange = (sceneId: string) => {
     setSelectedSceneId(sceneId)
     const url = sceneId ? `/deploy?scene=${sceneId}` : '/deploy'
@@ -503,6 +511,7 @@ function DeployContent() {
             <h2 className="text-lg font-semibold">Decentraland Worlds</h2>
             <p className="text-sm text-gray-500">Virvi deploys from what&apos;s live in your World, so you never need the scene&apos;s files.</p>
           </div>
+          {worldNotice && <p className="rounded-lg border border-blue-900/60 bg-blue-950/40 px-4 py-3 text-sm text-blue-200" role="status">{worldNotice}</p>}
           {worldsError ? (
             <p className="rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300" role="alert">{worldsError}</p>
           ) : !worlds ? (
@@ -526,6 +535,7 @@ function DeployContent() {
                   virviDeploys={virviDeploys}
                   offerGrant={worlds.offerGrant.has(d.id)}
                   onChanged={refreshHistory}
+                  onDisconnected={disconnected}
                 />
               ))}
               {worlds.adoptable.map((world) => (

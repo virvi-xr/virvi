@@ -99,7 +99,18 @@ export interface DclWorld {
   hasScene: boolean
   footprint: { base: string; parcels: string[] } | null
   storage: { maxAllowedBytes: number; usedBytes: number } | null
+  /** The Virvi scene the World is connected to, as the caller may see it; null when none (absent on older responses). */
+  connectedScene?: ConnectedScene | null
 }
+
+/**
+ * Who holds a World in Virvi: named only for someone with access to that scene, and disconnectable (with the
+ * destination to remove) only with full access. Otherwise just "another Virvi account".
+ */
+export type ConnectedScene =
+  | { sceneId: string; name: string; canDisconnect: true; destinationId: string }
+  | { sceneId: string; name: string; canDisconnect: false }
+  | { name: null; canDisconnect: false }
 
 export type DclDestinationMode = 'virvi' | 'sign'
 
@@ -591,12 +602,18 @@ function useRealApi() {
     // Decentraland Worlds
     getDclNames: () => apiFetch<{ wallets: Array<{ address: string; names: DclWorld[] }> }>('/api/dcl/names'),
     getDclWorld: (world: string) => apiFetch<DclWorld & { owner: boolean }>(`/api/dcl/worlds/${encodeURIComponent(world)}`),
-    /** Pass `plot` (and `spawn`) to build a new scene there, or omit both to adopt the live scene. 409 `world_in_use` carries `sceneId`. */
+    /** Pass `plot` (and `spawn`) to build a new scene there, or omit both to adopt the live scene. 409 `world_in_use` carries `sceneId` and `connectedScene`. */
     createDclDestination: (data: { sceneId: string; world: string; mode: DclDestinationMode; plot?: Plot; spawn?: { x: number; z: number } }) =>
       apiFetch<{ destination: DclDestination; replaces?: { parcels: string[] } }>('/api/dcl/destinations', { method: 'POST', body: JSON.stringify(data) }),
     /** The scene's World destinations, and Worlds set up in-world for it (Creator Hub `@virvixr/dcl` scenes) it can adopt. */
     getSceneDclDestinations: (sceneId: string) =>
       apiFetch<{ destinations: DclDestination[]; adoptable: Array<{ world: string }> }>(`/api/scenes/${sceneId}/dcl/destinations`),
+    /**
+     * Disconnects the World from its scene: nothing changes in Decentraland. `grantKept`: Virvi still holds the owner's
+     * deploy permission there (`message` says how to remove it). 409 `deploy_in_progress`, 409 `not_a_world`, 403 without full access.
+     */
+    disconnectDclDestination: (id: string) =>
+      apiFetch<{ world: string; sceneId: string; grantKept: boolean; message?: string }>(`/api/dcl/destinations/${id}`, { method: 'DELETE' }),
     getDclDestination: (id: string) =>
       apiFetch<{
         destination: DclDestination; kind: 'world' | 'parcels'; parcels: string[]

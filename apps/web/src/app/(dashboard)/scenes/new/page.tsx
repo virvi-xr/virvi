@@ -124,7 +124,8 @@ export default function NewScenePage() {
   const at = STEPS.findIndex((s) => s.id === state.step)
   const { dcl, hyperfy, ar } = state.destinations
   // An account carrying a trial's "Decentraland World" picks the World here (or skips Decentraland)
-  const whereReady = (trial || !state.dclLater) && (!dcl?.hasScene || replaceOk) && !contractBlocked && (!hyperfy || !!hyperfy.name.trim()) && (!ar || !!ar.name.trim())
+  // A World connected to another scene is disconnected (or another picked) before anything else is asked of it
+  const whereReady = (trial || !state.dclLater) && !dcl?.connectedScene && (!dcl?.hasScene || replaceOk) && !contractBlocked && (!hyperfy || !!hyperfy.name.trim()) && (!ar || !!ar.name.trim())
   const ready = canAdvance(state) && (state.step !== 'where' || whereReady)
   const next = () => {
     setSelectedKey(null)

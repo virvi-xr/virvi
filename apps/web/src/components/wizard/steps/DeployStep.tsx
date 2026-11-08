@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type Dispatch } from 'react'
 import Link from 'next/link'
 import { plotParcels } from '@virvixr/shared'
-import { fetchDclNames, useApi, type DclDeployment, type DclWorld, type WizardOptions } from '@/lib/api'
+import { fetchDclNames, useApi, type ConnectedScene, type DclDeployment, type DclWorld, type WizardOptions } from '@/lib/api'
 import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
 import { connectExtras, jumpInUrl, progressLines, runWizard, wizardErrorMessage, type Phase, type RunMemory, type RunPlan, type RunUpdate } from '@/lib/wizard/run'
@@ -12,6 +12,8 @@ import { shortAddress } from '@/lib/wizard/helpers'
 import { Badge, PrimaryButton } from '@/components/ui'
 import { CONTRACT_WALLET_MESSAGE, type NamesState } from './WhereStep'
 import { ProgressLines, useShownPhase } from '../ProgressLines'
+import { WorldInUseNotice } from '../WorldInUseNotice'
+import { worldInUseView } from '@/lib/world-disconnect'
 import { ROOM_LAYOUT_NOTICE } from '@/lib/room-set'
 
 /** The server keeps a storefront sign to this many characters. */
@@ -49,9 +51,13 @@ interface View {
   partial: string | null
   hyperfyError: string | null
   arError: string | null
+  /** The run stopped on 409 world_in_use: the scene holding the World, for its disconnect. */
+  worldInUse: ConnectedScene | null
 }
 
-const idle: View = { status: 'idle', phase: 'packing', models: null, wallet: null, deployment: null, error: null, partial: null, hyperfyError: null, arError: null }
+const idle: View = {
+  status: 'idle', phase: 'packing', models: null, wallet: null, deployment: null, error: null, partial: null, hyperfyError: null, arError: null, worldInUse: null,
+}
 
 export function DeployStep({ state, dispatch, options, memory, onRunning, names }: {
   state: WizardState
@@ -124,7 +130,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
   const start = async () => {
     const plan = makePlan()
     onRunning(true)
-    setView((v) => ({ ...v, status: 'running', error: null, phase: 'packing' }))
+    setView((v) => ({ ...v, status: 'running', error: null, worldInUse: null, phase: 'packing' }))
     try {
       await runWizard(plan, memory, {
         // A trial's save opens the sign-up sheet, which names the scene
@@ -136,7 +142,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
       }, update)
       if (alive.current) setView((v) => ({ ...v, status: 'done', phase: 'live', partial: null }))
     } catch (err) {
-      const e = err as { message?: string; partial?: boolean }
+      const e = err as { message?: string; partial?: boolean; worldInUse?: ConnectedScene | null }
       if (!alive.current) return
       setView((v) => ({
         ...v,
@@ -144,6 +150,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
         wallet: null,
         error: e.partial ? null : e.message ?? 'Something went wrong. Try again in a moment.',
         partial: e.partial ? e.message ?? null : v.partial,
+        worldInUse: e.worldInUse ?? null,
       }))
     } finally {
       onRunning(false)
@@ -171,7 +178,9 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
       return false
     }
     setPickedHere(true)
-    dispatch({ type: 'setDcl', dcl: { world: world.world, wallet, hasScene: world.hasScene, footprint: world.footprint, storage: world.storage ?? undefined } })
+    dispatch({ type: 'setDcl', dcl: {
+      world: world.world, wallet, hasScene: world.hasScene, footprint: world.footprint, storage: world.storage ?? undefined, connectedScene: world.connectedScene ?? null,
+    } })
     return true
   }
 
@@ -220,6 +229,9 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
   const lines = progressLines(shownPhase, view.models, view.status === 'failed')
   const live = done && (!dcl || view.deployment?.status === 'deployed')
   const started = view.status !== 'idle'
+  // Picked (on Where or here) while connected to another scene: that is settled first, before deploying over anything
+  const heldAtPick = !started && !!dcl && worldInUseView(dcl.world, dcl.connectedScene, memory.sceneId) !== null
+  const freed = () => { if (dcl) dispatch({ type: 'setDcl', dcl: { ...dcl, connectedScene: null } }) }
   // Until the scene exists its name can change; the deploy mode can change again after a failure.
   const nameEditable = !running && !memory.sceneId
   const modeEditable = view.status === 'idle' || view.status === 'failed'
@@ -286,7 +298,12 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
         <p className="rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2 text-yellow-100">{ROOM_LAYOUT_NOTICE}</p>
       )}
 
-      {view.error && <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300" role="alert">{view.error}</p>}
+      {view.error && view.worldInUse && dcl ? (
+        // The run's scene is kept (RunMemory): after the disconnect the run carries on and connects this World to it
+        <WorldInUseNotice world={dcl.world} connected={view.worldInUse} ownSceneId={memory.sceneId}
+          onDisconnected={() => { freed(); start() }} />
+      ) : view.error && <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300" role="alert">{view.error}</p>}
+      {heldAtPick && dcl && <WorldInUseNotice world={dcl.world} connected={dcl.connectedScene} ownSceneId={memory.sceneId} onDisconnected={freed} />}
 
       {gate === 'wallet' && !done && (
         <div className="space-y-2">
@@ -341,7 +358,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
             <button type="button" onClick={() => { setPickedHere(false); dispatch({ type: 'setDclLater', on: true }) }}
               className="ml-3 text-xs text-gray-400 hover:text-white">Change</button>
           </p>
-          {dcl.hasScene && (
+          {dcl.hasScene && !heldAtPick && (
             <div className="space-y-2 text-yellow-100">
               <p>This World already has a scene on {dcl.footprint?.parcels.length ?? 1} {(dcl.footprint?.parcels.length ?? 1) === 1 ? 'parcel' : 'parcels'}. Deploying will replace it.</p>
               <label className="flex items-center gap-2">
@@ -354,7 +371,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
       )}
 
       {!done && gate === 'deploy' && (
-        <PrimaryButton type="button" onClick={start} disabled={running || atLimit || !state.name.trim() || confirmPending}>
+        <PrimaryButton type="button" onClick={start} disabled={running || atLimit || !state.name.trim() || confirmPending || heldAtPick}>
           {running ? 'Working…' : view.status === 'failed' ? 'Try again' : 'Create and deploy'}
         </PrimaryButton>
       )}

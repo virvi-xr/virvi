@@ -9,6 +9,7 @@ import { wizardErrorMessage } from '@/lib/wizard/run'
 import { hostingChoice, normalizeWorldName, plotLabel, shortAddress } from '@/lib/wizard/helpers'
 import type { WizardAction, WizardState } from '@/lib/wizard/state'
 import { Badge } from '@/components/ui'
+import { WorldInUseNotice } from '../WorldInUseNotice'
 import { LockIcon } from '@/components/icons'
 
 export type NamesState =
@@ -93,7 +94,15 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
       dispatch({ type: 'setDcl', dcl: null })
       return
     }
-    dispatch({ type: 'setDcl', dcl: { world: world.world, wallet, hasScene: world.hasScene, footprint: world.footprint, storage: world.storage ?? undefined } })
+    dispatch({ type: 'setDcl', dcl: {
+      world: world.world, wallet, hasScene: world.hasScene, footprint: world.footprint, storage: world.storage ?? undefined, connectedScene: world.connectedScene ?? null,
+    } })
+  }
+
+  /** The World is free now: the replace question comes next, and the list no longer shows it connected. */
+  const disconnected = () => {
+    if (dcl) dispatch({ type: 'setDcl', dcl: { ...dcl, connectedScene: null } })
+    reloadNames()
   }
 
   const checkTyped = async (e: React.FormEvent) => {
@@ -205,7 +214,8 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
           </details>
         )}
         {contractBlocked && <p className="rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2 text-sm text-yellow-200" role="alert">{CONTRACT_WALLET_MESSAGE}</p>}
-        {dcl?.hasScene && (
+        {dcl?.connectedScene && <WorldInUseNotice world={dcl.world} connected={dcl.connectedScene} onDisconnected={disconnected} />}
+        {dcl?.hasScene && !dcl.connectedScene && (
           <div className="space-y-2 rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2.5 text-sm text-yellow-100">
             <p>Your World already has a scene on {dcl.footprint?.parcels.length ?? 1} {(dcl.footprint?.parcels.length ?? 1) === 1 ? 'parcel' : 'parcels'}. Deploying will replace it.</p>
             <label className="flex items-center gap-2">

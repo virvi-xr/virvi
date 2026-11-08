@@ -1,6 +1,6 @@
 'use client'
 // One scene's Decentraland World on the deploy page: mode, status, models waiting, Redeploy now, the
-// permission for Virvi, "Use the live version", "Download what went live" and the deploy history.
+// permission for Virvi, "Use the live version", "Download what went live", the deploy history and "Disconnect this World".
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useApi, type DclDeployment, type DclDestination, type DclPendingModel } from '@/lib/api'
@@ -8,6 +8,7 @@ import {
   deploymentStatusLabel, deploymentSummary, formatDateTime, modeLabel, pendingLine, signErrorMessage, statusView,
 } from '@/lib/deploy'
 import { errorCode, grantVirvi, jumpInUrl, progressLines, revokeVirvi } from '@/lib/wizard/run'
+import { disconnectedNotice, disconnectFromCardPrompt } from '@/lib/world-disconnect'
 import { Badge, ConfirmAction } from '@/components/ui'
 import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
@@ -26,7 +27,7 @@ interface Detail {
 const button = 'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
 const secondary = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50'
 
-export function WorldDestinationCard({ destination, history, virviDeploys, offerGrant, onChanged }: {
+export function WorldDestinationCard({ destination, history, virviDeploys, offerGrant, onChanged, onDisconnected }: {
   destination: DclDestination
   /** This destination's deployments, newest first. */
   history: DclDeployment[]
@@ -36,11 +37,13 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
   offerGrant?: boolean
   /** Something changed (a deploy, the mode): the page reloads the history. */
   onChanged: (dest: DclDestination) => void
+  /** The World was disconnected from the scene: the page drops the card and shows `notice`. */
+  onDisconnected: (dest: DclDestination, notice: string) => void
 }) {
   const api = useApi()
   const [dest, setDest] = useState(destination)
   const [detail, setDetail] = useState<Detail | null>(null)
-  const [busy, setBusy] = useState<null | 'grant' | 'revoke' | 'rebase' | 'mode'>(null)
+  const [busy, setBusy] = useState<null | 'grant' | 'revoke' | 'rebase' | 'mode' | 'disconnect'>(null)
   const [error, setError] = useState<string | null>(null)
   /** grant_partial: Virvi may hold World-wide rights, so removing them is offered until it works. */
   const [partial, setPartial] = useState(false)
@@ -90,6 +93,19 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
     'You sign each deploy from now on.')
   const rebase = () => act('rebase', async () => (await api.rebaseDclDestination(dest.id)).destination,
     "Virvi now builds on what's live in your World.")
+
+  // Only Virvi's link goes: the World keeps what's live, and Virvi's permission stays until the owner removes it
+  const disconnect = async () => {
+    setBusy('disconnect')
+    setError(null)
+    setNotice(null)
+    try {
+      onDisconnected(dest, disconnectedNotice(await api.disconnectDclDestination(dest.id)))
+    } catch (err) {
+      setError(signErrorMessage(err, dest))
+      setBusy(null)
+    }
+  }
 
   const redeploy = async () => {
     setError(null)
@@ -201,6 +217,15 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
             Use the live version
           </ConfirmAction>
         )}
+        <ConfirmAction
+          disabled={running}
+          confirmLabel="Disconnect"
+          prompt={disconnectFromCardPrompt(dest.worldName, granted || partial)}
+          onConfirm={disconnect}
+          className={`${secondary} sm:ml-auto`}
+        >
+          {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect this World'}
+        </ConfirmAction>
       </div>
 
       {view.underway && <ProgressLines lines={lines} />}

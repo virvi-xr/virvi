@@ -11,7 +11,11 @@ export const GUIDE_PLOT: Plot = { width: 2, depth: 2, base: { x: 0, y: 0 } }
 export interface WizardState {
   step: WizardStep
   destinations: {
-    dcl: { world: string; wallet: string; hasScene: boolean; footprint: DclWorld['footprint']; storage?: DclWorld['storage'] } | null
+    dcl: {
+      world: string; wallet: string; hasScene: boolean; footprint: DclWorld['footprint']; storage?: DclWorld['storage']
+      /** Another Virvi scene the World is connected to when it was picked (disconnect it first); null or absent: none. */
+      connectedScene?: DclWorld['connectedScene']
+    } | null
     hyperfy: null | { kind: 'self' | 'hosted'; name: string }
     ar: null | { name: string }
   }
