@@ -6,7 +6,7 @@ import { errorSignatures, errorReports, users } from '../src/db/schema.js'
 import { clientRecord, writeRecords, resetErrorBuffer, reportSignature } from '../src/errors/record.js'
 import { resetErrorBudgets } from '../src/errors/limits.js'
 import { runFilingPass, resetPendingIssueSaves, setFilingDbHook } from '../src/errors/filing.js'
-import { syncLinearDone, DONE_SYNC_EVERY_MS } from '../src/errors/linear-sync.js'
+import { syncLinearDone, reopenForFiling, DONE_SYNC_EVERY_MS } from '../src/errors/linear-sync.js'
 import { setLinearClient, httpLinearClient, LinearError, resetLinearBackoff, type LinearClient, type LinearIssueState } from '../src/errors/linear.js'
 import { ERROR_BUDGETS } from '../src/errors/limits.js'
 import { setOnErrorIssueFiled } from '../src/errors/filing.js'
@@ -224,13 +224,34 @@ describe('Linear phase 2', () => {
       expect(linear.comments).toHaveLength(1)
     })
 
-    it('the HTTP client treats 401, 403 and AUTHENTICATION_ERROR as stop-and-back-off', async () => {
+    it('the HTTP client pauses on 401 and AUTHENTICATION_ERROR only; 403 and FORBIDDEN refuse just that call (N6)', async () => {
       const { isTransientLinearError } = await import('../src/errors/linear.js')
-      for (const [status, body] of [[401, {}], [403, {}], [200, { errors: [{ message: 'x', extensions: { code: 'AUTHENTICATION_ERROR' } }] }]] as const) {
+      const cases = [[401, {}, true], [200, { errors: [{ message: 'x', extensions: { code: 'AUTHENTICATION_ERROR' } }] }, true], [403, {}, false],
+        [200, { errors: [{ message: 'x', extensions: { code: 'FORBIDDEN' } }] }, false]] as const
+      for (const [status, body, pause] of cases) {
         const client = httpLinearClient({ apiKey: 'k', teamId: 't', fetch: (async () => new Response(JSON.stringify(body), { status })) as typeof fetch })
         const err = await client.createComment('i', 'b').catch((e) => e)
-        expect(isTransientLinearError(err), String(status)).toBe(true)
+        expect(isTransientLinearError(err), `${status} ${JSON.stringify(body)}`).toBe(pause)
       }
+    })
+
+    it('a 403 on one comment marks only that report refused; the rest still post (N6)', async () => {
+      const u = await createUser()
+      const a = await reportOn(crash({ message: 'hidden team' }), u.id)
+      const b = await reportOn(crash({ message: 'visible team' }), u.id)
+      await db.update(errorSignatures).set({ linearIssueId: 'issue-hidden', linearFiledAt: new Date(Date.now() - HOUR) }).where(eq(errorSignatures.id, a.signatureId))
+      await db.update(errorSignatures).set({ linearIssueId: 'issue-ok', linearFiledAt: new Date(Date.now() - HOUR) }).where(eq(errorSignatures.id, b.signatureId))
+      const comment = linear.createComment.bind(linear)
+      linear.createComment = async (issueId: string, body: string) => {
+        if (issueId === 'issue-hidden') { linear.calls++; throw new LinearError('Linear 403: Forbidden', 403, false) }
+        return comment(issueId, body)
+      }
+      const r = await runFilingPass()
+      expect(r.skipped).toBeUndefined()
+      expect(linear.comments.map((c) => c.issueId)).toEqual(['issue-ok'])
+      const [ra] = await db.select().from(errorReports).where(eq(errorReports.id, a.report.id))
+      expect(ra.linearSkipped).toBe('linear_refused')
+      expect((await runFilingPass()).skipped).toBeUndefined()
     })
 
     it('a comment Linear refuses for good is marked skipped, and failures count toward the pass cap', async () => {
@@ -366,18 +387,50 @@ describe('Linear phase 2', () => {
       expect((await db.select().from(errorSignatures))[0].resolvedAt).toBeNull()
     })
 
-    it("an issue closed as Canceled, Won't fix or Duplicate closes the link without marking it fixed (M3, N5)", async () => {
-      await filed()
+    it("a Canceled or Won't fix issue is remembered as closed: no new issue, no comments, until an admin re-opens it (R2)", async () => {
+      const s0 = await filed()
       linear.states.set('issue-1', { id: 'issue-1', stateType: 'canceled', completedAt: null, canceledAt: new Date().toISOString() })
       const r = await syncLinearDone()
-      expect([r.resolved, r.unlinked]).toEqual([0, 1])
+      expect([r.resolved, r.closed]).toEqual([0, 1])
       const [s] = await db.select().from(errorSignatures)
-      expect(s).toMatchObject({ resolvedAt: null, regressedAt: null, linearIssueId: null, linearIssueKey: null })
-      // so it can be filed again later, as a new issue (here: a spike of new users)
-      await writeRecords([clientRecord(crash(), ctx('u3', '198.51.100.3'))])
-      await writeRecords([clientRecord(crash(), ctx('u4', '198.51.100.4'))])
-      expect((await runFilingPass(new Date(Date.now() + 60_000))).filed).toBe(1)
+      expect(s).toMatchObject({ resolvedAt: null, linearIssueId: 'issue-1', linearClosedState: 'canceled' })
+      expect(s.linearClosedAt).toBeTruthy()
+      // a severe hour (3 users) and a report: no new issue and no comments on the closed one
+      for (const [u, ip] of [['u3', '198.51.100.3'], ['u4', '198.51.100.4'], ['u5', '198.51.100.5']]) await writeRecords([clientRecord(crash(), ctx(u, ip))])
+      const acct = await createUser()
+      await reportOn(crash(), acct.id)
+      const later = new Date(Date.now() + 2 * DAY)
+      expect(await runFilingPass(later)).toMatchObject({ filed: 0, comments: 0 })
+      expect(linear.issues).toHaveLength(1)
+      expect(linear.comments).toHaveLength(0)
+      // the Done sync leaves it alone too
+      expect((await syncLinearDone(later)).checked).toBe(0)
+      // an admin re-opens it for filing: the data files it again
+      expect(await reopenForFiling(s0.id)).toBe(true)
+      const [open] = await db.select().from(errorSignatures)
+      expect(open).toMatchObject({ linearIssueId: null, linearClosedAt: null, linearClosedState: null })
+      for (const [u, ip] of [['u6', '198.51.100.6'], ['u7', '198.51.100.7'], ['u8', '198.51.100.8']]) await writeRecords([clientRecord(crash(), ctx(u, ip), later)])
+      expect((await runFilingPass(new Date(later.getTime() + 60_000))).filed).toBe(1)
       expect(linear.issues).toHaveLength(2)
+    })
+
+    it('a Duplicate is re-linked to the issue it duplicates, and follows that issue from then on (R2)', async () => {
+      await filed()
+      linear.states.set('issue-1', { id: 'issue-1', stateType: 'canceled', completedAt: null, canceledAt: new Date().toISOString(), duplicateOf: { id: 'issue-main', identifier: 'LIV-7', url: 'https://linear.app/x/issue/LIV-7' } })
+      expect((await syncLinearDone()).relinked).toBe(1)
+      const [s] = await db.select().from(errorSignatures)
+      expect(s).toMatchObject({ linearIssueId: 'issue-main', linearIssueKey: 'LIV-7', linearClosedAt: null, resolvedAt: null })
+      linear.states.set('issue-main', { id: 'issue-main', stateType: 'completed', completedAt: new Date().toISOString() })
+      expect((await syncLinearDone()).resolved).toBe(1)
+    })
+
+    it('the HTTP client reads a duplicate relation', async () => {
+      const client = httpLinearClient({
+        apiKey: 'k', teamId: 't',
+        fetch: (async () => new Response(JSON.stringify({ data: { issues: { nodes: [{ id: 'a', completedAt: null, canceledAt: '2026-11-08T00:00:00.000Z', state: { type: 'canceled' },
+          relations: { nodes: [{ type: 'related', relatedIssue: { id: 'z', identifier: 'LIV-2', url: 'u2' } }, { type: 'duplicate', relatedIssue: { id: 'b', identifier: 'LIV-3', url: 'u3' } }] } }] } } }), { status: 200 })) as typeof fetch,
+      })
+      expect(await client.issueStates(['a'])).toEqual([{ id: 'a', stateType: 'canceled', completedAt: null, canceledAt: '2026-11-08T00:00:00.000Z', duplicateOf: { id: 'b', identifier: 'LIV-3', url: 'u3' } }])
     })
 
     it('the Done sync honours the backoff and starts it on a transient failure (N3)', async () => {

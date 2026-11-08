@@ -103,6 +103,13 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
           {s.resolvedAt
             ? <button onClick={() => resolve(false)} className="rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500">{s.linearDoneAt ? 'Done in Linear' : 'Marked fixed'} {sinceLabel(s.resolvedAt)} · Undo</button>
             : <button onClick={() => resolve(true)} className="rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500">Mark fixed</button>}
+          {s.linearClosedAt && (
+            <button onClick={async () => { try { await api.reopenAdminErrorForFiling(id); load() } catch (e: any) { setError(e.message) } }}
+              title="Its Linear issue was closed without a fix, so it isn't filed or commented on. Re-open to let a new issue be filed."
+              className="rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500">
+              Closed in Linear ({s.linearClosedState ?? 'canceled'}) {sinceLabel(s.linearClosedAt)} · Re-open for filing
+            </button>
+          )}
           <button onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-gray-400 hover:text-white">Close</button>
         </div>
       </div>

@@ -4,11 +4,18 @@ import { config } from '../config.js'
  * An issue's workflow state type (triage, backlog, unstarted, started, completed, canceled) and when it was completed
  * or canceled (a Duplicate is canceled too).
  */
-export interface LinearIssueState { id: string; stateType: string; completedAt: string | null; canceledAt?: string | null }
+export interface LinearIssueState {
+  id: string; stateType: string; completedAt: string | null; canceledAt?: string | null
+  /** The state's own name ("Won't fix", "Duplicate"), when Linear gives it. */
+  stateName?: string
+  /** For a duplicate, the issue it duplicates. */
+  duplicateOf?: { id: string; identifier: string; url: string }
+}
 
 /**
  * A failed Linear call. `transient` ("stop and back off"): a rate limit, a 5xx, the network, or the key being refused
- * (401, 403, AUTHENTICATION_ERROR: nothing can succeed until it is fixed); the jobs then back off (linearPaused).
+ * (401, AUTHENTICATION_ERROR: nothing can succeed until it is fixed); the jobs then back off (linearPaused). A 403 or
+ * FORBIDDEN is about that one thing (an issue in a team the key can't see): it refuses just that call.
  */
 export class LinearError extends Error {
   constructor(message: string, public status: number | null, public transient: boolean) { super(message) }
@@ -16,7 +23,7 @@ export class LinearError extends Error {
 
 /** Whether an error from a Linear call means "try later": a transient LinearError, or the network / a timeout. */
 export function isTransientLinearError(err: unknown): boolean {
-  if (err instanceof LinearError) return err.transient || err.status === 401 || err.status === 403
+  if (err instanceof LinearError) return err.transient || err.status === 401
   const name = (err as { name?: string } | null)?.name
   return name === 'TypeError' || name === 'AbortError' || name === 'TimeoutError'
 }
@@ -64,8 +71,8 @@ export function httpLinearClient(opts: {
     const body = await res.json().catch(() => ({})) as { data?: T; errors?: Array<{ message?: string; extensions?: { code?: string } }> }
     if (!res.ok || body.errors?.length || !body.data) {
       const codes = (body.errors ?? []).map((e) => e.extensions?.code)
-      const limited = res.status === 429 || res.status >= 500 || res.status === 401 || res.status === 403
-        || codes.includes('RATELIMITED') || codes.includes('AUTHENTICATION_ERROR') || codes.includes('FORBIDDEN')
+      const limited = res.status === 429 || res.status >= 500 || res.status === 401
+        || codes.includes('RATELIMITED') || codes.includes('AUTHENTICATION_ERROR')
       throw new LinearError(`Linear ${res.status}: ${body.errors?.[0]?.message ?? 'no data'}`, res.status, !!limited)
     }
     return body.data
@@ -88,9 +95,15 @@ export function httpLinearClient(opts: {
     },
     async issueStates(ids) {
       if (!ids.length) return []
-      const data = await gql<{ issues: { nodes: Array<{ id: string; completedAt: string | null; canceledAt?: string | null; state: { type: string } | null }> } }>(
-        'query($ids: [ID!]) { issues(filter: { id: { in: $ids } }, first: 50) { nodes { id completedAt canceledAt state { type } } } }', { ids: ids.slice(0, 50) })
-      return data.issues.nodes.map((n) => ({ id: n.id, stateType: n.state?.type ?? 'unknown', completedAt: n.completedAt ?? null, canceledAt: n.canceledAt ?? null }))
+      const data = await gql<{ issues: { nodes: Array<{ id: string; completedAt: string | null; canceledAt?: string | null; state: { type: string; name?: string } | null; relations?: { nodes?: Array<{ type: string; relatedIssue: { id: string; identifier: string; url: string } | null }> } }> } }>(
+        'query($ids: [ID!]) { issues(filter: { id: { in: $ids } }, first: 50) { nodes { id completedAt canceledAt state { type name } relations { nodes { type relatedIssue { id identifier url } } } } } }', { ids: ids.slice(0, 50) })
+      return data.issues.nodes.map((n) => {
+        const out: LinearIssueState = { id: n.id, stateType: n.state?.type ?? 'unknown', completedAt: n.completedAt ?? null, canceledAt: n.canceledAt ?? null }
+        if (n.state?.name) out.stateName = n.state.name
+        const dup = n.relations?.nodes?.find((r) => r.type === 'duplicate')?.relatedIssue
+        if (dup) out.duplicateOf = { id: dup.id, identifier: dup.identifier, url: dup.url }
+        return out
+      })
     },
   }
 }

@@ -2241,6 +2241,9 @@ export const errorSignatures = pgTable('error_signatures', {
   linearFilingAt: timestamp('linear_filing_at', { withTimezone: true }),
   // When its Linear issue was completed, as last read from Linear (that marks it fixed, like the Errors page's Mark fixed)
   linearDoneAt: timestamp('linear_done_at', { withTimezone: true }),
+  // Its issue was closed without a fix (Canceled, Won't fix): no new issue and no comments until an admin re-opens it
+  linearClosedAt: timestamp('linear_closed_at', { withTimezone: true }),
+  linearClosedState: text('linear_closed_state'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   hashUq: uniqueIndex('error_signatures_hash_uq').on(t.hash),

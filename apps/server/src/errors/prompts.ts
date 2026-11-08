@@ -30,7 +30,7 @@ export async function signatureFacts(hash: string, expected: boolean, now = Date
   const hit = cache.get(hash)
   if (hit && now - hit.at < FACTS_TTL_MS) return { id: hit.id, facts: { ...hit.facts, expected: expected || hit.facts.expected } }
   const [row] = rowsOf<{ id: string; expected: string | null; open_issue: boolean; reports: number }>(await db.execute(sql`
-    SELECT s.id, s.expected, (s.linear_issue_id IS NOT NULL AND s.resolved_at IS NULL) AS open_issue,
+    SELECT s.id, s.expected, (s.linear_issue_id IS NOT NULL AND s.resolved_at IS NULL AND s.linear_closed_at IS NULL) AS open_issue,
       (SELECT count(*) FROM (SELECT 1 FROM error_reports r WHERE r.signature_id = s.id
         AND r.created_at > coalesce(s.resolved_at, s.regressed_at, '-infinity'::timestamptz) LIMIT ${KNOWN_MIN_REPORTS}) x)::int AS reports
     FROM error_signatures s WHERE s.hash = ${hash}`))

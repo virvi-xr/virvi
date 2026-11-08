@@ -252,7 +252,7 @@ async function postReports(client: LinearClient, now: Date, result: FilingResult
     SELECT r.id, r.signature_id, r.description, r.created_at, r.release, r.payload, r.screenshot_key, u.id AS user_id, u.is_trial, s.linear_issue_id
     FROM error_reports r JOIN error_signatures s ON s.id = r.signature_id LEFT JOIN users u ON u.id = r.user_id
     WHERE r.linear_posted_at IS NULL AND r.linear_skipped IS NULL AND r.created_at >= ${ts(new Date(now.getTime() - REPORT_POST_DAYS * DAY))}
-      AND (s.linear_issue_id IS NOT NULL OR (${canCreate}::boolean AND u.id IS NOT NULL AND NOT u.is_trial AND s.kind <> 'report'
+      AND ((s.linear_issue_id IS NOT NULL AND s.linear_closed_at IS NULL) OR (${canCreate}::boolean AND s.linear_issue_id IS NULL AND u.id IS NOT NULL AND NOT u.is_trial AND s.kind <> 'report'
         AND s.expected IS NULL AND s.total_count > 0 AND (s.linear_filing_at IS NULL OR s.linear_filing_at < ${ts(new Date(now.getTime() - CLAIM_MS))})))
       AND (SELECT count(*) FROM error_reports p WHERE p.signature_id = r.signature_id AND p.linear_posted_at > ${ts(new Date(now.getTime() - DAY))}) < ${REPORT_COMMENTS_PER_SIGNATURE_DAY}
     ORDER BY r.created_at DESC LIMIT 100`))
@@ -365,7 +365,7 @@ export async function runFilingPass(now = new Date(), client: LinearClient | nul
   // Issues already filed: regression notes, a daily update while active, and the quiet note
   const filed = rowsOf<Record<string, unknown>>(await db.execute(sql`
     SELECT id, linear_issue_id, last_seen_at, resolved_at, regressed_at, linear_filed_at, linear_commented_at, linear_quiet_at, linear_regression_at
-    FROM error_signatures WHERE linear_issue_id IS NOT NULL AND linear_filed_at < ${ts(now)}`))
+    FROM error_signatures WHERE linear_issue_id IS NOT NULL AND linear_closed_at IS NULL AND linear_filed_at < ${ts(now)}`))
   for (const s of filed) {
     const id = s.id as string
     const issueId = s.linear_issue_id as string

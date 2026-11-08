@@ -96,7 +96,7 @@ describe('entrypoint schema fallback: error reporting', () => {
     const statements = fallbackBlocks('Error reporting')
     await scratch(async () => {
       await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.error_signatures (LIKE public.error_signatures INCLUDING ALL)`))
-      await db.execute(sql.raw(`ALTER TABLE ${SCHEMA}.error_signatures DROP COLUMN linear_filing_at, DROP COLUMN linear_done_at`))
+      await db.execute(sql.raw(`ALTER TABLE ${SCHEMA}.error_signatures DROP COLUMN linear_filing_at, DROP COLUMN linear_done_at, DROP COLUMN linear_closed_at, DROP COLUMN linear_closed_state`))
       await db.execute(sql.raw(`CREATE TABLE ${SCHEMA}.error_reports (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), signature_id UUID NOT NULL CONSTRAINT error_reports_signature_id_error_signatures_id_fk REFERENCES ${SCHEMA}.error_signatures(id) ON DELETE CASCADE, user_id UUID CONSTRAINT error_reports_user_id_users_id_fk REFERENCES public.users(id) ON DELETE SET NULL, description TEXT NOT NULL, payload JSONB NOT NULL, release TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`))
       await runFallback(statements)
       for (const t of ['error_signatures', 'error_reports']) expect(await columns(SCHEMA, t), t).toEqual(await columns('public', t))

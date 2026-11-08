@@ -132,3 +132,19 @@ describe('admin Errors page routes', () => {
     expect((await get('/api/admin/error-settings')).json().thresholds).toMatchObject({ newMinUsers: 4, filing: false })
   })
 })
+
+describe('Re-open for filing (R2)', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  beforeEach(async () => { await resetDb(); app = await testApp() })
+  afterEach(async () => { await app.close() })
+  it('an admin clears a closed Linear link so the signature can be filed again', async () => {
+    const admin = await createUser({ role: 'admin' })
+    const [sig] = await db.insert(errorSignatures).values({ hash: 'h-closed', signature: 'job x Error: boom', source: 'server', kind: 'job', linearIssueId: 'issue-1', linearIssueKey: 'LIV-1', linearClosedAt: new Date(), linearClosedState: 'canceled' }).returning()
+    const res = await app.inject({ method: 'PATCH', url: `/api/admin/errors/${sig.id}`, headers: { authorization: `Bearer ${tokenFor(admin)}` }, payload: { reopenForFiling: true } })
+    expect(res.statusCode).toBe(200)
+    const [row] = await db.select().from(errorSignatures).where(eq(errorSignatures.id, sig.id))
+    expect(row).toMatchObject({ linearIssueId: null, linearIssueKey: null, linearClosedAt: null, linearClosedState: null })
+    const bad = await app.inject({ method: 'PATCH', url: `/api/admin/errors/${sig.id}`, headers: { authorization: `Bearer ${tokenFor(admin)}` }, payload: { reopenForFiling: 'yes' } })
+    expect(bad.statusCode).toBe(400)
+  })
+})

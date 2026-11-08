@@ -802,6 +802,9 @@ function useRealApi() {
     getAdminCatalogPacks: () => apiFetch<{ packs: CatalogPack[] }>('/api/admin/catalog/packs'),
     // Errors (admin, LIV-66)
     getAdminErrors: () => apiFetch<ErrorsOverview>('/api/admin/errors'),
+    /** "Re-open for filing": forget a Linear issue closed without a fix, so the data can file it again. */
+    reopenAdminErrorForFiling: (id: string) =>
+      apiFetch<{ id: string; reopened: true }>(`/api/admin/errors/${id}`, { method: 'PATCH', body: JSON.stringify({ reopenForFiling: true }) }),
     /** A report's screenshot (admin; the route needs the bearer, so it is fetched, never linked). */
     getAdminErrorScreenshot: (reportId: string) => downloadBlob(`/api/admin/errors/reports/${reportId}/screenshot`, 'screenshot'),
     // "Ask me about errors" (accounts; guests and trials keep theirs in the browser)

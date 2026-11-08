@@ -15,6 +15,9 @@ export interface ErrorSignatureSummary {
   resolvedAt: string | null
   /** Marked fixed by its Linear issue being completed (phase 2). */
   linearDoneAt?: string | null
+  /** Its Linear issue was closed without a fix (Canceled, Won't fix): not filed or commented on until re-opened. */
+  linearClosedAt?: string | null
+  linearClosedState?: string | null
   regressedAt: string | null
   userReports: number
   linearIssueKey: string | null

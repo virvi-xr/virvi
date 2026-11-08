@@ -10,6 +10,7 @@ import { isUuid } from '../auth/scene-from.js'
 import { errorsOverview, signatureDetail } from '../errors/queries.js'
 import { checkThresholds, getThresholds, saveThresholds } from '../errors/settings.js'
 import { linearConfigured } from '../errors/linear.js'
+import { reopenForFiling } from '../errors/linear-sync.js'
 
 /** The admin Errors page (LIV-66 §2): site admins only, by the database-checked guard. */
 export default async function adminErrorRoutes(app: FastifyInstance) {
@@ -29,7 +30,13 @@ export default async function adminErrorRoutes(app: FastifyInstance) {
   })
 
   // Marked fixed: the phase-1 stand-in for its Linear issue being Done. An event after it is a regression.
-  app.patch<{ Params: { id: string }; Body: { resolved?: unknown } }>('/api/admin/errors/:id', async (request, reply) => {
+  app.patch<{ Params: { id: string }; Body: { resolved?: unknown; reopenForFiling?: unknown } }>('/api/admin/errors/:id', async (request, reply) => {
+    // "Re-open for filing": its Linear issue was closed without a fix; let the data file it again
+    if (request.body?.reopenForFiling !== undefined) {
+      if (request.body.reopenForFiling !== true) return reply.status(400).send({ error: 'reopenForFiling must be true' })
+      if (!isUuid(request.params.id) || !(await reopenForFiling(request.params.id))) return reply.status(404).send({ error: 'not_found' })
+      return reply.send({ id: request.params.id, reopened: true })
+    }
     const resolved = request.body?.resolved
     if (typeof resolved !== 'boolean') return reply.status(400).send({ error: 'resolved must be true or false' })
     if (!isUuid(request.params.id)) return reply.status(404).send({ error: 'not_found' })
