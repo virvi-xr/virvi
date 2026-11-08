@@ -272,7 +272,7 @@ export async function backupSnapshot(sceneId: string): Promise<BackupSnapshot> {
     add(el, 'image', () => {
       const assets: Record<string, AssetPlan> = {}
       put(assets, 'texture', el.textureSrc, 'texture')
-      return { props: pick(el, ['emission', 'isTransparent']), assets }
+      return { props: pick(el, ['emission', 'isTransparent', 'frame']), assets }
     })
   }
   for (const el of s.videos) {
@@ -282,7 +282,7 @@ export async function backupSnapshot(sceneId: string): Promise<BackupSnapshot> {
       put(assets, 'offImage', el.offImageSrc, 'texture')
       const list = Array.isArray(el.playlist) ? el.playlist : []
       list.forEach((u, i) => put(assets, `playlist.${i}`, u, 'video'))
-      return { props: pick(el, ['isLive', 'enableLiveStream', 'offType', 'volume', 'emission', 'adShape']), assets }
+      return { props: pick(el, ['isLive', 'enableLiveStream', 'offType', 'volume', 'emission', 'adShape', 'frame']), assets }
     })
   }
   for (const el of s.sounds) {
