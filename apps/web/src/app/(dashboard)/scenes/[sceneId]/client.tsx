@@ -12,6 +12,7 @@ import { PresetBar } from './PresetBar'
 import { PresetSchedules } from './PresetSchedules'
 import { ScreenShowings } from './ScreenShowings'
 import { ClickActionField } from './ClickAction'
+import { FrameField } from './FrameField'
 import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
 import { SceneThumbnail } from './SceneThumbnail'
@@ -505,6 +506,8 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
         </div>
       </div>
 
+      <FrameField properties={props} onSave={(properties) => onUpdateElement(element.id, { properties }, { rethrow: true })} />
+
       <div className="space-y-2">
         <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
@@ -808,6 +811,8 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
         onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
 
       <ImageSourceField label="Texture" value={props.textureSrc} onChange={setTexture} api={api} sceneId={sceneId} />
+
+      <FrameField properties={props} onSave={(properties) => onUpdateElement(element.id, { properties }, { rethrow: true })} />
 
       <div className="space-y-2">
         <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
