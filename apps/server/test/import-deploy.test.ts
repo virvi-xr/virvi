@@ -704,6 +704,74 @@ describe('deploying an imported build', () => {
     expect(worlds.deployed).toHaveLength(1)
   })
 
+  describe('a disconnect racing the automatic deploy of an upload', () => {
+    const disconnect = (id: string) => app.inject({ method: 'DELETE', url: `/api/dcl/destinations/${id}`, headers: auth(user) })
+
+    it('the deploy claimed the import first: the disconnect is refused and the deploy finishes', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      let release!: () => void
+      const held = new Promise<void>((r) => { release = r })
+      let asked!: () => void
+      const reached = new Promise<void>((r) => { asked = r })
+      const real = worlds.getDeployers.bind(worlds)
+      worlds.getDeployers = async (world: string) => { asked(); await held; return real(world) }
+
+      const running = deployImport(imp.id)
+      await reached
+      // Claimed, but nothing links it to the destination yet
+      expect(await importRow(imp.id)).toMatchObject({ status: 'deploying', destinationId: null, deploymentId: null })
+      const res = await disconnect(dest.id)
+      expect([res.statusCode, res.json().error]).toEqual([409, 'import_in_progress'])
+
+      release()
+      await running
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      expect((await importRow(imp.id)).status).toBe('deployed')
+      expect((await destByWorld())?.sceneId).toBe(scene.id)
+    })
+
+    it('the disconnect went first: the claimed deploy stops and never connects the World back to the old scene', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      // deployImport read the granted destination; the disconnect lands before its claim
+      expect((await disconnect(dest.id)).statusCode).toBe(200)
+      const [claimed] = await db.update(sceneImports).set({ status: 'deploying' }).where(eq(sceneImports.id, imp.id)).returning()
+      expect(await startImportDeploy(claimed, user.id, { virviOnly: true, claimed: true, fetch: fetcher })).toBeNull()
+      expect(await destByWorld()).toBeUndefined()
+      expect(await db.select().from(sceneDeployments)).toHaveLength(0)
+      expect(worlds.deployed).toHaveLength(0)
+    })
+
+    it('a destination gone while the claimed deploy reads Decentraland is never set up again by it (checked under the lock)', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      const real = worlds.getDeployers.bind(worlds)
+      // Removed outside the disconnect route's import check, after the deploy saw it granted
+      worlds.getDeployers = async (world: string) => {
+        await db.delete(dclWorldDestinations).where(eq(dclWorldDestinations.id, dest.id))
+        return real(world)
+      }
+      await deployImport(imp.id)
+      expect(await destByWorld()).toBeUndefined()
+      expect(await importRow(imp.id)).toMatchObject({ status: 'built', deploymentId: null })
+      expect(worlds.deployed).toHaveLength(0)
+    })
+
+    it('a Deploy the creator presses after the disconnect still sets the World up again (their choice)', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      expect((await disconnect(dest.id)).statusCode).toBe(200)
+      const res = await post(`/api/imports/${imp.id}/deploy`)
+      expect(res.statusCode).toBeLessThan(300)
+      expect((await destByWorld())?.sceneId).toBe(scene.id)
+    })
+  })
+
   it('an automatic deploy that fails before the World accepts goes from deploying back to built', async () => {
     const { scene } = await createScene(user, 'Cafe')
     await grantedDest(scene.id)

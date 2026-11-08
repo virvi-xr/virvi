@@ -84,6 +84,7 @@ import {
 import { deploymentForCaller, publicDeployment } from './deploy.js'
 import { ImportError } from '../services/import/scene-zip.js'
 import { worldOf } from '../services/dcl/world-of.js'
+import { BLOCKING, lockLocation, sameLocation } from '../services/import/imports.js'
 import { parcelControl, type ParcelControl } from '../services/dcl/parcel-control.js'
 import { GRANT_COST_NOTE, grantMissing, grantTransactions, heldAsUpdateOperator, isAetheria } from '../services/dcl/parcel-grant.js'
 import { CatalystError, contentServerFor } from '../services/dcl/catalyst-client.js'
@@ -190,6 +191,28 @@ async function connectedScenesOf(actor: Actor, worlds: string[]): Promise<Map<st
 async function describeWorld(world: string, storage: { maxAllowedBytes: number; usedBytes: number } | null, connectedScene: ConnectedScene | null) {
   const entities = await read(() => getWorldsClient().getWorldEntities(world))
   return { world, hasScene: entities.length > 0, footprint: footprint(entities), storage, connectedScene }
+}
+
+/** The live scene a location setup is about: the one it was set up from, else the one on its base parcel, else the first. */
+function setupEntity(entities: LiveEntity[], entityId: string | null, baseParcel: string | null): LiveEntity | undefined {
+  return entities.find((e) => e.id === entityId) ?? entities.find((e) => !!baseParcel && e.pointers.includes(baseParcel)) ?? entities[0]
+}
+
+/**
+ * Whether the World's set-up scene is one Virvi built (its own runtime), so a setup pointing at a Virvi scene is left
+ * over from Virvi's deploys (a World disconnected from it), not a Creator Hub `@virvixr/dcl` scene to adopt. Null when
+ * Decentraland can't say, or the World has no scene.
+ */
+export async function setupBuiltByVirvi(world: string, entityId: string | null, baseParcel: string | null): Promise<boolean | null> {
+  let entities: LiveEntity[]
+  try {
+    entities = await getWorldsClient().getWorldEntities(world)
+  } catch (err) {
+    if (err instanceof WorldsError) return null
+    throw err
+  }
+  const live = setupEntity(entities, entityId, baseParcel)
+  return live ? builtByVirvi(live.metadata) : null
 }
 
 /** Set on a deploy still waiting for its signature when its World is disconnected: that signature can no longer be used. */
@@ -487,10 +510,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
       const loc = await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, `world:${world}`) })
       const setup = loc ? await getActiveSetup(loc.id) : null
       if (!loc || setup?.virviSceneId !== sceneId) throw new RouteError(400, 'not_connected')
-      const live =
-        entities.find((e) => e.id === setup.deploymentEntityId) ??
-        entities.find((e) => !!loc.baseParcel && e.pointers.includes(loc.baseParcel)) ??
-        entities[0]
+      const live = setupEntity(entities, setup.deploymentEntityId, loc.baseParcel)!
       fields = {
         base: live.metadata?.scene?.base ?? live.pointers[0],
         parcels: live.metadata?.scene?.parcels ?? live.pointers,
@@ -529,8 +549,17 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     if (!isFullAccess(access)) throw new RouteError(403, 'forbidden')
     requireWorld(dest)
     const gone = await db.transaction(async (tx) => {
-      // The lock mode A deploys take (startVirviDeploy), so none starts between the check and the delete
+      // The lock uploads and import deploys take (an import deploy sets the World up again under it), then the one mode A
+      // deploys and the signed submit take, so nothing starts between the checks and the delete
+      await lockLocation(tx, { kind: 'world', world: worldOf(dest) })
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${dest.id}))`)
+      const uploading = await tx.query.sceneImports.findFirst({
+        where: and(sameLocation({ kind: 'world', world: worldOf(dest) }), inArray(sceneImports.status, [...BLOCKING])),
+        columns: { id: true },
+      })
+      if (uploading) {
+        throw new RouteError(409, 'import_in_progress', { message: 'An upload to this World is being built or deployed right now. Wait for it to finish, then disconnect.' })
+      }
       const busy = await tx.query.sceneDeployments.findFirst({
         where: and(eq(sceneDeployments.destinationId, dest.id), inArray(sceneDeployments.status, ['pending', 'building', 'deploying'])),
         columns: { id: true },
@@ -542,7 +571,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
       if (busy || importing) {
         throw new RouteError(409, 'deploy_in_progress', { message: 'A deploy is going out to this World right now. Wait for it to finish, then disconnect.' })
       }
-      // A submit claims its row with the same status check, so it either got there first (busy above) or finds it failed
+      // A submit claims its row under the destination's lock, so it either got there first (busy above) or finds it failed
       await tx.update(sceneDeployments).set({ status: 'failed', errorMessage: DISCONNECTED })
         .where(and(eq(sceneDeployments.destinationId, dest.id), eq(sceneDeployments.status, 'awaiting_signature')))
       const [row] = await tx.delete(dclWorldDestinations).where(eq(dclWorldDestinations.id, dest.id)).returning()
@@ -750,7 +779,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
       orderBy: [dclWorldDestinations.createdAt],
     })
     const setUp = await db
-      .select({ world: analyticsScenes.worldName })
+      .select({ world: analyticsScenes.worldName, entityId: locationSetups.deploymentEntityId, baseParcel: analyticsScenes.baseParcel })
       .from(locationSetups)
       .innerJoin(analyticsScenes, eq(analyticsScenes.id, locationSetups.analyticsSceneId))
       .where(and(eq(locationSetups.virviSceneId, sceneId), isNull(locationSetups.endedAt), eq(analyticsScenes.kind, 'world')))
@@ -758,7 +787,14 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     const taken = worlds.length
       ? new Set((await db.query.dclWorldDestinations.findMany({ where: inArray(dclWorldDestinations.worldName, worlds), columns: { worldName: true } })).map((d) => d.worldName))
       : new Set<string>()
-    return reply.send({ destinations, adoptable: worlds.filter((w) => !taken.has(w)).map((world) => ({ world })) })
+    // Only Creator Hub scenes are adopted: a Virvi-built scene still set up here is a World disconnected from this scene
+    // (offering it back would undo the disconnect). Left out too when Decentraland can't say right now.
+    const adoptable: Array<{ world: string }> = []
+    for (const world of worlds.filter((w) => !taken.has(w))) {
+      const row = setUp.find((r) => r.world?.toLowerCase() === world)!
+      if ((await setupBuiltByVirvi(world, row.entityId, row.baseParcel)) === false) adoptable.push({ world })
+    }
+    return reply.send({ destinations, adoptable })
   }))
 
   app.get<{ Params: { sceneId: string } }>(

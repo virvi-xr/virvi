@@ -727,16 +727,21 @@ describe('World destination routes', () => {
       expect(await destRows()).toHaveLength(1)
     })
 
-    it('is refused while an upload is being deployed there', async () => {
+    it('is refused while an upload to that World is uploaded, building or deploying, linked to it or not', async () => {
       const { scene } = await createScene(user)
       const dest = await insertDest(scene.id)
-      const [imp] = await db.insert(sceneImports).values({
-        userId: user.id, sceneId: scene.id, worldName: WORLD, kind: 'sdk7', status: 'deploying', sourceKey: 'imports/x/source.zip', destinationId: dest.id,
-      }).returning()
-      await db.update(dclWorldDestinations).set({ pendingImportId: imp.id }).where(eq(dclWorldDestinations.id, dest.id))
-      const res = await req('DELETE', `/api/dcl/destinations/${dest.id}`)
-      expect([res.statusCode, res.json().error]).toEqual([409, 'deploy_in_progress'])
-      expect(await destRows()).toHaveLength(1)
+      for (const status of ['uploaded', 'building', 'deploying'] as const) {
+        // Not linked: an automatic deploy claims its import before it links it (Ruling R24)
+        const [imp] = await db.insert(sceneImports).values({
+          userId: user.id, sceneId: scene.id, worldName: WORLD, kind: 'sdk7', status, sourceKey: 'imports/x/source.zip',
+        }).returning()
+        const res = await req('DELETE', `/api/dcl/destinations/${dest.id}`)
+        expect([res.statusCode, res.json().error]).toEqual([409, 'import_in_progress'])
+        await db.delete(sceneImports).where(eq(sceneImports.id, imp.id))
+      }
+      // A built upload waiting for its Deploy doesn't hold the World
+      await db.insert(sceneImports).values({ userId: user.id, sceneId: scene.id, worldName: WORLD, kind: 'sdk7', status: 'built', sourceKey: 'imports/y/source.zip' })
+      expect((await req('DELETE', `/api/dcl/destinations/${dest.id}`)).statusCode).toBe(200)
     })
 
     it('cancels a deploy waiting for its signature, so that signature can never land', async () => {
@@ -776,6 +781,7 @@ describe('World destination routes', () => {
       const { scene: other } = await createScene(user, 'Other')
       const hub = await createAnalyticsScene({ kind: 'world', locationKey: 'world:hub.dcl.eth', realm: 'hub.dcl.eth', worldName: 'hub.dcl.eth' })
       await createSetup(hub.id, scene.id)
+      worlds.entities.set('hub.dcl.eth', [liveEntity('hub1', ['0,0'])])
       const elsewhere = await createAnalyticsScene({ kind: 'world', locationKey: 'world:else.dcl.eth', realm: 'else.dcl.eth', worldName: 'else.dcl.eth' })
       await createSetup(elsewhere.id, other.id)
       const ended = await createAnalyticsScene({ kind: 'world', locationKey: 'world:old.dcl.eth', realm: 'old.dcl.eth', worldName: 'old.dcl.eth' })
@@ -791,6 +797,25 @@ describe('World destination routes', () => {
       expect(res.statusCode).toBe(200)
       expect(res.json().destinations.map((d: { id: string }) => d.id)).toEqual([dest.id])
       expect(res.json().adoptable).toEqual([{ world: 'hub.dcl.eth' }])
+    })
+
+    it('leaves out a World whose set-up scene Virvi built (one disconnected from this scene), or that Decentraland cannot read', async () => {
+      const { scene } = await createScene(user)
+      const built = liveEntity('e1', ['0,0'])
+      built.metadata = { ...built.metadata, virvi: { apiUrl: 'https://virvi.io', wssUrl: 'wss://virvi.io', runtime: 3 } }
+      worlds.entities.set(WORLD, [built])
+      const cafe = await createAnalyticsScene({ kind: 'world', locationKey: `world:${WORLD}`, realm: WORLD, worldName: WORLD, baseParcel: '0,0' })
+      await createSetup(cafe.id, scene.id)
+      // Disconnected: the setup Virvi's deploys made stays (the World still runs the scene), but it isn't offered back
+      const dest = await insertDest(scene.id)
+      expect((await req('DELETE', `/api/dcl/destinations/${dest.id}`)).statusCode).toBe(200)
+      expect((await req('GET', `/api/scenes/${scene.id}/dcl/destinations`)).json().adoptable).toEqual([])
+
+      worlds.entities.set(WORLD, [liveEntity('e2', ['0,0'])])
+      expect((await req('GET', `/api/scenes/${scene.id}/dcl/destinations`)).json().adoptable).toEqual([{ world: WORLD }])
+      worlds.down = true
+      const down = await req('GET', `/api/scenes/${scene.id}/dcl/destinations`)
+      expect([down.statusCode, down.json().adoptable]).toEqual([200, []])
     })
 
     it("is 404 for a scene the caller can't edit", async () => {

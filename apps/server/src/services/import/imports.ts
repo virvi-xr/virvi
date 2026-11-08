@@ -18,7 +18,7 @@ export type SceneImportRow = typeof sceneImports.$inferSelect
 type DeploymentRow = Pick<typeof sceneDeployments.$inferSelect, 'status' | 'assetBundle' | 'createdAt'>
 
 /** Statuses that hold the World: a second upload is 409 import_in_progress. */
-const BLOCKING = ['uploaded', 'building', 'deploying'] as const
+export const BLOCKING = ['uploaded', 'building', 'deploying'] as const
 /** Statuses a new upload replaces (Ruling R2): nothing runs, the creator just hasn't deployed or signed. */
 const SUPERSEDED = ['built', 'awaiting_signature'] as const
 export const SUPERSEDED_MESSAGE = 'A newer upload replaced this one.'

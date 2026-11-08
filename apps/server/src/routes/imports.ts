@@ -45,7 +45,7 @@ import {
 } from '../services/import/imports.js'
 import { NOT_DEPLOYABLE, notParcelController, placeOwner, startImportDeploy } from '../services/import/import-deploy.js'
 import { DeployerError } from '../services/dcl/world-deployer.js'
-import { ownerFor, RouteError } from './dcl-destinations.js'
+import { ownerFor, RouteError, setupBuiltByVirvi } from './dcl-destinations.js'
 import { publicDeployment } from './deploy.js'
 
 const BUILD_START_FAILED = "The build couldn't start. Try the upload again in a few minutes."
@@ -129,7 +129,8 @@ async function manageable(request: FastifyRequest, sceneIds: string[], refusal: 
 
 /**
  * Which Virvi scene the import goes to. A World: the scene its destination belongs to (409 world_in_use without full
- * access), else the scene its active setup belongs to (409 world_set_up_elsewhere), else the scene of its last import
+ * access), else the scene its active setup belongs to (409 world_set_up_elsewhere; not a setup whose live scene Virvi
+ * built, which a disconnected World leaves behind), else the scene of its last import
  * when the importer still has full access on it, else a new scene. Parcels: the same with a destination or an active
  * setup on any overlapping parcel (409 parcels_in_use, parcels_set_up_elsewhere), the destinations' scene first; parcels
  * that overlap several different Virvi scenes are refused (409 parcels_in_use, naming them) rather than one picked.
@@ -141,8 +142,11 @@ async function sceneFor(request: FastifyRequest, location: ImportLocation, newNa
     const world = location.world
     const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, world), columns: { sceneId: true } })
     used = await manageable(request, dest ? [dest.sceneId] : [], new ImportError(409, 'world_in_use', "This World is connected to a Virvi scene you can't manage."))
-    const loc = used ? null : await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, `world:${world}`), columns: { id: true } })
-    const setup = loc ? await getActiveSetup(loc.id) : null
+    const loc = used ? null : await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, `world:${world}`), columns: { id: true, baseParcel: true } })
+    let setup = loc ? await getActiveSetup(loc.id) : null
+    // A setup left by Virvi's own deploys of a scene the World was since disconnected from doesn't connect the World:
+    // only a Creator Hub `@virvixr/dcl` scene running there does (when Decentraland can't say, the setup counts)
+    if (setup && loc && (await setupBuiltByVirvi(world, setup.deploymentEntityId, loc.baseParcel)) === true) setup = null
     setupScene = await manageable(request, setup ? [setup.virviSceneId] : [], new ImportError(409, 'world_set_up_elsewhere', "This World is set up under a Virvi scene you can't manage."))
   } else {
     const overlap = sql`ARRAY[${sql.join(location.parcels.map((p) => sql`${p}`), sql`, `)}]::text[]`

@@ -190,7 +190,7 @@ export async function startImportDeploy(
   }
 }
 
-async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { virviOnly?: boolean } & DeployOptions): Promise<StartedImportDeploy | null> {
+async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { virviOnly?: boolean; claimed?: boolean } & DeployOptions): Promise<StartedImportDeploy | null> {
   const from = row.status
   const loc = locationOf(row)
   const plot = await builtPlot(row, loc)
@@ -208,6 +208,12 @@ async function begin(row: SceneImportRow, by: string, virvi: boolean, opts: { vi
       where: sameLocation(loc), orderBy: [desc(sceneImports.createdAt)], columns: { id: true },
     })
     if (now?.status !== from || newest?.id !== row.id) return null
+    // The automatic deploy only ever deploys into the scene's own World destination, never sets one up: read again under
+    // the lock a disconnect takes, so a World disconnected meanwhile isn't connected back to this scene
+    if (loc.kind === 'world' && (opts.virviOnly || opts.claimed)) {
+      const still = await tx.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, loc.world), columns: { sceneId: true } })
+      if (still?.sceneId !== row.sceneId) return null
+    }
     const at = new Date()
     const values = { sceneId: row.sceneId, ownerUserId: by, ownerWallet: owner, ...plot, mode: 'sign' as const, adopted: true, pendingImportId: row.id }
     const set = { ...plot, adopted: true, pendingImportId: row.id, ownerWallet: owner, ownerUserId: by, updatedAt: at }

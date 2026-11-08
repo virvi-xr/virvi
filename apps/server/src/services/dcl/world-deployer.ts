@@ -863,6 +863,8 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   // Claim it, so a second submit of the same signature can't upload twice. An import's deployment is claimed with its
   // import, which must still be waiting for this very deployment (a newer upload may have replaced it).
   const claimed = await db.transaction(async (tx) => {
+    // The destination's lock (startVirviDeploy, a disconnect): a disconnect either cancels this row first or sees it deploying
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${dest.id}))`)
     if (bundle.importId) {
       const imp = await tx.update(sceneImports)
         .set({ status: 'deploying', updatedAt: new Date() })
