@@ -1572,7 +1572,8 @@ export const studioDesigns = pgTable('studio_designs', {
   machineClaimedAt: timestamp('machine_claimed_at', { withTimezone: true }),
   // SHA-256 of the machine's STUDIO_WORKER_TOKEN; the token itself is never stored
   workerTokenHash: text('worker_token_hash').unique(),
-  // Set by the first paid finalize: a finalized design no longer counts as open, even while it is revised
+  // Set by the first paid finalize. The design stops counting as open once every piece is finalized (LIV-81), even
+  // while it is revised; a partly finalized one still counts (designs.ts openDesignCount)
   finalizedAt: timestamp('finalized_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

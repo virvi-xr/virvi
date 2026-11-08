@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { listUploads, publicUpload, uploadPaths } from './uploads.js'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioFinalizeCredits, studioJobs, studioPayments, studioMessages, studioPieces, studioRenders, studioRevisions } from '../db/schema.js'
@@ -39,7 +39,8 @@ export const START_FAILED = 'The studio machine could not start.'
 export const fixChecksText = (categories: string[]) =>
   `Fix every FAIL the checker reported for: ${categories.join(', ')}. Change nothing else.`
 
-export type FixClipping = { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit'] }
+/** `categories`: the pieces worn in the view the person saw, when it was Finalize's selection (sets.ts wornRevisions). */
+export type FixClipping = { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit']; categories?: string[] }
 const OUTFIT_LABELS: Record<string, string> = { default: 'default', 'outfit-2': 'outfit 2', 'outfit-3': 'outfit 3' }
 /** What the person's clipping report says in the conversation. */
 export const clippingText = (kind: string, f: FixClipping) =>
@@ -83,13 +84,51 @@ export function revisionsKey(pieces: { latestRevisionId: string | null }[]): str
   return pieces.map((p) => p.latestRevisionId).filter((x): x is string => !!x).sort().join(',')
 }
 
-export function publicDesign(d: Design) {
-  return { id: d.id, name: d.name, kind: d.kind, agent: d.agent, status: d.status, archivedAt: d.archivedAt, lastJobAt: d.lastJobAt, finalizedAt: d.finalizedAt, createdAt: d.createdAt }
+/**
+ * How far a design is finalized: `pieceCount` pieces have a revision, `finalizedPieces` of them have been paid for at
+ * some revision (a later revision of a finalized piece keeps it finalized). `finalizedAt` is when the first was.
+ */
+export type FinalizedCount = { finalizedPieces: number; pieceCount: number }
+const NONE: FinalizedCount = { finalizedPieces: 0, pieceCount: 0 }
+
+export function publicDesign(d: Design, counts: FinalizedCount = NONE) {
+  return {
+    id: d.id, name: d.name, kind: d.kind, agent: d.agent, status: d.status, archivedAt: d.archivedAt, lastJobAt: d.lastJobAt,
+    finalizedAt: d.finalizedAt, finalizedPieces: counts.finalizedPieces, pieceCount: counts.pieceCount, createdAt: d.createdAt,
+  }
 }
+
+/** Each design's FinalizedCount, in one query. */
+export async function finalizedCounts(designIds: string[], exec: Exec = db): Promise<Map<string, FinalizedCount>> {
+  if (!designIds.length) return new Map()
+  const rows = await exec.select({
+    designId: studioPieces.designId,
+    pieceCount: sql<number>`count(*)::int`,
+    finalizedPieces: sql<number>`count(*) FILTER (WHERE EXISTS (SELECT 1 FROM studio_entitlements e
+      WHERE e.design_id = studio_pieces.design_id AND e.category = studio_pieces.category))::int`,
+  }).from(studioPieces)
+    .where(and(inArray(studioPieces.designId, designIds), isNotNull(studioPieces.latestRevisionId)))
+    .groupBy(studioPieces.designId)
+  return new Map(rows.map((r) => [r.designId, { finalizedPieces: r.finalizedPieces, pieceCount: r.pieceCount }]))
+}
+
+/** publicDesign for each design, with how far it is finalized. */
+export async function publicDesigns(rows: Design[]) {
+  const counts = await finalizedCounts(rows.map((d) => d.id))
+  return rows.map((d) => publicDesign(d, counts.get(d.id)))
+}
+
+/**
+ * Fully finalized: paid for (finalizedAt) with no piece left unfinalized. A partly finalized design is still open
+ * (LIV-81: it counts toward the open-design limit until every piece is finalized).
+ */
+const fullyFinalized = sql`(studio_designs.finalized_at IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM studio_pieces p WHERE p.design_id = studio_designs.id AND p.latest_revision_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM studio_entitlements e WHERE e.design_id = p.design_id AND e.category = p.category)))`
 
 export async function openDesignCount(userId: string): Promise<number> {
   const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(studioDesigns)
-    .where(and(eq(studioDesigns.ownerId, userId), isNull(studioDesigns.archivedAt), isNull(studioDesigns.finalizedAt)))
+    .where(and(eq(studioDesigns.ownerId, userId), isNull(studioDesigns.archivedAt), sql`NOT ${fullyFinalized}`))
   return n
 }
 
@@ -150,7 +189,7 @@ export async function designDetail(d: Design, now: Date) {
     .orderBy(desc(studioJobs.createdAt))
     .limit(1)
   return {
-    design: publicDesign(d),
+    design: publicDesign(d, (await finalizedCounts([d.id])).get(d.id)),
     pieces: pieces.map((p) => {
       const rev = revs.find((r) => r.id === p.latestRevisionId)
       const views: Record<string, { status: string; frames: number; urls: string[]; renderedAt: Date; pending?: boolean }> = {}

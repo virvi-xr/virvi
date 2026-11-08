@@ -30,6 +30,11 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
   Checkout (or grants at once when every line is waived). The webhook makes an *entitlement* per paid revision and
   queues a `finalize` job, which builds the package from that revision's stored files. The owner downloads it from
   `GET /designs/:id/pieces/:category/revisions/:number/package`; a failed package is retried free with `…/package/retry`.
+- **Some of the pieces** (LIV-81): both take `categories` (`?categories=a,b` on the quote), so the creator pays only
+  for the pieces ticked. A partly finalized design (`finalizedPieces` of `pieceCount`) stays open for prompts and
+  counts toward the open-design limit until every piece is finalized. Finalize's emote checks for a selection wear the
+  chosen pieces and the finalized ones only (`categories` on `set-renders`, `emote-checks`, `clipping`,
+  `finalize-renders`, and `GET /designs/:id/set`).
 - **Revisions** (every finalize after a piece's first) are half price. A customer who says the revision fixed the
   agent's mistake (`…/report`, within 30 days, or at checkout) is refunded that line in full, at once.
 - **Top-ups** (`POST /topups`) add prompts used after the day's allowance; they never expire.

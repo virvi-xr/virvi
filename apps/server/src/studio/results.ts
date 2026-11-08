@@ -98,8 +98,15 @@ const SUPERSEDED = 'superseded: the pieces changed before it ran'
  * key, where nobody sees them, and hold up the current ones. Fails them before a worker takes them.
  */
 async function cancelSupersededRenders(designId: string, superseded: string[], exec: Exec, now: Date): Promise<void> {
-  const revisions = revisionsKey(await exec.select({ latestRevisionId: studioPieces.latestRevisionId }).from(studioPieces)
-    .where(eq(studioPieces.designId, designId)))
+  const latest = await exec.select({ latestRevisionId: studioPieces.latestRevisionId }).from(studioPieces)
+    .where(eq(studioPieces.designId, designId))
+  const revisions = revisionsKey(latest)
+  const current = latest.map((p) => p.latestRevisionId).filter((x): x is string => !!x)
+  // A view of Finalize's selection (render.categories) wears only those pieces: it is stale when one of them changed,
+  // not when another piece did. A whole-set view is stale on any change, a piece added included.
+  const staleSet = sql`(${studioJobs.payload}->'render'->'categories' IS NULL AND ${studioJobs.payload}->>'revisions' IS DISTINCT FROM ${revisions})
+    OR (${studioJobs.payload}->'render'->'categories' IS NOT NULL AND NOT (string_to_array(${studioJobs.payload}->>'revisions', ',')
+      <@ ARRAY[${sql.join([sql`''`, ...current.map((r) => sql`${r}`)], sql`, `)}]::text[]))`
   const pieceJobs = superseded.length
     ? sql`OR id IN (SELECT job_id FROM studio_renders WHERE revision_id IN (${sql.join(superseded.map((r) => sql`${r}`), sql`, `)})
         UNION SELECT pending_job_id FROM studio_renders WHERE revision_id IN (${sql.join(superseded.map((r) => sql`${r}`), sql`, `)}))`
@@ -107,7 +114,7 @@ async function cancelSupersededRenders(designId: string, superseded: string[], e
   const cancelled = await exec.update(studioJobs)
     .set({ status: 'failed', result: { outcome: 'error', error: SUPERSEDED, pieces: [] }, finishedAt: now })
     .where(and(eq(studioJobs.designId, designId), eq(studioJobs.type, 'render'), eq(studioJobs.status, 'queued'),
-      sql`((${studioJobs.payload}->'render'->>'set' = 'true' AND ${studioJobs.payload}->>'revisions' IS DISTINCT FROM ${revisions}) ${pieceJobs})`))
+      sql`((${studioJobs.payload}->'render'->>'set' = 'true' AND (${staleSet})) ${pieceJobs})`))
     .returning({ id: studioJobs.id })
   const ids = cancelled.map((j) => j.id)
   if (!ids.length) return

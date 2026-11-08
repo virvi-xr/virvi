@@ -14,7 +14,7 @@ import { isVirviAdmin, quoteFinalize, QuoteError } from '../studio/pricing.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
-import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
+import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, setDetail, TOUR_VIEW, wornRevisions } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
@@ -22,7 +22,7 @@ import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
-  designDetail, openDesignCount, totalDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
+  designDetail, openDesignCount, totalDesignCount, publicDesign, publicDesigns, queuePrompt, requestOrbit, requestRender, usage, type Design, type FixClipping, type View,
 } from '../studio/designs.js'
 
 /**
@@ -71,6 +71,20 @@ async function ownDesign(request: FastifyRequest): Promise<Design | null> {
   if (!UUID.test(id)) return null
   const [d] = await db.select().from(studioDesigns).where(and(eq(studioDesigns.id, id), eq(studioDesigns.ownerId, request.user.id)))
   return d ?? null
+}
+
+const CATEGORY = /^[a-z_]{1,32}$/
+const BAD_CATEGORIES = 'categories must be piece categories'
+
+/**
+ * A chosen set of pieces: a list in a body, or `a,b` in a query. Absent (or an empty query) is null, every piece;
+ * undefined is a malformed one.
+ */
+function chosenCategories(raw: unknown, from: 'body' | 'query'): string[] | null | undefined {
+  if (raw == null || (from === 'query' && raw === '')) return null
+  const list = from === 'query' ? (typeof raw === 'string' ? raw.split(',') : null) : raw
+  if (!Array.isArray(list) || !list.length || !list.every((c) => typeof c === 'string' && CATEGORY.test(c))) return undefined
+  return [...new Set(list as string[])]
 }
 
 /** Agent check shared by create and update. */
@@ -154,7 +168,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     const rows = await db.select().from(studioDesigns)
       .where(and(eq(studioDesigns.ownerId, request.user.id), archived ? isNotNull(studioDesigns.archivedAt) : isNull(studioDesigns.archivedAt)))
       .orderBy(desc(studioDesigns.createdAt))
-    return rows.map(publicDesign)
+    return publicDesigns(rows)
   })
 
   app.get('/api/studio/designs/:id', trialAuth, async (request, reply) => {
@@ -187,7 +201,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     const [updated] = Object.keys(set).length
       ? await db.update(studioDesigns).set(set).where(eq(studioDesigns.id, d.id)).returning()
       : [d]
-    return publicDesign(updated)
+    return (await publicDesigns([updated]))[0]
   })
 
   app.post('/api/studio/designs/:id/prompts', trialWork, async (request, reply) => {
@@ -221,10 +235,13 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.get('/api/studio/designs/:id/finalize', trialAuth, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
+    // The dialog re-quotes as pieces are ticked: the total, free finalizes and first-piece prices are the server's
+    const categories = chosenCategories((request.query as { categories?: unknown }).categories, 'query')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
     try {
       const admin = await isVirviAdmin(request.user.id)
       const now = new Date()
-      return await quoteFinalize(d, null, [], admin ? 0 : await giftsFor(request.user.id, d.id, now), undefined,
+      return await quoteFinalize(d, categories, [], admin ? 0 : await giftsFor(request.user.id, d.id, now), undefined,
         { admin, credit: admin ? 0 : await creditFor(request.user.id, d.id, now) })
     } catch (err) {
       if (err instanceof QuoteError) return quoteRefusal(reply, err)
@@ -240,13 +257,8 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
     // an admin's finalize is granted without Stripe, and MANA doesn't use Stripe, so neither waits on it being set up
     if (method === 'card' && !config.stripeSecretKey && !(await isVirviAdmin(request.user.id))) return paymentsOff(reply)
-    let categories: string[] | null = null
-    if (b.categories != null) {
-      if (!Array.isArray(b.categories) || !b.categories.length || !b.categories.every((c) => typeof c === 'string' && /^[a-z_]{1,32}$/.test(c))) {
-        return reply.status(400).send({ error: 'categories must be piece categories' })
-      }
-      categories = [...new Set(b.categories as string[])]
-    }
+    const categories = chosenCategories(b.categories, 'body')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
     const reports: Record<string, string> = {}
     if (b.reports != null) {
       if (typeof b.reports !== 'object' || Array.isArray(b.reports)) return reply.status(400).send({ error: 'reports must map a category to what was wrong' })
@@ -480,7 +492,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/set-renders', trialWork, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { bodyShape?: unknown; outfit?: unknown; emote?: unknown }
+    const b = (request.body ?? {}) as { bodyShape?: unknown; outfit?: unknown; emote?: unknown; categories?: unknown }
     if (d.kind === 'scene') {  // the building's walk-through, the one design-level view a scene design has
       if (!(await hasBuilding(d.id))) return reply.status(404).send({ error: 'no_building' })
       const r = await requestSetRender(d, TOUR_VIEW, new Date())
@@ -493,7 +505,10 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (d.kind === 'emote' ? emote !== null : !(BASE_EMOTES as readonly unknown[]).includes(emote)) {
       return reply.status(400).send({ error: 'unknown emote' })
     }
-    const r = await requestSetRender(d, { bodyShape: b.bodyShape, outfit: b.outfit, emote } as View, new Date())
+    // Finalize's selection: only the chosen and finalized pieces are worn
+    const categories = chosenCategories(b.categories, 'body')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    const r = await requestSetRender(d, { bodyShape: b.bodyShape, outfit: b.outfit, emote } as View, new Date(), { categories })
     if (!r) return reply.status(404).send({ error: 'piece_not_found' })
     return r.status === 'queued' ? { status: 'queued' } : r
   })
@@ -506,13 +521,15 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/emote-checks', trialWork, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; state?: unknown }
+    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; state?: unknown; categories?: unknown }
     const emote = checkedEmote(d, b.emote)
     if (!emote) return reply.status(400).send({ error: 'unknown emote' })
     if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
     // Clipping is reported through /clipping, which also queues the fix
     if (b.state !== 'fine') return reply.status(400).send({ error: 'state must be fine' })
-    const revisions = await currentRevisions(d.id)
+    const categories = chosenCategories(b.categories, 'body')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    const { revisions } = await wornRevisions(d.id, categories)
     if (!revisions) return reply.status(404).send({ error: 'piece_not_found' })
     await recordCheck(d.id, revisions, emote, b.bodyShape as string, 'fine')
     return reply.status(204).send()
@@ -522,13 +539,16 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/clipping', trialWork, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; outfit?: unknown }
+    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; outfit?: unknown; categories?: unknown }
     const emote = checkedEmote(d, b.emote)
     if (!emote) return reply.status(400).send({ error: 'unknown emote' })
     if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
     if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return reply.status(400).send({ error: 'unknown outfit' })
-    const fix = { emote, bodyShape: b.bodyShape, outfit: b.outfit } as { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit'] }
-    const revisions = await currentRevisions(d.id)
+    const chosen = chosenCategories(b.categories, 'body')
+    if (chosen === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    // The view seen was Finalize's selection: the fix looks at the same pieces worn
+    const { revisions, categories } = await wornRevisions(d.id, chosen)
+    const fix: FixClipping = { emote, bodyShape: b.bodyShape as View['bodyShape'], outfit: b.outfit as View['outfit'], ...(categories ? { categories } : {}) }
     const key = setViewKey(d.kind, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : emote } as View)
     const [seen] = revisions ? await db.select({ id: studioSetRenders.id }).from(studioSetRenders).where(and(
       eq(studioSetRenders.designId, d.id), eq(studioSetRenders.revisions, revisions), eq(studioSetRenders.viewKey, key),
@@ -545,7 +565,19 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/finalize-renders', work, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    return { queued: await queueFinalizeRenders(d, new Date()) }
+    const categories = chosenCategories((request.body as { categories?: unknown } | null)?.categories, 'body')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    return { queued: await queueFinalizeRenders(d, new Date(), categories) }
+  })
+
+  // The emote step for Finalize's selection (`?categories=a,b`): views and checks of the chosen and finalized pieces
+  // worn together. Without it, the whole set's, as the design detail has it.
+  app.get('/api/studio/designs/:id/set', trialAuth, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const categories = chosenCategories((request.query as { categories?: unknown }).categories, 'query')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    return setDetail(d, new Date(), undefined, categories)
   })
 
   // The signed token is the authority: no bearer. Every check failing is the same 403. A wildcard, not :token, because

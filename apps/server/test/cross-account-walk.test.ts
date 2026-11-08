@@ -300,6 +300,7 @@ const CASES: Case[] = [
   { route: 'GET /api/studio/payments/:paymentId', url: (f) => `/api/studio/payments/${f.designPayment.id}` },
   { route: 'POST /api/studio/payments/:paymentId/mana-tx', url: (f) => `/api/studio/payments/${f.designPayment.id}/mana-tx`, body: () => ({ txHash: '0x' + 'ab'.repeat(32) }) },
   { route: 'POST /api/studio/designs/:id/finalize-renders', url: (f) => `/api/studio/designs/${f.design.id}/finalize-renders` },
+  { route: 'GET /api/studio/designs/:id/set', url: (f) => `/api/studio/designs/${f.design.id}/set?categories=hat` },
   { route: 'DELETE /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}` },
   { route: 'PATCH /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}`, body: () => ({ endsAt: null }) },
   { route: 'POST /api/hyperfy/worlds/:id/restore', url: (f) => `/api/hyperfy/worlds/${f.world.id}/restore` },
