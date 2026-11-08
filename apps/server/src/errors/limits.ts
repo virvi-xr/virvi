@@ -66,6 +66,18 @@ export const ERROR_BUDGETS = {
   },
   /** The share of each budget (and of the signature cap) anonymous browser traffic may use; the rest is kept for signed-in users. */
   anonymousShare: 0.6,
+  /**
+   * Report screenshots (phase 2), in `error_budget`: at most 5 a day per address and per user, 100 and 100 MB a day in
+   * all (anonymous ones 60% of that), each at most 2 MB after re-encoding, kept 30 days: at most about 3 GB stored.
+   * Past a budget the report is kept without its screenshot.
+   */
+  screenshotsPerIpDay: 5,
+  screenshotsPerUserDay: 5,
+  screenshotsPerDay: 100,
+  screenshotBytesPerDay: 100 * 1024 * 1024,
+  screenshotDays: 30,
+  /** Thank-you emails for reports (LIV-50 stand-in), per account per day. */
+  reportAcksPerUserDay: 3,
 }
 
 /**
@@ -196,6 +208,13 @@ export class DayBudget {
   takeAll(limits: Array<[string, number]>): boolean {
     if (!limits.every(([k, l]) => this.has(k, l))) return false
     for (const [k, l] of limits) this.take(k, 1, l)
+    return true
+  }
+
+  /** Takes `n` from every [key, n, limit] if each has that much left, else nothing; true when it took them. */
+  takeAllOf(limits: Array<[string, number, number]>): boolean {
+    if (!limits.every(([k, n, l]) => (this.base.get(k) ?? 0) + (this.used.get(k) ?? 0) + n <= l)) return false
+    for (const [k, n, l] of limits) this.take(k, n, l)
     return true
   }
 

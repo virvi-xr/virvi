@@ -92,14 +92,16 @@ export interface ClientContext {
 
 /** A validated browser event (checkErrorBatch) as a record. */
 export function clientRecord(e: ClientErrorEvent, ctx: ClientContext, receivedAt = new Date()): ErrorRecord {
-  const signature = errorSignature({ kind: e.kind, status: e.status, method: e.method, path: e.path, errorType: e.errorType, message: e.message, stack: e.stack })
+  // A report with no error (the help menu) is signed by its page
+  const path = e.kind === 'report' ? e.route : e.path
+  const signature = errorSignature({ kind: e.kind, status: e.status, method: e.method, path, errorType: e.errorType, message: e.message, stack: e.stack })
   return {
     hash: signatureHash(signature),
     signature,
     source: 'web',
     kind: e.kind,
     status: e.status ?? null,
-    routeTemplate: e.path ? routeTemplate(e.path) : null,
+    routeTemplate: path ? routeTemplate(path) : null,
     normalizedMessage: e.message ? normalizeMessage(e.message) : null,
     expected: e.kind === 'api' && e.status !== undefined ? expectedReason(e.status, e.errorBody) : null,
     occurredAt: new Date(e.t),

@@ -50,6 +50,7 @@ export const PUBLIC_EXACT = [
   'POST /api/advertiser-leads', // public: landing page early-access form (anonymous visitors, never reads a bearer)
   'POST /api/errors', // public: error reports from guests, trials and accounts; an optional bearer only picks the user to count (hashed), never grants anything
   'POST /api/errors/reports', // public: a crash screen's Report; an optional bearer only names the sender
+  'POST /api/errors/prompt', // public: "should I ask?" for an error; an optional account bearer applies that account's own prompt state, nothing else
   'GET /api/studio/render-frames/*', // the signed frame token is the auth (no bearer)
   'GET /api/health', // health check
   'GET /api/instance', // public: install mode and version (no secrets)

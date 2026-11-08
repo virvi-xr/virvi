@@ -2237,6 +2237,10 @@ export const errorSignatures = pgTable('error_signatures', {
   linearCommentedAt: timestamp('linear_commented_at', { withTimezone: true }),
   linearQuietAt: timestamp('linear_quiet_at', { withTimezone: true }),
   linearRegressionAt: timestamp('linear_regression_at', { withTimezone: true }),
+  // Set just before an issue is made and cleared once it is saved: a pass never makes a second issue for it (phase 2)
+  linearFilingAt: timestamp('linear_filing_at', { withTimezone: true }),
+  // When its Linear issue was completed, as last read from Linear (that marks it fixed, like the Errors page's Mark fixed)
+  linearDoneAt: timestamp('linear_done_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   hashUq: uniqueIndex('error_signatures_hash_uq').on(t.hash),
@@ -2308,7 +2312,8 @@ export const errorHourlyUsers = pgTable('error_hourly_users', {
   hourIdx: index('error_hourly_users_hour_idx').on(t.hour),
 }))
 
-// What a user said they were doing, sent from a crash screen's Report form (with their account: they chose to send it)
+// What a user said they were doing, sent from a Report form (crash screen, prompt or help menu), with their account if
+// signed in: they chose to send it
 export const errorReports = pgTable('error_reports', {
   id: uuid('id').primaryKey().defaultRandom(),
   signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
@@ -2316,9 +2321,35 @@ export const errorReports = pgTable('error_reports', {
   description: text('description').notNull(),
   payload: jsonb('payload').notNull(),
   release: text('release'),
+  // The optional screenshot, re-encoded without metadata, in the private store (errors/reports.ts); kept 90 days
+  screenshotKey: text('screenshot_key'),
+  screenshotType: text('screenshot_type'),
+  screenshotBytes: integer('screenshot_bytes'),
+  // Added to the signature's Linear issue as a comment (filing on)
+  linearPostedAt: timestamp('linear_posted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   signatureIdx: index('error_reports_signature_idx').on(t.signatureId, t.createdAt),
+  postedIdx: index('error_reports_posted_idx').on(t.linearPostedAt),
+}))
+
+// Report prompts per account (§4): when they were last asked, and whether they turned prompts off. Guests and trials
+// keep theirs in the browser.
+export const errorPromptState = pgTable('error_prompt_state', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  askedAt: timestamp('asked_at', { withTimezone: true }),
+  optedOut: boolean('opted_out').notNull().default(false),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// "We know about this" was shown to this account (by its error user hash) for this signature: once each
+export const errorPromptKnown = pgTable('error_prompt_known', {
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  userHash: text('user_hash').notNull(),
+  shownAt: timestamp('shown_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.signatureId, t.userHash] }),
+  shownIdx: index('error_prompt_known_shown_idx').on(t.shownAt),
 }))
 
 // Filing thresholds tuned on the Errors page (one row, id 'default'); unset keys use src/errors/settings.ts defaults

@@ -163,10 +163,12 @@ export async function signatureDetail(id: string, now: Date, days = 7) {
     requestId: j.request_id as string, source: j.source as string, kind: j.kind as string, occurredAt: iso(j.occurred_at)!, signatureId: j.signature_id as string, signature: j.signature as string,
   })) : []
   const reports = rowsOf<SigRow>(await db.execute(sql`
-    SELECT r.id, r.description, r.release, r.created_at, r.payload, u.email, u.display_name FROM error_reports r LEFT JOIN users u ON u.id = r.user_id
+    SELECT r.id, r.description, r.release, r.created_at, r.payload, r.screenshot_key, r.linear_posted_at, u.email, u.display_name
+    FROM error_reports r LEFT JOIN users u ON u.id = r.user_id
     WHERE r.signature_id = ${id}::uuid ORDER BY r.created_at DESC LIMIT 20`)).map((r) => ({
     id: r.id as string, description: r.description as string, release: r.release as string | null, createdAt: iso(r.created_at)!,
     payload: r.payload, from: (r.email as string | null) ?? (r.display_name as string | null) ?? null,
+    screenshot: !!r.screenshot_key, postedAt: iso(r.linear_posted_at),
   }))
   return {
     signature: { ...summary({ ...sig, count: totals.week, users: totals.users_week }), message: sig.message as string | null, route: sig.route as string | null },

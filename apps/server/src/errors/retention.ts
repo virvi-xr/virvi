@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
+import { purgeScreenshots } from './reports.js'
 
 /** Raw error events, per-hour user hashes and breakdowns are kept this long. */
 export const RAW_DAYS = 30
@@ -25,7 +26,11 @@ export async function purgeErrors(now = new Date()) {
   await db.execute(sql`DELETE FROM error_budget WHERE day < ${keepFrom}::date`)
   await db.execute(sql`DELETE FROM error_releases WHERE seen_at < ${ts(new Date(now.getTime() - 90 * 86_400_000))}`)
   const hours = n(await db.execute(sql`DELETE FROM error_hourly WHERE hour < ${ts(counts)}`))
-  await db.execute(sql`DELETE FROM error_reports WHERE created_at < ${ts(counts)}`)
+  // Screenshots go after 30 days (the reports stay), and before a report goes, its screenshot
+  await purgeScreenshots(now).catch((err) => console.error('[errors] purging report screenshots failed:', err instanceof Error ? err.message : err))
+  await db.execute(sql`DELETE FROM error_reports WHERE created_at < ${ts(counts)} AND screenshot_key IS NULL`)
+  // "We know about this" marks are kept as long as reports
+  await db.execute(sql`DELETE FROM error_prompt_known WHERE shown_at < ${ts(counts)}`)
   // Browser signatures only anonymous addresses ever hit, never filed or reported, go after 30 quiet days (with their rows)
   const anonymous = n(await db.execute(sql`
     DELETE FROM error_signatures WHERE source = 'web' AND NOT seen_users AND linear_issue_id IS NULL AND user_reports = 0

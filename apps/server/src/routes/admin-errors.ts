@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { errorSignatures } from '../db/schema.js'
+import { errorReports, errorSignatures } from '../db/schema.js'
+import { getImportStore } from '../storage/private-store.js'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { requireAdmin } from '../auth/admin.js'
@@ -38,6 +39,15 @@ export default async function adminErrorRoutes(app: FastifyInstance) {
       .returning({ id: errorSignatures.id, resolvedAt: errorSignatures.resolvedAt, regressedAt: errorSignatures.regressedAt })
     if (!row) return reply.status(404).send({ error: 'not_found' })
     return reply.send(row)
+  })
+
+  // A report's screenshot (private store; never a public URL)
+  app.get<{ Params: { reportId: string } }>('/api/admin/errors/reports/:reportId/screenshot', async (request, reply) => {
+    if (!isUuid(request.params.reportId)) return reply.status(404).send({ error: 'not_found' })
+    const [r] = await db.select({ key: errorReports.screenshotKey }).from(errorReports).where(eq(errorReports.id, request.params.reportId))
+    const obj = r?.key ? await getImportStore().get(r.key) : null
+    if (!obj) return reply.status(404).send({ error: 'not_found' })
+    return reply.type(obj.contentType).header('Cache-Control', 'private, max-age=3600').header('X-Content-Type-Options', 'nosniff').send(obj.body)
   })
 
   app.get('/api/admin/error-settings', async (_request, reply) => {

@@ -21,10 +21,17 @@ export const ERROR_LIMITS = {
   maxCount: 20,
   /** A client clock further off than this is replaced by the server's. */
   maxClockSkewMs: 86_400_000,
+  /** A report's optional screenshot (PNG, JPEG or WebP), before base64. */
+  maxScreenshotBytes: 2 * 1024 * 1024,
 } as const
 
 export const CLIENT_ERROR_KINDS = ['api', 'crash', 'exception', 'rejection', 'console'] as const
-export type ClientErrorKind = (typeof CLIENT_ERROR_KINDS)[number]
+/**
+ * `report`: a report a user sent with no error (the help menu's Report a bug), signed by its page. Only the report
+ * endpoint takes it; an ingest batch never does.
+ */
+export type ClientErrorKind = (typeof CLIENT_ERROR_KINDS)[number] | 'report'
+const REPORT_EVENT_KINDS: readonly string[] = [...CLIENT_ERROR_KINDS, 'report']
 export type ServerErrorKind = 'server_5xx' | 'server_exception' | 'job'
 export type ErrorKind = ClientErrorKind | ServerErrorKind
 
@@ -269,6 +276,8 @@ export function errorSignature(e: SignatureInput): string {
     case 'api':
     case 'server_5xx':
       return `${e.kind} ${e.status ?? 0} ${(e.method ?? 'GET').toUpperCase()} ${routeTemplate(e.path ?? '')}`
+    case 'report':
+      return `report ${routeTemplate(e.path ?? '')}`
     case 'job': {
       const c = codeAndMessage(e.code, e.message ?? '')
       return `job ${e.job ?? 'unknown'} ${type}${c.code}: ${messagePrefix(c.message)}`
@@ -371,9 +380,9 @@ function checkCrumb(c: unknown, nowMs: number): Breadcrumb | string {
   return out
 }
 
-function checkEvent(e: unknown, nowMs: number): ClientErrorEvent | string {
+function checkEvent(e: unknown, nowMs: number, kinds: readonly string[] = CLIENT_ERROR_KINDS): ClientErrorEvent | string {
   if (!isObj(e)) return 'event must be an object'
-  if (typeof e.kind !== 'string' || !(CLIENT_ERROR_KINDS as readonly string[]).includes(e.kind)) return `unknown kind: ${String(e.kind)}`
+  if (typeof e.kind !== 'string' || !kinds.includes(e.kind)) return `unknown kind: ${String(e.kind)}`
   const fields = {
     route: optStr(e.route, ERROR_LIMITS.maxPath),
     sceneId: optStr(e.sceneId, 64),
@@ -437,19 +446,97 @@ export function checkErrorBatch(input: unknown, nowMs: number): ErrorBatchCheck 
   return { ok: true, release, events }
 }
 
+export type ScreenshotType = 'image/png' | 'image/jpeg' | 'image/webp'
+export const SCREENSHOT_TYPES: readonly ScreenshotType[] = ['image/png', 'image/jpeg', 'image/webp']
+
 export type ErrorReportCheck =
-  | { ok: true; release: string | null; description: string; event: ClientErrorEvent }
+  | { ok: true; release: string | null; description: string; event: ClientErrorEvent; screenshot: ReportScreenshot | null }
   | { ok: false; error: string }
 
-/** A user's report from a crash screen: `{ v: 1, release?, description, event }`. */
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/
+
+/** A report's screenshot as sent: base64 (the server decodes and checks the image itself). */
+export interface ReportScreenshot { type: ScreenshotType; data: string; bytes: number }
+
+function checkScreenshot(v: unknown): ReportScreenshot | null | string {
+  if (v === undefined || v === null) return null
+  if (!isObj(v)) return 'screenshot must be an object'
+  if (typeof v.type !== 'string' || !(SCREENSHOT_TYPES as readonly string[]).includes(v.type)) return 'screenshot must be a PNG, JPEG or WebP image'
+  if (typeof v.data !== 'string' || !v.data || !BASE64.test(v.data)) return 'screenshot.data must be base64'
+  if (v.data.length > Math.ceil(ERROR_LIMITS.maxScreenshotBytes / 3) * 4) return 'screenshot must be at most 2 MB'
+  if (v.data.length % 4 !== 0) return 'screenshot.data must be base64'
+  const bytes = (v.data.length / 4) * 3 - (v.data.endsWith('==') ? 2 : v.data.endsWith('=') ? 1 : 0)
+  if (bytes > ERROR_LIMITS.maxScreenshotBytes) return 'screenshot must be at most 2 MB'
+  return { type: v.type as ScreenshotType, data: v.data, bytes }
+}
+
+/**
+ * A user's report (a crash screen's, a prompt's or the help menu's): `{ v: 1, release?, description, event,
+ * screenshot? }`. The event is the error it is about, or a `report` event of the page when there is none.
+ */
 export function checkErrorReport(input: unknown, nowMs: number): ErrorReportCheck {
   if (!isObj(input)) return { ok: false, error: 'report must be an object' }
   if (input.v !== 1) return { ok: false, error: 'v must be 1' }
   const description = typeof input.description === 'string' ? input.description.trim() : ''
   if (!description) return { ok: false, error: 'description is required' }
   if (description.length > ERROR_LIMITS.maxDescription) return { ok: false, error: `description must be at most ${ERROR_LIMITS.maxDescription} characters` }
+  const event = checkEvent(input.event, nowMs, REPORT_EVENT_KINDS)
+  if (typeof event === 'string') return { ok: false, error: event }
+  const screenshot = checkScreenshot(input.screenshot)
+  if (typeof screenshot === 'string') return { ok: false, error: screenshot }
+  const release = releaseOf(input.release)
+  return { ok: true, release, description, event, screenshot }
+}
+
+// ── Asking users (§4) ───────────────────────────────────────────────────────
+
+/** The prompt check's body (`POST /api/errors/prompt`): `{ v: 1, event }`, the event that just happened, without breadcrumbs. */
+export type PromptRequestCheck = { ok: true; event: ClientErrorEvent } | { ok: false; error: string }
+export function checkPromptRequest(input: unknown, nowMs: number): PromptRequestCheck {
+  if (!isObj(input)) return { ok: false, error: 'request must be an object' }
+  if (input.v !== 1) return { ok: false, error: 'v must be 1' }
   const event = checkEvent(input.event, nowMs)
   if (typeof event === 'string') return { ok: false, error: event }
-  const release = releaseOf(input.release)
-  return { ok: true, release, description, event }
+  delete event.breadcrumbs
+  delete event.errorBody
+  return { ok: true, event }
+}
+
+/** A user is asked about an error at most once in this long. */
+export const PROMPT_INTERVAL_MS = 24 * 3_600_000
+/** A signature with this many user descriptions has the context it needs: users hear "we know about this" instead. */
+export const KNOWN_MIN_REPORTS = 3
+
+/** What the server knows about a signature. */
+export interface PromptFacts {
+  /** On the expected-4xx list (or overflow): never asked about. */
+  expected: boolean
+  /** User descriptions since it was last fixed. */
+  reports: number
+  /** It has a Linear issue that isn't Done. */
+  openIssue: boolean
+}
+
+/** One user's prompt state: on the server for accounts, in the browser for guests and trials. */
+export interface PromptState {
+  askedAt: number | null
+  optedOut: boolean
+  /** "We know about this" was already shown to them for this signature. */
+  knownShown: boolean
+}
+
+export type PromptKind = 'ask' | 'known' | 'none'
+
+/**
+ * What to show after an error (LIV-66 §4). `ask` (the report toast) only when the error broke what the user was
+ * doing, isn't expected, its signature lacks user context (fewer than 3 descriptions, issue or not), and the user
+ * wasn't asked in the last 24 hours and hasn't turned prompts off. Otherwise `known` ("we know about this", once per
+ * signature) when it has an open issue or 3 descriptions, else `none`. Background errors are never shown.
+ */
+export function promptDecision(userAction: boolean, f: PromptFacts, s: PromptState, nowMs: number): PromptKind {
+  if (!userAction || f.expected) return 'none'
+  const lacksContext = f.reports < KNOWN_MIN_REPORTS
+  if (lacksContext && !s.optedOut && (s.askedAt === null || nowMs - s.askedAt >= PROMPT_INTERVAL_MS)) return 'ask'
+  if ((f.openIssue || !lacksContext) && !s.knownShown) return 'known'
+  return 'none'
 }
