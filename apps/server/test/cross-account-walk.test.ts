@@ -246,6 +246,7 @@ const CASES: Case[] = [
   { route: 'PATCH /api/dcl/destinations/:id', url: (f) => `/api/dcl/destinations/${f.destination.id}`, body: () => ({ mode: 'virvi' }) },
   { route: 'GET /api/dcl/destinations/:id/grant', url: (f) => `/api/dcl/destinations/${f.destination.id}/grant` },
   { route: 'POST /api/dcl/destinations/:id/grant', url: (f) => `/api/dcl/destinations/${f.destination.id}/grant`, body: () => ({ chains: [[], []], timestamp: Date.now() }) },
+  { route: 'DELETE /api/dcl/destinations/:id', url: (f) => `/api/dcl/destinations/${f.destination.id}` },
   { route: 'DELETE /api/dcl/destinations/:id/grant', url: (f) => `/api/dcl/destinations/${f.destination.id}/grant` },
   { route: 'POST /api/dcl/destinations/:id/revoke', url: (f) => `/api/dcl/destinations/${f.destination.id}/revoke`, body: () => ({ chains: [[]], timestamp: Date.now() }) },
   { route: 'GET /api/dcl/destinations/:id/parcel-grant', url: (f) => `/api/dcl/destinations/${f.parcelsDestination.id}/parcel-grant` },
