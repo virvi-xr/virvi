@@ -74,6 +74,24 @@ def test_emote_checker_runs(tmp_path, skills):
     assert list(glbs_by_shape(pieces[0])) == ['unisex'] and glbs_by_shape(pieces[0])['unisex'].name == 'wave.glb'
 
 
+def test_emote_checker_adds_the_leg_check(tmp_path, skills):
+    lay_out(tmp_path, 'emote', [FIXTURES / 'wave.glb'], {**HAT, 'category': 'emote', 'loop': False})
+    fine = collect(tmp_path, 'emote', {})[0][0].checker
+    assert '  PASS  legs apart' in fine['report']
+    shutil.copy(FIXTURES / 'emote_legs/crossed_thighs.glb', tmp_path / 'out/emote/wave.glb')
+    crossed = collect(tmp_path, 'emote', {})[0][0].checker
+    line = next(l for l in crossed['report'].splitlines() if 'legs pass through each other' in l)
+    assert line.startswith('  WARN  ') and 'wave.glb' in line and 'the thighs pass through each other at' in line
+    warns = [l for l in crossed['report'].splitlines() if l.startswith('  WARN')]
+    assert line in warns and crossed['warnings'] == len(warns)
+    assert crossed['pass'] is True and crossed['failures'] == 0  # a warning: it still saves
+
+
+def test_wearable_checker_has_no_leg_check(tmp_path, skills):
+    cap(tmp_path)
+    assert 'legs' not in collect(tmp_path, 'wearable', {})[0][0].checker['report']
+
+
 def test_closing_names_the_slots_and_forbids_renders():
     text = closing('wearable', ['hat', 'eyewear'])
     for words in ('hat', 'eyewear', 'studio-preview', 'never render', '/opt/assets', 'piece.json'):

@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, scene
+from . import config, emote_legs, scene
 
 CHECKER_TIMEOUT_SEC = 300
 
@@ -170,9 +170,25 @@ def check(piece: Piece, kind: str) -> dict:
         hides = piece.meta.get('hides') or []
         cmd += ['--hides', ','.join(hides) if isinstance(hides, list) else str(hides)] if hides else []
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=CHECKER_TIMEOUT_SEC)
-    levels = [l.split()[0] for l in p.stdout.splitlines() if l.startswith('  ') and l.split()]
+    report = p.stdout + (legs_report(piece.glbs) if kind == 'emote' else '')
+    levels = [l.split()[0] for l in report.splitlines() if l.startswith('  ') and l.split()]
     return {'ran': True, 'pass': p.returncode == 0, 'warnings': levels.count('WARN'), 'failures': levels.count('FAIL'),
-            'report': p.stdout + p.stderr}
+            'report': report + p.stderr}
+
+
+def legs_report(glbs: list[Path]) -> str:
+    """The studio's own leg check (emote_legs), in the checker's line format: a WARN when the legs pass through each
+    other, never a FAIL, so the emote still saves."""
+    lines = ['Studio leg check:']
+    for g in glbs:
+        r = emote_legs.check(g)
+        if r is None:
+            lines.append(f'  INFO  {"legs check":<38} {g.name}: not checked (no avatar clip with both legs)')
+        elif r.crossing:
+            lines.append(f'  WARN  {"legs pass through each other":<38} {g.name}: {r.describe()}')
+        else:
+            lines.append(f'  PASS  {"legs apart":<38} {g.name}: thighs and shins stay clear of each other')
+    return '\n'.join(lines) + '\n'
 
 
 def new_hashes(pieces: list[Piece]) -> dict:
