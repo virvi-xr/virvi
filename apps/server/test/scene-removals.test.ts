@@ -283,4 +283,35 @@ describe('removing deployments when a scene is deleted (LIV-83)', () => {
     expect(await destRow(dest.id)).toBeDefined()
     expect((await call('GET', `/api/scenes/${sceneId}/dcl/destinations`)).json().destinations).toHaveLength(1)
   })
+  it("Remove anyway that Virvi's signature can't do goes to the owner's wallet, which then removes what's live", async () => {
+    const dest = await insertWorld()
+    putLive(WORLD, liveWorld('bafkreiownnew', true))
+    const [removal] = (await call('DELETE', `/api/scenes/${sceneId}`, { remove: [dest.id] })).json().removals
+    expect(removal.status).toBe('needs_review')
+    worlds.failNext = new WorldsError(403, '{"message":"Unauthorized"}')
+    const anyway = (await call('POST', `/api/scenes/${sceneId}/removals/${removal.id}/retry`, { confirm: true })).json().removal
+    expect(anyway.status).toBe('awaiting_signature')
+    const sign = (await call('GET', `/api/scenes/${sceneId}/removals/${removal.id}/sign`)).json()
+    const ok = await call('POST', `/api/scenes/${sceneId}/removals/${removal.id}/signature`, { chain: await chainFor(ownerKey, sign.request.payload), timestamp: sign.request.timestamp })
+    expect(ok.json().removal.status).toBe('done')
+    expect(worlds.signed).toHaveLength(1)
+    expect(await destRow(dest.id)).toBeUndefined()
+  })
+
+  it('a removal that reaches the locks after the scene was restored sends nothing and disconnects nothing', async () => {
+    const dest = await insertWorld()
+    putLive(WORLD, liveWorld('bafkreilive'))
+    worlds.failNext = new WorldsError(500, 'down')
+    const [removal] = (await call('DELETE', `/api/scenes/${sceneId}`, { remove: [dest.id] })).json().removals
+    expect(removal.status).toBe('failed')
+    // Restored behind the removal's back (the restore route would also clear the removal)
+    await db.update(scenes).set({ deletedAt: null }).where(eq(scenes.id, sceneId))
+    const retry = await call('POST', `/api/scenes/${sceneId}/removals/${removal.id}/retry`)
+    expect(retry.statusCode).toBe(409) // not_deleted: the removal routes only work on a deleted scene
+    const [row] = await db.select().from(sceneRemovals).where(eq(sceneRemovals.id, removal.id))
+    const { runRemoval } = await import('../src/scenes/removals.js')
+    expect((await runRemoval(row)).errorMessage).toBe('The scene was restored, so this was stopped.')
+    expect(worlds.signed).toHaveLength(0)
+    expect(await destRow(dest.id)).toBeDefined()
+  })
 })

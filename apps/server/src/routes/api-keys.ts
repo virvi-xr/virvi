@@ -15,6 +15,13 @@ interface DeleteKeyParams {
   keyId: string
 }
 
+/** The session's org when it's still there (LIV-83: a deleted organization is no context for a new key). */
+async function liveOrg(orgId: string | null | undefined): Promise<string | null> {
+  if (!orgId) return null
+  const [org] = await db.select({ id: organizations.id }).from(organizations).where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)))
+  return org?.id ?? null
+}
+
 export default async function apiKeyRoutes(app: FastifyInstance) {
   // ── POST /api/keys — Create a new API key ───────────────────────────────
   // A key acts as its account (same access as the user who made it, no narrower), so keys carry no scopes
@@ -57,7 +64,7 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
         .insert(apiKeys)
         .values({
           userId: request.user.id,
-          orgId: orgId ?? request.user.orgId ?? null,
+          orgId: orgId ?? (await liveOrg(request.user.orgId)),
           name,
           keyHash,
           keyPrefix,

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
   arSpaces, eventSceneLinks, events, hyperfyWorlds, organizations, orgMembers, sceneCollaborators, sceneElementInstances, sceneElements,
-  mediaAssets, sceneLibrary, sceneRemovals, scenePresets, sceneRoles, scenes, streamingServers,
+  apiKeys, eventGiveawayLinks, giveaways, mediaAssets, sceneLibrary, sceneRemovals, users, scenePresets, sceneRoles, scenes, streamingServers,
 } from '../src/db/schema.js'
 import type { HostingDeps } from '../src/hyperfy/hosting.js'
 import { hardDeleteScene, purgeDeletedScenes, PURGE_AFTER_DAYS, restoreScene } from '../src/scenes/deleted.js'
@@ -319,5 +319,63 @@ describe('deleting a scene (LIV-83)', () => {
     // Listing isn't access: the admin can't open it
     expect((await call(admin, 'GET', `/api/scenes/${scene.id}`)).statusCode).toBe(403)
     expect((await call(owner, 'GET', `/api/scenes/${scene.id}`)).json().scene.canDelete).toBe(true)
+  })
+  it("a restore takes only what the scene alone used; what scenes shared stays the org's until its purge hands it to who still uses it", async () => {
+    const platformAdmin = await createUser({ role: 'admin' })
+    const orgAdmin = await createUser()
+    const [org] = await db.insert(organizations).values({ name: 'Shared Co', slug: `org-${Date.now()}`, billingOwnerId: owner.id }).returning()
+    await db.insert(orgMembers).values([{ orgId: org.id, userId: owner.id, role: 'owner' }, { orgId: org.id, userId: orgAdmin.id, role: 'admin' }])
+    await db.update(users).set({ activeOrgId: org.id }).where(eq(users.id, orgAdmin.id))
+    const a = (await createScene(owner, 'A')).scene
+    const b = (await createScene(owner, 'B')).scene
+    await db.update(scenes).set({ orgId: org.id }).where(inArray(scenes.id, [a.id, b.id]))
+    const [shared] = await db.insert(events).values({ ownerId: owner.id, orgId: org.id, name: 'Both' }).returning()
+    const [onlyA] = await db.insert(events).values({ ownerId: owner.id, orgId: org.id, name: 'Only A' }).returning()
+    await db.insert(eventSceneLinks).values([{ eventId: shared.id, sceneId: a.id }, { eventId: shared.id, sceneId: b.id }, { eventId: onlyA.id, sceneId: a.id }])
+    const [prize] = await db.insert(giveaways).values({ ownerId: owner.id, orgId: org.id, name: 'Prize' }).returning()
+    await db.insert(eventGiveawayLinks).values([{ eventId: shared.id, giveawayId: prize.id }, { eventId: onlyA.id, giveawayId: prize.id }])
+    const [media] = await db.insert(mediaAssets).values({ ownerId: owner.id, orgId: org.id, filename: 'm.png', contentType: 'image/png', sizeBytes: 1, storageKey: 'media/o/m.png', publicUrl: 'https://cdn.example/m.png' }).returning()
+    await db.insert(sceneLibrary).values([{ sceneId: a.id, mediaAssetId: media.id }, { sceneId: b.id, mediaAssetId: media.id }])
+
+    expect((await call(platformAdmin, 'DELETE', `/api/admin/orgs/${org.id}`)).statusCode).toBe(204)
+    expect((await db.select().from(users).where(eq(users.id, orgAdmin.id)))[0].activeOrgId).toBeNull()
+    expect((await call(orgAdmin, 'POST', `/api/scenes/${a.id}/restore`)).statusCode).toBe(200)
+    const ev = async (id: string) => (await db.select().from(events).where(eq(events.id, id)))[0]
+    expect(await ev(onlyA.id)).toMatchObject({ ownerId: orgAdmin.id, orgId: null })
+    expect(await ev(shared.id)).toMatchObject({ orgId: org.id })
+    expect((await db.select().from(giveaways).where(eq(giveaways.id, prize.id)))[0].orgId).toBe(org.id)
+    expect((await db.select().from(mediaAssets).where(eq(mediaAssets.id, media.id)))[0].orgId).toBe(org.id)
+
+    // B goes for good; then the org does, and what A still uses goes to A's owner instead of away with it
+    await db.update(scenes).set({ deletedAt: new Date(Date.now() - 31 * DAY) }).where(eq(scenes.id, b.id))
+    await purgeDeletedScenes(new Date())
+    expect(await db.select().from(organizations).where(eq(organizations.id, org.id))).toEqual([])
+    expect(await ev(shared.id)).toMatchObject({ ownerId: orgAdmin.id, orgId: null })
+    expect((await db.select().from(giveaways).where(eq(giveaways.id, prize.id)))[0]).toMatchObject({ orgId: null, ownerId: orgAdmin.id })
+    expect((await db.select().from(mediaAssets).where(eq(mediaAssets.id, media.id)))[0]).toMatchObject({ ownerId: orgAdmin.id, orgId: null })
+    expect(await db.select().from(sceneLibrary).where(eq(sceneLibrary.sceneId, a.id))).toHaveLength(1)
+  })
+
+  it("a new API key doesn't take a deleted organization from the session", async () => {
+    const [org] = await db.insert(organizations).values({ name: 'Gone Co', slug: `org-${Date.now()}`, billingOwnerId: owner.id, deletedAt: new Date() }).returning()
+    const res = await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(owner, { orgId: org.id })}` }, payload: { name: 'k' } })
+    expect(res.statusCode, res.body).toBe(201)
+    expect((await db.select().from(apiKeys).where(eq(apiKeys.id, res.json().id)))[0].orgId).toBeNull()
+  })
+
+  it('a purge claim left by a crash stops blocking a restore once it is stale; a running removal does block it', async () => {
+    const { scene } = await createScene(owner, 'Stale')
+    await db.update(scenes).set({ deletedAt: new Date(), purgingAt: new Date() }).where(eq(scenes.id, scene.id))
+    expect((await call(owner, 'POST', `/api/scenes/${scene.id}/restore`)).json().error).toBe('purging')
+    await db.update(scenes).set({ purgingAt: new Date(Date.now() - 31 * 60_000) }).where(eq(scenes.id, scene.id))
+    const [removal] = await db.insert(sceneRemovals).values({ sceneId: scene.id, kind: 'hosted_world', targetId: scene.id, label: 'Shut down x', status: 'pending' }).returning()
+    const blocked = await call(owner, 'POST', `/api/scenes/${scene.id}/restore`)
+    expect(blocked.statusCode).toBe(409)
+    expect(blocked.json().error).toBe('removal_running')
+    // An interrupted one (stale) no longer blocks
+    await db.update(sceneRemovals).set({ updatedAt: new Date(Date.now() - 6 * 60_000) }).where(eq(sceneRemovals.id, removal.id))
+    const ok = await call(owner, 'POST', `/api/scenes/${scene.id}/restore`)
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(await sceneRow(scene.id)).toMatchObject({ deletedAt: null, purgingAt: null })
   })
 })

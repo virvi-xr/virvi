@@ -19,7 +19,7 @@
  */
 import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { dclWorldDestinations, hyperfyWorlds, sceneDeployments, sceneImports, sceneRemovals } from '../db/schema.js'
+import { dclWorldDestinations, hyperfyWorlds, sceneDeployments, sceneImports, sceneRemovals, scenes } from '../db/schema.js'
 import { destroyHostedWorld, HostingError, type HostingDeps } from '../hyperfy/hosting.js'
 import { buildEntity, chainSigner, signedFetchPayload, verifyChain, virviSignerFor, type AuthChain, type SceneMetadata } from '../services/dcl/entity.js'
 import { getWorldsClient, WorldsError, type LiveEntity, type SignedRequest } from '../services/dcl/worlds-client.js'
@@ -30,6 +30,7 @@ import { builtByVirvi } from '../services/dcl/assemble.js'
 import type { Destination } from '../services/dcl/world-deployer.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
 import { parcelControl } from '../services/dcl/parcel-control.js'
+import { isAccessRefusal } from '../services/dcl/parcel-grant.js'
 import { DirectoryUnavailableError } from '../analytics/dcl-directory.js'
 
 export type RemovalKind = 'hosted_world' | 'hyperfy_world' | 'dcl_world' | 'dcl_parcels'
@@ -153,7 +154,17 @@ const awaiting = (id: string, message: string | null = null) =>
   db.update(sceneRemovals).set({ status: 'awaiting_signature', errorMessage: message, updatedAt: new Date() }).where(eq(sceneRemovals.id, id))
 const needsReview = (id: string, reason: string) =>
   db.update(sceneRemovals).set({ status: 'needs_review', errorMessage: `${reason} Virvi left it as it is. Check it, then choose Remove anyway if you still want it gone.`, pending: null, updatedAt: new Date() }).where(eq(sceneRemovals.id, id))
-const reload = async (id: string) => (await db.query.sceneRemovals.findFirst({ where: eq(sceneRemovals.id, id) }))!
+/** The removal as it is now; gone (a restore cleared it) reads as stopped. */
+const reload = async (r: Removal): Promise<Removal> =>
+  (await db.query.sceneRemovals.findFirst({ where: eq(sceneRemovals.id, r.id) }))
+  ?? { ...r, status: 'failed', errorMessage: RESTORED_MEANWHILE, pending: null }
+const RESTORED_MEANWHILE = 'The scene was restored, so this was stopped.'
+
+/** The scene is still deleted (read under `q`'s lock when given: a restore waits for the removal, or it stops). */
+async function stillDeleted(sceneId: string, q: Pick<typeof db, 'select'> = db): Promise<boolean> {
+  const [row] = await q.select({ deletedAt: scenes.deletedAt }).from(scenes).where(eq(scenes.id, sceneId)).for('share')
+  return !!row?.deletedAt
+}
 
 function plain(err: unknown): string {
   if (err instanceof DisconnectBusyError) return err.message
@@ -211,12 +222,15 @@ export async function startRemovals(
 }
 
 /** Decentraland refused Virvi's own signature (its permission is gone or doesn't cover the scene): the owner signs. */
-const isRefusal = (err: unknown) => (err instanceof WorldsError || err instanceof CatalystError) && (err.status === 401 || err.status === 403)
+const isRefusal = (err: unknown) =>
+  ((err instanceof WorldsError || err instanceof CatalystError) && (err.status === 401 || err.status === 403))
+  // The catalyst's access check answers 400 naming the problem: the same test a mode A parcels deploy uses
+  || isAccessRefusal(err)
 const VIRVI_REFUSED = "Decentraland didn't accept Virvi's permission there any more. Sign with your wallet to remove it."
 
 const SIGNATURE_REFUSED = "Decentraland didn't accept that signature. Sign again with the wallet that owns it."
 
-type DclOutcome = 'done' | 'needs_review' | 'refused'
+type DclOutcome = 'done' | 'needs_review' | 'refused' | 'restored'
 
 /**
  * Takes the scene off a Decentraland destination, under the destination's locks (underDestinationLocks): nothing is
@@ -227,6 +241,11 @@ type DclOutcome = 'done' | 'needs_review' | 'refused'
 async function removeFromDcl(r: Removal, dest: Destination, send: () => Promise<void>, seen: string | null | undefined): Promise<DclOutcome> {
   let outcome: DclOutcome = 'done'
   await underDestinationLocks(dest, async (tx) => {
+    // A restore that got in first keeps its deployment: nothing is sent or disconnected
+    if (!(await stillDeleted(r.sceneId, tx))) {
+      outcome = 'restored'
+      return false
+    }
     const live = await liveAtBase(dest)
     if (live) {
       const reason = seen !== undefined && live.id === seen ? null : notVirvisReason(dest, live)
@@ -263,6 +282,7 @@ export async function runRemoval(r: Removal, opts: { deps?: Partial<HostingDeps>
   try {
     switch (r.kind as RemovalKind) {
       case 'hosted_world':
+        if (!(await stillDeleted(r.sceneId))) { await failed(r.id, RESTORED_MEANWHILE); break }
         try {
           await destroyHostedWorld(r.targetId, opts.deps)
         } catch (err) {
@@ -271,6 +291,7 @@ export async function runRemoval(r: Removal, opts: { deps?: Partial<HostingDeps>
         await done(r.id)
         break
       case 'hyperfy_world':
+        if (!(await stillDeleted(r.sceneId))) { await failed(r.id, RESTORED_MEANWHILE); break }
         await db.delete(hyperfyWorlds).where(and(eq(hyperfyWorlds.id, r.targetId), eq(hyperfyWorlds.kind, 'self')))
         await done(r.id)
         break
@@ -287,6 +308,8 @@ export async function runRemoval(r: Removal, opts: { deps?: Partial<HostingDeps>
           await awaiting(r.id)
           break
         }
+        // Recorded first, so a refusal that hands it to the owner's wallet carries "Remove anyway" along
+        if (opts.confirm) await recordSeen(r, seen)
         const signer = virviSignerFor(dest.kind)!
         const send = dest.kind === 'parcels'
           ? async () => {
@@ -299,6 +322,7 @@ export async function runRemoval(r: Removal, opts: { deps?: Partial<HostingDeps>
           }
         const outcome = await removeFromDcl(r, dest, send, seen)
         if (outcome === 'refused') await awaiting(r.id, VIRVI_REFUSED)
+        if (outcome === 'restored') await failed(r.id, RESTORED_MEANWHILE)
         break
       }
     }
@@ -306,7 +330,7 @@ export async function runRemoval(r: Removal, opts: { deps?: Partial<HostingDeps>
     console.error('[scene-removals] removal failed:', r.id, r.kind, err instanceof Error ? err.message : err)
     await failed(r.id, r.kind === 'hosted_world' ? "This world couldn't be shut down just now. Try again." : plain(err))
   }
-  return reload(r.id)
+  return reload(r)
 }
 
 /** What the owner saw (or, with `confirm`, what's live now: they chose "Remove anyway"). Undefined: nothing seen. */
@@ -403,7 +427,9 @@ export async function submitRemovalSignature(r: Removal, userId: string, body: {
         throw err
       }
       if (control.wallet !== signer) throw new RemovalError(403, 'not_parcel_controller', "That signature isn't from a wallet that can deploy to every one of these parcels.")
-      if ((await removeFromDcl(r, dest, () => contentServerFor(dest).deploy({ entityId, authChain: chain as AuthChain, files }), await seenFor(r, dest))) === 'refused') await awaiting(r.id, SIGNATURE_REFUSED)
+      const outcome = await removeFromDcl(r, dest, () => contentServerFor(dest).deploy({ entityId, authChain: chain as AuthChain, files }), await seenFor(r, dest))
+      if (outcome === 'refused') await awaiting(r.id, SIGNATURE_REFUSED)
+      if (outcome === 'restored') await failed(r.id, RESTORED_MEANWHILE)
     } else {
       const ts = body.timestamp
       if (!Number.isInteger(ts) || (ts as number) > Date.now() + 60_000) throw new RemovalError(400, 'invalid_timestamp', 'The signature is missing its time.')
@@ -414,14 +440,16 @@ export async function submitRemovalSignature(r: Removal, userId: string, body: {
       if (chainSigner(chain as AuthChain) !== owner || !(await verifyChain(chain as AuthChain, signedFetchPayload(req.method, req.path, req.timestamp, req.metadata), owner))) {
         throw new RemovalError(403, 'not_world_owner', "That signature isn't from the wallet that owns this World.")
       }
-      if ((await removeFromDcl(r, dest, () => getWorldsClient().sendSigned(req, chain as AuthChain), await seenFor(r, dest))) === 'refused') await awaiting(r.id, SIGNATURE_REFUSED)
+      const outcome = await removeFromDcl(r, dest, () => getWorldsClient().sendSigned(req, chain as AuthChain), await seenFor(r, dest))
+      if (outcome === 'refused') await awaiting(r.id, SIGNATURE_REFUSED)
+      if (outcome === 'restored') await failed(r.id, RESTORED_MEANWHILE)
     }
   } catch (err) {
     if (err instanceof RemovalError) throw err
     console.error('[scene-removals] signed removal failed:', r.id, err instanceof Error ? err.message : err)
     await failed(r.id, plain(err))
   }
-  return reload(r.id)
+  return reload(r)
 }
 
 /** The scene's removals, oldest first. */

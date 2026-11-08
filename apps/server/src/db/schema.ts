@@ -215,9 +215,9 @@ export const scenes = pgTable('scenes', {
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   deletedBy: uuid('deleted_by').references((): AnyPgColumn => users.id, { onDelete: 'set null' }),
   /**
-   * Set when the scene was deleted with its organization (the org row is gone, org_id is cleared): the org it belonged to,
-   * and the users who may restore it besides its owner, the org's owners and admins at the time. A restore makes the
-   * scene the restorer's own personal scene.
+   * Set when the scene was deleted with its organization (the org row is kept, marked deleted, until the purge; org_id
+   * is cleared): the org it belonged to, and the users who may restore it besides its owner, the org's owners and
+   * admins at the time. A restore makes the scene the restorer's own personal scene.
    */
   deletedOrgId: uuid('deleted_org_id'),
   restorerIds: uuid('restorer_ids').array(),
