@@ -8,7 +8,7 @@ import type { AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, Timeserie
 import { demoFixtures, type DemoData, type DemoEditable, type DemoEvent, type DemoGiveaway } from './fixtures'
 
 export const DEMO_METHODS = [
-  'getAnalyticsLocations', 'getAnalyticsSummary', 'getAnalyticsTimeseries', 'getAnalyticsHeatmap', 'getAnalyticsSessions', 'getAnalyticsLive',
+  'getAnalyticsLocations', 'getAnalyticsSummary', 'getAnalyticsTimeseries', 'getAnalyticsHeatmap', 'getAnalyticsSessions', 'getAnalyticsLive', 'getAnalyticsLayout',
   'getEvents', 'getEvent', 'createEvent', 'updateEvent', 'deleteEvent',
   'linkSceneToEvent', 'unlinkSceneFromEvent', 'linkGiveawayToEvent', 'unlinkGiveawayFromEvent',
   'getScenes', 'getGiveaways', 'getGiveaway', 'createGiveaway', 'updateGiveaway', 'deleteGiveaway',
@@ -222,7 +222,12 @@ export function createDemoApi(opts: { trialId: string; now: () => number; storag
       const cells = base.cells
         .map((c) => ({ ...c, visits: Math.round(c.visits * share), dwellSec: Math.round(c.dwellSec * share) }))
         .filter((c) => c.visits > 0)
-      return done({ cells })
+      // The demo is a free account: 2D cells, and the 3D view shows locked
+      return done({ cells, heatmap3d: false })
+    },
+    getAnalyticsLayout: (id) => {
+      if (noLocation(id)) return Promise.reject(notFound())
+      return done({ layout: null })
     },
     getAnalyticsSessions: (id, cursor) => {
       if (noLocation(id)) return Promise.reject(notFound())

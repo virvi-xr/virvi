@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useApi } from '@/lib/api'
-import type { AnalyticsLocation, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from '@/lib/analytics/types'
+import type { AnalyticsLocation, AnalyticsSession, AnalyticsSummary, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from '@/lib/analytics/types'
 import { rangeQuery, type RangeKey, type RangeQuery } from '@/lib/analytics/range'
 import { formatDuration, visitorLabel } from '@/lib/analytics/labels'
 import { isNoAccess } from '@/lib/analytics/view'
@@ -10,6 +10,8 @@ import { StatCard } from '@/components/analytics/StatCard'
 import { TimeSeriesChart } from '@/components/analytics/TimeSeriesChart'
 import { BarList } from '@/components/analytics/BarList'
 import { ParcelMap } from '@/components/analytics/ParcelMap'
+import { Toggle } from '@/components/analytics/Toggle'
+import { HeatmapPanel } from '@/components/analytics/HeatmapPanel'
 import { Section, type SectionState } from '@/components/analytics/Section'
 import { full } from '@/components/analytics/format'
 import { tenureLabel } from './LocationList'
@@ -114,28 +116,6 @@ function useLive(apiRef: { current: Api }, id: string, enabled: boolean, onNoAcc
 const toLocalDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-function Toggle<T extends string>({ label, value, options, onChange }: {
-  label: string; value: T; options: Array<[T, string]>; onChange: (v: T) => void
-}) {
-  return (
-    <div role="group" aria-label={label} className="inline-flex flex-wrap rounded-lg bg-gray-800 p-1">
-      {options.map(([v, text]) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={value === v}
-          onClick={() => onChange(v)}
-          className={`rounded-md px-3 py-1 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-            value === v ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white'
-          }`}
-        >
-          {text}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 const Note = ({ children }: { children: ReactNode }) => <p className="mb-3 text-sm text-gray-400">{children}</p>
 
 export function Dashboard({ location, showAllLink, onWalletVisibility }: {
@@ -164,9 +144,11 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
     async () => ({ points: (await apiRef.current.getAnalyticsTimeseries(id, q!)).points, q: q! }),
     denied,
   )
-  const [heat, retryHeat] = useRequest<HeatCell[]>(
-    qKey,
-    async () => (await apiRef.current.getAnalyticsHeatmap(id, { from: q!.from, to: q!.to })).cells,
+  const [heat, retryHeat] = useRequest<HeatmapData>(qKey, () => apiRef.current.getAnalyticsHeatmap(id, { from: q!.from, to: q!.to }), denied)
+  // The linked scene's layout under the heatmap; without one (or if it can't load) the map is just the parcels.
+  const [layout] = useRequest<LayoutItem[] | null>(
+    location.virviSceneId ? id : null,
+    async () => (await apiRef.current.getAnalyticsLayout(id)).layout?.items ?? null,
     denied,
   )
   const ended = !!location.until
@@ -298,10 +280,16 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
       >
         {heat.data && (
           <>
-            {heat.data.length === 0 && <Note>{EMPTY_NOTE}</Note>}
-            <div className="mx-auto max-w-xl">
-              <ParcelMap parcels={location.parcels} baseParcel={location.baseParcel} cells={heat.data} metric={heatMetric} />
-            </div>
+            {heat.data.cells.length === 0 && <Note>{EMPTY_NOTE}</Note>}
+            <HeatmapPanel
+              parcels={location.parcels}
+              baseParcel={location.baseParcel}
+              kind={location.kind}
+              data={heat.data}
+              metric={heatMetric}
+              live={live.data?.positions}
+              layout={layout.status === 'ready' ? (layout.data ?? null) : null}
+            />
           </>
         )}
       </Section>

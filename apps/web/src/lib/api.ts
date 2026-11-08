@@ -17,7 +17,7 @@ import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
-import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
+import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
 import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
@@ -510,8 +510,11 @@ function useRealApi() {
     getAnalyticsTimeseries: (id: string, q: AnalyticsRangeQuery & { bucket: 'hour' | 'day' }) =>
       apiFetch<{ points: TimeseriesPoint[] }>(`/api/analytics/locations/${id}/timeseries?${new URLSearchParams({ ...q })}`),
     getAnalyticsLive: (id: string) => apiFetch<LiveData>(`/api/analytics/locations/${id}/live`),
-    getAnalyticsHeatmap: (id: string, q: AnalyticsRangeQuery) =>
-      apiFetch<{ cells: HeatCell[] }>(`/api/analytics/locations/${id}/heatmap?${new URLSearchParams({ ...q })}`),
+    getAnalyticsHeatmap: async (id: string, q: AnalyticsRangeQuery): Promise<HeatmapData> => {
+      const r = await apiFetch<{ cells: HeatCell[]; heatmap3d?: boolean }>(`/api/analytics/locations/${id}/heatmap?${new URLSearchParams({ ...q })}`)
+      return { cells: r.cells, heatmap3d: r.heatmap3d === true }
+    },
+    getAnalyticsLayout: (id: string) => apiFetch<{ layout: { items: LayoutItem[] } | null }>(`/api/analytics/locations/${id}/layout`),
     getAnalyticsSessions: (id: string, cursor?: string) => {
       const query = new URLSearchParams({ limit: '50' })
       if (cursor) query.set('cursor', cursor)

@@ -1,6 +1,7 @@
 // Heat cells for the 2D and 3D heatmaps (LIV-85). Cells carry a floor band (`cellY`, see heatmap-height in
 // @virvixr/shared) on paid plans; null for days rolled up before heights were recorded, absent on free plans.
-import { bandRangeM } from '@virvixr/shared'
+// The module itself, not the package index: @virvixr/shared is CommonJS, so the index would bring all of it along.
+import { bandRangeM } from '@virvixr/shared/dist/heatmap-height.js'
 import type { HeatCell } from './types'
 
 export type HeatMetric = 'dwell' | 'visits'
@@ -79,6 +80,11 @@ export function heatView(o: { heatmap3d: boolean; webgl: boolean; cells: HeatCel
 } {
   if (!o.heatmap3d) return { view: '2d', locked: true, note: null }
   const want = o.chosen ?? (hasHeightVariation(o.cells) ? '3d' : '2d')
-  if (want === '3d' && !o.webgl) return { view: '2d', locked: false, note: o.chosen === '3d' ? NO_WEBGL_NOTE : null }
+  if (want === '3d' && !o.webgl) return { view: '2d', locked: false, note: NO_WEBGL_NOTE }
   return { view: want, locked: false, note: null }
 }
+
+/** The heat ramp as colours for three.js: mirrors --heat-0..5 in styles/globals.css. */
+export const HEAT_COLOURS = ['#184f95', '#256abf', '#3987e5', '#6da7ec', '#9ec5f4', '#cde2fb']
+/** Live positions: mirrors --chart-2. */
+export const LIVE_COLOUR = '#d95926'
