@@ -165,7 +165,7 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
     const { kind } = request.params as { kind: string }
     if (!isLessonKind(kind)) return reply.status(404).send({ error: 'unknown kind' })
     const agent = (request.body as { agent?: unknown } | null)?.agent
-    if (!(DEFAULT_AGENTS as readonly unknown[]).includes(agent)) return reply.status(400).send({ error: 'agent must be claude, codex or grok' })
+    if (!(DEFAULT_AGENTS as readonly unknown[]).includes(agent)) return reply.status(400).send({ error: 'agent must be claude or codex' })
     await setKindDefault(kind, agent as string, request.user.id, new Date())
     return { defaults: await kindDefaultsDetail() }
   })

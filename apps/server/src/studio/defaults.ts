@@ -9,7 +9,8 @@ import { modelFor } from './designs.js'
  * with no default keeps the page's own.
  */
 
-export const DEFAULT_AGENTS = ['claude', 'codex', 'grok'] as const
+/** The agents a default can name: not Grok, which new designs are no longer offered (the web's RETIRED_AGENTS). */
+export const DEFAULT_AGENTS = ['claude', 'codex'] as const
 
 export async function kindDefaults(): Promise<Record<LessonKind, string | null>> {
   const rows = await db.select().from(studioKindDefaults)

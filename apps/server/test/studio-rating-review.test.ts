@@ -175,5 +175,19 @@ describe('reviewing ratings', () => {
       const [row] = await db.select().from(studioDigestWeeks).where(eq(studioDigestWeeks.weekStart, '2026-11-02'))
       expect(row).toMatchObject({ ratings: 2, sentAt: expect.any(Date) })
     })
+
+    it('a claim that never sent (the server died mid-send) is retried after an hour, not before', async () => {
+      const sent: string[] = []
+      setDigestMailer(async (to) => { sent.push(to); return true })
+      await rated('down')
+      const monday = new Date('2026-11-09T02:00:00Z')
+      await db.insert(studioDigestWeeks).values({ weekStart: '2026-11-02', ratings: 1, claimedAt: new Date('2026-11-09T01:30:00Z') })
+      expect(await sendWeeklyDigest(monday)).toBe('already') // another server may still be sending
+      expect(sent).toHaveLength(0)
+      expect(await sendWeeklyDigest(new Date('2026-11-09T02:31:00Z'))).toBe('sent')
+      expect(sent).toEqual(['ada@virvi.io'])
+      expect(await sendWeeklyDigest(new Date('2026-11-09T05:00:00Z'))).toBe('already')
+      expect(sent).toHaveLength(1)
+    })
   })
 })

@@ -39,6 +39,7 @@ describe('the default agent per design kind', () => {
     const [kept] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, before.id))
     expect(kept.agent).toBe('codex')
     expect((await set('emote', 'gpt')).statusCode).toBe(400)
+    expect((await set('emote', 'grok')).statusCode).toBe(400) // retired: new designs aren't offered it
     expect((await set('hat', 'claude')).statusCode).toBe(404)
     expect((await set('emote', 'codex', owner)).statusCode).toBe(403)
   })
@@ -51,7 +52,7 @@ describe('the default agent per design kind', () => {
     }
     const res = await app.inject({ method: 'GET', url: '/api/admin/studio/defaults', headers: as(admin) })
     const body = res.json()
-    expect(body).toMatchObject({ ratesDays: 28, minSample: 20, agents: ['claude', 'codex', 'grok'], defaults: { wearable: null } })
+    expect(body).toMatchObject({ ratesDays: 28, minSample: 20, agents: ['claude', 'codex'], defaults: { wearable: null } })
     expect(body.rates.find((k: any) => k.kind === 'wearable').leader).toEqual({ agent: 'codex', model: 'gpt-x', rate: 0.75 })
     expect((await app.inject({ method: 'GET', url: '/api/studio/defaults', headers: as(owner) })).json().agents.wearable).toBeNull()
   })

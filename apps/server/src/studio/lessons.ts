@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioLessons, studioRatings } from '../db/schema.js'
 import type { Exec } from './quota.js'
@@ -94,10 +94,10 @@ export async function updateLesson(
       status: change.approve ? 'approved' : l.status,
     }
     if (live(next)) {
-      // Lock the kind's lessons so two approvals can't both fit in the room one of them leaves
+      // One change to a kind's live lessons at a time, so two approvals can't both fit in the room one of them leaves
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`studio-lessons:${l.kind}`}))`)
       const others = await tx.select({ text: studioLessons.text }).from(studioLessons)
         .where(and(eq(studioLessons.kind, l.kind), eq(studioLessons.status, 'approved'), eq(studioLessons.enabled, true), ne(studioLessons.id, l.id)))
-        .for('update')
       if (others.reduce((n, o) => n + o.text.length, 0) + next.text.length > LESSONS_TOTAL_MAX) throw new LessonError(409, 'lessons_too_long')
     }
     const [u] = await tx.update(studioLessons).set({

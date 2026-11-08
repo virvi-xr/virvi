@@ -1733,11 +1733,13 @@ export const studioLessons = pgTable('studio_lessons', {
   kindIdx: index('studio_lessons_kind_idx').on(t.kind, t.createdAt),
 }))
 
-// The weekly ratings digest: one row per week (its Monday, UTC) once a server has dealt with it, so the email goes once
-// across restarts and servers. `sentAt` is null when the week had no ratings (no email).
+// The weekly ratings digest: one row per week (its Monday, UTC) once a server claims it, so the email goes once across
+// restarts and servers. `sentAt` is set once mailed; a week with no ratings is never mailed. A claim an hour old with
+// nothing sent (the server died mid-send) is claimed again.
 export const studioDigestWeeks = pgTable('studio_digest_weeks', {
   weekStart: date('week_start', { mode: 'string' }).primaryKey(),
   ratings: integer('ratings').notNull().default(0),
+  claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
   sentAt: timestamp('sent_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })

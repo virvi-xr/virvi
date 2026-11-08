@@ -231,17 +231,27 @@ export function digestEmail(d: Awaited<ReturnType<typeof weekDigest>>): { subjec
   }
 }
 
+/** A claim this old with nothing sent means the server that made it died mid-send: the week is claimed again. */
+export const DIGEST_RECLAIM_MS = 3600_000
+
 /**
- * Mails the last full week's digest to every admin, once: the week's row is claimed with an insert, so restarts and
- * other servers skip it. A week with no ratings is recorded and not mailed.
+ * Mails the last full week's digest to every admin, once: claim the week (an insert, or taking over a claim an hour
+ * old that never sent), mail, then mark it sent. Restarts and other servers skip a week that is sent or freshly
+ * claimed. A week with no ratings is recorded and not mailed.
  */
 export async function sendWeeklyDigest(now: Date): Promise<'sent' | 'empty' | 'already'> {
   const week = lastFullWeek(now)
-  const [seen] = await db.select({ w: studioDigestWeeks.weekStart }).from(studioDigestWeeks).where(eq(studioDigestWeeks.weekStart, week))
-  if (seen) return 'already'
+  const stale = new Date(now.getTime() - DIGEST_RECLAIM_MS)
+  const [seen] = await db.select().from(studioDigestWeeks).where(eq(studioDigestWeeks.weekStart, week))
+  if (seen && (seen.sentAt || seen.ratings === 0 || seen.claimedAt > stale)) return 'already'
   const digest = await weekDigest(week)
   const total = digest.totals.up + digest.totals.down
-  const [claimed] = await db.insert(studioDigestWeeks).values({ weekStart: week, ratings: total }).onConflictDoNothing().returning()
+  const [claimed] = seen
+    ? await db.update(studioDigestWeeks).set({ claimedAt: now, ratings: total })
+      .where(and(eq(studioDigestWeeks.weekStart, week), sql`${studioDigestWeeks.sentAt} IS NULL`,
+        sql`${studioDigestWeeks.claimedAt} < ${stale.toISOString()}::timestamptz`))
+      .returning()
+    : await db.insert(studioDigestWeeks).values({ weekStart: week, ratings: total, claimedAt: now }).onConflictDoNothing().returning()
   if (!claimed) return 'already'
   if (!total) return 'empty'
   const admins = await db.select({ email: users.email }).from(users).where(and(eq(users.role, 'admin'), sql`${users.email} IS NOT NULL`))
@@ -253,6 +263,6 @@ export async function sendWeeklyDigest(now: Date): Promise<'sent' | 'empty' | 'a
       console.error('[studio] digest email failed:', err instanceof Error ? err.message : err)
     }
   }
-  await db.update(studioDigestWeeks).set({ sentAt: now }).where(eq(studioDigestWeeks.weekStart, week))
+  await db.update(studioDigestWeeks).set({ sentAt: new Date() }).where(eq(studioDigestWeeks.weekStart, week))
   return 'sent'
 }
