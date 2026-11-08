@@ -59,6 +59,21 @@ function SigTable({ title, rows, onOpen, empty, extra }: { title: string; rows: 
   )
 }
 
+/** A report's screenshot: fetched with the session (the route is admin-only), shown on request. */
+function Screenshot({ reportId }: { reportId: string }) {
+  const api = useApi()
+  const [url, setUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url) }, [url])
+  if (url) return <a href={url} target="_blank" rel="noreferrer" className="mt-1 block"><img src={url} alt="The user's screenshot" className="max-h-48 rounded border border-gray-800" /></a>
+  return (
+    <button type="button" className="ml-2 text-xs text-blue-300 underline" disabled={failed}
+      onClick={() => api.getAdminErrorScreenshot(reportId).then((b) => setUrl(URL.createObjectURL(b.blob)), () => setFailed(true))}>
+      {failed ? 'Screenshot gone' : 'Screenshot'}
+    </button>
+  )
+}
+
 function Detail({ id, onClose }: { id: string; onClose: () => void }) {
   const api = useApi()
   const [d, setD] = useState<ErrorDetail | null>(null)
@@ -86,7 +101,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
         </div>
         <div className="flex gap-2">
           {s.resolvedAt
-            ? <button onClick={() => resolve(false)} className="rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500">Marked fixed {sinceLabel(s.resolvedAt)} · Undo</button>
+            ? <button onClick={() => resolve(false)} className="rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500">{s.linearDoneAt ? 'Done in Linear' : 'Marked fixed'} {sinceLabel(s.resolvedAt)} · Undo</button>
             : <button onClick={() => resolve(true)} className="rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500">Mark fixed</button>}
           <button onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-gray-400 hover:text-white">Close</button>
         </div>
@@ -127,7 +142,12 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
       {d.reports.length > 0 && (
         <div>
           <p className="mb-1 text-xs text-gray-400">What users said</p>
-          <ul className="space-y-1 text-sm">{d.reports.map((r) => <li key={r.id}>“{r.description}” <span className="text-xs text-gray-500">— {r.from ?? 'signed out'}, {sinceLabel(r.createdAt)}</span></li>)}</ul>
+          <ul className="space-y-1 text-sm">{d.reports.map((r) => (
+            <li key={r.id}>
+              “{r.description}” <span className="text-xs text-gray-500">— {r.from ?? 'signed out'}, {sinceLabel(r.createdAt)}{r.postedAt ? ' · added to Linear' : ''}</span>
+              {r.screenshot && <Screenshot reportId={r.id} />}
+            </li>
+          ))}</ul>
         </div>
       )}
       <div>
@@ -208,6 +228,11 @@ export default function ErrorsPage() {
   const [range, setRange] = useState<'day' | 'week'>('day')
   const [by, setBy] = useState<'byUsers' | 'byCount'>('byUsers')
   const [open, setOpen] = useState<string | null>(null)
+  // A Linear comment links straight to a signature: /admin/errors?id=<signature>
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('id')
+    if (id && /^[0-9a-f-]{36}$/i.test(id)) setOpen(id)
+  }, [])
 
   useEffect(() => {
     if (user?.role !== 'admin') return

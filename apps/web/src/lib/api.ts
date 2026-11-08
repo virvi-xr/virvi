@@ -282,8 +282,12 @@ function useRealApi() {
     if ((status === 401 && err.message === 'Session expired — sign in again') || (status === 403 && err.error === 'scene_pass_not_allowed')) logout()
   }, [logout])
 
-  const apiFetch = useCallback(async <T = any>(path: string, options: RequestInit & { signUpCtx?: BlockedCtx } = {}): Promise<T> => {
-    const { signUpCtx, ...init } = options
+  /**
+   * `userAction`: the call is something the user asked for (a save, deploy, upload or payment), so its failure broke
+   * what they were doing and may offer a report (LIV-66 §4). Every other call is background: recorded, never prompted.
+   */
+  const apiFetch = useCallback(async <T = any>(path: string, options: RequestInit & { signUpCtx?: BlockedCtx; userAction?: boolean } = {}): Promise<T> => {
+    const { signUpCtx, userAction, ...init } = options
     const send = async (bearer: string | null) => {
       const started = performance.now()
       const method = init.method ?? 'GET'
@@ -297,7 +301,7 @@ function useRealApi() {
       // Non-JSON error bodies (proxy pages, e.g. a 413 from the edge) become `HTTP <status>`.
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
       // LIV-66: every non-OK response is recorded, with the error body only (never the request's)
-      reporter.apiDone({ ...done, ok: false, body: err })
+      reporter.apiDone({ ...done, ok: false, body: err, userAction })
       dropDeadSession(res.status, err)
       return { res, err }
     }
@@ -357,9 +361,9 @@ function useRealApi() {
     getScenes: () => apiFetch<{ scenes: any[] }>('/api/scenes'),
     getScene: (id: string) => apiFetch<{ scene: any }>(`/api/scenes/${id}`),
     createScene: (name: string, description?: string) =>
-      apiFetch<{ scene: any; preset: any }>('/api/scenes', { method: 'POST', body: JSON.stringify({ name, description }) }),
+      apiFetch<{ scene: any; preset: any }>('/api/scenes', { method: 'POST', userAction: true, body: JSON.stringify({ name, description }) }),
     updateScene: (id: string, data: Record<string, any>) =>
-      apiFetch<{ scene: any }>(`/api/scenes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ scene: any }>(`/api/scenes/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     // Deleting a scene (LIV-83): soft delete, Recently deleted, restore, delete forever, removals
     getDeletePlan: (id: string) => apiFetch<DeletePlan>(`/api/scenes/${id}/delete-plan`),
     /** `remove`: ids from the plan's `running` to shut down or remove. */
@@ -377,7 +381,7 @@ function useRealApi() {
       apiFetch<{ removal: Removal }>(`/api/scenes/${sceneId}/removals/${removalId}/signature`, { method: 'POST', body: JSON.stringify(body) }),
     /** The scene's thumbnail (LIV-88): the cropped 16:9 PNG or JPEG, base64. */
     setSceneThumbnail: (id: string, fileData: string) =>
-      apiFetch<{ scene: any }>(`/api/scenes/${id}/thumbnail`, { method: 'PUT', body: JSON.stringify({ fileData }) }),
+      apiFetch<{ scene: any }>(`/api/scenes/${id}/thumbnail`, { method: 'PUT', userAction: true, body: JSON.stringify({ fileData }) }),
     removeSceneThumbnail: (id: string) =>
       apiFetch<{ scene: any }>(`/api/scenes/${id}/thumbnail`, { method: 'DELETE' }),
 
@@ -433,17 +437,17 @@ function useRealApi() {
 
     // Elements
     createElement: (presetId: string, data: Record<string, any>) =>
-      apiFetch<{ element: any }>(`/api/presets/${presetId}/elements`, { method: 'POST', body: JSON.stringify(data) }),
+      apiFetch<{ element: any }>(`/api/presets/${presetId}/elements`, { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     updateElement: (id: string, data: Record<string, any>) =>
-      apiFetch<{ element: any }>(`/api/elements/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ element: any }>(`/api/elements/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteElement: (id: string) =>
       apiFetch(`/api/elements/${id}`, { method: 'DELETE' }),
 
     // Instances
     createInstance: (elementId: string, data: Record<string, any>) =>
-      apiFetch<{ instance: any }>(`/api/elements/${elementId}/instances`, { method: 'POST', body: JSON.stringify(data) }),
+      apiFetch<{ instance: any }>(`/api/elements/${elementId}/instances`, { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     updateInstance: (id: string, data: Record<string, any>) =>
-      apiFetch<{ instance: any }>(`/api/instances/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ instance: any }>(`/api/instances/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteInstance: (id: string) =>
       apiFetch(`/api/instances/${id}`, { method: 'DELETE' }),
     deleteElementInstances: (elementId: string) =>
@@ -452,7 +456,7 @@ function useRealApi() {
     // Media
     getMedia: () => apiFetch<{ assets: any[] }>('/api/media'),
     uploadMedia: (filename: string, contentType: string, data: string) =>
-      apiFetch<{ asset: any }>('/api/media/upload', { method: 'POST', body: JSON.stringify({ filename, contentType, data }) }),
+      apiFetch<{ asset: any }>('/api/media/upload', { method: 'POST', userAction: true, body: JSON.stringify({ filename, contentType, data }) }),
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Scheduled showings on a video screen (LIV-87). */
@@ -488,7 +492,7 @@ function useRealApi() {
       apiFetch<{ activePresetId: string }>(`/api/presets/${presetId}/activate`, { method: 'POST' }),
     /** Self-hosted branding (instance admins). undefined keeps a field, null clears it; images are base64. */
     updateBranding: (body: { name?: string | null; logo?: string | null; favicon?: string | null }) =>
-      apiFetch<{ name: string | null; logoUrl: string | null; faviconUrl: string | null }>('/api/instance/branding', { method: 'PUT', body: JSON.stringify(body) }),
+      apiFetch<{ name: string | null; logoUrl: string | null; faviconUrl: string | null }>('/api/instance/branding', { method: 'PUT', userAction: true, body: JSON.stringify(body) }),
     resetBranding: () => apiFetch<void>('/api/instance/branding', { method: 'DELETE' }),
     getSceneStreams: (sceneId: string) =>
       apiFetch<{ streams: import('./streams').SceneStream[] }>(`/api/scenes/${sceneId}/streams`),
@@ -552,7 +556,7 @@ function useRealApi() {
 
     // Account
     updateProfile: (displayName: string) =>
-      apiFetch<{ user: any }>('/api/auth/profile', { method: 'PUT', body: JSON.stringify({ displayName }) }),
+      apiFetch<{ user: any }>('/api/auth/profile', { method: 'PUT', userAction: true, body: JSON.stringify({ displayName }) }),
     changePassword: (currentPassword: string, newPassword: string) =>
       apiFetch<{ success: boolean }>('/api/auth/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
     deleteAccount: (password: string) =>
@@ -595,7 +599,7 @@ function useRealApi() {
     // Billing
     getBillingUsage: () => apiFetch<{ tier: string; limits: any; usage: any }>('/api/billing/usage'),
     getBillingSubscription: () => apiFetch<{ tier: string; status: string; billingEnabled?: boolean; limits: any }>('/api/billing/subscription'),
-    createCheckout: (priceId: string) => apiFetch<{ url: string }>('/api/billing/checkout', { method: 'POST', body: JSON.stringify({ priceId }) }),
+    createCheckout: (priceId: string) => apiFetch<{ url: string }>('/api/billing/checkout', { method: 'POST', userAction: true, body: JSON.stringify({ priceId }) }),
     getPortalUrl: () => apiFetch<{ url: string }>('/api/billing/portal', { method: 'POST', body: JSON.stringify({}) }),
 
     // New Scene Wizard
@@ -634,7 +638,7 @@ function useRealApi() {
     getDclWorld: (world: string) => apiFetch<DclWorld & { owner: boolean }>(`/api/dcl/worlds/${encodeURIComponent(world)}`),
     /** Pass `plot` (and `spawn`) to build a new scene there, or omit both to adopt the live scene. 409 `world_in_use` carries `sceneId` and `connectedScene`. */
     createDclDestination: (data: { sceneId: string; world: string; mode: DclDestinationMode; plot?: Plot; spawn?: { x: number; z: number } }) =>
-      apiFetch<{ destination: DclDestination; replaces?: { parcels: string[] } }>('/api/dcl/destinations', { method: 'POST', body: JSON.stringify(data) }),
+      apiFetch<{ destination: DclDestination; replaces?: { parcels: string[] } }>('/api/dcl/destinations', { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     /** The scene's World destinations, and Worlds set up in-world for it (Creator Hub `@virvixr/dcl` scenes) it can adopt. */
     getSceneDclDestinations: (sceneId: string) =>
       apiFetch<{ destinations: DclDestination[]; adoptable: Array<{ world: string }> }>(`/api/scenes/${sceneId}/dcl/destinations`),
@@ -669,17 +673,17 @@ function useRealApi() {
       apiFetch<{ destination: DclDestination }>(`/api/dcl/destinations/${id}/revoke`, { method: 'POST', body: JSON.stringify(data) }),
     /** Mode virvi answers 202 with just the deployment; mode sign adds the `payload` to sign (then `submitDeploySignature`). */
     deployDclDestination: (id: string) =>
-      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/dcl/destinations/${id}/deploy`, { method: 'POST' }),
+      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/dcl/destinations/${id}/deploy`, { method: 'POST', userAction: true }),
     /** 409 `expired`: prepare the deploy again. */
     submitDeploySignature: (deploymentId: string, chain: AuthChain) =>
-      apiFetch<{ deployment: DclDeployment }>(`/api/deploy/${deploymentId}/signature`, { method: 'POST', body: JSON.stringify({ chain }) }),
+      apiFetch<{ deployment: DclDeployment }>(`/api/deploy/${deploymentId}/signature`, { method: 'POST', userAction: true, body: JSON.stringify({ chain }) }),
     rebaseDclDestination: (id: string) =>
       apiFetch<{ destination: DclDestination }>(`/api/dcl/destinations/${id}/rebase`, { method: 'POST' }),
 
     // Scene imports (a Creator Hub or SDK7 scene built and deployed by Virvi)
     /** The scene zip as the raw body. Errors carry `{ error, message, importId? }` (the import made, for its build log). */
     uploadSceneImport: (zip: Blob) =>
-      apiFetch<{ import: SceneImportView }>('/api/imports', { method: 'POST', body: zip, headers: { 'Content-Type': 'application/zip' } }),
+      apiFetch<{ import: SceneImportView }>('/api/imports', { method: 'POST', userAction: true, body: zip, headers: { 'Content-Type': 'application/zip' } }),
     getSceneImport: (id: string) => apiFetch<{ import: SceneImportView }>(`/api/imports/${id}`),
     /** The caller's own last 10 imports, any scene, newest first. */
     listMySceneImports: () => apiFetch<{ imports: SceneImportView[] }>('/api/imports'),
@@ -688,7 +692,7 @@ function useRealApi() {
       readTextRecovering((b) => fetch(`${API_URL}/api/imports/${id}/log`, { headers: requestHeaders(b, {}) }), token, { swapToStoredAccount, renew }, dropDeadSession),
     /** 200 with the `payload` to sign (then `submitDeploySignature`), or 202 with just the deployment: Virvi deploys. */
     deploySceneImport: (id: string) =>
-      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string; usesScene?: SceneImportMove }>(`/api/imports/${id}/deploy`, { method: 'POST' }),
+      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string; usesScene?: SceneImportMove }>(`/api/imports/${id}/deploy`, { method: 'POST', userAction: true }),
     /** What a World deployment put live, as a zip: through the authenticated route, never a plain link. */
     downloadDeployFiles: async (deploymentId: string): Promise<{ blob: Blob; filename: string }> => {
       const res = await fetch(`${API_URL}/api/deploy/${deploymentId}/files.zip`, { headers: requestHeaders(token, {}) })
@@ -798,6 +802,12 @@ function useRealApi() {
     getAdminCatalogPacks: () => apiFetch<{ packs: CatalogPack[] }>('/api/admin/catalog/packs'),
     // Errors (admin, LIV-66)
     getAdminErrors: () => apiFetch<ErrorsOverview>('/api/admin/errors'),
+    /** A report's screenshot (admin; the route needs the bearer, so it is fetched, never linked). */
+    getAdminErrorScreenshot: (reportId: string) => downloadBlob(`/api/admin/errors/reports/${reportId}/screenshot`, 'screenshot'),
+    // "Ask me about errors" (accounts; guests and trials keep theirs in the browser)
+    getErrorPromptSettings: () => apiFetch<{ askAboutErrors: boolean }>('/api/errors/prompt-settings'),
+    setErrorPromptSettings: (askAboutErrors: boolean) =>
+      apiFetch<{ askAboutErrors: boolean }>('/api/errors/prompt-settings', { method: 'PUT', body: JSON.stringify({ askAboutErrors }) }),
     getAdminError: (id: string, days = 7) => apiFetch<ErrorDetail>(`/api/admin/errors/${id}?days=${days}`),
     setAdminErrorResolved: (id: string, resolved: boolean) =>
       apiFetch<{ id: string; resolvedAt: string | null }>(`/api/admin/errors/${id}`, { method: 'PATCH', body: JSON.stringify({ resolved }) }),
@@ -896,9 +906,9 @@ function useRealApi() {
       license?: string
       author?: string
       isPublic?: boolean
-    }) => apiFetch<{ asset: any }>('/api/assets', { method: 'POST', body: JSON.stringify(data) }),
+    }) => apiFetch<{ asset: any }>('/api/assets', { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     updateAsset: (id: string, data: Record<string, any>) =>
-      apiFetch<{ asset: any }>(`/api/assets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ asset: any }>(`/api/assets/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteAsset: (id: string) =>
       apiFetch<{ deleted: boolean }>(`/api/assets/${id}`, { method: 'DELETE' }),
 
@@ -912,9 +922,9 @@ function useRealApi() {
     getEvents: () => apiFetch<{ events: any[] }>('/api/events'),
     getEvent: (id: string) => apiFetch<{ event: any; presetSchedules?: import('./event-presets').EventPresetSchedule[]; scenePresets?: import('./event-presets').ScenePresetOption[]; showings?: import('./event-presets').EventShowing[] }>(`/api/events/${id}`),
     createEvent: (data: { name: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>
-      apiFetch<{ event: any }>('/api/events', { method: 'POST', body: JSON.stringify(data) }),
+      apiFetch<{ event: any }>('/api/events', { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     updateEvent: (id: string, data: { name?: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>
-      apiFetch<{ event: any }>(`/api/events/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ event: any }>(`/api/events/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteEvent: (id: string) =>
       apiFetch(`/api/events/${id}`, { method: 'DELETE' }),
     linkSceneToEvent: (eventId: string, sceneId: string) =>
@@ -942,7 +952,7 @@ function useRealApi() {
     updateStudioDesign: (id: string, patch: { name?: string; agent?: string; archived?: boolean }) =>
       apiFetch<StudioDesign>(`/api/studio/designs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean }) =>
-      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', body: JSON.stringify(body) }),
+      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }
       | { category: string; mode: 'orbit' | 'scale' }) =>
       apiFetch<{ status: 'ready'; frames: number; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/renders`, { method: 'POST', body: JSON.stringify(body) }),
@@ -965,7 +975,7 @@ function useRealApi() {
     getStudioQuote: (id: string, categories: string[] | null = null) =>
       apiFetch<Quote>(`/api/studio/designs/${id}/finalize${categories?.length ? `?categories=${categories.join(',')}` : ''}`),
     finalizeStudio: (id: string, body: { categories?: string[]; reports?: Record<string, string>; method: CheckoutMethod }, signUpCtx?: BlockedCtx) =>
-      apiFetch<CheckoutResult>(`/api/studio/designs/${id}/finalize`, { method: 'POST', body: JSON.stringify(body), signUpCtx }),
+      apiFetch<CheckoutResult>(`/api/studio/designs/${id}/finalize`, { method: 'POST', userAction: true, body: JSON.stringify(body), signUpCtx }),
     redeemGiftCode: (code: string) =>
       apiFetch<{ prompts: number; finalizes: number }>('/api/studio/gift-codes/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
     buyStudioPrompts: (packs: number, method: CheckoutMethod, signUpCtx?: BlockedCtx) =>

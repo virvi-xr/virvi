@@ -101,15 +101,24 @@ export default function PrivacyPage() {
             Hourly counts of each kind of error, with no identity, are kept for 400 days.
           </li>
           <li>
-            <strong>If you send a report:</strong> when a page breaks it records the error without your account. If you press Report, you see
-            exactly what will be sent before you press Submit. A report you send (what you wrote and that preview) is linked to your account if
-            you're signed in, so we can follow up, and is kept for 400 days. Ask us at{' '}
-            <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a> to have it deleted sooner.
+            <strong>If you send a report:</strong> when a page breaks it records the error without your account. If something you were doing
+            fails and we need more detail, we may ask you about it, at most once a day; you can turn that off in Settings (or from the
+            message itself). Whether you report from there, a crash page or Report a bug in the menu, you see exactly what will be sent before
+            you press Submit, and nothing is sent before that. A report you send (what you wrote, that preview and a screenshot if you add one)
+            is linked to your account if you're signed in, so we can follow up, and we send you a short email to say we've got it. Reports are
+            kept for 400 days, and screenshots for 30 days. Ask us at{' '}
+            <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a> to have one deleted sooner.
+          </li>
+          <li>
+            <strong>Asking only when it helps:</strong> to ask you at most once a day, and to say &ldquo;we know about this&rdquo; only once
+            for each problem, we keep when we last asked your account and whether you turned asking off; if you're not signed in, this
+            browser keeps it.
           </li>
           <li>
             <strong>Our issue tracker:</strong> when automatic bug filing is turned on, the details of errors that keep happening (the redacted
-            messages, pages, steps and counts above, and what people wrote in their reports, with email addresses and similar details removed) are
-            sent to Linear, the issue tracker we use, as bug reports. Your account, name and email are not.
+            messages, pages, steps and counts above) are sent to Linear, the issue tracker we use, as bug reports, without your account. A report
+            you choose to send is added to that bug with what you wrote and, if you're signed in, your name, email and account id, so the team
+            can follow up. Screenshots stay with us and are not sent to Linear.
           </li>
         </ul>
 

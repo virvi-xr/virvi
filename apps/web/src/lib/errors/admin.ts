@@ -13,6 +13,8 @@ export interface ErrorSignatureSummary {
   lastRelease: string | null
   totalCount: number
   resolvedAt: string | null
+  /** Marked fixed by its Linear issue being completed (phase 2). */
+  linearDoneAt?: string | null
   regressedAt: string | null
   userReports: number
   linearIssueKey: string | null
@@ -47,7 +49,7 @@ export interface ErrorDetail {
   events: ErrorEventView[]
   requestIds: string[]
   joined: Array<{ requestId: string; source: string; kind: string; occurredAt: string; signatureId: string; signature: string }>
-  reports: Array<{ id: string; description: string; release: string | null; createdAt: string; from: string | null }>
+  reports: Array<{ id: string; description: string; release: string | null; createdAt: string; from: string | null; screenshot?: boolean; postedAt?: string | null }>
 }
 
 export interface ErrorThresholds {

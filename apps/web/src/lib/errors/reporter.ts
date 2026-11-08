@@ -3,7 +3,15 @@ import { API_URL } from '../config'
 import { requestHeaders } from '../request-headers'
 import { Breadcrumbs, clickLabel, type LabelledElement } from './breadcrumbs'
 import { ErrorQueue, type SendResult } from './queue'
-import { apiErrorEvent, consoleMessage, errorEvent, isOwnSource, reportPreview, shouldReportApi, type ReportPayload } from './capture'
+import { apiErrorEvent, consoleMessage, errorEvent, isOwnSource, shouldReportApi, type ReportResult } from './capture'
+import { decideFromAnswer, promptKey, promptRequestBody, readLocal, shouldCheckPrompt, writeLocal, type PromptAnswer } from './prompt'
+
+/** A toast to show after an error that broke what the user was doing (LIV-66 §4). */
+export interface PromptEvent { kind: 'ask' | 'known'; event: ClientErrorEvent }
+
+const storage = (): Storage | null => {
+  try { return typeof localStorage === 'undefined' ? null : localStorage } catch { return null }
+}
 
 /** The build this page is (NEXT_PUBLIC_RELEASE, set from the commit SHA at build time; see next.config.ts). */
 export const RELEASE = (process.env.NEXT_PUBLIC_RELEASE || 'dev').slice(0, 12)
@@ -21,6 +29,10 @@ class Reporter {
   private token: () => string | null = () => null
   private installed = false
   private captured = new WeakSet<object>()
+  private last: ClientErrorEvent | null = null
+  private checked = new Set<string>()
+  private promptListeners = new Set<(p: PromptEvent) => void>()
+  private reportListeners = new Set<(lastError: ClientErrorEvent | null) => void>()
 
   setToken(get: () => string | null) {
     this.token = get
@@ -40,7 +52,62 @@ class Reporter {
   }
 
   private add(e: ClientErrorEvent) {
-    try { this.queue.add(e) } catch { /* never let reporting throw */ }
+    try {
+      this.last = e
+      this.queue.add(e)
+    } catch { /* never let reporting throw */ }
+  }
+
+  /** The last error on this page (for the help menu's Report a bug), or null. */
+  lastError(): ClientErrorEvent | null {
+    return this.last ? { ...this.last, breadcrumbs: this.crumbs.list() } : null
+  }
+
+  /** The breadcrumbs and page now, for a report with no error. */
+  context() {
+    return this.ctx()
+  }
+
+  onPrompt(fn: (p: PromptEvent) => void): () => void {
+    this.promptListeners.add(fn)
+    return () => { this.promptListeners.delete(fn) }
+  }
+
+  /** Opens the Report form (the help menu, a prompt toast). Rendered by <ErrorPrompts/>. */
+  openReport(lastError: ClientErrorEvent | null = this.lastError()) {
+    for (const fn of this.reportListeners) fn(lastError)
+  }
+
+  onOpenReport(fn: (lastError: ClientErrorEvent | null) => void): () => void {
+    this.reportListeners.add(fn)
+    return () => { this.reportListeners.delete(fn) }
+  }
+
+  /** A guest's or trial's "Don't ask me about errors" (an account's is saved on the server). */
+  optOutHere() {
+    const s = storage()
+    writeLocal(s, { ...readLocal(s), optedOut: true })
+  }
+
+  /**
+   * After an error that broke a user action: asks the server whether to ask (once per signature per page), applies a
+   * guest's own 24-hour and opt-out state, and tells the toasts. Background errors never get here.
+   */
+  private async checkPrompt(e: ClientErrorEvent) {
+    try {
+      if (!shouldCheckPrompt(e) || !this.promptListeners.size) return
+      const key = promptKey(e)
+      if (this.checked.has(key) || this.checked.size >= 50) return
+      this.checked.add(key)
+      const body = promptRequestBody(e)
+      const res = await fetch(`${API_URL}/api/errors/prompt`, { method: 'POST', headers: requestHeaders(this.token(), { body }), body })
+      if (!res.ok) return
+      const answer = (await res.json()) as PromptAnswer
+      const s = storage()
+      const { prompt, local } = decideFromAnswer(answer, readLocal(s), Date.now())
+      if (!answer.saved) writeLocal(s, local)
+      if (prompt !== 'none') for (const fn of this.promptListeners) fn({ kind: prompt, event: e })
+    } catch { /* never let reporting throw */ }
   }
 
   /** Called once from <ErrorReporting/>. */
@@ -99,13 +166,18 @@ class Reporter {
     this.crumbs.nav(path)
   }
 
-  /** Every apiFetch call ends here: a breadcrumb always, an event when it failed. */
-  apiDone(r: { method: string; path: string; status: number; ms: number; requestId: string | null; ok: boolean; body?: unknown }) {
+  /**
+   * Every apiFetch call ends here: a breadcrumb always, an event when it failed. Calls are background unless the call
+   * site marks them a user action (a save, deploy, upload or payment the user asked for): only those may prompt.
+   */
+  apiDone(r: { method: string; path: string; status: number; ms: number; requestId: string | null; ok: boolean; body?: unknown; userAction?: boolean }) {
     try {
       if (!shouldReportApi(r.path)) return
       this.crumbs.api(r.method, r.path, r.status, r.ms, r.requestId)
-      // A failed write (save, deploy, upload, payment) broke something the user was doing; a failed read may be background
-      if (!r.ok) this.add(apiErrorEvent({ ...r, body: r.body }, this.ctx(r.method.toUpperCase() !== 'GET')))
+      if (r.ok) return
+      const e = apiErrorEvent({ ...r, body: r.body }, this.ctx(!!r.userAction))
+      this.add(e)
+      if (r.userAction) void this.checkPrompt(e)
     } catch { /* ignore */ }
   }
 
@@ -116,15 +188,20 @@ class Reporter {
   crash(error: unknown): ClientErrorEvent {
     if (error && typeof error === 'object') this.captured.add(error)
     const e = errorEvent('crash', error, this.ctx(true))
+    this.last = e
     void this.post([e], { keepalive: false, bearer: false }).catch(() => {})
     return e
   }
 
-  /** Sends a crash screen's report: exactly the payload its preview showed. Throws on failure, for the form to say so. */
-  async report(payload: ReportPayload): Promise<void> {
-    const body = reportPreview(payload)
+  /**
+   * Sends a report: exactly the payload its preview showed (ReportDraft), with the session only now. Throws on failure,
+   * for the form to say so (with the server's reason for a refused screenshot).
+   */
+  async report(body: string): Promise<ReportResult> {
     const res = await fetch(`${API_URL}/api/errors/reports`, { method: 'POST', headers: requestHeaders(this.token(), { body }), body })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const json = await res.json().catch(() => ({})) as Partial<ReportResult> & { error?: string }
+    if (!res.ok) throw Object.assign(new Error(json.error ?? `HTTP ${res.status}`), { status: res.status, code: json.error })
+    return { emailed: !!json.emailed, screenshot: json.screenshot ?? null }
   }
 }
 

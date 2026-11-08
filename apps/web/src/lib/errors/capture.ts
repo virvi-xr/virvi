@@ -1,4 +1,4 @@
-import { ERROR_LIMITS, redactText, redactUrl, redactValue, type Breadcrumb, type ClientErrorEvent, type ClientErrorKind } from '@virvixr/shared'
+import { ERROR_LIMITS, SCREENSHOT_TYPES, redactText, redactUrl, redactValue, type Breadcrumb, type ClientErrorEvent, type ClientErrorKind, type ScreenshotType } from '@virvixr/shared'
 
 /**
  * Turning what the browser saw into error events (LIV-66). Pure: reporter.ts wires these to window, console and
@@ -55,7 +55,7 @@ export function consoleMessage(args: unknown[]): string {
 }
 
 /** A thrown value (crash screen, uncaught exception, unhandled rejection, console.error). */
-export function errorEvent(kind: Exclude<ClientErrorKind, 'api'>, thrown: unknown, ctx: EventContext): ClientErrorEvent {
+export function errorEvent(kind: Exclude<ClientErrorKind, 'api' | 'report'>, thrown: unknown, ctx: EventContext): ClientErrorEvent {
   const e = base(kind, ctx)
   if (thrown instanceof Error) {
     e.errorType = (thrown.name || 'Error').slice(0, 60)
@@ -91,12 +91,90 @@ export interface ReportPayload {
   release: string
   description: string
   event: ClientErrorEvent
+  /** Optional, chosen by the user (never captured on its own): base64. */
+  screenshot?: { type: ScreenshotType; data: string }
 }
 
-/** What a crash screen's Report sends. */
-export function buildReport(description: string, event: ClientErrorEvent, release: string): ReportPayload {
-  return { v: 1, release, description: description.trim().slice(0, ERROR_LIMITS.maxDescription), event }
+/** What a Report sends: what the user said, the error (or the page's report event) and an optional screenshot. */
+export function buildReport(description: string, event: ClientErrorEvent, release: string, screenshot?: { type: ScreenshotType; data: string } | null): ReportPayload {
+  const p: ReportPayload = { v: 1, release, description: description.trim().slice(0, ERROR_LIMITS.maxDescription), event }
+  if (screenshot) p.screenshot = { type: screenshot.type, data: screenshot.data }
+  return p
 }
 
-/** The form's read-only "What we'll send": the exact JSON that Submit posts. */
-export const reportPreview = (p: ReportPayload) => JSON.stringify(p, null, 2)
+const sizeText = (n: number) => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / (1024 * 1024)).toFixed(1)} MB`)
+const base64Bytes = (b64: string) => Math.floor((b64.length * 3) / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0)
+
+/**
+ * The form's read-only "What we'll send": the exact JSON that Submit posts, except that a screenshot's bytes are
+ * summarised (the picture itself is shown above the preview).
+ */
+export function reportPreview(p: ReportPayload): string {
+  if (!p.screenshot) return JSON.stringify(p, null, 2)
+  return JSON.stringify({ ...p, screenshot: { type: p.screenshot.type, data: `[the image above, ${sizeText(base64Bytes(p.screenshot.data))}]` } }, null, 2)
+}
+
+/** A report with no error (the help menu's Report a bug): the page and what the user did before. */
+export function reportEvent(route: string, breadcrumbs: Breadcrumb[], now = Date.now()): ClientErrorEvent {
+  return { kind: 'report', t: now, route: redactUrl(route).slice(0, ERROR_LIMITS.maxPath), breadcrumbs }
+}
+
+/** Why a chosen screenshot can't be sent, or null. */
+export function checkScreenshotFile(f: { type: string; size: number }): string | null {
+  if (!(SCREENSHOT_TYPES as readonly string[]).includes(f.type)) return 'Use a PNG, JPEG or WebP image.'
+  if (f.size > ERROR_LIMITS.maxScreenshotBytes) return 'The image is over 2 MB. Use a smaller one.'
+  return null
+}
+
+/** The help menu's form is pre-filled with the last error only if it happened in the last half hour. */
+export const LAST_ERROR_MS = 30 * 60_000
+
+export interface ReportResult { emailed: boolean; screenshot: 'kept' | 'not_kept' | null }
+
+/**
+ * One Report form's state. Nothing is sent until submit(): typing, attaching a screenshot and reading the preview
+ * stay in the page. `send` posts the body (reporter.report, which adds the session only then).
+ */
+export class ReportDraft {
+  description = ''
+  /** Leave the last error out (the report is about something else). */
+  includeError = true
+  private shot: { type: ScreenshotType; data: string } | null = null
+  private readonly lastError: ClientErrorEvent | null
+
+  constructor(private readonly o: {
+    lastError: ClientErrorEvent | null; route: string; breadcrumbs: Breadcrumb[]; release: string
+    send: (body: string) => Promise<ReportResult>; now?: () => number
+  }) {
+    const now = (o.now ?? Date.now)()
+    this.lastError = o.lastError && now - o.lastError.t <= LAST_ERROR_MS ? o.lastError : null
+  }
+
+  get hasError(): boolean { return !!this.lastError }
+  get ready(): boolean { return !!this.description.trim() }
+  get screenshot() { return this.shot }
+
+  setDescription(d: string) { this.description = d }
+
+  /** Attaches a chosen image (base64); returns why not, or null. */
+  attach(file: { type: string; size: number }, base64: string): string | null {
+    const why = checkScreenshotFile(file)
+    if (why) return why
+    this.shot = { type: file.type as ScreenshotType, data: base64 }
+    return null
+  }
+
+  removeScreenshot() { this.shot = null }
+
+  payload(): ReportPayload {
+    const event = this.lastError && this.includeError ? this.lastError : reportEvent(this.o.route, this.o.breadcrumbs, (this.o.now ?? Date.now)())
+    return buildReport(this.description, event, this.o.release, this.shot)
+  }
+
+  preview(): string { return reportPreview(this.payload()) }
+
+  async submit(): Promise<ReportResult> {
+    if (!this.ready) throw new Error('Say what you were trying to do first.')
+    return this.o.send(JSON.stringify(this.payload()))
+  }
+}

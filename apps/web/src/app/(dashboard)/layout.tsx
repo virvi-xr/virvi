@@ -12,8 +12,9 @@ import { BrandMark } from '@/components/BrandMark'
 import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
 import {
   BroadcastIcon, CalendarIcon, ChartIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LockIcon, LogoutIcon, MediaIcon,
-  ScenesIcon, ShieldIcon, SparkleIcon,
+  ScenesIcon, ShieldIcon, SparkleIcon, BugIcon,
 } from '@/components/icons'
+import { reporter } from '@/lib/errors/reporter'
 
 /** `description` shows as the item's tooltip (what the page is for, where the label alone is ambiguous). */
 type NavItem = { href: string; label: string; icon: (p: { size?: number }) => React.ReactElement; description?: string }
@@ -160,6 +161,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           ))}
         </nav>
+        {/* Help: always here, whatever the session (LIV-66 §4) */}
+        <div className="border-t border-gray-800 px-3 py-2 md:px-3">
+          <p className="hidden px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-[0.2em] text-gray-500 md:block">Help</p>
+          <button type="button" onClick={() => reporter.openReport()}
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-white/[0.03] hover:text-white">
+            <span className="text-gray-500"><BugIcon size={18} /></span>
+            Report a bug
+          </button>
+        </div>
         <div className="flex items-center gap-3 border-t border-gray-800 px-4 py-3 md:px-6 md:py-5">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-gray-800 text-sm font-semibold text-gray-200">
             {(user.displayName || '?').trim().charAt(0).toUpperCase()}

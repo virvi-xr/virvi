@@ -1,5 +1,6 @@
 'use client'
 import { useApi } from '@/lib/api'
+import { ErrorPromptSetting } from './ErrorPromptSetting'
 import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState } from 'react'
@@ -376,6 +377,8 @@ export default function SettingsPage() {
           </div>
 
           <LinkedWallets />
+
+          <ErrorPromptSetting />
 
           <LinkedHyperfySessions />
 
