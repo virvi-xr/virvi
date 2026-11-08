@@ -617,3 +617,11 @@ def test_grok_looks_again_and_then_fixes_the_legs(api, tmp_path, skills, monkeyp
     assert calls[2]['session'] == 'sess-grok-1' and calls[2]['limits']['costCeilingUsd'] == 1.5
     assert result['outcome'] == 'ok', result['error']
     assert result['costUsd'] == pytest.approx(2.7)
+
+
+def test_a_failed_leg_retry_that_deleted_the_emote_still_saves_the_first_export(api, tmp_path, skills, monkeypatch):
+    spy_runs_with_limits(monkeypatch, 'claude_legs_retry_deletes_and_fails.jsonl')
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert result['outcome'] == 'ok', result['error']  # the stray out/hat/ export is gone too, or collect would refuse
+    assert api.files['job-1/pieces/emote/reading_time.glb'] == (FIXTURES / 'emote_legs/crossed_thighs.glb').read_bytes()
+    assert not (tmp_path / 'out/hat').exists()

@@ -5,7 +5,7 @@
 
 Control lines (never printed): {"sleep": seconds}; {"spawn_sleep": seconds, "pidfile": path} starts a child
 `sleep` and writes its pid, as an agent's Blender would be; {"write": path, "text": str} writes a file relative
-to the working directory; {"copy": src, "to": dst} copies a fixture file into the working directory;
+to the working directory; {"remove": path} deletes a file, link or folder there; {"copy": src, "to": dst} copies a fixture file into the working directory;
 {"env": path} writes the environment it was given as JSON; {"exit": n} ends with exit code n."""
 import json
 import os
@@ -27,6 +27,9 @@ for line in Path(sys.argv[1]).read_text().splitlines():
     elif 'write' in obj:
         Path(obj['write']).parent.mkdir(parents=True, exist_ok=True)
         Path(obj['write']).write_text(obj['text'])
+    elif 'remove' in obj:
+        p = Path(obj['remove'])
+        shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink()
     elif 'copy' in obj:
         Path(obj['to']).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(Path(__file__).parent.parent / 'fixtures' / obj['copy'], obj['to'])
