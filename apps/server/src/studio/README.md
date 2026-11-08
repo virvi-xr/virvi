@@ -21,6 +21,8 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `mana/` | paying in MANA: the rate (`rate.ts`), quotes (`quote.ts`), the Polygon reader (`polygon.ts`), settling and the watcher (`settle.ts`), MANA-back requests (`refunds.ts`) |
 | `ratings.ts` | 👍 / 👎 on each revision (an agent reply that changed pieces), and a 👎's one free "Try again with this feedback" (LIV-142) |
 | `rating-review.ts` | what admins learn from ratings: the 👎 review queue, the weekly digest (the admin page's, and the Monday email to every admin, sent once per week), and the 👍 rate per agent and model for each kind |
+| `lessons.ts` | lessons for the agent per design kind: drafted, approved by an admin, then sent with every new prompt of that kind (the job's `lessons`), at most 4,000 characters live per kind |
+| `lesson-drafts.ts` | Claude (ANTHROPIC_API_KEY, Sonnet 5.5) drafting one lesson from a batch of 👎s of one kind |
 | `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes; then the trial sweep and the weekly ratings digest |
 
 Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/studio-worker.ts` (the workers,

@@ -10,6 +10,8 @@ import { requireAdmin } from '../auth/admin.js'
 import { decodeCursor, DESIGN_KINDS, listAdminDesigns } from '../studio/admin-designs.js'
 import { lastFullWeek, listDownRatings, markRating, parseWeek, weekDigest } from '../studio/rating-review.js'
 import { TAG_KEYS } from '../studio/ratings.js'
+import { createLesson, deleteLesson, isLessonKind, LessonError, lessonText, listLessons, updateLesson } from '../studio/lessons.js'
+import { DRAFT_BATCH_MAX, draftingAvailable, draftLesson } from '../studio/lesson-drafts.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 const REFUND_STATUSES: ManaRefundStatus[] = ['requested', 'sent', 'declined']
@@ -84,6 +86,67 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
     const week = raw === undefined || raw === '' ? lastFullWeek(new Date()) : parseWeek(raw)
     if (!week) return reply.status(400).send({ error: 'week must be a Monday, as YYYY-MM-DD' })
     return weekDigest(week)
+  })
+
+  // Lessons for the agent, per design kind: drafted, edited, approved, switched off (LIV-142)
+  const lessonRefusal = (reply: FastifyReply, err: unknown) => {
+    if (err instanceof LessonError) return reply.status(err.status).send({ error: err.code, code: err.code })
+    throw err
+  }
+  const ratingIds = (raw: unknown, max: number): string[] | null =>
+    Array.isArray(raw) && raw.length <= max && raw.every(isUuid) ? [...new Set(raw as string[])] : null
+
+  app.get('/api/admin/studio/lessons', admin, async (request, reply) => {
+    const kind = (request.query as { kind?: unknown }).kind
+    if (kind !== undefined && kind !== '' && !isLessonKind(kind)) return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
+    return { ...await listLessons(isLessonKind(kind) ? kind : null), drafting: draftingAvailable() }
+  })
+
+  app.post('/api/admin/studio/lessons', admin, async (request, reply) => {
+    const b = (request.body ?? {}) as { kind?: unknown; text?: unknown; sourceRatingIds?: unknown }
+    if (!isLessonKind(b.kind)) return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
+    const text = lessonText(b.text)
+    if (!text) return reply.status(400).send({ error: 'text must be 1-500 characters' })
+    const sources = b.sourceRatingIds === undefined ? [] : ratingIds(b.sourceRatingIds, DRAFT_BATCH_MAX)
+    if (!sources) return reply.status(400).send({ error: 'sourceRatingIds must be rating ids' })
+    try {
+      return reply.status(201).send(await createLesson(request.user.id, { kind: b.kind, text, sourceRatingIds: sources, drafted: 'admin' }, new Date()))
+    } catch (err) {
+      return lessonRefusal(reply, err)
+    }
+  })
+
+  // "Draft a lesson": Claude drafts one from the chosen 👎s (one kind); it is saved as a draft for the admin to edit
+  app.post('/api/admin/studio/lessons/draft', admin, async (request, reply) => {
+    const ids = ratingIds((request.body as { ratingIds?: unknown } | null)?.ratingIds, DRAFT_BATCH_MAX)
+    if (!ids?.length) return reply.status(400).send({ error: `ratingIds must be 1-${DRAFT_BATCH_MAX} rating ids` })
+    try {
+      const { kind, text } = await draftLesson(ids)
+      return reply.status(201).send(await createLesson(request.user.id, { kind, text, sourceRatingIds: ids, drafted: 'claude' }, new Date()))
+    } catch (err) {
+      return lessonRefusal(reply, err)
+    }
+  })
+
+  app.patch('/api/admin/studio/lessons/:id', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'lesson_not_found' })
+    const b = (request.body ?? {}) as { text?: unknown; enabled?: unknown; status?: unknown }
+    const text = b.text === undefined ? undefined : lessonText(b.text)
+    if (text === null) return reply.status(400).send({ error: 'text must be 1-500 characters' })
+    if (b.enabled !== undefined && typeof b.enabled !== 'boolean') return reply.status(400).send({ error: 'enabled must be true or false' })
+    if (b.status !== undefined && b.status !== 'approved') return reply.status(400).send({ error: "status can only become 'approved'" })
+    try {
+      return await updateLesson(id, request.user.id, { text, enabled: b.enabled as boolean | undefined, approve: b.status === 'approved' }, new Date())
+    } catch (err) {
+      return lessonRefusal(reply, err)
+    }
+  })
+
+  app.delete('/api/admin/studio/lessons/:id', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id) || !(await deleteLesson(id))) return reply.status(404).send({ error: 'lesson_not_found' })
+    return reply.status(204).send()
   })
 
   app.get('/api/admin/studio/flags', admin, async (request) => {

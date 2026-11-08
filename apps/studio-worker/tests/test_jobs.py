@@ -637,3 +637,32 @@ def test_a_leg_retry_whose_restore_fails_still_records_the_cost(api, tmp_path, s
     assert result['outcome'] == 'error'
     assert 'could not put the emote back' in result['error']
     assert result['costUsd'] == pytest.approx(0.05)
+
+
+def test_lessons_go_in_the_instructions_not_the_history(api, tmp_path, skills, monkeypatch):
+    seen = {}
+    real = jobs.run_agent
+
+    def spy(agent, model, prompt, session, *a, **kw):
+        seen.setdefault('prompt', prompt)
+        return real(agent, model, prompt, session, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    result = run(api, tmp_path, prompt_job(lessons=['Size hats to the head.', 'Keep visors  thin.']), 'claude_builds_hat.jsonl')
+    assert result['outcome'] == 'ok', result
+    instructions = seen['prompt'].split('Studio instructions:')[1]
+    assert 'Lessons from earlier designs (follow them unless the user asks otherwise):\n- Size hats to the head.\n' \
+           '- Keep visors thin.' in instructions
+    # the next prompt's history holds the user's words only
+    seen.clear()
+    run(api, tmp_path, prompt_job(jobId='job-2', agent='grok', model='grok-build-0.1', prompt='make it pink'),
+        'grok_builds_hat.jsonl')
+    assert 'Size hats' not in seen['prompt']
+
+
+def test_lessons_text_skips_junk_and_stays_bounded():
+    from studio_worker.instructions import LESSONS_MAX, closing, lessons_text
+    assert lessons_text(None) == '' and lessons_text([]) == '' and lessons_text([None, 3, '  ']) == ''
+    text = lessons_text(['x' * 3000, 'y' * 1500, 'z'])
+    assert '- ' + 'x' * 3000 in text and 'y' * 1500 not in text and len(text) < LESSONS_MAX + 200
+    assert 'Lessons from earlier designs' not in closing('emote', None)
+    assert 'Lessons from earlier designs' in closing('emote', None, lessons=['Loop cleanly.'])

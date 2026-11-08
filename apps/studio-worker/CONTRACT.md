@@ -124,6 +124,9 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   `review/clipping/<emote>/NN.png`, and the prompt tells the agent to open them first and to check its fix with
   `studio-preview <pieces> --emote <emote> --body <shape> --outfit <outfit>`. If the frames can't be rendered, the
   job ends `error` without running the agent.
+- `lessons`, on a prompt job: `[str]`, the lessons Virvi admins approved for the design's kind (LIV-142), present only
+  when there are some (at most 4,000 characters together). The worker adds them to the studio instructions after the
+  user's words, never to the conversation history. A worker that predates them ignores the field.
 
 - `finalize`, on a finalize job: `{"designName": str, "pieces": [{"category", "name", "revision": n, "files":
   [contract paths]}]}`. `files` are the paid revision's files (its GLBs, `piece.json` and checker report). Virvi may add

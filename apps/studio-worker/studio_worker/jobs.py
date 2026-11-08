@@ -129,7 +129,7 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
     uploads = fetch_uploads(job, client, design)
     words = job['prompt'] + (_clipping_text(design, kind, agent, fix) if fix else '')
     prompt = prompt_with_context(state, agent, words) + uploads_text(uploads) + \
-        closing(kind, job.get('selectedSlots'), agent)
+        closing(kind, job.get('selectedSlots'), agent, job.get('lessons'))
     limits = {**DEFAULT_LIMITS, **{k: v for k, v in (job.get('limits') or {}).items() if v is not None}}
 
     _phase(client, job_id, 'building')

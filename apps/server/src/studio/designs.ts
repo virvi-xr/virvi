@@ -15,6 +15,7 @@ import type { Exec } from './quota.js'
 import { setDetail } from './sets.js'
 import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
 import { designRevisions } from './ratings.js'
+import { liveLessons } from './lessons.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
@@ -324,6 +325,7 @@ export async function queuePrompt(
       // Support's own words reach the agent marked as theirs; never scope-checked (that is for the designer's words)
       const ownWords = !input.continue && !fix && !fixText
       const prompt = fix ? clippingInstruction(d.kind, fix) : !ownWords ? text : support ? `${SUPPORT_PREFIX}${ownerWords(text)}` : ownerWords(text)
+      const lessons = await liveLessons(d.kind, tx)
       const [job] = await tx.insert(studioJobs).values({
         designId: d.id,
         type: 'prompt',
@@ -340,6 +342,9 @@ export async function queuePrompt(
           // the user's own words; Continue and fixing the checks are the server's (a try-again is the owner's)
           check: counted || !!feedback,
           ...(fix ? { fixClipping: fix } : {}),
+          // Admin-approved lessons for this kind (LIV-142): the worker adds them to its instructions, never to the
+          // conversation. A worker that predates them ignores the field
+          ...(lessons.length ? { lessons } : {}),
         },
         counted,
         countedDay: r.day,

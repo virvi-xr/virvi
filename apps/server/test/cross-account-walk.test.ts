@@ -388,6 +388,8 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/studio/reports/:id/approve', url: () => `/api/admin/studio/reports/${AD_ID}/approve` },
   { route: 'POST /api/admin/studio/reports/:id/decline', url: () => `/api/admin/studio/reports/${AD_ID}/decline` },
   { route: 'POST /api/admin/studio/gift-codes/:id/off', url: () => `/api/admin/studio/gift-codes/${AD_ID}/off` },
+  { route: 'PATCH /api/admin/studio/lessons/:id', url: () => `/api/admin/studio/lessons/${AD_ID}`, body: () => ({ enabled: false }) },
+  { route: 'DELETE /api/admin/studio/lessons/:id', url: () => `/api/admin/studio/lessons/${AD_ID}` },
   { route: 'PATCH /api/admin/studio/ratings/:id', url: (f) => `/api/admin/studio/ratings/${f.designRating.id}`, body: () => ({ handled: true }) },
   { route: 'GET /api/admin/studio/mana-refunds/:id/quote', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/quote` },
   { route: 'POST /api/admin/studio/mana-refunds/:id/sent', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/sent`, body: () => ({ txHash: '0x' + 'ab'.repeat(32), amountWei: '1' }) },

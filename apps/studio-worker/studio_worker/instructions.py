@@ -30,7 +30,26 @@ piece (<name> in lowercase letters and underscores, e.g. out/furniture_round_tab
 Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is."""
 
 
-def closing(kind: str, selected_slots: list[str] | None, agent: str | None = None) -> str:
+LESSONS_MAX = 4000  # the server keeps a kind's lessons within this; a longer list is cut, never sent whole
+
+
+def lessons_text(lessons: list | None) -> str:
+    """The admin-approved lessons for this kind of design (the job's `lessons`), as one more part of the instructions."""
+    kept, used = [], 0
+    for lesson in lessons or []:
+        if not isinstance(lesson, str) or not lesson.strip():
+            continue
+        text = ' '.join(lesson.split())
+        if used + len(text) > LESSONS_MAX:
+            break
+        kept.append(f'- {text}')
+        used += len(text)
+    if not kept:
+        return ''
+    return '\nLessons from earlier designs (follow them unless the user asks otherwise):\n' + '\n'.join(kept)
+
+
+def closing(kind: str, selected_slots: list[str] | None, agent: str | None = None, lessons: list | None = None) -> str:
     scope = 'Decentraland wearables and emotes'
     if kind == 'scene':
         scope = 'buildings, furniture and decor for Decentraland scenes'
@@ -78,7 +97,7 @@ only: `blender -b`. {what}
 {layout}
 Blender is for building only: never render in Blender (no thumbnails, turntables or test renders). `studio-preview` is how you look at your work.
 {look}
-{check}{shaping}
+{check}{shaping}{lessons_text(lessons)}
 When you're done, reply to the user in a few plain sentences: what you made or changed, and anything you need from them.
 You build and discuss {scope}, and nothing else. If the user asks for something that isn't
 (coding help, writing unrelated to the listing, research, general questions), write out/declined.json as

@@ -320,6 +320,10 @@ export const config = {
   studioClaudeModel: env('STUDIO_CLAUDE_MODEL') || 'claude-opus-5-5',
   studioCodexModel: env('STUDIO_CODEX_MODEL') || 'gpt-6.1-sol',
   studioGrokModel: env('STUDIO_GROK_MODEL') || 'grok-build-0.1',
+  // Drafting agent lessons from a batch of 👎s on the Studio admin page (LIV-142, src/studio/lesson-drafts.ts). Unset,
+  // there is no Draft button and admins write lessons by hand. The workers' keys stay behind their key proxy
+  anthropicApiKey: env('ANTHROPIC_API_KEY') || null,
+  studioLessonModel: env('STUDIO_LESSON_MODEL') || 'claude-sonnet-5-5',
   studioPrices: studioPricesFrom(process.env),
   studioMana: manaSettingsFrom(process.env),
   // The studio scene's parcel (for example "-12,34"), where the checkout link sends a returning visitor
