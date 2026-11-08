@@ -204,6 +204,8 @@ function Cells({ cells, max, metric, floor, onHover }: Heatmap3DProps & { onHove
   useEffect(() => {
     const m = mesh.current
     if (!m) return
+    // The first setColorAt adds the instance colours, which the material's shader then has to be rebuilt for.
+    const fresh = !m.instanceColor
     const o = new THREE.Object3D()
     shown.forEach((c, i) => {
       const b = cellBox(c)
@@ -216,6 +218,7 @@ function Cells({ cells, max, metric, floor, onHover }: Heatmap3DProps & { onHove
     m.count = shown.length
     m.instanceMatrix.needsUpdate = true
     if (m.instanceColor) m.instanceColor.needsUpdate = true
+    if (fresh) (m.material as THREE.Material).needsUpdate = true
     m.computeBoundingSphere()
     invalidate()
   }, [shown, metric, max, palette, invalidate])
