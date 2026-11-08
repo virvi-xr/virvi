@@ -14,11 +14,11 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments } from '../../db/schema.js'
 import { frameEntitiesInScene, modelsInScene, pendingModels, type Assembled } from './assemble.js'
-import { liveSceneIds } from '../../scenes/live.js'
 import {
   DeployerError, liveBaseFor, reconcileStaleDeployments, refusedLine, REFUSED_PREFIX, sceneLimitProblem, startVirviDeploy,
   type Destination, type DeployOptions,
 } from './world-deployer.js'
+import { liveSceneIds } from '../../scenes/live.js'
 
 export { pendingModels }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import type { RoomScanLayout, ScannedRoom } from '@virvixr/shared'
-import { assetLibraryItems, roomScans, roomSets, sceneCollaborators, sceneElements } from '../src/db/schema.js'
+import { assetLibraryItems, roomScans, roomSets, sceneCollaborators, sceneElements, scenes } from '../src/db/schema.js'
 import { db } from '../src/db/connection.js'
 import type { StorageProvider } from '../src/storage/index.js'
 import { glbStats } from '../src/catalog/glb-stats.js'
@@ -226,7 +226,13 @@ describe('room sets', () => {
       return { element, row }
     }
     const deleteElement = (u: TestUser, id: string) => app.inject({ method: 'DELETE', url: `/api/elements/${id}`, headers: bearer(u) })
-    const deleteScene = (u: TestUser, id: string) => app.inject({ method: 'DELETE', url: `/api/scenes/${id}`, headers: bearer(u) })
+    // LIV-83: delete, then delete for good (the purge removes the set rows and GLBs)
+    const deleteScene = async (u: TestUser, id: string) => {
+      const del = await app.inject({ method: 'DELETE', url: `/api/scenes/${id}`, headers: bearer(u) })
+      if (del.statusCode !== 200) return del
+      const [{ name }] = await db.select({ name: scenes.name }).from(scenes).where(eq(scenes.id, id))
+      return app.inject({ method: 'POST', url: `/api/scenes/${id}/purge`, headers: bearer(u), payload: { name } })
+    }
 
     it('deleting the element deletes its set row and GLB', async () => {
       const owner = await createUser()

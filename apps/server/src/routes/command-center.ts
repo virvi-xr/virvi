@@ -124,7 +124,7 @@ export default async function commandCenterRoutes(app: FastifyInstance) {
       const links = await db
         .select({ sceneId: eventSceneLinks.sceneId })
         .from(eventSceneLinks)
-        .where(and(eq(eventSceneLinks.eventId, eventId), liveScene()))
+        .where(eq(eventSceneLinks.eventId, eventId))
 
       let sceneIds = await accessibleSceneIds(actorFromClaims(request.user), links.map((l) => l.sceneId))
 

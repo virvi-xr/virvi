@@ -88,7 +88,7 @@ export class VirviCommandCenterRoom extends Room {
         const links = await db
           .select({ sceneId: eventSceneLinks.sceneId })
           .from(eventSceneLinks)
-          .where(and(eq(eventSceneLinks.eventId, this.eventId), liveScene()))
+          .where(eq(eventSceneLinks.eventId, this.eventId))
 
         const sceneIds = await accessibleSceneIds(actor, links.map((l) => l.sceneId))
         const action = message.action || message.data

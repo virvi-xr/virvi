@@ -166,7 +166,10 @@ describe('scene thumbnail routes', () => {
   it('deleting the scene deletes its thumbnail file', async () => {
     const s = await setup()
     const { thumbnailKey } = (await put(s.scene.id, s.owner, await png())).json().scene
-    expect((await app.inject({ method: 'DELETE', url: `/api/scenes/${s.scene.id}`, headers: as(s.owner) })).statusCode).toBe(204)
+    expect((await app.inject({ method: 'DELETE', url: `/api/scenes/${s.scene.id}`, headers: as(s.owner) })).statusCode).toBe(200)
+    // LIV-83: a deleted scene keeps its thumbnail until it's deleted for good
+    expect(stored(thumbnailKey)).toBe(true)
+    expect((await app.inject({ method: 'POST', url: `/api/scenes/${s.scene.id}/purge`, headers: as(s.owner), payload: { name: s.scene.name } })).statusCode).toBe(204)
     expect(stored(thumbnailKey)).toBe(false)
   })
 })

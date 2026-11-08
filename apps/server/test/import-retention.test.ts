@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { dclWorldDestinations, sceneDeployments, sceneImports, userAuthMethods } from '../src/db/schema.js'
+import { dclWorldDestinations, sceneDeployments, sceneImports, userAuthMethods, scenes } from '../src/db/schema.js'
 import bcrypt from 'bcryptjs'
 import { localPrivateStore, memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { FILES_EXPIRED, startRetentionSweep, stopRetentionSweep, sweepRetention } from '../src/services/import/retention.js'
@@ -163,7 +163,12 @@ describe('retention (Ruling R27)', () => {
       const id = await anImport('failed', now)
       const sceneId = (await importRow(id)).sceneId
       const keep = await anImport('failed', now)
-      const r = await app.inject({ method: 'DELETE', url: `/api/scenes/${sceneId}`, headers: { authorization: `Bearer ${tokenFor(user)}` } })
+      const headers = { authorization: `Bearer ${tokenFor(user)}` }
+      expect((await app.inject({ method: 'DELETE', url: `/api/scenes/${sceneId}`, headers })).statusCode).toBe(200)
+      // LIV-83: the files go when the scene is deleted for good
+      expect(under(id)).not.toEqual([])
+      const [{ name }] = await db.select({ name: scenes.name }).from(scenes).where(eq(scenes.id, sceneId))
+      const r = await app.inject({ method: 'POST', url: `/api/scenes/${sceneId}/purge`, headers, payload: { name } })
       expect(r.statusCode).toBe(204)
       expect(under(id)).toEqual([])
       expect(under(keep)).toHaveLength(4)

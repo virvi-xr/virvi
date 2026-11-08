@@ -95,8 +95,9 @@ describe('scene roles API', () => {
     await db.insert(sceneRoles).values({ sceneId: scene.id, walletAddress: co.wallet!, userId: co.id, role: 'cohost' })
     expect((await call('DELETE', `/api/scenes/${scene.id}`, tokenFor(co))).statusCode).toBe(403)
     expect(await db.query.scenes.findFirst({ where: eq(scenes.id, scene.id) })).toBeDefined()
-    expect((await call('DELETE', `/api/scenes/${scene.id}`, tokenFor(host))).statusCode).toBe(204)
-    expect(await db.query.scenes.findFirst({ where: eq(scenes.id, scene.id) })).toBeUndefined()
+    expect((await call('DELETE', `/api/scenes/${scene.id}`, tokenFor(host))).statusCode).toBe(200)
+    // LIV-83: deleted, restorable
+    expect((await db.query.scenes.findFirst({ where: eq(scenes.id, scene.id) }))?.deletedAt).toBeTruthy()
   })
 
   it('collaborator emails are shown only to full-access roles', async () => {
