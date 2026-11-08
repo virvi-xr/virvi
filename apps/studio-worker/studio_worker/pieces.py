@@ -39,7 +39,7 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
         return [], None, 'out/ is not a folder'
     proposal, problems = None, []
     try:
-        proposal = json.loads(_read(out / 'proposal.json')) if os.path.lexists(out / 'proposal.json') else None
+        proposal = json.loads(read_regular(out / 'proposal.json')) if os.path.lexists(out / 'proposal.json') else None
     except (UnsafeFile, json.JSONDecodeError) as e:
         problems.append(f'out/proposal.json: {e}')
     pieces = []
@@ -54,7 +54,7 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
             problems.append(scene.folder_problem(d.name))
             continue
         try:
-            meta = json.loads(_read(d / 'piece.json'))
+            meta = json.loads(read_regular(d / 'piece.json'))
             glbs = [g for g in sorted(d.iterdir()) if g.suffix.lower() == '.glb']
             if not glbs:
                 problems.append(f'{rel}/ has a piece.json but no GLB')
@@ -73,10 +73,10 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
             copies, extras = [], []
             for g in glbs:
                 copies.append(staged / g.name)
-                copies[-1].write_bytes(_read(g))
+                copies[-1].write_bytes(read_regular(g))
             for e in scene.extras(d, meta) if kind == 'scene' else []:
                 extras.append(staged / e.name)
-                extras[-1].write_bytes(_read(e))
+                extras[-1].write_bytes(read_regular(e))
             (staged / 'piece.json').write_text(json.dumps(meta))
         except UnsafeFile as e:
             problems.append(str(e))
@@ -108,7 +108,7 @@ def read_declined(design: Path) -> str | None:
     if not os.path.lexists(path):
         return None
     try:
-        reason = json.loads(_read(path)).get('reason')
+        reason = json.loads(read_regular(path)).get('reason')
     except (UnsafeFile, json.JSONDecodeError, AttributeError, UnicodeDecodeError):
         reason = None
     return str(reason)[:120] if reason else 'no reason given'
@@ -118,17 +118,25 @@ class UnsafeFile(Exception):
     pass
 
 
-def _read(path: Path) -> bytes:
-    """A regular file's bytes, never through a symlink and never a hard link to something else."""
+def read_regular(path: Path, max_bytes: int | None = None) -> bytes:
+    """A regular file's bytes, never through a symlink, never a hard link to something else, never a pipe or device
+    (opened without blocking), and at most max_bytes when given."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            raise UnsafeFile(f'{_rel(path)} is not a regular file')
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         raise UnsafeFile(f'{_rel(path)} is not a regular file') from None
     with os.fdopen(fd, 'rb') as f:
         st = os.fstat(f.fileno())
         if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
             raise UnsafeFile(f'{_rel(path)} is not a regular file')
-        return f.read()
+        if max_bytes is not None and st.st_size > max_bytes:
+            raise UnsafeFile(f'{_rel(path)} is too large')
+        data = f.read() if max_bytes is None else f.read(max_bytes + 1)
+    if max_bytes is not None and len(data) > max_bytes:
+        raise UnsafeFile(f'{_rel(path)} is too large')
+    return data
 
 
 def _rel(path: Path) -> str:

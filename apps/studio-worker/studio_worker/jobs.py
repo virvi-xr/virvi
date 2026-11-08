@@ -28,7 +28,7 @@ from .api import Api, ApiError
 from .config import AGENT_USER, DESIGN, skills_sha
 from .finalize import Tools, finalize_job
 from .instructions import closing, uploads_text
-from .pieces import Piece, UnsafeFile, _read, collect, glbs_by_shape, glbs_exported, glbs_outside, new_hashes, read_declined
+from .pieces import Piece, UnsafeFile, collect, glbs_by_shape, glbs_exported, glbs_outside, new_hashes, read_declined, read_regular
 from .workspace import load_state, pack, prompt_with_context, save_state, state_dir, unpack
 
 IDLE_EXIT_SEC = 600
@@ -231,7 +231,7 @@ def _crossing_legs(design: Path, since: float) -> list[tuple[str, str]]:
         if g.parent != design / 'out' / 'emote':
             continue
         try:
-            r = emote_legs.check_bytes(_read(g))
+            r = emote_legs.check_bytes(read_regular(g, emote_legs.MAX_BYTES))
         except UnsafeFile:
             continue
         if r is not None and r.crossing:

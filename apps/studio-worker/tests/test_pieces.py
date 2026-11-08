@@ -169,3 +169,23 @@ def test_closing_for_a_scene_design_names_the_skills_folders_and_checks():
     # its scope is buildings and furniture, so a cafe isn't declined as off-topic
     assert 'buildings, furniture and decor' in text
     assert 'wearables and emotes, and nothing else' not in text
+
+
+def test_a_fifo_glb_is_an_error_not_a_hang(tmp_path):
+    d = tmp_path / 'design/out/hat'
+    d.mkdir(parents=True)
+    (d / 'piece.json').write_text(json.dumps(HAT))
+    os.mkfifo(d / 'hat_male.glb')
+    pieces, _, error = collect(tmp_path / 'design', 'wearable', {}, stage=tmp_path / 'stage')
+    assert pieces == [] and 'out/hat/hat_male.glb' in error and 'not a regular file' in error
+
+
+def test_read_regular_caps_the_size(tmp_path):
+    import pytest
+    from studio_worker.pieces import UnsafeFile, read_regular
+    (tmp_path / 'out').mkdir()
+    big = tmp_path / 'out/big.glb'
+    big.write_bytes(b'x' * 1000)
+    assert read_regular(big) == b'x' * 1000 and read_regular(big, max_bytes=1000) == b'x' * 1000
+    with pytest.raises(UnsafeFile, match='too large'):
+        read_regular(big, max_bytes=999)
