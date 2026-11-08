@@ -316,6 +316,18 @@ export class DclAdapter implements VirviPlatformAdapter {
     ])
   }
 
+  /** A frame part (LIV-129): a plain coloured box or plane, lit like the scene, with no collider. */
+  setSolidShape(entity: EntityHandle, shape: 'box' | 'plane', color: { r: number; g: number; b: number }): void {
+    if (shape === 'box') MeshRenderer.setBox(entity as Entity)
+    else MeshRenderer.setPlane(entity as Entity)
+    Material.setPbrMaterial(entity as Entity, {
+      albedoColor: Color4.create(color.r, color.g, color.b, 1),
+      roughness: 0.7,
+      metallic: 0,
+      specularIntensity: 0.2,
+    })
+  }
+
   setGltfModel(entity: EntityHandle, src: string): void {
     // A model with collisions keeps them across a model swap (createOrReplace would drop the mask)
     const mask = this.meshCollisionMasks.get(entity as Entity)

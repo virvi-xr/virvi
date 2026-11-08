@@ -12,6 +12,8 @@ import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Input } from '@dcl/sdk/rea
 import { copyName, nextSwitchText, presetLabel, PRESET_NAME_MAX, type HUDNextSwitch, type HUDPreset } from './presets.js'
 import { clearCopiesPrompt, type HUDLayoutItem } from './layout.js'
 import { CLICK_KIND_LABELS, CLICKABLE_TYPES, clickDraftOf, clickFromDraft, clickLabel, type ClickDraft } from './clicks.js'
+import { FRAMEABLE, FRAME_CHOICES, frameDraftOf, frameFromDraft, frameLabel, stepThickness, withDraftStyle } from './frames.js'
+import { FRAME_STYLE_HINTS, FRAME_SWATCHES, frameColorRgb, type FrameSettings } from '@virvixr/shared'
 import { DELAY_STEP_MINUTES, NO_SHOWINGS, SHOWINGS_LOADING, showingRow, type HUDShowing, type ShowControl } from './showings.js'
 import { offImageLabel, screenSourceLabel, streamOptionLabel, type HUDImage, type HUDScreen, type HUDStream } from './streams.js'
 import { Color4 } from '@dcl/sdk/math'
@@ -90,6 +92,9 @@ interface HUDState {
   /** The item whose click action is being edited (LIV-126), its draft, and why the last save didn't go through. */
   clicking: { elementId: string; draft: ClickDraft } | null
   clickError: string | null
+  /** The image or screen whose frame is being edited (LIV-129), its draft, and why the last save didn't go through. */
+  framing: { elementId: string; draft: FrameSettings } | null
+  frameError: string | null
   missingModels: number
   /** The Media Library's Upload view: an upload link (this computer) and its QR (phone), minted on open. */
   upload: UploadViewState
@@ -181,6 +186,8 @@ const state: HUDState = {
   confirmClear: null,
   clicking: null,
   clickError: null,
+  framing: null,
+  frameError: null,
   missingModels: 0,
   upload: { open: false, loading: false, error: null, token: null },
   renaming: null,
@@ -806,7 +813,7 @@ function SceneLayoutPanel() {
       <PanelHeader
         title="Scene Layout"
         subtitle={state.currentSceneName || undefined}
-        onClose={() => { state.activePanel = null; state.confirmDelete = null; state.confirmClear = null; state.clicking = null }}
+        onClose={() => { state.activePanel = null; state.confirmDelete = null; state.confirmClear = null; state.clicking = null; state.framing = null }}
       />
       <UiEntity uiTransform={{ width: '100%', padding: 8, flexDirection: 'column' }}>
         <EditMessage />
@@ -839,7 +846,7 @@ function SceneLayoutPanel() {
               }}
               uiBackground={{ color: C.bgCard }}
             >
-              <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: editable ? (CLICKABLE_TYPES.has(el.type) ? 68 : 112) : 260 }}>
+              <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', width: editable ? rowNameWidth(el.type) : 260 }}>
                 <Label value={el.type.toUpperCase().slice(0, 3)} fontSize={8} color={C.textMuted}
                   uiTransform={{ margin: { right: 6 } }} />
                 <Label value={el.name || 'Unnamed'} fontSize={11} color={el.enabled ? C.text : C.textDim} textAlign="middle-left" />
@@ -869,14 +876,14 @@ function SceneLayoutPanel() {
                 <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Button label={el.enabled ? 'Hide' : 'Show'} color={el.enabled ? undefined : C.accent}
                     onPress={() => onSceneAction?.('layout_toggle', { elementId: el.id, enabled: !el.enabled })}
-                    width={56} height={24} fontSize={10} />
+                    width={ROW_BUTTON.toggle} height={24} fontSize={10} />
                   <UiEntity uiTransform={{ width: 4 }} />
                   <Button label="Delete" color={C.danger} onPress={() => { state.confirmClear = null; state.confirmDelete = el.id }}
-                    width={56} height={24} fontSize={10} />
+                    width={ROW_BUTTON.delete} height={24} fontSize={10} />
                   {el.copies > 0 && <UiEntity uiTransform={{ width: 4 }} />}
                   {el.copies > 0 && (
                     <Button label="Clear" onPress={() => { state.confirmDelete = null; state.confirmClear = el.id }}
-                      width={52} height={24} fontSize={10} />
+                      width={ROW_BUTTON.clear} height={24} fontSize={10} />
                   )}
                   {CLICKABLE_TYPES.has(el.type) && <UiEntity uiTransform={{ width: 4 }} />}
                   {CLICKABLE_TYPES.has(el.type) && (
@@ -885,9 +892,22 @@ function SceneLayoutPanel() {
                         state.confirmDelete = null
                         state.confirmClear = null
                         state.clickError = null
+                        state.framing = null
                         state.clicking = state.clicking?.elementId === el.id ? null : { elementId: el.id, draft: clickDraftOf(el.click) }
                       }}
-                      width={40} height={24} fontSize={9} />
+                      width={ROW_BUTTON.click} height={24} fontSize={9} />
+                  )}
+                  {FRAMEABLE.has(el.type) && <UiEntity uiTransform={{ width: 4 }} />}
+                  {FRAMEABLE.has(el.type) && (
+                    <Button label="Frame" color={state.framing?.elementId === el.id ? C.accent : undefined}
+                      onPress={() => {
+                        state.confirmDelete = null
+                        state.confirmClear = null
+                        state.clicking = null
+                        state.frameError = null
+                        state.framing = state.framing?.elementId === el.id ? null : { elementId: el.id, draft: frameDraftOf(el.frame) }
+                      }}
+                      width={ROW_BUTTON.frame} height={24} fontSize={9} />
                   )}
                 </UiEntity>
               )}
@@ -910,6 +930,81 @@ function SceneLayoutPanel() {
             textAlign="top-left" uiTransform={{ width: '100%', height: 22 }} />
         )}
         {editable && state.clicking && <ClickEditor />}
+        {editable && state.framing && <FrameEditor />}
+      </UiEntity>
+    </UiEntity>
+  )
+}
+
+/** Layout row button widths: they and the name share the row (310 px inside the panel, 10 kept spare). */
+const ROW_BUTTON = { toggle: 44, delete: 48, clear: 44, click: 38, frame: 42 }
+const ROW_INNER = 300
+
+/** The name's share of an editor's row: what the widest set of buttons this type can show leaves. */
+function rowNameWidth(type: string): number {
+  const gap = 4
+  let used = ROW_BUTTON.toggle + gap + ROW_BUTTON.delete + gap + ROW_BUTTON.clear
+  if (CLICKABLE_TYPES.has(type)) used += gap + ROW_BUTTON.click
+  if (FRAMEABLE.has(type)) used += gap + ROW_BUTTON.frame
+  return ROW_INNER - used
+}
+
+/** An image's or screen's frame (LIV-129): Off or a style, a colour, a thickness, like the dashboard's. */
+function FrameEditor() {
+  const f = state.framing!
+  const item = state.layout.find((el) => el.id === f.elementId)
+  if (!item) return null
+  const d = f.draft
+  const set = (draft: FrameSettings) => { if (state.framing) state.framing = { ...state.framing, draft } }
+  const save = () => {
+    const r = frameFromDraft(state.framing!.draft)
+    if (!r.ok) { state.frameError = r.error; return }
+    state.frameError = null
+    onSceneAction?.('layout_frame', { elementId: f.elementId, frame: r.value })
+  }
+  return (
+    <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', padding: 6, margin: { top: 4 } }} uiBackground={{ color: C.bgCard }}>
+      <Label value={`${item.name || 'Unnamed'}: ${frameLabel(item.frame)}`} fontSize={10} color={C.textDim} textAlign="middle-left" uiTransform={{ height: 18 }} />
+      <UiEntity uiTransform={{ flexDirection: 'row', margin: { top: 2, bottom: 4 } }}>
+        {FRAME_CHOICES.map(([choice, label]) => (
+          <UiEntity key={choice} uiTransform={{ margin: { right: 3 } }}>
+            <Button label={label} color={(choice === 'off' ? !d.enabled : d.enabled && d.style === choice) ? C.accent : undefined}
+              onPress={() => set(withDraftStyle(state.framing!.draft, choice))} width={60} height={22} fontSize={9} />
+          </UiEntity>
+        ))}
+      </UiEntity>
+      {d.enabled && (
+        <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
+          <Label value={FRAME_STYLE_HINTS[d.style]} fontSize={9} color={C.textMuted} textAlign="middle-left" uiTransform={{ height: 16 }} />
+          <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', margin: { top: 2, bottom: 4 } }}>
+            <Label value="Colour" fontSize={10} color={C.textDim} uiTransform={{ width: 44 }} />
+            {FRAME_SWATCHES.map((s) => {
+              const c = frameColorRgb(s.color)
+              const on = d.color === s.color
+              return (
+                <UiEntity key={s.color} uiTransform={{ margin: { right: 3 } }}>
+                  <Button label={on ? '✓' : ''} color={Color4.create(c.r, c.g, c.b, 1)} textColor={c.r + c.g + c.b > 1.5 ? Color4.create(0, 0, 0, 1) : C.text}
+                    onPress={() => set({ ...state.framing!.draft, color: s.color })} width={26} height={22} fontSize={10} />
+                </UiEntity>
+              )
+            })}
+          </UiEntity>
+          {!FRAME_SWATCHES.some((s) => s.color === d.color) && (
+            <Label value={`Colour ${d.color} (set on the dashboard)`} fontSize={9} color={C.textMuted} textAlign="middle-left" uiTransform={{ height: 16 }} />
+          )}
+          <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Label value="Thickness" fontSize={10} color={C.textDim} uiTransform={{ width: 60 }} />
+            <Button label="-" onPress={() => set(stepThickness(state.framing!.draft, -1))} width={26} height={22} fontSize={12} />
+            <Label value={`${d.thickness}%`} fontSize={10} color={C.text} uiTransform={{ width: 40 }} />
+            <Button label="+" onPress={() => set(stepThickness(state.framing!.draft, 1))} width={26} height={22} fontSize={12} />
+          </UiEntity>
+        </UiEntity>
+      )}
+      {state.frameError && <Label value={state.frameError} fontSize={10} color={C.danger} textAlign="top-left" uiTransform={{ width: '100%', height: 20 }} />}
+      <UiEntity uiTransform={{ flexDirection: 'row', margin: { top: 4 } }}>
+        <Button label="Save" color={C.accent} onPress={save} width={56} height={24} fontSize={10} />
+        <UiEntity uiTransform={{ width: 4 }} />
+        <Button label="Cancel" onPress={() => { state.framing = null; state.frameError = null }} width={56} height={24} fontSize={10} />
       </UiEntity>
     </UiEntity>
   )
@@ -1908,6 +2003,16 @@ export class DclHUDRenderer implements HUDRenderer {
     if (state.confirmDelete && !list.some((el) => el.id === state.confirmDelete)) state.confirmDelete = null
     if (state.confirmClear && !list.some((el) => el.id === state.confirmClear && el.copies > 0)) state.confirmClear = null
     if (state.clicking && !list.some((el) => el.id === state.clicking!.elementId)) state.clicking = null
+    if (state.framing && !list.some((el) => el.id === state.framing!.elementId)) state.framing = null
+  }
+
+  /** A frame was saved (LIV-129): close the editor; or it was refused: say why there. */
+  frameSaved(error: string | null = null): void {
+    if (error) state.frameError = error
+    else {
+      state.framing = null
+      state.frameError = null
+    }
   }
 
   /** A click action was saved (LIV-126): close the editor; or it was refused: say why there. */

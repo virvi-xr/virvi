@@ -1,3 +1,5 @@
+import { storedFrame } from './frames.js'
+
 /** One row of the HUD's Scene Layout panel. `copies` is how many instances the element has in the scene. */
 export type HUDLayoutItem = {
   id: string
@@ -7,6 +9,8 @@ export type HUDLayoutItem = {
   copies: number
   /** What clicking the item does (LIV-126); null for nothing. */
   click: import('@virvixr/shared').ClickEvent | null
+  /** Its frame (LIV-129), kept while switched off; null for none. Images and video screens only. */
+  frame: import('@virvixr/shared').FrameSettings | null
 }
 
 /**
@@ -16,7 +20,9 @@ export type HUDLayoutItem = {
 export function toLayoutItem(el: any, previous?: HUDLayoutItem): HUDLayoutItem {
   const copies = Array.isArray(el?.instances) ? el.instances.length : previous?.copies ?? 0
   const click = el?.clickEvent !== undefined ? (el.clickEvent && el.clickEvent.type ? el.clickEvent : null) : previous?.click ?? null
-  return { id: el.id, name: el.name, type: el.type, enabled: el.enabled !== false, copies, click }
+  const props = el?.properties && typeof el.properties === 'object' ? el.properties : undefined
+  const frame = props ? storedFrame(props.frame) : previous?.frame ?? null
+  return { id: el.id, name: el.name, type: el.type, enabled: el.enabled !== false, copies, click, frame }
 }
 
 export function withCopies(list: HUDLayoutItem[], elementId: string, copies: number): HUDLayoutItem[] {

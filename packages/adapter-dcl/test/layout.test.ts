@@ -4,7 +4,7 @@ import { toLayoutItem, clearCopiesPrompt, clearedMessage, withCopies } from '../
 describe('toLayoutItem', () => {
   it('counts the element’s copies from its instances', () => {
     const el = { id: 'e1', name: 'Poster', type: 'image', enabled: true, instances: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }
-    expect(toLayoutItem(el)).toEqual({ id: 'e1', name: 'Poster', type: 'image', enabled: true, copies: 3, click: null })
+    expect(toLayoutItem(el)).toEqual({ id: 'e1', name: 'Poster', type: 'image', enabled: true, copies: 3, click: null, frame: null })
   })
 
   it('keeps the previous count when the response has no instances (an element update returns the row only)', () => {

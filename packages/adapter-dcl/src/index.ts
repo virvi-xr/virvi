@@ -13,6 +13,7 @@ import { DELAY_STEP_MINUTES, showControlError, showControlNote, showingsFromApi,
 import { offImageChoices, screensFromPreset, withLiveSource, withOffImage, type HUDStream } from './streams.js'
 import type { HUDMediaItem } from './DclHUDRenderer.js'
 import { toLayoutItem, withCopies, clearedMessage, type HUDLayoutItem } from './layout.js'
+import { withFrame } from './frames.js'
 import { locationKeyFor } from '@virvixr/shared'
 import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
 
@@ -681,7 +682,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           return
         }
 
-        if (action !== 'media_place' && action !== 'layout_toggle' && action !== 'layout_delete' && action !== 'layout_clear' && action !== 'layout_click') return
+        if (action !== 'media_place' && action !== 'layout_toggle' && action !== 'layout_delete' && action !== 'layout_clear' && action !== 'layout_click' && action !== 'layout_frame') return
         if (busy) return
         busy = true
         try {
@@ -714,6 +715,22 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
               renderer?.setEditMessage('Click action saved')
             } catch (err) {
               renderer?.clickSaved(showControlError(err, { connected: connected() }))
+            }
+          }
+          if (action === 'layout_frame') {
+            // The item's frame (LIV-129): properties are replaced whole, so the frame goes in with the live ones
+            try {
+              const elementId = String(data?.elementId)
+              const preset = await activePreset()
+              const current = preset?.elements?.find((el: any) => el.id === elementId)
+              if (!current) throw new Error('HTTP 404: {"error":"Not found"}')
+              const { element } = await virvi.httpClient.updateElement(elementId, { properties: withFrame(current.properties, data?.frame ?? null) })
+              layout = layout.map((el) => (el.id === element.id ? toLayoutItem(element, el) : el))
+              renderer?.setLayout(layout)
+              renderer?.frameSaved()
+              renderer?.setEditMessage('Frame saved')
+            } catch (err) {
+              renderer?.frameSaved(showControlError(err, { connected: connected() }))
             }
           }
           if (action === 'layout_clear') {
