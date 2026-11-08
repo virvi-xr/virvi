@@ -44,6 +44,8 @@ export default function StudioDesignPage() {
   const fetchedAt = useRef(0)
   // Finalize's ticked pieces (null: every payable one), and the emote checks of that selection worn together
   const [selected, setSelected] = useState<string[] | null>(null)
+  // A 👍's "Finalize this": open Finalize with that revision's pieces ticked
+  const [finalizeWith, setFinalizeWith] = useState<{ categories: string[]; n: number } | null>(null)
   const [wornSet, setWornSet] = useState<{ key: string; set: StudioSet } | null>(null)
   const chosen = quote && selected ? selectionCategories(selected, quote) : null
   const wornKey = chosen?.join(',') ?? ''
@@ -185,7 +187,8 @@ export default function StudioDesignPage() {
         </p>
       )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Conversation designId={designId} detail={detail} usage={usage} events={events} onChanged={reload} />
+        <Conversation designId={designId} detail={detail} usage={usage} events={events} onChanged={reload}
+          quote={quote} onFinalize={(categories) => setFinalizeWith((prev) => ({ categories, n: (prev?.n ?? 0) + 1 }))} />
         <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}
           step={step} onStep={setStep} emoteTarget={emoteTarget} worn={worn}
           finalizeStep={detail.design.kind === 'scene'
@@ -195,7 +198,7 @@ export default function StudioDesignPage() {
             : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={openEmote} /></div>}>
           <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'}
             detail={detail} onOpenEmote={openEmote} selected={selected} onSelected={setSelected} worn={worn}
-            support={detail.support} onChanged={reload} />
+            support={detail.support} onChanged={reload} openWith={finalizeWith} />
           <PaidRevisions designId={designId} pieces={detail.pieces} onChanged={reload} kind={detail.design.kind} owner={controls.reports} />
         </Preview>
       </div>

@@ -1,3 +1,4 @@
+import type { StudioRevision } from './studio-ratings'
 /**
  * Design Studio: the page's types (the server's JSON, from apps/server/src/routes/studio.ts and studio/*.ts), its
  * copy, and the pure decisions the studio pages make. Kept free of React so it tests in node.
@@ -119,6 +120,8 @@ export type StudioDetail = {
   uploads: StudioUpload[]
   /** Present when a Virvi admin is viewing someone else's design (Virvi support). */
   support?: StudioSupportView
+  /** Each agent reply that changed pieces, with the owner's 👍 / 👎 (LIV-142). */
+  revisions?: StudioRevision[]
 }
 
 /** A file the owner gave the agent (the server's `publicUpload`). */

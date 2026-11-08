@@ -9,6 +9,7 @@ import { PrimaryButton } from '@/components/ui'
 import { Turnstile, type TurnstileHandle } from '@/components/Turnstile'
 import { beginTrial } from '@/lib/trial'
 import { keepUnsent, refusalMessage, type StudioKind } from '@/lib/studio'
+import { startingAgent } from '@/lib/studio-ratings'
 
 const MAX_PROMPT = 4000
 const PLACEHOLDERS: Record<StudioKind, string> = {
@@ -43,7 +44,9 @@ export default function TryStudioPage() {
     setGo(null)
     ;(async () => {
       try {
-        const d = await apiRef.current.createStudioDesign({ kind: go.kind, agent: 'claude' })
+        // An admin's default agent for the kind (LIV-142), else Claude Code, as trials always started on
+        const defaults = await apiRef.current.getStudioDefaults().then((r) => r.agents).catch(() => null)
+        const d = await apiRef.current.createStudioDesign({ kind: go.kind, agent: startingAgent(go.kind, defaults, 'claude') })
         // The design page is one static page for every id, loaded in full (as the Studio's own links do)
         try {
           await apiRef.current.sendStudioPrompt(d.id, { text: go.text })

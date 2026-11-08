@@ -7,6 +7,7 @@ import { Badge, EmptyState, PageHeader, PrimaryButton, Skeleton } from '@/compon
 import { PlusIcon, SparkleIcon } from '@/components/icons'
 import { countLabel } from '@/lib/format'
 import { AgentPicker } from './AgentPicker'
+import { startingAgent } from '@/lib/studio-ratings'
 import { KindPicker } from '@/components/KindPicker'
 import {
   DEFAULT_AGENT, agentLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, kindLabel, refusalMessage, relativeTime, usageLine,
@@ -160,6 +161,17 @@ function NewDesign({ onCancel }: { onCancel: () => void }) {
   const api = useApi()
   const [kind, setKind] = useState<StudioKind>('wearable')
   const [agent, setAgent] = useState<string>(DEFAULT_AGENT)
+  // The admin's default agent for each kind (LIV-142), until the person picks one themselves
+  const [defaults, setDefaults] = useState<Partial<Record<StudioKind, string | null>> | null>(null)
+  const [picked, setPicked] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    api.getStudioDefaults().then((r) => { if (!cancelled) setDefaults(r.agents) }).catch(() => {})
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!picked) setAgent(startingAgent(kind, defaults, DEFAULT_AGENT))
+  }, [kind, defaults, picked])
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [refusal, setRefusal] = useState<Refusal | null>(null)
@@ -185,7 +197,7 @@ function NewDesign({ onCancel }: { onCancel: () => void }) {
       </fieldset>
       <fieldset>
         <legend className="mb-2 text-sm text-gray-400">Who builds it?</legend>
-        <AgentPicker name="new-agent" value={agent} onChange={setAgent} />
+        <AgentPicker name="new-agent" value={agent} onChange={(a) => { setPicked(true); setAgent(a) }} />
       </fieldset>
       <label className="block">
         <span className="mb-2 block text-sm text-gray-400">Name (optional)</span>

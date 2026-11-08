@@ -18,6 +18,7 @@ import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, Ar
 import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
+import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
 
@@ -787,6 +788,22 @@ function useRealApi() {
     // Everyone's designs (admin: Virvi support opens them on the design page)
     getAdminStudioDesigns: (query: { q?: string; kind?: string; cursor?: string | null } = {}) =>
       apiFetch<{ designs: AdminDesign[]; nextCursor: string | null }>(`/api/admin/studio/designs${adminDesignsQuery(query)}`),
+    // Ratings (admin, LIV-142): the 👎 queue, the weekly digest, lessons for the agent and the default agent per kind
+    getAdminStudioRatings: (f: ReviewFilters = {}) => apiFetch<{ ratings: AdminRating[]; nextCursor: string | null }>(`/api/admin/studio/ratings${ratingsQuery(f)}`),
+    markAdminStudioRating: (id: string, change: { handled?: boolean; autoCheck?: boolean }) =>
+      apiFetch<{ id: string; handledAt: string | null; autoCheck: boolean }>(`/api/admin/studio/ratings/${id}`, { method: 'PATCH', body: JSON.stringify(change) }),
+    getAdminStudioDigest: (week?: string) => apiFetch<Digest>(`/api/admin/studio/digest${week ? `?week=${week}` : ''}`),
+    getAdminStudioLessons: () => apiFetch<LessonsList>('/api/admin/studio/lessons'),
+    createAdminStudioLesson: (body: { kind: string; text: string; sourceRatingIds?: string[] }) =>
+      apiFetch<AdminLesson>('/api/admin/studio/lessons', { method: 'POST', body: JSON.stringify(body) }),
+    draftAdminStudioLesson: (ratingIds: string[]) =>
+      apiFetch<AdminLesson>('/api/admin/studio/lessons/draft', { method: 'POST', body: JSON.stringify({ ratingIds }) }),
+    updateAdminStudioLesson: (id: string, change: { text?: string; enabled?: boolean; status?: 'approved' }) =>
+      apiFetch<AdminLesson>(`/api/admin/studio/lessons/${id}`, { method: 'PATCH', body: JSON.stringify(change) }),
+    deleteAdminStudioLesson: (id: string) => apiFetch<void>(`/api/admin/studio/lessons/${id}`, { method: 'DELETE' }),
+    getAdminStudioDefaults: () => apiFetch<KindDefaults>('/api/admin/studio/defaults'),
+    setAdminStudioDefault: (kind: string, agent: string) =>
+      apiFetch<{ defaults: KindDefaults['defaults'] }>(`/api/admin/studio/defaults/${kind}`, { method: 'PUT', body: JSON.stringify({ agent }) }),
     // Studio flags (admin)
     getAdminStudioFlags: (status: 'open' | 'closed') => apiFetch<{ flags: AdminStudioFlag[] }>(`/api/admin/studio/flags?status=${status}`),
     dismissAdminStudioFlag: (id: string) => apiFetch<void>(`/api/admin/studio/flags/${id}/dismiss`, { method: 'POST' }),
@@ -893,6 +910,13 @@ function useRealApi() {
     createStudioDesign: (body: { kind: StudioKind; agent: string; name?: string }) =>
       apiFetch<StudioDesign>('/api/studio/designs', { method: 'POST', body: JSON.stringify(body) }),
     getStudioDesign: (id: string) => apiFetch<StudioDetail>(`/api/studio/designs/${id}`),
+    // 👍 / 👎 on a revision (LIV-142), and a 👎's free try-again
+    rateStudioRevision: (id: string, jobId: string, body: ReturnType<typeof ratingBody>) =>
+      apiFetch<StudioRevision>(`/api/studio/designs/${id}/revisions/${jobId}/rating`, { method: 'PUT', body: JSON.stringify(body) }),
+    clearStudioRating: (id: string, jobId: string) => apiFetch<void>(`/api/studio/designs/${id}/revisions/${jobId}/rating`, { method: 'DELETE' }),
+    tryStudioRevisionAgain: (id: string, jobId: string) =>
+      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/revisions/${jobId}/try-again`, { method: 'POST' }),
+    getStudioDefaults: () => apiFetch<{ agents: Record<StudioKind, string | null> }>('/api/studio/defaults'),
     updateStudioDesign: (id: string, patch: { name?: string; agent?: string; archived?: boolean }) =>
       apiFetch<StudioDesign>(`/api/studio/designs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean }) =>

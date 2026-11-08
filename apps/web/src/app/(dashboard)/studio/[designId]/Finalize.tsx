@@ -67,11 +67,18 @@ type Props = {
   worn: WornState
   /** Virvi support finalizing for the owner: free, at once, no checkout page; then the page re-reads the design. */
   support?: StudioSupportView; onChanged?: () => Promise<void>
+  /** "Finalize this" on a 👍 (LIV-142): open the dialog with these pieces ticked; `n` tells one ask from the next. */
+  openWith?: { categories: string[]; n: number } | null
 }
 
 /** The finalize strip under the preview, and the dialog that pays for the ticked pieces (every payable one at first). */
-export default function Finalize({ designId, kind, quote, busy, detail, onOpenEmote, selected, onSelected, worn, support, onChanged }: Props) {
+export default function Finalize({ designId, kind, quote, busy, detail, onOpenEmote, selected, onSelected, worn, support, onChanged, openWith }: Props) {
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!openWith || !quote || busy) return
+    onSelected(openWith.categories)
+    setOpen(true)
+  }, [openWith?.n]) // eslint-disable-line react-hooks/exhaustive-deps
   const strip = finalizeStrip(quote, kind)
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">

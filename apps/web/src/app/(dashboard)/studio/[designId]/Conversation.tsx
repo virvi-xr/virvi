@@ -6,8 +6,10 @@ import { openSignUp } from '@/lib/trial'
 import { PrimaryButton } from '@/components/ui'
 import {
   agentLabel, canSend, takeUnsent, categoryLabel, checkoutHref, composerState, formatCents, latestRenderUrl, trialCtx, trialNudge, initialTicks, progressFor, refusalMessage, slotSelection,
-  type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage,
+  type Quote, type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage,
 } from '@/lib/studio'
+import { canRate, canTryAgain, revisionUnder } from '@/lib/studio-ratings'
+import Rating from './Rating'
 import { designControls, messageIsViewers, messageLabel } from '@/lib/studio-support'
 import { AgentPicker } from '../AgentPicker'
 import Markdown from './Markdown'
@@ -15,10 +17,14 @@ import Uploads from './Uploads'
 
 const MAX_PROMPT = 4000
 
-type Props = { designId: string; detail: StudioDetail; usage: StudioUsage | null; events: StudioEvent[]; onChanged: () => Promise<void> }
+type Props = {
+  designId: string; detail: StudioDetail; usage: StudioUsage | null; events: StudioEvent[]; onChanged: () => Promise<void>
+  /** For a 👍's "Finalize this": the quote, and opening Finalize with these pieces ticked. */
+  quote?: Quote | null; onFinalize?: (categories: string[]) => void
+}
 
 /** The left column: the agent picker, the conversation, and the message box. */
-export default function Conversation({ designId, detail, usage, events, onChanged }: Props) {
+export default function Conversation({ designId, detail, usage, events, onChanged, quote = null, onFinalize }: Props) {
   const api = useApi()
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -100,14 +106,21 @@ export default function Conversation({ designId, detail, usage, events, onChange
               : 'Describe the wearable or the set: what it is, its look, the slots it fills.'}
           </p>
         )}
-        {detail.messages.map((m) => (
-          <Message key={m.id} m={m} label={messageLabel(m, detail)} viewers={messageIsViewers(m, detail)}>
-            {m === openProposal && m.proposal && (
-              <ProposalPicker proposal={m.proposal} disabled={sending || composer.mode === 'out' || composer.mode === 'paused'}
-                onBuild={(slots) => send({ text: `Build these: ${slots.map(categoryLabel).join(', ')}`, selectedSlots: slots })} />
-            )}
-          </Message>
-        ))}
+        {detail.messages.map((m) => {
+          const rev = revisionUnder(m, detail)
+          return (
+            <Message key={m.id} m={m} label={messageLabel(m, detail)} viewers={messageIsViewers(m, detail)}>
+              {m === openProposal && m.proposal && (
+                <ProposalPicker proposal={m.proposal} disabled={sending || composer.mode === 'out' || composer.mode === 'paused'}
+                  onBuild={(slots) => send({ text: `Build these: ${slots.map(categoryLabel).join(', ')}`, selectedSlots: slots })} />
+              )}
+              {rev && (
+                <Rating designId={designId} rev={rev} canRate={canRate(detail)} quote={quote} canPrompt={canTryAgain(composer.mode, !!active || sending)}
+                  onChanged={onChanged} onFinalize={(c) => onFinalize?.(c)} onKeepGoing={() => document.getElementById('studio-prompt')?.focus()} />
+              )}
+            </Message>
+          )
+        })}
         {/* What the agent is doing, not a reply: no bubble, a dashed rule and muted italics, so it can't pass for its answer */}
         {active && (
           <div className="max-w-[85%] self-start border-l-2 border-dashed border-gray-700 py-1 pl-3 text-sm" aria-live="polite">
@@ -169,7 +182,14 @@ export default function Conversation({ designId, detail, usage, events, onChange
 
 /** `label`: who said it, when it is said (messageLabel); `viewers`: on the right, as the viewer's own words. */
 function Message({ m, label, viewers, children }: { m: StudioMessage; label: string | null; viewers: boolean; children?: React.ReactNode }) {
-  if (m.role === 'system') return <p className="self-center px-4 text-center text-xs text-gray-500">{m.text}</p>
+  if (m.role === 'system') {
+    return (
+      <div className="self-center px-4 text-center text-xs text-gray-500">
+        <p>{m.text}</p>
+        {children}
+      </div>
+    )
+  }
   const words = m.role === 'user'
   const tone = m.support ? 'bg-emerald-600/15 text-emerald-50 border border-emerald-500/30' : words ? 'bg-blue-600/20 text-blue-50' : 'border border-gray-800 bg-gray-950 text-gray-200'
   return (

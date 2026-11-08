@@ -11,6 +11,10 @@ import {
   type AdminManaRefund, type AdminMistakeReport, type AdminStudioFlag,
 } from '@/lib/studio'
 import AdminDesigns from './Designs'
+import Feedback from './Feedback'
+import Lessons from './Lessons'
+import Digest from './Digest'
+import KindDefaults from './KindDefaults'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
 const smallButton = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50'
@@ -148,6 +152,20 @@ function TransferRow({ t, api, onChanged }: { t: ReturnType<typeof adminManaRows
   )
 }
 
+/** What Virvi learns from 👍 / 👎 (LIV-142): the 👎 queue, lessons for the agent, the weekly digest and the default agents. */
+function Learning() {
+  const [version, setVersion] = useState(0)
+  const [drafting, setDrafting] = useState(false)
+  return (
+    <>
+      <Feedback drafting={drafting} onLessonDrafted={() => setVersion((v) => v + 1)} />
+      <Lessons version={version} onList={(l) => setDrafting(l.drafting)} />
+      <Digest />
+      <KindDefaults />
+    </>
+  )
+}
+
 /**
  * Admin: everyone's designs (open one to help as Virvi support), accounts the studio flagged for repeatedly sending work that isn't a design (dismiss, or pause their studio
  * access), and mistake reports past a piece's instant refunds (approve or decline).
@@ -210,6 +228,7 @@ export default function AdminStudioPage() {
       {error && <p className="mb-4 text-sm text-red-400" role="alert">{error}</p>}
 
       <AdminDesigns />
+      <Learning />
 
       <section aria-labelledby="flags-title" className="mt-10">
         <div className="mb-3 flex items-center justify-between gap-3">
