@@ -14,6 +14,7 @@ import { creditBalance } from './credit.js'
 import type { Exec } from './quota.js'
 import { setDetail } from './sets.js'
 import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
+import { designRevisions } from './ratings.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
@@ -230,6 +231,8 @@ export async function designDetail(d: Design, now: Date) {
     uploads: (await listUploads(d.id)).map(publicUpload),
     activeJob: active ?? null,
     set: await setDetail(d, now),
+    // Each agent reply that changed pieces, and the owner's 👍 / 👎 of it (LIV-142)
+    revisions: await designRevisions(d.id, d.ownerId),
     lastPrompt: last
       ? { jobId: last.jobId, outcome: (last.result as { outcome?: string } | null)?.outcome ?? null, status: last.status }
       : null,
@@ -255,10 +258,16 @@ export async function startWorker(designId: string, jobId: string, now: Date): P
  * `byAdminId`: a Virvi admin helping on the owner's design (Virvi support). Their prompt takes nothing from anyone's
  * allowance, gifts, credits or trial quota, and the cost ceiling doesn't stop it; the per-prompt limits, one prompt at
  * a time and an archived design's refusal still apply. The job and the message record the admin.
+ *
+ * `feedbackFor`: the owner's "Try again with this feedback" on a 👎'd revision (LIV-142), in their own words: free (no
+ * allowance, gift or credit; past the cost ceiling it is refused), once per revision.
  */
 export async function queuePrompt(
   design: Design,
-  input: { text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping; byAdminId?: string },
+  input: {
+    text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping; byAdminId?: string
+    feedbackFor?: string
+  },
   now: Date,
 ): Promise<{ ok: true; jobId: string } | ({ ok: false } & Refusal)> {
   let jobId: string
@@ -290,10 +299,16 @@ export async function queuePrompt(
         if (!categories.length) throw new Refused({ status: 409, body: { error: 'nothing_to_fix', code: 'nothing_to_fix' } })
         fixText = fixChecksText(categories)
       }
+      if (input.feedbackFor) {
+        const [tried] = await tx.select({ id: studioJobs.id }).from(studioJobs).where(eq(studioJobs.feedbackFor, input.feedbackFor))
+        if (tried) throw new Refused({ status: 409, body: { error: 'already_tried', code: 'already_tried' } })
+      }
       // A clipping report is the agent's mistake too: free, in the server's words. Support's prompts are never counted.
       const support = input.byAdminId ?? null
-      const counted = !support && !input.continue && !input.fixChecks && !input.fixClipping
-      const r = support ? { ok: true as const, day: null, from: null } : await reservePrompt(d.ownerId, now, { counted }, tx)
+      const feedback = input.feedbackFor ?? null
+      const counted = !support && !feedback && !input.continue && !input.fixChecks && !input.fixClipping
+      const r = support ? { ok: true as const, day: null, from: null }
+        : await reservePrompt(d.ownerId, now, { counted, ...(feedback ? { gifts: false } : {}) }, tx)
       if (!r.ok) {
         const s = await promptStatus(d.ownerId, now)
         if (s.trial && (r.reason === 'allowance' || r.reason === 'cost_ceiling')) throw new Refused({ status: 403, body: { error: 'account_required', action: 'more_prompts' } })
@@ -322,13 +337,15 @@ export async function queuePrompt(
           limits: promptLimits(d.agent, d.kind),
           render: null,
           uploads: await uploadPaths(d.id, tx),
-          check: counted, // the user's own words; Continue and fixing the checks are the server's
+          // the user's own words; Continue and fixing the checks are the server's (a try-again is the owner's)
+          check: counted || !!feedback,
           ...(fix ? { fixClipping: fix } : {}),
         },
         counted,
         countedDay: r.day,
         countedFrom: r.from,
         byAdminId: support,
+        feedbackFor: feedback,
       }).returning({ id: studioJobs.id })
       await tx.update(studioDesigns).set({ status: 'building', lastJobAt: now }).where(eq(studioDesigns.id, d.id))
       return job.id
@@ -338,7 +355,10 @@ export async function queuePrompt(
       if (err.r.body.error === 'account_required') recordTrialBlocked(design.ownerId, String(err.r.body.action ?? 'more_prompts'))
       return { ok: false, ...err.r }
     }
-    if ((err as { code?: string }).code === '23505') return { ok: false, status: 409, body: { error: 'busy', code: 'busy' } }
+    if ((err as { code?: string }).code === '23505') {
+      if ((err as { constraint_name?: string }).constraint_name === 'studio_jobs_feedback_for_uq') return { ok: false, status: 409, body: { error: 'already_tried', code: 'already_tried' } }
+      return { ok: false, status: 409, body: { error: 'busy', code: 'busy' } }
+    }
     throw err
   }
   if (trialPrompt) recordTrialEvent('prompt', design.ownerId)

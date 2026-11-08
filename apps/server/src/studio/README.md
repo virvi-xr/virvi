@@ -19,6 +19,7 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `credit.ts` | Virvi credit: a balance in USD cents per account, and a ledger row for every change |
 | `merge.ts` | moving a visitor wallet's studio data (records, counters, credit) onto an existing account |
 | `mana/` | paying in MANA: the rate (`rate.ts`), quotes (`quote.ts`), the Polygon reader (`polygon.ts`), settling and the watcher (`settle.ts`), MANA-back requests (`refunds.ts`) |
+| `ratings.ts` | 👍 / 👎 on each revision (an agent reply that changed pieces), and a 👎's one free "Try again with this feedback" (LIV-142) |
 | `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes |
 
 Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/studio-worker.ts` (the workers,

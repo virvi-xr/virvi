@@ -19,6 +19,7 @@ import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordChec
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
+import { clearRating, downRating, feedbackText, findRevision, parseRating, rateRevision, type RatingTag } from '../studio/ratings.js'
 import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
@@ -261,6 +262,41 @@ export default async function studioRoutes(app: FastifyInstance) {
       slots = [...new Set(b.selectedSlots as string[])]
     }
     const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId }, new Date())
+    if (!r.ok) return reply.status(r.status).send(r.body)
+    return reply.status(202).send({ jobId: r.jobId })
+  })
+
+  // 👍 / 👎 on a revision (an agent reply that changed pieces, named by its job): the owner's alone. Support sees the
+  // ratings in the design detail but doesn't rate (LIV-142).
+  app.put('/api/studio/designs/:id/revisions/:jobId/rating', trialAuth, async (request, reply) => {
+    const d = await ownDesign(request)
+    const { jobId } = request.params as { jobId: string }
+    if (!d || !UUID.test(jobId)) return notFound(reply)
+    const input = parseRating(request.body)
+    if (typeof input === 'string') return reply.status(400).send({ error: input })
+    const r = await rateRevision(d, jobId, request.user.id, input, new Date())
+    return r ?? reply.status(404).send({ error: 'revision_not_found' })
+  })
+
+  app.delete('/api/studio/designs/:id/revisions/:jobId/rating', trialAuth, async (request, reply) => {
+    const d = await ownDesign(request)
+    const { jobId } = request.params as { jobId: string }
+    if (!d || !UUID.test(jobId)) return notFound(reply)
+    if (!(await clearRating(d.id, jobId, request.user.id))) return reply.status(404).send({ error: 'revision_not_found' })
+    return reply.status(204).send()
+  })
+
+  // "Try again with this feedback": a 👎'd revision's one free prompt, built from its tags and note
+  app.post('/api/studio/designs/:id/revisions/:jobId/try-again', trialWork, async (request, reply) => {
+    const d = await ownDesign(request)
+    const { jobId } = request.params as { jobId: string }
+    if (!d || !UUID.test(jobId)) return notFound(reply)
+    const rev = await findRevision(d.id, jobId)
+    if (!rev) return reply.status(404).send({ error: 'revision_not_found' })
+    const down = await downRating(jobId, request.user.id)
+    if (!down) return reply.status(409).send({ error: 'not_rated_down', code: 'not_rated_down' })
+    const text = feedbackText(rev.names, down.tags as RatingTag[], down.note)
+    const r = await queuePrompt(d, { text, selectedSlots: null, continue: false, feedbackFor: jobId }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
   })

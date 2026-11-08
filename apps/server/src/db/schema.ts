@@ -1654,6 +1654,9 @@ export const studioJobs = pgTable('studio_jobs', {
   byAdminId: uuid('by_admin_id'),
   // A render nobody is waiting on (the rest of an Inspect sphere): jobs/next hands these out after the others
   background: boolean('background').notNull().default(false),
+  // The owner's free "Try again with this feedback" (LIV-142): the prompt job of the 👎'd revision it retries. At
+  // most one per revision, held by the database
+  feedbackFor: uuid('feedback_for'),
   takenAt: timestamp('taken_at', { withTimezone: true }),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1663,6 +1666,7 @@ export const studioJobs = pgTable('studio_jobs', {
   oneOpenPromptUq: uniqueIndex('studio_jobs_one_open_prompt_uq')
     .on(t.designId)
     .where(sql`${t.type} = 'prompt' AND ${t.status} IN ('queued', 'taken')`),
+  feedbackForUq: uniqueIndex('studio_jobs_feedback_for_uq').on(t.feedbackFor).where(sql`${t.feedbackFor} IS NOT NULL`),
 }))
 
 export const studioMessages = pgTable('studio_messages', {
@@ -1679,6 +1683,72 @@ export const studioMessages = pgTable('studio_messages', {
 }, (t) => ({
   designIdx: index('studio_messages_design_idx').on(t.designId, t.createdAt),
 }))
+
+// ── Design Studio ratings and what Virvi learns from them (LIV-142) ──────────────────────────────────────────────
+// A revision is a prompt job that changed pieces: its owner rates it 👍 or 👎 (one rating per user per revision; clearing
+// deletes the row). The revision's kind, agent, model, prompt and cost are copied in, so the queue and the digest read
+// them without the job.
+export const studioRatings = pgTable('studio_ratings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  jobId: uuid('job_id').notNull().references(() => studioJobs.id, { onDelete: 'cascade' }),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  rating: text('rating').notNull(), // up | down
+  tags: jsonb('tags').$type<string[]>().notNull().default([]), // a 👎's tags (studio/ratings.ts RATING_TAGS)
+  note: text('note'),
+  kind: text('kind').notNull(),
+  agent: text('agent'),
+  model: text('model'),
+  prompt: text('prompt'),
+  costUsd: doublePrecision('cost_usd'),
+  // The admin queue: a 👎 someone looked at, and one that could be caught by an automatic check
+  handledAt: timestamp('handled_at', { withTimezone: true }),
+  handledBy: uuid('handled_by'),
+  autoCheck: boolean('auto_check').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  jobUserUq: uniqueIndex('studio_ratings_job_user_uq').on(t.jobId, t.userId),
+  ratingIdx: index('studio_ratings_rating_idx').on(t.rating, t.createdAt),
+  designIdx: index('studio_ratings_design_idx').on(t.designId),
+}))
+
+// Lessons for the agent, per design kind: drafted (by an admin, or by Claude from a batch of 👎s), then approved by an
+// admin. Approved and on, they go with every new prompt of their kind (designs.ts queuePrompt, the job's `lessons`).
+export const studioLessons = pgTable('studio_lessons', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: text('kind').notNull(), // wearable | emote | scene
+  text: text('text').notNull(),
+  status: text('status').notNull().default('draft'), // draft | approved
+  enabled: boolean('enabled').notNull().default(true),
+  sourceRatingIds: jsonb('source_rating_ids').$type<string[]>().notNull().default([]),
+  drafted: text('drafted').notNull().default('admin'), // admin | claude
+  createdBy: uuid('created_by'),
+  updatedBy: uuid('updated_by'),
+  approvedBy: uuid('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  kindIdx: index('studio_lessons_kind_idx').on(t.kind, t.createdAt),
+}))
+
+// The weekly ratings digest: one row per week (its Monday, UTC) once a server has dealt with it, so the email goes once
+// across restarts and servers. `sentAt` is null when the week had no ratings (no email).
+export const studioDigestWeeks = pgTable('studio_digest_weeks', {
+  weekStart: date('week_start', { mode: 'string' }).primaryKey(),
+  ratings: integer('ratings').notNull().default(0),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// The agent a new design of each kind starts on, set by an admin; a kind with no row keeps the page's own default
+export const studioKindDefaults = pgTable('studio_kind_defaults', {
+  kind: text('kind').primaryKey(),
+  agent: text('agent').notNull(),
+  updatedBy: uuid('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
 
 // Files the owner gives the agent: images (references, textures, logos) and GLBs. Kept at uploadKey(designId, id).
 export const studioUploads = pgTable('studio_uploads', {

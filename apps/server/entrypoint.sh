@@ -284,6 +284,21 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio admin help columns ensured');
       } catch(e) { console.log('[virvi-server] studio admin help columns:', e.message); }
 
+      // Design Studio ratings and lessons (LIV-142); matches studioRatings, studioLessons, studioDigestWeeks, studioKindDefaults and studioJobs.feedbackFor in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS feedback_for UUID\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_jobs_feedback_for_uq ON studio_jobs (feedback_for) WHERE feedback_for IS NOT NULL\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_ratings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), job_id UUID NOT NULL CONSTRAINT studio_ratings_job_id_studio_jobs_id_fk REFERENCES studio_jobs(id) ON DELETE CASCADE, design_id UUID NOT NULL CONSTRAINT studio_ratings_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT studio_ratings_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, rating TEXT NOT NULL, tags JSONB NOT NULL DEFAULT '[]'::jsonb, note TEXT, kind TEXT NOT NULL, agent TEXT, model TEXT, prompt TEXT, cost_usd DOUBLE PRECISION, handled_at TIMESTAMPTZ, handled_by UUID, auto_check BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_ratings_job_user_uq ON studio_ratings (job_id, user_id)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_ratings_rating_idx ON studio_ratings (rating, created_at)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_ratings_design_idx ON studio_ratings (design_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_lessons (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), kind TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', enabled BOOLEAN NOT NULL DEFAULT true, source_rating_ids JSONB NOT NULL DEFAULT '[]'::jsonb, drafted TEXT NOT NULL DEFAULT 'admin', created_by UUID, updated_by UUID, approved_by UUID, approved_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_lessons_kind_idx ON studio_lessons (kind, created_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_digest_weeks (week_start DATE PRIMARY KEY, ratings INTEGER NOT NULL DEFAULT 0, sent_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_kind_defaults (kind TEXT PRIMARY KEY, agent TEXT NOT NULL, updated_by UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        console.log('[virvi-server] studio ratings and lessons ensured');
+      } catch(e) { console.log('[virvi-server] studio ratings and lessons:', e.message); }
+
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_pairings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), world_id UUID NOT NULL REFERENCES hyperfy_worlds(id) ON DELETE CASCADE, user_id UUID REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT UNIQUE, secret_hash TEXT, hyperfy_player_id TEXT, player_name TEXT, status TEXT NOT NULL DEFAULT 'pending', code_expires_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

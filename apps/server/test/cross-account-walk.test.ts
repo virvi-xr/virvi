@@ -10,6 +10,7 @@ import {
   dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
+  studioRatings,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -115,6 +116,7 @@ async function fixtures() {
   const [designPiece] = await db.insert(studioPieces).values({ designId: design.id, category: 'hat', name: 'B cap' }).returning()
   const [designRev] = await db.insert(studioRevisions).values({ pieceId: designPiece.id, number: 1, jobId: designJob.id, changeKind: 'new', meta: {}, files: [] }).returning()
   await db.update(studioPieces).set({ latestRevisionId: designRev.id }).where(eq(studioPieces.id, designPiece.id))
+  await db.insert(studioRatings).values({ jobId: designJob.id, designId: design.id, userId: b.id, rating: 'down', tags: ['broken'], kind: 'wearable' })
   // B paid for revision 1 as a revision (so a report would refund it); its package is ready to download
   const [designPayment] = await db.insert(studioPayments).values({
     userId: b.id, designId: design.id, kind: 'finalize', status: 'paid', amountCents: 1000, paidAt: new Date(), stripePaymentIntent: 'pi_b',
@@ -148,7 +150,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, designPayment, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designUpload, designPayment, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -317,6 +319,10 @@ const CASES: Case[] = [
   { route: 'POST /api/studio/payments/:paymentId/mana-tx', url: (f) => `/api/studio/payments/${f.designPayment.id}/mana-tx`, body: () => ({ txHash: '0x' + 'ab'.repeat(32) }) },
   { route: 'POST /api/studio/designs/:id/finalize-renders', url: (f) => `/api/studio/designs/${f.design.id}/finalize-renders` },
   { route: 'GET /api/studio/designs/:id/set', url: (f) => `/api/studio/designs/${f.design.id}/set?categories=hat` },
+  // B's 👎 on B's revision: nobody else rates, clears it or spends its free try-again (LIV-142)
+  { route: 'PUT /api/studio/designs/:id/revisions/:jobId/rating', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/rating`, body: () => ({ rating: 'up' }) },
+  { route: 'DELETE /api/studio/designs/:id/revisions/:jobId/rating', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/rating` },
+  { route: 'POST /api/studio/designs/:id/revisions/:jobId/try-again', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/try-again` },
   { route: 'DELETE /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}` },
   { route: 'PATCH /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}`, body: () => ({ endsAt: null }) },
   { route: 'POST /api/hyperfy/worlds/:id/restore', url: (f) => `/api/hyperfy/worlds/${f.world.id}/restore` },
@@ -432,6 +438,7 @@ const TABLES = [
   dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
+  studioRatings,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))
