@@ -9,6 +9,7 @@ import {
 } from '../enums/index.js';
 import { Vec3, ClickEvent } from './math.js';
 import type { AdShape, AdFormats } from '../ads.js';
+import type { FrameSettings } from '../frames.js';
 
 // ---------------------------------------------------------------------------
 // Generic element types
@@ -60,12 +61,16 @@ export interface VideoProperties {
   volume?: number;
   emission?: number;
   adShape?: AdShape; // defaults to '16:9'
+  /** A frame around the screen (LIV-129); none when absent. */
+  frame?: FrameSettings;
 }
 
 export interface ImageProperties {
   textureSrc?: string;
   emission?: number;
   isTransparent?: boolean;
+  /** A frame around the picture (LIV-129); none when absent. */
+  frame?: FrameSettings;
 }
 
 export interface ModelProperties {

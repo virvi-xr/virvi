@@ -24,3 +24,4 @@ export * from './showings.js'
 export * from './click-actions.js';
 export * from './scene-thumbnail.js'
 export * from './placements.js'
+export * from './frames.js'

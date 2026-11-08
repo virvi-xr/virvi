@@ -60,6 +60,12 @@ export interface VirviPlatformAdapter {
   resolveModelSrc?(src: string): string | null;
   setMaterial(entity: EntityHandle, material: MaterialData): void;
   setVideoMaterial(entity: EntityHandle, video: VideoMaterialData): void;
+  /**
+   * Optional: draw the entity as a plain solid colour shape (channels 0-1), sized by its transform's scale: a 1×1×1
+   * box, or a 1×1 plane. Frames around images and video screens are built from these (LIV-129); without it, nothing
+   * is framed.
+   */
+  setSolidShape?(entity: EntityHandle, shape: 'box' | 'plane', color: { r: number; g: number; b: number }): void;
   /** Optional: show text on the entity (the "Ad" label). Without it, ads show no label. */
   setText?(entity: EntityHandle, text: string, opts: { fontSize: number }): void;
 

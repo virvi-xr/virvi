@@ -1,8 +1,10 @@
-import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
+import { frameOf } from '@virvixr/shared'
+import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData, FrameSettings } from '@virvixr/shared'
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
 import { itemName } from './naming.js'
 import { bindClick } from './click.js'
+import { ItemFrame } from './frame.js'
 
 // Internal tracking of element config
 interface ImageConfig {
@@ -15,6 +17,8 @@ interface ImageConfig {
   isTransparent: boolean
   /** The item's click action (LIV-126). */
   clickEvent?: unknown
+  /** The frame every copy has (LIV-129), or null for none. */
+  frame: FrameSettings | null
 }
 
 // Internal tracking of element instance -> entity mapping
@@ -30,6 +34,8 @@ interface ImageInstance {
   withCollisions: boolean
   /** The copy's own click action, which wins unless its type is NONE. */
   clickEvent?: unknown
+  /** The frame around this copy (it draws nothing while the item has none). */
+  frame: ItemFrame
 }
 
 export class ImageManager {
@@ -64,6 +70,7 @@ export class ImageManager {
       emission: data.emission ?? 0,
       isTransparent: data.isTransparent ?? false,
       clickEvent: data.clickEvent,
+      frame: frameOf(data.frame),
     }
     this.configs.set(config.sk, config)
 
@@ -110,9 +117,11 @@ export class ImageManager {
       scale,
       withCollisions: data.withCollisions ?? false,
       clickEvent: data.clickEvent,
+      frame: new ItemFrame(this.adapter),
     }
     this.instances.set(data.sk, instance)
     bindClick(this.adapter, entity, instance.clickEvent, config.clickEvent)
+    instance.frame.draw(config.frame, { position, rotation, scale })
 
     const key = data.customId || data.sk
     this.storage.images.instances[key] = data
@@ -146,6 +155,12 @@ export class ImageManager {
       config.clickEvent = elementData.clickEvent
       for (const instance of this.instances.values()) {
         if (instance.configSk === config.sk) bindClick(this.adapter, instance.entity, instance.clickEvent, config.clickEvent)
+      }
+    }
+    if (elementData.frame !== undefined) {
+      config.frame = frameOf(elementData.frame)
+      for (const instance of this.instances.values()) {
+        if (instance.configSk === config.sk) this.drawFrame(instance)
       }
     }
     // A file-name label follows the file
@@ -188,6 +203,7 @@ export class ImageManager {
       instance.position = position
       instance.rotation = rotation
       instance.scale = scale
+      this.drawFrame(instance)
     }
 
     if (instanceData.enabled !== undefined) {
@@ -220,10 +236,20 @@ export class ImageManager {
 
   previewTransform(sk: string, t: TransformData): void {
     previewOn(this.adapter, this.instances, sk, t)
+    const instance = this.instances.get(sk)
+    if (instance) this.drawFrame(instance, t)
   }
 
   restoreTransform(sk: string): void {
     restoreOn(this.adapter, this.instances, sk)
+    const instance = this.instances.get(sk)
+    if (instance) this.drawFrame(instance)
+  }
+
+  /** Fit the copy's frame to its stored transform (or a previewed one). */
+  private drawFrame(instance: ImageInstance, t?: TransformData): void {
+    const frame = this.configs.get(instance.configSk)?.frame ?? null
+    instance.frame.draw(frame, t ?? { position: instance.position, rotation: instance.rotation, scale: instance.scale })
   }
 
   updateInstance(instanceId: string, property: string, value: unknown): void {
@@ -240,6 +266,7 @@ export class ImageManager {
 
     for (const [sk, instance] of this.instances) {
       if (instance.configSk === elementId) {
+        instance.frame.dispose()
         this.adapter.destroyEntity(instance.entity)
         const instKey = instance.customId || instance.sk
         delete this.storage.images.instances[instKey]
@@ -251,6 +278,7 @@ export class ImageManager {
   deleteInstance(instanceId: string): void {
     const instance = this.instances.get(instanceId)
     if (instance) {
+      instance.frame.dispose()
       this.adapter.destroyEntity(instance.entity)
       const key = instance.customId || instance.sk
       delete this.storage.images.instances[key]
@@ -260,6 +288,7 @@ export class ImageManager {
 
   clear(): void {
     for (const instance of this.instances.values()) {
+      instance.frame.dispose()
       this.adapter.destroyEntity(instance.entity)
     }
     this.configs.clear()

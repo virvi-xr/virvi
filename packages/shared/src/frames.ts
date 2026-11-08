@@ -1,0 +1,116 @@
+/**
+ * Frames around images and video screens (LIV-129): what may be saved, and what a runtime draws.
+ *
+ * Stored in the element's properties as `frame` (so it reaches runtimes flattened, like `textureSrc`), it applies to
+ * every copy of the item. Off by default: an item without `frame`, or with `enabled: false`, looks exactly as before.
+ * A frame switched off keeps its style, colour and thickness, so switching it back on brings them back.
+ * Thickness is a share of the picture's shorter side, in percent, so a frame keeps its look when the item is resized.
+ * Used by the server (it refuses a bad frame), the dashboard and the in-world HUD; runtimes read it with `frameOf`,
+ * which never throws and never refuses (packages/core src/managers/frame.ts draws it).
+ */
+
+export type FrameStyle = 'thin' | 'classic' | 'gallery'
+
+export interface FrameSettings {
+  enabled: boolean
+  style: FrameStyle
+  /** '#rrggbb', lower case. */
+  color: string
+  /** Bar width as a percent of the picture's shorter side. */
+  thickness: number
+}
+
+export const FRAME_STYLES: readonly FrameStyle[] = ['thin', 'classic', 'gallery']
+
+export const FRAME_STYLE_LABELS: Record<FrameStyle, string> = { thin: 'Thin', classic: 'Classic', gallery: 'Gallery' }
+
+/** One line on what each style looks like, for pickers. */
+export const FRAME_STYLE_HINTS: Record<FrameStyle, string> = {
+  thin: 'One slim modern border',
+  classic: 'A deeper, raised border',
+  gallery: 'A white mat with a slim frame around it',
+}
+
+export const FRAME_THICKNESS = { min: 1, max: 20, step: 1 } as const
+
+export const FRAME_DEFAULTS: Record<FrameStyle, { color: string; thickness: number }> = {
+  thin: { color: '#1c1c1c', thickness: 2 },
+  classic: { color: '#6b4a2b', thickness: 6 },
+  gallery: { color: '#1c1c1c', thickness: 2 },
+}
+
+/** Colours offered as one-tap swatches (the dashboard also takes any colour). */
+export const FRAME_SWATCHES: readonly { label: string; color: string }[] = [
+  { label: 'Black', color: '#1c1c1c' },
+  { label: 'White', color: '#f2f2f2' },
+  { label: 'Wood', color: '#6b4a2b' },
+  { label: 'Oak', color: '#b08850' },
+  { label: 'Gold', color: '#c9a227' },
+  { label: 'Silver', color: '#a8a9ad' },
+]
+
+/** The mat in the Gallery style: always this colour, this wide (percent of the shorter side). */
+export const FRAME_MAT = { color: '#f4f1ea', width: 12 } as const
+
+export type FrameCheck = { ok: true; value: FrameSettings | null } | { ok: false; error: string }
+
+const HEX = /^#[0-9a-f]{6}$/i
+
+const isStyle = (v: unknown): v is FrameStyle => typeof v === 'string' && (FRAME_STYLES as readonly string[]).includes(v)
+
+const fail = (error: string): FrameCheck => ({ ok: false, error })
+
+/** A frame as sent, checked and tidied; null removes it. */
+export function checkFrame(raw: unknown): FrameCheck {
+  if (raw === null) return { ok: true, value: null }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('That frame is not available.')
+  const r = raw as Record<string, unknown>
+  if (typeof r.enabled !== 'boolean') return fail('A frame is on or off.')
+  if (!isStyle(r.style)) return fail('Choose a frame style: Thin, Classic or Gallery.')
+  const d = FRAME_DEFAULTS[r.style]
+  if (r.color !== undefined && (typeof r.color !== 'string' || !HEX.test(r.color))) return fail('The frame colour must be a hex colour like #1c1c1c.')
+  const thickness = r.thickness === undefined ? d.thickness : r.thickness
+  if (typeof thickness !== 'number' || !Number.isFinite(thickness) || thickness < FRAME_THICKNESS.min || thickness > FRAME_THICKNESS.max) {
+    return fail(`Frame thickness goes from ${FRAME_THICKNESS.min} to ${FRAME_THICKNESS.max}.`)
+  }
+  const color = typeof r.color === 'string' ? r.color.toLowerCase() : d.color
+  return { ok: true, value: { enabled: r.enabled, style: r.style, color, thickness } }
+}
+
+/** The frame to draw, or null for none. Lenient: a bad colour falls back to the style's, a thickness is held in range. */
+export function frameOf(raw: unknown): FrameSettings | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (r.enabled !== true || !isStyle(r.style)) return null
+  const d = FRAME_DEFAULTS[r.style]
+  const color = typeof r.color === 'string' && HEX.test(r.color) ? r.color.toLowerCase() : d.color
+  const t = typeof r.thickness === 'number' && Number.isFinite(r.thickness) ? r.thickness : d.thickness
+  return { enabled: true, style: r.style, color, thickness: Math.min(FRAME_THICKNESS.max, Math.max(FRAME_THICKNESS.min, t)) }
+}
+
+/** A new frame: Thin, with its defaults, switched on. */
+export function defaultFrame(style: FrameStyle = 'thin'): FrameSettings {
+  return { enabled: true, style, ...FRAME_DEFAULTS[style] }
+}
+
+/** Another style: its default colour and thickness come along, unless the frame's were changed from the old style's. */
+export function withFrameStyle(frame: FrameSettings, style: FrameStyle): FrameSettings {
+  const old = FRAME_DEFAULTS[frame.style]
+  const next = FRAME_DEFAULTS[style]
+  return {
+    ...frame,
+    style,
+    color: frame.color === old.color ? next.color : frame.color,
+    thickness: frame.thickness === old.thickness ? next.thickness : frame.thickness,
+  }
+}
+
+/** '#rrggbb' as 0-1 channels (black for anything else). */
+export function frameColorRgb(hex: string): { r: number; g: number; b: number } {
+  if (!HEX.test(hex)) return { r: 0, g: 0, b: 0 }
+  const n = parseInt(hex.slice(1), 16)
+  return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 }
+}
+
+/** The element types that may have a frame (ad spaces stay unframed). */
+export const FRAMEABLE_TYPES: ReadonlySet<string> = new Set(['image', 'video'])

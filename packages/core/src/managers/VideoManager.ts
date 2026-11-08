@@ -1,6 +1,6 @@
 import { needsResync, screenStateAt, showingSign, type ScreenState, type ShowingInstance } from '@virvixr/shared'
-import { AD_LIMITS, VideoSourceType } from '@virvixr/shared'
-import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData } from '@virvixr/shared'
+import { AD_LIMITS, VideoSourceType, frameOf } from '@virvixr/shared'
+import type { VirviPlatformAdapter, VirviStorage, EntityHandle, TransformData, FrameSettings } from '@virvixr/shared'
 import { listTransformable, previewOn, restoreOn } from './transform-ops.js'
 import type { ListedInstance } from './transform-ops.js'
 import { AdSlot } from '../ads/slot.js'
@@ -8,6 +8,7 @@ import { bindClick } from './click.js'
 import type { AdHost } from '../ads/host.js'
 import { itemName } from './naming.js'
 import { add, eulerDegreesToQuat, rotateVector } from '../transform/math.js'
+import { ItemFrame } from './frame.js'
 
 // Internal tracking of element config
 interface VideoConfig {
@@ -26,6 +27,8 @@ interface VideoConfig {
   emission: number
   /** The item's click action (LIV-126). */
   clickEvent?: unknown
+  /** The frame every copy of the screen has (LIV-129), or null for none. */
+  frame: FrameSettings | null
 }
 
 // Internal tracking of element instance -> entity mapping
@@ -59,6 +62,8 @@ interface VideoInstance {
   /** Schedule mode: the countdown / now-showing text over the picture, and what it says now. */
   showingSign?: EntityHandle
   showingSignText?: string
+  /** The frame around this copy: entities of its own, so an ad slot swapping `entity` leaves it alone. */
+  frame: ItemFrame
 }
 
 /** A `screen_showings` message (see apps/server src/scenes/showings.ts). */
@@ -253,6 +258,7 @@ export class VideoManager {
       playlistIndex: 0,
       emission: data.emission ?? 0.6,
       clickEvent: data.clickEvent,
+      frame: frameOf(data.frame),
       ...carry,
     }
     this.configs.set(config.sk, config)
@@ -299,8 +305,10 @@ export class VideoManager {
       playlistIndex: config.playlistIndex,
       sinceAd: 0,
       mediaToken: 0,
+      frame: new ItemFrame(this.adapter),
     }
     this.instances.set(data.sk, instance)
+    instance.frame.draw(config.frame, { position, rotation, scale })
 
     // Apply the correct media source
     this.applyMediaState(instance, config)
@@ -495,6 +503,12 @@ export class VideoManager {
     if (elementData.emission !== undefined) config.emission = elementData.emission
     if (elementData.clickEvent !== undefined) config.clickEvent = elementData.clickEvent
     if (elementData.enabled !== undefined) config.enabled = elementData.enabled
+    if (elementData.frame !== undefined) {
+      config.frame = frameOf(elementData.frame)
+      for (const instance of this.instances.values()) {
+        if (instance.configSk === config.sk) this.drawFrame(instance)
+      }
+    }
     if (elementData.name !== undefined) {
       config.name = elementData.name
       for (const instance of this.instances.values()) {
@@ -536,6 +550,7 @@ export class VideoManager {
       instance.scale = scale
       instance.slot?.setTransform({ position, rotation, scale })
       if (instance.showingSign !== undefined) this.adapter.setTransform(instance.showingSign, this.signTransform(instance))
+      this.drawFrame(instance)
     }
 
     if (instanceData.enabled !== undefined) {
@@ -571,10 +586,20 @@ export class VideoManager {
 
   previewTransform(sk: string, t: TransformData): void {
     previewOn(this.adapter, this.instances, sk, t)
+    const instance = this.instances.get(sk)
+    if (instance) this.drawFrame(instance, t)
   }
 
   restoreTransform(sk: string): void {
     restoreOn(this.adapter, this.instances, sk)
+    const instance = this.instances.get(sk)
+    if (instance) this.drawFrame(instance)
+  }
+
+  /** Fit the copy's frame to its stored transform (or a previewed one). */
+  private drawFrame(instance: VideoInstance, t?: TransformData): void {
+    const frame = this.configs.get(instance.configSk)?.frame ?? null
+    instance.frame.draw(frame, t ?? { position: instance.position, rotation: instance.rotation, scale: instance.scale })
   }
 
   updateInstance(instanceId: string, property: string, value: unknown): void {
@@ -595,6 +620,7 @@ export class VideoManager {
       if (instance.configSk === elementId) {
         instance.slot?.dispose()
         this.stopShowingClock(instance)
+        instance.frame.dispose()
         this.adapter.destroyEntity(instance.entity)
         const instKey = instance.customId || instance.sk
         delete this.storage.videos.instances[instKey]
@@ -608,6 +634,7 @@ export class VideoManager {
     if (instance) {
       instance.slot?.dispose()
       this.stopShowingClock(instance)
+      instance.frame.dispose()
       this.adapter.destroyEntity(instance.entity)
       const key = instance.customId || instance.sk
       delete this.storage.videos.instances[key]
@@ -619,6 +646,7 @@ export class VideoManager {
     for (const instance of this.instances.values()) {
       instance.slot?.dispose()
       this.stopShowingClock(instance)
+      instance.frame.dispose()
       this.adapter.destroyEntity(instance.entity)
     }
     this.configs.clear()
