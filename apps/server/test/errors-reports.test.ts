@@ -52,24 +52,28 @@ describe('user reports (POST /api/errors/reports)', () => {
     headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
   })
 
-  it("takes a help-menu report with no error, signed by its page, and thanks an account by email", async () => {
+  it('takes a help-menu report with no error, signed by its page, kept on the Errors page only (never for Linear)', async () => {
     const u = await createUser({ email: 'maker@example.com', name: 'Maker' })
     const res = await report({ description: 'The save button does nothing', event: helpMenu() }, tokenFor(u))
     expect(res.statusCode).toBe(201)
-    expect(res.json()).toEqual({ received: true, emailed: true, screenshot: null })
+    expect(res.json()).toEqual({ received: true, screenshot: null })
     const [sig] = await db.select().from(errorSignatures)
     expect(sig).toMatchObject({ signature: 'report /scenes/:id', kind: 'report', userReports: 1, totalCount: 0 })
     const [r] = await db.select().from(errorReports)
     expect(r.userId).toBe(u.id)
-    expect(mail.sent).toHaveLength(1)
-    expect(mail.sent[0].to).toBe('maker@example.com')
-    expect(mail.sent[0].subject).toMatch(/got your report/i)
-    expect(mail.sent[0].html).not.toContain('The save button does nothing') // the email doesn't echo what they typed
+    expect(r.linearSkipped).toBe('no_error')
+  })
+
+  it('sends no thank-you email (emails are not verified): the thanks is in the app', async () => {
+    const u = await createUser({ email: 'victim@example.com', name: 'your account will be deleted, see evil.example' })
+    for (let i = 0; i < 3; i++) expect((await report({ description: `try ${i}`, event: crash() }, tokenFor(u))).statusCode).toBe(201)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mail.sent).toEqual([])
   })
 
   it('a guest’s report is kept without an account and no email', async () => {
     const res = await report({ description: 'It crashed', event: crash() })
-    expect(res.json()).toEqual({ received: true, emailed: false, screenshot: null })
+    expect(res.json()).toEqual({ received: true, screenshot: null })
     const [r] = await db.select().from(errorReports)
     expect(r.userId).toBeNull()
     expect(mail.sent).toHaveLength(0)
@@ -84,13 +88,6 @@ describe('user reports (POST /api/errors/reports)', () => {
     const [r] = await db.select().from(errorReports)
     expect(r.userId).toBeNull()
     expect(mail.sent).toHaveLength(0)
-  })
-
-  it('sends at most 3 thank-you emails a day to one account', async () => {
-    const u = await createUser({ email: 'a@example.com' })
-    for (let i = 0; i < 5; i++) expect((await report({ description: `try ${i}`, event: crash() }, tokenFor(u))).statusCode).toBe(201)
-    expect(mail.sent).toHaveLength(ERROR_BUDGETS.reportAcksPerUserDay)
-    expect(ERROR_BUDGETS.reportAcksPerUserDay).toBe(3)
   })
 
   it('keeps a screenshot re-encoded without its metadata in the private store; only site admins can open it', async () => {
@@ -135,6 +132,18 @@ describe('user reports (POST /api/errors/reports)', () => {
     expect(store.keys()).toHaveLength(5)
     // another address still can
     expect((await report({ description: 'other', event: crash(), screenshot: { type: 'image/png', data } }, undefined, '203.0.113.9')).json().screenshot).toBe('kept')
+  })
+
+  it('decodes a screenshot only once it has a place in the budget (M1); a spent address gets 429 before any decode', async () => {
+    const data = (await png()).toString('base64')
+    for (let i = 0; i < ERROR_BUDGETS.screenshotsPerIpDay; i++) await report({ description: `r${i}`, event: crash(), screenshot: { type: 'image/png', data } }, undefined, '198.51.100.40')
+    // not a picture at all: decoded it would be refused 415; past the budget it is never decoded, and the report is kept
+    const junk = Buffer.from('not an image at all').toString('base64')
+    const over = await report({ description: 'later', event: crash(), screenshot: { type: 'image/png', data: junk } }, undefined, '198.51.100.40')
+    expect([over.statusCode, over.json().screenshot]).toEqual([201, 'not_kept'])
+    for (let i = 0; i < ERROR_BUDGETS.reportsPerIpDay; i++) await report({ description: `f${i}`, event: crash() }, undefined, '198.51.100.41')
+    const spent = await report({ description: 'x', event: crash(), screenshot: { type: 'image/png', data: junk } }, undefined, '198.51.100.41')
+    expect(spent.statusCode).toBe(429)
   })
 
   it('a report clears the cached prompt facts, so the third description turns asks into "we know"', async () => {

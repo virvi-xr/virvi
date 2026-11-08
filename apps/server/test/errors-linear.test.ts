@@ -7,7 +7,9 @@ import { clientRecord, writeRecords, resetErrorBuffer, reportSignature } from '.
 import { resetErrorBudgets } from '../src/errors/limits.js'
 import { runFilingPass, resetPendingIssueSaves, setFilingDbHook } from '../src/errors/filing.js'
 import { syncLinearDone, DONE_SYNC_EVERY_MS } from '../src/errors/linear-sync.js'
-import { setLinearClient, httpLinearClient, type LinearClient, type LinearIssueState } from '../src/errors/linear.js'
+import { setLinearClient, httpLinearClient, LinearError, resetLinearBackoff, type LinearClient, type LinearIssueState } from '../src/errors/linear.js'
+import { ERROR_BUDGETS } from '../src/errors/limits.js'
+import { setOnErrorIssueFiled } from '../src/errors/filing.js'
 import { withLock } from '../src/errors/jobs.js'
 import { config } from '../src/config.js'
 import { resetDb } from './helpers/db.js'
@@ -22,7 +24,8 @@ class FakeLinear implements LinearClient {
   issues: Array<{ id: string; title: string; description: string }> = []
   comments: Array<{ issueId: string; body: string }> = []
   states = new Map<string, LinearIssueState>()
-  failComment = false
+  failComment: Error | null = null
+  calls = 0
   stateCalls: string[][] = []
   async createIssue(input: { title: string; description: string }) {
     const n = this.issues.length + 1
@@ -30,7 +33,8 @@ class FakeLinear implements LinearClient {
     return { id: `issue-${n}`, identifier: `LIV-${900 + n}`, url: `https://linear.app/x/issue/LIV-${900 + n}` }
   }
   async createComment(issueId: string, body: string) {
-    if (this.failComment) throw new Error('Linear 500')
+    this.calls++
+    if (this.failComment) throw this.failComment
     this.comments.push({ issueId, body })
   }
   async issueStates(ids: string[]) {
@@ -45,9 +49,12 @@ const crash = (over: Partial<ClientErrorEvent> = {}): ClientErrorEvent => ({
 })
 const ctx = (user: string | null, ip = '198.51.100.1') => ({ release: config.release, browser: 'Chrome 131', os: 'macOS', userHash: user, orgId: null, ipKey: ip, ipHash: `ip:${ip}` })
 
-async function reportOn(e: ClientErrorEvent, userId: string | null, description = 'I was saving my scene') {
-  const signatureId = (await reportSignature(clientRecord(e, ctx(null))))!
-  const [r] = await db.insert(errorReports).values({ signatureId, userId, description, payload: { v: 1, description, event: e } }).returning()
+let reportN = 0
+async function reportOn(e: ClientErrorEvent, userId: string | null, description = 'I was saving my scene', createdAt = new Date()) {
+  // each from its own address, so the per-address new-signature budget doesn't fold them into overflow
+  reportN++
+  const signatureId = (await reportSignature(clientRecord(e, ctx(null, `10.${(reportN >> 16) & 255}.${(reportN >> 8) & 255}.${reportN & 255}`))))!
+  const [r] = await db.insert(errorReports).values({ signatureId, userId, description, payload: { v: 1, description, event: e }, createdAt }).returning()
   await db.update(errorSignatures).set({ userReports: 1 }).where(eq(errorSignatures.id, signatureId))
   return { signatureId, report: r }
 }
@@ -59,6 +66,7 @@ describe('Linear phase 2', () => {
     resetErrorBuffer()
     resetErrorBudgets()
     resetPendingIssueSaves()
+    resetLinearBackoff()
     linear = new FakeLinear()
     setLinearClient(linear)
   })
@@ -77,9 +85,11 @@ describe('Linear phase 2', () => {
       expect(linear.comments).toHaveLength(1)
       const c = linear.comments[0]
       expect(c.issueId).toBe('issue-1')
-      expect(c.body).toContain('Maker Jo')
-      expect(c.body).toContain('maker@example.com')
+      // the account id and the Errors page link; never the name or the email (I4)
       expect(c.body).toContain(u.id)
+      expect(c.body).toContain(`/admin/errors?id=`)
+      expect(c.body).not.toContain('Maker Jo')
+      expect(c.body).not.toContain('maker@example.com')
       expect(c.body).toContain('Saving my scene')
       expect(c.body).not.toContain('abc123secretvalue') // typed secrets are still redacted
       const [r] = await db.select().from(errorReports).where(eq(errorReports.id, report.id))
@@ -89,7 +99,10 @@ describe('Linear phase 2', () => {
       expect(linear.comments).toHaveLength(1)
     })
 
-    it("an account's report on a signature with no issue makes one, then comments on it", async () => {
+    it("an account's report on a signature with real events and no issue makes one, then comments on it (no LIV-51 run)", async () => {
+      const hooked: string[] = []
+      setOnErrorIssueFiled((e) => { hooked.push(e.issueKey) })
+      await writeRecords([clientRecord(crash({ message: 'Only I saw this' }), ctx('u1'))])
       const u = await createUser()
       const { signatureId } = await reportOn(crash({ message: 'Only I saw this' }), u.id)
       await runFilingPass()
@@ -97,13 +110,51 @@ describe('Linear phase 2', () => {
       expect(linear.comments.map((c) => c.issueId)).toEqual(['issue-1'])
       const [s] = await db.select().from(errorSignatures).where(eq(errorSignatures.id, signatureId))
       expect(s).toMatchObject({ linearIssueKey: 'LIV-901', linearFiledReason: 'report' })
+      expect(hooked).toEqual([])
+      setOnErrorIssueFiled(null)
     })
 
-    it("a help-menu report's issue is titled as a bug report of its page", async () => {
+    it('a report alone (no real events) or a help-menu report never makes an issue (I2)', async () => {
       const u = await createUser()
+      await reportOn(crash({ message: 'claimed only by the report' }), u.id)
       await reportOn({ kind: 'report', t: Date.now(), route: '/scenes/3f2b8c1e-1d2a-4b3c-9d8e-0123456789ab' }, u.id)
       await runFilingPass()
-      expect(linear.issues[0].title).toBe('Bug report: /scenes/:id')
+      expect(linear.issues).toHaveLength(0)
+    })
+
+    it('one account makes at most 1 issue a day from reports, and reports make at most 5 a day in all (I2)', async () => {
+      expect([ERROR_BUDGETS.reportIssuesPerDay, ERROR_BUDGETS.reportIssuesPerAccountDay]).toEqual([5, 1])
+      const spammer = await createUser()
+      for (let i = 0; i < 4; i++) {
+        await writeRecords([clientRecord(crash({ message: `spam ${'abcd'[i]}` }), ctx('u1'))])
+        await reportOn(crash({ message: `spam ${'abcd'[i]}` }), spammer.id)
+      }
+      await runFilingPass()
+      expect(linear.issues).toHaveLength(1)
+      // the rest are marked skipped, so they leave the window
+      expect((await db.select().from(errorReports)).filter((r) => r.linearSkipped === 'account_issue_budget')).toHaveLength(3)
+      for (let i = 0; i < 6; i++) {
+        const u = await createUser()
+        await writeRecords([clientRecord(crash({ message: `other ${'abcdef'[i]}` }), ctx('u1'))])
+        await reportOn(crash({ message: `other ${'abcdef'[i]}` }), u.id)
+      }
+      await runFilingPass(new Date(Date.now() + 60_000))
+      expect(linear.issues).toHaveLength(5)
+      // auto-filing's own budget is untouched: a real new error with 2 users still files
+      await writeRecords([clientRecord(crash({ message: 'real' }), ctx('ua'))])
+      await writeRecords([clientRecord(crash({ message: 'real' }), ctx('ub', '198.51.100.2'))])
+      await runFilingPass(new Date(Date.now() + 120_000))
+      expect(linear.issues).toHaveLength(6)
+    })
+
+    it('170 unpostable reports (more than a pass reads) never hold up a postable one (I1)', async () => {
+      const old = new Date(Date.now() - 2 * DAY)
+      for (let i = 0; i < 170; i++) await reportOn(crash({ message: `guest page ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}` }), null, 'x', old)
+      const u = await createUser()
+      const { signatureId } = await reportOn(crash({ message: 'has an issue' }), u.id)
+      await db.update(errorSignatures).set({ linearIssueId: 'issue-x', linearFiledAt: new Date(Date.now() - HOUR) }).where(eq(errorSignatures.id, signatureId))
+      await runFilingPass()
+      expect(linear.comments.map((c) => c.issueId)).toEqual(['issue-x'])
     })
 
     it("a guest's report never makes an issue, and waits for one; a trial counts as a guest", async () => {
@@ -144,15 +195,31 @@ describe('Linear phase 2', () => {
       expect(linear.comments).toHaveLength(7)
     })
 
-    it('a comment Linear refuses is tried again on the next pass', async () => {
+    it('a rate limit or 5xx stops the pass at the first failure and backs off; the report is tried again later (I1)', async () => {
       const u = await createUser()
-      const { signatureId } = await reportOn(crash(), u.id)
-      await db.update(errorSignatures).set({ linearIssueId: 'issue-x', linearFiledAt: new Date(Date.now() - HOUR) }).where(eq(errorSignatures.id, signatureId))
-      linear.failComment = true
+      let sig = ''
+      for (let i = 0; i < 4; i++) sig = (await reportOn(crash(), u.id, `r${i}`)).signatureId
+      await db.update(errorSignatures).set({ linearIssueId: 'issue-x', linearFiledAt: new Date(Date.now() - HOUR) }).where(eq(errorSignatures.id, sig))
+      linear.failComment = new LinearError('Linear 429: rate limited', 429, true)
       expect((await runFilingPass()).failed).toBe(1)
-      linear.failComment = false
+      expect(linear.calls).toBe(1)
+      linear.failComment = null
+      expect((await runFilingPass()).skipped).toBe('backoff')
+      expect(linear.calls).toBe(1)
+      await runFilingPass(new Date(Date.now() + 6 * 60_000))
+      expect(linear.comments).toHaveLength(4)
+    })
+
+    it('a comment Linear refuses for good is marked skipped, and failures count toward the pass cap', async () => {
+      const u = await createUser()
+      const { signatureId, report } = await reportOn(crash(), u.id)
+      await db.update(errorSignatures).set({ linearIssueId: 'issue-gone', linearFiledAt: new Date(Date.now() - HOUR) }).where(eq(errorSignatures.id, signatureId))
+      linear.failComment = new LinearError('Linear 400: Entity not found', 400, false)
+      expect((await runFilingPass()).failed).toBe(1)
+      const [r] = await db.select().from(errorReports).where(eq(errorReports.id, report.id))
+      expect([r.linearSkipped, r.linearPostedAt]).toEqual(['linear_refused', null])
       await runFilingPass()
-      expect(linear.comments).toHaveLength(1)
+      expect(linear.calls).toBe(1)
     })
 
     it('says on the comment when there is a screenshot, without sending it', async () => {
@@ -162,7 +229,7 @@ describe('Linear phase 2', () => {
       await db.update(errorSignatures).set({ linearIssueId: 'issue-x', linearFiledAt: new Date(Date.now() - HOUR) }).where(eq(errorSignatures.id, signatureId))
       await runFilingPass()
       expect(linear.comments[0].body).toContain(`/admin/errors?id=${signatureId}`)
-      expect(linear.comments[0].body).toMatch(/screenshot/i)
+      expect(linear.comments[0].body).toMatch(/and the screenshot/i)
     })
 
     it('stays off with filing off: reports are only stored', async () => {
@@ -276,6 +343,13 @@ describe('Linear phase 2', () => {
       expect((await db.select().from(errorSignatures))[0].resolvedAt).toBeNull()
     })
 
+    it('an issue closed as Canceled or Duplicate counts as closed (M3)', async () => {
+      await filed()
+      linear.states.set('issue-1', { id: 'issue-1', stateType: 'canceled', completedAt: null, canceledAt: new Date().toISOString() })
+      expect((await syncLinearDone()).resolved).toBe(1)
+      expect((await db.select().from(errorSignatures))[0].resolvedAt).toBeTruthy()
+    })
+
     it('asks Linear in batches of 50, and does nothing with filing off or no key', async () => {
       for (let i = 0; i < 120; i++) {
         await db.insert(errorSignatures).values({ hash: `h${i}`, signature: `s${i}`, source: 'server', kind: 'job', linearIssueId: `issue-${i}` })
@@ -306,7 +380,7 @@ describe('Linear phase 2', () => {
           return new Response(JSON.stringify({ data: { issues: { nodes: [{ id: 'a', completedAt: '2026-11-08T00:00:00.000Z', state: { type: 'completed' } }] } } }), { status: 200 })
         }) as typeof fetch,
       })
-      expect(await client.issueStates(['a', 'b'])).toEqual([{ id: 'a', stateType: 'completed', completedAt: '2026-11-08T00:00:00.000Z' }])
+      expect(await client.issueStates(['a', 'b'])).toEqual([{ id: 'a', stateType: 'completed', completedAt: '2026-11-08T00:00:00.000Z', canceledAt: null }])
       expect(calls[0].query).toContain('issues(')
       expect(calls[0].variables.ids).toEqual(['a', 'b'])
     })

@@ -2321,12 +2321,14 @@ export const errorReports = pgTable('error_reports', {
   description: text('description').notNull(),
   payload: jsonb('payload').notNull(),
   release: text('release'),
-  // The optional screenshot, re-encoded without metadata, in the private store (errors/reports.ts); kept 90 days
+  // The optional screenshot, re-encoded without metadata, in the private store (errors/reports.ts); kept 30 days
   screenshotKey: text('screenshot_key'),
   screenshotType: text('screenshot_type'),
   screenshotBytes: integer('screenshot_bytes'),
   // Added to the signature's Linear issue as a comment (filing on)
   linearPostedAt: timestamp('linear_posted_at', { withTimezone: true }),
+  // Never to be posted, and why: no_error (a help-menu report), account_issue_budget, linear_refused
+  linearSkipped: text('linear_skipped'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   signatureIdx: index('error_reports_signature_idx').on(t.signatureId, t.createdAt),

@@ -45,16 +45,3 @@ export async function sendOrgInviteEmail(to: string, orgName: string, inviterNam
   `)
 }
 
-const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
-
-/** The thank-you for a bug report (LIV-66; the stand-in for LIV-50's acknowledgement). It never repeats what they wrote. */
-export function reportAckEmail(name: string | null): { subject: string; html: string } {
-  return {
-    subject: "Thanks, we've got your report",
-    html: `
-    <h2>Thanks${name ? `, ${escapeHtml(name)}` : ''}</h2>
-    <p>We've got your bug report, with the details of the error. The team reads every one, and we'll get in touch if we need more from you.</p>
-    <p style="color:#666;font-size:12px">You're getting this because you sent a report from Virvi while signed in.</p>
-  `,
-  }
-}

@@ -76,8 +76,12 @@ export const ERROR_BUDGETS = {
   screenshotsPerDay: 100,
   screenshotBytesPerDay: 100 * 1024 * 1024,
   screenshotDays: 30,
-  /** Thank-you emails for reports (LIV-50 stand-in), per account per day. */
-  reportAcksPerUserDay: 3,
+  /**
+   * Linear issues a user's report may make (filing.ts postReports), in `error_budget`: 5 a day in all and 1 a day per
+   * account, apart from auto-filing's maxIssuesPerDay, so no account can spend the day's issues.
+   */
+  reportIssuesPerDay: 5,
+  reportIssuesPerAccountDay: 1,
 }
 
 /**

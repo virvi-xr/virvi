@@ -2,7 +2,9 @@ import { sql } from 'drizzle-orm'
 import { redactText } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { config } from '../config.js'
-import { getLinearClient, type LinearClient } from './linear.js'
+import { getLinearClient, isTransientLinearError, linearPaused, noteLinearOk, noteLinearTransient, type LinearClient } from './linear.js'
+import { DayBudget, ERROR_BUDGETS } from './limits.js'
+import { errorUserHash } from './user-hash.js'
 import { getThresholds, type Thresholds } from './settings.js'
 import { findSpikes } from './spikes.js'
 import { signatureDetail, USER_ROW, type SignatureDetail } from './queries.js'
@@ -74,7 +76,7 @@ const REASON_TEXT: Record<FilingReason, string> = {
   severe: 'a server error or crash happening to several users, or many times, in an hour',
   spike: 'running at several times its usual rate for this hour of the week',
   regression: 'it came back after it was marked fixed',
-  report: 'a signed-in user reported it',
+  report: 'a signed-in user reported it (and it has real events)',
 }
 
 const fence = (s: string) => '```\n' + s.replace(/```/g, "'''") + '\n```'
@@ -202,57 +204,80 @@ async function fileIssue(client: LinearClient, signatureId: string, reason: Fili
       await new Promise((r) => setTimeout(r, 100 * 2 ** attempt))
     }
   }
-  await Promise.resolve(onIssueFiled({ signatureId, issueId: issue.id, issueKey: issue.identifier, url: issue.url, reason }))
+  // The LIV-51 agent runs on issues the data filed, not on ones a user's report made
+  if (reason !== 'report') await Promise.resolve(onIssueFiled({ signatureId, issueId: issue.id, issueKey: issue.identifier, url: issue.url, reason }))
     .catch((err) => console.error('[errors] issue-filed hook failed:', err instanceof Error ? err.message : err))
   return issue
 }
 
-/** Report comments per signature a day, and per pass. */
+/** Report comments per signature a day, and Linear calls for reports per pass (failed ones count). */
 export const REPORT_COMMENTS_PER_SIGNATURE_DAY = 5
 export const REPORT_COMMENTS_PER_PASS = 50
 /** A report not posted within this long (a guest's on a signature that never got an issue) is left stored only. */
 const REPORT_POST_DAYS = 30
 
-/** A report as a Linear comment: who sent it (the real account; they chose to send it), what they said, and the page. */
-export function reportComment(r: { description: string; createdAt: string; account: { id: string; displayName: string | null; email: string | null } | null; route: string | null; release: string | null; screenshot: boolean; signatureId: string }): string {
-  const who = r.account ? `${r.account.displayName ?? 'A user'}${r.account.email ? ` (${r.account.email})` : ''} · user \`${r.account.id}\`` : 'a guest (not signed in)'
-  const lines = [`**User report** from ${who} · ${r.createdAt}${r.release ? ` · release ${r.release}` : ''}`, '', '> ' + redactText(r.description).replace(/\n/g, '\n> ')]
-  if (r.route) lines.push('', `Page: \`${r.route}\``)
-  if (r.screenshot) lines.push('', `A screenshot is attached on the Errors page: ${config.publicUrl}/admin/errors?id=${r.signatureId}`)
+const mdCode = (s: string) => '`' + s.replace(/[`\n\r]/g, ' ').slice(0, 300) + '`'
+
+/**
+ * A report as a Linear comment: the account id that sent it (they chose to send it; the Errors page, for site admins,
+ * has the rest), what they said (redacted, quoted) and the page. No name or email goes to Linear.
+ */
+export function reportComment(r: { description: string; createdAt: string; accountId: string | null; route: string | null; release: string | null; screenshot: boolean; signatureId: string }): string {
+  const who = r.accountId ? `account ${mdCode(r.accountId)}` : 'a guest (not signed in)'
+  const quoted = redactText(r.description).replace(/\r/g, '').split('\n').map((l) => `> ${l.replace(/^[#>]+/, '')}`).join('\n')
+  const lines = [`**User report** from ${who} · ${r.createdAt}${r.release ? ` · release ${r.release}` : ''}`, '', quoted]
+  if (r.route) lines.push('', `Page: ${mdCode(r.route)}`)
+  lines.push('', `Details${r.screenshot ? ' and the screenshot' : ''} on the Errors page: ${config.publicUrl}/admin/errors?id=${r.signatureId}`)
   return lines.join('\n')
 }
 
+type ReportRow = Record<string, unknown>
+
 /**
- * Adds stored reports to their signature's issue as comments (filing on). An account's report on a signature with no
- * issue makes one (within the day's issue budget); a guest's or trial's waits for an issue the data files. At most 5
- * a day per signature and 50 a pass. A report is claimed before it is posted, so it is never posted twice.
+ * Adds stored reports to their signature's issue as comments (filing on). Only postable reports are read, newest
+ * first, so unpostable ones never hold up the rest:
+ * - a report on a signature with an issue (at most 5 a day per signature);
+ * - an account's report on a signature with no issue that has real events (never a help-menu report with no error,
+ *   never an expected or overflow one): it makes the issue, within its own budget of 5 a day in all and 1 a day per
+ *   account (ERROR_BUDGETS.reportIssues*), apart from auto-filing's. Past the account's 1 the report is marked skipped.
+ * A guest's or trial's report waits for an issue the data files. A report is claimed before it is posted, so it is
+ * never posted twice; one Linear refuses for good is marked skipped. At most 50 Linear calls a pass, failed ones
+ * included; a transient failure (rate limit, 5xx, network) stops the pass (the caller backs off).
  */
-async function postReports(client: LinearClient, now: Date, result: FilingResult, budget: { issues: number }): Promise<void> {
-  const rows = rowsOf<Record<string, unknown>>(await db.execute(sql`
-    SELECT r.id, r.signature_id, r.description, r.created_at, r.release, r.payload, r.screenshot_key, u.id AS user_id, u.email, u.display_name, u.is_trial,
-      s.linear_issue_id, s.expected
+async function postReports(client: LinearClient, now: Date, result: FilingResult): Promise<'ok' | 'stop'> {
+  const B = ERROR_BUDGETS
+  const issueBudget = await DayBudget.load(['ri:*'], now)
+  const canCreate = issueBudget.has('ri:*', B.reportIssuesPerDay)
+  const rows = rowsOf<ReportRow>(await db.execute(sql`
+    SELECT r.id, r.signature_id, r.description, r.created_at, r.release, r.payload, r.screenshot_key, u.id AS user_id, u.is_trial, s.linear_issue_id
     FROM error_reports r JOIN error_signatures s ON s.id = r.signature_id LEFT JOIN users u ON u.id = r.user_id
-    WHERE r.linear_posted_at IS NULL AND r.created_at >= ${ts(new Date(now.getTime() - REPORT_POST_DAYS * DAY))}
-    ORDER BY r.created_at LIMIT 200`))
-  if (!rows.length) return
-  const sigIds = [...new Set(rows.map((r) => r.signature_id as string))]
-  const postedToday = new Map(rowsOf<{ signature_id: string; n: number }>(await db.execute(sql`
-    SELECT signature_id, count(*)::int AS n FROM error_reports
-    WHERE signature_id IN (${sql.join(sigIds.map((id) => sql`${id}::uuid`), sql`, `)}) AND linear_posted_at > ${ts(new Date(now.getTime() - DAY))}
-    GROUP BY signature_id`)).map((r) => [r.signature_id, Number(r.n)]))
-  const issueOf = new Map<string, string | null>()
-  let comments = 0
+    WHERE r.linear_posted_at IS NULL AND r.linear_skipped IS NULL AND r.created_at >= ${ts(new Date(now.getTime() - REPORT_POST_DAYS * DAY))}
+      AND (s.linear_issue_id IS NOT NULL OR (${canCreate}::boolean AND u.id IS NOT NULL AND NOT u.is_trial AND s.kind <> 'report'
+        AND s.expected IS NULL AND s.total_count > 0 AND (s.linear_filing_at IS NULL OR s.linear_filing_at < ${ts(new Date(now.getTime() - CLAIM_MS))})))
+      AND (SELECT count(*) FROM error_reports p WHERE p.signature_id = r.signature_id AND p.linear_posted_at > ${ts(new Date(now.getTime() - DAY))}) < ${REPORT_COMMENTS_PER_SIGNATURE_DAY}
+    ORDER BY r.created_at DESC LIMIT 100`))
+  const postedToday = new Map<string, number>()
+  const issueOf = new Map<string, string>()
+  const skip = (id: string, why: string) => db.execute(sql`UPDATE error_reports SET linear_skipped = ${why} WHERE id = ${id}::uuid`)
+  let calls = 0
   for (const r of rows) {
-    if (comments >= REPORT_COMMENTS_PER_PASS) break
+    if (calls >= REPORT_COMMENTS_PER_PASS) break
     const sigId = r.signature_id as string
     if ((postedToday.get(sigId) ?? 0) >= REPORT_COMMENTS_PER_SIGNATURE_DAY) continue
-    const account = r.user_id && !r.is_trial ? { id: r.user_id as string, displayName: (r.display_name as string | null) ?? null, email: (r.email as string | null) ?? null } : null
+    const accountId = r.user_id && !r.is_trial ? (r.user_id as string) : null
     try {
-      let issueId = issueOf.has(sigId) ? issueOf.get(sigId)! : ((r.linear_issue_id as string | null) ?? null)
+      let issueId = issueOf.get(sigId) ?? ((r.linear_issue_id as string | null) ?? null)
       if (!issueId) {
-        // Only an account's report makes an issue, within the day's budget; never for overflow
-        if (!account || r.expected === 'overflow' || budget.issues <= 0) continue
-        budget.issues--
+        if (!accountId) continue
+        // The report's own issue budget: 5 a day in all and 1 per account, across instances
+        const budget = await DayBudget.load(['ri:*', `ri:u:${errorUserHash(accountId)}`], now)
+        if (!budget.has('ri:*', B.reportIssuesPerDay)) continue
+        if (!budget.takeAll([['ri:*', B.reportIssuesPerDay], [`ri:u:${errorUserHash(accountId)}`, B.reportIssuesPerAccountDay]])) {
+          await skip(r.id as string, 'account_issue_budget')
+          continue
+        }
+        await budget.save()
+        calls++
         const issue = await fileIssue(client, sigId, 'report', now)
         if (!issue) continue
         result.filed++
@@ -263,33 +288,44 @@ async function postReports(client: LinearClient, now: Date, result: FilingResult
         UPDATE error_reports SET linear_posted_at = ${ts(now)} WHERE id = ${r.id as string}::uuid AND linear_posted_at IS NULL RETURNING id`))
       if (!claimed.length) continue
       const event = ((r.payload as { event?: { route?: string } } | null)?.event) ?? {}
+      calls++
       try {
         await client.createComment(issueId, reportComment({
-          description: r.description as string, createdAt: new Date(r.created_at as string).toISOString(), account,
-          route: event.route ?? null, release: (r.release as string | null) ?? null, screenshot: !!r.screenshot_key, signatureId: sigId,
+          description: r.description as string, createdAt: new Date(r.created_at as string).toISOString(), accountId,
+          route: typeof event.route === 'string' ? event.route : null, release: (r.release as string | null) ?? null, screenshot: !!r.screenshot_key, signatureId: sigId,
         }))
       } catch (err) {
         await db.execute(sql`UPDATE error_reports SET linear_posted_at = NULL WHERE id = ${r.id as string}::uuid`).catch(() => {})
+        if (!isTransientLinearError(err)) await skip(r.id as string, 'linear_refused').catch(() => {})
         throw err
       }
-      comments++
       result.comments++
       postedToday.set(sigId, (postedToday.get(sigId) ?? 0) + 1)
     } catch (err) {
       result.failed++
       console.error('[errors] posting a report to Linear failed:', err instanceof Error ? err.message : err)
+      if (isTransientLinearError(err)) return 'stop'
     }
   }
+  return 'ok'
 }
 
-export interface FilingResult { filed: number; comments: number; failed: number; skipped?: 'not_configured' | 'off' }
+export interface FilingResult { filed: number; comments: number; failed: number; skipped?: 'not_configured' | 'off' | 'backoff' }
 
 /** One pass (jobs.ts runs it every few minutes under a lock). Each signature's failure is logged and skipped. */
 export async function runFilingPass(now = new Date(), client: LinearClient | null = getLinearClient()): Promise<FilingResult> {
   if (!client) return { filed: 0, comments: 0, failed: 0, skipped: 'not_configured' }
   const t = await getThresholds()
   if (!t.filing) return { filed: 0, comments: 0, failed: 0, skipped: 'off' }
+  // Linear rate-limited us or was down: wait before calling again (filing, reports and the Done sync alike)
+  if (linearPaused(now.getTime())) return { filed: 0, comments: 0, failed: 0, skipped: 'backoff' }
   const result: FilingResult = { filed: 0, comments: 0, failed: 0 }
+  /** A transient Linear failure ends the pass and starts the backoff. */
+  const stop = (err: unknown) => {
+    if (!isTransientLinearError(err)) return false
+    noteLinearTransient(now.getTime())
+    return true
+  }
   // Issues made by an earlier pass whose save failed: saved now, never made again
   for (const [signatureId, p] of [...pendingSaves]) {
     try {
@@ -304,7 +340,7 @@ export async function runFilingPass(now = new Date(), client: LinearClient | nul
   const spikeSet = new Set(spikes.map((s) => s.signatureId))
 
   const [today] = rowsOf<{ n: number }>(await db.execute(sql`
-    SELECT count(*)::int AS n FROM error_signatures WHERE linear_filed_at >= ${ts(new Date(now.getTime() - DAY))}`))
+    SELECT count(*)::int AS n FROM error_signatures WHERE linear_filed_at >= ${ts(new Date(now.getTime() - DAY))} AND linear_filed_reason IS DISTINCT FROM 'report'`))
   let budget = Math.min(t.maxIssuesPerPass, t.maxIssuesPerDay - Number(today.n))
   for (const c of await candidateStats(now, spikeSet)) {
     const reason = filingReason(c, t)
@@ -317,11 +353,14 @@ export async function runFilingPass(now = new Date(), client: LinearClient | nul
     } catch (err) {
       result.failed++
       console.error('[errors] filing a Linear issue failed:', err instanceof Error ? err.message : err)
+      if (stop(err)) return result
     }
   }
 
-  budget = Math.min(budget, t.maxIssuesPerDay - Number(today.n) - result.filed)
-  await postReports(client, now, result, { issues: Math.max(0, budget) })
+  if ((await postReports(client, now, result)) === 'stop') {
+    noteLinearTransient(now.getTime())
+    return result
+  }
 
   // Issues already filed: regression notes, a daily update while active, and the quiet note
   const filed = rowsOf<Record<string, unknown>>(await db.execute(sql`
@@ -356,7 +395,9 @@ export async function runFilingPass(now = new Date(), client: LinearClient | nul
     } catch (err) {
       result.failed++
       console.error('[errors] updating a Linear issue failed:', err instanceof Error ? err.message : err)
+      if (stop(err)) return result
     }
   }
+  noteLinearOk()
   return result
 }

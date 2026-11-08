@@ -1,7 +1,35 @@
 import { config } from '../config.js'
 
-/** An issue's workflow state type (triage, backlog, unstarted, started, completed, canceled) and when it was completed. */
-export interface LinearIssueState { id: string; stateType: string; completedAt: string | null }
+/**
+ * An issue's workflow state type (triage, backlog, unstarted, started, completed, canceled) and when it was completed
+ * or canceled (a Duplicate is canceled too).
+ */
+export interface LinearIssueState { id: string; stateType: string; completedAt: string | null; canceledAt?: string | null }
+
+/** A failed Linear call. `transient`: a rate limit, a 5xx or the network; the jobs then back off (linearPaused). */
+export class LinearError extends Error {
+  constructor(message: string, public status: number | null, public transient: boolean) { super(message) }
+}
+
+/** Whether an error from a Linear call means "try later": a transient LinearError, or the network / a timeout. */
+export function isTransientLinearError(err: unknown): boolean {
+  if (err instanceof LinearError) return err.transient
+  const name = (err as { name?: string } | null)?.name
+  return name === 'TypeError' || name === 'AbortError' || name === 'TimeoutError'
+}
+
+// Backoff after a transient failure: 5 minutes, doubling to an hour, per instance. A good pass clears it.
+const BACKOFF_MS = 5 * 60_000
+const MAX_BACKOFF_MS = 60 * 60_000
+let pausedUntil = 0
+let level = 0
+export const linearPaused = (now = Date.now()) => now < pausedUntil
+export function noteLinearTransient(now = Date.now()): void {
+  pausedUntil = now + Math.min(MAX_BACKOFF_MS, BACKOFF_MS * 2 ** level)
+  level = Math.min(level + 1, 6)
+}
+export function noteLinearOk(): void { level = 0; pausedUntil = 0 }
+export const resetLinearBackoff = noteLinearOk
 
 /** What error filing needs from Linear (LIV-66). Tests set a fake with setLinearClient; nothing in tests calls Linear. */
 export interface LinearClient {
@@ -18,15 +46,23 @@ export function httpLinearClient(opts: {
 }): LinearClient {
   const doFetch = opts.fetch ?? fetch
   async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-    const res = await doFetch(ENDPOINT, {
-      method: 'POST',
-      // A personal API key goes as it is; an OAuth token would be "Bearer …"
-      headers: { 'content-type': 'application/json', authorization: opts.apiKey },
-      body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(15_000),
-    })
-    const body = await res.json().catch(() => ({})) as { data?: T; errors?: Array<{ message?: string }> }
-    if (!res.ok || body.errors?.length || !body.data) throw new Error(`Linear ${res.status}: ${body.errors?.[0]?.message ?? 'no data'}`)
+    let res: Response
+    try {
+      res = await doFetch(ENDPOINT, {
+        method: 'POST',
+        // A personal API key goes as it is; an OAuth token would be "Bearer …"
+        headers: { 'content-type': 'application/json', authorization: opts.apiKey },
+        body: JSON.stringify({ query, variables }),
+        signal: AbortSignal.timeout(15_000),
+      })
+    } catch (err) {
+      throw new LinearError(`Linear unreachable: ${err instanceof Error ? err.message : err}`, null, true)
+    }
+    const body = await res.json().catch(() => ({})) as { data?: T; errors?: Array<{ message?: string; extensions?: { code?: string } }> }
+    if (!res.ok || body.errors?.length || !body.data) {
+      const limited = res.status === 429 || res.status >= 500 || body.errors?.some((e) => e.extensions?.code === 'RATELIMITED')
+      throw new LinearError(`Linear ${res.status}: ${body.errors?.[0]?.message ?? 'no data'}`, res.status, !!limited)
+    }
     return body.data
   }
   return {
@@ -47,9 +83,9 @@ export function httpLinearClient(opts: {
     },
     async issueStates(ids) {
       if (!ids.length) return []
-      const data = await gql<{ issues: { nodes: Array<{ id: string; completedAt: string | null; state: { type: string } | null }> } }>(
-        'query($ids: [ID!]) { issues(filter: { id: { in: $ids } }, first: 50) { nodes { id completedAt state { type } } } }', { ids: ids.slice(0, 50) })
-      return data.issues.nodes.map((n) => ({ id: n.id, stateType: n.state?.type ?? 'unknown', completedAt: n.completedAt ?? null }))
+      const data = await gql<{ issues: { nodes: Array<{ id: string; completedAt: string | null; canceledAt?: string | null; state: { type: string } | null }> } }>(
+        'query($ids: [ID!]) { issues(filter: { id: { in: $ids } }, first: 50) { nodes { id completedAt canceledAt state { type } } } }', { ids: ids.slice(0, 50) })
+      return data.issues.nodes.map((n) => ({ id: n.id, stateType: n.state?.type ?? 'unknown', completedAt: n.completedAt ?? null, canceledAt: n.canceledAt ?? null }))
     },
   }
 }

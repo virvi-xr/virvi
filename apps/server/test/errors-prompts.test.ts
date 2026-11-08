@@ -8,6 +8,7 @@ import { resetErrorBuffer, clientRecord, writeRecords } from '../src/errors/reco
 import { registerRelease, resetErrorBudgets } from '../src/errors/limits.js'
 import { resetPromptFacts } from '../src/errors/prompts.js'
 import { ERROR_PROMPT_RATE_LIMIT } from '../src/routes/errors.js'
+import { purgeErrors } from '../src/errors/retention.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { resetDb } from './helpers/db.js'
 import { createUser, tokenFor } from './helpers/factories.js'
@@ -152,6 +153,16 @@ describe('report prompts (POST /api/errors/prompt)', () => {
     expect((await ask({ kind: 'nope' })).statusCode).toBe(400)
     expect((await app.inject({ method: 'POST', url: '/api/errors/prompt', payload: { v: 2 } })).statusCode).toBe(400)
     expect(ERROR_PROMPT_RATE_LIMIT.max).toBe(30)
+  })
+
+  it('"we know" marks (an account hash) are kept 30 days, as the privacy page says (I5)', async () => {
+    const s = await signature()
+    await db.insert(errorPromptKnown).values([
+      { signatureId: s.id, userHash: 'old', shownAt: new Date(Date.now() - 31 * 24 * HOUR) },
+      { signatureId: s.id, userHash: 'new', shownAt: new Date() },
+    ])
+    await purgeErrors(new Date())
+    expect((await db.select().from(errorPromptKnown)).map((r) => r.userHash)).toEqual(['new'])
   })
 
   it('caches what it knows about a signature for a minute', async () => {

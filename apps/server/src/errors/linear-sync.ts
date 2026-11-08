@@ -5,8 +5,8 @@ import { getThresholds } from './settings.js'
 
 /**
  * Reading Done back from Linear (LIV-66 phase 2). With filing on, jobs.ts runs this every 10 minutes under an advisory
- * lock (one instance at a time). A signature whose issue was completed is marked fixed, as the Errors page's Mark fixed
- * does, so its next event is a regression (and the filing pass notes it on the issue). An issue completed before the
+ * lock (one instance at a time). A signature whose issue was completed (or canceled, or closed as a duplicate) is
+ * marked fixed, as the Errors page's Mark fixed does, so its next event is a regression (and the filing pass notes it on the issue). An issue completed before the
  * signature's last regression, or one already applied, doesn't mark it fixed again; reopening an issue in Linear
  * un-marks a signature that Linear (not an admin) had marked fixed.
  */
@@ -36,7 +36,9 @@ export async function syncLinearDone(now = new Date(), client: LinearClient | nu
       const s = states.get(r.issue)
       if (!s) continue // gone from Linear: left as it is
       result.checked++
-      const completedAt = s.stateType === 'completed' && s.completedAt ? new Date(s.completedAt) : null
+      // Completed, or closed as Canceled or Duplicate: closed either way (a Duplicate's own issue carries on)
+      const closedAt = s.stateType === 'completed' ? s.completedAt : s.stateType === 'canceled' ? (s.canceledAt ?? s.completedAt ?? null) : null
+      const completedAt = closedAt ? new Date(closedAt) : null
       if (completedAt && !r.resolved_at) {
         // Each completion is applied once (an admin's Undo or a regression isn't overridden by the same one), and only
         // if it came after the last regression. Fixed from now, so a later event is a regression

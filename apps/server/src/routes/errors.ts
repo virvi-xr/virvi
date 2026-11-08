@@ -10,7 +10,7 @@ import { ERROR_BUDGETS, ipKey, takeReport } from '../errors/limits.js'
 import { getAskAboutErrors, promptFor, setAskAboutErrors } from '../errors/prompts.js'
 import { authenticate } from '../middleware/auth.js'
 import { forgetPromptFacts } from '../errors/prompts.js'
-import { prepareScreenshot, reportAccount, ScreenshotError, sendReportAck, storeScreenshot, takeScreenshotBudget, type Screenshot } from '../errors/reports.js'
+import { prepareScreenshot, reportAccount, ScreenshotError, storeScreenshot, takeScreenshotBudget, type Screenshot } from '../errors/reports.js'
 
 /**
  * Error reports from the web app (LIV-66). Public: guests, trials and signed-in users all report. An optional bearer
@@ -111,46 +111,48 @@ export default async function errorRoutes(app: FastifyInstance) {
     const checked = checkErrorReport(request.body, Date.now())
     if (!checked.ok) return reply.status(400).send({ error: checked.error })
     const { who, ctx } = await contextOf(request, checked.release)
-    // Checked (and re-encoded) before anything is kept, so a bad picture can be fixed and sent again
+    if (!takeReport(ctx.ipKey)) return reply.status(429).send({ error: 'rate_limited', retryAfter: 3600 })
+    const account = await reportAccount(who.userId)
+    // A screenshot is decoded only once it has a place in today's budgets (M1); past them the report goes without it.
+    // A picture that can't be used is refused before anything is kept, so it can be fixed and sent again
     let shot: Screenshot | null = null
+    let screenshot: 'kept' | 'not_kept' | null = null
     if (checked.screenshot) {
-      try {
-        shot = await prepareScreenshot(checked.screenshot)
-      } catch (err) {
-        if (err instanceof ScreenshotError) return reply.status(err.status).send({ error: err.code })
-        throw err
+      screenshot = 'not_kept'
+      const trust = account && !account.trial ? 'user' : 'anon'
+      if (await takeScreenshotBudget({ ipHash: ctx.ipHash, userHash: account ? errorUserHash(account.id) : null, trust }, checked.screenshot.bytes)) {
+        try {
+          shot = await prepareScreenshot(checked.screenshot)
+        } catch (err) {
+          if (err instanceof ScreenshotError) return reply.status(err.status).send({ error: err.code })
+          throw err
+        }
       }
     }
-    if (!takeReport(ctx.ipKey)) return reply.status(429).send({ error: 'rate_limited', retryAfter: 3600 })
     // The report's signature, found or made without counting anything: no event, recurrence or affected user
     const record = clientRecord(checked.event, ctx)
     const signatureId = await reportSignature(record)
     if (!signatureId) return reply.status(503).send({ error: 'unavailable' })
-    const account = await reportAccount(who.userId)
     const [row] = await db.insert(errorReports).values({
       signatureId,
       userId: account?.id ?? null,
       description: checked.description,
       payload: { v: 1, release: checked.release, description: checked.description, event: boundEvent(checked.event), ...(shot ? { screenshot: { type: shot.contentType } } : {}) },
       release: checked.release,
+      // A help-menu report with no error stays on the Errors page: it never makes or joins a Linear issue
+      linearSkipped: checked.event.kind === 'report' ? 'no_error' : null,
     }).returning({ id: errorReports.id })
     await db.execute(sql`UPDATE error_signatures SET user_reports = user_reports + 1 WHERE id = ${signatureId}`)
     forgetPromptFacts(record.hash)
-    let screenshot: 'kept' | 'not_kept' | null = null
     if (shot) {
-      const trust = account && !account.trial ? 'user' : 'anon'
-      screenshot = 'not_kept'
-      if (await takeScreenshotBudget({ ipHash: ctx.ipHash, userHash: account ? errorUserHash(account.id) : null, trust }, shot.data.length)) {
-        try {
-          const key = await storeScreenshot(row.id, shot)
-          await db.update(errorReports).set({ screenshotKey: key, screenshotType: shot.contentType, screenshotBytes: shot.data.length }).where(eq(errorReports.id, row.id))
-          screenshot = 'kept'
-        } catch (err) {
-          console.error('[errors] storing a report screenshot failed:', err instanceof Error ? err.message : err)
-        }
+      try {
+        const key = await storeScreenshot(row.id, shot)
+        await db.update(errorReports).set({ screenshotKey: key, screenshotType: shot.contentType, screenshotBytes: shot.data.length }).where(eq(errorReports.id, row.id))
+        screenshot = 'kept'
+      } catch (err) {
+        console.error('[errors] storing a report screenshot failed:', err instanceof Error ? err.message : err)
       }
     }
-    const emailed = await sendReportAck(account).catch(() => false)
-    return reply.status(201).send({ received: true, emailed, screenshot })
+    return reply.status(201).send({ received: true, screenshot })
   })
 }
