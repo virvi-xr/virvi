@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
   analyticsSessions,
@@ -119,6 +119,46 @@ describe('analytics jobs', () => {
     await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: a.id, seq: 1, occurredAt: at(0), x: 1, y: 0.9, z: 1 })
     await rollupDay(s.id, '2026-10-01')
     await Promise.all([rollupDay(s.id, '2026-10-01'), rollupDay(s.id, '2026-10-01'), rollupDay(s.id, '2026-10-01')])
+    expect(await db.select().from(analyticsHeatmapDaily)).toHaveLength(1)
+  })
+
+  it('during a rolling deploy, a rollup by the old code (no day lock, height-less rows) and one by the new never both stay', async () => {
+    const s = await createAnalyticsScene()
+    const a = await insertSession(s.id, { startedAt: at(0), lastSeenAt: at(10) })
+    await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: a.id, seq: 1, occurredAt: at(0), x: 1, y: 0.9, z: 1 })
+    const day = '2026-10-01'
+    const oldRollup = (hold: Promise<void>, started: () => void) =>
+      db.transaction(async (tx) => {
+        // What the pre-LIV-85 rollupDay did: replace the day, no cell_y, no lock.
+        await tx.delete(analyticsHeatmapDaily).where(and(eq(analyticsHeatmapDaily.sceneId, s.id), eq(analyticsHeatmapDaily.day, day)))
+        await tx.insert(analyticsHeatmapDaily).values({ sceneId: s.id, day, cellX: 1, cellZ: 1, dwellSec: 3, visits: 1 })
+        started()
+        await hold
+      })
+    // Old first: the new rollup waits for it, then replaces its rows.
+    let release!: () => void
+    let started!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const inside = new Promise<void>((r) => (started = r))
+    const old = oldRollup(held, started)
+    await inside
+    const fresh = rollupDay(s.id, day)
+    await new Promise((r) => setTimeout(r, 300))
+    release()
+    await Promise.all([old, fresh])
+    expect((await db.select().from(analyticsHeatmapDaily)).map((c) => c.cellY)).toEqual([0])
+    // New first: the old rollup's delete waits for it, then replaces it (height-less until the next rollup; never doubled).
+    let ready!: () => void
+    const begun = new Promise<void>((r) => (ready = r))
+    const slow = db.transaction(async (tx) => {
+      await tx.execute(sql`lock table analytics_heatmap_daily in share row exclusive mode`)
+      ready()
+      await new Promise((r) => setTimeout(r, 300))
+    })
+    await begun
+    const late = rollupDay(s.id, day)
+    const legacy = oldRollup(Promise.resolve(), () => {})
+    await Promise.all([slow, late, legacy])
     expect(await db.select().from(analyticsHeatmapDaily)).toHaveLength(1)
   })
 

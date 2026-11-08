@@ -131,9 +131,6 @@ export async function rollupHour(sceneId: string, hour: Date): Promise<void> {
     .onConflictDoUpdate({ target: [analyticsRollupHourly.sceneId, analyticsRollupHourly.hour], set: values })
 }
 
-/** Advisory lock class for one scene-day rollup (the 710xx keys above are whole-job locks). */
-const DAY_LOCK_CLASS = 7105
-
 /** heightBand (@virvixr/shared) in SQL, for a location kind; the constants are code, not input. */
 export function heightBandSql(y: ReturnType<typeof sql.raw>, kind: string) {
   const offset = feetOffsetM(kind)
@@ -147,8 +144,11 @@ export async function rollupDay(sceneId: string, day: string, now = new Date()):
   const [loc] = await db.select({ kind: analyticsScenes.kind }).from(analyticsScenes).where(eq(analyticsScenes.id, sceneId))
   const band = heightBandSql(sql.raw('y'), loc?.kind ?? 'parcels')
   await db.transaction(async (tx) => {
-    // One rollup of a scene's day at a time (the regular rollups and the height backfill can meet here).
-    await tx.execute(sql`select pg_advisory_xact_lock(${DAY_LOCK_CLASS}, hashtext(${`${sceneId}|${day}`}))`)
+    // One heatmap replace at a time, whoever runs it: the regular rollups and the height backfill can meet here, and
+    // during a rolling deploy so can the pre-LIV-85 code, which takes no lock of its own. This mode conflicts with
+    // itself and with the row-exclusive lock any delete or insert takes, so a second replace (old code or new) waits
+    // for the first to commit and its delete then sees, and removes, the first's rows. Reads are not blocked.
+    await tx.execute(sql`lock table analytics_heatmap_daily in share row exclusive mode`)
     await tx.delete(analyticsHeatmapDaily).where(and(eq(analyticsHeatmapDaily.sceneId, sceneId), eq(analyticsHeatmapDaily.day, day)))
     await tx.execute(sql`
       insert into analytics_heatmap_daily (scene_id, day, cell_x, cell_y, cell_z, dwell_sec, visits)
