@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import struct
 
 import pytest
@@ -257,3 +258,48 @@ def test_an_oversized_or_odd_file_is_not_read(tmp_path, monkeypatch):
     assert emote_legs.check(tmp_path / 'fifo.glb') is None  # returns at once instead of blocking on the pipe
     os.symlink(path, tmp_path / 'link.glb')
     assert emote_legs.check(tmp_path / 'link.glb') is None
+
+
+# ---- fix round 2: malformed accessors never read out of bounds
+BAD_LAYOUTS = {
+    'negative stride': {'view': {'byteStride': -12}},
+    'huge negative stride': {'view': {'byteStride': -100000000}},
+    'zero stride': {'view': {'byteStride': 0}},
+    'stride below the element': {'view': {'byteStride': 8}},
+    'stride not a multiple of the component': {'view': {'byteStride': 18}},
+    'huge stride': {'view': {'byteStride': 10 ** 12}},
+    'stride not an int': {'view': {'byteStride': 16.5}},
+    'negative view offset': {'view': {'byteOffset': -4}},
+    'view past the chunk': {'view': {'byteOffset': 10 ** 9}},
+    'view longer than the chunk': {'view': {'byteLength': 10 ** 9}},
+    'negative accessor offset': {'acc': {'byteOffset': -16}},
+    'accessor past its view': {'acc': {'byteOffset': 10 ** 6}},
+    'count past its view': {'acc': {'count': 10 ** 7}},
+    'negative count': {'acc': {'count': -3}},
+    'count not an int': {'acc': {'count': 'many'}},
+    'view index out of range': {'acc': {'bufferView': 999}},
+    'negative view index': {'acc': {'bufferView': -1}},
+}
+
+
+def test_malformed_accessors_are_no_verdict_and_never_crash(tmp_path):
+    import subprocess
+    import sys
+    paths = []
+    for label, change in BAD_LAYOUTS.items():
+        path = gf.emote(tmp_path / f'{len(paths)}.glb', [REST, crossed()])
+        g, blob = gf.read_glb(path)
+        out = next(s['output'] for s in g['animations'][0]['samplers'] if g['accessors'][s['output']]['type'] == 'VEC4')
+        acc = g['accessors'][out]
+        g['bufferViews'][acc['bufferView']].update(change.get('view', {}))
+        acc.update(change.get('acc', {}))
+        gf.write_glb(path, g, blob)
+        paths.append((label, str(path)))
+    # in a child process: a crash there fails this test instead of killing pytest
+    code = ('import sys, json; from studio_worker import emote_legs\n'
+            'print(json.dumps([emote_legs.check(p) is None for p in sys.argv[1:]]))')
+    p = subprocess.run([sys.executable, '-c', code, *[p for _, p in paths]], capture_output=True, text=True,
+                       cwd=Path(__file__).parent.parent, timeout=120)
+    assert p.returncode == 0, p.stderr[-2000:]
+    verdicts = json.loads(p.stdout.splitlines()[-1])
+    assert [label for (label, _), none in zip(paths, verdicts) if not none] == []

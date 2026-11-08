@@ -138,23 +138,43 @@ def _parse(data: bytes):
     return gltf, blob
 
 
-def _accessor(gltf, blob, i) -> np.ndarray:
-    acc = gltf['accessors'][i]
-    if 'sparse' in acc or acc['type'] not in WIDTH or acc['componentType'] not in COMPONENTS:
+def _int(v, lo=0, hi=None) -> int:
+    """v when it is a real int in [lo, hi], else unreadable (bools, floats and strings are refused)."""
+    if type(v) is not int or v < lo or (hi is not None and v > hi):
         raise _Unreadable
-    view = gltf['bufferViews'][acc['bufferView']]
-    if view.get('buffer', 0) != 0 or 'uri' in gltf['buffers'][0]:
+    return v
+
+
+def _accessor(gltf, blob, i) -> np.ndarray:
+    """An accessor's rows as floats. Every offset, length and stride is checked against the view and the binary
+    chunk first, and the bytes are gathered by plain indexing, so a malformed file can never read out of bounds."""
+    accessors, views, buffers = gltf['accessors'], gltf['bufferViews'], gltf.get('buffers') or []
+    acc = accessors[_int(i, 0, len(accessors) - 1)]
+    if 'sparse' in acc or acc.get('type') not in WIDTH or acc.get('componentType') not in COMPONENTS:
+        raise _Unreadable
+    if len(buffers) != 1 or 'uri' in buffers[0]:
+        raise _Unreadable
+    view = views[_int(acc.get('bufferView'), 0, len(views) - 1)]
+    if view.get('buffer', 0) != 0:
+        raise _Unreadable
+    view_start = _int(view.get('byteOffset', 0))
+    view_len = _int(view.get('byteLength'), 1)
+    if view_start + view_len > len(blob):
         raise _Unreadable
     dtype, norm = COMPONENTS[acc['componentType']]
-    width, count = WIDTH[acc['type']], int(acc['count'])
-    item = np.dtype(dtype).itemsize * width
-    stride = view.get('byteStride') or item
-    start = view.get('byteOffset', 0) + acc.get('byteOffset', 0)
-    if count <= 0 or start + stride * (count - 1) + item > len(blob):
+    size = np.dtype(dtype).itemsize
+    width = WIDTH[acc['type']]
+    item = size * width
+    count = _int(acc.get('count'), 1)
+    stride = _int(view['byteStride'], item, 252) if 'byteStride' in view else item
+    if stride % size:
         raise _Unreadable
-    raw = np.frombuffer(blob, np.uint8, stride * (count - 1) + item, start)
-    rows = np.lib.stride_tricks.as_strided(raw, (count, item), (stride, 1))
-    out = np.ascontiguousarray(rows).view(dtype).reshape(count, width).astype(float)
+    start = _int(acc.get('byteOffset', 0))
+    if start + stride * (count - 1) + item > view_len:
+        raise _Unreadable
+    chunk = np.frombuffer(blob, np.uint8, view_len, view_start)
+    rows = chunk[start + np.arange(count)[:, None] * stride + np.arange(item)[None, :]]
+    out = rows.reshape(-1).view(dtype).reshape(count, width).astype(float)
     if norm and acc.get('normalized'):
         out = np.maximum(out / norm, -1.0)
     return out
