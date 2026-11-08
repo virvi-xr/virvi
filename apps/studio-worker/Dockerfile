@@ -9,7 +9,7 @@ ARG BLENDER_SHA256=8d3be07d2bc412b502c6bfe3cfe3e22195a4164076867da987ce148d73c27
 # download.blender.org sits behind a bot check; this is one of its listed mirrors, and the checksum pins the file
 ARG BLENDER_MIRROR=https://mirrors.ocf.berkeley.edu/blender/release/Blender4.4
 ARG SKILLS_REPO=https://github.com/MetaverseUnknower/dcl-avatar-skills.git
-ARG SKILLS_SHA=a914875c0bba82a68783db8e0a6a0099200a94ce
+ARG SKILLS_SHA=71a16c413e41cf9fe8e6535ff94f6289109aa36c
 
 ENV DEBIAN_FRONTEND=noninteractive PIP_BREAK_SYSTEM_PACKAGES=1
 
