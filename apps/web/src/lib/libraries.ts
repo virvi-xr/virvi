@@ -46,3 +46,12 @@ export function uploadErrorMessage(err: any): string {
 export function asPickerModel(a: { id: string; name: string; cdnUrl?: string | null }): { id: string; filename: string; publicUrl: string; contentType: string } {
   return { id: a.id, filename: a.name, publicUrl: a.cdnUrl ?? '', contentType: 'model/gltf-binary' }
 }
+
+/** The model picker pages through your 3D Models (newest first, LIV-132), optionally searched by name. */
+export const MODEL_PICKER_PAGE = 50
+
+/** The 3D Models request for one picker page: yours, `search` by name or description when given. */
+export function modelPickerQuery(search: string, offset: number): { mine: 'all'; limit: string; offset: string; q?: string } {
+  const q = search.trim()
+  return { mine: 'all', limit: String(MODEL_PICKER_PAGE), offset: String(offset), ...(q ? { q } : {}) }
+}

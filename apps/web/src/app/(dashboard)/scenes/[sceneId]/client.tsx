@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage, isGlbAsset } from '@/lib/api'
-import { ASSET_LIBRARY, MEDIA_LIBRARY, asPickerModel } from '@/lib/libraries'
+import { ASSET_LIBRARY, MEDIA_LIBRARY, asPickerModel, modelPickerQuery } from '@/lib/libraries'
 import { useAuth } from '@/lib/auth'
 import { AD_SHAPES, type AdFormats, type ClickEvent } from '@virvixr/shared'
 import { shapeLabel, offImageLabel, adModeHint, isAdsMode, adSpaceRefreshKey } from '@/lib/ads'
@@ -25,7 +25,7 @@ import { streamForSource, streamOptionLabel, type SceneStream } from '@/lib/stre
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Badge, PageHeader, Skeleton, type Tone } from '@/components/ui'
+import { Badge, PageHeader, SearchField, Skeleton, type Tone } from '@/components/ui'
 import { LockIcon } from '@/components/icons'
 import { LockedButton, LockedSection, askSceneSignUp } from '@/components/TrialLock'
 import { offTypeLocked, sceneTabLocked, TRIAL_LOCK_LABELS } from '@/lib/trial-scene'
@@ -563,15 +563,37 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
     })
   }
 
+  // Your 3D Models come a page at a time, newest first, with a search box, so every one of them can be reached
+  const [search, setSearch] = useState('')
+  const [total, setTotal] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const loadModels = (offset: number) =>
+    api.getAssets(modelPickerQuery(search, offset)).then(data => {
+      setTotal(data.total)
+      return data.assets.map(asPickerModel)
+    })
+
   useEffect(() => {
-    const load = modelsOnly
-      ? api.getAssets({ mine: 'all', limit: '100' }).then(data => data.assets.map(asPickerModel))
-      : api.getMedia().then(data => data.assets.filter(matchesAccept))
-    load.then(list => {
-      setAssets(list)
+    if (modelsOnly) return
+    api.getMedia().then(data => {
+      setAssets(data.assets.filter(matchesAccept))
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (!modelsOnly) return
+    let live = true
+    const t = setTimeout(() => {
+      loadModels(0).then(list => { if (live) { setAssets(list); setLoading(false) } }).catch(() => { if (live) setLoading(false) })
+    }, search ? 250 : 0)
+    return () => { live = false; clearTimeout(t) }
+  }, [search])
+
+  const loadMore = () => {
+    setLoadingMore(true)
+    loadModels(assets.length).then(list => setAssets(prev => [...prev, ...list])).catch(() => {}).finally(() => setLoadingMore(false))
+  }
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -604,11 +626,12 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
           </div>
         </div>
         {uploadError && <p className="px-4 pt-3 text-xs text-red-400">{uploadError}</p>}
+        {modelsOnly && <div className="px-4 pt-3"><SearchField value={search} onChange={setSearch} placeholder="Search your models..." label="Search your models" /></div>}
         <div className="flex-1 overflow-y-auto p-4">
           {loading ? (
             <Skeleton rows={2} className="h-12" />
           ) : assets.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-8">{modelsOnly ? 'No models in your 3D Models yet. Use Upload GLB to add one.' : 'No images or video yet. Upload one above.'}</p>
+            <p className="text-gray-500 text-sm text-center py-8">{modelsOnly ? (search.trim() ? 'No models match your search.' : 'No models in your 3D Models yet. Use Upload GLB to add one.') : 'No images or video yet. Upload one above.'}</p>
           ) : (
             <div className="grid grid-cols-3 gap-3">
               {assets.map((asset: any) => (
@@ -627,6 +650,14 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
                   </div>
                 </button>
               ))}
+            </div>
+          )}
+          {modelsOnly && !loading && assets.length < total && (
+            <div className="mt-4 text-center">
+              <button type="button" onClick={loadMore} disabled={loadingMore}
+                className="rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:border-gray-500 disabled:opacity-50">
+                {loadingMore ? 'Loading…' : `Load more (${assets.length} of ${total})`}
+              </button>
             </div>
           )}
         </div>

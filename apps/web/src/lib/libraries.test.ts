@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ASSET_LIBRARY, MEDIA_LIBRARY, MEDIA_UPLOAD_RULES, asPickerModel, isModelFile, splitModelFiles, uploadErrorMessage } from './libraries'
+import { ASSET_LIBRARY, MEDIA_LIBRARY, MEDIA_UPLOAD_RULES, asPickerModel, isModelFile, modelPickerQuery, MODEL_PICKER_PAGE, splitModelFiles, uploadErrorMessage } from './libraries'
 
 describe('the two libraries (LIV-132)', () => {
   it('says what each library is for', () => {
@@ -55,5 +55,12 @@ describe('uploadErrorMessage', () => {
 
   it('lists a 3D Models item in the model picker as a GLB at its URL', () => {
     expect(asPickerModel({ id: 'a1', name: 'Chair', cdnUrl: 'https://cdn/x.glb' })).toEqual({ id: 'a1', filename: 'Chair', publicUrl: 'https://cdn/x.glb', contentType: 'model/gltf-binary' })
+  })
+})
+
+describe('the model picker', () => {
+  it('pages through all of your 3D Models, with an optional search', () => {
+    expect(modelPickerQuery('', 0)).toEqual({ mine: 'all', limit: String(MODEL_PICKER_PAGE), offset: '0' })
+    expect(modelPickerQuery('  chair ', 100)).toEqual({ mine: 'all', limit: String(MODEL_PICKER_PAGE), offset: '100', q: 'chair' })
   })
 })
