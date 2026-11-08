@@ -14,7 +14,8 @@ export interface TimeseriesPoint { t: string; sessions: number; uniqueVisitors: 
 export interface LiveData { count: number; positions: Array<{ x: number; y?: number; z: number }> }
 // The server names the dwell field `dwellSec` (the brief's `dwell` was wrong).
 // cellY: the floor band on paid plans (null for days from before heights were recorded); absent on free plans.
-export interface HeatCell { x: number; z: number; cellY?: number | null; dwellSec: number; visits: number }
+// partlyHeightless (3D only, see mergeGround): a ground cell that includes days from before heights were recorded.
+export interface HeatCell { x: number; z: number; cellY?: number | null; dwellSec: number; visits: number; partlyHeightless?: boolean }
 export interface HeatmapData { cells: HeatCell[]; heatmap3d: boolean }
 /** One placed instance of the linked scene's live preset, in scene coordinates (x east, z north, Euler degrees). */
 export interface LayoutItem {

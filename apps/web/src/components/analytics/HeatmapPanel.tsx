@@ -3,7 +3,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import type { HeatmapData, LayoutItem, LiveData } from '@/lib/analytics/types'
-import { cellsFor3d, flattenCells, floorLabel, floorsOf, floorSummary, heatView, type HeatMetric } from '@/lib/analytics/heat'
+import { cellsFor3d, flattenCells, floorLabel, floorsOf, floorSummary, heatView, mergeGround, type HeatMetric } from '@/lib/analytics/heat'
 import { placeLayout } from '@/lib/analytics/layout'
 import { formatDuration } from '@/lib/analytics/labels'
 import { hasWebGL } from '@/lib/webgl'
@@ -40,8 +40,10 @@ export function HeatmapPanel({ parcels, baseParcel, kind, data, metric, live, la
   const v = heatView({ heatmap3d: data.heatmap3d, webgl: !!webgl && !failed, cells: data.cells, chosen })
   const note = webgl === null ? null : failed && v.view === '2d' && chosen !== '2d' ? "3D couldn't start in this browser, so here's the 2D map." : v.note
   const floors = useMemo(() => floorsOf(data.cells), [data.cells])
-  const drawn = useMemo(() => cellsFor3d(data.cells, metric), [data.cells, metric])
-  const summary = useMemo(() => floorSummary(data.cells.filter((c) => (metric === 'dwell' ? c.dwellSec : c.visits) > 0), metric), [data.cells, metric])
+  // 3D: height-less cells join the ground cell at the same spot (one box, summed value).
+  const cells3d = useMemo(() => mergeGround(data.cells), [data.cells])
+  const drawn = useMemo(() => cellsFor3d(cells3d, metric), [cells3d, metric])
+  const summary = useMemo(() => floorSummary(cells3d.filter((c) => (metric === 'dwell' ? c.dwellSec : c.visits) > 0), metric), [cells3d, metric])
   const shownFloor = floor !== 'all' && !floors.includes(floor) ? 'all' : floor
 
   return (

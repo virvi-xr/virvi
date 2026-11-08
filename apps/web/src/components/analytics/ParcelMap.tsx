@@ -2,7 +2,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { HeatCell, LiveData } from '@/lib/analytics/types'
 import { mapBounds, parcelRects, toSvg, type MapBounds } from '@/lib/analytics/parcel-map'
-import { cellValue, colourStep, HEAT_STEPS, type HeatMetric } from '@/lib/analytics/heat-scale'
+import { cellValue, colourStep, HEAT_STEPS, maxOf, type HeatMetric } from '@/lib/analytics/heat-scale'
 import { formatDuration } from '@/lib/analytics/labels'
 import { full } from './format'
 
@@ -45,7 +45,7 @@ export function ParcelMap({ parcels, baseParcel, cells, metric = 'dwell', live, 
   const k = W / (bounds.maxX - bounds.minX) // px per metre
   const g: MapGeometry = { W, height, k, bounds, px, py }
   const tiles = parcelRects(parcels, baseParcel)
-  const max = Math.max(0, ...heat.map((c) => cellValue(c, metric)))
+  const max = maxOf(heat, (c) => cellValue(c, metric))
   const h = hover !== null ? heat[hover] : null
   const metricLabel = metric === 'dwell' ? 'Time spent' : 'Visits'
   const tileFont = Math.max(8, Math.min(12, (k * 16) / 5))

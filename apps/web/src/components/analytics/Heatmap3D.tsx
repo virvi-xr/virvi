@@ -92,6 +92,7 @@ export default function Heatmap3D(props: Heatmap3DProps) {
           <p className="text-gray-400">{props.metric === 'dwell' ? `${full(hover.cell.visits)} visit${hover.cell.visits === 1 ? '' : 's'}` : `${formatDuration(hover.cell.dwellSec)} spent`}</p>
           <p className="text-gray-400">x {hover.cell.x} m, z {hover.cell.z} m</p>
           {hover.cell.cellY === null && <p className="text-gray-400">Height not recorded</p>}
+          {hover.cell.partlyHeightless && <p className="text-gray-400">Includes days with no height recorded</p>}
         </div>
       )}
       <p className="pointer-events-none absolute bottom-2 left-3 rounded bg-gray-950/80 px-2 py-1 text-xs text-gray-400">

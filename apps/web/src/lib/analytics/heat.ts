@@ -4,12 +4,44 @@
 import { bandRangeM } from '@virvixr/shared/dist/heatmap-height.js'
 import type { HeatCell } from './types'
 
-import { cellValue, colourStep, HEAT_STEPS, type HeatMetric } from './heat-scale'
+import { cellValue, colourStep, HEAT_STEPS, maxOf, type HeatMetric } from './heat-scale'
 
-export { cellValue, colourStep, HEAT_STEPS, type HeatMetric }
+export { cellValue, colourStep, HEAT_STEPS, maxOf, type HeatMetric }
 /** Above this many cells the 3D view drops the faintest colour steps. */
 export const MAX_3D_CELLS = 20_000
 
+
+/**
+ * For 3D: a cell from days before heights were recorded and a ground-floor cell at the same spot become one ground
+ * cell with the summed value (flagged), so a hot spot across the backfill boundary isn't split into two cooler boxes.
+ * A height-less cell with no ground cell beside it stays as it is.
+ */
+export function mergeGround(cells: HeatCell[]): HeatCell[] {
+  const out: Array<HeatCell & { _null?: boolean; _ground?: boolean }> = []
+  const at = new Map<string, HeatCell & { _null?: boolean; _ground?: boolean }>()
+  for (const c of cells) {
+    if (c.cellY !== 0 && c.cellY !== null) {
+      out.push(c)
+      continue
+    }
+    const k = `${c.x},${c.z}`
+    let m = at.get(k)
+    if (!m) {
+      m = { x: c.x, z: c.z, cellY: c.cellY, dwellSec: 0, visits: 0 }
+      at.set(k, m)
+      out.push(m)
+    }
+    m.dwellSec += c.dwellSec
+    m.visits += c.visits
+    if (c.cellY === null) m._null = true
+    else m._ground = true
+  }
+  return out.map((c) => {
+    if (!('_null' in c) && !('_ground' in c)) return c
+    const { _null, _ground, ...cell } = c
+    return _null && _ground ? { ...cell, cellY: 0, partlyHeightless: true } : cell
+  })
+}
 
 /** The floor a cell is drawn on: a cell without a height is at ground level. */
 export const floorOf = (c: HeatCell) => c.cellY ?? 0
@@ -45,18 +77,20 @@ export function floorSummary(cells: HeatCell[], metric: HeatMetric) {
   for (const c of cells) totals.set(floorOf(c), (totals.get(floorOf(c)) ?? 0) + cellValue(c, metric))
   return {
     cells: cells.length,
-    max: Math.max(0, ...cells.map((c) => cellValue(c, metric))),
+    max: maxOf(cells, (c) => cellValue(c, metric)),
     floors: [...totals].map(([level, total]) => ({ level, total })).sort((a, b) => b.total - a.total || a.level - b.level),
-    heightless: cells.filter((c) => c.cellY === null).length,
+    heightless: cells.filter((c) => c.cellY === null || c.partlyHeightless).length,
   }
 }
 
 /** The cells the 3D view draws: those with a value, dropping the faintest steps while there are more than `cap`. */
 export function cellsFor3d(cells: HeatCell[], metric: HeatMetric, cap = MAX_3D_CELLS): { cells: HeatCell[]; max: number; hidden: number } {
   const lit = cells.filter((c) => cellValue(c, metric) > 0)
-  const max = Math.max(0, ...lit.map((c) => cellValue(c, metric)))
+  const max = maxOf(lit, (c) => cellValue(c, metric))
   let shown = lit
   for (let step = 1; shown.length > cap && step < HEAT_STEPS; step++) shown = lit.filter((c) => colourStep(cellValue(c, metric), max) >= step)
+  // Still too many in the hottest step alone: keep the hottest cells.
+  if (shown.length > cap) shown = [...shown].sort((a, b) => cellValue(b, metric) - cellValue(a, metric)).slice(0, cap)
   return { cells: shown, max, hidden: lit.length - shown.length }
 }
 

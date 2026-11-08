@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  HEAT_STEPS, colourStep, flattenCells, floorOf, hasHeightVariation, floorSummary, cellsFor3d, floorLabel, floorsOf, heatView, cellBox,
+  HEAT_STEPS, colourStep, flattenCells, floorOf, hasHeightVariation, floorSummary, cellsFor3d, floorLabel, floorsOf, heatView, cellBox, mergeGround,
 } from './heat'
+import { mapBounds } from './parcel-map'
 import type { HeatCell } from './types'
 
 const c = (x: number, z: number, cellY: number | null | undefined, dwellSec: number, visits = 1): HeatCell => ({ x, z, cellY, dwellSec, visits })
@@ -67,5 +68,23 @@ describe('heat cells', () => {
     expect(heatView({ heatmap3d: true, webgl: false, cells: flat, chosen: null })).toEqual({ view: '2d', locked: false, note: null })
     expect(heatView({ heatmap3d: true, webgl: false, cells: tall, chosen: null })).toMatchObject({ view: '2d', note: expect.stringMatching(/WebGL/) })
     expect(heatView({ heatmap3d: true, webgl: false, cells: tall, chosen: '3d' })).toMatchObject({ view: '2d', note: expect.stringMatching(/WebGL/) })
+  })
+  it('3D: a height-less cell and a ground cell at the same spot are one box with the summed value, flagged', () => {
+    const merged = mergeGround([c(1, 1, 0, 10, 2), c(1, 1, null, 5, 1), c(1, 1, 1, 7, 1), c(2, 2, null, 4, 1)])
+    expect(merged).toEqual([
+      { x: 1, z: 1, cellY: 0, dwellSec: 15, visits: 3, partlyHeightless: true },
+      { x: 1, z: 1, cellY: 1, dwellSec: 7, visits: 1 },
+      { x: 2, z: 2, cellY: null, dwellSec: 4, visits: 1 },
+    ])
+    const s = floorSummary(merged, 'dwell')
+    expect(s.cells).toBe(3)
+    expect(s.heightless).toBe(2)
+  })
+
+  it('handles maps far bigger than a function call can take as arguments', () => {
+    const big = Array.from({ length: 300_000 }, (_, i) => c(i % 1000, Math.floor(i / 1000), i % 3, (i % 60) + 1))
+    expect(floorSummary(big, 'dwell').max).toBe(60)
+    expect(cellsFor3d(big, 'dwell').cells.length).toBeLessThanOrEqual(20_000)
+    expect(mapBounds([], null, big)).toEqual({ minX: 0, minZ: 0, maxX: 1008, maxZ: 304 })
   })
 })
