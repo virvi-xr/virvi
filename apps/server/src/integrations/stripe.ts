@@ -49,6 +49,8 @@ export interface TierLimits {
   streamMinutes: number
   apiKeys: number
   analyticsRetentionDays: number
+  /** The analytics heatmap's 3D view and floor heights (LIV-85); free plans get the 2D bird's-eye view. */
+  analyticsHeatmap3d: boolean
   giveawayCredits: number
   recording: boolean
   crossWorldBroadcast: boolean
@@ -69,6 +71,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     streamMinutes: 0,
     apiKeys: 0,
     analyticsRetentionDays: 7,
+    analyticsHeatmap3d: false,
     giveawayCredits: 100,
     recording: false,
     crossWorldBroadcast: false,
@@ -86,6 +89,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     streamMinutes: 1000,
     apiKeys: 1,
     analyticsRetentionDays: 30,
+    analyticsHeatmap3d: true,
     giveawayCredits: 1000,
     recording: false,
     crossWorldBroadcast: false,
@@ -103,6 +107,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     streamMinutes: 5000,
     apiKeys: 5,
     analyticsRetentionDays: 90,
+    analyticsHeatmap3d: true,
     giveawayCredits: 5000,
     recording: true,
     crossWorldBroadcast: false,
@@ -120,6 +125,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     streamMinutes: Infinity,
     apiKeys: Infinity,
     analyticsRetentionDays: 365,
+    analyticsHeatmap3d: true,
     giveawayCredits: 25000,
     recording: true,
     crossWorldBroadcast: true,
@@ -137,6 +143,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     streamMinutes: Infinity,
     apiKeys: Infinity,
     analyticsRetentionDays: Infinity,
+    analyticsHeatmap3d: true,
     giveawayCredits: Infinity,
     recording: true,
     crossWorldBroadcast: true,

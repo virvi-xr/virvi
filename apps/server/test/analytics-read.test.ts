@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { analyticsEvents, analyticsHeatmapDaily, analyticsPositions, analyticsRollupHourly, analyticsScenes, analyticsSessions, analyticsCopresenceDaily, sceneRoles } from '../src/db/schema.js'
+import { analyticsEvents, analyticsHeatmapDaily, analyticsPositions, analyticsRollupHourly, analyticsScenes, analyticsSessions, analyticsCopresenceDaily, sceneRoles, subscriptions, locationSetups, sceneCollaborators } from '../src/db/schema.js'
+import { config } from '../src/config.js'
 import { visitorHash } from '../src/analytics/hash.js'
 import { resetEmoteLabelCache } from '../src/analytics/labels.js'
 import { setDeleteMyDataLimiter } from '../src/routes/analytics-read.js'
@@ -126,7 +127,7 @@ describe('analytics read API', () => {
       { sceneId: s.id, sessionId: live.id, seq: 1, occurredAt: new Date(Date.now() - 6000), x: 1, y: 0, z: 1 },
       { sceneId: s.id, sessionId: live.id, seq: 2, occurredAt: new Date(Date.now() - 3000), x: 2, y: 0, z: 3 },
     ])
-    expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json()).toEqual({ count: 1, positions: [{ x: 2, z: 3 }] })
+    expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json()).toEqual({ count: 1, positions: [{ x: 2, y: 0, z: 3 }] })
   })
 
   it('heatmap sums cells over the range', async () => {
@@ -137,7 +138,79 @@ describe('analytics read API', () => {
       { sceneId: s.id, day: today, cellX: 3, cellZ: 4, dwellSec: 10, visits: 1 },
       { sceneId: s.id, day: yesterday, cellX: 3, cellZ: 4, dwellSec: 5, visits: 2 },
     ])
-    expect((await get(owner, `/api/analytics/locations/${s.id}/heatmap`)).json().cells).toEqual([{ x: 3, z: 4, dwellSec: 15, visits: 3 }])
+    expect((await get(owner, `/api/analytics/locations/${s.id}/heatmap`)).json().cells).toEqual([{ x: 3, z: 4, cellY: null, dwellSec: 15, visits: 3 }])
+  })
+
+  describe('heatmap height (LIV-85)', () => {
+    const prevUnlocked = config.allFeaturesUnlocked
+    afterEach(() => { config.allFeaturesUnlocked = prevUnlocked })
+    const today = () => new Date().toISOString().slice(0, 10)
+    const yesterday = () => new Date(Date.now() - 86400_000).toISOString().slice(0, 10)
+    async function twoFloors(sceneId: string) {
+      await db.insert(analyticsHeatmapDaily).values([
+        { sceneId, day: today(), cellX: 3, cellZ: 4, cellY: 0, dwellSec: 10, visits: 1 },
+        { sceneId, day: today(), cellX: 3, cellZ: 4, cellY: 1, dwellSec: 20, visits: 2 },
+        { sceneId, day: yesterday(), cellX: 3, cellZ: 4, cellY: 1, dwellSec: 1, visits: 1 },
+        { sceneId, day: yesterday(), cellX: 3, cellZ: 4, cellY: null, dwellSec: 4, visits: 1 }, // rolled up before heights
+      ])
+    }
+
+    it('paid plans get each floor as its own cell, and days without heights as cellY null', async () => {
+      const { owner, s } = await owned()
+      await twoFloors(s.id)
+      const body = (await get(owner, `/api/analytics/locations/${s.id}/heatmap`)).json()
+      expect(body.heatmap3d).toBe(true)
+      expect(body.cells).toEqual([
+        { x: 3, z: 4, cellY: 0, dwellSec: 10, visits: 1 },
+        { x: 3, z: 4, cellY: 1, dwellSec: 21, visits: 3 },
+        { x: 3, z: 4, cellY: null, dwellSec: 4, visits: 1 },
+      ])
+    })
+
+    it('level returns one floor; level 0 includes the cells with no height, which draw at ground level', async () => {
+      const { owner, s } = await owned()
+      await twoFloors(s.id)
+      const at = async (level: string) => (await get(owner, `/api/analytics/locations/${s.id}/heatmap?level=${level}`))
+      expect((await at('1')).json().cells).toEqual([{ x: 3, z: 4, cellY: 1, dwellSec: 21, visits: 3 }])
+      expect((await at('0')).json().cells).toEqual([
+        { x: 3, z: 4, cellY: 0, dwellSec: 10, visits: 1 },
+        { x: 3, z: 4, cellY: null, dwellSec: 4, visits: 1 },
+      ])
+      expect((await at('1.5')).statusCode).toBe(400)
+      expect((await at('up')).statusCode).toBe(400)
+      expect((await at('99999')).statusCode).toBe(400)
+    })
+
+    it('free plans get 2D cells summed over every floor, without cellY, and level is ignored', async () => {
+      config.allFeaturesUnlocked = false
+      const { owner, s } = await owned()
+      await twoFloors(s.id)
+      for (const url of [`/api/analytics/locations/${s.id}/heatmap`, `/api/analytics/locations/${s.id}/heatmap?level=1`, `/api/analytics/locations/${s.id}/heatmap?level=up`]) {
+        const res = await get(owner, url)
+        expect(res.statusCode).toBe(200)
+        expect(res.json()).toEqual({ heatmap3d: false, cells: [{ x: 3, z: 4, dwellSec: 35, visits: 5 }] })
+      }
+    })
+
+    it("the plan is the linked scene owner's: creator and up get heights", async () => {
+      config.allFeaturesUnlocked = false
+      const { owner, s } = await owned()
+      await twoFloors(s.id)
+      await db.insert(subscriptions).values({ userId: owner.id, tier: 'creator' })
+      const body = (await get(owner, `/api/analytics/locations/${s.id}/heatmap`)).json()
+      expect(body.heatmap3d).toBe(true)
+      expect(body.cells).toHaveLength(3)
+    })
+
+    it("a viewer on a paid owner's scene gets heights too (the plan follows the scene, not the reader)", async () => {
+      config.allFeaturesUnlocked = false
+      const { owner, s } = await owned()
+      await db.insert(subscriptions).values({ userId: owner.id, tier: 'pro' })
+      const viewer = await createUser()
+      const setup = await db.query.locationSetups.findFirst({ where: eq(locationSetups.analyticsSceneId, s.id) })
+      await db.insert(sceneCollaborators).values({ sceneId: setup!.virviSceneId, userId: viewer.id, role: 'viewer' })
+      expect((await get(viewer, `/api/analytics/locations/${s.id}/heatmap`)).json().heatmap3d).toBe(true)
+    })
   })
 
   it('turning wallet visibility off removes revealed identities; only managers may change it', async () => {
@@ -194,9 +267,9 @@ describe('analytics read API', () => {
     const { owner, s } = await owned()
     for (const [x, z] of [[5, 1], [1, 9], [1, 2]]) {
       const sess = await insertSession(s.id, { lastSeenAt: new Date() })
-      await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: sess.id, seq: 1, occurredAt: new Date(), x, y: 0, z })
+      await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: sess.id, seq: 1, occurredAt: new Date(), x, y: 3.9, z })
     }
-    expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json().positions).toEqual([{ x: 1, z: 2 }, { x: 1, z: 9 }, { x: 5, z: 1 }])
+    expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json().positions).toEqual([{ x: 1, y: 3.9, z: 2 }, { x: 1, y: 3.9, z: 9 }, { x: 5, y: 3.9, z: 1 }])
   })
 
   it('rejects a sessions cursor whose id is not a UUID', async () => {
@@ -268,7 +341,7 @@ describe('analytics read API', () => {
     expect((await get(owner, `/api/analytics/locations/${s.id}/summary?${q}`)).json()).toMatchObject({ sessions: 2, uniqueVisitors: 1, peakConcurrency: 1 })
     const ts = (await get(owner, `/api/analytics/locations/${s.id}/timeseries?bucket=hour&${q}`)).json()
     expect(ts.points.map((p: any) => p.sessions)).toEqual([2])
-    expect((await get(owner, `/api/analytics/locations/${s.id}/heatmap?${q}`)).json().cells).toEqual([{ x: 1, z: 1, dwellSec: 7, visits: 1 }])
+    expect((await get(owner, `/api/analytics/locations/${s.id}/heatmap?${q}`)).json().cells).toEqual([{ x: 1, z: 1, cellY: null, dwellSec: 7, visits: 1 }])
     expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json()).toEqual({ count: 0, positions: [] })
     const sessions = (await get(owner, `/api/analytics/locations/${s.id}/sessions`)).json().sessions
     expect(sessions).toHaveLength(1)

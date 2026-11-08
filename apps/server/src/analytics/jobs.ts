@@ -15,7 +15,7 @@ import {
 } from '../db/schema.js'
 import { config } from '../config.js'
 import { HEATMAP_BAND_M, HEATMAP_BAND_SLACK_M, feetOffsetM, groundClamped } from '@virvixr/shared'
-import { getSubscription } from '../integrations/stripe.js'
+import { getSubscription, type TierLimits } from '../integrations/stripe.js'
 import type { AnalyticsSceneRow } from './registry.js'
 import { purgeWalletChallenges } from './claims.js'
 import { purgeAuthHandoffCodes } from '../routes/auth-handoff.js'
@@ -233,15 +233,34 @@ export async function runRollups(now = new Date()): Promise<{ hours: number; day
   return { hours: todo.length, days: dayCount }
 }
 
+/** A Virvi scene's plan: its owner's subscription limits; null when the scene is gone. */
+export async function planLimitsForScene(virviSceneId: string): Promise<TierLimits | null> {
+  const host = await db.query.scenes.findFirst({ where: eq(scenes.id, virviSceneId), columns: { ownerId: true } })
+  if (!host) return null
+  return (await getSubscription(host.ownerId)).limits
+}
+
+/**
+ * Whether a location's heatmap shows heights and the 3D view (LIV-85): every self-hosted install with all features
+ * unlocked; otherwise the plan of the Virvi scene whose setup the reader reads through (as retention follows the host's).
+ */
+export async function heatmap3dFor(virviSceneId: string | null | undefined): Promise<boolean> {
+  if (config.allFeaturesUnlocked) return true
+  if (!virviSceneId) return false
+  return (await planLimitsForScene(virviSceneId))?.analyticsHeatmap3d === true
+}
+
 export async function retentionDaysFor(scene: AnalyticsSceneRow): Promise<number> {
   if (scene.isPreview) return 7
   const active = await db.query.locationSetups.findFirst({ where: and(eq(locationSetups.analyticsSceneId, scene.id), isNull(locationSetups.endedAt)) })
   if (!active) return 30
-  const host = await db.query.scenes.findFirst({ where: eq(scenes.id, active.virviSceneId), columns: { ownerId: true } })
-  if (!host) return 30
-  if (config.allFeaturesUnlocked) return Infinity
-  const sub = await getSubscription(host.ownerId)
-  const d = sub.limits.analyticsRetentionDays
+  if (config.allFeaturesUnlocked) {
+    const host = await db.query.scenes.findFirst({ where: eq(scenes.id, active.virviSceneId), columns: { id: true } })
+    return host ? Infinity : 30
+  }
+  const limits = await planLimitsForScene(active.virviSceneId)
+  if (!limits) return 30
+  const d = limits.analyticsRetentionDays
   return d === Infinity || (typeof d === 'number' && Number.isFinite(d)) ? d : 30
 }
 
