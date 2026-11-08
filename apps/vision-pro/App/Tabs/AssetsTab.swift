@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// "Media Library": the scene's images and GLB models, Rename, Place and Dismiss, and the Upload view.
+/// "3D Models" (LIV-132): the scene's GLB models and images, Rename, Place and Dismiss, and the Upload view.
 struct AssetsTab: View {
     let app: AppModel
     @ObservedObject var builder: SceneBuilder
@@ -19,7 +19,7 @@ struct AssetsTab: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PanelHeader(title: "Media Library", subtitle: "Images and GLB models") { upload = nil; onClose() }
+            PanelHeader(title: "3D Models", subtitle: "This scene's models and images") { upload = nil; onClose() }
             VStack(alignment: .leading, spacing: 3) {
                 if !canEdit(builder.role) {
                     EmptyPanel(text: "Only the host, co-hosts and editors can place media")

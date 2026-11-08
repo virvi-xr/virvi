@@ -12,7 +12,7 @@ final class HudModelTests: XCTestCase {
     }
 
     func testTabsOrderAndRolesOnlyForHosts() {
-        XCTAssertEqual(HudTab.allCases.map(\.rawValue), ["Layout", "Assets", "Events", "Stream", "Worlds", "Alerts", "Roles", "Stats"])
+        XCTAssertEqual(HudTab.allCases.map(\.rawValue), ["Layout", "Models", "Events", "Stream", "Worlds", "Alerts", "Roles", "Stats"])
         XCTAssertEqual(visibleTabs(role: .host), HudTab.allCases)
         XCTAssertEqual(visibleTabs(role: .cohost), HudTab.allCases)
         for role in [SceneRole.editor, .viewer] {

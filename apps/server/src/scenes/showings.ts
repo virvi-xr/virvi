@@ -257,7 +257,7 @@ export function parseShowingInput(body: Record<string, unknown>, base?: ShowingR
 }
 
 /**
- * Fills in each video's length: a length measured on upload (any Media Library file at that address) wins; else the
+ * Fills in each video's length: a length measured on upload (any Images & Video file at that address) wins; else the
  * one sent (an external video whose length the host typed). Throws ShowingError(400, 'unknown_length') naming the rest.
  */
 export async function resolveItems(items: ShowingInput['items']): Promise<Item[]> {
@@ -270,7 +270,7 @@ export async function resolveItems(items: ShowingInput['items']): Promise<Item[]
   const resolved = items.map((i) => ({ url: i.url, kind: i.kind, duration: measured.get(i.url) ?? i.duration ?? 0 }))
   const missing = itemsWithoutLength(resolved)
   if (missing.length) {
-    throw new ShowingError(400, 'unknown_length', "These videos have no known length, so they can't be scheduled. Upload them to the Media Library, or enter their length.", { urls: [...new Set(missing)] })
+    throw new ShowingError(400, 'unknown_length', "These videos have no known length, so they can't be scheduled. Upload them to Images & Video, or enter their length.", { urls: [...new Set(missing)] })
   }
   if (programmeLength(resolved) > MAX_PROGRAMME_SECONDS) throw new ShowingError(400, 'bad_showing', 'A showing can run up to 48 hours.')
   return resolved
