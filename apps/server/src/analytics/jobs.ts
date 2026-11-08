@@ -302,8 +302,8 @@ export const HEATMAP_BACKFILL_JOB = 'heatmap-height-backfill'
 
 /**
  * Once only (LIV-85): re-run the daily heatmap rollup, which now records floor heights, for every day still fully
- * inside each location's retention, so recent history gets heights. Older days, and the day the retention cutoff
- * falls in (part of its raw positions may be gone), keep their height-less cells. rollupDay replaces a day's cells
+ * inside each location's retention, so recent history gets heights. Older days, the day the retention cutoff falls
+ * in, and the day of the oldest raw position left (part of its positions may be gone) keep their height-less cells. rollupDay replaces a day's cells
  * under a per-day lock, so a rerun or a concurrent rollup changes nothing; the job itself runs under the
  * analytics job lock. Locations that fail are retried on the next run; the job is marked done once none fail.
  * Returns null when it has already run.
@@ -327,12 +327,20 @@ export async function runHeatmapHeightBackfill(
     try {
       const retention = await retentionDaysFor(scene)
       const firstDay = Number.isFinite(retention) ? new Date(Math.ceil((now.getTime() - retention * DAY) / DAY) * DAY) : null
-      const rows = rowsOf<{ day: string }>(
-        await db.execute(sql`
-          select distinct to_char(occurred_at at time zone 'UTC', 'YYYY-MM-DD') as day from analytics_positions
-          where scene_id = ${scene.id}${firstDay ? sql` and occurred_at >= ${ts(firstDay)}` : sql``}
-          order by 1`),
+      // Every purge deletes what is older than its cutoff, so every cutoff so far is at or before the oldest raw
+      // position left: days after that position's day are complete, and its own day may not be (retention can have
+      // grown since, e.g. a setup ended or a plan upgraded). That day is skipped, so a rollup is never redone from less.
+      const [oldest] = rowsOf<{ day: string | null }>(
+        await db.execute(sql`select to_char(min(occurred_at) at time zone 'UTC', 'YYYY-MM-DD') as day from analytics_positions where scene_id = ${scene.id}`),
       )
+      const rows = oldest?.day
+        ? rowsOf<{ day: string }>(
+            await db.execute(sql`
+              select distinct to_char(occurred_at at time zone 'UTC', 'YYYY-MM-DD') as day from analytics_positions
+              where scene_id = ${scene.id} and occurred_at >= ${ts(new Date(new Date(`${oldest.day}T00:00:00Z`).getTime() + DAY))}${firstDay ? sql` and occurred_at >= ${ts(firstDay)}` : sql``}
+              order by 1`),
+          )
+        : []
       for (const { day } of rows) {
         await rollup(scene.id, day, now)
         days++

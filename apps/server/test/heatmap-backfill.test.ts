@@ -47,8 +47,26 @@ describe('heatmap height backfill (LIV-85)', () => {
     expect(await cellsOf(s.id, dayAgo(30))).toEqual([{ y: null, dwellSec: 6 }])
   })
 
+  it('retention that grew (7 → 30 days): the day the old 7-day purge cut into keeps its full cells; later days get heights', async () => {
+    const s = await legacyScene([2, 7])
+    // The 7-day purge ran at 03:00 seven days ago and took that morning's positions: the day's rollup (dwell 6 + 40)
+    // was made from more than is left. Retention is now 30 days, so that day is inside it again.
+    const morning = new Date(`${dayAgo(7)}T01:00:00Z`)
+    await db.update(analyticsHeatmapDaily).set({ dwellSec: 46, visits: 2 }).where(and(eq(analyticsHeatmapDaily.sceneId, s.id), eq(analyticsHeatmapDaily.day, dayAgo(7))))
+    expect(morning.getTime()).toBeLessThan(noonAgo(7).getTime())
+    expect(await runHeatmapHeightBackfill(now)).toMatchObject({ days: 1 })
+    expect(await cellsOf(s.id, dayAgo(7))).toEqual([{ y: null, dwellSec: 46 }])
+    expect(await cellsOf(s.id, dayAgo(2))).toEqual([{ y: 0, dwellSec: 3 }, { y: 1, dwellSec: 3 }])
+  })
+
+  it('the oldest day with raw positions is never re-rolled (it may be partly purged), even with one day of data', async () => {
+    const s = await legacyScene([4])
+    expect(await runHeatmapHeightBackfill(now)).toMatchObject({ days: 0 })
+    expect(await cellsOf(s.id, dayAgo(4))).toEqual([{ y: null, dwellSec: 6 }])
+  })
+
   it('runs once: a second run does nothing, and the per-location progress rows are cleared', async () => {
-    const s = await legacyScene([2])
+    const s = await legacyScene([2, 6])
     await runHeatmapHeightBackfill(now)
     await db.delete(analyticsHeatmapDaily)
     await db.insert(analyticsHeatmapDaily).values({ sceneId: s.id, day: dayAgo(2), cellX: 9, cellZ: 9, dwellSec: 1, visits: 1 })
@@ -59,8 +77,8 @@ describe('heatmap height backfill (LIV-85)', () => {
   })
 
   it('a location that fails is retried next time; the others are not redone', async () => {
-    const a = await legacyScene([2])
-    const b = await legacyScene([3])
+    const a = await legacyScene([2, 6])
+    const b = await legacyScene([3, 6])
     const done: string[] = []
     const failB = async (sceneId: string, day: string, at?: Date) => {
       if (sceneId === b.id) throw new Error('boom')
@@ -78,7 +96,7 @@ describe('heatmap height backfill (LIV-85)', () => {
   })
 
   it('two servers running it at once leave the same cells as one', async () => {
-    const s = await legacyScene([2, 5])
+    const s = await legacyScene([2, 5, 6])
     await Promise.all([runHeatmapHeightBackfill(now), runHeatmapHeightBackfill(now)])
     expect(await cellsOf(s.id, dayAgo(2))).toEqual([{ y: 0, dwellSec: 3 }, { y: 1, dwellSec: 3 }])
     expect(await cellsOf(s.id, dayAgo(5))).toEqual([{ y: 0, dwellSec: 3 }, { y: 1, dwellSec: 3 }])
