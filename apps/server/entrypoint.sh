@@ -295,6 +295,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE TABLE IF NOT EXISTS studio_lessons (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), kind TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', enabled BOOLEAN NOT NULL DEFAULT true, source_rating_ids JSONB NOT NULL DEFAULT '[]'::jsonb, drafted TEXT NOT NULL DEFAULT 'admin', created_by UUID, updated_by UUID, approved_by UUID, approved_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         await sql\`CREATE INDEX IF NOT EXISTS studio_lessons_kind_idx ON studio_lessons (kind, created_at)\`;
         await sql\`CREATE TABLE IF NOT EXISTS studio_digest_weeks (week_start DATE PRIMARY KEY, ratings INTEGER NOT NULL DEFAULT 0, claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), sent_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`ALTER TABLE studio_digest_weeks ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\`;
         await sql\`CREATE TABLE IF NOT EXISTS studio_kind_defaults (kind TEXT PRIMARY KEY, agent TEXT NOT NULL, updated_by UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         console.log('[virvi-server] studio ratings and lessons ensured');
       } catch(e) { console.log('[virvi-server] studio ratings and lessons:', e.message); }
