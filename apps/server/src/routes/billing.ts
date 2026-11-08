@@ -9,9 +9,10 @@
  */
 
 import { FastifyInstance } from 'fastify'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { scenes, streamingSessions } from '../db/schema.js'
+import { liveScene } from '../scenes/live.js'
 import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
 import { storageUsedBytes } from '../media/quota.js'
@@ -106,7 +107,7 @@ export default async function billingRoutes(app: FastifyInstance) {
       const [sceneCount] = await db
         .select({ count: sql<number>`count(*)` })
         .from(scenes)
-        .where(eq(scenes.ownerId, request.user.id))
+        .where(and(eq(scenes.ownerId, request.user.id), liveScene()))
 
       // Storage used: the same total the upload quota checks (Images & Video, 3D Models uploads, thumbnails)
       const storageBytes = await storageUsedBytes(request.user.id)

@@ -202,7 +202,22 @@ export const scenes = pgTable('scenes', {
   activePresetId: uuid('active_preset_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+  /**
+   * LIV-83: when the scene was deleted; null while it is live. A deleted scene is hidden everywhere (scenes/deleted.ts)
+   * and restorable for 30 days, then the purge sweep removes it for good.
+   */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: uuid('deleted_by').references((): AnyPgColumn => users.id, { onDelete: 'set null' }),
+  /**
+   * Set when the scene was deleted with its organization (the org row is gone, org_id is cleared): the org it belonged to,
+   * and the users who may restore it besides its owner, the org's owners and admins at the time. A restore makes the
+   * scene the restorer's own personal scene.
+   */
+  deletedOrgId: uuid('deleted_org_id'),
+  restorerIds: uuid('restorer_ids').array(),
+}, (t) => ({
+  deletedIdx: index('scenes_deleted_at_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
+}))
 
 export const scenesRelations = relations(scenes, ({ one, many }) => ({
   org: one(organizations, {
@@ -727,6 +742,10 @@ export const sceneDeployments = pgTable('scene_deployments', {
   destinationId: uuid('destination_id').references(() => dclWorldDestinations.id, { onDelete: 'set null' }),
   deployedAt: timestamp('deployed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  /** LIV-83: when deleting the scene removed this deployment from its platform (null: still up, or never removed). */
+  removedAt: timestamp('removed_at', { withTimezone: true }),
+  /** What the removal did: 'undeployed' (a World's scene), 'emptied' (an empty scene over the parcels). */
+  removalOutcome: text('removal_outcome'),
 })
 
 export const sceneDeploymentsRelations = relations(sceneDeployments, ({ one }) => ({
@@ -2049,4 +2068,35 @@ export const screenShowings = pgTable('screen_showings', {
   elementIdx: index('screen_showings_element_idx').on(t.elementId),
   sceneIdx: index('screen_showings_scene_idx').on(t.sceneId),
   eventIdx: index('screen_showings_event_idx').on(t.eventId),
+}))
+
+// ── Scene removals (LIV-83): what deleting a scene shut down or removed, with each outcome ──
+
+/**
+ * One thing a scene's delete was asked to shut down or remove: a Virvi-hosted Hyperfy world ('hosted_world'), a
+ * self-run Hyperfy world Virvi stops serving ('hyperfy_world'), or a Decentraland World or Genesis City parcels
+ * destination ('dcl_world', 'dcl_parcels'). `target` keeps what's needed after the row it names is gone (the World's
+ * name, the parcels, the owner's wallet). Failed ones can be retried from the Recently deleted list; the rows go
+ * with the scene when it is purged.
+ */
+export const sceneRemovals = pgTable('scene_removals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull().$type<'hosted_world' | 'hyperfy_world' | 'dcl_world' | 'dcl_parcels'>(),
+  /** The hyperfy_worlds or dcl_world_destinations row it removes (no FK: the row goes once removed). */
+  targetId: uuid('target_id').notNull(),
+  label: text('label').notNull(),
+  target: jsonb('target').$type<Record<string, unknown>>().notNull().default({}),
+  /** pending | awaiting_signature | done | failed */
+  status: text('status').notNull().$type<'pending' | 'awaiting_signature' | 'done' | 'failed'>().default('pending'),
+  errorMessage: text('error_message'),
+  /** A prepared Genesis City empty-scene deploy waiting for the owner's signature: entity id and timestamp. */
+  pending: jsonb('pending').$type<{ entityId: string; timestamp: number } | null>(),
+  requestedBy: uuid('requested_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (t) => ({
+  sceneIdx: index('scene_removals_scene_idx').on(t.sceneId),
+  targetUq: uniqueIndex('scene_removals_scene_target_uq').on(t.sceneId, t.targetId),
 }))

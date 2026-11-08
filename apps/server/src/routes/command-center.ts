@@ -6,7 +6,8 @@
  */
 
 import { FastifyInstance } from 'fastify'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { liveScene } from '../scenes/live.js'
 import { db } from '../db/connection.js'
 import {
   events,
@@ -54,7 +55,7 @@ export default async function commandCenterRoutes(app: FastifyInstance) {
         })
         .from(eventSceneLinks)
         .innerJoin(scenes, eq(eventSceneLinks.sceneId, scenes.id))
-        .where(eq(eventSceneLinks.eventId, eventId))
+        .where(and(eq(eventSceneLinks.eventId, eventId), liveScene()))
 
       const worlds = await Promise.all(
         links.map(async (link) => {
@@ -123,7 +124,7 @@ export default async function commandCenterRoutes(app: FastifyInstance) {
       const links = await db
         .select({ sceneId: eventSceneLinks.sceneId })
         .from(eventSceneLinks)
-        .where(eq(eventSceneLinks.eventId, eventId))
+        .where(and(eq(eventSceneLinks.eventId, eventId), liveScene()))
 
       let sceneIds = await accessibleSceneIds(actorFromClaims(request.user), links.map((l) => l.sceneId))
 

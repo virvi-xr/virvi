@@ -15,19 +15,18 @@ import { authenticate } from '../middleware/auth.js'
 import type { AuthUser } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { recordTrialBlocked } from '../auth/trial-events.js'
-import { getSceneAccess, hasScope, isFullAccess, isHostAccess, canWriteElement, diffKeys } from '../auth/permissions.js'
+import { getSceneAccess, hasScope, isFullAccess, canWriteElement, diffKeys } from '../auth/permissions.js'
 import { config } from '../config.js'
 import { publishElementChanged, publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
 import { activatePreset, canManagePresets, cleanPresetName, createPreset, deletePreset, deleteRefusal, PRESET_NAME_MAX, renamePreset } from '../scenes/presets.js'
 import { dispatchPlatformCallbacks } from '../integrations/platform-hooks.js'
 import { serializeSingleElement } from '../services/scene-serializer.js'
 import { getSubscription } from '../integrations/stripe.js'
-import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
-import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
+import { liveScene } from '../scenes/live.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
-import { SceneGone, ThumbnailError, bodyLimitFor, deleteThumbnailFile, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
+import { SceneGone, ThumbnailError, bodyLimitFor, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
 import { StoreMediaError } from '../media/store.js'
 import { SCENE_THUMBNAIL_MAX_BYTES } from '@virvixr/shared'
 import { commitRoomSet, deleteOrphanedRoomSets, insertRoomSet, prepareRoomSetForPlacement, RoomSetError, roomSetIdsByElement, sceneOwnedRoomSets, type PreparedRoomSet } from '../room-scan/sets.js'
@@ -113,7 +112,7 @@ export async function sceneLimitError(userId: string) {
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(scenes)
-    .where(eq(scenes.ownerId, userId))
+    .where(and(eq(scenes.ownerId, userId), liveScene()))
   if (count < limit) return null
   return {
     error: 'scene_limit_reached' as const,
@@ -210,12 +209,12 @@ export default async function sceneRoutes(app: FastifyInstance) {
     const actor = actorFromClaims(request.user)
     // A trial sees the scenes it owns, never collaborations or roles (its access is owner-only).
     if (actor.trial && actor.userId) {
-      const own = await db.query.scenes.findMany({ where: eq(scenes.ownerId, actor.userId), orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)] })
+      const own = await db.query.scenes.findMany({ where: and(eq(scenes.ownerId, actor.userId), liveScene()), orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)] })
       return reply.send({ scenes: own.map((s) => ({ ...s, relationship: 'owner' as const })) })
     }
     if (!actor.userId || !actor.verified) return reply.send({ scenes: [] })
     const owned = await db.query.scenes.findMany({
-      where: eq(scenes.ownerId, request.user.id),
+      where: and(eq(scenes.ownerId, request.user.id), liveScene()),
       orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
     })
     const collabs = await db.query.sceneCollaborators.findMany({
@@ -223,7 +222,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     })
     const shared = collabs.length
       ? await db.query.scenes.findMany({
-          where: inArray(scenes.id, collabs.map((c) => c.sceneId)),
+          where: and(inArray(scenes.id, collabs.map((c) => c.sceneId)), liveScene()),
           orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
         })
       : []
@@ -253,7 +252,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     const extraIds = roleRows.map((r) => r.sceneId).filter((id) => !ownedIds.has(id) && !sharedIds.has(id))
     const extra = extraIds.length
       ? await db.query.scenes.findMany({
-          where: inArray(scenes.id, [...new Set(extraIds)]),
+          where: and(inArray(scenes.id, [...new Set(extraIds)]), liveScene()),
           orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
         })
       : []
@@ -435,31 +434,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     return reply.send({ scene })
   })
 
-  // ── DELETE /api/scenes/:sceneId — delete scene ───────────────────────────
-
-  app.delete<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', { config: { trial: true } }, async (request, reply) => {
-    const { sceneId } = request.params
-
-    const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) })
-    if (!scene) return reply.status(404).send({ error: 'Scene not found' })
-    // Host-only: co-hosts hold scene.admin but may not delete the scene.
-    if (!isHostAccess(await accessFor(request, sceneId))) {
-      return reply.status(403).send({ error: 'Forbidden' })
-    }
-
-    // Hosted worlds' rows would cascade away with it, leaving their Fly app, database and files running untracked.
-    const blocked = await hostedWorldsBlockingDelete({ sceneId })
-    if (blocked) return reply.status(409).send(blocked)
-    // The cascade only unlinks the scene's room sets, so they (and their GLBs) are removed here
-    const roomSetsToDelete = await sceneOwnedRoomSets({ sceneId })
-    const imports = await importsGoingWith({ sceneId })
-    await db.delete(scenes).where(eq(scenes.id, sceneId))
-    await deleteThumbnailFile(scene.thumbnailKey)
-    await deleteOrphanedRoomSets(roomSetsToDelete)
-    await deleteImportFiles(imports)
-    await publishSceneTouched(sceneId) // wake waiting Hyperfy feed polls so they get 404 now
-    return reply.status(204).send()
-  })
+  // DELETE /api/scenes/:sceneId (LIV-83: soft delete, restore, purge) is in routes/scene-delete.ts
 
   // ── Presets (LIV-84): create (blank or a copy), rename, delete, make live ──
   // Hosts, co-hosts and editors only; booking crew never manage presets (canManagePresets).

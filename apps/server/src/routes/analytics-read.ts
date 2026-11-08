@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
+import { liveScene } from '../scenes/live.js'
 import {
   analyticsCopresenceDaily,
   analyticsEvents,
@@ -105,7 +106,8 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       const reachable = db
         .select({ id: scenes.id })
         .from(scenes)
-        .where(
+        .where(and(
+          liveScene(),
           or(
             eq(scenes.ownerId, actor.userId),
             inArray(scenes.id, db.select({ id: sceneCollaborators.sceneId }).from(sceneCollaborators).where(eq(sceneCollaborators.userId, actor.userId))),
@@ -118,7 +120,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
             ),
             inArray(scenes.id, db.select({ id: accessGrants.sceneId }).from(accessGrants).where(eq(accessGrants.userId, actor.userId))),
           ),
-        )
+        ))
       candidate = inArray(analyticsScenes.id, db.select({ id: locationSetups.analyticsSceneId }).from(locationSetups).where(inArray(locationSetups.virviSceneId, reachable)))
     }
     const all = await db.select().from(analyticsScenes).where(candidate)

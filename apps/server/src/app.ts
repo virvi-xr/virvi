@@ -60,6 +60,8 @@ import importBuildRoutes from './routes/import-build.js'
 import importRoutes from './routes/imports.js'
 import brandingRoutes from './routes/branding.js'
 import presetScheduleRoutes from './routes/preset-schedules.js'
+import { registerDeletedSceneGuard } from './auth/deleted-scene-guard.js'
+import sceneDeleteRoutes from './routes/scene-delete.js'
 import showingRoutes from './routes/showings.js'
 import { db } from './db/connection.js'
 import { sql } from 'drizzle-orm'
@@ -137,6 +139,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     for (const m of methods) if (m !== 'HEAD' && m !== 'OPTIONS') registeredRoutes.push({ method: m, url: r.url, scenePass: !!sp, hyperfy: !!sp?.hyperfy, ar: !!sp?.ar, arPersonal: sp?.ar === 'personal', trial: !!(r.config as { trial?: boolean } | undefined)?.trial })
   })
   app.decorate('registeredRoutes', registeredRoutes)
+  // LIV-83: routes naming a deleted scene answer 404 (after authenticate)
+  registerDeletedSceneGuard(app)
 
   // Swagger / OpenAPI docs
   await app.register(fastifySwagger, {
@@ -185,6 +189,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await scope.register(adRoutes)
   })
   await app.register(sceneRoutes)
+  await app.register(sceneDeleteRoutes)
   await app.register(sceneRoleRoutes)
   await app.register(sceneLibraryRoutes)
   await app.register(presetScheduleRoutes)

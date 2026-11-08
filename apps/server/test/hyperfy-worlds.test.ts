@@ -21,6 +21,7 @@ vi.mock('../src/hyperfy/hosting.js', async (orig) => {
     createHostedWorld: (i: Parameters<typeof m.createHostedWorld>[0]) => m.createHostedWorld(i, fake.deps),
     destroyHostedWorld: (id: string) => m.destroyHostedWorld(id, fake.deps),
     hostedWorldsBlockingDelete: (scope: Parameters<typeof m.hostedWorldsBlockingDelete>[0]) => m.hostedWorldsBlockingDelete(scope, fake.deps),
+    destroyHostedWorldsFor: (scope: Parameters<typeof m.destroyHostedWorldsFor>[0]) => m.destroyHostedWorldsFor(scope, fake.deps),
     switchHostedWorldScene: async (id: string, sceneId: string) => {
       await m.switchHostedWorldScene(id, sceneId)
       await fake.onSwitch?.()
@@ -495,30 +496,54 @@ describe('hosted Hyperfy world routes', () => {
     const sceneRow = async (id: string) => (await db.select().from(scenes).where(eq(scenes.id, id)))[0]
     const userRow = async (id: string) => (await db.select().from(users).where(eq(users.id, id)))[0]
 
-    it("deleting a scene with a running hosted world removes the world's Fly app, database and files, then the scene", async () => {
+    it("deleting a scene with \"Shut down\" ticked removes the world's Fly app, database and files; the scene is soft-deleted (LIV-83)", async () => {
       const w = await hostedRunning()
+      const plan = (await call(owner, 'GET', `/api/scenes/${sceneId}/delete-plan`)).json()
+      expect(plan.running).toEqual([expect.objectContaining({ id: w.id, kind: 'hosted_world', label: `Shut down ${w.slug}`, defaultChecked: true })])
       const { destroyed } = installFakes()
-      const res = await call(owner, 'DELETE', `/api/scenes/${sceneId}`)
-      expect(res.statusCode).toBe(204)
+      const res = await call(owner, 'DELETE', `/api/scenes/${sceneId}`, { remove: [w.id] })
+      expect(res.statusCode).toBe(200)
+      expect(res.json().removals).toEqual([expect.objectContaining({ kind: 'hosted_world', status: 'done' })])
       expect(destroyed).toEqual(destroyedAll(w.slug!))
-      expect(await sceneRow(sceneId)).toBeUndefined()
+      expect((await sceneRow(sceneId)).deletedAt).not.toBeNull()
       expect(await row(w.id)).toBeUndefined()
     })
 
-    it('a failing destroy blocks the scene delete with 409 hosted_world_destroy_failed, and nothing is deleted', async () => {
+    it('a failing shut down still deletes the scene; the removal is failed and Retry works; an unticked world is left running', async () => {
       const w = await hostedRunning()
       const self = (await call(owner, 'POST', '/api/hyperfy/worlds', { sceneId, name: 'Mine' })).json().world
       installFakes({ failDeleteApp: true })
-      const res = await call(owner, 'DELETE', `/api/scenes/${sceneId}`)
-      expect(res.statusCode).toBe(409)
-      expect(res.json().error).toBe('hosted_world_destroy_failed')
+      const res = await call(owner, 'DELETE', `/api/scenes/${sceneId}`, { remove: [w.id] })
+      expect(res.statusCode).toBe(200)
+      const [removal] = res.json().removals
+      expect(removal).toMatchObject({ kind: 'hosted_world', status: 'failed' })
       expect(res.body).not.toContain('fly down')
-      expect(await sceneRow(sceneId)).toBeDefined()
+      expect((await sceneRow(sceneId)).deletedAt).not.toBeNull()
       expect(await row(w.id)).toBeDefined()
       expect(await row(self.id)).toBeDefined()
+      expect((await call(owner, 'GET', '/api/scenes/deleted')).json().scenes[0].removals).toEqual([expect.objectContaining({ id: removal.id, status: 'failed' })])
       // Retrying once Fly answers again works.
-      installFakes()
-      expect((await call(owner, 'DELETE', `/api/scenes/${sceneId}`)).statusCode).toBe(204)
+      const { destroyed } = installFakes()
+      const retry = await call(owner, 'POST', `/api/scenes/${sceneId}/removals/${removal.id}/retry`)
+      expect(retry.statusCode).toBe(200)
+      expect(retry.json().removal.status).toBe('done')
+      expect(destroyed).toEqual(destroyedAll(w.slug!))
+      expect(await row(self.id)).toBeDefined()
+    })
+
+    it('a hosted world left running on a deleted scene is shut down when the scene is deleted forever', async () => {
+      const w = await hostedRunning()
+      expect((await call(owner, 'DELETE', `/api/scenes/${sceneId}`)).statusCode).toBe(200)
+      expect(await row(w.id)).toBeDefined()
+      installFakes({ failDeleteApp: true })
+      const blocked = await call(owner, 'POST', `/api/scenes/${sceneId}/purge`, { name: (await sceneRow(sceneId)).name })
+      expect(blocked.statusCode).toBe(409)
+      expect(blocked.json().error).toBe('hosted_world_destroy_failed')
+      expect(await sceneRow(sceneId)).toBeDefined()
+      const { destroyed } = installFakes()
+      expect((await call(owner, 'POST', `/api/scenes/${sceneId}/purge`, { name: (await sceneRow(sceneId)).name })).statusCode).toBe(204)
+      expect(destroyed).toEqual(destroyedAll(w.slug!))
+      expect(await sceneRow(sceneId)).toBeUndefined()
     })
 
     it('deleting the account destroys hosted worlds the user owns and hosted worlds on their scenes; a failing destroy is 409', async () => {
@@ -560,18 +585,16 @@ describe('hosted Hyperfy world routes', () => {
       expect(await userRow(owner.id)).toBeUndefined()
     })
 
-    it("an admin deleting an organization destroys hosted worlds on the org's scenes first; a failing destroy is 409", async () => {
+    it("an admin deleting an organization soft-deletes the org's scenes and leaves their hosted worlds running (LIV-83)", async () => {
       const admin = await createUser({ role: 'admin' })
       const [org] = await db.insert(organizations).values({ name: 'Org', slug: `org-${Date.now()}`, billingOwnerId: owner.id }).returning()
       await db.update(scenes).set({ orgId: org.id }).where(eq(scenes.id, sceneId))
       const w = await hostedRunning()
-      installFakes({ failDeleteApp: true })
-      expect((await call(admin, 'DELETE', `/api/admin/orgs/${org.id}`)).statusCode).toBe(409)
-      expect(await sceneRow(sceneId)).toBeDefined()
-      const { destroyed } = installFakes()
+      const { destroyed } = installFakes({ failDeleteApp: true })
       expect((await call(admin, 'DELETE', `/api/admin/orgs/${org.id}`)).statusCode).toBe(204)
-      expect(destroyed).toEqual(destroyedAll(w.slug!))
-      expect(await sceneRow(sceneId)).toBeUndefined()
+      expect(destroyed).toEqual([])
+      expect((await sceneRow(sceneId)).deletedAt).not.toBeNull()
+      expect(await row(w.id)).toBeDefined()
     })
   })
 })

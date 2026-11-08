@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { and, eq, sql, ilike, or, count, desc } from 'drizzle-orm'
+import { and, eq, sql, ilike, or, count, desc, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
   users,
@@ -14,6 +14,7 @@ import {
 } from '../db/schema.js'
 import { listPacks } from '../catalog/packs.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
+import { softDeleteOrgScenes } from '../scenes/deleted.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authenticate } from '../middleware/auth.js'
 import { isUuid } from '../auth/scene-from.js'
@@ -101,7 +102,7 @@ export default async function adminRoutes(app: FastifyInstance) {
         trialGuests: sql<number>`(count(*) FILTER (WHERE ${users.isTrial}))::int`,
       }).from(users),
       db.select({ totalOrgs: sql<number>`count(*)::int` }).from(organizations),
-      db.select({ totalScenes: sql<number>`count(*)::int` }).from(scenes),
+      db.select({ totalScenes: sql<number>`count(*)::int` }).from(scenes).where(isNull(scenes.deletedAt)),
       db.select({ totalMedia: sql<number>`count(*)::int` }).from(mediaAssets),
       // Images & Video plus people's 3D Models uploads, counted as the quota counts them (catalog and paid Studio pieces aside)
       db.execute(sql`SELECT (coalesce((SELECT sum(size_bytes) FROM media_assets), 0) + coalesce((SELECT sum(file_size_bytes) FROM asset_library_items WHERE uploaded_by IS NOT NULL AND coalesce(source_ref, '') NOT LIKE 'studio:%'), 0))::bigint AS "totalStorageBytes"`)
@@ -277,7 +278,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           slug: organizations.slug,
           createdAt: organizations.createdAt,
           memberCount: sql<number>`(SELECT count(*)::int FROM org_members WHERE org_id = ${organizations.id})`,
-          sceneCount: sql<number>`(SELECT count(*)::int FROM scenes WHERE org_id = ${organizations.id})`,
+          sceneCount: sql<number>`(SELECT count(*)::int FROM scenes WHERE org_id = ${organizations.id} AND deleted_at IS NULL)`,
         })
         .from(organizations)
         .where(conditions)
@@ -303,9 +304,10 @@ export default async function adminRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Organization not found' })
     }
 
-    // Hosted worlds' rows would cascade away with it, leaving their Fly app, database and files running untracked.
-    const blocked = await hostedWorldsBlockingDelete({ orgId })
-    if (blocked) return reply.status(409).send(blocked)
+    // LIV-83: the org's scenes are soft-deleted, not cascaded away: each stays restorable for 30 days by its owner or by
+    // the org's owners and admins now (recorded, since the org and its members go), and hosted worlds and deployments
+    // stay up until the purge.
+    await softDeleteOrgScenes(orgId, request.user.id)
     await db.delete(organizations).where(eq(organizations.id, orgId))
     return reply.status(204).send()
   })

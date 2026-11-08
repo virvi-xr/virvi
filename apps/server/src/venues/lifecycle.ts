@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { bookings, scenes, venues } from '../db/schema.js'
 import { publishVenueEvent, type VenueEvent } from '../realtime/bus.js'
+import { liveSceneIds } from '../scenes/live.js'
 import { runPresetScheduleSweep } from '../scenes/preset-schedules.js'
 
 // Must match liveWindowStart / liveWindowEnd in src/auth/permissions.ts.
@@ -58,6 +59,8 @@ export async function runLifecycleSweep(at = new Date()) {
     .where(
       and(
         eq(bookings.status, 'confirmed'),
+        // Suspended while the venue's scene is deleted (LIV-83): it goes live if the scene is restored in time
+        inArray(venues.sceneId, liveSceneIds()),
         sql`${bookings.startsAt} - ${setupLead} <= ${at.toISOString()}::timestamptz`,
         sql`${bookings.endsAt} + ${grace} > ${at.toISOString()}::timestamptz`,
       ),

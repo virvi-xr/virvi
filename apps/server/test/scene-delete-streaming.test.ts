@@ -10,12 +10,16 @@ describe('deleting a scene linked to a streaming server', () => {
   beforeEach(async () => { await resetDb(); app = await testApp() })
   afterEach(() => app.close())
 
-  it('deletes the scene and keeps the server, unlinked', async () => {
+  it('a delete keeps the server linked (restorable); deleting forever keeps it, unlinked', async () => {
     const owner = await createUser()
     const { scene } = await createScene(owner)
     const [server] = await db.insert(streamingServers).values({ ownerId: owner.id, name: 'Stage', sceneId: scene.id }).returning()
-    const res = await app.inject({ method: 'DELETE', url: `/api/scenes/${scene.id}`, headers: { authorization: `Bearer ${tokenFor(owner)}` } })
+    const headers = { authorization: `Bearer ${tokenFor(owner)}` }
+    const res = await app.inject({ method: 'DELETE', url: `/api/scenes/${scene.id}`, headers })
     expect(res.statusCode, res.body).toBeLessThan(300)
+    expect((await db.select().from(streamingServers).where(eq(streamingServers.id, server.id)))[0].sceneId).toBe(scene.id)
+    const purge = await app.inject({ method: 'POST', url: `/api/scenes/${scene.id}/purge`, headers, payload: { name: scene.name } })
+    expect(purge.statusCode, purge.body).toBe(204)
     expect(await db.select().from(scenes).where(eq(scenes.id, scene.id))).toEqual([])
     const [kept] = await db.select().from(streamingServers).where(eq(streamingServers.id, server.id))
     expect(kept.sceneId).toBeNull()

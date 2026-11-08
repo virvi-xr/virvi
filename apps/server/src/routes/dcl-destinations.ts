@@ -84,7 +84,8 @@ import {
 import { deploymentForCaller, publicDeployment } from './deploy.js'
 import { ImportError } from '../services/import/scene-zip.js'
 import { worldOf } from '../services/dcl/world-of.js'
-import { BLOCKING, lockLocation, sameLocation } from '../services/import/imports.js'
+import { DisconnectBusyError, disconnectDestination } from '../services/dcl/disconnect.js'
+import { mayManageDeletion } from '../scenes/deleted.js'
 import { parcelControl, type ParcelControl } from '../services/dcl/parcel-control.js'
 import { GRANT_COST_NOTE, grantMissing, grantTransactions, heldAsUpdateOperator, isAetheria } from '../services/dcl/parcel-grant.js'
 import { CatalystError, contentServerFor } from '../services/dcl/catalyst-client.js'
@@ -170,7 +171,14 @@ export type ConnectedScene =
 async function connectedSceneOf(actor: Actor, dest: { id: string; sceneId: string } | null | undefined): Promise<ConnectedScene | null> {
   if (!dest) return null
   const access = await getSceneAccess(actor, dest.sceneId)
-  if (access.level === 'none') return { name: null, canDisconnect: false }
+  if (access.level === 'none') {
+    // A deleted scene still holds its World until it's restored or purged (LIV-83): its own people see which one
+    const deleted = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true, deletedAt: true, ownerId: true, orgId: true, restorerIds: true } })
+    if (deleted?.deletedAt && (await mayManageDeletion(actor, deleted))) {
+      return { sceneId: dest.sceneId, name: `${deleted.name} (deleted)`, canDisconnect: false }
+    }
+    return { name: null, canDisconnect: false }
+  }
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
   if (!scene) return { name: null, canDisconnect: false }
   return isFullAccess(access)
@@ -215,8 +223,6 @@ export async function setupBuiltByVirvi(world: string, entityId: string | null, 
   return live ? builtByVirvi(live.metadata) : null
 }
 
-/** Set on a deploy still waiting for its signature when its World is disconnected: that signature can no longer be used. */
-const DISCONNECTED = 'This World was disconnected from the scene, so this deploy was cancelled.'
 const GRANT_KEPT = (world: string) =>
   `Virvi can still deploy to ${world} until you remove its permission. Remove Virvi under ${world}'s permissions in the Creator Hub.`
 
@@ -548,34 +554,9 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     if (access.level === 'none') throw new RouteError(404, 'not_found')
     if (!isFullAccess(access)) throw new RouteError(403, 'forbidden')
     requireWorld(dest)
-    const gone = await db.transaction(async (tx) => {
-      // The lock uploads and import deploys take (an import deploy sets the World up again under it), then the one mode A
-      // deploys and the signed submit take, so nothing starts between the checks and the delete
-      await lockLocation(tx, { kind: 'world', world: worldOf(dest) })
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${dest.id}))`)
-      const uploading = await tx.query.sceneImports.findFirst({
-        where: and(sameLocation({ kind: 'world', world: worldOf(dest) }), inArray(sceneImports.status, [...BLOCKING])),
-        columns: { id: true },
-      })
-      if (uploading) {
-        throw new RouteError(409, 'import_in_progress', { message: 'An upload to this World is being built or deployed right now. Wait for it to finish, then disconnect.' })
-      }
-      const busy = await tx.query.sceneDeployments.findFirst({
-        where: and(eq(sceneDeployments.destinationId, dest.id), inArray(sceneDeployments.status, ['pending', 'building', 'deploying'])),
-        columns: { id: true },
-      })
-      const importing = await tx.query.sceneImports.findFirst({
-        where: and(eq(sceneImports.destinationId, dest.id), eq(sceneImports.status, 'deploying')),
-        columns: { id: true },
-      })
-      if (busy || importing) {
-        throw new RouteError(409, 'deploy_in_progress', { message: 'A deploy is going out to this World right now. Wait for it to finish, then disconnect.' })
-      }
-      // A submit claims its row under the destination's lock, so it either got there first (busy above) or finds it failed
-      await tx.update(sceneDeployments).set({ status: 'failed', errorMessage: DISCONNECTED })
-        .where(and(eq(sceneDeployments.destinationId, dest.id), eq(sceneDeployments.status, 'awaiting_signature')))
-      const [row] = await tx.delete(dclWorldDestinations).where(eq(dclWorldDestinations.id, dest.id)).returning()
-      return row
+    const gone = await disconnectDestination(dest).catch((err) => {
+      if (err instanceof DisconnectBusyError) throw new RouteError(409, err.code, { message: err.message })
+      throw err
     })
     if (!gone) throw new RouteError(404, 'not_found')
     const world = worldOf(gone)

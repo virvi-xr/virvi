@@ -286,6 +286,20 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] hyperfy_pairings table ensured');
       } catch(e) { console.log('[virvi-server] hyperfy_pairings:', e.message); }
 
+      // Deleting a scene (LIV-83): soft delete, deployment removals; matches scenes, sceneDeployments and sceneRemovals in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS deleted_by UUID CONSTRAINT scenes_deleted_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS deleted_org_id UUID\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS restorer_ids UUID[]\`;
+        await sql\`CREATE INDEX IF NOT EXISTS scenes_deleted_at_idx ON scenes (deleted_at) WHERE deleted_at IS NOT NULL\`;
+        await sql\`ALTER TABLE scene_deployments ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE scene_deployments ADD COLUMN IF NOT EXISTS removal_outcome TEXT\`;
+        await sql\`CREATE TABLE IF NOT EXISTS scene_removals (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scene_id UUID NOT NULL CONSTRAINT scene_removals_scene_id_scenes_id_fk REFERENCES scenes(id) ON DELETE CASCADE, kind TEXT NOT NULL, target_id UUID NOT NULL, label TEXT NOT NULL, target JSONB NOT NULL DEFAULT '{}'::jsonb, status TEXT NOT NULL DEFAULT 'pending', error_message TEXT, pending JSONB, requested_by UUID CONSTRAINT scene_removals_requested_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), finished_at TIMESTAMPTZ)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS scene_removals_scene_idx ON scene_removals (scene_id)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS scene_removals_scene_target_uq ON scene_removals (scene_id, target_id)\`;
+        console.log('[virvi-server] scene delete columns ensured');
+      } catch(e) { console.log('[virvi-server] scene delete columns:', e.message); }
       // model enum value
       try {
         await sql\`ALTER TYPE element_type ADD VALUE IF NOT EXISTS 'model'\`;

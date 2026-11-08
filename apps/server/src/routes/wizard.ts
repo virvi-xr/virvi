@@ -12,6 +12,7 @@ import type { FastifyInstance } from 'fastify'
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { dclBudget, plotParcels, plotSizeM, validPlot, type Plot } from '@virvixr/shared'
 import { db } from '../db/connection.js'
+import { liveScene } from '../scenes/live.js'
 import { assetLibraryItems, sceneElementInstances, sceneElements, sceneLibrary, scenes } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { browsableAsset } from '../catalog/visibility.js'
@@ -114,7 +115,7 @@ export default async function wizardRoutes(app: FastifyInstance) {
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(scenes)
-      .where(eq(scenes.ownerId, request.user.id))
+      .where(and(eq(scenes.ownerId, request.user.id), liveScene()))
     const dcl = { virviDeploys: !!signer, virviAddress: signer?.address ?? null }
     const hyperfy = { allowed: true, requiredTier: 'free' } // the wizard is open to everyone
     // A trial's scenes are its own sandbox: no plan limit applies until it becomes an account

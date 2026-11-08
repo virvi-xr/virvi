@@ -14,6 +14,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments } from '../../db/schema.js'
 import { frameEntitiesInScene, modelsInScene, pendingModels, type Assembled } from './assemble.js'
+import { liveSceneIds } from '../../scenes/live.js'
 import {
   DeployerError, liveBaseFor, reconcileStaleDeployments, refusedLine, REFUSED_PREFIX, sceneLimitProblem, startVirviDeploy,
   type Destination, type DeployOptions,
@@ -50,7 +51,8 @@ export async function sweepRedeploys(now: Date = new Date(), opts: DeployOptions
   await reconcileStaleDeployments(now)
   let started = 0
   let marked = 0
-  for (const dest of await db.select().from(dclWorldDestinations)) {
+  // A deleted scene (LIV-83) never deploys
+  for (const dest of await db.select().from(dclWorldDestinations).where(inArray(dclWorldDestinations.sceneId, liveSceneIds()))) {
     try {
       const pending = await pendingModels(dest)
       if (pending.length === 0) {

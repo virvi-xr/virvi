@@ -1,7 +1,8 @@
 import { parseRingCode, type ArDeviceScene } from '@virvixr/shared'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { arFloors, arMarkers, arSpaces } from '../db/schema.js'
+import { arFloors, arMarkers, arSpaces, scenes } from '../db/schema.js'
+import { liveScene } from '../scenes/live.js'
 import type { SceneAccess } from '../auth/permissions.js'
 import { isUuid, type SceneFrom } from '../auth/scene-from.js'
 
@@ -27,7 +28,8 @@ export function sceneRoleOfAccess(access: SceneAccess): ArDeviceScene['role'] {
 
 export async function spaceScene(spaceId: string): Promise<string | null> {
   if (!isUuid(spaceId)) return null
-  const [row] = await db.select({ sceneId: arSpaces.sceneId }).from(arSpaces).where(eq(arSpaces.id, spaceId))
+  // A deleted scene's spaces (LIV-83) are gone with it
+  const [row] = await db.select({ sceneId: arSpaces.sceneId }).from(arSpaces).innerJoin(scenes, eq(scenes.id, arSpaces.sceneId)).where(and(eq(arSpaces.id, spaceId), liveScene()))
   return row?.sceneId ?? null
 }
 
@@ -37,7 +39,8 @@ export async function floorScene(floorId: string): Promise<string | null> {
     .select({ sceneId: arSpaces.sceneId })
     .from(arFloors)
     .innerJoin(arSpaces, eq(arSpaces.id, arFloors.spaceId))
-    .where(eq(arFloors.id, floorId))
+    .innerJoin(scenes, eq(scenes.id, arSpaces.sceneId))
+    .where(and(eq(arFloors.id, floorId), liveScene()))
   return row?.sceneId ?? null
 }
 
@@ -48,7 +51,8 @@ export async function markerScene(markerId: string): Promise<string | null> {
     .from(arMarkers)
     .innerJoin(arFloors, eq(arFloors.id, arMarkers.floorId))
     .innerJoin(arSpaces, eq(arSpaces.id, arFloors.spaceId))
-    .where(eq(arMarkers.id, markerId))
+    .innerJoin(scenes, eq(scenes.id, arSpaces.sceneId))
+    .where(and(eq(arMarkers.id, markerId), liveScene()))
   return row?.sceneId ?? null
 }
 
@@ -84,7 +88,8 @@ export async function markerByCode(code: string): Promise<MarkerByCode | null> {
     .from(arMarkers)
     .innerJoin(arFloors, eq(arFloors.id, arMarkers.floorId))
     .innerJoin(arSpaces, eq(arSpaces.id, arFloors.spaceId))
-    .where(eq(arMarkers.ringId, ringId))
+    .innerJoin(scenes, eq(scenes.id, arSpaces.sceneId))
+    .where(and(eq(arMarkers.ringId, ringId), liveScene()))
   return row ?? null
 }
 

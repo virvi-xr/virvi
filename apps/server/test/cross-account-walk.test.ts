@@ -7,7 +7,7 @@ import {
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
   giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, apiKeys, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, roomScans, roomSets, arDevices,
-  dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports,
+  dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
 } from '../src/db/schema.js'
@@ -135,11 +135,20 @@ async function fixtures() {
     scanId: roomScan.id, userId: b.id, options: { style: 'plain' }, nudges: [], storageKey: `room-sets/${b.id}/b.glb`, glbUrl: 'https://cdn.test/b.glb',
     triangles: 100, plot: { width: 1, depth: 1, base: { x: 0, y: 0 } }, offset: { x: 0.62, y: 0, z: 0.62 }, sceneElementId: element.id,
   }).returning()
+  // B's deleted scene (LIV-83), still holding a World, with a removal waiting for B's signature
+  const deletedScene = (await createScene(b, 'B deleted scene')).scene
+  await db.update(scenes).set({ deletedAt: new Date(), deletedBy: b.id }).where(eq(scenes.id, deletedScene.id))
+  const [goneDestination] = await db.insert(dclWorldDestinations).values({
+    sceneId: deletedScene.id, ownerUserId: b.id, ownerWallet: b.wallet!, worldName: 'b-gone.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'sign', lastEntityId: 'bafkreigone',
+  }).returning()
+  const [removal] = await db.insert(sceneRemovals).values({
+    sceneId: deletedScene.id, kind: 'dcl_world', targetId: goneDestination.id, label: 'Remove the scene from b-gone.dcl.eth', status: 'awaiting_signature', requestedBy: b.id,
+  }).returning()
   const aScene = (await createScene(a, 'A scene')).scene
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, designPayment, aScene, aEvent,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, designPayment, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -155,6 +164,12 @@ const CASES: Case[] = [
   { route: 'PUT /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail`, body: () => ({ fileData: 'AAAA' }) },
   { route: 'DELETE /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail` },
   { route: 'DELETE /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}` },
+  { route: 'GET /api/scenes/:sceneId/delete-plan', url: (f) => `/api/scenes/${f.scene.id}/delete-plan` },
+  { route: 'POST /api/scenes/:sceneId/restore', url: (f) => `/api/scenes/${f.deletedScene.id}/restore` },
+  { route: 'POST /api/scenes/:sceneId/purge', url: (f) => `/api/scenes/${f.deletedScene.id}/purge`, body: () => ({ name: 'B deleted scene' }) },
+  { route: 'POST /api/scenes/:sceneId/removals/:removalId/retry', url: (f) => `/api/scenes/${f.deletedScene.id}/removals/${f.removal.id}/retry` },
+  { route: 'GET /api/scenes/:sceneId/removals/:removalId/sign', url: (f) => `/api/scenes/${f.deletedScene.id}/removals/${f.removal.id}/sign` },
+  { route: 'POST /api/scenes/:sceneId/removals/:removalId/signature', url: (f) => `/api/scenes/${f.deletedScene.id}/removals/${f.removal.id}/signature`, body: () => ({ chain: [], timestamp: Date.now() }) },
   { route: 'POST /api/scenes/:sceneId/presets', url: (f) => `/api/scenes/${f.scene.id}/presets`, body: () => ({ name: 'pwned' }) },
   { route: 'GET /api/scenes/:sceneId/preset-schedules', url: (f) => `/api/scenes/${f.scene.id}/preset-schedules` },
   { route: 'POST /api/scenes/:sceneId/preset-schedules', url: (f) => `/api/scenes/${f.scene.id}/preset-schedules`, body: (f) => ({ presetId: f.preset.id, recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC', durationMinutes: 30 }) },
@@ -413,7 +428,7 @@ const TABLES = [
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
   giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, arDevices, roomScans, roomSets,
-  dclWorldDestinations, sceneImports,
+  dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
 ]
@@ -515,7 +530,7 @@ describe('cross-account route walk', () => {
     const own = new Set([
       'GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes',
       'GET /api/wizard/catalog', 'GET /api/wizard/options', 'GET /api/room-scans', 'GET /api/hyperfy/slots', 'GET /api/assets', 'GET /api/assets/categories',
-      'POST /api/imports', 'GET /api/imports', 'GET /api/ar/devices',
+      'POST /api/imports', 'GET /api/imports', 'GET /api/ar/devices', 'GET /api/scenes/deleted',
     ])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
     expect(cases.length).toBe(trialRoutes.size - own.size)

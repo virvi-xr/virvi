@@ -51,6 +51,8 @@ export function hasScope(access: SceneAccess, scope: SceneScope) {
   return access.scopes.has(scope)
 }
 
+const SCENE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 const minutes = (n: number) => n * 60_000
 
 export function liveWindowStart(b: { startsAt: Date }, rules: VenueRules) {
@@ -67,18 +69,27 @@ export function bookingWindowAt(b: { startsAt: Date; endsAt: Date }, rules: Venu
   return null
 }
 
+/**
+ * What `actor` may do in the scene. A deleted scene (LIV-83) gives no access to anyone, admins included: only the
+ * delete routes' own check (scenes/deleted.ts mayManageDeletion) reaches it, to restore or purge it.
+ */
 export async function getSceneAccess(actor: Actor, sceneId: string, at = new Date()): Promise<SceneAccess> {
   // A trial owns its own scenes and nothing else: no admin, collaborator, role or grant paths.
   if (actor.trial) {
     if (!actor.userId) return NONE
-    const own = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { ownerId: true } })
-    return own?.ownerId === actor.userId ? full('owner') : NONE
+    const own = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { ownerId: true, deletedAt: true } })
+    return own?.ownerId === actor.userId && !own.deletedAt ? full('owner') : NONE
   }
   if (!actor.userId || !actor.verified) return NONE
-  if (actor.role === 'admin') return full('admin')
+  if (actor.role === 'admin') {
+    // Not a scene id: as before, the route's own lookup answers (no query on a malformed uuid)
+    if (!SCENE_UUID.test(sceneId)) return full('admin')
+    const s = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { deletedAt: true } })
+    return s?.deletedAt ? NONE : full('admin')
+  }
 
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) })
-  if (!scene) return NONE
+  if (!scene || scene.deletedAt) return NONE
   if (scene.ownerId === actor.userId) return full('owner')
 
   const collab = await db.query.sceneCollaborators.findFirst({

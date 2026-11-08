@@ -657,7 +657,8 @@ export class VirviSceneRoom extends Room {
         where: eq(scenes.id, this.sceneId),
       })
 
-      if (!scene?.activePresetId) {
+      // A deleted scene (LIV-83) sends nothing: a deployment left up shows an empty scene
+      if (!scene?.activePresetId || scene.deletedAt) {
         console.log(`[VirviSceneRoom] No active preset for scene ${this.sceneId}`)
         // Still send init with empty preset so client doesn't hang
         client.send('scene_preset_update', {
@@ -880,6 +881,6 @@ export class VirviSceneRoom extends Room {
     const scene = await db.query.scenes.findFirst({
       where: eq(scenes.id, this.sceneId),
     })
-    return scene?.activePresetId || null
+    return (!scene?.deletedAt && scene?.activePresetId) || null
   }
 }

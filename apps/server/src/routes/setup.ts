@@ -3,6 +3,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { localModelFile, validateSceneRef, type AnalyticsSceneRef } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { analyticsScenes, assetLibraryItems, mediaAssets, sceneElements, scenes } from '../db/schema.js'
+import { isSceneDeleted } from '../scenes/live.js'
 import { hasDclAuthHeaders, verifyDclSignedFetch } from '../middleware/dcl-auth.js'
 import { resolveAnalyticsScene } from '../analytics/registry.js'
 import { DirectoryUnavailableError } from '../analytics/dcl-directory.js'
@@ -69,6 +70,8 @@ export default async function setupRoutes(app: FastifyInstance) {
     try {
       const { resolved, scene, setup } = await locate(ref, wallet)
       if (!scene) return reply.send({ state: !resolved.ok && resolved.status === 503 ? 'unavailable' : 'none' })
+      // Set up for a deleted scene (LIV-83): nothing to show or join until it's restored
+      if (setup && (await isSceneDeleted(setup.virviSceneId))) return reply.send({ state: 'none' })
       if (setup) {
         const role = await roleOf(setup.virviSceneId, wallet)
         if (role) return reply.send({ state: 'member', sceneId: setup.virviSceneId, role })
@@ -139,7 +142,8 @@ export default async function setupRoutes(app: FastifyInstance) {
     }
     const analytics = await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, key) })
     const setup = analytics ? await getActiveSetup(analytics.id) : null
-    if (!setup) {
+    // A location set up for a deleted scene (LIV-83) shows nothing, as if it weren't set up
+    if (!setup || (await isSceneDeleted(setup.virviSceneId))) {
       reply.status(404).send({ error: 'not_set_up' })
       return null
     }

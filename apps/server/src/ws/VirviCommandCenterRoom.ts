@@ -13,7 +13,8 @@ import { createRequire } from 'node:module'
 const _require = createRequire(import.meta.url)
 const { Room } = _require('colyseus') as any
 type Client = any
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { liveScene } from '../scenes/live.js'
 import { db } from '../db/connection.js'
 import {
   events,
@@ -87,7 +88,7 @@ export class VirviCommandCenterRoom extends Room {
         const links = await db
           .select({ sceneId: eventSceneLinks.sceneId })
           .from(eventSceneLinks)
-          .where(eq(eventSceneLinks.eventId, this.eventId))
+          .where(and(eq(eventSceneLinks.eventId, this.eventId), liveScene()))
 
         const sceneIds = await accessibleSceneIds(actor, links.map((l) => l.sceneId))
         const action = message.action || message.data
@@ -167,7 +168,7 @@ export class VirviCommandCenterRoom extends Room {
           })
           .from(eventSceneLinks)
           .innerJoin(scenes, eq(eventSceneLinks.sceneId, scenes.id))
-          .where(eq(eventSceneLinks.eventId, this.eventId))
+          .where(and(eq(eventSceneLinks.eventId, this.eventId), liveScene()))
 
         worldStatuses = await Promise.all(
           links.map(async (link) => {

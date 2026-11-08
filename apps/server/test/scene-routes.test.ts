@@ -125,7 +125,7 @@ describe('scene routes enforce collaborator roles', () => {
 
   it('owner keeps full access', async () => {
     const s = await setup()
-    expect((await app.inject({ method: 'DELETE', url: `/api/scenes/${s.scene.id}`, headers: as(s.owner) })).statusCode).toBe(204)
+    expect((await app.inject({ method: 'DELETE', url: `/api/scenes/${s.scene.id}`, headers: as(s.owner) })).statusCode).toBe(200)
   })
 
   it('renaming a scene trims the name; a viewer cannot; blank or over 120 characters is 400', async () => {

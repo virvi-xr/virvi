@@ -172,6 +172,9 @@ export interface SignedBundle {
 async function loadDestination(id: string): Promise<Destination> {
   const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.id, id) })
   if (!dest) throw new DeployerError(404, 'not_found')
+  // Nothing deploys for a deleted scene (LIV-83): not a route, an upload's automatic deploy or the sweep
+  const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { deletedAt: true } })
+  if (!scene || scene.deletedAt) throw new DeployerError(404, 'not_found', 'This scene was deleted.')
   return dest
 }
 

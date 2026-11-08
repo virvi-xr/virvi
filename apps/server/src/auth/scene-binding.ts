@@ -5,6 +5,7 @@ import type { SceneRequestContext } from '../middleware/dcl-auth.js'
 import { getActiveSetup, releaseIfRedeployed } from '../setup/setups.js'
 import { DirectoryUnavailableError } from '../analytics/dcl-directory.js'
 import { isOfficialRealm, isWorldRealm } from './official-realms.js'
+import { isSceneDeleted } from '../scenes/live.js'
 
 export interface SceneBinding { locationId: string | null; sceneId: string | null }
 const VISITOR: SceneBinding = { locationId: null, sceneId: null }
@@ -48,5 +49,7 @@ export async function bindSceneRequest(ctx: SceneRequestContext, wallet: string,
     // Still not the recorded deployment (unchanged, unknown deployer, nothing live, or another entity than the live one) → visitor.
     if (!setup.deploymentEntityId || setup.deploymentEntityId !== ctx.sceneId) return { locationId: loc.id, sceneId: null }
   }
+  // A deleted scene (LIV-83) binds nothing: a deployment left up gets no scene pass, ads or HUD
+  if (await isSceneDeleted(setup.virviSceneId)) return { locationId: loc.id, sceneId: null }
   return { locationId: loc.id, sceneId: setup.virviSceneId }
 }

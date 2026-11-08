@@ -14,6 +14,7 @@ import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
 import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
 import { startRetentionSweep, RETENTION_SWEEP_MS } from './services/import/retention.js'
+import { startScenePurgeSweep, PURGE_SWEEP_MS, PURGE_AFTER_DAYS } from './scenes/deleted.js'
 import { startDurationBackfill } from './media/durations.js'
 import { setOnBuildDone } from './services/import/build-runner.js'
 import { deployImport } from './services/import/import-deploy.js'
@@ -105,6 +106,9 @@ async function main() {
   // Ruling R27: import files 30 days after the import ended, deployed files no deploy keeps (it skips a missing bucket)
   startRetentionSweep(RETENTION_SWEEP_MS)
   console.log(`[virvi-server] Import file retention sweep 5 min after boot, then every ${RETENTION_SWEEP_MS}ms`)
+  // LIV-83: deleted scenes are removed for good after their 30 days
+  startScenePurgeSweep()
+  console.log(`[virvi-server] Deleted scene purge (after ${PURGE_AFTER_DAYS} days) 10 min after boot, then every ${PURGE_SWEEP_MS}ms`)
   startDurationBackfill()
   console.log('[virvi-server] Video length backfill 2 min after boot')
   startAnalyticsJobs()
