@@ -503,3 +503,69 @@ def test_claude_is_never_sent_back(api, tmp_path, skills, monkeypatch):
     calls = spy_on_runs(monkeypatch)
     run(api, tmp_path, prompt_job(), 'claude_builds_hat.jsonl')
     assert len(calls) == 1
+
+
+def emote_job(**kw):
+    return prompt_job(**{'kind': 'emote', 'prompt': 'an emote reading a book', 'selectedSlots': None, **kw})
+
+
+def spy_with_second_run(monkeypatch, fixture):
+    """Like spy_on_runs, but every run after the first replays `fixture`."""
+    calls = []
+    real = jobs.run_agent
+
+    def spy(agent, model, prompt, session, *a, **kw):
+        calls.append({'prompt': prompt, 'session': session})
+        if len(calls) > 1:
+            kw['command'] = fake_command(fixture)
+        return real(agent, model, prompt, session, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    return calls
+
+
+def test_emote_with_crossed_legs_is_sent_back_once_to_fix_them(api, tmp_path, skills, monkeypatch):
+    calls = spy_with_second_run(monkeypatch, 'claude_fixes_emote_legs.jsonl')
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert len(calls) == 2 and calls[1]['session'] == 'sess-emote'
+    again = calls[1]['prompt']
+    assert again.startswith(jobs.LEGS_AGAIN_START) and 'out/emote/reading_time.glb' in again
+    assert 'the thighs pass through each other at' in again and 'limb_overlaps' in again and '`leg`' in again
+    assert 'studio-preview out/emote' in again
+    assert ('job-1', {'type': 'progress', 'text': jobs.LEGS_PROGRESS}) in api.events
+    assert result['outcome'] == 'ok', result['error']
+    assert result['reply'] == 'Fixed the legs: they sit side by side now.'
+    assert result['costUsd'] == pytest.approx(0.03)
+    report = api.files['job-1/checks/emote.txt'].decode()
+    assert '  PASS  legs apart' in report and 'legs pass through each other' not in report
+
+
+def test_emote_legs_still_crossed_after_the_retry_save_with_a_warning(api, tmp_path, skills, monkeypatch):
+    calls = spy_on_runs(monkeypatch)  # the retry exports the same crossed legs again
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert len(calls) == 2  # sent back once, never twice
+    assert result['outcome'] == 'ok', result['error']
+    emote = result['pieces'][0]
+    assert emote['files'] and emote['checker']['pass'] is True and emote['checker']['warnings'] >= 1
+    report = api.files['job-1/checks/emote.txt'].decode()
+    assert any(l.startswith('  WARN  legs pass through each other') for l in report.splitlines())
+
+
+def test_emote_with_legs_apart_runs_once(api, tmp_path, skills, monkeypatch):
+    calls = spy_on_runs(monkeypatch)
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote.jsonl')
+    assert len(calls) == 1 and result['outcome'] == 'ok'
+    assert not any(e == {'type': 'progress', 'text': jobs.LEGS_PROGRESS} for _, e in api.events)
+
+
+def test_emote_not_exported_this_prompt_is_not_sent_back(api, tmp_path, skills, monkeypatch):
+    run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    calls = spy_on_runs(monkeypatch)
+    run(api, tmp_path, emote_job(jobId='job-2', prompt='what is it called?'), 'claude_stream.jsonl')
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('kind', ['wearable', 'scene'])
+def test_only_emotes_get_the_leg_retry(api, tmp_path, skills, monkeypatch, kind):
+    calls = spy_on_runs(monkeypatch)
+    run(api, tmp_path, prompt_job(kind=kind, selectedSlots=None), 'claude_builds_emote_crossed_legs.jsonl')
+    assert len(calls) == 1

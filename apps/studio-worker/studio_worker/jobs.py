@@ -23,12 +23,12 @@ from typing import Callable, Mapping
 from . import render as renderer
 from . import scope
 from .agent import Usage, run_agent, then
-from . import scene
+from . import emote_legs, scene
 from .api import Api, ApiError
 from .config import AGENT_USER, DESIGN, skills_sha
 from .finalize import Tools, finalize_job
 from .instructions import closing, uploads_text
-from .pieces import Piece, collect, glbs_by_shape, glbs_exported, glbs_outside, new_hashes, read_declined
+from .pieces import Piece, UnsafeFile, _read, collect, glbs_by_shape, glbs_exported, glbs_outside, new_hashes, read_declined
 from .workspace import load_state, pack, prompt_with_context, save_state, state_dir, unpack
 
 IDLE_EXIT_SEC = 600
@@ -39,6 +39,9 @@ TOUR_WATCHDOG_SEC = 900  # a walk-through is up to 480 frames: more than a spin'
 LOOK_AGAIN = ('You changed a piece without looking at it. Run `studio-preview out/<category>` for each piece you '
               'changed and read every PNG it prints with read_file to see it. Fix whatever looks wrong: shape, size, '
               'where it sits on the head or body, clipping. Then reply to the user again in a few plain sentences.')
+# Sent once to an emote run whose exported legs pass through each other (emote_legs); the reply goes to the user
+LEGS_AGAIN_START = 'The legs in the emote you exported pass through each other'
+LEGS_PROGRESS = 'Fixing the legs: they pass through each other in the emote.'
 
 
 def run_job(job: dict, client: Api, design: Path, render_fn: Callable = renderer.render,
@@ -139,6 +142,13 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
                           lambda text: _send(client, job_id, {'type': 'progress', 'text': text}),
                           command=command, as_user=as_user, cwd=design)
         run = then(run, again)
+    crossing = _crossing_legs(design, started) if kind == 'emote' and run.outcome == 'ok' else None
+    if crossing:  # once only: if the legs still cross, the emote saves with a WARN in its checker report
+        _send(client, job_id, {'type': 'progress', 'text': LEGS_PROGRESS})
+        again = run_agent(agent, job['model'], _legs_again(crossing, agent), run.session, run.session_total, limits,
+                          lambda text: _send(client, job_id, {'type': 'progress', 'text': text}),
+                          command=command, as_user=as_user, cwd=design)
+        run = then(run, again)
     usage = run.usage
     cost = None if run.cost_usd is None and check_cost is None else round((run.cost_usd or 0) + (check_cost or 0), 6)
     result.update(reply=run.reply, costUsd=cost, tokens=usage and {
@@ -211,6 +221,32 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
         result.update(outcome='error', error='render failed: ' + '; '.join(render_errors))
     else:
         result['outcome'] = 'ok' if uploaded else 'no_change'
+
+
+def _crossing_legs(design: Path, since: float) -> list[tuple[str, str]]:
+    """[(out/emote/<name>.glb, what crosses)] for the emote GLBs this run exported whose legs pass through each other.
+    The agent's files are read as regular files only, as collect reads them."""
+    found = []
+    for g in glbs_exported(design, since):
+        if g.parent != design / 'out' / 'emote':
+            continue
+        try:
+            r = emote_legs.check_bytes(_read(g))
+        except UnsafeFile:
+            continue
+        if r is not None and r.crossing:
+            found.append((g.relative_to(design).as_posix(), r.describe()))
+    return found
+
+
+def _legs_again(crossing: list[tuple[str, str]], agent: str) -> str:
+    where = '; '.join(f'in {path}, {what}' for path, what in crossing)
+    opener = 'read every PNG it prints with read_file' if agent == 'grok' else 'open the images it prints'
+    return (f'{LEGS_AGAIN_START}: {where}. Fix the legs: pose them with emotelib\'s `leg` IK instead of rotating the '
+            'leg bones by hand, and run `limb_overlaps` on every frame, left leg against right leg, until nothing '
+            'overlaps (legs that touch on purpose rest against each other). Export over the same file, then run '
+            f'`studio-preview out/emote` again and {opener} to look. Then reply to the user again in a few plain '
+            'sentences.')
 
 
 def _prompt_views(kind: str, piece: Piece | None = None) -> list[dict]:

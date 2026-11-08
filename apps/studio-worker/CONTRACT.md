@@ -221,6 +221,9 @@ effort: one that fails to send is dropped.
   shown to the user. `costUsd` on any checked prompt includes the check's cost.
 - `changeKind`, from the agent: `"new"`, `"fix"` (a fix to a published piece) or `"design"` (a design change).
 - `checker.pass` false means the skills checker found a FAIL. The piece is still reported.
+- An emote's checker report ends with the studio's own leg check: a `WARN` (counted in `checker.warnings`, never a
+  FAIL) when its thighs or shins pass through each other. A prompt whose emote export has crossing legs sends the agent
+  back once, in the same session, to fix them; `reply`, `costUsd` and `tokens` cover both runs.
 - `costUsd` and `tokens` are this prompt's share only, even when the agent resumed a session. They are null for a
   render job.
 - **The workspace is saved before the result is posted.** If the save fails, the outcome is `error` and `pieces` is
