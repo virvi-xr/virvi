@@ -4,7 +4,7 @@ import type { ClientErrorEvent } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
 import { errorSignatures, errorEvents, errorHourly, errorHourlyDims, errorHourlyUsers, errorIpKeys, errorBudget } from '../src/db/schema.js'
 import { config } from '../src/config.js'
-import { clientRecord, writeRecords, resetErrorBuffer, recordServerResponse, flushErrors, type ClientContext } from '../src/errors/record.js'
+import { clientRecord, writeRecords, resetErrorBuffer, recordServerResponse, recordJobFailure, flushErrors, type ClientContext } from '../src/errors/record.js'
 import { ERROR_BUDGETS, ipKey, resetErrorBudgets, takeNewSignature, registerRelease } from '../src/errors/limits.js'
 import { errorIpHash } from '../src/errors/user-hash.js'
 import { purgeErrors } from '../src/errors/retention.js'
@@ -243,6 +243,113 @@ describe('anonymous traffic can only use part of each budget (R2-1)', () => {
     expect(s.signature).toBe('server_5xx 500 GET /api/a')
     expect(await db.select().from(errorEvents)).toHaveLength(1)
     expect(await db.select().from(errorHourly)).toHaveLength(1)
+  })
+})
+
+describe('per-user limits (R3-1)', () => {
+  const saved = JSON.parse(JSON.stringify(ERROR_BUDGETS))
+  beforeEach(async () => { await resetDb(); restart() })
+  afterEach(() => { Object.assign(ERROR_BUDGETS, JSON.parse(JSON.stringify(saved))); restart() })
+  const real = async () => (await db.select().from(errorSignatures)).filter((s) => s.expected !== 'overflow')
+  const junk = (r: number, i: number) => `junk ${String.fromCharCode(97 + (r % 26))}${String.fromCharCode(97 + i)} q${'abcdefghijklmnop'[r]}`
+
+  it('the trial probe: one signed-in user floods new errors; another user’s new crash still gets its signature, event and count', async () => {
+    for (const trial of [true, false]) {
+      await resetDb(); restart()
+      const atk = ctx('198.51.100.66', { userHash: 'attackertrial'.padEnd(32, '0'), trial })
+      for (let r = 0; r < 16; r++) await writeRecords(Array.from({ length: 20 }, (_, i) => clientRecord(exception(junk(r, i)), atk)))
+      // the flooder got only a user's share
+      expect((await real()).length).toBeLessThanOrEqual(ERROR_BUDGETS.perUser.newSignaturesPerHour)
+      await writeRecords([clientRecord({ kind: 'crash', t: Date.now(), route: '/y', errorType: 'TypeError', message: 'real bug in save' }, ctx('203.0.113.9', { userHash: 'b'.repeat(32) }))])
+      const [legit] = await db.select().from(errorSignatures).where(eq(errorSignatures.kind, 'crash'))
+      expect(legit?.signature).toBe('crash TypeError: real bug in save')
+      expect(await db.select().from(errorEvents).where(eq(errorEvents.signatureId, legit.id))).toHaveLength(1)
+      const [hour] = await db.select().from(errorHourly).where(eq(errorHourly.signatureId, legit.id))
+      expect(Number(hour.users)).toBe(1)
+    }
+  })
+
+  it('a user’s new signatures are capped an hour in memory and a day in the database, whatever address they use', async () => {
+    ERROR_BUDGETS.perUser = { ...ERROR_BUDGETS.perUser, newSignaturesPerHour: 3, newSignaturesPerDay: 5 }
+    const u = { userHash: 'c'.repeat(32) }
+    await writeRecords(msgs.slice(0, 4).map((m, i) => clientRecord(exception(m), ctx(`198.51.100.${i + 1}`, u))))
+    expect(await real()).toHaveLength(3)
+    restart() // a new instance: its hourly memory is empty, the day's count is in the database
+    await writeRecords(msgs.slice(4, 8).map((m, i) => clientRecord(exception(m), ctx(`198.51.101.${i + 1}`, u))))
+    expect(await real()).toHaveLength(5)
+    // someone else is unaffected
+    await writeRecords([clientRecord(exception(msgs[9]), ctx('198.51.102.1', { userHash: 'd'.repeat(32) }))])
+    expect(await real()).toHaveLength(6)
+  })
+
+  it('an address’s caps hold for signed-in users too: many accounts on one address share them', async () => {
+    ERROR_BUDGETS.newSignaturesPerIpHour = 3
+    await writeRecords(msgs.slice(0, 6).map((m, i) => clientRecord(exception(m), ctx('198.51.100.7', { userHash: String(i).repeat(32) }))))
+    expect(await real()).toHaveLength(3)
+    ERROR_BUDGETS.newSignaturesPerIpHour = 100
+    ERROR_BUDGETS.signatureHoursPerIpDay = 4
+    await writeRecords(msgs.slice(6, 12).map((m, i) => clientRecord(exception(m), ctx('198.51.100.8', { userHash: String(i).repeat(32) }))))
+    expect(await real()).toHaveLength(7)
+  })
+
+  it('caps the signature-hours and stored events one user makes a day, across restarts', async () => {
+    ERROR_BUDGETS.perUser = { ...ERROR_BUDGETS.perUser, signatureHoursPerDay: 4, storedEventsPerDay: 2 }
+    const u = (ip: string) => ctx(ip, { userHash: 'e'.repeat(32) })
+    await writeRecords(msgs.slice(0, 3).map((m, i) => clientRecord(exception(m), u(`198.51.100.${i + 1}`))))
+    expect(await count('error_events')).toBe(2)
+    restart()
+    await writeRecords(msgs.slice(3, 6).map((m, i) => clientRecord(exception(m), u(`198.51.101.${i + 1}`))))
+    expect(await real()).toHaveLength(4)
+    expect(await count('error_events')).toBe(2)
+    // known signature-hours it already touched still count
+    await writeRecords([clientRecord(exception(msgs[0]), u('198.51.102.1'))])
+    const [s] = (await real()).filter((x) => x.signature.endsWith(msgs[0]))
+    expect(Number(s.totalCount)).toBe(2)
+  })
+
+  it('a trial counts as anonymous for the reserve; only an account reaches the last 40%', async () => {
+    const day = new Date().toISOString().slice(0, 10)
+    const anon = (k: keyof typeof ERROR_BUDGETS.db) => Math.floor(ERROR_BUDGETS.db[k] * 0.6)
+    for (const k of ['hourly', 'events', 'dims', 'users'] as const) {
+      await db.execute(sql`INSERT INTO error_budget (day, key, n) VALUES (${day}::date, ${k}, ${anon(k)}), (${day}::date, ${`anon:${k}`}, ${anon(k)})`)
+    }
+    await writeRecords([clientRecord(exception('trial bug'), ctx('203.0.113.9', { userHash: 'f'.repeat(32), trial: true }))])
+    expect((await db.select().from(errorSignatures)).map((s) => s.signature)).toEqual(['overflow exception'])
+    await writeRecords([clientRecord(exception('account bug'), ctx('203.0.113.10', { userHash: 'a'.repeat(32) }))])
+    expect((await real()).map((s) => s.signature)).toEqual(['exception E: account bug'])
+  })
+
+  it('a trial’s signatures stay in the anonymous share of the signature cap', async () => {
+    ERROR_BUDGETS.maxSignatures = 5
+    await writeRecords(msgs.slice(0, 5).map((m, i) => clientRecord(exception(m), ctx(`198.51.100.${i + 1}`, { userHash: String(i).repeat(32), trial: true }))))
+    expect(await real()).toHaveLength(3)
+    restart() // the count is read again from the database
+    await writeRecords([clientRecord(exception(msgs[6]), ctx('198.51.100.9', { userHash: '9'.repeat(32), trial: true }))])
+    expect(await real()).toHaveLength(3)
+    await writeRecords([clientRecord(exception(msgs[7]), ctx('198.51.100.10', { userHash: 'a'.repeat(32) }))])
+    expect(await real()).toHaveLength(4)
+  })
+
+  it('one user failing jobs with varied text makes few job signatures, and at most a user’s share', async () => {
+    // varied names in the message are one signature
+    for (let i = 0; i < 30; i++) recordJobFailure('import_start', Object.assign(new Error(`bad_zip: The zip file "scene ${i} by me" is broken`), { name: 'ImportError' }), { owner: 'user-0' })
+    await flushErrors()
+    expect((await real()).map((s) => s.signature)).toEqual(['job import_start ImportError bad_zip: The zip file <s>'])
+    // past the per-user cap, new job signatures from that user fold into overflow; another user's still count
+    ERROR_BUDGETS.perUser = { ...ERROR_BUDGETS.perUser, jobSignaturesPerHour: 3, jobSignaturesPerDay: 4 }
+    for (let i = 0; i < 6; i++) recordJobFailure('deploy', new Error(`${'abcdef'[i]}word failed here`), { owner: 'user-1' })
+    await flushErrors()
+    expect((await real()).filter((s) => s.kind === 'job')).toHaveLength(1 + 3)
+    restart()
+    for (let i = 0; i < 6; i++) recordJobFailure('deploy', new Error(`${'ghijkl'[i]}word failed here`), { owner: 'user-1' })
+    await flushErrors()
+    expect((await real()).filter((s) => s.kind === 'job')).toHaveLength(1 + 4)
+    const [over] = (await db.select().from(errorSignatures)).filter((s) => s.signature === 'overflow job')
+    expect(Number(over.totalCount)).toBe(12 - 4)
+    recordJobFailure('deploy', new Error('other user failed'), { owner: 'user-2' })
+    recordJobFailure('deploy', new Error('no owner failed'))
+    await flushErrors()
+    expect((await real()).filter((s) => s.kind === 'job')).toHaveLength(1 + 4 + 2)
   })
 })
 

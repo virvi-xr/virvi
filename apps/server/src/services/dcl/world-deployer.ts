@@ -577,8 +577,10 @@ export async function markFailed(
     .update(sceneDeployments)
     .set({ status: 'failed', errorMessage: message, ...(extra.assetBundle !== undefined ? { assetBundle: extra.assetBundle } : {}) })
     .where(and(eq(sceneDeployments.id, deploymentId), ...(onlyIf ? [eq(sceneDeployments.status, onlyIf)] : [])))
-    .returning({ id: sceneDeployments.id })
-  if (failed.length) recordJobFailure('deploy', err instanceof Error ? err : new Error(message))
+    .returning({ id: sceneDeployments.id, sceneId: sceneDeployments.sceneId, deployedBy: sceneDeployments.deployedBy })
+  if (failed.length) {
+    recordJobFailure('deploy', err instanceof Error ? err : new Error(message), { sceneId: failed[0].sceneId, owner: failed[0].deployedBy ?? failed[0].sceneId })
+  }
   if (failed.length) await importDeployFailed([deploymentId], { code: errorCodeOf(err), message: extra.importMessage ?? message })
 }
 

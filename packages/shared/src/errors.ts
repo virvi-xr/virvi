@@ -232,11 +232,35 @@ export interface SignatureInput {
   stack?: string
   /** Job failures: which job. */
   job?: string
+  /** Server-side errors: the error's code (`err.code`), if it has a short one. */
+  code?: string
+}
+
+/**
+ * The few words of a server-side message that go into its signature: stripped like any message, quoted text as
+ * `<s>`, at most 4 words and 40 characters. What follows (names, reasons, text a user chose) never splits a signature.
+ */
+export function messagePrefix(message: string): string {
+  return normalizeMessage(message)
+    .replace(/(["'`])[^"'`]*\1/g, '<s>')
+    .split(' ')
+    .slice(0, 4)
+    .join(' ')
+    .slice(0, 40)
+}
+
+/** A server-side error's code and the rest of its message: `code` when short, else a leading `snake_code: `. */
+function codeAndMessage(code: string | undefined, message: string): { code: string; message: string } {
+  if (code && /^[A-Za-z][\w.-]{0,39}$/.test(code)) return { code: ` ${code}`, message }
+  const m = /^([a-z][a-z0-9_]{2,39}): (.*)$/s.exec(message)
+  return m ? { code: ` ${m[1]}`, message: m[2] } : { code: '', message }
 }
 
 /**
  * The group an error belongs to: status + route template for API and server responses; error type + stripped message
- * + top stack frame for client errors and exceptions; the job's name + error for failed background jobs.
+ * + top stack frame for client errors; for failed background jobs and uncaught server exceptions, the job's name (or
+ * the top frame), error type and code and only a short prefix of the message (messagePrefix), so varied text can't
+ * mint signatures.
  */
 export function errorSignature(e: SignatureInput): string {
   const type = (e.errorType || 'Error').slice(0, 60)
@@ -245,8 +269,15 @@ export function errorSignature(e: SignatureInput): string {
     case 'api':
     case 'server_5xx':
       return `${e.kind} ${e.status ?? 0} ${(e.method ?? 'GET').toUpperCase()} ${routeTemplate(e.path ?? '')}`
-    case 'job':
-      return `job ${e.job ?? 'unknown'} ${type}: ${msg}`
+    case 'job': {
+      const c = codeAndMessage(e.code, e.message ?? '')
+      return `job ${e.job ?? 'unknown'} ${type}${c.code}: ${messagePrefix(c.message)}`
+    }
+    case 'server_exception': {
+      const c = codeAndMessage(e.code, e.message ?? '')
+      const frame = topFrame(e.stack)
+      return `${e.kind} ${type}${c.code}: ${messagePrefix(c.message)}${frame ? ` @ ${frame}` : ''}`
+    }
     default: {
       const frame = topFrame(e.stack)
       return `${e.kind} ${type}: ${msg}${frame ? ` @ ${frame}` : ''}`

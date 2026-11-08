@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { db } from '../src/db/connection.js'
 import { users, errorSignatures, errorEvents, errorHourly, errorHourlyDims, errorHourlyUsers, errorReports } from '../src/db/schema.js'
 import { buildApp } from '../src/app.js'
 import { config } from '../src/config.js'
 import { flushErrors, resetErrorBuffer, recordJobFailure, bufferedErrorCount } from '../src/errors/record.js'
-import { registerRelease, resetErrorBudgets } from '../src/errors/limits.js'
+import { ERROR_BUDGETS, registerRelease, resetErrorBudgets } from '../src/errors/limits.js'
 import { errorUserHash } from '../src/errors/user-hash.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { resetDb } from './helpers/db.js'
@@ -83,6 +83,24 @@ describe('error ingest (POST /api/errors)', () => {
     expect(hashes.filter(Boolean)).toEqual([errorUserHash(t.id)])
     const [hour] = await db.select().from(errorHourly)
     expect(hour.users).toBe(1)
+  })
+
+  it('a trial token counts as anonymous for the signed-in reserve; an account token does not (R3-1)', async () => {
+    const day = new Date().toISOString().slice(0, 10)
+    for (const k of ['hourly', 'events', 'dims', 'users'] as const) {
+      const n = Math.floor(ERROR_BUDGETS.db[k] * ERROR_BUDGETS.anonymousShare)
+      await db.execute(sql`INSERT INTO error_budget (day, key, n) VALUES (${day}::date, ${k}, ${n}), (${day}::date, ${`anon:${k}`}, ${n})`)
+    }
+    const t = await createUser({ email: null })
+    await db.update(users).set({ isTrial: true, trialLastActiveAt: new Date() }).where(eq(users.id, t.id))
+    const { accessToken } = issueTrialSession(app, { id: t.id, displayName: t.displayName, role: 'creator', trialLastActiveAt: new Date() })
+    await send({ v: 1, events: [crash({ message: 'trial bug' })] }, { authorization: `Bearer ${accessToken}` })
+    const u = await createUser()
+    await send({ v: 1, events: [crash({ message: 'account bug' })] }, { authorization: `Bearer ${tokenFor(u)}` })
+    await flushErrors()
+    expect((await db.select().from(errorSignatures)).map((s) => s.signature).sort()).toEqual([
+      'crash TypeError: account bug @ renderList (/_next/static/chunks/page.js)', 'overflow crash',
+    ])
   })
 
   it('stores the first occurrences and only counts repeats and the rest of a busy day', async () => {

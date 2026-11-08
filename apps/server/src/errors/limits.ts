@@ -21,10 +21,14 @@ import { config } from '../config.js'
  * state, plus hourly rows (400 days, but anonymous-only browser signatures and their rows go after 30 quiet days).
  * One address: at most 100 signature-hours, about 2,500 rows and 50 events, about 0.9 MB a day.
  *
- * Anonymous browsers (no server-verified account or trial) may use at most 60% of every shared budget, of the
- * instance's new-signature and stored-event budgets and of the signature cap; the rest is kept for signed-in users,
- * so a flood can't blind reporting for them. Signed-in users aren't held to an address's signature-hours. Server-side
- * records (5xx, uncaught exceptions, failed jobs) use their own `server:` budgets of the same sizes.
+ * Anonymous browsers (no server-verified account; a guest trial counts as anonymous) may use at most 60% of every
+ * shared budget, of the instance's new-signature and stored-event budgets and of the signature cap; the rest is kept
+ * for signed-in accounts, so a flood can't blind reporting for them. The reserve only changes which pool a record
+ * draws from: every browser record, signed in or not, is held to its address's limits, and one with a user hash (an
+ * account or a trial) also to that user's (`perUser`, each about 5% of the matching budget, in memory and in the
+ * database), so no one user can use up the reserve. Server-side records (5xx, uncaught exceptions, failed jobs) use
+ * their own `server:` budgets of the same sizes; a failed job with a known owner is held to that owner's share of new
+ * job signatures.
  *
  * Breakdown values are clamped: the release must be one the server has run (else "unknown"), routes are templated
  * and cut to 100 characters, a browser is family and major version (a major over 200 is "other"), and at most 10
@@ -45,13 +49,28 @@ export const ERROR_BUDGETS = {
   signatureHoursPerIpDay: 100,
   maxTrackedKeys: 100_000,
   db: { events: 1000, hourly: 5000, dims: 50_000, users: 50_000 },
+  /**
+   * One user hash (an account or trial), whatever its address, about 5% of each matching budget: new signatures an
+   * hour (of the instance's 300, in memory) and a day (of the 5,000 cap, in `error_budget` as `ns:<hash>`);
+   * signature-hours a day (of the 5,000 hourly rows, `uh:<hash>`); stored events a day (of the 1,000, `ue:<hash>`,
+   * and in memory). A failed job's owner: new job signatures an hour (in memory) and a day (of the 5,000 server
+   * hourly rows, `js:<owner>`).
+   */
+  perUser: {
+    newSignaturesPerHour: 15,
+    newSignaturesPerDay: 250,
+    signatureHoursPerDay: 250,
+    storedEventsPerDay: 50,
+    jobSignaturesPerHour: 15,
+    jobSignaturesPerDay: 250,
+  },
   /** The share of each budget (and of the signature cap) anonymous browser traffic may use; the rest is kept for signed-in users. */
   anonymousShare: 0.6,
 }
 
 /**
  * Who a record speaks for: `server` (5xx, uncaught exceptions, failed jobs: trusted, with budgets of their own),
- * `user` (a browser with a server-verified account or trial), or `anon` (any other browser).
+ * `user` (a browser with a server-verified account), or `anon` (any other browser, guest trials included).
  */
 export type Trust = 'server' | 'user' | 'anon'
 
@@ -67,13 +86,30 @@ class WindowCounter {
   private counts = new Map<string, number>()
   constructor(private readonly ms: number) {}
 
-  /** Takes up to `n` of `limit` for `key` in the current window; returns how many it got. */
-  take(key: string, n: number, limit: number, now = Date.now()): number {
+  private roll(now: number) {
     const w = Math.floor(now / this.ms)
     if (w !== this.window) {
       this.window = w
       this.counts.clear()
     }
+  }
+
+  /** Whether `key` has one left of `limit` in the current window. */
+  has(key: string, limit: number, now = Date.now()): boolean {
+    this.roll(now)
+    return (this.counts.get(key) ?? 0) < limit
+  }
+
+  /** Takes one from every [key, limit] if each has one left, else none; true when it took them. */
+  takeAll(limits: Array<[string, number]>, now = Date.now()): boolean {
+    if (!limits.every(([k, l]) => this.has(k, l, now))) return false
+    for (const [k, l] of limits) this.take(k, 1, l, now)
+    return true
+  }
+
+  /** Takes up to `n` of `limit` for `key` in the current window; returns how many it got. */
+  take(key: string, n: number, limit: number, now = Date.now()): number {
+    this.roll(now)
     const used = this.counts.get(key)
     // A full map makes room by forgetting its oldest key, so a flood of addresses never locks new ones out
     if (used === undefined && this.counts.size >= ERROR_BUDGETS.maxTrackedKeys) this.counts.delete(this.counts.keys().next().value!)
@@ -86,23 +122,34 @@ class WindowCounter {
 let hourly = new WindowCounter(HOUR)
 let daily = new WindowCounter(DAY)
 
-/** A new browser signature: anonymous ones within the address's hourly budget and their share of the instance's. */
-export function takeNewSignature(ip: string | null, now = Date.now(), trust: Trust = 'anon'): boolean {
-  if (trust === 'anon') {
-    if (ip && hourly.take(`sig:${ip}`, 1, ERROR_BUDGETS.newSignaturesPerIpHour, now) < 1) return false
-    if (hourly.take('sig:anon', 1, anonLimit(ERROR_BUDGETS.newSignaturesPerHour), now) < 1) return false
-  }
-  return hourly.take('sig:*', 1, ERROR_BUDGETS.newSignaturesPerHour, now) === 1
+/**
+ * A new browser signature: within the address's and the user's hourly budgets (whatever the trust), the anonymous
+ * share of the instance's if anonymous, and the instance's. Takes from all or none.
+ */
+export function takeNewSignature(ip: string | null, now = Date.now(), trust: Trust = 'anon', userHash: string | null = null): boolean {
+  const limits: Array<[string, number]> = [['sig:*', ERROR_BUDGETS.newSignaturesPerHour]]
+  if (ip) limits.push([`sig:${ip}`, ERROR_BUDGETS.newSignaturesPerIpHour])
+  if (userHash) limits.push([`sig:u:${userHash}`, ERROR_BUDGETS.perUser.newSignaturesPerHour])
+  if (trust === 'anon') limits.push(['sig:anon', anonLimit(ERROR_BUDGETS.newSignaturesPerHour)])
+  return hourly.takeAll(limits, now)
 }
 
-/** A full event stored today: anonymous ones within the address's budget and their share; server ones on their own budget. */
-export function takeStoredEvent(ip: string | null, now = Date.now(), trust: Trust = 'anon'): boolean {
+/** A new job signature from this owner this hour (in memory; the day's is in the database). */
+export function takeJobSignature(owner: string, now = Date.now()): boolean {
+  return hourly.takeAll([[`jsig:${owner}`, ERROR_BUDGETS.perUser.jobSignaturesPerHour]], now)
+}
+
+/**
+ * A full event stored today: browser ones within the address's and the user's budgets and, if anonymous, their
+ * share; server ones on their own budget. Takes from all or none.
+ */
+export function takeStoredEvent(ip: string | null, now = Date.now(), trust: Trust = 'anon', userHash: string | null = null): boolean {
   if (trust === 'server') return daily.take('ev:server', 1, ERROR_BUDGETS.storedEventsPerDay, now) === 1
-  if (trust === 'anon') {
-    if (ip && daily.take(`ev:${ip}`, 1, ERROR_BUDGETS.storedEventsPerIpDay, now) < 1) return false
-    if (daily.take('ev:anon', 1, anonLimit(ERROR_BUDGETS.storedEventsPerDay), now) < 1) return false
-  }
-  return daily.take('ev:*', 1, ERROR_BUDGETS.storedEventsPerDay, now) === 1
+  const limits: Array<[string, number]> = [['ev:*', ERROR_BUDGETS.storedEventsPerDay]]
+  if (ip) limits.push([`ev:${ip}`, ERROR_BUDGETS.storedEventsPerIpDay])
+  if (userHash) limits.push([`ev:u:${userHash}`, ERROR_BUDGETS.perUser.storedEventsPerDay])
+  if (trust === 'anon') limits.push(['ev:anon', anonLimit(ERROR_BUDGETS.storedEventsPerDay)])
+  return daily.takeAll(limits, now)
 }
 
 /** A crash report from this address today. */
@@ -138,6 +185,18 @@ export class DayBudget {
       for (const r of rows) b.base.set(r.key, Number(r.n))
     }
     return b
+  }
+
+  /** Whether `key` has one left of `limit`. */
+  has(key: string, limit: number): boolean {
+    return (this.base.get(key) ?? 0) + (this.used.get(key) ?? 0) < limit
+  }
+
+  /** Takes one from every [key, limit] if each has one left, else none; true when it took them. */
+  takeAll(limits: Array<[string, number]>): boolean {
+    if (!limits.every(([k, l]) => this.has(k, l))) return false
+    for (const [k, l] of limits) this.take(k, 1, l)
+    return true
   }
 
   /** Takes up to `n` of `limit` for `key`; returns how many it got. */

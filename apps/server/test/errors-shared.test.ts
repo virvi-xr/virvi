@@ -70,6 +70,21 @@ describe('errorSignature', () => {
     expect(errorSignature({ kind: 'server_5xx', status: 503, method: 'POST', path: '/api/scenes/:sceneId' })).toBe('server_5xx 503 POST /api/scenes/:sceneId')
     expect(errorSignature({ kind: 'job', job: 'deploy', errorType: 'Error', message: 'World 12 is full' })).toBe('job deploy Error: World <n> is full')
   })
+  it('failed jobs and server exceptions sign by name, type and code, with only a short prefix of the message', () => {
+    // Text a user chose (names, reasons) after the first few words, or quoted, never makes a new signature
+    const job = (message: string, code?: string) => errorSignature({ kind: 'job', job: 'import_start', errorType: 'ImportError', message, code })
+    expect(job('bad_zip: The zip file "my scene 1" could not be opened')).toBe(job('bad_zip: The zip file "another 22" could not be read at all'))
+    expect(job('bad_zip: The zip file is broken')).toBe('job import_start ImportError bad_zip: The zip file is')
+    expect(job('Decentraland rejected the deploy: name alice-world taken')).toBe(job('Decentraland rejected the deploy: bob owns this'))
+    expect(job('anything at all', 'grant_revoked')).toBe('job import_start ImportError grant_revoked: anything at all')
+    expect(job('x', 'grant_revoked')).not.toBe(job('x', 'cancelled'))
+    expect(job('a'.repeat(300))).toHaveLength('job import_start ImportError: '.length + 40)
+    const exc = (message: string) => errorSignature({ kind: 'server_exception', errorType: 'Error', message, stack: 'Error: x\n    at handle (/app/dist/routes/import.js:1:2)' })
+    expect(exc('Unexpected token in "user text 1" here and more words')).toBe(exc('Unexpected token in "other 9" here, then different words'))
+    expect(exc('Unexpected token in json')).toBe('server_exception Error: Unexpected token in json @ handle (/app/dist/routes/import.js)')
+    // Browser errors keep their whole (stripped) message
+    expect(errorSignature({ kind: 'exception', errorType: 'E', message: 'one two three four five six' })).toBe('exception E: one two three four five six')
+  })
 })
 
 describe('expected 4xx (one list, never filed)', () => {

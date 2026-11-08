@@ -313,8 +313,9 @@ export async function deleteImportFiles(ids: string[]): Promise<void> {
 
 /** Fails an import that never got its build going (storing the source or starting the build threw). */
 export async function failImport(importId: string, code: string, message: string): Promise<void> {
-  recordJobFailure('import_start', Object.assign(new Error(`${code}: ${message}`), { name: 'ImportError' }))
   const now = new Date()
-  await db.update(sceneImports).set({ status: 'failed', errorCode: code, errorMessage: message, buildTokenHash: null, finishedAt: now, updatedAt: now })
+  const [row] = await db.update(sceneImports).set({ status: 'failed', errorCode: code, errorMessage: message, buildTokenHash: null, finishedAt: now, updatedAt: now })
     .where(and(eq(sceneImports.id, importId), inArray(sceneImports.status, ['uploaded', 'building'])))
+    .returning({ userId: sceneImports.userId })
+  recordJobFailure('import_start', Object.assign(new Error(message), { name: 'ImportError', code }), { owner: row?.userId ?? null })
 }

@@ -6,8 +6,8 @@ import {
 } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { config } from '../config.js'
-import { resetIpKeys } from './user-hash.js'
-import { DayBudget, ERROR_BUDGETS, anonLimit, knownReleases, takeNewSignature, takeStoredEvent, type Trust } from './limits.js'
+import { errorUserHash, resetIpKeys } from './user-hash.js'
+import { DayBudget, ERROR_BUDGETS, anonLimit, knownReleases, takeJobSignature, takeNewSignature, takeStoredEvent, type Trust } from './limits.js'
 
 /**
  * The error recorder (LIV-66). Requests and jobs only push into an in-memory buffer; a flusher writes it every
@@ -42,6 +42,10 @@ export interface ErrorRecord {
   browser: string | null
   os: string | null
   userHash: string | null
+  /** The user hash is a guest trial's: it counts as anonymous for the signed-in reserve (limits.ts). */
+  trial: boolean
+  /** A failed job's owner (hashed), for the per-owner cap on new job signatures; never stored. */
+  owner: string | null
   orgId: string | null
   sceneId: string | null
   /** The sender's address key (limits.ts ipKey) and its day-salted hash ('ip:…'), for budgets and distinct-address counts. */
@@ -79,6 +83,8 @@ export interface ClientContext {
   browser: string
   os: string
   userHash: string | null
+  /** The user hash is from a guest trial token, not an account. */
+  trial?: boolean
   orgId: string | null
   ipKey: string | null
   ipHash: string | null
@@ -106,6 +112,8 @@ export function clientRecord(e: ClientErrorEvent, ctx: ClientContext, receivedAt
     browser: ctx.browser,
     os: ctx.os,
     userHash: ctx.userHash,
+    trial: !!(ctx.userHash && ctx.trial),
+    owner: null,
     orgId: uuidOrNull(ctx.orgId),
     sceneId: uuidOrNull(e.sceneId),
     ipKey: ctx.ipKey,
@@ -126,9 +134,11 @@ export function recordClientEvents(events: ClientErrorEvent[], ctx: ClientContex
   for (const e of events) push(clientRecord(e, ctx, at))
 }
 
-function errorParts(err: unknown): { errorType: string; message: string; stack: string | null } {
+function errorParts(err: unknown): { errorType: string; message: string; stack: string | null; code?: string } {
   if (err instanceof Error) {
+    const code = (err as { code?: unknown }).code
     return {
+      code: typeof code === 'string' ? code : undefined,
       errorType: (err.name || 'Error').slice(0, 60),
       message: redactText(String(err.message ?? '').slice(0, ERROR_LIMITS.maxMessage)),
       stack: err.stack ? redactText(err.stack.slice(0, ERROR_LIMITS.maxStack)) : null,
@@ -146,13 +156,14 @@ interface ServerFields {
   orgId?: string | null
   sceneId?: string | null
   job?: string
+  owner?: string | null
 }
 
 function serverRecord(kind: 'server_5xx' | 'server_exception' | 'job', err: unknown, f: ServerFields): ErrorRecord {
   const parts = err === undefined ? null : errorParts(err)
   const signature = errorSignature({
     kind, status: f.status ?? undefined, method: f.method ?? undefined, path: f.routeTemplate ?? undefined,
-    errorType: parts?.errorType, message: parts?.message, stack: parts?.stack ?? undefined, job: f.job,
+    errorType: parts?.errorType, message: parts?.message, stack: parts?.stack ?? undefined, job: f.job, code: parts?.code,
   })
   const now = new Date()
   return {
@@ -163,7 +174,7 @@ function serverRecord(kind: 'server_5xx' | 'server_exception' | 'job', err: unkn
     expected: null,
     occurredAt: now, receivedAt: now, release: config.release,
     route: f.routeTemplate ?? null, method: f.method ?? null, path: f.routeTemplate ?? null, requestId: f.requestId ?? null,
-    browser: null, os: null, userHash: f.userHash ?? null, orgId: uuidOrNull(f.orgId), sceneId: uuidOrNull(f.sceneId),
+    browser: null, os: null, userHash: f.userHash ?? null, trial: false, owner: f.owner ? errorUserHash(`owner:${f.owner}`) : null, orgId: uuidOrNull(f.orgId), sceneId: uuidOrNull(f.sceneId),
     ipKey: null, ipHash: null,
     count: 1, repeat: false, userFacing: false,
     errorType: parts?.errorType ?? null, message: parts?.message ?? null, stack: parts?.stack ?? null,
@@ -181,8 +192,11 @@ export function recordServerException(err: unknown): void {
   try { push(serverRecord('server_exception', err, {})) } catch { /* ignore */ }
 }
 
-/** A background job that failed: studio worker jobs, deploys, imports, payment webhooks. */
-export function recordJobFailure(job: string, err: unknown, f: { sceneId?: string | null; orgId?: string | null } = {}): void {
+/**
+ * A background job that failed: studio worker jobs, deploys, imports, payment webhooks. `owner` (the account or scene
+ * whose job it was) holds that owner to a share of new job signatures, so failing jobs on purpose can't crowd out others.
+ */
+export function recordJobFailure(job: string, err: unknown, f: { sceneId?: string | null; orgId?: string | null; owner?: string | null } = {}): void {
   try { push(serverRecord('job', err instanceof Error ? err : new Error(String(err)), { ...f, job })) } catch { /* ignore */ }
 }
 
@@ -220,9 +234,11 @@ const rowsOf = <T>(r: unknown) => r as unknown as T[]
 const hourOf = (d: Date) => new Date(Math.floor(d.getTime() / HOUR_MS) * HOUR_MS)
 const THIRTY_DAYS = 30 * 24 * HOUR_MS
 
-const trustOf = (r: ErrorRecord): Trust => (r.source === 'server' ? 'server' : r.userHash ? 'user' : 'anon')
+/** Only an account reaches the signed-in reserve; a guest trial is anonymous for it (still held to its user's limits). */
+const isAccount = (r: ErrorRecord) => !!r.userHash && !r.trial
+const trustOf = (r: ErrorRecord): Trust => (r.source === 'server' ? 'server' : isAccount(r) ? 'user' : 'anon')
 /** A group speaks for its most trusted record: one signed-in user's event makes its signature-hour theirs. */
-const groupTrust = (g: ErrorRecord[]): Trust => (g.some((r) => r.source === 'server') ? 'server' : g.some((r) => r.userHash) ? 'user' : 'anon')
+const groupTrust = (g: ErrorRecord[]): Trust => (g.some((r) => r.source === 'server') ? 'server' : g.some(isAccount) ? 'user' : 'anon')
 
 let signatureTotal = { n: 0, anon: 0, at: 0 }
 /**
@@ -310,8 +326,9 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
       SELECT user_hash FROM error_hourly_users WHERE signature_id = ${signatureId} AND hour = ${ts(hour)}
         AND user_hash IN (${sql.join(hashes.map((h) => sql`${h}`), sql`, `)})`)).map((r) => r.user_hash))
     const fresh = hashes.filter((h) => !present.has(h))
-    // A user's own row is theirs to make; an address row uses the group's share
-    const allowed = fresh.filter((h) => budget.takeFor('users', 1, h.startsWith('ip:') ? trust : trust === 'server' ? 'server' : 'user') === 1)
+    // An account's own row is theirs to make; a trial's or an address row uses the group's share
+    const accounts = new Set(group.filter(isAccount).map((r) => r.userHash!))
+    const allowed = fresh.filter((h) => budget.takeFor('users', 1, trust === 'server' ? 'server' : accounts.has(h) ? 'user' : h.startsWith('ip:') ? trust : 'anon') === 1)
     if (allowed.length) {
       const added = rowsOf<{ user_hash: string }>(await db.execute(sql`
         INSERT INTO error_hourly_users (signature_id, hour, user_hash)
@@ -322,7 +339,8 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
       if (added.length) {
         await db.execute(sql`UPDATE error_hourly SET users = users + ${users}, ips = ips + ${ips} WHERE signature_id = ${signatureId} AND hour = ${ts(hour)}`)
       }
-      if (users) await db.execute(sql`UPDATE error_signatures SET seen_users = true WHERE id = ${signatureId} AND NOT seen_users`)
+      // Only an account marks a signature as one signed-in users hit (the signature cap's reserve and the purge)
+      if (added.some((a) => accounts.has(a.user_hash))) await db.execute(sql`UPDATE error_signatures SET seen_users = true WHERE id = ${signatureId} AND NOT seen_users`)
     }
   }
 
@@ -358,7 +376,10 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
   let keep = slot ? Number(slot.after) - Number(slot.before) : 0
   if (isNew && keep < 1) keep = 1
   for (const r of candidates.slice(0, keep)) {
-    if (!takeStoredEvent(r.ipKey, r.receivedAt.getTime(), trustOf(r)) || !budget.takeFor('events', 1, trustOf(r))) continue
+    // A user's daily share (in the database) first, then memory, then the day's shared budget
+    if (r.source === 'web' && r.userHash && !budget.has(`ue:${r.userHash}`, ERROR_BUDGETS.perUser.storedEventsPerDay)) continue
+    if (!takeStoredEvent(r.ipKey, r.receivedAt.getTime(), trustOf(r), r.source === 'web' ? r.userHash : null) || !budget.takeFor('events', 1, trustOf(r))) continue
+    if (r.source === 'web' && r.userHash) budget.take(`ue:${r.userHash}`, 1, ERROR_BUDGETS.perUser.storedEventsPerDay)
     const e = boundRecord(r)
     try {
       await db.execute(sql`
@@ -375,11 +396,12 @@ async function writeHour(signatureId: string, hour: Date, group: ErrorRecord[], 
 }
 
 /**
- * Admits records to signatures: a known signature always; a new browser one only within the address and instance
- * budgets and under the cap on recently seen browser signatures; a server one always. The rest become overflow
- * records. Returns the known signatures' ids by hash.
+ * Admits records to signatures: a known signature always; a new browser one only within the address's, the user's
+ * (hourly in memory, daily in `budget`) and the instance's budgets and under the cap on recently seen browser
+ * signatures; a server one always, except a failed job's new signature past its owner's share. The rest become
+ * overflow records. Returns the known signatures' ids by hash.
  */
-async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; fresh: Set<string>; existing: Map<string, string> }> {
+async function admit(records: ErrorRecord[], budget: DayBudget): Promise<{ records: ErrorRecord[]; fresh: Set<string>; existing: Map<string, string> }> {
   const hashes = [...new Set(records.map((r) => r.hash))]
   const existing = new Map(rowsOf<{ hash: string; id: string }>(await db.execute(sql`
     SELECT hash, id FROM error_signatures WHERE hash IN (${sql.join(hashes.map((h) => sql`${h}`), sql`, `)})`)).map((r) => [r.hash, r.id]))
@@ -388,16 +410,26 @@ async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; 
   let anon = counts.anon
   const fresh = new Set<string>()
   const out: ErrorRecord[] = []
+  const { perUser } = ERROR_BUDGETS
   for (const r of records) {
-    if (existing.has(r.hash) || fresh.has(r.hash) || r.expected === 'overflow' || r.source === 'server') {
-      if (r.source === 'server' && !existing.has(r.hash)) fresh.add(r.hash)
-      out.push(r)
+    if (existing.has(r.hash) || fresh.has(r.hash) || r.expected === 'overflow') { out.push(r); continue }
+    if (r.source === 'server') {
+      // A failed job's owner may make only so many new job signatures (an hour here, a day in the database)
+      const owned = r.kind === 'job' && r.owner
+      const ok = !owned || (budget.has(`js:${r.owner}`, perUser.jobSignaturesPerDay) && takeJobSignature(r.owner!, r.receivedAt.getTime()))
+      if (ok) {
+        if (owned) budget.take(`js:${r.owner}`, 1, perUser.jobSignaturesPerDay)
+        fresh.add(r.hash)
+        out.push(r)
+      } else out.push(overflowRecord(r))
       continue
     }
-    // Anonymous browsers may fill only their share of the cap; signed-in users the rest
+    // Anonymous browsers (trials included) may fill only their share of the cap; accounts the rest
     const trust = trustOf(r)
     const room = total < ERROR_BUDGETS.maxSignatures && (trust !== 'anon' || anon < anonLimit(ERROR_BUDGETS.maxSignatures))
-    if (room && takeNewSignature(r.ipKey, r.receivedAt.getTime(), trust)) {
+      && (!r.userHash || budget.has(`ns:${r.userHash}`, perUser.newSignaturesPerDay))
+    if (room && takeNewSignature(r.ipKey, r.receivedAt.getTime(), trust, r.userHash)) {
+      if (r.userHash) budget.take(`ns:${r.userHash}`, 1, perUser.newSignaturesPerDay)
       fresh.add(r.hash)
       total++
       signatureTotal.n++
@@ -408,6 +440,17 @@ async function admit(records: ErrorRecord[]): Promise<{ records: ErrorRecord[]; 
     }
   }
   return { records: out, fresh, existing }
+}
+
+/** Every `error_budget` key a batch may use: the shared and server budgets, and its addresses' and users' shares. */
+function budgetKeys(records: ErrorRecord[]): string[] {
+  const keys: string[] = (['events', 'hourly', 'dims', 'users'] as const).flatMap((k) => [k, `anon:${k}`, `server:${k}`])
+  for (const r of records) {
+    if (r.source === 'web' && r.ipHash) keys.push(`sh:${r.ipHash}`)
+    if (r.source === 'web' && r.userHash) keys.push(`ns:${r.userHash}`, `uh:${r.userHash}`, `ue:${r.userHash}`)
+    if (r.owner) keys.push(`js:${r.owner}`)
+  }
+  return keys
 }
 
 const groupBy = <T>(xs: T[], key: (x: T) => string | number) => {
@@ -443,9 +486,9 @@ export async function writeRecords(records: ErrorRecord[]): Promise<Map<string, 
   const ids = new Map<string, string>()
   if (!records.length) return ids
   const known = await knownReleases()
-  const { records: admitted, fresh, existing } = await admit(records.map((r) => clampWeb(r, known)))
-  const shKeys = admitted.filter((r) => r.source === 'web' && r.ipHash && r.expected !== 'overflow').map((r) => `sh:${r.ipHash}`)
-  const budget = await DayBudget.load([...(['events', 'hourly', 'dims', 'users'] as const).flatMap((k) => [k, `anon:${k}`, `server:${k}`]), ...shKeys])
+  const clamped = records.map((r) => clampWeb(r, known))
+  const budget = await DayBudget.load(budgetKeys(clamped))
+  const { records: admitted, fresh, existing } = await admit(clamped, budget)
   const folded: ErrorRecord[] = []
   const touched = new Set<string>()
 
@@ -456,17 +499,19 @@ export async function writeRecords(records: ErrorRecord[]): Promise<Map<string, 
       const plan: Array<[Date, ErrorRecord[]]> = []
       for (const [h, g] of groupBy(group, (r) => hourOf(r.receivedAt).getTime())) {
         const hour = new Date(h as number)
-        const ipHashes = [...new Set(g.map((r) => r.ipHash).filter((x): x is string => !!x))]
-        const present = known && ipHashes.length ? new Set(rowsOf<{ user_hash: string }>(await db.execute(sql`
+        const marks = [...new Set(g.flatMap((r) => (r.source === 'web' ? [r.ipHash, r.userHash] : [])).filter((x): x is string => !!x))]
+        const present = known && marks.length ? new Set(rowsOf<{ user_hash: string }>(await db.execute(sql`
           SELECT user_hash FROM error_hourly_users WHERE signature_id = ${known} AND hour = ${ts(hour)}
-            AND user_hash IN (${sql.join(ipHashes.map((x) => sql`${x}`), sql`, `)})`)).map((r) => r.user_hash)) : new Set<string>()
-        // An address touching a signature-hour it hasn't yet today uses one of its signature-hours for the day
+            AND user_hash IN (${sql.join(marks.map((x) => sql`${x}`), sql`, `)})`)).map((r) => r.user_hash)) : new Set<string>()
+        // An address or user touching a signature-hour it hasn't yet today uses one of its signature-hours for the
+        // day, whatever its trust; past either share the record goes to overflow. Server records aren't held to them.
         const keep: ErrorRecord[] = []
         for (const r of g) {
-          const t = r.ipHash ? `${hash}|${h}|${r.ipHash}` : ''
-          // Signed-in users and server records aren't held to an address's signature-hours
-          if (r.source !== 'web' || r.userHash || !r.ipHash || present.has(r.ipHash) || touched.has(t)) { keep.push(r); continue }
-          if (budget.take(`sh:${r.ipHash}`, 1, ERROR_BUDGETS.signatureHoursPerIpDay)) { touched.add(t); keep.push(r) } else folded.push(r)
+          if (r.source !== 'web') { keep.push(r); continue }
+          const need: Array<[string, number, string]> = []
+          if (r.ipHash && !present.has(r.ipHash) && !touched.has(`${hash}|${h}|${r.ipHash}`)) need.push([`sh:${r.ipHash}`, ERROR_BUDGETS.signatureHoursPerIpDay, `${hash}|${h}|${r.ipHash}`])
+          if (r.userHash && !present.has(r.userHash) && !touched.has(`${hash}|${h}|${r.userHash}`)) need.push([`uh:${r.userHash}`, ERROR_BUDGETS.perUser.signatureHoursPerDay, `${hash}|${h}|${r.userHash}`])
+          if (budget.takeAll(need.map(([k, l]) => [k, l]))) { for (const [, , t] of need) touched.add(t); keep.push(r) } else folded.push(r)
         }
         if (!keep.length) continue
         const hourExists = known ? rowsOf(await db.execute(sql`SELECT 1 FROM error_hourly WHERE signature_id = ${known} AND hour = ${ts(hour)}`)).length > 0 : false
@@ -495,7 +540,10 @@ export async function writeRecords(records: ErrorRecord[]): Promise<Map<string, 
  * affected user. A new signature is made only within the same budgets (else the report joins the overflow one).
  */
 export async function reportSignature(r: ErrorRecord): Promise<string | null> {
-  const { records: [a] } = await admit([clampWeb(r, await knownReleases())])
+  const clamped = clampWeb(r, await knownReleases())
+  const budget = await DayBudget.load(budgetKeys([clamped]))
+  const { records: [a] } = await admit([clamped], budget)
+  await budget.save().catch((err) => console.error('[errors] saving the error budget failed:', err instanceof Error ? err.message : err))
   await db.execute(sql`
     INSERT INTO error_signatures (hash, signature, source, kind, status, route, error_type, message, expected, first_release, last_release, total_count)
     VALUES (${a.hash}, ${a.signature}, ${a.source}, ${a.kind}, ${a.status}, ${a.routeTemplate}, ${a.errorType}, ${a.normalizedMessage}, ${a.expected},

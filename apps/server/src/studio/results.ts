@@ -319,11 +319,17 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     if (d) await maybeFlag(d.ownerId, now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
   }
   // LIV-66: a worker job that ended in an error is a failed background job
-  if (result.outcome === 'error') recordJobFailure(`studio_${job.type}`, new Error(result.error || 'studio job failed'))
+  if (result.outcome === 'error') await recordStudioFailure(job, result.error || 'studio job failed')
   await publishStudio(job.designId, {
     type: 'job', jobId: job.id, status, outcome: result.outcome, ...(result.error ? { error: result.error } : {}),
   })
   return 'applied'
+}
+
+/** LIV-66: a failed worker job, held to its design owner's share of new job signatures. Never throws. */
+async function recordStudioFailure(job: { type: string; designId: string }, error: string): Promise<void> {
+  const [d] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, job.designId)).catch(() => [])
+  recordJobFailure(`studio_${job.type}`, new Error(error), { owner: d?.ownerId ?? job.designId })
 }
 
 /** Fails jobs that will never get a result (machine never started, or stopped answering), once each. */
@@ -363,7 +369,7 @@ export async function failJobs(
     })
     if (!r) continue
     n++
-    recordJobFailure(`studio_${r.type}`, new Error(error))
+    await recordStudioFailure(r, error)
     await publishStudio(r.designId, { type: 'job', jobId: r.id, status: 'failed', outcome: 'error', error })
   }
   return n
