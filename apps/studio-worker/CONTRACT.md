@@ -116,9 +116,11 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   - `{"categories": ["hat"], "bodyShape", "mode": "orbit", "ring": bool}`: a wearable's Inspect view, `orbit-<shape>`,
     122 frames (24 with `ring`).
   - `{"set": true, "bodyShape", "outfit", "emote": <base emote>|"own"}`: every current piece worn together in a
-    walk-around, uploaded to `renders/set/<viewKey>/`. The result carries `set` and an empty `pieces`.
+    walk-around, uploaded to `renders/set/<viewKey>/`. The result carries `set` and an empty `pieces`. With
+    `"categories": [...]` (Finalize checking some of the pieces) only those pieces are worn.
 - `fixClipping`, on a prompt job: `{"emote": <base emote>|"own", "bodyShape", "outfit"}` when the prompt is the
-  server's free clipping fix. Before the agent runs, the worker writes 16 frames of that emote, every piece worn, to
+  server's free clipping fix (with `categories`, the pieces worn in the view the person saw: only those are worn in the
+  frames and named to studio-preview). Before the agent runs, the worker writes 16 frames of that emote, every piece worn, to
   `review/clipping/<emote>/NN.png`, and the prompt tells the agent to open them first and to check its fix with
   `studio-preview <pieces> --emote <emote> --body <shape> --outfit <outfit>`. If the frames can't be rendered, the
   job ends `error` without running the agent.

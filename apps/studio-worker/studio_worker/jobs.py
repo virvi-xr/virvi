@@ -228,6 +228,11 @@ def _worn(pieces: list[Piece]) -> list[dict]:
     return [{'category': p.category, 'glbs': glbs_by_shape(p), 'meta': p.meta} for p in pieces]
 
 
+def _chosen(pieces: list[Piece], categories) -> list[Piece]:
+    """Finalize's selection (`categories`): only those pieces are worn. None wears every piece."""
+    return pieces if categories is None else [p for p in pieces if p.category in categories]
+
+
 def _clipping_frames(design, kind, fix, render_fn, as_user) -> str | None:
     """Writes 16 frames of the reported emote, every piece worn, to review/clipping/<emote>/. Returns an error."""
     out = design / 'review' / 'clipping' / fix['emote']
@@ -235,6 +240,7 @@ def _clipping_frames(design, kind, fix, render_fn, as_user) -> str | None:
         shutil.rmtree(out)
     with tempfile.TemporaryDirectory(prefix='studio-stage-') as stage:
         pieces, _, error = collect(design, kind, {}, run_checker=False, stage=Path(stage))
+        pieces = _chosen(pieces, fix.get('categories'))
         if error or not pieces:
             return error or 'the design has no pieces'
         r = render_fn(_worn(pieces), {'bodyShape': fix['bodyShape'], 'outfit': fix['outfit'],
@@ -248,8 +254,10 @@ def _clipping_frames(design, kind, fix, render_fn, as_user) -> str | None:
 
 
 def _clipping_text(design, kind, agent, fix) -> str:
+    chosen = fix.get('categories')
     folders = ' '.join(f'out/{d.name}' for d in sorted((design / 'out').iterdir()) if d.is_dir() and
-                       (d / 'piece.json').exists()) if (design / 'out').is_dir() else 'out/<category>'
+                       (d / 'piece.json').exists() and (chosen is None or d.name in chosen)) \
+        if (design / 'out').is_dir() else 'out/<category>'
     opener = 'open every one with read_file' if agent == 'grok' else 'open every one'
     return (f"\nFrames of the clipping are in review/clipping/{fix['emote']}/: {opener} before you change anything, "
             f"and after your fix run studio-preview {folders} --emote {fix['emote']} --body {fix['bodyShape']} "
@@ -322,7 +330,8 @@ def _tour_render(job, client, pieces, render_fn, result):
 
 
 def _set_render(job, client, pieces, spec, render_fn, result):
-    """Every piece worn together, walking round once through the emote: renders/set/<viewKey>/."""
+    """Every piece (or Finalize's selection) worn together, walking round once through the emote: renders/set/<viewKey>/."""
+    pieces = _chosen(pieces, spec.get('categories'))
     if not pieces:
         result['error'] = 'the design has no pieces'
         return

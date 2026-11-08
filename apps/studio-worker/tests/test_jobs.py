@@ -388,6 +388,25 @@ def test_set_render_job_wears_every_piece(api, tmp_path):
     assert 'job-r/renders/set/walk-male-default-run/095.webp' in api.files
 
 
+def test_set_render_job_for_a_selection_wears_only_those_pieces(api, tmp_path):
+    renders = []
+    design = design_with(tmp_path, 'feet', 'hat', 'upper_body')
+    result = jobs.run_job(render_job({'set': True, 'bodyShape': 'male', 'outfit': 'default', 'emote': 'run',
+                                      'categories': ['hat', 'upper_body']}),
+                          client(api), design, render_fn=fake_render(renders), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert sorted(p['category'] for p in renders[0][0]) == ['hat', 'upper_body']
+    assert result['set']['viewKey'] == 'walk-male-default-run'
+
+
+def test_set_render_job_for_a_selection_with_no_piece_left_fails(api, tmp_path):
+    design = design_with(tmp_path, 'hat')
+    result = jobs.run_job(render_job({'set': True, 'bodyShape': 'male', 'outfit': 'default', 'emote': 'run',
+                                      'categories': ['feet']}),
+                          client(api), design, render_fn=fake_render([]), as_user=None)
+    assert result['outcome'] == 'error' and 'no pieces' in result['error']
+
+
 def test_set_render_failure_uploads_nothing(api, tmp_path):
     design = design_with(tmp_path, 'hat')
     result = jobs.run_job(render_job({'set': True, 'bodyShape': 'male', 'outfit': 'default', 'emote': 'jump'}),
@@ -413,6 +432,29 @@ def test_clipping_fix_shows_the_agent_frames_first(api, tmp_path, skills, monkey
                              'sample': 16}
     assert 'Frames of the clipping are in review/clipping/dance/' in seen['prompt']
     assert 'studio-preview out/hat --emote dance --body female --outfit outfit-2' in seen['prompt']
+
+
+def test_clipping_fix_for_a_selection_shows_only_those_pieces(api, tmp_path, skills, monkeypatch):
+    run(api, tmp_path, prompt_job(), 'claude_builds_hat.jsonl')
+    seen, real = {}, jobs.run_agent
+
+    def spy(agent, model, prompt, *a, **kw):
+        seen.update(prompt=prompt)
+        return real(agent, model, prompt, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    # a second piece the person didn't tick
+    other = tmp_path / 'out' / 'feet'
+    other.mkdir(parents=True)
+    for g in (FIXTURES / 'cap').glob('*.glb'):
+        (other / g.name).write_bytes(g.read_bytes())
+    (other / 'piece.json').write_text('{"name": "Neon boots", "category": "feet"}')
+    renders = []
+    job = prompt_job(jobId='job-2', prompt='Fix the clipping in the dance emote',
+                     fixClipping={'emote': 'dance', 'bodyShape': 'female', 'outfit': 'default', 'categories': ['hat']})
+    result = run(api, tmp_path, job, 'claude_stream.jsonl', renders)
+    assert renders, result
+    assert [p['category'] for p in renders[0][0]] == ['hat']
+    assert 'studio-preview out/hat --emote dance' in seen['prompt']
 
 
 def test_clipping_frames_that_fail_stop_the_fix(api, tmp_path, skills, monkeypatch):
