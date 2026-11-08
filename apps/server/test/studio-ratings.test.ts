@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { studioDesigns, studioJobs, studioMessages, studioPauses, studioPromptCredits, studioRatings, studioUsageDays, users } from '../src/db/schema.js'
 import { config } from '../src/config.js'
@@ -73,18 +73,23 @@ describe('rating Design Studio revisions', () => {
     const res = await app.inject({ method: 'POST', url: `${S}/designs/${design.id}/prompts`, headers: as(owner), payload: { text } })
     expect(res.statusCode).toBe(202)
     const jobId = res.json().jobId as string
+    await finish(design, jobId)
+    return jobId
+  }
+
+  /** The worker answers the job by changing the hat. */
+  async function finish(design: { id: string }, jobId: string) {
     const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, design.id))
     const token = await issueWorker(d, d.machineId ?? 'm-test')
     await db.update(studioJobs).set({ status: 'taken', takenAt: new Date() }).where(eq(studioJobs.id, jobId))
     const done = await app.inject({ method: 'POST', url: `/api/studio/worker/jobs/${jobId}/result`, headers: { authorization: `Bearer ${token}` }, payload: okResult(jobId, { model: 'gpt-x' }) as any })
     expect(done.statusCode).toBe(204)
-    return jobId
   }
 
   it('the owner rates a revision, changes it to 👎 with tags and a note, and clears it; the detail shows each', async () => {
     const d = await createDesign(owner)
     const jobId = await revision(d)
-    expect((await detail(owner, d.id)).revisions).toEqual([{ jobId, categories: ['hat'], rating: null, tags: [], note: null, tryAgain: null }])
+    expect((await detail(owner, d.id)).revisions).toEqual([{ jobId, categories: ['hat'], rating: null, tags: [], note: null, tryAgain: null, current: true }])
 
     const up = await rate(owner, d.id, jobId, { rating: 'up' })
     expect(up.statusCode).toBe(200)
@@ -172,6 +177,71 @@ describe('rating Design Studio revisions', () => {
       await rate(owner, d.id, jobId, { rating: 'down' })
       expect((await tryAgain(owner, d.id, jobId)).statusCode).toBe(409)
       expect((await detail(owner, d.id)).revisions.find((r: any) => r.jobId === jobId).tryAgain).toBe('used')
+    })
+
+    it('doesn’t chain: a revision a try-again made gets no free try-again of its own', async () => {
+      const d = await createDesign(owner)
+      const first = await revision(d)
+      await rate(owner, d.id, first, { rating: 'down', note: 'Make it a red dragon helmet.' })
+      const retry = (await tryAgain(owner, d.id, first)).json().jobId as string
+      await finish(d, retry)
+      const down = await rate(owner, d.id, retry, { rating: 'down', note: 'Now add wings.' })
+      expect(down.json()).toMatchObject({ rating: 'down', tryAgain: null }) // the 👎 itself still counts
+      expect((await tryAgain(owner, d.id, retry)).json()).toMatchObject({ code: 'not_retryable' })
+      expect(await db.select().from(studioJobs).where(eq(studioJobs.feedbackFor, retry))).toHaveLength(0)
+    })
+
+    it('only the design’s latest revision has one; an older revision says whether it is still current', async () => {
+      const d = await createDesign(owner)
+      const older = await revision(d)
+      const newer = await revision(d, 'make the visor bigger')
+      expect((await rate(owner, d.id, older, { rating: 'down' })).json()).toMatchObject({ tryAgain: null, current: false })
+      expect((await tryAgain(owner, d.id, older)).json()).toMatchObject({ code: 'not_latest' })
+      expect((await rate(owner, d.id, newer, { rating: 'down' })).json()).toMatchObject({ tryAgain: 'available', current: true })
+      expect((await tryAgain(owner, d.id, newer)).statusCode).toBe(202)
+    })
+
+    it('at most 3 a day per owner, across designs', async () => {
+      const d = await createDesign(owner)
+      const jobId = await revision(d)
+      await rate(owner, d.id, jobId, { rating: 'down' })
+      for (let i = 0; i < 3; i++) {
+        const other = await createDesign(owner, { name: `d${i}` })
+        await db.insert(studioJobs).values({ designId: other.id, type: 'prompt', status: 'done', payload: {}, feedbackFor: crypto.randomUUID() })
+      }
+      expect((await detail(owner, d.id)).revisions[0].tryAgain).toBeNull()
+      const res = await tryAgain(owner, d.id, jobId)
+      expect(res.statusCode).toBe(429)
+      expect(res.json()).toMatchObject({ code: 'try_again_limit' })
+      // yesterday's don't count
+      await db.update(studioJobs).set({ createdAt: new Date(Date.now() - 2 * 86400_000) }).where(isNotNull(studioJobs.feedbackFor))
+      expect((await tryAgain(owner, d.id, jobId)).statusCode).toBe(202)
+    })
+
+    it('two at once on different designs can’t both pass the daily cap', async () => {
+      const a = await createDesign(owner, { name: 'A' })
+      const b = await createDesign(owner, { name: 'B' })
+      const ja = await revision(a)
+      const jb = await revision(b)
+      await rate(owner, a.id, ja, { rating: 'down' })
+      await rate(owner, b.id, jb, { rating: 'down' })
+      for (let i = 0; i < 2; i++) {
+        const other = await createDesign(owner, { name: `o${i}` })
+        await db.insert(studioJobs).values({ designId: other.id, type: 'prompt', status: 'done', payload: {}, feedbackFor: crypto.randomUUID() })
+      }
+      const codes = (await Promise.all([tryAgain(owner, a.id, ja), tryAgain(owner, b.id, jb)])).map((r) => r.statusCode).sort()
+      expect(codes).toEqual([202, 429])
+    })
+
+    it('a trial uses it on its own design', async () => {
+      const t = await createUser({ email: null })
+      await db.update(users).set({ isTrial: true, trialLastActiveAt: new Date() }).where(eq(users.id, t.id))
+      const { accessToken } = issueTrialSession(app, { id: t.id, displayName: t.displayName, role: 'creator', trialLastActiveAt: new Date() })
+      const d = await createDesign(t as TestUser)
+      const rev = await addRevision(d, 'hat')
+      expect((await rate(accessToken, d.id, rev.jobId, { rating: 'down', tags: ['size'] })).json().tryAgain).toBe('available')
+      const res = await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/revisions/${rev.jobId}/try-again`, headers: { authorization: `Bearer ${accessToken}` } })
+      expect(res.statusCode).toBe(202)
     })
 
     it('goes even when the owner is out of prompts, and takes nothing from them', async () => {

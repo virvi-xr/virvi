@@ -1,6 +1,7 @@
-import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioJobs, studioPieces, studioRatings, studioRevisions } from '../db/schema.js'
+import type { Exec } from './quota.js'
 
 /**
  * 👍 / 👎 on Design Studio revisions (LIV-142). A revision, here, is one agent reply that changed pieces: a prompt job
@@ -28,6 +29,49 @@ const TAG_WORDS: Record<RatingTag, string> = {
   quality: 'looks low quality',
   slow: 'took too long or cost too much',
   other: 'isn’t right',
+}
+
+/** Free try-agains one owner may send per UTC day, across their designs. */
+export const TRY_AGAIN_DAILY = 3
+
+/**
+ * Why a 👎'd revision can't have its free try-again now, or null when it can. Only the design's latest revision gets
+ * one, never a revision a try-again made (so they don't chain), once per revision, and TRY_AGAIN_DAILY a day per owner.
+ * queuePrompt asks again inside its transaction, under the owner's lock, so concurrent asks can't pass it together.
+ */
+export async function tryAgainBlock(
+  exec: Exec, designId: string, ownerId: string, jobId: string, now: Date,
+): Promise<'already_tried' | 'not_latest' | 'not_retryable' | 'try_again_limit' | null> {
+  const [tried] = await exec.select({ id: studioJobs.id }).from(studioJobs).where(eq(studioJobs.feedbackFor, jobId))
+  if (tried) return 'already_tried'
+  const [job] = await exec.select({ feedbackFor: studioJobs.feedbackFor }).from(studioJobs).where(eq(studioJobs.id, jobId))
+  if (job?.feedbackFor) return 'not_retryable'
+  if ((await latestRevisionJob(exec, designId)) !== jobId) return 'not_latest'
+  if ((await tryAgainsToday(exec, ownerId, now)) >= TRY_AGAIN_DAILY) return 'try_again_limit'
+  return null
+}
+
+/** The design's latest revision: the prompt job that most recently changed a piece. */
+async function latestRevisionJob(exec: Exec, designId: string): Promise<string | null> {
+  const rows = await exec.execute(sql`
+    SELECT r.job_id FROM studio_revisions r JOIN studio_pieces p ON p.id = r.piece_id
+    JOIN studio_jobs j ON j.id = r.job_id AND j.type = 'prompt'
+    WHERE p.design_id = ${designId}
+    ORDER BY r.created_at DESC, j.created_at DESC LIMIT 1`) as unknown as { job_id: string }[]
+  return rows[0]?.job_id ?? null
+}
+
+async function tryAgainsToday(exec: Exec, ownerId: string, now: Date): Promise<number> {
+  const day = now.toISOString().slice(0, 10)
+  const rows = await exec.execute(sql`
+    SELECT count(*)::int AS n FROM studio_jobs j JOIN studio_designs d ON d.id = j.design_id
+    WHERE d.owner_id = ${ownerId} AND j.feedback_for IS NOT NULL AND j.created_at >= ${`${day}T00:00:00Z`}::timestamptz`) as unknown as { n: number }[]
+  return rows[0]?.n ?? 0
+}
+
+/** Holds the owner's try-agains to one at a time until the transaction ends (the daily count stays true). */
+export async function lockTryAgains(exec: Exec, ownerId: string): Promise<void> {
+  await exec.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`studio-try-again:${ownerId}`}))`)
 }
 
 export type RatingInput = { rating: 'up' | 'down'; tags: RatingTag[]; note: string | null }
@@ -62,8 +106,10 @@ export type RevisionView = {
   rating: 'up' | 'down' | null
   tags: RatingTag[]
   note: string | null
-  /** A 👎's free try-again: still to use, or used (null without a 👎). */
+  /** A 👎's free try-again: still to use, or used (null without a 👎, or when this revision can't have one). */
   tryAgain: 'available' | 'used' | null
+  /** Every piece it changed is still at the revision it made (nothing changed them since): Finalize this pays for it. */
+  current: boolean
 }
 
 /** The prompt jobs of a design that changed pieces, oldest first, with the pieces each changed. */
@@ -84,26 +130,36 @@ async function revisionJobs(designId: string, jobId?: string) {
 }
 
 /** Every revision of the design, with the owner's rating of it (what the conversation shows). */
-export async function designRevisions(designId: string, ownerId: string): Promise<RevisionView[]> {
+export async function designRevisions(designId: string, ownerId: string, now = new Date()): Promise<RevisionView[]> {
   const jobs = await revisionJobs(designId)
   if (!jobs.size) return []
   const ids = [...jobs.keys()]
+  // The job behind each piece's latest revision
+  const latest = await db.select({ category: studioPieces.category, jobId: studioRevisions.jobId }).from(studioPieces)
+    .innerJoin(studioRevisions, eq(studioRevisions.id, studioPieces.latestRevisionId))
+    .where(eq(studioPieces.designId, designId))
   const ratings = await db.select().from(studioRatings)
     .where(and(eq(studioRatings.designId, designId), eq(studioRatings.userId, ownerId)))
   const retried = new Set((await db.select({ f: studioJobs.feedbackFor }).from(studioJobs)
     .where(and(eq(studioJobs.designId, designId), isNotNull(studioJobs.feedbackFor), inArray(studioJobs.feedbackFor, ids))))
     .map((r) => r.f))
-  return ids.map((jobId) => {
+  const views: RevisionView[] = []
+  for (const jobId of ids) {
     const r = ratings.find((x) => x.jobId === jobId)
-    return {
+    const categories = jobs.get(jobId)!.categories
+    const offer = retried.has(jobId) ? 'used'
+      : r?.rating === 'down' && !(await tryAgainBlock(db, designId, ownerId, jobId, now)) ? 'available' : null
+    views.push({
       jobId,
-      categories: jobs.get(jobId)!.categories,
+      categories,
       rating: (r?.rating as 'up' | 'down' | undefined) ?? null,
       tags: (r?.tags ?? []) as RatingTag[],
       note: r?.note ?? null,
-      tryAgain: retried.has(jobId) ? 'used' : r?.rating === 'down' ? 'available' : null,
-    }
-  })
+      tryAgain: offer,
+      current: categories.every((c) => latest.find((l) => l.category === c)?.jobId === jobId),
+    })
+  }
+  return views
 }
 
 /** One revision of the design (a prompt job of it that changed pieces), with its piece names; null if it isn't one. */

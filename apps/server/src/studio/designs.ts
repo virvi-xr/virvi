@@ -14,7 +14,7 @@ import { creditBalance } from './credit.js'
 import type { Exec } from './quota.js'
 import { setDetail } from './sets.js'
 import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
-import { designRevisions } from './ratings.js'
+import { designRevisions, lockTryAgains, tryAgainBlock } from './ratings.js'
 import { liveLessons } from './lessons.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
@@ -301,8 +301,10 @@ export async function queuePrompt(
         fixText = fixChecksText(categories)
       }
       if (input.feedbackFor) {
-        const [tried] = await tx.select({ id: studioJobs.id }).from(studioJobs).where(eq(studioJobs.feedbackFor, input.feedbackFor))
-        if (tried) throw new Refused({ status: 409, body: { error: 'already_tried', code: 'already_tried' } })
+        // One owner's try-agains one at a time, so the daily count holds across their designs
+        await lockTryAgains(tx, d.ownerId)
+        const block = await tryAgainBlock(tx, d.id, d.ownerId, input.feedbackFor, now)
+        if (block) throw new Refused({ status: block === 'try_again_limit' ? 429 : 409, body: { error: block, code: block } })
       }
       // A clipping report is the agent's mistake too: free, in the server's words. Support's prompts are never counted.
       const support = input.byAdminId ?? null
