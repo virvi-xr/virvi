@@ -66,6 +66,7 @@ describe('dcl runtime', () => {
     const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
     expect(src).toContain('layout_frame')
     expect(src).toContain('A white mat with a slim frame around it')
+    expect(src).toContain("entity limit for its parcels") // frames are left off rather than go over it
   })
 
   it('keeps v3 to v10 for deploys still waiting to be signed', async () => {
