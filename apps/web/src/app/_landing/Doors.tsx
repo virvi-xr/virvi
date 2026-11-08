@@ -1,4 +1,5 @@
 import { signinPath } from '@/lib/landing-route'
+import { TRY_OPTIONS } from '@/lib/try-options'
 
 /** A night plaza with a billboard in each of the four ad shapes; the 16:9 one carries the visitor's brand. */
 function BillboardScene() {
@@ -46,7 +47,7 @@ function BillboardScene() {
 
 export function Doors({ onAdvertise }: { onAdvertise: () => void }) {
   return (
-    <section className="mx-auto grid max-w-6xl gap-5 px-4 pb-10 pt-10 sm:px-6 md:grid-cols-[1.3fr_1fr] md:items-start md:pt-16">
+    <section className="mx-auto grid max-w-6xl gap-5 px-4 pb-10 pt-10 sm:px-6 md:grid-cols-2 md:items-start md:pt-16">
       <div className="relative corner-notch overflow-hidden rounded-xl border border-blue-700 bg-gradient-to-br from-blue-950 via-gray-900 to-gray-900 p-6 sm:p-10">
         <p className="mb-4 text-sm font-medium text-blue-300">For brands and creators</p>
         <h1 className="max-w-xl text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-5xl">
@@ -66,20 +67,32 @@ export function Doors({ onAdvertise }: { onAdvertise: () => void }) {
         <BillboardScene />
       </div>
 
-      <div className="rounded-xl border border-gray-800 bg-gray-900 p-6 sm:p-10">
-        <p className="mb-4 text-sm font-medium text-gray-400">For builders and venue owners</p>
-        <h2 className="text-3xl font-semibold leading-tight tracking-tight text-white">Run every scene you own from one dashboard</h2>
-        <p className="mt-5 text-base leading-relaxed text-gray-400">
-          Change screens, streams and events live, without redeploying. Then turn your screens into ad spaces and earn from the campaigns we
-          place in them.
+      <div className="relative corner-notch overflow-hidden rounded-xl border border-violet-600 bg-gradient-to-br from-violet-950 via-gray-900 to-gray-900 p-6 sm:p-10">
+        <p className="mb-4 text-sm font-medium text-violet-300">For builders and venue owners</p>
+        <h2 className="text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-5xl">Build it, then run it live</h2>
+        <p className="mt-5 text-base leading-relaxed text-gray-300">
+          Make wearables, emotes and buildings with an AI agent, lay out scenes in 3D, and change screens, streams and events live without
+          redeploying. Then turn your screens into ad spaces and earn from the campaigns we place in them.
         </p>
-        <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
-          <a href={signinPath(null, 'register')} className="inline-block rounded-lg border border-gray-600 px-5 py-3 font-semibold text-white hover:border-gray-400 hover:bg-gray-800">
-            Start building — it's free
-          </a>
-          <a href="/try/studio/" className="text-sm font-medium text-blue-300 underline-offset-4 hover:underline">Try it — no account needed</a>
-          <a href="/try/scene/" className="text-sm font-medium text-blue-300 underline-offset-4 hover:underline">Build a scene — no account needed</a>
+        <p className="mt-6 text-sm font-semibold text-white">Try it now. No account or wallet needed.</p>
+        <div className="mt-3 grid gap-3">
+          {TRY_OPTIONS.map((o) => (
+            <a
+              key={o.key}
+              href={o.href}
+              className="group block rounded-lg border border-gray-700 bg-gray-950/70 p-4 hover:border-violet-400 hover:bg-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300"
+            >
+              <span className="flex items-center justify-between gap-3">
+                <span className="text-lg font-semibold text-white">{o.title}</span>
+                <span className="shrink-0 text-sm font-semibold text-violet-300 group-hover:text-violet-200">{o.cta} →</span>
+              </span>
+              <span className="mt-1 block text-sm leading-relaxed text-gray-400">{o.blurb}</span>
+            </a>
+          ))}
         </div>
+        <a href={signinPath(null, 'register')} className="mt-6 inline-block text-sm font-medium text-gray-300 underline-offset-4 hover:text-white hover:underline">
+          Or create a free account →
+        </a>
       </div>
     </section>
   )
