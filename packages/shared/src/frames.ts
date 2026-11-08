@@ -114,3 +114,20 @@ export function frameColorRgb(hex: string): { r: number; g: number; b: number } 
 
 /** The element types that may have a frame (ad spaces stay unframed). */
 export const FRAMEABLE_TYPES: ReadonlySet<string> = new Set(['image', 'video'])
+
+/** Entities one framed copy adds in Decentraland: 4 bars, and 4 mat strips for Gallery; 0 with no frame drawn. */
+export function frameEntityCount(raw: unknown): number {
+  const f = frameOf(raw)
+  return !f ? 0 : f.style === 'gallery' ? 8 : 4
+}
+
+/** Entities every framed copy of these items adds (enabled images and video screens, their enabled copies). */
+export function frameEntitiesIn(elements: Array<{ type: string; enabled?: boolean; properties: unknown; copies: number }>): number {
+  let n = 0
+  for (const el of elements) {
+    if (el.enabled === false || !FRAMEABLE_TYPES.has(el.type)) continue
+    const props = el.properties && typeof el.properties === 'object' ? (el.properties as Record<string, unknown>) : {}
+    n += frameEntityCount(props.frame) * el.copies
+  }
+  return n
+}

@@ -7,7 +7,12 @@
 export const DCL_PARCEL_M = 16
 /** Largest single file a Decentraland scene deployment accepts. */
 export const DCL_MAX_FILE_BYTES = 52_428_800
-/** Entities the runtime itself needs on top of the scene's own. */
+/** Decentraland's entity limit per parcel. */
+export const DCL_ENTITIES_PER_PARCEL = 200
+/**
+ * Entities the runtime itself needs on top of the scene's own. Frames around images and video screens (LIV-129) are
+ * made by the runtime too, but per framed copy: count them with `frameEntitiesIn` (frames.ts).
+ */
 export const RUNTIME_ENTITY_RESERVE = 20
 /** Longest side of a plot, in parcels. */
 export const MAX_PLOT_SIDE = 10
@@ -44,7 +49,7 @@ export function dclBudget(parcelCount: number): {
 } {
   return {
     triangles: parcelCount * 10_000,
-    entities: parcelCount * 200 - RUNTIME_ENTITY_RESERVE,
+    entities: parcelCount * DCL_ENTITIES_PER_PARCEL - RUNTIME_ENTITY_RESERVE,
     files: parcelCount * 200,
     maxFileBytes: DCL_MAX_FILE_BYTES,
   }

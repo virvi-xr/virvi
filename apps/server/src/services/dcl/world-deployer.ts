@@ -26,7 +26,7 @@ import { linkLocation } from '../../setup/setups.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { ImportError, worldNameOf } from '../import/scene-zip.js'
 import {
-  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsBesideBuilt, modelsInScene, navmapThumbnailFile,
+  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, frameEntitiesInScene, modelsBesideBuilt, modelsInScene, navmapThumbnailFile,
   isPlacementsFile, ownThumbnailFile, pendingModels, placementsFile, placementsInScene, wizardSceneJson, PLACEMENTS_MAX_BYTES,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
@@ -218,14 +218,19 @@ const plural = (n: number, one: string) => `${n.toLocaleString('en-US')} ${one}$
 
 /**
  * A plain sentence when the scene has more placed models than Decentraland's per-parcel limit, else null. No network.
- * Entities count every placed instance, as the wizard does. Triangles are only a warning (`sceneTriangleWarning`).
+ * Entities count every placed instance, as the wizard does, and the pieces of frames around images and video screens
+ * (`frames`, from frameEntitiesInScene; LIV-129). Triangles are only a warning (`sceneTriangleWarning`).
  */
-export function sceneLimitProblem(dest: Destination, all: ModelNeed[]): string | null {
+export function sceneLimitProblem(dest: Destination, all: ModelNeed[], frames = 0): string | null {
   const budget = dclBudget(dest.parcels.length)
   const parcels = plural(dest.parcels.length, 'parcel')
   const placed = all.reduce((n, m) => n + m.instances, 0)
-  if (placed > budget.entities) {
-    return `Your scene has ${plural(placed, 'placed model')}, over the ${budget.entities.toLocaleString('en-US')} your ${parcels} allow. Remove some to publish.`
+  if (placed + frames > budget.entities) {
+    const limit = budget.entities.toLocaleString('en-US')
+    if (frames > 0) {
+      return `Your scene has ${plural(placed, 'placed model')} and ${plural(frames, 'frame piece')}, over the ${limit} your ${parcels} allow. Remove some models or frames to publish.`
+    }
+    return `Your scene has ${plural(placed, 'placed model')}, over the ${limit} your ${parcels} allow. Remove some to publish.`
   }
   return null
 }
@@ -265,7 +270,7 @@ export async function storageProblem(dest: Destination, pending: ModelNeed[]): P
  * destination becomes over_budget and this throws 422 over_budget; a destination that fits again is cleared.
  */
 export async function assertDeployable(dest: Destination): Promise<void> {
-  const problem = sceneLimitProblem(dest, await modelsInScene(dest.sceneId)) ?? (await storageProblem(dest, await pendingModels(dest)))
+  const problem = sceneLimitProblem(dest, await modelsInScene(dest.sceneId), await frameEntitiesInScene(dest.sceneId)) ?? (await storageProblem(dest, await pendingModels(dest)))
   if (problem) {
     if (dest.status !== 'over_budget' || dest.statusDetail !== problem) await setDestStatus(dest.id, 'over_budget', problem)
     throw new DeployerError(422, 'over_budget', problem)

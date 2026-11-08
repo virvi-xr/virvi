@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { FRAME_DEFAULTS, FRAME_THICKNESS, checkFrame, defaultFrame, frameOf, frameColorRgb, withFrameStyle } from '@virvixr/shared'
+import { DCL_ENTITIES_PER_PARCEL, FRAME_DEFAULTS, FRAME_THICKNESS, RUNTIME_ENTITY_RESERVE, checkFrame, dclBudget, defaultFrame, frameEntitiesIn, frameEntityCount, frameOf, frameColorRgb, withFrameStyle } from '@virvixr/shared'
 
 /** Frames around images and video screens (LIV-129): what may be saved, and what a runtime draws. */
 describe('checkFrame', () => {
@@ -61,5 +61,31 @@ describe('frame helpers', () => {
       expect(d.thickness).toBeGreaterThanOrEqual(FRAME_THICKNESS.min)
       expect(d.thickness).toBeLessThanOrEqual(FRAME_THICKNESS.max)
     }
+  })
+})
+
+describe('frame entities in the Decentraland budget', () => {
+  it('a framed copy costs 4 entities (8 for Gallery); none for no frame, a frame switched off, or one not drawn', () => {
+    expect(frameEntityCount(undefined)).toBe(0)
+    expect(frameEntityCount({ ...defaultFrame(), enabled: false })).toBe(0)
+    expect(frameEntityCount({ enabled: true, style: 'ornate' })).toBe(0)
+    expect(frameEntityCount(defaultFrame('thin'))).toBe(4)
+    expect(frameEntityCount(defaultFrame('classic'))).toBe(4)
+    expect(frameEntityCount(defaultFrame('gallery'))).toBe(8)
+  })
+  it('counts every enabled copy of every framed image and screen, and nothing on other items', () => {
+    const elements = [
+      { type: 'image', enabled: true, properties: { frame: defaultFrame() }, copies: 3 },
+      { type: 'video', enabled: true, properties: { frame: defaultFrame('gallery') }, copies: 2 },
+      { type: 'image', enabled: false, properties: { frame: defaultFrame() }, copies: 5 },
+      { type: 'image', enabled: true, properties: { textureSrc: 'a.png' }, copies: 9 },
+      { type: 'ad_space', enabled: true, properties: { frame: defaultFrame() }, copies: 4 },
+      { type: 'image', enabled: true, properties: null, copies: 1 },
+    ]
+    expect(frameEntitiesIn(elements)).toBe(3 * 4 + 2 * 8)
+  })
+  it('the parcel entity limit is 200 per parcel, and authoring keeps the runtime reserve back', () => {
+    expect(DCL_ENTITIES_PER_PARCEL).toBe(200)
+    expect(dclBudget(2).entities).toBe(400 - RUNTIME_ENTITY_RESERVE)
   })
 })

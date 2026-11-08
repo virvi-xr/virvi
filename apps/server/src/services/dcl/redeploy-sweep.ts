@@ -13,7 +13,7 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments } from '../../db/schema.js'
-import { modelsInScene, pendingModels, type Assembled } from './assemble.js'
+import { frameEntitiesInScene, modelsInScene, pendingModels, type Assembled } from './assemble.js'
 import {
   DeployerError, liveBaseFor, reconcileStaleDeployments, refusedLine, REFUSED_PREFIX, sceneLimitProblem, startVirviDeploy,
   type Destination, type DeployOptions,
@@ -82,7 +82,7 @@ export async function sweepRedeploys(now: Date = new Date(), opts: DeployOptions
         dest.status = 'ok'
       }
 
-      const problem = sceneLimitProblem(dest, await modelsInScene(dest.sceneId))
+      const problem = sceneLimitProblem(dest, await modelsInScene(dest.sceneId), await frameEntitiesInScene(dest.sceneId))
       if (problem) {
         // Another needs_review (changed outside Virvi, failures) keeps its own message.
         const mayShow = ['ok', 'unreachable', 'over_budget'].includes(dest.status)

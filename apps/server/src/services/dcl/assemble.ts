@@ -37,7 +37,7 @@
  * deployment no longer holds.
  */
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
-import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, PLACEMENTS_FILE, encodePlacements, localModelFile, type Placement, type Vec3 } from '@virvixr/shared'
+import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, frameEntitiesIn, frameEntityCount, PLACEMENTS_FILE, encodePlacements, localModelFile, type Placement, type Vec3 } from '@virvixr/shared'
 import { config } from '../../config.js'
 import { db } from '../../db/connection.js'
 import { assetLibraryItems, mediaAssets, sceneElementInstances, sceneElements, sceneImports, scenes } from '../../db/schema.js'
@@ -116,6 +116,27 @@ export async function modelsInScene(sceneId: string): Promise<ModelNeed[]> {
   const thumbnail = await thumbnailInScene(sceneId)
   const models = await modelElements(sceneId)
   return thumbnail ? [...models, thumbnail] : models
+}
+
+/**
+ * Entities the runtime adds for frames on the live preset's images and video screens (LIV-129): 4 per framed copy,
+ * 8 for Gallery. Counted with placed models against the parcels' entity limit (sceneLimitProblem).
+ */
+export async function frameEntitiesInScene(sceneId: string): Promise<number> {
+  const rows = await db
+    .select({ id: sceneElements.id, type: sceneElements.type, enabled: sceneElements.enabled, properties: sceneElements.properties })
+    .from(sceneElements)
+    .innerJoin(scenes, eq(scenes.activePresetId, sceneElements.presetId))
+    .where(and(eq(scenes.id, sceneId), inArray(sceneElements.type, ['image', 'video'])))
+  const framed = rows.filter((r) => frameEntityCount((r.properties as { frame?: unknown } | null)?.frame) > 0)
+  if (!framed.length) return 0
+  const copies = await db
+    .select({ elementId: sceneElementInstances.elementId, n: count() })
+    .from(sceneElementInstances)
+    .where(and(inArray(sceneElementInstances.elementId, framed.map((r) => r.id)), eq(sceneElementInstances.enabled, true)))
+    .groupBy(sceneElementInstances.elementId)
+  const by = new Map(copies.map((c) => [c.elementId, Number(c.n)]))
+  return frameEntitiesIn(framed.map((r) => ({ type: r.type, enabled: r.enabled, properties: r.properties, copies: by.get(r.id) ?? 0 })))
 }
 
 async function modelElements(sceneId: string): Promise<ModelNeed[]> {
