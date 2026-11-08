@@ -2,8 +2,8 @@ import type { ClientErrorEvent } from '@virvixr/shared'
 import { API_URL } from '../config'
 import { requestHeaders } from '../request-headers'
 import { Breadcrumbs, clickLabel, type LabelledElement } from './breadcrumbs'
-import { ErrorQueue } from './queue'
-import { apiErrorEvent, errorEvent, isOwnSource, reportPreview, shouldReportApi, type ReportPayload } from './capture'
+import { ErrorQueue, type SendResult } from './queue'
+import { apiErrorEvent, consoleMessage, errorEvent, isOwnSource, reportPreview, shouldReportApi, type ReportPayload } from './capture'
 
 /** The build this page is (NEXT_PUBLIC_RELEASE, set from the commit SHA at build time; see next.config.ts). */
 export const RELEASE = (process.env.NEXT_PUBLIC_RELEASE || 'dev').slice(0, 12)
@@ -17,7 +17,7 @@ const SCENE_IN_PATH = /\/scenes\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
  */
 class Reporter {
   readonly crumbs = new Breadcrumbs()
-  private readonly queue = new ErrorQueue({ send: (events) => this.post(events) })
+  private readonly queue = new ErrorQueue({ send: (events, o) => this.post(events, { keepalive: o.keepalive, bearer: true }) })
   private token: () => string | null = () => null
   private installed = false
   private captured = new WeakSet<object>()
@@ -31,9 +31,12 @@ class Reporter {
     return { route, breadcrumbs: this.crumbs.list(), sceneId: SCENE_IN_PATH.exec(route)?.[1] ?? null, userFacing }
   }
 
-  private async post(events: ClientErrorEvent[]) {
+  /** One send. `bearer: false` sends without the session, so the server counts it against no one. */
+  private async post(events: ClientErrorEvent[], o: { keepalive: boolean; bearer: boolean }): Promise<SendResult> {
     const body = JSON.stringify({ v: 1, release: RELEASE, events })
-    await fetch(`${API_URL}/api/errors`, { method: 'POST', keepalive: true, headers: requestHeaders(this.token(), { body }), body })
+    const res = await fetch(`${API_URL}/api/errors`, { method: 'POST', keepalive: o.keepalive, headers: requestHeaders(o.bearer ? this.token() : null, { body }), body })
+    if (res.ok) return 'ok'
+    return res.status === 429 || res.status >= 500 ? 'retry' : 'drop'
   }
 
   private add(e: ClientErrorEvent) {
@@ -72,7 +75,8 @@ class Reporter {
         const caller = (new Error().stack ?? '').split('\n').slice(2).join('\n')
         if (!isOwnSource({ stack: caller }, origin)) return
         const err = args.find((a) => a instanceof Error) as Error | undefined
-        const thrown = err ?? new Error(args.map((a) => (typeof a === 'string' ? a : (() => { try { return JSON.stringify(a) } catch { return String(a) } })())).join(' '))
+        // Never the objects themselves: strings and Errors only, anything else as a type tag (consoleMessage)
+        const thrown = Object.assign(new Error(consoleMessage(args)), err ? { name: err.name, stack: err.stack } : {})
         const ctx = this.ctx()
         setTimeout(() => {
           if (err && this.captured.has(err)) return
@@ -86,7 +90,7 @@ class Reporter {
         this.crumbs.click(clickLabel(el as unknown as LabelledElement | null))
       } catch { /* ignore */ }
     }, { capture: true })
-    const flush = () => { void this.queue.flush() }
+    const flush = () => { void this.queue.flush({ keepalive: true }) }
     window.addEventListener('pagehide', flush)
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush() })
   }
@@ -105,12 +109,14 @@ class Reporter {
     } catch { /* ignore */ }
   }
 
-  /** A crash screen: recorded at once (user-facing), and returned for its Report form. */
+  /**
+   * A crash screen: recorded at once, without the session (nothing about the user goes until they press Submit on
+   * the Report form), and returned for that form.
+   */
   crash(error: unknown): ClientErrorEvent {
     if (error && typeof error === 'object') this.captured.add(error)
     const e = errorEvent('crash', error, this.ctx(true))
-    this.add(e)
-    void this.queue.flush()
+    void this.post([e], { keepalive: false, bearer: false }).catch(() => {})
     return e
   }
 

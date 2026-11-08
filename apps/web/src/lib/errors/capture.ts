@@ -36,6 +36,24 @@ function base(kind: ClientErrorKind, ctx: EventContext): ClientErrorEvent {
   return e
 }
 
+/**
+ * A value as text without serialising it: strings, numbers and booleans as they are, anything else only as a type tag
+ * (`[object]`, `[array]`, `[null]`), so form values or payloads inside an object never leave the browser.
+ */
+function valueText(v: unknown): string {
+  if (typeof v === 'string') return v
+  if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'bigint') return String(v)
+  if (v === null) return '[null]'
+  if (v === undefined) return '[undefined]'
+  if (Array.isArray(v)) return '[array]'
+  return `[${typeof v}]`
+}
+
+/** console.error's arguments as one message: strings and Errors (as `Name: message`), everything else a type tag. */
+export function consoleMessage(args: unknown[]): string {
+  return args.slice(0, 10).map((a) => (a instanceof Error ? `${a.name || 'Error'}: ${a.message}` : valueText(a))).join(' ').slice(0, ERROR_LIMITS.maxMessage)
+}
+
 /** A thrown value (crash screen, uncaught exception, unhandled rejection, console.error). */
 export function errorEvent(kind: Exclude<ClientErrorKind, 'api'>, thrown: unknown, ctx: EventContext): ClientErrorEvent {
   const e = base(kind, ctx)
@@ -45,9 +63,7 @@ export function errorEvent(kind: Exclude<ClientErrorKind, 'api'>, thrown: unknow
     if (thrown.stack) e.stack = redactText(thrown.stack).slice(0, ERROR_LIMITS.maxStack)
   } else {
     e.errorType = 'Error'
-    let text: string
-    try { text = typeof thrown === 'string' ? thrown : JSON.stringify(thrown) ?? String(thrown) } catch { text = String(thrown) }
-    e.message = redactText(text).slice(0, ERROR_LIMITS.maxMessage)
+    e.message = redactText(valueText(thrown).slice(0, ERROR_LIMITS.maxMessage))
   }
   e.breadcrumbs = ctx.breadcrumbs
   if (ctx.userFacing) e.userFacing = true

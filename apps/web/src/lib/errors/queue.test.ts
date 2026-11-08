@@ -62,11 +62,82 @@ describe('ErrorQueue: batching and sampling', () => {
     expect(h.q.dropped).toBe(5)
   })
 
-  it('swallows send failures (reporting never throws or loops)', async () => {
+  it('swallows send failures (reporting never throws, and retries only when asked or timed)', async () => {
     const h = harness({ fail: true })
     h.q.add(crash())
     await expect(h.q.flush()).resolves.toBeUndefined()
-    await h.q.flush()
     expect(h.sent).toHaveLength(1)
+    expect(h.hasTimer()).toBe(true)
+  })
+})
+
+describe('ErrorQueue: sizes, failures and retries (I4)', () => {
+  const big = (i: number): ClientErrorEvent => ({
+    kind: 'crash', t: 1, errorType: 'TypeError', message: `big ${'abcdefghij'[i]}`, stack: 'at f (https://virvi.io/a.js:1:1)\n'.repeat(115),
+    breadcrumbs: Array.from({ length: 30 }, () => ({ t: 1, type: 'api' as const, method: 'GET', path: '/api/' + 'x'.repeat(150), status: 500, ms: 3 })),
+  })
+  function h2(results: Array<'ok' | 'retry' | 'drop'>) {
+    const calls: Array<{ events: ClientErrorEvent[]; keepalive: boolean; bytes: number }> = []
+    let timer: (() => void) | null = null
+    const q = new ErrorQueue({
+      send: async (events, o) => { calls.push({ events, keepalive: o.keepalive, bytes: JSON.stringify({ v: 1, release: 'dev', events }).length }); return results.shift() ?? 'ok' },
+      setTimer: (fn) => { timer = fn; return 1 },
+      clearTimer: () => { timer = null },
+    })
+    return { q, calls, fire: async () => { const t = timer; timer = null; t?.(); await new Promise((r) => setTimeout(r, 0)) } }
+  }
+
+  it('splits a batch so every send stays under the body and keepalive limit', async () => {
+    const h = h2([])
+    for (let i = 0; i < 10; i++) h.q.add(big(i))
+    await h.q.flush()
+    expect(h.calls.length).toBeGreaterThan(1)
+    for (const c of h.calls) expect(c.bytes).toBeLessThan(60_000)
+    expect(h.calls.flatMap((c) => c.events)).toHaveLength(10)
+  })
+
+  it('trims the breadcrumbs of later events in the same send', async () => {
+    const h = h2([])
+    h.q.add(big(0))
+    h.q.add(big(1))
+    await h.q.flush()
+    const [first, second] = h.calls[0].events
+    expect(first.breadcrumbs).toHaveLength(30)
+    expect(second.breadcrumbs!.length).toBeLessThanOrEqual(10)
+  })
+
+  it('a failed send is not marked sent and is retried, a few times at most', async () => {
+    const h = h2(['retry', 'retry', 'ok'])
+    h.q.add(crash())
+    await h.q.flush()
+    await h.fire()
+    await h.fire()
+    expect(h.calls).toHaveLength(3)
+    expect(h.calls.every((c) => !c.events[0].repeat && c.events[0].breadcrumbs)).toBe(true) // still the full first occurrence
+    h.q.add(crash())
+    await h.q.flush()
+    expect(h.calls[3].events[0].repeat).toBe(true) // sent once it got through
+    const g = h2(['retry', 'retry', 'retry', 'retry', 'retry'])
+    g.q.add(crash())
+    await g.q.flush()
+    for (let i = 0; i < 5; i++) await g.fire()
+    expect(g.calls).toHaveLength(3)
+  })
+
+  it('a refused send (413, 400) is dropped, not retried', async () => {
+    const h = h2(['drop'])
+    h.q.add(crash())
+    await h.q.flush()
+    await h.fire()
+    expect(h.calls).toHaveLength(1)
+  })
+
+  it('uses keepalive only when the page is going away', async () => {
+    const h = h2([])
+    h.q.add(crash('a'))
+    await h.q.flush()
+    h.q.add(crash('b'))
+    await h.q.flush({ keepalive: true })
+    expect(h.calls.map((c) => c.keepalive)).toEqual([false, true])
   })
 })

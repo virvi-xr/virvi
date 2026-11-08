@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isOwnSource, errorEvent, apiErrorEvent, buildReport, reportPreview, shouldReportApi } from './capture'
+import { isOwnSource, errorEvent, apiErrorEvent, buildReport, reportPreview, shouldReportApi, consoleMessage } from './capture'
 
 const ORIGIN = 'https://virvi.io'
 
@@ -30,7 +30,7 @@ describe('errorEvent', () => {
   })
   it('reads a thrown non-Error', () => {
     expect(errorEvent('rejection', 'went wrong', { route: '/', breadcrumbs: [], now: 1 })).toMatchObject({ errorType: 'Error', message: 'went wrong' })
-    expect(errorEvent('rejection', { reason: 1 }, { route: '/', breadcrumbs: [], now: 1 }).message).toBe('{"reason":1}')
+    expect(errorEvent('rejection', { reason: 1 }, { route: '/', breadcrumbs: [], now: 1 }).message).toBe('[object]')
   })
 })
 
@@ -53,5 +53,20 @@ describe('the Report form payload', () => {
     expect(payload).toEqual({ v: 1, release: 'abc123', description: 'Saving my scene', event })
     expect(reportPreview(payload)).toBe(JSON.stringify(payload, null, 2))
     expect(JSON.parse(reportPreview(payload))).toEqual(payload)
+  })
+})
+
+describe('never serialises objects (I6)', () => {
+  it('a non-Error rejection keeps a string, or only a type tag', () => {
+    expect(errorEvent('rejection', { name: 'draft', password: 'hunter2' }, { route: '/', breadcrumbs: [], now: 1 }).message).toBe('[object]')
+    expect(errorEvent('rejection', ['a'], { route: '/', breadcrumbs: [], now: 1 }).message).toBe('[array]')
+    expect(errorEvent('rejection', null, { route: '/', breadcrumbs: [], now: 1 }).message).toBe('[null]')
+    expect(errorEvent('rejection', 42, { route: '/', breadcrumbs: [], now: 1 }).message).toBe('42')
+    expect(errorEvent('rejection', 'mail me@x.com', { route: '/', breadcrumbs: [], now: 1 }).message).toBe('mail [email]')
+  })
+  it('console.error arguments: strings and Errors only, objects as tags, redacted', () => {
+    const m = consoleMessage(['save failed', { name: 'my draft', password: 'hunter2' }, new TypeError('bad me@x.com'), 3])
+    expect(m).toBe('save failed [object] TypeError: bad me@x.com 3')
+    expect(errorEvent('console', new Error(m), { route: '/', breadcrumbs: [], now: 1 }).message).toBe('save failed [object] TypeError: bad [email] 3')
   })
 })

@@ -85,15 +85,32 @@ export default function PrivacyPage() {
           When something goes wrong on virvi.io, the page and our server record the error so we can find and fix it. A report holds the error
           message, the page, the build of Virvi, your browser and operating system, your organization and scene ids, the time, and the last few
           things you did: pages you opened, the names of buttons and links you clicked, and the requests the page made (their address, result and
-          timing). Before anything leaves your browser, tokens, email addresses, wallet addresses and the query part of web addresses are removed.
-          It never includes what you type, passwords, wallet signatures, payment details, or what the page sent or received, other than the error
-          message that came back. You're counted by a keyed hash of your account id, so we can see how many people an error reached without
-          storing who. Error reports are kept for 30 days; hourly counts of each kind of error, with no identity, are kept for 400 days.
+          timing). Before anything leaves your browser, tokens, email addresses, wallet addresses, secrets and the query part of web addresses are
+          removed. It never includes what you type, passwords, wallet signatures, payment details, or what the page sent or received, other than
+          the error message that came back.
         </p>
-        <p>
-          If a page breaks, you can press Report and tell us what you were doing. That report is sent only when you press Submit, shows you
-          exactly what will be sent first, and is sent with your account if you're signed in so we can follow up.
-        </p>
+        <ul className="list-disc pl-5">
+          <li>
+            <strong>How you're counted:</strong> by a keyed hash of your account id, so we can see how many people an error reached without
+            storing who. To count how many different places an error comes from, we also keep a keyed hash of your network address that changes
+            every day. Your address itself is never stored.
+          </li>
+          <li>
+            <strong>How long:</strong> error details and those hashes are kept for 30 days. Hourly counts of each kind of error, with no identity,
+            are kept for 400 days.
+          </li>
+          <li>
+            <strong>If you send a report:</strong> when a page breaks it records the error without your account. If you press Report, you see
+            exactly what will be sent before you press Submit. A report you send (what you wrote and that preview) is linked to your account if
+            you're signed in, so we can follow up, and is kept for 400 days. Ask us at{' '}
+            <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a> to have it deleted sooner.
+          </li>
+          <li>
+            <strong>Our issue tracker:</strong> when automatic bug filing is turned on, the details of errors that keep happening (the redacted
+            messages, pages, steps and counts above, and what people wrote in their reports, with email addresses and similar details removed) are
+            sent to Linear, the issue tracker we use, as bug reports. Your account, name and email are not.
+          </li>
+        </ul>
 
         <h2>Advertiser early access</h2>
         <p>
