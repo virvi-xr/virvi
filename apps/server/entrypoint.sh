@@ -326,6 +326,20 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS scene_removals_scene_target_uq ON scene_removals (scene_id, target_id)\`;
         console.log('[virvi-server] scene delete columns ensured');
       } catch(e) { console.log('[virvi-server] scene delete columns:', e.message); }
+      // Heatmap height (LIV-85): matches analyticsHeatmapDaily in src/db/schema.ts (and scripts/pre-push-upgrade.mjs)
+      try {
+        await sql\`DO \$\$ DECLARE pk text; BEGIN
+          IF to_regclass('analytics_heatmap_daily') IS NOT NULL THEN
+            ALTER TABLE analytics_heatmap_daily ADD COLUMN IF NOT EXISTS cell_y smallint;
+            SELECT conname INTO pk FROM pg_constraint WHERE conrelid = 'analytics_heatmap_daily'::regclass AND contype = 'p';
+            IF pk IS NOT NULL THEN EXECUTE format('ALTER TABLE analytics_heatmap_daily DROP CONSTRAINT %I', pk); END IF;
+            IF to_regclass('analytics_heatmap_daily_cell_uq') IS NULL THEN
+              CREATE UNIQUE INDEX analytics_heatmap_daily_cell_uq ON analytics_heatmap_daily (scene_id, day, cell_x, cell_z, cell_y);
+            END IF;
+          END IF;
+        END \$\$\`;
+        console.log('[virvi-server] heatmap cell_y ensured');
+      } catch(e) { console.log('[virvi-server] heatmap cell_y:', e.message); }
       // model enum value
       try {
         await sql\`ALTER TYPE element_type ADD VALUE IF NOT EXISTS 'model'\`;

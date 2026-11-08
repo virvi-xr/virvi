@@ -8,6 +8,7 @@ export * from './platform.js';
 export * from './protocol.js';
 export * from './venues.js';
 export * from './analytics.js';
+export * from './heatmap-height.js';
 export * from './models.js';
 export * from './catalog.js';
 export * from './hyperfy.js';

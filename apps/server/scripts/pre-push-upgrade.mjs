@@ -62,7 +62,19 @@ try {
     }
     if (legacy.length) console.log(`[virvi-server] pre-push upgrade: backfilled playback_id on ${legacy.length} stream(s)`)
   }
-  console.log('[virvi-server] pre-push upgrade: legacy analytics tables cleared, scene_state dropped, deployment_wallets retired, vlm_scene_id renamed, playback_id ensured') // virvi-rename: keep
+  // LIV-85: the heatmap gains a nullable cell_y (floor band), so its (scene_id, day, cell_x, cell_z) primary key becomes a
+  // unique index over all five. Done here because push would otherwise ask whether to truncate the table.
+  await sql`DO $$ DECLARE pk text; BEGIN
+    IF to_regclass('analytics_heatmap_daily') IS NOT NULL THEN
+      ALTER TABLE analytics_heatmap_daily ADD COLUMN IF NOT EXISTS cell_y smallint;
+      SELECT conname INTO pk FROM pg_constraint WHERE conrelid = 'analytics_heatmap_daily'::regclass AND contype = 'p';
+      IF pk IS NOT NULL THEN EXECUTE format('ALTER TABLE analytics_heatmap_daily DROP CONSTRAINT %I', pk); END IF;
+      IF to_regclass('analytics_heatmap_daily_cell_uq') IS NULL THEN
+        CREATE UNIQUE INDEX analytics_heatmap_daily_cell_uq ON analytics_heatmap_daily (scene_id, day, cell_x, cell_z, cell_y);
+      END IF;
+    END IF;
+  END $$`
+  console.log('[virvi-server] pre-push upgrade: legacy analytics tables cleared, scene_state dropped, deployment_wallets retired, vlm_scene_id renamed, playback_id ensured, heatmap cell_y ensured') // virvi-rename: keep
 } finally {
   await sql.end()
 }

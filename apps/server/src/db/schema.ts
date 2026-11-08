@@ -477,9 +477,20 @@ export const analyticsHeatmapDaily = pgTable('analytics_heatmap_daily', {
   day: date('day').notNull(),
   cellX: smallint('cell_x').notNull(),
   cellZ: smallint('cell_z').notNull(),
+  /**
+   * The floor band (LIV-85, `heightBand` in @virvixr/shared: 2 m bands of feet height, 0 = ground floor).
+   * Null for days rolled up before heights were recorded: drawn at ground level, labelled "height not recorded".
+   */
+  cellY: smallint('cell_y'),
   dwellSec: integer('dwell_sec').notNull().default(0),
   visits: integer('visits').notNull().default(0),
-}, (t) => ({ pk: primaryKey({ columns: [t.sceneId, t.day, t.cellX, t.cellZ] }) }))
+}, (t) => ({
+  // Was the primary key (scene_id, day, cell_x, cell_z); cell_y is nullable, so a unique index instead. Only days rolled up
+  // before LIV-85 have null heights, and nothing writes those again, so the usual NULLS DISTINCT is enough (drizzle-kit
+  // 0.31 can't read NULLS NOT DISTINCT back and would re-add it on every push). scripts/pre-push-upgrade.mjs swaps the
+  // keys before push (and entrypoint.sh's fallback repeats it).
+  cellUq: uniqueIndex('analytics_heatmap_daily_cell_uq').on(t.sceneId, t.day, t.cellX, t.cellZ, t.cellY),
+}))
 
 export const analyticsCopresenceDaily = pgTable('analytics_copresence_daily', {
   sceneId: uuid('scene_id').notNull().references(() => analyticsScenes.id, { onDelete: 'cascade' }),

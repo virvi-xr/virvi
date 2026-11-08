@@ -14,6 +14,7 @@ import {
   scenes,
 } from '../db/schema.js'
 import { config } from '../config.js'
+import { HEATMAP_BAND_M, HEATMAP_BAND_SLACK_M, feetOffsetM, groundClamped } from '@virvixr/shared'
 import { getSubscription } from '../integrations/stripe.js'
 import type { AnalyticsSceneRow } from './registry.js'
 import { purgeWalletChallenges } from './claims.js'
@@ -130,23 +131,37 @@ export async function rollupHour(sceneId: string, hour: Date): Promise<void> {
     .onConflictDoUpdate({ target: [analyticsRollupHourly.sceneId, analyticsRollupHourly.hour], set: values })
 }
 
+/** Advisory lock class for one scene-day rollup (the 710xx keys above are whole-job locks). */
+const DAY_LOCK_CLASS = 7105
+
+/** heightBand (@virvixr/shared) in SQL, for a location kind; the constants are code, not input. */
+export function heightBandSql(y: ReturnType<typeof sql.raw>, kind: string) {
+  const offset = feetOffsetM(kind)
+  const raw = sql`floor(round((${y} - ${sql.raw(String(offset))} + ${sql.raw(String(HEATMAP_BAND_SLACK_M))}) * 100) / ${sql.raw(String(HEATMAP_BAND_M * 100))})::int`
+  return groundClamped(kind) ? sql`greatest(0, ${raw})` : raw
+}
+
 export async function rollupDay(sceneId: string, day: string, now = new Date()): Promise<void> {
   const d0 = new Date(`${day}T00:00:00Z`)
   const d1 = new Date(d0.getTime() + DAY)
+  const [loc] = await db.select({ kind: analyticsScenes.kind }).from(analyticsScenes).where(eq(analyticsScenes.id, sceneId))
+  const band = heightBandSql(sql.raw('y'), loc?.kind ?? 'parcels')
   await db.transaction(async (tx) => {
+    // One rollup of a scene's day at a time (the regular rollups and the height backfill can meet here).
+    await tx.execute(sql`select pg_advisory_xact_lock(${DAY_LOCK_CLASS}, hashtext(${`${sceneId}|${day}`}))`)
     await tx.delete(analyticsHeatmapDaily).where(and(eq(analyticsHeatmapDaily.sceneId, sceneId), eq(analyticsHeatmapDaily.day, day)))
     await tx.execute(sql`
-      insert into analytics_heatmap_daily (scene_id, day, cell_x, cell_z, dwell_sec, visits)
-      select ${sceneId}, ${day}::date, floor(x)::int, floor(z)::int,
+      insert into analytics_heatmap_daily (scene_id, day, cell_x, cell_y, cell_z, dwell_sec, visits)
+      select ${sceneId}, ${day}::date, floor(x)::int, ${band}, floor(z)::int,
              round(sum(least(coalesce(gap, 3), 15)))::int, count(distinct session_id)::int
       from (
-        select session_id, x, z,
+        select session_id, x, y, z,
                extract(epoch from (lead(occurred_at) over (partition by session_id order by occurred_at, seq) - occurred_at)) as gap
         from analytics_positions
         where scene_id = ${sceneId} and occurred_at >= ${ts(d0)} and occurred_at < ${ts(d1)}
           and abs(x) < 32768 and abs(z) < 32768
       ) p
-      group by 3, 4`)
+      group by 3, 4, 5`)
 
     await tx.delete(analyticsCopresenceDaily).where(and(eq(analyticsCopresenceDaily.sceneId, sceneId), eq(analyticsCopresenceDaily.day, day)))
     await tx.execute(sql`
