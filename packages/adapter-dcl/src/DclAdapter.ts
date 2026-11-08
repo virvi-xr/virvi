@@ -19,6 +19,7 @@ import {
   VideoState as DclVideoState,
 } from '@dcl/sdk/ecs'
 import { Vector3, Quaternion, Color3, Color4 } from '@dcl/sdk/math'
+import { DCL_ENTITIES_PER_PARCEL } from '@virvixr/shared'
 import type {
   VirviPlatformAdapter,
   PlatformCapabilities,
@@ -41,6 +42,16 @@ import type {
 } from '@virvixr/shared'
 import { localModelFile, DCL_HUD_PROTOCOL } from '@virvixr/shared'
 import { adoptPlaced, releasePlaced } from './placements.js'
+
+/** Decentraland's entity limit for a scene, from its scene.json metadata: 200 per parcel; undefined when unknown. */
+export function maxEntitiesFor(metadataJson: string | undefined): number | undefined {
+  try {
+    const parcels = JSON.parse(metadataJson ?? '')?.scene?.parcels
+    return Array.isArray(parcels) && parcels.length > 0 ? parcels.length * DCL_ENTITIES_PER_PARCEL : undefined
+  } catch {
+    return undefined
+  }
+}
 
 export class DclAdapter implements VirviPlatformAdapter {
   /** Sent with every request, so the server can tell an old HUD to redeploy (426 redeploy_required). */
@@ -83,6 +94,9 @@ export class DclAdapter implements VirviPlatformAdapter {
       for (const entry of (info?.content ?? []) as Array<{ file?: string }>) {
         if (entry?.file) this.sceneFiles.set(entry.file.toLowerCase(), entry.file)
       }
+      // Decentraland's entity limit for this scene's parcels: frames are left off rather than go over it (LIV-129)
+      const max = maxEntitiesFor(info?.metadataJson)
+      if (max !== undefined) this.capabilities.maxEntities = max
     } catch {
       // Outside the DCL runtime: no deployed files known; URL models resolve to null (missing).
     }
@@ -314,6 +328,13 @@ export class DclAdapter implements VirviPlatformAdapter {
       // South side UVs
       0, 0, 0, 1, 1, 1, 1, 0,
     ])
+  }
+
+  /** The scene's entities now: those with a Transform, and the video players (which have none). */
+  entityCount(): number {
+    let n = 0
+    for (const _ of engine.getEntitiesWith(Transform)) n++
+    return n + this.videoPlayerEntities.size
   }
 
   /** A frame part (LIV-129): a plain coloured box or plane, lit like the scene, with no collider. */

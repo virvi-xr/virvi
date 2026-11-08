@@ -8,12 +8,13 @@ const sdk = vi.hoisted(() => {
   const stub = () => ({})
   const component = { createOrReplace: stub, getMutableOrNull: stub, getOrNull: () => null, has: () => false, deleteFrom: stub }
   return {
+    transformCount: 0,
     meshes,
     materials,
     colliders,
     reset() { meshes.clear(); materials.clear(); colliders.clear() },
     ecs: {
-      engine: { addEntity: () => 1, removeEntity: stub, addSystem: stub },
+      engine: { addEntity: () => 1, removeEntity: stub, addSystem: stub, getEntitiesWith: function* () { for (let i = 0; i < sdk.transformCount; i++) yield [i, {}] } },
       GltfContainer: component,
       MeshCollider: { setBox: (e: number) => void colliders.set(e, 'box'), setPlane: (e: number) => void colliders.set(e, 'plane'), deleteFrom: stub },
       ColliderLayer: { CL_NONE: 0, CL_POINTER: 1, CL_PHYSICS: 2 },
@@ -29,6 +30,7 @@ const sdk = vi.hoisted(() => {
   }
 })
 vi.mock('@dcl/sdk/ecs', () => sdk.ecs)
+
 vi.mock('@dcl/sdk/math', () => ({
   Vector3: { create: (x: number, y: number, z: number) => ({ x, y, z }) },
   Quaternion: { fromEulerDegrees: () => ({ x: 0, y: 0, z: 0, w: 1 }) },
@@ -36,7 +38,7 @@ vi.mock('@dcl/sdk/math', () => ({
   Color4: { create: (r: number, g: number, b: number, a: number) => ({ r, g, b, a }) },
 }))
 
-import { DclAdapter } from '../src/DclAdapter.js'
+import { DclAdapter, maxEntitiesFor } from '../src/DclAdapter.js'
 
 /** Frame parts (LIV-129): solid colour boxes and planes, with no texture, no glow and nothing to click or bump into. */
 describe('setSolidShape', () => {
@@ -62,5 +64,20 @@ describe('setSolidShape', () => {
   it('adds no collider, so frames never block players or clicks', () => {
     adapter.setSolidShape(5, 'box', { r: 0, g: 0, b: 0 })
     expect(sdk.colliders.has(5)).toBe(false)
+  })
+})
+
+/** Frames never push a scene over Decentraland's entity limit (LIV-129): the adapter knows the limit and the count. */
+describe('entity limit', () => {
+  it('the limit is 200 per parcel of the deployed scene (read from scene.json when the adapter starts)', () => {
+    expect(maxEntitiesFor(JSON.stringify({ scene: { base: '0,0', parcels: ['0,0', '1,0', '0,1'] } }))).toBe(600)
+    expect(maxEntitiesFor('{}')).toBeUndefined()
+    expect(maxEntitiesFor('not json')).toBeUndefined()
+    expect(maxEntitiesFor(undefined)).toBeUndefined()
+    expect(new DclAdapter().capabilities.maxEntities).toBeUndefined() // outside Decentraland: no limit known
+  })
+  it('counts the scene\'s entities', () => {
+    sdk.transformCount = 42
+    expect(new DclAdapter().entityCount()).toBe(42)
   })
 })

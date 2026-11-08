@@ -199,6 +199,37 @@ describe('ItemFrame', () => {
     expect(live.size).toBe(0)
   })
 
+  it('never takes the scene over its entity limit: a frame that would is skipped, logged once, and the next one that fits is drawn', () => {
+    const { a, live } = adapter()
+    a.capabilities = { maxEntities: 10 }
+    let others = 0 // the scene's own entities
+    a.entityCount = vi.fn(() => others + live.size)
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const f1 = new ItemFrame(a)
+    const f2 = new ItemFrame(a)
+    const f3 = new ItemFrame(a)
+    f1.draw(frame(), at()) // 4 of 10
+    others = 3
+    f2.draw(frame(), at()) // 7 + 4 > 10: skipped
+    expect(live.size).toBe(4)
+    f3.draw(frame({ style: 'gallery' }), at()) // 7 + 8 > 10: skipped
+    expect(live.size).toBe(4)
+    expect(log.mock.calls.filter((c) => String(c[0]).includes('entity limit'))).toHaveLength(1)
+    f2.draw(frame(), at({ x: 3, y: 1, z: 1 })) // the same frame moved: not checked again every frame
+    expect(a.entityCount).toHaveBeenCalledTimes(3)
+    others = 0
+    f2.draw(frame({ color: '#ffffff' }), at()) // a change tries again, and now it fits
+    expect(live.size).toBe(8)
+    log.mockRestore()
+  })
+
+  it('without a known limit or count, frames are always drawn', () => {
+    const { a, live } = adapter()
+    a.capabilities = { maxEntities: 1 }
+    new ItemFrame(a).draw(frame(), at())
+    expect(live.size).toBe(4)
+  })
+
   it('draws nothing on a platform without solid shapes', () => {
     const { a, live } = adapter(false)
     const f = new ItemFrame(a)

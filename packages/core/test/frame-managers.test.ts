@@ -116,6 +116,20 @@ describe('image frames', () => {
   })
 })
 
+describe('frames and the entity limit', () => {
+  it('a frame that would take the scene over its limit is left off; the image itself is always made', () => {
+    const h = setup()
+    h.adapter.capabilities.maxEntities = 7
+    h.adapter.entityCount = () => h.live.size
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    h.sm.handlePresetUpdate({ action: 'init', scenePreset: { images: [image({ frame: defaultFrame(), instances: [inst('i1'), inst('i2'), inst('i3')] })] } })
+    // i1: plane + 4 bars = 5; i2: plane (6), 4 more bars would be 10 > 7, so none; i3: plane (7)
+    expect(h.live.size).toBe(7)
+    expect(h.bars()).toHaveLength(4)
+    log.mockRestore()
+  })
+})
+
 describe('video screen frames', () => {
   it('a framed screen gets bars; restyling and removing work live', () => {
     const h = setup()

@@ -66,6 +66,11 @@ export interface VirviPlatformAdapter {
    * is framed.
    */
   setSolidShape?(entity: EntityHandle, shape: 'box' | 'plane', color: { r: number; g: number; b: number }): void;
+  /**
+   * Optional: how many entities the scene has now. With `capabilities.maxEntities`, frames that would take the scene
+   * over the limit are left off; without either, frames are always drawn.
+   */
+  entityCount?(): number;
   /** Optional: show text on the entity (the "Ad" label). Without it, ads show no label. */
   setText?(entity: EntityHandle, text: string, opts: { fontSize: number }): void;
 

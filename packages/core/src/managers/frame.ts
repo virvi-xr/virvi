@@ -82,6 +82,22 @@ export function framePartTransforms(frame: FrameSettings, t: TransformData): (Fr
   }))
 }
 
+/** Every scene runtime (Decentraland, Hyperfy, Node) has a console; core's lib setting doesn't declare one. */
+declare const console: { log(...args: unknown[]): void }
+
+/** Adapters that have already said frames were left off (said once per scene runtime). */
+const toldLimit = new WeakSet<object>()
+
+/**
+ * Room for `n` more entities under the platform's limit. Without a known limit (capabilities.maxEntities) or a count
+ * (entityCount), there is always room.
+ */
+function roomFor(adapter: VirviPlatformAdapter, n: number): boolean {
+  const max = adapter.capabilities?.maxEntities
+  if (max === undefined || !adapter.entityCount) return true
+  return adapter.entityCount() + n <= max
+}
+
 /** One item copy's frame: its entities, redrawn in place while the frame looks the same. */
 export class ItemFrame {
   private entities: EntityHandle[] = []
@@ -90,12 +106,23 @@ export class ItemFrame {
 
   constructor(private adapter: VirviPlatformAdapter) {}
 
-  /** Draw the frame around a picture with this transform; null (or a platform without solid shapes) removes it. */
+  /**
+   * Draw the frame around a picture with this transform; null (or a platform without solid shapes) removes it.
+   * A frame that would take the scene over its entity limit is left off (never the picture itself), until it changes.
+   */
   draw(frame: FrameSettings | null, t: TransformData): void {
     const parts = frame && this.adapter.setSolidShape ? framePartTransforms(frame, t) : []
     const look = parts.map((p) => `${p.shape}:${p.color}`).join('|')
-    if (look !== this.look) {
+    if (look !== this.look && `skipped:${look}` !== this.look) {
       this.dispose()
+      if (parts.length && !roomFor(this.adapter, parts.length)) {
+        this.look = `skipped:${look}`
+        if (!toldLimit.has(this.adapter)) {
+          toldLimit.add(this.adapter)
+          console.log("[Virvi] Some frames aren't shown: the scene is at Decentraland's entity limit for its parcels")
+        }
+        return
+      }
       this.look = look
       for (const p of parts) {
         const e = this.adapter.createEntity()
@@ -103,7 +130,7 @@ export class ItemFrame {
         this.entities.push(e)
       }
     }
-    parts.forEach((p, i) => this.adapter.setTransform(this.entities[i], p.transform))
+    parts.forEach((p, i) => { if (this.entities[i] !== undefined) this.adapter.setTransform(this.entities[i], p.transform) })
   }
 
   dispose(): void {
