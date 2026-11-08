@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes, createHash } from 'node:crypto'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { apiKeys, orgMembers } from '../db/schema.js'
+import { apiKeys, organizations, orgMembers } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 
 interface CreateKeyBody {
@@ -38,7 +38,8 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
         const [member] = await db
           .select({ id: orgMembers.userId })
           .from(orgMembers)
-          .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, request.user.id)))
+          .innerJoin(organizations, eq(organizations.id, orgMembers.orgId))
+          .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, request.user.id), isNull(organizations.deletedAt)))
         if (!member) return reply.status(400).send({ error: 'Not a member of that organization' })
       }
 

@@ -3,10 +3,10 @@ import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
   arSpaces, eventSceneLinks, events, hyperfyWorlds, organizations, orgMembers, sceneCollaborators, sceneElementInstances, sceneElements,
-  scenePresets, sceneRoles, scenes,
+  mediaAssets, sceneLibrary, sceneRemovals, scenePresets, sceneRoles, scenes, streamingServers,
 } from '../src/db/schema.js'
 import type { HostingDeps } from '../src/hyperfy/hosting.js'
-import { purgeDeletedScenes, PURGE_AFTER_DAYS } from '../src/scenes/deleted.js'
+import { hardDeleteScene, purgeDeletedScenes, PURGE_AFTER_DAYS, restoreScene } from '../src/scenes/deleted.js'
 import { hashWorldKey } from '../src/hyperfy/worlds.js'
 import { resetDb } from './helpers/db.js'
 import { createElement, createInstance, createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -142,10 +142,14 @@ describe('deleting a scene (LIV-83)', () => {
     const cohost = await createUser({ wallet: randomWallet() })
     await db.insert(sceneRoles).values({ sceneId: s.scene.id, walletAddress: cohost.wallet!, role: 'cohost', grantedByUserId: owner.id })
     const stranger = await createUser()
-    for (const u of [cohost, s.editor, stranger]) {
+    for (const u of [cohost, s.editor]) {
       expect((await call(u, 'DELETE', `/api/scenes/${s.scene.id}`)).statusCode).toBe(403)
       expect((await call(u, 'GET', `/api/scenes/${s.scene.id}/delete-plan`)).statusCode).toBe(403)
     }
+    // Someone with no access at all can't tell the scene exists
+    expect((await call(stranger, 'DELETE', `/api/scenes/${s.scene.id}`)).statusCode).toBe(404)
+    expect((await call(stranger, 'GET', `/api/scenes/${s.scene.id}/delete-plan`)).statusCode).toBe(404)
+    expect((await call(stranger, 'POST', `/api/scenes/${s.scene.id}/restore`)).statusCode).toBe(404)
     expect((await call(owner, 'DELETE', `/api/scenes/${s.scene.id}`)).statusCode).toBe(200)
     for (const u of [cohost, s.editor, stranger]) {
       expect((await call(u, 'POST', `/api/scenes/${s.scene.id}/restore`)).statusCode).toBe(404)
@@ -166,8 +170,9 @@ describe('deleting a scene (LIV-83)', () => {
     await db.update(scenes).set({ orgId: org.id }).where(eq(scenes.id, orgScene.id))
     const personal = (await createScene(owner, 'Personal')).scene
 
-    expect((await call(member, 'DELETE', `/api/scenes/${orgScene.id}`)).statusCode).toBe(403)
-    expect((await call(admin, 'DELETE', `/api/scenes/${personal.id}`)).statusCode).toBe(403)
+    // Neither has any access to these scenes: 404, as for a scene that doesn't exist
+    expect((await call(member, 'DELETE', `/api/scenes/${orgScene.id}`)).statusCode).toBe(404)
+    expect((await call(admin, 'DELETE', `/api/scenes/${personal.id}`)).statusCode).toBe(404)
     expect((await call(admin, 'DELETE', `/api/scenes/${orgScene.id}`)).statusCode).toBe(200)
     expect((await sceneRow(orgScene.id)).deletedBy).toBe(admin.id)
     expect((await call(admin, 'GET', '/api/scenes/deleted')).json().scenes.map((s: { id: string }) => s.id)).toEqual([orgScene.id])
@@ -190,8 +195,22 @@ describe('deleting a scene (LIV-83)', () => {
     const [world] = await db.insert(hyperfyWorlds).values({
       sceneId: scene.id, ownerId: owner.id, name: 'Hosted', kind: 'hosted', keyHash: 'org-hash', keyPrefix: 'virviw_org', slug: 'org-world', flyApp: 'vlm-w-org-world', status: 'running',
     }).returning()
+    // What the org owns for the scene: an event linked to it, media in its library, its streaming server
+    const [event] = await db.insert(events).values({ ownerId: owner.id, orgId: org.id, name: 'Org night' }).returning()
+    await db.insert(eventSceneLinks).values({ eventId: event.id, sceneId: scene.id })
+    const [media] = await db.insert(mediaAssets).values({ ownerId: owner.id, orgId: org.id, filename: 'logo.png', contentType: 'image/png', sizeBytes: 1, storageKey: 'media/o/logo.png', publicUrl: 'https://cdn.example/logo.png' }).returning()
+    await db.insert(sceneLibrary).values({ sceneId: scene.id, mediaAssetId: media.id, addedBy: owner.id })
+    const [stream] = await db.insert(streamingServers).values({ ownerId: owner.id, orgId: org.id, name: 'Org stage', sceneId: scene.id }).returning()
+    // An org event linked to no scene isn't the restorer's
+    const [other] = await db.insert(events).values({ ownerId: owner.id, orgId: org.id, name: 'Unlinked' }).returning()
 
     expect((await call(platformAdmin, 'DELETE', `/api/admin/orgs/${org.id}`)).statusCode).toBe(204)
+    // The org is kept, hidden: nothing of its cascades away
+    const [orgRow] = await db.select().from(organizations).where(eq(organizations.id, org.id))
+    expect(orgRow.deletedAt).not.toBeNull()
+    expect((await call(orgAdmin, 'GET', '/api/orgs')).json().organizations).toEqual([])
+    expect((await call(platformAdmin, 'GET', '/api/admin/orgs')).json().organizations).toEqual([])
+    expect((await call(platformAdmin, 'DELETE', `/api/admin/orgs/${org.id}`)).statusCode).toBe(404)
     const row = await sceneRow(scene.id)
     expect(row).toMatchObject({ orgId: null, deletedOrgId: org.id })
     expect(row.deletedAt).not.toBeNull()
@@ -206,6 +225,19 @@ describe('deleting a scene (LIV-83)', () => {
     expect(res.statusCode, res.body).toBe(200)
     expect(await sceneRow(scene.id)).toMatchObject({ ownerId: orgAdmin.id, orgId: null, deletedAt: null, restorerIds: null, deletedOrgId: null })
     expect((await call(orgAdmin, 'GET', '/api/scenes')).json().scenes.map((s: { id: string }) => s.id)).toEqual([scene.id])
+    // What the org owned for the scene came with it
+    expect((await db.select().from(events).where(eq(events.id, event.id)))[0]).toMatchObject({ ownerId: orgAdmin.id, orgId: null })
+    expect(await db.select().from(eventSceneLinks).where(eq(eventSceneLinks.sceneId, scene.id))).toHaveLength(1)
+    expect((await db.select().from(mediaAssets).where(eq(mediaAssets.id, media.id)))[0]).toMatchObject({ ownerId: orgAdmin.id, orgId: null })
+    expect(await db.select().from(sceneLibrary).where(eq(sceneLibrary.sceneId, scene.id))).toHaveLength(1)
+    expect((await db.select().from(streamingServers).where(eq(streamingServers.id, stream.id)))[0]).toMatchObject({ ownerId: orgAdmin.id, orgId: null, sceneId: scene.id })
+    expect((await db.select().from(hyperfyWorlds).where(eq(hyperfyWorlds.id, world.id)))[0].ownerId).toBe(orgAdmin.id)
+    expect((await db.select().from(events).where(eq(events.id, other.id)))[0].orgId).toBe(org.id)
+    // No scene left deleted for the org: the purge removes it, with what's left of its own
+    await purgeDeletedScenes(new Date())
+    expect(await db.select().from(organizations).where(eq(organizations.id, org.id))).toEqual([])
+    expect(await db.select().from(events).where(eq(events.id, other.id))).toEqual([])
+    expect((await db.select().from(events).where(eq(events.id, event.id)))).toHaveLength(1)
   })
 
   it('the purge hard-deletes scenes past 30 days and destroys a hosted world left running; younger ones stay', async () => {
@@ -236,4 +268,56 @@ describe('deleting a scene (LIV-83)', () => {
     expect(await sceneRow(scene.id)).toBeUndefined()
   })
 
+  it('a purge never takes a scene restored meanwhile, and a restore waits out a purge under way', async () => {
+    const { scene } = await createScene(owner, 'Race')
+    await db.insert(hyperfyWorlds).values({
+      sceneId: scene.id, ownerId: owner.id, name: 'Hosted', kind: 'hosted', keyHash: 'race-hash', keyPrefix: 'virviw_race', slug: 'race-world', flyApp: 'vlm-w-race-world', status: 'running',
+    })
+    const longAgo = new Date(Date.now() - 31 * DAY)
+    await db.update(scenes).set({ deletedAt: longAgo }).where(eq(scenes.id, scene.id))
+    // The sweep picked it, then the owner restored it before the sweep reached it
+    await restoreScene(scene.id, owner.id)
+    expect(await hardDeleteScene(scene.id, { cutoff: new Date(Date.now() - 30 * DAY) })).toBe(false)
+    expect(fake.destroyed).toEqual([])
+    expect((await sceneRow(scene.id)).deletedAt).toBeNull()
+
+    // Deleted again just now: the sweep's cutoff doesn't reach it
+    await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, scene.id))
+    expect(await hardDeleteScene(scene.id, { cutoff: new Date(Date.now() - 30 * DAY) })).toBe(false)
+
+    // A restore pressed while the purge destroys the hosted world is refused, and the purge finishes
+    let during: number | undefined
+    const deleteApp = fake.deps.fly!.deleteApp
+    fake.deps.fly = { ...fake.deps.fly!, deleteApp: async (name: string) => {
+      during = (await call(owner, 'POST', `/api/scenes/${scene.id}/restore`)).statusCode
+      await deleteApp(name)
+    } } as HostingDeps['fly']
+    const purge = await call(owner, 'POST', `/api/scenes/${scene.id}/purge`, { name: 'Race' })
+    expect(purge.statusCode).toBe(204)
+    expect(during).toBe(409)
+    expect(await sceneRow(scene.id)).toBeUndefined()
+  })
+
+  it('restoring clears the removals of that delete, so a later delete starts afresh', async () => {
+    const { scene } = await createScene(owner, 'Again')
+    expect((await call(owner, 'DELETE', `/api/scenes/${scene.id}`)).statusCode).toBe(200)
+    await db.insert(sceneRemovals).values({ sceneId: scene.id, kind: 'dcl_world', targetId: scene.id, label: 'Remove the scene from x.dcl.eth', status: 'failed' })
+    expect((await call(owner, 'POST', `/api/scenes/${scene.id}/restore`)).statusCode).toBe(200)
+    expect(await db.select().from(sceneRemovals)).toEqual([])
+  })
+
+  it("an org's owners and admins see its scenes in their list, marked, with Delete; members don't", async () => {
+    const admin = await createUser()
+    const member = await createUser()
+    const [org] = await db.insert(organizations).values({ name: 'Studio Co', slug: `org-${Date.now()}`, billingOwnerId: owner.id }).returning()
+    await db.insert(orgMembers).values([{ orgId: org.id, userId: owner.id, role: 'owner' }, { orgId: org.id, userId: admin.id, role: 'admin' }, { orgId: org.id, userId: member.id, role: 'member' }])
+    const { scene } = await createScene(owner, 'Org scene')
+    await db.update(scenes).set({ orgId: org.id }).where(eq(scenes.id, scene.id))
+    expect((await call(admin, 'GET', '/api/scenes')).json().scenes).toEqual([expect.objectContaining({ id: scene.id, relationship: 'org_admin', canDelete: true, orgName: 'Studio Co' })])
+    expect((await call(member, 'GET', '/api/scenes')).json().scenes).toEqual([])
+    expect((await call(owner, 'GET', '/api/scenes')).json().scenes).toEqual([expect.objectContaining({ id: scene.id, relationship: 'owner', canDelete: true })])
+    // Listing isn't access: the admin can't open it
+    expect((await call(admin, 'GET', `/api/scenes/${scene.id}`)).statusCode).toBe(403)
+    expect((await call(owner, 'GET', `/api/scenes/${scene.id}`)).json().scene.canDelete).toBe(true)
+  })
 })

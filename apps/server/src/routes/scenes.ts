@@ -10,6 +10,8 @@ import {
   sceneCollaborators,
   sceneRoles,
   users,
+  organizations,
+  orgMembers,
 } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import type { AuthUser } from '../middleware/auth.js'
@@ -23,6 +25,7 @@ import { dispatchPlatformCallbacks } from '../integrations/platform-hooks.js'
 import { serializeSingleElement } from '../services/scene-serializer.js'
 import { getSubscription } from '../integrations/stripe.js'
 import { liveScene } from '../scenes/live.js'
+import { mayManageDeletion } from '../scenes/deleted.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
 import { checkParentInstance } from '../scenes/instance-parent.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
@@ -210,7 +213,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     // A trial sees the scenes it owns, never collaborations or roles (its access is owner-only).
     if (actor.trial && actor.userId) {
       const own = await db.query.scenes.findMany({ where: and(eq(scenes.ownerId, actor.userId), liveScene()), orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)] })
-      return reply.send({ scenes: own.map((s) => ({ ...s, relationship: 'owner' as const })) })
+      return reply.send({ scenes: own.map((s) => ({ ...s, relationship: 'owner' as const, canDelete: true })) })
     }
     if (!actor.userId || !actor.verified) return reply.send({ scenes: [] })
     const owned = await db.query.scenes.findMany({
@@ -256,9 +259,27 @@ export default async function sceneRoutes(app: FastifyInstance) {
           orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
         })
       : []
+    // LIV-83: an owner or admin of an organization also sees its scenes, to delete them (the narrow org-admin check);
+    // opening one still needs access of their own (getSceneAccess isn't widened)
+    const adminOrgs = await db
+      .select({ id: organizations.id, name: organizations.name })
+      .from(orgMembers)
+      .innerJoin(organizations, eq(organizations.id, orgMembers.orgId))
+      .where(and(eq(orgMembers.userId, actor.userId), inArray(orgMembers.role, ['owner', 'admin']), isNull(organizations.deletedAt)))
+    const orgName = new Map(adminOrgs.map((o) => [o.id, o.name]))
+    const listed = new Set([...ownedIds, ...sharedIds, ...extra.map((s) => s.id)])
+    const orgScenes = adminOrgs.length
+      ? (await db.query.scenes.findMany({
+          where: and(inArray(scenes.orgId, adminOrgs.map((o) => o.id)), liveScene()),
+          orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
+        })).filter((s) => !listed.has(s.id))
+      : []
+    const canDelete = (s: { ownerId: string; orgId: string | null }) => s.ownerId === actor.userId || actor.role === 'admin' || (!!s.orgId && orgName.has(s.orgId))
+    const org = (s: { orgId: string | null }) => (s.orgId && orgName.has(s.orgId) ? { orgName: orgName.get(s.orgId)! } : {})
     const list = [
-      ...owned.map((s) => ({ ...s, relationship: 'owner' as const })),
-      ...[...shared, ...extra].map((s) => ({ ...s, relationship: best.get(s.id)! })),
+      ...owned.map((s) => ({ ...s, relationship: 'owner' as const, canDelete: true, ...org(s) })),
+      ...[...shared, ...extra].map((s) => ({ ...s, relationship: best.get(s.id)!, canDelete: canDelete(s), ...org(s) })),
+      ...orgScenes.map((s) => ({ ...s, relationship: 'org_admin' as const, canDelete: true, ...org(s) })),
     ]
     // A scene pass sees only its own scene (the guard already required a bound sceneId).
     return reply.send({ scenes: isScenePass(request.user) ? list.filter((s) => s.id === request.user.sceneId) : list })
@@ -354,7 +375,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
       return reply.send({ scene: { ...rest, presets: await withRoomSets(scene.presets.filter((p) => visible.has(p.id))) } })
     }
 
-    return reply.send({ scene: { ...scene, presets: await withRoomSets(scene.presets) } })
+    return reply.send({ scene: { ...scene, presets: await withRoomSets(scene.presets), canDelete: await mayManageDeletion(actorFromClaims(request.user), scene) } })
   })
 
   // ── PUT /api/scenes/:sceneId — update scene ─────────────────────────────

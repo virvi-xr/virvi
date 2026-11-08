@@ -53,6 +53,12 @@ export const organizations = pgTable('organizations', {
   metadata: jsonb('metadata'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * LIV-83: when the organization was deleted. The row stays (so its events, media and streaming servers don't cascade
+   * away while its scenes can still be restored) and is hidden everywhere; the purge removes it once none of its scenes
+   * is left deleted.
+   */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 })
 
 export const organizationsRelations = relations(organizations, ({ one, many }) => ({
@@ -215,6 +221,8 @@ export const scenes = pgTable('scenes', {
    */
   deletedOrgId: uuid('deleted_org_id'),
   restorerIds: uuid('restorer_ids').array(),
+  /** Set while a purge is destroying the scene's hosted worlds (LIV-83): a restore is refused meanwhile. */
+  purgingAt: timestamp('purging_at', { withTimezone: true }),
 }, (t) => ({
   deletedIdx: index('scenes_deleted_at_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
 }))
@@ -2087,8 +2095,8 @@ export const sceneRemovals = pgTable('scene_removals', {
   targetId: uuid('target_id').notNull(),
   label: text('label').notNull(),
   target: jsonb('target').$type<Record<string, unknown>>().notNull().default({}),
-  /** pending | awaiting_signature | done | failed */
-  status: text('status').notNull().$type<'pending' | 'awaiting_signature' | 'done' | 'failed'>().default('pending'),
+  /** pending | awaiting_signature | done | failed | needs_review (the live content changed: Virvi left it alone) */
+  status: text('status').notNull().$type<'pending' | 'awaiting_signature' | 'done' | 'failed' | 'needs_review'>().default('pending'),
   errorMessage: text('error_message'),
   /** A prepared Genesis City empty-scene deploy waiting for the owner's signature: entity id and timestamp. */
   pending: jsonb('pending').$type<{ entityId: string; timestamp: number } | null>(),

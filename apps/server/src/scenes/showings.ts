@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { programmeLength, type ProgrammeItem, type ShowingInstance } from '@virvixr/shared'
 import { db } from '../db/connection.js'
+import { liveSceneIds } from './live.js'
 import { events, eventSceneLinks, mediaAssets, sceneElements, screenShowings } from '../db/schema.js'
 import { publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
 import { isTimeZone, nextStarts, occurrencesBetween, utcToZoned, zonedToUtc, type ScheduleSpec } from './schedule-time.js'
@@ -383,7 +384,8 @@ export async function eventShowings(eventId: string) {
     id: screenShowings.id, sceneId: screenShowings.sceneId, elementId: screenShowings.elementId,
     screenName: sceneElements.name, title: screenShowings.title, enabled: screenShowings.enabled,
   }).from(screenShowings).innerJoin(sceneElements, eq(screenShowings.elementId, sceneElements.id))
-    .where(eq(screenShowings.eventId, eventId)).orderBy(screenShowings.createdAt)
+    // A deleted scene's (LIV-83) are left out until it's restored
+    .where(and(eq(screenShowings.eventId, eventId), inArray(screenShowings.sceneId, liveSceneIds()))).orderBy(screenShowings.createdAt)
 }
 
 /** The events linked to a scene, which its showings can follow. */

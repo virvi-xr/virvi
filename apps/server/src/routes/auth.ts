@@ -334,7 +334,7 @@ export default async function authRoutes(app: FastifyInstance) {
       let previewSceneId: string | null = null
       if (typeof sceneId === 'string' && /^[0-9a-f-]{36}$/i.test(sceneId)) {
         const row = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) })
-        previewSceneId = row ? row.id : null
+        previewSceneId = row && !row.deletedAt ? row.id : null
       }
       const claims = {
         ...sceneClaims(dbUser, '', { sceneId: previewSceneId, locationId: null }),

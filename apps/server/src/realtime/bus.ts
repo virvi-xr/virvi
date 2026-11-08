@@ -18,6 +18,8 @@ export type VenueEvent =
   /** A screen's scheduled showings were added, edited or removed (LIV-87). */
   | { type: 'showings_changed'; sceneId: string; elementId: string }
   | ({ type: 'presets_changed'; sceneId: string } & PresetsChange)
+  /** The scene was deleted (LIV-83): its rooms empty and close. */
+  | { type: 'scene_deleted'; sceneId: string }
 
 /** A preset was created, renamed or deleted (the list editors see; switching the live one is preset_changed). */
 export type PresetsChange =

@@ -292,6 +292,8 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS deleted_by UUID CONSTRAINT scenes_deleted_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL\`;
         await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS deleted_org_id UUID\`;
         await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS restorer_ids UUID[]\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS purging_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ\`;
         await sql\`CREATE INDEX IF NOT EXISTS scenes_deleted_at_idx ON scenes (deleted_at) WHERE deleted_at IS NOT NULL\`;
         await sql\`ALTER TABLE scene_deployments ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE scene_deployments ADD COLUMN IF NOT EXISTS removal_outcome TEXT\`;

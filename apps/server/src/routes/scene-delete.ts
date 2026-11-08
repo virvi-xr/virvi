@@ -21,10 +21,11 @@ import { db } from '../db/connection.js'
 import { bookings, eventSceneLinks, events, orgMembers, organizations, sceneRemovals, scenes, venues } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
+import { getSceneAccess } from '../auth/permissions.js'
 import { isUuid } from '../auth/scene-from.js'
 import { HostingError } from '../hyperfy/hosting.js'
 import {
-  hardDeleteScene, mayManageDeletion, purgeAtOf, restoreScene, sceneForDeletion, softDeleteScene,
+  hardDeleteScene, mayManageDeletion, purgeAtOf, restoreScene, RestoreRefused, sceneForDeletion, softDeleteScene,
 } from '../scenes/deleted.js'
 import {
   publicRemoval, removalOptions, removalsOf, RemovalError, runRemoval, signRequestFor, startRemovals, submitRemovalSignature, type Removal,
@@ -71,7 +72,9 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
       return null
     }
     if (!allowed) {
-      reply.status(403).send({ error: 'Forbidden' })
+      // 403 only for people with some access to the scene (a co-host, an editor); anyone else can't tell it exists
+      const known = (await getSceneAccess(actorFromClaims(request.user), scene.id)).level !== 'none'
+      reply.status(known ? 403 : 404).send(known ? { error: 'Forbidden' } : NOT_FOUND)
       return null
     }
     if (!scene.deletedAt && deleted) {
@@ -121,7 +124,7 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
         ...s,
         purgeAt: purgeAtOf(s.deletedAt!),
         orgDeleted: !s.orgId && !!s.deletedOrgId,
-        removals: removals.filter((r) => r.sceneId === s.id).map(publicRemoval),
+        removals: removals.filter((r) => r.sceneId === s.id).map((r) => publicRemoval(r)),
       })),
     })
   })
@@ -137,7 +140,7 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
     })
   })
 
-  app.delete<{ Params: { sceneId: string }; Body: { remove?: unknown } | null }>(
+  app.delete<{ Params: { sceneId: string }; Body: { remove?: unknown; seen?: unknown } | null }>(
     '/api/scenes/:sceneId',
     { config: { trial: true } },
     async (request, reply) => {
@@ -146,14 +149,20 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
       const raw = request.body?.remove
       if (raw !== undefined && (!Array.isArray(raw) || !raw.every(isUuid))) return reply.status(400).send({ error: 'bad_remove', message: 'remove must be a list of ids' })
       const remove = (raw as string[] | undefined) ?? []
+      // What the dialog showed live on each Decentraland destination (id → entity id, or null for nothing)
+      const rawSeen = request.body?.seen
+      if (rawSeen !== undefined && (typeof rawSeen !== 'object' || rawSeen === null || !Object.entries(rawSeen).every(([k, v]) => isUuid(k) && (v === null || typeof v === 'string')))) {
+        return reply.status(400).send({ error: 'bad_seen', message: 'seen must map destination ids to entity ids' })
+      }
+      const seen = rawSeen as Record<string, string | null> | undefined
       if (remove.length && request.user.trial) return reply.status(403).send({ error: 'account_required', action: 'remove_deployments' })
       const now = new Date()
       if (!(await softDeleteScene(scene.id, request.user.id, now))) return reply.status(404).send(NOT_FOUND)
       // The scene is deleted whatever happens to these: a failure is listed with Retry
-      const removals = remove.length ? await startRemovals(scene.id, remove, request.user.id) : []
+      const removals = remove.length ? await startRemovals(scene.id, remove, request.user.id, { seen }) : []
       return reply.send({
         scene: { id: scene.id, name: scene.name, deletedAt: now, purgeAt: purgeAtOf(now) },
-        removals: removals.map(publicRemoval),
+        removals: removals.map((r) => publicRemoval(r)),
       })
     },
   )
@@ -165,10 +174,15 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
     const newOwner = !scene.orgId && scene.deletedOrgId ? request.user.id : scene.ownerId
     const limit = await sceneLimitError(newOwner)
     if (limit) return reply.status(403).send(limit)
-    const restored = await restoreScene(scene.id, request.user.id)
+    let restored
+    try {
+      restored = await restoreScene(scene.id, request.user.id)
+    } catch (err) {
+      if (err instanceof RestoreRefused) return reply.status(409).send({ error: err.code, message: err.message })
+      throw err
+    }
     if (!restored) return reply.status(404).send(NOT_FOUND)
-    const removals = (await removalsOf([scene.id])).filter((r) => r.status === 'done')
-    return reply.send({ scene: restored, notRestored: removals.map(publicRemoval) })
+    return reply.send({ scene: restored.scene, notRestored: restored.notRestored.map((r) => publicRemoval(r)) })
   })
 
   app.post<{ Params: { sceneId: string }; Body: { name?: unknown } | null }>(
@@ -179,7 +193,8 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
       if (!scene) return reply
       if (request.body?.name !== scene.name) return reply.status(400).send({ error: 'name_mismatch', message: "Type the scene's name to delete it forever." })
       try {
-        await hardDeleteScene(scene.id)
+        // False: a restore or another purge got there first
+        if (!(await hardDeleteScene(scene.id))) return reply.status(409).send({ error: 'not_purged', message: 'This scene was restored or is already being deleted.' })
       } catch (err) {
         if (err instanceof HostingError) return reply.status(409).send({ error: err.code, message: err.message })
         throw err
@@ -188,14 +203,15 @@ export default async function sceneDeleteRoutes(app: FastifyInstance) {
     },
   )
 
-  app.post<{ Params: { sceneId: string; removalId: string } }>(
+  // Body { confirm: true }: "Remove anyway" for a removal that needs a look (what's live changed)
+  app.post<{ Params: { sceneId: string; removalId: string }; Body: { confirm?: unknown } | null }>(
     '/api/scenes/:sceneId/removals/:removalId/retry',
     { config: { deletedScene: true } },
     async (request, reply) => {
       const r = await removalOf(request, reply)
       if (!r) return reply
       if (r.status === 'done') return reply.send({ removal: publicRemoval(r) })
-      return reply.send({ removal: publicRemoval(await runRemoval(r)) })
+      return reply.send({ removal: publicRemoval(await runRemoval(r, { confirm: request.body?.confirm === true })) })
     },
   )
 

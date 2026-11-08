@@ -19,12 +19,17 @@ export class DisconnectBusyError extends Error {
   }
 }
 
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
 /**
- * Removes the destination row under the locks uploads, import deploys, mode A deploys and signed submits take, so
- * nothing starts between the checks and the delete. A deploy still waiting for a signature fails (DISCONNECTED).
- * Throws DisconnectBusyError while an upload or a deploy is running; returns the removed row, or null when it was gone.
+ * Runs `fn` under the locks uploads, import deploys, mode A deploys and signed submits take (the location's import lock,
+ * then the destination's), once nothing is building or deploying there (else DisconnectBusyError). When `fn` returns
+ * true the destination is disconnected in the same transaction: a deploy still waiting for a signature fails
+ * (DISCONNECTED) and the row goes. Returns `fn`'s answer and the removed row (null when kept or already gone).
+ * Removing a deleted scene's deployment (LIV-83) runs its Decentraland call inside `fn`, so a deploy can neither be
+ * under way during it nor start after it.
  */
-export async function disconnectDestination(dest: Destination): Promise<Destination | null> {
+export async function underDestinationLocks(dest: Destination, fn: (tx: Tx) => Promise<boolean>): Promise<{ removed: Destination | null; went: boolean }> {
   const loc = destinationLocation(dest)
   const place = dest.kind === 'parcels' ? 'these parcels' : 'this World'
   return db.transaction(async (tx) => {
@@ -35,7 +40,7 @@ export async function disconnectDestination(dest: Destination): Promise<Destinat
       columns: { id: true },
     })
     if (uploading) {
-      throw new DisconnectBusyError('import_in_progress', `An upload to ${place} is being built or deployed right now. Wait for it to finish, then disconnect.`)
+      throw new DisconnectBusyError('import_in_progress', `An upload to ${place} is being built or deployed right now. Wait for it to finish, then try again.`)
     }
     const busy = await tx.query.sceneDeployments.findFirst({
       where: and(eq(sceneDeployments.destinationId, dest.id), inArray(sceneDeployments.status, ['pending', 'building', 'deploying'])),
@@ -46,12 +51,22 @@ export async function disconnectDestination(dest: Destination): Promise<Destinat
       columns: { id: true },
     })
     if (busy || importing) {
-      throw new DisconnectBusyError('deploy_in_progress', `A deploy is going out to ${place} right now. Wait for it to finish, then disconnect.`)
+      throw new DisconnectBusyError('deploy_in_progress', `A deploy is going out to ${place} right now. Wait for it to finish, then try again.`)
     }
+    const go = await fn(tx)
+    if (!go) return { removed: null, went: false }
     // A submit claims its row under the destination's lock, so it either got there first (busy above) or finds it failed
     await tx.update(sceneDeployments).set({ status: 'failed', errorMessage: DISCONNECTED })
       .where(and(eq(sceneDeployments.destinationId, dest.id), eq(sceneDeployments.status, 'awaiting_signature')))
     const [row] = await tx.delete(dclWorldDestinations).where(eq(dclWorldDestinations.id, dest.id)).returning()
-    return row ?? null
+    return { removed: row ?? null, went: true }
   })
+}
+
+/**
+ * Removes the destination row under those locks (underDestinationLocks). Throws DisconnectBusyError while an upload
+ * or a deploy is running; returns the removed row, or null when it was gone.
+ */
+export async function disconnectDestination(dest: Destination): Promise<Destination | null> {
+  return (await underDestinationLocks(dest, async () => true)).removed
 }

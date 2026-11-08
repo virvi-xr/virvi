@@ -545,6 +545,16 @@ export class VirviSceneRoom extends Room {
 
   private async onVenueEvent(e: VenueEvent) {
     try {
+      if (e.type === 'scene_deleted') {
+        // Everyone connected sees the scene empty, then the room closes; a client that joins again gets nothing
+        this.broadcast('scene_preset_update', {
+          action: 'init',
+          scenePreset: { videos: [], images: [], sounds: [], models: [], widgets: [], nfts: [], claimPoints: [], adSpaces: [] },
+          sceneSettings: [],
+        })
+        await this.disconnect()
+        return
+      }
       if (e.type === 'element_changed') {
         await this.broadcastElementChange(e)
         // A screen just switched to Schedule mode needs its showings

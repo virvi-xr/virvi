@@ -14,7 +14,7 @@ import {
 } from '../db/schema.js'
 import { listPacks } from '../catalog/packs.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
-import { softDeleteOrgScenes } from '../scenes/deleted.js'
+import { softDeleteOrg } from '../scenes/deleted.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authenticate } from '../middleware/auth.js'
 import { isUuid } from '../auth/scene-from.js'
@@ -263,12 +263,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     const offset = Number(request.query.offset) || 0
     const search = request.query.search?.trim()
 
-    const conditions = search
+    // A deleted organization (LIV-83) is hidden until it's purged
+    const conditions = and(isNull(organizations.deletedAt), search
       ? or(
           ilike(organizations.name, `%${search}%`),
           ilike(organizations.slug, `%${search}%`),
         )
-      : undefined
+      : undefined)
 
     const [rows, [{ total }]] = await Promise.all([
       db
@@ -298,17 +299,14 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { orgId: string } }>('/api/admin/orgs/:orgId', async (request, reply) => {
     const { orgId } = request.params
-
-    const existing = await db.query.organizations.findFirst({ where: eq(organizations.id, orgId) })
-    if (!existing) {
-      return reply.status(404).send({ error: 'Organization not found' })
-    }
+    if (!isUuid(orgId)) return reply.status(404).send({ error: 'Organization not found' })
 
     // LIV-83: the org's scenes are soft-deleted, not cascaded away: each stays restorable for 30 days by its owner or by
     // the org's owners and admins now (recorded, since the org and its members go), and hosted worlds and deployments
     // stay up until the purge.
-    await softDeleteOrgScenes(orgId, request.user.id)
-    await db.delete(organizations).where(eq(organizations.id, orgId))
+    // The org row is kept, marked deleted, so its events, media and streaming servers don't cascade away; the purge
+    // removes it once none of its scenes is left deleted.
+    if ((await softDeleteOrg(orgId, request.user.id)) === null) return reply.status(404).send({ error: 'Organization not found' })
     return reply.status(204).send()
   })
 }

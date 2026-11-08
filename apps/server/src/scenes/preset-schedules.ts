@@ -2,7 +2,7 @@ import { and, desc, eq, gt, inArray, ne, or } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { bookings, eventSceneLinks, events, scenePresets, scenePresetScheduleRuns, scenePresetSchedules, scenes, venues } from '../db/schema.js'
 import { publishVenueEvent } from '../realtime/bus.js'
-import { liveScene } from './live.js'
+import { liveScene, liveSceneIds } from './live.js'
 import { isTimeZone, latestStart, utcToZoned, nextStarts, occurrencesBetween, type Occurrence, type ScheduleSpec } from './schedule-time.js'
 
 /**
@@ -145,7 +145,8 @@ export async function eventPresetSchedules(eventId: string) {
     id: scenePresetSchedules.id, sceneId: scenePresetSchedules.sceneId, presetId: scenePresetSchedules.presetId,
     presetName: scenePresets.name, enabled: scenePresetSchedules.enabled,
   }).from(scenePresetSchedules).innerJoin(scenePresets, eq(scenePresetSchedules.presetId, scenePresets.id))
-    .where(eq(scenePresetSchedules.eventId, eventId)).orderBy(scenePresetSchedules.createdAt)
+    // A deleted scene's (LIV-83) are left out until it's restored
+    .where(and(eq(scenePresetSchedules.eventId, eventId), inArray(scenePresetSchedules.sceneId, liveSceneIds()))).orderBy(scenePresetSchedules.createdAt)
 }
 
 function overlaps(a: Occurrence, b: Occurrence): boolean {
