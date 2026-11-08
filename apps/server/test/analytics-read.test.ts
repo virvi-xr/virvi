@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { analyticsEvents, analyticsHeatmapDaily, analyticsPositions, analyticsRollupHourly, analyticsScenes, analyticsSessions, analyticsCopresenceDaily, sceneRoles, subscriptions, locationSetups, sceneCollaborators } from '../src/db/schema.js'
+import { analyticsEvents, analyticsHeatmapDaily, analyticsPositions, analyticsRollupHourly, analyticsScenes, analyticsSessions, analyticsCopresenceDaily, sceneRoles, subscriptions, locationSetups, sceneCollaborators, assetLibraryItems, sceneElements, sceneElementInstances } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { visitorHash } from '../src/analytics/hash.js'
 import { resetEmoteLabelCache } from '../src/analytics/labels.js'
 import { setDeleteMyDataLimiter } from '../src/routes/analytics-read.js'
 import { TokenBucketLimiter } from '../src/analytics/limiter.js'
 import { resetDb } from './helpers/db.js'
-import { testApp, createUser, randomWallet, createScene, tokenFor } from './helpers/factories.js'
+import { testApp, createUser, randomWallet, createScene, createElement, tokenFor } from './helpers/factories.js'
 import { createAnalyticsScene, insertSession } from './helpers/analytics.js'
 import { createSetup } from './helpers/setups.js'
 
@@ -210,6 +210,58 @@ describe('analytics read API', () => {
       const setup = await db.query.locationSetups.findFirst({ where: eq(locationSetups.analyticsSceneId, s.id) })
       await db.insert(sceneCollaborators).values({ sceneId: setup!.virviSceneId, userId: viewer.id, role: 'viewer' })
       expect((await get(viewer, `/api/analytics/locations/${s.id}/heatmap`)).json().heatmap3d).toBe(true)
+    })
+  })
+
+  describe('layout (LIV-85)', () => {
+    async function linked() {
+      const owner = await createUser()
+      const { scene, preset } = await createScene(owner)
+      const s = await createAnalyticsScene()
+      await createSetup(s.id, scene.id)
+      return { owner, scene, preset, s }
+    }
+
+    it("returns the live preset's enabled instances: models with their GLB and size, other elements by type", async () => {
+      const { owner, preset, s } = await linked()
+      const url = 'https://cdn.example/models/stage.glb'
+      await db.insert(assetLibraryItems).values({ name: 'Stage', storageKey: 'k/stage.glb', cdnUrl: url, dimensions: { width: 4, height: 3, depth: 2 } })
+      const stage = await createElement(preset.id, { type: 'model', name: 'Stage', properties: { modelSrc: url } })
+      const screen = await createElement(preset.id, { type: 'video', name: 'Main Screen' })
+      const hidden = await createElement(preset.id, { type: 'image', name: 'Hidden poster', properties: {} })
+      await db.update(sceneElements).set({ enabled: false }).where(eq(sceneElements.id, hidden.id))
+      const [st] = await db.insert(sceneElementInstances).values({ elementId: stage.id, position: { x: 20, y: 0, z: 10 }, rotation: { x: 0, y: 90, z: 0 }, scale: { x: 2, y: 1, z: 1 } }).returning()
+      const [sc] = await db.insert(sceneElementInstances).values({ elementId: screen.id, position: { x: 0, y: 3, z: 0 }, parentInstanceId: st.id }).returning()
+      await db.insert(sceneElementInstances).values({ elementId: screen.id, enabled: false, position: { x: 1, y: 1, z: 1 } })
+      await db.insert(sceneElementInstances).values({ elementId: hidden.id, position: { x: 1, y: 1, z: 1 } })
+      const res = await get(owner, `/api/analytics/locations/${s.id}/layout`)
+      expect(res.statusCode).toBe(200)
+      const items = res.json().layout.items
+      expect(items).toHaveLength(2)
+      expect(items).toContainEqual({
+        id: st.id, parentId: null, type: 'model', name: 'Stage', src: url, dimensions: { x: 4, y: 3, z: 2 },
+        position: { x: 20, y: 0, z: 10 }, rotation: { x: 0, y: 90, z: 0 }, scale: { x: 2, y: 1, z: 1 },
+      })
+      expect(items).toContainEqual({
+        id: sc.id, parentId: st.id, type: 'video', name: 'Main Screen', src: null, dimensions: null,
+        position: { x: 0, y: 3, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
+      })
+    })
+
+    it('a model whose GLB is not a web URL comes without src (drawn as its footprint)', async () => {
+      const { owner, preset, s } = await linked()
+      const m = await createElement(preset.id, { type: 'model', name: 'Local', properties: { modelSrc: 'models/house.glb' } })
+      await db.insert(sceneElementInstances).values({ elementId: m.id, position: { x: 1, y: 0, z: 1 } })
+      expect((await get(owner, `/api/analytics/locations/${s.id}/layout`)).json().layout.items[0]).toMatchObject({ src: null, dimensions: null })
+    })
+
+    it('an unlinked location has no layout; strangers get 403', async () => {
+      const owner = await createUser()
+      const s = await createAnalyticsScene()
+      const admin = await createUser({ role: 'admin' })
+      expect((await get(admin, `/api/analytics/locations/${s.id}/layout`)).json()).toEqual({ layout: null })
+      const { s: other } = await linked()
+      expect((await get(owner, `/api/analytics/locations/${other.id}/layout`)).statusCode).toBe(403)
     })
   })
 

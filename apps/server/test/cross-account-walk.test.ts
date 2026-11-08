@@ -350,6 +350,7 @@ const CASES: Case[] = [
   { route: 'GET /api/analytics/locations/:id/timeseries', url: (f) => `/api/analytics/locations/${f.location.id}/timeseries` },
   { route: 'GET /api/analytics/locations/:id/live', url: (f) => `/api/analytics/locations/${f.location.id}/live` },
   { route: 'GET /api/analytics/locations/:id/heatmap', url: (f) => `/api/analytics/locations/${f.location.id}/heatmap` },
+  { route: 'GET /api/analytics/locations/:id/layout', url: (f) => `/api/analytics/locations/${f.location.id}/layout` },
   { route: 'GET /api/analytics/locations/:id/sessions', url: (f) => `/api/analytics/locations/${f.location.id}/sessions` },
   { route: 'PATCH /api/analytics/locations/:id', url: (f) => `/api/analytics/locations/${f.location.id}`, body: () => ({ walletVisibility: true }) },
   // orgs

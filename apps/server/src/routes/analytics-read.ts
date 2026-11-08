@@ -25,6 +25,7 @@ import { visitorHash } from '../analytics/hash.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
 import { mergeLegacyEntityTargets, resolveEmoteLabels } from '../analytics/labels.js'
 import { heatmap3dFor } from '../analytics/jobs.js'
+import { sceneLayout } from '../analytics/layout.js'
 
 const DAY = 86_400_000
 const HOUR = 3_600_000
@@ -287,6 +288,13 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       heatmap3d,
       cells: cells.map((c) => ({ x: Number(c.x), z: Number(c.z), cellY: c.y === null ? null : Number(c.y), dwellSec: Number(c.dwell), visits: Number(c.visits) })),
     })
+  })
+
+  // The live preset's layout of the Virvi scene the reader reads through (LIV-85): drawn under the heatmap, on every plan.
+  app.get<{ Params: { id: string } }>('/api/analytics/locations/:id/layout', { config: { scenePass: { sceneFrom: fromAnalyticsLocation } } }, async (request, reply) => {
+    const scene = await guard(request, reply, request.params.id)
+    if (!scene) return
+    return reply.send({ layout: scene.tenureSceneId ? await sceneLayout(scene.tenureSceneId) : null })
   })
 
   app.get<{ Params: { id: string }; Querystring: { cursor?: string; limit?: string } }>('/api/analytics/locations/:id/sessions', { config: { scenePass: { sceneFrom: fromAnalyticsLocation } } }, async (request, reply) => {
