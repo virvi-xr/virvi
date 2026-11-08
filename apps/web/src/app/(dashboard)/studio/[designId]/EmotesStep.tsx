@@ -20,6 +20,9 @@ export const emoteName = (emote: string) => emote === OWN_EMOTE ? 'Your emote' :
 
 export type EmoteTarget = { emote: string; bodyShape: 'male' | 'female' }
 
+/** Said when Finalize has nothing ticked: there are no pieces to check together. */
+export const NONE_TICKED = 'No pieces are ticked in Finalize, so there’s nothing to check. Tick a piece to see its emotes.'
+
 /** Said while the emotes are Finalize's selection rather than every piece. */
 export const WORN_NOTE = 'Showing the pieces you’re finalizing, with any you’ve finalized before. Pieces you didn’t tick aren’t worn.'
 

@@ -7,8 +7,8 @@ import { useAuth } from '@/lib/auth'
 import { useStudioRoom } from '@/lib/colyseus'
 import { Badge, PageHeader, RowMenu, Skeleton } from '@/components/ui'
 import {
-  designBadge, designIdFromPath, kindLabel, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn, selectionCategories,
-  type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioSet, type StudioUsage, type Worn,
+  designBadge, designIdFromPath, kindLabel, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn, selectionCategories, wornState,
+  type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioSet, type StudioUsage, type WornState,
 } from '@/lib/studio'
 import Conversation from './Conversation'
 import Preview from './Preview'
@@ -86,8 +86,7 @@ export default function StudioDesignPage() {
       .catch(() => {})
     return () => { cancelled = true }
   }, [designId, wornKey, detail])
-  const worn: Worn | 'loading' | null = !wornKey ? null
-    : wornSet?.key === wornKey ? { categories: wornKey.split(','), set: wornSet.set } : 'loading'
+  const worn: WornState = wornState(chosen, wornSet)
 
   const onEvent = useCallback((e: StudioEvent) => {
     setEvents((prev) => [...prev.slice(-(MAX_EVENTS - 1)), e])
@@ -181,7 +180,7 @@ export default function StudioDesignPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Conversation designId={designId} detail={detail} usage={usage} events={events} onChanged={reload} />
         <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}
-          step={step} onStep={setStep} emoteTarget={emoteTarget} worn={worn === 'loading' ? null : worn}
+          step={step} onStep={setStep} emoteTarget={emoteTarget} worn={worn}
           finalizeStep={detail.design.kind === 'scene'
             ? <p className="p-4 text-sm text-gray-300">Each piece you finalize goes into your 3D Asset Library, private to you, ready to place in a scene.</p>
             : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={openEmote} /></div>}>

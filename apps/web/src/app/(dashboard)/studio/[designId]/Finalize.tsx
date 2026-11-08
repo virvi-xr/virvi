@@ -6,27 +6,30 @@ import { Badge, PrimaryButton } from '@/components/ui'
 import {
   canReport, checkoutBody, checkoutHref, checkoutReportsKey, dialogTotal, emoteChecklist, finalizeChoices, finalizeStrip, formatCents, initialSelection,
   latestOnly, lineNote, HELD_REPORT_COPY, PRICE_LABEL, REPORT_MAX, refusalMessage, reportOk, selectionCategories, selectionProblem, toggleSelection,
-  triangleWarning, wornDetail, type Quote, type StudioDetail, type StudioKind, type Worn,
+  triangleWarning, wornDetail, type Quote, type StudioDetail, type StudioKind, type WornState,
 } from '@/lib/studio'
-import { STATE_BADGE, WORN_NOTE, emoteName, type EmoteTarget } from './EmotesStep'
+import { NONE_TICKED, STATE_BADGE, WORN_NOTE, emoteName, type EmoteTarget } from './EmotesStep'
 
 /**
  * Every emote on both body shapes and whether the person has looked: a nudge, never a gate. Opening it renders the
  * ones that aren't yet, and each row opens that emote in the Emotes step. With only some pieces ticked (`worn`), it
- * is about those pieces and the finalized ones worn together; 'loading' while that selection's views are fetched.
+ * is about those pieces and the finalized ones worn together; 'loading' while that selection's views are fetched,
+ * 'none' with nothing ticked.
  */
 export function EmoteChecklist({ designId, detail: whole, worn = null, onOpen }: {
-  designId: string; detail: StudioDetail; worn?: Worn | 'loading' | null; onOpen: (t: EmoteTarget) => void
+  designId: string; detail: StudioDetail; worn?: WornState; onOpen: (t: EmoteTarget) => void
 }) {
   const api = useApi()
   const { user } = useAuth()
-  const selection = worn === 'loading' ? null : worn
+  const waiting = worn === 'loading' || worn === 'none'
+  const selection = waiting ? null : worn
   const detail = wornDetail(whole, selection)
   useEffect(() => {
     // finalize-renders is closed to a trial: asking would open an unrequested sign-up sheet
-    if (worn === 'loading') return
+    if (waiting) return
     if (!user?.trial && detail.pieces.some((p) => p.revision)) api.requestStudioFinalizeRenders(designId, selection?.categories ?? null).catch(() => {})
-  }, [designId, worn === 'loading' ? null : detail.set.revisions]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [designId, waiting ? null : detail.set.revisions]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (worn === 'none') return <p className="text-sm text-gray-400">{NONE_TICKED}</p>
   if (worn === 'loading') return <p className="text-sm text-gray-400" aria-live="polite">Loading the emote checks for the pieces you ticked…</p>
   const { rows, checkedCount } = emoteChecklist(detail)
   return (
@@ -59,8 +62,8 @@ type Props = {
   designId: string; kind: StudioKind; quote: Quote | null; busy: boolean
   detail: StudioDetail; onOpenEmote: (t: EmoteTarget) => void
   /** The ticked pieces (null: not chosen yet, so every payable piece), kept by the page while the dialog closes. */
-  selected: string[] | null; onSelected: (categories: string[]) => void
-  worn: Worn | 'loading' | null
+  selected: string[] | null; onSelected: (categories: string[] | null) => void
+  worn: WornState
 }
 
 /** The finalize strip under the preview, and the dialog that pays for the ticked pieces (every payable one at first). */
@@ -79,7 +82,7 @@ export default function Finalize({ designId, kind, quote, busy, detail, onOpenEm
       )}
       {open && quote && (
         <FinalizeDialog designId={designId} quote={quote} selected={selected ?? initialSelection(quote)} onSelected={onSelected}
-          onClose={() => setOpen(false)}>
+          onClose={() => { setOpen(false); onSelected(null) }}>
           {kind !== 'scene' && <EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />}
         </FinalizeDialog>
       )}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   canReport, checkoutBody, designBadge, finalizeChoices, initialSelection, latestOnly, selectionCategories, selectionProblem,
-  toggleSelection, wornDetail, type Quote, type QuoteLine, type StudioDesign, type StudioDetail, type StudioSet,
+  checkoutQuoteRefusal, toggleSelection, wornDetail, wornState, type Quote, type QuoteLine, type StudioDesign, type StudioDetail, type StudioSet,
 } from './studio'
 
 /** LIV-81: ticking which pieces to finalize. */
@@ -108,5 +108,24 @@ describe('wornDetail', () => {
   it('the emote step shows the selection’s set while only some pieces are ticked', () => {
     expect(wornDetail(detail, { categories: ['hat'], set: some }).set).toBe(some)
     expect(wornDetail(detail, null)).toBe(detail)
+  })
+})
+
+describe('wornState (fix round 1)', () => {
+  const set: StudioSet = { revisions: 'a', views: {}, checks: [], freeFixesLeft: {} }
+  it('is the whole set with no selection, loading until the selection’s set is fetched, none with nothing ticked', () => {
+    expect(wornState(null, null)).toBeNull()
+    expect(wornState(null, { key: 'hat', set })).toBeNull()
+    expect(wornState([], null)).toBe('none')
+    expect(wornState(['hat'], null)).toBe('loading')
+    expect(wornState(['hat'], { key: 'feet', set })).toBe('loading')
+    expect(wornState(['hat'], { key: 'hat', set })).toEqual({ categories: ['hat'], set })
+  })
+})
+
+describe('checkoutQuoteRefusal (fix round 1)', () => {
+  it('a selection with nothing left to pay is the nothing-left page, not an error', () => {
+    expect(checkoutQuoteRefusal({ status: 409, body: { code: 'nothing_to_pay' } })).toBe('nothing_left')
+    expect(checkoutQuoteRefusal({ status: 404, body: { error: 'design_not_found' } })).not.toBe('nothing_left')
   })
 })

@@ -5,12 +5,12 @@ import { Badge, type Tone } from '@/components/ui'
 import {
   ORBIT_FRAMES, categoryLabel, inspectNote, orbitKeyFor, pieceLabel, pieceTabStatus, refusalMessage, relativeTime, shownStep, stageFor, stageState, stepsFor,
   triangleWarning, viewButtonRendering, viewKey, wornDetail,
-  type RenderView, type Step, type StudioDetail, type StudioPiece, type Worn,
+  type RenderView, type Step, type StudioDetail, type StudioPiece, type WornState,
 } from '@/lib/studio'
 import SpinStage from './SpinStage'
 import Steps from './Steps'
 import InspectStage from './InspectStage'
-import EmotesStep, { type EmoteTarget } from './EmotesStep'
+import EmotesStep, { NONE_TICKED, type EmoteTarget } from './EmotesStep'
 import TourStep from './TourStep'
 
 const SHAPES = [['male', 'Male'], ['female', 'Female']] as const
@@ -37,7 +37,7 @@ type Props = {
   /** What the Finalize step shows: the emote checklist. */
   finalizeStep: React.ReactNode
   /** Finalize's selection, when only some pieces are ticked: the Emotes step shows that selection worn. */
-  worn?: Worn | null
+  worn?: WornState
   children?: React.ReactNode
 }
 
@@ -138,7 +138,12 @@ export default function Preview({ designId, detail, category, onSelect, onChange
         )}
 
         {step === 'emotes' ? (
-          <EmotesStep designId={designId} detail={wornDetail(detail, worn)} target={emoteTarget} onChanged={onChanged} categories={worn?.categories ?? null} />
+          worn === 'loading' || worn === 'none' ? (
+            // Never the whole set while a selection waits: a check would land on the wrong pieces
+            <p className="p-8 text-center text-sm text-gray-400" aria-live="polite">{worn === 'none' ? NONE_TICKED : 'Loading the emotes for the pieces you ticked…'}</p>
+          ) : (
+            <EmotesStep designId={designId} detail={wornDetail(detail, worn)} target={emoteTarget} onChanged={onChanged} categories={worn?.categories ?? null} />
+          )
         ) : step === 'tour' ? (
           <TourStep designId={designId} detail={detail} onChanged={onChanged} />
         ) : step === 'finalize' ? (

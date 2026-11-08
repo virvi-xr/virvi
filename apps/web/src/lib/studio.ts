@@ -686,6 +686,24 @@ export const canReport = (l: QuoteLine, selected: string[]) => l.priceKind.start
 /** Finalize's selection while only some pieces are ticked, and its emote step (the chosen and finalized pieces worn). */
 export type Worn = { categories: string[]; set: StudioSet }
 
+/**
+ * What the emote checklist and Emotes step show for Finalize's selection: null for every piece; 'none' with nothing
+ * ticked; 'loading' until the selection's own set (`fetched`, keyed by its categories) is in. Never the whole set while
+ * a selection is waiting, so no check is recorded against the wrong pieces.
+ */
+export type WornState = Worn | 'loading' | 'none' | null
+export function wornState(chosen: string[] | null, fetched: { key: string; set: StudioSet } | null): WornState {
+  if (!chosen) return null
+  if (!chosen.length) return 'none'
+  const key = chosen.join(',')
+  return fetched?.key === key ? { categories: chosen, set: fetched.set } : 'loading'
+}
+
+/** The checkout page's quote refused: 'nothing_left' shows the nothing-left page (the ticked pieces were paid meanwhile). */
+export function checkoutQuoteRefusal(err: { status?: number; body?: { code?: string; error?: string } }): 'nothing_left' | string {
+  return err.body?.code === 'nothing_to_pay' ? 'nothing_left' : refusalMessage(err as never, new Date()).text
+}
+
 /** The design as the emote checklist and Emotes step see it: with the selection's set when there is one. */
 export const wornDetail = (detail: StudioDetail, worn: Worn | null): StudioDetail => worn ? { ...detail, set: worn.set } : detail
 

@@ -9,7 +9,7 @@ import { PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { formatMana, sendMana, walletRejected } from '@/lib/mana'
 import { MANA_IDLE, canQuote, confirmLoop, manaReducer, manaView, onSent, type ManaEvent, type ManaState } from '@/lib/mana-flow'
 import {
-  checkoutReportsKey, checkoutTarget, checkoutTotals, countdown, formatCents, formatCredit, HELD_REPORT_COPY, lineNote, PRICE_LABEL, refusalMessage,
+  checkoutQuoteRefusal, checkoutReportsKey, checkoutTarget, checkoutTotals, countdown, formatCents, formatCredit, HELD_REPORT_COPY, lineNote, PRICE_LABEL, refusalMessage,
   type CheckoutMethod, type CheckoutResult, type CheckoutTarget, type ManaQuote, type Quote, type StudioUsage,
 } from '@/lib/studio'
 
@@ -71,6 +71,8 @@ export default function Checkout() {
   // A trial's sign-up sheet names the design: its name and revisions
   const [signUpCtx, setSignUpCtx] = useState<BlockedCtx | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
+  // The ticked pieces were paid for meanwhile (another tab): the nothing-left page, not an error
+  const [nothingLeft, setNothingLeft] = useState(false)
   const [wallet, setWallet] = useState<Eip1193Provider | null>(null)
   const [cardBusy, setCardBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -106,7 +108,12 @@ export default function Checkout() {
       // The ticked pieces' own quote: which is the first piece, and the free finalizes, are the server's
       apiRef.current.getStudioQuote(target.designId, target.categories)
         .then((q) => { if (!cancelled) setQuote(q) })
-        .catch((err) => { if (!cancelled) setLoadError(refusalMessage(err, new Date()).text) })
+        .catch((err) => {
+          if (cancelled) return
+          const r = checkoutQuoteRefusal(err)
+          if (r === 'nothing_left') setNothingLeft(true)
+          else setLoadError(r)
+        })
       if (user?.trial) apiRef.current.getStudioDesign(target.designId).then((d) => { if (!cancelled) setSignUpCtx(trialCtx(d)) }).catch(() => {})
     }
     return () => { cancelled = true }
@@ -145,8 +152,8 @@ export default function Checkout() {
       </Shell>
     )
   }
-  if (!order) return <Shell back={backHref}><Skeleton rows={2} /></Shell>
-  if (order.lines.length === 0) {
+  if (!nothingLeft && !order) return <Shell back={backHref}><Skeleton rows={2} /></Shell>
+  if (nothingLeft || !order || order.lines.length === 0) {
     return (
       <Shell back={backHref}>
         <p className="text-sm text-gray-300">There’s nothing left to pay for on this design.</p>
