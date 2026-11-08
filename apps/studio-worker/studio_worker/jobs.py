@@ -154,9 +154,14 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
             run = then(run, again)
         else:  # the first run's emote stands, as if there had been no retry; the retry's usage still counts
             print(f'[worker] leg retry ended {again.outcome}: {again.error}; keeping the first export', file=sys.stderr)
+            outcome, error = run.outcome, run.error
             if kept is not None:  # None: out/ wasn't a real folder, and collect rejects it anyway
-                restore.restore(design, kept, as_user)
-            run = dataclasses.replace(then(run, again), outcome=run.outcome, error=run.error, reply=run.reply)
+                try:
+                    restore.restore(design, kept, as_user)
+                except Exception as e:  # out/ may be half put back: save nothing, but keep the cost
+                    print(f'[worker] leg retry restore failed: {e!r}', file=sys.stderr)
+                    outcome, error = 'error', f'could not put the emote back after the leg fix failed: {e}'
+            run = dataclasses.replace(then(run, again), outcome=outcome, error=error, reply=run.reply)
     usage = run.usage
     cost = None if run.cost_usd is None and check_cost is None else round((run.cost_usd or 0) + (check_cost or 0), 6)
     result.update(reply=run.reply, costUsd=cost, tokens=usage and {

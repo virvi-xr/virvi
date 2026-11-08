@@ -625,3 +625,15 @@ def test_a_failed_leg_retry_that_deleted_the_emote_still_saves_the_first_export(
     assert result['outcome'] == 'ok', result['error']  # the stray out/hat/ export is gone too, or collect would refuse
     assert api.files['job-1/pieces/emote/reading_time.glb'] == (FIXTURES / 'emote_legs/crossed_thighs.glb').read_bytes()
     assert not (tmp_path / 'out/hat').exists()
+
+
+def test_a_leg_retry_whose_restore_fails_still_records_the_cost(api, tmp_path, skills, monkeypatch):
+    spy_runs_with_limits(monkeypatch, 'claude_legs_retry_fails.jsonl')
+
+    def broken(*a, **kw):
+        raise OSError(28, 'No space left on device')
+    monkeypatch.setattr(jobs.restore, 'restore', broken)
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert result['outcome'] == 'error'
+    assert 'could not put the emote back' in result['error']
+    assert result['costUsd'] == pytest.approx(0.05)
