@@ -668,7 +668,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           return
         }
 
-        // Read-only lists: everyone sees the layout; the media library is only fetched for editors.
+        // Read-only lists: everyone sees the layout; the scene's library (3D Models panel) is only fetched for editors.
         // Refreshes don't take the busy lock, so opening a panel mid-edit still loads it.
         if (action === 'layout_refresh' || action === 'media_refresh') {
           if (action === 'media_refresh' && !edits()) return

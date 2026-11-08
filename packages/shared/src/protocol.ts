@@ -48,7 +48,7 @@ export type ServerMessage =
 // Shared message data interfaces
 // ============================================================================
 
-/** One entry in a scene's media library (`GET /api/scenes/:sceneId/library` and `scene_library_changed`). */
+/** One entry in a scene's library, images and video or 3D models (`GET /api/scenes/:sceneId/library` and `scene_library_changed`). */
 export interface SceneLibraryItemData {
   id: string;
   kind: 'media' | 'model';

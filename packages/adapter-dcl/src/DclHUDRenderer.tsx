@@ -77,7 +77,7 @@ interface HUDState {
   roleDraftRole: 'cohost' | 'editor' | 'viewer'
   confirmTransfer: string | null
 
-  // Media library + layout editing (host, co-hosts, editors)
+  // The scene's library (the 3D Models panel) + layout editing (host, co-hosts, editors)
   media: HUDMediaItem[]
   mediaLoaded: boolean
   /** The last media/layout load failed (the error is in editMessage) — show that, not "Loading…". */
@@ -96,9 +96,9 @@ interface HUDState {
   framing: { elementId: string; draft: FrameSettings } | null
   frameError: string | null
   missingModels: number
-  /** The Media Library's Upload view: an upload link (this computer) and its QR (phone), minted on open. */
+  /** The 3D Models panel's Upload view: an upload link (this computer) and its QR (phone), minted on open. */
   upload: UploadViewState
-  /** The Media Library row being renamed, with the draft name. */
+  /** The 3D Models panel row being renamed, with the draft name. */
   renaming: { id: string; draft: string } | null
 
   // In-world transform editing (editors); mirrored from DclEditMode.state
@@ -711,7 +711,8 @@ const ACTION_STATS = '__stats'
 function NavBar() {
   const panels: Array<{ type: HUDPanelType | typeof ACTION_STATS; label: string }> = [
     { type: HUDPanelType.SCENE_LAYOUT, label: 'Layout' },
-    { type: HUDPanelType.ASSET_BROWSER, label: 'Assets' },
+    // The 3D Models panel: "3D Models" doesn't fit a tab once there are eight
+    { type: HUDPanelType.ASSET_BROWSER, label: 'Models' },
     { type: HUDPanelType.EVENT_CONTROL, label: 'Events' },
     { type: HUDPanelType.STREAM_CONTROL, label: 'Stream' },
     { type: HUDPanelType.WORLD_STATUS, label: 'Worlds' },
@@ -1071,7 +1072,7 @@ function ClickEditor() {
 }
 
 // ---------------------------------------------------------------------------
-// Panel: Asset Browser (the scene's library: its images and models, shown as the Media Library panel)
+// Panel: Asset Browser (the scene's library: its models and images, shown as the 3D Models panel, LIV-132)
 // ---------------------------------------------------------------------------
 
 // Badge per HUD status: a marker and a word (the marker carries the color)
@@ -1166,7 +1167,7 @@ function UploadView() {
   const hhmm = expires ? `${String(expires.getHours()).padStart(2, '0')}:${String(expires.getMinutes()).padStart(2, '0')}` : ''
   return (
     <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', alignItems: 'center', padding: 8 }}>
-      <Label value="Upload media" fontSize={13} color={C.text} uiTransform={{ height: 22 }} />
+      <Label value="Upload models or images" fontSize={13} color={C.text} uiTransform={{ height: 22 }} />
       {loading && <Label value="Making a link…" fontSize={11} color={C.textDim} uiTransform={{ height: 24 }} />}
       {error && <Label value={error} fontSize={11} color={C.danger} uiTransform={{ height: 24 }} />}
       {token && (
@@ -1203,12 +1204,12 @@ function AssetBrowserPanel() {
   const editable = canEdit()
   return (
     <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
-      <PanelHeader title="Media Library" subtitle="This scene's images and models"
+      <PanelHeader title="3D Models" subtitle="This scene's models and images"
         onClose={() => { if (state.upload.open) closeUploadView(); state.activePanel = null }} />
       <UiEntity uiTransform={{ width: '100%', padding: 8, flexDirection: 'column' }}>
         {!editable ? (
           <UiEntity uiTransform={{ width: '100%', padding: 16, flexDirection: 'column', alignItems: 'center' }}>
-            <Label value="Only the host, co-hosts and editors can place media" fontSize={11} color={C.textDim} />
+            <Label value="Only the host, co-hosts and editors can place models and images" fontSize={11} color={C.textDim} />
           </UiEntity>
         ) : state.upload.open ? (
           <UploadView />
@@ -1222,7 +1223,7 @@ function AssetBrowserPanel() {
             )}
             {state.media.length === 0 ? (
               <UiEntity uiTransform={{ width: '100%', padding: 16, flexDirection: 'column', alignItems: 'center' }}>
-                <Label value={state.mediaFailed ? "Couldn't load your media library" : state.mediaLoaded ? 'No images or models yet' : 'Loading…'} fontSize={12} color={C.textDim} />
+                <Label value={state.mediaFailed ? "Couldn't load this scene's models" : state.mediaLoaded ? 'No images or models yet' : 'Loading…'} fontSize={12} color={C.textDim} />
                 {state.mediaLoaded && !state.mediaFailed && (
                   <UiEntity uiTransform={{ margin: { top: 8 } }}>
                     <UploadButton />
@@ -1988,7 +1989,7 @@ export class DclHUDRenderer implements HUDRenderer {
     state.presetsError = null
   }
 
-  // --- Media library + layout editing (called by the createVirvi flow) ---
+  // --- The scene's library (3D Models panel) + layout editing (called by the createVirvi flow) ---
 
   setMedia(list: HUDMediaItem[]): void {
     state.media = list

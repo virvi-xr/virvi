@@ -1,6 +1,6 @@
 /**
- * AssetBrowserPanel — Browse/search the 3D Asset Library (3D models, your own and shared ones), place them in scene.
- * Images and video live in the Media Library, not here.
+ * AssetBrowserPanel — Browse/search 3D Models (the asset library: 3D models, your own and shared ones), place them in scene.
+ * Images and video live in Images & Video, not here.
  *
  * Fetches assets from Virvi API, renders thumbnail grid via HUDRenderer,
  * and tracks budget usage against platform limits.
@@ -34,7 +34,7 @@ export class AssetBrowserPanel {
     this.limits = limits
   }
 
-  /** Load and display the 3D Asset Library: shared models, plus your own private ones when signed in. */
+  /** Load and display 3D Models: shared models, plus your own private ones when signed in. */
   async open(filters?: { q?: string; category?: string; tag?: string }): Promise<void> {
     try {
       const params: string[] = []
