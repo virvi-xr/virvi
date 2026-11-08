@@ -162,6 +162,7 @@ describe('filing ignores what a client alone can claim (I2)', () => {
     issues: string[] = []
     async createIssue(i: { title: string }) { this.issues.push(i.title); return { id: `i${this.issues.length}`, identifier: `LIV-${this.issues.length}`, url: 'u' } }
     async createComment() {}
+    async issueStates() { return [] }
   }
   let linear: Fake
   beforeEach(async () => { await resetDb(); resetErrorBudgets(); linear = new Fake(); setLinearClient(linear) })

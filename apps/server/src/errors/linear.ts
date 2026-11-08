@@ -1,9 +1,14 @@
 import { config } from '../config.js'
 
+/** An issue's workflow state type (triage, backlog, unstarted, started, completed, canceled) and when it was completed. */
+export interface LinearIssueState { id: string; stateType: string; completedAt: string | null }
+
 /** What error filing needs from Linear (LIV-66). Tests set a fake with setLinearClient; nothing in tests calls Linear. */
 export interface LinearClient {
   createIssue(input: { title: string; description: string }): Promise<{ id: string; identifier: string; url: string }>
   createComment(issueId: string, body: string): Promise<void>
+  /** The states of these issues (at most 50 a call); issues Linear no longer has are left out. */
+  issueStates(ids: string[]): Promise<LinearIssueState[]>
 }
 
 const ENDPOINT = 'https://api.linear.app/graphql'
@@ -39,6 +44,12 @@ export function httpLinearClient(opts: {
       const data = await gql<{ commentCreate: { success: boolean } }>(
         'mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }', { input: { issueId, body } })
       if (!data.commentCreate.success) throw new Error('Linear did not add the comment')
+    },
+    async issueStates(ids) {
+      if (!ids.length) return []
+      const data = await gql<{ issues: { nodes: Array<{ id: string; completedAt: string | null; state: { type: string } | null }> } }>(
+        'query($ids: [ID!]) { issues(filter: { id: { in: $ids } }, first: 50) { nodes { id completedAt state { type } } } }', { ids: ids.slice(0, 50) })
+      return data.issues.nodes.map((n) => ({ id: n.id, stateType: n.state?.type ?? 'unknown', completedAt: n.completedAt ?? null }))
     },
   }
 }

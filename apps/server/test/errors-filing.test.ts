@@ -23,6 +23,7 @@ class FakeLinear implements LinearClient {
     return { id: `issue-${n}`, identifier: `LIV-${900 + n}`, url: `https://linear.app/x/issue/LIV-${900 + n}` }
   }
   async createComment(issueId: string, body: string) { this.comments.push({ issueId, body }) }
+  async issueStates() { return [] }
 }
 
 const crash = (over: Partial<ClientErrorEvent> = {}): ClientErrorEvent => ({

@@ -27,6 +27,8 @@ export interface SignatureSummary {
   lastRelease: string | null
   totalCount: number
   resolvedAt: string | null
+  /** Its Linear issue's completion that marked it fixed (null when an admin did, or it isn't). */
+  linearDoneAt: string | null
   regressedAt: string | null
   userReports: number
   linearIssueKey: string | null
@@ -50,6 +52,7 @@ const summary = (r: SigRow): SignatureSummary => ({
   lastRelease: (r.last_release as string | null) ?? null,
   totalCount: Number(r.total_count ?? 0),
   resolvedAt: iso(r.resolved_at),
+  linearDoneAt: r.resolved_at && !r.resolved_by ? iso(r.linear_done_at) : null,
   regressedAt: iso(r.regressed_at),
   userReports: Number(r.user_reports ?? 0),
   linearIssueKey: (r.linear_issue_key as string | null) ?? null,

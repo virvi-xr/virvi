@@ -4,6 +4,7 @@ import { flushErrors, recordServerException, startErrorFlusher } from './record.
 import { purgeErrors } from './retention.js'
 import { registerRelease } from './limits.js'
 import { runFilingPass } from './filing.js'
+import { DONE_SYNC_EVERY_MS, syncLinearDone } from './linear-sync.js'
 
 type Reserved = ((strings: TemplateStringsArray, ...v: unknown[]) => Promise<Array<Record<string, unknown>>>) & { release(): void }
 
@@ -31,8 +32,9 @@ export const PURGE_EVERY_MS = 60 * 60_000
 export const FILING_EVERY_MS = 5 * 60_000
 
 /**
- * LIV-66 background work: the flusher (every instance writes its own buffer), the retention purge hourly and the Linear
- * filing pass every 5 minutes (one instance at a time, by advisory lock). Their own failures are logged, never reported.
+ * LIV-66 background work: the flusher (every instance writes its own buffer), the retention purge hourly, the Linear
+ * filing pass (with user reports) every 5 minutes and reading Done from Linear every 10 (one instance at a time, by
+ * advisory lock). Their own failures are logged, never reported.
  */
 export function startErrorJobs(): () => void {
   startErrorFlusher()
@@ -62,6 +64,7 @@ export function startErrorJobs(): () => void {
   registerRelease().catch((err) => console.error('[errors] registering the release failed:', err instanceof Error ? err.message : err))
   every(PURGE_EVERY_MS, 'purge', async () => { await registerRelease(); return purgeErrors(new Date()) })
   every(FILING_EVERY_MS, 'filing', () => runFilingPass(new Date()))
+  every(DONE_SYNC_EVERY_MS, 'linear-done', () => syncLinearDone(new Date()))
   return () => { for (const t of timers) clearTimeout(t) }
 }
 
