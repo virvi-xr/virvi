@@ -4,8 +4,8 @@ import { useApi } from '@/lib/api'
 import { Badge, type Tone } from '@/components/ui'
 import {
   ORBIT_FRAMES, categoryLabel, inspectNote, orbitKeyFor, pieceLabel, pieceTabStatus, refusalMessage, relativeTime, shownStep, stageFor, stageState, stepsFor,
-  triangleWarning, viewButtonRendering, viewKey,
-  type RenderView, type Step, type StudioDetail, type StudioPiece,
+  triangleWarning, viewButtonRendering, viewKey, wornDetail,
+  type RenderView, type Step, type StudioDetail, type StudioPiece, type Worn,
 } from '@/lib/studio'
 import SpinStage from './SpinStage'
 import Steps from './Steps'
@@ -36,6 +36,8 @@ type Props = {
   emoteTarget: EmoteTarget | null
   /** What the Finalize step shows: the emote checklist. */
   finalizeStep: React.ReactNode
+  /** Finalize's selection, when only some pieces are ticked: the Emotes step shows that selection worn. */
+  worn?: Worn | null
   children?: React.ReactNode
 }
 
@@ -44,7 +46,7 @@ type Props = {
  * buttons; Inspect turns one piece alone any way; Emotes plays every piece worn. The finalize strip and paid revisions
  * sit under it.
  */
-export default function Preview({ designId, detail, category, onSelect, onChanged, step: picked, onStep, emoteTarget, finalizeStep, children }: Props) {
+export default function Preview({ designId, detail, category, onSelect, onChanged, step: picked, onStep, emoteTarget, finalizeStep, worn = null, children }: Props) {
   const api = useApi()
   const kind = detail.design.kind
   const categories = detail.pieces.map((p) => p.category)
@@ -136,7 +138,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
         )}
 
         {step === 'emotes' ? (
-          <EmotesStep designId={designId} detail={detail} target={emoteTarget} onChanged={onChanged} />
+          <EmotesStep designId={designId} detail={wornDetail(detail, worn)} target={emoteTarget} onChanged={onChanged} categories={worn?.categories ?? null} />
         ) : step === 'tour' ? (
           <TourStep designId={designId} detail={detail} onChanged={onChanged} />
         ) : step === 'finalize' ? (

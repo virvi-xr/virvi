@@ -20,10 +20,17 @@ export const emoteName = (emote: string) => emote === OWN_EMOTE ? 'Your emote' :
 
 export type EmoteTarget = { emote: string; bodyShape: 'male' | 'female' }
 
-type Props = { designId: string; detail: StudioDetail; target: EmoteTarget | null; onChanged: () => Promise<void> }
+/** Said while the emotes are Finalize's selection rather than every piece. */
+export const WORN_NOTE = 'Showing the pieces you’re finalizing, with any you’ve finalized before. Pieces you didn’t tick aren’t worn.'
+
+/**
+ * `categories`: Finalize's selection, when only some pieces are ticked. `detail.set` is then that selection's (the
+ * chosen and finalized pieces worn together), and every view, check and clipping report is for it.
+ */
+type Props = { designId: string; detail: StudioDetail; target: EmoteTarget | null; onChanged: () => Promise<void>; categories?: string[] | null }
 
 /** Emotes: every piece worn together, one emote at a time, and the person says whether it looks fine or clips. */
-export default function EmotesStep({ designId, detail, target, onChanged }: Props) {
+export default function EmotesStep({ designId, detail, target, onChanged, categories = null }: Props) {
   const api = useApi()
   const kind = detail.design.kind
   const emotes = checkedEmotes(kind)
@@ -46,7 +53,7 @@ export default function EmotesStep({ designId, detail, target, onChanged }: Prop
   const framesId = `${detail.set.revisions}/${key}/${shown?.renderedAt}`
   useEffect(() => {
     if (shown?.status !== 'ready' || frames?.id === framesId) return
-    api.requestStudioSetRender(designId, view)
+    api.requestStudioSetRender(designId, view, categories)
       .then((r) => { if (r.status === 'ready') setFrames({ id: framesId, urls: r.urls }) })
       .catch((err) => setError(refusalMessage(err as never, new Date()).text))
   }, [framesId, shown?.status]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -57,13 +64,13 @@ export default function EmotesStep({ designId, detail, target, onChanged }: Prop
   useEffect(() => {
     if (!hasPieces || shown || asking === `${detail.set.revisions}/${key}`) return
     setAsking(`${detail.set.revisions}/${key}`)
-    api.requestStudioSetRender(designId, view).then(onChanged)
+    api.requestStudioSetRender(designId, view, categories).then(onChanged)
       .catch((err) => setError(refusalMessage(err as never, new Date()).text))
   }, [key, detail.set.revisions, hasPieces, shown]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const retry = async () => {
     setError(null)
-    try { await api.requestStudioSetRender(designId, view); await onChanged() } catch (err) { setError(refusalMessage(err as never, new Date()).text) }
+    try { await api.requestStudioSetRender(designId, view, categories); await onChanged() } catch (err) { setError(refusalMessage(err as never, new Date()).text) }
   }
   const act = async (fn: () => Promise<unknown>) => {
     setSending(true)
@@ -108,7 +115,7 @@ export default function EmotesStep({ designId, detail, target, onChanged }: Prop
         {!hasPieces ? (
           <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400">The agent hasn’t built anything yet. Describe what you want on the left.</p>
         ) : ready ? (
-          <SpinStage view={key} urls={urls} loop fps={shown!.fps ?? undefined} label={`${emoteName(emote)}, ${bodyShape}, every piece worn`} />
+          <SpinStage view={key} urls={urls} loop fps={shown!.fps ?? undefined} label={`${emoteName(emote)}, ${bodyShape}, ${categories ? 'the pieces you’re finalizing worn' : 'every piece worn'}`} />
         ) : shown?.status === 'ready' ? (
           <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-400" aria-live="polite">Loading…</p>
         ) : shown?.status === 'failed' ? (
@@ -117,10 +124,11 @@ export default function EmotesStep({ designId, detail, target, onChanged }: Prop
             <button type="button" onClick={retry} className="text-blue-300 underline">Try again</button>
           </div>
         ) : (
-          <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400" aria-live="polite">Rendering this emote with every piece on. It takes about 40 seconds.</p>
+          <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400" aria-live="polite">Rendering this emote with {categories ? 'the pieces you’re finalizing' : 'every piece'} on. It takes about 40 seconds.</p>
         )}
       </div>
       <div className="space-y-3 border-t border-gray-800 p-3">
+        {categories && <p className="text-xs text-gray-400">{WORN_NOTE}</p>}
         <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Avatar">
           {SHAPES.map(([s, label]) => toggle(bodyShape === s, label, () => { setBodyShape(s); setError(null) }))}
           <span className="mx-1 h-4 w-px bg-gray-800" aria-hidden="true" />
@@ -130,9 +138,9 @@ export default function EmotesStep({ designId, detail, target, onChanged }: Prop
           <p className="text-sm text-blue-200" aria-live="polite">Being fixed… The agent is looking at frames of this emote. It renders again when it’s done.</p>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" disabled={!ready || sending} onClick={() => act(() => api.checkStudioEmote(designId, { emote, bodyShape }))}
+            <button type="button" disabled={!ready || sending} onClick={() => act(() => api.checkStudioEmote(designId, { emote, bodyShape }, categories))}
               className="rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-40">Looks fine</button>
-            <button type="button" disabled={!ready || sending || busy} onClick={() => act(() => api.reportStudioClipping(designId, { emote, bodyShape, outfit }))}
+            <button type="button" disabled={!ready || sending || busy} onClick={() => act(() => api.reportStudioClipping(designId, { emote, bodyShape, outfit }, categories))}
               className="rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-40">I see clipping</button>
             <span className="text-xs text-gray-500">{fixes} free fix{fixes === 1 ? '' : 'es'} left for this emote</span>
           </div>

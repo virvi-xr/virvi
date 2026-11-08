@@ -11,7 +11,7 @@ import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
-import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
+import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
@@ -865,16 +865,24 @@ function useRealApi() {
     requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }
       | { category: string; mode: 'orbit' | 'scale' }) =>
       apiFetch<{ status: 'ready'; frames: number; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/renders`, { method: 'POST', body: JSON.stringify(body) }),
-    /** An emote view with every piece worn; a scene design's walk-through takes no view. */
-    requestStudioSetRender: (id: string, view?: RenderView) =>
-      apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/set-renders`, { method: 'POST', body: JSON.stringify(view ?? {}) }),
-    checkStudioEmote: (id: string, body: { emote: string; bodyShape: 'male' | 'female' }) =>
-      apiFetch<void>(`/api/studio/designs/${id}/emote-checks`, { method: 'POST', body: JSON.stringify({ ...body, state: 'fine' }) }),
-    reportStudioClipping: (id: string, body: { emote: string; bodyShape: 'male' | 'female'; outfit: string }) =>
-      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/clipping`, { method: 'POST', body: JSON.stringify(body) }),
-    requestStudioFinalizeRenders: (id: string) =>
-      apiFetch<{ queued: number }>(`/api/studio/designs/${id}/finalize-renders`, { method: 'POST' }),
-    getStudioQuote: (id: string) => apiFetch<Quote>(`/api/studio/designs/${id}/finalize`),
+    /**
+     * An emote view with every piece worn (or, with `categories`, Finalize's selection and the finalized pieces); a
+     * scene design's walk-through takes no view.
+     */
+    requestStudioSetRender: (id: string, view?: RenderView, categories: string[] | null = null) =>
+      apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/set-renders`, { method: 'POST', body: JSON.stringify({ ...view, ...(categories ? { categories } : {}) }) }),
+    checkStudioEmote: (id: string, body: { emote: string; bodyShape: 'male' | 'female' }, categories: string[] | null = null) =>
+      apiFetch<void>(`/api/studio/designs/${id}/emote-checks`, { method: 'POST', body: JSON.stringify({ ...body, state: 'fine', ...(categories ? { categories } : {}) }) }),
+    reportStudioClipping: (id: string, body: { emote: string; bodyShape: 'male' | 'female'; outfit: string }, categories: string[] | null = null) =>
+      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/clipping`, { method: 'POST', body: JSON.stringify({ ...body, ...(categories ? { categories } : {}) }) }),
+    requestStudioFinalizeRenders: (id: string, categories: string[] | null = null) =>
+      apiFetch<{ queued: number }>(`/api/studio/designs/${id}/finalize-renders`, categories ? { method: 'POST', body: JSON.stringify({ categories }) } : { method: 'POST' }),
+    /** The emote step for Finalize's selection: the chosen and finalized pieces worn together. */
+    getStudioSet: (id: string, categories: string[]) =>
+      apiFetch<StudioSet>(`/api/studio/designs/${id}/set?categories=${categories.join(',')}`),
+    /** The finalize quote: every payable piece, or only `categories`, priced by the server. */
+    getStudioQuote: (id: string, categories: string[] | null = null) =>
+      apiFetch<Quote>(`/api/studio/designs/${id}/finalize${categories?.length ? `?categories=${categories.join(',')}` : ''}`),
     finalizeStudio: (id: string, body: { categories?: string[]; reports?: Record<string, string>; method: CheckoutMethod }, signUpCtx?: BlockedCtx) =>
       apiFetch<CheckoutResult>(`/api/studio/designs/${id}/finalize`, { method: 'POST', body: JSON.stringify(body), signUpCtx }),
     redeemGiftCode: (code: string) =>

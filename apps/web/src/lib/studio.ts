@@ -39,7 +39,10 @@ export type StudioDesign = {
   status: 'idle' | 'building' | string
   archivedAt: string | null
   lastJobAt: string | null
-  finalizedAt: string | null
+  finalizedAt: string | null // when the first piece was finalized
+  /** Of the pieces with a revision (`pieceCount`), how many have been finalized at some revision. */
+  finalizedPieces?: number
+  pieceCount?: number
   createdAt: string
 }
 
@@ -318,7 +321,10 @@ export const refreshDue = (fetchedAt: number, now: number) => now - fetchedAt >=
 
 export function designBadge(d: StudioDesign): { label: string; tone: Tone } {
   if (d.archivedAt) return { label: 'Archived', tone: 'neutral' }
-  if (d.finalizedAt) return { label: 'Finalized', tone: 'success' }
+  if (d.finalizedAt) {
+    const left = (d.pieceCount ?? 0) > (d.finalizedPieces ?? 0)
+    return { label: left ? `Finalized ${d.finalizedPieces ?? 0} of ${d.pieceCount}` : 'Finalized', tone: 'success' }
+  }
   if (d.status === 'building') return { label: 'Agent working', tone: 'info' }
   return { label: 'Draft', tone: 'violet' }
 }
@@ -625,10 +631,68 @@ export const REPORT_MAX = 2000
 
 export const reportOk = (text: string) => text.trim().length >= REPORT_MIN && text.length <= REPORT_MAX
 
-/** The checkout covers every payable piece; only reports the server will take are sent. */
-export function checkoutBody(reports: Record<string, string>): { reports?: Record<string, string> } {
-  const ok = Object.entries(reports).filter(([, t]) => reportOk(t)).map(([c, t]) => [c, t.trim()] as const)
-  return ok.length ? { reports: Object.fromEntries(ok) } : {}
+/**
+ * What the checkout is for: every payable piece (`categories` null), or the ticked ones. Only reports the server will
+ * take are sent, and none for a piece left out.
+ */
+export function checkoutBody(reports: Record<string, string>, categories: string[] | null = null): { categories?: string[]; reports?: Record<string, string> } {
+  const ok = Object.entries(reports).filter(([c, t]) => reportOk(t) && (!categories || categories.includes(c))).map(([c, t]) => [c, t.trim()] as const)
+  return { ...(categories ? { categories } : {}), ...(ok.length ? { reports: Object.fromEntries(ok) } : {}) }
+}
+
+/** A piece in the Finalize dialog: ticked or not when `pickable`; otherwise disabled, with why. */
+export type FinalizeChoice = { category: string; name: string; pickable: boolean; finalized: boolean; reason: string | null }
+
+const CHOICE_REASON: Record<Quote['pieces'][number]['state'], string | null> = {
+  payable: null,
+  entitled: 'Finalized',
+  blocked: 'Failed the checker. Ask the agent to fix it first.',
+  none: 'Not built yet',
+}
+
+/** A checkbox per piece, in the quote's order. A finalized piece with a newer revision is pickable: that's a revision. */
+export function finalizeChoices(quote: Quote): FinalizeChoice[] {
+  return quote.pieces.map((p) => ({
+    category: p.category, name: p.name, pickable: p.state === 'payable', finalized: p.state === 'entitled', reason: CHOICE_REASON[p.state] ?? null,
+  }))
+}
+
+const payable = (quote: Quote) => quote.pieces.filter((p) => p.state === 'payable').map((p) => p.category)
+
+/** Every payable piece ticked: what Finalize always paid for. */
+export const initialSelection = (quote: Quote): string[] => payable(quote)
+
+/** Ticks or unticks a piece; one that can't be finalized stays as it is. */
+export function toggleSelection(selected: string[], category: string, quote: Quote): string[] {
+  if (!payable(quote).includes(category)) return selected
+  const next = selected.includes(category) ? selected.filter((c) => c !== category) : [...selected, category]
+  return next.sort()
+}
+
+/** The ticked pieces the server is asked about, or null when they are every payable piece (the checkout as it always was). */
+export function selectionCategories(selected: string[], quote: Quote): string[] | null {
+  const all = payable(quote)
+  const ticked = all.filter((c) => selected.includes(c))
+  return ticked.length === all.length && all.length > 0 ? null : ticked
+}
+
+/** Why the dialog can't check out the selection, if it can't. */
+export const selectionProblem = (selected: string[]): string | null =>
+  selected.length ? null : 'Tick at least one piece to finalize.'
+
+/** A mistake report goes with a revision line only, and only while its piece is ticked. */
+export const canReport = (l: QuoteLine, selected: string[]) => l.priceKind.startsWith('revision') && selected.includes(l.category)
+
+/** Finalize's selection while only some pieces are ticked, and its emote step (the chosen and finalized pieces worn). */
+export type Worn = { categories: string[]; set: StudioSet }
+
+/** The design as the emote checklist and Emotes step see it: with the selection's set when there is one. */
+export const wornDetail = (detail: StudioDetail, worn: Worn | null): StudioDetail => worn ? { ...detail, set: worn.set } : detail
+
+/** Requests answered out of order: only the newest one's answer is used. */
+export function latestOnly() {
+  let n = 0
+  return { next: () => ++n, isLatest: (id: number) => id === n }
 }
 
 /**

@@ -7,8 +7,8 @@ import { useAuth } from '@/lib/auth'
 import { useStudioRoom } from '@/lib/colyseus'
 import { Badge, PageHeader, RowMenu, Skeleton } from '@/components/ui'
 import {
-  designBadge, designIdFromPath, kindLabel, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn,
-  type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioUsage,
+  designBadge, designIdFromPath, kindLabel, nextPoll, paymentBanner, refreshDue, refusalMessage, reloadsOn, selectionCategories,
+  type Quote, type Refusal, type Step, type StudioDetail, type StudioEvent, type StudioSet, type StudioUsage, type Worn,
 } from '@/lib/studio'
 import Conversation from './Conversation'
 import Preview from './Preview'
@@ -41,6 +41,11 @@ export default function StudioDesignPage() {
   const [quote, setQuote] = useState<Quote | null>(null)
   const [payment, setPayment] = useState<{ id: string; startedAt: number } | null>(null)
   const fetchedAt = useRef(0)
+  // Finalize's ticked pieces (null: every payable one), and the emote checks of that selection worn together
+  const [selected, setSelected] = useState<string[] | null>(null)
+  const [wornSet, setWornSet] = useState<{ key: string; set: StudioSet } | null>(null)
+  const chosen = quote && selected ? selectionCategories(selected, quote) : null
+  const wornKey = chosen?.join(',') ?? ''
 
   useEffect(() => {
     const id = designIdFromPath(window.location.pathname, params.designId as string | undefined)
@@ -71,6 +76,18 @@ export default function StudioDesignPage() {
   useEffect(() => {
     if (token && designId) reload()
   }, [token, designId, reload])
+
+  // A selection's emote views and checks, read again whenever the design is
+  useEffect(() => {
+    if (!designId || !wornKey) return
+    let cancelled = false
+    apiRef.current.getStudioSet(designId, wornKey.split(','))
+      .then((set) => { if (!cancelled) setWornSet({ key: wornKey, set }) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [designId, wornKey, detail])
+  const worn: Worn | 'loading' | null = !wornKey ? null
+    : wornSet?.key === wornKey ? { categories: wornKey.split(','), set: wornSet.set } : 'loading'
 
   const onEvent = useCallback((e: StudioEvent) => {
     setEvents((prev) => [...prev.slice(-(MAX_EVENTS - 1)), e])
@@ -164,12 +181,12 @@ export default function StudioDesignPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Conversation designId={designId} detail={detail} usage={usage} events={events} onChanged={reload} />
         <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}
-          step={step} onStep={setStep} emoteTarget={emoteTarget}
+          step={step} onStep={setStep} emoteTarget={emoteTarget} worn={worn === 'loading' ? null : worn}
           finalizeStep={detail.design.kind === 'scene'
             ? <p className="p-4 text-sm text-gray-300">Each piece you finalize goes into your 3D Asset Library, private to you, ready to place in a scene.</p>
-            : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} onOpen={openEmote} /></div>}>
+            : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={openEmote} /></div>}>
           <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'}
-            detail={detail} onOpenEmote={openEmote} />
+            detail={detail} onOpenEmote={openEmote} selected={selected} onSelected={setSelected} worn={worn} />
           <PaidRevisions designId={designId} pieces={detail.pieces} onChanged={reload} kind={detail.design.kind} />
         </Preview>
       </div>

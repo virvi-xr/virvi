@@ -103,7 +103,8 @@ export default function Checkout() {
       // a top-up's order is the usage's price; a design's only loses Pay with MANA without it
       .catch((err) => { if (!cancelled && target.kind === 'topup') setLoadError(refusalMessage(err, new Date()).text) })
     if (target.kind === 'design') {
-      apiRef.current.getStudioQuote(target.designId)
+      // The ticked pieces' own quote: which is the first piece, and the free finalizes, are the server's
+      apiRef.current.getStudioQuote(target.designId, target.categories)
         .then((q) => { if (!cancelled) setQuote(q) })
         .catch((err) => { if (!cancelled) setLoadError(refusalMessage(err, new Date()).text) })
       if (user?.trial) apiRef.current.getStudioDesign(target.designId).then((d) => { if (!cancelled) setSignUpCtx(trialCtx(d)) }).catch(() => {})
