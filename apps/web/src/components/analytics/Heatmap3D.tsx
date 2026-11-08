@@ -8,7 +8,8 @@ import { OrbitControls, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { feetHeight, heightBand } from '@virvixr/shared/dist/heatmap-height.js'
 import type { HeatCell, LiveData } from '@/lib/analytics/types'
-import { mapBounds, parcelRects, type MapBounds } from '@/lib/analytics/parcel-map'
+import { parcelRects, type MapBounds } from '@/lib/analytics/parcel-map'
+import { view3d, type Camera3D } from '@/lib/analytics/view3d'
 import { cellBox, cellValue, colourStep, floorOf, HEAT_COLOURS, LIVE_COLOUR, type HeatMetric } from '@/lib/analytics/heat'
 import type { PlacedModel } from '@/lib/analytics/layout'
 import { MODEL_TURN } from '@/lib/scene-transform'
@@ -52,8 +53,8 @@ const fmt = (v: number, metric: HeatMetric) => (metric === 'dwell' ? formatDurat
 
 export default function Heatmap3D(props: Heatmap3DProps) {
   const { parcels, baseParcel, cells, live, models, onFailed } = props
-  const bounds = useMemo(
-    () => mapBounds(parcels, baseParcel, [...cells, ...(live ?? []), ...models.flatMap((m) => m.footprint)]),
+  const { ground: bounds, camera: view } = useMemo(
+    () => view3d(parcels, baseParcel, cells, live ?? [], models.flatMap((m) => m.footprint)),
     [parcels, baseParcel, cells, live, models],
   )
   const [hover, setHover] = useState<{ cell: HeatCell; left: number; top: number } | null>(null)
@@ -79,7 +80,7 @@ export default function Heatmap3D(props: Heatmap3DProps) {
           ))}
           <Cells {...props} onHover={onHover} />
           <LiveDots live={live ?? []} kind={props.kind} floor={props.floor} />
-          <Controls bounds={bounds} />
+          <Controls view={view} />
         </Canvas>
       </Boundary>
       {hover && (
@@ -102,26 +103,24 @@ export default function Heatmap3D(props: Heatmap3DProps) {
   )
 }
 
-/** Orbit, zoom and pan, starting south of the map looking north. */
-function Controls({ bounds }: { bounds: MapBounds }) {
+/** Orbit, zoom and pan, starting south of the map looking north; set again only when the framed area changes. */
+function Controls({ view }: { view: Camera3D }) {
   const camera = useThree((s) => s.camera)
   const controls = useThree((s) => s.controls) as unknown as { target: THREE.Vector3; update: () => void } | null
   const invalidate = useThree((s) => s.invalidate)
-  const w = bounds.maxX - bounds.minX
-  const d = bounds.maxZ - bounds.minZ
-  const cx = (bounds.minX + bounds.maxX) / 2
-  const cz = -(bounds.minZ + bounds.maxZ) / 2
-  const size = Math.max(w, d)
+  const latest = useRef(view)
+  latest.current = view
   useEffect(() => {
-    camera.position.set(cx, size * 0.8 + 6, cz + size * 1.1 + 8)
-    camera.lookAt(cx, 0, cz)
+    const { position, target } = latest.current
+    camera.position.set(...position)
+    camera.lookAt(...target)
     if (controls) {
-      controls.target.set(cx, 0, cz)
+      controls.target.set(...target)
       controls.update()
     }
     invalidate()
-  }, [cx, cz, size, camera, controls, invalidate])
-  return <OrbitControls makeDefault maxPolarAngle={Math.PI / 2 - 0.05} minDistance={2} maxDistance={size * 4 + 40} />
+  }, [view.key, camera, controls, invalidate])
+  return <OrbitControls makeDefault maxPolarAngle={Math.PI / 2 - 0.05} minDistance={2} maxDistance={view.maxDistance} />
 }
 
 function Ground({ bounds, parcels, baseParcel }: { bounds: MapBounds; parcels: string[]; baseParcel: string | null }) {
