@@ -114,6 +114,8 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
         if frames_error:
             result['error'] = f'could not render the clipping frames: {frames_error}'
             return
+        if fix.get('categories') is not None:  # confirms the frames wore only the selection
+            result['worn'] = sorted(fix['categories'])
     saved = copy.deepcopy(state)
     for answered in ('proposal.json', 'declined.json'):  # an earlier prompt's; don't read it as this one's
         if os.path.lexists(design / 'out' / answered):
@@ -348,6 +350,8 @@ def _set_render(job, client, pieces, spec, render_fn, result):
             client.put_file(job['jobId'], f'renders/set/{key}/{i:03d}{frame.suffix}', frame.read_bytes(),
                             mimetypes.guess_type(frame.name)[0] or 'image/webp')
     result.update(outcome='ok', set={'viewKey': key, 'frames': len(r['frames']), 'fps': r.get('fps')})
+    if spec.get('categories') is not None:  # confirms only the selection was worn
+        result['worn'] = sorted(spec['categories'])
 
 
 def view_key(view: dict) -> str:

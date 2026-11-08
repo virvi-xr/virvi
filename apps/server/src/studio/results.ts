@@ -25,6 +25,7 @@ export type ContractResult = {
   error?: string | null
   scope?: { by: 'check' | 'agent'; category: string; note: string } | null // on off_topic and declined
   set?: { viewKey: string; frames: number; fps: number } | null // a set render job's emote view
+  worn?: string[] // the categories a selection's set render or clipping fix wore (CONTRACT.md); absent from older workers
 }
 
 export type ContractPiece = {
@@ -60,6 +61,9 @@ export function parseResult(body: unknown): { ok: true; result: ContractResult }
       return { ok: false, reason: 'scope is malformed' }
     }
   }
+  if (r.worn != null && (!Array.isArray(r.worn) || r.worn.length > 200 || !r.worn.every((c) => typeof c === 'string' && CATEGORY.test(c)))) {
+    return { ok: false, reason: 'worn is malformed' }
+  }
   if (r.set != null) {
     const st = r.set as Record<string, unknown>
     if (typeof st !== 'object' || typeof st.viewKey !== 'string' || !VIEW_KEY.test(st.viewKey)
@@ -92,6 +96,13 @@ export function parseResult(body: unknown): { ok: true; result: ContractResult }
 }
 
 const SUPERSEDED = 'superseded: the pieces changed before it ran'
+
+/**
+ * Whether a job that named Finalize's selection (`categories`) was done with only those pieces worn: the worker says
+ * so in `worn`. An older worker ignores the selection and wears every piece, so its view isn't the selection's.
+ */
+export const confirmsSelection = (categories: string[] | undefined, worn: string[] | undefined) =>
+  !categories || (!!worn && [...worn].sort().join(',') === [...categories].sort().join(','))
 
 /**
  * After a prompt changed pieces: renders still waiting for the old pieces would render the new ones under the old
@@ -259,9 +270,10 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         await tx.update(studioRenders).set({ status: ready ? 'ready' : 'failed', frames: ready ? frames : 0 })
           .where(eq(studioRenders.id, row.id))
       }
+      const selection = (job.payload as { render?: { categories?: string[] } }).render?.categories
       for (const row of await tx.select().from(studioSetRenders).where(eq(studioSetRenders.jobId, job.id))) {
         const s = result.set
-        const ready = result.outcome !== 'error' && s?.viewKey === row.viewKey && s.frames > 0
+        const ready = result.outcome !== 'error' && s?.viewKey === row.viewKey && s.frames > 0 && confirmsSelection(selection, result.worn)
         await tx.update(studioSetRenders).set(ready ? { status: 'ready', frames: s!.frames, fps: s!.fps } : { status: 'failed', frames: 0 })
           .where(eq(studioSetRenders.id, row.id))
       }
@@ -271,7 +283,10 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
   })
   if (!job) return 'already'
   const fix = (job.payload as { fixClipping?: FixClipping }).fixClipping
-  if (job.type === 'prompt' && fix && result.outcome === 'ok') {
+  if (job.type === 'prompt' && fix && result.outcome === 'ok' && !confirmsSelection(fix.categories, result.worn)) {
+    // An older worker fixed it looking at every piece: re-rendering would keep that under the selection's key
+    console.warn(`[studio] clipping fix ${job.id} didn't confirm the selection it was for; its view isn't re-rendered`)
+  } else if (job.type === 'prompt' && fix && result.outcome === 'ok') {
     // A clipping fix renders the emote it fixed again straight away, for the new pieces (Finalize's selection, if it
     // was that view)
     const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, job.designId))

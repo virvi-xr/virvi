@@ -387,12 +387,53 @@ describe('finalizing some of the pieces', () => {
       const [row] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id))
       const token = await issueWorker(row, row.machineId ?? 'm-test')
       await db.update(studioJobs).set({ status: 'taken', takenAt: new Date() }).where(eq(studioJobs.id, fix.id))
-      const done = await app.inject({ method: 'POST', url: `${S}/worker/jobs/${fix.id}/result`, headers: { authorization: `Bearer ${token}` }, payload: okResult(fix.id) as any })
+      const done = await app.inject({ method: 'POST', url: `${S}/worker/jobs/${fix.id}/result`, headers: { authorization: `Bearer ${token}` }, payload: { ...okResult(fix.id), worn: ['feet', 'hat'] } as any })
       expect(done.statusCode).toBe(204)
       const again = (await setJobs(d.id)).filter((j) => j.status === 'queued')
       expect(again.map((j) => (j.payload as any).render)).toEqual([
         { set: true, bodyShape: 'female', outfit: 'default', emote: 'dance', categories: ['feet', 'hat'] },
       ])
+    })
+
+    it('a selection’s view is kept only when the worker confirms it wore only those pieces (fix round 1, I2)', async () => {
+      const u = await createUser()
+      const d = await collection(u)
+      const land = async (emote: string, over: Record<string, unknown>) => {
+        await setRender(u, d.id, { bodyShape: 'male', outfit: 'default', emote, categories: ['hat'] })
+        const [row] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id))
+        const token = await issueWorker(row, row.machineId ?? 'm-test')
+        const job = (await setJobs(d.id)).find((j) => (j.payload as any).render.emote === emote)!
+        await db.update(studioJobs).set({ status: 'taken', takenAt: new Date() }).where(eq(studioJobs.id, job.id))
+        const key = `walk-male-default-${emote}`
+        const res = await app.inject({
+          method: 'POST', url: `${S}/worker/jobs/${job.id}/result`, headers: { authorization: `Bearer ${token}` },
+          payload: { ...okResult(job.id), agent: null, model: null, costUsd: null, tokens: null, reply: '', pieces: [], set: { viewKey: key, frames: 96, fps: 24 }, ...over } as any,
+        })
+        expect(res.statusCode).toBe(204)
+        return (await db.select().from(studioSetRenders).where(eq(studioSetRenders.jobId, job.id)))[0].status
+      }
+      // an older worker wears every piece and says nothing: not kept, so it renders again when asked
+      expect(await land('run', {})).toBe('failed')
+      expect(await land('jump', { worn: ['hat', 'upper_body'] })).toBe('failed')
+      expect(await land('wave', { worn: ['hat'] })).toBe('ready')
+    })
+
+    it('a clipping fix whose frames weren’t confirmed for the selection doesn’t re-render the selection', async () => {
+      const u = await createUser()
+      const d = await collection(u)
+      await setRender(u, d.id, { bodyShape: 'female', outfit: 'default', emote: 'dance', categories: ['hat'] })
+      const [job] = await setJobs(d.id)
+      await db.update(studioSetRenders).set({ status: 'ready', frames: 96 }).where(eq(studioSetRenders.jobId, job.id))
+      await db.update(studioJobs).set({ status: 'done' }).where(eq(studioJobs.id, job.id))
+      const res = await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/clipping`, headers: as(u), payload: { emote: 'dance', bodyShape: 'female', outfit: 'default', categories: ['hat'] } })
+      expect(res.statusCode).toBe(202)
+      const fixId = res.json().jobId
+      const [row] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id))
+      const token = await issueWorker(row, row.machineId ?? 'm-test')
+      await db.update(studioJobs).set({ status: 'taken', takenAt: new Date() }).where(eq(studioJobs.id, fixId))
+      const done = await app.inject({ method: 'POST', url: `${S}/worker/jobs/${fixId}/result`, headers: { authorization: `Bearer ${token}` }, payload: okResult(fixId) as any })
+      expect(done.statusCode).toBe(204)
+      expect((await setJobs(d.id)).filter((j) => j.status === 'queued')).toEqual([])
     })
 
     it('a selection of every piece is the whole set, as before', async () => {

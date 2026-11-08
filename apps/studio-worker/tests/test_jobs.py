@@ -384,6 +384,7 @@ def test_set_render_job_wears_every_piece(api, tmp_path):
     assert view == {'bodyShape': 'male', 'outfit': 'default', 'emote': 'run', 'mode': 'walk'}
     assert result['set'] == {'viewKey': 'walk-male-default-run', 'frames': 96, 'fps': 24.0}
     assert result['pieces'] == []
+    assert 'worn' not in result
     assert 'job-r/renders/set/walk-male-default-run/000.webp' in api.files
     assert 'job-r/renders/set/walk-male-default-run/095.webp' in api.files
 
@@ -397,6 +398,7 @@ def test_set_render_job_for_a_selection_wears_only_those_pieces(api, tmp_path):
     assert result['outcome'] == 'ok', result
     assert sorted(p['category'] for p in renders[0][0]) == ['hat', 'upper_body']
     assert result['set']['viewKey'] == 'walk-male-default-run'
+    assert result['worn'] == ['hat', 'upper_body']  # the server keeps a selection's view only when this confirms it
 
 
 def test_set_render_job_for_a_selection_with_no_piece_left_fails(api, tmp_path):
@@ -454,6 +456,7 @@ def test_clipping_fix_for_a_selection_shows_only_those_pieces(api, tmp_path, ski
     result = run(api, tmp_path, job, 'claude_stream.jsonl', renders)
     assert renders, result
     assert [p['category'] for p in renders[0][0]] == ['hat']
+    assert result['worn'] == ['hat']
     assert 'studio-preview out/hat --emote dance' in seen['prompt']
 
 
