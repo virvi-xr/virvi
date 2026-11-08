@@ -24,6 +24,7 @@ Every platform adapter implements this interface. You only need this if you're b
 - `setGltfModel(entity, src): void` — Set glTF model
 - `setMaterial(entity, material): void` — Apply material (texture, emission, transparency)
 - `setVideoMaterial(entity, video): void` — Apply video texture
+- `setSolidShape?(entity, shape, color): void` — Optional: a plain colour `'box'` or `'plane'` (channels 0-1). Frames around images and video screens are built from these; without it, items show unframed
 
 ### Video
 - `createVideoPlayer(entity, options): void` — Create video player
