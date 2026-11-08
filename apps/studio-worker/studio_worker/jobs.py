@@ -7,6 +7,7 @@ for an emote view) and saves nothing. A finalize job builds
 paid packages from Virvi's copies of the paid files (finalize.py) and saves nothing either.
 """
 import copy
+import dataclasses
 import json
 import mimetypes
 import os
@@ -145,10 +146,16 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
     crossing = _crossing_legs(design, started) if kind == 'emote' and run.outcome == 'ok' else None
     if crossing:  # once only: if the legs still cross, the emote saves with a WARN in its checker report
         _send(client, job_id, {'type': 'progress', 'text': LEGS_PROGRESS})
-        again = run_agent(agent, job['model'], _legs_again(crossing, agent), run.session, run.session_total, limits,
-                          lambda text: _send(client, job_id, {'type': 'progress', 'text': text}),
+        kept = _snapshot(design / 'out' / 'emote')
+        again = run_agent(agent, job['model'], _legs_again(crossing, agent), run.session, run.session_total,
+                          _retry_limits(limits), lambda text: _send(client, job_id, {'type': 'progress', 'text': text}),
                           command=command, as_user=as_user, cwd=design)
-        run = then(run, again)
+        if again.outcome == 'ok':
+            run = then(run, again)
+        else:  # the first run's emote stands, as if there had been no retry; the retry's usage still counts
+            print(f'[worker] leg retry ended {again.outcome}: {again.error}; keeping the first export', file=sys.stderr)
+            _restore(design / 'out' / 'emote', kept, as_user)
+            run = dataclasses.replace(then(run, again), outcome=run.outcome, error=run.error, reply=run.reply)
     usage = run.usage
     cost = None if run.cost_usd is None and check_cost is None else round((run.cost_usd or 0) + (check_cost or 0), 6)
     result.update(reply=run.reply, costUsd=cost, tokens=usage and {
@@ -237,6 +244,45 @@ def _crossing_legs(design: Path, since: float) -> list[tuple[str, str]]:
         if r is not None and r.crossing:
             found.append((g.relative_to(design).as_posix(), r.describe()))
     return found
+
+
+def _retry_limits(limits: dict) -> dict:
+    """The leg retry's own budget: half the prompt's time, turns and cost ceiling."""
+    half = {'timeoutSec': lambda v: v / 2, 'maxTurns': lambda v: max(1, int(v) // 2), 'costCeilingUsd': lambda v: v / 2}
+    return {k: half[k](v) if k in half and v else v for k, v in limits.items()}
+
+
+def _snapshot(folder: Path) -> dict[str, bytes]:
+    """The regular files directly in `folder` (out/emote/), by name."""
+    if os.path.islink(folder) or not folder.is_dir():
+        return {}
+    kept = {}
+    for f in folder.iterdir():
+        try:
+            kept[f.name] = read_regular(f, emote_legs.MAX_BYTES)
+        except UnsafeFile:
+            continue
+    return kept
+
+
+def _restore(folder: Path, kept: dict[str, bytes], as_user: str | None) -> None:
+    """Puts out/emote/ back as `kept`: what the retry added goes, and every kept file is written afresh."""
+    if os.path.islink(folder) or not folder.is_dir():
+        return
+    for f in folder.iterdir():
+        if f.name not in kept and (f.is_symlink() or f.is_file()):
+            f.unlink()
+    for name, data in kept.items():
+        f = folder / name
+        if f.is_dir() and not f.is_symlink():
+            shutil.rmtree(f)
+        elif os.path.lexists(f):  # a fresh file, never one written through a link the retry left
+            f.unlink()
+        fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, 'wb') as fh:
+            fh.write(data)
+        if as_user:
+            shutil.chown(f, as_user)
 
 
 def _legs_again(crossing: list[tuple[str, str]], agent: str) -> str:

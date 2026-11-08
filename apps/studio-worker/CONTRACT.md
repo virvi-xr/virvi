@@ -223,7 +223,9 @@ effort: one that fails to send is dropped.
 - `checker.pass` false means the skills checker found a FAIL. The piece is still reported.
 - An emote's checker report ends with the studio's own leg check: a `WARN` (counted in `checker.warnings`, never a
   FAIL) when its thighs or shins pass through each other. A prompt whose emote export has crossing legs sends the agent
-  back once, in the same session, to fix them; `reply`, `costUsd` and `tokens` cover both runs.
+  back once, in the same session and with half the prompt's limits (time, turns, cost ceiling), to fix them;
+  `costUsd` and `tokens` cover both runs. If that retry doesn't finish (time, steps, ceiling, an error), the first
+  run's emote, reply and outcome stand and it saves with the WARN.
 - `costUsd` and `tokens` are this prompt's share only, even when the agent resumed a session. They are null for a
   render job.
 - **The workspace is saved before the result is posted.** If the save fails, the outcome is `error` and `pieces` is

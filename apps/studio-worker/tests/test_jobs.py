@@ -569,3 +569,51 @@ def test_only_emotes_get_the_leg_retry(api, tmp_path, skills, monkeypatch, kind)
     calls = spy_on_runs(monkeypatch)
     run(api, tmp_path, prompt_job(kind=kind, selectedSlots=None), 'claude_builds_emote_crossed_legs.jsonl')
     assert len(calls) == 1
+
+
+def spy_runs_with_limits(monkeypatch, later=None):
+    """Every run's prompt, session and limits; runs after the first replay `later` when given."""
+    calls = []
+    real = jobs.run_agent
+
+    def spy(agent, model, prompt, session, before, limits, *a, **kw):
+        calls.append({'prompt': prompt, 'session': session, 'limits': dict(limits)})
+        if later and len(calls) > 1:
+            kw['command'] = fake_command(later)
+        return real(agent, model, prompt, session, before, limits, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    return calls
+
+
+def test_the_leg_retry_gets_half_the_prompts_limits(api, tmp_path, skills, monkeypatch):
+    calls = spy_runs_with_limits(monkeypatch, 'claude_fixes_emote_legs.jsonl')
+    run(api, tmp_path, emote_job(limits={'timeoutSec': 30, 'maxTurns': 80, 'costCeilingUsd': 3.0}),
+        'claude_builds_emote_crossed_legs.jsonl')
+    assert calls[0]['limits'] == {'timeoutSec': 30, 'maxTurns': 80, 'costCeilingUsd': 3.0}
+    assert calls[1]['limits'] == {'timeoutSec': 15, 'maxTurns': 40, 'costCeilingUsd': 1.5}
+
+
+def test_a_failed_leg_retry_keeps_the_first_runs_emote(api, tmp_path, skills, monkeypatch):
+    calls = spy_runs_with_limits(monkeypatch, 'claude_legs_retry_fails.jsonl')
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert len(calls) == 2
+    assert result['outcome'] == 'ok', result['error']
+    assert result['reply'] == 'Built a reading emote.'  # the first run's: the retry never replied
+    assert result['costUsd'] == pytest.approx(0.05)  # both runs: 0.02, then 0.03 more
+    emote = result['pieces'][0]
+    assert emote['files'] and emote['checker']['warnings'] >= 1
+    glb = api.files['job-1/pieces/emote/reading_time.glb']
+    assert glb == (FIXTURES / 'emote_legs/crossed_thighs.glb').read_bytes()  # the half-written export was put back
+    assert not (tmp_path / 'out/emote/stray.glb').exists()
+    report = api.files['job-1/checks/emote.txt'].decode()
+    assert any(l.startswith('  WARN  legs pass through each other') for l in report.splitlines())
+
+
+def test_grok_looks_again_and_then_fixes_the_legs(api, tmp_path, skills, monkeypatch):
+    calls = spy_runs_with_limits(monkeypatch)
+    result = run(api, tmp_path, grok_job(kind='emote', selectedSlots=None), 'grok_builds_emote_crossed_legs.jsonl')
+    assert [c['prompt'] == jobs.LOOK_AGAIN for c in calls] == [False, True, False]
+    assert calls[2]['prompt'].startswith(jobs.LEGS_AGAIN_START) and 'read_file' in calls[2]['prompt']
+    assert calls[2]['session'] == 'sess-grok-1' and calls[2]['limits']['costCeilingUsd'] == 1.5
+    assert result['outcome'] == 'ok', result['error']
+    assert result['costUsd'] == pytest.approx(2.7)
