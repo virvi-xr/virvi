@@ -37,13 +37,13 @@ Requests for another account's scenes, deployments, events, giveaways, streams o
 | POST | `/elements/:id/instances` | Yes | Create instance |
 | PUT | `/instances/:id` | Yes | Update instance |
 
-## Assets
+## Assets (3D Models)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/assets` | No | Browse/search asset library |
+| GET | `/assets` | No | Browse/search 3D Models (the asset library) |
 | GET | `/assets/:id` | No | Get single asset |
-| POST | `/assets` | Yes | Upload a GLB model to the 3D Asset Library. Private unless `isPublic: true` is sent |
+| POST | `/assets` | Yes | Upload a GLB model to 3D Models. Private unless `isPublic: true` is sent |
 | PUT | `/assets/:id` | Yes | Update asset metadata |
 | DELETE | `/assets/:id` | Yes | Delete asset |
 | GET | `/assets/categories` | No | List categories |
@@ -135,7 +135,7 @@ Hooks are listed with `GET /api/hooks` and removed with `DELETE /api/hooks/:hook
 |--------|------|------|-------------|
 | POST | `/upload-tokens` | Yes | Create upload token |
 | GET | `/upload/:code` | Token | Validate upload code |
-| POST | `/upload/:code` | Token | Upload file via code |
+| POST | `/upload/:code/start`, `/upload/:code/:assetId` | Token | Upload a file via code: announce it, then send its bytes. Models go in the scene owner's 3D Models (private), images and video in Images & Video |
 
 ## Command Center
 

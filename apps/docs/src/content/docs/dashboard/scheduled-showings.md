@@ -16,10 +16,10 @@ A video screen in **Schedule** mode plays a programme of videos at set times. Ev
 Each showing has:
 
 - **A title** (optional), shown on the countdown sign.
-- **A programme:** videos played in order, chosen from the Media Library or pasted as links. Mark trailers and ads as **ads**; they play before the feature, never after it.
+- **A programme:** videos played in order, chosen from Images & Video or pasted as links. Mark trailers and ads as **ads**; they play before the feature, never after it.
 - **When it plays:** once, every day, or on chosen days, at a start time in a timezone. Daylight-saving changes are handled.
 
-Every video needs a known length. Videos uploaded to the Media Library are measured on upload. For a video from elsewhere, type its length (h:mm:ss, m:ss or minutes). A programme can run up to 48 hours.
+Every video needs a known length. Videos uploaded to Images & Video are measured on upload. For a video from elsewhere, type its length (h:mm:ss, m:ss or minutes). A programme can run up to 48 hours.
 
 Showings on the same screen can't overlap. A save that would run into another showing is refused, with the time it would clash.
 

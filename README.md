@@ -115,7 +115,7 @@ docker compose -f docker-compose.scalable.yml up -d --scale virvi=3
 - **Scenes** — create/edit scenes, manage elements (video, image, model, sound, widget), real-time Colyseus sync
 - **Events** — schedule events, link scenes, coordinate cross-platform activations
 - **Giveaways** — create giveaways, add items, track claims
-- **Media** — upload/manage images, videos, 3D models with CDN delivery
+- **Images & Video** and **3D Models** — upload/manage images and video, and GLB models, with CDN delivery
 - **Streaming** — provision HLS streaming servers, manage stream keys
 - **Analytics** — visitor sessions, platform breakdown, action tracking per scene
 - **Settings** — organization management, team invites, billing/subscription, API keys, account settings

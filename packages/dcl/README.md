@@ -46,8 +46,9 @@ editors or viewers by wallet address.
 
 ## Images and 3D models
 
-- Upload images (PNG, JPG, WebP, GIF up to 10 MB) and GLB models (up to 50 MB) on virvi.io (Media),
-  or place them from the in-world HUD (Assets → Place).
+- Upload images (PNG, JPG, WebP, GIF up to 10 MB) on virvi.io (Images & Video) and GLB models (up to 50 MB)
+  on virvi.io (3D Models), or upload and place them from the in-world HUD (Models → Place). Models uploaded
+  in-world go in the scene owner's 3D Models, private.
 - Images appear live for everyone.
 - Decentraland only loads 3D models that are deployed with your scene. By default Virvi deploys them
   to your World for you (set it up at virvi.io/deploy); if you publish yourself, the HUD's Publish

@@ -76,4 +76,4 @@ State is isolated per user per scene:
 
 ## Storage Limits
 
-Each user-scene pair has a storage budget based on your subscription tier. Keep values compact and avoid storing large binary data. Use the [Media Library](/dashboard/media-library/) for files and store only references in scene state.
+Each user-scene pair has a storage budget based on your subscription tier. Keep values compact and avoid storing large binary data. Use [Images & Video and 3D Models](/dashboard/media-library/) for files and store only references in scene state.
