@@ -6,6 +6,7 @@ import { destroyWorker, type MachineDeps } from '../studio/machines.js'
 import { getStudioStore } from '../studio/store.js'
 import { recordTrialEvent } from './trial-events.js'
 import { releaseTrialLeftovers, trialLeftovers } from './trial-data.js'
+import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
 
 const BATCH = 100
 /** Rows looked at per run, failures included, so a run stays bounded when many trials keep failing. */
@@ -53,8 +54,10 @@ async function expireTrial(id: string, cutoff: Date, deps: Partial<MachineDeps>)
       await getStudioStore().deletePrefix(`designs/${d.id}/`)
     }
     // Re-check the row in the delete: a trial that converted since the select is kept
-    const gone = await db.delete(users).where(and(eq(users.id, id), eq(users.isTrial, true), lt(users.trialLastActiveAt, cutoff))).returning({ id: users.id })
-    if (!gone.length) return false
+    const models = await deleteUserWithModels(id, async (tx) =>
+      (await tx.delete(users).where(and(eq(users.id, id), eq(users.isTrial, true), lt(users.trialLastActiveAt, cutoff))).returning({ id: users.id })).length > 0)
+    if (!models) return false
+    await releaseModelFiles(models)
     // A trial that converted since keeps its builds and files; one that is gone frees them
     await releaseTrialLeftovers(leftovers)
     recordTrialEvent('expired', id)

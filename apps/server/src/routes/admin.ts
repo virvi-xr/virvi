@@ -17,6 +17,7 @@ import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authenticate } from '../middleware/auth.js'
 import { isUuid } from '../auth/scene-from.js'
+import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
 
 /**
  * Reusable preHandler that ensures the authenticated user has the 'admin' role.
@@ -102,7 +103,9 @@ export default async function adminRoutes(app: FastifyInstance) {
       db.select({ totalOrgs: sql<number>`count(*)::int` }).from(organizations),
       db.select({ totalScenes: sql<number>`count(*)::int` }).from(scenes),
       db.select({ totalMedia: sql<number>`count(*)::int` }).from(mediaAssets),
-      db.select({ totalStorageBytes: sql<string>`coalesce(sum(${mediaAssets.sizeBytes}), 0)::bigint` }).from(mediaAssets),
+      // Images & Video plus people's 3D Models uploads, counted as the quota counts them (catalog and paid Studio pieces aside)
+      db.execute(sql`SELECT (coalesce((SELECT sum(size_bytes) FROM media_assets), 0) + coalesce((SELECT sum(file_size_bytes) FROM asset_library_items WHERE uploaded_by IS NOT NULL AND coalesce(source_ref, '') NOT LIKE 'studio:%'), 0))::bigint AS "totalStorageBytes"`)
+        .then((r) => (Array.isArray(r) ? r : (r as { rows: unknown[] }).rows) as Array<{ totalStorageBytes: string }>),
       db
         .select({
           tier: subscriptions.tier,
@@ -244,8 +247,9 @@ export default async function adminRoutes(app: FastifyInstance) {
     const blocked = await hostedWorldsBlockingDelete({ userId })
     if (blocked) return reply.status(409).send(blocked)
     const imports = await importsGoingWith({ userId })
-    await db.delete(users).where(eq(users.id, userId))
+    const models = await deleteUserWithModels(userId, async (tx) => (await tx.delete(users).where(eq(users.id, userId)).returning({ id: users.id })).length > 0)
     await deleteImportFiles(imports)
+    await releaseModelFiles(models ?? [])
     return reply.status(204).send()
   })
 

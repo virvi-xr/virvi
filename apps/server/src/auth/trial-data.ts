@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { arDevices, roomScans, roomSets, sceneImports, sceneLibrary, scenes } from '../db/schema.js'
+import { arDevices, assetLibraryItems, roomScans, roomSets, sceneImports, sceneLibrary, scenes } from '../db/schema.js'
 import { getBuildRunner } from '../services/import/build-runner.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { deleteThumbnailFile } from '../scenes/thumbnail.js'
@@ -23,6 +23,8 @@ export async function moveTrialSceneData(tx: Tx, fromUserId: string, toUserId: s
   // the count lets the sign-in tell them, and Settings removes it
   const headsets = await tx.update(arDevices).set({ userId: toUserId }).where(eq(arDevices.userId, fromUserId)).returning({ id: arDevices.id })
   await tx.update(sceneLibrary).set({ addedBy: toUserId }).where(eq(sceneLibrary.addedBy, fromUserId))
+  // Its 3D Models (room-set models, any uploads) move too, as they are: private stays private
+  await tx.update(assetLibraryItems).set({ uploadedBy: toUserId }).where(eq(assetLibraryItems.uploadedBy, fromUserId))
   return { headsets: headsets.length }
 }
 

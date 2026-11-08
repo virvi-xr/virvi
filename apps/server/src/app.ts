@@ -194,7 +194,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     runStartupBackfill()
       .catch((err) => app.log.warn({ err }, 'scene library backfill failed'))
       .then(() => moveMediaModels())
-      .then((n) => { if (n.moved || n.dropped) app.log.info(n, 'moved 3D models from media to the asset library') })
+      .then((n) => { if (n.moved || n.dropped || n.failed) app.log.info(n, 'moved 3D models from media to the asset library') })
       .catch((err) => app.log.warn({ err }, 'moving 3D models out of media failed'))
   }
   await app.register(analyticsClaimSignedRoutes)

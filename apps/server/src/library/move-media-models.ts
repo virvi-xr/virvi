@@ -15,8 +15,11 @@ import { modelName } from './model-uploads.js'
  * Safe to run twice and on several replicas at once: the media row is locked, and once moved it no longer exists.
  */
 
-/** Media rows that are 3D models (by type or by name: old uploads may be stored as octet-stream). */
-const IS_MODEL = sql`(${mediaAssets.contentType} ILIKE 'model/gltf%' OR ${mediaAssets.filename} ~* '\\.(glb|gltf)$')`
+/**
+ * Media rows that are 3D models: stored as a model type, or a .glb/.gltf with no real type (old uploads were kept as
+ * octet-stream). The type decides, as classifyUpload does: an image that happens to be named .glb stays an image.
+ */
+const IS_MODEL = sql`(${mediaAssets.contentType} ILIKE 'model/gltf%' OR (${mediaAssets.filename} ~* '\\.(glb|gltf)$' AND coalesce(${mediaAssets.contentType}, '') IN ('', 'application/octet-stream')))`
 
 /** An upload with no file this long after it started was abandoned (as library/scene-library.ts STALE_UPLOAD_MS). */
 const STALE_MS = 15 * 60_000
@@ -62,16 +65,24 @@ export async function moveMediaModel(mediaId: string, now: Date = new Date()): P
   return { result: outcome.result, assetItemId: outcome.assetItemId }
 }
 
-/** Move every 3D model still in media; returns the counts. Runs at every boot (cheap once nothing is left). */
-export async function moveMediaModels(now: Date = new Date()): Promise<{ moved: number; dropped: number }> {
+/**
+ * Move every 3D model still in media; returns the counts. Runs at every boot (cheap once nothing is left). A row that
+ * fails is logged and left for the next boot; the rest still move.
+ */
+export async function moveMediaModels(now: Date = new Date()): Promise<{ moved: number; dropped: number; failed: number }> {
   const rows = await db
     .select({ id: mediaAssets.id })
     .from(mediaAssets)
     .where(IS_MODEL)
-  const counts = { moved: 0, dropped: 0 }
+  const counts = { moved: 0, dropped: 0, failed: 0 }
   for (const r of rows) {
-    const { result } = await moveMediaModel(r.id, now)
-    if (result !== 'skipped') counts[result]++
+    try {
+      const { result } = await moveMediaModel(r.id, now)
+      if (result !== 'skipped') counts[result]++
+    } catch (err) {
+      counts.failed++
+      console.error(`[move-media-models] media ${r.id} not moved (retried next boot):`, err instanceof Error ? err.message : err)
+    }
   }
   return counts
 }

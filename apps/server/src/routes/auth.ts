@@ -5,6 +5,7 @@ import { OAuth2Client } from 'google-auth-library'
 import { eq, and } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { users, userAuthMethods, passwordResetTokens, scenes } from '../db/schema.js'
+import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
 import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
 import { sendPasswordResetEmail } from '../services/email.js'
@@ -746,9 +747,11 @@ export default async function authRoutes(app: FastifyInstance) {
       if (blocked) return reply.status(409).send(blocked)
       // Delete user — cascading deletes handle related data
       const imports = await importsGoingWith({ userId: request.user.id })
-      await db.delete(users).where(eq(users.id, request.user.id))
+      // Their private 3D Models go in the same transaction (public ones stay, ownerless)
+      const models = await deleteUserWithModels(request.user.id, async (tx) => (await tx.delete(users).where(eq(users.id, request.user.id)).returning({ id: users.id })).length > 0)
       // Their imports' rows cascaded; the private files go too
       await deleteImportFiles(imports)
+      await releaseModelFiles(models ?? [])
 
       return reply.status(204).send()
     },

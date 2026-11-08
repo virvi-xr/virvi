@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { assetLibraryItems, mediaAssets, sceneLibrary, sceneRoles } from '../src/db/schema.js'
@@ -6,6 +6,7 @@ import { config } from '../src/config.js'
 import { listSceneLibrary } from '../src/library/scene-library.js'
 import { reserveMedia, storeMedia, StoreMediaError } from '../src/media/store.js'
 import { assertStorageQuota, storageUsedBytes } from '../src/media/quota.js'
+import { createStorage } from '../src/storage/index.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -81,10 +82,12 @@ describe('in-world model uploads go to 3D Models', () => {
     const { assetId } = (await start(a)).json()
     expect((await send(b, assetId)).statusCode).toBe(404)
     expect((await send(a, assetId)).statusCode).toBe(201)
-    expect((await send(a, assetId)).statusCode).toBe(409)
+    // Stored: its upload code is cleared, so the code no longer reaches it
+    expect((await send(a, assetId)).statusCode).toBe(404)
+    expect((await model(assetId)).uploadCode).toBeNull()
     const small = (await start(a, { sizeBytes: 3 })).json().assetId
     expect((await send(a, small)).statusCode).toBe(413)
-    expect(await model(small)).toMatchObject({ status: 'failed', error: 'too_large', cdnUrl: null })
+    expect(await model(small)).toMatchObject({ status: 'failed', error: 'too_large', cdnUrl: null, uploadCode: null })
   })
 
   it('in-flight and failed models stay out of 3D Models browsing until stored', async () => {
@@ -171,5 +174,54 @@ describe('in-world model uploads go to 3D Models', () => {
       await expect(storeMedia(s.owner.id, { ...file, data: Buffer.from('abc') })).rejects.toMatchObject({ status: 415 })
     }
     expect(await db.select().from(mediaAssets)).toHaveLength(0)
+  })
+
+  it('never shows an upload code in asset responses', async () => {
+    const s = await setup()
+    const code = await mint(s.owner, s.scene.id)
+    const { assetId } = (await start(code)).json()
+    const one = await app.inject({ method: 'GET', url: `/api/assets/${assetId}`, headers: { authorization: `Bearer ${tokenFor(s.owner)}` } })
+    expect(one.statusCode).toBe(200)
+    expect(one.json().asset).not.toHaveProperty('uploadCode')
+    const sent = await send(code, assetId)
+    expect(sent.json().asset).not.toHaveProperty('uploadCode')
+    await db.update(assetLibraryItems).set({ isPublic: true, uploadCode: 'leaked' }).where(eq(assetLibraryItems.id, assetId))
+    const list = await app.inject({ method: 'GET', url: '/api/assets' })
+    expect(list.json().assets[0]).not.toHaveProperty('uploadCode')
+  })
+
+  it("a model can't be deleted from 3D Models while it uploads, and a dismissed one leaves no file", async () => {
+    const s = await setup()
+    const code = await mint(s.owner, s.scene.id)
+    const { assetId } = (await start(code)).json()
+    const del = await app.inject({ method: 'DELETE', url: `/api/assets/${assetId}`, headers: { authorization: `Bearer ${tokenFor(s.owner)}` } })
+    expect(del.statusCode).toBe(409)
+    // Removed while its bytes were being stored: the fill finds no row and deletes the file it wrote
+    const { fillModel } = await import('../src/library/model-uploads.js')
+    const row = await model(assetId)
+    await db.update(assetLibraryItems).set({ status: 'uploading' }).where(eq(assetLibraryItems.id, assetId))
+    const proto = Object.getPrototypeOf(createStorage())
+    const original = proto.upload
+    const upload = vi.spyOn(proto, 'upload').mockImplementationOnce(async function (this: unknown, ...args: unknown[]) {
+      await db.delete(assetLibraryItems).where(eq(assetLibraryItems.id, assetId)) // dismissed mid-store
+      return original.apply(this, args)
+    })
+    await expect(fillModel(assetId, Buffer.from(GLB, 'base64'))).rejects.toMatchObject({ status: 404 })
+    upload.mockRestore()
+    const file = await app.inject({ method: 'GET', url: `/uploads/${row.storageKey}` })
+    expect(file.statusCode).toBe(404)
+  })
+
+  it('My Models lists newest first, so a just-uploaded model is on the first page', async () => {
+    const s = await setup()
+    const at = (m: number) => new Date(Date.now() - m * 60_000)
+    await db.insert(assetLibraryItems).values([
+      { name: 'old', storageKey: 'a', cdnUrl: 'https://x/a.glb', isPublic: false, uploadedBy: s.owner.id, createdAt: at(30) },
+      { name: 'new', storageKey: 'b', cdnUrl: 'https://x/b.glb', isPublic: false, uploadedBy: s.owner.id, createdAt: at(1) },
+      { name: 'mid', storageKey: 'c', cdnUrl: 'https://x/c.glb', isPublic: false, uploadedBy: s.owner.id, createdAt: at(10) },
+    ])
+    const res = await app.inject({ method: 'GET', url: '/api/assets?mine=all&limit=2', headers: { authorization: `Bearer ${tokenFor(s.owner)}` } })
+    expect(res.json().assets.map((a: { name: string }) => a.name)).toEqual(['new', 'mid'])
+    expect(res.json().total).toBe(3)
   })
 })

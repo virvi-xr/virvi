@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { assetLibraryItems, mediaAssets, organizations, sceneLibrary, uploadTokens } from '../src/db/schema.js'
 import { createStorage } from '../src/storage/index.js'
@@ -43,7 +43,7 @@ describe('moving 3D models out of media', () => {
   it("moves each stored model to the owner's 3D Models, private, same file and URL, same library link", async () => {
     const s = await setup()
     const before = await storageUsedBytes(s.owner.id)
-    expect(await moveMediaModels()).toEqual({ moved: 2, dropped: 0 })
+    expect(await moveMediaModels()).toEqual({ moved: 2, dropped: 0, failed: 0 })
 
     // Media keeps only the image
     expect((await db.select().from(mediaAssets)).map((m) => m.id)).toEqual([s.png.id])
@@ -62,6 +62,10 @@ describe('moving 3D models out of media', () => {
     expect(await storageUsedBytes(s.owner.id)).toBe(before)
     const usage = await app.inject({ method: 'GET', url: '/api/billing/usage', headers: { authorization: `Bearer ${tokenFor(s.owner)}` } })
     expect(usage.json().usage.storageBytes).toBe(before)
+    // And the admin overview's storage total doesn't drop either
+    const admin = await createUser({ role: 'admin' })
+    const stats = await app.inject({ method: 'GET', url: '/api/admin/stats', headers: { authorization: `Bearer ${tokenFor(admin)}` } })
+    expect(stats.json().totalStorageBytes).toBe(before)
   })
 
   it('a scene that places a moved model still carries its working URL', async () => {
@@ -87,7 +91,7 @@ describe('moving 3D models out of media', () => {
     await setup()
     const [a, b] = await Promise.all([moveMediaModels(), moveMediaModels()])
     expect(a.moved + b.moved).toBe(2)
-    expect(await moveMediaModels()).toEqual({ moved: 0, dropped: 0 })
+    expect(await moveMediaModels()).toEqual({ moved: 0, dropped: 0, failed: 0 })
     expect(await db.select().from(assetLibraryItems)).toHaveLength(2)
   })
 
@@ -97,7 +101,7 @@ describe('moving 3D models out of media', () => {
     const [stale] = await db.insert(mediaAssets).values({ ownerId: s.owner.id, filename: 'y.glb', contentType: 'model/gltf-binary', sizeBytes: 5, status: 'uploading', createdAt: new Date(Date.now() - 20 * 60_000) }).returning()
     const [fresh] = await db.insert(mediaAssets).values({ ownerId: s.owner.id, filename: 'z.glb', contentType: 'model/gltf-binary', sizeBytes: 5, status: 'uploading' }).returning()
     await db.insert(sceneLibrary).values({ sceneId: s.scene.id, mediaAssetId: failed.id })
-    expect(await moveMediaModels()).toEqual({ moved: 2, dropped: 2 })
+    expect(await moveMediaModels()).toEqual({ moved: 2, dropped: 2, failed: 0 })
     const left = (await db.select().from(mediaAssets)).map((m) => m.id).sort()
     expect(left).toEqual([s.png.id, fresh.id].sort())
     void stale
@@ -123,5 +127,28 @@ describe('moving 3D models out of media', () => {
     const [item] = await listSceneLibrary(scene.id)
     expect(item).toMatchObject({ id: link.id, kind: 'model', status: 'ready', name: 'Old' })
     expect(res.json().asset).toMatchObject({ cdnUrl: item.url, uploadedBy: owner.id, isPublic: false })
+  })
+
+  it('decides "model" by type: an image named .glb stays in media; an octet-stream .glb moves', async () => {
+    const s = await setup()
+    const [img] = await db.insert(mediaAssets).values({ ownerId: s.owner.id, filename: 'poster.glb', contentType: 'image/png', sizeBytes: 9, storageKey: 'p.png', publicUrl: 'https://x/p.png' }).returning()
+    expect(await moveMediaModels()).toEqual({ moved: 2, dropped: 0, failed: 0 })
+    expect(await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, img.id) })).toBeTruthy()
+    expect(await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, s.old.id) })).toBeUndefined()
+  })
+
+  it('one row that fails is logged and left for next boot; the others still move', async () => {
+    const s = await setup()
+    await db.execute(sql`CREATE OR REPLACE FUNCTION liv132_refuse() RETURNS trigger AS $$ BEGIN IF NEW.name = 'Chair' THEN RAISE EXCEPTION 'refused'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql`)
+    await db.execute(sql`CREATE TRIGGER liv132_refuse BEFORE INSERT ON asset_library_items FOR EACH ROW EXECUTE FUNCTION liv132_refuse()`)
+    try {
+      expect(await moveMediaModels()).toEqual({ moved: 1, dropped: 0, failed: 1 })
+      expect(await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, s.glb.id) })).toBeTruthy()
+    } finally {
+      await db.execute(sql`DROP TRIGGER liv132_refuse ON asset_library_items`)
+      await db.execute(sql`DROP FUNCTION liv132_refuse()`)
+    }
+    expect(await moveMediaModels()).toEqual({ moved: 1, dropped: 0, failed: 0 })
+    expect(await db.query.sceneLibrary.findFirst({ where: eq(sceneLibrary.id, s.link.id) })).toMatchObject({ mediaAssetId: null })
   })
 })

@@ -28,7 +28,7 @@ import { fromBody } from '../auth/scene-from.js'
 import { linkToScene, uploadDestination } from '../library/scene-library.js'
 import { publishLibraryChanged } from '../realtime/bus.js'
 import { reserveMedia, fillMedia, StoreMediaError } from '../media/store.js'
-import { reserveModel, fillModel } from '../library/model-uploads.js'
+import { reserveModel, fillModel, withoutUploadCode } from '../library/model-uploads.js'
 import { moveMediaModel } from '../library/move-media-models.js'
 import { classifyUpload, isModelFile } from '../storage/upload-policy.js'
 
@@ -241,9 +241,12 @@ export default async function companionUploadRoutes(app: FastifyInstance) {
         stored = await fillMedia(assetId, data)
         // A model reserved in media before the split (a phone upload started across the deploy) goes to 3D Models now
         const moved = isModelFile(stored.filename, stored.contentType) ? await moveMediaModel(assetId) : null // announces the link itself
-        if (moved?.assetItemId) return reply.status(201).send({ asset: await db.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.id, moved.assetItemId) }) })
+        if (moved?.assetItemId) {
+          const item = await db.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.id, moved.assetItemId) })
+          return reply.status(201).send({ asset: item ? withoutUploadCode(item) : null })
+        }
       } else {
-        stored = await fillModel(assetId, data)
+        stored = withoutUploadCode(await fillModel(assetId, data))
       }
     } catch (err) {
       await announce()

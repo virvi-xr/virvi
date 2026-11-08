@@ -42,7 +42,7 @@ export async function expireStaleUploads(now: Date = new Date()): Promise<number
     .returning({ id: mediaAssets.id })
   const models = await db
     .update(assetLibraryItems)
-    .set(failed)
+    .set({ ...failed, uploadCode: null })
     .where(and(inArray(assetLibraryItems.status, ['uploading', 'processing']), lt(assetLibraryItems.createdAt, before)))
     .returning({ id: assetLibraryItems.id })
   if (media.length + models.length === 0) return 0
