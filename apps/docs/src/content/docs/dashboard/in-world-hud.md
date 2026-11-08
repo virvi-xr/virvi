@@ -69,3 +69,7 @@ In the Layout panel, an item with copies shows how many (×3) and a **Clear** bu
 
 From `@virvixr/dcl` 2.11.0, the Layout panel's **Click** button sets what clicking an image, model or screen does. See [Click Actions](/dashboard/click-actions/).
 
+
+## Frames
+
+From `@virvixr/dcl` 2.12.0, the Layout panel's **Frame** button puts a frame around an image or video screen: **Off**, **Thin** (one slim modern border), **Classic** (a deeper, raised border, wood by default) or **Gallery** (a white mat with a slim frame around it), with a colour swatch and a thickness. Press **Save** and the frame shows at once, on every copy of the item. Thickness is a share of the picture's shorter side, so the frame stays in proportion when you resize it. The scene editor's image and video screen cards have the same **Frame** setting, with any colour. Ad spaces have no frame.

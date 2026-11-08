@@ -12,7 +12,7 @@ describe('dcl runtime', () => {
     // The HUD registers with a virtual canvas (scales on high-DPI screens) and textures its launcher from the icon
     expect(src).toContain('virtualWidth')
     expect(src).toContain('images/virvi/hud-v.png')
-    expect(DCL_RUNTIME_VERSION).toBe(10)
+    expect(DCL_RUNTIME_VERSION).toBe(11)
   })
 
   it('names Virvi items for analytics (v4)', async () => {
@@ -62,8 +62,14 @@ describe('dcl runtime', () => {
     // The bundle is run in a Decentraland LOD sandbox by packages/adapter-dcl/test/lod-sandbox.test.ts
   })
 
-  it('keeps v3 to v9 for deploys still waiting to be signed', async () => {
-    for (const v of [3, 4, 5, 6, 7, 8, 9]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
+  it('frames images and video screens, and sets frames from the HUD Layout panel (v11)', async () => {
+    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    expect(src).toContain('layout_frame')
+    expect(src).toContain('A white mat with a slim frame around it')
+  })
+
+  it('keeps v3 to v10 for deploys still waiting to be signed', async () => {
+    for (const v of [3, 4, 5, 6, 7, 8, 9, 10]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
   })
 
   it('speaks the Virvi protocol only', async () => {
