@@ -4,6 +4,7 @@
  * GET    /api/dcl/names                          — each verified wallet's DCL names and their Worlds
  * GET    /api/dcl/worlds/:world                  — one typed name (ENS or DCL), plus whether the caller owns it
  * POST   /api/dcl/destinations                   — connect a World to a scene (wizard plot, or adopt the live scene)
+ * DELETE /api/dcl/destinations/:id               — disconnect a World from its scene (nothing changes in Decentraland)
  * GET    /api/dcl/destinations/:id               — the destination (kind, parcels, who may sign), models waiting to publish, the last deployment
  * PATCH  /api/dcl/destinations/:id               — switch deploy mode
  * GET    /api/dcl/destinations/:id/grant         — the owner's signed requests that let Virvi deploy
@@ -25,6 +26,11 @@
  * (grant, revoke) refuse them with 409 not_a_world. Their own option is the on-chain operator grant (parcel-grant.ts):
  * the owner sends the transactions from their wallet, and Virvi only reads the result back from Decentraland. It is
  * never offered on Aetheria land, and PATCH can't switch parcels to mode 'virvi' unless Virvi already holds the rights.
+ *
+ * Names, the World lookup and 409 world_in_use carry `connectedScene`: the Virvi scene the World is connected to, as
+ * the caller may see it (connectedSceneOf). Disconnecting (DELETE) removes only Virvi's link: what is live in the World
+ * stays, and so does Virvi's deploy permission there, which only the owner's signature removes (the revoke routes,
+ * before disconnecting, or the Creator Hub after). Worlds only: Genesis City parcels get 409 not_a_world.
  *
  * Open to every plan (no feature gate). "Owner" is the World's owner as the Worlds server reports it right
  * now, and it must be one of the caller's verified wallets.
@@ -57,12 +63,12 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { plotParcels, validPlot, type Plot } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { analyticsScenes, dclWorldDestinations, locationSetups, sceneDeployments } from '../db/schema.js'
+import { analyticsScenes, dclWorldDestinations, locationSetups, sceneDeployments, sceneImports, scenes } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
-import { actorFromClaims } from '../auth/actor.js'
+import { actorFromClaims, type Actor } from '../auth/actor.js'
 import { getSceneAccess, hasScope, isFullAccess } from '../auth/permissions.js'
 import { fromParam, isUuid } from '../auth/scene-from.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
@@ -150,10 +156,46 @@ function worldParam(raw: unknown): string {
   return world
 }
 
-async function describeWorld(world: string, storage: { maxAllowedBytes: number; usedBytes: number } | null) {
-  const entities = await read(() => getWorldsClient().getWorldEntities(world))
-  return { world, hasScene: entities.length > 0, footprint: footprint(entities), storage }
+/**
+ * The Virvi scene a World is connected to, as `actor` may see it: its id and name only with some access to that scene
+ * (otherwise just that another Virvi account uses it), and `canDisconnect` with the destination's id only with full
+ * access. Null when the World isn't connected.
+ */
+export type ConnectedScene =
+  | { sceneId: string; name: string; canDisconnect: true; destinationId: string }
+  | { sceneId: string; name: string; canDisconnect: false }
+  | { name: null; canDisconnect: false }
+
+async function connectedSceneOf(actor: Actor, dest: { id: string; sceneId: string } | null | undefined): Promise<ConnectedScene | null> {
+  if (!dest) return null
+  const access = await getSceneAccess(actor, dest.sceneId)
+  if (access.level === 'none') return { name: null, canDisconnect: false }
+  const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
+  if (!scene) return { name: null, canDisconnect: false }
+  return isFullAccess(access)
+    ? { sceneId: dest.sceneId, name: scene.name, canDisconnect: true, destinationId: dest.id }
+    : { sceneId: dest.sceneId, name: scene.name, canDisconnect: false }
 }
+
+/** connectedSceneOf for each World, by name. */
+async function connectedScenesOf(actor: Actor, worlds: string[]): Promise<Map<string, ConnectedScene | null>> {
+  const dests = worlds.length
+    ? await db.query.dclWorldDestinations.findMany({ where: inArray(dclWorldDestinations.worldName, worlds), columns: { id: true, sceneId: true, worldName: true } })
+    : []
+  const out = new Map<string, ConnectedScene | null>()
+  for (const w of worlds) out.set(w, await connectedSceneOf(actor, dests.find((d) => d.worldName === w)))
+  return out
+}
+
+async function describeWorld(world: string, storage: { maxAllowedBytes: number; usedBytes: number } | null, connectedScene: ConnectedScene | null) {
+  const entities = await read(() => getWorldsClient().getWorldEntities(world))
+  return { world, hasScene: entities.length > 0, footprint: footprint(entities), storage, connectedScene }
+}
+
+/** Set on a deploy still waiting for its signature when its World is disconnected: that signature can no longer be used. */
+const DISCONNECTED = 'This World was disconnected from the scene, so this deploy was cancelled.'
+const GRANT_KEPT = (world: string) =>
+  `Virvi can still deploy to ${world} until you remove its permission. Remove Virvi under ${world}'s permissions in the Creator Hub.`
 
 /** The World's owner when it is one of the caller's verified wallets; 403 not_world_owner otherwise. */
 export async function ownerFor(userId: string, world: string): Promise<string> {
@@ -391,7 +433,9 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
         getDclDirectory().getOwnedNames(address),
         read(() => getWorldsClient().getWalletStats(address)),
       ])
-      return { address, names: await Promise.all(unique(names.map((n) => n.toLowerCase())).map((w) => describeWorld(w, storage))) }
+      const worlds = unique(names.map((n) => n.toLowerCase()))
+      const connected = await connectedScenesOf(actorFromClaims(request.user), worlds)
+      return { address, names: await Promise.all(worlds.map((w) => describeWorld(w, storage, connected.get(w) ?? null))) }
     }))
     return reply.send({ wallets: out })
   }))
@@ -400,7 +444,8 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     const world = worldParam(request.params.world)
     const [{ owner }, wallets] = await Promise.all([read(() => getWorldsClient().getDeployers(world)), verifiedWalletsOf(request.user.id)])
     const storage = owner ? await read(() => getWorldsClient().getWalletStats(owner)) : null
-    return reply.send({ ...(await describeWorld(world, storage)), owner: !!owner && wallets.includes(owner) })
+    const connected = (await connectedScenesOf(actorFromClaims(request.user), [world])).get(world) ?? null
+    return reply.send({ ...(await describeWorld(world, storage, connected)), owner: !!owner && wallets.includes(owner) })
   }))
 
   app.post<{ Body: CreateBody }>('/api/dcl/destinations', async (request, reply) => handle(reply, async () => {
@@ -415,8 +460,10 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
     if (!isFullAccess(await getSceneAccess(actorFromClaims(request.user), sceneId))) throw new RouteError(403, 'forbidden')
     const owner = await ownerFor(request.user.id, world)
     const inUse = async () => {
-      const other = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, world), columns: { sceneId: true } })
-      return other ? new RouteError(409, 'world_in_use', { sceneId: other.sceneId }) : null
+      const other = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.worldName, world), columns: { id: true, sceneId: true } })
+      return other
+        ? new RouteError(409, 'world_in_use', { sceneId: other.sceneId, connectedScene: await connectedSceneOf(actorFromClaims(request.user), other) })
+        : null
     }
     const taken = await inUse()
     if (taken) throw taken
@@ -465,6 +512,46 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
       throw err
     }
     return reply.status(201).send({ destination, ...(replaces ? { replaces } : {}) })
+  }))
+
+  // Disconnect: the World can then be connected to another scene. Full access to the scene (403; 404 without any access);
+  // Worlds only. Refused (409 deploy_in_progress) while a deploy or an upload is going out to it; a deploy still waiting
+  // for its signature is cancelled, so that signature can't land on a World no scene is connected to. Its deploy history
+  // stays with the scene (destination_id is set null), uploads that named it stay as they are, and nothing is sent to
+  // Decentraland: what is live stays live, and Virvi's deploy permission stays until the owner removes it (`grantKept`).
+  app.delete<{ Params: { id: string } }>('/api/dcl/destinations/:id', async (request, reply) => handle(reply, async () => {
+    const { id } = request.params
+    if (!isUuid(id)) throw new RouteError(404, 'not_found')
+    const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.id, id) })
+    if (!dest) throw new RouteError(404, 'not_found')
+    const access = await getSceneAccess(actorFromClaims(request.user), dest.sceneId)
+    if (access.level === 'none') throw new RouteError(404, 'not_found')
+    if (!isFullAccess(access)) throw new RouteError(403, 'forbidden')
+    requireWorld(dest)
+    const gone = await db.transaction(async (tx) => {
+      // The lock mode A deploys take (startVirviDeploy), so none starts between the check and the delete
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${dest.id}))`)
+      const busy = await tx.query.sceneDeployments.findFirst({
+        where: and(eq(sceneDeployments.destinationId, dest.id), inArray(sceneDeployments.status, ['pending', 'building', 'deploying'])),
+        columns: { id: true },
+      })
+      const importing = await tx.query.sceneImports.findFirst({
+        where: and(eq(sceneImports.destinationId, dest.id), eq(sceneImports.status, 'deploying')),
+        columns: { id: true },
+      })
+      if (busy || importing) {
+        throw new RouteError(409, 'deploy_in_progress', { message: 'A deploy is going out to this World right now. Wait for it to finish, then disconnect.' })
+      }
+      // A submit claims its row with the same status check, so it either got there first (busy above) or finds it failed
+      await tx.update(sceneDeployments).set({ status: 'failed', errorMessage: DISCONNECTED })
+        .where(and(eq(sceneDeployments.destinationId, dest.id), eq(sceneDeployments.status, 'awaiting_signature')))
+      const [row] = await tx.delete(dclWorldDestinations).where(eq(dclWorldDestinations.id, dest.id)).returning()
+      return row
+    })
+    if (!gone) throw new RouteError(404, 'not_found')
+    const world = worldOf(gone)
+    const grantKept = gone.mode === 'virvi' && !!gone.grantedAt
+    return reply.send({ world, sceneId: gone.sceneId, grantKept, ...(grantKept ? { message: GRANT_KEPT(world) } : {}) })
   }))
 
   app.get<{ Params: { id: string } }>('/api/dcl/destinations/:id', async (request, reply) => handle(reply, async () => {
