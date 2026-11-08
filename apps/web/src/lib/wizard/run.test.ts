@@ -29,6 +29,7 @@ function fakeApi(script: Partial<Record<keyof RunApi, (...args: any[]) => any>> 
     bootstrapWizardScene: async () => ({ sceneId: 'scene-1' }),
     createDclDestination: async () => ({ destination: dest() }),
     patchDclDestination: async (_id, { mode }) => ({ destination: dest({ mode }) }),
+    getSceneDclDestinations: async () => ({ destinations: [] }),
     getDclDestination: async () => ({ destination: dest(), lastDeployment: { id: 'dep-busy', sceneId: 'scene-1', status: 'deploying' } }),
     getDclGrant: async () => ({
       virviAddress: '0xvirvi',
@@ -187,6 +188,20 @@ describe('runWizard, mode virvi', () => {
     expect(calls).not.toContain('bootstrapWizardScene')
     expect(calls[0]).toBe('createDclDestination')
     expect(mem.destination?.id).toBe('dest-1')
+  })
+
+  it('world_in_use naming this very scene (an earlier create whose answer was lost) carries on with its destination', async () => {
+    const mine = { sceneId: 'scene-1', name: 'My park', canDisconnect: true, destinationId: 'dest-1' }
+    const { api, calls } = fakeApi({
+      createDclDestination: async () => { throw apiError(409, { error: 'world_in_use', sceneId: 'scene-1', connectedScene: mine }) },
+      getSceneDclDestinations: async () => ({ destinations: [dest({ worldName: 'other.dcl.eth', id: 'x' }), dest({ worldName: 'cafe.dcl.eth', mode: 'sign' })] }),
+    })
+    const mem = emptyMemory()
+    mem.sceneId = 'scene-1'
+    await runWizard(plan(), mem, deps(api).deps, () => {})
+    expect(mem.destination?.id).toBe('dest-1')
+    expect(calls.slice(0, 3)).toEqual(['createDclDestination', 'getSceneDclDestinations', 'patchDclDestination'])
+    expect(mem.deploymentId).toBe('dep-1')
   })
 
   it("world_in_use for someone else's scene says so without naming it", async () => {

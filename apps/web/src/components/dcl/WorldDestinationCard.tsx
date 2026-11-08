@@ -27,7 +27,7 @@ interface Detail {
 const button = 'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
 const secondary = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50'
 
-export function WorldDestinationCard({ destination, history, virviDeploys, offerGrant, onChanged, onDisconnected }: {
+export function WorldDestinationCard({ destination, history, virviDeploys, offerGrant, onChanged, onDisconnected, canDisconnect = true }: {
   destination: DclDestination
   /** This destination's deployments, newest first. */
   history: DclDeployment[]
@@ -39,6 +39,8 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
   onChanged: (dest: DclDestination) => void
   /** The World was disconnected from the scene: the page drops the card and shows `notice`. */
   onDisconnected: (dest: DclDestination, notice: string) => void
+  /** Full access to the scene (owner or co-host): only then is "Disconnect this World" offered. */
+  canDisconnect?: boolean
 }) {
   const api = useApi()
   const [dest, setDest] = useState(destination)
@@ -121,6 +123,8 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
   const pending = detail?.pending.length ?? null
   const last = detail?.lastDeployment ?? history[0] ?? null
   const lines = progressLines(shownPhase, view.models, view.status === 'failed')
+  // The button that removes Virvi's permission, as it reads now (null when the card doesn't offer it)
+  const revokeLabel = granted ? 'Switch to signing each deploy' : partial ? "Remove Virvi's permission" : null
 
   return (
     <div className="space-y-4 rounded-lg border border-gray-800 bg-gray-900 p-5 text-sm">
@@ -202,7 +206,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
             onConfirm={revoke}
             className={secondary}
           >
-            {busy === 'revoke' ? 'Working…' : granted ? 'Switch to signing each deploy' : "Remove Virvi's permission"}
+            {busy === 'revoke' ? 'Working…' : revokeLabel}
           </ConfirmAction>
         )}
         {dest.status === 'needs_review' && (
@@ -217,15 +221,17 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
             Use the live version
           </ConfirmAction>
         )}
-        <ConfirmAction
-          disabled={running}
-          confirmLabel="Disconnect"
-          prompt={disconnectFromCardPrompt(dest.worldName, granted || partial)}
-          onConfirm={disconnect}
-          className={`${secondary} sm:ml-auto`}
-        >
-          {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect this World'}
-        </ConfirmAction>
+        {canDisconnect && (
+          <ConfirmAction
+            disabled={running}
+            confirmLabel="Disconnect"
+            prompt={disconnectFromCardPrompt(dest.worldName, revokeLabel)}
+            onConfirm={disconnect}
+            className={`${secondary} sm:ml-auto`}
+          >
+            {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect this World'}
+          </ConfirmAction>
+        )}
       </div>
 
       {view.underway && <ProgressLines lines={lines} />}

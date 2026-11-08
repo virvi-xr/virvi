@@ -151,6 +151,7 @@ export interface RunApi {
   bootstrapWizardScene(data: WizardSceneBody): Promise<{ sceneId: string }>
   createDclDestination(data: { sceneId: string; world: string; mode: DclDestinationMode; plot?: Plot; spawn?: { x: number; z: number } }): Promise<{ destination: DclDestination }>
   patchDclDestination(id: string, data: { mode: DclDestinationMode }): Promise<{ destination: DclDestination }>
+  getSceneDclDestinations(sceneId: string): Promise<{ destinations: DclDestination[] }>
   getDclDestination(id: string): Promise<{ destination: DclDestination; lastDeployment: DclDeployment | null }>
   getDclGrant(id: string): Promise<DclGrantRequests>
   submitDclGrant(id: string, data: DclSignedSubmission): Promise<{ destination: DclDestination }>
@@ -237,10 +238,18 @@ export async function runWizard(plan: RunPlan, mem: RunMemory, deps: RunDeps, on
     let deploymentId: string | null = null
     let settled: DclDeployment | null = null
     if (plan.dcl) {
+      let created = false
       if (!mem.destination) {
-        const { destination } = await api.createDclDestination({ sceneId, world: plan.dcl.world, mode: plan.dcl.mode, plot: plan.plot, spawn: plan.spawn })
-        mem.destination = destination
-      } else if (mem.destination.mode !== plan.dcl.mode) {
+        try {
+          const { destination } = await api.createDclDestination({ sceneId, world: plan.dcl.world, mode: plan.dcl.mode, plot: plan.plot, spawn: plan.spawn })
+          mem.destination = destination
+          created = true
+        } catch (err) {
+          // Connected to this very scene already (an earlier try made it, but its answer was lost): carry on with it
+          mem.destination = await ownDestination(err, sceneId, plan.dcl.world, api)
+        }
+      }
+      if (!created && mem.destination.mode !== plan.dcl.mode) {
         mem.destination = (await api.patchDclDestination(mem.destination.id, { mode: plan.dcl.mode })).destination
       }
       const destId = mem.destination.id
@@ -270,6 +279,15 @@ export async function runWizard(plan: RunPlan, mem: RunMemory, deps: RunDeps, on
     on({ wallet: null })
     fail(err)
   }
+}
+
+/** After a failed create: this scene's own destination for `world` when the 409 world_in_use names this scene; else rethrows. */
+async function ownDestination(err: unknown, sceneId: string, world: string, api: Pick<RunApi, 'getSceneDclDestinations'>): Promise<DclDestination> {
+  const held = connectedSceneFromError(err)
+  if (!held || !('sceneId' in held) || held.sceneId !== sceneId) throw err
+  const mine = (await api.getSceneDclDestinations(sceneId)).destinations.find((d) => d.worldName === world)
+  if (!mine) throw err
+  return mine
 }
 
 // ── Signing and deploying, shared by the wizard, the deploy page and the publish page ─────

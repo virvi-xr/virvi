@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  connectedSceneFromError, disconnectedNotice, disconnectFromCardPrompt, disconnectFromWizardPrompt, DISCONNECT_ACTION, worldInUseView,
+  afterDisconnect, canDisconnectScene, connectedSceneFromError, disconnectedNotice, disconnectFromCardPrompt, disconnectFromWizardPrompt, DISCONNECT_ACTION, worldInUseView,
 } from './world-disconnect'
 import { wizardErrorMessage } from './wizard/run'
 
@@ -72,14 +72,26 @@ describe('disconnect copy', () => {
   })
 
   it("the deploy page's confirm explains the World, redeploys and the permission", () => {
-    const plain = disconnectFromCardPrompt('cafe.dcl.eth', false)
+    const plain = disconnectFromCardPrompt('cafe.dcl.eth', null)
     expect(plain).toContain('cafe.dcl.eth keeps showing this scene until something else is deployed there')
     expect(plain).toContain('Virvi stops redeploying to it')
     expect(plain).not.toMatch(/permission/)
-    const granted = disconnectFromCardPrompt('cafe.dcl.eth', true)
+    const granted = disconnectFromCardPrompt('cafe.dcl.eth', 'Switch to signing each deploy')
     expect(granted).toMatch(/Virvi keeps its permission to deploy to cafe\.dcl\.eth until you remove it/)
-    expect(granted).toContain('Switch to signing each deploy')
+    expect(granted).toContain('use “Switch to signing each deploy” first')
     expect(granted).toContain('Creator Hub')
+    // After a partial grant the card's button reads differently, and the copy names it as it reads
+    expect(disconnectFromCardPrompt('cafe.dcl.eth', "Remove Virvi's permission")).toContain("use “Remove Virvi's permission” first")
+  })
+
+  it('the Deploy page offers the disconnect to owners and co-hosts only', () => {
+    expect([undefined, null, 'owner', 'cohost', 'editor', 'viewer'].map(canDisconnectScene)).toEqual([true, true, true, true, false, false])
+  })
+
+  it("after the wizard's disconnect: the run carries on, unless an unagreed scene turned up in the World", () => {
+    expect(afterDisconnect(false, { hasScene: false })).toBe('run')
+    expect(afterDisconnect(true, { hasScene: true })).toBe('run')
+    expect(afterDisconnect(false, { hasScene: true })).toBe('confirm_replace')
   })
 
   it("after disconnecting: the server's permission sentence when there is one", () => {

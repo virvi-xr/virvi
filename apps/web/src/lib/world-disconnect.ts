@@ -53,14 +53,30 @@ export function disconnectFromWizardPrompt(world: string, name: string): string 
     `“${name}” keeps its models and deploy history, but Virvi stops deploying “${name}” to ${world}.`
 }
 
-/** The Deploy page's confirm. `granted`: Virvi holds the owner's deploy permission there. */
-export function disconnectFromCardPrompt(world: string, granted: boolean): string {
+/**
+ * The Deploy page's confirm. `revokeLabel`: the card's button that removes Virvi's deploy permission, as it reads right
+ * now ("Switch to signing each deploy" with the grant, "Remove Virvi's permission" after a partial one); null without one.
+ */
+export function disconnectFromCardPrompt(world: string, revokeLabel: string | null): string {
   const base = `Disconnect ${world} from this scene? ${world} keeps showing this scene until something else is deployed there. ` +
     'Virvi stops redeploying to it, and you can connect the World to another scene.'
-  return granted
-    ? `${base} Virvi keeps its permission to deploy to ${world} until you remove it: use “Switch to signing each deploy” first, ` +
+  return revokeLabel
+    ? `${base} Virvi keeps its permission to deploy to ${world} until you remove it: use “${revokeLabel}” first, ` +
       "or remove Virvi later under the World's permissions in the Creator Hub."
     : base
+}
+
+/** Whether the Deploy page offers the disconnect: full access only (owner or co-host; no relationship listed means owner). */
+export function canDisconnectScene(relationship: string | null | undefined): boolean {
+  return !relationship || relationship === 'owner' || relationship === 'cohost'
+}
+
+/**
+ * After the wizard disconnected the World from the other scene: carry on with the run, unless the World turned out to
+ * have a scene the user hasn't agreed to replace (the pick didn't know of it), which is asked first.
+ */
+export function afterDisconnect(replaceAgreed: boolean, fresh: { hasScene: boolean }): 'run' | 'confirm_replace' {
+  return fresh.hasScene && !replaceAgreed ? 'confirm_replace' : 'run'
 }
 
 /** Shown once the disconnect went through: the server's permission sentence when Virvi keeps one. */

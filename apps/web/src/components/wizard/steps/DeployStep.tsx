@@ -13,7 +13,7 @@ import { Badge, PrimaryButton } from '@/components/ui'
 import { CONTRACT_WALLET_MESSAGE, type NamesState } from './WhereStep'
 import { ProgressLines, useShownPhase } from '../ProgressLines'
 import { WorldInUseNotice } from '../WorldInUseNotice'
-import { worldInUseView } from '@/lib/world-disconnect'
+import { afterDisconnect, worldInUseView } from '@/lib/world-disconnect'
 import { ROOM_LAYOUT_NOTICE } from '@/lib/room-set'
 
 /** The server keeps a storefront sign to this many characters. */
@@ -232,6 +232,30 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
   // Picked (on Where or here) while connected to another scene: that is settled first, before deploying over anything
   const heldAtPick = !started && !!dcl && worldInUseView(dcl.world, dcl.connectedScene, memory.sceneId) !== null
   const freed = () => { if (dcl) dispatch({ type: 'setDcl', dcl: { ...dcl, connectedScene: null } }) }
+  /**
+   * The run stopped on world_in_use and the World is free now. It is read again first: when it has a scene nobody agreed
+   * to replace (the pick didn't know of it), the replace question comes before the run carries on.
+   */
+  const resumeAfterDisconnect = async () => {
+    if (!dcl) return
+    let fresh: DclWorld
+    try {
+      fresh = await api.getDclWorld(dcl.world)
+    } catch (err) {
+      if (alive.current) setView((v) => ({ ...v, worldInUse: null, error: wizardErrorMessage(err) }))
+      return
+    }
+    if (!alive.current) return
+    const agreed = dcl.hasScene && (!pickedHere || replaceOk)
+    dispatch({ type: 'setDcl', dcl: { ...dcl, hasScene: fresh.hasScene, footprint: fresh.footprint, connectedScene: null } })
+    if (afterDisconnect(agreed, fresh) === 'confirm_replace') {
+      setPickedHere(true)
+      setReplaceOk(false)
+      setView((v) => ({ ...v, status: 'idle', error: null, worldInUse: null }))
+      return
+    }
+    start()
+  }
   // Until the scene exists its name can change; the deploy mode can change again after a failure.
   const nameEditable = !running && !memory.sceneId
   const modeEditable = view.status === 'idle' || view.status === 'failed'
@@ -298,10 +322,9 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
         <p className="rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2 text-yellow-100">{ROOM_LAYOUT_NOTICE}</p>
       )}
 
-      {view.error && view.worldInUse && dcl ? (
+      {view.error && dcl && worldInUseView(dcl.world, view.worldInUse, memory.sceneId) ? (
         // The run's scene is kept (RunMemory): after the disconnect the run carries on and connects this World to it
-        <WorldInUseNotice world={dcl.world} connected={view.worldInUse} ownSceneId={memory.sceneId}
-          onDisconnected={() => { freed(); start() }} />
+        <WorldInUseNotice world={dcl.world} connected={view.worldInUse} ownSceneId={memory.sceneId} onDisconnected={resumeAfterDisconnect} />
       ) : view.error && <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300" role="alert">{view.error}</p>}
       {heldAtPick && dcl && <WorldInUseNotice world={dcl.world} connected={dcl.connectedScene} ownSceneId={memory.sceneId} onDisconnected={freed} />}
 

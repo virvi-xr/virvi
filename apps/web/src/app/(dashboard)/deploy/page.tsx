@@ -12,6 +12,7 @@ import { ConfirmAction, PageHeader, Skeleton } from '@/components/ui'
 import { AdoptWorldCard, WorldDestinationCard } from '@/components/dcl/WorldDestinationCard'
 import { ParcelDestinationCard } from '@/components/dcl/ParcelDestinationCard'
 import { wizardErrorMessage } from '@/lib/wizard/run'
+import { canDisconnectScene } from '@/lib/world-disconnect'
 
 export default function DeployPage() {
   return (
@@ -457,7 +458,8 @@ function DeployContent() {
       offerGrant: new Set([...w.offerGrant, dest.id]),
     })
 
-  // A World disconnected from the scene: its card goes (the deploy history stays below with the scene's)
+  // A World disconnected from the scene: its card goes. Its deployments stay in the scene's records (Download what went
+  // live still works by deployment), but this page lists history per World, so they no longer show here.
   const [worldNotice, setWorldNotice] = useState<string | null>(null)
   useEffect(() => setWorldNotice(null), [selectedSceneId])
   const disconnected = (dest: DclDestination, notice: string) => {
@@ -536,6 +538,7 @@ function DeployContent() {
                   offerGrant={worlds.offerGrant.has(d.id)}
                   onChanged={refreshHistory}
                   onDisconnected={disconnected}
+                  canDisconnect={canDisconnectScene(scenes.find((s) => s.id === selectedSceneId)?.relationship)}
                 />
               ))}
               {worlds.adoptable.map((world) => (
