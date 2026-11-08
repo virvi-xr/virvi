@@ -201,7 +201,7 @@ class Reporter {
     const res = await fetch(`${API_URL}/api/errors/reports`, { method: 'POST', headers: requestHeaders(this.token(), { body }), body })
     const json = await res.json().catch(() => ({})) as Partial<ReportResult> & { error?: string }
     if (!res.ok) throw Object.assign(new Error(json.error ?? `HTTP ${res.status}`), { status: res.status, code: json.error })
-    return { emailed: !!json.emailed, screenshot: json.screenshot ?? null }
+    return { screenshot: json.screenshot ?? null }
   }
 }
 

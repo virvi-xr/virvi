@@ -129,7 +129,7 @@ export function checkScreenshotFile(f: { type: string; size: number }): string |
 /** The help menu's form is pre-filled with the last error only if it happened in the last half hour. */
 export const LAST_ERROR_MS = 30 * 60_000
 
-export interface ReportResult { emailed: boolean; screenshot: 'kept' | 'not_kept' | null }
+export interface ReportResult { screenshot: 'kept' | 'not_kept' | null }
 
 /**
  * One Report form's state. Nothing is sent until submit(): typing, attaching a screenshot and reading the preview
@@ -141,6 +141,8 @@ export class ReportDraft {
   includeError = true
   private shot: { type: ScreenshotType; data: string } | null = null
   private readonly lastError: ClientErrorEvent | null
+  /** A report event with no error is made once, so the preview and what Submit sends are the same (its time too). */
+  private readonly pageEvent: ClientErrorEvent
 
   constructor(private readonly o: {
     lastError: ClientErrorEvent | null; route: string; breadcrumbs: Breadcrumb[]; release: string
@@ -148,6 +150,7 @@ export class ReportDraft {
   }) {
     const now = (o.now ?? Date.now)()
     this.lastError = o.lastError && now - o.lastError.t <= LAST_ERROR_MS ? o.lastError : null
+    this.pageEvent = reportEvent(o.route, o.breadcrumbs, now)
   }
 
   get hasError(): boolean { return !!this.lastError }
@@ -167,7 +170,7 @@ export class ReportDraft {
   removeScreenshot() { this.shot = null }
 
   payload(): ReportPayload {
-    const event = this.lastError && this.includeError ? this.lastError : reportEvent(this.o.route, this.o.breadcrumbs, (this.o.now ?? Date.now)())
+    const event = this.lastError && this.includeError ? this.lastError : this.pageEvent
     return buildReport(this.description, event, this.o.release, this.shot)
   }
 

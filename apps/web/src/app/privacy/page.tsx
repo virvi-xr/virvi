@@ -105,20 +105,21 @@ export default function PrivacyPage() {
             fails and we need more detail, we may ask you about it, at most once a day; you can turn that off in Settings (or from the
             message itself). Whether you report from there, a crash page or Report a bug in the menu, you see exactly what will be sent before
             you press Submit, and nothing is sent before that. A report you send (what you wrote, that preview and a screenshot if you add one)
-            is linked to your account if you're signed in, so we can follow up, and we send you a short email to say we've got it. Reports are
-            kept for 400 days, and screenshots for 30 days. Ask us at{' '}
+            is linked to your account if you're signed in, so we can follow up. Reports are kept for 400 days, and screenshots for 30
+            days. Ask us at{' '}
             <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a> to have one deleted sooner.
           </li>
           <li>
             <strong>Asking only when it helps:</strong> to ask you at most once a day, and to say &ldquo;we know about this&rdquo; only once
-            for each problem, we keep when we last asked your account and whether you turned asking off; if you're not signed in, this
-            browser keeps it.
+            for each problem, we keep when we last asked your account and whether you turned asking off, and for 30 days which problems
+            we told it about (by the account hash above); if you're not signed in, this browser keeps it.
           </li>
           <li>
             <strong>Our issue tracker:</strong> when automatic bug filing is turned on, the details of errors that keep happening (the redacted
             messages, pages, steps and counts above) are sent to Linear, the issue tracker we use, as bug reports, without your account. A report
-            you choose to send is added to that bug with what you wrote and, if you're signed in, your name, email and account id, so the team
-            can follow up. Screenshots stay with us and are not sent to Linear.
+            you choose to send is added to that bug with what you wrote (with email addresses and similar details removed) and, if you're
+            signed in, your account id, never your name or email. Screenshots stay with us and are not sent to Linear. Those Linear comments
+            aren't removed by the 400-day limit or when you delete your account; ask us at support@virvi.io and we'll remove them.
           </li>
         </ul>
 

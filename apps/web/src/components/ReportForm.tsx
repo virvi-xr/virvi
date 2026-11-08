@@ -77,7 +77,6 @@ export function ReportForm({ lastError, onCancel, onSent }: { lastError: ClientE
       <div role="status" className="space-y-1 text-sm">
         <p className="font-medium text-emerald-300">Thanks — we've got it.</p>
         <p className="text-gray-400">
-          {result?.emailed ? "We've sent you an email to say so. " : ''}
           {result?.screenshot === 'not_kept' ? "We couldn't keep your screenshot today, but your report is in." : 'The team reads every report.'}
         </p>
       </div>
@@ -120,7 +119,7 @@ export function ReportForm({ lastError, onCancel, onSent }: { lastError: ClientE
       <div>
         <p className="text-xs font-medium uppercase tracking-wider text-gray-500">What we'll send</p>
         <pre aria-label="What we'll send" className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md border border-gray-800 bg-gray-950 p-2 font-mono text-[11px] text-gray-400">{draft.preview()}</pre>
-        <p className="mt-1 text-xs text-gray-500">Nothing is sent until you press Submit. If you're signed in, it's sent with your account (name and email) so we can follow up.</p>
+        <p className="mt-1 text-xs text-gray-500">Nothing is sent until you press Submit. If you're signed in, it's sent with your account so we can follow up.</p>
       </div>
       {state === 'failed' && failure && <p className="text-sm text-red-400">{failure}</p>}
       <div className="flex gap-2">

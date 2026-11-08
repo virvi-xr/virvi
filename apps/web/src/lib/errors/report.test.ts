@@ -37,7 +37,7 @@ describe('report payload and preview', () => {
 describe('ReportDraft: nothing leaves before Submit', () => {
   const draft = (lastError: ClientErrorEvent | null = failed) => {
     const sent: string[] = []
-    const d = new ReportDraft({ lastError, route: '/scenes/x', breadcrumbs: crumbs, release: 'abc1234', now: () => NOW, send: async (body) => { sent.push(body); return { emailed: true, screenshot: 'kept' } } })
+    const d = new ReportDraft({ lastError, route: '/scenes/x', breadcrumbs: crumbs, release: 'abc1234', now: () => NOW, send: async (body) => { sent.push(body); return { screenshot: 'kept' } } })
     return { d, sent }
   }
 
@@ -56,7 +56,7 @@ describe('ReportDraft: nothing leaves before Submit', () => {
     d.attach({ type: 'image/png', size: 8 }, shot.data)
     const preview = JSON.parse(d.preview())
     const result = await d.submit()
-    expect(result).toEqual({ emailed: true, screenshot: 'kept' })
+    expect(result).toEqual({ screenshot: 'kept' })
     expect(sent).toHaveLength(1)
     const body = JSON.parse(sent[0])
     expect(body).toEqual(d.payload())
@@ -97,5 +97,16 @@ describe('ReportDraft: nothing leaves before Submit', () => {
     d.attach({ type: 'image/png', size: 8 }, shot.data)
     d.removeScreenshot()
     expect(d.payload().screenshot).toBeUndefined()
+  })
+
+  it('a help-menu report previews and sends the same time, however long the form is open (M2)', async () => {
+    let clock = NOW
+    const sent: string[] = []
+    const d = new ReportDraft({ lastError: null, route: '/scenes/x', breadcrumbs: crumbs, release: 'abc1234', now: () => clock, send: async (body) => { sent.push(body); return { screenshot: null } } })
+    d.setDescription('x')
+    const preview = d.preview()
+    clock += 60_000
+    await d.submit()
+    expect(JSON.parse(sent[0])).toEqual(JSON.parse(preview))
   })
 })
