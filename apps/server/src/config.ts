@@ -8,6 +8,7 @@
  */
 
 import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { getAddress } from 'ethers'
 
 export type VirviMode = 'single' | 'scalable' | 'cloud'
@@ -170,9 +171,16 @@ export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY
   return null
 }
 
-/** The build SHA a release is known by: VIRVI_RELEASE, else RAILWAY_GIT_COMMIT_SHA or SOURCE_COMMIT, cut to 12; else 'dev'. */
-export function releaseFrom(e: Record<string, string | undefined>): string {
-  const raw = (e.VIRVI_RELEASE || e.RAILWAY_GIT_COMMIT_SHA || e.SOURCE_COMMIT || '').trim()
+/** The first line of a RELEASE file (the deploy stamps the commit SHA there, since `railway up` from a checkout passes
+ * no RAILWAY_GIT_COMMIT_SHA); null when it's missing or unreadable. */
+export function readReleaseFile(path: string): string | null {
+  try { return readFileSync(path, 'utf8').split('\n')[0].trim() || null } catch { return null }
+}
+
+/** The build SHA a release is known by: VIRVI_RELEASE, else RAILWAY_GIT_COMMIT_SHA or SOURCE_COMMIT, else the stamped
+ * RELEASE file, cut to 12; else 'dev'. */
+export function releaseFrom(e: Record<string, string | undefined>, stamped: string | null = null): string {
+  const raw = (e.VIRVI_RELEASE || e.RAILWAY_GIT_COMMIT_SHA || e.SOURCE_COMMIT || stamped || '').trim()
   return /^[A-Za-z0-9._-]+$/.test(raw) ? raw.slice(0, 12) : 'dev'
 }
 
@@ -391,7 +399,7 @@ export const config = {
 
   // ── Error reporting (LIV-66, src/errors/) ─────────────────────────────
   // The build this server runs (the Errors page's "since deploy"): VIRVI_RELEASE, else Railway's commit SHA, else 'dev'
-  release: releaseFrom(process.env),
+  release: releaseFrom(process.env, readReleaseFile(resolve(process.cwd(), 'RELEASE')) ?? readReleaseFile(resolve(process.cwd(), '../../RELEASE'))),
   // ERROR_REPORTING=false stops recording (the ingest endpoint still answers 202 and drops what it gets)
   errorReportingEnabled: env('ERROR_REPORTING') !== 'false',
   // How often buffered error events are written (0 disables the flusher; tests flush by hand)
