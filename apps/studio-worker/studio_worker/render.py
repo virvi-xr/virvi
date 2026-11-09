@@ -150,7 +150,8 @@ def _query(view: dict) -> str:
     shape = FEMALE if view.get('bodyShape') == 'female' else MALE
     if view.get('mode') == 'orbit':  # the item alone: with an outfit the page shows the outfit's first wearable
         return f'bodyShape={shape}&disableAutoRotate=true&disableBackground=false&type=wearable'
-    return '&'.join([f"profile={config.OUTFITS.get(view.get('outfit') or 'default', 'default1')}",
+    outfit = config.OUTFITS.get(view.get('outfit') or 'default', config.OUTFITS['default'])
+    return '&'.join([f"profile={outfit['female' if shape == FEMALE else 'male']}",
                      f'bodyShape={shape}', 'disableAutoRotate=true',
                      f"disableBackground={'true' if view.get('mode') == 'thumbnail' else 'false'}",
                      f"emote={'idle' if view.get('emote') in (None, 'own') else view['emote']}"])

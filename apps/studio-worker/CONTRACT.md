@@ -112,7 +112,8 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   running the agent. False or missing for the server's own text (Continue, fixing the checks), which is never checked.
 - `render`, on a render job: `{"categories": ["hat"], "bodyShape": "male"|"female", "outfit": "default"|"outfit-2"|
   "outfit-3", "emote": null|"idle"|"wave"|"dance"|"clap"|"walk"|"run"|"jump"}`. A wearable view is a 36-frame spin;
-  an emote design's view is 36 frames through its animation. Two more shapes:
+  an emote design's view is 36 frames through its animation. An outfit is a base avatar made for the body shape
+  being rendered (`config.OUTFITS`), so each body keeps its own hair, face and clothes. Two more shapes:
   - `{"categories": ["hat"], "bodyShape", "mode": "orbit", "ring": bool}`: a wearable's Inspect view, `orbit-<shape>`,
     122 frames (24 with `ring`).
   - `{"set": true, "bodyShape", "outfit", "emote": <base emote>|"own"}`: every current piece worn together in a

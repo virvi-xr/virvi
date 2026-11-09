@@ -215,3 +215,22 @@ def test_item_alone_loads_while_the_controller_waits_for_it(tmp_path, stub):
     r = render.render([HAT], {**SPIN, 'mode': 'orbit', 'ring': True}, tmp_path, watchdog_sec=60)
     assert r['ok'] is True, r
     assert len(r['frames']) == 24
+
+
+def test_each_body_shape_wears_an_outfit_made_for_it():
+    """LIV-143: wearable-preview dresses the requested body in the profile's own hair, face and clothes, so a BaseFemale
+    profile (default1) on the male body looked like a woman. Each outfit is a profile of the shape being rendered (body
+    shapes from peer.decentraland.org/lambdas/profiles/defaultN)."""
+    female_profiles = {'default1', 'default4', 'default13'}
+    male_profiles = {'default81', 'default83', 'default96'}
+    for outfit in config.OUTFITS:
+        for shape, profiles in (('male', male_profiles), ('female', female_profiles)):
+            q = render._query({**SPIN, 'bodyShape': shape, 'outfit': outfit, 'mode': 'walk', 'emote': 'own'})
+            profile = q.split('profile=')[1].split('&')[0]
+            assert profile in profiles, (outfit, shape, profile)
+            assert f'bodyShape={render.FEMALE if shape == "female" else render.MALE}' in q
+    # the three outfits differ on each body, and an unknown outfit falls back to the default one
+    for shape in ('male', 'female'):
+        assert len({render._query({**SPIN, 'bodyShape': shape, 'outfit': o}) for o in config.OUTFITS}) == 3
+        assert render._query({**SPIN, 'bodyShape': shape, 'outfit': 'nope'}) == \
+            render._query({**SPIN, 'bodyShape': shape, 'outfit': 'default'})
