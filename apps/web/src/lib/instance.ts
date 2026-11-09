@@ -12,7 +12,7 @@ export interface InstanceInfo {
 }
 
 /** Where self-hosters read about their install. */
-export const SELF_HOSTING_DOCS_URL = 'https://github.com/virvi-xr/virvi/blob/main/apps/docs/src/content/docs/self-hosting/overview.md'
+export const SELF_HOSTING_DOCS_URL = '/docs/self-hosting/overview/'
 
 /**
  * The label a self-hosted install shows next to the Virvi name; hosted virvi.io (or not known yet) shows none.

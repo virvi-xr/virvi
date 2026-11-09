@@ -113,7 +113,7 @@ docker compose -f docker-compose.single.yml up -d
 
 ## Scalable mode
 
-`docker-compose.scalable.yml` adds Redis (`REDIS_URL=redis://redis:6379`) so real-time rooms work across several Virvi containers.
+`docker-compose.scalable.yml` adds Redis (`REDIS_URL=redis://redis:6379`) so real-time rooms work across several Virvi containers. Redis has no password and its port 6379 is published on the host: remove that `ports:` entry if the host is public.
 
 ```bash
 docker compose -f docker-compose.scalable.yml up -d --build

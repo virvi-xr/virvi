@@ -17,28 +17,3 @@ Admins create bookings with `POST /api/venues/:venueId/bookings` (`renterWallet`
 
 ## Crew
 The renter (host) adds crew by wallet with a role — `cohost`, `vj`, `lighting`, `performer`, `door` — and can toggle individual scopes. Crew don't need a Virvi account; access attaches when their wallet signs in from Decentraland. Revoked crew can be added again; their old grant is restored with the new role and scopes.
-
-## Upgrading an existing instance
-
-Before deploying to any running Virvi instance, review wallet users who got `admin` role from the old auto-promote bug. The following queries list users and auth methods to review by hand. **Nothing should be deleted automatically** — review, understand the context, and make deliberate choices about role corrections.
-
-### Rotate JWT_SECRET
-
-Rotate `JWT_SECRET` when deploying this release (logs everyone out once) so tokens issued before verification existed stop working.
-
-### Wallet users with admin role
-
-```sql
-SELECT u.id, u.display_name, u.created_at, m.identifier, m.metadata->>'verified' AS verified
-FROM users u JOIN user_auth_methods m ON m.user_id = u.id AND m.type = 'wallet'
-WHERE u.role = 'admin'
-ORDER BY u.created_at;
-```
-
-### Unverified wallet auth methods
-
-The following query lists wallet auth methods whose identifier is not `preview:`-prefixed and whose `metadata->>'verified'` is not `'true'`. These may be accounts created from unverified body wallets by the old login route:
-
-```sql
-SELECT m.identifier, m.user_id, u.display_name, u.role, u.created_at FROM user_auth_methods m JOIN users u ON u.id = m.user_id WHERE m.type = 'wallet' AND m.identifier NOT LIKE 'preview:%' AND coalesce(m.metadata->>'verified', 'false') <> 'true' ORDER BY u.created_at;
-```

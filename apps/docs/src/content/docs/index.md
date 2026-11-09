@@ -7,10 +7,10 @@ hero:
   tagline: One dashboard to manage video screens, 3D assets, live events, and analytics across Decentraland, Hyperfy, Second Life, and beyond.
   actions:
     - text: Get Started
-      link: /getting-started/what-is-virvi/
+      link: /docs/getting-started/what-is-virvi/
       icon: right-arrow
       variant: primary
     - text: Self-Host
-      link: /self-hosting/overview/
+      link: /docs/self-hosting/overview/
       variant: minimal
 ---
