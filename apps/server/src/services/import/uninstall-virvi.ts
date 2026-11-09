@@ -3,7 +3,7 @@ import { db } from '../../db/connection.js'
 import { sceneImports } from '../../db/schema.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { readSceneZip } from './scene-zip.js'
-import { HUD_ICON, IMPORT_LINE, MAIN_FILES, MAIN_HEADS, PACKAGE, SOURCE_FILE, VIRVI_DCL_RANGE, findBodyBrace, headerEnd, importStatements, maskSource, skipBrackets } from './install-virvi.js'
+import { HUD_ICON, IMPORT_LINE, MAIN_FILES, MAIN_HEADS, PACKAGE, SOURCE_FILE, VIRVI_DCL_RANGES_WRITTEN, findBodyBrace, headerEnd, importStatements, maskSource, skipBrackets } from './install-virvi.js'
 
 const CREATOR_HUB_SCRIPT = 'assets/scene/Scripts/VirviManager.ts'
 const SYNC_MANIFEST = 'models/virvi/.virvi-sync.json'
@@ -60,8 +60,10 @@ function withoutDependency(pkgText: string): string | null {
   let edited = false
   for (const key of ['dependencies', 'devDependencies']) {
     const holder = record[key]
-    // A different range was the creator's own (installVirvi only adds, or raises to, VIRVI_DCL_RANGE)
-    if (!holder || typeof holder !== 'object' || Array.isArray(holder) || (holder as Record<string, unknown>)[PACKAGE] !== VIRVI_DCL_RANGE) continue
+    // A range Virvi never wrote was the creator's own (installVirvi only adds, or raises to, its range of the day)
+    if (!holder || typeof holder !== 'object' || Array.isArray(holder)) continue
+    const range = (holder as Record<string, unknown>)[PACKAGE]
+    if (typeof range !== 'string' || !VIRVI_DCL_RANGES_WRITTEN.includes(range)) continue
     delete (holder as Record<string, unknown>)[PACKAGE]
     if (Object.keys(holder).length === 0 && key === 'dependencies') delete record[key]
     edited = true

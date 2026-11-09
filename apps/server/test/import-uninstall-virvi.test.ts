@@ -53,12 +53,24 @@ describe('uninstallVirvi', () => {
     await roundTrips(folder({ 'package.json': pkg(), 'src/index.js': 'export function main() {}\n' }))
   })
 
+  it('takes out a dependency an earlier Virvi installed, at any range Virvi has used', async () => {
+    for (const old of ['^2.5.0', '^2.6.0', '^2.7.0', '^2.8.0']) {
+      const installed = (await installVirvi(folder({ 'package.json': pkg({ left: '1.0.0' }), 'src/index.ts': MAIN }))).files
+      // As an older Virvi left it: the same edits, its own range
+      const p = JSON.parse(strFromU8(installed.get('package.json')!))
+      p.dependencies['@virvixr/dcl'] = old
+      installed.set('package.json', strToU8(JSON.stringify(p, null, 2) + '\n'))
+      const back = uninstallVirvi(installed)
+      expect(JSON.parse(strFromU8(back.files.get('package.json')!)).dependencies, old).toEqual({ left: '1.0.0' })
+    }
+  })
+
   it('keeps a dependency the original already had, and reports the creator\'s own Virvi code', async () => {
     const own = "import { startVirviManager } from '@virvixr/dcl'\nexport class VirviManager { start() { startVirviManager() } }\n"
     const f = folder({ 'package.json': pkg({ '@virvixr/dcl': '^2.4.0' }), 'src/index.ts': MAIN, 'src/own.ts': own })
     const back = uninstallVirvi((await installVirvi(f)).files)
     expect(back.leftovers).toEqual(['src/own.ts'])
-    expect(JSON.parse(strFromU8(back.files.get('package.json')!)).dependencies['@virvixr/dcl']).toBe('^2.8.0')
+    expect(JSON.parse(strFromU8(back.files.get('package.json')!)).dependencies['@virvixr/dcl']).toBe('^2.13.0')
     expect(strFromU8(back.files.get('src/own.ts')!)).toBe(own)
   })
 
