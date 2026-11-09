@@ -18,7 +18,7 @@ Each catalog model shows its artist, pack and license.
 
 ## Adding a model to a scene
 
-Open a model and choose **Add to scene**. It appears in that scene's library (the **3D Models** panel in the in-world HUD), ready to place. See [Images & Video and 3D Models](/dashboard/media-library/).
+Open a model and choose **Add to scene**. It appears in that scene's library (the **3D Models** panel in the in-world HUD), ready to place. See [Images & Video and 3D Models](/docs/dashboard/media-library/).
 
 Catalog models are hosted by Virvi and only linked into your scene, so they **never count toward your storage**.
 

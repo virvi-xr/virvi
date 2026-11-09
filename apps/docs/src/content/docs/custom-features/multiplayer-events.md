@@ -9,7 +9,7 @@ Multiplayer Events let you send and receive custom real-time messages between al
 
 - Messages are broadcast through the Virvi Colyseus room for your scene.
 - All connected players in the same world instance receive the message.
-- Messages are fire-and-forget (not persisted). For persistent data, use [Scene State](/custom-features/scene-state/).
+- Messages are fire-and-forget (not persisted). For persistent data, use [Scene State](/docs/custom-features/scene-state/).
 - Message payloads are JSON-serializable objects.
 
 ## Sending a Message
@@ -86,5 +86,5 @@ unsubscribe();
 ## Limitations
 
 - Messages are not persisted. If a player connects after a message was sent, they will not receive it.
-- Messages are scoped to a single world instance. Players in different instances of the same scene do not receive each other's messages. For cross-world communication, use the [Command Center](/dashboard/command-center/).
+- Messages are scoped to a single world instance. Players in different instances of the same scene do not receive each other's messages. For cross-world communication, use the [Command Center](/docs/dashboard/command-center/).
 - Maximum payload size is subject to Colyseus room limits.

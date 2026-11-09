@@ -70,7 +70,7 @@ Nothing is configured for this; a server without the bucket skips it.
 
 ## Guest Trials
 
-Signed-out visitors can try the Design Studio at `/try/studio` and the scene builder, import, room scans and demos at `/try/scene` (see [Try Without an Account](/getting-started/try-without-an-account/)).
+Signed-out visitors can try the Design Studio at `/try/studio` and the scene builder, import, room scans and demos at `/try/scene` (see [Try Without an Account](/docs/getting-started/try-without-an-account/)).
 
 | Variable | Description |
 |----------|-------------|

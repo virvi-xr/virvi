@@ -430,4 +430,6 @@ export const config = {
 
   // ── Dashboard ───────────────────────────────────────────────────────────
   dashboardDir: env('DASHBOARD_DIR') || './dashboard',
+  /** The built docs site (apps/docs, Starlight with base /docs), served at /docs. Missing → no docs routes. */
+  docsDir: env('DOCS_DIR') || './apps/docs/dist',
 } as const

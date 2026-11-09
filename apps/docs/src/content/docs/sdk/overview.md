@@ -12,7 +12,7 @@ The Virvi SDK is split into layered packages:
 | `@virvixr/core` | `Virvi` class, `SceneManager`, element managers (Video, Image, Mesh, Sound) |
 | `@virvixr/hud` | In-world management HUD (optional) |
 | `@virvixr/adapter-dcl` | Decentraland SDK 7 adapter |
-| `@virvixr/hyperfy-app` | Virvi app for self-run Hyperfy worlds (see [Hyperfy Setup](/sdk/hyperfy/install)) |
+| `@virvixr/hyperfy-app` | Virvi app for self-run Hyperfy worlds (see [Hyperfy Setup](/docs/sdk/hyperfy/install)) |
 
 ## How It Works
 

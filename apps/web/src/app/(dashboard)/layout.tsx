@@ -12,8 +12,9 @@ import { BrandMark } from '@/components/BrandMark'
 import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
 import {
   BroadcastIcon, CalendarIcon, ChartIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LockIcon, LogoutIcon, MediaIcon,
-  ScenesIcon, ShieldIcon, SparkleIcon, BugIcon,
+  ScenesIcon, ShieldIcon, SparkleIcon, BugIcon, BookIcon,
 } from '@/components/icons'
+import { siteLinks } from '@/lib/site'
 import { reporter } from '@/lib/errors/reporter'
 
 /** `description` shows as the item's tooltip (what the page is for, where the label alone is ambiguous). */
@@ -164,6 +165,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Help: always here, whatever the session (LIV-66 §4) */}
         <div className="border-t border-gray-800 px-3 py-2 md:px-3">
           <p className="hidden px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-[0.2em] text-gray-500 md:block">Help</p>
+          <a href={siteLinks().docs} target="_blank" rel="noopener"
+            className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-white/[0.03] hover:text-white">
+            <span className="text-gray-500"><BookIcon size={18} /></span>
+            Docs
+          </a>
           <button type="button" onClick={() => reporter.openReport()}
             className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-white/[0.03] hover:text-white">
             <span className="text-gray-500"><BugIcon size={18} /></span>

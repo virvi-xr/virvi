@@ -59,7 +59,7 @@ pnpm dev
 
 ## Next Steps
 
-1. [Core Concepts](/getting-started/concepts) — understand scenes, presets, elements
-2. [Dashboard Guide](/dashboard/scenes) — create your first scene
-3. [Decentraland Setup](/sdk/decentraland/install) — connect a DCL scene
-4. [Hyperfy Setup](/sdk/hyperfy/install) — connect a Hyperfy world
+1. [Core Concepts](/docs/getting-started/concepts) — understand scenes, presets, elements
+2. [Dashboard Guide](/docs/dashboard/scenes) — create your first scene
+3. [Decentraland Setup](/docs/sdk/decentraland/install) — connect a DCL scene
+4. [Hyperfy Setup](/docs/sdk/hyperfy/install) — connect a Hyperfy world

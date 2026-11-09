@@ -16,7 +16,7 @@ When you sign in from inside Decentraland, Virvi gives you a scene pass. It lets
 Only open a realm link (a `decentraland.org/play?realm=…` address) from Virvi support. Someone running their own realm can make it look like your parcel. If you visit it as a host or editor, the realm's code could act with your role in your scene while you're there.
 
 ## Signing in on the website
-A scene pass opens only that scene's analytics on the website. Anything else asks you to sign in with full access. See [Analytics](/dashboard/analytics/#signing-in-from-the-hud) for how the Stats button works.
+A scene pass opens only that scene's analytics on the website. Anything else asks you to sign in with full access. See [Analytics](/docs/dashboard/analytics/#signing-in-from-the-hud) for how the Stats button works.
 
 The first time you open the website after this upgrade, you're signed out once. Sign in as usual and you're back to normal.
 

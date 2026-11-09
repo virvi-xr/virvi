@@ -72,8 +72,8 @@ State is isolated per user per scene:
 
 - User A's state in Scene 1 is separate from User A's state in Scene 2.
 - User A's state is separate from User B's state in the same scene.
-- There is no built-in way to read another user's state. For shared data, use [Multiplayer Events](/custom-features/multiplayer-events/) or [Widgets](/custom-features/widgets/).
+- There is no built-in way to read another user's state. For shared data, use [Multiplayer Events](/docs/custom-features/multiplayer-events/) or [Widgets](/docs/custom-features/widgets/).
 
 ## Storage Limits
 
-Each user-scene pair has a storage budget based on your subscription tier. Keep values compact and avoid storing large binary data. Use [Images & Video and 3D Models](/dashboard/media-library/) for files and store only references in scene state.
+Each user-scene pair has a storage budget based on your subscription tier. Keep values compact and avoid storing large binary data. Use [Images & Video and 3D Models](/docs/dashboard/media-library/) for files and store only references in scene state.

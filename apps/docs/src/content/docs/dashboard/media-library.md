@@ -21,7 +21,7 @@ Images & Video doesn't take 3D models: a GLB or glTF file is refused with a poin
 
 The **3D Models** page has two views:
 
-- **All Models:** shared models everyone can use, including Virvi's free [catalog packs](/dashboard/catalog-packs/).
+- **All Models:** shared models everyone can use, including Virvi's free [catalog packs](/docs/dashboard/catalog-packs/).
 - **My Models:** your own models, public and private: your uploads, models uploaded from in-world, models made from a room scan, and pieces you finalize in the Design Studio.
 
 New uploads are private: only you see them in the library, and you can place them in your own scenes. On a scene's model element, **Upload GLB** adds the model to your 3D Models the same way, and **Choose from 3D Models** picks one of yours.
@@ -32,4 +32,4 @@ Files in both libraries are stored at long, unguessable links. "Private" and "li
 
 ## A scene's library
 
-Each scene also has its own library: the models and images added to that scene, ready to place. The in-world HUD shows it as the **3D Models** panel. It lists what's been added to that scene: images placed from Images & Video, models added from 3D Models with **Add to scene**, and files uploaded from in-world. Models uploaded from in-world go in the scene owner's 3D Models, private (a renter's go in their own); images go in Images & Video. See [In-world HUD](/dashboard/in-world-hud/#uploading-from-in-world).
+Each scene also has its own library: the models and images added to that scene, ready to place. The in-world HUD shows it as the **3D Models** panel. It lists what's been added to that scene: images placed from Images & Video, models added from 3D Models with **Add to scene**, and files uploaded from in-world. Models uploaded from in-world go in the scene owner's 3D Models, private (a renter's go in their own); images go in Images & Video. See [In-world HUD](/docs/dashboard/in-world-hud/#uploading-from-in-world).

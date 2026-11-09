@@ -3,7 +3,7 @@ title: REST API Reference
 description: Complete list of Virvi API endpoints
 ---
 
-All endpoints are prefixed with `/api` except the platform hooks (`/hook/*`). Authenticated endpoints require `Authorization: Bearer <token>`, where the token is an access token or an [API key](/api/authentication#api-keys).
+All endpoints are prefixed with `/api` except the platform hooks (`/hook/*`). Authenticated endpoints require `Authorization: Bearer <token>`, where the token is an access token or an [API key](/docs/api/authentication#api-keys).
 
 Requests for another account's scenes, deployments, events, giveaways, streams or wallets are refused with `403` or `404`.
 

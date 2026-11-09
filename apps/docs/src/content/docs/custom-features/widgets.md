@@ -19,7 +19,7 @@ Common uses include:
 
 ## Creating a Widget
 
-1. Open the [Scene Editor](/dashboard/scene-editor/).
+1. Open the [Scene Editor](/docs/dashboard/scene-editor/).
 2. Navigate to the **Widgets** section.
 3. Click **Add Widget**.
 4. Configure the widget:
@@ -66,4 +66,4 @@ Widget state is synced through Colyseus like all other scene elements. When one 
 
 ## Dashboard Control
 
-Operators can set widget values from the dashboard or the [In-World HUD](/dashboard/in-world-hud/), letting you control scene behavior remotely without writing additional code.
+Operators can set widget values from the dashboard or the [In-World HUD](/docs/dashboard/in-world-hud/), letting you control scene behavior remotely without writing additional code.

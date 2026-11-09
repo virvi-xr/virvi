@@ -6,6 +6,7 @@ import fastifySwaggerUi from '@fastify/swagger-ui'
 import { randomUUID } from 'node:crypto'
 import { config } from './config.js'
 import { withRawJson } from './http/raw-json.js'
+import { isDocsPath, registerDocsSite, sendDocsNotFound } from './http/docs-site.js'
 import { registerJwt } from './middleware/auth.js'
 import authRoutes from './routes/auth.js'
 import walletAuthRoutes from './routes/wallet-auth.js'
@@ -374,6 +375,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     }])
   })
 
+  // ── Docs (/docs, plus /llms.txt for agents) ───────────────────────────
+  const docsServed = await registerDocsSite(app, config.docsDir)
+  console.log(`[virvi-server] Docs ${docsServed ? `served at /docs from ${resolve(config.docsDir)}` : `not built (${resolve(config.docsDir)})`}`)
+
   // ── Static Dashboard ─────────────────────────────────────────────────────
   const dashboardPath = resolve(config.dashboardDir)
   console.log(`[virvi-server] Dashboard path: ${dashboardPath} (exists: ${existsSync(dashboardPath)})`)
@@ -420,11 +425,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       if (request.url.startsWith('/api/')) {
         return reply.status(404).send({ error: 'Not found' })
       }
+      if (docsServed && isDocsPath(request.url)) return sendDocsNotFound(reply, config.docsDir)
       return reply.sendFile('index.html')
     })
   } else {
     console.log(`[virvi-server] No dashboard directory at ${dashboardPath} — API-only mode`)
-    app.setNotFoundHandler(async (_request, reply) => {
+    app.setNotFoundHandler(async (request, reply) => {
+      if (docsServed && isDocsPath(request.url)) return sendDocsNotFound(reply, config.docsDir)
       return reply.status(404).send({ error: 'Not found' })
     })
   }

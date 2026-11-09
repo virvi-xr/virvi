@@ -36,7 +36,7 @@ That's it. All scene elements configured in the Virvi dashboard render automatic
 
 ## Show your Virvi models on the Decentraland map
 
-For scenes that run your own code: uploaded through [Scene Import](/dashboard/scene-import/), or built elsewhere and connected to a Virvi scene. Scenes Virvi builds for you already do this.
+For scenes that run your own code: uploaded through [Scene Import](/docs/dashboard/scene-import/), or built elsewhere and connected to a Virvi scene. Scenes Virvi builds for you already do this.
 
 ```typescript
 import { createVirvi, placeDeployedModels } from '@virvixr/dcl'

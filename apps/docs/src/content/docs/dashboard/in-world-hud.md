@@ -31,7 +31,7 @@ While you hold an item, other editors see "being moved by" and your name on it a
 
 ## Uploading from in-world
 
-Editors can add GLB models and images to the scene's library (the HUD's **3D Models** panel, the **Models** tab) while standing in it. This panel is the scene's own list; on the dashboard, 3D models live in 3D Models and images and video in Images & Video (see [Images & Video and 3D Models](/dashboard/media-library/)). A model you upload from in-world goes in the scene owner's 3D Models, private.
+Editors can add GLB models and images to the scene's library (the HUD's **3D Models** panel, the **Models** tab) while standing in it. This panel is the scene's own list; on the dashboard, 3D models live in 3D Models and images and video in Images & Video (see [Images & Video and 3D Models](/docs/dashboard/media-library/)). A model you upload from in-world goes in the scene owner's 3D Models, private.
 
 Open the 3D Models panel and press **Upload**. The panel shows:
 
@@ -57,7 +57,7 @@ The Stream panel lists the live preset's video screens. For each one, editors ca
 - **Choose stream:** pick one of the scene's streams, labelled "Main Stage (live)" or "Editor Cam (offline, yours)".
 - **Turn live on / off.**
 - **Change** the off image, the picture shown when the screen has nothing to play. It lists the scene library's ready images (up to 8); **No off image** clears it.
-- **Showings** (screens in Schedule mode): the screen's showings with **End now**, **Play now** and **Delay 5 min**. See [Scheduled Showings](/dashboard/scheduled-showings/).
+- **Showings** (screens in Schedule mode): the screen's showings with **End now**, **Play now** and **Delay 5 min**. See [Scheduled Showings](/docs/dashboard/scheduled-showings/).
 
 The Hyperfy HUD's Streams panel, the Quest's builder Stream tab and the Vision Pro's Stream tab have the same stream, live and off-image controls. The Quest's Stream tab is on personal headsets only.
 
@@ -67,7 +67,7 @@ In the Layout panel, an item with copies shows how many (×3) and a **Clear** bu
 
 ## Click actions
 
-From `@virvixr/dcl` 2.11.0, the Layout panel's **Click** button sets what clicking an image, model or screen does. See [Click Actions](/dashboard/click-actions/).
+From `@virvixr/dcl` 2.11.0, the Layout panel's **Click** button sets what clicking an image, model or screen does. See [Click Actions](/docs/dashboard/click-actions/).
 
 
 ## Frames

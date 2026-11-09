@@ -82,7 +82,7 @@ Hyperfy builders can edit app scripts and props in a world, so only give builder
 
 ## Analytics
 
-Visitors show up in [Virvi Analytics](/dashboard/analytics) under a **Hyperfy** location for that world. Hyperfy players have no wallets, so they count as unverified guests, and no names are recorded.
+Visitors show up in [Virvi Analytics](/docs/dashboard/analytics) under a **Hyperfy** location for that world. Hyperfy players have no wallets, so they count as unverified guests, and no names are recorded.
 
 ## Hosted worlds
 

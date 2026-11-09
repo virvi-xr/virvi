@@ -78,4 +78,4 @@ Custom rendering still benefits from Colyseus real-time sync. When a collaborato
 
 - You are responsible for all visual representation when custom rendering is active.
 - Platform-specific behavior (Decentraland SDK, Hyperfy API) must be handled in your code.
-- The [In-World HUD](/dashboard/in-world-hud/) continues to work normally — it interacts with Virvi data, not the rendering layer.
+- The [In-World HUD](/docs/dashboard/in-world-hud/) continues to work normally — it interacts with Virvi data, not the rendering layer.
