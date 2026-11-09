@@ -23,7 +23,8 @@ from .pieces import Piece, glbs_by_shape
 from .render import fit_square
 
 THUMBNAIL_BLEND = Path(__file__).parent / 'thumbnail_blend.py'
-AVATARS = {'male': 'AvatarShape_A.blend', 'female': 'AvatarShape_B.blend'}
+# the official avatar files: AvatarShape_A is the BaseFemale body, AvatarShape_B the BaseMale one
+AVATARS = {'male': 'AvatarShape_B.blend', 'female': 'AvatarShape_A.blend'}
 SHAPES = ('male', 'female')
 LOOK_VIEWS = ('front', 'right', 'back', 'left')
 PROMO_FRAMES, PROMO_SIZE, PROMO_FPS = 72, 720, 24

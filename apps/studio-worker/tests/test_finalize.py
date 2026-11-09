@@ -320,3 +320,13 @@ def test_a_paid_building_still_packages_when_its_walk_through_fails(api, tmp_pat
     z = package(api, 'job-f', 'building')
     assert 'tour.mp4' not in z.namelist()
     assert 'walk-through' in z.read('REPORT.md').decode()
+
+
+def test_clipping_check_wears_each_glb_on_its_own_body(api, tmp_path):
+    """AvatarShape_A.blend is the BaseFemale body and AvatarShape_B.blend the BaseMale one (LIV-143)."""
+    piece = give_inputs(api, 'job-f', 'hat', HAT_FILES, HAT_META)
+    tools = FakeTools()
+    assert run(api, tmp_path, finalize_job([piece]), tools)['outcome'] == 'ok'
+    clipping = [a for k, a in tools.calls if k == 'blender' and any('check_clipping' in str(x) for x in a)]
+    pairs = {Path(a[0]).name: Path(a[a.index('--glb') + 1]).stem.rsplit('_', 1)[-1] for a in clipping}
+    assert pairs == {'AvatarShape_A.blend': 'female', 'AvatarShape_B.blend': 'male'}

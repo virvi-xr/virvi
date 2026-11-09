@@ -92,8 +92,9 @@ def closing(kind: str, selected_slots: list[str] | None, agent: str | None = Non
 
 ---
 Studio instructions:
-Use the dcl-avatar-skills. The official Decentraland base avatar .blend files are in {ASSETS}. Blender runs headless
-only: `blender -b`. {what}
+Use the dcl-avatar-skills. The official Decentraland base avatar .blend files are in {ASSETS}: AvatarShape_A.blend is
+the female body (BaseFemale, the _female GLB) and AvatarShape_B.blend the male body (BaseMale, the _male GLB). Blender
+runs headless only: `blender -b`. {what}
 {layout}
 Blender is for building only: never render in Blender (no thumbnails, turntables or test renders). `studio-preview` is how you look at your work.
 {look}

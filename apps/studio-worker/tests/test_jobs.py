@@ -666,3 +666,12 @@ def test_lessons_text_skips_junk_and_stays_bounded():
     assert '- ' + 'x' * 3000 in text and 'y' * 1500 not in text and len(text) < LESSONS_MAX + 200
     assert 'Lessons from earlier designs' not in closing('emote', None)
     assert 'Lessons from earlier designs' in closing('emote', None, lessons=['Loop cleanly.'])
+
+
+def test_instructions_name_each_avatar_file_s_body_shape():
+    """AvatarShape_A.blend is BaseFemale and AvatarShape_B.blend BaseMale (LIV-143): the agent pairs each GLB with its body."""
+    from studio_worker.instructions import closing
+    for kind in ('wearable', 'emote'):
+        text = ' '.join(closing(kind, None).split())
+        assert 'AvatarShape_A.blend is the female body (BaseFemale, the _female GLB)' in text
+        assert 'AvatarShape_B.blend the male body (BaseMale, the _male GLB)' in text
