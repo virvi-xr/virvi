@@ -374,7 +374,7 @@ export async function queuePrompt(
   return { ok: true, jobId }
 }
 
-const renderPayload = (kind: string, render: Record<string, unknown>) => ({
+export const renderPayload = (kind: string, render: Record<string, unknown>) => ({
   type: 'render', kind, agent: null, model: null, prompt: null, selectedSlots: null, limits: RENDER_LIMITS, render,
 })
 

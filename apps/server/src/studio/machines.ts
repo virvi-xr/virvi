@@ -45,7 +45,7 @@ const CLAIM_STALE_MS = 2 * 60_000
 const DEAD = ['destroyed', 'destroying', 'failed']
 const IDLE_EXIT_SEC = '600'
 /** Fly reports an image with its digest (`repo:tag@sha256:…`); the tag is what STUDIO_WORKER_IMAGE names. */
-const sameImage = (a: string | null, b: string) => (a ?? '').split('@')[0] === b.split('@')[0]
+export const sameImage = (a: string | null, b: string) => (a ?? '').split('@')[0] === b.split('@')[0]
 
 function plain(err: unknown, secret?: string): string {
   let msg = err instanceof Error ? err.message : String(err)
