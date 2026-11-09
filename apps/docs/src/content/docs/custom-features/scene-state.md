@@ -1,79 +1,37 @@
 ---
 title: Scene State
-description: Using virvi.setState and virvi.getState for persistent key-value storage per user per scene.
+description: Virvi has no per-player key-value store in the SDK; here is what to use for saved and shared state instead.
 ---
 
-Scene State provides a simple persistent key-value store scoped to each user within each scene. Use it to save user preferences, progress, or any custom data that should survive across sessions.
+The Virvi SDK (`@virvixr/dcl` 2.13.0) has **no** `setState` or `getState`, and the server has no per-player key-value store. Earlier versions of these docs described one; it doesn't exist.
 
-## How It Works
+Pick by what the state is for.
 
-- Data is stored as key-value pairs on the Virvi server.
-- Each entry is scoped to a specific **user** and **scene** combination.
-- State persists across sessions — when a user returns to your scene, their data is still there.
-- Keys are strings. Values can be strings, numbers, booleans, or JSON-serializable objects.
+| You need | Use |
+|---|---|
+| State everyone sees live, that can be lost when the room empties (scores in a round, a shared timer) | [Multiplayer Events](/docs/custom-features/multiplayer-events/): send changes with `sendMessage`. Note that the sender doesn't receive its own message, and late joiners don't see earlier ones |
+| What the scene shows (screens, images, models, which preset is live) | Virvi itself: change it in the dashboard, the HUD or the [REST API](/docs/api/rest-reference/). Every connected player gets the change |
+| Saved per-player data (progress, preferences, collectibles) | Your own backend. Virvi doesn't store it |
 
-## Setting State
+## Changing what the scene shows from your own server
 
-Use `virvi.setState` to save a value:
+A backend of yours can change a scene through the REST API with an [API key](/docs/api/authentication/#api-keys). For example, switch the live preset:
 
-```typescript
-import { virvi } from "@virvi/sdk";
-
-// Save a simple value
-await virvi.setState("theme", "dark");
-
-// Save a number
-await virvi.setState("score", 42);
-
-// Save an object
-await virvi.setState("preferences", {
-  musicVolume: 0.8,
-  showTutorial: false,
-});
+```bash
+curl -X POST "$VIRVI_URL/api/presets/$PRESET_ID/activate" \
+  -H "Authorization: Bearer $VIRVI_API_KEY"
 ```
 
-`setState` returns a promise that resolves when the value has been persisted on the server.
+Every player in the scene sees the new preset. The key's account must be the scene's host, a co-host or an editor; otherwise the call returns `403`.
 
-## Getting State
+Never put an API key in scene code. Scene code is public: anyone can read it.
 
-Use `virvi.getState` to retrieve a previously saved value:
+## Late joiners and shared live state
 
-```typescript
-const theme = await virvi.getState("theme");
-// "dark"
+Messages aren't replayed. A common pattern for "current state" over messages:
 
-const score = await virvi.getState("score");
-// 42
+1. When a player connects, send a `state-request` message.
+2. Players who have the state answer with `state-snapshot`.
+3. Everyone applies the newest snapshot they get.
 
-const prefs = await virvi.getState("preferences");
-// { musicVolume: 0.8, showTutorial: false }
-```
-
-If the key does not exist, `getState` returns `undefined`.
-
-## Deleting State
-
-Remove a key by setting it to `null`:
-
-```typescript
-await virvi.setState("theme", null);
-```
-
-## Common Use Cases
-
-- **User preferences** — save UI settings, language choice, or accessibility options
-- **Progress tracking** — record which areas a user has visited or which tasks they have completed
-- **Collectibles** — track which items a user has found in a scavenger hunt
-- **Personalization** — remember a user's chosen avatar outfit or display name
-
-## Scope and Isolation
-
-State is isolated per user per scene:
-
-- User A's state in Scene 1 is separate from User A's state in Scene 2.
-- User A's state is separate from User B's state in the same scene.
-- There is no built-in way to read another user's state. For shared data, use [Multiplayer Events](/docs/custom-features/multiplayer-events/) or [Widgets](/docs/custom-features/widgets/).
-
-## Storage Limits
-
-Each user-scene pair has a storage budget based on your subscription tier. Keep values compact and avoid storing large binary data. Use [Images & Video and 3D Models](/docs/dashboard/media-library/) for files and store only references in scene state.
+Any client can send any payload, so this works for cosmetic or game state, not for anything that must be trusted.

@@ -31,7 +31,7 @@ If your agent can't browse, download `llms-full.txt` and add it to the conversat
 
 **Build a custom feature**
 
-> Read the Custom Features and SDK pages from https://virvi.io/docs/llms.txt. I want a scoreboard widget that every visitor sees update live. Plan it against Virvi's scene state and widgets APIs before coding.
+> Read the SDK and Custom Features pages from https://virvi.io/docs/llms.txt. I want a scoreboard that every visitor sees update live in my Decentraland scene. Plan it with `@virvixr/dcl` and Virvi's multiplayer messages before coding, and only use functions the docs list.
 
 **Use the API from a script**
 
@@ -42,4 +42,4 @@ If your agent can't browse, download `llms-full.txt` and add it to the conversat
 - **Tell the agent which Virvi it's talking to.** Hosted (`https://virvi.io`) or your own server's URL. Self-hosted installs serve the same docs at `<your server>/docs`, matching your version.
 - **Keep keys out of prompts.** Create an API key in the dashboard and put it in an environment variable; tell the agent the variable's name, not the key.
 - **Ask for a plan first** on anything that deploys or changes a live scene. Virvi applies changes to visitors in real time.
-- **Versions matter.** The SDK packages (`@virvixr/dcl` and friends) follow the server. If something in the docs doesn't match what your agent sees, check the package version and tell us with *Report a bug* in the dashboard.
+- **Versions matter.** These docs match `@virvixr/dcl` 2.13.0, the only SDK package on npm. The API is described by each server at `/api/docs/json`. If something in the docs doesn't match what your agent sees, check the package version and tell us with *Report a bug* in the dashboard.

@@ -10,7 +10,7 @@ When you sign in from inside Decentraland, Virvi gives you a scene pass. It lets
 - **A parcel or World with no setup:** you're a visitor only. You can see content, but you can't edit and you can't open Stats.
 - **Any scene trying to act for you elsewhere:** it can't. Your pass works only in the scene set up where you're standing; any other scene's content sees you as an anonymous visitor.
 - **Realms that aren't Decentraland's:** you're a visitor only. Only Decentraland's own Genesis City realms, the DAO catalysts and the Worlds server can give you your role in a scene, and only while that scene's current deployment is running.
-- **How long a pass lasts:** 15 minutes after the scene last asked for it. The HUD asks again on its own while you're in the scene; once you leave, the pass stops working.
+- **How long a pass lasts:** 15 minutes after the scene last asked for it (the server's `JWT_ACCESS_EXPIRY`). The HUD asks again on its own while you're in the scene; once you leave, the pass stops working.
 
 ### Links to other realms
 Only open a realm link (a `decentraland.org/play?realm=…` address) from Virvi support. Someone running their own realm can make it look like your parcel. If you visit it as a host or editor, the realm's code could act with your role in your scene while you're there.

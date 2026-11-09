@@ -1,69 +1,35 @@
 ---
 title: Widgets
-description: Using widget elements to create custom UI controls within your Virvi scenes.
+description: Widget elements store a control value in a scene's preset; the current SDK doesn't pass them to scene code yet.
 ---
 
-Widgets are special elements that let you add custom interactive UI controls to your scenes. They provide a way to build scene-specific interfaces beyond the standard video, image, model, and sound elements.
+A widget is a scene element that holds one control value, such as an on/off switch or a number, which you set from the dashboard.
 
-## What Are Widgets?
+## Current status
 
-A widget is a UI element that appears in-world and responds to user interaction. Widgets are defined in the dashboard and can trigger actions in your scene code via the SDK.
+- **Dashboard:** a scene's editor has a **Widgets** section. You can add a widget, pick its control type and set its value. It is saved in the preset like any other element.
+- **SDK:** `@virvixr/dcl` 2.13.0 does **not** pass widgets to scene code. `virvi.storage.widgets` stays empty, and the `widgets` option in `VirviInitConfig` is accepted but not used. There is no `onWidgetChange` or `onWidgetClick`.
+- **Hyperfy app:** widgets aren't supported.
 
-Common uses include:
+So today a widget's value can't drive your scene through the SDK.
 
-- Toggle buttons for scene features
-- Selection menus for user preferences
-- Information panels with dynamic content
-- Voting or polling interfaces
-- Custom control panels for interactive experiences
+## Control types
 
-## Creating a Widget
+The control types (`WidgetControlType` in `@virvixr/shared`):
 
-1. Open the [Scene Editor](/docs/dashboard/scene-editor/).
-2. Navigate to the **Widgets** section.
-3. Click **Add Widget**.
-4. Configure the widget:
-   - **Type** — button, toggle, slider, dropdown, or text input
-   - **Label** — display text for the widget
-   - **Default value** — initial state
-   - **Position** — where the widget appears in the scene
+| Value | Type |
+|---|---|
+| 0 | None |
+| 1 | Toggle |
+| 2 | Text |
+| 3 | Selector |
+| 4 | Date and time |
+| 5 | Trigger |
+| 6 | Slider |
 
-## Widget Types
+## What to use instead
 
-| Type       | Description                          | Value Type |
-| ---------- | ------------------------------------ | ---------- |
-| Button     | Triggers an action on click          | None       |
-| Toggle     | On/off switch                        | Boolean    |
-| Slider     | Numeric range input                  | Number     |
-| Dropdown   | Selection from a list of options     | String     |
-| Text Input | Free-form text entry                 | String     |
-
-## Handling Widget Events in Code
-
-Use the Virvi SDK to listen for widget interactions:
-
-```typescript
-import { virvi } from "@virvi/sdk";
-
-virvi.onWidgetChange("my-toggle", (value: boolean) => {
-  // React to the toggle change
-  if (value) {
-    enableFeature();
-  } else {
-    disableFeature();
-  }
-});
-
-virvi.onWidgetClick("my-button", () => {
-  // React to button press
-  triggerAction();
-});
-```
-
-## Syncing Widget State
-
-Widget state is synced through Colyseus like all other scene elements. When one user interacts with a widget, all connected users see the result if the widget is configured as shared. Widgets can also be set to per-user mode, where each user has their own independent state.
-
-## Dashboard Control
-
-Operators can set widget values from the dashboard or the [In-World HUD](/docs/dashboard/in-world-hud/), letting you control scene behavior remotely without writing additional code.
+- **A switch you flip from the dashboard:** make two presets and switch between them (dashboard, HUD, or `POST /api/presets/:presetId/activate`). Every player gets the change.
+- **Show or hide one item:** `PUT /api/elements/:elementId` with `{ "enabled": false }` (or `true`). Connected players see the change.
+- **Live values between players:** [Multiplayer Events](/docs/custom-features/multiplayer-events/).
+- **Reading widget values from a backend:** `GET /api/scenes/:sceneId` returns the scene's presets and their elements, widgets included. It needs a sign-in or [API key](/docs/api/authentication/#api-keys) with access to the scene, so call it from your own server, never from scene code.

@@ -1,81 +1,39 @@
 ---
 title: Custom Rendering
-description: Using the customRendering flag to take control of element rendering instead of relying on Virvi's defaults.
+description: How to draw Virvi content your own way today, and what the stored customRendering flag does and doesn't do.
 ---
 
-By default, Virvi automatically renders all scene elements (videos, images, models, sounds) using built-in platform-specific renderers. The `customRendering` flag lets you override this behavior and handle rendering yourself.
+Virvi draws every image, video screen, model and sound in the live preset for you. The SDK has **no** option to turn that off: there is no `customRendering` setting in `createVirvi()` and no `onElementCreate`, `onElementUpdate` or `onElementDelete` callbacks.
 
-## Why Use Custom Rendering?
+## The customRendering field
 
-Custom rendering is useful when you need to:
+Elements and instances have a `customRendering` field (default `false`). You can set it through the API, for example `PUT /api/elements/:elementId` with `{ "customRendering": true }`, and it comes back with the scene's data.
 
-- Apply custom shaders or materials to elements
-- Implement non-standard positioning or animation logic
-- Integrate Virvi elements with an existing rendering pipeline
-- Build advanced visual effects that go beyond Virvi's defaults
-- Control exactly when and how elements appear
+The SDK (`@virvixr/dcl` 2.13.0) ignores it: Virvi still draws the element. Treat it as a label your own code can read, not as a switch.
 
-## Enabling Custom Rendering
+## Ways to draw content yourself
 
-Set the `customRendering` flag when initializing Virvi:
+**Hide Virvi's copy and draw your own.** Set the element's `enabled` to `false` (`PUT /api/elements/:elementId` with `{ "enabled": false }`, or hide it in the dashboard or HUD) so Virvi doesn't draw it. Keep what your code needs in your own scene code or backend.
+
+**Add effects next to Virvi's.** Let Virvi draw the element, and read its data from `virvi.storage` once connected:
 
 ```typescript
-import { virvi } from "@virvi/sdk";
+import { createVirvi } from '@virvixr/dcl'
 
-await virvi.init({
-  customRendering: true,
-});
+export async function main() {
+  const virvi = await createVirvi()
+  virvi.onStateChange((state) => {
+    if (state !== 'connected') return
+    const screen = virvi.storage.videos.configs['main-screen'] // by custom ID
+    if (screen) console.log('screen element', screen)
+  })
+}
 ```
 
-When enabled, Virvi still syncs element data (positions, URLs, properties) from the server, but does not create any visual objects in the scene. You receive the data and decide what to do with it.
+`storage` is a read-only snapshot that Virvi updates as the scene changes. There's no change callback per element; read it when you need it, or react to `onActivePresetChanged` for preset switches.
 
-## Handling Elements Manually
+**Write an adapter.** For full control over how every element is drawn on a platform, implement `VirviPlatformAdapter` yourself. See [Building an Adapter](/docs/sdk/building-an-adapter/). This is a monorepo-level change, not a scene-level one.
 
-With custom rendering enabled, use event listeners to receive element data:
+## Things that keep working
 
-```typescript
-virvi.onElementCreate((element) => {
-  // Virvi has a new element — create your own visual representation
-  const mesh = createCustomMesh(element);
-  scene.add(mesh);
-});
-
-virvi.onElementUpdate((element) => {
-  // Element properties changed — update your representation
-  updateCustomMesh(element.id, element);
-});
-
-virvi.onElementDelete((element) => {
-  // Element removed — clean up your representation
-  removeCustomMesh(element.id);
-});
-```
-
-Each element object includes all the data you need:
-
-- `id` — unique element identifier
-- `type` — video, image, model, or sound
-- `instances` — array of instance transforms and overrides
-- `properties` — type-specific data (URL, volume, loop, etc.)
-
-## Per-Element Custom Rendering
-
-You can also enable custom rendering on a per-element basis instead of globally. This lets Virvi handle most elements normally while you take control of specific ones:
-
-```typescript
-await virvi.init({
-  customRendering: ["element-id-1", "element-id-2"],
-});
-```
-
-Elements not in the list are rendered by Virvi as usual.
-
-## Real-Time Updates
-
-Custom rendering still benefits from Colyseus real-time sync. When a collaborator changes an element in the dashboard, your `onElementUpdate` callback fires with the new data. You are responsible for applying the change visually, but the data flow is automatic.
-
-## Considerations
-
-- You are responsible for all visual representation when custom rendering is active.
-- Platform-specific behavior (Decentraland SDK, Hyperfy API) must be handled in your code.
-- The [In-World HUD](/docs/dashboard/in-world-hud/) continues to work normally — it interacts with Virvi data, not the rendering layer.
+The [In-World HUD](/docs/dashboard/in-world-hud/) edits Virvi's data, not your drawing code, so it works the same whichever approach you take.

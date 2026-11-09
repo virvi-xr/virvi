@@ -7,7 +7,7 @@ The **Virvi app** is a small Hyperfy app (a `.hyp` file) that shows one of your 
 
 ## What you need
 
-- A plan that includes deployment (Creator and up).
+- A plan that includes deployment (Creator and up). On a self-hosted install every feature is unlocked.
 - Full access to the scene you want to show.
 - A self-run Hyperfy world where you can add apps.
 
@@ -17,13 +17,15 @@ The **Virvi app** is a small Hyperfy app (a `.hyp` file) that shows one of your 
 2. Under **Your Hyperfy worlds**, choose **Connect a world** and give it a name.
 3. A one-time panel shows the **world key**, a **Download Virvi app (.hyp)** link and the setup steps. Copy the key now: you won't see it again.
 
+The app file is served by the Virvi server at `/api/hyperfy/app.hyp`.
+
 Each connected world is listed with its name, the start of its key and when it was last seen.
 
 ## Install the app
 
 1. Drag `virvi.hyp` into your Hyperfy world.
 2. Open the app's settings and paste the key into **Virvi world key**.
-3. Leave **Virvi feed URL** as `https://api.virvi.io`.
+3. Leave **Virvi feed URL** as `https://api.virvi.io`. On a self-hosted install, set it to your server's `PUBLIC_URL`, such as `https://virvi.example.com`.
 
 The scene appears within a few seconds, and later edits show up in about a second.
 
@@ -86,7 +88,7 @@ Visitors show up in [Virvi Analytics](/docs/dashboard/analytics) under a **Hyper
 
 ## Hosted worlds
 
-Don't want to run Hyperfy yourself? Virvi can host a world for you. Under **Create a hosted world** on the **Deploy** page, give it a name and, if you like, an end date. It is ready within a few minutes, with the Virvi app already installed and showing your scene. Hosted worlds appear only where Virvi has hosting turned on.
+Don't want to run Hyperfy yourself? Virvi can host a world for you. Under **Create a hosted world** on the **Deploy** page, give it a name and, if you like, an end date. It is ready within a few minutes, with the Virvi app already installed and showing your scene. Hosted worlds appear only where Virvi has hosting turned on. A self-hosted install needs the Fly settings in [Hosted Hyperfy worlds](/docs/self-hosting/environment-variables/#hosted-hyperfy-worlds) for this.
 
 ### How many you get
 

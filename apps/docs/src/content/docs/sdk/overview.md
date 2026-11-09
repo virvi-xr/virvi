@@ -1,61 +1,95 @@
 ---
 title: SDK Overview
-description: How the Virvi SDK works across platforms
+description: Which Virvi package to install, how the SDK packages fit together, and what a scene's code can do with Virvi.
 ---
 
-The Virvi SDK is split into layered packages:
+## Which package to install
+
+| You are building | Install | Notes |
+|---|---|---|
+| A Decentraland SDK 7 scene | `@virvixr/dcl` (2.13.0) from npm | The only Virvi SDK package on npm. See [Decentraland Setup](/docs/sdk/decentraland/install/). |
+| A Hyperfy world | The Virvi app (`virvi.hyp`) | Downloaded from your Virvi server, not npm. See [Hyperfy Setup](/docs/sdk/hyperfy/install/). |
+| A script, bot or backend | Nothing | Call the [REST API](/docs/api/rest-reference/) with an [API key](/docs/api/authentication/#api-keys). |
+| A platform that can only make HTTP calls | Nothing | Use the [platform hooks](/docs/api/rest-reference/#platform-hooks) (`/hook/*`). |
+| Support for a new platform | The monorepo | See [Building an Adapter](/docs/sdk/building-an-adapter/). |
+
+## The packages inside
+
+`@virvixr/dcl` bundles the workspace packages below. They live in `packages/` in the repo, are marked private, and are not published to npm on their own: import from `@virvixr/dcl` in a Decentraland scene.
 
 | Package | Purpose |
-|---------|---------|
-| `@virvixr/shared` | Types, enums, `VirviPlatformAdapter` interface, protocol types |
-| `@virvixr/client` | HTTP client + Colyseus WebSocket manager |
-| `@virvixr/core` | `Virvi` class, `SceneManager`, element managers (Video, Image, Mesh, Sound) |
-| `@virvixr/hud` | In-world management HUD (optional) |
-| `@virvixr/adapter-dcl` | Decentraland SDK 7 adapter |
-| `@virvixr/hyperfy-app` | Virvi app for self-run Hyperfy worlds (see [Hyperfy Setup](/docs/sdk/hyperfy/install)) |
+|---|---|
+| `@virvixr/shared` | Types, enums, the `VirviPlatformAdapter` interface, protocol types |
+| `@virvixr/client` | HTTP client (`VirviHttpClient`) and Colyseus WebSocket manager |
+| `@virvixr/core` | The `Virvi` class, `SceneManager`, element managers (video, image, model, sound, ad space) |
+| `@virvixr/hud` | The in-world management HUD |
+| `@virvixr/adapter-dcl` | The Decentraland SDK 7 adapter and `createVirvi()` |
+| `@virvixr/hyperfy-app` | Builds the Hyperfy app (`virvi.hyp`) |
 
-## How It Works
+## How it works
 
-1. Your scene imports the platform-specific adapter (e.g., `@virvixr/adapter-dcl`)
-2. The adapter creates a `Virvi` instance with itself as the platform implementation
-3. `Virvi.init()` authenticates with the server, joins the Colyseus room, and receives the scene data
-4. @virvixr/core's element managers call adapter methods to render everything
-5. When the dashboard sends an update, @virvixr/core receives it and calls the adapter to apply changes
+1. `createVirvi()` makes a platform adapter and a `Virvi` instance.
+2. It signs in to the Virvi server with the platform's identity (in Decentraland, a signed request from the player's wallet).
+3. It joins the scene's real-time room (`virvi_scene`) and receives the live preset.
+4. Core's element managers call the adapter to draw every element.
+5. When someone edits the scene in the dashboard or the HUD, the room sends the change and core applies it.
 
 ```typescript
-// Decentraland scene
-import { createVirvi } from '@virvixr/adapter-dcl'
+import { createVirvi, type Virvi } from '@virvixr/dcl'
 
-const virvi = await createVirvi()
+/** Run fn once Virvi has joined the scene's room (now, if it already has). */
+function whenConnected(virvi: Virvi, fn: () => void) {
+  if (virvi.connectionState === 'connected') return fn()
+  const off = virvi.onStateChange((state) => {
+    if (state === 'connected') { off(); fn() }
+  })
+}
 
-// Everything renders automatically. Developer APIs:
-virvi.sendMessage('game-event', { score: 100 })
-virvi.onMessage('game-event', (data) => console.log(data))
-virvi.setState('high-score', 9999)
-virvi.recordAction('level-complete', { level: 3 })
+export async function main() {
+  const virvi = await createVirvi()
+
+  // Handlers can be added at any time
+  virvi.onMessage('game-event', (data) => console.log('got', data))
+
+  // Sending needs the room: before it is joined, sendMessage throws "Not in a room"
+  whenConnected(virvi, () => virvi.sendMessage('game-event', { score: 100 }))
+
+  // A custom analytics event
+  virvi.track('level-complete', { level: 3 })
+}
 ```
 
-## The Virvi Class
+`createVirvi()` can resolve before the scene has loaded: for example while the owner sees "Set up Virvi here", or while it connects in the background. Wait for `connected`, as above, before you send messages or read `storage`.
 
-The `Virvi` class is the main entry point. After `init()`:
+## The Virvi object
 
-| Method | Purpose |
-|--------|---------|
-| `sendMessage(id, data)` | Send a custom message to other clients in the room |
-| `onMessage(id, callback)` | Listen for custom messages |
-| `setState(key, value)` | Store persistent key-value state on the server |
-| `getState(key)` | Retrieve stored state |
-| `recordAction(id, metadata)` | Log a user action for analytics |
-| `initHUD(renderer, limits)` | Initialize the in-world management HUD (optional) |
-| `destroy()` | Clean up — sends session_end, leaves room |
+What `createVirvi()` resolves to. These are the members meant for scene code.
+
+| Member | What it does |
+|---|---|
+| `sendMessage(id, data?)` | Sends `data` to every other client in the scene's room. Not to yourself. See [Multiplayer Events](/docs/custom-features/multiplayer-events/). |
+| `onMessage(id, callback)` | Calls `callback(data)` when a message with that `id` arrives. One callback per `id`; a second call replaces the first. |
+| `track(name, props?)` | Records a custom analytics event. |
+| `recordAction(id, metadata?)` | Deprecated name for `track()`. |
+| `storage` | Read-only view of the scene's elements. See [Storage](#storage). |
+| `sceneId` | The connected Virvi scene's ID, or `null`. |
+| `user` | The signed-in user (`id`, `displayName`, `role`), or `null`. |
+| `connectionState` | `idle`, `authenticating`, `authenticated`, `discovering_scene`, `scene_ready`, `connecting`, `connected` or `error`. |
+| `onStateChange(listener)` | Calls `listener(state, detail?)` on every change. Returns a function that removes it. |
+| `onActivePresetChanged(listener)` | Calls `listener(presetId)` when the live preset changes. Returns a remover. |
+| `destroy()` | Leaves the room and stops. |
+
+There is no per-user key-value store in the SDK. See [Scene State](/docs/custom-features/scene-state/) for what to use instead.
 
 ## Storage
 
-`virvi.storage` provides read-only access to all scene elements:
+`virvi.storage` holds the live preset's elements, keyed by each element's custom ID (or its internal key when it has none). Each store has `configs` (elements) and `instances` (placed copies).
 
 ```typescript
-virvi.storage.videos.configs['my-screen']   // video element by customId
-virvi.storage.images.configs['banner']       // image element
-virvi.storage.models.configs['trophy']       // 3D model element
-virvi.storage.sounds.configs['ambient']      // sound element
+virvi.storage.videos.configs['my-screen']
+virvi.storage.images.configs['banner']
+virvi.storage.models.configs['trophy']
+virvi.storage.sounds.configs['ambient']
 ```
+
+The stores are `videos`, `images`, `models`, `sounds`, `adSpaces`, `nfts`, `claimPoints` and `widgets`. The SDK fills the first five. Read them; don't write to them.
