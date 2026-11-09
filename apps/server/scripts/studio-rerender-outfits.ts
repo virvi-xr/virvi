@@ -18,13 +18,16 @@ const args = process.argv.slice(2)
 const value = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined)
 const before = value('--before') ? new Date(value('--before')!) : null
 const limit = value('--limit') ? Number(value('--limit')) : 20
-if (!before || Number.isNaN(before.getTime()) || !Number.isInteger(limit) || limit < 1) {
+// --design given without a design id must never fall back to a whole batch
+const design = value('--design')
+const badDesign = args.includes('--design') && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(design ?? '')
+if (!before || Number.isNaN(before.getTime()) || !Number.isInteger(limit) || limit < 1 || badDesign) {
   console.error('usage: studio-rerender-outfits.ts --before <ISO time> [--dry-run] [--limit <designs, default 20>] [--design <id>]')
   process.exit(2)
 }
 const dryRun = args.includes('--dry-run')
 try {
-  const r = await rerenderOutfitViews(new Date(), { before, dryRun, limit, designId: value('--design') })
+  const r = await rerenderOutfitViews(new Date(), { before, dryRun, limit, designId: design })
   console.log(JSON.stringify({ dryRun, before: before.toISOString(), limit, ...r }))
   process.exit(r.stopped ? 1 : 0)
 } catch (err) {
