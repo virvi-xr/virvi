@@ -221,7 +221,7 @@ def test_each_body_shape_wears_an_outfit_made_for_it():
     """LIV-143: wearable-preview dresses the requested body in the profile's own hair, face and clothes, so a BaseFemale
     profile (default1) on the male body looked like a woman. Each outfit is a profile of the shape being rendered (body
     shapes from peer.decentraland.org/lambdas/profiles/defaultN)."""
-    female_profiles = {'default1', 'default4', 'default13'}
+    female_profiles = {'default1', 'default8', 'default15'}  # no eyewear and a human skin (LIV-143 review)
     male_profiles = {'default81', 'default83', 'default96'}
     for outfit in config.OUTFITS:
         for shape, profiles in (('male', male_profiles), ('female', female_profiles)):

@@ -10,11 +10,12 @@ AGENT_USER = 'agent'
 PREVIEW_URL = 'https://wearable-preview.decentraland.org/'
 # Outfit name -> body shape -> wearable-preview `profile` value (a deterministic default outfit). The preview dresses the
 # requested body in the profile's own hair, face and clothes, so each body wears a profile made for it: default1 is a
-# BaseFemale avatar and looked like a woman on the male body (LIV-143). Long sleeves and trousers; short sleeves and
-# shorts; then a skirt (a dress for the female body, a kilt for the male one).
+# BaseFemale avatar and looked like a woman on the male body (LIV-143). Long sleeves and trousers; then shorts; then a
+# skirt (a school skirt on the female body, a kilt on the male one). The female profiles wear no eyewear (it would sit
+# over an eyewear or mask piece) and have a human skin colour; default15 and default8 wear small earrings.
 OUTFITS = {'default': {'male': 'default81', 'female': 'default1'},
-           'outfit-2': {'male': 'default96', 'female': 'default13'},
-           'outfit-3': {'male': 'default83', 'female': 'default4'}}
+           'outfit-2': {'male': 'default96', 'female': 'default15'},
+           'outfit-3': {'male': 'default83', 'female': 'default8'}}
 BASE_EMOTES = ('idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump')
 
 
