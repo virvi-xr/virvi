@@ -51,7 +51,8 @@ export async function syncLinearDone(now = new Date(), client: LinearClient | nu
       result.checked++
       // Closed without a fix. A Duplicate follows the issue it duplicates (read on the next run). Canceled or Won't fix
       // is remembered: no new issue and no comments for the signature until an admin re-opens it (Errors page)
-      if (s.stateType === 'canceled') {
+      // Linear's native Duplicate state ('duplicate') is closed-without-a-fix too
+      if (s.stateType === 'canceled' || s.stateType === 'duplicate') {
         if (s.duplicateOf) {
           const re = rowsOf<{ id: string }>(await db.execute(sql`
             UPDATE error_signatures SET linear_issue_id = ${s.duplicateOf.id}, linear_issue_key = ${s.duplicateOf.identifier}, linear_issue_url = ${s.duplicateOf.url}
@@ -87,12 +88,13 @@ export async function syncLinearDone(now = new Date(), client: LinearClient | nu
   return result
 }
 
-/** The Errors page's "Re-open for filing": forgets a closed issue, so the data can file the signature again. */
+/** The Errors page's "Re-open for filing": forgets a closed issue, so the data can file the signature again. Only a
+ * signature whose issue is closed in Linear (false otherwise), so a live issue is never forgotten into a second one. */
 export async function reopenForFiling(signatureId: string): Promise<boolean> {
   const rows = rowsOf<{ id: string }>(await db.execute(sql`
     UPDATE error_signatures SET linear_issue_id = NULL, linear_issue_key = NULL, linear_issue_url = NULL, linear_filed_at = NULL,
       linear_filed_reason = NULL, linear_commented_at = NULL, linear_quiet_at = NULL, linear_regression_at = NULL, linear_done_at = NULL,
       linear_filing_at = NULL, linear_closed_at = NULL, linear_closed_state = NULL
-    WHERE id = ${signatureId}::uuid RETURNING id`))
+    WHERE id = ${signatureId}::uuid AND linear_closed_at IS NOT NULL RETURNING id`))
   return rows.length > 0
 }

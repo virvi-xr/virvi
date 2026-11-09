@@ -424,6 +424,24 @@ describe('Linear phase 2', () => {
       expect((await syncLinearDone()).resolved).toBe(1)
     })
 
+    it("Linear's native 'duplicate' state type is handled like canceled: re-linked when it names the main issue, else closed (N7)", async () => {
+      await filed()
+      linear.states.set('issue-1', { id: 'issue-1', stateType: 'duplicate', completedAt: null, canceledAt: new Date().toISOString(), duplicateOf: { id: 'issue-main', identifier: 'LIV-7', url: 'https://linear.app/x/issue/LIV-7' } })
+      expect((await syncLinearDone()).relinked).toBe(1)
+      const [s] = await db.select().from(errorSignatures)
+      expect(s).toMatchObject({ linearIssueId: 'issue-main', linearClosedAt: null })
+      linear.states.set('issue-main', { id: 'issue-main', stateType: 'duplicate', completedAt: null, canceledAt: new Date().toISOString() })
+      expect((await syncLinearDone()).closed).toBe(1)
+      expect((await db.select().from(errorSignatures))[0].linearClosedState).toBe('duplicate')
+    })
+
+    it('Re-open for filing only acts on a signature whose issue is closed in Linear (N8)', async () => {
+      const s0 = await filed()
+      expect(await reopenForFiling(s0.id)).toBe(false)
+      const [s] = await db.select().from(errorSignatures)
+      expect(s.linearIssueId).toBe('issue-1')
+    })
+
     it('the HTTP client reads a duplicate relation', async () => {
       const client = httpLinearClient({
         apiKey: 'k', teamId: 't',
