@@ -23,6 +23,7 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `rating-review.ts` | what admins learn from ratings: the 👎 review queue, the weekly digest (the admin page's, and the Monday email to every admin, sent once per week), and the 👍 rate per agent and model for each kind |
 | `lessons.ts` | lessons for the agent per design kind: drafted, approved by an admin, then sent with every new prompt of that kind (the job's `lessons`), at most 4,000 characters live per kind |
 | `lesson-drafts.ts` | Claude (ANTHROPIC_API_KEY, Sonnet 5.5) drafting one lesson from a batch of 👎s of one kind |
+| `prompt-help.ts` | "Improve my prompt": Claude (ANTHROPIC_API_KEY, Haiku 5.5) rewriting a draft into a concrete request with a few quick-pick questions, never sent to the agent; its own daily limit per account |
 | `defaults.ts` | the agent a new design of each kind starts on, set by an admin beside the 👍 rates (never automatically) |
 | `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes; then the trial sweep and the weekly ratings digest |
 
@@ -56,6 +57,11 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    - `STUDIO_FLY_APP` only if the worker app isn't `vlm-studio-worker`
    - optional: `STUDIO_CLAUDE_MODEL` (default `claude-opus-5-5`), `STUDIO_CODEX_MODEL` (default `gpt-6.1-sol`),
      `STUDIO_GROK_MODEL` (default `grok-build-0.1`)
+   - optional, for "Improve my prompt" (`POST /designs/:id/prompt-help`, which needs `ANTHROPIC_API_KEY` and answers
+     `503 prompt_help_unavailable` without it): `STUDIO_PROMPT_HELP_MODEL` (default `claude-haiku-5-5`) and
+     `STUDIO_PROMPT_HELP_PER_DAY` (default 30 per account and UTC day, trials included; `429 prompt_help_limit` past
+     it). It never uses a prompt or counts toward the cost ceiling; the count is `studio_usage_days.prompt_helps`,
+     added at boot like the other columns.
 3. **The schema.** The server makes it at boot: `entrypoint.sh` runs `drizzle-kit push` before it starts the server,
    then a hand-written fallback (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) in case push failed. That
    covers the eleven `studio_*` tables (four of them for payments), two new columns (`studio_designs.finalized_at`,

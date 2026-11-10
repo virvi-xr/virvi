@@ -1859,6 +1859,7 @@ export const studioUsageDays = pgTable('studio_usage_days', {
   day: date('day', { mode: 'string' }).notNull(), // UTC
   prompts: integer('prompts').notNull().default(0),
   costUsd: doublePrecision('cost_usd').notNull().default(0),
+  promptHelps: integer('prompt_helps').notNull().default(0), // "Improve my prompt" uses (src/studio/prompt-help.ts), not prompts
 }, (t) => ({
   pk: primaryKey({ columns: [t.userId, t.day] }),
 }))

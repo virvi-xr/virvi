@@ -15,6 +15,7 @@ import { isAdminRequest } from '../auth/admin.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
+import { helpWithPrompt, PromptHelpError } from '../studio/prompt-help.js'
 import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, setDetail, TOUR_VIEW, wornRevisions } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
@@ -41,6 +42,10 @@ const AGENTS = ['claude', 'codex', 'grok']
 const REPORT_MIN = 10
 const REPORT_MAX = 2000
 const MAX_PACKS = 10
+// A prompt help's answers to its own quick-pick questions
+const HELP_ANSWERS_MAX = 10
+const HELP_ANSWER_MAX = 80
+const HELP_ANSWER_ID = /^[a-z0-9_-]{1,40}$/
 
 async function studioOn(_request: FastifyRequest, reply: FastifyReply) {
   if (!config.studioEnabled) return reply.status(404).send({ error: 'not_found' })
@@ -265,6 +270,41 @@ export default async function studioRoutes(app: FastifyInstance) {
     const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
+  })
+
+  // "Improve my prompt": a rewrite of the draft and a few quick-pick questions, never sent to the agent. Who may use it
+  // is who may send a prompt (support too); it has its own daily limit per account, apart from the prompt allowance.
+  app.post('/api/studio/designs/:id/prompt-help', trialWork, async (request, reply) => {
+    const a = await designAccess(request, SUPPORT)
+    if (!a) return notFound(reply)
+    const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; answers?: unknown }
+    if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > MAX_PROMPT) {
+      return reply.status(400).send({ error: `text must be 1-${MAX_PROMPT} characters` })
+    }
+    let slots: string[] | null = null
+    if (b.selectedSlots != null) {
+      if (a.d.kind !== 'wearable') return reply.status(400).send({ error: 'only a wearable design has slots' })
+      if (!Array.isArray(b.selectedSlots) || !b.selectedSlots.length
+        || !b.selectedSlots.every((s) => (WEARABLE_CATEGORIES as readonly string[]).includes(s))) {
+        return reply.status(400).send({ error: 'selectedSlots must be wearable categories' })
+      }
+      slots = [...new Set(b.selectedSlots as string[])]
+    }
+    let answers: Record<string, string> | null = null
+    if (b.answers != null) {
+      const entries = typeof b.answers === 'object' && !Array.isArray(b.answers) ? Object.entries(b.answers as object) : null
+      if (!entries || entries.length > HELP_ANSWERS_MAX
+        || !entries.every(([k, v]) => HELP_ANSWER_ID.test(k) && typeof v === 'string' && v.trim() && v.length <= HELP_ANSWER_MAX)) {
+        return reply.status(400).send({ error: `answers must be at most ${HELP_ANSWERS_MAX} short answers` })
+      }
+      answers = Object.fromEntries(entries.map(([k, v]) => [k, (v as string).trim()]))
+    }
+    try {
+      return await helpWithPrompt(request.user.id, { kind: a.d.kind as 'wearable' | 'emote' | 'scene', text: b.text.trim(), selectedSlots: slots, answers }, new Date())
+    } catch (err) {
+      if (err instanceof PromptHelpError) return reply.status(err.status).send({ error: err.code })
+      throw err
+    }
   })
 
   // 👍 / 👎 on a revision (an agent reply that changed pieces, named by its job): the owner's alone. Support sees the

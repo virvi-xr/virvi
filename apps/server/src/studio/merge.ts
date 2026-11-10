@@ -52,10 +52,11 @@ export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: str
 
   // Counters, summed
   await tx.execute(sql`
-    insert into ${studioUsageDays} (user_id, day, prompts, cost_usd)
-    select ${toUserId}, day, prompts, cost_usd from ${studioUsageDays} where user_id = ${fromUserId}
+    insert into ${studioUsageDays} (user_id, day, prompts, cost_usd, prompt_helps)
+    select ${toUserId}, day, prompts, cost_usd, prompt_helps from ${studioUsageDays} where user_id = ${fromUserId}
     on conflict (user_id, day) do update set
-      prompts = ${studioUsageDays.prompts} + excluded.prompts, cost_usd = ${studioUsageDays.costUsd} + excluded.cost_usd`)
+      prompts = ${studioUsageDays.prompts} + excluded.prompts, cost_usd = ${studioUsageDays.costUsd} + excluded.cost_usd,
+      prompt_helps = ${studioUsageDays.promptHelps} + excluded.prompt_helps`)
   await tx.delete(studioUsageDays).where(eq(studioUsageDays.userId, fromUserId))
 
   await tx.execute(sql`

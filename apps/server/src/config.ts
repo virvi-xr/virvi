@@ -335,6 +335,9 @@ export const config = {
   // there is no Draft button and admins write lessons by hand. The workers' keys stay behind their key proxy
   anthropicApiKey: env('ANTHROPIC_API_KEY') || null,
   studioLessonModel: env('STUDIO_LESSON_MODEL') || 'claude-sonnet-5-5',
+  // "Improve my prompt" on a design's message box (src/studio/prompt-help.ts): its model, and how many a day per account
+  studioPromptHelpModel: env('STUDIO_PROMPT_HELP_MODEL') || 'claude-haiku-5-5',
+  studioPromptHelpPerDay: positiveInt(env('STUDIO_PROMPT_HELP_PER_DAY'), 30, true),
   studioPrices: studioPricesFrom(process.env),
   studioMana: manaSettingsFrom(process.env),
   // The studio scene's parcel (for example "-12,34"), where the checkout link sends a returning visitor

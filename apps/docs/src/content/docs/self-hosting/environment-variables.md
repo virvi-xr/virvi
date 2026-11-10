@@ -143,6 +143,15 @@ Signed-out visitors can try Virvi at `/try/...` (see [Try Without an Account](/d
 
 The Design Studio runs only in cloud mode, so on a self-hosted install trials cover the scene tools.
 
+## Design Studio
+
+The Design Studio runs only in cloud mode. These settings shape its "Improve my prompt" button, which rewrites a draft before it is sent. The button needs `ANTHROPIC_API_KEY` on the server; without it the button is hidden.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `STUDIO_PROMPT_HELP_MODEL` | `claude-haiku-5-5` | The Claude model that rewrites drafts. |
+| `STUDIO_PROMPT_HELP_PER_DAY` | `30` | Rewrites each account (trials too) may ask for per UTC day. They don't use prompts. `0` allows none. A value that isn't a whole number stops the server from starting. |
+
 ## Streaming
 
 These connect the server to the [streaming media server](/docs/self-hosting/docker-compose/#live-streaming).

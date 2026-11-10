@@ -300,6 +300,12 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio ratings and lessons ensured');
       } catch(e) { console.log('[virvi-server] studio ratings and lessons:', e.message); }
 
+      // Design Studio prompt help: how many times a day an account asked to improve a prompt; matches studioUsageDays.promptHelps in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_usage_days ADD COLUMN IF NOT EXISTS prompt_helps INTEGER NOT NULL DEFAULT 0\`;
+        console.log('[virvi-server] studio_usage_days.prompt_helps ensured');
+      } catch(e) { console.log('[virvi-server] studio_usage_days.prompt_helps:', e.message); }
+
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_pairings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), world_id UUID NOT NULL REFERENCES hyperfy_worlds(id) ON DELETE CASCADE, user_id UUID REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT UNIQUE, secret_hash TEXT, hyperfy_player_id TEXT, player_name TEXT, status TEXT NOT NULL DEFAULT 'pending', code_expires_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
