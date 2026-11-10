@@ -31,23 +31,23 @@ const TAG_WORDS: Record<RatingTag, string> = {
   other: 'isn’t right',
 }
 
-/** Free try-agains one owner may send per UTC day, across their designs. */
+/** Free try-agains one person may send per UTC day, across the designs they're on. */
 export const TRY_AGAIN_DAILY = 3
 
 /**
  * Why a 👎'd revision can't have its free try-again now, or null when it can. Only the design's latest revision gets
- * one, never a revision a try-again made (so they don't chain), once per revision, and TRY_AGAIN_DAILY a day per owner.
- * queuePrompt asks again inside its transaction, under the owner's lock, so concurrent asks can't pass it together.
+ * one, never a revision a try-again made (so they don't chain), once per revision, and TRY_AGAIN_DAILY a day per sender.
+ * queuePrompt asks again inside its transaction, under the sender's lock, so concurrent asks can't pass it together.
  */
 export async function tryAgainBlock(
-  exec: Exec, designId: string, ownerId: string, jobId: string, now: Date,
+  exec: Exec, designId: string, senderId: string, jobId: string, now: Date,
 ): Promise<'already_tried' | 'not_latest' | 'not_retryable' | 'try_again_limit' | null> {
   const [tried] = await exec.select({ id: studioJobs.id }).from(studioJobs).where(eq(studioJobs.feedbackFor, jobId))
   if (tried) return 'already_tried'
   const [job] = await exec.select({ feedbackFor: studioJobs.feedbackFor }).from(studioJobs).where(eq(studioJobs.id, jobId))
   if (job?.feedbackFor) return 'not_retryable'
   if ((await latestRevisionJob(exec, designId)) !== jobId) return 'not_latest'
-  if ((await tryAgainsToday(exec, ownerId, now)) >= TRY_AGAIN_DAILY) return 'try_again_limit'
+  if ((await tryAgainsToday(exec, senderId, now)) >= TRY_AGAIN_DAILY) return 'try_again_limit'
   return null
 }
 
@@ -61,17 +61,18 @@ async function latestRevisionJob(exec: Exec, designId: string): Promise<string |
   return rows[0]?.job_id ?? null
 }
 
-async function tryAgainsToday(exec: Exec, ownerId: string, now: Date): Promise<number> {
+/** The sender's try-agains today, on any design; one from before senders were kept (user_id null) is the owner's. */
+async function tryAgainsToday(exec: Exec, senderId: string, now: Date): Promise<number> {
   const day = now.toISOString().slice(0, 10)
   const rows = await exec.execute(sql`
     SELECT count(*)::int AS n FROM studio_jobs j JOIN studio_designs d ON d.id = j.design_id
-    WHERE d.owner_id = ${ownerId} AND j.feedback_for IS NOT NULL AND j.created_at >= ${`${day}T00:00:00Z`}::timestamptz`) as unknown as { n: number }[]
+    WHERE COALESCE(j.user_id, d.owner_id) = ${senderId} AND j.feedback_for IS NOT NULL AND j.created_at >= ${`${day}T00:00:00Z`}::timestamptz`) as unknown as { n: number }[]
   return rows[0]?.n ?? 0
 }
 
-/** Holds the owner's try-agains to one at a time until the transaction ends (the daily count stays true). */
-export async function lockTryAgains(exec: Exec, ownerId: string): Promise<void> {
-  await exec.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`studio-try-again:${ownerId}`}))`)
+/** Holds the sender's try-agains to one at a time until the transaction ends (the daily count stays true). */
+export async function lockTryAgains(exec: Exec, senderId: string): Promise<void> {
+  await exec.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`studio-try-again:${senderId}`}))`)
 }
 
 export type RatingInput = { rating: 'up' | 'down'; tags: RatingTag[]; note: string | null }
@@ -131,9 +132,9 @@ async function revisionJobs(designId: string, jobId?: string) {
 
 /**
  * Every revision of the design, with the rater's own rating of it (what the conversation shows): the reader's, or the
- * owner's for support. Try again counts against the owner's daily try-agains, as queuePrompt does.
+ * owner's for support. Try again counts against the rater's daily try-agains, as queuePrompt does for its sender.
  */
-export async function designRevisions(design: { id: string; ownerId: string }, raterId: string, now = new Date()): Promise<RevisionView[]> {
+export async function designRevisions(design: { id: string }, raterId: string, now = new Date()): Promise<RevisionView[]> {
   const designId = design.id
   const jobs = await revisionJobs(designId)
   if (!jobs.size) return []
@@ -152,7 +153,7 @@ export async function designRevisions(design: { id: string; ownerId: string }, r
     const r = ratings.find((x) => x.jobId === jobId)
     const categories = jobs.get(jobId)!.categories
     const offer = retried.has(jobId) ? 'used'
-      : r?.rating === 'down' && !(await tryAgainBlock(db, designId, design.ownerId, jobId, now)) ? 'available' : null
+      : r?.rating === 'down' && !(await tryAgainBlock(db, designId, raterId, jobId, now)) ? 'available' : null
     views.push({
       jobId,
       categories,

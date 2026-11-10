@@ -166,6 +166,12 @@ function systemNote(r: ContractResult, refunded: boolean): string | null {
   }
 }
 
+/**
+ * Who a prompt job's cost, give-back, off-topic and flag accounting goes to: its sender (LIV-159), or the design's owner
+ * for a job from before senders were kept.
+ */
+export const jobPayer = (job: { userId: string | null }, design: { ownerId: string }): string => job.userId ?? design.ownerId
+
 /** The design is idle again once no prompt is waiting or running. */
 export async function settleDesign(designId: string, exec: Exec = db): Promise<void> {
   await exec.update(studioDesigns).set({ status: 'idle' }).where(and(
@@ -190,7 +196,8 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     const day = job.countedDay ?? utcDay(now)
 
     if (job.type === 'prompt') {
-      const costDay = design ? await jobDay(design.ownerId, job.countedDay, now, tx) : day
+      const payer = design ? jobPayer(job, design) : null
+      const costDay = payer ? await jobDay(payer, job.countedDay, now, tx) : day
       const payload = job.payload as { agent?: string }
       const agent = result.agent ?? payload.agent ?? null
       if (result.reply || result.proposal) {
@@ -229,15 +236,15 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
       }
       if (result.pieces.some((p) => p.files?.length)) await cancelSupersededRenders(job.designId, superseded, tx, now)
       // Support's prompt (a Virvi admin's) is Virvi's spend: it goes on nobody's day, the trials' budget included
-      if (design && !job.byAdminId) await recordCost(design.ownerId, costDay, result.costUsd ?? 0, tx)
-      const refunded = (job.counted || job.countedFrom === 'gift') && !!design && (result.outcome === 'error'
-        || (result.outcome === 'off_topic' && await offTopicIsFree(tx, design.ownerId, now)))
-      if (refunded) await refundPrompt(design!.ownerId, day, job.countedFrom as PromptSource | null, tx)
+      if (payer && !job.byAdminId) await recordCost(payer, costDay, result.costUsd ?? 0, tx)
+      const refunded = (job.counted || job.countedFrom === 'gift') && !!payer && (result.outcome === 'error'
+        || (result.outcome === 'off_topic' && await offTopicIsFree(tx, payer, now)))
+      if (refunded) await refundPrompt(payer!, day, job.countedFrom as PromptSource | null, tx)
       const note = systemNote(result, refunded)
       if (note) await tx.insert(studioMessages).values({ designId: job.designId, role: 'system', text: note, jobId: job.id })
-      if ((result.outcome === 'off_topic' || result.outcome === 'declined') && result.scope && design && !job.byAdminId) {
+      if ((result.outcome === 'off_topic' || result.outcome === 'declined') && result.scope && design && payer && !job.byAdminId) {
         await logScopeEvent(tx, {
-          userId: design.ownerId, designId: design.id, jobId: job.id, by: result.scope.by, category: result.scope.category,
+          userId: payer, designId: design.id, jobId: job.id, by: result.scope.by, category: result.scope.category,
           note: result.scope.note, message: String((job.payload as { prompt?: unknown }).prompt ?? ''),
         })
       }
@@ -317,7 +324,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
   }
   if ((result.outcome === 'off_topic' || result.outcome === 'declined') && !job.byAdminId) {
     const [d] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, job.designId))
-    if (d) await maybeFlag(d.ownerId, now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
+    if (d) await maybeFlag(jobPayer(job, d), now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
   }
   if (job.type === 'prompt') await finishTimings(job.id)
   // LIV-66: a worker job that ended in an error is a failed background job
@@ -351,7 +358,7 @@ export async function failJobs(
       if (!job) return null
       const [design] = await tx.select().from(studioDesigns).where(eq(studioDesigns.id, job.designId))
       if (job.type === 'prompt') {
-        if ((job.counted || job.countedFrom === 'gift') && design) await refundPrompt(design.ownerId, job.countedDay ?? utcDay(now), job.countedFrom as PromptSource | null, tx)
+        if ((job.counted || job.countedFrom === 'gift') && design) await refundPrompt(jobPayer(job, design), job.countedDay ?? utcDay(now), job.countedFrom as PromptSource | null, tx)
         await tx.insert(studioMessages).values({
           designId: job.designId, role: 'system', jobId: job.id,
           text: `${error}${job.counted ? ' Your prompt was not counted.' : ''}`,

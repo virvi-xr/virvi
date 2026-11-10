@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { listUploads, publicUpload, uploadPaths } from './uploads.js'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioFinalizeCredits, studioJobs, studioPayments, studioMessages, studioPieces, studioRenders, studioRevisions } from '../db/schema.js'
+import { studioDesigns, studioFinalizeCredits, studioJobs, studioPayments, studioMessages, studioPieces, studioRenders, studioRevisions, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { reservePrompt, promptStatus, TRIAL_DAY } from './quota.js'
 import { recordTrialEvent, recordTrialBlocked } from '../auth/trial-events.js'
@@ -18,6 +18,7 @@ import { designRevisions, lockTryAgains, tryAgainBlock } from './ratings.js'
 import { liveLessons } from './lessons.js'
 import { retireIdea } from './prompt-ideas.js'
 import { recordMachine, typicalFirstReplySec } from './timings.js'
+import { memberCount } from './members.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
@@ -192,10 +193,19 @@ export async function designDetail(d: Design, now: Date, readerId = d.ownerId) {
   const [active] = await db.select({
     id: studioJobs.id, type: studioJobs.type, status: studioJobs.status, createdAt: studioJobs.createdAt,
     fixClipping: sql<FixClipping | null>`${studioJobs.payload}->'fixClipping'`,
+    userId: studioJobs.userId, byAdminId: studioJobs.byAdminId,
   }).from(studioJobs)
     .where(and(eq(studioJobs.designId, d.id), inArray(studioJobs.status, ['queued', 'taken'])))
     .orderBy(sql`CASE WHEN ${studioJobs.type} = 'prompt' THEN 0 ELSE 1 END`, asc(studioJobs.createdAt))
     .limit(1)
+  // Who sent each prompt: a row from before senders were kept (user_id null) is the owner's
+  const senderIds = [...new Set([d.ownerId, ...messages.map((m) => m.userId), active?.userId].filter((x): x is string => !!x))]
+  const names = new Map((await db.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, senderIds)))
+    .map((u) => [u.id, u.displayName]))
+  const sender = (userId: string | null) => {
+    const id = userId ?? d.ownerId
+    return { userId: id, displayName: names.get(id) ?? null }
+  }
   const [last] = await db.select({ jobId: studioJobs.id, status: studioJobs.status, result: studioJobs.result }).from(studioJobs)
     .where(and(eq(studioJobs.designId, d.id), eq(studioJobs.type, 'prompt')))
     .orderBy(desc(studioJobs.createdAt))
@@ -227,12 +237,20 @@ export async function designDetail(d: Design, now: Date, readerId = d.ownerId) {
         finalized: finalized.filter((f) => f.category === p.category).map(({ category: _c, ...f }) => f),
       }
     }),
-    // `support`: a Virvi admin wrote it (shown as Virvi support); who, is for the audit, not the page
+    // `support`: a Virvi admin wrote it (shown as Virvi support); who, is for the audit, not the page. `sender`: who
+    // wrote a person's message (null for the agent's, the system's and support's)
     messages: messages.map((m) => ({
       id: m.id, role: m.role, agent: m.agent, text: m.text, proposal: m.proposal, jobId: m.jobId, createdAt: m.createdAt, support: !!m.byAdminId,
+      sender: m.role === 'user' && !m.byAdminId ? sender(m.userId) : null,
     })),
     uploads: (await listUploads(d.id)).map(publicUpload),
-    activeJob: active ?? null,
+    // `senderName`: who sent the prompt running now (null for a render, or support's prompt)
+    activeJob: active
+      ? {
+        id: active.id, type: active.type, status: active.status, createdAt: active.createdAt, fixClipping: active.fixClipping,
+        senderName: active.type === 'prompt' && !active.byAdminId ? sender(active.userId).displayName : null,
+      }
+      : null,
     set: await setDetail(d, now),
     // Each agent reply that changed pieces, and the reader's own 👍 / 👎 of it (LIV-142)
     revisions: await designRevisions(d, readerId),
@@ -269,11 +287,15 @@ export async function startWorker(designId: string, jobId: string, now: Date): P
 }
 
 /**
+ * `senderId`: who sent it (the owner or a collaborator, LIV-159): the prompt counts against their allowance, gifts,
+ * credits, cost ceiling and try-agains, not the owner's, and the job and the message record them. On a shared design
+ * the agent gets the sender's name in front of their own words, so it can tell who asked for what.
+ *
  * `byAdminId`: a Virvi admin helping on the owner's design (Virvi support). Their prompt takes nothing from anyone's
  * allowance, gifts, credits or trial quota, and the cost ceiling doesn't stop it; the per-prompt limits, one prompt at
  * a time and an archived design's refusal still apply. The job and the message record the admin.
  *
- * `feedbackFor`: the owner's "Try again with this feedback" on a 👎'd revision (LIV-142), in their own words: free (no
+ * `feedbackFor`: the sender's "Try again with this feedback" on a 👎'd revision (LIV-142), in their own words: free (no
  * allowance, gift or credit; past the cost ceiling it is refused), once per revision.
  */
 export async function queuePrompt(
@@ -281,6 +303,7 @@ export async function queuePrompt(
   input: {
     text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping; byAdminId?: string
     feedbackFor?: string
+    senderId: string
     /** The example prompt the words came from (prompt-ideas.ts): retired for everyone when this is the design's first prompt. */
     ideaId?: string
   },
@@ -288,6 +311,8 @@ export async function queuePrompt(
 ): Promise<{ ok: true; jobId: string } | ({ ok: false } & Refusal)> {
   let jobId: string
   let trialPrompt = false
+  let senderName: string | null = null
+  const senderId = input.senderId
   try {
     jobId = await db.transaction(async (tx) => {
       // One prompt at a time: lock the design, then check; the partial unique index backs this up
@@ -316,9 +341,9 @@ export async function queuePrompt(
         fixText = fixChecksText(categories)
       }
       if (input.feedbackFor) {
-        // One owner's try-agains one at a time, so the daily count holds across their designs
-        await lockTryAgains(tx, d.ownerId)
-        const block = await tryAgainBlock(tx, d.id, d.ownerId, input.feedbackFor, now)
+        // One sender's try-agains one at a time, so the daily count holds across their designs
+        await lockTryAgains(tx, senderId)
+        const block = await tryAgainBlock(tx, d.id, senderId, input.feedbackFor, now)
         if (block) throw new Refused({ status: block === 'try_again_limit' ? 429 : 409, body: { error: block, code: block } })
       }
       // A clipping report is the agent's mistake too: free, in the server's words. Support's prompts are never counted.
@@ -326,9 +351,9 @@ export async function queuePrompt(
       const feedback = input.feedbackFor ?? null
       const counted = !support && !feedback && !input.continue && !input.fixChecks && !input.fixClipping
       const r = support ? { ok: true as const, day: null, from: null }
-        : await reservePrompt(d.ownerId, now, { counted, ...(feedback ? { gifts: false } : {}) }, tx)
+        : await reservePrompt(senderId, now, { counted, ...(feedback ? { gifts: false } : {}) }, tx)
       if (!r.ok) {
-        const s = await promptStatus(d.ownerId, now)
+        const s = await promptStatus(senderId, now)
         if (s.trial && (r.reason === 'allowance' || r.reason === 'cost_ceiling')) throw new Refused({ status: 403, body: { error: 'account_required', action: 'more_prompts' } })
         if (r.reason === 'trial_busy') {
           throw new Refused({ status: 429, body: { error: 'trial_busy', message: 'Free tries are busy right now — create an account to keep going.' } })
@@ -341,10 +366,16 @@ export async function queuePrompt(
         .where(and(eq(studioMessages.designId, d.id), eq(studioMessages.role, 'user'))).limit(1)).length
       const fix = input.fixClipping
       const text = input.continue ? CONTINUE_TEXT : fix ? clippingText(d.kind, fix) : fixText ?? input.text!
-      await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text, byAdminId: support })
-      // Support's own words reach the agent marked as theirs; never scope-checked (that is for the designer's words)
+      await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text, userId: senderId, byAdminId: support })
+      if (!support) {
+        const [u] = await tx.select({ displayName: users.displayName }).from(users).where(eq(users.id, senderId))
+        senderName = u?.displayName ?? null
+      }
+      // Support's own words reach the agent marked as theirs; never scope-checked (that is for the designer's words).
+      // On a shared design a member's own words carry their name
       const ownWords = !input.continue && !fix && !fixText
-      const prompt = fix ? clippingInstruction(d.kind, fix) : !ownWords ? text : support ? `${SUPPORT_PREFIX}${ownerWords(text)}` : ownerWords(text)
+      const named = !support && senderName && await memberCount(d.id, tx) > 0 ? `${senderName}: ` : ''
+      const prompt = fix ? clippingInstruction(d.kind, fix) : !ownWords ? text : support ? `${SUPPORT_PREFIX}${ownerWords(text)}` : `${named}${ownerWords(text)}`
       const lessons = await liveLessons(d.kind, tx)
       const [job] = await tx.insert(studioJobs).values({
         designId: d.id,
@@ -359,7 +390,7 @@ export async function queuePrompt(
           limits: promptLimits(d.agent, d.kind),
           render: null,
           uploads: await uploadPaths(d.id, tx),
-          // the user's own words; Continue and fixing the checks are the server's (a try-again is the owner's)
+          // the user's own words; Continue and fixing the checks are the server's (a try-again is the sender's)
           check: counted || !!feedback,
           ...(fix ? { fixClipping: fix } : {}),
           // Admin-approved lessons for this kind (LIV-142): the worker adds them to its instructions, never to the
@@ -369,16 +400,17 @@ export async function queuePrompt(
         counted,
         countedDay: r.day,
         countedFrom: r.from,
+        userId: senderId,
         byAdminId: support,
         feedbackFor: feedback,
       }).returning({ id: studioJobs.id })
       await tx.update(studioDesigns).set({ status: 'building', lastJobAt: now }).where(eq(studioDesigns.id, d.id))
-      if (first) await retireIdea(tx, input.ideaId!, d.ownerId, d.id, now)
+      if (first) await retireIdea(tx, input.ideaId!, senderId, d.id, now)
       return job.id
     })
   } catch (err) {
     if (err instanceof Refused) {
-      if (err.r.body.error === 'account_required') recordTrialBlocked(design.ownerId, String(err.r.body.action ?? 'more_prompts'))
+      if (err.r.body.error === 'account_required') recordTrialBlocked(senderId, String(err.r.body.action ?? 'more_prompts'))
       return { ok: false, ...err.r }
     }
     if ((err as { code?: string }).code === '23505') {
@@ -387,8 +419,8 @@ export async function queuePrompt(
     }
     throw err
   }
-  if (trialPrompt) recordTrialEvent('prompt', design.ownerId)
-  await publishStudio(design.id, { type: 'job', jobId, status: 'queued' })
+  if (trialPrompt) recordTrialEvent('prompt', senderId)
+  await publishStudio(design.id, { type: 'job', jobId, status: 'queued', senderName })
   await startWorker(design.id, jobId, now)
   return { ok: true, jobId }
 }

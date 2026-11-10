@@ -18,16 +18,16 @@ export const WARM_EVERY_MS = 5 * 60_000
 export type WarmOutcome = 'warmed' | 'external' | 'archived' | 'no_prompts' | 'busy' | 'recent' | 'failed'
 
 /**
- * Warms the design's machine unless there is no point: the worker is run by hand, the design is archived, the owner
- * couldn't send a prompt now (no prompts left, or past the cost ceiling; a Virvi admin's support prompts don't count
+ * Warms the design's machine unless there is no point: the worker is run by hand, the design is archived, the person
+ * writing (`userId`, the owner or a collaborator) couldn't send a prompt now (no prompts left, or past the cost ceiling; a Virvi admin's support prompts don't count
  * so they aren't held to it), a job is already waiting or running (it has the machine coming), or it was warmed in the
  * last 5 minutes (held by the database, so it holds across servers).
  */
-export async function warmDesign(d: Design, opts: { support: boolean }, now: Date, deps: Partial<MachineDeps> = {}): Promise<WarmOutcome> {
+export async function warmDesign(d: Design, opts: { support: boolean; userId: string }, now: Date, deps: Partial<MachineDeps> = {}): Promise<WarmOutcome> {
   if (config.studioMachines === 'external') return 'external'
   if (d.archivedAt) return 'archived'
   if (!opts.support) {
-    const s = await promptStatus(d.ownerId, now)
+    const s = await promptStatus(opts.userId, now)
     if (s.left <= 0 || s.overCostCeiling) return 'no_prompts'
   }
   const [open] = await db.select({ id: studioJobs.id }).from(studioJobs)

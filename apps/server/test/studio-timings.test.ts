@@ -45,7 +45,7 @@ describe('timing the wait for a first reply', () => {
 
   const send = async (d: { id: string }) => {
     const [design] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id))
-    const r = await queuePrompt(design, { text: 'a neon cap with a secret visor', selectedSlots: null, continue: false }, new Date())
+    const r = await queuePrompt(design, { text: 'a neon cap with a secret visor', selectedSlots: null, continue: false, senderId: design.ownerId }, new Date())
     if (!r.ok) throw new Error(JSON.stringify(r))
     return r.jobId
   }

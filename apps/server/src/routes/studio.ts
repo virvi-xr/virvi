@@ -289,7 +289,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     const cont = b.continue === true
     const fixChecks = b.fixChecks === true
     if (fixChecks) {
-      const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixChecks: true, byAdminId }, new Date())
+      const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixChecks: true, byAdminId, senderId: request.user.id }, new Date())
       if (!r.ok) return reply.status(r.status).send(r.body)
       return reply.status(202).send({ jobId: r.jobId })
     }
@@ -306,7 +306,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       slots = [...new Set(b.selectedSlots as string[])]
     }
     const ideaId = !cont && typeof b.ideaId === 'string' ? b.ideaId : undefined
-    const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId, ideaId }, new Date())
+    const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId, ideaId, senderId: request.user.id }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
   })
@@ -376,7 +376,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/warm', trialWork, async (request, reply) => {
     const a = await designAccess(request, { need: 'work', ...SUPPORT })
     if (!a || a === VIEWER) return refused(reply, a)
-    await warmDesign(a.d, { support: a.support }, new Date())
+    await warmDesign(a.d, { support: a.support, userId: request.user.id }, new Date())
     return reply.status(204).send()
   })
 
@@ -417,7 +417,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     const down = await downRating(jobId, request.user.id)
     if (!down) return reply.status(409).send({ error: 'not_rated_down', code: 'not_rated_down' })
     const text = feedbackText(rev.names, down.tags as RatingTag[], down.note)
-    const r = await queuePrompt(d, { text, selectedSlots: null, continue: false, feedbackFor: jobId }, new Date())
+    const r = await queuePrompt(d, { text, selectedSlots: null, continue: false, feedbackFor: jobId, senderId: request.user.id }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
   })
@@ -771,7 +771,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       eq(studioSetRenders.status, 'ready'))) : []
     if (!seen) return reply.status(409).send({ error: 'not_seen', code: 'not_seen' })
     if (await freeFixesLeft(d.id, emote) <= 0) return reply.status(409).send({ error: 'clipping_fix_limit', code: 'clipping_fix_limit' })
-    const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixClipping: fix, byAdminId: a.support ? request.user.id : undefined }, new Date())
+    const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixClipping: fix, byAdminId: a.support ? request.user.id : undefined, senderId: request.user.id }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     await recordCheck(d.id, revisions, emote, fix.bodyShape, 'clipping')
     return reply.status(202).send({ jobId: r.jobId })
