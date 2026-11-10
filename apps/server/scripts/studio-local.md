@@ -59,8 +59,7 @@ Design Studio page:
 
 No agent runs and nothing is spent.
 
-1. Steps 1 and 2 above. For the dashboard on `next dev`, start the server with `PUBLIC_URL=http://localhost:3010
-   CORS_ORIGINS=http://localhost:3000`. Add a dummy `STRIPE_SECRET_KEY` to see the payment buttons refuse with
+1. Steps 1 and 2 above. For the dashboard on `next dev`, start the server with `PUBLIC_URL=http://localhost:3010`. Add a dummy `STRIPE_SECRET_KEY` to see the payment buttons refuse with
    "Stripe didn’t answer".
 2. The seed:
 

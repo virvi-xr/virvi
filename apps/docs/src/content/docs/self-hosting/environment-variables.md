@@ -7,7 +7,7 @@ sidebar:
 
 The server reads its settings from environment variables when it starts (`apps/server/src/config.ts`). Change one, then restart the server.
 
-With Docker Compose, a variable reaches the server only if it is listed under the `virvi` service's `environment:`. See [Docker Compose](/docs/self-hosting/docker-compose/#adding-more-variables).
+With Docker Compose, put variables in `.env`; the lines under the `virvi` service's `environment:` win over it. See [Docker Compose](/docs/self-hosting/docker-compose/#adding-more-variables).
 
 Never commit secret values. The tables describe each secret; they never show one.
 
@@ -30,7 +30,7 @@ Never commit secret values. The tables describe each secret; they never show one
 | `DATABASE_URL` | Required | Required | none | Postgres connection string. Without it the server prints `FATAL: DATABASE_URL environment variable is required` and exits. |
 | `JWT_SECRET` | Required | Required | `dev-secret-change-me` | Signs every sign-in token. Use a long random string (`openssl rand -hex 32`). When `NODE_ENV=production` (always true in the Docker image) or in cloud mode, the server refuses to start without it or with the default. Changing it signs everyone out. |
 | `PUBLIC_URL` | Required | Required | `http://localhost:3010` | The public origin of this server, such as `https://virvi.example.com`. Used in uploaded file URLs, OAuth redirects and the API docs' server URL. |
-| `REDIS_URL` | Not used | Required | none | Redis for cross-server rooms. In `scalable` mode without it, the server quietly falls back to in-memory rooms, and players on different servers stop seeing each other's changes. `/api/health` shows `redis: not_configured`. |
+| `REDIS_URL` | Not used | Required | none | Redis for cross-server rooms. The server won't start in `scalable` mode without it. |
 
 ## Server and network
 
@@ -73,7 +73,7 @@ A negative or non-numeric value is treated as `1`.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `STORAGE_PROVIDER` | `local` | `local` stores uploads on disk. `s3` or `r2` stores them in an S3-compatible bucket. Any other value (including `supabase`) means `local`. Use `s3` or `r2` when you run more than one server on different machines. |
+| `STORAGE_PROVIDER` | `local` | `local` stores uploads on disk. `s3` or `r2` stores them in an S3-compatible bucket. Any other value stops the server at boot. Unset, it's `local` (`s3` in cloud mode). Use `s3` or `r2` when you run more than one server on different machines. |
 | `LOCAL_STORAGE_PATH` | `./uploads` | Folder for uploads with `local`. Served publicly at `/uploads/`. Must be on persistent storage. |
 | `PRIVATE_STORAGE_PATH` | a `private` folder beside `LOCAL_STORAGE_PATH` | Single mode only: where scene import sources and builds are kept. Must be outside `LOCAL_STORAGE_PATH` (the server refuses a path inside it) and on persistent storage. |
 | `S3_BUCKET` | none | Bucket name. Required with `s3`/`r2`; the server throws `S3_BUCKET is required when using s3/r2 storage` on the first upload without it. |
@@ -158,8 +158,8 @@ These connect the server to the [streaming media server](/docs/self-hosting/dock
 
 | Variable | Default | What it does |
 |---|---|---|
-| `VIRVI_DCL_DEPLOY_KEY` | none | Private key (32-byte hex) of a wallet used only to deploy Worlds an owner has granted it ("Let Virvi deploy for me"). A malformed key is ignored with a warning. |
-| `VIRVI_DCL_PARCEL_DEPLOY_KEY` | none | A separate wallet's private key for Genesis City parcels. Unset hides the "Make Virvi an operator" option; browser signing still works. |
+| `VIRVI_DCL_DEPLOY_KEY` | none | Private key (32-byte hex) of a wallet used only to deploy Worlds an owner has granted it ("Let Virvi deploy for me"). A malformed key stops the server at boot (the error names the variable, never the value). |
+| `VIRVI_DCL_PARCEL_DEPLOY_KEY` | none | A separate wallet's private key for Genesis City parcels. Unset hides the "Make Virvi an operator" option; browser signing still works. A malformed key stops the server at boot. |
 | `DCL_REDEPLOY_SWEEP_MS` | `30000` | How often pending redeploys are checked (`0` disables). |
 | `DCL_MAP_SWEEP_MS` | `60000` | How often to check whether Decentraland built a map snapshot for a new deploy (`0` disables). |
 | `DCL_CATALYST_URL` | `https://peer.decentraland.org` | Catalyst for Genesis City deploys and parcel permissions. |
@@ -206,13 +206,4 @@ The dashboard is a static export. These are baked in when the image is built (`d
 | `NEXT_PUBLIC_DISCORD_URL` | none | Discord link on the landing page; hidden when unset. |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | none | Turnstile site key for trials. |
 
-The docs are built with absolute links to `https://virvi.io` unless `DOCS_SITE` is set at build time. The Dockerfile doesn't pass `DOCS_SITE`, so a self-hosted image's `/docs/llms.txt` links point at virvi.io.
-
-## Variables that do nothing
-
-`.env.example` and older docs list some variables the server no longer reads. Setting them has no effect:
-
-- `CORS_ORIGINS`: the API allows every origin and never uses cookies.
-- `MULTI_TENANT`
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`: Supabase storage isn't implemented; `STORAGE_PROVIDER=supabase` stores on local disk.
-- `ALCHEMY_API_KEY`
+The server's `/llms.txt`, `/docs/llms.txt`, `/docs/llms-full.txt` and `/docs/<page>.md` files link to its own `PUBLIC_URL`, so an agent reading your install's docs stays on your install. The HTML pages keep their virvi.io canonical links.

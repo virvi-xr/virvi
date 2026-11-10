@@ -14,7 +14,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432" # this machine only; Docker publishing skips host firewalls
     environment:
       POSTGRES_DB: vlm  # virvi-rename: keep (local database name)
       POSTGRES_USER: vlm  # virvi-rename: keep (local database name)
@@ -35,6 +35,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Everything in .env reaches the server (SMTP, OAuth, TRUST_PROXY_HOPS...); the lines below win over it.
+    env_file: .env
     environment:
       VIRVI_MODE: single
       DATABASE_URL: postgresql://vlm:${POSTGRES_PASSWORD:-vlm_prod}@postgres:5432/vlm
@@ -42,6 +44,8 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3010}
       STORAGE_PROVIDER: local
       LOCAL_STORAGE_PATH: /app/uploads
+      PRIVATE_STORAGE_PATH: /app/private
+      PORT: 3010 # the container's port; PORT in .env is the host port
     volumes:
       - uploads:/app/uploads
       - private:/app/private

@@ -82,8 +82,8 @@ Without a dashboard folder the server runs API-only. Without a docs folder it ha
 |---|---|---|
 | Any Linux machine with Docker | `docker-compose.single.yml`, `docker-compose.scalable.yml` | The path these docs follow. |
 | Railway | `Dockerfile`, `.railway/railway.ts` | Start command `apps/server/entrypoint.sh`, health check `/api/health`. Add a Postgres database, set `DATABASE_URL`, `JWT_SECRET`, `PUBLIC_URL`, and `TRUST_PROXY_HOPS=2`. Set `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_WSS_URL` as variables so the build sees them. |
-| Fly.io | `fly.toml` | Single mode on port 3010 with a `/api/health` check. It has no volume and stops idle machines: use S3/R2 storage (or add a volume), and set `DATABASE_URL` and `JWT_SECRET` as secrets. |
-| Render | `render.yaml` | Generates `JWT_SECRET`; you set `DATABASE_URL` and `PUBLIC_URL`. Its `SUPABASE_*` entries do nothing (Supabase storage isn't implemented). Use S3/R2 storage or a persistent disk. |
+| Fly.io | `fly.toml` | Single mode on port 3010 with a `/api/health` check. Uploads go on a volume: create it once with `fly volumes create virvi_data --region iad --size 10` before the first deploy. Set `DATABASE_URL` and `JWT_SECRET` as secrets. |
+| Render | `render.yaml` | Generates `JWT_SECRET`; you set `DATABASE_URL` and `PUBLIC_URL`. It stores uploads on a 10 GB persistent disk (Render doesn't do zero-downtime deploys for a service with a disk); for S3/R2 instead, set `STORAGE_PROVIDER=s3` and the S3 variables. |
 
 On any host, set [`TRUST_PROXY_HOPS`](/docs/self-hosting/environment-variables/#trust_proxy_hops) to the number of proxies in front of the server.
 
@@ -94,7 +94,7 @@ On any host, set [`TRUST_PROXY_HOPS`](/docs/self-hosting/environment-variables/#
 - `TRUST_PROXY_HOPS` for your proxy setup (`0` with no proxy).
 - `STREAMING_WEBHOOK_KEY` if you turn streaming on.
 - Block `/metrics` at your proxy if it is on.
-- Don't publish Postgres (5432) or Redis (6379) on a public interface. The Compose files publish both on the host by default.
+- Keep Postgres (5432) and Redis (6379) off public interfaces. The Compose files publish them on `127.0.0.1` only.
 - `SMTP_*` and `EMAIL_FROM` so password resets work, and `AR_REPORTS_EMAIL` so space reports reach you.
 - Sign up first, so you are the instance admin.
 

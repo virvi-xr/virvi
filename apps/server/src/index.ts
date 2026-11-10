@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 const _require = createRequire(import.meta.url)
 const { Server: ColyseusServer } = _require('colyseus') as any
 const { WebSocketTransport } = _require('@colyseus/ws-transport') as any
-import { config, assertProductionSecrets, roomsDistributed } from './config.js'
+import { config, assertProductionSecrets, assertScalableRedis, roomsDistributed } from './config.js'
 import { startHookCrons } from './integrations/platform-hooks.js'
 import { defineRooms } from './ws/registry.js'
 import { runMigrations } from './db/migrate.js'
@@ -27,6 +27,7 @@ async function main() {
   // LIV-66: an exception nothing caught is recorded before the process exits, as it always has
   installProcessErrorHandlers()
   assertProductionSecrets({ mode: config.mode, nodeEnv: process.env.NODE_ENV, jwtSecret: config.jwtSecret })
+  assertScalableRedis({ mode: config.mode, redisUrl: config.redisUrl })
   console.log(`[virvi-server] Starting in "${config.mode}" mode`)
 
   // ── Auto-migrate ─────────────────────────────────────────────────────────

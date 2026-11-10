@@ -150,7 +150,7 @@ If you have no proxy, set it to `0`; otherwise visitors can choose their own IP 
 
 ### Players on different servers don't see each other's changes
 
-Scalable mode without `REDIS_URL` uses in-memory rooms. `/api/health` shows `"redis": "not_configured"`. Set `REDIS_URL` on every server.
+Scalable mode won't start without `REDIS_URL` (`REDIS_URL must be set in scalable mode`). Set it on every server, all pointing at the same Redis.
 
 ### Scene imports are refused
 
@@ -158,12 +158,12 @@ Scalable mode without `REDIS_URL` uses in-memory rooms. `/api/health` shows `"re
 
 ### Emails don't arrive
 
-The log shows `SMTP not configured, skipping email to ...`. Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` and `EMAIL_FROM`, and pass them through Compose ([Adding more variables](/docs/self-hosting/docker-compose/#adding-more-variables)).
+The log shows `SMTP not configured, skipping email to ...`. Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` and `EMAIL_FROM`, in `.env`, then `docker compose up -d`.
 
 ### A setting has no effect
 
-- With Compose, is it listed under the `virvi` service's `environment:`? A line in `.env` alone isn't passed to the server.
-- Is it one of the [variables that do nothing](/docs/self-hosting/environment-variables/#variables-that-do-nothing)?
+- With Compose, is it also set under the `virvi` service's `environment:`? Those lines win over `.env`.
+- Did you restart the container after changing `.env`? (`docker compose up -d` recreates it.)
 - Variables starting `NEXT_PUBLIC_` take effect only when the image is rebuilt.
 
 ### `Server room limit reached`

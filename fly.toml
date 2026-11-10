@@ -8,6 +8,13 @@ primary_region = "iad"
   VIRVI_MODE = "single"
   PORT = "3010"
   NODE_ENV = "production"
+  # Uploads and private files on the volume below, so they survive deploys and machine replacement
+  LOCAL_STORAGE_PATH = "/app/data/uploads"
+
+# Create it once before the first deploy: fly volumes create virvi_data --region iad --size 10
+[mounts]
+  source = "virvi_data"
+  destination = "/app/data"
 
 [http_service]
   internal_port = 3010

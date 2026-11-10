@@ -70,7 +70,7 @@ Open `http://localhost:3010` and sign up. The first account on a new install bec
 
 ### What the single file sets up
 
-- `postgres`: database `vlm`, user `vlm`, data in the `pgdata` volume. Port 5432 is also published on the host; remove that `ports:` entry if the host is public.
+- `postgres`: database `vlm`, user `vlm`, data in the `pgdata` volume. Port 5432 is published on `127.0.0.1` only, for tools on the same machine.
 - `virvi`: `VIRVI_MODE=single`, `STORAGE_PROVIDER=local`, uploads in the `uploads` volume (`/app/uploads`) and private import files in the `private` volume (`/app/private`).
 
 ## Your own domain
@@ -92,18 +92,15 @@ Put a reverse proxy (Caddy, nginx, Traefik) in front for HTTPS. It must pass Web
 
 ## Adding more variables
 
-The Compose files pass only the variables listed under the `virvi` service's `environment:`. Adding a line to `.env` alone does nothing for the server. To set more (SMTP, OAuth, `TRUST_PROXY_HOPS` and so on), add them to that list:
+Every line of `.env` reaches the server (the Compose files load it with `env_file`). To set more (SMTP, OAuth, `TRUST_PROXY_HOPS` and so on), add them to `.env`:
 
-```yaml
-  virvi:
-    environment:
-      # ...the existing lines...
-      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
-      SMTP_HOST: ${SMTP_HOST}
-      EMAIL_FROM: ${EMAIL_FROM}
+```bash
+TRUST_PROXY_HOPS=1
+SMTP_HOST=smtp.example.com
+EMAIL_FROM=noreply@example.com
 ```
 
-Or add `env_file: .env` to the `virvi` service to pass every line of `.env`. The full list is in [Environment Variables](/docs/self-hosting/environment-variables/).
+The values under the `virvi` service's `environment:` (mode, database, storage paths) win over `.env`. The full list is in [Environment Variables](/docs/self-hosting/environment-variables/).
 
 Then apply it:
 
@@ -113,7 +110,7 @@ docker compose -f docker-compose.single.yml up -d
 
 ## Scalable mode
 
-`docker-compose.scalable.yml` adds Redis (`REDIS_URL=redis://redis:6379`) so real-time rooms work across several Virvi containers. Redis has no password and its port 6379 is published on the host: remove that `ports:` entry if the host is public.
+`docker-compose.scalable.yml` adds Redis (`REDIS_URL=redis://redis:6379`) so real-time rooms work across several Virvi containers. Redis has no password, so its port 6379 is published on `127.0.0.1` only.
 
 ```bash
 docker compose -f docker-compose.scalable.yml up -d --build

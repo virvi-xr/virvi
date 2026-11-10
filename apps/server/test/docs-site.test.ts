@@ -78,3 +78,37 @@ describe('docs site', () => {
     await bare.close()
   })
 })
+
+describe('docs site on a self-hosted address', () => {
+  let selfDir: string
+  let selfApp: FastifyInstance
+  beforeAll(async () => {
+    selfDir = mkdtempSync(join(tmpdir(), 'docs-self-'))
+    writeFileSync(join(selfDir, 'index.html'), '<a href="https://virvi.io/docs/x/">x</a>')
+    writeFileSync(join(selfDir, 'llms.txt'), '- [Overview](https://virvi.io/docs/self-hosting/overview.md)\nHosted: https://virvi.io\n')
+    mkdirSync(join(selfDir, 'self-hosting'), { recursive: true })
+    writeFileSync(join(selfDir, 'self-hosting', 'overview.md'), 'Index: https://virvi.io/llms.txt\n')
+    selfApp = Fastify()
+    await registerDocsSite(selfApp, selfDir, 'https://venues.example.com/')
+    await selfApp.ready()
+  })
+  afterAll(async () => {
+    await selfApp.close()
+    rmSync(selfDir, { recursive: true, force: true })
+  })
+
+  it("points llms.txt's docs links at this server, at the root and under /docs, and leaves virvi.io itself alone", async () => {
+    for (const url of ['/llms.txt', '/docs/llms.txt', '/docs/llms.txt?x=1']) {
+      const res = await selfApp.inject({ method: 'GET', url })
+      expect(res.headers['content-type'], url).toMatch(/^text\/plain/)
+      expect(res.body, url).toBe('- [Overview](https://venues.example.com/docs/self-hosting/overview.md)\nHosted: https://virvi.io\n')
+    }
+  })
+
+  it('rewrites Markdown pages and leaves HTML as built', async () => {
+    const md = await selfApp.inject({ method: 'GET', url: '/docs/self-hosting/overview.md' })
+    expect(md.headers['content-type']).toMatch(/^text\/markdown/)
+    expect(md.body).toBe('Index: https://venues.example.com/llms.txt\n')
+    expect((await selfApp.inject({ method: 'GET', url: '/docs/' })).body).toContain('https://virvi.io/docs/x/')
+  })
+})

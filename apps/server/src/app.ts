@@ -376,7 +376,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   })
 
   // ── Docs (/docs, plus /llms.txt for agents) ───────────────────────────
-  const docsServed = await registerDocsSite(app, config.docsDir)
+  const docsServed = await registerDocsSite(app, config.docsDir, config.publicUrl)
   console.log(`[virvi-server] Docs ${docsServed ? `served at /docs from ${resolve(config.docsDir)}` : `not built (${resolve(config.docsDir)})`}`)
 
   // ── Static Dashboard ─────────────────────────────────────────────────────

@@ -13,9 +13,11 @@ services:
         sync: false
       - key: PUBLIC_URL
         sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
-        sync: false
+      # Uploads and private files live on the disk below, so they survive deploys and restarts.
+      # For S3/R2 instead, set STORAGE_PROVIDER=s3 with S3_BUCKET, S3_ENDPOINT and the AWS_* keys.
+      - key: LOCAL_STORAGE_PATH
+        value: /app/data/uploads
+    disk:
+      name: virvi-data
+      mountPath: /app/data
+      sizeGB: 10

@@ -4,12 +4,13 @@
  * Modes:
  *   single   — Self-hosted, one server, in-memory Colyseus presence
  *   scalable — Self-hosted, multiple servers + Redis presence
- *   cloud    — Hosted virvi.io SaaS, multi-tenant, billing enabled
+ *   cloud    — Hosted virvi.io SaaS, billing enabled
  */
 
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { getAddress } from 'ethers'
+import { resolveStorageProvider } from './storage/index.js'
 
 export type VirviMode = 'single' | 'scalable' | 'cloud'
 
@@ -126,6 +127,13 @@ export function studioPricesFrom(e: Record<string, string | undefined>) {
   }
 }
 
+/** Refuse to start scalable mode without Redis: in-memory rooms would split players across servers without a word. */
+export function assertScalableRedis(c: { mode: VirviMode; redisUrl?: string }): void {
+  if (c.mode === 'scalable' && !c.redisUrl?.trim()) {
+    throw new Error('REDIS_URL must be set in scalable mode (use VIRVI_MODE=single for one server)')
+  }
+}
+
 /** Refuse to start a production-like server on the well-known development JWT secret. */
 export function assertProductionSecrets(c: { mode: VirviMode; nodeEnv?: string; jwtSecret: string }): void {
   const production = c.mode === 'cloud' || c.nodeEnv === 'production'
@@ -157,8 +165,8 @@ const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0
 
 /**
  * A deploy key (VIRVI_DCL_DEPLOY_KEY, VIRVI_DCL_PARCEL_DEPLOY_KEY) checked once at startup: a 32-byte hex secp256k1
- * private key, returned 0x-prefixed. A malformed key is treated as unset (Virvi deploys show as unavailable) with a
- * warning that names the variable but never includes the key, instead of throwing on every use.
+ * private key, returned 0x-prefixed; unset is null. A malformed key stops the server at boot with an error that names
+ * the variable but never includes the key.
  */
 export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY_KEY'): string | null {
   const hex = raw?.trim().replace(/^0x/i, '') ?? ''
@@ -167,8 +175,8 @@ export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY
     const n = BigInt(`0x${hex}`)
     if (n > 0n && n < SECP256K1_N) return `0x${hex}`
   }
-  console.warn(`[virvi-config] ${name} is not a valid private key (32 bytes of hex); Virvi deploys are off until it is fixed`)
-  return null
+  // Refuse to start rather than quietly turning deploys off. The message never includes the value.
+  throw new Error(`${name} is not a valid private key (32 bytes of hex). Fix it or unset it.`)
 }
 
 /** The first line of a RELEASE file (the deploy stamps the commit SHA there, since `railway up` from a checkout passes
@@ -262,14 +270,8 @@ export const config = {
   // All features unlocked when billing is disabled (self-hosted gets everything)
   allFeaturesUnlocked: !env('STRIPE_SECRET_KEY') && mode !== 'cloud',
 
-  // ── Multi-tenancy ───────────────────────────────────────────────────────
-  multiTenant: env('MULTI_TENANT')
-    ? env('MULTI_TENANT') === 'true'
-    : mode === 'cloud',
-
   // ── Storage ─────────────────────────────────────────────────────────────
-  storageProvider: env('STORAGE_PROVIDER')
-    || (mode === 'cloud' ? 's3' : 'local'),
+  storageProvider: resolveStorageProvider(), // throws at boot on an unknown STORAGE_PROVIDER
   cdnUrl: env('CDN_URL') || null,
 
   // Decentraland wallet Virvi deploys Worlds scenes with ("Let Virvi deploy for me"). Env only:
@@ -278,11 +280,6 @@ export const config = {
   // A separate wallet for Genesis City parcels, which owners make an update operator on-chain. Unset hides that
   // option (browser signing still works). Env only: never logged, never returned.
   virviDclParcelDeployKey: validDeployKey(env('VIRVI_DCL_PARCEL_DEPLOY_KEY'), 'VIRVI_DCL_PARCEL_DEPLOY_KEY'),
-
-  // Supabase (single mode default external storage)
-  supabaseUrl: env('SUPABASE_URL'),
-  supabaseAnonKey: env('SUPABASE_ANON_KEY'),
-  supabaseServiceKey: env('SUPABASE_SERVICE_KEY'),
 
   // S3 / R2
   s3Bucket: env('S3_BUCKET'),
@@ -364,12 +361,6 @@ export const config = {
   rateLimitMax: parseInt(env('RATE_LIMIT_MAX') || '300'),
   // Reverse-proxy hops to trust for client IP (Railway = 1)
   trustProxyHops: ((n) => (Number.isNaN(n) || n < 0 ? 1 : n))(parseInt(env('TRUST_PROXY_HOPS') || '1')),
-
-  // ── CORS ──────────────────────────────────────────────────────────────
-  corsOrigins: [
-    env('PUBLIC_URL') || 'http://localhost:3010',
-    ...(env('CORS_ORIGINS') ? env('CORS_ORIGINS')!.split(',').map((s) => s.trim()).filter(Boolean) : []),
-  ],
 
   // ── Email ──────────────────────────────────────────────────────────────
   smtpHost: env('SMTP_HOST'),

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { assertProductionSecrets, validDeployKey, studioPricesFrom } from '../src/config.js'
+import { describe, it, expect } from 'vitest'
+import { assertProductionSecrets, assertScalableRedis, validDeployKey, studioPricesFrom } from '../src/config.js'
 
 describe('assertProductionSecrets', () => {
   it('refuses the dev or an empty secret in cloud mode or NODE_ENV=production', () => {
@@ -19,27 +19,17 @@ describe('validDeployKey', () => {
     expect(validDeployKey(` 0x${key.toUpperCase()} `)).toBe(`0x${key.toUpperCase()}`)
     expect(validDeployKey(undefined)).toBeNull()
   })
-  it('treats a malformed key as unset and warns without printing it', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      for (const bad of ['0x1234', `${key}00`, 'z'.repeat(64), '0'.repeat(64), 'f'.repeat(64)]) expect(validDeployKey(bad)).toBeNull()
-      expect(warn).toHaveBeenCalled()
-      for (const call of warn.mock.calls) expect(String(call)).not.toMatch(/zzzz|ffff|1234/)
-    } finally {
-      warn.mockRestore()
+  it('refuses a malformed key, naming the variable without printing the value', () => {
+    for (const bad of ['0x1234', `${key}00`, 'z'.repeat(64), '0'.repeat(64), 'f'.repeat(64)]) {
+      let message = ''
+      try { validDeployKey(bad) } catch (err) { message = String(err) }
+      expect(message).toMatch(/VIRVI_DCL_DEPLOY_KEY is not a valid private key/)
+      expect(message).not.toMatch(/zzzz|ffff|1234|0000/)
     }
   })
-  it('names the Genesis City key in its warning, still without printing it', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      expect(validDeployKey('f'.repeat(64), 'VIRVI_DCL_PARCEL_DEPLOY_KEY')).toBeNull()
-      expect(validDeployKey(key, 'VIRVI_DCL_PARCEL_DEPLOY_KEY')).toBe(`0x${key}`)
-      expect(warn).toHaveBeenCalledTimes(1)
-      expect(String(warn.mock.calls[0])).toMatch(/VIRVI_DCL_PARCEL_DEPLOY_KEY/)
-      expect(String(warn.mock.calls[0])).not.toMatch(/ffff/)
-    } finally {
-      warn.mockRestore()
-    }
+  it('names the Genesis City key when it is the malformed one', () => {
+    expect(() => validDeployKey('f'.repeat(64), 'VIRVI_DCL_PARCEL_DEPLOY_KEY')).toThrow(/VIRVI_DCL_PARCEL_DEPLOY_KEY/)
+    expect(validDeployKey(key, 'VIRVI_DCL_PARCEL_DEPLOY_KEY')).toBe(`0x${key}`)
   })
 })
 
@@ -59,5 +49,17 @@ describe('studioPricesFrom', () => {
     expect(() => studioPricesFrom({ STUDIO_PRICE_EMOTE_CENTS: 'abc' })).toThrow(/STUDIO_PRICE_EMOTE_CENTS/)
     expect(() => studioPricesFrom({ STUDIO_TOPUP_PROMPTS: '-1' })).toThrow(/STUDIO_TOPUP_PROMPTS/)
     expect(() => studioPricesFrom({ STUDIO_REVISION_EMOTE_CENTS: '1.5' })).toThrow()
+  })
+})
+
+describe('assertScalableRedis', () => {
+  it('refuses scalable mode without REDIS_URL', () => {
+    expect(() => assertScalableRedis({ mode: 'scalable' })).toThrow(/REDIS_URL must be set in scalable mode/)
+    expect(() => assertScalableRedis({ mode: 'scalable', redisUrl: '  ' })).toThrow(/REDIS_URL/)
+  })
+  it('allows scalable with Redis, and single and cloud without it', () => {
+    expect(() => assertScalableRedis({ mode: 'scalable', redisUrl: 'redis://redis:6379' })).not.toThrow()
+    expect(() => assertScalableRedis({ mode: 'single' })).not.toThrow()
+    expect(() => assertScalableRedis({ mode: 'cloud' })).not.toThrow()
   })
 })
