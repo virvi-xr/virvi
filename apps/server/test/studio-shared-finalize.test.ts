@@ -197,6 +197,31 @@ describe('finalizing a shared design', () => {
     expect(stripe.calls.refunds[0].params).toMatchObject({ payment_intent: 'pi_collab', amount: 1500 })
   })
 
+  it('a payer made a viewer still reports a mistake; a viewer who did not pay gets 404', async () => {
+    const { d, rev } = await shared()
+    const viewer = await createUser()
+    await join(d.id, viewer, 'viewer')
+    await entitle(d, rev)
+    const rev2 = await addRevision(d, 'hat')
+    await entitle(d, rev2, { userId: collab.id, paymentIntent: 'pi_collab' })
+    await db.update(studioDesignMembers).set({ role: 'viewer' }).where(eq(studioDesignMembers.userId, collab.id))
+    const offered = async (u: TestUser) => {
+      const res = await app.inject({ method: 'GET', url: `${S}/designs/${d.id}`, headers: as(u) })
+      return res.json().pieces[0].finalized.find((f: any) => f.revision === 2).reportableUntil
+    }
+    expect(await offered(collab)).toEqual(expect.any(String))
+    expect(await offered(viewer)).toBeNull()
+    const report = (u: TestUser) => app.inject({
+      method: 'POST', url: `${S}/designs/${d.id}/pieces/hat/revisions/2/report`, headers: as(u), payload: { text: 'the agent broke the visor' },
+    })
+    const theirs = await report(viewer)
+    expect(theirs.statusCode).toBe(404)
+    expect(theirs.json()).toMatchObject({ code: 'not_found' })
+    const res = await report(collab)
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ status: 'refunded', refundCents: 1500 })
+  })
+
   describe("a scene piece goes to the payer's library", () => {
     let uploads: Map<string, Buffer>
     beforeEach(() => {

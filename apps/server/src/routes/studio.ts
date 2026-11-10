@@ -621,8 +621,10 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
   })
 
+  // Anyone on the design may ask, a viewer too: reportMistake refuses everyone but the revision's payer (a payer since
+  // made a viewer still reports on what they paid for)
   app.post('/api/studio/designs/:id/pieces/:category/revisions/:number/report', trialAuth, async (request, reply) => {
-    const a = await designAccess(request, { need: 'work' })
+    const a = await designAccess(request, { need: 'view' })
     if (!a || a === VIEWER) return refused(reply, a)
     const d = a.d
     if (!config.stripeSecretKey) return paymentsOff(reply)
