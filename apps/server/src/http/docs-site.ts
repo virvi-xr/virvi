@@ -27,10 +27,10 @@ function agentFiles(root: string): string[] {
  * The agent files (llms.txt, llms-full.txt, <page>.md) with their links moved from the built site to this server, so an
  * agent reading a self-hosted install's docs stays on that install. Empty when this server is the built site.
  */
-export function rewrittenAgentFiles(root: string, publicUrl: string | undefined): Map<string, string> {
+export function rewrittenAgentFiles(root: string, siteUrl: string | undefined): Map<string, string> {
   const files = new Map<string, string>()
   let origin: string
-  try { origin = new URL(publicUrl ?? '').origin } catch { return files }
+  try { origin = new URL(siteUrl ?? '').origin } catch { return files }
   if (origin === BUILT_SITE) return files
   for (const full of agentFiles(root)) {
     const text = readFileSync(full, 'utf8')
@@ -50,13 +50,13 @@ export function isDocsPath(url: string): boolean {
 
 /**
  * Serves the built docs from `dir`. Returns false (and registers nothing) when the docs weren't built. With a
- * `publicUrl` other than the built site, the agent files' links point at this server instead.
+ * `siteUrl` (the dashboard's origin, WEB_APP_URL) other than the built site, the agent files' links point there instead.
  */
-export async function registerDocsSite(app: FastifyInstance, dir: string, publicUrl?: string): Promise<boolean> {
+export async function registerDocsSite(app: FastifyInstance, dir: string, siteUrl?: string): Promise<boolean> {
   const root = resolve(dir)
   if (!existsSync(join(root, 'index.html'))) return false
 
-  const rewritten = rewrittenAgentFiles(root, publicUrl)
+  const rewritten = rewrittenAgentFiles(root, siteUrl)
   if (rewritten.size > 0) {
     app.addHook('onRequest', async (request, reply) => {
       const path = request.url.split('?')[0]

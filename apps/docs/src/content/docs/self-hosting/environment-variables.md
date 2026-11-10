@@ -206,4 +206,4 @@ The dashboard is a static export. These are baked in when the image is built (`d
 | `NEXT_PUBLIC_DISCORD_URL` | none | Discord link on the landing page; hidden when unset. |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | none | Turnstile site key for trials. |
 
-The server's `/llms.txt`, `/docs/llms.txt`, `/docs/llms-full.txt` and `/docs/<page>.md` files link to its own `PUBLIC_URL`, so an agent reading your install's docs stays on your install. The HTML pages keep their virvi.io canonical links.
+The server's `/llms.txt`, `/docs/llms.txt`, `/docs/llms-full.txt` and `/docs/<page>.md` files link to its own address (`WEB_APP_URL`, which defaults to `PUBLIC_URL`), so an agent reading your install's docs stays on your install. The HTML pages keep their virvi.io canonical links.

@@ -112,3 +112,17 @@ describe('docs site on a self-hosted address', () => {
     expect((await selfApp.inject({ method: 'GET', url: '/docs/' })).body).toContain('https://virvi.io/docs/x/')
   })
 })
+
+describe('docs site behind a separate API host', () => {
+  it('leaves the links alone when the dashboard origin is the built site, whatever the API host is', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'docs-api-'))
+    writeFileSync(join(d, 'index.html'), '<h1>Docs</h1>')
+    writeFileSync(join(d, 'llms.txt'), '- [Overview](https://virvi.io/docs/self-hosting/overview.md)\n')
+    const a = Fastify()
+    await registerDocsSite(a, d, 'https://virvi.io')
+    await a.ready()
+    expect((await a.inject({ method: 'GET', url: '/llms.txt' })).body).toBe('- [Overview](https://virvi.io/docs/self-hosting/overview.md)\n')
+    await a.close()
+    rmSync(d, { recursive: true, force: true })
+  })
+})
