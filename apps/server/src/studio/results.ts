@@ -10,6 +10,7 @@ import { addToLibrary } from './library.js'
 import { DECLINED_NOTE, SCOPE_CATEGORIES, logScopeEvent, maybeFlag, offTopicIsFree, offTopicNote } from './scope.js'
 import { recordJobFailure } from '../errors/record.js'
 import { finishTimings } from './timings.js'
+import { notifyPackageReady } from '../notifications/notifications.js'
 
 /** A worker's Result, as apps/studio-worker/CONTRACT.md defines it (only the fields Virvi reads are typed). */
 export type ContractResult = {
@@ -308,8 +309,9 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
   }
   if (job.type === 'finalize') {
     // Paid scene pieces go into the designer's asset library; a failure leaves them for the sweep to add
-    const ready = await db.select({ id: studioEntitlements.id }).from(studioEntitlements)
+    const ready = await db.select({ id: studioEntitlements.id, category: studioEntitlements.category }).from(studioEntitlements)
       .where(and(eq(studioEntitlements.jobId, job.id), eq(studioEntitlements.status, 'ready')))
+    await notifyPackageReady(job.designId, ready.map((r) => r.category))
     for (const { id } of ready) {
       await addToLibrary(id, now).catch((err) => console.error('[studio] library add failed:', err instanceof Error ? err.message : err))
     }

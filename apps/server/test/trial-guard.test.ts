@@ -33,6 +33,8 @@ const ALLOWED = [
   'DELETE /api/studio/designs/:id/revisions/:jobId/rating',
   'POST /api/studio/designs/:id/revisions/:jobId/try-again',
   'GET /api/studio/defaults',
+  'GET /api/notifications',
+  'GET /api/notifications/unread-count',
   'GET /api/scenes',
   'GET /api/scenes/:sceneId',
   'GET /api/scenes/:sceneId/delete-plan',

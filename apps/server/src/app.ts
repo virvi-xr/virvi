@@ -57,6 +57,7 @@ import wizardRoutes from './routes/wizard.js'
 import dclDestinationRoutes from './routes/dcl-destinations.js'
 import studioWorkerRoutes from './routes/studio-worker.js'
 import studioRoutes from './routes/studio.js'
+import notificationRoutes from './routes/notifications.js'
 import importBuildRoutes from './routes/import-build.js'
 import importRoutes from './routes/imports.js'
 import brandingRoutes from './routes/branding.js'
@@ -275,6 +276,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(dclDestinationRoutes)
   await app.register(studioWorkerRoutes)
   await app.register(studioRoutes)
+  await app.register(notificationRoutes)
   await app.register(importBuildRoutes)
   await app.register(importRoutes)
   await app.register(errorRoutes)

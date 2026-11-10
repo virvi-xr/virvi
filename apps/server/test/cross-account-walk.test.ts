@@ -10,7 +10,7 @@ import {
   dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -136,6 +136,8 @@ async function fixtures() {
     designId: design.id, email: 'b-invitee@test.dev', role: 'viewer', token: 'b-invite-token', invitedBy: b.id, userId: invitee.id, expiresAt: new Date(Date.now() + 24 * H),
   }).returning()
 
+  const [notification] = await db.insert(notifications).values({ userId: b.id, kind: 'studio_owner', data: { designId: design.id, designName: 'B cap' } }).returning()
+
   const roomFloor: Array<[number, number]> = [[0, 0], [4, 0], [4, 3], [0, 3]]
   const [roomScan] = await db.insert(roomScans).values({
     userId: b.id, name: 'B scan', source: 'quest-mruk',
@@ -158,7 +160,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, notification, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -338,6 +340,7 @@ const CASES: Case[] = [
   { route: 'POST /api/studio/designs/:id/invites/:inviteId/cancel', url: (f) => `/api/studio/designs/${f.design.id}/invites/${f.designInvite.id}/cancel` },
   { route: 'POST /api/studio/designs/:id/invites/:inviteId/resend', url: (f) => `/api/studio/designs/${f.design.id}/invites/${f.designInvite.id}/resend` },
   { route: 'POST /api/studio/invites/:inviteId/accept', url: (f) => `/api/studio/invites/${f.designInvite.id}/accept` },
+  { route: 'POST /api/notifications/:id/read', url: (f) => `/api/notifications/${f.notification.id}/read` },
   { route: 'POST /api/studio/invites/:inviteId/decline', url: (f) => `/api/studio/invites/${f.designInvite.id}/decline` },
   // The link is the auth (anyone signed in holding it may accept): A, not holding B's, guesses one
   { route: 'GET /api/studio/invite-links/:token', url: () => `/api/studio/invite-links/${GUESSED_INVITE_TOKEN}` },
@@ -468,7 +471,7 @@ const TABLES = [
   dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))
@@ -569,6 +572,7 @@ describe('cross-account route walk', () => {
       'GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes',
       'GET /api/wizard/catalog', 'GET /api/wizard/options', 'GET /api/room-scans', 'GET /api/hyperfy/slots', 'GET /api/assets', 'GET /api/assets/categories',
       'POST /api/imports', 'GET /api/imports', 'GET /api/ar/devices', 'GET /api/scenes/deleted', 'GET /api/studio/defaults',
+      'GET /api/notifications', 'GET /api/notifications/unread-count',
     ])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
     expect(cases.length).toBe(trialRoutes.size - own.size)

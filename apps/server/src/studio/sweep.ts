@@ -9,6 +9,7 @@ import { config } from '../config.js'
 import { addMissingLibraryRows } from './library.js'
 import { sweepTrials } from '../auth/trial-sweep.js'
 import { sendWeeklyDigest } from './rating-review.js'
+import { pruneNotifications } from '../notifications/notifications.js'
 
 /**
  * The Design Studio sweep: fails jobs that will never get a result (refunding counted prompts), restarts machines for
@@ -98,6 +99,8 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
   for (const { id } of owing) await settleRefund(id)
   // Paid scene pieces whose library rows didn't land (storage was down) get another try
   await addMissingLibraryRows(now).catch((err) => console.error('[studio-sweep] library retry failed:', err instanceof Error ? err.message : err))
+  // Notifications are kept 90 days from their last update
+  await pruneNotifications(now).catch((err) => console.error('[studio-sweep] notification prune failed:', err instanceof Error ? err.message : err))
   return { lost, destroyed }
 }
 

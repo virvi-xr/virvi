@@ -6,6 +6,7 @@ import { config } from '../config.js'
 import { sendDesignInviteEmail } from '../services/email.js'
 import { designRole, memberCount } from './members.js'
 import { type Exec } from './quota.js'
+import { markDesignInvitesRead, markInvitesRead, notifyInvite } from '../notifications/notifications.js'
 
 /**
  * Inviting people to a design (LIV-159): by email, matched to an account when it is sent, or claimed through its link
@@ -45,9 +46,6 @@ const openAt = (now: Date) => and(unanswered, gt(studioDesignInvites.expiresAt, 
 
 /** What the owner sees of an invite. */
 export const publicInvite = (i: Invite) => ({ id: i.id, email: i.email, role: i.role as InviteRole, expiresAt: i.expiresAt, link: inviteLink(i.token) })
-
-/** Filled in by notifications (Task 5): an invite to an existing account was made. */
-export async function notifyInvite(_invite: Invite): Promise<void> {}
 
 /** Members (the owner left out) plus open invites, leaving out one invite (the one being accepted or revived). */
 async function seatsTaken(designId: string, now: Date, exec: Exec, exceptInviteId?: string): Promise<number> {
@@ -99,7 +97,10 @@ export async function createInvite(
       if (sent >= INVITES_PER_DAY) throw new InviteError(429, 'invite_limit')
       if (await seatsTaken(design.id, now, tx) >= config.studioMaxMembers) throw new InviteError(409, 'members_full')
       // An expired, unanswered invite to the same email gives way to the new one
-      if (prior) await tx.update(studioDesignInvites).set({ cancelledAt: now }).where(eq(studioDesignInvites.id, prior.id))
+      if (prior) {
+        await tx.update(studioDesignInvites).set({ cancelledAt: now }).where(eq(studioDesignInvites.id, prior.id))
+        await markInvitesRead([prior.id], now, tx)
+      }
       const [row] = await tx.insert(studioDesignInvites).values({
         designId: design.id, email, role, token: randomBytes(32).toString('base64url'), invitedBy: design.ownerId,
         userId: match?.id ?? null, createdAt: now, lastSentAt: now, expiresAt: new Date(now.getTime() + INVITE_DAYS * DAY_MS),
@@ -124,6 +125,7 @@ export async function findDesignInvite(designId: string, inviteId: string): Prom
 
 export async function cancelInvite(i: Invite, now: Date): Promise<void> {
   await db.update(studioDesignInvites).set({ cancelledAt: now }).where(and(eq(studioDesignInvites.id, i.id), unanswered))
+  await markInvitesRead([i.id], now)
 }
 
 /**
@@ -150,6 +152,7 @@ export async function resendInvite(i: Invite, designName: string, now: Date): Pr
 /** Archiving a design cancels its unanswered invites. */
 export async function cancelDesignInvites(designId: string, now: Date, exec: Exec = db): Promise<void> {
   await exec.update(studioDesignInvites).set({ cancelledAt: now }).where(and(eq(studioDesignInvites.designId, designId), unanswered))
+  await markDesignInvitesRead(designId, now, exec)
 }
 
 /** The open, unexpired invites matched to the user's account, newest first. */
@@ -196,12 +199,14 @@ export async function acceptInvite(i: Invite, userId: string, now: Date): Promis
     if (await seatsTaken(cur.designId, now, tx, cur.id) >= config.studioMaxMembers) throw new InviteError(409, 'members_full')
     await tx.insert(studioDesignMembers).values({ designId: cur.designId, userId, role: cur.role, joinedAt: now })
     await tx.update(studioDesignInvites).set({ acceptedAt: now, userId }).where(eq(studioDesignInvites.id, cur.id))
+    await markInvitesRead([cur.id], now, tx)
     return { designId: cur.designId, role: cur.role as InviteRole }
   })
 }
 
 export async function declineInvite(i: Invite, now: Date): Promise<void> {
   await db.update(studioDesignInvites).set({ declinedAt: now }).where(and(eq(studioDesignInvites.id, i.id), unanswered))
+  await markInvitesRead([i.id], now)
 }
 
 /** The owner's view of the design's unanswered invites (expired ones too, so they can be resent), oldest first. */

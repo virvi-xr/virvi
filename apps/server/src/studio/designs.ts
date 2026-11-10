@@ -19,6 +19,7 @@ import { liveLessons } from './lessons.js'
 import { retireIdea } from './prompt-ideas.js'
 import { recordMachine, typicalFirstReplySec } from './timings.js'
 import { memberCount } from './members.js'
+import { notifyPrompt } from '../notifications/notifications.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
@@ -421,6 +422,8 @@ export async function queuePrompt(
   }
   if (trialPrompt) recordTrialEvent('prompt', senderId)
   await publishStudio(design.id, { type: 'job', jobId, status: 'queued', senderName })
+  // After the commit, and never failing the prompt (notifyPrompt logs its own failures)
+  await notifyPrompt(design, senderId, senderName, !!input.byAdminId)
   await startWorker(design.id, jobId, now)
   return { ok: true, jobId }
 }
