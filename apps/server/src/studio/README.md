@@ -110,12 +110,12 @@ Checking your request, The agent is reading your request) with the time so far, 
 
 - **Timings.** Each prompt job's `timings` (jsonb, null for other jobs and older prompts) holds `machine` (what
   `ensureWorker` did for it: `created`, `started`, `running` or `external`) and the seconds from the job's
-  `createdAt` to `taken`, `checking` (the off-topic check, before `building`), `building`, `firstProgress` (the
+  `createdAt` to `taken`, `screening` (the off-topic check, before the agent), `building`, `firstProgress` (the
   first progress line the page shows, not a `Running:` command) and `done`, plus the worker's `boot` seconds and
   whether it `restored` a workspace. Each is written once, as its event arrives; later progress lines write nothing.
-  A worker image from before the `boot` event and the early `checking` phase gives no `boot` or `checking`, and the
+  A worker image from before the `boot` event and the `screening` phase gives no `boot` or `screening`, and the
   rest still fills in. A finished prompt logs one line, ids and seconds only:
-  `[studio] job <id> timing: machine=created taken=24s boot=9s checking=31s building=35s first_progress=52s done=310s`.
+  `[studio] job <id> timing: machine=created taken=24s boot=9s screening=31s building=35s first_progress=52s done=310s`.
 - **Admin.** `GET /api/admin/studio/first-reply` (the Studio admin page's First reply card): the median and 90th
   percentile of created → first progress over the last 50 timed prompts, by `machine`, and the median of each step.
 - **Warming.** When someone starts typing a prompt, taps a slot or emote chip, or attaches a file, the page calls
@@ -127,7 +127,7 @@ Checking your request, The agent is reading your request) with the time so far, 
   made, so nothing is counted or charged. The sweep counts `warmed_at` as activity, so it doesn't destroy a machine
   just warmed on a design idle for days.
 - **Deploy order.** The server first (it accepts the `boot` event, and the timings columns are made at boot), then
-  the worker image, which adds the `boot` event and the early `checking` phase.
+  the worker image, which adds the `boot` event and the `screening` phase.
 
 ## Paying with MANA and credit
 

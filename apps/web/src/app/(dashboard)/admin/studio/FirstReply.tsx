@@ -14,7 +14,7 @@ const MACHINES = [
 const STEPS = [
   { key: 'taken', label: 'Taken' },
   { key: 'boot', label: 'Worker boot (how long it took)' },
-  { key: 'checking', label: 'Checking' },
+  { key: 'screening', label: 'Screening the request' },
   { key: 'building', label: 'Agent starts' },
   { key: 'firstProgress', label: 'First progress' },
   { key: 'done', label: 'Finished' },

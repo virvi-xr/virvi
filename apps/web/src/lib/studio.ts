@@ -394,6 +394,7 @@ export function giftRedeemSuccess(g: { prompts: number; finalizes: number }): st
 
 const PHASES: Record<string, string> = {
   building: 'Agent working…',
+  screening: 'Checking your request…',
   checking: 'Running the checks…',
   rendering: 'Rendering the preview…',
   saving: 'Saving…',

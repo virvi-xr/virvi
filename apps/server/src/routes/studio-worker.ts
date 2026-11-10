@@ -152,7 +152,7 @@ export default async function studioWorkerRoutes(app: FastifyInstance) {
         if (timed && job.timings?.firstProgress === undefined && shownProgress(e.text)) await time(recordStep(job.id, 'firstProgress', new Date()))
         await publishStudio(job.designId, { type: 'progress', jobId: job.id, text: e.text.slice(0, MAX_EVENT_TEXT) })
       } else if (e?.type === 'phase' && typeof e.phase === 'string' && /^[a-z_]{1,32}$/.test(e.phase)) {
-        if (timed && (e.phase === 'checking' || e.phase === 'building') && job.timings?.[e.phase] === undefined) {
+        if (timed && (e.phase === 'screening' || e.phase === 'building') && job.timings?.[e.phase] === undefined) {
           await time(recordStep(job.id, e.phase, new Date()))
         }
         await publishStudio(job.designId, { type: 'phase', jobId: job.id, phase: e.phase })

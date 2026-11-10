@@ -19,24 +19,20 @@ const shown = (e: StudioEvent) => e.type === 'progress' && !!e.text.trim() && !e
 
 /**
  * The steps for a prompt job, or null once the agent's progress takes over: its first shown line, or a phase after
- * the agent's (the `checking` after `building` is the pieces' checks; `rendering`, `saving`). The `checking` step
- * shows only when the worker sent that phase: an older worker doesn't, and taken goes straight to the agent reading.
+ * the agent's (`checking`, `rendering`, `saving`). The check step shows only when the worker sent `screening`: an
+ * older worker doesn't, and taken goes straight to the agent reading.
  */
 export function waitSteps(job: { id: string; status: string }, events: StudioEvent[]): WaitStep[] | null {
   const own = events.filter((e) => e.jobId === job.id)
   if (own.some(shown)) return null
-  let checking = false
-  let building = false
-  for (const e of own) {
-    if (e.type !== 'phase') continue
-    if (building && e.phase !== 'building') return null
-    if (e.phase === 'checking') checking = true
-    else if (e.phase === 'building') building = true
-  }
-  const taken = job.status !== 'queued' || checking || building || own.some((e) => e.type === 'job' && e.status === 'taken')
+  const phases = new Set(own.flatMap((e) => (e.type === 'phase' ? [e.phase] : [])))
+  if ([...phases].some((p) => p !== 'screening' && p !== 'building')) return null
+  const screening = phases.has('screening')
+  const building = phases.has('building')
+  const taken = job.status !== 'queued' || phases.size > 0 || own.some((e) => e.type === 'job' && e.status === 'taken')
   const steps: WaitStep[] = [{ key: 'start', label: WAIT_LABELS.start, state: taken ? 'done' : 'current' }]
-  if (checking) steps.push({ key: 'check', label: WAIT_LABELS.check, state: building ? 'done' : 'current' })
-  steps.push({ key: 'read', label: WAIT_LABELS.read, state: taken && (building || !checking) ? 'current' : 'todo' })
+  if (screening) steps.push({ key: 'check', label: WAIT_LABELS.check, state: building ? 'done' : 'current' })
+  steps.push({ key: 'read', label: WAIT_LABELS.read, state: taken && (building || !screening) ? 'current' : 'todo' })
   return steps
 }
 
@@ -80,7 +76,7 @@ export type FirstReplyStats = {
   jobs: number
   firstReply: Spread
   byMachine: Record<'created' | 'started' | 'running', Spread>
-  steps: Record<'taken' | 'boot' | 'checking' | 'building' | 'firstProgress' | 'done', number | null>
+  steps: Record<'taken' | 'boot' | 'screening' | 'building' | 'firstProgress' | 'done', number | null>
 }
 
 /** Seconds on the admin card: whole seconds, or a dash when there are none. */

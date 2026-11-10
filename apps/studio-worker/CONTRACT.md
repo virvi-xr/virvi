@@ -165,7 +165,7 @@ Views, rendered in the worker's own Babylon page:
 {"type": "progress", "text": "Running: blender -b /opt/assets/AvatarShape_A.blend --python build_cap.py"}
 ```
 
-A prompt job's phases come in order: `checking` (only when the job has `check`: the off-topic check, before the
+A prompt job's phases come in order: `screening` (only when the job has `check`: the off-topic check, before the
 agent), `building`, `checking` (the pieces' checks), `rendering` (only when a piece changed), `saving`. A render job
 sends `rendering`. Progress texts are the agent's messages and the commands it runs.
 

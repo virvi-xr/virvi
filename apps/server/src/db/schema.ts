@@ -1661,7 +1661,7 @@ export const studioRevisions = pgTable('studio_revisions', {
 export type JobTimings = {
   machine?: 'created' | 'started' | 'running' | 'external'
   taken?: number
-  checking?: number
+  screening?: number
   building?: number
   firstProgress?: number
   done?: number

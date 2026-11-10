@@ -17,19 +17,19 @@ describe('the steps before the first reply', () => {
   })
 
   it('a worker that checks the request shows the check, then the agent reading it', () => {
-    expect(states(waitSteps(job(), [taken, phase('checking')]))).toEqual([
+    expect(states(waitSteps(job(), [taken, phase('screening')]))).toEqual([
       'Starting your studio: done',
       'Checking your request: current',
       'The agent is reading your request: todo',
     ])
-    expect(states(waitSteps(job('taken'), [taken, phase('checking'), phase('building')]))).toEqual([
+    expect(states(waitSteps(job('taken'), [taken, phase('screening'), phase('building')]))).toEqual([
       'Starting your studio: done',
       'Checking your request: done',
       'The agent is reading your request: current',
     ])
   })
 
-  it('a worker with no checking phase: taken goes straight to the agent reading', () => {
+  it('a worker with no screening phase: taken goes straight to the agent reading', () => {
     expect(states(waitSteps(job(), [taken]))).toEqual([
       'Starting your studio: done',
       'The agent is reading your request: current',
@@ -46,19 +46,18 @@ describe('the steps before the first reply', () => {
   })
 
   it('gives way to the agent’s progress once its first line shows', () => {
-    expect(waitSteps(job('taken'), [phase('checking'), phase('building'), progress('Shaping the brim.')])).toBeNull()
+    expect(waitSteps(job('taken'), [phase('screening'), phase('building'), progress('Shaping the brim.')])).toBeNull()
     // its commands don't show, so they don't end the wait
     expect(waitSteps(job('taken'), [phase('building'), progress('Running: blender -b'), progress('  ')])).not.toBeNull()
   })
 
   it('gives way to the later phases too (an agent that never wrote a line)', () => {
-    // the `checking` after building is the pieces' checks, not the request's
-    expect(waitSteps(job('taken'), [phase('checking'), phase('building'), phase('checking')])).toBeNull()
+    expect(waitSteps(job('taken'), [phase('screening'), phase('building'), phase('checking')])).toBeNull()
     expect(waitSteps(job('taken'), [phase('building'), phase('rendering')])).toBeNull()
   })
 
   it('reads only its own job’s events', () => {
-    expect(states(waitSteps(job(), [progress('Other job', 'j2'), phase('checking', 'j2')]))).toEqual([
+    expect(states(waitSteps(job(), [progress('Other job', 'j2'), phase('screening', 'j2')]))).toEqual([
       'Starting your studio: current',
       'The agent is reading your request: todo',
     ])

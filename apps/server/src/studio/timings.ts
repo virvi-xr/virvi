@@ -11,7 +11,7 @@ import type { Exec } from './quota.js'
  */
 
 export type MachineAction = NonNullable<JobTimings['machine']>
-export type TimedStep = 'checking' | 'building' | 'firstProgress'
+export type TimedStep = 'screening' | 'building' | 'firstProgress'
 
 /** Seconds from the job's creation to `at`, to a tenth. */
 const since = (at: Date | ReturnType<typeof sql>) =>
@@ -28,17 +28,13 @@ export async function recordMachine(jobId: string, machine: MachineAction, exec:
     .where(and(eq(studioJobs.id, jobId), eq(studioJobs.type, 'prompt')))
 }
 
-/**
- * A step's first time only. `checking` counts only before `building`: the worker's `checking` after the agent (the
- * pieces' checks, which every worker sends) is not the off-topic check.
- */
+/** A step's first time only. */
 export async function recordStep(jobId: string, step: TimedStep, now: Date): Promise<void> {
   const t = sql`coalesce(${studioJobs.timings}, '{}'::jsonb)`
   await db.update(studioJobs).set({ timings: merge(sql`jsonb_build_object(${step}::text, ${since(now)})`) })
     .where(and(
       eq(studioJobs.id, jobId), eq(studioJobs.type, 'prompt'), eq(studioJobs.status, 'taken'),
       sql`NOT (${t} ? ${step})`,
-      step === 'checking' ? sql`NOT (${t} ? 'building')` : sql`true`,
     ))
 }
 
@@ -53,7 +49,7 @@ export async function recordBoot(jobId: string, seconds: number, restored: boole
 export function timingLine(jobId: string, t: JobTimings): string {
   const s = (k: keyof JobTimings, label: string = k) => typeof t[k] === 'number' ? ` ${label}=${Math.round(t[k] as number)}s` : ''
   return `[studio] job ${jobId} timing: machine=${t.machine ?? 'unknown'}`
-    + s('taken') + s('boot') + s('checking') + s('building') + s('firstProgress', 'first_progress') + s('done')
+    + s('taken') + s('boot') + s('screening') + s('building') + s('firstProgress', 'first_progress') + s('done')
 }
 
 /** After a prompt job finished (its result, or failed as lost): its `done`, and the one log line. Never throws. */
@@ -86,7 +82,7 @@ export function p90(values: number[]): number | null {
 export const RECENT_JOBS = 50
 /** Below this many timed jobs, the page gets no typical wait. */
 export const TYPICAL_MIN_JOBS = 5
-const STEPS = ['taken', 'boot', 'checking', 'building', 'firstProgress', 'done'] as const
+const STEPS = ['taken', 'boot', 'screening', 'building', 'firstProgress', 'done'] as const
 const MACHINES = ['created', 'started', 'running'] as const
 
 type Spread = { jobs: number; median: number | null; p90: number | null }

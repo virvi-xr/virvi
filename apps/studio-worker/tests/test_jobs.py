@@ -694,16 +694,16 @@ def test_the_reply_keeps_the_workspace_out_of_sight():
         assert 'A file the user uploaded can be called by the name they gave it, without its folder.' in text
 
 
-def test_a_checked_prompt_says_checking_before_building(api, tmp_path, skills):
+def test_a_checked_prompt_says_screening_before_building(api, tmp_path, skills):
     result = run_checked(api, tmp_path, prompt_job(check=True), 'claude_builds_hat.jsonl', verdict('design'))
     assert result['outcome'] == 'ok', result
-    # The first `checking` is the off-topic check; the second, after the agent, is the pieces' checks
-    assert api.phases('job-1') == ['checking', 'building', 'checking', 'rendering', 'saving']
+    # `screening` is the off-topic check; `checking`, after the agent, is the pieces' checks
+    assert api.phases('job-1') == ['screening', 'building', 'checking', 'rendering', 'saving']
 
 
-def test_an_off_topic_prompt_says_checking_and_nothing_else(api, tmp_path):
+def test_an_off_topic_prompt_says_screening_and_nothing_else(api, tmp_path):
     run_checked(api, tmp_path, prompt_job(check=True), 'claude_builds_hat.jsonl', verdict('off_topic', 'coding'))
-    assert api.phases('job-1') == ['checking']
+    assert api.phases('job-1') == ['screening']
 
 
 def test_an_unchecked_prompt_starts_with_building(api, tmp_path, skills):

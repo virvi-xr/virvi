@@ -68,7 +68,7 @@ describe('timing the wait for a first reply', () => {
     expect((await w.next()).statusCode).toBe(200)
     for (const e of [
       { type: 'boot', seconds: 9.37, restored: true },
-      { type: 'phase', phase: 'checking' },
+      { type: 'phase', phase: 'screening' },
       { type: 'phase', phase: 'building' },
       { type: 'progress', text: 'Running: blender -b' }, // a command: the page doesn't show it
       { type: 'progress', text: 'Shaping the brim.' },
@@ -77,8 +77,8 @@ describe('timing the wait for a first reply', () => {
     ]) expect((await w.event(jobId, e)).statusCode).toBe(204)
     const t = await timingsOf(jobId) as JobTimings
     expect(t).toMatchObject({ machine: 'created', boot: 9.4, restored: true })
-    for (const k of ['taken', 'checking', 'building', 'firstProgress'] as const) expect(t[k]).toBeGreaterThanOrEqual(0)
-    expect(t.checking!).toBeLessThanOrEqual(t.building!)
+    for (const k of ['taken', 'screening', 'building', 'firstProgress'] as const) expect(t[k]).toBeGreaterThanOrEqual(0)
+    expect(t.screening!).toBeLessThanOrEqual(t.building!)
     expect(t.building!).toBeLessThanOrEqual(t.firstProgress!)
     expect(t.done).toBeUndefined()
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -86,7 +86,7 @@ describe('timing the wait for a first reply', () => {
     const done = await timingsOf(jobId) as JobTimings
     expect(done.done).toBeGreaterThanOrEqual(done.firstProgress!)
     const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('timing:'))
-    expect(lines).toEqual([expect.stringMatching(new RegExp(`^\\[studio\\] job ${jobId} timing: machine=created taken=\\d+s boot=9s checking=\\d+s building=\\d+s first_progress=\\d+s done=\\d+s$`))])
+    expect(lines).toEqual([expect.stringMatching(new RegExp(`^\\[studio\\] job ${jobId} timing: machine=created taken=\\d+s boot=9s screening=\\d+s building=\\d+s first_progress=\\d+s done=\\d+s$`))])
     // ids and seconds only
     expect(lines[0]).not.toMatch(/neon|visor|cap|brim|rounded/i)
   })
@@ -98,7 +98,7 @@ describe('timing the wait for a first reply', () => {
     await w.next()
     await w.event(jobId, { type: 'phase', phase: 'building' })
     await w.event(jobId, { type: 'progress', text: 'Shaping the brim.' })
-    await w.event(jobId, { type: 'phase', phase: 'checking' }) // after building: the pieces' checks
+    await w.event(jobId, { type: 'phase', phase: 'checking' }) // the pieces' checks: not timed
     await w.result(jobId, okResult(jobId))
     const t = await timingsOf(jobId) as JobTimings
     expect(Object.keys(t).sort()).toEqual(['building', 'done', 'firstProgress', 'machine', 'taken'])
@@ -181,8 +181,8 @@ describe('timing the wait for a first reply', () => {
       expect(p90([7])).toBe(7)
       expect(p90(Array.from({ length: 10 }, (_, i) => i + 1))).toBe(9)
       expect(p90(Array.from({ length: 20 }, (_, i) => i + 1))).toBe(18)
-      expect(timingLine('j1', { machine: 'created', taken: 24.4, boot: 9, checking: 31, building: 35.2, firstProgress: 52, done: 309.6 }))
-        .toBe('[studio] job j1 timing: machine=created taken=24s boot=9s checking=31s building=35s first_progress=52s done=310s')
+      expect(timingLine('j1', { machine: 'created', taken: 24.4, boot: 9, screening: 31, building: 35.2, firstProgress: 52, done: 309.6 }))
+        .toBe('[studio] job j1 timing: machine=created taken=24s boot=9s screening=31s building=35s first_progress=52s done=310s')
       expect(timingLine('j2', {})).toBe('[studio] job j2 timing: machine=unknown')
     })
   })
@@ -201,7 +201,7 @@ describe('timing the wait for a first reply', () => {
       await timed(d, Array.from({ length: 5 }, () => ({ machine: 'created', firstProgress: 999 })), Date.now() - 7200_000)
       await timed(d, [
         ...Array.from({ length: 10 }, (_, i) => ({ machine: 'created' as const, taken: 20 + i, boot: 8, firstProgress: 40 + i, done: 300 })),
-        ...Array.from({ length: 20 }, (_, i) => ({ machine: 'started' as const, taken: 2, boot: 6, checking: 9, building: 10, firstProgress: 15 + i })),
+        ...Array.from({ length: 20 }, (_, i) => ({ machine: 'started' as const, taken: 2, boot: 6, screening: 9, building: 10, firstProgress: 15 + i })),
         ...Array.from({ length: 19 }, () => ({ machine: 'running' as const, taken: 1, firstProgress: 5 })),
         { machine: 'running', taken: 1 }, // no progress line: counted for its steps only
       ])
@@ -216,7 +216,7 @@ describe('timing the wait for a first reply', () => {
       expect(s.byMachine.started).toEqual({ jobs: 20, median: 24.5, p90: 32 })
       expect(s.byMachine.running).toEqual({ jobs: 19, median: 5, p90: 5 })
       expect(s.firstReply.jobs).toBe(49)
-      expect(s.steps).toMatchObject({ taken: 2, boot: 6, checking: 9, building: 10, done: 300 })
+      expect(s.steps).toMatchObject({ taken: 2, boot: 6, screening: 9, building: 10, done: 300 })
     })
 
     it('is for admins only', async () => {

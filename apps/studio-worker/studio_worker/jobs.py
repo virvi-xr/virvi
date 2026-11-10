@@ -108,7 +108,7 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
     state = load_state(state_path)
     check_cost = None
     if job.get('check'):  # only the user's own words are checked; the server's (Continue, fix the checks) never are
-        _phase(client, job_id, 'checking')  # the off-topic check; the `checking` after the agent is the pieces' checks
+        _phase(client, job_id, 'screening')  # the off-topic check, before the agent
         v = checker(job['prompt'], kind, state.messages, [u.get('name') or '' for u in job.get('uploads') or []])
         check_cost = v.cost_usd
         if v.verdict == 'off_topic':  # the agent never runs, and nothing about the design changes
