@@ -28,6 +28,8 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `defaults.ts` | the agent a new design of each kind starts on, set by an admin beside the 👍 rates (never automatically) |
 | `timings.ts` | how long each prompt waits for its first reply (`studio_jobs.timings`): the machine, each step's seconds, the finish log line, the admin page's First reply card and the design detail's `typicalFirstReplySec` |
 | `warm.ts` | starting a design's machine while the person writes a prompt (`POST /designs/:id/warm`), so the prompt doesn't wait for it |
+| `members.ts` | who a design is shared with (LIV-159): the owner, and open `studio_design_members` rows as collaborator or viewer |
+| `invites.ts` | inviting people to a design by email or link (14 days, resendable), accepting and declining, role changes, removing and leaving; at most `STUDIO_MAX_MEMBERS` members plus open invites per design and 50 invites per owner per UTC day; the email goes out only when SMTP is set |
 | `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes; then the trial sweep and the weekly ratings digest |
 
 Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/studio-worker.ts` (the workers,

@@ -20,11 +20,12 @@ export async function designRole(designId: string, userId: string, exec: Exec = 
 }
 
 /** Everyone on the design, with their names: the owner first, then open members by when they joined. */
-export async function designMembers(designId: string, exec: Exec = db): Promise<{ userId: string; displayName: string | null; role: DesignRole }[]> {
-  const [owner] = await exec.select({ userId: studioDesigns.ownerId, displayName: users.displayName }).from(studioDesigns)
+export async function designMembers(designId: string, exec: Exec = db): Promise<{ userId: string; displayName: string | null; role: DesignRole; joinedAt: Date }[]> {
+  // The owner joined when the design was made
+  const [owner] = await exec.select({ userId: studioDesigns.ownerId, displayName: users.displayName, joinedAt: studioDesigns.createdAt }).from(studioDesigns)
     .innerJoin(users, eq(users.id, studioDesigns.ownerId)).where(eq(studioDesigns.id, designId))
   if (!owner) return []
-  const members = await exec.select({ userId: studioDesignMembers.userId, displayName: users.displayName, role: studioDesignMembers.role })
+  const members = await exec.select({ userId: studioDesignMembers.userId, displayName: users.displayName, role: studioDesignMembers.role, joinedAt: studioDesignMembers.joinedAt })
     .from(studioDesignMembers).innerJoin(users, eq(users.id, studioDesignMembers.userId))
     .where(and(eq(studioDesignMembers.designId, designId), isNull(studioDesignMembers.leftAt)))
     .orderBy(asc(studioDesignMembers.joinedAt), asc(studioDesignMembers.id))

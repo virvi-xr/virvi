@@ -10,7 +10,7 @@ import {
   dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -33,6 +33,8 @@ const PUBLIC_TARGET = { parcels: ['0,0'], contentServer: 'https://1.1.1.1' }
 const B_PARCEL = '-40,-40'
 /** A well-formed pairing code nobody started. */
 const GUESSED_CODE = 'ZZZZZZ'
+/** A well-formed design invite token nobody was given. */
+const GUESSED_INVITE_TOKEN = 'Z'.repeat(43)
 
 /** Everything below is B's, except `aScene`/`aEvent`, which A owns and uses to reach for B's ids in a body. */
 async function fixtures() {
@@ -127,6 +129,12 @@ async function fixtures() {
   }).returning()
   await db.insert(studioPromptCredits).values({ userId: b.id, balance: 3 })
   const [designUpload] = await db.insert(studioUploads).values({ designId: design.id, name: 'b-logo.png', kind: 'image', contentType: 'image/png', size: 4 }).returning()
+  // B's design is shared with the collaborator, and B invited someone else's account (an open invite, its link held by B)
+  await db.insert(studioDesignMembers).values({ designId: design.id, userId: collaborator.id, role: 'collaborator' })
+  const invitee = await createUser({ email: 'b-invitee@test.dev' })
+  const [designInvite] = await db.insert(studioDesignInvites).values({
+    designId: design.id, email: 'b-invitee@test.dev', role: 'viewer', token: 'b-invite-token', invitedBy: b.id, userId: invitee.id, expiresAt: new Date(Date.now() + 24 * H),
+  }).returning()
 
   const roomFloor: Array<[number, number]> = [[0, 0], [4, 0], [4, 3], [0, 3]]
   const [roomScan] = await db.insert(roomScans).values({
@@ -150,7 +158,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -325,6 +333,17 @@ const CASES: Case[] = [
   // B's 👎 on B's revision: nobody else rates, clears it or spends its free try-again (LIV-142)
   { route: 'PUT /api/studio/designs/:id/revisions/:jobId/rating', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/rating`, body: () => ({ rating: 'up' }) },
   { route: 'DELETE /api/studio/designs/:id/revisions/:jobId/rating', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/rating` },
+  { route: 'GET /api/studio/designs/:id/people', url: (f) => `/api/studio/designs/${f.design.id}/people` },
+  { route: 'POST /api/studio/designs/:id/invites', url: (f) => `/api/studio/designs/${f.design.id}/invites`, body: () => ({ email: 'pwned@test.dev' }) },
+  { route: 'POST /api/studio/designs/:id/invites/:inviteId/cancel', url: (f) => `/api/studio/designs/${f.design.id}/invites/${f.designInvite.id}/cancel` },
+  { route: 'POST /api/studio/designs/:id/invites/:inviteId/resend', url: (f) => `/api/studio/designs/${f.design.id}/invites/${f.designInvite.id}/resend` },
+  { route: 'POST /api/studio/invites/:inviteId/accept', url: (f) => `/api/studio/invites/${f.designInvite.id}/accept` },
+  { route: 'POST /api/studio/invites/:inviteId/decline', url: (f) => `/api/studio/invites/${f.designInvite.id}/decline` },
+  // The link is the auth (anyone signed in holding it may accept): A, not holding B's, guesses one
+  { route: 'GET /api/studio/invite-links/:token', url: () => `/api/studio/invite-links/${GUESSED_INVITE_TOKEN}` },
+  { route: 'POST /api/studio/invite-links/:token/accept', url: () => `/api/studio/invite-links/${GUESSED_INVITE_TOKEN}/accept` },
+  { route: 'PATCH /api/studio/designs/:id/members/:userId', url: (f) => `/api/studio/designs/${f.design.id}/members/${f.collaborator.id}`, body: () => ({ role: 'viewer' }) },
+  { route: 'DELETE /api/studio/designs/:id/members/:userId', url: (f) => `/api/studio/designs/${f.design.id}/members/${f.collaborator.id}` },
   { route: 'POST /api/studio/designs/:id/revisions/:jobId/try-again', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/try-again` },
   { route: 'DELETE /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}` },
   { route: 'PATCH /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}`, body: () => ({ endsAt: null }) },
@@ -449,7 +468,7 @@ const TABLES = [
   dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))
@@ -533,8 +552,8 @@ describe('cross-account route walk', () => {
 
   it("B's own token reads every GET case (the fixtures are real, so A's refusals are not misses)", async () => {
     const failed: string[] = []
-    // (a pairing code case is a guess, so nobody's to read)
-    for (const c of CASES.filter((c) => c.route.startsWith('GET ') && !c.route.includes('/hyperfy/') && !c.route.includes('/admin/') && !c.route.includes('/ar/pair/'))) {
+    // (a pairing code or invite link case is a guess, so nobody's to read)
+    for (const c of CASES.filter((c) => c.route.startsWith('GET ') && !c.route.includes('/hyperfy/') && !c.route.includes('/admin/') && !c.route.includes('/ar/pair/') && !c.route.includes('/invite-links/'))) {
       const res = await app.inject({ method: 'GET', url: c.url(f), headers: { authorization: `Bearer ${tokenFor(f.b)}` } })
       if (res.statusCode !== 200) failed.push(`${c.route} → ${res.statusCode}`)
     }

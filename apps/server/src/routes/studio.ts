@@ -16,6 +16,11 @@ import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from 
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
 import { designMembers, designRole, type DesignRole } from '../studio/members.js'
+import {
+  INVITE_ROLES, InviteError, acceptInvite, cancelDesignInvites, cancelInvite, createInvite, declineInvite, designInvites, endMembership,
+  findDesignInvite, findInviteByToken, findMyInvite, linkView, myInvites, normalEmail, publicInvite, resendInvite, setMemberRole, type InviteRole,
+} from '../studio/invites.js'
+import { publishStudio } from '../studio/events.js'
 import { helpWithPrompt, PromptHelpError } from '../studio/prompt-help.js'
 import { EXCLUDE_MAX, IDEAS_COUNT_MAX, IDEA_ID, IDEA_MOVES, IDEA_PLAYBACKS, findIdea, pickIdeas, retiredIdeas, type IdeaMove, type IdeaPlayback, type IdeaQuery } from '../studio/prompt-ideas.js'
 import { warmDesign } from '../studio/warm.js'
@@ -270,10 +275,144 @@ export default async function studioRoutes(app: FastifyInstance) {
       }
       set.archivedAt = b.archived ? (d.archivedAt ?? new Date()) : null
     }
+    const archiving = !!set.archivedAt && !d.archivedAt
     const [updated] = Object.keys(set).length
-      ? await db.update(studioDesigns).set(set).where(eq(studioDesigns.id, d.id)).returning()
+      ? await db.transaction(async (tx) => {
+        const rows = await tx.update(studioDesigns).set(set).where(eq(studioDesigns.id, d.id)).returning()
+        // Archiving cancels the design's invites (its members stay)
+        if (archiving) await cancelDesignInvites(d.id, set.archivedAt!, tx)
+        return rows
+      })
       : [d]
     return (await publicDesigns([updated]))[0]
+  })
+
+  // ── People: invites, roles, removing and leaving (studio/invites.ts). None of it is open to trials. ──
+
+  /** An invite route's refusal, as the page sees it. */
+  const inviteRefusal = (reply: FastifyReply, err: unknown) => {
+    if (err instanceof InviteError) return reply.status(err.status).send({ error: err.code, code: err.code })
+    throw err
+  }
+  const inviteRole = (raw: unknown): InviteRole | undefined =>
+    (INVITE_ROLES as readonly unknown[]).includes(raw) ? raw as InviteRole : undefined
+
+  // Everyone on the design, by anyone on it; the owner also sees the unanswered invites (expired ones too, to resend)
+  app.get('/api/studio/designs/:id/people', auth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'view' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const members = await designMembers(a.d.id)
+    return a.role === 'owner' ? { members, invites: await designInvites(a.d.id) } : { members }
+  })
+
+  app.post('/api/studio/designs/:id/invites', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const b = (request.body ?? {}) as { email?: unknown; role?: unknown }
+    const email = normalEmail(b.email)
+    if (!email) return reply.status(400).send({ error: 'email must be an email address' })
+    const role = b.role == null ? 'collaborator' : inviteRole(b.role)
+    if (!role) return reply.status(400).send({ error: 'role must be collaborator or viewer' })
+    try {
+      return reply.status(201).send({ invite: publicInvite(await createInvite(d, email, role, new Date())) })
+    } catch (err) {
+      return inviteRefusal(reply, err)
+    }
+  })
+
+  app.post('/api/studio/designs/:id/invites/:inviteId/cancel', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const { inviteId } = request.params as { inviteId: string }
+    const i = UUID.test(inviteId) ? await findDesignInvite(d.id, inviteId) : null
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    await cancelInvite(i, new Date())
+    return reply.status(204).send()
+  })
+
+  // The same link, 14 more days, mailed again
+  app.post('/api/studio/designs/:id/invites/:inviteId/resend', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const { inviteId } = request.params as { inviteId: string }
+    const i = UUID.test(inviteId) ? await findDesignInvite(d.id, inviteId) : null
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    try {
+      return { invite: publicInvite(await resendInvite(i, d.name, new Date())) }
+    } catch (err) {
+      return inviteRefusal(reply, err)
+    }
+  })
+
+  // The invites matched to my account that I can still accept
+  app.get('/api/studio/invites', auth, async (request) => myInvites(request.user.id, new Date()))
+
+  // Accepting or declining an invite matched to my account (anyone else's is 404). Not behind notPaused.
+  app.post('/api/studio/invites/:inviteId/accept', auth, async (request, reply) => {
+    const { inviteId } = request.params as { inviteId: string }
+    const i = UUID.test(inviteId) ? await findMyInvite(request.user.id, inviteId) : null
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    try {
+      return await acceptInvite(i, request.user.id, new Date())
+    } catch (err) {
+      return inviteRefusal(reply, err)
+    }
+  })
+
+  app.post('/api/studio/invites/:inviteId/decline', auth, async (request, reply) => {
+    const { inviteId } = request.params as { inviteId: string }
+    const i = UUID.test(inviteId) ? await findMyInvite(request.user.id, inviteId) : null
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    await declineInvite(i, new Date())
+    return reply.status(204).send()
+  })
+
+  // An invite's link: the token is the credential, so any signed-in account holding it may see and accept it (how an
+  // invite sent to an email with no account yet is claimed).
+  const INVITE_TOKEN = /^[A-Za-z0-9_-]{20,100}$/
+  const linkInvite = async (request: FastifyRequest) => {
+    const { token } = request.params as { token: string }
+    return INVITE_TOKEN.test(token) ? findInviteByToken(token) : null
+  }
+
+  app.get('/api/studio/invite-links/:token', auth, async (request, reply) => {
+    const i = await linkInvite(request)
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    return linkView(i, new Date())
+  })
+
+  app.post('/api/studio/invite-links/:token/accept', auth, async (request, reply) => {
+    const i = await linkInvite(request)
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    try {
+      return await acceptInvite(i, request.user.id, new Date())
+    } catch (err) {
+      return inviteRefusal(reply, err)
+    }
+  })
+
+  app.patch('/api/studio/designs/:id/members/:userId', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const { userId } = request.params as { userId: string }
+    const role = inviteRole((request.body as { role?: unknown } | undefined)?.role)
+    if (!role) return reply.status(400).send({ error: 'role must be collaborator or viewer' })
+    if (userId === d.ownerId) return reply.status(400).send({ error: 'owner', code: 'owner' })
+    if (!UUID.test(userId) || !(await setMemberRole(d.id, userId, role))) return reply.status(404).send({ error: 'member_not_found' })
+    return { userId, role }
+  })
+
+  // The owner removes anyone; a member removes only themselves (leaving). The owner can't be removed or leave. The
+  // live room disconnects them (member_removed).
+  app.delete('/api/studio/designs/:id/members/:userId', auth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'view' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const { userId } = request.params as { userId: string }
+    if (a.role !== 'owner' && userId !== request.user.id) return reply.status(404).send({ error: 'member_not_found' })
+    if (userId === a.d.ownerId) return reply.status(400).send({ error: 'owner', code: 'owner' })
+    if (!UUID.test(userId) || !(await endMembership(a.d.id, userId, new Date()))) return reply.status(404).send({ error: 'member_not_found' })
+    await publishStudio(a.d.id, { type: 'member_removed', userId })
+    return reply.status(204).send()
   })
 
   app.post('/api/studio/designs/:id/prompts', trialWork, async (request, reply) => {
