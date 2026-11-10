@@ -16,6 +16,7 @@ import type { ArFileFormat, ArMounting } from './ar'
 import { adminDesignsQuery, type AdminDesign } from './studio-support'
 import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
+import type { NotificationItem } from './notifications'
 import type { InviteLinkView, InviteRole, MyInvite, PastPackage, StudioInvite } from './studio-people'
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
 import type { FirstReplyStats } from './studio-wait'
@@ -1071,6 +1072,12 @@ function useRealApi() {
       apiFetch<{ userId: string; role: InviteRole }>(`/api/studio/designs/${id}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
     /** The owner removing someone, or a member leaving (their own id). */
     removeStudioMember: (id: string, userId: string) => apiFetch<void>(`/api/studio/designs/${id}/members/${userId}`, { method: 'DELETE' }),
+    // The bell (LIV-159): my notifications; `before` is the last item's updatedAt
+    getNotifications: (before?: string) =>
+      apiFetch<{ items: NotificationItem[]; more: boolean }>(`/api/notifications?limit=20${before ? `&before=${encodeURIComponent(before)}` : ''}`),
+    getUnreadNotifications: () => apiFetch<{ count: number }>('/api/notifications/unread-count'),
+    markNotificationRead: (id: string) => apiFetch<void>(`/api/notifications/${id}/read`, { method: 'POST' }),
+    markAllNotificationsRead: () => apiFetch<void>('/api/notifications/read-all', { method: 'POST' }),
     getMyStudioInvites: () => apiFetch<MyInvite[]>('/api/studio/invites'),
     acceptStudioInvite: (inviteId: string) =>
       apiFetch<{ designId: string; role: InviteRole }>(`/api/studio/invites/${inviteId}/accept`, { method: 'POST' }),
