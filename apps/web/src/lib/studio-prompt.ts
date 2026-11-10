@@ -65,6 +65,31 @@ export function firstEmoteMessage(text: string, choice: EmoteChoice): { text: st
   return { text: extra.length ? `${text}\n\n${extra.join(' ')}` : text }
 }
 
+// ── The message the box sends ───────────────────────────────────────────────
+
+export const MAX_PROMPT = 4000
+
+/**
+ * Before the first message, what the chips say. `inWords`: the box already holds the chips' sentence (the person used
+ * a suggestion made from it), so it isn't added again; ticked slots still go with the message.
+ */
+export type FirstChoice = { kind: HelpKind; slots: SlotChoice; emote: EmoteChoice; inWords: boolean }
+
+/** What Send sends, and what "Improve my prompt" rewrites: the words with the chips' sentence, and the ticked slots. */
+export function outgoingMessage(text: string, first: FirstChoice | null): { text: string; selectedSlots?: string[] } {
+  if (!first) return { text }
+  if (first.kind === 'emote') return first.inWords ? { text } : firstEmoteMessage(text, first.emote)
+  if (!first.inWords) return firstWearableMessage(text, first.slots)
+  const slots = choiceSlots(first.slots)
+  return slots ? { text, selectedSlots: slots } : { text }
+}
+
+/** Why the box can't send this, when the chips' sentence takes it past the limit; null when it fits. */
+export function tooLong(body: { text: string }, max = MAX_PROMPT): string | null {
+  const over = body.text.length - max
+  return over > 0 ? `Your message is ${over.toLocaleString('en-US')} character${over === 1 ? '' : 's'} too long with your choices above. Shorten it a little.` : null
+}
+
 // ── What makes a good prompt ────────────────────────────────────────────────
 
 export type GuideItem = { id: string; label: string; example: string }
@@ -189,6 +214,28 @@ export function withAnswer(answers: Record<string, string>, id: string, option: 
   if (next[id] === option) delete next[id]
   else next[id] = option
   return next
+}
+
+// The server's limits on a prompt help's answers (routes/studio.ts)
+export const ANSWERS_MAX = 10
+export const ANSWER_MAX = 80
+const ANSWER_ID = /^[a-z0-9_-]{1,40}$/
+
+/** The answers kept within the server's limits: valid ids, non-empty, each cut to fit, the latest ten. */
+export function clampAnswers(answers: Record<string, string>): Record<string, string> {
+  const kept = Object.entries(answers).filter(([id, a]) => ANSWER_ID.test(id) && a.trim()).map(([id, a]) => [id, a.trim().slice(0, ANSWER_MAX)] as const)
+  return Object.fromEntries(kept.slice(-ANSWERS_MAX))
+}
+
+/**
+ * Re-asking after a tap on a question's option: the suggestion as it is now in its box (edits kept), the slots, and
+ * the answers so far with this one.
+ */
+export function reaskBody(state: Extract<HelpState, { status: 'ready' }>, id: string, option: string, slots?: string[]):
+  { text: string; selectedSlots?: string[]; answers: Record<string, string> } {
+  const answers = clampAnswers(withAnswer(state.answers, id, option))
+  const text = (state.prompt.trim() || state.help.prompt).slice(0, MAX_PROMPT)
+  return { text, ...(slots ? { selectedSlots: slots } : {}), answers }
 }
 
 /** Whether "Improve my prompt" can be pressed: there is a draft and the box could send it. */

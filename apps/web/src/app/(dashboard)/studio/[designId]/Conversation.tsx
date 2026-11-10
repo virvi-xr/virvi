@@ -13,7 +13,7 @@ import Rating from './Rating'
 import { designControls, messageIsViewers, messageLabel } from '@/lib/studio-support'
 import { customerReply } from '@/lib/studio-reply'
 import {
-  HELP_IDLE, NO_CHOICE, canImprove, choiceSlots, firstEmoteMessage, firstWearableMessage, helpFailure, helpReducer, helpsWith, withAnswer,
+  HELP_IDLE, MAX_PROMPT, NO_CHOICE, canImprove, choiceSlots, helpFailure, helpReducer, helpsWith, outgoingMessage, reaskBody, tooLong,
   type EmoteChoice, type SlotChoice,
 } from '@/lib/studio-prompt'
 import { EmoteChips, HelpPanel, ImproveButton, PromptGuide, SlotChips } from './PromptHelper'
@@ -21,7 +21,6 @@ import { AgentPicker } from '../AgentPicker'
 import Markdown from './Markdown'
 import Uploads from './Uploads'
 
-const MAX_PROMPT = 4000
 
 type Props = {
   designId: string; detail: StudioDetail; usage: StudioUsage | null; events: StudioEvent[]; onChanged: () => Promise<void>
@@ -43,6 +42,10 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const [emoteChoice, setEmoteChoice] = useState<EmoteChoice>({ move: null, playback: null })
   const [help, dispatchHelp] = useReducer(helpReducer, HELP_IDLE)
   const [helpOff, setHelpOff] = useState(false)
+  // The box holds a suggestion made with the chips' sentence, so Send doesn't add it again (changing a chip does)
+  const [chipsInWords, setChipsInWords] = useState(false)
+  const chooseSlots = (c: SlotChoice) => { setSlotChoice(c); setChipsInWords(false) }
+  const chooseEmote = (c: EmoteChoice) => { setEmoteChoice(c); setChipsInWords(false) }
 
   // From /try/studio: the design was made but its first prompt was refused; offer it again here (read once, then gone)
   useEffect(() => {
@@ -86,25 +89,30 @@ export default function Conversation({ designId, detail, usage, events, onChange
     }
   }
 
-  /** The message the box sends: the first one carries what the chips say. */
-  const outgoing = (t: string) => !firstPrompt ? { text: t } : kind === 'wearable' ? firstWearableMessage(t, slotChoice) : firstEmoteMessage(t, emoteChoice)
+  /** The message the box sends (and Improve my prompt rewrites): the first one carries what the chips say. */
+  const outgoing = (t: string) => outgoingMessage(t, firstPrompt && helpsWith(kind) ? { kind, slots: slotChoice, emote: emoteChoice, inWords: chipsInWords } : null)
 
   const submit = () => {
     const t = text.trim()
     if (!t || !canSend(composer.mode) || sending) return
     const body = outgoing(t)
-    if (body.text.length > MAX_PROMPT) return
+    const long = tooLong(body)
+    if (long) {
+      setRefusal({ text: long })
+      return
+    }
     dispatchHelp({ type: 'dismiss' })
     send(body)
   }
 
-  const askHelp = async (answers?: Record<string, string>) => {
-    const t = text.trim()
-    if (!t) return
-    dispatchHelp({ type: 'ask', answers })
-    const slots = firstPrompt && kind === 'wearable' ? choiceSlots(slotChoice) : undefined
+  /** With no body: the draft as it would be sent. A question's option re-asks with the suggestion as edited. */
+  const askHelp = async (body?: { text: string; selectedSlots?: string[]; answers?: Record<string, string> }) => {
+    const ask: { text: string; selectedSlots?: string[]; answers?: Record<string, string> } = body ?? outgoing(text.trim())
+    if (!ask.text.trim()) return
+    dispatchHelp({ type: 'ask', answers: body?.answers })
     try {
-      const r = await api.studioPromptHelp(designId, { text: t, ...(slots ? { selectedSlots: slots } : {}), ...(answers && Object.keys(answers).length ? { answers } : {}) })
+      const { answers, ...rest } = ask
+      const r = await api.studioPromptHelp(designId, { ...rest, text: rest.text.slice(0, MAX_PROMPT), ...(answers && Object.keys(answers).length ? { answers } : {}) })
       dispatchHelp({ type: 'answered', help: r })
     } catch (err) {
       const f = helpFailure(err as never)
@@ -197,12 +205,12 @@ export default function Conversation({ designId, detail, usage, events, onChange
           </div>
         ) : (
           <form onSubmit={(e) => { e.preventDefault(); submit() }}>
-            {firstPrompt && kind === 'wearable' && <SlotChips choice={slotChoice} onChange={setSlotChoice} disabled={sending} />}
-            {firstPrompt && kind === 'emote' && <EmoteChips choice={emoteChoice} onChange={setEmoteChoice} disabled={sending} />}
+            {firstPrompt && kind === 'wearable' && <SlotChips choice={slotChoice} onChange={chooseSlots} disabled={sending} />}
+            {firstPrompt && kind === 'emote' && <EmoteChips choice={emoteChoice} onChange={chooseEmote} disabled={sending} />}
             {canHelp && (
               <HelpPanel state={help} onEdit={(prompt) => dispatchHelp({ type: 'edit', prompt })}
-                onAnswer={(id, option) => askHelp(withAnswer(help.status === 'ready' ? help.answers : {}, id, option))}
-                onUse={(prompt) => { setText(prompt.slice(0, MAX_PROMPT)); dispatchHelp({ type: 'dismiss' }); document.getElementById('studio-prompt')?.focus() }}
+                onAnswer={(id, option) => { if (help.status === 'ready') askHelp(reaskBody(help, id, option, outgoing(text.trim()).selectedSlots)) }}
+                onUse={(prompt) => { setText(prompt.slice(0, MAX_PROMPT)); setChipsInWords(firstPrompt); dispatchHelp({ type: 'dismiss' }); document.getElementById('studio-prompt')?.focus() }}
                 onDismiss={() => dispatchHelp({ type: 'dismiss' })} />
             )}
             <label htmlFor="studio-prompt" className="sr-only">Message the agent</label>

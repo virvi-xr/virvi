@@ -60,7 +60,7 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    - optional, for "Improve my prompt" (`POST /designs/:id/prompt-help`, which needs `ANTHROPIC_API_KEY` and answers
      `503 prompt_help_unavailable` without it): `STUDIO_PROMPT_HELP_MODEL` (default `claude-haiku-5-5`) and
      `STUDIO_PROMPT_HELP_PER_DAY` (default 30 per account and UTC day, trials included; `429 prompt_help_limit` past
-     it). It never uses a prompt or counts toward the cost ceiling; the count is `studio_usage_days.prompt_helps`,
+     it; 0 answers `503` like a missing key, so the button hides). It never uses a prompt or counts toward the cost ceiling; the count is `studio_usage_days.prompt_helps`,
      added at boot like the other columns.
 3. **The schema.** The server makes it at boot: `entrypoint.sh` runs `drizzle-kit push` before it starts the server,
    then a hand-written fallback (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) in case push failed. That

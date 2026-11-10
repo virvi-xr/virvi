@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   EXAMPLES, GUIDE, GUIDE_FOLDED_KEY, HELP_IDLE, NO_CHOICE, SLOT_GROUPS, canImprove, choiceSlots, firstEmoteMessage, firstWearableMessage, guideTicks,
   helpFailure, helpReducer, helpsWith, pickOpen, readGuideFolded, toggleSlot, withAnswer, writeGuideFolded, type HelpState, type PromptHelp,
+  ANSWER_MAX, ANSWERS_MAX, clampAnswers, outgoingMessage, reaskBody, tooLong, type FirstChoice,
 } from './studio-prompt'
 import { WEARABLE_CATEGORIES } from './studio-reply'
 
@@ -120,5 +121,57 @@ describe('the Improve my prompt panel', () => {
     expect(helpFailure({ status: 429, body: { error: 'prompt_help_limit' } }).message).toBe('You’ve reached today’s limit for prompt help. It comes back tomorrow.')
     expect(helpFailure({ status: 502, body: { error: 'prompt_help_failed' } })).toEqual({ message: 'That didn’t work. Try again in a moment.' })
     expect(helpFailure({ status: 403, body: { code: 'studio_paused' } }).message).toBe('Your studio access is paused.')
+  })
+})
+
+describe('the message the box sends', () => {
+  const outfit: FirstChoice = { kind: 'wearable', slots: { mode: 'outfit' }, emote: { move: null, playback: null }, inWords: false }
+  const hat: FirstChoice = { ...outfit, slots: { mode: 'slots', slots: ['hat'] } }
+  const dance: FirstChoice = { ...outfit, kind: 'emote', emote: { move: 'dance', playback: 'loop' } }
+
+  it('is what Improve my prompt rewrites too: the chips’ sentence and the slots', () => {
+    expect(outgoingMessage('desert explorer', outfit)).toEqual({ text: 'desert explorer\n\nI\'d like a full outfit: suggest the pieces.' })
+    expect(outgoingMessage('a sun hat', hat)).toEqual({ text: 'a sun hat', selectedSlots: ['hat'] })
+    expect(outgoingMessage('a wiggle', dance)).toEqual({ text: 'a wiggle\n\nIt’s a dance. It loops.' })
+    // after the first message the chips are gone
+    expect(outgoingMessage('make it pink', null)).toEqual({ text: 'make it pink' })
+  })
+
+  it('doesn’t add the chips’ sentence twice once a suggestion made from it is used', () => {
+    const asked = outgoingMessage('a wiggle', dance).text
+    const used = 'A cheerful wiggle dance. It loops.' // the rewrite of `asked`, put in the box by Use this
+    expect(asked).toContain('It loops.')
+    expect(outgoingMessage(used, { ...dance, inWords: true })).toEqual({ text: used })
+    expect(outgoingMessage('A full desert outfit.', { ...outfit, inWords: true })).toEqual({ text: 'A full desert outfit.' })
+    // the slots still go with it
+    expect(outgoingMessage('A straw sun hat.', { ...hat, inWords: true })).toEqual({ text: 'A straw sun hat.', selectedSlots: ['hat'] })
+  })
+
+  it('says so when the chips’ sentence takes it past the limit', () => {
+    const body = outgoingMessage('x'.repeat(3990), outfit)
+    expect(tooLong(body)).toBe(`Your message is ${body.text.length - 4000} characters too long with your choices above. Shorten it a little.`)
+    expect(tooLong({ text: 'x'.repeat(4001) })).toBe('Your message is 1 character too long with your choices above. Shorten it a little.')
+    expect(tooLong({ text: 'x'.repeat(4000) })).toBeNull()
+  })
+})
+
+describe('re-asking from a question', () => {
+  const help: PromptHelp = { prompt: 'A sky-blue bucket hat.', questions: [{ id: 'hair', label: 'Hide the hair?', options: ['Hide it', 'Show it'] }] }
+  const ready = (over: Partial<Extract<HelpState, { status: 'ready' }>> = {}) => ({ status: 'ready' as const, help, prompt: help.prompt, answers: {}, ...over })
+
+  it('rewrites the suggestion as edited, not the original draft', () => {
+    expect(reaskBody(ready({ prompt: 'A sky-blue bucket hat with a red band.' }), 'hair', 'Hide it', ['hat']))
+      .toEqual({ text: 'A sky-blue bucket hat with a red band.', selectedSlots: ['hat'], answers: { hair: 'Hide it' } })
+    // an emptied box falls back to the suggestion
+    expect(reaskBody(ready({ prompt: '  ' }), 'hair', 'Show it').text).toBe('A sky-blue bucket hat.')
+  })
+
+  it('keeps the answers within the server’s limits', () => {
+    const many = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`q${i}`, 'x'.repeat(100)]))
+    const body = reaskBody(ready({ answers: many }), 'hair', 'Hide it')
+    expect(Object.keys(body.answers)).toHaveLength(ANSWERS_MAX)
+    expect(body.answers.hair).toBe('Hide it')
+    expect(Object.values(body.answers).every((a) => a.length <= ANSWER_MAX)).toBe(true)
+    expect(clampAnswers({ 'Bad Id': 'x', ok: '  ', fine: ' yes ' })).toEqual({ fine: 'yes' })
   })
 })

@@ -51,12 +51,51 @@ describe('an agent reply as the customer reads it', () => {
       'The colour is `#3a7bd5`, and the rarity is `epic`.',
       'Check out the new sleeves; the checks all pass.',
       'Here is the plan:\n\n1. A cap\n2. Sneakers',
+      'It has an `in` and an `out` point, so it loops.',
+      'Set it to `out` mode for the loop.',
+      'Zoom in and out of the preview.',
+      'The bangs stick out/hair pokes through the brim, so I moved it up.',
+      'The bangs stick out/hat on one side.',
+      'See [the brief](https://example.com/out/hat/brief) for more.',
       '',
     ]
     for (const p of prose) expect(customerReply(p)).toBe(p)
     // a fenced block is shown as written
     const fenced = 'The settings:\n```\nout/hat/piece.json\n```'
     expect(customerReply(fenced)).toBe(fenced)
+  })
+})
+
+describe('the words around a rewritten token', () => {
+  it('replaces an article and drops a following folder', () => {
+    expect(customerReply('I tidied your `out/hat/` folder.')).toBe('I tidied your hat.')
+    expect(customerReply('There is a `out/feet` folder now.')).toBe('There is the feet piece now.')
+    expect(customerReply('The cap is in the `out/hat/` folder.')).toBe('The cap is in the hat.')
+    expect(customerReply('The `out/hat/` directory holds both shapes.')).toBe('The hat holds both shapes.')
+    expect(customerReply('Your `out/upper_body/` folder is ready.')).toBe('Your upper body piece is ready.')
+  })
+
+  it('doesn’t capitalise after an abbreviation', () => {
+    expect(customerReply('A small change, e.g. `out/hat` works on both shapes.')).toBe('A small change, e.g. the hat works on both shapes.')
+    expect(customerReply('Pieces, i.e. `out/feet/` and more.')).toBe('Pieces, i.e. the feet piece and more.')
+  })
+
+  it('reads a checker run with its flags as one, and never doubles the phrase', () => {
+    expect(customerReply('I fixed what failed the checks in `check_wearable.py --strict`.')).toBe('I fixed what failed the checks.')
+    expect(customerReply('I ran check_wearable.py --strict and it passes.')).toBe('I ran the checks and it passes.')
+    expect(customerReply('The checker check_emote.py found nothing.')).toBe('The checker found nothing.')
+    expect(customerReply('I looked in the preview (`studio-preview out/hat --tour`).')).toBe('I looked in the preview.')
+  })
+
+  it('keeps a file name with Markdown characters in a code span', () => {
+    expect(customerReply('I used `uploads/my*star*.png` as the print.')).toBe('I used `my*star*.png` as the print.')
+    expect(customerReply('I used uploads/_ref_.png.')).toBe('I used `_ref_.png`.')
+    expect(customerReply('I used uploads/my_cool_ref.png.')).toBe('I used my_cool_ref.png.')
+  })
+
+  it('turns a link into a workspace path into its words, and leaves web links alone', () => {
+    expect(customerReply('Have a look at [out/hat/cap.glb](out/hat/cap.glb).')).toBe('Have a look at the hat.')
+    expect(customerReply('Your [reference](uploads/beach.png) is on the front.')).toBe('Your reference is on the front.')
   })
 })
 

@@ -2,7 +2,6 @@ import Anthropic from '@anthropic-ai/sdk'
 import { sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { config } from '../config.js'
-import { asData } from './lesson-drafts.js'
 import { utcDay } from './quota.js'
 
 /**
@@ -35,7 +34,8 @@ export class PromptHelpError extends Error {
   }
 }
 
-export const promptHelpAvailable = () => !!config.anthropicApiKey || helperOverride !== null
+/** Off without a key, and with STUDIO_PROMPT_HELP_PER_DAY=0 (the page hides the button on either). */
+export const promptHelpAvailable = () => config.studioPromptHelpPerDay > 0 && (!!config.anthropicApiKey || helperOverride !== null)
 
 const WHAT: Record<HelpKind, string> = {
   wearable: 'wearable (or a set of wearables)',
@@ -90,6 +90,10 @@ const SCHEMA = {
   },
 }
 
+/** The draft's whole length (the prompts route's limit): `<` and `>` escaped, so nothing in it can close a tag. */
+export const DRAFT_MAX = 4000
+const asData = (s: string, max = DRAFT_MAX) => s.slice(0, max).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
 /** What the model reads: the draft, the slots and the answers, all as escaped data. */
 export function helpRequest(input: HelpInput): string {
   const parts = [`<draft>${asData(input.text)}</draft>`]
@@ -106,12 +110,17 @@ async function claudeHelper(input: HelpInput): Promise<string> {
   const client = new Anthropic({ apiKey: config.anthropicApiKey!, maxRetries: 1, timeout: 15_000, ...(fetchOverride ? { fetch: fetchOverride } : {}) })
   const response = await client.messages.create({
     model: config.studioPromptHelpModel,
-    max_tokens: 2000,
+    // Haiku's thinking counts toward this, so it is well above the answer's own size
+    max_tokens: 4000,
     output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
     system: system(input.kind),
     messages: [{ role: 'user', content: helpRequest(input) }],
   })
-  if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') throw new PromptHelpError(502, 'prompt_help_failed')
+  if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') {
+    // The reason only, never the text
+    console.warn(`[studio] prompt help stopped: ${response.stop_reason}`)
+    throw new PromptHelpError(502, 'prompt_help_failed')
+  }
   return response.content.map((b) => (b.type === 'text' ? b.text : '')).join('').trim()
 }
 

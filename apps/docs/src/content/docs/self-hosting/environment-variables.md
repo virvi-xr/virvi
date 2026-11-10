@@ -150,7 +150,7 @@ The Design Studio runs only in cloud mode. These settings shape its "Improve my 
 | Variable | Default | What it does |
 |---|---|---|
 | `STUDIO_PROMPT_HELP_MODEL` | `claude-haiku-5-5` | The Claude model that rewrites drafts. |
-| `STUDIO_PROMPT_HELP_PER_DAY` | `30` | Rewrites each account (trials too) may ask for per UTC day. They don't use prompts. `0` allows none. A value that isn't a whole number stops the server from starting. |
+| `STUDIO_PROMPT_HELP_PER_DAY` | `30` | Rewrites each account (trials too) may ask for per UTC day. They don't use prompts. `0` turns the button off. A value that isn't a whole number stops the server from starting. |
 
 ## Streaming
 

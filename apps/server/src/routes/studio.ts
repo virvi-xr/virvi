@@ -278,7 +278,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     const a = await designAccess(request, SUPPORT)
     if (!a) return notFound(reply)
     const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; answers?: unknown }
-    if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > MAX_PROMPT) {
+    if (typeof b.text !== 'string' || !ownerWords(b.text) || b.text.length > MAX_PROMPT) {
       return reply.status(400).send({ error: `text must be 1-${MAX_PROMPT} characters` })
     }
     let slots: string[] | null = null
@@ -300,7 +300,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       answers = Object.fromEntries(entries.map(([k, v]) => [k, (v as string).trim()]))
     }
     try {
-      return await helpWithPrompt(request.user.id, { kind: a.d.kind as 'wearable' | 'emote' | 'scene', text: b.text.trim(), selectedSlots: slots, answers }, new Date())
+      return await helpWithPrompt(request.user.id, { kind: a.d.kind as 'wearable' | 'emote' | 'scene', text: ownerWords(b.text), selectedSlots: slots, answers }, new Date())
     } catch (err) {
       if (err instanceof PromptHelpError) return reply.status(err.status).send({ error: err.code })
       throw err
