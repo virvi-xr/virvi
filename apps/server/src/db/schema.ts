@@ -1827,6 +1827,9 @@ export const studioDesignInvites = pgTable('studio_design_invites', {
   acceptedAt: timestamp('accepted_at', { withTimezone: true }),
   declinedAt: timestamp('declined_at', { withTimezone: true }),
   cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  // The email: sent on create and each resend (at most one resend an hour, 3 in all)
+  resendCount: integer('resend_count').notNull().default(0),
+  lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
 }, (t) => ({
   openUq: uniqueIndex('studio_design_invites_open_uq').on(t.designId, t.email)
     .where(sql`${t.acceptedAt} IS NULL AND ${t.declinedAt} IS NULL AND ${t.cancelledAt} IS NULL`),

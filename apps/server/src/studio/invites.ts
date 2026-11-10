@@ -20,6 +20,8 @@ export type InviteRole = 'collaborator' | 'viewer'
 export const INVITE_ROLES: readonly InviteRole[] = ['collaborator', 'viewer']
 export const INVITE_DAYS = 14
 export const INVITES_PER_DAY = 50
+export const RESENDS_MAX = 3
+const RESEND_GAP_MS = 3600_000
 const DAY_MS = 24 * 3600_000
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -100,7 +102,7 @@ export async function createInvite(
       if (prior) await tx.update(studioDesignInvites).set({ cancelledAt: now }).where(eq(studioDesignInvites.id, prior.id))
       const [row] = await tx.insert(studioDesignInvites).values({
         designId: design.id, email, role, token: randomBytes(32).toString('base64url'), invitedBy: design.ownerId,
-        userId: match?.id ?? null, createdAt: now, expiresAt: new Date(now.getTime() + INVITE_DAYS * DAY_MS),
+        userId: match?.id ?? null, createdAt: now, lastSentAt: now, expiresAt: new Date(now.getTime() + INVITE_DAYS * DAY_MS),
       }).returning()
       return row
     })
@@ -124,16 +126,23 @@ export async function cancelInvite(i: Invite, now: Date): Promise<void> {
   await db.update(studioDesignInvites).set({ cancelledAt: now }).where(and(eq(studioDesignInvites.id, i.id), unanswered))
 }
 
-/** The same link, 14 more days from now, mailed again. Reviving an expired invite needs a free seat. */
+/**
+ * The same link, 14 more days from now, mailed again: at most once an hour and 3 times in all. Reviving an expired
+ * invite needs a free seat.
+ */
 export async function resendInvite(i: Invite, designName: string, now: Date): Promise<Invite> {
   const updated = await db.transaction(async (tx) => {
     await lockDesign(tx, i.designId)
-    if (i.expiresAt <= now && await seatsTaken(i.designId, now, tx, i.id) >= config.studioMaxMembers) throw new InviteError(409, 'members_full')
-    const [row] = await tx.update(studioDesignInvites).set({ expiresAt: new Date(now.getTime() + INVITE_DAYS * DAY_MS) })
-      .where(and(eq(studioDesignInvites.id, i.id), unanswered)).returning()
+    const [cur] = await tx.select().from(studioDesignInvites).where(and(eq(studioDesignInvites.id, i.id), unanswered))
+    if (!cur) throw new InviteError(404, 'invite_not_found')
+    if (cur.resendCount >= RESENDS_MAX) throw new InviteError(429, 'resend_limit')
+    if (cur.lastSentAt && now.getTime() - cur.lastSentAt.getTime() < RESEND_GAP_MS) throw new InviteError(429, 'resend_too_soon')
+    if (cur.expiresAt <= now && await seatsTaken(cur.designId, now, tx, cur.id) >= config.studioMaxMembers) throw new InviteError(409, 'members_full')
+    const [row] = await tx.update(studioDesignInvites)
+      .set({ expiresAt: new Date(now.getTime() + INVITE_DAYS * DAY_MS), resendCount: cur.resendCount + 1, lastSentAt: now })
+      .where(eq(studioDesignInvites.id, cur.id)).returning()
     return row
   })
-  if (!updated) throw new InviteError(404, 'invite_not_found')
   await mailInvite(updated, designName)
   return updated
 }

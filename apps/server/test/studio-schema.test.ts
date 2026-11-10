@@ -159,7 +159,7 @@ describe('design studio schema', () => {
       designId: d.id, email: 'a@b.co', role: 'viewer', token: 'tok1', invitedBy: owner.id, userId: friend.id,
       expiresAt: new Date(Date.now() + 864e5),
     }).returning()
-    expect(inv).toMatchObject({ acceptedAt: null, declinedAt: null, cancelledAt: null })
+    expect(inv).toMatchObject({ acceptedAt: null, declinedAt: null, cancelledAt: null, resendCount: 0, lastSentAt: null })
     const [n] = await db.insert(notifications).values({ userId: friend.id, kind: 'invite', data: { design: 'Neon cap' }, groupKey: 'g1' }).returning()
     expect(n).toMatchObject({ readAt: null, groupKey: 'g1' })
     const [msg] = await db.insert(studioMessages).values({ designId: d.id, role: 'user', text: 'hi', userId: friend.id }).returning()

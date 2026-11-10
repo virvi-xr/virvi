@@ -333,9 +333,15 @@ describe('design invites and people', () => {
     expect(m.subject).toBe('Olive Owner invited you to Neon <cap> on Virvi')
     expect(m.html).toContain(inv.link)
     expect(m.html).toContain('Neon &lt;cap&gt;')
-    // Resend mails again
-    await act(owner, `/designs/${d.id}/invites/${inv.id}/resend`)
+    // Resend mails again, but not within the hour
+    const soon = await act(owner, `/designs/${d.id}/invites/${inv.id}/resend`)
+    expect([soon.statusCode, soon.json()]).toEqual([429, { error: 'resend_too_soon', code: 'resend_too_soon' }])
+    expect(sendMail).toHaveBeenCalledTimes(1)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(Date.now() + 3600_000))
+    expect((await act(owner, `/designs/${d.id}/invites/${inv.id}/resend`)).statusCode).toBe(200)
     expect(sendMail).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
     // A failing transport doesn't fail the invite
     sendMail.mockRejectedValueOnce(new Error('smtp down'))
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -343,5 +349,28 @@ describe('design invites and people', () => {
     expect(logged).toHaveBeenCalledWith('[virvi-studio] invite email failed:', expect.any(Error))
     logged.mockRestore()
     expect(await db.select().from(studioDesignInvites).where(and(eq(studioDesignInvites.designId, d.id), eq(studioDesignInvites.email, 'c@test.dev')))).toHaveLength(1)
+  })
+
+  // Last: once SMTP is set, email.ts keeps its transport for the rest of the file
+  it('resend: at most once an hour, and 3 times in all', async () => {
+    ;(config as any).smtpHost = 'smtp.test'
+    const d = await createDesign(owner)
+    const inv = (await invite(owner, d.id, { email: 'cora@test.dev' })).json().invite
+    const resend = () => act(owner, `/designs/${d.id}/invites/${inv.id}/resend`)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    for (let n = 1; n <= 3; n++) {
+      vi.setSystemTime(new Date(Date.now() + 3600_000))
+      expect((await resend()).statusCode).toBe(200)
+      if (n === 3) break
+      const again = await resend()
+      expect([again.statusCode, again.json().code]).toEqual([429, 'resend_too_soon'])
+    }
+    expect(sendMail).toHaveBeenCalledTimes(4)
+    vi.setSystemTime(new Date(Date.now() + 3600_000))
+    const fourth = await resend()
+    expect([fourth.statusCode, fourth.json()]).toEqual([429, { error: 'resend_limit', code: 'resend_limit' }])
+    expect(sendMail).toHaveBeenCalledTimes(4)
+    const [row] = await db.select().from(studioDesignInvites)
+    expect(row.resendCount).toBe(3)
   })
 })
