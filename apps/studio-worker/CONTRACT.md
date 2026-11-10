@@ -6,7 +6,8 @@ real.
 
 One machine works on one design. It restores the design's workspace, takes that design's jobs one at a time, and
 exits after `STUDIO_IDLE_EXIT_SEC` with no job, which stops the machine. The worker always pulls; Virvi never calls
-the machine.
+the machine. Virvi may start the machine before there is a job (when someone starts typing a prompt), so a worker can
+boot, restore, and poll for a while before its first job, or exit idle without one.
 
 ## Machine environment
 
@@ -164,9 +165,20 @@ Views, rendered in the worker's own Babylon page:
 {"type": "progress", "text": "Running: blender -b /opt/assets/AvatarShape_A.blend --python build_cap.py"}
 ```
 
-A prompt job's phases come in order: `building`, `checking`, `rendering` (only when a piece changed), `saving`. A
-render job sends `rendering`. Progress texts are the agent's messages and the commands it runs. Events are best
-effort: one that fails to send is dropped.
+A prompt job's phases come in order: `checking` (only when the job has `check`: the off-topic check, before the
+agent), `building`, `checking` (the pieces' checks), `rendering` (only when a piece changed), `saving`. A render job
+sends `rendering`. Progress texts are the agent's messages and the commands it runs.
+
+```json
+{"type": "boot", "seconds": 9.4, "restored": true}
+```
+
+The first job a worker process takes, of any type, starts with a `boot` event: the seconds from the process starting
+to its first poll for a job (booting and restoring the workspace), and whether there was a workspace to restore. Later
+jobs of the same process get none. Virvi records it for prompt jobs only (`studio_jobs.timings`).
+
+Events are best effort: one that fails to send is dropped, and the job goes on. A server older than the `boot` event
+answers it 400.
 
 ## Result
 

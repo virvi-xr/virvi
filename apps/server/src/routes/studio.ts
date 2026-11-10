@@ -16,6 +16,7 @@ import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from 
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
 import { helpWithPrompt, PromptHelpError } from '../studio/prompt-help.js'
+import { warmDesign } from '../studio/warm.js'
 import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, setDetail, TOUR_VIEW, wornRevisions } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
@@ -305,6 +306,15 @@ export default async function studioRoutes(app: FastifyInstance) {
       if (err instanceof PromptHelpError) return reply.status(err.status).send({ error: err.code })
       throw err
     }
+  })
+
+  // Starting the design's machine while the person writes a prompt (studio/warm.ts): who may is who may send one. It
+  // answers 204 whether it warmed or there was no point, so the page never shows anything for it.
+  app.post('/api/studio/designs/:id/warm', trialWork, async (request, reply) => {
+    const a = await designAccess(request, SUPPORT)
+    if (!a) return notFound(reply)
+    await warmDesign(a.d, { support: a.support }, new Date())
+    return reply.status(204).send()
   })
 
   // 👍 / 👎 on a revision (an agent reply that changed pieces, named by its job): the owner's alone. Support sees the

@@ -5,13 +5,15 @@ import { CubeIcon, PaperclipIcon, XSmallIcon } from '@/components/icons'
 import { accountRequired } from '@/lib/trial'
 import { formatBytesShort, refusalMessage, uploadHint, uploadProblem, UPLOAD_ACCEPT, type StudioUpload } from '@/lib/studio'
 
-type Props = { designId: string; kind: string; uploads: StudioUpload[]; disabled: boolean; dropped: File[] | null; onChanged: () => Promise<void>; readOnly?: boolean }
+type Props = { designId: string; kind: string; uploads: StudioUpload[]; disabled: boolean; dropped: File[] | null; onChanged: () => Promise<void>; readOnly?: boolean
+  /** Called as files start uploading. */
+  onAttach?: () => void }
 
 /**
  * The files the agent can use (a logo for a shirt, a reference photo, a base mesh): attach, see, remove. Every prompt
  * gets all of them; the message says what to do with each. `readOnly` (Virvi support): see them, nothing else.
  */
-export default function Uploads({ designId, kind, uploads, disabled, dropped, onChanged, readOnly = false }: Props) {
+export default function Uploads({ designId, kind, uploads, disabled, dropped, onChanged, readOnly = false, onAttach }: Props) {
   const api = useApi()
   const input = useRef<HTMLInputElement>(null)
   const [sending, setSending] = useState<string[]>([])
@@ -19,6 +21,7 @@ export default function Uploads({ designId, kind, uploads, disabled, dropped, on
 
   const add = async (files: File[]) => {
     setError(null)
+    onAttach?.()
     for (const file of files) {
       const problem = uploadProblem(file)
       if (problem) { setError(`${file.name}: ${problem}`); continue }

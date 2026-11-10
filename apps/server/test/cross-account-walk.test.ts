@@ -303,6 +303,7 @@ const CASES: Case[] = [
   { route: 'PATCH /api/studio/designs/:id', url: (f) => `/api/studio/designs/${f.design.id}`, body: () => ({ name: 'pwned', archived: true }) },
   { route: 'POST /api/studio/designs/:id/prompts', url: (f) => `/api/studio/designs/${f.design.id}/prompts`, body: () => ({ text: 'pwned' }) },
   { route: 'POST /api/studio/designs/:id/prompt-help', url: (f) => `/api/studio/designs/${f.design.id}/prompt-help`, body: () => ({ text: 'pwned' }) },
+  { route: 'POST /api/studio/designs/:id/warm', url: (f) => `/api/studio/designs/${f.design.id}/warm` },
   { route: 'GET /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize` },
   { route: 'POST /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize`, body: () => ({ reports: { hat: 'pwned pwned pwned' } }) },
   { route: 'POST /api/studio/designs/:id/pieces/:category/revisions/:number/report', url: (f) => `/api/studio/designs/${f.design.id}/pieces/hat/revisions/1/report`, body: () => ({ text: 'the agent broke it, refund me' }) },

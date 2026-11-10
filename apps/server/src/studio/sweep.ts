@@ -55,7 +55,8 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
 
   const idle = await db.select({ id: studioDesigns.id }).from(studioDesigns).where(and(
     isNotNull(studioDesigns.machineId),
-    sql`COALESCE(${studioDesigns.lastJobAt}, ${studioDesigns.createdAt}) < ${new Date(now.getTime() - IDLE_MACHINE_MS).toISOString()}::timestamptz`,
+    // A machine warmed ahead of a prompt (warm.ts) is in use too: GREATEST skips a null warmed_at
+    sql`GREATEST(COALESCE(${studioDesigns.lastJobAt}, ${studioDesigns.createdAt}), ${studioDesigns.warmedAt}) < ${new Date(now.getTime() - IDLE_MACHINE_MS).toISOString()}::timestamptz`,
     sql`NOT EXISTS (SELECT 1 FROM studio_jobs j WHERE j.design_id = ${studioDesigns.id} AND j.status IN ('queued', 'taken'))`,
   ))
   let destroyed = 0

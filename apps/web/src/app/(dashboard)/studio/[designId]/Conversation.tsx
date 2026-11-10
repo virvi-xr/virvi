@@ -20,6 +20,8 @@ import { EmoteChips, HelpPanel, ImproveButton, PromptGuide, SlotChips } from './
 import { AgentPicker } from '../AgentPicker'
 import Markdown from './Markdown'
 import Uploads from './Uploads'
+import WaitSteps from './WaitSteps'
+import { createWarmer, waitSteps } from '@/lib/studio-wait'
 
 
 type Props = {
@@ -44,8 +46,12 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const [helpOff, setHelpOff] = useState(false)
   // The box holds a suggestion made with the chips' sentence, so Send doesn't add it again (changing a chip does)
   const [chipsInWords, setChipsInWords] = useState(false)
-  const chooseSlots = (c: SlotChoice) => { setSlotChoice(c); setChipsInWords(false) }
-  const chooseEmote = (c: EmoteChoice) => { setEmoteChoice(c); setChipsInWords(false) }
+  const chooseSlots = (c: SlotChoice) => { setSlotChoice(c); setChipsInWords(false); warm() }
+  const chooseEmote = (c: EmoteChoice) => { setEmoteChoice(c); setChipsInWords(false); warm() }
+  // Starting the machine once the person starts on a prompt (typing, a chip, a file), not on opening the page
+  const apiRef = useRef(api)
+  apiRef.current = api
+  const [warmer] = useState(() => createWarmer((id) => apiRef.current.warmStudioDesign(id)))
 
   // From /try/studio: the design was made but its first prompt was refused; offer it again here (read once, then gone)
   useEffect(() => {
@@ -62,6 +68,12 @@ export default function Conversation({ designId, detail, usage, events, onChange
   // Support's own allowance is no business of this design's
   const nudge = detail.support ? null : trialNudge(usage)
   const active = detail.activeJob?.type === 'prompt' ? detail.activeJob : null
+  function warm() { if (canSend(composer.mode) && !active) warmer(designId) }
+  // Until the agent's first progress line: the steps, timed from when the prompt was sent (or first seen here)
+  const steps = active ? waitSteps(active, events) : null
+  const seen = useRef<{ id: string; at: number } | null>(null)
+  if (active && seen.current?.id !== active.id) seen.current = { id: active.id, at: Date.now() }
+  const waitSince = (active?.createdAt && Date.parse(active.createdAt)) || (seen.current?.at ?? Date.now())
   const failing = detail.pieces.filter((p) => p.revision?.checker?.pass === false)
   const lastMessage = detail.messages[detail.messages.length - 1]
   const openProposal = lastMessage?.role === 'agent' && lastMessage.proposal?.slots?.length && !active ? lastMessage : null
@@ -175,14 +187,15 @@ export default function Conversation({ designId, detail, usage, events, onChange
               {agentLabel(detail.design.agent)} is working
             </p>
             <div className="italic text-gray-400">
-              <Markdown text={progressFor(events, active.id) ?? (active.status === 'queued' ? 'Starting the studio…' : 'Working…')} />
+              {steps ? <WaitSteps steps={steps} since={waitSince} typicalSec={detail.typicalFirstReplySec} />
+                : <Markdown text={progressFor(events, active.id) ?? (active.status === 'queued' ? 'Starting the studio…' : 'Working…')} />}
             </div>
           </div>
         )}
       </div>
 
       <div className="border-t border-gray-800 p-3">
-        <Uploads designId={designId} kind={detail.design.kind} uploads={detail.uploads ?? []} disabled={composer.mode === 'archived' || composer.mode === 'paused'} dropped={dropped} onChanged={onChanged} readOnly={!controls.uploads} />
+        <Uploads designId={designId} kind={detail.design.kind} uploads={detail.uploads ?? []} disabled={composer.mode === 'archived' || composer.mode === 'paused'} dropped={dropped} onChanged={onChanged} readOnly={!controls.uploads} onAttach={warm} />
         {refusal && <RefusalLine refusal={refusal} usage={controls.topup ? usage : null} onFix={() => send({ fixChecks: true })} />}
         {failing.length > 0 && !active && (
           <button type="button" disabled={sending} onClick={() => send({ fixChecks: true })}
@@ -216,7 +229,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
             <label htmlFor="studio-prompt" className="sr-only">Message the agent</label>
             <textarea id="studio-prompt" value={text} rows={3} maxLength={MAX_PROMPT}
               disabled={composer.mode === 'busy'}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => { setText(e.target.value); warm() }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
               placeholder={composer.mode === 'busy' ? 'The agent is still working on your last message.' : detail.support ? 'Message the agent as Virvi support' : 'Describe what you want, or what to change'}
               className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-blue-400 disabled:opacity-60" />

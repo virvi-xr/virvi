@@ -25,6 +25,8 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `lesson-drafts.ts` | Claude (ANTHROPIC_API_KEY, Sonnet 5.5) drafting one lesson from a batch of 👎s of one kind |
 | `prompt-help.ts` | "Improve my prompt": Claude (ANTHROPIC_API_KEY, Haiku 5.5) rewriting a draft into a concrete request with a few quick-pick questions, never sent to the agent; its own daily limit per account |
 | `defaults.ts` | the agent a new design of each kind starts on, set by an admin beside the 👍 rates (never automatically) |
+| `timings.ts` | how long each prompt waits for its first reply (`studio_jobs.timings`): the machine, each step's seconds, the finish log line, the admin page's First reply card and the design detail's `typicalFirstReplySec` |
+| `warm.ts` | starting a design's machine while the person writes a prompt (`POST /designs/:id/warm`), so the prompt doesn't wait for it |
 | `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes; then the trial sweep and the weekly ratings digest |
 
 Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/studio-worker.ts` (the workers,
@@ -64,8 +66,9 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
      added at boot like the other columns.
 3. **The schema.** The server makes it at boot: `entrypoint.sh` runs `drizzle-kit push` before it starts the server,
    then a hand-written fallback (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) in case push failed. That
-   covers the eleven `studio_*` tables (four of them for payments), two new columns (`studio_designs.finalized_at`,
-   `studio_jobs.counted_from`), and the MANA and credit tables below. Nothing needs running by hand first; to check
+   covers the eleven `studio_*` tables (four of them for payments), new columns (`studio_designs.finalized_at`,
+   `studio_jobs.counted_from`, and for the first-reply wait `studio_jobs.timings` and `studio_designs.warmed_at`),
+   and the MANA and credit tables below. Nothing needs running by hand first; to check
    the schema before a deploy, `drizzle-kit push` against production does the same.
 4. **Fly.** Confirm that the server's `FLY_API_TOKEN` can manage machines in `vlm-studio-worker`, in the
    `FLY_WORLDS_ORG` org (`vlm-worlds`). The agent keys are that app's secrets (`fly secrets import -a
@@ -98,6 +101,33 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
      at boot), then the worker image: `fly deploy --build-only --push --remote-only --image-label <sha>` from
      `apps/studio-worker`, then `e2e/fly.sh <image>`, then `e2e/scope_eval.py` on a machine of that image (it fails if
      a designer's message would be turned down), then `STUDIO_WORKER_IMAGE` on Railway.
+
+## The first-reply wait
+
+After a prompt is sent, the page lists the steps until the agent's first progress line (Starting your studio,
+Checking your request, The agent is reading your request) with the time so far, and "Usually about N seconds" from
+`typicalFirstReplySec` (the median over the last 50 timed prompts, cached 5 minutes; absent below 5).
+
+- **Timings.** Each prompt job's `timings` (jsonb, null for other jobs and older prompts) holds `machine` (what
+  `ensureWorker` did for it: `created`, `started`, `running` or `external`) and the seconds from the job's
+  `createdAt` to `taken`, `checking` (the off-topic check, before `building`), `building`, `firstProgress` (the
+  first progress line the page shows, not a `Running:` command) and `done`, plus the worker's `boot` seconds and
+  whether it `restored` a workspace. Each is written once, as its event arrives; later progress lines write nothing.
+  A worker image from before the `boot` event and the early `checking` phase gives no `boot` or `checking`, and the
+  rest still fills in. A finished prompt logs one line, ids and seconds only:
+  `[studio] job <id> timing: machine=created taken=24s boot=9s checking=31s building=35s first_progress=52s done=310s`.
+- **Admin.** `GET /api/admin/studio/first-reply` (the Studio admin page's First reply card): the median and 90th
+  percentile of created → first progress over the last 50 timed prompts, by `machine`, and the median of each step.
+- **Warming.** When someone starts typing a prompt, taps a slot or emote chip, or attaches a file, the page calls
+  `POST /designs/:id/warm` (once per 5 minutes per design): the machine is made or started with no job, and the
+  worker boots, restores and polls until a prompt comes or it exits idle after 600 s. It answers 204 whether it warmed
+  or not, and does nothing when the account couldn't send a prompt (no prompts left, past the cost ceiling; a paused
+  account gets the prompts route's 403), a job is already waiting or running, the design is archived,
+  `STUDIO_MACHINES=external`, or the design was warmed in the last 5 minutes (`studio_designs.warmed_at`). No job is
+  made, so nothing is counted or charged. The sweep counts `warmed_at` as activity, so it doesn't destroy a machine
+  just warmed on a design idle for days.
+- **Deploy order.** The server first (it accepts the `boot` event, and the timings columns are made at boot), then
+  the worker image, which adds the `boot` event and the early `checking` phase.
 
 ## Paying with MANA and credit
 

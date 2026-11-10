@@ -45,11 +45,11 @@ describe('studio worker machines', () => {
   it('a stopped machine is started, a running one left alone', async () => {
     const fly = fakeFly()
     const d = await createDesign(await createUser())
-    await ensureWorker(d.id, { fly })
-    await ensureWorker(d.id, { fly })
+    expect(await ensureWorker(d.id, { fly })).toBe('created')
+    expect(await ensureWorker(d.id, { fly })).toBe('running')
     expect(fly.calls.start).toHaveLength(0)
     fly.machines.get('m1')!.state = 'stopped'
-    await ensureWorker(d.id, { fly })
+    expect(await ensureWorker(d.id, { fly })).toBe('started')
     expect(fly.calls.start).toEqual(['m1'])
     expect(fly.calls.create).toHaveLength(1)
   })
@@ -120,7 +120,7 @@ describe('studio worker machines', () => {
     await ensureWorker(d.id, { fly })
     fly.machines.get('m1')!.state = 'stopping'
     fly.startMachine = async () => { throw new FlyError('Fly POST start returned 412: machine is stopping', 412, '') }
-    await expect(ensureWorker(d.id, { fly })).resolves.toBeUndefined()
+    await expect(ensureWorker(d.id, { fly })).resolves.toBe('started')
   })
 
   it('the token hash is stored before the machine can call in', async () => {

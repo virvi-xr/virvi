@@ -8,6 +8,7 @@ import { hashWorkerToken } from '../studio/machines.js'
 import { checkFilePath, getStudioStore, jobFileKey, uploadKey, workspaceKey } from '../studio/store.js'
 import { applyResult, parseResult } from '../studio/results.js'
 import { publishStudio } from '../studio/events.js'
+import { recordBoot, recordStep, takenTimings } from '../studio/timings.js'
 
 /**
  * Virvi's side of apps/studio-worker/CONTRACT.md. Each design's machine authenticates with its own worker token; a token
@@ -19,6 +20,9 @@ const MB = 1024 * 1024
 const FILE_LIMIT = 50 * MB
 const WORKSPACE_LIMIT = 1024 * MB
 const MAX_EVENT_TEXT = 4000
+const MAX_BOOT_SEC = 3600
+/** A progress line the page shows (web's progressFor): not empty, and not one of the agent's commands. */
+const shownProgress = (text: string) => !!text.trim() && !text.startsWith('Running:')
 
 type Design = typeof studioDesigns.$inferSelect
 type Job = typeof studioJobs.$inferSelect
@@ -125,7 +129,7 @@ export default async function studioWorkerRoutes(app: FastifyInstance) {
     scope.get('/api/studio/worker/designs/:designId/jobs/next', opts, async (request, reply) => {
       const designId = request.studioDesign!.id
       const rows = await db.execute<{ id: string; payload: Record<string, unknown> }>(sql`
-        UPDATE studio_jobs SET status = 'taken', taken_at = now()
+        UPDATE studio_jobs SET status = 'taken', taken_at = now(), timings = ${takenTimings}
         WHERE id = (
           SELECT id FROM studio_jobs WHERE design_id = ${designId} AND status = 'queued'
           ORDER BY background, created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -137,13 +141,24 @@ export default async function studioWorkerRoutes(app: FastifyInstance) {
       return reply.send({ jobId: job.id, ...job.payload })
     })
 
+    // A prompt job's wait is timed from its events (timings.ts): a phase's first time, the first progress line the page
+    // shows, and the worker's boot. The job row is already read, so a progress line after the first writes nothing
     scope.post('/api/studio/worker/jobs/:jobId/events', opts, async (request, reply) => {
-      const e = request.body as { type?: unknown; text?: unknown; phase?: unknown } | null
+      const e = request.body as { type?: unknown; text?: unknown; phase?: unknown; seconds?: unknown; restored?: unknown } | null
       const job = request.studioJob!
+      const timed = job.type === 'prompt' && job.status === 'taken'
+      const time = (p: Promise<void>) => p.catch((err) => console.error('[studio] timings not recorded:', err instanceof Error ? err.message : err))
       if (e?.type === 'progress' && typeof e.text === 'string') {
+        if (timed && job.timings?.firstProgress === undefined && shownProgress(e.text)) await time(recordStep(job.id, 'firstProgress', new Date()))
         await publishStudio(job.designId, { type: 'progress', jobId: job.id, text: e.text.slice(0, MAX_EVENT_TEXT) })
       } else if (e?.type === 'phase' && typeof e.phase === 'string' && /^[a-z_]{1,32}$/.test(e.phase)) {
+        if (timed && (e.phase === 'checking' || e.phase === 'building') && job.timings?.[e.phase] === undefined) {
+          await time(recordStep(job.id, e.phase, new Date()))
+        }
         await publishStudio(job.designId, { type: 'phase', jobId: job.id, phase: e.phase })
+      } else if (e?.type === 'boot' && typeof e.seconds === 'number' && Number.isFinite(e.seconds) && e.seconds >= 0
+        && e.seconds <= MAX_BOOT_SEC && typeof e.restored === 'boolean') {
+        if (timed && job.timings?.boot === undefined) await time(recordBoot(job.id, e.seconds, e.restored))
       } else {
         return reply.status(400).send({ error: 'bad_event' })
       }

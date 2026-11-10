@@ -114,7 +114,7 @@ export type StudioDetail = {
   design: StudioDesign
   pieces: StudioPiece[]
   messages: StudioMessage[]
-  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; fixClipping?: FixClipping | null } | null
+  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; createdAt?: string; fixClipping?: FixClipping | null } | null
   set: StudioSet
   lastPrompt: { jobId: string; outcome: string | null; status: string } | null
   uploads: StudioUpload[]
@@ -122,6 +122,8 @@ export type StudioDetail = {
   support?: StudioSupportView
   /** Each agent reply that changed pieces, with the owner's 👍 / 👎 (LIV-142). */
   revisions?: StudioRevision[]
+  /** The usual seconds from sending a prompt to the agent's first progress line; absent until the server knows. */
+  typicalFirstReplySec?: number
 }
 
 /** A file the owner gave the agent (the server's `publicUpload`). */

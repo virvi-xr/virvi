@@ -15,6 +15,7 @@ import Feedback from './Feedback'
 import Lessons from './Lessons'
 import Digest from './Digest'
 import KindDefaults from './KindDefaults'
+import FirstReply from './FirstReply'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
 const smallButton = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50'
@@ -162,6 +163,7 @@ function Learning() {
       <Lessons version={version} onList={(l) => setDrafting(l.drafting)} />
       <Digest />
       <KindDefaults />
+      <FirstReply />
     </>
   )
 }

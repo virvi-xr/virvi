@@ -692,3 +692,71 @@ def test_the_reply_keeps_the_workspace_out_of_sight():
             assert named in text[rule:], named
         assert '"I\'ve put together a few options", "the hat", "your reference image", "the checks"' in text
         assert 'A file the user uploaded can be called by the name they gave it, without its folder.' in text
+
+
+def test_a_checked_prompt_says_checking_before_building(api, tmp_path, skills):
+    result = run_checked(api, tmp_path, prompt_job(check=True), 'claude_builds_hat.jsonl', verdict('design'))
+    assert result['outcome'] == 'ok', result
+    # The first `checking` is the off-topic check; the second, after the agent, is the pieces' checks
+    assert api.phases('job-1') == ['checking', 'building', 'checking', 'rendering', 'saving']
+
+
+def test_an_off_topic_prompt_says_checking_and_nothing_else(api, tmp_path):
+    run_checked(api, tmp_path, prompt_job(check=True), 'claude_builds_hat.jsonl', verdict('off_topic', 'coding'))
+    assert api.phases('job-1') == ['checking']
+
+
+def test_an_unchecked_prompt_starts_with_building(api, tmp_path, skills):
+    run(api, tmp_path, prompt_job(), 'claude_builds_hat.jsonl')
+    assert api.phases('job-1')[0] == 'building'
+
+
+def test_events_that_fail_to_send_never_fail_the_job(api, tmp_path, skills):
+    api.fail[('POST', '/events')] = 500
+    result = run_checked(api, tmp_path, prompt_job(check=True), 'claude_builds_hat.jsonl', verdict('design'))
+    assert result['outcome'] == 'ok', result
+    assert api.events == [] and api.results[-1]['outcome'] == 'ok'
+
+
+def worker_env(api, idle='1'):
+    return {'VIRVI_API_URL': api.url, 'STUDIO_WORKER_TOKEN': TOKEN, 'STUDIO_DESIGN_ID': 'design-1',
+            'STUDIO_IDLE_EXIT_SEC': idle}
+
+
+def test_the_first_job_hears_how_long_the_worker_took_to_boot(api, tmp_path, skills):
+    api.jobs += [prompt_job(), prompt_job(jobId='job-2')]
+    assert jobs.main(worker_env(api), design=tmp_path / 'design', poll_sec=0.1, render_fn=fake_render([]),
+                     command=fake_command('claude_builds_hat.jsonl'), as_user=None, started=jobs.time.monotonic() - 3) == 0
+    first = [e for j, e in api.events if j == 'job-1']
+    assert first[0]['type'] == 'boot' and first[0]['restored'] is False
+    assert 3 <= first[0]['seconds'] < 30
+    assert [e for j, e in api.events if e['type'] == 'boot' and j == 'job-2'] == []  # once per process
+
+
+def test_the_boot_event_says_whether_the_workspace_was_restored(api, tmp_path, skills):
+    src = tmp_path / 'src'
+    (src / 'out').mkdir(parents=True)
+    save_state(tmp_path / 'src-state', State())
+    api.workspace = pack(src, tmp_path / 'src-state')
+    api.jobs.append(prompt_job())
+    jobs.main(worker_env(api), design=tmp_path / 'design', poll_sec=0.1, render_fn=fake_render([]),
+              command=fake_command('claude_builds_hat.jsonl'), as_user=None)
+    boot = [e for j, e in api.events if e['type'] == 'boot']
+    assert len(boot) == 1 and boot[0]['restored'] is True and boot[0]['seconds'] >= 0
+
+
+def test_a_boot_event_that_fails_to_send_still_runs_the_job(api, tmp_path, skills):
+    api.fail[('POST', '/events')] = 400  # a server from before the boot event refuses it
+    api.jobs.append(prompt_job())
+    assert jobs.main(worker_env(api), design=tmp_path / 'design', poll_sec=0.1, render_fn=fake_render([]),
+                     command=fake_command('claude_builds_hat.jsonl'), as_user=None) == 0
+    assert api.results[-1]['outcome'] == 'ok'
+
+
+def test_boot_counts_from_when_the_entrypoint_began(api, tmp_path, skills):
+    api.jobs.append(prompt_job())
+    env = {**worker_env(api), 'STUDIO_BOOT_AT': str(jobs.time.time() - 7)}
+    jobs.main(env, design=tmp_path / 'design', poll_sec=0.1, render_fn=fake_render([]),
+              command=fake_command('claude_builds_hat.jsonl'), as_user=None)
+    boot = [e for j, e in api.events if e['type'] == 'boot']
+    assert 7 <= boot[0]['seconds'] < 30

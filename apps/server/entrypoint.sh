@@ -306,6 +306,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio_usage_days.prompt_helps ensured');
       } catch(e) { console.log('[virvi-server] studio_usage_days.prompt_helps:', e.message); }
 
+      // Design Studio first-reply wait: each prompt job's timings, and when a design's machine was last warmed; matches studioJobs.timings and studioDesigns.warmedAt in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS timings JSONB\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS warmed_at TIMESTAMPTZ\`;
+        console.log('[virvi-server] studio timings and warmed_at ensured');
+      } catch(e) { console.log('[virvi-server] studio timings and warmed_at:', e.message); }
+
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_pairings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), world_id UUID NOT NULL REFERENCES hyperfy_worlds(id) ON DELETE CASCADE, user_id UUID REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT UNIQUE, secret_hash TEXT, hyperfy_player_id TEXT, player_name TEXT, status TEXT NOT NULL DEFAULT 'pending', code_expires_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
