@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
 import { openSignUp } from '@/lib/trial'
@@ -12,6 +12,11 @@ import { canRate, canTryAgain, revisionUnder } from '@/lib/studio-ratings'
 import Rating from './Rating'
 import { designControls, messageIsViewers, messageLabel } from '@/lib/studio-support'
 import { customerReply } from '@/lib/studio-reply'
+import {
+  HELP_IDLE, NO_CHOICE, canImprove, choiceSlots, firstEmoteMessage, firstWearableMessage, helpFailure, helpReducer, helpsWith, withAnswer,
+  type EmoteChoice, type SlotChoice,
+} from '@/lib/studio-prompt'
+import { EmoteChips, HelpPanel, ImproveButton, PromptGuide, SlotChips } from './PromptHelper'
 import { AgentPicker } from '../AgentPicker'
 import Markdown from './Markdown'
 import Uploads from './Uploads'
@@ -33,6 +38,11 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const listRef = useRef<HTMLDivElement>(null)
   const [dropped, setDropped] = useState<File[] | null>(null)
   const [dragging, setDragging] = useState(false)
+  // Helping with the first prompt: what it is (slots, or the kind of move), and "Improve my prompt"
+  const [slotChoice, setSlotChoice] = useState<SlotChoice>(NO_CHOICE)
+  const [emoteChoice, setEmoteChoice] = useState<EmoteChoice>({ move: null, playback: null })
+  const [help, dispatchHelp] = useReducer(helpReducer, HELP_IDLE)
+  const [helpOff, setHelpOff] = useState(false)
 
   // From /try/studio: the design was made but its first prompt was refused; offer it again here (read once, then gone)
   useEffect(() => {
@@ -52,6 +62,9 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const failing = detail.pieces.filter((p) => p.revision?.checker?.pass === false)
   const lastMessage = detail.messages[detail.messages.length - 1]
   const openProposal = lastMessage?.role === 'agent' && lastMessage.proposal?.slots?.length && !active ? lastMessage : null
+  const kind = detail.design.kind
+  // Before the first message of a wearable or an emote: the chips and the guide
+  const firstPrompt = detail.messages.length === 0 && !active && helpsWith(kind)
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
@@ -73,11 +86,35 @@ export default function Conversation({ designId, detail, usage, events, onChange
     }
   }
 
+  /** The message the box sends: the first one carries what the chips say. */
+  const outgoing = (t: string) => !firstPrompt ? { text: t } : kind === 'wearable' ? firstWearableMessage(t, slotChoice) : firstEmoteMessage(t, emoteChoice)
+
   const submit = () => {
     const t = text.trim()
-    if (!t || t.length > MAX_PROMPT || !canSend(composer.mode) || sending) return
-    send({ text: t })
+    if (!t || !canSend(composer.mode) || sending) return
+    const body = outgoing(t)
+    if (body.text.length > MAX_PROMPT) return
+    dispatchHelp({ type: 'dismiss' })
+    send(body)
   }
+
+  const askHelp = async (answers?: Record<string, string>) => {
+    const t = text.trim()
+    if (!t) return
+    dispatchHelp({ type: 'ask', answers })
+    const slots = firstPrompt && kind === 'wearable' ? choiceSlots(slotChoice) : undefined
+    try {
+      const r = await api.studioPromptHelp(designId, { text: t, ...(slots ? { selectedSlots: slots } : {}), ...(answers && Object.keys(answers).length ? { answers } : {}) })
+      dispatchHelp({ type: 'answered', help: r })
+    } catch (err) {
+      const f = helpFailure(err as never)
+      if (f.unavailable) {
+        setHelpOff(true)
+        dispatchHelp({ type: 'dismiss' })
+      } else dispatchHelp({ type: 'failed', message: f.message })
+    }
+  }
+  const canHelp = helpsWith(kind) && !helpOff
 
   const switchAgent = async (agent: string) => {
     setRefusal(null)
@@ -160,6 +197,14 @@ export default function Conversation({ designId, detail, usage, events, onChange
           </div>
         ) : (
           <form onSubmit={(e) => { e.preventDefault(); submit() }}>
+            {firstPrompt && kind === 'wearable' && <SlotChips choice={slotChoice} onChange={setSlotChoice} disabled={sending} />}
+            {firstPrompt && kind === 'emote' && <EmoteChips choice={emoteChoice} onChange={setEmoteChoice} disabled={sending} />}
+            {canHelp && (
+              <HelpPanel state={help} onEdit={(prompt) => dispatchHelp({ type: 'edit', prompt })}
+                onAnswer={(id, option) => askHelp(withAnswer(help.status === 'ready' ? help.answers : {}, id, option))}
+                onUse={(prompt) => { setText(prompt.slice(0, MAX_PROMPT)); dispatchHelp({ type: 'dismiss' }); document.getElementById('studio-prompt')?.focus() }}
+                onDismiss={() => dispatchHelp({ type: 'dismiss' })} />
+            )}
             <label htmlFor="studio-prompt" className="sr-only">Message the agent</label>
             <textarea id="studio-prompt" value={text} rows={3} maxLength={MAX_PROMPT}
               disabled={composer.mode === 'busy'}
@@ -167,13 +212,20 @@ export default function Conversation({ designId, detail, usage, events, onChange
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
               placeholder={composer.mode === 'busy' ? 'The agent is still working on your last message.' : detail.support ? 'Message the agent as Virvi support' : 'Describe what you want, or what to change'}
               className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-blue-400 disabled:opacity-60" />
-            <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs text-gray-500">
                 <p>{composer.note}</p>
                 {nudge && <p className="mt-0.5 text-amber-300">{nudge}</p>}
               </div>
-              <PrimaryButton type="submit" disabled={!canSend(composer.mode) || sending || !text.trim()}>Send</PrimaryButton>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                {canHelp && <ImproveButton disabled={!canImprove(text, canSend(composer.mode) && !sending, help)} onClick={() => askHelp()} />}
+                <PrimaryButton type="submit" disabled={!canSend(composer.mode) || sending || !text.trim()}>Send</PrimaryButton>
+              </div>
             </div>
+            {firstPrompt && helpsWith(kind) && (
+              <PromptGuide kind={kind} draft={text} slots={kind === 'wearable' ? choiceSlots(slotChoice) : undefined}
+                hasUploads={(detail.uploads ?? []).length > 0} onExample={(e) => { setText(e); document.getElementById('studio-prompt')?.focus() }} />
+            )}
           </form>
         )}
       </div>

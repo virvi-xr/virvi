@@ -15,6 +15,7 @@ import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
 import { adminDesignsQuery, type AdminDesign } from './studio-support'
 import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioSet, StudioUpload, StudioUsage } from './studio'
+import type { PromptHelp } from './studio-prompt'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
@@ -954,6 +955,9 @@ function useRealApi() {
     getStudioDefaults: () => apiFetch<{ agents: Record<StudioKind, string | null> }>('/api/studio/defaults'),
     updateStudioDesign: (id: string, patch: { name?: string; agent?: string; archived?: boolean }) =>
       apiFetch<StudioDesign>(`/api/studio/designs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    // "Improve my prompt": a rewrite of the draft, never sent to the agent
+    studioPromptHelp: (id: string, body: { text: string; selectedSlots?: string[]; answers?: Record<string, string> }) =>
+      apiFetch<PromptHelp>(`/api/studio/designs/${id}/prompt-help`, { method: 'POST', body: JSON.stringify(body) }),
     sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean }) =>
       apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }
