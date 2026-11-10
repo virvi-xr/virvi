@@ -24,6 +24,7 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `lessons.ts` | lessons for the agent per design kind: drafted, approved by an admin, then sent with every new prompt of that kind (the job's `lessons`), at most 4,000 characters live per kind |
 | `lesson-drafts.ts` | Claude (ANTHROPIC_API_KEY, Sonnet 5.5) drafting one lesson from a batch of 👎s of one kind |
 | `prompt-help.ts` | "Improve my prompt": Claude (ANTHROPIC_API_KEY, Haiku 5.5) rewriting a draft into a concrete request with a few quick-pick questions, never sent to the agent; its own daily limit per account |
+| `prompt-ideas.ts` | example prompts for a design's first message: about 200 wearable and 60 emote ideas in code, served a few at a time to follow the chips (`GET /designs/:id/prompt-ideas`), each retired for everyone once someone sends it as a first prompt, edited or not (`studio_idea_uses`); the admin page counts what is left per slot and move |
 | `defaults.ts` | the agent a new design of each kind starts on, set by an admin beside the 👍 rates (never automatically) |
 | `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes; then the trial sweep and the weekly ratings digest |
 
@@ -62,9 +63,13 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
      `STUDIO_PROMPT_HELP_PER_DAY` (default 30 per account and UTC day, trials included; `429 prompt_help_limit` past
      it; 0 answers `503` like a missing key, so the button hides). It never uses a prompt or counts toward the cost ceiling; the count is `studio_usage_days.prompt_helps`,
      added at boot like the other columns.
+   - The example prompts under "What makes a good prompt" need nothing set: the ideas are in `prompt-ideas.ts`, and the
+     ones already used are `studio_idea_uses` (one row per idea), made at boot like the other tables. An idea's id
+     never changes once shipped; to drop one, delete it from the pool. **Example ideas** on the admin page
+     (`GET /api/admin/studio/ideas`) shows how many are left per slot and move, flagging any with fewer than 3.
 3. **The schema.** The server makes it at boot: `entrypoint.sh` runs `drizzle-kit push` before it starts the server,
    then a hand-written fallback (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) in case push failed. That
-   covers the eleven `studio_*` tables (four of them for payments), two new columns (`studio_designs.finalized_at`,
+   covers the `studio_*` tables (four of them for payments, and `studio_idea_uses` for the example prompts), two new columns (`studio_designs.finalized_at`,
    `studio_jobs.counted_from`), and the MANA and credit tables below. Nothing needs running by hand first; to check
    the schema before a deploy, `drizzle-kit push` against production does the same.
 4. **Fly.** Confirm that the server's `FLY_API_TOKEN` can manage machines in `vlm-studio-worker`, in the

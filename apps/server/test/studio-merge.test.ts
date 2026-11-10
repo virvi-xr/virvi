@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
   users, userAuthMethods, studioCredits, studioFlags, studioCreditLedger, studioDesigns, studioEntitlements, studioFinalizeCredits, studioGiftCodes, studioGiftRedemptions,
-  studioPauses, studioPayments, studioPromptCredits, studioUsageDays,
+  studioIdeaUses, studioPauses, studioPayments, studioPromptCredits, studioUsageDays,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
@@ -43,8 +43,11 @@ describe('studio data follows a wallet linked to an existing account', () => {
     await db.insert(studioPromptCredits).values({ userId: e.id, balance: 1, gifted: 1 })
     await db.insert(studioFinalizeCredits).values({ userId: shell.id, balance: 1 })
     await db.insert(studioCredits).values([{ userId: shell.id, balanceCents: 1200 }, { userId: e.id, balanceCents: 300 }])
+    await db.insert(studioIdeaUses).values({ ideaId: 'bucket-hat-palm', userId: shell.id, designId: d.id })
 
     expect(await linkVerifiedWallet(e.id, w)).toBe('linked')
+    // the idea stays retired, now under the account
+    expect(await db.select({ userId: studioIdeaUses.userId, designId: studioIdeaUses.designId }).from(studioIdeaUses)).toEqual([{ userId: e.id, designId: d.id }])
 
     expect((await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id)))[0].ownerId).toBe(e.id)
     expect((await db.select().from(studioPayments).where(eq(studioPayments.id, payment.id)))[0].userId).toBe(e.id)

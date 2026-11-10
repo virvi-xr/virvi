@@ -16,6 +16,7 @@ import { setDetail } from './sets.js'
 import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
 import { designRevisions, lockTryAgains, tryAgainBlock } from './ratings.js'
 import { liveLessons } from './lessons.js'
+import { retireIdea } from './prompt-ideas.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
@@ -268,6 +269,8 @@ export async function queuePrompt(
   input: {
     text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping; byAdminId?: string
     feedbackFor?: string
+    /** The example prompt the words came from (prompt-ideas.ts): retired for everyone when this is the design's first prompt. */
+    ideaId?: string
   },
   now: Date,
 ): Promise<{ ok: true; jobId: string } | ({ ok: false } & Refusal)> {
@@ -321,6 +324,9 @@ export async function queuePrompt(
         throw new Refused({ status: 429, body: { error: r.reason, code: r.reason, resetsAt: s.resetsAt } })
       }
       trialPrompt = r.day === TRIAL_DAY
+      // Asked before this prompt's own message goes in: an idea is used up by the design's first prompt only
+      const first = !!input.ideaId && !(await tx.select({ id: studioMessages.id }).from(studioMessages)
+        .where(and(eq(studioMessages.designId, d.id), eq(studioMessages.role, 'user'))).limit(1)).length
       const fix = input.fixClipping
       const text = input.continue ? CONTINUE_TEXT : fix ? clippingText(d.kind, fix) : fixText ?? input.text!
       await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text, byAdminId: support })
@@ -355,6 +361,7 @@ export async function queuePrompt(
         feedbackFor: feedback,
       }).returning({ id: studioJobs.id })
       await tx.update(studioDesigns).set({ status: 'building', lastJobAt: now }).where(eq(studioDesigns.id, d.id))
+      if (first) await retireIdea(tx, input.ideaId!, d.ownerId, d.id, now)
       return job.id
     })
   } catch (err) {

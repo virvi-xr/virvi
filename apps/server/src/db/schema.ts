@@ -1763,6 +1763,15 @@ export const studioKindDefaults = pgTable('studio_kind_defaults', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// Example prompts someone sent as a design's first prompt (src/studio/prompt-ideas.ts): one row per idea, so it is never
+// offered again to anyone. Who and which design are kept for the record; deleting either keeps the idea retired.
+export const studioIdeaUses = pgTable('studio_idea_uses', {
+  ideaId: text('idea_id').primaryKey(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  designId: uuid('design_id').references(() => studioDesigns.id, { onDelete: 'set null' }),
+  usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // Files the owner gives the agent: images (references, textures, logos) and GLBs. Kept at uploadKey(designId, id).
 export const studioUploads = pgTable('studio_uploads', {
   id: uuid('id').primaryKey().defaultRandom(),

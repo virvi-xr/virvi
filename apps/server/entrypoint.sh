@@ -306,6 +306,12 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio_usage_days.prompt_helps ensured');
       } catch(e) { console.log('[virvi-server] studio_usage_days.prompt_helps:', e.message); }
 
+      // Design Studio prompt ideas: the example prompts someone sent as a first prompt, retired for everyone; matches studioIdeaUses in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS studio_idea_uses (idea_id TEXT PRIMARY KEY, user_id UUID CONSTRAINT studio_idea_uses_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, design_id UUID CONSTRAINT studio_idea_uses_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE SET NULL, used_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        console.log('[virvi-server] studio_idea_uses ensured');
+      } catch(e) { console.log('[virvi-server] studio_idea_uses:', e.message); }
+
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_pairings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), world_id UUID NOT NULL REFERENCES hyperfy_worlds(id) ON DELETE CASCADE, user_id UUID REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT UNIQUE, secret_hash TEXT, hyperfy_player_id TEXT, player_name TEXT, status TEXT NOT NULL DEFAULT 'pending', code_expires_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

@@ -13,6 +13,7 @@ import { TAG_KEYS } from '../studio/ratings.js'
 import { createLesson, deleteLesson, isLessonKind, LessonError, lessonText, listLessons, updateLesson } from '../studio/lessons.js'
 import { DEFAULT_AGENTS, kindDefaultsDetail, setKindDefault } from '../studio/defaults.js'
 import { DRAFT_BATCH_MAX, draftingAvailable, draftLesson } from '../studio/lesson-drafts.js'
+import { ideaCounts } from '../studio/prompt-ideas.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 const REFUND_STATUSES: ManaRefundStatus[] = ['requested', 'sent', 'declined']
@@ -169,6 +170,9 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
     await setKindDefault(kind, agent as string, request.user.id, new Date())
     return { defaults: await kindDefaultsDetail() }
   })
+
+  // The example prompts left (not yet sent as anyone's first prompt), per slot and per move, of how many there are
+  app.get('/api/admin/studio/ideas', admin, async () => ideaCounts())
 
   app.get('/api/admin/studio/flags', admin, async (request) => {
     const status = (request.query as { status?: string }).status === 'closed' ? 'closed' : 'open'

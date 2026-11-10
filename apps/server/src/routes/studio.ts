@@ -16,6 +16,7 @@ import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from 
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
 import { helpWithPrompt, PromptHelpError } from '../studio/prompt-help.js'
+import { EXCLUDE_MAX, IDEAS_COUNT_MAX, IDEA_ID, IDEA_MOVES, IDEA_PLAYBACKS, findIdea, pickIdeas, retiredIdeas, type IdeaMove, type IdeaPlayback, type IdeaQuery } from '../studio/prompt-ideas.js'
 import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, setDetail, TOUR_VIEW, wornRevisions } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
@@ -247,7 +248,11 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!a) return notFound(reply)
     const d = a.d
     const byAdminId = a.support ? request.user.id : undefined
-    const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; continue?: unknown; fixChecks?: unknown }
+    const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; continue?: unknown; fixChecks?: unknown; ideaId?: unknown }
+    // The example prompt the words came from: one of this kind's ideas. It only says what to retire, never reaches the agent
+    if (b.ideaId != null && (typeof b.ideaId !== 'string' || findIdea(b.ideaId)?.kind !== d.kind)) {
+      return reply.status(400).send({ error: 'ideaId must be one of the example prompts for this kind' })
+    }
     const cont = b.continue === true
     const fixChecks = b.fixChecks === true
     if (fixChecks) {
@@ -267,9 +272,35 @@ export default async function studioRoutes(app: FastifyInstance) {
       }
       slots = [...new Set(b.selectedSlots as string[])]
     }
-    const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId }, new Date())
+    const ideaId = !cont && typeof b.ideaId === 'string' ? b.ideaId : undefined
+    const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId, ideaId }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
+  })
+
+  // Example prompts for the first message, following the chips, from the ideas nobody has used yet (prompt-ideas.ts).
+  // Who may read them is who may read the design. `exclude`: the ids the viewer already saw this visit.
+  app.get('/api/studio/designs/:id/prompt-ideas', trialAuth, async (request, reply) => {
+    const a = await designAccess(request, SUPPORT)
+    if (!a) return notFound(reply)
+    const q = request.query as { count?: string; exclude?: string; slots?: string; mode?: string; move?: string; playback?: string }
+    const count = q.count == null ? 3 : Number(q.count)
+    if (!Number.isInteger(count) || count < 1 || count > IDEAS_COUNT_MAX) return reply.status(400).send({ error: `count must be 1-${IDEAS_COUNT_MAX}` })
+    const list = (raw: string | undefined) => (raw ? raw.split(',') : [])
+    const slots = list(q.slots)
+    if (!slots.every((s) => (WEARABLE_CATEGORIES as readonly string[]).includes(s))) return reply.status(400).send({ error: 'slots must be wearable categories' })
+    if (q.mode != null && !['slots', 'outfit', 'unsure'].includes(q.mode)) return reply.status(400).send({ error: 'mode must be slots, outfit or unsure' })
+    if (q.move && !(IDEA_MOVES as readonly string[]).includes(q.move)) return reply.status(400).send({ error: `move must be ${IDEA_MOVES.join(', ')}` })
+    if (q.playback && !(IDEA_PLAYBACKS as readonly string[]).includes(q.playback)) return reply.status(400).send({ error: 'playback must be loop or once' })
+    const kind = a.d.kind
+    if (kind !== 'wearable' && kind !== 'emote') return { ideas: [], more: false }
+    const query: IdeaQuery = kind === 'wearable'
+      ? { kind, mode: (q.mode as 'slots' | 'outfit' | 'unsure' | undefined) ?? 'slots', slots: [...new Set(slots)] }
+      : { kind, move: (q.move || null) as IdeaMove | null, playback: (q.playback || null) as IdeaPlayback | null }
+    // The latest ids when past the cap; anything that isn't an id can't match one, so it is dropped
+    const exclude = new Set(list(q.exclude).filter((id) => IDEA_ID.test(id)).slice(-EXCLUDE_MAX))
+    const r = pickIdeas(query, { retired: await retiredIdeas(), exclude, count })
+    return { ideas: r.ideas.map((i) => ({ id: i.id, text: i.text })), more: r.more }
   })
 
   // "Improve my prompt": a rewrite of the draft and a few quick-pick questions, never sent to the agent. Who may use it

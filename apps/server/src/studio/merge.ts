@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import {
-  studioCreditLedger, studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions,
+  studioCreditLedger, studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions, studioIdeaUses,
   studioManaRefunds, studioMistakeReports, studioPauses, studioPayments, studioPromptCredits, studioScopeEvents, studioUsageDays,
 } from '../db/schema.js'
 import { addCredit, takeCredit } from './credit.js'
@@ -33,6 +33,7 @@ export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: str
   await tx.update(studioMistakeReports).set({ userId: toUserId }).where(eq(studioMistakeReports.userId, fromUserId))
   await tx.update(studioScopeEvents).set({ userId: toUserId }).where(eq(studioScopeEvents.userId, fromUserId))
   await tx.update(studioManaRefunds).set({ userId: toUserId }).where(eq(studioManaRefunds.userId, fromUserId))
+  await tx.update(studioIdeaUses).set({ userId: toUserId }).where(eq(studioIdeaUses.userId, fromUserId))
 
   // At most one flag is open per account: if the target already has one, the source's is dismissed instead of moved
   const [targetOpen] = await tx.select({ id: studioFlags.id }).from(studioFlags)
