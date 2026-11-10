@@ -11,6 +11,7 @@ import {
 import { canRate, canTryAgain, revisionUnder } from '@/lib/studio-ratings'
 import Rating from './Rating'
 import { designControls, messageIsViewers, messageLabel } from '@/lib/studio-support'
+import { customerReply } from '@/lib/studio-reply'
 import { AgentPicker } from '../AgentPicker'
 import Markdown from './Markdown'
 import Uploads from './Uploads'
@@ -109,9 +110,9 @@ export default function Conversation({ designId, detail, usage, events, onChange
         {detail.messages.map((m) => {
           const rev = revisionUnder(m, detail)
           return (
-            <Message key={m.id} m={m} label={messageLabel(m, detail)} viewers={messageIsViewers(m, detail)}>
+            <Message key={m.id} m={m} label={messageLabel(m, detail)} viewers={messageIsViewers(m, detail)} raw={!!detail.support}>
               {m === openProposal && m.proposal && (
-                <ProposalPicker proposal={m.proposal} disabled={sending || composer.mode === 'out' || composer.mode === 'paused'}
+                <ProposalPicker proposal={m.proposal} raw={!!detail.support} disabled={sending || composer.mode === 'out' || composer.mode === 'paused'}
                   onBuild={(slots) => send({ text: `Build these: ${slots.map(categoryLabel).join(', ')}`, selectedSlots: slots })} />
               )}
               {rev && (
@@ -180,8 +181,11 @@ export default function Conversation({ designId, detail, usage, events, onChange
   )
 }
 
-/** `label`: who said it, when it is said (messageLabel); `viewers`: on the right, as the viewer's own words. */
-function Message({ m, label, viewers, children }: { m: StudioMessage; label: string | null; viewers: boolean; children?: React.ReactNode }) {
+/**
+ * `label`: who said it, when it is said (messageLabel); `viewers`: on the right, as the viewer's own words; `raw`: the
+ * agent's reply as written (Virvi support), not in the customer's terms (customerReply).
+ */
+function Message({ m, label, viewers, raw, children }: { m: StudioMessage; label: string | null; viewers: boolean; raw: boolean; children?: React.ReactNode }) {
   if (m.role === 'system') {
     return (
       <div className="self-center px-4 text-center text-xs text-gray-500">
@@ -195,13 +199,13 @@ function Message({ m, label, viewers, children }: { m: StudioMessage; label: str
   return (
     <div className={`max-w-[85%] break-words rounded-lg px-3 py-2 text-sm ${viewers ? 'self-end' : 'self-start'} ${words ? 'whitespace-pre-wrap' : ''} ${tone}`}>
       {label && <p className={`mb-1 text-xs ${m.support ? 'font-medium text-emerald-300' : 'text-gray-500'}`}>{label}</p>}
-      {words ? m.text : <Markdown text={m.text} />}
+      {words ? m.text : <Markdown text={raw ? m.text : customerReply(m.text)} />}
       {children}
     </div>
   )
 }
 
-function ProposalPicker({ proposal, disabled, onBuild }: { proposal: StudioProposal; disabled: boolean; onBuild: (slots: string[]) => void }) {
+function ProposalPicker({ proposal, raw, disabled, onBuild }: { proposal: StudioProposal; raw: boolean; disabled: boolean; onBuild: (slots: string[]) => void }) {
   const [ticked, setTicked] = useState(() => initialTicks(proposal))
   const sel = slotSelection(proposal, ticked)
   const toggle = (c: string) => setTicked((prev) => {
@@ -219,7 +223,7 @@ function ProposalPicker({ proposal, disabled, onBuild }: { proposal: StudioPropo
           <span>
             <span className="capitalize">{categoryLabel(s.category)}</span>
             {s.recommended && <span className="ml-2 text-xs text-emerald-300">recommended</span>}
-            {s.reason && <span className="block text-xs text-gray-500">{s.reason}</span>}
+            {s.reason && <span className="block text-xs text-gray-500">{raw ? s.reason : customerReply(s.reason)}</span>}
           </span>
         </label>
       ))}

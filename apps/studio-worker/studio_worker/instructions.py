@@ -30,6 +30,16 @@ piece (<name> in lowercase letters and underscores, e.g. out/furniture_round_tab
 Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is."""
 
 
+def no_workspace(kind: str) -> str:
+    """The user only reads the reply: the workspace, its files and the tools that made them are never theirs to see."""
+    files = 'out/..., proposal.json, declined.json' if kind == 'wearable' else 'out/..., declined.json'
+    return ('The user never sees your workspace, so your reply never mentions file names, folders, paths, commands, '
+            f'scripts, tools or skills ({files}, uploads/..., studio-preview, the checker scripts, Blender, the skills '
+            'by name). Say it in the user\'s terms instead: "I\'ve put together a few options", "the hat", "your '
+            'reference image", "the checks". A file the user uploaded can be called by the name they gave it, without '
+            'its folder.')
+
+
 LESSONS_MAX = 4000  # the server keeps a kind's lessons within this; a longer list is cut, never sent whole
 
 
@@ -100,6 +110,7 @@ Blender is for building only: never render in Blender (no thumbnails, turntables
 {look}
 {check}{shaping}{lessons_text(lessons)}
 When you're done, reply to the user in a few plain sentences: what you made or changed, and anything you need from them.
+{no_workspace(kind)}
 You build and discuss {scope}, and nothing else. If the user asks for something that isn't
 (coding help, writing unrelated to the listing, research, general questions), write out/declined.json as
 {{"reason": str}}, do nothing more and stop. If a message mixes design work with something else, do the design part only

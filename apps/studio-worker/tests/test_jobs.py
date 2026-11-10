@@ -675,3 +675,20 @@ def test_instructions_name_each_avatar_file_s_body_shape():
         text = ' '.join(closing(kind, None).split())
         assert 'AvatarShape_A.blend is the female body (BaseFemale, the _female GLB)' in text
         assert 'AvatarShape_B.blend the male body (BaseMale, the _male GLB)' in text
+
+
+def test_the_reply_keeps_the_workspace_out_of_sight():
+    """The user only reads the reply: no file names, paths, commands or tools, said in their terms instead."""
+    from studio_worker.instructions import closing
+    for kind, slots in (('wearable', None), ('wearable', ['hat']), ('emote', None), ('scene', None)):
+        text = ' '.join(closing(kind, slots).split())
+        done = text.index("When you're done, reply to the user in a few plain sentences")
+        rule = text.index('The user never sees your workspace, so your reply never mentions file names, folders, paths, '
+                          'commands, scripts, tools or skills')
+        assert done < rule < text.index('You build and discuss')
+        assert ('proposal.json' in text[rule:]) == (kind == 'wearable')  # only a wearable design proposes slots
+        for named in ('out/...', 'declined.json', 'uploads/...', 'studio-preview', 'the checker scripts',
+                      'Blender', 'the skills by name'):
+            assert named in text[rule:], named
+        assert '"I\'ve put together a few options", "the hat", "your reference image", "the checks"' in text
+        assert 'A file the user uploaded can be called by the name they gave it, without its folder.' in text
