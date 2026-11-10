@@ -1,6 +1,6 @@
 # Design Studio collaboration, team chat and the notification bell (LIV-159)
 
-Status: design, 2026-11-10. Linear: LIV-159. Owner decisions are marked **(owner)**; everything else marked
+Status: phase 1 built, 2026-11-10. Linear: LIV-159. Owner decisions are marked **(owner)**; everything else marked
 **(Claude's call)** can be changed by the owner while reviewing.
 
 ## Why

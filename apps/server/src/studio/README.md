@@ -58,6 +58,23 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
   agent's mistake (`…/report`, within 30 days, or at checkout) is refunded that line in full, at once.
 - **Top-ups** (`POST /topups`) add prompts used after the day's allowance; they never expire.
 
+## Sharing (LIV-159)
+
+- **Roles.** The *owner* (`studio_designs.owner_id`) can do everything. A *collaborator* prompts, renders, uploads,
+  finalizes and downloads. A *viewer* reads the chat, renders and files; an action route answers
+  `403 { error: 'viewer', code: 'viewer' }`. Someone who isn't on the design, or was removed, gets the same 404 as a
+  stranger. Only the owner invites, changes roles, removes people, renames, archives and deletes.
+- **Invites.** The owner invites by email (`POST /designs/:id/invites`) as collaborator or viewer; the invitee takes the
+  link or accepts from `GET /invites`. An invite lasts 14 days, is resent at most once an hour and 3 times, and the
+  owner may send 50 a UTC day. Members plus pending invites are capped by `STUDIO_MAX_MEMBERS` (50). Trial accounts
+  can't invite, be invited or accept (`403 account_required`); a paused account can accept and view, not act.
+- **Who pays.** Whoever sends a prompt, finalizes or reports is recorded on the message, job or payment
+  (`studio_messages.user_id`, `studio_jobs.user_id`, `studio_payments.user_id`; null means the owner). That person's
+  daily allowance, cost ceiling, card, credit, free finalizes and MANA are the ones used, never the owner's.
+- **Notifications.** The bell (`/api/notifications`) holds `studio_invite`, `studio_package_ready`, `studio_prompts`
+  and `studio_owner` (a design handed over when the owner's account is deleted). They carry names and design titles
+  only, never prompt or chat text, and are kept 90 days.
+
 ## Deploying (the owner's steps)
 
 The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STUDIO_S3_URI` are set.
