@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  EXAMPLES, GUIDE, GUIDE_FOLDED_KEY, HELP_IDLE, NO_CHOICE, SLOT_GROUPS, canImprove, choiceSlots, firstEmoteMessage, firstWearableMessage, guideTicks,
+  GUIDE, GUIDE_FOLDED_KEY, HELP_IDLE, NO_CHOICE, SLOT_GROUPS, canImprove, choiceSlots, firstEmoteMessage, firstWearableMessage, guideTicks,
   helpFailure, helpReducer, helpsWith, pickOpen, readGuideFolded, toggleSlot, withAnswer, writeGuideFolded, type HelpState, type PromptHelp,
   ANSWER_MAX, ANSWERS_MAX, clampAnswers, outgoingMessage, reaskBody, tooLong, type FirstChoice,
 } from './studio-prompt'
@@ -52,6 +52,8 @@ describe('what makes a good prompt', () => {
     // a detail placed on the piece counts, even without a pattern word
     expect(guideTicks('wearable', 'a cartoon bucket hat in sky blue canvas with a small palm tree on the front').has('details')).toBe(true)
     expect(guideTicks('wearable', 'a jacket with a graphic across the back').has('details')).toBe(true)
+    // the styles the example ideas use
+    for (const style of ['painterly', 'cel-shaded', 'cel shaded']) expect(guideTicks('wearable', `a ${style} beret`).has('style'), style).toBe(true)
     // whole words only
     expect(guideTicks('wearable', 'redo the thing').has('colours')).toBe(false)
   })
@@ -60,13 +62,6 @@ describe('what makes a good prompt', () => {
     expect([...guideTicks('emote', 'A cheerful dance that loops, holding a lantern')].sort()).toEqual(['mood', 'move', 'playback', 'props'])
     expect(GUIDE.emote.map((i) => i.id)).toContain('playback')
     expect(GUIDE.wearable.map((i) => i.id)).toEqual(['what', 'style', 'colours', 'details', 'fit', 'reference'])
-  })
-
-  it('every example ticks most of its guide', () => {
-    for (const kind of ['wearable', 'emote'] as const) {
-      for (const e of EXAMPLES[kind]) expect(guideTicks(kind, e).size, e).toBeGreaterThanOrEqual(3)
-      expect(EXAMPLES[kind].length).toBeGreaterThanOrEqual(2)
-    }
   })
 
   it('remembers whether the viewer folded it, and survives blocked storage', () => {

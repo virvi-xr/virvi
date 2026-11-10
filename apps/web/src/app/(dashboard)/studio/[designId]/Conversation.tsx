@@ -16,6 +16,7 @@ import {
   HELP_IDLE, MAX_PROMPT, NO_CHOICE, canImprove, choiceSlots, helpFailure, helpReducer, helpsWith, outgoingMessage, reaskBody, tooLong,
   type EmoteChoice, type SlotChoice,
 } from '@/lib/studio-prompt'
+import { IDEA_NONE, ideaIdToSend, ideaReducer } from '@/lib/studio-ideas'
 import { EmoteChips, HelpPanel, ImproveButton, PromptGuide, SlotChips } from './PromptHelper'
 import { AgentPicker } from '../AgentPicker'
 import Markdown from './Markdown'
@@ -42,6 +43,8 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const [emoteChoice, setEmoteChoice] = useState<EmoteChoice>({ move: null, playback: null })
   const [help, dispatchHelp] = useReducer(helpReducer, HELP_IDLE)
   const [helpOff, setHelpOff] = useState(false)
+  // The example idea the box's words came from (edits keep it), sent with the first message so it is retired
+  const [idea, dispatchIdea] = useReducer(ideaReducer, IDEA_NONE)
   // The box holds a suggestion made with the chips' sentence, so Send doesn't add it again (changing a chip does)
   const [chipsInWords, setChipsInWords] = useState(false)
   const chooseSlots = (c: SlotChoice) => { setSlotChoice(c); setChipsInWords(false) }
@@ -78,7 +81,10 @@ export default function Conversation({ designId, detail, usage, events, onChange
     setRefusal(null)
     try {
       await api.sendStudioPrompt(designId, body)
-      if (body.text) setText('')
+      if (body.text) {
+        setText('')
+        dispatchIdea({ type: 'replaced' })
+      }
       await onChanged()
     } catch (err) {
       setRefusal(refusalMessage(err as never, new Date()))
@@ -102,7 +108,8 @@ export default function Conversation({ designId, detail, usage, events, onChange
       return
     }
     dispatchHelp({ type: 'dismiss' })
-    send(body)
+    const ideaId = ideaIdToSend(idea, firstPrompt)
+    send(ideaId ? { ...body, ideaId } : body)
   }
 
   /** With no body: the draft as it would be sent. A question's option re-asks with the suggestion as edited. */
@@ -210,13 +217,13 @@ export default function Conversation({ designId, detail, usage, events, onChange
             {canHelp && (
               <HelpPanel state={help} onEdit={(prompt) => dispatchHelp({ type: 'edit', prompt })}
                 onAnswer={(id, option) => { if (help.status === 'ready') askHelp(reaskBody(help, id, option, outgoing(text.trim()).selectedSlots)) }}
-                onUse={(prompt) => { setText(prompt.slice(0, MAX_PROMPT)); setChipsInWords(firstPrompt); dispatchHelp({ type: 'dismiss' }); document.getElementById('studio-prompt')?.focus() }}
+                onUse={(prompt) => { setText(prompt.slice(0, MAX_PROMPT)); dispatchIdea({ type: 'replaced' }); setChipsInWords(firstPrompt); dispatchHelp({ type: 'dismiss' }); document.getElementById('studio-prompt')?.focus() }}
                 onDismiss={() => dispatchHelp({ type: 'dismiss' })} />
             )}
             <label htmlFor="studio-prompt" className="sr-only">Message the agent</label>
             <textarea id="studio-prompt" value={text} rows={3} maxLength={MAX_PROMPT}
               disabled={composer.mode === 'busy'}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => { setText(e.target.value); dispatchIdea({ type: 'typed', text: e.target.value }) }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
               placeholder={composer.mode === 'busy' ? 'The agent is still working on your last message.' : detail.support ? 'Message the agent as Virvi support' : 'Describe what you want, or what to change'}
               className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-blue-400 disabled:opacity-60" />
@@ -231,8 +238,9 @@ export default function Conversation({ designId, detail, usage, events, onChange
               </div>
             </div>
             {firstPrompt && helpsWith(kind) && (
-              <PromptGuide kind={kind} draft={text} slots={kind === 'wearable' ? choiceSlots(slotChoice) : undefined}
-                hasUploads={(detail.uploads ?? []).length > 0} onExample={(e) => { setText(e); document.getElementById('studio-prompt')?.focus() }} />
+              <PromptGuide designId={designId} kind={kind} chips={kind === 'wearable' ? { kind, slots: slotChoice } : { kind, emote: emoteChoice }}
+                draft={text} slots={kind === 'wearable' ? choiceSlots(slotChoice) : undefined} hasUploads={(detail.uploads ?? []).length > 0}
+                onExample={(i) => { setText(i.text); dispatchIdea({ type: 'tapped', idea: i }); document.getElementById('studio-prompt')?.focus() }} />
             )}
           </form>
         )}

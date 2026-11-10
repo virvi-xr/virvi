@@ -2,8 +2,8 @@ import { categoryLabel } from './studio'
 
 /**
  * Helping people write a design's first prompt: what they are making (slots for a wearable, the kind of move for an
- * emote), a short guide with ticks that light up as the draft covers each part, example prompts, and the state of
- * "Improve my prompt" (POST /api/studio/designs/:id/prompt-help). Wearable and emote designs only.
+ * emote), a short guide with ticks that light up as the draft covers each part, and the state of "Improve my prompt"
+ * (POST /api/studio/designs/:id/prompt-help). Wearable and emote designs only. The example prompts are studio-ideas.ts.
  */
 
 export type HelpKind = 'wearable' | 'emote'
@@ -113,7 +113,7 @@ export const GUIDE: Record<HelpKind, GuideItem[]> = {
 
 const has = (draft: string, words: RegExp) => words.test(draft.toLowerCase())
 const WEARABLE_WHAT = /\b(hats?|caps?|beanie|helmet|hair|wig|mask|glasses|goggles|eyewear|sunglasses|earrings?|tiara|crown|horns?|halo|beard|moustache|mustache|shirt|t-shirt|tee|jacket|hoodie|coat|top|sweater|vest|dress|armou?r|pants|trousers|jeans|shorts|skirt|shoes?|sneakers?|boots?|sandals|gloves?|bracelet|skin|outfit|set)\b/
-const STYLE = /\b(cartoon\w*|realistic|low[- ]?poly|pixel\w*|anime|stylized|stylised|cute|chibi|futuristic|retro|vintage|minimal\w*|cyberpunk|steampunk|fantasy|sci-?fi|gothic|kawaii|punk|elegant|sporty|casual|grunge|y2k|vaporwave)\b/
+const STYLE = /\b(cartoon\w*|realistic|painterly|cel[- ]?shaded|low[- ]?poly|pixel\w*|anime|stylized|stylised|cute|chibi|futuristic|retro|vintage|minimal\w*|cyberpunk|steampunk|fantasy|sci-?fi|gothic|kawaii|punk|elegant|sporty|casual|grunge|y2k|vaporwave)\b/
 const COLOURS = /\b(red|orange|yellow|green|blue|purple|violet|pink|black|white|gr[ae]y|brown|beige|cream|gold(en)?|silver|teal|turquoise|navy|neon|pastel|rainbow|colou?rs?|leather|metal(lic)?|chrome|steel|wood(en)?|glass|silk|satin|velvet|wool|knit(ted)?|denim|cotton|canvas|fur|lace|plastic|rubber|straw|crystal|gems?|marble)\b/
 const DETAILS = /\b(pattern\w*|stripe[sd]?|spots|dots|polka|checker\w*|plaid|print(ed)?|embroider\w*|trim|spikes?|studs?|feathers?|flowers?|floral|stars?|hearts?|skulls?|flames?|wings?|chains?|patch(es)?|buttons?|zips?|zipper|pockets?|glow\w*|motifs?|logo|badge|bow|ribbon|fringe|tassels?|emblem|symbol|details?|accents?|graphics?|decals?|(on|across|along|around) (the|its|each) (front|back|sides?|chest|sleeves?|brim|band|collar|hem|toes?|heels?|top))\b/
 const FIT = /\b(hides?|hiding|fit\w*|loose|tight|baggy|oversized|cropped|long|short|both body|body shapes?|male|female|over the hair|covers?)\b/
@@ -141,20 +141,6 @@ export function guideTicks(kind: HelpKind, draft: string, ctx: { slots?: string[
   }
   if (ref) ticks.add('reference')
   return ticks
-}
-
-/** Example prompts that fill the box: original ideas, no brands or characters. */
-export const EXAMPLES: Record<HelpKind, string[]> = {
-  wearable: [
-    'A low-poly sky-blue bucket hat with a woven straw band and a tiny embroidered palm tree. It hides the hair and fits both body shapes.',
-    'A cartoon moth-wing cape in dusty lilac velvet with glowing amber eye spots, on the upper body, with matching soft boots.',
-    'Realistic copper-plated diving goggles with brass rivets and green-tinted lenses, worn on the eyes, over the hair.',
-  ],
-  emote: [
-    'A cheerful two-step dance that ends in a little spin and a finger point. It loops.',
-    'A dramatic bow with a sweeping arm, like taking applause after a show. It plays once.',
-    'Juggling three glowing orbs while bobbing to a beat, with a soft chime on each catch. It loops.',
-  ],
 }
 
 // ── The "What makes a good prompt" panel, open or folded, per viewer ──────

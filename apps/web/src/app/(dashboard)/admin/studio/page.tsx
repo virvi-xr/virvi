@@ -15,6 +15,7 @@ import Feedback from './Feedback'
 import Lessons from './Lessons'
 import Digest from './Digest'
 import KindDefaults from './KindDefaults'
+import ExampleIdeas from './ExampleIdeas'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
 const smallButton = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50'
@@ -152,7 +153,7 @@ function TransferRow({ t, api, onChanged }: { t: ReturnType<typeof adminManaRows
   )
 }
 
-/** What Virvi learns from 👍 / 👎 (LIV-142): the 👎 queue, lessons for the agent, the weekly digest and the default agents. */
+/** What Virvi learns from 👍 / 👎 (LIV-142): the 👎 queue, lessons for the agent, the weekly digest and the default agents; and the example ideas left. */
 function Learning() {
   const [version, setVersion] = useState(0)
   const [drafting, setDrafting] = useState(false)
@@ -162,6 +163,7 @@ function Learning() {
       <Lessons version={version} onList={(l) => setDrafting(l.drafting)} />
       <Digest />
       <KindDefaults />
+      <ExampleIdeas />
     </>
   )
 }

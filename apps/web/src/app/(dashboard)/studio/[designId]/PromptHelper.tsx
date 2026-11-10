@@ -1,9 +1,11 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useApi } from '@/lib/api'
 import { PrimaryButton } from '@/components/ui'
 import { CheckIcon, ChevronDownIcon, SparkleIcon } from '@/components/icons'
+import { IDEAS_DEBOUNCE_MS, ideaParams, withSeen, type IdeaChips, type PromptIdea } from '@/lib/studio-ideas'
 import {
-  EXAMPLES, GUIDE, MOVE_KINDS, MOVE_LABELS, PLAYBACKS, PLAYBACK_LABELS, SLOT_GROUPS, guideTicks, pickOpen, readGuideFolded, slotChipLabel, toggleSlot,
+  GUIDE, MOVE_KINDS, MOVE_LABELS, PLAYBACKS, PLAYBACK_LABELS, SLOT_GROUPS, guideTicks, pickOpen, readGuideFolded, slotChipLabel, toggleSlot,
   writeGuideFolded, type EmoteChoice, type HelpKind, type HelpState, type SlotChoice,
 } from '@/lib/studio-prompt'
 
@@ -56,9 +58,13 @@ export function EmoteChips({ choice, onChange, disabled }: { choice: EmoteChoice
   )
 }
 
-/** "What makes a good prompt": what to cover, ticked as the draft covers it, and examples that fill the box. */
-export function PromptGuide({ kind, draft, slots, hasUploads, onExample }: {
-  kind: HelpKind; draft: string; slots?: string[]; hasUploads: boolean; onExample: (text: string) => void
+/**
+ * "What makes a good prompt": what to cover, ticked as the draft covers it, and example ideas that fill the box. The
+ * ideas follow the chips (fetched again once they rest), "More ideas" brings three the viewer hasn't seen; while one
+ * loads the last ones stay, and when the server can't give any the examples just go (the guide still works).
+ */
+export function PromptGuide({ designId, kind, chips, draft, slots, hasUploads, onExample }: {
+  designId: string; kind: HelpKind; chips: IdeaChips; draft: string; slots?: string[]; hasUploads: boolean; onExample: (idea: PromptIdea) => void
 }) {
   // Open on the server render; the viewer's choice is read once the page is in the browser
   const [folded, setFolded] = useState(false)
@@ -75,6 +81,45 @@ export function PromptGuide({ kind, draft, slots, hasUploads, onExample }: {
     writeGuideFolded(store, next)
   }
   const ticks = guideTicks(kind, draft, { slots, hasUploads })
+
+  const api = useApi()
+  const apiRef = useRef(api)
+  apiRef.current = api
+  const [ideas, setIdeas] = useState<PromptIdea[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // Seen this visit, skipped by the server; a counter drops answers that a newer ask overtook
+  const seen = useRef<string[]>([])
+  const asked = useRef(0)
+  // The chips as the server reads them, without the seen ids: a change here is a new question
+  const chipsKey = ideaParams(chips, [])
+  // The chips the shown ideas were asked for, so folding and opening the guide again keeps them
+  const shownFor = useRef<string | null>(null)
+  const fetchIdeas = async () => {
+    const n = ++asked.current
+    const key = chipsKey
+    setLoading(true)
+    try {
+      const r = await apiRef.current.studioPromptIdeas(designId, ideaParams(chips, seen.current))
+      if (n !== asked.current) return
+      seen.current = withSeen(seen.current, r.ideas)
+      shownFor.current = key
+      setIdeas(r.ideas)
+      setFailed(false)
+    } catch {
+      if (n === asked.current) setFailed(true)
+    } finally {
+      if (n === asked.current) setLoading(false)
+    }
+  }
+  const fetchRef = useRef(fetchIdeas)
+  fetchRef.current = fetchIdeas
+  useEffect(() => {
+    if (folded || shownFor.current === chipsKey) return
+    const t = setTimeout(() => { fetchRef.current() }, IDEAS_DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [designId, chipsKey, folded])
+
   return (
     <div className="mt-3 rounded-md border border-gray-800 bg-gray-950/60 text-sm">
       <button type="button" onClick={toggle} aria-expanded={!folded} aria-controls="studio-prompt-guide"
@@ -101,13 +146,21 @@ export function PromptGuide({ kind, draft, slots, hasUploads, onExample }: {
               )
             })}
           </ul>
-          <p className="mb-1.5 mt-3 text-xs text-gray-500">Try one of these</p>
-          <div className="flex flex-col gap-1.5">
-            {EXAMPLES[kind].map((e) => (
-              <button key={e} type="button" onClick={() => onExample(e)}
-                className="rounded-md border border-gray-800 px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/[0.04]">{e}</button>
-            ))}
-          </div>
+          {!failed && !!ideas?.length && (
+            <>
+              <div className="mb-1.5 mt-3 flex items-center justify-between gap-2">
+                <p className="text-xs text-gray-500">Try one of these</p>
+                <button type="button" onClick={() => fetchIdeas()} disabled={loading}
+                  className="shrink-0 text-xs text-blue-300 underline hover:text-blue-200 disabled:opacity-50">More ideas</button>
+              </div>
+              <div className="flex flex-col gap-1.5" aria-busy={loading}>
+                {ideas.map((i) => (
+                  <button key={i.id} type="button" onClick={() => onExample(i)}
+                    className="rounded-md border border-gray-800 px-2.5 py-1.5 text-left text-xs text-gray-300 hover:bg-white/[0.04]">{i.text}</button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
