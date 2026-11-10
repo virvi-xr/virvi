@@ -145,6 +145,7 @@ export async function resendInvite(i: Invite, designName: string, now: Date): Pr
       .where(eq(studioDesignInvites.id, cur.id)).returning()
     return row
   })
+  if (updated.userId) await notifyInvite(updated)
   await mailInvite(updated, designName)
   return updated
 }

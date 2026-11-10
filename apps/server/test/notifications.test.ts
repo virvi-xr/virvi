@@ -8,6 +8,7 @@ import { memoryStudioStore, setStudioStore, jobFileKey } from '../src/studio/sto
 import { setMachineDeps } from '../src/studio/machines.js'
 import { quoteFinalize } from '../src/studio/pricing.js'
 import { grantPayment } from '../src/studio/payments.js'
+import { flushNotifications } from '../src/notifications/notifications.js'
 import { sweepStudio } from '../src/studio/sweep.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
@@ -43,8 +44,8 @@ describe('notifications', () => {
   })
 
   const as = (u: TestUser) => ({ authorization: `Bearer ${tokenFor(u)}` })
-  const list = async (u: TestUser, qs = '') => (await app.inject({ method: 'GET', url: `/api/notifications${qs}`, headers: as(u) })).json()
-  const count = async (u: TestUser) => (await app.inject({ method: 'GET', url: '/api/notifications/unread-count', headers: as(u) })).json().count
+  const list = async (u: TestUser, qs = '') => (await flushNotifications(), (await app.inject({ method: 'GET', url: `/api/notifications${qs}`, headers: as(u) })).json())
+  const count = async (u: TestUser) => (await flushNotifications(), await app.inject({ method: 'GET', url: '/api/notifications/unread-count', headers: as(u) })).json().count
   const post = (u: TestUser, url: string) => app.inject({ method: 'POST', url, headers: as(u), payload: {} })
   const invite = (u: TestUser, designId: string, email: string, role = 'collaborator') =>
     app.inject({ method: 'POST', url: `/api/studio/designs/${designId}/invites`, headers: as(u), payload: { email, role } })
@@ -89,6 +90,15 @@ describe('notifications', () => {
     expect(await count(kim)).toBe(0)
     await db.update(studioDesignInvites).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(studioDesignInvites.userId, lee.id))
     expect((await list(lee)).items[0]).toMatchObject({ readAt: null, gone: true })
+    await sweepStudio(new Date())
+    expect(await count(lee)).toBe(0)
+    expect((await list(lee)).items[0]).toMatchObject({ readAt: expect.any(String), gone: true })
+    // A resend after expiry shows it again as a new unread item
+    const sent = (await db.select().from(studioDesignInvites).where(eq(studioDesignInvites.userId, lee.id)))[0]
+    await db.update(studioDesignInvites).set({ lastSentAt: new Date(Date.now() - 2 * 3600_000) }).where(eq(studioDesignInvites.id, sent.id))
+    expect((await post(olive, `/api/studio/designs/${d.id}/invites/${sent.id}/resend`)).statusCode).toBe(200)
+    expect(await count(lee)).toBe(1)
+    expect((await list(lee)).items[0]).toMatchObject({ readAt: null, gone: false })
   })
 
   it('an invite to an email with no account notifies nobody', async () => {
@@ -147,6 +157,7 @@ describe('notifications', () => {
     // The notifications table is gone for a moment: every notify throws
     await db.execute(sql`ALTER TABLE notifications RENAME TO notifications_gone`)
     const res = await app.inject({ method: 'POST', url: `/api/studio/designs/${d.id}/prompts`, headers: as(olive), payload: { text: 'x', selectedSlots: ['hat'] } })
+    await flushNotifications()
     await db.execute(sql`ALTER TABLE notifications_gone RENAME TO notifications`)
     expect(res.statusCode).toBe(202)
   })
@@ -256,6 +267,7 @@ describe('notifications', () => {
     await invite(olive, d.id, 'sam@test.dev')
     await join(d.id, sam)
     await prompt(olive, d.id)
+    await flushNotifications()
     const rows = await db.select().from(notifications)
     expect(rows.length).toBeGreaterThan(1)
     expect(JSON.stringify(rows)).not.toContain(PROMPT_TEXT)

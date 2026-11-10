@@ -15,7 +15,8 @@ type Data = Record<string, unknown>
 export const NOTIFICATION_DAYS = 90
 const PAGE = 20
 const MAX_PAGE = 50
-const TRIES = 5
+// Each lost race means another writer made progress, so this only has to outlast the writers that can meet at once
+const TRIES = 10
 
 /**
  * Adds a notification, or merges into the user's unread one with the same groupKey. The merge is a compare-and-set on
@@ -60,6 +61,15 @@ export async function markDesignInvitesRead(designId: string, now: Date, exec: E
     .where(and(eq(notifications.kind, 'studio_invite'), isNull(notifications.readAt), sql`${notifications.data}->>'designId' = ${designId}`))
 }
 
+/** Invites that expired unanswered: their notifications are read (a resend makes a fresh one). Run by the sweep. */
+export async function markExpiredInvitesRead(now: Date): Promise<void> {
+  await db.update(notifications).set({ readAt: now }).where(and(
+    eq(notifications.kind, 'studio_invite'), isNull(notifications.readAt),
+    sql`${notifications.data}->>'inviteId' IN (SELECT id::text FROM studio_design_invites
+      WHERE accepted_at IS NULL AND declined_at IS NULL AND cancelled_at IS NULL AND expires_at <= ${now.toISOString()}::timestamptz)`,
+  ))
+}
+
 /** Drops notifications not updated for 90 days. */
 export async function pruneNotifications(now: Date): Promise<number> {
   const cutoff = new Date(now.getTime() - NOTIFICATION_DAYS * 24 * 3600_000)
@@ -68,6 +78,16 @@ export async function pruneNotifications(now: Date): Promise<number> {
 }
 
 // ── Studio hooks ──
+
+const inflight = new Set<Promise<void>>()
+/** Runs a notify without holding up the caller; `flushNotifications` waits for the ones started (tests). */
+export function inBackground(p: Promise<void>): void {
+  inflight.add(p)
+  void p.finally(() => inflight.delete(p))
+}
+export async function flushNotifications(): Promise<void> {
+  while (inflight.size) await Promise.all([...inflight])
+}
 
 /** Never throws: a notification must not fail what it reports. */
 async function quietly(what: string, fn: () => Promise<void>) {
@@ -81,6 +101,8 @@ const nameOf = async (userId: string): Promise<string> =>
 export async function notifyInvite(i: { id: string; designId: string; userId: string | null; invitedBy: string; role: string }): Promise<void> {
   if (!i.userId) return
   await quietly('invite', async () => {
+    // A resend shows it again: the earlier one (if still unread) gives way
+    await markInvitesRead([i.id], new Date())
     const [d] = await db.select({ name: studioDesigns.name }).from(studioDesigns).where(eq(studioDesigns.id, i.designId))
     await notify(i.userId!, 'studio_invite', {
       inviteId: i.id, designId: i.designId, designName: d?.name ?? '', inviterName: await nameOf(i.invitedBy), role: i.role,
