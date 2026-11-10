@@ -16,6 +16,7 @@ import Preview from './Preview'
 import Finalize, { EmoteChecklist } from './Finalize'
 import type { EmoteTarget } from './EmotesStep'
 import PaidRevisions from './PaidRevisions'
+import People from './People'
 
 /** The events kept for progress lines: enough for any one job's latest note. */
 const MAX_EVENTS = 200
@@ -47,6 +48,7 @@ export default function StudioDesignPage() {
   // A 👍's "Finalize this": open Finalize with that revision's pieces ticked
   const [finalizeWith, setFinalizeWith] = useState<{ categories: string[]; n: number } | null>(null)
   const [wornSet, setWornSet] = useState<{ key: string; set: StudioSet } | null>(null)
+  const [showPeople, setShowPeople] = useState(false)
   const chosen = quote && selected ? selectionCategories(selected, quote) : null
   const wornKey = chosen?.join(',') ?? ''
 
@@ -91,7 +93,10 @@ export default function StudioDesignPage() {
   }, [designId, wornKey, detail])
   const worn: WornState = wornState(chosen, wornSet)
 
+  const meId = user?.id ?? null
   const onEvent = useCallback((e: StudioEvent) => {
+    // Someone left or was removed: the People change, and if it was me the design is gone (the re-read says so)
+    if (e.type === 'member_removed') { reload(); return }
     setEvents((prev) => [...prev.slice(-(MAX_EVENTS - 1)), e])
     if (reloadsOn(e)) reload()
   }, [reload])
@@ -152,7 +157,7 @@ export default function StudioDesignPage() {
     return (
       <div className="mx-auto max-w-7xl">
         <PageHeader crumbs={[{ label: 'Design Studio', href: '/studio' }, 'Not found']} title="Design not found" />
-        <p className="text-gray-400">This design doesn’t exist or isn’t yours. <Link href="/studio" className="text-blue-300 underline">Back to your designs</Link></p>
+        <p className="text-gray-400">This design doesn’t exist, or you’re not on it. <Link href="/studio" className="text-blue-300 underline">Back to your designs</Link></p>
       </div>
     )
   }
@@ -167,10 +172,21 @@ export default function StudioDesignPage() {
         crumbs={detail.support ? [{ label: 'Studio admin', href: '/admin/studio' }, d.name] : [{ label: 'Design Studio', href: '/studio' }, d.name]}
         title={d.name}
         subtitle={<span className="flex flex-wrap items-center gap-2">{kindLabel(d.kind)} <Badge tone={badge.tone}>{badge.label}</Badge></span>}
-        actions={controls.designMenu ? <RowMenu label="Design actions" items={[d.archivedAt
-          ? { label: 'Unarchive', onSelect: () => setArchived(false) }
-          : { label: 'Archive', onSelect: () => setArchived(true), confirm: 'Archive this design?' }]} /> : undefined}
+        actions={(controls.people || controls.designMenu) ? (
+          <div className="flex items-center gap-2">
+            {controls.people && (
+              <button type="button" onClick={() => setShowPeople((v) => !v)} aria-expanded={showPeople}
+                className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">
+                People{detail.members && detail.members.length > 1 ? ` · ${detail.members.length}` : ''}
+              </button>
+            )}
+            {controls.designMenu && <RowMenu label="Design actions" items={[d.archivedAt
+              ? { label: 'Unarchive', onSelect: () => setArchived(false) }
+              : { label: 'Archive', onSelect: () => setArchived(true), confirm: 'Archive this design?' }]} />}
+          </div>
+        ) : undefined}
       />
+      {showPeople && <People designId={designId} detail={detail} meId={meId} onChanged={reload} onClose={() => setShowPeople(false)} />}
       {detail.support && (
         <p className="mb-4 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" role="status">
           {supportBanner(detail.support)}
@@ -190,16 +206,19 @@ export default function StudioDesignPage() {
         <Conversation designId={designId} detail={detail} usage={usage} events={events} onChanged={reload}
           quote={quote} onFinalize={(categories) => setFinalizeWith((prev) => ({ categories, n: (prev?.n ?? 0) + 1 }))} />
         <Preview designId={designId} detail={detail} category={category} onSelect={setCategory} onChanged={reload}
-          step={step} onStep={setStep} emoteTarget={emoteTarget} worn={worn}
+          step={step} onStep={setStep} emoteTarget={emoteTarget} worn={worn} viewOnly={!controls.act}
           finalizeStep={detail.design.kind === 'scene'
             ? <p className="p-4 text-sm text-gray-300">{detail.support
               ? 'Each piece finalized goes into the owner’s 3D Models, private to them, ready to place in a scene.'
               : 'Each piece you finalize goes into your 3D Models, private to you, ready to place in a scene.'}</p>
             : <div className="p-4"><EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={openEmote} /></div>}>
-          <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'}
-            detail={detail} onOpenEmote={openEmote} selected={selected} onSelected={setSelected} worn={worn}
-            support={detail.support} onChanged={reload} openWith={finalizeWith} />
-          <PaidRevisions designId={designId} pieces={detail.pieces} onChanged={reload} kind={detail.design.kind} owner={controls.reports} />
+          {controls.act && (
+            <Finalize designId={designId} kind={d.kind} quote={quote} busy={detail.activeJob?.type === 'prompt'}
+              detail={detail} onOpenEmote={openEmote} selected={selected} onSelected={setSelected} worn={worn}
+              support={detail.support} onChanged={reload} openWith={finalizeWith} />
+          )}
+          <PaidRevisions designId={designId} pieces={detail.pieces} onChanged={reload} kind={detail.design.kind}
+            owner={controls.owner} canReport={controls.reports} act={controls.act} />
         </Preview>
       </div>
     </div>

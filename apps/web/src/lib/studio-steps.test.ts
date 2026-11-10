@@ -157,6 +157,13 @@ describe('the step a design opens on', () => {
     expect(shownStep('tour', 'scene', ['building'])).toBe('tour')
     expect(shownStep('emotes', 'wearable', ['hat'])).toBe('emotes')
   })
+  it('leaves a viewer the steps that only look: no emotes, walk-through or finalize (LIV-159)', () => {
+    expect(stepsFor('wearable', ['hat'], true)).toEqual(['design', 'inspect', 'avatar'])
+    expect(stepsFor('emote', ['emote'], true)).toEqual(['design', 'avatar'])
+    expect(stepsFor('scene', ['building', 'furniture_chair'], true)).toEqual(['design', 'inspect', 'scale'])
+    expect(shownStep('emotes', 'wearable', ['hat'], true)).toBe('avatar')
+    expect(shownStep('tour', 'scene', ['building'], true)).toBe('inspect')
+  })
 })
 
 describe('scene gifts and checks', () => {

@@ -7,10 +7,10 @@ import {
   type FinalizedRevision, type StudioPiece,
 } from '@/lib/studio'
 
-type Props = { designId: string; pieces: StudioPiece[]; onChanged: () => Promise<void>; kind?: string; owner?: boolean }
+type Props = { designId: string; pieces: StudioPiece[]; onChanged: () => Promise<void>; kind?: string; owner?: boolean; canReport?: boolean; act?: boolean }
 
 /** Save a downloaded blob under its file name. */
-function save(blob: Blob, filename: string) {
+export function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -22,10 +22,11 @@ function save(blob: Blob, filename: string) {
 /**
  * Every paid piece's revisions, whichever tab is selected: download, a free retry when packaging failed, and mistake
  * reports. With two or more pieces ready, "Download all" fetches them as one zip; while pieces package, it says how many
- * are ready. `owner`: the owner is looking (false for Virvi support), so mistake reports and their outcome, MANA back
- * and their 3D Models link show.
+ * are ready. `owner`: the owner is looking (false for Virvi support and other members), so a report's outcome, MANA back
+ * and their 3D Models link show. `canReport`: not Virvi support; anyone else may report a revision they paid for (the
+ * server sends `reportableUntil` to the payer alone, LIV-159). `act`: not a viewer, so a failed package can be tried again.
  */
-export default function PaidRevisions({ designId, pieces, onChanged, kind, owner = true }: Props) {
+export default function PaidRevisions({ designId, pieces, onChanged, kind, owner = true, canReport = owner, act = true }: Props) {
   const api = useApi()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +40,7 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind, owner
     setError(null)
     try {
       const { blob, filename } = await api.downloadStudioPackages(designId)
-      save(blob, filename)
+      saveBlob(blob, filename)
     } catch (err) {
       setError(refusalMessage(err as never, new Date()).text)
     } finally {
@@ -61,7 +62,7 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind, owner
         <section key={piece.category} aria-label={piece.name}>
           {several && <h4 className="px-4 pt-3 text-xs font-medium uppercase tracking-wide text-gray-400">{piece.name}</h4>}
           <ul className="divide-y divide-gray-800">
-            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} owner={owner} />)}
+            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} owner={owner} canReport={canReport} act={act} />)}
           </ul>
         </section>
       ))}
@@ -69,7 +70,7 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind, owner
   )
 }
 
-function PaidRevision({ designId, category, f, onChanged, scene, owner }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean; owner: boolean }) {
+function PaidRevision({ designId, category, f, onChanged, scene, owner, canReport, act }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean; owner: boolean; canReport: boolean; act: boolean }) {
   const api = useApi()
   const actions = revisionActions(f, new Date())
   const [busy, setBusy] = useState(false)
@@ -93,7 +94,7 @@ function PaidRevision({ designId, category, f, onChanged, scene, owner }: { desi
 
   const download = () => run(async () => {
     const { blob, filename } = await api.downloadStudioPackage(designId, category, f.revision)
-    save(blob, filename)
+    saveBlob(blob, filename)
   })
 
   const retry = () => run(async () => {
@@ -131,13 +132,13 @@ function PaidRevision({ designId, category, f, onChanged, scene, owner }: { desi
           {actions.packaging && <span className="text-gray-400">Packaging…</span>}
           {actions.download && scene && owner && <a href="/assets" className="text-blue-300 underline">In your 3D Models</a>}
           {actions.download && <PrimaryButton type="button" disabled={busy} onClick={download}>Download</PrimaryButton>}
-          {actions.retry && <PrimaryButton type="button" disabled={busy} onClick={retry}>Try again</PrimaryButton>}
-          {owner && actions.report === 'open' && !reporting && refunded === null && (
+          {actions.retry && act && <PrimaryButton type="button" disabled={busy} onClick={retry}>Try again</PrimaryButton>}
+          {canReport && actions.report === 'open' && !reporting && refunded === null && (
             <button type="button" onClick={() => setReporting(true)} className="text-gray-400 underline hover:text-white">Report a mistake</button>
           )}
         </div>
       </div>
-      {actions.retry && <p className="mt-1 text-xs text-gray-500">Packaging didn’t finish. Trying again is free.</p>}
+      {actions.retry && <p className="mt-1 text-xs text-gray-500">{act ? 'Packaging didn’t finish. Trying again is free.' : 'Packaging didn’t finish.'}</p>}
       {reporting && (
         <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); if (reportOk(text)) report() }}>
           <label className="block">

@@ -9,8 +9,10 @@ import { countLabel } from '@/lib/format'
 import { AgentPicker } from './AgentPicker'
 import { startingAgent } from '@/lib/studio-ratings'
 import { KindPicker } from '@/components/KindPicker'
+import { peopleRefusal, roleLabel, splitDesigns, type MyInvite, type PastPackage } from '@/lib/studio-people'
+import { saveBlob } from './[designId]/PaidRevisions'
 import {
-  DEFAULT_AGENT, agentLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, kindLabel, refusalMessage, relativeTime, usageLine,
+  DEFAULT_AGENT, agentLabel, categoryLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, kindLabel, refusalMessage, relativeTime, usageLine,
   type Refusal, type StudioDesign, type StudioKind, type StudioUsage,
 } from '@/lib/studio'
 
@@ -19,7 +21,7 @@ import {
 const designHref = (id: string) => `/studio/${id}/`
 
 export default function StudioPage() {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const api = useApi()
   const [archived, setArchived] = useState(false)
   const [designs, setDesigns] = useState<StudioDesign[] | null>(null)
@@ -50,12 +52,15 @@ export default function StudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, archived])
 
+  const lists = designs ? splitDesigns(designs) : null
+  // A trial can't be invited or leave a design, and these routes are an account's: asking would open the sign-up sheet
+  const account = !!token && !user?.trial
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
         crumbs={['Workspace', 'Design Studio']}
         title="Design Studio"
-        count={designs ? countLabel(designs.length) : undefined}
+        count={lists ? countLabel(lists.mine.length) : undefined}
         subtitle={usage ? usageLine(usage) : 'Design Decentraland wearables, emotes, buildings and furniture with an agent.'}
         actions={
           <div className="flex items-center gap-2">
@@ -76,6 +81,8 @@ export default function StudioPage() {
 
       {showCreate && <NewDesign onCancel={() => setShowCreate(false)} />}
 
+      {account && <Invites />}
+
       <div className="mb-4 inline-flex rounded-md border border-gray-800 p-0.5 text-sm" role="tablist" aria-label="Which designs">
         {([['Open', false], ['Archived', true]] as const).map(([label, value]) => (
           <button key={label} role="tab" aria-selected={archived === value} onClick={() => setArchived(value)}
@@ -85,9 +92,9 @@ export default function StudioPage() {
         ))}
       </div>
 
-      {!designs ? (
+      {!lists ? (
         <Skeleton />
-      ) : designs.length === 0 ? (
+      ) : lists.mine.length === 0 && lists.shared.length === 0 ? (
         archived ? (
           <p className="text-gray-500">No archived designs.</p>
         ) : (
@@ -96,16 +103,33 @@ export default function StudioPage() {
             action={<PrimaryButton onClick={() => setShowCreate(true)}><PlusIcon size={16} /> New design</PrimaryButton>} />
         )
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {designs.map((d) => <DesignCard key={d.id} d={d} />)}
-        </div>
+        <>
+          {lists.mine.length > 0 ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {lists.mine.map((d) => <DesignCard key={d.id} d={d} />)}
+            </div>
+          ) : (
+            <p className="text-gray-500">{archived ? 'None of your own designs are archived.' : 'You have no designs of your own yet.'}</p>
+          )}
+          {lists.shared.length > 0 && (
+            <section aria-labelledby="shared-heading" className="mt-8">
+              <h2 id="shared-heading" className="mb-3 text-lg font-semibold">Shared with me</h2>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {lists.shared.map((d) => <DesignCard key={d.id} d={d} />)}
+              </div>
+            </section>
+          )}
+        </>
       )}
+
+      {account && !archived && <PastPackages />}
     </div>
   )
 }
 
 function DesignCard({ d }: { d: StudioDesign }) {
   const badge = designBadge(d)
+  const shared = !!d.role && d.role !== 'owner'
   return (
     <a href={designHref(d.id)} className="rounded-lg border border-gray-800 bg-gray-900 p-4 text-left transition-colors hover:border-gray-600">
       <div className="flex items-center justify-between gap-3">
@@ -113,8 +137,108 @@ function DesignCard({ d }: { d: StudioDesign }) {
         <Badge tone={badge.tone}>{badge.label}</Badge>
       </div>
       <p className="mt-2 text-sm text-gray-400">{kindLabel(d.kind)} · {agentLabel(d.agent)}</p>
+      {shared && <p className="mt-1 truncate text-sm text-gray-400">{d.ownerName?.trim() ? `${d.ownerName.trim()}’s design` : 'Shared with you'} · {roleLabel(d.role!)}</p>}
       <p className="mt-1 text-xs text-gray-600">{d.lastJobAt ? `Last worked on ${relativeTime(d.lastJobAt, new Date())}` : `Started ${relativeTime(d.createdAt, new Date())}`}</p>
     </a>
+  )
+}
+
+/** "Invited to a design": the invites matched to my account, with Accept and Decline. Nothing shows without any. */
+function Invites() {
+  const api = useApi()
+  const [invites, setInvites] = useState<MyInvite[]>([])
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<{ id: string; text: string } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    api.getMyStudioInvites().then((r) => { if (!cancelled) setInvites(r) }).catch(() => {})
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const answer = async (i: MyInvite, accept: boolean) => {
+    setBusy(i.id)
+    setError(null)
+    try {
+      if (accept) {
+        const r = await api.acceptStudioInvite(i.id)
+        window.location.assign(designHref(r.designId))
+        return
+      }
+      await api.declineStudioInvite(i.id)
+      setInvites((prev) => prev.filter((x) => x.id !== i.id))
+    } catch (err) {
+      setError({ id: i.id, text: peopleRefusal(err as never) })
+    }
+    setBusy(null)
+  }
+
+  if (invites.length === 0) return null
+  return (
+    <section aria-labelledby="invites-heading" className="mb-6 rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+      <h2 id="invites-heading" className="mb-3 font-semibold">Invited to a design</h2>
+      <ul className="space-y-3">
+        {invites.map((i) => (
+          <li key={i.id} className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate font-medium">{i.designName}</p>
+              <p className="text-sm text-gray-400">{i.inviterName?.trim() ? `${i.inviterName.trim()} invited you` : 'You’re invited'} as a {roleLabel(i.role).toLowerCase()}.</p>
+              {error?.id === i.id && <p className="mt-1 text-sm text-amber-300" role="alert">{error.text}</p>}
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <PrimaryButton type="button" disabled={busy === i.id} onClick={() => answer(i, true)}>Accept</PrimaryButton>
+              <button type="button" disabled={busy === i.id} onClick={() => answer(i, false)}
+                className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700 disabled:opacity-50">Decline</button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/** "Finalized while you were on it": packages kept from designs I've left or was removed from. Nothing shows without any. */
+function PastPackages() {
+  const api = useApi()
+  const [packages, setPackages] = useState<PastPackage[]>([])
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    api.getStudioPastPackages().then((r) => { if (!cancelled) setPackages(r) }).catch(() => {})
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const download = async (p: PastPackage) => {
+    setBusy(p.entitlementId)
+    setError(null)
+    try {
+      const { blob, filename } = await api.downloadStudioPastPackage(p.entitlementId)
+      saveBlob(blob, filename)
+    } catch (err) {
+      setError(refusalMessage(err as never, new Date()).text)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (packages.length === 0) return null
+  return (
+    <section aria-labelledby="past-heading" className="mt-8">
+      <h2 id="past-heading" className="text-lg font-semibold">Finalized while you were on it</h2>
+      <p className="mb-3 text-sm text-gray-400">Pieces finalized on designs you’ve left. They stay yours to download.</p>
+      {error && <p className="mb-2 text-sm text-amber-300" role="alert">{error}</p>}
+      <ul className="divide-y divide-gray-800 rounded-lg border border-gray-800 bg-gray-900">
+        {packages.map((p) => (
+          <li key={p.entitlementId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+            <div className="min-w-0">
+              <p className="truncate font-medium">{p.designName}</p>
+              <p className="text-xs text-gray-500"><span className="capitalize">{categoryLabel(p.category)}</span> · Revision {p.revisionNumber} · finalized {new Date(p.finalizedAt).toLocaleDateString()}</p>
+            </div>
+            <PrimaryButton type="button" disabled={busy === p.entitlementId} onClick={() => download(p)}>Download</PrimaryButton>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

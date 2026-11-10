@@ -65,6 +65,8 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
       return { title: 'Create a free account to add a room set to a scene.', unlocks: 'Your scenes and room scans move into your account.' }
     case 'hyperfy_hosting':
       return { title: 'Create a free account to have Virvi host a Hyperfy world.', unlocks: 'Accounts get hosted Hyperfy worlds with their plan.' }
+    case 'studio_invite':
+      return { title: `Create a free account to join ${name || 'this design'}.`, unlocks: 'Your trial designs and scenes move into your account.', ...(name ? { emphasis: name } : {}) }
     case 'more_designs':
       return { title: 'Create a free account to start another design.', unlocks: 'Accounts can keep more designs open at once.' }
     case 'more_prompts':

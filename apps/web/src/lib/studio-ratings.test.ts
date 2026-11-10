@@ -24,6 +24,9 @@ describe('where a rating sits', () => {
   it('the owner rates; support only sees what the owner said', () => {
     expect(canRate({})).toBe(true)
     expect(canRate({ support: { ownerId: 'o', ownerName: 'Olive', ownerEmail: null, trial: false } })).toBe(false)
+    // LIV-159: a collaborator rates their own way; a viewer doesn't
+    expect(canRate({ role: 'collaborator' })).toBe(true)
+    expect(canRate({ role: 'viewer' })).toBe(false)
     expect(ratingSummary(rev())).toBeNull()
     expect(ratingSummary(rev({ rating: 'up' }))).toBe('The owner rated this 👍')
     expect(ratingSummary(rev({ rating: 'down', tags: ['broken', 'size'], note: 'Too big' })))

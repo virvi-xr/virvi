@@ -38,6 +38,8 @@ type Props = {
   finalizeStep: React.ReactNode
   /** Finalize's selection, when only some pieces are ticked: the Emotes step shows that selection worn. */
   worn?: WornState
+  /** A viewer (LIV-159): what is rendered, never a render asked for, and only the steps that look. */
+  viewOnly?: boolean
   children?: React.ReactNode
 }
 
@@ -46,11 +48,11 @@ type Props = {
  * buttons; Inspect turns one piece alone any way; Emotes plays every piece worn. The finalize strip and paid revisions
  * sit under it.
  */
-export default function Preview({ designId, detail, category, onSelect, onChanged, step: picked, onStep, emoteTarget, finalizeStep, worn = null, children }: Props) {
+export default function Preview({ designId, detail, category, onSelect, onChanged, step: picked, onStep, emoteTarget, finalizeStep, worn = null, viewOnly = false, children }: Props) {
   const api = useApi()
   const kind = detail.design.kind
   const categories = detail.pieces.map((p) => p.category)
-  const step = shownStep(picked, kind, categories)
+  const step = shownStep(picked, kind, categories, viewOnly)
   const stage = stageFor(step, kind)
   const [view, setView] = useState<RenderView>({ bodyShape: 'male', outfit: 'default', emote: null })
   const [pending, setPending] = useState<Set<string>>(new Set())
@@ -67,7 +69,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
 
   // Inspect asks for the rest of the sphere when it isn't there, once per piece revision and body shape
   useEffect(() => {
-    if (stage !== 'inspect' || !piece?.revision || kind === 'emote') return
+    if (viewOnly || stage !== 'inspect' || !piece?.revision || kind === 'emote') return
     const asked = `${piece.category}/${piece.revision.number}/${inspectShape}`
     if (inspectAsked === asked || inspect?.status === 'queued' || (inspect?.status === 'ready' && (inspect.frames >= ORBIT_FRAMES || inspect.pending))) return
     setInspectAsked(asked)
@@ -92,7 +94,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
   const pick = async (next: RenderView) => {
     setView(next)
     setError(null)
-    if (!piece) return
+    if (!piece || viewOnly) return
     const k = viewKey(kind, next)
     if (piece.renders[k]?.status === 'ready' || piece.renders[k]?.status === 'queued' || pending.has(k)) return
     setPending((prev) => new Set(prev).add(k))
@@ -120,7 +122,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
   return (
     <section aria-label="Preview" className="flex min-w-0 flex-col gap-4">
       <div className="rounded-lg border border-gray-800 bg-gray-900">
-        <Steps steps={stepsFor(kind, categories)} current={step} onPick={pickStep} />
+        <Steps steps={stepsFor(kind, categories, viewOnly)} current={step} onPick={pickStep} />
         {pieceTabs && (
           <div role="tablist" aria-label="Pieces" className="flex flex-wrap gap-1 border-b border-gray-800 p-2">
             {tabs.map((p) => {
@@ -156,6 +158,8 @@ export default function Preview({ designId, detail, category, onSelect, onChange
               ) : inspect?.status === 'ready' && inspect.urls.length > 0 ? (
                 <InspectStage key={`${piece.category}/${inspectShape}`} urls={inspect.urls} label={`${piece.name} on its own, ${inspectShape}`}
                   note={inspectNote(inspect)} onRetry={() => setInspectAsked(null)} />
+              ) : viewOnly && inspect?.status !== 'queued' ? (
+                <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400">This view hasn’t been rendered yet.</p>
               ) : inspect?.status === 'failed' ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center text-sm text-gray-400">
                   <p>This view didn’t render.</p>
@@ -185,8 +189,9 @@ export default function Preview({ designId, detail, category, onSelect, onChange
             <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-400" aria-live="polite">Rendering this view…</p>
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center text-sm text-gray-400">
-              <p>{spin.text}</p>
-              {piece && <button type="button" onClick={() => pick({ ...view })} className="text-blue-300 underline">Render this view</button>}
+              {/* a viewer can't ask for a render, so can't retry one either */}
+              <p>{viewOnly && piece ? 'This view hasn’t been rendered yet.' : spin.text}</p>
+              {piece && !viewOnly && <button type="button" onClick={() => pick({ ...view })} className="text-blue-300 underline">Render this view</button>}
             </div>
           )}
         </div>

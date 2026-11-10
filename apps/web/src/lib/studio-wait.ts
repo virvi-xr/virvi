@@ -23,7 +23,7 @@ const shown = (e: StudioEvent) => e.type === 'progress' && !!e.text.trim() && !e
  * older worker doesn't, and taken goes straight to the agent reading.
  */
 export function waitSteps(job: { id: string; status: string }, events: StudioEvent[]): WaitStep[] | null {
-  const own = events.filter((e) => e.jobId === job.id)
+  const own = events.filter((e) => 'jobId' in e && e.jobId === job.id)
   if (own.some(shown)) return null
   const phases = new Set(own.flatMap((e) => (e.type === 'phase' ? [e.phase] : [])))
   if ([...phases].some((p) => p !== 'screening' && p !== 'building')) return null

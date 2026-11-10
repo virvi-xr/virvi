@@ -6,6 +6,7 @@ import type { StudioRevision } from './studio-ratings'
 import { formatMana, walletRejected } from './mana'
 import type { Tone } from '@/components/ui'
 import { blockedCopy } from './trial'
+import { VIEWER_NOTE, canAct } from './studio-people'
 
 export type StudioKind = 'wearable' | 'emote' | 'scene'
 
@@ -45,7 +46,16 @@ export type StudioDesign = {
   finalizedPieces?: number
   pieceCount?: number
   createdAt: string
+  /** The reader's role on it (LIV-159); a design shared with them also names its owner. */
+  role?: DesignRole
+  ownerName?: string | null
 }
+
+/** A person's role on a design (LIV-159): the owner, a collaborator (works on it) or a viewer (looks). */
+export type DesignRole = 'owner' | 'collaborator' | 'viewer'
+
+/** Someone on a design, the owner first (the server's `designMembers`). */
+export type StudioMember = { userId: string; displayName: string | null; role: DesignRole; joinedAt: string }
 
 /** `triangles`: a scene piece over its recommended triangle count (a warning, never a block). */
 export type Checker = { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } | null
@@ -91,6 +101,8 @@ export type StudioMessage = {
   createdAt: string
   /** A Virvi admin wrote it, helping on the design: shown as Virvi support, never as the owner's words. */
   support?: boolean
+  /** Who wrote a person's message (LIV-159); null for the agent's, a system note and support's. */
+  sender?: { userId: string; displayName: string | null } | null
 }
 
 /** Whose design a Virvi admin is helping on (the server sends it only to an admin who isn't the owner). */
@@ -114,7 +126,8 @@ export type StudioDetail = {
   design: StudioDesign
   pieces: StudioPiece[]
   messages: StudioMessage[]
-  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; createdAt?: string; fixClipping?: FixClipping | null } | null
+  /** `senderName`: who sent the prompt running now (null for a render, or support's prompt). */
+  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; createdAt?: string; fixClipping?: FixClipping | null; senderName?: string | null } | null
   set: StudioSet
   lastPrompt: { jobId: string; outcome: string | null; status: string } | null
   uploads: StudioUpload[]
@@ -124,6 +137,9 @@ export type StudioDetail = {
   revisions?: StudioRevision[]
   /** The usual seconds from sending a prompt to the agent's first progress line; absent until the server knows. */
   typicalFirstReplySec?: number
+  /** The reader's role (null for Virvi support), and everyone on the design, the owner first (LIV-159). */
+  role?: DesignRole | null
+  members?: StudioMember[]
 }
 
 /** A file the owner gave the agent (the server's `publicUpload`). */
@@ -189,7 +205,8 @@ export type CheckoutMethod = 'card' | 'mana'
 export type StudioEvent =
   | { type: 'progress'; jobId: string; text: string }
   | { type: 'phase'; jobId: string; phase: string }
-  | { type: 'job'; jobId: string; status: 'queued' | 'taken' | 'done' | 'failed'; outcome?: string; error?: string }
+  | { type: 'job'; jobId: string; status: 'queued' | 'taken' | 'done' | 'failed'; outcome?: string; error?: string; senderName?: string | null }
+  | { type: 'member_removed'; userId: string }
 
 export type RenderView = { bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: string | null }
 
@@ -255,6 +272,10 @@ export function refusalMessage(
       return { text: 'The studio needs a rest for today. Come back tomorrow.' }
     case 'busy':
       return { text: 'The agent is still working on your last message.' }
+    case 'viewer':
+      return { text: VIEWER_NOTE }
+    case 'checkout_open':
+      return { text: 'Someone else on this design has a checkout open for these pieces. It clears by itself in about half an hour.' }
     case 'clipping_fix_limit':
       return { text: `We’ve tried to fix the clipping in ${emoteLabel(b.emote === OWN_EMOTE ? 'emote' : 'wearable', b.emote ?? 'emote')} twice. Describe what you see in a prompt and the agent will take another look.` }
     case 'not_seen':
@@ -411,7 +432,7 @@ const shortenPaths = (text: string) => text.replace(/\/(?:work|opt|tmp)\/\S+/g, 
 export function progressFor(events: StudioEvent[], jobId: string): string | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]
-    if (e.jobId !== jobId) continue
+    if (!('jobId' in e) || e.jobId !== jobId) continue
     if (e.type === 'progress' && e.text.trim() && !e.text.startsWith('Running:')) return shortenPaths(e.text.trim())
     if (e.type === 'phase' && PHASES[e.phase]) return PHASES[e.phase]
   }
@@ -433,7 +454,7 @@ export function nextPoll(detail: StudioDetail, connected: boolean): number | nul
   return connected ? 30_000 : 5_000
 }
 
-export type ComposerMode = 'send' | 'busy' | 'continue' | 'out' | 'archived' | 'paused'
+export type ComposerMode = 'send' | 'busy' | 'continue' | 'out' | 'archived' | 'paused' | 'viewer'
 
 export const PAUSED_NOTE = 'Your studio access is paused, so you can’t send new messages. You can still finalize and download your designs. Contact support@virvi.io.'
 
@@ -453,8 +474,11 @@ export function composerState(detail: StudioDetail, usage: StudioUsage | null, n
   // Support: otherwise the usage the page has is the admin's own, which doesn't apply here
   if (detail.support) usage = null
   const note = detail.support ? SUPPORT_NOTE : !usage ? '' : usage.trial ? `${usage.promptsLeft} of ${usage.allowance} free prompts left` : `${usage.promptsLeft} prompts left today · ${usage.plan} plan`
+  // A viewer has no box at all (LIV-159)
+  if (!canAct(detail.role)) return { mode: 'viewer', note: VIEWER_NOTE }
   if (detail.design.archivedAt) {
-    return { mode: 'archived', note: detail.support ? 'This design is archived. Only its owner can unarchive it.' : 'This design is archived. Unarchive it to keep working on it.' }
+    const owner = !detail.support && (detail.role ?? 'owner') === 'owner'
+    return { mode: 'archived', note: owner ? 'This design is archived. Unarchive it to keep working on it.' : 'This design is archived. Only its owner can unarchive it.' }
   }
   if (paused) return { mode: 'paused', note: PAUSED_NOTE }
   if (detail.activeJob?.type === 'prompt') return { mode: 'busy', note: 'The agent is still working on your last message.' }
@@ -503,23 +527,25 @@ export const STEP_LABELS: Record<Step, string> = {
 
 /**
  * An emote design has nothing to inspect without the avatar. A scene design has no avatar or emotes: a building gets
- * its walk-through and furniture its scale view, once the design has one.
+ * its walk-through and furniture its scale view, once the design has one. `viewOnly` (a viewer, LIV-159): only the
+ * steps that look at what is rendered; emotes and the walk-through are rendered on asking, and finalizing is work.
  */
-export function stepsFor(kind: string, categories: string[] = []): Step[] {
+export function stepsFor(kind: string, categories: string[] = [], viewOnly = false): Step[] {
+  const shown = (s: Step) => !viewOnly || (s !== 'emotes' && s !== 'tour' && s !== 'finalize')
   if (kind === 'scene') {
     const building = categories.includes('building')
     const furniture = categories.some((c) => c.startsWith('furniture_'))
-    return STEPS.filter((s) => s === 'design' || s === 'inspect' || s === 'finalize' || (s === 'tour' && building) || (s === 'scale' && furniture))
+    return STEPS.filter((s) => shown(s) && (s === 'design' || s === 'inspect' || s === 'finalize' || (s === 'tour' && building) || (s === 'scale' && furniture)))
   }
-  return STEPS.filter((s) => s !== 'tour' && s !== 'scale' && (kind !== 'emote' || s !== 'inspect'))
+  return STEPS.filter((s) => shown(s) && s !== 'tour' && s !== 'scale' && (kind !== 'emote' || s !== 'inspect'))
 }
 
 /** The step a design opens on: On avatar, or Inspect for a scene design (it has no avatar). */
 export const defaultStep = (kind: string): Step => kind === 'scene' ? 'inspect' : 'avatar'
 
 /** The step to show: the one picked, while the design has it (a walk-through needs the building first). */
-export const shownStep = (step: Step, kind: string, categories: string[]): Step =>
-  stepsFor(kind, categories).includes(step) ? step : defaultStep(kind)
+export const shownStep = (step: Step, kind: string, categories: string[], viewOnly = false): Step =>
+  stepsFor(kind, categories, viewOnly).includes(step) ? step : defaultStep(kind)
 /** The attach button's hint, with an example that fits the kind of design. */
 export const uploadHint = (kind: string) =>
   `Images or 3D files for the agent. Say what each is for, like “put ${kind === 'scene' ? 'sign.png over the door' : 'logo.png on the chest'}”.`

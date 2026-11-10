@@ -2,6 +2,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { openSignUp } from '@/lib/trial'
 import { PrimaryButton } from '@/components/ui'
 import {
@@ -10,7 +11,8 @@ import {
 } from '@/lib/studio'
 import { canRate, canTryAgain, revisionUnder } from '@/lib/studio-ratings'
 import Rating from './Rating'
-import { designControls, messageIsViewers, messageLabel } from '@/lib/studio-support'
+import { designControls, messageIsViewers, messageLabel, runningPrompt } from '@/lib/studio-support'
+import { boxState } from '@/lib/studio-people'
 import { customerReply } from '@/lib/studio-reply'
 import {
   HELP_IDLE, MAX_PROMPT, NO_CHOICE, canImprove, choiceSlots, helpFailure, helpReducer, helpsWith, outgoingMessage, reaskBody, tooLong,
@@ -34,6 +36,7 @@ type Props = {
 /** The left column: the agent picker, the conversation, and the message box. */
 export default function Conversation({ designId, detail, usage, events, onChanged, quote = null, onFinalize }: Props) {
   const api = useApi()
+  const meId = useAuth().user?.id ?? null
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [refusal, setRefusal] = useState<Refusal | null>(null)
@@ -71,6 +74,10 @@ export default function Conversation({ designId, detail, usage, events, onChange
   // Support's own allowance is no business of this design's
   const nudge = detail.support ? null : trialNudge(usage)
   const active = detail.activeJob?.type === 'prompt' ? detail.activeJob : null
+  // While a prompt runs, whose it is ("Working on Sam's prompt"); a viewer has no box (LIV-159)
+  const box = boxState(detail.role, runningPrompt(detail, meId), meId)
+  const busyLine = composer.mode === 'busy' && typeof box === 'object' ? box.busyFor : null
+  const note = busyLine ?? composer.note
   function warm() { if (canSend(composer.mode) && !active) warmer(designId) }
   // Until the agent's first progress line: the steps, timed from when the prompt was sent (or first seen here)
   const steps = active ? waitSteps(active, events) : null
@@ -159,9 +166,12 @@ export default function Conversation({ designId, detail, usage, events, onChange
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true) } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }}
       onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropped([...e.dataTransfer.files]) } setDragging(false) }}>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 p-3">
-        <AgentPicker name="design-agent" value={detail.design.agent} onChange={switchAgent} disabled={!!active || sending || !controls.switchAgent} />
-      </div>
+      {/* Switching the agent is the owner's; support sees which it is, other members don't get the picker */}
+      {(controls.switchAgent || detail.support) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 p-3">
+          <AgentPicker name="design-agent" value={detail.design.agent} onChange={switchAgent} disabled={!!active || sending || !controls.switchAgent} />
+        </div>
+      )}
 
       <div ref={listRef} className="flex max-h-[60vh] min-h-64 flex-1 flex-col gap-3 overflow-y-auto p-4">
         {detail.messages.length === 0 && !active && (
@@ -174,8 +184,8 @@ export default function Conversation({ designId, detail, usage, events, onChange
         {detail.messages.map((m) => {
           const rev = revisionUnder(m, detail)
           return (
-            <Message key={m.id} m={m} label={messageLabel(m, detail)} viewers={messageIsViewers(m, detail)} raw={!!detail.support}>
-              {m === openProposal && m.proposal && (
+            <Message key={m.id} m={m} label={messageLabel(m, detail, meId)} viewers={messageIsViewers(m, detail, meId)} raw={!!detail.support}>
+              {m === openProposal && m.proposal && controls.act && (
                 <ProposalPicker proposal={m.proposal} raw={!!detail.support} disabled={sending || composer.mode === 'out' || composer.mode === 'paused'}
                   onBuild={(slots) => send({ text: `Build these: ${slots.map(categoryLabel).join(', ')}`, selectedSlots: slots })} />
               )}
@@ -204,7 +214,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
       <div className="border-t border-gray-800 p-3">
         <Uploads designId={designId} kind={detail.design.kind} uploads={detail.uploads ?? []} disabled={composer.mode === 'archived' || composer.mode === 'paused'} dropped={dropped} onChanged={onChanged} readOnly={!controls.uploads} onAttach={warm} />
         {refusal && <RefusalLine refusal={refusal} usage={controls.topup ? usage : null} onFix={() => send({ fixChecks: true })} />}
-        {failing.length > 0 && !active && (
+        {failing.length > 0 && !active && controls.act && (
           <button type="button" disabled={sending} onClick={() => send({ fixChecks: true })}
             className="mb-2 rounded-md border border-amber-500/40 px-3 py-1.5 text-sm text-amber-200 hover:bg-amber-500/10 disabled:opacity-50">
             Fix the checker failures (free)
@@ -218,7 +228,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
         )}
         {composer.mode === 'out' && usage?.trial ? (
           <OutOfPrompts detail={detail} />
-        ) : composer.mode === 'out' || composer.mode === 'archived' || composer.mode === 'paused' ? (
+        ) : composer.mode === 'out' || composer.mode === 'archived' || composer.mode === 'paused' || composer.mode === 'viewer' ? (
           <div className="text-sm text-gray-400">
             <p>{composer.note}</p>
             {composer.mode === 'out' && usage && controls.topup && <TopupButton usage={usage} onRefusal={setRefusal} />}
@@ -238,11 +248,11 @@ export default function Conversation({ designId, detail, usage, events, onChange
               disabled={composer.mode === 'busy'}
               onChange={(e) => { setText(e.target.value); dispatchIdea({ type: 'typed', text: e.target.value }); warm() }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
-              placeholder={composer.mode === 'busy' ? 'The agent is still working on your last message.' : detail.support ? 'Message the agent as Virvi support' : 'Describe what you want, or what to change'}
+              placeholder={busyLine ?? (detail.support ? 'Message the agent as Virvi support' : 'Describe what you want, or what to change')}
               className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-blue-400 disabled:opacity-60" />
             <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs text-gray-500">
-                <p>{composer.note}</p>
+                <p>{note}</p>
                 {nudge && <p className="mt-0.5 text-amber-300">{nudge}</p>}
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">

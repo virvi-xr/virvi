@@ -37,6 +37,11 @@ describe('AGENTS', () => {
 describe('refusalMessage', () => {
   const r = (code: string, body: Record<string, unknown> = {}, status = 409) => refusalMessage({ status, body: { code, ...body } }, NOW)
 
+  it('explains a viewer’s refusal and another member’s open checkout (LIV-159)', () => {
+    expect(r('viewer', { error: 'viewer' }, 403)).toEqual({ text: 'You can view this design. Ask the owner to make you a collaborator to send prompts.' })
+    expect(r('checkout_open')).toEqual({ text: 'Someone else on this design has a checkout open for these pieces. It clears by itself in about half an hour.' })
+  })
+
   it('names when the allowance comes back and offers a top-up', () => {
     expect(r('allowance', { resetsAt: at(125 * MIN) }, 429)).toEqual({
       text: 'You’ve used today’s prompts. More at midnight UTC (in 2 h 5 min).',

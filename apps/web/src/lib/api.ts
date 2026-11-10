@@ -14,8 +14,9 @@ import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
 import { adminDesignsQuery, type AdminDesign } from './studio-support'
-import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioSet, StudioUpload, StudioUsage } from './studio'
+import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
+import type { InviteLinkView, InviteRole, MyInvite, PastPackage, StudioInvite } from './studio-people'
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
 import type { FirstReplyStats } from './studio-wait'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
@@ -1046,5 +1047,27 @@ function useRealApi() {
     /** Every piece's newest ready package in one zip ("Download all"), through the same kind of authenticated route. */
     downloadStudioPackages: (id: string, signUpCtx?: BlockedCtx): Promise<{ blob: Blob; filename: string }> =>
       downloadBlob(`/api/studio/designs/${id}/packages`, 'design.zip', signUpCtx),
+    // Sharing a design (LIV-159): its people and invites, my invites, and packages kept from designs I've left
+    /** `invites` (with their links) for the owner alone. */
+    getStudioPeople: (id: string) => apiFetch<{ members: StudioMember[]; invites?: StudioInvite[] }>(`/api/studio/designs/${id}/people`),
+    inviteToStudioDesign: (id: string, email: string, role: InviteRole) =>
+      apiFetch<{ invite: StudioInvite }>(`/api/studio/designs/${id}/invites`, { method: 'POST', body: JSON.stringify({ email, role }) }),
+    cancelStudioInvite: (id: string, inviteId: string) => apiFetch<void>(`/api/studio/designs/${id}/invites/${inviteId}/cancel`, { method: 'POST' }),
+    resendStudioInvite: (id: string, inviteId: string) =>
+      apiFetch<{ invite: StudioInvite }>(`/api/studio/designs/${id}/invites/${inviteId}/resend`, { method: 'POST' }),
+    setStudioMemberRole: (id: string, userId: string, role: InviteRole) =>
+      apiFetch<{ userId: string; role: InviteRole }>(`/api/studio/designs/${id}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+    /** The owner removing someone, or a member leaving (their own id). */
+    removeStudioMember: (id: string, userId: string) => apiFetch<void>(`/api/studio/designs/${id}/members/${userId}`, { method: 'DELETE' }),
+    getMyStudioInvites: () => apiFetch<MyInvite[]>('/api/studio/invites'),
+    acceptStudioInvite: (inviteId: string) =>
+      apiFetch<{ designId: string; role: InviteRole }>(`/api/studio/invites/${inviteId}/accept`, { method: 'POST' }),
+    declineStudioInvite: (inviteId: string) => apiFetch<void>(`/api/studio/invites/${inviteId}/decline`, { method: 'POST' }),
+    getStudioInviteLink: (token: string) => apiFetch<InviteLinkView>(`/api/studio/invite-links/${token}`),
+    acceptStudioInviteLink: (token: string) =>
+      apiFetch<{ designId: string; role: InviteRole }>(`/api/studio/invite-links/${token}/accept`, { method: 'POST' }),
+    getStudioPastPackages: () => apiFetch<PastPackage[]>('/api/studio/past-packages'),
+    downloadStudioPastPackage: (entitlementId: string): Promise<{ blob: Blob; filename: string }> =>
+      downloadBlob(`/api/studio/past-packages/${entitlementId}/package`, 'package.zip'),
   }), [apiFetch, downloadBlob, token, user?.trial, dropDeadSession, renew, swapToStoredAccount])
 }

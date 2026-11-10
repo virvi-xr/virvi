@@ -85,6 +85,8 @@ const SERVER_VERSION = '2.0.0'
  */
 export const redactPairingCode = (url: string) =>
   url.replace(/^(\/api\/(?:hyperfy|ar)\/pair\/)[^/?#]+/, '$1:code').replace(/^(\/(?:pair\/(?:headset\/)?|s\/))[^/?#]+/, '$1:code')
+    // a Design Studio invite link's token is its credential (LIV-159), the page's and the API's
+    .replace(/^(\/(?:api\/studio\/invite-links|studio\/invite)\/)[^/?#]+/, '$1:token')
 
 /** The response header carrying the request ID (Fastify's genReqId) */
 export const REQUEST_ID_HEADER = 'x-request-id'
@@ -408,6 +410,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     }
     app.get('/studio/:designId', studioPage)
     app.get('/studio/:designId/', studioPage)
+    // A design's invite link (/studio/invite/<token>, LIV-159): one exported page for every token, at studio/invite/_/
+    app.get('/studio/invite/:token', (_request, reply) => reply.sendFile('studio/invite/_/index.html'))
+    app.get('/studio/invite/:token/', (_request, reply) => reply.sendFile('studio/invite/_/index.html'))
 
     // AR space pages (/s/<code>): the static export has one page for every code, at s/_/
     app.get('/s/:code', (_request, reply) => reply.sendFile('s/_/index.html'))

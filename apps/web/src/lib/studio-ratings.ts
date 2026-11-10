@@ -1,3 +1,4 @@
+import { canAct } from './studio-people'
 import { agentLabel, kindLabel, type ComposerMode, type Quote, type StudioAgent, type StudioDetail, type StudioKind, type StudioMessage } from './studio'
 
 /**
@@ -49,8 +50,8 @@ export function revisionUnder(m: Pick<StudioMessage, 'id' | 'jobId'>, detail: Pi
 /** Whether a 👎's free try-again can go now: it doesn't use a prompt, so being out of prompts doesn't stop it. */
 export const canTryAgain = (mode: ComposerMode, running: boolean) => !running && (mode === 'send' || mode === 'continue' || mode === 'out')
 
-/** Whether the viewer rates: the owner does; Virvi support sees the owner's rating and doesn't. */
-export const canRate = (detail: Pick<StudioDetail, 'support'>) => !detail.support
+/** Whether the reader rates: the owner and collaborators do (each their own); Virvi support sees the owner's rating and doesn't, nor does a viewer. */
+export const canRate = (detail: Pick<StudioDetail, 'support' | 'role'>) => !detail.support && canAct(detail.role)
 
 /** What a rating says to someone who can't change it (support). */
 export function ratingSummary(r: Pick<StudioRevision, 'rating' | 'tags' | 'note'>): string | null {

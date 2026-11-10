@@ -1,4 +1,5 @@
 import { agentLabel, type StudioDetail, type StudioKind, type StudioMessage, type StudioSupportView } from './studio'
+import { canAct, promptSenderId, senderLabel } from './studio-people'
 
 /**
  * Virvi support: a Virvi admin helping on someone else's Design Studio design, on the design's own page. What it
@@ -19,31 +20,57 @@ export function supportBanner(s: StudioSupportView): string {
 
 /**
  * The name over a message: the agent's for the agent, Virvi support for an admin's message (to the owner and to the
- * admin), the owner's name for the owner's own words when support is looking, and none for the owner's own words to
- * the owner. A system note has none.
+ * admin), and for a person's words their sender (LIV-159): You for my own, their name for someone else's. Support
+ * sees every sender by name (the owner's when an older message has none). A system note has none, and so does a
+ * person's message from before senders were sent.
  */
-export function messageLabel(m: Pick<StudioMessage, 'role' | 'agent' | 'support'>, detail: Pick<StudioDetail, 'support'>): string | null {
+export function messageLabel(m: Pick<StudioMessage, 'role' | 'agent' | 'support' | 'sender'>, detail: Pick<StudioDetail, 'support'>, meId?: string | null): string | null {
   if (m.role === 'system') return null
   if (m.role === 'agent') return agentLabel(m.agent)
   if (m.support) return SUPPORT_LABEL
-  return detail.support ? supportOwnerName(detail.support) : null
-}
-
-/** Whether a message sits on the right, as the viewer's own: the owner's for the owner, support's for an admin. */
-export function messageIsViewers(m: Pick<StudioMessage, 'role' | 'support'>, detail: Pick<StudioDetail, 'support'>): boolean {
-  if (m.role !== 'user') return false
-  return detail.support ? !!m.support : !m.support
+  if (detail.support) return m.sender?.displayName?.trim() || supportOwnerName(detail.support)
+  return senderLabel(m, meId)
 }
 
 /**
- * The owner's controls on the design page. Support can prompt, render, check and finalize; renaming or archiving,
- * switching the agent, adding or removing files, mistake reports, buying prompts and MANA refunds stay the owner's.
+ * Whether a message sits on the right, as the viewer's own: my own words (any person's words before senders were
+ * sent: the owner's), support's for an admin.
  */
-export function designControls(detail: Pick<StudioDetail, 'support'>): {
-  designMenu: boolean; switchAgent: boolean; uploads: boolean; reports: boolean; topup: boolean
+export function messageIsViewers(m: Pick<StudioMessage, 'role' | 'support' | 'sender'>, detail: Pick<StudioDetail, 'support'>, meId?: string | null): boolean {
+  if (m.role !== 'user') return false
+  if (detail.support) return !!m.support
+  return m.sender && meId ? m.sender.userId === meId : !m.support
+}
+
+/**
+ * The prompt the agent is on, with who sent it, for the box's "Working on Sam's prompt" (boxState): the sender is the
+ * newest person's message's (promptSenderId). Support's prompt is Virvi support's to members, and the admin's own to
+ * support. Null while no prompt runs.
+ */
+export function runningPrompt(detail: Pick<StudioDetail, 'activeJob' | 'messages' | 'support'>, meId: string | null | undefined) {
+  const job = detail.activeJob
+  if (job?.type !== 'prompt') return null
+  const last = [...detail.messages].reverse().find((m) => m.role === 'user')
+  if (last?.support) return { ...job, senderName: SUPPORT_LABEL, senderId: detail.support ? meId ?? null : null }
+  return { ...job, senderName: job.senderName ?? null, senderId: promptSenderId(detail.messages) }
+}
+
+/**
+ * The controls on the design page, by who is looking. Support can prompt, render, check and finalize; renaming or
+ * archiving, switching the agent, adding or removing files, mistake reports, buying prompts and MANA refunds stay the
+ * owner's. On a shared design (LIV-159) a collaborator works on it as the owner does (`act`: prompt, render, check,
+ * finalize; files and buying prompts too) but can't rename, archive or switch the agent; a viewer only looks. Anyone
+ * may report a revision they paid for (the server sends `reportableUntil` to the payer alone), and see the People.
+ * `owner`: the owner is looking.
+ */
+export function designControls(detail: Pick<StudioDetail, 'support' | 'role'>): {
+  designMenu: boolean; switchAgent: boolean; uploads: boolean; reports: boolean; topup: boolean; people: boolean; act: boolean; owner: boolean
 } {
-  const owner = !detail.support
-  return { designMenu: owner, switchAgent: owner, uploads: owner, reports: owner, topup: owner }
+  const support = !!detail.support
+  const role = support ? null : detail.role ?? 'owner'
+  const owner = role === 'owner'
+  const member = !support && canAct(role)
+  return { designMenu: owner, switchAgent: owner, uploads: member, reports: !support, topup: member, people: !support, act: canAct(role), owner }
 }
 
 /** The Finalize dialog's button for support: the pieces are finalized for the owner at once, free. */

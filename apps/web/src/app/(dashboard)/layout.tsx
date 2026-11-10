@@ -6,6 +6,7 @@ import { useApi } from '@/lib/api'
 import { scenePassAllows, trialAllows } from '@/lib/session'
 import { openSignUp, signedInNote, takeMovedHeadsetNotice, trialNav } from '@/lib/trial'
 import { signinPath } from '@/lib/landing-route'
+import { isInvitePath } from '@/lib/studio-people'
 import { useStudioAvailable } from '@/lib/use-studio'
 import Link from 'next/link'
 import { BrandMark } from '@/components/BrandMark'
@@ -75,7 +76,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     if (!loading && !user) {
       const here = window.location.pathname + window.location.search
-      router.push(signinPath(here))
+      // A design's invite link is often someone's first visit: it opens on sign-up (sign in is beside it)
+      router.push(signinPath(here, isInvitePath(window.location.pathname) ? 'register' : undefined))
     }
   }, [user, loading, router])
 

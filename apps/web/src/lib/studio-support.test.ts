@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { composerState, PAUSED_NOTE, SUPPORT_NOTE, type StudioDetail, type StudioSupportView, type StudioUsage } from './studio'
 import {
-  SUPPORT_LABEL, adminDesignOwner, adminDesignsQuery, designControls, messageIsViewers, messageLabel, pieceCountLabel, supportBanner,
+  SUPPORT_LABEL, adminDesignOwner, runningPrompt, adminDesignsQuery, designControls, messageIsViewers, messageLabel, pieceCountLabel, supportBanner,
   supportFinalizeLabel, supportOwnerName,
 } from './studio-support'
+import { VIEWER_NOTE } from './studio-people'
 
 const NOW = new Date('2026-11-08T12:00:00Z')
 const support = (over: Partial<StudioSupportView> = {}): StudioSupportView => ({
@@ -50,6 +51,17 @@ describe('messageLabel and messageIsViewers', () => {
     expect(messageIsViewers({ role: 'user' }, owner)).toBe(true) // an older reply without the flag
     expect(messageIsViewers(m, admin)).toBe(false)
   })
+  it('names each person’s words on a shared design: You for mine, their name for theirs (LIV-159)', () => {
+    const mine = { role: 'user' as const, agent: null, support: false, sender: { userId: 'me', displayName: 'Mia' } }
+    const sams = { role: 'user' as const, agent: null, support: false, sender: { userId: 'sam', displayName: 'Sam' } }
+    expect(messageLabel(mine, owner, 'me')).toBe('You')
+    expect(messageLabel(sams, owner, 'me')).toBe('Sam')
+    expect(messageIsViewers(mine, owner, 'me')).toBe(true)
+    expect(messageIsViewers(sams, owner, 'me')).toBe(false)
+    // support sees each sender by name, the owner's too
+    expect(messageLabel(sams, admin, 'admin')).toBe('Sam')
+    expect(messageIsViewers(sams, admin, 'admin')).toBe(false)
+  })
   it('names the agent for its replies and nobody for system notes', () => {
     expect(messageLabel({ role: 'agent', agent: 'claude' }, admin)).toBe('Claude Code')
     expect(messageLabel({ role: 'system', agent: null }, admin)).toBeNull()
@@ -57,12 +69,51 @@ describe('messageLabel and messageIsViewers', () => {
   })
 })
 
+describe('runningPrompt', () => {
+  const job = { id: 'j', type: 'prompt', status: 'taken' }
+  const sams = { id: 'm1', role: 'user' as const, agent: null, text: 'hi', proposal: null, jobId: null, createdAt: NOW.toISOString(), sender: { userId: 'sam', displayName: 'Sam' } }
+  const supports = { ...sams, sender: null, support: true }
+  it('is the running job with whoever sent it (the newest person’s message)', () => {
+    expect(runningPrompt(detail({ activeJob: { ...job, senderName: 'Sam' }, messages: [sams] }), 'me')).toEqual({ ...job, senderName: 'Sam', senderId: 'sam' })
+    expect(runningPrompt(detail(), 'me')).toBeNull()
+  })
+  it('names support’s prompt for members, and as the admin’s own for support', () => {
+    expect(runningPrompt(detail({ activeJob: { ...job, senderName: null }, messages: [supports] }), 'me')).toEqual({ ...job, senderName: SUPPORT_LABEL, senderId: null })
+    expect(runningPrompt(detail({ support: support(), activeJob: { ...job, senderName: null }, messages: [supports] }), 'admin'))
+      .toEqual({ ...job, senderName: SUPPORT_LABEL, senderId: 'admin' })
+  })
+})
+
 describe('designControls', () => {
-  it('gives the owner every control', () => {
-    expect(designControls(detail())).toEqual({ designMenu: true, switchAgent: true, uploads: true, reports: true, topup: true })
+  const all = { designMenu: true, switchAgent: true, uploads: true, reports: true, topup: true, people: true, act: true, owner: true }
+  it('gives the owner every control, a design from before roles too', () => {
+    expect(designControls(detail({ role: 'owner' }))).toEqual(all)
+    expect(designControls(detail())).toEqual(all)
   })
   it('keeps renaming, archiving, the agent, files, reports and buying prompts the owner’s', () => {
-    expect(designControls(detail({ support: support() }))).toEqual({ designMenu: false, switchAgent: false, uploads: false, reports: false, topup: false })
+    expect(designControls(detail({ support: support(), role: null }))).toEqual({
+      designMenu: false, switchAgent: false, uploads: false, reports: false, topup: false, people: false, act: true, owner: false,
+    })
+  })
+  it('lets a collaborator work but not manage the design (LIV-159)', () => {
+    expect(designControls(detail({ role: 'collaborator' }))).toEqual({ ...all, designMenu: false, switchAgent: false, owner: false })
+  })
+  it('lets a viewer look, see the people, and report a revision they paid for, nothing else', () => {
+    expect(designControls(detail({ role: 'viewer' }))).toEqual({
+      designMenu: false, switchAgent: false, uploads: false, reports: true, topup: false, people: true, act: false, owner: false,
+    })
+  })
+})
+
+describe('composerState for a viewer', () => {
+  it('has no box, whatever else is going on', () => {
+    expect(composerState(detail({ role: 'viewer' }), usage(), NOW)).toEqual({ mode: 'viewer', note: VIEWER_NOTE })
+    expect(composerState(detail({ role: 'viewer', activeJob: { id: 'j', type: 'prompt', status: 'taken' } }), usage({ paused: true }), NOW).mode).toBe('viewer')
+  })
+  it('leaves a collaborator’s box as the owner’s, but unarchiving to the owner', () => {
+    expect(composerState(detail({ role: 'collaborator' }), usage(), NOW).mode).toBe('send')
+    expect(composerState(detail({ role: 'collaborator', design: { ...detail().design, archivedAt: NOW.toISOString() } }), usage(), NOW))
+      .toEqual({ mode: 'archived', note: 'This design is archived. Only its owner can unarchive it.' })
   })
 })
 

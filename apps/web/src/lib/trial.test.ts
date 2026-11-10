@@ -19,6 +19,12 @@ describe('blockedCopy', () => {
     expect(blockedCopy('POST /api/studio/designs/:id/finalize', { designName: 'Neon Jacket', revisions: 4 }).title)
       .toBe('Create a free account to finalize Neon Jacket. Your design and its 4 revisions are saved.')
   })
+  it('asks a trial opening a design’s invite link to sign up to join it (LIV-159)', () => {
+    expect(blockedCopy('studio_invite', { designName: 'Neon Jacket' })).toEqual({
+      title: 'Create a free account to join Neon Jacket.', unlocks: 'Your trial designs and scenes move into your account.', emphasis: 'Neon Jacket',
+    })
+    expect(blockedCopy('studio_invite', {}).title).toBe('Create a free account to join this design.')
+  })
   it('falls back to the default for unknown actions', () => {
     expect(blockedCopy('POST /nope', {}).title).toBe('Create a free account to use this.')
   })
