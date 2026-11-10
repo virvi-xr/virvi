@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { studioJobs } from '../src/db/schema.js'
+import { studioDesignMembers, studioJobs } from '../src/db/schema.js'
+import { publishStudio } from '../src/studio/events.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { resetDb } from './helpers/db.js'
@@ -64,5 +65,46 @@ describe('VirviStudioRoom', () => {
     await expect(joinStudio(gs.url, design.id, tokenFor(owner, { kind: 'scene', sceneId: scene.id }))).rejects.toThrow()
     await expect(joinStudio(gs.url, design.id, tokenFor(owner, { verified: false }))).rejects.toThrow()
     await expect(joinStudio(gs.url, design.id)).rejects.toThrow()
+  })
+
+  it('a collaborator can join the room', async () => {
+    const design = await createDesign(await createUser())
+    const collab = await createUser()
+    await db.insert(studioDesignMembers).values({ designId: design.id, userId: collab.id, role: 'collaborator' })
+    const s = await joinStudio(gs.url, design.id, tokenFor(collab))
+    expect(s.room.connection.isOpen).toBe(true)
+    await s.room.leave()
+  })
+
+  it('a viewer can join', async () => {
+    const design = await createDesign(await createUser())
+    const viewer = await createUser()
+    await db.insert(studioDesignMembers).values({ designId: design.id, userId: viewer.id, role: 'viewer' })
+    const s = await joinStudio(gs.url, design.id, tokenFor(viewer))
+    expect(s.room.connection.isOpen).toBe(true)
+    await s.room.leave()
+  })
+
+  it('a stranger is Unauthorized, and so is a member who left', async () => {
+    const design = await createDesign(await createUser())
+    await expect(joinStudio(gs.url, design.id, tokenFor(await createUser()))).rejects.toThrow(/Unauthorized/)
+    const left = await createUser()
+    await db.insert(studioDesignMembers).values({ designId: design.id, userId: left.id, role: 'collaborator', leftAt: new Date() })
+    await expect(joinStudio(gs.url, design.id, tokenFor(left))).rejects.toThrow(/Unauthorized/)
+  })
+
+  it('removed member is disconnected from the room', async () => {
+    const owner = await createUser()
+    const design = await createDesign(owner)
+    const collab = await createUser()
+    await db.insert(studioDesignMembers).values({ designId: design.id, userId: collab.id, role: 'collaborator' })
+    const gone = await joinStudio(gs.url, design.id, tokenFor(collab))
+    const stays = await joinStudio(gs.url, design.id, tokenFor(owner))
+    const left = new Promise<number>((resolve) => gone.room.onLeave((code: number) => resolve(code)))
+    await publishStudio(design.id, { type: 'member_removed', userId: collab.id })
+    expect(await left).toBeGreaterThan(1000)
+    // The others stay and hear it
+    expect(await stays.waitForCount(1)).toEqual([{ type: 'member_removed', userId: collab.id }])
+    await stays.room.leave()
   })
 })
