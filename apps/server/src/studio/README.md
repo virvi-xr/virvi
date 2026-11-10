@@ -73,7 +73,11 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    then a hand-written fallback (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) in case push failed. That
    covers the `studio_*` tables (four of them for payments, and `studio_idea_uses` for the example prompts), new columns
    (`studio_designs.finalized_at`, `studio_jobs.counted_from`, and for the first-reply wait `studio_jobs.timings` and
-   `studio_designs.warmed_at`), and the MANA and credit tables below. Nothing needs running by hand first; to check
+   `studio_designs.warmed_at`), and the MANA and credit tables below. Collaboration (LIV-159) adds
+   `studio_design_members`, `studio_design_invites` and `notifications`, the sender columns `studio_messages.user_id`
+   and `studio_jobs.user_id` (null means the owner), and makes `studio_payments.user_id` nullable with `ON DELETE SET NULL`
+   (a deleted payer's payment stays, because entitlements reference it). `STUDIO_MAX_MEMBERS` (default 50) caps members plus
+   pending invites per design. Nothing needs running by hand first; to check
    the schema before a deploy, `drizzle-kit push` against production does the same.
 4. **Fly.** Confirm that the server's `FLY_API_TOKEN` can manage machines in `vlm-studio-worker`, in the
    `FLY_WORLDS_ORG` org (`vlm-worlds`). The agent keys are that app's secrets (`fly secrets import -a

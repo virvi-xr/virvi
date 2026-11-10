@@ -338,6 +338,8 @@ export const config = {
   // "Improve my prompt" on a design's message box (src/studio/prompt-help.ts): its model, and how many a day per account
   studioPromptHelpModel: env('STUDIO_PROMPT_HELP_MODEL') || 'claude-haiku-5-5',
   studioPromptHelpPerDay: positiveInt(env('STUDIO_PROMPT_HELP_PER_DAY'), 30, true),
+  // Most people on one design (members plus pending invites), owner not counted (LIV-159)
+  studioMaxMembers: positiveInt(env('STUDIO_MAX_MEMBERS'), 50),
   studioPrices: studioPricesFrom(process.env),
   studioMana: manaSettingsFrom(process.env),
   // The studio scene's parcel (for example "-12,34"), where the checkout link sends a returning visitor

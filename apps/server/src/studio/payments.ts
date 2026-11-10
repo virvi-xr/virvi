@@ -88,8 +88,8 @@ async function openSession(params: Record<string, unknown>, paymentId: string): 
 }
 
 /** Adds free-finalize credits back to a user's balance. */
-async function returnGifts(tx: Exec, userId: string, n: number, now: Date): Promise<void> {
-  if (!(n > 0)) return
+async function returnGifts(tx: Exec, userId: string | null, n: number, now: Date): Promise<void> {
+  if (!(n > 0) || !userId) return // no payer account left: nobody to give them back to
   await tx.insert(studioFinalizeCredits).values({ userId, balance: n, updatedAt: now })
     .onConflictDoUpdate({ target: studioFinalizeCredits.userId, set: { balance: sql`${studioFinalizeCredits.balance} + ${n}`, updatedAt: now } })
 }
@@ -134,8 +134,9 @@ export async function expirePaymentIn(tx: Exec, paymentId: string, now: Date): P
  * locks the design and the free-finalize credits first, in the order a grant does.
  */
 async function holdCredit(
-  tx: Exec, pay: { id: string; userId: string; amountCents: number; lines: PaymentLine[] }, now: Date,
+  tx: Exec, pay: { id: string; userId: string | null; amountCents: number; lines: PaymentLine[] }, now: Date,
 ): Promise<{ lines: PaymentLine[]; creditCents: number; dueCents: number }> {
+  if (!pay.userId) return { lines: pay.lines, creditCents: 0, dueCents: pay.amountCents }
   const taken = await takeCredit(tx, pay.userId, pay.amountCents, 'hold', pay.id, now)
   if (!(taken > 0)) return { lines: pay.lines, creditCents: 0, dueCents: pay.amountCents }
   const lines = pay.lines.length ? allocateCredit(pay.lines, taken).lines : pay.lines
@@ -409,6 +410,8 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
       .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending')))
       .returning()
     if (!pay) return null
+    // The payer's account is gone: nobody to grant to. Roll back so the payment stays pending for a person to settle
+    if (!pay.userId) throw new Error(`payment ${pay.id} is paid but its payer account is gone`)
     if (pay.kind === 'topup') {
       await tx.insert(studioPromptCredits).values({ userId: pay.userId, balance: pay.prompts })
         .onConflictDoUpdate({ target: studioPromptCredits.userId, set: { balance: sql`${studioPromptCredits.balance} + ${pay.prompts}`, updatedAt: now } })
@@ -469,7 +472,7 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
     return { pay, jobIds: await insertFinalizeJobs(tx, design, entitlementIds, now) }
   })
   if (!out) return 'already'
-  for (const h of held) await mailHeldReport(out.pay.userId, h.name, h.revision, h.text)
+  for (const h of held) if (out.pay.userId) await mailHeldReport(out.pay.userId, h.name, h.revision, h.text)
   await settleRefund(out.pay.id)
   await startFinalizeJobs(out.pay.designId, out.jobIds, now)
   return 'granted'

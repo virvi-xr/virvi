@@ -318,6 +318,23 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio timings and warmed_at ensured');
       } catch(e) { console.log('[virvi-server] studio timings and warmed_at:', e.message); }
 
+      // Design Studio collaboration (LIV-159): members, invites, senders, notifications, and a payment that outlives its payer; matches studioDesignMembers, studioDesignInvites, notifications, studioMessages.userId, studioJobs.userId and studioPayments.userId in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS studio_design_members (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), design_id UUID NOT NULL CONSTRAINT studio_design_members_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT studio_design_members_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL, joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), left_at TIMESTAMPTZ)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_design_members_open_uq ON studio_design_members (design_id, user_id) WHERE left_at IS NULL\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_design_members_user_idx ON studio_design_members (user_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_design_invites (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), design_id UUID NOT NULL CONSTRAINT studio_design_invites_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE CASCADE, email TEXT NOT NULL, role TEXT NOT NULL, token TEXT NOT NULL UNIQUE, invited_by UUID NOT NULL CONSTRAINT studio_design_invites_invited_by_users_id_fk REFERENCES users(id) ON DELETE CASCADE, user_id UUID CONSTRAINT studio_design_invites_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL, accepted_at TIMESTAMPTZ, declined_at TIMESTAMPTZ, cancelled_at TIMESTAMPTZ)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_design_invites_open_uq ON studio_design_invites (design_id, email) WHERE accepted_at IS NULL AND declined_at IS NULL AND cancelled_at IS NULL\`;
+        await sql\`CREATE TABLE IF NOT EXISTS notifications (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT notifications_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, data JSONB NOT NULL, group_key TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), read_at TIMESTAMPTZ)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications (user_id, created_at DESC)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS notifications_unread_group_uq ON notifications (user_id, group_key) WHERE read_at IS NULL AND group_key IS NOT NULL\`;
+        await sql\`ALTER TABLE studio_messages ADD COLUMN IF NOT EXISTS user_id UUID\`;
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS user_id UUID\`;
+        await sql\`ALTER TABLE studio_payments ALTER COLUMN user_id DROP NOT NULL\`;
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'studio_payments_user_id_users_id_fk' AND conrelid = 'studio_payments'::regclass AND confdeltype <> 'n') THEN ALTER TABLE studio_payments DROP CONSTRAINT studio_payments_user_id_users_id_fk; ALTER TABLE studio_payments ADD CONSTRAINT studio_payments_user_id_users_id_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL; END IF; END \$\$\`;
+        console.log('[virvi-server] studio collaboration ensured');
+      } catch(e) { console.log('[virvi-server] studio collaboration:', e.message); }
+
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_pairings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), world_id UUID NOT NULL REFERENCES hyperfy_worlds(id) ON DELETE CASCADE, user_id UUID REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT UNIQUE, secret_hash TEXT, hyperfy_player_id TEXT, player_name TEXT, status TEXT NOT NULL DEFAULT 'pending', code_expires_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

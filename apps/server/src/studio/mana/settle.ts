@@ -60,7 +60,7 @@ async function claim(paymentId: string, txHash: string): Promise<'claimed' | 'ta
  */
 async function reopen(paymentId: string, now: Date): Promise<void> {
   const [first] = await db.select().from(studioPayments).where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'expired')))
-  if (!first) return
+  if (!first || !first.userId) return // no payer account left to take holds for
   const giftsWanted = first.lines.filter((l) => l.gift).length
   // What the quote held: a finalize's credit is on its lines; a top-up's, in its first hold in the ledger
   const creditWanted = first.kind === 'topup' ? await topupHold(first.id) : first.lines.reduce((n, l) => n + (l.creditCents ?? 0), 0)
@@ -77,7 +77,7 @@ async function reopen(paymentId: string, now: Date): Promise<void> {
     const locked = await tx.select().from(studioPayments).where(inArray(studioPayments.id, [first.id, ...quotes]))
       .orderBy(asc(studioPayments.id)).for('update')
     const pay = locked.find((p) => p.id === first.id && p.status === 'expired')
-    if (!pay) return null
+    if (!pay || !pay.userId) return null
     if (pay.designId) await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.id, pay.designId)).for('key share')
     if (giftsWanted > 0 || locked.some((p) => p.giftsHeld > 0)) {
       await tx.insert(studioFinalizeCredits).values({ userId: pay.userId, balance: 0, updatedAt: now }).onConflictDoNothing()

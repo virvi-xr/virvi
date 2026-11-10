@@ -1682,6 +1682,8 @@ export const studioJobs = pgTable('studio_jobs', {
   countedFrom: text('counted_from'), // allowance | gift | credit: where a counted prompt is given back to
   // A prompt a Virvi admin sent on the owner's design (Virvi support): never counted, its cost on nobody's allowance
   byAdminId: uuid('by_admin_id'),
+  // Who sent a prompt job; null means the owner (every row from before collaboration)
+  userId: uuid('user_id'),
   // A render nobody is waiting on (the rest of an Inspect sphere): jobs/next hands these out after the others
   background: boolean('background').notNull().default(false),
   // The owner's free "Try again with this feedback" (LIV-142): the prompt job of the 👎'd revision it retries. At
@@ -1710,6 +1712,8 @@ export const studioMessages = pgTable('studio_messages', {
   text: text('text').notNull(),
   jobId: uuid('job_id'),
   proposal: jsonb('proposal'),
+  // The collaborator who sent a user message; null means the owner (every row from before collaboration)
+  userId: uuid('user_id'),
   // A user message a Virvi admin wrote (shown as Virvi support, never as the owner's words)
   byAdminId: uuid('by_admin_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1793,6 +1797,57 @@ export const studioIdeaUses = pgTable('studio_idea_uses', {
   designId: uuid('design_id').references(() => studioDesigns.id, { onDelete: 'set null' }),
   usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+// People on someone else's design (collaboration, LIV-159). A row is kept after the member leaves (leftAt set), so
+// "Finalized while you were on it" can still find the design. One open membership per user and design.
+export const studioDesignMembers = pgTable('studio_design_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(), // collaborator | viewer
+  joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+  leftAt: timestamp('left_at', { withTimezone: true }),
+}, (t) => ({
+  openUq: uniqueIndex('studio_design_members_open_uq').on(t.designId, t.userId).where(sql`${t.leftAt} IS NULL`),
+  userIdx: index('studio_design_members_user_idx').on(t.userId),
+}))
+
+// An invite to a design by email. The token is stored plainly, like orgInvites.token. userId is the account the email
+// matched when it was sent, if any.
+export const studioDesignInvites = pgTable('studio_design_invites', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  email: text('email').notNull(), // trimmed, lower-cased
+  role: text('role').notNull(), // collaborator | viewer
+  token: text('token').notNull().unique(), // 32 random bytes, base64url
+  invitedBy: uuid('invited_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  declinedAt: timestamp('declined_at', { withTimezone: true }),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+}, (t) => ({
+  openUq: uniqueIndex('studio_design_invites_open_uq').on(t.designId, t.email)
+    .where(sql`${t.acceptedAt} IS NULL AND ${t.declinedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
+}))
+
+// In-app notifications. data carries names and design titles only, never prompt or chat text. An unread row with a
+// groupKey is updated in place instead of adding another.
+export const notifications = pgTable('notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(),
+  data: jsonb('data').notNull(),
+  groupKey: text('group_key'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  readAt: timestamp('read_at', { withTimezone: true }),
+}, (t) => ({
+  userCreatedIdx: index('notifications_user_created_idx').on(t.userId, t.createdAt.desc()),
+  unreadGroupUq: uniqueIndex('notifications_unread_group_uq').on(t.userId, t.groupKey)
+    .where(sql`${t.readAt} IS NULL AND ${t.groupKey} IS NOT NULL`),
+}))
 
 // Files the owner gives the agent: images (references, textures, logos) and GLBs. Kept at uploadKey(designId, id).
 export const studioUploads = pgTable('studio_uploads', {
@@ -1938,7 +1993,8 @@ export type PaymentLine = {
 // A one-time Stripe Checkout: finalizing pieces, or a prompt top-up. Nothing is charged when every line is waived.
 export const studioPayments = pgTable('studio_payments', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  // Null once the payer's account is deleted: the payment stays, because entitlements reference it
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
   designId: uuid('design_id').references(() => studioDesigns.id, { onDelete: 'cascade' }), // null for a top-up
   kind: text('kind').notNull(), // finalize | topup
   status: text('status').notNull().default('pending'), // pending | paid | expired

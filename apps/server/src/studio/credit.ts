@@ -12,11 +12,11 @@ export async function creditBalance(userId: string, exec: Exec = db): Promise<nu
   return row?.balanceCents ?? 0
 }
 
-/** Adds credit and records it in the ledger. Does nothing when `cents` is zero or less. */
+/** Adds credit and records it in the ledger. Does nothing when `cents` is zero or less, or the account is gone (null). */
 export async function addCredit(
-  tx: Exec, userId: string, cents: number, reason: LedgerReason, refId: string | null, now: Date,
+  tx: Exec, userId: string | null, cents: number, reason: LedgerReason, refId: string | null, now: Date,
 ): Promise<void> {
-  if (!(cents > 0)) return
+  if (!(cents > 0) || !userId) return // no payer account left (studio_payments.user_id is null): nobody to credit
   await tx.insert(studioCredits).values({ userId, balanceCents: cents, updatedAt: now })
     .onConflictDoUpdate({ target: studioCredits.userId, set: { balanceCents: sql`${studioCredits.balanceCents} + ${cents}`, updatedAt: now } })
   await tx.insert(studioCreditLedger).values({ userId, deltaCents: cents, reason, refId, createdAt: now })

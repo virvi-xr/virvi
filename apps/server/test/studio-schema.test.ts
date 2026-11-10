@@ -20,6 +20,10 @@ import {
   studioManaTransfers,
   studioManaScan,
   studioManaRefunds,
+  studioDesignMembers,
+  studioDesignInvites,
+  notifications,
+  users,
 } from '../src/db/schema.js'
 import { TIER_LIMITS } from '../src/integrations/stripe.js'
 import { BASE_EMOTES, orbitKey, revisionsKey, setViewKey } from '../src/studio/designs.js'
@@ -143,5 +147,45 @@ describe('design studio schema', () => {
     expect(r.txHash).toBeNull()
     const [pay] = await db.insert(studioPayments).values({ userId: user.id, kind: 'topup', amountCents: 500 }).returning()
     expect(pay).toMatchObject({ method: 'card', creditHeldCents: 0, manaAmountWei: null })
+  })
+
+  it('has the collaboration tables and columns', async () => {
+    const { user: owner, d } = await design()
+    const friend = await createUser()
+    const [m] = await db.insert(studioDesignMembers).values({ designId: d.id, userId: friend.id, role: 'collaborator' }).returning()
+    expect(m.leftAt).toBeNull()
+    expect(m.joinedAt).toBeInstanceOf(Date)
+    const [inv] = await db.insert(studioDesignInvites).values({
+      designId: d.id, email: 'a@b.co', role: 'viewer', token: 'tok1', invitedBy: owner.id, userId: friend.id,
+      expiresAt: new Date(Date.now() + 864e5),
+    }).returning()
+    expect(inv).toMatchObject({ acceptedAt: null, declinedAt: null, cancelledAt: null })
+    const [n] = await db.insert(notifications).values({ userId: friend.id, kind: 'invite', data: { design: 'Neon cap' }, groupKey: 'g1' }).returning()
+    expect(n).toMatchObject({ readAt: null, groupKey: 'g1' })
+    const [msg] = await db.insert(studioMessages).values({ designId: d.id, role: 'user', text: 'hi', userId: friend.id }).returning()
+    expect(msg.userId).toBe(friend.id)
+    const [job] = await db.insert(studioJobs).values({ designId: d.id, type: 'prompt', payload: { type: 'prompt' }, userId: friend.id }).returning()
+    expect(job.userId).toBe(friend.id)
+    const [old] = await db.insert(studioMessages).values({ designId: d.id, role: 'user', text: 'old' }).returning()
+    expect(old.userId).toBeNull()
+  })
+
+  it('a second open membership for the same user and design is refused', async () => {
+    const { d } = await design()
+    const friend = await createUser()
+    const row = { designId: d.id, userId: friend.id, role: 'viewer' }
+    await db.insert(studioDesignMembers).values(row)
+    await expect(db.insert(studioDesignMembers).values(row)).rejects.toMatchObject({ code: '23505' })
+    await db.update(studioDesignMembers).set({ leftAt: new Date() }).where(eq(studioDesignMembers.userId, friend.id))
+    await db.insert(studioDesignMembers).values(row)
+    expect(await db.select().from(studioDesignMembers)).toHaveLength(2)
+  })
+
+  it('a payment survives its payer being deleted, with user_id null', async () => {
+    const user = await createUser()
+    const [pay] = await db.insert(studioPayments).values({ userId: user.id, kind: 'topup', amountCents: 500 }).returning()
+    await db.delete(users).where(eq(users.id, user.id))
+    const [after] = await db.select().from(studioPayments).where(eq(studioPayments.id, pay.id))
+    expect(after.userId).toBeNull()
   })
 })
