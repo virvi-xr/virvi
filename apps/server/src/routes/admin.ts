@@ -20,6 +20,7 @@ import { authenticate } from '../middleware/auth.js'
 import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
+import { handOverDesigns } from '../studio/handover.js'
 
 
 export default async function adminRoutes(app: FastifyInstance) {
@@ -240,7 +241,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     const blocked = await hostedWorldsBlockingDelete({ userId })
     if (blocked) return reply.status(409).send(blocked)
     const imports = await importsGoingWith({ userId })
-    const models = await deleteUserWithModels(userId, async (tx) => (await tx.delete(users).where(eq(users.id, userId)).returning({ id: users.id })).length > 0)
+    const models = await deleteUserWithModels(userId, async (tx) => {
+      // Designs they share pass to a member first (LIV-159); the rest go with them
+      await handOverDesigns(tx, userId, new Date())
+      return (await tx.delete(users).where(eq(users.id, userId)).returning({ id: users.id })).length > 0
+    })
     await deleteImportFiles(imports)
     await releaseModelFiles(models ?? [])
     return reply.status(204).send()

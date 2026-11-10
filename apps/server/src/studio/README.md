@@ -17,7 +17,8 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `payments.ts` | one-time Stripe Checkout for finalizing and top-ups, applied once from the webhook; entitlements, finalize jobs, mistake refunds |
 | `scope.ts` | keeping the studio to design work: the turn-down log, flags for the owner (and their email), pausing an account |
 | `credit.ts` | Virvi credit: a balance in USD cents per account, and a ledger row for every change |
-| `merge.ts` | moving a visitor wallet's studio data (records, counters, credit) onto an existing account |
+| `merge.ts` | moving a visitor wallet's studio data (records, counters, credit, memberships, invites, notifications) onto an existing account |
+| `handover.ts` | an owner's account deleted: each design they share passes to its longest-standing collaborator, else viewer (`studio_owner` notification); unshared ones go with the account |
 | `mana/` | paying in MANA: the rate (`rate.ts`), quotes (`quote.ts`), the Polygon reader (`polygon.ts`), settling and the watcher (`settle.ts`), MANA-back requests (`refunds.ts`) |
 | `ratings.ts` | 👍 / 👎 on each revision (an agent reply that changed pieces), and a 👎's one free "Try again with this feedback" (LIV-142) |
 | `rating-review.ts` | what admins learn from ratings: the 👎 review queue, the weekly digest (the admin page's, and the Monday email to every admin, sent once per week), and the 👍 rate per agent and model for each kind |

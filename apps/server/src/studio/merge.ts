@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import {
-  studioCreditLedger, studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions, studioIdeaUses,
+  notifications, studioCreditLedger, studioDesignInvites, studioDesignMembers, studioJobs, studioMessages, studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions, studioIdeaUses,
   studioManaRefunds, studioMistakeReports, studioPauses, studioPayments, studioPromptCredits, studioScopeEvents, studioUsageDays,
 } from '../db/schema.js'
 import { addCredit, takeCredit } from './credit.js'
@@ -34,6 +34,34 @@ export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: str
   await tx.update(studioScopeEvents).set({ userId: toUserId }).where(eq(studioScopeEvents.userId, fromUserId))
   await tx.update(studioManaRefunds).set({ userId: toUserId }).where(eq(studioManaRefunds.userId, fromUserId))
   await tx.update(studioIdeaUses).set({ userId: toUserId }).where(eq(studioIdeaUses.userId, fromUserId))
+
+  // Collaboration (LIV-159): one open membership per person and design. The target owning the design (theirs, or the
+  // source's that just moved) needs none; both on it keep the one row, with the stronger role. Past ones move too.
+  await tx.execute(sql`
+    update ${studioDesignMembers} m set left_at = ${now.toISOString()}::timestamptz
+    from ${studioDesigns} d
+    where d.id = m.design_id and d.owner_id = ${toUserId} and m.user_id in (${fromUserId}, ${toUserId}) and m.left_at is null`)
+  await tx.execute(sql`
+    update ${studioDesignMembers} t set role = 'collaborator'
+    from ${studioDesignMembers} f
+    where f.design_id = t.design_id and f.user_id = ${fromUserId} and t.user_id = ${toUserId}
+      and f.left_at is null and t.left_at is null and f.role = 'collaborator'`)
+  await tx.execute(sql`
+    update ${studioDesignMembers} f set left_at = ${now.toISOString()}::timestamptz
+    from ${studioDesignMembers} t
+    where t.design_id = f.design_id and f.user_id = ${fromUserId} and t.user_id = ${toUserId} and f.left_at is null and t.left_at is null`)
+  await tx.update(studioDesignMembers).set({ userId: toUserId }).where(eq(studioDesignMembers.userId, fromUserId))
+  await tx.update(studioDesignInvites).set({ userId: toUserId }).where(eq(studioDesignInvites.userId, fromUserId))
+  await tx.update(studioDesignInvites).set({ invitedBy: toUserId }).where(eq(studioDesignInvites.invitedBy, fromUserId))
+  // Who sent a prompt or message
+  await tx.update(studioJobs).set({ userId: toUserId }).where(eq(studioJobs.userId, fromUserId))
+  await tx.update(studioMessages).set({ userId: toUserId }).where(eq(studioMessages.userId, fromUserId))
+  // One unread notification per group: where the target has one, the source's is read
+  await tx.execute(sql`
+    update ${notifications} f set read_at = ${now.toISOString()}::timestamptz
+    from ${notifications} t
+    where t.user_id = ${toUserId} and f.user_id = ${fromUserId} and t.group_key = f.group_key and t.read_at is null and f.read_at is null`)
+  await tx.update(notifications).set({ userId: toUserId }).where(eq(notifications.userId, fromUserId))
 
   // At most one flag is open per account: if the target already has one, the source's is dismissed instead of moved
   const [targetOpen] = await tx.select({ id: studioFlags.id }).from(studioFlags)
