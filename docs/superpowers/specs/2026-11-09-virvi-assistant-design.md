@@ -18,7 +18,7 @@ Success looks like: a creator finishes a real multi-step job from one conversati
 
 ## Non-goals (for this design)
 
-- Acting in-world (Decentraland HUD, Quest, Vision Pro) and voice. The tool layer is built so these surfaces can reuse it later (phase 4).
+- Acting in-world (Decentraland HUD, Hyperfy, Quest, Vision Pro) and voice. The owner decided the assistant is web only; in-world, people use a dedicated Design Studio scene instead (LIV-65).
 - Writing scene code or SDK7 projects. Studio already owns generative design; the assistant can drive Studio's existing routes, not replace them.
 - Admin/support powers. An admin's assistant still acts only as that admin through admin routes, and admin tools are a later phase.
 - An open "API for agents". External agents use API keys today; that stays separate.
@@ -33,7 +33,7 @@ Success looks like: a creator finishes a real multi-step job from one conversati
 ## Constraints from the existing system
 
 - Server is Fastify (`apps/server`), web is Next.js (`apps/web`, dashboard under `app/(dashboard)`). Auth is a session JWT → `Actor` (`auth/actor.ts`); scene access via `auth/permissions.ts` (`getSceneAccess`, `isFullAccess`), org roles, scene roles, trial actors (`actor.trial`), tier limits in `TierLimits`.
-- Anthropic is already configured (`config.anthropicApiKey`, Studio models). Default models: `claude-sonnet-5-5` for the assistant, `claude-opus-5-5` reserved for hard planning if needed (builder's call to measure).
+- Anthropic is already configured (`config.anthropicApiKey`, Studio models). Default model for the assistant: `claude-sonnet-5-5`, configurable with `ASSISTANT_MODEL` (owner, 2026-11-09). The assistant routes requests, fills in actions and explains; wearables and emotes are built by the Design Studio agent, which keeps its own model (`claude-opus-5-5`), so the assistant's model doesn't change design quality. Switch to Opus if quality on harder requests (deploy diagnosis) disappoints.
 - Self-hosted error tracking (LIV-66) exists; the assistant's failures report there like everything else.
 - No users yet (`vlm-no-users-yet`), so schema can be added freely.
 
@@ -97,7 +97,7 @@ Confirmations are bound to the exact tool + arguments the server will run (a sig
 
 - **Prompt injection:** tool results are passed to the model inside clearly delimited data blocks with an instruction that their contents are untrusted; summaries strip or escape anything instruction-like where practical. Confirmation cards are rendered from the server's own record of the pending call, never from model text, so a manipulated model can't disguise an action.
 - **Scope:** the tool registry is an allowlist. Unknown tool names are rejected server-side.
-- **Rate and cost limits:** per-tier limits on assistant messages per day and tool calls per message (add to `TierLimits`: `assistantMessagesPerDay`, `assistantToolCallsPerMessage`), plus a per-user token budget. Trial users get a small allowance (builder's call: enough to try it, e.g. 10 messages). Hitting a limit says so and offers the upgrade page.
+- **Access and cost limits (owner, LIV-65):** paid plans only; free and trial accounts see the panel locked with an upgrade prompt. Each user's metered model cost per billing period is capped at 70% of that period's subscription payment (annual plans: 70% of 1/12 of the yearly payment, reset monthly), read from Stripe; downgrades, refunds and cancellations shrink or stop it at once. Users see the budget left as a percentage, with a warning at 80% and a stop at 100% that says when it comes back or offers an upgrade. A per-minute rate limit and `assistantToolCallsPerMessage` keep one conversation from burning the month. Studio prompts the assistant starts use the normal Studio allowance, not this budget.
 - **Privacy:** tool summaries never include other people's emails, wallet addresses, or private data the user could not see in the UI. Logs redact per-tool `redact` fields. Conversations are excluded from LIV-66 error reports except ids.
 - **Kill switch:** `ASSISTANT_ENABLED` config flag and a per-tool disable list in admin settings.
 
@@ -120,21 +120,25 @@ Confirmations are bound to the exact tool + arguments the server will run (a sig
 1. **Foundation + read + safe writes (first ticket).** Panel with streaming; conversation service; tool registry with `app.inject` execution as the user; confirmation tokens; action log; limits and usage; ~25 tools covering orientation, navigation, help, scene settings/elements/presets, media and screens, with undo. Kill switch. Tests: every tool's authorization is the route's (a test that calls each tool as an unrelated user and expects the route's 403/404), confirmation tokens can't be replayed or altered, injected instructions in a scene name don't trigger a tool call (scripted model), limits enforced.
 2. **Public and paid actions.** Events/showings/publishing, giveaways, scene roles/invites, deploy and deploy diagnosis (wallet signing handed to the UI), Studio prompts and finalize via checkout. Settings "Assistant activity" page with undo.
 3. **Quality.** Evaluation set of real creator tasks with pass/fail grading, help search over docs, opt-in preferences memory, cost tuning (model choice per turn, caching).
-4. **Other surfaces.** In-world HUD and Quest/Vision Pro panels reusing the same conversation service and tools; voice.
 
 ## Left to the builder
 
 - Exact tool list and names in phase 1 (from the catalogue above, ~25), and which existing routes each wraps.
 - Panel visual design within the dashboard's existing style.
-- Token budget numbers per tier; the trial allowance.
 - How summaries are trimmed per tool.
 - Whether a single model or a cheap-then-strong split per turn.
+
+## Owner decisions (2026-11-09, recorded in LIV-65)
+
+- Web only; no in-world or voice phase.
+- Paid plans only; trial and free accounts get the locked panel.
+- The 70%-of-payment monthly budget replaces per-tier message counts.
+- Default model `claude-sonnet-5-5` for the assistant; the Design Studio agent keeps Opus 5.5.
+- Actions ship on day one, behind confirmation: the public launch waits for phase 2.
+- Works across all of the user's organizations; every action and confirmation names its organization.
 
 ## Calls made without the owner (check these)
 
 - The assistant acts only through existing routes, as the user (no service-level shortcuts).
-- Web dashboard first; in-world/voice is phase 4.
 - Never-tools list (API keys, auth, billing, account/org deletion, purges, admin).
 - No long-term memory in phase 1.
-- Trial users get a small allowance rather than none.
-- Default model `claude-sonnet-5-5`.
