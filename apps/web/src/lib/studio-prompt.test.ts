@@ -49,6 +49,9 @@ describe('what makes a good prompt', () => {
     const full = guideTicks('wearable', 'A low-poly sky-blue bucket hat in canvas with an embroidered palm tree. It hides the hair. See the sketch.')
     expect([...full].sort()).toEqual(['colours', 'details', 'fit', 'reference', 'style', 'what'])
     expect(guideTicks('wearable', 'a cap', { hasUploads: true }).has('reference')).toBe(true)
+    // a detail placed on the piece counts, even without a pattern word
+    expect(guideTicks('wearable', 'a cartoon bucket hat in sky blue canvas with a small palm tree on the front').has('details')).toBe(true)
+    expect(guideTicks('wearable', 'a jacket with a graphic across the back').has('details')).toBe(true)
     // whole words only
     expect(guideTicks('wearable', 'redo the thing').has('colours')).toBe(false)
   })

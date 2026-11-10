@@ -8,7 +8,7 @@ import {
 } from '@/lib/studio-prompt'
 
 const chip = (on: boolean) =>
-  `rounded-full border px-2.5 py-1 text-xs capitalize transition-colors disabled:opacity-40 ${on ? 'border-blue-400 bg-blue-500/15 text-blue-100' : 'border-gray-800 text-gray-300 hover:bg-white/[0.04]'}`
+  `rounded-full border px-2.5 py-1 text-xs first-letter:uppercase transition-colors disabled:opacity-40 ${on ? 'border-blue-400 bg-blue-500/15 text-blue-100' : 'border-gray-800 text-gray-300 hover:bg-white/[0.04]'}`
 
 /** "What are you making?" before a wearable's first message: the slots go with it; the last two leave them to the agent. */
 export function SlotChips({ choice, onChange, disabled }: { choice: SlotChoice; onChange: (c: SlotChoice) => void; disabled: boolean }) {
