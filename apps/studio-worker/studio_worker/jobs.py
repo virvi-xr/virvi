@@ -33,6 +33,8 @@ from .pieces import Piece, UnsafeFile, collect, glbs_by_shape, glbs_exported, gl
 from .workspace import load_state, pack, prompt_with_context, save_state, state_dir, unpack
 
 IDLE_EXIT_SEC = 600
+# When this process started, as near as Python can tell: the boot event counts from here
+STARTED = time.monotonic()
 POLL_SEC = 2.0
 DEFAULT_LIMITS = {'timeoutSec': 1500, 'maxTurns': 80, 'costCeilingUsd': 3.0}
 TOUR_WATCHDOG_SEC = 900  # a walk-through is up to 480 frames: more than a spin's 36
@@ -106,6 +108,7 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
     state = load_state(state_path)
     check_cost = None
     if job.get('check'):  # only the user's own words are checked; the server's (Continue, fix the checks) never are
+        _phase(client, job_id, 'screening')  # the off-topic check, before the agent
         v = checker(job['prompt'], kind, state.messages, [u.get('name') or '' for u in job.get('uploads') or []])
         check_cost = v.cost_usd
         if v.verdict == 'off_topic':  # the agent never runs, and nothing about the design changes
@@ -471,8 +474,19 @@ def _send(client, job_id, event):
         print(f'event not sent: {e}', file=sys.stderr)
 
 
+def _boot_seconds(env: Mapping[str, str], started: float | None, now: float) -> float:
+    if started is None:
+        try:
+            return round(max(0.0, time.time() - float(env['STUDIO_BOOT_AT'])), 1)
+        except (KeyError, ValueError):
+            started = STARTED
+    return round(max(0.0, now - started), 1)
+
+
 def main(env: Mapping[str, str] | None = None, design: Path | None = None, poll_sec: float = POLL_SEC,
-         **run_kwargs) -> int:
+         started: float | None = None, **run_kwargs) -> int:
+    """`started`: when the worker started (monotonic), for the boot event. By default, when the image's entrypoint
+    began (STUDIO_BOOT_AT, epoch seconds), else when this module was imported."""
     env = os.environ if env is None else env
     design = Path(design or DESIGN)
     client = Api(env['VIRVI_API_URL'], env['STUDIO_WORKER_TOKEN'], env['STUDIO_DESIGN_ID'])
@@ -483,6 +497,8 @@ def main(env: Mapping[str, str] | None = None, design: Path | None = None, poll_
     design.mkdir(parents=True, exist_ok=True)
     print(f'studio worker: design {client.design}, workspace {"restored" if data else "new"}', file=sys.stderr)
     idle_since = time.monotonic()
+    # Start to first poll (boot and workspace restore), sent once, with the first job this process takes
+    boot = {'type': 'boot', 'seconds': _boot_seconds(env, started, idle_since), 'restored': bool(data)}
     while True:
         try:
             job = client.next_job()
@@ -491,6 +507,9 @@ def main(env: Mapping[str, str] | None = None, design: Path | None = None, poll_
             job = None
         if job:
             print(f"job {job['jobId']} ({job.get('type')}) started", file=sys.stderr)
+            if boot:
+                _send(client, job['jobId'], boot)
+                boot = None
             try:
                 result = run_job(job, client, design, **run_kwargs)
             except ApiError as e:  # the result itself couldn't be posted; the API times the job out

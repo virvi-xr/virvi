@@ -17,6 +17,7 @@ import { adminDesignsQuery, type AdminDesign } from './studio-support'
 import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
+import type { FirstReplyStats } from './studio-wait'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
@@ -840,6 +841,7 @@ function useRealApi() {
     deleteAdminStudioLesson: (id: string) => apiFetch<void>(`/api/admin/studio/lessons/${id}`, { method: 'DELETE' }),
     getAdminStudioDefaults: () => apiFetch<KindDefaults>('/api/admin/studio/defaults'),
     getAdminStudioIdeas: () => apiFetch<AdminIdeaCounts>('/api/admin/studio/ideas'),
+    getAdminStudioFirstReply: () => apiFetch<FirstReplyStats>('/api/admin/studio/first-reply'),
     setAdminStudioDefault: (kind: string, agent: string) =>
       apiFetch<{ defaults: KindDefaults['defaults'] }>(`/api/admin/studio/defaults/${kind}`, { method: 'PUT', body: JSON.stringify({ agent }) }),
     // Studio flags (admin)
@@ -960,6 +962,8 @@ function useRealApi() {
     // "Improve my prompt": a rewrite of the draft, never sent to the agent
     studioPromptHelp: (id: string, body: { text: string; selectedSlots?: string[]; answers?: Record<string, string> }) =>
       apiFetch<PromptHelp>(`/api/studio/designs/${id}/prompt-help`, { method: 'POST', body: JSON.stringify(body) }),
+    // Starting the design's machine while the person writes a prompt: always 204, fire and forget
+    warmStudioDesign: (id: string) => apiFetch<void>(`/api/studio/designs/${id}/warm`, { method: 'POST' }),
     /** `query`: ideaParams (studio-ideas.ts). */
     studioPromptIdeas: (id: string, query: string) => apiFetch<PromptIdeas>(`/api/studio/designs/${id}/prompt-ideas?${query}`),
     sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean; ideaId?: string }) =>

@@ -1616,6 +1616,9 @@ export const studioDesigns = pgTable('studio_designs', {
   machineClaimedAt: timestamp('machine_claimed_at', { withTimezone: true }),
   // SHA-256 of the machine's STUDIO_WORKER_TOKEN; the token itself is never stored
   workerTokenHash: text('worker_token_hash').unique(),
+  // When the machine was last started ahead of a prompt (POST /designs/:id/warm): at most once per 5 minutes, and the
+  // sweep counts it as activity, so it doesn't destroy a machine just warmed
+  warmedAt: timestamp('warmed_at', { withTimezone: true }),
   // Set by the first paid finalize. The design stops counting as open once every piece is finalized (LIV-81), even
   // while it is revised; a partly finalized one still counts (designs.ts openDesignCount)
   finalizedAt: timestamp('finalized_at', { withTimezone: true }),
@@ -1650,6 +1653,22 @@ export const studioRevisions = pgTable('studio_revisions', {
   numberUq: uniqueIndex('studio_revisions_piece_number_uq').on(t.pieceId, t.number),
 }))
 
+/**
+ * How a prompt job's machine was got (`machine`: made for it, started from stopped, already running, or run by hand),
+ * the seconds from the job's createdAt to each step, and the worker's own boot (`boot` seconds, and whether it
+ * restored a workspace). A step the job never reached, or an older worker never reported, is absent.
+ */
+export type JobTimings = {
+  machine?: 'created' | 'started' | 'running' | 'external'
+  taken?: number
+  screening?: number
+  building?: number
+  firstProgress?: number
+  done?: number
+  boot?: number
+  restored?: boolean
+}
+
 export const studioJobs = pgTable('studio_jobs', {
   id: uuid('id').primaryKey().defaultRandom(),
   designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
@@ -1668,6 +1687,9 @@ export const studioJobs = pgTable('studio_jobs', {
   // The owner's free "Try again with this feedback" (LIV-142): the prompt job of the 👎'd revision it retries. At
   // most one per revision, held by the database
   feedbackFor: uuid('feedback_for'),
+  // A prompt job's wait, filled in as it goes (studio/timings.ts): how its machine was got, and seconds from createdAt
+  // to each step. Null for other jobs and for prompts from before it
+  timings: jsonb('timings').$type<JobTimings>(),
   takenAt: timestamp('taken_at', { withTimezone: true }),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

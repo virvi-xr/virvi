@@ -9,6 +9,7 @@ import { hasBuilding, requestSetRender, TOUR_VIEW } from './sets.js'
 import { addToLibrary } from './library.js'
 import { DECLINED_NOTE, SCOPE_CATEGORIES, logScopeEvent, maybeFlag, offTopicIsFree, offTopicNote } from './scope.js'
 import { recordJobFailure } from '../errors/record.js'
+import { finishTimings } from './timings.js'
 
 /** A worker's Result, as apps/studio-worker/CONTRACT.md defines it (only the fields Virvi reads are typed). */
 export type ContractResult = {
@@ -318,6 +319,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     const [d] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, job.designId))
     if (d) await maybeFlag(d.ownerId, now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
   }
+  if (job.type === 'prompt') await finishTimings(job.id)
   // LIV-66: a worker job that ended in an error is a failed background job
   if (result.outcome === 'error') await recordStudioFailure(job, result.error || 'studio job failed')
   await publishStudio(job.designId, {
@@ -369,6 +371,7 @@ export async function failJobs(
     })
     if (!r) continue
     n++
+    if (r.type === 'prompt') await finishTimings(r.id)
     await recordStudioFailure(r, error)
     await publishStudio(r.designId, { type: 'job', jobId: r.id, status: 'failed', outcome: 'error', error })
   }

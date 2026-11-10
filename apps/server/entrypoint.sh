@@ -311,6 +311,12 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE TABLE IF NOT EXISTS studio_idea_uses (idea_id TEXT PRIMARY KEY, user_id UUID CONSTRAINT studio_idea_uses_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, design_id UUID CONSTRAINT studio_idea_uses_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE SET NULL, used_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         console.log('[virvi-server] studio_idea_uses ensured');
       } catch(e) { console.log('[virvi-server] studio_idea_uses:', e.message); }
+      // Design Studio first-reply wait: each prompt job's timings, and when a design's machine was last warmed; matches studioJobs.timings and studioDesigns.warmedAt in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS timings JSONB\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS warmed_at TIMESTAMPTZ\`;
+        console.log('[virvi-server] studio timings and warmed_at ensured');
+      } catch(e) { console.log('[virvi-server] studio timings and warmed_at:', e.message); }
 
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {

@@ -199,6 +199,7 @@ describe('progressFor', () => {
   })
   it('falls back to the phase in plain words', () => {
     expect(progressFor([{ type: 'phase', jobId: 'j1', phase: 'checking' }], 'j1')).toBe('Running the checks…')
+    expect(progressFor([{ type: 'phase', jobId: 'j1', phase: 'screening' }], 'j1')).toBe('Checking your request…')
     expect(progressFor([{ type: 'phase', jobId: 'j1', phase: 'packaging' }], 'j1')).toBe('Packaging your files…')
   })
   it('shows a later phase over an older note', () => {

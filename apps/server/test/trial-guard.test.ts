@@ -18,6 +18,7 @@ const ALLOWED = [
   'POST /api/studio/designs/:id/prompts',
   'POST /api/studio/designs/:id/prompt-help',
   'GET /api/studio/designs/:id/prompt-ideas',
+  'POST /api/studio/designs/:id/warm',
   'GET /api/studio/designs/:id/finalize',
   'POST /api/studio/designs/:id/pieces/:category/revisions/:number/report',
   'POST /api/studio/designs/:id/uploads',

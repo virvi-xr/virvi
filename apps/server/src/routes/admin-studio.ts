@@ -14,6 +14,7 @@ import { createLesson, deleteLesson, isLessonKind, LessonError, lessonText, list
 import { DEFAULT_AGENTS, kindDefaultsDetail, setKindDefault } from '../studio/defaults.js'
 import { DRAFT_BATCH_MAX, draftingAvailable, draftLesson } from '../studio/lesson-drafts.js'
 import { ideaCounts } from '../studio/prompt-ideas.js'
+import { firstReplyStats } from '../studio/timings.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 const REFUND_STATUSES: ManaRefundStatus[] = ['requested', 'sent', 'declined']
@@ -153,6 +154,9 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
 
   // The agent new designs of each kind start on, with the last four weeks' 👍 rates to choose it by. Set by hand only.
   const RATES_DAYS = 28
+  // How long prompts wait for their first progress line: the last 50 timed prompt jobs, by how the machine was got
+  app.get('/api/admin/studio/first-reply', admin, async () => firstReplyStats())
+
   app.get('/api/admin/studio/defaults', admin, async () => {
     const now = new Date()
     return {

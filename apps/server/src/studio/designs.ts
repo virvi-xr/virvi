@@ -17,6 +17,7 @@ import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './sce
 import { designRevisions, lockTryAgains, tryAgainBlock } from './ratings.js'
 import { liveLessons } from './lessons.js'
 import { retireIdea } from './prompt-ideas.js'
+import { recordMachine, typicalFirstReplySec } from './timings.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
@@ -189,7 +190,7 @@ export async function designDetail(d: Design, now: Date) {
   const messages = await db.select().from(studioMessages).where(eq(studioMessages.designId, d.id))
     .orderBy(asc(studioMessages.createdAt), asc(studioMessages.id))
   const [active] = await db.select({
-    id: studioJobs.id, type: studioJobs.type, status: studioJobs.status,
+    id: studioJobs.id, type: studioJobs.type, status: studioJobs.status, createdAt: studioJobs.createdAt,
     fixClipping: sql<FixClipping | null>`${studioJobs.payload}->'fixClipping'`,
   }).from(studioJobs)
     .where(and(eq(studioJobs.designId, d.id), inArray(studioJobs.status, ['queued', 'taken'])))
@@ -238,7 +239,14 @@ export async function designDetail(d: Design, now: Date) {
     lastPrompt: last
       ? { jobId: last.jobId, outcome: (last.result as { outcome?: string } | null)?.outcome ?? null, status: last.status }
       : null,
+    // The usual wait from sending a prompt to the agent's first progress line, in seconds; absent below 5 timed jobs
+    ...await typicalFirstReply(now),
   }
+}
+
+async function typicalFirstReply(now: Date): Promise<{ typicalFirstReplySec?: number }> {
+  const sec = await typicalFirstReplySec(now).catch(() => null)
+  return sec === null ? {} : { typicalFirstReplySec: sec }
 }
 
 type Refusal = { status: number; body: Record<string, unknown> }
@@ -246,10 +254,14 @@ class Refused extends Error {
   constructor(public r: Refusal) { super(String(r.body.code ?? r.body.error)) }
 }
 
-/** After a job is committed: make sure a machine will take it, or fail it plainly (refunding a counted prompt). */
+/**
+ * After a job is committed: make sure a machine will take it, or fail it plainly (refunding a counted prompt). A prompt
+ * job records how its machine was got (timings.ts).
+ */
 export async function startWorker(designId: string, jobId: string, now: Date): Promise<void> {
   try {
-    await ensureWorker(designId)
+    const machine = await ensureWorker(designId)
+    await recordMachine(jobId, machine).catch((err) => console.error('[studio] timings not recorded:', err instanceof Error ? err.message : err))
   } catch (err) {
     console.error('[studio] worker start failed:', err instanceof Error ? err.message : err)
     await failJobs([jobId], START_FAILED, now)
