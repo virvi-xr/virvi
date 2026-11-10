@@ -99,6 +99,14 @@ describe('the words around a rewritten token', () => {
   })
 })
 
+describe('where a piece’s file was written', () => {
+  it('drops "to" or "into" a file in a piece’s folder, since the sentence already names the piece', () => {
+    expect(customerReply('I exported the hat to `out/hat/hat_male.glb` and checked it.')).toBe('I exported the hat and checked it.')
+    expect(customerReply('Saved the shirt into out/upper_body/shirt.glb.')).toBe('Saved the shirt.')
+    expect(customerReply('I fixed the weights in `out/upper_body/`.')).toBe('I fixed the weights in the upper body piece.')
+  })
+})
+
 describe('a piece’s folder for people', () => {
   it('uses the category labels, with "piece" where the label is a body part', () => {
     expect(pieceName('hat')).toBe('the hat')

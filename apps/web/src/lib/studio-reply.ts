@@ -92,6 +92,10 @@ const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 function rewriteProse(text: string): string {
   // "… to `out/proposal.json` instead": the agent's note is not a place the user can go
   let s = text.replace(new RegExp(String.raw`\s+(?:to|in|into|at)\s+(\`(?:\.\/)?out\/(?:proposal|declined)\.json\`|(?<![\w/.\-])(?:\.\/)?out\/(?:proposal|declined)\.json(?![\w/]))`, 'g'), '')
+  // "exported the hat to `out/hat/hat_male.glb`": a file in a piece's folder is where it went, and the sentence already
+  // names the piece
+  const file = String.raw`(?:\.\/)?out\/${PIECE_FOLDERS}\/[\w.\-]+\.[a-z0-9]+`
+  s = s.replace(new RegExp(String.raw`\s+(?:to|into|as)\s+(?:\`${file}\`|(?<![\w/.\-])${file}(?=[.,;:!?]*(?:\s|$)))`, 'g'), '')
   // "(`check_wearable.py`)", "the hat (`out/hat/`)": a parenthesis holding only the workspace's name says nothing more;
   // and "the checks in `check_wearable.py --strict`" already says it
   const said = (re: string) => new RegExp(re, 'g')
