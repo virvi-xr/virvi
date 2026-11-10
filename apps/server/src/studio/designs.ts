@@ -180,7 +180,7 @@ export async function usage(userId: string, limit: number, now: Date) {
   }
 }
 
-export async function designDetail(d: Design, now: Date) {
+export async function designDetail(d: Design, now: Date, readerId = d.ownerId) {
   const pieces = await db.select().from(studioPieces).where(eq(studioPieces.designId, d.id)).orderBy(asc(studioPieces.createdAt))
   const revIds = pieces.map((p) => p.latestRevisionId).filter((x): x is string => !!x)
   const revs = revIds.length ? await db.select().from(studioRevisions).where(inArray(studioRevisions.id, revIds)) : []
@@ -234,8 +234,8 @@ export async function designDetail(d: Design, now: Date) {
     uploads: (await listUploads(d.id)).map(publicUpload),
     activeJob: active ?? null,
     set: await setDetail(d, now),
-    // Each agent reply that changed pieces, and the owner's 👍 / 👎 of it (LIV-142)
-    revisions: await designRevisions(d.id, d.ownerId),
+    // Each agent reply that changed pieces, and the reader's own 👍 / 👎 of it (LIV-142)
+    revisions: await designRevisions(d, readerId),
     lastPrompt: last
       ? { jobId: last.jobId, outcome: (last.result as { outcome?: string } | null)?.outcome ?? null, status: last.status }
       : null,

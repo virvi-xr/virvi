@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { and, eq, isNotNull } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { studioDesigns, studioJobs, studioMessages, studioPauses, studioPromptCredits, studioRatings, studioUsageDays, users } from '../src/db/schema.js'
+import { studioDesignMembers, studioDesigns, studioJobs, studioMessages, studioPauses, studioPromptCredits, studioRatings, studioUsageDays, users } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
@@ -85,6 +85,19 @@ describe('rating Design Studio revisions', () => {
     const done = await app.inject({ method: 'POST', url: `/api/studio/worker/jobs/${jobId}/result`, headers: { authorization: `Bearer ${token}` }, payload: okResult(jobId, { model: 'gpt-x' }) as any })
     expect(done.statusCode).toBe(204)
   }
+
+  it('a collaborator sees their own rating and Try again, not the owner’s; support sees the owner’s', async () => {
+    const d = await createDesign(owner)
+    const jobId = await revision(d)
+    await db.insert(studioDesignMembers).values({ designId: d.id, userId: other.id, role: 'collaborator' })
+    expect((await rate(owner, d.id, jobId, { rating: 'up' })).statusCode).toBe(200)
+    const down = await rate(other, d.id, jobId, { rating: 'down', tags: ['broken'] })
+    expect(down.json()).toMatchObject({ rating: 'down', tags: ['broken'], tryAgain: 'available' })
+    expect((await detail(other, d.id)).revisions[0]).toMatchObject({ rating: 'down', tags: ['broken'], tryAgain: 'available' })
+    expect((await detail(owner, d.id)).revisions[0]).toMatchObject({ rating: 'up', tryAgain: null })
+    expect((await detail(admin, d.id)).revisions[0]).toMatchObject({ rating: 'up' })
+    expect((await tryAgain(other, d.id, jobId)).statusCode).toBe(202)
+  })
 
   it('the owner rates a revision, changes it to 👎 with tags and a note, and clears it; the detail shows each', async () => {
     const d = await createDesign(owner)

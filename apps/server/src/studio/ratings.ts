@@ -129,8 +129,12 @@ async function revisionJobs(designId: string, jobId?: string) {
   return jobs
 }
 
-/** Every revision of the design, with the owner's rating of it (what the conversation shows). */
-export async function designRevisions(designId: string, ownerId: string, now = new Date()): Promise<RevisionView[]> {
+/**
+ * Every revision of the design, with the rater's own rating of it (what the conversation shows): the reader's, or the
+ * owner's for support. Try again counts against the owner's daily try-agains, as queuePrompt does.
+ */
+export async function designRevisions(design: { id: string; ownerId: string }, raterId: string, now = new Date()): Promise<RevisionView[]> {
+  const designId = design.id
   const jobs = await revisionJobs(designId)
   if (!jobs.size) return []
   const ids = [...jobs.keys()]
@@ -139,7 +143,7 @@ export async function designRevisions(designId: string, ownerId: string, now = n
     .innerJoin(studioRevisions, eq(studioRevisions.id, studioPieces.latestRevisionId))
     .where(eq(studioPieces.designId, designId))
   const ratings = await db.select().from(studioRatings)
-    .where(and(eq(studioRatings.designId, designId), eq(studioRatings.userId, ownerId)))
+    .where(and(eq(studioRatings.designId, designId), eq(studioRatings.userId, raterId)))
   const retried = new Set((await db.select({ f: studioJobs.feedbackFor }).from(studioJobs)
     .where(and(eq(studioJobs.designId, designId), isNotNull(studioJobs.feedbackFor), inArray(studioJobs.feedbackFor, ids))))
     .map((r) => r.f))
@@ -148,7 +152,7 @@ export async function designRevisions(designId: string, ownerId: string, now = n
     const r = ratings.find((x) => x.jobId === jobId)
     const categories = jobs.get(jobId)!.categories
     const offer = retried.has(jobId) ? 'used'
-      : r?.rating === 'down' && !(await tryAgainBlock(db, designId, ownerId, jobId, now)) ? 'available' : null
+      : r?.rating === 'down' && !(await tryAgainBlock(db, designId, design.ownerId, jobId, now)) ? 'available' : null
     views.push({
       jobId,
       categories,
@@ -172,7 +176,7 @@ export async function findRevision(designId: string, jobId: string) {
 
 /** Rates a revision, or changes its rating: the revision's kind, agent, model, prompt and cost go with it. */
 export async function rateRevision(
-  design: { id: string; kind: string }, jobId: string, userId: string, input: RatingInput, now: Date,
+  design: { id: string; kind: string; ownerId: string }, jobId: string, userId: string, input: RatingInput, now: Date,
 ): Promise<RevisionView | null> {
   const rev = await findRevision(design.id, jobId)
   if (!rev) return null
@@ -189,7 +193,7 @@ export async function rateRevision(
   }
   await db.insert(studioRatings).values({ jobId, designId: design.id, userId, ...values, createdAt: now })
     .onConflictDoUpdate({ target: [studioRatings.jobId, studioRatings.userId], set: values })
-  return (await designRevisions(design.id, userId)).find((r) => r.jobId === jobId) ?? null
+  return (await designRevisions(design, userId)).find((r) => r.jobId === jobId) ?? null
 }
 
 export async function clearRating(designId: string, jobId: string, userId: string): Promise<boolean> {
