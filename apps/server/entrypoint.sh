@@ -330,10 +330,14 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS notifications_unread_group_uq ON notifications (user_id, group_key) WHERE read_at IS NULL AND group_key IS NOT NULL\`;
         await sql\`ALTER TABLE studio_messages ADD COLUMN IF NOT EXISTS user_id UUID\`;
         await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS user_id UUID\`;
-        await sql\`ALTER TABLE studio_payments ALTER COLUMN user_id DROP NOT NULL\`;
-        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'studio_payments_user_id_users_id_fk' AND conrelid = 'studio_payments'::regclass AND confdeltype <> 'n') THEN ALTER TABLE studio_payments DROP CONSTRAINT studio_payments_user_id_users_id_fk; ALTER TABLE studio_payments ADD CONSTRAINT studio_payments_user_id_users_id_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL; END IF; END \$\$\`;
         console.log('[virvi-server] studio collaboration ensured');
       } catch(e) { console.log('[virvi-server] studio collaboration:', e.message); }
+      // A deleted payer's payment stays (user_id null, ON DELETE SET NULL); matches studioPayments.userId in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_payments ALTER COLUMN user_id DROP NOT NULL\`;
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'studio_payments_user_id_users_id_fk' AND conrelid = 'studio_payments'::regclass AND confdeltype <> 'n') THEN ALTER TABLE studio_payments DROP CONSTRAINT studio_payments_user_id_users_id_fk; ALTER TABLE studio_payments ADD CONSTRAINT studio_payments_user_id_users_id_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL; END IF; END \$\$\`;
+        console.log('[virvi-server] studio_payments.user_id nullable ensured');
+      } catch(e) { console.log('[virvi-server] studio_payments.user_id nullable:', e.message); }
 
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {

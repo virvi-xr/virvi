@@ -405,13 +405,17 @@ export async function createTopupCheckout(
 export async function grantPayment(paymentId: string, paymentIntent: string | null, now: Date): Promise<'granted' | 'already'> {
   const held: { name: string; revision: number; text: string }[] = []
   const out = await db.transaction(async (tx) => {
+    // The payer's account is gone: nobody to grant to. Leave it pending (the sweep expires it) and acknowledge the webhook
+    const [payer] = await tx.select({ userId: studioPayments.userId }).from(studioPayments).where(eq(studioPayments.id, paymentId))
+    if (payer && !payer.userId) {
+      console.warn(`[studio] payment ${paymentId} not granted: its payer account is gone`)
+      return null
+    }
     const [pay] = await tx.update(studioPayments)
       .set({ status: 'paid', paidAt: now, ...(paymentIntent ? { stripePaymentIntent: paymentIntent } : {}) })
       .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending')))
       .returning()
-    if (!pay) return null
-    // The payer's account is gone: nobody to grant to. Roll back so the payment stays pending for a person to settle
-    if (!pay.userId) throw new Error(`payment ${pay.id} is paid but its payer account is gone`)
+    if (!pay || !pay.userId) return null // (a null payer was returned above; this narrows the type)
     if (pay.kind === 'topup') {
       await tx.insert(studioPromptCredits).values({ userId: pay.userId, balance: pay.prompts })
         .onConflictDoUpdate({ target: studioPromptCredits.userId, set: { balance: sql`${studioPromptCredits.balance} + ${pay.prompts}`, updatedAt: now } })
