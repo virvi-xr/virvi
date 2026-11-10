@@ -23,6 +23,7 @@ with no agent run; the package is the only model file a customer downloads.
 python3 -m pytest -q apps/studio-worker/tests
 
 # The image (Fly runs amd64), and its tools
+bash apps/studio-worker/scripts/fetch_assets.sh
 docker build --platform linux/amd64 -t vlm-studio-worker:dev apps/studio-worker
 docker run --rm --platform linux/amd64 --entrypoint /opt/smoke.sh vlm-studio-worker:dev
 ```
@@ -47,6 +48,7 @@ docker run --rm --platform linux/amd64 --cap-add NET_ADMIN --env-file apps/studi
 
 ```bash
 cd apps/studio-worker
+bash scripts/fetch_assets.sh
 fly deploy --build-only --push --image-label "$(git rev-parse --short HEAD)"
 bash e2e/fly.sh "registry.fly.io/vlm-studio-worker:$(git rev-parse --short HEAD)"
 ```
@@ -67,5 +69,7 @@ See `.gitignore`:
 - `.env`: `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, for local runs. On Fly they are the app's secrets, which the
   owner imports with `fly secrets import -a vlm-studio-worker < apps/studio-worker/.env`.
 - `assets/`: the official Decentraland base avatar `.blend` files. They are built into the image, which lives only in
-  Fly's private registry.
+  Fly's private registry. `scripts/fetch_assets.sh` fills the folder from the owner's backups (the iCloud Drive
+  folder `Documents/Virvi/studio-worker-assets`, then `~/-Decentraland`, or `STUDIO_ASSETS_DIR`) and checks each
+  file's pinned SHA-256. Every built image also holds them at `/opt/assets/`.
 - `runs/`: the spike's raw runs.
