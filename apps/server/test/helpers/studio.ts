@@ -134,11 +134,11 @@ export async function addRevision(
   return rev
 }
 
-/** Marks a revision paid for, as a granted payment would: a paid payment and a ready entitlement. */
+/** Marks a revision paid for, as a granted payment would: a paid payment and a ready entitlement (the owner's, or `userId`'s). */
 export async function entitle(
   design: { id: string; ownerId: string },
   rev: { id: string; pieceId: string },
-  opts: { amountCents?: number; paidAt?: Date; paymentIntent?: string } = {},
+  opts: { amountCents?: number; paidAt?: Date; paymentIntent?: string; userId?: string } = {},
 ) {
   const { studioPieces, studioEntitlements, studioPayments, studioDesigns: designs } = await import('../../src/db/schema.js')
   const { and, eq } = await import('drizzle-orm')
@@ -149,11 +149,11 @@ export async function entitle(
   const amountCents = opts.amountCents ?? (kind === 'first' ? 2900 : 1500)
   const paidAt = opts.paidAt ?? new Date()
   const [payment] = await db.insert(studioPayments).values({
-    userId: design.ownerId, designId: design.id, kind: 'finalize', status: 'paid', amountCents, paidAt,
+    userId: opts.userId ?? design.ownerId, designId: design.id, kind: 'finalize', status: 'paid', amountCents, paidAt,
     stripePaymentIntent: opts.paymentIntent ?? `pi_${rev.id.slice(0, 8)}`,
   }).returning()
   const [ent] = await db.insert(studioEntitlements).values({
-    revisionId: rev.id, paymentId: payment.id, userId: design.ownerId, designId: design.id, category: piece.category,
+    revisionId: rev.id, paymentId: payment.id, userId: opts.userId ?? design.ownerId, designId: design.id, category: piece.category,
     kind, amountCents, status: 'ready',
   }).returning()
   await db.update(designs).set({ finalizedAt: paidAt }).where(eq(designs.id, design.id))

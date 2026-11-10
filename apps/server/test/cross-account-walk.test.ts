@@ -136,6 +136,22 @@ async function fixtures() {
     designId: design.id, email: 'b-invitee@test.dev', role: 'viewer', token: 'b-invite-token', invitedBy: b.id, userId: invitee.id, expiresAt: new Date(Date.now() + 24 * H),
   }).returning()
 
+  // B was on someone else's design and left; a package finalized while B was on it is still B's to download
+  const pastOwner = await createUser()
+  const [pastDesign] = await db.insert(studioDesigns).values({ ownerId: pastOwner.id, name: 'Old team cap', kind: 'wearable', agent: 'claude' }).returning()
+  const [pastPrompt] = await db.insert(studioJobs).values({ designId: pastDesign.id, type: 'prompt', status: 'done', payload: {} }).returning()
+  const [pastPiece] = await db.insert(studioPieces).values({ designId: pastDesign.id, category: 'hat', name: 'Old team cap' }).returning()
+  const [pastRev] = await db.insert(studioRevisions).values({ pieceId: pastPiece.id, number: 1, jobId: pastPrompt.id, changeKind: 'new', meta: {}, files: [] }).returning()
+  const [pastFinalize] = await db.insert(studioJobs).values({ designId: pastDesign.id, type: 'finalize', status: 'done', payload: {}, finishedAt: new Date(Date.now() - 2 * H) }).returning()
+  const [pastPayment] = await db.insert(studioPayments).values({
+    userId: pastOwner.id, designId: pastDesign.id, kind: 'finalize', status: 'paid', amountCents: 2900, paidAt: new Date(Date.now() - 3 * H),
+  }).returning()
+  const [pastPackage] = await db.insert(studioEntitlements).values({
+    revisionId: pastRev.id, paymentId: pastPayment.id, userId: pastOwner.id, designId: pastDesign.id, category: 'hat', kind: 'first', amountCents: 2900,
+    status: 'ready', jobId: pastFinalize.id, packageKey: `designs/${pastDesign.id}/jobs/${pastFinalize.id}/final/hat/package.zip`,
+  }).returning()
+  await db.insert(studioDesignMembers).values({ designId: pastDesign.id, userId: b.id, role: 'collaborator', joinedAt: new Date(Date.now() - 4 * H), leftAt: new Date(Date.now() - H) })
+
   const [notification] = await db.insert(notifications).values({ userId: b.id, kind: 'studio_owner', data: { designId: design.id, designName: 'B cap' } }).returning()
 
   const roomFloor: Array<[number, number]> = [[0, 0], [4, 0], [4, 3], [0, 3]]
@@ -160,7 +176,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, notification, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -347,6 +363,8 @@ const CASES: Case[] = [
   { route: 'POST /api/studio/invite-links/:token/accept', url: () => `/api/studio/invite-links/${GUESSED_INVITE_TOKEN}/accept` },
   { route: 'PATCH /api/studio/designs/:id/members/:userId', url: (f) => `/api/studio/designs/${f.design.id}/members/${f.collaborator.id}`, body: () => ({ role: 'viewer' }) },
   { route: 'DELETE /api/studio/designs/:id/members/:userId', url: (f) => `/api/studio/designs/${f.design.id}/members/${f.collaborator.id}` },
+  // A package finalized while B was on a design B has left: A was never on it
+  { route: 'GET /api/studio/past-packages/:entitlementId/package', url: (f) => `/api/studio/past-packages/${f.pastPackage.id}/package` },
   { route: 'POST /api/studio/designs/:id/revisions/:jobId/try-again', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/try-again` },
   { route: 'DELETE /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}` },
   { route: 'PATCH /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}`, body: () => ({ endsAt: null }) },
@@ -507,8 +525,7 @@ describe('cross-account route walk', () => {
     f = await fixtures()
     const store = memoryStudioStore()
     setStudioStore(store)
-    const [paid] = await db.select().from(studioEntitlements)
-    await store.put(paid.packageKey!, Buffer.from('PK-b-package'), 'application/zip')
+    for (const paid of await db.select().from(studioEntitlements)) await store.put(paid.packageKey!, Buffer.from('PK-b-package'), 'application/zip')
     await store.put(uploadKey(f.design.id, f.designUpload.id), Buffer.from('b-png'), 'image/png')
     const importStore = memoryPrivateStore()
     setImportStore(importStore)

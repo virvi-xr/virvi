@@ -308,7 +308,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     }
   }
   if (job.type === 'finalize') {
-    // Paid scene pieces go into the designer's asset library; a failure leaves them for the sweep to add
+    // Paid scene pieces go into the payer's asset library; a failure leaves them for the sweep to add
     const ready = await db.select({ id: studioEntitlements.id, category: studioEntitlements.category }).from(studioEntitlements)
       .where(and(eq(studioEntitlements.jobId, job.id), eq(studioEntitlements.status, 'ready')))
     await notifyPackageReady(job.designId, ready.map((r) => r.category))

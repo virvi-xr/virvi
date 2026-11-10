@@ -1,7 +1,7 @@
-import { and, asc, eq, gt, inArray, isNull, lt, or, sql, type SQLWrapper } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, or, sql, type SQLWrapper } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
-  studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioManaRefunds, studioMistakeReports, studioPayments, studioPieces, studioPromptCredits,
+  studioCredits, studioDesignMembers, studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioManaRefunds, studioMistakeReports, studioPayments, studioPieces, studioPromptCredits,
   studioRenders, studioRevisions, users, type PaymentLine,
 } from '../db/schema.js'
 import { config } from '../config.js'
@@ -219,6 +219,10 @@ export async function giftsFor(userId: string, designId: string, now: Date, exec
  * design's open MANA quotes are expired (giving back their holds) and a new one is made. It is refused with MANA off
  * (mana_unavailable) or no fresh rate (rate_unavailable) before anything is held.
  *
+ * On a shared design (LIV-159) the checkout is the paying member's: only their own open checkouts are reused or
+ * expired, and another member's open checkout for any of the same revisions refuses it (checkout_open), so a revision
+ * never has two payments started by two people.
+ *
  * `byAdminId`: a Virvi admin finalizing on `user`'s (the owner's) behalf. It is an admin's finalize, every line free
  * and no gift or credit of anyone's spent, granted at once without Stripe or MANA; the payment and entitlements are the
  * owner's, as if they had paid, and the payment records the admin. Reports don't apply (they are the owner's).
@@ -244,25 +248,30 @@ export async function createFinalizeCheckout(
   const open = await db.select().from(studioPayments).where(and(
     eq(studioPayments.designId, design.id), eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now),
   ))
+  const covers = (p: typeof open[number]) => p.kind === 'finalize' && p.lines.some((l) => quote.lines.some((q) => q.revisionId === l.revisionId))
+  // Someone else is paying for one of these revisions; support's finalize expires theirs instead (below)
+  if (!byAdminId && open.some((p) => p.userId !== user.id && covers(p))) throw new PaymentError(409, 'checkout_open')
+  const mine = open.filter((p) => p.userId === user.id)
   if (quote.dueCents > 0 && method === 'card') {
-    const same = open.find((p) => p.stripeSessionUrl && sameLines(p.lines, withReports(quote.lines)))
+    const same = mine.find((p) => p.stripeSessionUrl && sameLines(p.lines, withReports(quote.lines)))
     if (same) return { url: same.stripeSessionUrl! }
   }
   if (quote.dueCents > 0 && method === 'mana') {
     // Never one whose transaction is claimed: it is paid, and a second transfer of its amount would match nothing
-    const same = open.find((p) => p.method === 'mana' && p.manaAmountWei && !p.manaTxHash && sameLines(p.lines, withReports(quote.lines))
+    const same = mine.find((p) => p.method === 'mana' && p.manaAmountWei && !p.manaTxHash && sameLines(p.lines, withReports(quote.lines))
       && p.expiresAt!.getTime() - now.getTime() > MANA_REUSE_MIN_MS)
     if (same) return { mana: manaQuoteOf(same) }
   }
   // The rate before anything is expired or held, so a refusal leaves everything as it was
   const rate = method === 'mana' && quote.dueCents > 0 ? await requireRate(now) : null
-  // A new MANA quote replaces this design's open ones; any checkout takes over the free finalizes and credit it needs
-  // Support finalizing for the owner also closes the owner's own open checkouts for any of those pieces, so they
-  // aren't charged for what is now free. One Stripe won't expire (already paid), and a MANA transfer that still comes
-  // in for an expired quote, are granted as a duplicate: the line is owed back (MANA's share as Virvi credit).
-  const covers = (p: typeof open[number]) => p.kind === 'finalize' && p.lines.some((l) => quote.lines.some((q) => q.category === l.category))
-  await expireOpen(open.filter((p) => (method === 'mana' && p.method === 'mana')
-    || (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0) || (!!byAdminId && covers(p))), now)
+  // A new MANA quote replaces the user's open ones on this design; any checkout takes over the free finalizes and
+  // credit it needs from the user's own (another member's hold that member's). Support finalizing for the owner also
+  // closes every member's open checkouts for any of those pieces, so nobody is charged for what is now free. One Stripe
+  // won't expire (already paid), and a MANA transfer that still comes in for an expired quote, are granted as a
+  // duplicate: the line is owed back (MANA's share as Virvi credit).
+  const coversPiece = (p: typeof open[number]) => p.kind === 'finalize' && p.lines.some((l) => quote.lines.some((q) => q.category === l.category))
+  await expireOpen(open.filter((p) => (p.userId === user.id && ((method === 'mana' && p.method === 'mana')
+    || (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0))) || (!!byAdminId && coversPiece(p))), now)
 
   const expiresAt = new Date(now.getTime() + (method === 'mana' ? config.studioMana.quoteTtlMs : CHECKOUT_TTL_MS))
   const { pay, lines, mana } = await db.transaction(async (tx) => {
@@ -601,6 +610,7 @@ export async function reportMistake(
   revisionNumber: number,
   text: string,
   now: Date,
+  reporterId: string,
 ): Promise<RefundResult | { status: 'in_review' }> {
   const [row] = await db.select({ e: studioEntitlements, pay: studioPayments })
     .from(studioEntitlements)
@@ -610,6 +620,8 @@ export async function reportMistake(
     .where(and(eq(studioPieces.designId, design.id), eq(studioPieces.category, category), eq(studioRevisions.number, revisionNumber)))
   if (!row) throw new PaymentError(402, 'not_paid')
   const { e, pay } = row
+  // The refund is the payer's: nobody else on the design reports on what they paid for
+  if (e.userId !== reporterId) throw new PaymentError(404, 'not_found')
   if (e.kind !== 'revision') throw new PaymentError(409, 'not_a_revision')
   if (!(e.amountCents > 0)) throw new PaymentError(409, 'nothing_charged')
   if (refundSplit(e).stripeCents > 0 && !pay.stripePaymentIntent) throw new PaymentError(409, 'nothing_charged')
@@ -730,8 +742,44 @@ export async function readyPackages(designId: string) {
   return [...newest.values()].sort((a, b) => a.category.localeCompare(b.category))
 }
 
-/** Every paid revision of a design, newest first, as the page lists them (never the package's location). */
-export async function finalizedRevisions(designId: string) {
+/**
+ * The packages someone keeps from designs they were on and left (LIV-159), newest first: each ready while a membership
+ * of theirs was open (joined_at <= ready <= left_at), or paid for by them, on a design they have no role on now (one
+ * they're back on serves them through its own routes). A package is ready when its finalize job finished: the result
+ * that marks it ready sets the job's finishedAt in the same transaction, and a retry points it at the new job.
+ * `entitlementId` narrows it to that one package.
+ */
+export async function pastPackages(userId: string, entitlementId?: string) {
+  const readyAt = studioJobs.finishedAt
+  const rows = await db.select({
+    entitlementId: studioEntitlements.id, designName: studioDesigns.name, category: studioEntitlements.category,
+    revisionNumber: studioRevisions.number, finalizedAt: readyAt, packageKey: studioEntitlements.packageKey, pieceName: studioPieces.name,
+  })
+    .from(studioEntitlements)
+    .innerJoin(studioDesigns, eq(studioDesigns.id, studioEntitlements.designId))
+    .innerJoin(studioRevisions, eq(studioRevisions.id, studioEntitlements.revisionId))
+    .innerJoin(studioPieces, eq(studioPieces.id, studioRevisions.pieceId))
+    .innerJoin(studioJobs, eq(studioJobs.id, studioEntitlements.jobId))
+    .where(and(
+      entitlementId ? eq(studioEntitlements.id, entitlementId) : undefined,
+      eq(studioEntitlements.status, 'ready'), isNotNull(studioEntitlements.packageKey), isNotNull(readyAt),
+      ne(studioDesigns.ownerId, userId),
+      sql`NOT EXISTS (SELECT 1 FROM ${studioDesignMembers} m WHERE m.design_id = ${studioEntitlements.designId} AND m.user_id = ${userId} AND m.left_at IS NULL)`,
+      or(
+        eq(studioEntitlements.userId, userId),
+        sql`EXISTS (SELECT 1 FROM ${studioDesignMembers} m WHERE m.design_id = ${studioEntitlements.designId} AND m.user_id = ${userId}
+          AND m.left_at IS NOT NULL AND m.joined_at <= ${readyAt} AND ${readyAt} <= m.left_at)`,
+      ),
+    ))
+    .orderBy(desc(readyAt), asc(studioEntitlements.id))
+  return rows.map((r) => ({ ...r, packageKey: r.packageKey!, finalizedAt: r.finalizedAt! }))
+}
+
+/**
+ * Every paid revision of a design, newest first, as the page lists them (never the package's location). Only the
+ * payer may report a mistake, so `reportableUntil` is set for `readerId`'s own payments alone.
+ */
+export async function finalizedRevisions(designId: string, readerId: string) {
   const rows = await db.select({
     e: studioEntitlements, number: studioRevisions.number, paidAt: studioPayments.paidAt,
     reportId: studioMistakeReports.id, reportStatus: studioMistakeReports.status, reportedAt: studioMistakeReports.createdAt,
@@ -759,7 +807,7 @@ export async function finalizedRevisions(designId: string) {
         id: r.reportId, status: r.reportStatus, createdAt: r.reportedAt,
         manaCents: r.manaCents ?? 0, creditedCents: r.creditedCents ?? 0, manaRefund: r.manaRefund ?? null,
       } : null,
-      reportableUntil: r.e.kind === 'revision' && r.e.amountCents > 0 && !r.reportStatus && r.paidAt
+      reportableUntil: r.e.userId === readerId && r.e.kind === 'revision' && r.e.amountCents > 0 && !r.reportStatus && r.paidAt
         ? new Date(r.paidAt.getTime() + REPORT_WINDOW_DAYS * 24 * 3600 * 1000)
         : null,
     }))

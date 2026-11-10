@@ -26,7 +26,7 @@ import { EXCLUDE_MAX, IDEAS_COUNT_MAX, IDEA_ID, IDEA_MOVES, IDEA_PLAYBACKS, find
 import { warmDesign } from '../studio/warm.js'
 import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, setDetail, TOUR_VIEW, wornRevisions } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
-import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
+import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, pastPackages, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
 import { kindDefaults } from '../studio/defaults.js'
 import { clearRating, downRating, feedbackText, findRevision, parseRating, rateRevision, type RatingTag } from '../studio/ratings.js'
@@ -633,7 +633,7 @@ export default async function studioRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: `a report must be ${REPORT_MIN}-${REPORT_MAX} characters` })
     }
     try {
-      return await reportMistake(d, category, Number(number), text.trim(), new Date())
+      return await reportMistake(d, category, Number(number), text.trim(), new Date(), request.user.id)
     } catch (err) {
       return checkoutRefusal(reply, err)
     }
@@ -680,22 +680,39 @@ export default async function studioRoutes(app: FastifyInstance) {
       .send(zip)
   })
 
+  /** A ready package, streamed as `<piece>-r<n>.zip`. */
+  async function sendPackage(reply: FastifyReply, p: { packageKey: string; pieceName: string; category: string; revisionNumber: number }) {
+    const obj = await getStudioStore().getStream(p.packageKey)
+    if (!obj) return reply.status(404).send({ error: 'package_missing', code: 'package_missing' })
+    if (obj.length !== undefined) reply.header('Content-Length', obj.length)
+    return reply
+      .type('application/zip')
+      .header('Content-Disposition', `attachment; filename="${slugOf(p.pieceName, p.category)}-r${p.revisionNumber}.zip"`)
+      .header('Cache-Control', 'private, no-store')
+      .send(obj.body)
+  }
+
   // The paid revision's package, to anyone on the design
   app.get('/api/studio/designs/:id/pieces/:category/revisions/:number/package', auth, async (request, reply) => {
     const paid = await paidRevision(request, reply, 'view')
     if (!paid) return reply
     const { e, name } = paid
     if (e.status !== 'ready' || !e.packageKey) return reply.status(409).send({ error: e.status, code: e.status })
-    const obj = await getStudioStore().getStream(e.packageKey)
-    if (!obj) return reply.status(404).send({ error: 'package_missing', code: 'package_missing' })
-    const slug = slugOf(name, e.category)
     const { number } = request.params as { number: string }
-    if (obj.length !== undefined) reply.header('Content-Length', obj.length)
-    return reply
-      .type('application/zip')
-      .header('Content-Disposition', `attachment; filename="${slug}-r${number}.zip"`)
-      .header('Cache-Control', 'private, no-store')
-      .send(obj.body)
+    return sendPackage(reply, { packageKey: e.packageKey, pieceName: name, category: e.category, revisionNumber: Number(number) })
+  })
+
+  // "Finalized while you were on it": the packages kept from designs the person has left (pastPackages). Not for
+  // trials: they can't be invited, so they never leave a design.
+  app.get('/api/studio/past-packages', auth, async (request) =>
+    (await pastPackages(request.user.id)).map(({ entitlementId, designName, category, revisionNumber, finalizedAt }) =>
+      ({ entitlementId, designName, category, revisionNumber, finalizedAt })))
+
+  app.get('/api/studio/past-packages/:entitlementId/package', auth, async (request, reply) => {
+    const { entitlementId } = request.params as { entitlementId: string }
+    const [p] = UUID.test(entitlementId) ? await pastPackages(request.user.id, entitlementId) : []
+    if (!p) return reply.status(404).send({ error: 'not_found' })
+    return sendPackage(reply, p)
   })
 
   app.post('/api/studio/designs/:id/pieces/:category/revisions/:number/package/retry', auth, async (request, reply) => {

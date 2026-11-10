@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { and, eq, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { assetLibraryItems, studioDesigns, studioEntitlements, studioRevisions } from '../db/schema.js'
+import { assetLibraryItems, studioDesigns, studioEntitlements, studioPayments, studioRevisions } from '../db/schema.js'
 import { glbStats } from '../catalog/glb-stats.js'
 import { createStorage, type StorageProvider } from '../storage/index.js'
 import { getStudioStore, jobFileKey } from './store.js'
 
 /**
- * A paid scene piece (a building, furniture or decor) goes into its designer's asset library: each GLB copied to public
+ * A paid scene piece (a building, furniture or decor) goes into its payer's asset library (on a shared design, the
+ * member who paid; the design's owner once the payer's account is gone): each GLB copied to public
  * storage as a private row, measured from the file itself, with the finalize thumbnail and any dcl-sittables seats.
  * Paid pieces don't count against the upload storage quota. A row per revision: a scene already using an earlier one
  * keeps it.
@@ -46,6 +47,8 @@ async function copyToLibrary(entitlementId: string, now: Date): Promise<string[]
     const [design] = await tx.select().from(studioDesigns).where(eq(studioDesigns.id, ent.designId))
     const [rev] = await tx.select().from(studioRevisions).where(eq(studioRevisions.id, ent.revisionId))
     if (design?.kind !== 'scene' || !rev) return []
+    const [pay] = await tx.select({ userId: studioPayments.userId }).from(studioPayments).where(eq(studioPayments.id, ent.paymentId))
+    const payer = pay?.userId ?? design.ownerId
     const meta = (rev.meta ?? {}) as { name?: unknown; description?: unknown; kind?: unknown; type?: unknown }
     const base = typeof meta.name === 'string' && meta.name.trim() ? meta.name.trim().slice(0, 190) : ent.category
     const name = rev.number > 1 ? `${base} (revision ${rev.number})` : base
@@ -60,7 +63,7 @@ async function copyToLibrary(entitlementId: string, now: Date): Promise<string[]
     }
     let thumbnailUrl: string | null = null
     const thumb = ent.jobId ? await studio.get(jobFileKey(design.id, ent.jobId, `final/${ent.category}/thumbnail.png`)) : null
-    if (thumb) thumbnailUrl = await storage().upload(`assets/${design.ownerId}/${randomUUID()}.png`, thumb.body, 'image/png')
+    if (thumb) thumbnailUrl = await storage().upload(`assets/${payer}/${randomUUID()}.png`, thumb.body, 'image/png')
     const ids: string[] = []
     for (const file of glbs) {
       const sourceRef = `studio:${ent.id}:${file.slice(prefix.length)}`
@@ -72,14 +75,14 @@ async function copyToLibrary(entitlementId: string, now: Date): Promise<string[]
       const stats = await glbStats(obj.body, { visibleOnly: true }).catch((err) => {
         throw new UnusablePiece(`${file} isn't a readable GLB: ${err instanceof Error ? err.message : err}`)
       })
-      const storageKey = `assets/${design.ownerId}/${randomUUID()}.glb`
+      const storageKey = `assets/${payer}/${randomUUID()}.glb`
       const cdnUrl = await storage().upload(storageKey, obj.body, 'model/gltf-binary')
       const [row] = await tx.insert(assetLibraryItems).values({
         name, description: typeof meta.description === 'string' ? meta.description.slice(0, 1000) : null,
         category: meta.kind === 'building' ? 'building' : 'furniture',
         tags: typeof meta.type === 'string' && meta.type ? [meta.type.slice(0, 40)] : null,
         storageKey, cdnUrl, thumbnailUrl, fileSizeBytes: obj.body.length, triangleCount: stats.triangles, dimensions: stats.bbox,
-        isPublic: false, uploadedBy: design.ownerId, sourceRef, sittables, createdAt: now,
+        isPublic: false, uploadedBy: payer, sourceRef, sittables, createdAt: now,
       }).returning({ id: assetLibraryItems.id })
       ids.push(row.id)
     }

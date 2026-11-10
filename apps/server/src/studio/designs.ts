@@ -188,7 +188,7 @@ export async function designDetail(d: Design, now: Date, readerId = d.ownerId) {
   const revs = revIds.length ? await db.select().from(studioRevisions).where(inArray(studioRevisions.id, revIds)) : []
   const renders = revIds.length ? await db.select().from(studioRenders).where(inArray(studioRenders.revisionId, revIds)) : []
   const expires = frameUrlExpiry(now)
-  const finalized = await finalizedRevisions(d.id)
+  const finalized = await finalizedRevisions(d.id, readerId)
   const messages = await db.select().from(studioMessages).where(eq(studioMessages.designId, d.id))
     .orderBy(asc(studioMessages.createdAt), asc(studioMessages.id))
   const [active] = await db.select({

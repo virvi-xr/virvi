@@ -39,8 +39,15 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
 
 - **Finalizing** a piece pays for its latest revision: `GET /designs/:id/finalize` quotes it, `POST` opens a Stripe
   Checkout (or grants at once when every line is waived). The webhook makes an *entitlement* per paid revision and
-  queues a `finalize` job, which builds the package from that revision's stored files. The owner downloads it from
-  `GET /designs/:id/pieces/:category/revisions/:number/package`; a failed package is retried free with `…/package/retry`.
+  queues a `finalize` job, which builds the package from that revision's stored files. Anyone on the design downloads
+  it from `GET /designs/:id/pieces/:category/revisions/:number/package`; a failed package is retried free with
+  `…/package/retry`.
+- **Shared designs** (LIV-159): any collaborator finalizes and pays with their own card, credit, free finalizes or
+  MANA, and the payment and entitlements are theirs. Another member's open checkout for the same revision refuses a
+  second one (`409 checkout_open`). Only the payer reports a mistake on it, and a paid scene piece goes to the payer's
+  asset library (the owner's once the payer's account is gone). Someone who left keeps the packages that became ready
+  while they were on the design, and the ones they paid for: `GET /past-packages` and
+  `GET /past-packages/:entitlementId/package`.
 - **Some of the pieces** (LIV-81): both take `categories` (`?categories=a,b` on the quote), so the creator pays only
   for the pieces ticked. A partly finalized design (`finalizedPieces` of `pieceCount`) stays open for prompts and
   counts toward the open-design limit until every piece is finalized. Finalize's emote checks for a selection wear the
