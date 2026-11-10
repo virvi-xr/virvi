@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { studioDesigns, studioJobs, studioMessages, studioRenders, studioSetRenders } from '../src/db/schema.js'
+import { studioDesignMembers, studioDesigns, studioJobs, studioMessages, studioRenders, studioSetRenders } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, jobFileKey } from '../src/studio/store.js'
 import { signRenderFrame, frameUrlExpiry } from '../src/studio/render-urls.js'
@@ -169,6 +169,28 @@ describe('studio preview steps', () => {
       expect(frame.body).toBe('frame1')
       expect((await setRender(u, d.id, { bodyShape: 'male', outfit: 'default', emote: 'run' })).json())
         .toMatchObject({ status: 'ready', frames: 96, fps: 24 })
+    })
+
+    it('a viewer reads a rendered set view’s frames without asking for one; nothing is queued, a stranger gets 404 (LIV-159)', async () => {
+      const u = await createUser()
+      const d = await twoPieces(u)
+      await landSet(u, d, 'run', 'walk-male-default-run')
+      const viewer = await createUser()
+      await db.insert(studioDesignMembers).values({ designId: d.id, userId: viewer.id, role: 'viewer' })
+      const frames = (who: TestUser, q: string) => app.inject({ method: 'GET', url: `${S}/designs/${d.id}/set-frames?${q}`, headers: as(who) })
+      const before = (await renderJobs(d.id)).length
+      const ready = await frames(viewer, 'bodyShape=male&outfit=default&emote=run')
+      expect(ready.statusCode).toBe(200)
+      expect(ready.json()).toMatchObject({ status: 'ready', frames: 96, fps: 24 })
+      expect(ready.json().urls).toHaveLength(96)
+      expect((await app.inject({ method: 'GET', url: new URL(ready.json().urls[1]).pathname })).body).toBe('frame1')
+      // a view not rendered stays so: no job, no row
+      expect((await frames(viewer, 'bodyShape=female&outfit=default&emote=dance')).json()).toEqual({ status: 'none' })
+      expect(await renderJobs(d.id)).toHaveLength(before)
+      expect(await db.select().from(studioSetRenders).where(eq(studioSetRenders.viewKey, 'walk-female-default-dance'))).toEqual([])
+      expect((await frames(viewer, 'bodyShape=nope&outfit=default&emote=run')).statusCode).toBe(400)
+      const stranger = await createUser()
+      expect((await frames(stranger, 'bodyShape=male&outfit=default&emote=run')).statusCode).toBe(404)
     })
 
     it('a new revision of any piece makes the set view stale', async () => {

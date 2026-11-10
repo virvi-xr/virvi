@@ -87,6 +87,8 @@ export const redactPairingCode = (url: string) =>
   url.replace(/^(\/api\/(?:hyperfy|ar)\/pair\/)[^/?#]+/, '$1:code').replace(/^(\/(?:pair\/(?:headset\/)?|s\/))[^/?#]+/, '$1:code')
     // a Design Studio invite link's token is its credential (LIV-159), the page's and the API's
     .replace(/^(\/(?:api\/studio\/invite-links|studio\/invite)\/)[^/?#]+/, '$1:token')
+    // ...and the sign-in page's `next` back to it, raw or encoded (the rest of that value goes with it)
+    .replace(/([?&]next=(?:\/|%2F)studio(?:\/|%2F)invite(?:\/|%2F))[^&#]*/i, '$1:token')
 
 /** The response header carrying the request ID (Fastify's genReqId) */
 export const REQUEST_ID_HEADER = 'x-request-id'

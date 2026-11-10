@@ -56,6 +56,21 @@ export async function setViews(designId: string, revisions: string, exec: Exec =
 }
 
 /**
+ * A set view's frames when it is rendered already, never asking for one (a viewer looking, LIV-159): `ready` with its
+ * frame urls, else the view's status (`none` when never asked for). Null when the design has no pieces.
+ */
+export async function readySetFrames(
+  design: Design, view: View, now: Date, categories: string[] | null = null,
+): Promise<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: string } | null> {
+  const { revisions } = await wornRevisions(design.id, design.kind === 'scene' ? null : categories)
+  if (!revisions) return null
+  const [row] = await db.select().from(studioSetRenders).where(and(
+    eq(studioSetRenders.designId, design.id), eq(studioSetRenders.revisions, revisions), eq(studioSetRenders.viewKey, setViewKey(design.kind, view))))
+  if (row?.status !== 'ready') return { status: row?.status ?? 'none' }
+  return { status: 'ready', frames: row.frames, fps: row.fps, urls: frameUrls(design.id, row, frameUrlExpiry(now)) }
+}
+
+/**
  * An emote view of every piece worn: ready, or queued now (`queued` says a job was added rather than already
  * waiting). Null when the design has no pieces.
  */

@@ -78,8 +78,8 @@ export interface ClientErrorEvent {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** Paths whose next segment is a credential (pairing, upload and space codes): logged as `:code`. */
-const CODE_PATHS = /^((?:https?:\/\/[^/]+)?\/(?:api\/(?:hyperfy|ar)\/pair|pair\/headset|pair|u|s|api\/upload)\/)(?!headset(?:\/|$))[^/?#]+/
+/** Paths whose next segment is a credential (pairing, upload and space codes, Design Studio invite tokens): logged as `:code`. */
+const CODE_PATHS = /^((?:https?:\/\/[^/]+)?\/(?:api\/(?:hyperfy|ar)\/pair|pair\/headset|pair|u|s|api\/upload|studio\/invite|api\/studio\/invite-links)\/)(?!headset(?:\/|$))[^/?#]+/
 
 const SECRET_KEYS = 'token|code|key|secret|session|sig|signature|password|passwd|pwd|auth|apikey|api_key|access_token|refresh_token|client_secret'
 // Every pattern is linear: each starts behind a lookbehind that admits one start per run, or has a bounded quantifier

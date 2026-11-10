@@ -3,11 +3,11 @@ import { useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  formatCents, formatCredit, manaBack, paidSummary, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
+  formatCents, formatCredit, manaBack, paidByReader, paidSummary, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
   type FinalizedRevision, type StudioPiece,
 } from '@/lib/studio'
 
-type Props = { designId: string; pieces: StudioPiece[]; onChanged: () => Promise<void>; kind?: string; owner?: boolean; canReport?: boolean; act?: boolean }
+type Props = { designId: string; pieces: StudioPiece[]; onChanged: () => Promise<void>; kind?: string; support?: boolean; act?: boolean }
 
 /** Save a downloaded blob under its file name. */
 export function saveBlob(blob: Blob, filename: string) {
@@ -22,11 +22,10 @@ export function saveBlob(blob: Blob, filename: string) {
 /**
  * Every paid piece's revisions, whichever tab is selected: download, a free retry when packaging failed, and mistake
  * reports. With two or more pieces ready, "Download all" fetches them as one zip; while pieces package, it says how many
- * are ready. `owner`: the owner is looking (false for Virvi support and other members), so a report's outcome, MANA back
- * and their 3D Models link show. `canReport`: not Virvi support; anyone else may report a revision they paid for (the
- * server sends `reportableUntil` to the payer alone, LIV-159). `act`: not a viewer, so a failed package can be tried again.
+ * are ready. A revision's payer (`paidByMe`, LIV-159) sees its mistake report and outcome, MANA back and their 3D Models
+ * link; `support`: Virvi support is looking, and sees none of them. `act`: not a viewer, so a failed package can be tried again.
  */
-export default function PaidRevisions({ designId, pieces, onChanged, kind, owner = true, canReport = owner, act = true }: Props) {
+export default function PaidRevisions({ designId, pieces, onChanged, kind, support = false, act = true }: Props) {
   const api = useApi()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -62,7 +61,7 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind, owner
         <section key={piece.category} aria-label={piece.name}>
           {several && <h4 className="px-4 pt-3 text-xs font-medium uppercase tracking-wide text-gray-400">{piece.name}</h4>}
           <ul className="divide-y divide-gray-800">
-            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} owner={owner} canReport={canReport} act={act} />)}
+            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} mine={paidByReader(f, support)} act={act} />)}
           </ul>
         </section>
       ))}
@@ -70,7 +69,7 @@ export default function PaidRevisions({ designId, pieces, onChanged, kind, owner
   )
 }
 
-function PaidRevision({ designId, category, f, onChanged, scene, owner, canReport, act }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean; owner: boolean; canReport: boolean; act: boolean }) {
+function PaidRevision({ designId, category, f, onChanged, scene, mine, act }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean; mine: boolean; act: boolean }) {
   const api = useApi()
   const actions = revisionActions(f, new Date())
   const [busy, setBusy] = useState(false)
@@ -130,10 +129,10 @@ function PaidRevision({ designId, category, f, onChanged, scene, owner, canRepor
             <Badge tone="success">{f.report.status === 'waived' ? 'Waived' : 'Refunded'}</Badge>
           )}
           {actions.packaging && <span className="text-gray-400">Packaging…</span>}
-          {actions.download && scene && owner && <a href="/assets" className="text-blue-300 underline">In your 3D Models</a>}
+          {actions.download && scene && mine && <a href="/assets" className="text-blue-300 underline">In your 3D Models</a>}
           {actions.download && <PrimaryButton type="button" disabled={busy} onClick={download}>Download</PrimaryButton>}
           {actions.retry && act && <PrimaryButton type="button" disabled={busy} onClick={retry}>Try again</PrimaryButton>}
-          {canReport && actions.report === 'open' && !reporting && refunded === null && (
+          {mine && actions.report === 'open' && !reporting && refunded === null && (
             <button type="button" onClick={() => setReporting(true)} className="text-gray-400 underline hover:text-white">Report a mistake</button>
           )}
         </div>
@@ -158,7 +157,7 @@ function PaidRevision({ designId, category, f, onChanged, scene, owner, canRepor
           {refunded.creditedCents > 0 && ` ${formatCredit(refunded.creditedCents)} went to your Virvi credit, for your next checkout.`}
         </p>
       )}
-      {owner && mana.offer && (
+      {mine && mana.offer && (
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <p className="text-gray-300">You paid {formatCredit(f.report!.manaCents!)} of this in MANA.</p>
           <button type="button" disabled={busy} onClick={manaInstead} className="rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50">
@@ -166,8 +165,8 @@ function PaidRevision({ designId, category, f, onChanged, scene, owner, canRepor
           </button>
         </div>
       )}
-      {owner && mana.note && <p className="mt-2 text-gray-300" role="status">{mana.note}</p>}
-      {owner && f.report && reportCopy(f.report.status) && <p className="mt-2 text-gray-300" role="status">{reportCopy(f.report.status)}</p>}
+      {mine && mana.note && <p className="mt-2 text-gray-300" role="status">{mana.note}</p>}
+      {mine && f.report && reportCopy(f.report.status) && <p className="mt-2 text-gray-300" role="status">{reportCopy(f.report.status)}</p>}
       {error && <p className="mt-2 text-amber-300" role="alert">{error}</p>}
     </li>
   )

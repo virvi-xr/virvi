@@ -57,20 +57,19 @@ export function runningPrompt(detail: Pick<StudioDetail, 'activeJob' | 'messages
 
 /**
  * The controls on the design page, by who is looking. Support can prompt, render, check and finalize; renaming or
- * archiving, switching the agent, adding or removing files, mistake reports, buying prompts and MANA refunds stay the
- * owner's. On a shared design (LIV-159) a collaborator works on it as the owner does (`act`: prompt, render, check,
- * finalize; files and buying prompts too) but can't rename, archive or switch the agent; a viewer only looks. Anyone
- * may report a revision they paid for (the server sends `reportableUntil` to the payer alone), and see the People.
- * `owner`: the owner is looking.
+ * archiving, switching the agent, adding or removing files and buying prompts stay the owner's. On a shared design
+ * (LIV-159) a collaborator works on it as the owner does (`act`: prompt, render, check, finalize; files and buying
+ * prompts too) but can't rename, archive or switch the agent; a viewer only looks. Every member sees the People.
+ * Mistake reports and MANA back are the payer's (`paidByReader`).
  */
 export function designControls(detail: Pick<StudioDetail, 'support' | 'role'>): {
-  designMenu: boolean; switchAgent: boolean; uploads: boolean; reports: boolean; topup: boolean; people: boolean; act: boolean; owner: boolean
+  designMenu: boolean; switchAgent: boolean; uploads: boolean; topup: boolean; people: boolean; act: boolean
 } {
   const support = !!detail.support
   const role = support ? null : detail.role ?? 'owner'
   const owner = role === 'owner'
   const member = !support && canAct(role)
-  return { designMenu: owner, switchAgent: owner, uploads: member, reports: !support, topup: member, people: !support, act: canAct(role), owner }
+  return { designMenu: owner, switchAgent: owner, uploads: member, topup: member, people: !support, act: canAct(role) }
 }
 
 /** The Finalize dialog's button for support: the pieces are finalized for the owner at once, free. */

@@ -30,10 +30,10 @@ export const WORN_NOTE = 'Showing the pieces you’re finalizing, with any you�
  * `categories`: Finalize's selection, when only some pieces are ticked. `detail.set` is then that selection's (the
  * chosen and finalized pieces worn together), and every view, check and clipping report is for it.
  */
-type Props = { designId: string; detail: StudioDetail; target: EmoteTarget | null; onChanged: () => Promise<void>; categories?: string[] | null }
+type Props = { designId: string; detail: StudioDetail; target: EmoteTarget | null; onChanged: () => Promise<void>; categories?: string[] | null; viewOnly?: boolean }
 
 /** Emotes: every piece worn together, one emote at a time, and the person says whether it looks fine or clips. */
-export default function EmotesStep({ designId, detail, target, onChanged, categories = null }: Props) {
+export default function EmotesStep({ designId, detail, target, onChanged, categories = null, viewOnly = false }: Props) {
   const api = useApi()
   const kind = detail.design.kind
   const emotes = checkedEmotes(kind)
@@ -56,8 +56,8 @@ export default function EmotesStep({ designId, detail, target, onChanged, catego
   const framesId = `${detail.set.revisions}/${key}/${shown?.renderedAt}`
   useEffect(() => {
     if (shown?.status !== 'ready' || frames?.id === framesId) return
-    api.requestStudioSetRender(designId, view, categories)
-      .then((r) => { if (r.status === 'ready') setFrames({ id: framesId, urls: r.urls }) })
+    ;(viewOnly ? api.getStudioSetFrames(designId, view, categories) : api.requestStudioSetRender(designId, view, categories))
+      .then((r) => { if ('urls' in r) setFrames({ id: framesId, urls: r.urls }) })
       .catch((err) => setError(refusalMessage(err as never, new Date()).text))
   }, [framesId, shown?.status]) // eslint-disable-line react-hooks/exhaustive-deps
   const urls = frames?.id === framesId ? frames.urls : []
@@ -65,7 +65,7 @@ export default function EmotesStep({ designId, detail, target, onChanged, catego
 
   // An emote renders the first time someone opens it; a failed one waits for the person to ask again
   useEffect(() => {
-    if (!hasPieces || shown || asking === `${detail.set.revisions}/${key}`) return
+    if (viewOnly || !hasPieces || shown || asking === `${detail.set.revisions}/${key}`) return
     setAsking(`${detail.set.revisions}/${key}`)
     api.requestStudioSetRender(designId, view, categories).then(onChanged)
       .catch((err) => setError(refusalMessage(err as never, new Date()).text))
@@ -124,8 +124,10 @@ export default function EmotesStep({ designId, detail, target, onChanged, catego
         ) : shown?.status === 'failed' ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center text-sm text-gray-400">
             <p>That emote didn’t render.</p>
-            <button type="button" onClick={retry} className="text-blue-300 underline">Try again</button>
+            {!viewOnly && <button type="button" onClick={retry} className="text-blue-300 underline">Try again</button>}
           </div>
+        ) : viewOnly && shown?.status !== 'queued' ? (
+          <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400">This emote hasn’t been rendered yet.</p>
         ) : (
           <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400" aria-live="polite">Rendering this emote with {categories ? 'the pieces you’re finalizing' : 'every piece'} on. It takes about 40 seconds.</p>
         )}
@@ -137,7 +139,7 @@ export default function EmotesStep({ designId, detail, target, onChanged, catego
           <span className="mx-1 h-4 w-px bg-gray-800" aria-hidden="true" />
           {OUTFITS.map(([o, label]) => toggle(outfit === o, label, () => { setOutfit(o); setError(null) }))}
         </div>
-        {state === 'fixing' ? (
+        {viewOnly ? null : state === 'fixing' ? (
           <p className="text-sm text-blue-200" aria-live="polite">Being fixed… The agent is looking at frames of this emote. It renders again when it’s done.</p>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
@@ -148,7 +150,7 @@ export default function EmotesStep({ designId, detail, target, onChanged, catego
             <span className="text-xs text-gray-500">{fixes} free fix{fixes === 1 ? '' : 'es'} left for this emote</span>
           </div>
         )}
-        {busy && state !== 'fixing' && ready && <p className="text-xs text-gray-500">You can report clipping once the agent has finished.</p>}
+        {!viewOnly && busy && state !== 'fixing' && ready && <p className="text-xs text-gray-500">You can report clipping once the agent has finished.</p>}
         {error && <p className="text-sm text-amber-300" role="alert">{error}</p>}
       </div>
     </>

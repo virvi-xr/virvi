@@ -127,6 +127,9 @@ describe('redaction (fixtures)', () => {
   it('redactUrl drops the query and the codes in credential paths', () => {
     expect(redactUrl('https://virvi.io/pair/ABC123?x=1')).toBe('https://virvi.io/pair/:code')
     expect(redactUrl('/scenes/3f2b8c1e-1d2a-4b3c-9d8e-0123456789ab?tab=roles')).toBe('/scenes/3f2b8c1e-1d2a-4b3c-9d8e-0123456789ab')
+    // a Design Studio invite token, even one with no digit for the opaque rule to catch (LIV-159)
+    expect(redactUrl('https://virvi.io/studio/invite/AbCdEfGhIjKlMnOpQrStUvWxYz_-AbCdEfGh/')).toBe('https://virvi.io/studio/invite/:code/')
+    expect(redactUrl('/api/studio/invite-links/AbCdEfGhIjKlMnOpQrStUvWxYz_-AbCdEfGh/accept')).toBe('/api/studio/invite-links/:code/accept')
   })
 
   it('redactValue drops secret-looking keys and redacts strings in an error body', () => {

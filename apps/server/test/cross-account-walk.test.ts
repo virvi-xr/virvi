@@ -348,6 +348,7 @@ const CASES: Case[] = [
   { route: 'POST /api/studio/payments/:paymentId/mana-tx', url: (f) => `/api/studio/payments/${f.designPayment.id}/mana-tx`, body: () => ({ txHash: '0x' + 'ab'.repeat(32) }) },
   { route: 'POST /api/studio/designs/:id/finalize-renders', url: (f) => `/api/studio/designs/${f.design.id}/finalize-renders` },
   { route: 'GET /api/studio/designs/:id/set', url: (f) => `/api/studio/designs/${f.design.id}/set?categories=hat` },
+  { route: 'GET /api/studio/designs/:id/set-frames', url: (f) => `/api/studio/designs/${f.design.id}/set-frames?bodyShape=male&outfit=default&emote=run` },
   // B's 👎 on B's revision: nobody else rates, clears it or spends its free try-again (LIV-142)
   { route: 'PUT /api/studio/designs/:id/revisions/:jobId/rating', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/rating`, body: () => ({ rating: 'up' }) },
   { route: 'DELETE /api/studio/designs/:id/revisions/:jobId/rating', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/rating` },

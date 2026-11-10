@@ -978,6 +978,18 @@ function useRealApi() {
      */
     requestStudioSetRender: (id: string, view?: RenderView, categories: string[] | null = null) =>
       apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/set-renders`, { method: 'POST', body: JSON.stringify({ ...view, ...(categories ? { categories } : {}) }) }),
+    /** A set view's frames when rendered already, never asking for a render (what a viewer may read, LIV-159). */
+    getStudioSetFrames: (id: string, view?: RenderView, categories: string[] | null = null) => {
+      const q = new URLSearchParams()
+      if (view) {
+        q.set('bodyShape', view.bodyShape)
+        q.set('outfit', view.outfit)
+        if (view.emote) q.set('emote', view.emote)
+      }
+      if (categories?.length) q.set('categories', categories.join(','))
+      const qs = q.toString()
+      return apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: string }>(`/api/studio/designs/${id}/set-frames${qs ? `?${qs}` : ''}`)
+    },
     checkStudioEmote: (id: string, body: { emote: string; bodyShape: 'male' | 'female' }, categories: string[] | null = null) =>
       apiFetch<void>(`/api/studio/designs/${id}/emote-checks`, { method: 'POST', body: JSON.stringify({ ...body, state: 'fine', ...(categories ? { categories } : {}) }) }),
     reportStudioClipping: (id: string, body: { emote: string; bodyShape: 'male' | 'female'; outfit: string }, categories: string[] | null = null) =>

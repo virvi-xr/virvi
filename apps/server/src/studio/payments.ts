@@ -777,7 +777,7 @@ export async function pastPackages(userId: string, entitlementId?: string) {
 
 /**
  * Every paid revision of a design, newest first, as the page lists them (never the package's location). Only the
- * payer may report a mistake, so `reportableUntil` is set for `readerId`'s own payments alone.
+ * payer may report a mistake, so `reportableUntil` is set for `readerId`'s own payments alone, and `paidByMe` says which those are.
  */
 export async function finalizedRevisions(designId: string, readerId: string) {
   const rows = await db.select({
@@ -807,6 +807,8 @@ export async function finalizedRevisions(designId: string, readerId: string) {
         id: r.reportId, status: r.reportStatus, createdAt: r.reportedAt,
         manaCents: r.manaCents ?? 0, creditedCents: r.creditedCents ?? 0, manaRefund: r.manaRefund ?? null,
       } : null,
+      // `paidByMe`: the reader paid for it (LIV-159), so its report's outcome and MANA back are theirs to see
+      paidByMe: r.e.userId === readerId,
       reportableUntil: r.e.userId === readerId && r.e.kind === 'revision' && r.e.amountCents > 0 && !r.reportStatus && r.paidAt
         ? new Date(r.paidAt.getTime() + REPORT_WINDOW_DAYS * 24 * 3600 * 1000)
         : null,

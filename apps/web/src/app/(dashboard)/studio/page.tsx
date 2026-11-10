@@ -9,7 +9,7 @@ import { countLabel } from '@/lib/format'
 import { AgentPicker } from './AgentPicker'
 import { startingAgent } from '@/lib/studio-ratings'
 import { KindPicker } from '@/components/KindPicker'
-import { peopleRefusal, roleLabel, splitDesigns, type MyInvite, type PastPackage } from '@/lib/studio-people'
+import { acceptRefusal, peopleRefusal, roleLabel, splitDesigns, type MyInvite, type PastPackage } from '@/lib/studio-people'
 import { saveBlob } from './[designId]/PaidRevisions'
 import {
   DEFAULT_AGENT, agentLabel, categoryLabel, designBadge, giftRedeemMessage, giftRedeemSuccess, kindLabel, refusalMessage, relativeTime, usageLine,
@@ -148,7 +148,7 @@ function Invites() {
   const api = useApi()
   const [invites, setInvites] = useState<MyInvite[]>([])
   const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<{ id: string; text: string } | null>(null)
+  const [error, setError] = useState<{ id: string; text: string; openDesign?: boolean } | null>(null)
   useEffect(() => {
     let cancelled = false
     api.getMyStudioInvites().then((r) => { if (!cancelled) setInvites(r) }).catch(() => {})
@@ -167,7 +167,7 @@ function Invites() {
       await api.declineStudioInvite(i.id)
       setInvites((prev) => prev.filter((x) => x.id !== i.id))
     } catch (err) {
-      setError({ id: i.id, text: peopleRefusal(err as never) })
+      setError({ id: i.id, ...(accept ? acceptRefusal(err as never) : { text: peopleRefusal(err as never) }) })
     }
     setBusy(null)
   }
@@ -182,7 +182,12 @@ function Invites() {
             <div className="min-w-0">
               <p className="truncate font-medium">{i.designName}</p>
               <p className="text-sm text-gray-400">{i.inviterName?.trim() ? `${i.inviterName.trim()} invited you` : 'You’re invited'} as a {roleLabel(i.role).toLowerCase()}.</p>
-              {error?.id === i.id && <p className="mt-1 text-sm text-amber-300" role="alert">{error.text}</p>}
+              {error?.id === i.id && (
+                <p className="mt-1 text-sm text-amber-300" role="alert">
+                  {error.text}{' '}
+                  {error.openDesign && <a href={designHref(i.designId)} className="text-blue-300 underline">Open the design</a>}
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 gap-2">
               <PrimaryButton type="button" disabled={busy === i.id} onClick={() => answer(i, true)}>Accept</PrimaryButton>

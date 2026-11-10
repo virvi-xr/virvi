@@ -218,7 +218,7 @@ export default function StudioDesignPage() {
               support={detail.support} onChanged={reload} openWith={finalizeWith} />
           )}
           <PaidRevisions designId={designId} pieces={detail.pieces} onChanged={reload} kind={detail.design.kind}
-            owner={controls.owner} canReport={controls.reports} act={controls.act} />
+            support={!!detail.support} act={controls.act} />
         </Preview>
       </div>
     </div>

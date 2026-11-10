@@ -109,6 +109,10 @@ describe('AR static pages', () => {
     expect(redactPairingCode(`/studio/invite/${token}/`)).toBe('/studio/invite/:token/')
     expect(redactPairingCode(`/api/studio/invite-links/${token}/accept`)).toBe('/api/studio/invite-links/:token/accept')
     expect(redactPairingCode(`/api/studio/invite-links/${token}`)).toBe('/api/studio/invite-links/:token')
+    // and the sign-in page a signed-out visitor is sent to, with the invite page as its `next`
+    expect(redactPairingCode(`/signin/?next=%2Fstudio%2Finvite%2F${token}%2F&mode=register`)).toBe('/signin/?next=%2Fstudio%2Finvite%2F:token&mode=register')
+    expect(redactPairingCode(`/signin/?mode=register&next=/studio/invite/${token}/`)).toBe('/signin/?mode=register&next=/studio/invite/:token')
+    expect(redactPairingCode('/signin/?next=%2Fstudio%2F')).toBe('/signin/?next=%2Fstudio%2F')
   })
 
   describe('/.well-known/assetlinks.json', () => {

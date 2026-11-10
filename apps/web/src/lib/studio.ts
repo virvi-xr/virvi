@@ -78,6 +78,8 @@ export type FinalizedRevision = {
     id?: string; manaCents?: number; creditedCents?: number; manaRefund?: 'requested' | 'sent' | 'declined' | string | null
   } | null
   reportableUntil: string | null
+  /** The reader paid for it (LIV-159): its report's outcome, MANA back and the 3D Models link are theirs. */
+  paidByMe?: boolean
 }
 
 export type StudioPiece = {
@@ -527,11 +529,11 @@ export const STEP_LABELS: Record<Step, string> = {
 
 /**
  * An emote design has nothing to inspect without the avatar. A scene design has no avatar or emotes: a building gets
- * its walk-through and furniture its scale view, once the design has one. `viewOnly` (a viewer, LIV-159): only the
- * steps that look at what is rendered; emotes and the walk-through are rendered on asking, and finalizing is work.
+ * its walk-through and furniture its scale view, once the design has one. `viewOnly` (a viewer, LIV-159): no
+ * Finalize, which is work; the other steps show what is rendered.
  */
 export function stepsFor(kind: string, categories: string[] = [], viewOnly = false): Step[] {
-  const shown = (s: Step) => !viewOnly || (s !== 'emotes' && s !== 'tour' && s !== 'finalize')
+  const shown = (s: Step) => !viewOnly || s !== 'finalize'
   if (kind === 'scene') {
     const building = categories.includes('building')
     const furniture = categories.some((c) => c.startsWith('furniture_'))
@@ -859,6 +861,9 @@ export function revisionActions(f: FinalizedRevision, now: Date): {
         : 'closed'
   return { download: f.status === 'ready', retry: f.status === 'failed', packaging: f.status === 'packaging', report }
 }
+
+/** Whether a paid revision's payer's own lines show (report outcome, MANA back, 3D Models): the reader paid, and isn't Virvi support. */
+export const paidByReader = (f: Pick<FinalizedRevision, 'paidByMe'>, support: boolean) => !support && !!f.paidByMe
 
 /**
  * The paid-downloads panel's header, from each paid piece's newest paid revision: how many are ready, still packaging

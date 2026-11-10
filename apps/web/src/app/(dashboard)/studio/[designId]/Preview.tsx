@@ -38,7 +38,7 @@ type Props = {
   finalizeStep: React.ReactNode
   /** Finalize's selection, when only some pieces are ticked: the Emotes step shows that selection worn. */
   worn?: WornState
-  /** A viewer (LIV-159): what is rendered, never a render asked for, and only the steps that look. */
+  /** A viewer (LIV-159): what is rendered, never a render asked for, and no Finalize step. */
   viewOnly?: boolean
   children?: React.ReactNode
 }
@@ -144,10 +144,10 @@ export default function Preview({ designId, detail, category, onSelect, onChange
             // Never the whole set while a selection waits: a check would land on the wrong pieces
             <p className="p-8 text-center text-sm text-gray-400" aria-live="polite">{worn === 'none' ? NONE_TICKED : 'Loading the emotes for the pieces you ticked…'}</p>
           ) : (
-            <EmotesStep designId={designId} detail={wornDetail(detail, worn)} target={emoteTarget} onChanged={onChanged} categories={worn?.categories ?? null} />
+            <EmotesStep designId={designId} detail={wornDetail(detail, worn)} target={emoteTarget} onChanged={onChanged} categories={worn?.categories ?? null} viewOnly={viewOnly} />
           )
         ) : step === 'tour' ? (
-          <TourStep designId={designId} detail={detail} onChanged={onChanged} />
+          <TourStep designId={designId} detail={detail} onChanged={onChanged} viewOnly={viewOnly} />
         ) : step === 'finalize' ? (
           finalizeStep
         ) : stage === 'inspect' ? (

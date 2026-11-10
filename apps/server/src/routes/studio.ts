@@ -24,7 +24,7 @@ import { publishStudio } from '../studio/events.js'
 import { helpWithPrompt, PromptHelpError } from '../studio/prompt-help.js'
 import { EXCLUDE_MAX, IDEAS_COUNT_MAX, IDEA_ID, IDEA_MOVES, IDEA_PLAYBACKS, findIdea, pickIdeas, retiredIdeas, type IdeaMove, type IdeaPlayback, type IdeaQuery } from '../studio/prompt-ideas.js'
 import { warmDesign } from '../studio/warm.js'
-import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, setDetail, TOUR_VIEW, wornRevisions } from '../studio/sets.js'
+import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, readySetFrames, recordCheck, requestSetRender, setDetail, TOUR_VIEW, wornRevisions } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
 import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, pastPackages, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { storedZip } from '../studio/zip.js'
@@ -859,30 +859,45 @@ export default async function studioRoutes(app: FastifyInstance) {
     return r
   })
 
-  // An emote view with every piece worn: a base emote for a wearable design, the design's own (null) for an emote
+  /**
+   * The set view a request names (a body or a query): the walk-through for a scene design (it has a building), else an
+   * emote view (a base emote for a wearable design, the design's own, null, for an emote) and Finalize's selection.
+   */
+  const setViewOf = async (d: Design, b: { bodyShape?: unknown; outfit?: unknown; emote?: unknown; categories?: unknown }, from: 'body' | 'query') => {
+    if (d.kind === 'scene') {
+      if (!(await hasBuilding(d.id))) return { ok: false, status: 404, error: 'no_building' } as const
+      return { ok: true, view: TOUR_VIEW, categories: null } as const
+    }
+    if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return { ok: false, status: 400, error: 'bodyShape must be male or female' } as const
+    if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return { ok: false, status: 400, error: 'unknown outfit' } as const
+    const emote = (from === 'query' && b.emote === '' ? null : b.emote) ?? null
+    if (d.kind === 'emote' ? emote !== null : !(BASE_EMOTES as readonly unknown[]).includes(emote)) return { ok: false, status: 400, error: 'unknown emote' } as const
+    // Finalize's selection: only the chosen and finalized pieces are worn
+    const categories = chosenCategories(b.categories, from)
+    if (categories === undefined) return { ok: false, status: 400, error: BAD_CATEGORIES } as const
+    return { ok: true, view: { bodyShape: b.bodyShape, outfit: b.outfit, emote } as View, categories } as const
+  }
+
+  // An emote view with every piece worn, or a scene's walk-through: its frames when ready, else queued now
   app.post('/api/studio/designs/:id/set-renders', trialWork, async (request, reply) => {
     const a = await designAccess(request, { need: 'work', ...SUPPORT })
     if (!a || a === VIEWER) return refused(reply, a)
-    const d = a.d
-    const b = (request.body ?? {}) as { bodyShape?: unknown; outfit?: unknown; emote?: unknown; categories?: unknown }
-    if (d.kind === 'scene') {  // the building's walk-through, the one design-level view a scene design has
-      if (!(await hasBuilding(d.id))) return reply.status(404).send({ error: 'no_building' })
-      const r = await requestSetRender(d, TOUR_VIEW, new Date())
-      if (!r) return reply.status(404).send({ error: 'piece_not_found' })
-      return r.status === 'queued' ? { status: 'queued' } : r
-    }
-    if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
-    if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return reply.status(400).send({ error: 'unknown outfit' })
-    const emote = b.emote ?? null
-    if (d.kind === 'emote' ? emote !== null : !(BASE_EMOTES as readonly unknown[]).includes(emote)) {
-      return reply.status(400).send({ error: 'unknown emote' })
-    }
-    // Finalize's selection: only the chosen and finalized pieces are worn
-    const categories = chosenCategories(b.categories, 'body')
-    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
-    const r = await requestSetRender(d, { bodyShape: b.bodyShape, outfit: b.outfit, emote } as View, new Date(), { categories })
+    const v = await setViewOf(a.d, (request.body ?? {}) as Record<string, unknown>, 'body')
+    if (!v.ok) return reply.status(v.status).send({ error: v.error })
+    const r = await requestSetRender(a.d, v.view, new Date(), { categories: v.categories })
     if (!r) return reply.status(404).send({ error: 'piece_not_found' })
     return r.status === 'queued' ? { status: 'queued' } : r
+  })
+
+  // The same view's frames when it is rendered already, for anyone on the design (a viewer too, LIV-159): it never
+  // asks for a render, so nothing is queued or counted
+  app.get('/api/studio/designs/:id/set-frames', trialAuth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'view', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const v = await setViewOf(a.d, request.query as Record<string, unknown>, 'query')
+    if (!v.ok) return reply.status(v.status).send({ error: v.error })
+    const r = await readySetFrames(a.d, v.view, new Date(), v.categories)
+    return r ?? reply.status(404).send({ error: 'piece_not_found' })
   })
 
   /** An emote named in a check or report: a base emote for a wearable design, `own` (or null) for an emote design. */

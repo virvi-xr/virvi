@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  VIEWER_NOTE, boxState, canAct, inviteExpiry, inviteStatusCopy, inviteTokenFromPath, isInvitePath, peopleRefusal, promptSenderId, roleLabel,
+  VIEWER_NOTE, acceptRefusal, boxState, canAct, inviteExpiry, inviteStatusCopy, inviteTokenFromPath, isInvitePath, peopleRefusal, promptSenderId, roleLabel,
   senderLabel, splitDesigns,
 } from './studio-people'
 import type { StudioDesign, StudioMessage } from './studio'
@@ -100,6 +100,19 @@ describe('peopleRefusal', () => {
   it('asks for an email address on the server’s 400, and falls back for anything else', () => {
     expect(peopleRefusal({ status: 400, body: { error: 'email must be an email address' } })).toBe('Enter an email address.')
     expect(peopleRefusal({ status: 500, body: { error: 'boom' } })).toBe('Something went wrong. Try again.')
+  })
+})
+
+describe('acceptRefusal', () => {
+  const err = (code: string, status = 409) => ({ status, body: { error: code, code } })
+  it('speaks to the person accepting, not the owner', () => {
+    expect(acceptRefusal(err('already_member'))).toEqual({ text: 'You’re already on this design.', openDesign: true })
+    expect(acceptRefusal(err('members_full'))).toEqual({ text: 'This design is full. Ask the owner to make room.', openDesign: false })
+  })
+  it('keeps the invite’s own refusals', () => {
+    expect(acceptRefusal(err('expired'))).toEqual({ text: 'This invite has expired. Ask the owner to send a new one.', openDesign: false })
+    expect(acceptRefusal(err('used'))).toEqual({ text: 'This invite has already been used.', openDesign: false })
+    expect(acceptRefusal({ status: 500, body: {} })).toEqual({ text: 'Something went wrong. Try again.', openDesign: false })
   })
 })
 

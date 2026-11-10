@@ -179,11 +179,11 @@ export async function findInviteByToken(token: string): Promise<Invite | null> {
   return i ?? null
 }
 
-/** What a link's page shows before it is accepted. */
+/** What a link's page shows before it is accepted (`designId`: to open it, for someone already on it). */
 export async function linkView(i: Invite, now: Date) {
   const [d] = await db.select({ name: studioDesigns.name }).from(studioDesigns).where(eq(studioDesigns.id, i.designId))
   const status = i.acceptedAt || i.declinedAt || i.cancelledAt ? 'used' as const : i.expiresAt <= now ? 'expired' as const : 'open' as const
-  return { designName: d?.name ?? '', inviterName: await nameOf(i.invitedBy), role: i.role as InviteRole, status }
+  return { designId: i.designId, designName: d?.name ?? '', inviterName: await nameOf(i.invitedBy), role: i.role as InviteRole, status }
 }
 
 /**

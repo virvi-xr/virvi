@@ -188,7 +188,7 @@ describe('design invites and people', () => {
     expect(await myInvites(newbie)).toEqual([])
     const token = await tokenOf(inv.id)
     const look = await app.inject({ method: 'GET', url: `${S}/invite-links/${token}`, headers: as(newbie) })
-    expect(look.json()).toEqual({ designName: 'Neon cap', inviterName: 'Olive Owner', role: 'viewer', status: 'open' })
+    expect(look.json()).toEqual({ designId: d.id, designName: 'Neon cap', inviterName: 'Olive Owner', role: 'viewer', status: 'open' })
     const ok = await act(newbie, `/invite-links/${token}/accept`)
     expect(ok.statusCode).toBe(200)
     expect(ok.json()).toMatchObject({ designId: d.id, role: 'viewer' })

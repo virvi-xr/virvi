@@ -85,22 +85,22 @@ describe('runningPrompt', () => {
 })
 
 describe('designControls', () => {
-  const all = { designMenu: true, switchAgent: true, uploads: true, reports: true, topup: true, people: true, act: true, owner: true }
+  const all = { designMenu: true, switchAgent: true, uploads: true, topup: true, people: true, act: true }
   it('gives the owner every control, a design from before roles too', () => {
     expect(designControls(detail({ role: 'owner' }))).toEqual(all)
     expect(designControls(detail())).toEqual(all)
   })
   it('keeps renaming, archiving, the agent, files, reports and buying prompts the owner’s', () => {
     expect(designControls(detail({ support: support(), role: null }))).toEqual({
-      designMenu: false, switchAgent: false, uploads: false, reports: false, topup: false, people: false, act: true, owner: false,
+      designMenu: false, switchAgent: false, uploads: false, topup: false, people: false, act: true,
     })
   })
   it('lets a collaborator work but not manage the design (LIV-159)', () => {
-    expect(designControls(detail({ role: 'collaborator' }))).toEqual({ ...all, designMenu: false, switchAgent: false, owner: false })
+    expect(designControls(detail({ role: 'collaborator' }))).toEqual({ ...all, designMenu: false, switchAgent: false })
   })
-  it('lets a viewer look, see the people, and report a revision they paid for, nothing else', () => {
+  it('lets a viewer look and see the people, nothing else', () => {
     expect(designControls(detail({ role: 'viewer' }))).toEqual({
-      designMenu: false, switchAgent: false, uploads: false, reports: true, topup: false, people: true, act: false, owner: false,
+      designMenu: false, switchAgent: false, uploads: false, topup: false, people: true, act: false,
     })
   })
 })

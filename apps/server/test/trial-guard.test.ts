@@ -29,6 +29,7 @@ const ALLOWED = [
   'POST /api/studio/designs/:id/emote-checks',
   'POST /api/studio/designs/:id/clipping',
   'GET /api/studio/designs/:id/set',
+  'GET /api/studio/designs/:id/set-frames',
   'PUT /api/studio/designs/:id/revisions/:jobId/rating',
   'DELETE /api/studio/designs/:id/revisions/:jobId/rating',
   'POST /api/studio/designs/:id/revisions/:jobId/try-again',

@@ -6,7 +6,7 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { openSignUp } from '@/lib/trial'
 import { PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
-import { inviteStatusCopy, inviteTokenFromPath, peopleRefusal, roleLabel, type InviteLinkView } from '@/lib/studio-people'
+import { acceptRefusal, inviteStatusCopy, inviteTokenFromPath, peopleRefusal, roleLabel, type InviteLinkView } from '@/lib/studio-people'
 
 const BROKEN = 'This invite link doesn’t work. Check it, or ask the owner for a new one.'
 
@@ -22,6 +22,7 @@ export default function InvitePage() {
   const [token, setToken] = useState<string | null | undefined>(undefined)
   const [view, setView] = useState<InviteLinkView | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  const [refused, setRefused] = useState<{ text: string; openDesign: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
   const trial = !!user?.trial
 
@@ -45,12 +46,12 @@ export default function InvitePage() {
   const accept = async () => {
     if (!token) return
     setBusy(true)
-    setProblem(null)
+    setRefused(null)
     try {
       const r = await api.acceptStudioInviteLink(token)
       window.location.assign(`/studio/${r.designId}/`)
     } catch (err) {
-      setProblem(peopleRefusal(err as never))
+      setRefused(acceptRefusal(err as never))
       setBusy(false)
     }
   }
@@ -80,7 +81,12 @@ export default function InvitePage() {
               ? 'You can see the design as it changes and download what’s finalized.'
               : 'You can send prompts with your own allowance, finalize pieces and download them.'}
           </p>
-          {problem && <p className="text-amber-300" role="alert">{problem}</p>}
+          {refused && (
+            <p className="text-amber-300" role="alert">
+              {refused.text}{' '}
+              {refused.openDesign && <a href={`/studio/${view.designId}/`} className="text-blue-300 underline">Open the design</a>}
+            </p>
+          )}
           <PrimaryButton type="button" disabled={busy} onClick={accept}>{busy ? 'Joining…' : 'Accept'}</PrimaryButton>
         </div>
       )}

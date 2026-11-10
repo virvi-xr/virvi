@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  canSend, checkoutBody, composerState, paidSummary, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
+  canSend, checkoutBody, composerState, paidByReader, paidSummary, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
   type FinalizedRevision, type Quote, type QuoteLine, type StudioDetail, type StudioPiece, type StudioEvent, type StudioProposal,
 } from './studio'
 import { formatBytesShort, uploadProblem } from './studio'
@@ -472,6 +472,12 @@ describe('revisionActions', () => {
   })
   it('closes the report window by date', () => {
     expect(revisionActions(f({ reportableUntil: at(-1000) }), NOW).report).toBe('closed')
+  })
+  it('shows a payment’s own lines (report outcome, MANA back, 3D Models) to whoever paid, never to support (LIV-159)', () => {
+    expect(paidByReader(f({ paidByMe: true }), false)).toBe(true)
+    expect(paidByReader(f({ paidByMe: false }), false)).toBe(false)
+    expect(paidByReader(f(), false)).toBe(false)
+    expect(paidByReader(f({ paidByMe: true }), true)).toBe(false)
   })
   it('offers no report on a first finalize or an uncharged revision', () => {
     expect(revisionActions(f({ kind: 'first', amountCents: 2900, reportableUntil: null }), NOW).report).toBe('none')

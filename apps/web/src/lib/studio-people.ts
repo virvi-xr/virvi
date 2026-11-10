@@ -13,7 +13,7 @@ export type StudioInvite = { id: string; email: string; role: InviteRole; expire
 /** An invite matched to my account, on my Studio page. */
 export type MyInvite = { id: string; designId: string; designName: string; inviterName: string | null; role: InviteRole; expiresAt: string }
 /** What an invite link's page shows before it is accepted. */
-export type InviteLinkView = { designName: string; inviterName: string | null; role: InviteRole; status: 'open' | 'expired' | 'used' }
+export type InviteLinkView = { designId: string; designName: string; inviterName: string | null; role: InviteRole; status: 'open' | 'expired' | 'used' }
 /** A package kept from a design I've left ("Finalized while you were on it"). */
 export type PastPackage = { entitlementId: string; designName: string; category: string; revisionNumber: number; finalizedAt: string }
 
@@ -82,6 +82,14 @@ export function peopleRefusal(err: { status?: number; body?: { code?: string; er
   }
   if (err.status === 400 && err.body?.error?.startsWith('email')) return 'Enter an email address.'
   return 'Something went wrong. Try again.'
+}
+
+/** Accepting an invite (from the Studio page or a link) refused, in the accepter's terms; `openDesign`: link to the design. */
+export function acceptRefusal(err: { status?: number; body?: { code?: string; error?: string } }): { text: string; openDesign: boolean } {
+  const code = err.body?.code ?? err.body?.error
+  if (code === 'already_member') return { text: 'You’re already on this design.', openDesign: true }
+  if (code === 'members_full') return { text: 'This design is full. Ask the owner to make room.', openDesign: false }
+  return { text: peopleRefusal(err), openDesign: false }
 }
 
 export const roleLabel = (role: DesignRole | string) => role === 'owner' ? 'Owner' : role === 'viewer' ? 'Viewer' : 'Collaborator'

@@ -197,6 +197,22 @@ describe('finalizing a shared design', () => {
     expect(stripe.calls.refunds[0].params).toMatchObject({ payment_intent: 'pi_collab', amount: 1500 })
   })
 
+  it('tells each reader which paid revisions are theirs (paidByMe)', async () => {
+    const { d, rev } = await shared()
+    const viewer = await createUser()
+    await join(d.id, viewer, 'viewer')
+    await entitle(d, rev)
+    const rev2 = await addRevision(d, 'hat')
+    await entitle(d, rev2, { userId: collab.id, paymentIntent: 'pi_collab' })
+    const mine = async (u: TestUser) => {
+      const res = await app.inject({ method: 'GET', url: `${S}/designs/${d.id}`, headers: as(u) })
+      return Object.fromEntries(res.json().pieces[0].finalized.map((f: any) => [f.revision, f.paidByMe]))
+    }
+    expect(await mine(owner)).toEqual({ 1: true, 2: false })
+    expect(await mine(collab)).toEqual({ 1: false, 2: true })
+    expect(await mine(viewer)).toEqual({ 1: false, 2: false })
+  })
+
   it('a payer made a viewer still reports a mistake; a viewer who did not pay gets 404', async () => {
     const { d, rev } = await shared()
     const viewer = await createUser()
