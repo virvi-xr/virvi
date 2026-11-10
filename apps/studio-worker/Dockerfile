@@ -10,6 +10,11 @@ ARG BLENDER_SHA256=8d3be07d2bc412b502c6bfe3cfe3e22195a4164076867da987ce148d73c27
 ARG BLENDER_MIRROR=https://mirrors.ocf.berkeley.edu/blender/release/Blender4.4
 ARG SKILLS_REPO=https://github.com/MetaverseUnknower/dcl-avatar-skills.git
 ARG SKILLS_SHA=71a16c413e41cf9fe8e6535ff94f6289109aa36c
+# The official base avatars from Decentraland's public Blender toolkit, at the commit whose files the studio was built
+# and tested on (later commits ship different, zstd-compressed files)
+ARG AVATARS_URL=https://raw.githubusercontent.com/decentraland/dcl-blender-toolkit/06d9fd65561d93b73e6df5cc10c06e9d01332afc/assets
+ARG AVATAR_A_SHA256=78a7e87f37602efba99ea0c13d8a16a9d0847907bec295aa47c5fbd48987cdf8
+ARG AVATAR_B_SHA256=a26ed56c062d628f8a839acb6246c9eeb39312318851db1d94022d63ecadc800
 
 ENV DEBIAN_FRONTEND=noninteractive PIP_BREAK_SYSTEM_PACKAGES=1
 
@@ -31,8 +36,9 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor
     && apt-get install -y --no-install-recommends google-chrome-stable nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Python tools: numpy for the checkers, Playwright for the preview, Pillow for its frames
-RUN pip3 install --no-cache-dir numpy pillow playwright anthropic==2.2.0 && playwright install-deps chromium
+# Python tools: numpy for the checkers, Playwright for the preview, Pillow for its frames. Pinned: an unpinned
+# Playwright 1.65.0 broke the build (its driver needs libatomic1); bump them together and rerun the e2e
+RUN pip3 install --no-cache-dir numpy==2.4.6 pillow==13.0.0 playwright==1.64.1 anthropic==2.2.0 && playwright install-deps chromium
 
 # Agent CLIs, pinned: their output formats and usage reporting are what agent.py parses
 ARG CLAUDE_CODE_VERSION=2.1.310
@@ -59,9 +65,13 @@ RUN git clone "$SKILLS_REPO" /opt/skills && git -C /opt/skills checkout --quiet 
 RUN python3 /opt/skills/skills/curating-dcl-wearables/scripts/fetch_dcl_animations.py /opt/dcl-animations \
     && chmod -R a+rX /opt/dcl-animations
 
-# The official base avatars (the registry is Fly's private per-app one)
-COPY assets/*.blend /opt/assets/
-RUN chmod -R a+rX /opt/assets
+# The official base avatars (AvatarShape_A is BaseFemale, B is BaseMale), checked against their SHA-256
+RUN mkdir -p /opt/assets \
+    && curl -fsSL -o /opt/assets/AvatarShape_A.blend "$AVATARS_URL/AvatarShape_A.blend" \
+    && curl -fsSL -o /opt/assets/AvatarShape_B.blend "$AVATARS_URL/AvatarShape_B.blend" \
+    && printf '%s  %s\n' "$AVATAR_A_SHA256" /opt/assets/AvatarShape_A.blend "$AVATAR_B_SHA256" /opt/assets/AvatarShape_B.blend \
+       | sha256sum -c - \
+    && chmod -R a+rX /opt/assets
 
 COPY studio_worker /opt/studio_worker
 # The scene renderer's page, and the pinned Babylon.js it loads (checked against its SHA-256 at build)
