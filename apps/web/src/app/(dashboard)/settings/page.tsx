@@ -7,53 +7,11 @@ import { useEffect, useState } from 'react'
 import { LinkedWallets } from './LinkedWallets'
 import { LinkedHyperfySessions } from './LinkedHyperfySessions'
 import { PairedHeadsets } from './PairedHeadsets'
-import { Badge, PageHeader, PlatformBadge, Skeleton, tableHeadBand, type Tone } from '@/components/ui'
-import { instanceLabel, useInstance } from '@/lib/instance'
+import { Badge, PageHeader, PlatformBadge, Skeleton, tableHeadBand } from '@/components/ui'
+import { useInstance } from '@/lib/instance'
 import { canManageBranding } from '@/lib/branding'
 import { BrandingSettings } from './BrandingSettings'
-
-function formatBytes(bytes: number): string {
-  if (bytes === Infinity) return 'Unlimited'
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  const value = bytes / Math.pow(1024, i)
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`
-}
-
-function UsageBar({ label, current, limit, formatValue }: {
-  label: string
-  current: number
-  limit: number
-  formatValue: (v: number) => string
-}) {
-  const isUnlimited = limit === Infinity || limit === null
-  const pct = isUnlimited ? 0 : Math.min((current / limit) * 100, 100)
-  const barColor = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-green-500'
-
-  return (
-    <div>
-      <div className="flex items-center justify-between text-sm mb-1">
-        <span className="text-gray-400">{label}</span>
-        <span className="text-gray-300">
-          {formatValue(current)} / {isUnlimited ? 'Unlimited' : formatValue(limit)}
-        </span>
-      </div>
-      <div className="h-2 rounded-full bg-gray-800 overflow-hidden">
-        {isUnlimited ? (
-          <div className="h-full w-full bg-green-500/30 rounded-full" />
-        ) : (
-          <div
-            className={`h-full rounded-full transition-all ${barColor}`}
-            style={{ width: `${pct}%` }}
-          />
-        )}
-      </div>
-    </div>
-  )
-}
-
-const TIER_TONE: Record<string, Tone> = { free: 'neutral', creator: 'info', pro: 'violet', studio: 'warning', enterprise: 'success' }
+import { BillingSection } from './BillingSection'
 
 export default function SettingsPage() {
   const { user, token, updateUser, signOut } = useAuth()
@@ -99,14 +57,7 @@ export default function SettingsPage() {
   const [hooksLoading, setHooksLoading] = useState(true)
   const [deletingHookId, setDeletingHookId] = useState<string | null>(null)
 
-  // Billing state
-  const [billingEnabled, setBillingEnabled] = useState<boolean | null>(null)
   const instance = useInstance()
-  const [billingTier, setBillingTier] = useState<string>('free')
-  const [billingUsage, setBillingUsage] = useState<any>(null)
-  const [billingLimits, setBillingLimits] = useState<any>(null)
-  const [billingLoading, setBillingLoading] = useState(true)
-  const [billingActionLoading, setBillingActionLoading] = useState<string | null>(null)
 
   // Initialize display name from user
   useEffect(() => {
@@ -146,20 +97,6 @@ export default function SettingsPage() {
         setHooksLoading(false)
       })
       .catch(() => setHooksLoading(false))
-  }, [token])
-
-  // Fetch billing info
-  useEffect(() => {
-    if (!token) return
-    Promise.all([api.getBillingSubscription(), api.getBillingUsage()])
-      .then(([sub, usage]) => {
-        setBillingEnabled(sub.billingEnabled !== false)
-        setBillingTier(usage.tier)
-        setBillingUsage(usage.usage)
-        setBillingLimits(usage.limits)
-        setBillingLoading(false)
-      })
-      .catch(() => setBillingLoading(false))
   }, [token])
 
   const handleCreateApiKey = async (e: React.FormEvent) => {
@@ -597,137 +534,7 @@ export default function SettingsPage() {
       {/* Branding: self-hosted installs, instance admins only */}
       {canManageBranding(instance?.mode, user?.role) && <BrandingSettings />}
 
-      {/* Billing & Usage */}
-      <section className="mt-10">
-        <h2 className="text-lg font-semibold mb-4">Billing & Usage</h2>
-        {billingLoading ? (
-          <Skeleton rows={2} className="h-12" />
-        ) : billingEnabled === false ? (
-          <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
-            <div className="flex items-center gap-3 mb-2">
-              <Badge tone="success">{instanceLabel(instance?.mode) ?? 'Billing off'}</Badge>
-            </div>
-            <p className="text-gray-300">All features unlocked. Billing is not enabled on this instance.</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {/* Current Plan */}
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-gray-400">Current Plan</span>
-                  <Badge tone={TIER_TONE[billingTier] ?? 'neutral'}>
-                    {billingTier.charAt(0).toUpperCase() + billingTier.slice(1)}
-                  </Badge>
-                </div>
-                {billingTier !== 'free' && (
-                  <button
-                    disabled={billingActionLoading === 'portal'}
-                    onClick={async () => {
-                      setBillingActionLoading('portal')
-                      try {
-                        const { url } = await api.getPortalUrl()
-                        window.location.href = url
-                      } catch (err: any) {
-                        setError(err.message)
-                        setBillingActionLoading(null)
-                      }
-                    }}
-                    className="rounded-md bg-gray-700 px-4 py-2 text-sm font-medium hover:bg-gray-600 transition-colors disabled:opacity-50"
-                  >
-                    {billingActionLoading === 'portal' ? 'Redirecting...' : 'Manage Subscription'}
-                  </button>
-                )}
-              </div>
-
-              {/* Usage Stats */}
-              {billingUsage && billingLimits && (
-                <div className="space-y-3">
-                  <UsageBar
-                    label="Scenes"
-                    current={billingUsage.scenes}
-                    limit={billingLimits.scenes}
-                    formatValue={(v: number) => String(v)}
-                  />
-                  <UsageBar
-                    label="Storage"
-                    current={billingUsage.storageBytes}
-                    limit={billingLimits.storageBytes}
-                    formatValue={formatBytes}
-                  />
-                  {billingLimits.streamMinutes > 0 && (
-                    <UsageBar
-                      label="Streaming Minutes"
-                      current={billingUsage.streamMinutes}
-                      limit={billingLimits.streamMinutes}
-                      formatValue={(v: number) => String(v)}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Upgrade Options */}
-            {billingTier !== 'enterprise' && (
-              <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
-                <h3 className="text-sm font-medium text-gray-300 mb-3">Upgrade Plan</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {(['creator', 'pro', 'studio', 'enterprise'] as const)
-                    .filter(t => {
-                      const order = { free: 0, creator: 1, pro: 2, studio: 3, enterprise: 4 }
-                      return (order[t] || 0) > (order[billingTier as keyof typeof order] || 0)
-                    })
-                    .map(tier => (
-                      <button
-                        key={tier}
-                        disabled={billingActionLoading === tier}
-                        onClick={async () => {
-                          if (tier === 'enterprise') {
-                            window.open('mailto:sales@virvi.io?subject=Enterprise%20Plan', '_blank')
-                            return
-                          }
-                          setBillingActionLoading(tier)
-                          try {
-                            const priceEnvKey = `price_${tier}`
-                            const { url } = await api.createCheckout(priceEnvKey)
-                            window.location.href = url
-                          } catch (err: any) {
-                            setError(err.message)
-                            setBillingActionLoading(null)
-                          }
-                        }}
-                        className={`rounded-lg border p-4 text-left transition-colors disabled:opacity-50 ${
-                          tier === 'creator' ? 'border-blue-800 hover:bg-blue-900/20' :
-                          tier === 'pro' ? 'border-purple-800 hover:bg-purple-900/20' :
-                          tier === 'studio' ? 'border-yellow-800 hover:bg-yellow-900/20' :
-                          'border-green-800 hover:bg-green-900/20'
-                        }`}
-                      >
-                        <span className={`text-sm font-semibold ${
-                          tier === 'creator' ? 'text-blue-400' :
-                          tier === 'pro' ? 'text-purple-400' :
-                          tier === 'studio' ? 'text-yellow-400' :
-                          'text-green-400'
-                        }`}>
-                          {tier.charAt(0).toUpperCase() + tier.slice(1)}
-                        </span>
-                        <p className="mt-1 text-xs text-gray-400">
-                          {tier === 'creator' && 'Unlimited scenes, 10 GB storage'}
-                          {tier === 'pro' && 'Unlimited scenes, 50 GB storage'}
-                          {tier === 'studio' && 'Unlimited scenes, 500 GB storage'}
-                          {tier === 'enterprise' && 'Custom limits, dedicated support'}
-                        </p>
-                        <span className="mt-2 inline-block text-xs font-medium text-gray-300">
-                          {billingActionLoading === tier ? 'Redirecting...' : tier === 'enterprise' ? 'Contact Sales' : 'Upgrade'}
-                        </span>
-                      </button>
-                    ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </section>
+      <BillingSection />
 
       {/* API Keys */}
       <section className="mt-10">

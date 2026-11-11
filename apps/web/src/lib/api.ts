@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
+import type { Plan } from './billing'
 import { requestHeaders } from './request-headers'
 import { reporter } from './errors/reporter'
 import type { ErrorDetail, ErrorSettings, ErrorsOverview, ErrorThresholds } from './errors/admin'
@@ -604,7 +605,8 @@ function useRealApi() {
     // Billing
     getBillingUsage: () => apiFetch<{ tier: string; limits: any; usage: any }>('/api/billing/usage'),
     getBillingSubscription: () => apiFetch<{ tier: string; status: string; billingEnabled?: boolean; limits: any }>('/api/billing/subscription'),
-    createCheckout: (priceId: string) => apiFetch<{ url: string }>('/api/billing/checkout', { method: 'POST', userAction: true, body: JSON.stringify({ priceId }) }),
+    getBillingPlans: () => apiFetch<{ billingEnabled: boolean; plans: Plan[] }>('/api/billing/plans'),
+    createCheckout: (tier: 'creator' | 'pro' | 'studio') => apiFetch<{ url: string }>('/api/billing/checkout', { method: 'POST', userAction: true, body: JSON.stringify({ tier }) }),
     getPortalUrl: () => apiFetch<{ url: string }>('/api/billing/portal', { method: 'POST', body: JSON.stringify({}) }),
 
     // New Scene Wizard

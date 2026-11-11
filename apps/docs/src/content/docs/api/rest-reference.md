@@ -229,7 +229,8 @@ Only when billing is on (`STRIPE_SECRET_KEY` set, or cloud mode).
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/billing/checkout` | Yes | Start a Stripe Checkout session |
+| POST | `/api/billing/checkout` | Yes | Start a Stripe Checkout session for a plan: `{ "tier": "creator" \| "pro" \| "studio" }`. 503 `plan_unavailable` when the plan's price isn't set |
+| GET | `/api/billing/plans` | Yes | Each plan's limits (unlimited is `null`), price and whether it can be bought |
 | POST | `/api/billing/portal` | Yes | Open the Stripe customer portal |
 | GET | `/api/billing/subscription` | Yes | Your plan and limits |
 | GET | `/api/billing/usage` | Yes | Usage against the limits |

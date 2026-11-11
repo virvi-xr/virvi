@@ -158,13 +158,56 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
 // Price ID → Tier mapping (configured via env or hardcoded for your Stripe products)
 // ---------------------------------------------------------------------------
 
+/** The plans someone can buy in the app, in order. Enterprise is by arrangement (Contact Sales). */
+export const PAID_TIERS = ['creator', 'pro', 'studio'] as const
+export type PaidTier = typeof PAID_TIERS[number]
+
+/** A plan's Stripe price id, from STRIPE_PRICE_<PLAN>; null when it isn't set, so the plan can't be bought yet. */
+export function priceIdFor(tier: PaidTier): string | null {
+  return process.env[`STRIPE_PRICE_${tier.toUpperCase()}`]?.trim() || null
+}
+
 function tierFromPriceId(priceId: string): SubscriptionTier {
-  const map: Record<string, SubscriptionTier> = {
-    [process.env.STRIPE_PRICE_CREATOR || 'price_creator']: 'creator',
-    [process.env.STRIPE_PRICE_PRO || 'price_pro']: 'pro',
-    [process.env.STRIPE_PRICE_STUDIO || 'price_studio']: 'studio',
+  return PAID_TIERS.find((t) => priceIdFor(t) === priceId) ?? 'free'
+}
+
+export type PlanPrice = { amountCents: number; currency: string; interval: string | null }
+const PRICE_TTL_MS = 10 * 60_000
+let priceCache: { at: number; prices: Map<string, PlanPrice | null> } | null = null
+
+/** What each plan costs, read from Stripe (kept 10 minutes). A plan with no price set, or one Stripe can't read, has none. */
+export async function planPrices(now = Date.now()): Promise<Record<PaidTier, PlanPrice | null>> {
+  if (!priceCache || now - priceCache.at > PRICE_TTL_MS) {
+    const prices = new Map<string, PlanPrice | null>()
+    for (const tier of PAID_TIERS) {
+      const id = priceIdFor(tier)
+      if (!id) continue
+      try {
+        const p = await (await getStripe()).prices.retrieve(id)
+        prices.set(id, typeof p.unit_amount === 'number'
+          ? { amountCents: p.unit_amount, currency: p.currency, interval: p.recurring?.interval ?? null }
+          : null)
+      } catch (err) {
+        console.error(`[billing] the ${tier} plan's price couldn't be read from Stripe:`, err instanceof Error ? err.message : err)
+        prices.set(id, null)
+      }
+    }
+    priceCache = { at: now, prices }
   }
-  return map[priceId] || 'free'
+  const out = {} as Record<PaidTier, PlanPrice | null>
+  for (const tier of PAID_TIERS) {
+    const id = priceIdFor(tier)
+    out[tier] = id ? priceCache.prices.get(id) ?? null : null
+  }
+  return out
+}
+
+/** Tests: forget the prices read from Stripe. */
+export function clearPlanPrices() { priceCache = null }
+
+/** A plan's limits as JSON can carry them: unlimited is null (JSON has no Infinity). */
+export function limitsForJson(limits: TierLimits): Record<keyof TierLimits, number | boolean | null> {
+  return Object.fromEntries(Object.entries(limits).map(([k, v]) => [k, v === Infinity ? null : v])) as Record<keyof TierLimits, number | boolean | null>
 }
 
 // ---------------------------------------------------------------------------

@@ -190,7 +190,7 @@ Billing is for cloud mode.
 |---|---|---|
 | `STRIPE_SECRET_KEY` | none | Turns billing and plan limits on, in any mode. Leave it unset on a self-hosted install, or features become gated by plan. |
 | `STRIPE_WEBHOOK_SECRET` | none | Verifies Stripe webhooks at `/api/billing/webhook`. |
-| `STRIPE_PRICE_CREATOR`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_STUDIO` | `price_creator`, `price_pro`, `price_studio` | Stripe price IDs for each plan. |
+| `STRIPE_PRICE_CREATOR`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_STUDIO` | none | Stripe price IDs for each plan. A plan whose price isn't set shows "Price coming soon" on Settings and can't be bought. |
 
 ## Monitoring and background jobs
 

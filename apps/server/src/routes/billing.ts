@@ -3,15 +3,16 @@
  *
  * POST /api/billing/checkout     — Create Stripe Checkout session for upgrade
  * POST /api/billing/portal       — Create Stripe Customer Portal session
+ * GET  /api/billing/plans        — Each plan's limits, price and whether it can be bought
  * GET  /api/billing/subscription — Get current subscription + tier limits
  * GET  /api/billing/usage        — Get current usage vs limits
  * POST /api/billing/webhook      — Stripe webhook (not JWT-authenticated)
  */
 
 import { FastifyInstance } from 'fastify'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { scenes, streamingSessions } from '../db/schema.js'
+import { scenes, streamingServers, streamingSessions } from '../db/schema.js'
 import { liveScene } from '../scenes/live.js'
 import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
@@ -23,10 +24,21 @@ import {
   createPortalSession,
   handleWebhookEvent,
   getSubscription,
+  limitsForJson,
+  PAID_TIERS,
+  planPrices,
+  priceIdFor,
+  TIER_LIMITS,
+  type PaidTier,
 } from '../integrations/stripe.js'
+
+/** Where Stripe sends people back to: Settings, where Billing & Usage is. */
+const settingsUrl = () => `${config.webAppUrl.replace(/\/$/, '')}/settings`
 
 export default async function billingRoutes(app: FastifyInstance) {
   // ── Create Checkout Session ───────────────────────────────────────────
+  // By plan name: the price is the server's (STRIPE_PRICE_<PLAN>), never the page's. Stripe sends people back to
+  // Settings, the page they started from.
   app.post(
     '/api/billing/checkout',
     { preHandler: [authenticate] },
@@ -34,26 +46,21 @@ export default async function billingRoutes(app: FastifyInstance) {
       if (!config.billingEnabled) {
         return reply.status(403).send({ error: 'Billing is not enabled on this instance' })
       }
-
-      const body = request.body as {
-        priceId: string
-        successUrl?: string
-        cancelUrl?: string
+      const tier = (request.body as { tier?: unknown } | null)?.tier
+      if (typeof tier !== 'string' || !(PAID_TIERS as readonly string[]).includes(tier)) {
+        return reply.status(400).send({ error: `tier must be ${PAID_TIERS.join(', ')}` })
       }
-
-      if (!body.priceId) {
-        return reply.status(400).send({ error: 'Missing required field: priceId' })
+      const priceId = priceIdFor(tier as PaidTier)
+      if (!priceId) {
+        return reply.status(503).send({ error: 'This plan can’t be bought yet. Please try again later.', code: 'plan_unavailable' })
       }
-
-      const baseUrl = config.publicUrl
       const result = await createCheckoutSession({
         userId: request.user.id,
         email: request.user.email || '',
-        priceId: body.priceId,
-        successUrl: body.successUrl || `${baseUrl}/billing?success=true`,
-        cancelUrl: body.cancelUrl || `${baseUrl}/billing?canceled=true`,
+        priceId,
+        successUrl: `${settingsUrl()}?billing=success`,
+        cancelUrl: `${settingsUrl()}?billing=canceled`,
       })
-
       return reply.send(result)
     },
   )
@@ -66,15 +73,29 @@ export default async function billingRoutes(app: FastifyInstance) {
       if (!config.billingEnabled) {
         return reply.status(403).send({ error: 'Billing is not enabled on this instance' })
       }
-
-      const body = request.body as { returnUrl?: string }
-
-      const result = await createPortalSession({
-        userId: request.user.id,
-        returnUrl: body.returnUrl || `${config.publicUrl}/billing`,
-      })
-
+      const result = await createPortalSession({ userId: request.user.id, returnUrl: settingsUrl() })
       return reply.send(result)
+    },
+  )
+
+  // ── Plans ─────────────────────────────────────────────────────────────
+  // What each plan gives (the limits the server enforces) and costs (from Stripe), so the page can't drift from them.
+  // `available`: it can be bought here (its price is set). Unlimited limits are null.
+  app.get(
+    '/api/billing/plans',
+    { preHandler: [authenticate] },
+    async () => {
+      if (!config.billingEnabled) return { billingEnabled: false, plans: [] }
+      const prices = await planPrices()
+      return {
+        billingEnabled: true,
+        plans: (['free', ...PAID_TIERS, 'enterprise'] as const).map((tier) => ({
+          tier,
+          limits: limitsForJson(TIER_LIMITS[tier]),
+          price: tier === 'free' || tier === 'enterprise' ? null : prices[tier],
+          available: tier === 'free' || tier === 'enterprise' || !!priceIdFor(tier),
+        })),
+      }
     },
   )
 
@@ -113,17 +134,16 @@ export default async function billingRoutes(app: FastifyInstance) {
       // Storage used: the same total the upload quota checks (Images & Video, 3D Models uploads, thumbnails)
       const storageBytes = await storageUsedBytes(request.user.id)
 
-      // Sum streaming minutes this billing period
+      // Streaming minutes this billing period, on the caller's own streaming servers. A Date goes in through gte(), not
+      // a raw sql fragment: the driver refuses a Date there (that threw a 500 for every paid plan)
       let streamMinutes = 0
       if (sub.tier !== 'free') {
-        const periodStart = (sub as any).currentPeriodStart || new Date(0)
+        const periodStart = (sub as { currentPeriodStart?: Date | null }).currentPeriodStart ?? new Date(0)
         const [streamSum] = await db
-          .select({
-            total: sql<number>`coalesce(sum(${streamingSessions.durationSeconds}), 0)`,
-          })
+          .select({ total: sql<number>`coalesce(sum(${streamingSessions.durationSeconds}), 0)` })
           .from(streamingSessions)
-          // Sessions are linked via servers owned by the user — simplified here
-          .where(sql`${streamingSessions.startedAt} >= ${periodStart}`)
+          .innerJoin(streamingServers, eq(streamingServers.id, streamingSessions.serverId))
+          .where(and(eq(streamingServers.ownerId, request.user.id), gte(streamingSessions.startedAt, periodStart)))
 
         streamMinutes = Math.ceil(Number(streamSum.total) / 60)
       }
