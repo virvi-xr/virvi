@@ -17,6 +17,7 @@ import { wallState } from './wall.js'
 import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
 import { designRevisions, lockTryAgains, tryAgainBlock } from './ratings.js'
 import { liveLessons } from './lessons.js'
+import { pricingFacts } from './pricing.js'
 import { retireIdea } from './prompt-ideas.js'
 import { recordMachine, typicalFirstReplySec } from './timings.js'
 import { memberCount } from './members.js'
@@ -402,6 +403,9 @@ export async function queuePrompt(
           // Admin-approved lessons for this kind (LIV-142): the worker adds them to its instructions, never to the
           // conversation. A worker that predates them ignores the field
           ...(lessons.length ? { lessons } : {}),
+          // Prices, paying and the buyer's rights, so the agent can answer questions about them. A worker that predates
+          // it ignores the field
+          pricing: pricingFacts(d.kind),
         },
         counted,
         countedDay: r.day,

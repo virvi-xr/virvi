@@ -760,3 +760,40 @@ def test_boot_counts_from_when_the_entrypoint_began(api, tmp_path, skills):
               command=fake_command('claude_builds_hat.jsonl'), as_user=None)
     boot = [e for j, e in api.events if e['type'] == 'boot']
     assert 7 <= boot[0]['seconds'] < 30
+
+
+def test_pricing_goes_in_the_instructions_with_what_a_package_holds(api, tmp_path, skills, monkeypatch):
+    """A customer asked whether $29 covers both body shapes and whether they may reuse the files; the agent didn't know."""
+    seen = {}
+    real = jobs.run_agent
+
+    def spy(agent, model, prompt, session, *a, **kw):
+        seen.setdefault('prompt', prompt)
+        return real(agent, model, prompt, session, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    facts = 'Finalizing a wearable piece is $29.\nA finalized package is the buyer\'s.'
+    result = run(api, tmp_path, prompt_job(pricing=facts), 'claude_builds_hat.jsonl')
+    assert result['outcome'] == 'ok', result
+    instructions = ' '.join(seen['prompt'].split('Studio instructions:')[1].split())
+    assert 'Finalizing a wearable piece is $29. A finalized package is the buyer\'s.' in instructions
+    assert 'both body shapes' in instructions and 'item.zip' not in instructions  # the user's terms, not file names
+    # the next prompt's history holds the user's words only
+    seen.clear()
+    run(api, tmp_path, prompt_job(jobId='job-2', agent='grok', model='grok-build-0.1', prompt='make it pink'),
+        'grok_builds_hat.jsonl')
+    assert '$29' not in seen['prompt'].split('Studio instructions:')[0]
+
+
+def test_pricing_text_by_kind_and_without_facts():
+    from studio_worker.instructions import closing, pricing_text
+    assert pricing_text('wearable', None) == '' and pricing_text('wearable', '  ') == ''
+    assert 'Prices' not in closing('wearable', None)
+    wearable = ' '.join(pricing_text('wearable', '$29.').split())
+    assert 'a male and a female version' in wearable and 'Builder upload' in wearable
+    assert 'don\'t send them to support' in wearable.lower()
+    emote = ' '.join(pricing_text('emote', '$39.').split())
+    assert 'plays on both body shapes' in emote and 'female version' not in emote
+    scene = ' '.join(pricing_text('scene', '$49.').split())
+    assert 'walk-through' in scene and 'body shape' not in scene
+    # asking about prices is part of the design, never declined
+    assert 'never decline' in ' '.join(closing('wearable', None, pricing='$29.').split()).lower()

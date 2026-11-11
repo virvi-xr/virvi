@@ -129,6 +129,10 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
 - `lessons`, on a prompt job: `[str]`, the lessons Virvi admins approved for the design's kind (LIV-142), present only
   when there are some (at most 4,000 characters together). The worker adds them to the studio instructions after the
   user's words, never to the conversation history. A worker that predates them ignores the field.
+- `pricing`, on a prompt job: `str`, the design kind's prices, how paying works and what the buyer may do with a
+  finalized package (Virvi's `pricingFacts`, from its price settings). The worker adds it to the studio instructions
+  with what a package holds, so the agent answers questions about prices and the files instead of declining them.
+  Never part of the conversation history. A worker that predates it ignores the field.
 
 - `finalize`, on a finalize job: `{"designName": str, "pieces": [{"category", "name", "revision": n, "files":
   [contract paths]}]}`. `files` are the paid revision's files (its GLBs, `piece.json` and checker report). Virvi may add

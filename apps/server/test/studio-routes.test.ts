@@ -20,6 +20,7 @@ import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
 import { buildApp } from '../src/app.js'
 import { createDesign, fakeFly, okResult, issueWorker } from './helpers/studio.js'
+import { pricingFacts } from '../src/studio/pricing.js'
 
 const S = '/api/studio'
 
@@ -153,6 +154,7 @@ describe('studio dashboard routes', () => {
     expect(job.payload).toEqual({
       type: 'prompt', kind: 'wearable', agent: 'claude', model: 'claude-opus-5-5', prompt: 'a neon cap', selectedSlots: ['hat'],
       limits: { timeoutSec: 1500, maxTurns: 80, costCeilingUsd: 3 }, render: null, uploads: [], check: true,
+      pricing: pricingFacts('wearable'),
     })
     expect(job).toMatchObject({ status: 'queued', counted: true })
     expect((await app.inject({ method: 'GET', url: `${S}/usage`, headers: as(u) })).json().promptsLeft).toBe(2)

@@ -242,3 +242,53 @@ export async function quoteFinalize(
     notes: lines.some((l) => l.priceKind.startsWith('revision')) ? [RECURATION_NOTE] : [],
   }
 }
+
+type StudioPrices = typeof config.studioPrices
+
+const dollars = (cents: number) => `$${cents % 100 ? (cents / 100).toFixed(2) : cents / 100}`
+
+/**
+ * What the agent is told about prices, paying and the buyer's rights, for a design of `kind`, from the price settings:
+ * sent with every prompt job (`pricing`), so the agent can answer "how much is it?" and "can I reuse the files?" (the
+ * owner, 2026-11-11: a package is the buyer's, to edit, reuse and sell). The worker adds what a package holds.
+ */
+export function pricingFacts(kind: string, prices: StudioPrices = config.studioPrices): string {
+  const $ = dollars
+  let lines: string[]
+  if (kind === 'scene') {
+    lines = [
+      `A building is ${$(prices.buildingSmall)} to finalize at a 0.5x0.5 or 1x1 footprint, ${$(prices.buildingMedium)} at 1x2 or 2x2, `
+        + `and ${$(prices.buildingLarge)} at 4x4.`,
+      `Furniture and decor: the design's first paid piece is ${$(prices.furniture)} and every other one ${$(prices.furnitureExtra)} `
+        + '(after a building, every furniture piece is the lower price).',
+      `Changing a finalized piece and finalizing it again is a revision: a building ${$(prices.revisionBuildingSmall)}, `
+        + `${$(prices.revisionBuildingMedium)} or ${$(prices.revisionBuildingLarge)} by footprint, a furniture piece ${$(prices.revisionFurniture)}.`,
+    ]
+  } else if (kind === 'emote') {
+    lines = [
+      `Finalizing the emote is ${$(prices.emote)}. It is one animation that plays on both body shapes.`,
+      `Changing it after it is finalized and finalizing it again is a revision: ${$(prices.revisionEmote)}.`,
+    ]
+  } else {
+    lines = [
+      `Finalizing a wearable piece is ${$(prices.wearable)} for the design's first piece and ${$(prices.extraPiece)} for each other piece `
+        + 'of the same design. A piece is one item, such as the hat or the shirt. Each piece covers both body shapes: its '
+        + 'male and female versions come together, for one price, never charged separately.',
+      `Changing a finalized piece and finalizing it again is a revision: ${$(prices.revisionWearable)} for the first piece in a checkout `
+        + `and ${$(prices.revisionExtraPiece)} for each other piece in it.`,
+    ]
+  }
+  lines.push(
+    'The person picks which pieces to finalize, and can finalize the rest later. The Finalize screen shows the exact total '
+      + 'before they pay. Only finalizing and prompt top-ups cost anything: building and changing a design is covered by the '
+      + `daily prompts, and a top-up is ${$(prices.topupCents)} for ${prices.topupPrompts} more prompts.`,
+    'They pay by card, with MANA or with Virvi credit. A free finalize (from a gift code) covers one piece\'s first finalize, '
+      + `up to ${$(prices.giftCapCents)}. A revision that only fixes the agent's own mistake can be marked so at Finalize and isn't `
+      + 'charged (after a few on one piece, the team looks at it first). Clipping is always fixed free.',
+    'A finalized package is the buyer\'s: they may open the files in Blender or any other tool, change the shape, '
+      + 'artwork and materials, make variants, and publish and sell as many items made from them as they like, in '
+      + 'Decentraland or on any other platform, with nothing more to pay Virvi. Artwork they add must be theirs to use. '
+      + 'Decentraland\'s own publishing fee is Decentraland\'s, not Virvi\'s.',
+  )
+  return lines.join('\n')
+}

@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
   canReport, checkoutBody, checkoutHref, checkoutReportsKey, dialogTotal, emoteChecklist, finalizeChoices, finalizeStrip, formatCents, initialSelection,
-  latestOnly, lineNote, HELD_REPORT_COPY, PRICE_LABEL, REPORT_MAX, refusalMessage, reportOk, selectionCategories, selectionProblem, toggleSelection,
+  latestOnly, lineNote, HELD_REPORT_COPY, packageSummary, PRICE_LABEL, REPORT_MAX, refusalMessage, reportOk, selectionCategories, selectionProblem, toggleSelection,
   triangleWarning, wornDetail, type Quote, type StudioDetail, type StudioKind, type StudioSupportView, type WornState,
 } from '@/lib/studio'
 import { supportFinalizeLabel, supportOwnerName } from '@/lib/studio-support'
@@ -91,7 +91,7 @@ export default function Finalize({ designId, kind, quote, busy, detail, onOpenEm
         <PrimaryButton type="button" className="mt-3" disabled={busy} onClick={() => setOpen(true)}>{strip.button}</PrimaryButton>
       )}
       {open && quote && (
-        <FinalizeDialog designId={designId} quote={quote} selected={selected ?? initialSelection(quote)} onSelected={onSelected}
+        <FinalizeDialog designId={designId} kind={kind} quote={quote} selected={selected ?? initialSelection(quote)} onSelected={onSelected}
           onClose={() => { setOpen(false); onSelected(null) }} support={support} onChanged={onChanged}>
           {kind !== 'scene' && <EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />}
         </FinalizeDialog>
@@ -100,8 +100,8 @@ export default function Finalize({ designId, kind, quote, busy, detail, onOpenEm
   )
 }
 
-function FinalizeDialog({ designId, quote, selected, onSelected, onClose, children, support, onChanged }: {
-  designId: string; quote: Quote; selected: string[]; onSelected: (categories: string[]) => void; onClose: () => void; children: React.ReactNode
+function FinalizeDialog({ designId, kind, quote, selected, onSelected, onClose, children, support, onChanged }: {
+  designId: string; kind: StudioKind; quote: Quote; selected: string[]; onSelected: (categories: string[]) => void; onClose: () => void; children: React.ReactNode
   support?: StudioSupportView; onChanged?: () => Promise<void>
 }) {
   const api = useApi()
@@ -183,6 +183,7 @@ function FinalizeDialog({ designId, quote, selected, onSelected, onClose, childr
             ? `Tick the pieces to finalize for ${supportOwnerName(support)}. They’re theirs at once, as if they had paid, and nobody is charged.`
             : 'Tick the pieces to finalize now. You can keep working on the rest and finalize them later.'}
         </p>
+        <p className="mt-2 text-sm text-gray-400">{packageSummary(kind)}</p>
         <ul className="mt-4 divide-y divide-gray-800">
           {finalizeChoices(quote).map((c) => {
             const ticked = c.pickable && selected.includes(c.category)

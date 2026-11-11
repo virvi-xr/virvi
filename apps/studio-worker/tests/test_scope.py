@@ -88,3 +88,9 @@ def test_the_screen_knows_scene_designs():
     assert 'buildings' in SYSTEM and 'furniture' in SYSTEM
     content = request('a cosy cafe', 'scene', [], [])['messages'][0]['content']
     assert content.startswith('The design is a building or furniture for a Decentraland scene.')
+
+
+def test_the_check_treats_questions_about_prices_and_the_files_as_design():
+    """"Does the $29 Finalize include both body shapes? Can I reuse the GLBs?" can lead to a sale."""
+    text = ' '.join(scope.SYSTEM.split())
+    assert 'prices, paying, what finalizing includes and what they may do with the files' in text

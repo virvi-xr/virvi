@@ -171,6 +171,16 @@ export type QuoteLine = {
 const afterGift = (l: QuoteLine) => l.admin ? 0 : l.gift ? Math.max(0, l.amountCents - (l.giftCents ?? l.amountCents)) : l.amountCents
 
 /** How each kind of checkout line is named. */
+const YOURS = 'The files are yours to edit, reuse and sell, in Decentraland or anywhere else.'
+
+/** What Finalize gives you, for the Finalize dialog (the agent is told the same, with the prices). */
+export function packageSummary(kind: StudioKind): string {
+  if (kind === 'emote') return `The emote plays on both body shapes. You get the animation file, a thumbnail, renders and a short clip. ${YOURS}`
+  if (kind === 'scene') return `Each piece comes with its 3D file, a thumbnail, renders and, for a building, a walk-through clip. ${YOURS}`
+  return 'Each piece comes in male and female versions for one price, with its 3D files, the Builder upload, a thumbnail, '
+    + `renders and a short clip. ${YOURS}`
+}
+
 export const PRICE_LABEL: Record<QuoteLine['priceKind'], string> = {
   first: 'First finalize',
   first_extra: 'Extra piece',

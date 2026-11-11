@@ -57,6 +57,10 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
 - **Revisions** (every finalize after a piece's first) are half price. A customer who says the revision fixed the
   agent's mistake (`…/report`, within 30 days, or at checkout) is refunded that line in full, at once.
 - **Top-ups** (`POST /topups`) add prompts used after the day's allowance; they never expire.
+- **What the buyer gets** (owner, 2026-11-11): a finalized package is the buyer's, to edit, reuse, publish and sell
+  as many items made from it as they like, anywhere, with nothing more to pay Virvi. A wearable piece's price covers
+  both body shapes. The agent is told this and the kind's prices with every prompt (`pricingFacts` in `pricing.ts`,
+  the job's `pricing`), and the Finalize dialog says it in short (`packageSummary` in the web's `lib/studio.ts`).
 
 ## Sharing (LIV-159)
 
