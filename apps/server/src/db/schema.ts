@@ -703,7 +703,8 @@ export const assetLibraryItems = pgTable('asset_library_items', {
   dimensions: jsonb('dimensions'), // { width, height, depth }
   license: text('license'), // 'cc0', 'cc-by', 'proprietary', etc.
   author: text('author'),
-  isPublic: boolean('is_public').notNull().default(true),
+  // Private unless set: a row that forgets to say is never shared by accident (LIV-132). Catalog packs set it true
+  isPublic: boolean('is_public').notNull().default(false),
   // Deleting an account deletes its private models first (library/user-models.ts); its public ones stay, ownerless
   uploadedBy: uuid('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -114,7 +114,6 @@ export default function MediaPage() {
           <SelectField value={kind} onChange={v => setKind(v as Kind | 'all')} label="File type" className="w-full sm:w-56">
             <option value="all">All types</option>
             <option value="image">Images</option>
-            <option value="model">3D models</option>
             <option value="video">Video</option>
             <option value="other">Other</option>
           </SelectField>

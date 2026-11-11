@@ -16,6 +16,15 @@ describe('asset library routes', () => {
   const post = (user: Awaited<ReturnType<typeof createUser>>, payload: Record<string, unknown>) =>
     app.inject({ method: 'POST', url: '/api/assets', headers: { authorization: `Bearer ${tokenFor(user)}` }, payload: { name: 'Duck', filename: 'duck.glb', contentType: 'model/gltf-binary', fileData: 'AAAA', ...payload } })
 
+  it('a library row that doesn\'t say is private, so nothing is shared by accident (LIV-132)', async () => {
+    const owner = await createUser()
+    const [row] = await db.insert(assetLibraryItems).values({ name: 'Chair', storageKey: 'chair', uploadedBy: owner.id }).returning()
+    expect(row.isPublic).toBe(false)
+    const stranger = await createUser()
+    const res = await app.inject({ method: 'GET', url: `/api/assets/${row.id}`, headers: { authorization: `Bearer ${tokenFor(stranger)}` } })
+    expect(res.statusCode).toBe(404)
+  })
+
   it('stores under a server-chosen key, ignoring path segments in the filename', async () => {
     const u = await createUser()
     const res = await post(u, { filename: '../../evil.glb' })
