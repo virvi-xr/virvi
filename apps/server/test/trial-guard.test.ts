@@ -17,6 +17,7 @@ const ALLOWED = [
   'PATCH /api/studio/designs/:id',
   'POST /api/studio/designs/:id/prompts',
   'POST /api/studio/designs/:id/prompt-help',
+  'POST /api/studio/designs/:id/help', // asking Virvi support: a guest stuck on their own trial design may ask too
   'GET /api/studio/designs/:id/prompt-ideas',
   'POST /api/studio/designs/:id/warm',
   'GET /api/studio/designs/:id/finalize',
