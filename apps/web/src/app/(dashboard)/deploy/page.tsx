@@ -364,7 +364,7 @@ function HyperfyWorlds({ sceneId }: { sceneId: string }) {
       <form onSubmit={connect} className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-800 bg-gray-900 p-4">
         <div className="min-w-[12rem] flex-1">
           <label className="block text-xs text-gray-400 mb-1">Connect a world you run yourself</label>
-          <input
+          <input aria-label="Connect a world you run yourself"
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={100}
@@ -488,7 +488,7 @@ function DeployContent() {
       {/* Scene Selector */}
       <div>
         <label className="block text-xs text-gray-400 mb-1">Select Scene</label>
-        <select
+        <select aria-label="Select Scene"
           value={selectedSceneId}
           onChange={(e) => handleSceneChange(e.target.value)}
           className="w-full max-w-md rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800"
@@ -503,7 +503,7 @@ function DeployContent() {
       {!selectedSceneId && (
         <div className="text-center py-12">
           <p className="text-gray-500 mb-2">Select a scene to see where it&apos;s deployed.</p>
-          <p className="text-sm text-gray-600">Scenes go live in a Decentraland World, or in a Hyperfy world.</p>
+          <p className="text-sm text-gray-500">Scenes go live in a Decentraland World, or in a Hyperfy world.</p>
         </div>
       )}
 

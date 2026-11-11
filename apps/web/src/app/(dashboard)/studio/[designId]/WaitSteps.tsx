@@ -17,7 +17,7 @@ export default function WaitSteps({ steps, since, typicalSec }: { steps: WaitSte
     <div className="not-italic">
       <ol className="space-y-1">
         {steps.map((s) => (
-          <li key={s.key} className={`flex items-center gap-2 ${s.state === 'todo' ? 'text-gray-600' : s.state === 'done' ? 'text-gray-400' : 'text-gray-200'}`}
+          <li key={s.key} className={`flex items-center gap-2 ${s.state === 'todo' ? 'text-gray-500' : s.state === 'done' ? 'text-gray-400' : 'text-gray-200'}`}
             aria-current={s.state === 'current' ? 'step' : undefined}>
             <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden="true">
               {s.state === 'done' ? (

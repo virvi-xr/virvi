@@ -138,7 +138,7 @@ function DesignCard({ d }: { d: StudioDesign }) {
       </div>
       <p className="mt-2 text-sm text-gray-400">{kindLabel(d.kind)} · {agentLabel(d.agent)}</p>
       {shared && <p className="mt-1 truncate text-sm text-gray-400">{d.ownerName?.trim() ? `${d.ownerName.trim()}’s design` : 'Shared with you'} · {roleLabel(d.role!)}</p>}
-      <p className="mt-1 text-xs text-gray-600">{d.lastJobAt ? `Last worked on ${relativeTime(d.lastJobAt, new Date())}` : `Started ${relativeTime(d.createdAt, new Date())}`}</p>
+      <p className="mt-1 text-xs text-gray-500">{d.lastJobAt ? `Last worked on ${relativeTime(d.lastJobAt, new Date())}` : `Started ${relativeTime(d.createdAt, new Date())}`}</p>
     </a>
   )
 }

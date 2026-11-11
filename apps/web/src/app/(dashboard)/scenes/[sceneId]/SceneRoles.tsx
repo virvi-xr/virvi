@@ -60,7 +60,7 @@ export function SceneRoles({ sceneId }: { sceneId: string }) {
               <li key={r.wallet} className="flex items-center justify-between rounded-md bg-gray-800 px-4 py-2 text-sm">
                 <span className="font-mono text-gray-200" title={r.wallet}>{r.displayName || short(r.wallet)}</span>
                 <span className="flex items-center gap-2">
-                  <select value={r.role} disabled={busy} onChange={(e) => run(() => api.addSceneRole(sceneId, r.wallet, e.target.value as Role))}
+                  <select aria-label={`Role for ${r.displayName || short(r.wallet)}`} value={r.role} disabled={busy} onChange={(e) => run(() => api.addSceneRole(sceneId, r.wallet, e.target.value as Role))}
                     className="rounded bg-gray-700 px-2 py-1 text-xs text-white">
                     {(Object.keys(LABEL) as Role[]).map((k) => <option key={k} value={k}>{LABEL[k]}</option>)}
                   </select>
@@ -76,9 +76,9 @@ export function SceneRoles({ sceneId }: { sceneId: string }) {
             ))}
           </ul>
           <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); run(async () => { await api.addSceneRole(sceneId, wallet.trim(), role); setWallet('') }) }}>
-            <input value={wallet} onChange={(e) => setWallet(e.target.value)} placeholder="Wallet address (0x…)" pattern="^0x[0-9a-fA-F]{40}$" required
+            <input aria-label="Wallet address (0x…)" value={wallet} onChange={(e) => setWallet(e.target.value)} placeholder="Wallet address (0x…)" pattern="^0x[0-9a-fA-F]{40}$" required
               className="flex-1 rounded-md bg-gray-950 px-4 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800" />
-            <select value={role} onChange={(e) => setRole(e.target.value as Role)} className="rounded-md bg-gray-800 px-3 py-2 text-sm text-white">
+            <select aria-label="Role" value={role} onChange={(e) => setRole(e.target.value as Role)} className="rounded-md bg-gray-800 px-3 py-2 text-sm text-white">
               {(Object.keys(LABEL) as Role[]).map((k) => <option key={k} value={k}>{LABEL[k]}</option>)}
             </select>
             <button type="submit" disabled={busy} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50">Add</button>

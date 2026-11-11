@@ -102,7 +102,7 @@ function MarkerCard({ marker, busy, run }: { marker: ArMarkerView; busy: boolean
       <div className="flex-1 space-y-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-gray-400">Size (mm)</label>
-          <input type="number" min={AR_MIN_DIAMETER_MM} max={AR_MAX_DIAMETER_MM} value={diameter} onChange={(e) => setDiameter(e.target.value)} onBlur={saveDiameter} className={`${input} w-24`} />
+          <input aria-label="Size (mm)" type="number" min={AR_MIN_DIAMETER_MM} max={AR_MAX_DIAMETER_MM} value={diameter} onChange={(e) => setDiameter(e.target.value)} onBlur={saveDiameter} className={`${input} w-24`} />
           {diameterErr && <span className="text-xs text-red-400">{diameterErr}</span>}
           {!diameterErr && (resized || diameter !== String(marker.diameterMm)) && <span className="text-xs text-yellow-400">{resizeNote(marker)}</span>}
           <span className={`text-xs ${aligned ? 'text-green-400' : 'text-yellow-400'}`}>{aligned ? 'Aligned' : 'Not aligned yet: align it with the Quest app'}</span>
@@ -120,7 +120,7 @@ function MarkerCard({ marker, busy, run }: { marker: ArMarkerView; busy: boolean
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-gray-400">Mounting (3D files)</label>
-          <select value={mounting} onChange={(e) => setMounting(e.target.value as ArMounting)} className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-white">
+          <select aria-label="Mounting (3D files)" value={mounting} onChange={(e) => setMounting(e.target.value as ArMounting)} className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-white">
             {MOUNTINGS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
         </div>
@@ -185,7 +185,7 @@ function SpaceCard({ space, busy, run }: { space: ArSpaceView; busy: boolean; ru
           e.preventDefault()
           run(async () => { await api.addArFloor(space.id, { name: floorName.trim(), heightM: Number(floorHeight) }); setFloorName(''); setFloorHeight('0') }, { lock: true })
         }}>
-          <input value={floorName} onChange={(e) => setFloorName(e.target.value)} placeholder="New floor name" required maxLength={200} className={input} />
+          <input aria-label="New floor name" value={floorName} onChange={(e) => setFloorName(e.target.value)} placeholder="New floor name" required maxLength={200} className={input} />
           <input type="number" step="0.1" value={floorHeight} onChange={(e) => setFloorHeight(e.target.value)} required aria-label="New floor height in metres" className={`${input} w-24`} />
           <span className="text-xs text-gray-400">m</span>
           <button type="submit" disabled={busy} className={smallBtn}>+ Add floor</button>
@@ -231,8 +231,8 @@ export function ArSpaces({ sceneId }: { sceneId: string }) {
           e.preventDefault()
           run(async () => { await api.createArSpace(sceneId, { name: name.trim(), place: place.trim() || null }); setName(''); setPlace('') }, { lock: true })
         }}>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Space name" required maxLength={200} className={`${input} flex-1 min-w-40`} />
-          <input value={place} onChange={(e) => setPlace(e.target.value)} placeholder="Place (optional)" maxLength={500} className={`${input} flex-1 min-w-40`} />
+          <input aria-label="Space name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Space name" required maxLength={200} className={`${input} flex-1 min-w-40`} />
+          <input aria-label="Place (optional)" value={place} onChange={(e) => setPlace(e.target.value)} placeholder="Place (optional)" maxLength={500} className={`${input} flex-1 min-w-40`} />
           <button type="submit" disabled={busy} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50">Add AR space</button>
         </form>
       </div>

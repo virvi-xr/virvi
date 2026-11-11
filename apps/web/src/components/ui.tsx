@@ -258,7 +258,7 @@ export function InlineDescription({ value, canEdit, onSave, label, placeholder, 
       </p>
     )
   }
-  if (!canEdit) return <p className={`${spacing} text-sm text-gray-600`}>No description</p>
+  if (!canEdit) return <p className={`${spacing} text-sm text-gray-500`}>No description</p>
   return (
     <button onClick={() => { setDraft(''); setEditing(true) }} className={`${spacing} flex items-center gap-2 text-sm text-gray-400 hover:text-white`}>
       <PencilIcon size={16} /> Add description

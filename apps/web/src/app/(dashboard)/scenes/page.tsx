@@ -149,7 +149,7 @@ function ScenesContent() {
 
       {showCreate && actions.includes('blank') && (
         <form onSubmit={handleCreate} className="mb-6 flex flex-wrap gap-2 rounded-lg border border-gray-800 bg-gray-900 p-3">
-          <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
+          <input aria-label="Blank scene name" type="text" value={newName} onChange={e => setNewName(e.target.value)}
             placeholder="Blank scene name" autoFocus
             className="min-w-48 flex-1 rounded-md border border-gray-800 bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400" />
           <button type="submit" className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-700">Create</button>

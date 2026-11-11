@@ -77,7 +77,7 @@ export function ClickActionField({ value, onSave, api, MediaPicker, inherited }:
       )}
       {form.kind === 'sound' && (
         <div className="flex flex-wrap items-center gap-2">
-          <input className={`${INPUT} min-w-0 flex-1`} value={form.sound} placeholder="https:// (an mp3 or ogg)" onChange={(e) => set('sound', e.target.value)} />
+          <input aria-label="Sound URL (mp3 or ogg)" className={`${INPUT} min-w-0 flex-1`} value={form.sound} placeholder="https:// (an mp3 or ogg)" onChange={(e) => set('sound', e.target.value)} />
           <button type="button" className={BTN} onClick={() => setPicking(true)}>Choose from library</button>
           {picking && <MediaPicker api={api} accept="audio/*" onSelect={(url) => { set('sound', url); setPicking(false) }} onClose={() => setPicking(false)} />}
         </div>

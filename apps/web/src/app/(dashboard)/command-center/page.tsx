@@ -127,7 +127,7 @@ function CommandCenterContent() {
               Live
             </span>
           )}
-          <select
+          <select aria-label="Event"
             value={selectedEventId}
             onChange={(e) => {
               setSelectedEventId(e.target.value)
@@ -382,7 +382,7 @@ function BroadcastPanel({
 
       {activeTab === 'message' && (
         <form onSubmit={handleSendMessage} className="space-y-3">
-          <input
+          <input aria-label="Enter message to display"
             type="text"
             value={msgText}
             onChange={(e) => setMsgText(e.target.value)}
@@ -392,7 +392,7 @@ function BroadcastPanel({
           <div className="flex gap-3">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Color</label>
-              <input
+              <input aria-label="Color"
                 type="color"
                 value={msgColor}
                 onChange={(e) => setMsgColor(e.target.value)}
@@ -401,7 +401,7 @@ function BroadcastPanel({
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Font size</label>
-              <input
+              <input aria-label="Font size"
                 type="number"
                 value={msgFontSize}
                 onChange={(e) => setMsgFontSize(e.target.value)}
@@ -423,7 +423,7 @@ function BroadcastPanel({
 
       {activeTab === 'preset' && (
         <form onSubmit={handleSwitchPreset} className="space-y-3">
-          <input
+          <input aria-label="Preset ID to apply across all scenes"
             type="text"
             value={presetId}
             onChange={(e) => setPresetId(e.target.value)}
@@ -442,7 +442,7 @@ function BroadcastPanel({
 
       {activeTab === 'element' && (
         <form onSubmit={handleToggleElement} className="space-y-3">
-          <input
+          <input aria-label="Element ID to toggle"
             type="text"
             value={elementId}
             onChange={(e) => setElementId(e.target.value)}
@@ -485,7 +485,7 @@ function ActivityFeed({ log }: { log: Array<{ time: number; message: string }> }
         <div className="max-h-64 overflow-y-auto space-y-1">
           {log.map((entry, i) => (
             <div key={`${entry.time}-${i}`} className="flex items-start gap-3 text-sm py-1">
-              <span className="text-xs text-gray-600 whitespace-nowrap pt-0.5">
+              <span className="text-xs text-gray-500 whitespace-nowrap pt-0.5">
                 {new Date(entry.time).toLocaleTimeString()}
               </span>
               <span className="text-gray-300">{entry.message}</span>

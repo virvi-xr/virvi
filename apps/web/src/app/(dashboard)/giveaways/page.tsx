@@ -76,10 +76,10 @@ function GiveawaysContent() {
       {showCreate && (
         <form onSubmit={handleCreate} className="mb-6 rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3">
           <div className="flex gap-2">
-            <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
+            <input aria-label="Giveaway name" type="text" value={newName} onChange={e => setNewName(e.target.value)}
               placeholder="Giveaway name" autoFocus
               className="flex-1 rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800" />
-            <input type="number" value={newClaimLimit} onChange={e => setNewClaimLimit(e.target.value)}
+            <input aria-label="Claim limit" type="number" value={newClaimLimit} onChange={e => setNewClaimLimit(e.target.value)}
               placeholder="Claim limit" min="1"
               className="w-32 rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800" />
           </div>
@@ -110,7 +110,7 @@ function GiveawaysContent() {
                 <Badge tone={g.enabled ? 'success' : 'neutral'}>{g.enabled ? 'Enabled' : 'Disabled'}</Badge>
               </div>
               <p className="mt-2 text-sm text-gray-400">Claim limit: {g.claimLimit ?? 1}</p>
-              <p className="mt-1 text-xs text-gray-600">ID: {g.id}</p>
+              <p className="mt-1 text-xs text-gray-500">ID: {g.id}</p>
             </button>
           ))}
         </div>
@@ -264,10 +264,10 @@ function GiveawayDetail({ id, onDeleted }: { id: string; onDeleted: () => void }
       <form onSubmit={handleUpdate} className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-3">
         <h2 className="text-lg font-semibold">Settings</h2>
         <div className="flex gap-2">
-          <input type="text" value={editName} onChange={e => setEditName(e.target.value)}
+          <input aria-label="Name" type="text" value={editName} onChange={e => setEditName(e.target.value)}
             placeholder="Name"
             className="flex-1 rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800" />
-          <input type="number" value={editClaimLimit} onChange={e => setEditClaimLimit(e.target.value)}
+          <input aria-label="Claim limit" type="number" value={editClaimLimit} onChange={e => setEditClaimLimit(e.target.value)}
             placeholder="Claim limit" min="1"
             className="w-32 rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800" />
           <button type="submit" disabled={saving}
@@ -290,16 +290,16 @@ function GiveawayDetail({ id, onDeleted }: { id: string; onDeleted: () => void }
         {showAddItem && (
           <form onSubmit={handleAddItem} className="space-y-2 border-t border-gray-800 pt-3">
             <div className="grid grid-cols-2 gap-2">
-              <input type="text" value={itemName} onChange={e => setItemName(e.target.value)}
+              <input aria-label="Item name" type="text" value={itemName} onChange={e => setItemName(e.target.value)}
                 placeholder="Item name"
                 className="rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800" />
-              <input type="text" value={itemImageUrl} onChange={e => setItemImageUrl(e.target.value)}
+              <input aria-label="Image URL" type="text" value={itemImageUrl} onChange={e => setItemImageUrl(e.target.value)}
                 placeholder="Image URL"
                 className="rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800" />
-              <input type="text" value={itemContractAddress} onChange={e => setItemContractAddress(e.target.value)}
+              <input aria-label="Contract address" type="text" value={itemContractAddress} onChange={e => setItemContractAddress(e.target.value)}
                 placeholder="Contract address"
                 className="rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800" />
-              <input type="text" value={itemTokenId} onChange={e => setItemTokenId(e.target.value)}
+              <input aria-label="Token ID" type="text" value={itemTokenId} onChange={e => setItemTokenId(e.target.value)}
                 placeholder="Token ID"
                 className="rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800" />
             </div>

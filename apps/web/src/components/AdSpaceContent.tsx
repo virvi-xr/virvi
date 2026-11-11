@@ -49,7 +49,7 @@ export default function AdSpaceContent({ elementId, refreshKey, api }: { element
     <div className="space-y-3 rounded-lg border border-gray-800 bg-gray-950 p-3">
       <div className="flex flex-col gap-1">
         <span className="text-xs text-gray-500">Who can advertise here</span>
-        <select value={space?.content ?? 'family'} disabled={!space || busy}
+        <select aria-label="Who can advertise here" value={space?.content ?? 'family'} disabled={!space || busy}
           onChange={(e) => run(() => api.setAdSpaceContent(elementId, e.target.value as AdContent))}
           className="w-full max-w-md rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800 disabled:opacity-50">
           {CONTENT_OPTIONS.map((c) => <option key={c} value={c}>{contentLabel(c)}</option>)}

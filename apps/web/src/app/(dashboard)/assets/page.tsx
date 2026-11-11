@@ -107,7 +107,7 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Name *</label>
-              <input
+              <input aria-label="Name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -117,7 +117,7 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
             </div>
             <div className="md:col-span-2">
               <label className="block text-xs text-gray-400 mb-1">Description</label>
-              <textarea
+              <textarea aria-label="Description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={2}
@@ -127,7 +127,7 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Category</label>
-              <input
+              <input aria-label="Category"
                 type="text"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
@@ -137,7 +137,7 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Tags (comma separated)</label>
-              <input
+              <input aria-label="Tags (comma separated)"
                 type="text"
                 value={tagsInput}
                 onChange={(e) => setTagsInput(e.target.value)}
@@ -147,7 +147,7 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">License</label>
-              <select
+              <select aria-label="License"
                 value={license}
                 onChange={(e) => setLicense(e.target.value)}
                 className={fieldClass}
@@ -159,7 +159,7 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Author</label>
-              <input
+              <input aria-label="Author"
                 type="text"
                 value={author}
                 onChange={(e) => setAuthor(e.target.value)}
@@ -311,7 +311,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
             <div className="space-y-3">
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Name</label>
-                <input
+                <input aria-label="Name"
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
@@ -320,7 +320,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
               </div>
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Description</label>
-                <textarea
+                <textarea aria-label="Description"
                   value={editDescription}
                   onChange={(e) => setEditDescription(e.target.value)}
                   rows={3}
@@ -330,7 +330,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Category</label>
-                  <input
+                  <input aria-label="Category"
                     type="text"
                     value={editCategory}
                     onChange={(e) => setEditCategory(e.target.value)}
@@ -339,7 +339,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Tags (comma separated)</label>
-                  <input
+                  <input aria-label="Tags (comma separated)"
                     type="text"
                     value={editTags}
                     onChange={(e) => setEditTags(e.target.value)}
@@ -488,7 +488,7 @@ function AddToScene({ assetId }: { assetId: string }) {
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
       <p className="text-xs text-gray-500 mb-2">Add to a scene, ready to place</p>
       <div className="flex gap-2">
-        <select value={sceneId} onChange={(e) => setSceneId(e.target.value)} className="flex-1 rounded-md bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-400 border border-gray-800">
+        <select aria-label="Scene" value={sceneId} onChange={(e) => setSceneId(e.target.value)} className="flex-1 rounded-md bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-400 border border-gray-800">
           {scenes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <button onClick={add} disabled={busy} className="rounded-md bg-blue-600 px-4 py-2 text-sm hover:bg-blue-700 disabled:opacity-50">

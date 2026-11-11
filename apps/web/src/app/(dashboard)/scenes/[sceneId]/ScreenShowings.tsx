@@ -299,7 +299,7 @@ export function ScreenShowings({ api, sceneId, elementId, MediaPicker, screens =
             ))}
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" className={BTN} onClick={() => setPicking(true)}>Add from Images &amp; Video</button>
-              <input className={`${INPUT} flex-1`} value={urlInput} onChange={(e) => setUrlInput(e.target.value)} placeholder="Or paste a video URL"
+              <input aria-label="Or paste a video URL" className={`${INPUT} flex-1`} value={urlInput} onChange={(e) => setUrlInput(e.target.value)} placeholder="Or paste a video URL"
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (urlInput.trim()) { addItem(urlInput.trim()); setUrlInput('') } } }} />
             </div>
             <Preview form={form} name={name} />

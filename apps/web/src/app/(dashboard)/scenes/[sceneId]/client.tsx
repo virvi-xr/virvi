@@ -155,7 +155,7 @@ function NumberInput({ value, onChange, label }: { value: number; onChange: (v: 
   return (
     <div className="flex flex-col gap-1">
       <span className="text-xs text-gray-500">{label}</span>
-      <input ref={ref} type="number" step="any" value={local}
+      <input aria-label={label} ref={ref} type="number" step="any" value={local}
         onChange={e => setLocal(e.target.value)}
         onBlur={commit}
         onKeyDown={e => { if (e.key === 'Enter') ref.current?.blur() }}
@@ -177,7 +177,7 @@ function TextInput({ value, onChange, label, readOnly }: { value: string; onChan
   return (
     <div className="flex flex-col gap-1">
       <span className="text-xs text-gray-500">{label}</span>
-      <input ref={ref} type="text" value={local} readOnly={readOnly}
+      <input aria-label={label} ref={ref} type="text" value={local} readOnly={readOnly}
         onChange={e => setLocal(e.target.value)}
         onBlur={commit}
         onKeyDown={e => { if (e.key === 'Enter') ref.current?.blur() }}
@@ -414,7 +414,7 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
 
       <div className="flex flex-col gap-1">
         <span className="text-xs text-gray-500">Off Type</span>
-        <select value={props.offType ?? 0}
+        <select aria-label="Off Type" value={props.offType ?? 0}
           onChange={e => updateProp('offType', parseInt(e.target.value))}
           className="w-48 rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800">
           {OFF_TYPES.map(t => (
@@ -487,7 +487,7 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
         {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
 
         <div className="flex items-center gap-2">
-          <input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)}
+          <input aria-label="Paste video URL and press Enter" type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleAddUrl() }}
             placeholder="Paste video URL and press Enter"
             className="flex-1 rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800" />
@@ -505,7 +505,7 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
       <div className="flex flex-col gap-1">
         <span className="text-xs text-gray-500">Volume</span>
         <div className="flex items-center gap-3">
-          <input type="range" min={0} max={1} step={0.01} value={props.volume ?? 1}
+          <input aria-label="Volume" type="range" min={0} max={1} step={0.01} value={props.volume ?? 1}
             onChange={e => updateProp('volume', parseFloat(e.target.value))}
             className="flex-1 accent-blue-500" />
           <span className="text-sm text-gray-400 w-10 text-right">{Math.round((props.volume ?? 1) * 100)}%</span>
@@ -895,7 +895,7 @@ function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInsta
       <div className="flex flex-wrap gap-4">
         <div className="flex flex-col gap-1">
           <span className="text-xs text-gray-500">Shape</span>
-          <select value={props.shape ?? '16:9'}
+          <select aria-label="Shape" value={props.shape ?? '16:9'}
             onChange={e => updateProp('shape', e.target.value)}
             className="w-48 rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800">
             {AD_SHAPES.map(s => (
@@ -905,7 +905,7 @@ function AdSpaceElementEditor({ element, sceneId, onUpdateElement, onUpdateInsta
         </div>
         <div className="flex flex-col gap-1">
           <span className="text-xs text-gray-500">Formats</span>
-          <select value={props.formats ?? 'both'}
+          <select aria-label="Formats" value={props.formats ?? 'both'}
             onChange={e => updateProp('formats', e.target.value)}
             className="w-48 rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800">
             {AD_SPACE_FORMATS.map(f => (
@@ -1058,7 +1058,7 @@ function SoundElementEditor({ element, onUpdateElement, onUpdateInstance, onDele
       <div className="flex flex-col gap-1">
         <span className="text-xs text-gray-500">Volume</span>
         <div className="flex items-center gap-3">
-          <input type="range" min={0} max={1} step={0.01} value={props.volume ?? 1}
+          <input aria-label="Volume" type="range" min={0} max={1} step={0.01} value={props.volume ?? 1}
             onChange={e => updateProp('volume', parseFloat(e.target.value))}
             className="flex-1 accent-blue-500" />
           <span className="text-sm text-gray-400 w-10 text-right">{Math.round((props.volume ?? 1) * 100)}%</span>
@@ -1105,7 +1105,7 @@ function WidgetValueEditor({ controlType, value, onChange }: { controlType: numb
       return (
         <div className="flex flex-col gap-1">
           <span className="text-xs text-gray-500">Date/Time</span>
-          <input type="datetime-local" value={value || ''}
+          <input aria-label="Date/Time" type="datetime-local" value={value || ''}
             onChange={e => onChange(e.target.value)}
             className="w-64 rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800" />
         </div>
@@ -1123,7 +1123,7 @@ function WidgetValueEditor({ controlType, value, onChange }: { controlType: numb
           <span className="text-xs text-gray-500">Value: {value ?? 50}</span>
           <div className="flex items-center gap-3">
             <span className="text-xs text-gray-500">0</span>
-            <input type="range" min={0} max={100} step={1} value={value ?? 50}
+            <input aria-label="Value" type="range" min={0} max={100} step={1} value={value ?? 50}
               onChange={e => onChange(parseInt(e.target.value))}
               className="flex-1 accent-blue-500" />
             <span className="text-xs text-gray-500">100</span>
@@ -1169,7 +1169,7 @@ function WidgetElementEditor({ element, onUpdateElement, onDelete }: {
 
       <div className="flex flex-col gap-1">
         <span className="text-xs text-gray-500">Control Type</span>
-        <select value={props.controlType ?? 0}
+        <select aria-label="Control Type" value={props.controlType ?? 0}
           onChange={e => updateProp('controlType', parseInt(e.target.value))}
           className="w-48 rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800">
           {CONTROL_TYPES.map(ct => (
@@ -1234,14 +1234,14 @@ function ModerationPanel({ sendMessage }: { sendMessage: (type: string, payload:
         <h4 className="font-semibold">Send Message</h4>
         <div className="flex flex-col gap-1">
           <span className="text-xs text-gray-500">Message Text</span>
-          <textarea value={msgText} onChange={e => setMsgText(e.target.value)}
+          <textarea aria-label="Type a message to display in-world" value={msgText} onChange={e => setMsgText(e.target.value)}
             placeholder="Type a message to display in-world..."
             className="w-full rounded bg-gray-950 px-3 py-2 text-sm text-white outline-none resize-y min-h-[60px] focus:border-blue-400 border border-gray-800" />
         </div>
         <div className="flex items-end gap-4">
           <div className="flex flex-col gap-1">
             <span className="text-xs text-gray-500">Color</span>
-            <input type="color" value={msgColor} onChange={e => setMsgColor(e.target.value)}
+            <input aria-label="Color" type="color" value={msgColor} onChange={e => setMsgColor(e.target.value)}
               className="h-8 w-12 rounded bg-gray-800 border border-gray-700 cursor-pointer" />
           </div>
           <NumberInput label="Font Size" value={msgFontSize} onChange={setMsgFontSize} />
@@ -1280,7 +1280,7 @@ function ModerationPanel({ sendMessage }: { sendMessage: (type: string, payload:
               <div key={action.id} className="flex items-center gap-3 text-sm border-b border-gray-800 pb-2">
                 <Badge tone={action.type === 'Message' ? 'info' : 'danger'}>{action.type}</Badge>
                 <span className="text-gray-400 truncate flex-1">{action.detail}</span>
-                <span className="text-xs text-gray-600 whitespace-nowrap">{action.timestamp.toLocaleTimeString()}</span>
+                <span className="text-xs text-gray-500 whitespace-nowrap">{action.timestamp.toLocaleTimeString()}</span>
               </div>
             ))}
           </div>
@@ -1410,7 +1410,7 @@ function CollaboratorsSection({ sceneId, api, currentUserId }: {
                 {c.role === 'owner' ? (
                   <Badge tone={roleTone(c.role)}>{c.role}</Badge>
                 ) : isOwner ? (
-                  <select
+                  <select aria-label="Role"
                     value={c.role}
                     onChange={e => handleChangeRole(c.userId, e.target.value)}
                     className="rounded bg-gray-700 px-2 py-1 text-xs text-white outline-none focus:border-blue-400 border border-gray-800"
@@ -1439,7 +1439,7 @@ function CollaboratorsSection({ sceneId, api, currentUserId }: {
         <form onSubmit={handleAdd} className="flex items-end gap-2 pt-2 border-t border-gray-800">
           <div className="flex-1">
             <label className="text-xs text-gray-500 mb-1 block">Email</label>
-            <input
+            <input aria-label="Email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
@@ -1450,7 +1450,7 @@ function CollaboratorsSection({ sceneId, api, currentUserId }: {
           </div>
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Role</label>
-            <select
+            <select aria-label="Role"
               value={role}
               onChange={e => setRole(e.target.value as 'editor' | 'viewer')}
               className="rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800"
@@ -1903,7 +1903,7 @@ export default function SceneEditorPage() {
           if (sceneTabLocked(tab.key, trial)) {
             return (
               <button key={tab.key} type="button" onClick={() => askSceneSignUp(tab.key, tab.label)}
-                className="flex items-center gap-1.5 rounded-t-lg px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-800/50 hover:text-gray-400">
+                className="flex items-center gap-1.5 rounded-t-lg px-4 py-2 text-sm font-medium text-gray-500 transition-colors hover:bg-gray-800/50 hover:text-gray-400">
                 {tab.label} <LockIcon size={13} />
                 <span className="sr-only">(needs a free account)</span>
               </button>

@@ -125,8 +125,8 @@ function EventsContent() {
 
       {showCreate && (
         <form onSubmit={handleCreate} className="mb-6 space-y-3 rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Event name" autoFocus className={inputClass} />
-          <input type="text" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Description (optional)" className={inputClass} />
+          <input aria-label="Event name" type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Event name" autoFocus className={inputClass} />
+          <input aria-label="Description (optional)" type="text" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Description (optional)" className={inputClass} />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <label className="block">
               <span className="mb-1 block text-xs text-gray-400">Start time</span>
@@ -417,14 +417,14 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
       {/* Edit form */}
       <form onSubmit={handleUpdate} className="space-y-3 rounded-lg border border-gray-800 bg-gray-900 p-4">
         <h2 className="text-lg font-semibold">Edit Event</h2>
-        <input
+        <input aria-label="Event name"
           type="text"
           value={editName}
           onChange={(e) => setEditName(e.target.value)}
           placeholder="Event name"
           className="w-full rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800"
         />
-        <input
+        <input aria-label="Description"
           type="text"
           value={editDesc}
           onChange={(e) => setEditDesc(e.target.value)}
@@ -434,7 +434,7 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Start time</label>
-            <input
+            <input aria-label="Start time"
               type="datetime-local"
               value={editStart}
               onChange={(e) => setEditStart(e.target.value)}
@@ -443,7 +443,7 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
           </div>
           <div>
             <label className="block text-xs text-gray-400 mb-1">End time</label>
-            <input
+            <input aria-label="End time"
               type="datetime-local"
               value={editEnd}
               onChange={(e) => setEditEnd(e.target.value)}
@@ -452,7 +452,7 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
           </div>
           <div>
             <label className="block text-xs text-gray-400 mb-1">Timezone</label>
-            <input
+            <input aria-label="Timezone"
               type="text"
               value={editTz}
               onChange={(e) => setEditTz(e.target.value)}
@@ -496,7 +496,7 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
 
         {availableScenes.length > 0 && (
           <div className="flex gap-2">
-            <select
+            <select aria-label="Scene to link"
               value={linkSceneId}
               onChange={(e) => setLinkSceneId(e.target.value)}
               className="flex-1 rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800"
@@ -545,7 +545,7 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
 
         {availableGiveaways.length > 0 && (
           <div className="flex gap-2">
-            <select
+            <select aria-label="Giveaway to link"
               value={linkGiveawayId}
               onChange={(e) => setLinkGiveawayId(e.target.value)}
               className="flex-1 rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800"

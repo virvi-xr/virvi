@@ -58,7 +58,7 @@ export default function CatalogPacksPage() {
             <tbody>
               {packs.map((p) => (
                 <tr key={p.id} className="border-t border-gray-800">
-                  <td className="p-3">{p.name}<div className="text-[10px] text-gray-600">{p.id}</div></td>
+                  <td className="p-3">{p.name}<div className="text-[10px] text-gray-500">{p.id}</div></td>
                   <td className="p-3 text-gray-400"><a href={p.sourceUrl} target="_blank" rel="noreferrer" className="hover:text-white">{p.source}</a></td>
                   <td className="p-3 text-gray-400">{licenseLabel(p.license)}</td>
                   <td className="p-3 text-right text-gray-400">{p.modelCount}</td>

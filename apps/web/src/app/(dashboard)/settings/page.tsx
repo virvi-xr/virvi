@@ -296,7 +296,7 @@ export default function SettingsPage() {
           <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
             <h3 className="text-sm font-medium text-gray-300 mb-3">Display Name</h3>
             <form onSubmit={handleUpdateProfile} className="flex gap-3">
-              <input
+              <input aria-label="Your display name"
                 type="text"
                 value={displayName}
                 onChange={e => setDisplayName(e.target.value)}
@@ -335,21 +335,21 @@ export default function SettingsPage() {
               </div>
             )}
             <form onSubmit={handleChangePassword} className="space-y-3">
-              <input
+              <input aria-label="Current password"
                 type="password"
                 value={currentPassword}
                 onChange={e => setCurrentPassword(e.target.value)}
                 placeholder="Current password"
                 className="w-full rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800"
               />
-              <input
+              <input aria-label="New password"
                 type="password"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
                 placeholder="New password"
                 className="w-full rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800"
               />
-              <input
+              <input aria-label="Confirm new password"
                 type="password"
                 value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
@@ -395,7 +395,7 @@ export default function SettingsPage() {
                 {deleteError}
               </div>
             )}
-            <input
+            <input aria-label="Your password"
               type="password"
               value={deletePassword}
               onChange={e => setDeletePassword(e.target.value)}
@@ -433,7 +433,7 @@ export default function SettingsPage() {
 
         {showCreate && (
           <form onSubmit={handleCreateOrg} className="mb-6 flex gap-2">
-            <input type="text" value={newOrgName} onChange={e => setNewOrgName(e.target.value)}
+            <input aria-label="Organization name" type="text" value={newOrgName} onChange={e => setNewOrgName(e.target.value)}
               placeholder="Organization name" autoFocus
               className="flex-1 rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800" />
             <button type="submit" className="rounded-md bg-blue-600 px-4 py-2 text-sm hover:bg-blue-700">Create</button>
@@ -508,10 +508,10 @@ export default function SettingsPage() {
                       <div className="mt-4 border-t border-gray-800 pt-4">
                         <h4 className="text-sm font-medium text-gray-300 mb-2">Invite Member</h4>
                         <div className="flex gap-2">
-                          <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
+                          <input aria-label="Email address" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
                             placeholder="Email address"
                             className="flex-1 rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800" />
-                          <select value={inviteRole} onChange={e => setInviteRole(e.target.value)}
+                          <select aria-label="Role" value={inviteRole} onChange={e => setInviteRole(e.target.value)}
                             className="rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400 border border-gray-800">
                             <option value="member">Member</option>
                             <option value="admin">Admin</option>
@@ -571,7 +571,7 @@ export default function SettingsPage() {
         {/* Create key form */}
         {showCreateKey && (
           <form onSubmit={handleCreateApiKey} className="mb-6 flex gap-2">
-            <input type="text" value={newKeyName} onChange={e => setNewKeyName(e.target.value)}
+            <input aria-label="Key name" type="text" value={newKeyName} onChange={e => setNewKeyName(e.target.value)}
               placeholder="Key name (e.g. production, ci/cd)" autoFocus
               className="flex-1 rounded-md bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400 border border-gray-800" />
             <button type="submit" className="rounded-md bg-blue-600 px-4 py-2 text-sm hover:bg-blue-700">Create</button>

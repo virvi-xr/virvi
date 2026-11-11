@@ -24,7 +24,7 @@ export function ProgressLines({ lines }: { lines: Array<{ label: string; state: 
   return (
     <ol className="space-y-1.5" aria-label="Deploy progress">
       {lines.map((l) => (
-        <li key={l.label} className={`flex items-center gap-2 ${l.state === 'todo' ? 'text-gray-600' : l.state === 'failed' ? 'text-red-300' : l.state === 'active' ? 'text-white' : 'text-gray-400'}`}>
+        <li key={l.label} className={`flex items-center gap-2 ${l.state === 'todo' ? 'text-gray-500' : l.state === 'failed' ? 'text-red-300' : l.state === 'active' ? 'text-white' : 'text-gray-400'}`}>
           <span className="flex h-4 w-4 items-center justify-center">
             {l.state === 'done' ? <CheckIcon size={14} className="text-green-400" />
               : l.state === 'active' ? <span className="h-2 w-2 animate-pulse rounded-full bg-blue-400" />

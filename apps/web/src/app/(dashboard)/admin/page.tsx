@@ -274,7 +274,7 @@ export default function AdminPage() {
       {tab === 'users' && (
         <div className="space-y-4">
           <form onSubmit={handleUsersSearch} className="flex gap-2">
-            <input
+            <input aria-label="Search by name or email"
               type="text"
               placeholder="Search by name or email..."
               value={usersSearchInput}
@@ -310,7 +310,7 @@ export default function AdminPage() {
                         <td className="px-3 py-2 text-white">{u.displayName}</td>
                         <td className="px-3 py-2 text-gray-300">{u.email || '-'}</td>
                         <td className="px-3 py-2">
-                          <select
+                          <select aria-label={`Role for ${u.displayName}`}
                             value={u.role}
                             onChange={(e) => handleRoleChange(u.id, e.target.value)}
                             className="bg-gray-700 border border-gray-600 text-white text-xs rounded px-2 py-1 focus:outline-none"

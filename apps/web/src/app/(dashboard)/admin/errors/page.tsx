@@ -170,7 +170,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
               {e.errorBody != null && <pre className="mt-2 whitespace-pre-wrap break-all text-gray-400">{JSON.stringify(e.errorBody, null, 2)}</pre>}
               {e.breadcrumbs.length > 0 && (
                 <ol className="mt-2 space-y-0.5 text-gray-400">
-                  {e.breadcrumbs.map((c, i) => <li key={i}><span className="text-gray-600">{c.type}</span> {c.type === 'api' ? `${c.method} ${c.path} → ${c.status} (${c.ms}ms)` : c.type === 'click' ? c.label : c.path}</li>)}
+                  {e.breadcrumbs.map((c, i) => <li key={i}><span className="text-gray-500">{c.type}</span> {c.type === 'api' ? `${c.method} ${c.path} → ${c.status} (${c.ms}ms)` : c.type === 'click' ? c.label : c.path}</li>)}
                 </ol>
               )}
             </details>

@@ -185,7 +185,7 @@ function StreamingContent() {
 
       {showProvision && (
         <form onSubmit={handleProvision} className="mb-6 space-y-3 rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <input
+          <input aria-label="Server name"
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
@@ -196,7 +196,7 @@ function StreamingContent() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Region</label>
-              <input
+              <input aria-label="Region"
                 type="text"
                 value={newRegion}
                 onChange={(e) => setNewRegion(e.target.value)}
@@ -230,7 +230,7 @@ function StreamingContent() {
       ) : servers.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-gray-500 mb-2">No streaming servers yet.</p>
-          <p className="text-sm text-gray-600">Provision a server to start streaming via RTMP.</p>
+          <p className="text-sm text-gray-500">Provision a server to start streaming via RTMP.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">

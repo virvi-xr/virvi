@@ -15,7 +15,8 @@
   --color-gray-200: #d5d9df;
   --color-gray-300: #b0b6bf;
   --color-gray-400: #8a919c;
-  --color-gray-500: #646b76;
+  /* Secondary text: 5.2:1 on the page (gray-950), 4.8:1 on cards (gray-900), for WCAG AA (LIV-42) */
+  --color-gray-500: #7d848f;
   --color-gray-600: #474d57;
   --color-gray-700: #30353d;
   --color-gray-800: #1d2128;
@@ -62,6 +63,21 @@
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/*
+ * Reduced motion (LIV-42): for people who ask their system for less motion, animations and transitions finish at once
+ * and nothing scrolls smoothly. Spinners and pulses stop moving but still show.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /*

@@ -178,7 +178,7 @@ export default function NewScenePage() {
             return (
               <li key={s.id}>
                 <button type="button" disabled={!done || locked} onClick={() => dispatch({ type: 'goTo', step: s.id })}
-                  className={`flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900 px-4 py-2.5 text-left text-sm ${done && !locked ? 'hover:border-gray-700' : ''} ${done ? 'text-gray-200' : 'text-gray-600'}`}>
+                  className={`flex w-full items-center gap-2 rounded-lg border border-gray-800 bg-gray-900 px-4 py-2.5 text-left text-sm ${done && !locked ? 'hover:border-gray-700' : ''} ${done ? 'text-gray-200' : 'text-gray-500'}`}>
                   <span className="flex h-6 w-6 items-center justify-center">
                     {done ? <CheckIcon size={16} className="text-green-400" /> : <span className="font-mono text-xs">{i + 1}</span>}
                   </span>
