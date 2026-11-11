@@ -668,7 +668,8 @@ export function refundSplit(e: { amountCents: number; creditCents: number; metho
  * first; a refund Stripe already made for this entitlement (an answer that was lost) is recorded, not repeated. On a
  * refused refund the report is removed (a customer's instant report, so they can try again) or put back in review
  * (an owner's approval), and 502 is thrown. The credit share is added in the transaction that marks the report
- * refunded, and only if this call is the one that marks it, so a retried report never credits twice.
+ * refunded, and only if this call is the one that marks it, so a retried report never credits twice. A reporter whose
+ * account is gone (a handed-over design keeps their report) gets no credit: the refund is still recorded.
  */
 async function refundReport(
   e: typeof studioEntitlements.$inferSelect, pay: typeof studioPayments.$inferSelect, reportId: string,
@@ -854,14 +855,17 @@ export async function declineReport(reportId: string, adminId: string, now: Date
   return !!r
 }
 
-/** Held reports for the admin page, oldest first, with the piece, the revision's request and a frame of before and after. */
+/**
+ * Held reports for the admin page, oldest first, with the piece, the revision's request and a frame of before and after.
+ * A reporter who has since deleted their account (a handed-over design keeps their report) is listed as `gone`.
+ */
 export async function heldReports(now: Date) {
-  const rows = await db.select({ r: studioMistakeReports, e: studioEntitlements, rev: studioRevisions, piece: studioPieces, email: users.email })
+  const rows = await db.select({ r: studioMistakeReports, e: studioEntitlements, rev: studioRevisions, piece: studioPieces, email: users.email, reporter: users.id })
     .from(studioMistakeReports)
     .innerJoin(studioEntitlements, eq(studioEntitlements.id, studioMistakeReports.entitlementId))
     .innerJoin(studioRevisions, eq(studioRevisions.id, studioEntitlements.revisionId))
     .innerJoin(studioPieces, eq(studioPieces.id, studioRevisions.pieceId))
-    .innerJoin(users, eq(users.id, studioMistakeReports.userId))
+    .leftJoin(users, eq(users.id, studioMistakeReports.userId))
     .where(approvable(now))
     .orderBy(asc(studioMistakeReports.createdAt))
   const expires = frameUrlExpiry(now)
@@ -876,11 +880,11 @@ export async function heldReports(now: Date) {
       designId: piece.designId, revisionId: x.render.revisionId, viewKey: x.render.viewKey, category: piece.category, frame: 0, jobId: x.render.jobId,
     }, expires) : null
   }
-  return Promise.all(rows.map(async ({ r, e, rev, piece, email }) => {
+  return Promise.all(rows.map(async ({ r, e, rev, piece, email, reporter }) => {
     const [job] = rev.jobId ? await db.select({ payload: studioJobs.payload }).from(studioJobs).where(eq(studioJobs.id, rev.jobId)) : []
     return {
       id: r.id, text: r.text, refundCents: r.refundCents, createdAt: r.createdAt,
-      user: { id: r.userId, email },
+      user: { id: r.userId, email, gone: !reporter },
       designId: e.designId, piece: { category: piece.category, name: piece.name }, revisionNumber: rev.number,
       request: String((job?.payload as { prompt?: unknown } | undefined)?.prompt ?? ''),
       before: await frame(piece, rev.number - 1), after: await frame(piece, rev.number),

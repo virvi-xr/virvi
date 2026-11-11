@@ -3,13 +3,14 @@ import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
   studioCreditLedger, studioDesignMembers, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioJobs, studioPayments,
-  studioPromptCredits, studioRevisions, studioScopeEvents, studioUsageDays, users,
+  studioMistakeReports, studioPromptCredits, studioRevisions, studioScopeEvents, studioUsageDays, users,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { setStripe } from '../src/integrations/stripe.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
-import { createTopupCheckout, expirePayment, grantPayment } from '../src/studio/payments.js'
+import { approveReport, createTopupCheckout, expirePayment, grantPayment, heldReports } from '../src/studio/payments.js'
+import { handOverDesigns } from '../src/studio/handover.js'
 import { setManaRateSource } from '../src/studio/mana/rate.js'
 import { setManaSaltSource, type ManaQuote } from '../src/studio/mana/quote.js'
 import { setPolygon } from '../src/studio/mana/polygon.js'
@@ -17,7 +18,7 @@ import { watchManaTransfers } from '../src/studio/mana/settle.js'
 import { sweepStudio } from '../src/studio/sweep.js'
 import { resetDb } from './helpers/db.js'
 import { createUser, testApp } from './helpers/factories.js'
-import { createDesign, fakeFly, fakePolygon, fakeStripe, issueWorker, okResult, PROMPT_PAYLOAD, queueJob } from './helpers/studio.js'
+import { addRevision, createDesign, entitle, fakeFly, fakePolygon, fakeStripe, issueWorker, okResult, PROMPT_PAYLOAD, queueJob } from './helpers/studio.js'
 import { utcDay } from '../src/studio/quota.js'
 
 /**
@@ -208,5 +209,56 @@ describe('a prompt whose sender account was deleted', () => {
     expect((await designRow(d.id)).status).toBe('idle')
     expect((await designRow(idle.id)).machineId).toBeNull()
     await nobodyCharged()
+  })
+})
+
+/**
+ * LIV-159: an owner reports a mistake that waits for review, then deletes their account and the design passes to a
+ * collaborator. The report stays on the admin page with its reporter shown as gone, and approving it refunds the card
+ * share and records it once; the credit share has nobody to go to.
+ */
+describe('a held mistake report whose reporter account was deleted', () => {
+  let stripe: ReturnType<typeof fakeStripe>
+  afterAll(() => { setStripe(null) })
+  beforeEach(async () => {
+    await resetDb()
+    stripe = fakeStripe()
+    setStripe(stripe)
+  })
+
+  async function heldReportOfGoneOwner() {
+    const owner = await createUser()
+    const collab = await createUser()
+    const d = await createDesign(owner)
+    await db.insert(studioDesignMembers).values({ designId: d.id, userId: collab.id, role: 'collaborator' })
+    await entitle(d, await addRevision(d, 'hat'))
+    const { payment, entitlement } = await entitle(d, await addRevision(d, 'hat'), { amountCents: 1500 })
+    await db.update(studioEntitlements).set({ creditCents: 500 }).where(eq(studioEntitlements.id, entitlement.id))
+    const [report] = await db.insert(studioMistakeReports).values({
+      entitlementId: entitlement.id, userId: owner.id, text: 'the visor vanished', refundCents: 1500, status: 'in_review',
+    }).returning()
+    await db.transaction(async (tx) => {
+      expect(await handOverDesigns(tx, owner.id, new Date())).toBe(1)
+      await tx.delete(users).where(eq(users.id, owner.id))
+    })
+    return { owner, d, payment, report }
+  }
+
+  it('is still listed for review, its reporter shown as gone', async () => {
+    const { owner, report } = await heldReportOfGoneOwner()
+    const held = await heldReports(new Date())
+    expect(held.map((r) => [r.id, r.user])).toEqual([[report.id, { id: owner.id, email: null, gone: true }]])
+  })
+
+  it('approving it refunds the card share, records it, and credits nobody', async () => {
+    const { payment, report } = await heldReportOfGoneOwner()
+    const admin = await createUser({ role: 'admin' })
+    expect(await approveReport(report.id, admin.id, new Date())).toMatchObject({ status: 'refunded', refundCents: 1500 })
+    expect(stripe.calls.refunds.map((r) => r.params.amount)).toEqual([1000])
+    expect((await db.select().from(studioPayments).where(eq(studioPayments.id, payment.id)))[0].refundedCents).toBe(1000)
+    expect((await db.select().from(studioMistakeReports).where(eq(studioMistakeReports.id, report.id)))[0])
+      .toMatchObject({ status: 'refunded', reviewedBy: admin.id })
+    expect(await db.select().from(studioCreditLedger)).toEqual([])
+    expect(await heldReports(new Date())).toEqual([])
   })
 })

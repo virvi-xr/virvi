@@ -935,7 +935,7 @@ export type AdminMistakeReport = {
   text: string
   refundCents: number
   createdAt: string
-  user: { id: string; email: string | null }
+  user: { id: string; email: string | null; gone: boolean } // gone: the reporter deleted their account
   designId: string
   piece: { category: string; name: string }
   revisionNumber: number

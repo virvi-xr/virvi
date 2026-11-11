@@ -305,7 +305,7 @@ export default function AdminStudioPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="font-medium">{r.piece.name}: revision {r.revisionNumber} <span className="text-sm text-gray-500">· {formatCents(r.refundCents)}</span></p>
-                    <p className="text-sm text-gray-400">{r.user.email ?? r.user.id} · {dateFmt.format(new Date(r.createdAt))}</p>
+                    <p className="text-sm text-gray-400">{r.user.gone ? 'Deleted account' : r.user.email ?? r.user.id} · {dateFmt.format(new Date(r.createdAt))}</p>
                   </div>
                   <div className="flex gap-2">
                     <PrimaryButton type="button" disabled={busy} onClick={() => act(() => api.approveAdminStudioReport(r.id))}>
