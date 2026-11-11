@@ -24,7 +24,8 @@ and only design work can lead to a sale, so you decide whether a message belongs
 
 - design: building, changing or fixing a wearable, skin, emote, building or piece of furniture; answering the agent's questions; and questions about
   the design or getting it sold: rarity, names and descriptions, tags, hides and replaces, the Decentraland Builder,
-  curation, how it looks in-world, and prices, paying, what finalizing includes and what they may do with the files. A message that mixes design work with something else is design. So is small talk
+  curation, how it looks in-world, prices, paying, what finalizing includes and what they may do with the files, and asking
+  for Virvi support or a person about their design or order. A message that mixes design work with something else is design. So is small talk
   inside a design conversation: a greeting, thanks, "looks great", a yes or no to the agent.
 - off_topic: a message that asks for nothing that can lead to a wearable, emote, building or furniture: coding help, writing unrelated to
   the listing, research, homework, general questions or chat, using the machine for something else. Pick the category

@@ -95,6 +95,19 @@ of the design's next prompt (`NOTE_PREFIX`, `notesForAgent` in `designs.ts`): th
 ran, so a prompt stopped as off topic or failed sends them again. An owner's words that start with `[Virvi support…]`
 lose it, so they can't pass for a note.
 
+## Help requests
+
+Anyone who may work on a design (owner, collaborator, a trial guest on their own design) can press **Help** to ask Virvi
+support to step in: `POST /designs/:id/help` with their question (`help.ts`). It is free and works while out of prompts
+or paused. The request shows in the conversation (a `help` message), the design's detail carries `help` while it is
+open, and every admin gets a bell item (`studio_help`, the asker's name and the design's, no question text). When
+`STUDIO_HELP_DISCORD_WEBHOOK_URL` is set, the support Discord channel gets the asker's name, the design and a link,
+never their words (mentions off). Open requests wait at `GET /api/admin/studio/help`, oldest first. Support's reply on
+the design, a note or a prompt, resolves the request and reads support's bell items for it; or support resolves it
+from the queue (`POST /api/admin/studio/help/:id/resolve`). One open request per design is held by the database, and an
+account may ask 5 times a day. The agent is told to point people to Help for what it can't answer (refunds, accounts,
+payments gone wrong, something broken) instead of guessing or declining.
+
 ## Deploying (the owner's steps)
 
 The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STUDIO_S3_URI` are set.
@@ -107,6 +120,7 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    - `STUDIO_FLY_APP` only if the worker app isn't `vlm-studio-worker`
    - optional: `STUDIO_CLAUDE_MODEL` (default `claude-opus-5-5`), `STUDIO_CODEX_MODEL` (default `gpt-6.1-sol`),
      `STUDIO_GROK_MODEL` (default `grok-build-0.1`)
+   - optional: `STUDIO_HELP_DISCORD_WEBHOOK_URL`, the support Discord channel's webhook for help requests (a secret)
    - optional, for "Improve my prompt" (`POST /designs/:id/prompt-help`, which needs `ANTHROPIC_API_KEY` and answers
      `503 prompt_help_unavailable` without it): `STUDIO_PROMPT_HELP_MODEL` (default `claude-haiku-5-5`) and
      `STUDIO_PROMPT_HELP_PER_DAY` (default 30 per account and UTC day, trials included; `429 prompt_help_limit` past

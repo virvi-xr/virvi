@@ -17,6 +17,7 @@ import Digest from './Digest'
 import KindDefaults from './KindDefaults'
 import ExampleIdeas from './ExampleIdeas'
 import FirstReply from './FirstReply'
+import HelpRequests from './HelpRequests'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
 const smallButton = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50'
@@ -256,11 +257,12 @@ export default function AdminStudioPage() {
       <PageHeader
         crumbs={['System', { label: 'Admin', href: '/admin' }, 'Studio flags']}
         title="Studio flags"
-        subtitle="Everyone's designs to open and help with, accounts whose studio messages keep getting turned down as work that isn't a wearable or emote, and mistake reports waiting for a decision."
+        subtitle="People asking for help, everyone's designs to open and help with, accounts whose studio messages keep getting turned down as work that isn't a wearable or emote, and mistake reports waiting for a decision."
         actions={<Link href="/admin/studio/gift-codes" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Gift codes</Link>}
       />
       {error && <p className="mb-4 text-sm text-red-400" role="alert">{error}</p>}
 
+      <HelpRequests />
       <AdminDesigns />
       <Learning />
 

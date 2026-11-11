@@ -9,7 +9,7 @@ import type { Exec } from '../studio/quota.js'
  * groupKey, an unread row for the same key is updated in place (its data merged, updatedAt moved) instead of adding
  * another; once it is read, the next one starts a new row. Kept 90 days from their last update.
  */
-export type NotificationKind = 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note'
+export type NotificationKind = 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | 'studio_help'
 type Data = Record<string, unknown>
 
 export const NOTIFICATION_DAYS = 90
@@ -192,7 +192,8 @@ export async function listNotifications(userId: string, before: Date | null, lim
     items: page.map((n) => ({
       id: n.id, kind: n.kind, data: n.data, createdAt: n.createdAt, updatedAt: n.updatedAt, readAt: n.readAt,
       // An invite is gone only when it is closed and I'm not on the design (an accepted one is closed but not gone)
-      gone: !roles.has(String(dataOf(n).designId)) && (n.kind !== 'studio_invite' || !open.has(String(dataOf(n).inviteId))),
+      // A help request goes to Virvi support, who reach any design: it is never gone
+      gone: n.kind !== 'studio_help' && !roles.has(String(dataOf(n).designId)) && (n.kind !== 'studio_invite' || !open.has(String(dataOf(n).inviteId))),
       open: n.kind === 'studio_invite' && open.has(String(dataOf(n).inviteId)),
     })),
     more: rows.length > take,

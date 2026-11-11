@@ -11,7 +11,7 @@ import {
 } from '@/lib/studio'
 import { canRate, canTryAgain, revisionUnder } from '@/lib/studio-ratings'
 import Rating from './Rating'
-import { designControls, lastConversational, messageIsViewers, messageLabel, noteCaption, runningPrompt, supportTargets } from '@/lib/studio-support'
+import { HELP_WAITING, designControls, helpState, lastConversational, messageIsViewers, messageLabel, noteCaption, runningPrompt, supportTargets } from '@/lib/studio-support'
 import { boxState } from '@/lib/studio-people'
 import { customerReply } from '@/lib/studio-reply'
 import {
@@ -26,6 +26,9 @@ import Uploads from './Uploads'
 import WaitSteps from './WaitSteps'
 import { createWarmer, waitSteps } from '@/lib/studio-wait'
 
+
+/** The longest help request (the server's studio/help.ts HELP_MAX). */
+const HELP_MAX = 2000
 
 type Props = {
   designId: string; detail: StudioDetail; usage: StudioUsage | null; events: StudioEvent[]; onChanged: () => Promise<void>
@@ -42,6 +45,9 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const [refusal, setRefusal] = useState<Refusal | null>(null)
   // Support writes to the agent (a prompt) or to the people on the design only (a note, which starts nothing)
   const [to, setTo] = useState<'agent' | 'people'>('agent')
+  // Help: asking Virvi support to step in (the form is open while `asking`)
+  const [asking, setAsking] = useState(false)
+  const helping = helpState(detail)
   const listRef = useRef<HTMLDivElement>(null)
   const [dropped, setDropped] = useState<File[] | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -169,9 +175,25 @@ export default function Conversation({ designId, detail, usage, events, onChange
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false) }}
       onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropped([...e.dataTransfer.files]) } setDragging(false) }}>
       {/* Switching the agent is the owner's; support sees which it is, other members don't get the picker */}
-      {(controls.switchAgent || detail.support) && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 p-3">
-          <AgentPicker name="design-agent" value={detail.design.agent} onChange={switchAgent} disabled={!!active || sending || !controls.switchAgent} />
+      {(controls.switchAgent || detail.support || helping.show) && (
+        <div className="border-b border-gray-800 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {(controls.switchAgent || detail.support)
+              ? <AgentPicker name="design-agent" value={detail.design.agent} onChange={switchAgent} disabled={!!active || sending || !controls.switchAgent} />
+              : <span />}
+            {helping.show && !helping.open && !asking && (
+              <button type="button" onClick={() => setAsking(true)}
+                className="rounded-md border border-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:border-gray-700 hover:text-white">
+                Help
+              </button>
+            )}
+          </div>
+          {helping.show && asking && !helping.open && <AskHelpForm designId={designId} onCancel={() => setAsking(false)} onSent={async () => { setAsking(false); await onChanged() }} />}
+          {helping.open && (
+            <p className="mt-2 text-sm text-emerald-300" role="status">
+              {detail.support ? 'They asked for help. Your reply here, a note or a prompt, resolves it.' : HELP_WAITING}
+            </p>
+          )}
         </div>
       )}
 
@@ -300,7 +322,7 @@ function Message({ m, label, viewers, raw, children }: { m: StudioMessage; label
       </div>
     )
   }
-  const words = m.role === 'user' || m.role === 'note'
+  const words = m.role === 'user' || m.role === 'note' || m.role === 'help'
   const tone = m.support ? 'bg-emerald-600/15 text-emerald-50 border border-emerald-500/30' : words ? 'bg-blue-600/20 text-blue-50' : 'border border-gray-800 bg-gray-950 text-gray-200'
   return (
     <div className={`max-w-[85%] break-words rounded-lg px-3 py-2 text-sm ${viewers ? 'self-end' : 'self-start'} ${words ? 'whitespace-pre-wrap' : ''} ${tone}`}>
@@ -308,6 +330,48 @@ function Message({ m, label, viewers, raw, children }: { m: StudioMessage; label
       {words ? m.text : <Markdown text={raw ? m.text : customerReply(m.text)} />}
       {children}
     </div>
+  )
+}
+
+/**
+ * Asking Virvi support to step in, with the design or a question the agent can't answer: free, and open while out of
+ * prompts. Support replies in this conversation.
+ */
+function AskHelpForm({ designId, onCancel, onSent }: { designId: string; onCancel: () => void; onSent: () => Promise<void> }) {
+  const api = useApi()
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const submit = async () => {
+    const t = text.trim()
+    if (!t || sending) return
+    setSending(true)
+    setError(null)
+    try {
+      await api.askStudioHelp(designId, t)
+      setText('')
+      await onSent()
+    } catch (err) {
+      setError(refusalMessage(err as never, new Date()).text)
+    } finally {
+      setSending(false)
+    }
+  }
+  return (
+    <form className="mt-3" onSubmit={(e) => { e.preventDefault(); submit() }}>
+      <label htmlFor="studio-help" className="mb-1 block text-sm text-gray-300">What do you need help with?</label>
+      {error && <p className="mb-2 text-sm text-amber-300" role="alert">{error}</p>}
+      <textarea id="studio-help" value={text} rows={3} maxLength={HELP_MAX} autoFocus onChange={(e) => setText(e.target.value)}
+        placeholder="A question the agent couldn’t answer, or what you’d like changed in the design"
+        className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-emerald-400" />
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-gray-500">Virvi support replies here and you get a notification. It’s free and doesn’t use a prompt.</p>
+        <div className="flex gap-2">
+          <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-sm text-gray-400 hover:text-white">Cancel</button>
+          <PrimaryButton type="submit" disabled={sending || !text.trim()}>{sending ? 'Sending…' : 'Ask Virvi support'}</PrimaryButton>
+        </div>
+      </div>
+    </form>
   )
 }
 

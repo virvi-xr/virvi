@@ -94,3 +94,9 @@ def test_the_check_treats_questions_about_prices_and_the_files_as_design():
     """"Does the $29 Finalize include both body shapes? Can I reuse the GLBs?" can lead to a sale."""
     text = ' '.join(scope.SYSTEM.split())
     assert 'prices, paying, what finalizing includes and what they may do with the files' in text
+
+
+def test_the_check_treats_asking_for_support_about_the_design_as_design():
+    """"Can a person help me with this?" is how the Help button gets found."""
+    text = ' '.join(scope.SYSTEM.split())
+    assert 'asking for Virvi support or a person about their design or order' in text

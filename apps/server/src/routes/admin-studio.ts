@@ -16,6 +16,7 @@ import { DEFAULT_AGENTS, kindDefaultsDetail, setKindDefault } from '../studio/de
 import { DRAFT_BATCH_MAX, draftingAvailable, draftLesson } from '../studio/lesson-drafts.js'
 import { ideaCounts } from '../studio/prompt-ideas.js'
 import { firstReplyStats } from '../studio/timings.js'
+import { listOpenHelp, resolveHelp } from '../studio/help.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 const REFUND_STATUSES: ManaRefundStatus[] = ['requested', 'sent', 'declined']
@@ -156,6 +157,16 @@ export default async function adminStudioRoutes(app: FastifyInstance) {
   // The agent new designs of each kind start on, with the last four weeks' 👍 rates to choose it by. Set by hand only.
   const RATES_DAYS = 28
   // How long prompts wait for their first progress line: the last 50 timed prompt jobs, by how the machine was got
+  // Help requests waiting on Virvi support, oldest first (studio/help.ts); a reply on the design resolves one, or this
+  app.get('/api/admin/studio/help', admin, async () => ({ requests: await listOpenHelp() }))
+
+  app.post('/api/admin/studio/help/:id/resolve', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+    if (!(await resolveHelp({ id }, request.user.id, new Date()))) return reply.status(404).send({ error: 'not_found' })
+    return reply.status(204).send()
+  })
+
   app.get('/api/admin/studio/first-reply', admin, async () => firstReplyStats())
 
   app.get('/api/admin/studio/defaults', admin, async () => {

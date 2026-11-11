@@ -1729,6 +1729,22 @@ export const studioMessages = pgTable('studio_messages', {
   designIdx: index('studio_messages_design_idx').on(t.designId, t.createdAt),
 }))
 
+// ── Design Studio help requests ─────────────────────────────────────────────────────────────────────────────────
+// Someone on a design pressed Help: Virvi support is asked to step in. One open request per design, held by the
+// database; support's reply (a note or a prompt) resolves it, or support marks it resolved.
+export const studioHelpRequests = pgTable('studio_help_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  text: text('text').notNull(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolvedBy: uuid('resolved_by'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  oneOpenUq: uniqueIndex('studio_help_requests_one_open_uq').on(t.designId).where(sql`${t.resolvedAt} IS NULL`),
+  userIdx: index('studio_help_requests_user_idx').on(t.userId, t.createdAt),
+}))
+
 // ── Design Studio ratings and what Virvi learns from them (LIV-142) ──────────────────────────────────────────────
 // A revision is a prompt job that changed pieces: its owner rates it 👍 or 👎 (one rating per user per revision; clearing
 // deletes the row). The revision's kind, agent, model, prompt and cost are copied in, so the queue and the digest read

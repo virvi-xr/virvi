@@ -797,3 +797,11 @@ def test_pricing_text_by_kind_and_without_facts():
     assert 'walk-through' in scene and 'body shape' not in scene
     # asking about prices is part of the design, never declined
     assert 'never decline' in ' '.join(closing('wearable', None, pricing='$29.').split()).lower()
+
+
+def test_the_agent_points_to_the_help_button_for_what_it_cannot_answer():
+    from studio_worker.instructions import closing
+    for kind in ('wearable', 'emote', 'scene'):
+        text = ' '.join(closing(kind, None).split())
+        assert 'press Help at the top of the conversation' in text
+        assert 'Virvi support will reply there' in text

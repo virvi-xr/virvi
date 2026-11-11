@@ -8,6 +8,7 @@ import { recordTrialEvent, recordTrialBlocked } from '../auth/trial-events.js'
 import { ensureWorker } from './machines.js'
 import { failJobs } from './results.js'
 import { publishStudio } from './events.js'
+import { openHelp, resolveHelp } from './help.js'
 import { signRenderFrame, frameUrlExpiry } from './render-urls.js'
 import { finalizedRevisions } from './payments.js'
 import { creditBalance } from './credit.js'
@@ -248,10 +249,10 @@ export async function designDetail(d: Design, now: Date, readerId = d.ownerId, s
       }
     }),
     // `support`: a Virvi admin wrote it (shown as Virvi support); who, is for the audit, not the page. `sender`: who
-    // wrote a person's message (null for the agent's, the system's and support's)
+    // wrote a person's message or help request (null for the agent's, the system's and support's)
     messages: messages.map((m) => ({
       id: m.id, role: m.role, agent: m.agent, text: m.text, proposal: m.proposal, jobId: m.jobId, createdAt: m.createdAt, support: !!m.byAdminId,
-      sender: m.role === 'user' && !m.byAdminId ? sender(m.userId) : null,
+      sender: (m.role === 'user' || m.role === 'help') && !m.byAdminId ? sender(m.userId) : null,
     })),
     uploads: (await listUploads(d.id)).map(publicUpload),
     // `senderName`: who sent the prompt running now (null for a render, or support's prompt)
@@ -271,6 +272,8 @@ export async function designDetail(d: Design, now: Date, readerId = d.ownerId, s
       : null,
     // The usual wait from sending a prompt to the agent's first progress line, in seconds; absent below 5 timed jobs
     ...await typicalFirstReply(now),
+    // The open request for Virvi support's help (studio/help.ts), or null
+    help: await openHelp(d.id),
   }
 }
 
@@ -333,6 +336,8 @@ export async function addSupportNote(d: Design, adminId: string, text: string) {
   const [m] = await db.insert(studioMessages).values({ designId: d.id, role: 'note', text, byAdminId: adminId }).returning()
   await publishStudio(d.id, { type: 'message' })
   inBackground(notifySupportNote({ id: d.id, name: d.name }))
+  // Support replied: the design's help request (if one is open) is answered
+  await resolveHelp({ designId: d.id }, adminId, new Date())
   return { id: m.id, role: m.role, agent: null, text: m.text, proposal: null, jobId: null, createdAt: m.createdAt, support: true, sender: null }
 }
 
@@ -466,6 +471,8 @@ export async function queuePrompt(
   await startWorker(design.id, jobId, now)
   // After the commit, off the prompt's way, and never failing it (notifyPrompt logs its own failures)
   inBackground(notifyPrompt(design, senderId, senderName, !!input.byAdminId))
+  // Support stepped in with a prompt: the design's help request (if one is open) is answered
+  if (input.byAdminId) await resolveHelp({ designId: design.id }, input.byAdminId, now)
   return { ok: true, jobId }
 }
 

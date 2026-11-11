@@ -6,7 +6,7 @@ import { categoryLabel } from './studio'
  */
 export type NotificationItem = {
   id: string
-  kind: 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | string
+  kind: 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note' | 'studio_help' | string
   data: Record<string, unknown>
   createdAt: string
   updatedAt: string
@@ -64,6 +64,8 @@ export function notificationText(item: Pick<NotificationItem, 'kind' | 'data' | 
       const count = Number(d.count) || 1
       return { text: count > 1 ? `Virvi support sent you ${count} messages on ${design}` : `Virvi support sent you a message on ${design}`, href }
     }
+    case 'studio_help':
+      return { text: `${str(d.requesterName, 'Someone')} asked for help on ${design}`, href }
     default:
       return { text: design, href }
   }

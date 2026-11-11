@@ -14,7 +14,7 @@ import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
 import { adminDesignsQuery, type AdminDesign } from './studio-support'
-import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioMessage, StudioSet, StudioUpload, StudioUsage } from './studio'
+import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminHelpRequest, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioMessage, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
 import type { NotificationItem } from './notifications'
 import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, StudioInvite } from './studio-people'
@@ -855,6 +855,8 @@ function useRealApi() {
       apiFetch<{ id: string; code: string }>('/api/admin/studio/gift-codes', { method: 'POST', body: JSON.stringify(body) }),
     listGiftCodes: () => apiFetch<{ codes: AdminGiftCode[] }>('/api/admin/studio/gift-codes'),
     disableGiftCode: (id: string) => apiFetch<void>(`/api/admin/studio/gift-codes/${id}/off`, { method: 'POST' }),
+    getAdminStudioHelp: () => apiFetch<{ requests: AdminHelpRequest[] }>('/api/admin/studio/help'),
+    resolveAdminStudioHelp: (id: string) => apiFetch<void>(`/api/admin/studio/help/${id}/resolve`, { method: 'POST' }),
     getAdminStudioReports: () => apiFetch<{ reports: AdminMistakeReport[] }>('/api/admin/studio/reports'),
     approveAdminStudioReport: (id: string) =>
       apiFetch<{ status: 'refunded'; refundCents: number; creditedCents: number; manaCents: number }>(`/api/admin/studio/reports/${id}/approve`, { method: 'POST' }),
@@ -978,6 +980,8 @@ function useRealApi() {
     sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean; ideaId?: string }) =>
       apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     /** Virvi support's note to the people on a design: starts no agent (support only). */
+    askStudioHelp: (id: string, text: string) =>
+      apiFetch<{ help: { id: string } }>(`/api/studio/designs/${id}/help`, { method: 'POST', userAction: true, body: JSON.stringify({ text }) }),
     sendStudioSupportNote: (id: string, text: string) =>
       apiFetch<{ message: StudioMessage }>(`/api/studio/designs/${id}/support-notes`, { method: 'POST', userAction: true, body: JSON.stringify({ text }) }),
     requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }

@@ -377,6 +377,11 @@ export const config = {
   smtpPass: env('SMTP_PASS'),
   emailFrom: env('EMAIL_FROM') || 'noreply@virvi.io',
 
+  // ── Support alerts ─────────────────────────────────────────────────────
+  // A Discord webhook that hears of each Design Studio help request (studio/help.ts). Unset: no Discord post; the
+  // admin bell and the admin queue still get it. A secret: never logged or sent anywhere else.
+  studioHelpDiscordWebhookUrl: env('STUDIO_HELP_DISCORD_WEBHOOK_URL'),
+
   // ── Limits ──────────────────────────────────────────────────────────────
   maxRoomsPerServer: parseInt(env('MAX_ROOMS') || (mode === 'single' ? '50' : '500')),
   maxUploadSize: parseInt(env('MAX_UPLOAD_MB') || '100') * 1024 * 1024,

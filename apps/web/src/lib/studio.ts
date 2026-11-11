@@ -97,7 +97,7 @@ export type StudioProposal = { slots: { category: string; recommended: boolean; 
 export type StudioMessage = {
   id: string
   /** `note`: Virvi support's note to the people on the design; it starts no agent (the agent reads it with the next prompt) */
-  role: 'user' | 'agent' | 'system' | 'note'
+  role: 'user' | 'agent' | 'system' | 'note' | 'help'
   agent: string | null
   text: string
   proposal: StudioProposal | null
@@ -146,6 +146,8 @@ export type StudioDetail = {
   revisions?: StudioRevision[]
   /** The usual seconds from sending a prompt to the agent's first progress line; absent until the server knows. */
   typicalFirstReplySec?: number
+  /** The open request for Virvi support's help (the Help button), or null. */
+  help?: { id: string; createdAt: string } | null
   /** The reader's role (null for Virvi support), and everyone on the design, the owner first (LIV-159). */
   role?: DesignRole | null
   members?: StudioMember[]
@@ -949,6 +951,13 @@ export type AdminStudioFlag = {
 }
 
 /** A mistake report past the piece's instant refunds, waiting for the owner (the server's `heldReports`). */
+/** A help request waiting on Virvi support (the admin Studio page's queue). */
+export type AdminHelpRequest = {
+  id: string; text: string; createdAt: string
+  designId: string; designName: string; kind: StudioKind
+  userId: string; displayName: string | null
+}
+
 export type AdminMistakeReport = {
   id: string
   text: string

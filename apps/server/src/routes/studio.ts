@@ -6,6 +6,7 @@ import { db } from '../db/connection.js'
 import { studioDesignMembers, studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { isTrialUser } from '../studio/quota.js'
+import { HELP_MAX, requestHelp } from '../studio/help.js'
 import { authenticate } from '../middleware/auth.js'
 import { STUDIO_ROUTE_SCENE_PASS } from '../auth/scene-from.js'
 import { getSubscription } from '../integrations/stripe.js'
@@ -473,6 +474,20 @@ export default async function studioRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: `text must be 1-${NOTE_MAX} characters` })
     }
     return reply.status(201).send({ message: await addSupportNote(a.d, request.user.id, text.trim()) })
+  })
+
+  // Help: ask Virvi support to step in (studio/help.ts). Anyone who may work on the design, a trial guest too; free,
+  // and open while out of prompts or paused. One open request per design, a few a day per account.
+  app.post('/api/studio/designs/:id/help', trialAuth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'work' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const text = (request.body as { text?: unknown } | null)?.text
+    if (typeof text !== 'string' || !text.trim() || text.length > HELP_MAX) {
+      return reply.status(400).send({ error: `text must be 1-${HELP_MAX} characters` })
+    }
+    const r = await requestHelp(a.d, request.user.id, text.trim(), new Date())
+    if (!r.ok) return reply.status(r.status).send({ error: r.error, code: r.code })
+    return reply.status(201).send({ help: { id: r.id } })
   })
 
   // Example prompts for the first message, following the chips, from the ideas nobody has used yet (prompt-ideas.ts).

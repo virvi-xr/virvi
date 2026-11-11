@@ -28,6 +28,10 @@ export function messageLabel(m: Pick<StudioMessage, 'role' | 'agent' | 'support'
   if (m.role === 'system') return null
   if (m.role === 'agent') return agentLabel(m.agent)
   if (m.role === 'note' && detail.support) return `${SUPPORT_LABEL} · to ${supportOwnerName(detail.support)}`
+  if (m.role === 'help') {
+    const who = detail.support ? m.sender?.displayName?.trim() || supportOwnerName(detail.support) : senderLabel({ ...m, role: 'user' }, meId) ?? 'Someone'
+    return `${who} · asked ${SUPPORT_LABEL} for help`
+  }
   if (m.support) return SUPPORT_LABEL
   if (detail.support) return m.sender?.displayName?.trim() || supportOwnerName(detail.support)
   return senderLabel(m, meId)
@@ -39,7 +43,7 @@ export function messageLabel(m: Pick<StudioMessage, 'role' | 'agent' | 'support'
  */
 export function messageIsViewers(m: Pick<StudioMessage, 'role' | 'support' | 'sender'>, detail: Pick<StudioDetail, 'support'>, meId?: string | null): boolean {
   if (m.role === 'note') return !!detail.support
-  if (m.role !== 'user') return false
+  if (m.role !== 'user' && m.role !== 'help') return false
   if (detail.support) return !!m.support
   return m.sender && meId ? m.sender.userId === meId : !m.support
 }
@@ -84,9 +88,9 @@ export function supportTargets(s: StudioSupportView): { agent: string; people: s
   return { agent: 'To the agent', people: `To ${supportOwnerName(s)} only` }
 }
 
-/** The conversation's last message, notes left out: what the proposal picker and the first-prompt help go by. */
+/** The conversation's last message, support notes and help requests left out: what the proposal picker and the first-prompt help go by. */
 export function lastConversational<M extends Pick<StudioMessage, 'role'>>(messages: M[]): M | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role !== 'note') return messages[i]
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role !== 'note' && messages[i].role !== 'help') return messages[i]
   return undefined
 }
 
@@ -126,3 +130,14 @@ export function adminDesignOwner(d: Pick<AdminDesign, 'owner'>): { name: string;
 
 /** A row's pieces in the admin list. */
 export const pieceCountLabel = (n: number) => (n === 0 ? 'No pieces yet' : n === 1 ? '1 piece' : `${n} pieces`)
+
+/**
+ * The Help button (asking Virvi support to step in): for anyone who may work on the design, never for support itself
+ * or a viewer. `open`: a request is waiting, so the button gives way to the line saying so.
+ */
+export function helpState(detail: Pick<StudioDetail, 'support' | 'role' | 'help'>): { show: boolean; open: boolean } {
+  if (detail.support) return { show: false, open: !!detail.help }
+  return { show: canAct(detail.role ?? 'owner'), open: !!detail.help }
+}
+
+export const HELP_WAITING = 'Virvi support has been asked and will reply here. You can keep working with the agent meanwhile.'
