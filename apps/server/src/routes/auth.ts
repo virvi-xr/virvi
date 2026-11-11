@@ -248,7 +248,7 @@ export default async function authRoutes(app: FastifyInstance) {
             if (!signed.bodySigned) displayName = `${verifiedWallet.slice(0, 6)}…${verifiedWallet.slice(-4)}`
             request.log.info({ wallet: verifiedWallet, bodySigned: signed.bodySigned }, 'DCL signed fetch verified')
             const localPreview =
-              config.mode !== 'cloud' && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(signed.scene.realm.hostname)
+              (config.mode !== 'cloud' || config.studioLocalPreview) && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(signed.scene.realm.hostname)
             // The studio scene: its Genesis City parcel, on an official realm (a World or a stranger's realm can claim any parcel).
             studio =
               !!config.studioSceneParcel &&

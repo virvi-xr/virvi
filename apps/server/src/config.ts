@@ -86,7 +86,7 @@ export function manaSettingsFrom(e: Record<string, string | undefined>) {
   }
   return {
     recipient,
-    rpcUrl: e.POLYGON_RPC_URL || 'https://polygon-rpc.com',
+    rpcUrl: e.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
     token,
     chainId: 137 as const,
     quoteTtlMs: 600000 as const, // a quote holds for 10 minutes
@@ -344,6 +344,9 @@ export const config = {
   studioMana: manaSettingsFrom(process.env),
   // The studio scene's parcel (for example "-12,34"), where the checkout link sends a returning visitor
   studioSceneParcel: env('STUDIO_SCENE_PARCEL') || null,
+  // Development only: a cloud-mode server on your machine gives the studio pass to a Decentraland local preview
+  // (realm localhost or 127.0.0.1) on STUDIO_SCENE_PARCEL. Never set in production, and ignored when NODE_ENV=production.
+  studioLocalPreview: env('STUDIO_LOCAL_PREVIEW') === 'true' && process.env.NODE_ENV !== 'production',
   studioCheckoutLinkMs: 600000, // a one-time checkout link expires after 10 minutes
   // Turn-downs: who hears about an account that keeps sending off-topic work, after how many in how long, and how many
   // mistake refunds per piece are instant before the rest wait for review (src/studio/scope.ts)

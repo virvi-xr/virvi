@@ -67,6 +67,32 @@ describe('the studio pass', () => {
   const exchange = (code: string) => app.inject({ method: 'POST', url: '/api/auth/handoff/exchange', payload: { code } })
 
   describe('issuing the pass', () => {
+    describe('a local preview (STUDIO_LOCAL_PREVIEW)', () => {
+      const prevMode = config.mode
+      const prevLocal = (config as any).studioLocalPreview
+      beforeEach(() => { ;(config as any).mode = 'cloud' })
+      afterEach(() => { ;(config as any).mode = prevMode; ;(config as any).studioLocalPreview = prevLocal })
+
+      it('a cloud server refuses the studio pass to a localhost realm by default', async () => {
+        ;(config as any).studioLocalPreview = false
+        const res = await signIn({ 'x-test-realm': '127.0.0.1:8001' })
+        expect(res.statusCode).toBe(200)
+        expect(res.json().studio).not.toBe(true)
+      })
+
+      it('with STUDIO_LOCAL_PREVIEW on, a localhost realm on the studio parcel gets the studio pass', async () => {
+        ;(config as any).studioLocalPreview = true
+        const res = await signIn({ 'x-test-realm': '127.0.0.1:8001' })
+        expect(res.json()).toMatchObject({ verified: true, studio: true })
+      })
+
+      it('the switch never opens the studio pass to a non-local realm that is not official', async () => {
+        ;(config as any).studioLocalPreview = true
+        const res = await signIn({ 'x-test-realm': 'evil.example.com' })
+        expect(res.json().studio).not.toBe(true)
+      })
+    })
+
     it('a signed request from the studio parcel gets a studio pass', async () => {
       const res = await signIn()
       expect(res.statusCode).toBe(200)
