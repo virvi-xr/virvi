@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { assetLibraryItems, studioDesignMembers, studioEntitlements, studioFinalizeCredits, studioJobs, studioPayments, studioRevisions } from '../src/db/schema.js'
+import {
+  assetLibraryItems, studioDesignMembers, studioEntitlements, studioFinalizeCredits, studioJobs, studioMistakeReports, studioPayments, studioRevisions,
+} from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { setStripe } from '../src/integrations/stripe.js'
 import { memoryStudioStore, setStudioStore, jobFileKey } from '../src/studio/store.js'
@@ -211,6 +213,33 @@ describe('finalizing a shared design', () => {
     expect(await mine(owner)).toEqual({ 1: true, 2: false })
     expect(await mine(collab)).toEqual({ 1: false, 2: true })
     expect(await mine(viewer)).toEqual({ 1: false, 2: false })
+  })
+
+  it("another member's line carries no payment details; the payer's and support's do", async () => {
+    const { d, rev } = await shared()
+    await entitle(d, rev)
+    const rev2 = await addRevision(d, 'hat')
+    const { payment, entitlement } = await entitle(d, rev2, { userId: collab.id, paymentIntent: 'pi_collab' })
+    await db.insert(studioMistakeReports).values({
+      entitlementId: entitlement.id, userId: collab.id, text: 'the visor vanished', refundCents: 1500, status: 'refunded',
+      creditedCents: 400, manaCents: 300,
+    })
+    const line = async (u: TestUser) => {
+      const res = await app.inject({ method: 'GET', url: `${S}/designs/${d.id}`, headers: as(u) })
+      expect(res.statusCode).toBe(200)
+      return res.json().pieces[0].finalized.find((f: any) => f.revision === 2)
+    }
+    const theirs = await line(collab)
+    expect(theirs).toMatchObject({ amountCents: 1500, paymentId: payment.id, paidByMe: true, status: 'ready' })
+    expect(theirs.report).toMatchObject({ status: 'refunded', creditedCents: 400, manaCents: 300 })
+    const ownerSees = await line(owner)
+    expect(ownerSees).toMatchObject({ amountCents: null, paymentId: null, paidByMe: false, status: 'ready', kind: 'revision' })
+    expect(ownerSees.report).toEqual({ status: 'refunded', createdAt: expect.any(String), id: null, creditedCents: null, manaCents: null, manaRefund: null })
+    // Support, reading as the owner, still sees every line in full
+    const admin = await createUser({ role: 'admin' })
+    const supportSees = await line(admin)
+    expect(supportSees).toMatchObject({ amountCents: 1500, paymentId: payment.id })
+    expect(supportSees.report).toMatchObject({ creditedCents: 400, manaCents: 300 })
   })
 
   it('a payer made a viewer still reports a mistake; a viewer who did not pay gets 404', async () => {

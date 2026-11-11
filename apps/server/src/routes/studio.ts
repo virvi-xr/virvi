@@ -250,7 +250,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!a || a === VIEWER) return refused(reply, a)
     // `role`: the reader's (null for support); `members`: everyone on it, the owner first. The ratings shown are the
     // reader's own; support sees the owner's.
-    const detail = { ...await designDetail(a.d, new Date(), a.support ? a.d.ownerId : request.user.id), role: a.role, members: await designMembers(a.d.id) }
+    const detail = { ...await designDetail(a.d, new Date(), a.support ? a.d.ownerId : request.user.id, a.support), role: a.role, members: await designMembers(a.d.id) }
     return a.support ? { ...detail, support: await supportView(a.d) } : detail
   })
 

@@ -182,13 +182,13 @@ export async function usage(userId: string, limit: number, now: Date) {
   }
 }
 
-export async function designDetail(d: Design, now: Date, readerId = d.ownerId) {
+export async function designDetail(d: Design, now: Date, readerId = d.ownerId, support = false) {
   const pieces = await db.select().from(studioPieces).where(eq(studioPieces.designId, d.id)).orderBy(asc(studioPieces.createdAt))
   const revIds = pieces.map((p) => p.latestRevisionId).filter((x): x is string => !!x)
   const revs = revIds.length ? await db.select().from(studioRevisions).where(inArray(studioRevisions.id, revIds)) : []
   const renders = revIds.length ? await db.select().from(studioRenders).where(inArray(studioRenders.revisionId, revIds)) : []
   const expires = frameUrlExpiry(now)
-  const finalized = await finalizedRevisions(d.id, readerId)
+  const finalized = await finalizedRevisions(d.id, readerId, support)
   const messages = await db.select().from(studioMessages).where(eq(studioMessages.designId, d.id))
     .orderBy(asc(studioMessages.createdAt), asc(studioMessages.id))
   const [active] = await db.select({

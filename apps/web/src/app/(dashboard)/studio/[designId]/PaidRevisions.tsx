@@ -120,7 +120,7 @@ function PaidRevision({ designId, category, f, onChanged, scene, mine, act }: { 
         <div>
           <p className="font-medium">Revision {f.revision}</p>
           <p className="text-xs text-gray-500">
-            {f.kind === 'first' ? 'First finalize' : 'Revision'} · {formatCents(f.amountCents)}
+            {f.kind === 'first' ? 'First finalize' : 'Revision'}{f.amountCents !== null && ` · ${formatCents(f.amountCents)}`}
             {f.paidAt && ` · paid ${new Date(f.paidAt).toLocaleDateString()}`}
           </p>
         </div>

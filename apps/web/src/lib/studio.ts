@@ -69,13 +69,14 @@ export type FinalizedRevision = {
   revision: number
   kind: 'first' | 'revision'
   status: 'packaging' | 'ready' | 'failed' | string
-  amountCents: number
-  paymentId: string
+  /** `amountCents`, `paymentId` and the report's id, credit and MANA are null on another member's line (theirs to see). */
+  amountCents: number | null
+  paymentId: string | null
   paidAt: string | null
   /** `manaCents`: the refund's MANA share (now Virvi credit), which may be asked back as MANA; `manaRefund`: that request's status. */
   report: {
     status: 'pending' | 'refunded' | 'waived' | 'in_review' | 'declined' | string; createdAt: string
-    id?: string; manaCents?: number; creditedCents?: number; manaRefund?: 'requested' | 'sent' | 'declined' | string | null
+    id?: string | null; manaCents?: number | null; creditedCents?: number | null; manaRefund?: 'requested' | 'sent' | 'declined' | string | null
   } | null
   reportableUntil: string | null
   /** The reader paid for it (LIV-159): its report's outcome, MANA back and the 3D Models link are theirs. */
@@ -856,7 +857,7 @@ export function revisionActions(f: FinalizedRevision, now: Date): {
   download: boolean; retry: boolean; packaging: boolean; report: 'open' | 'done' | 'closed' | 'none'
 } {
   const report = f.report ? 'done'
-    : f.kind !== 'revision' || !(f.amountCents > 0) ? 'none'
+    : f.kind !== 'revision' || !((f.amountCents ?? 0) > 0) ? 'none'
       : f.reportableUntil && new Date(f.reportableUntil).getTime() > now.getTime() ? 'open'
         : 'closed'
   return { download: f.status === 'ready', retry: f.status === 'failed', packaging: f.status === 'packaging', report }

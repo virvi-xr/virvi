@@ -779,8 +779,10 @@ export async function pastPackages(userId: string, entitlementId?: string) {
 /**
  * Every paid revision of a design, newest first, as the page lists them (never the package's location). Only the
  * payer may report a mistake, so `reportableUntil` is set for `readerId`'s own payments alone, and `paidByMe` says which those are.
+ * Another member's line keeps what everyone needs (its status, for the package) but none of their payment: its amount,
+ * payment and its report's id, credit and MANA are null. `support` (Virvi support, reading as the owner) sees every line in full.
  */
-export async function finalizedRevisions(designId: string, readerId: string) {
+export async function finalizedRevisions(designId: string, readerId: string, support = false) {
   const rows = await db.select({
     e: studioEntitlements, number: studioRevisions.number, paidAt: studioPayments.paidAt,
     reportId: studioMistakeReports.id, reportStatus: studioMistakeReports.status, reportedAt: studioMistakeReports.createdAt,
@@ -795,25 +797,28 @@ export async function finalizedRevisions(designId: string, readerId: string) {
     .where(eq(studioEntitlements.designId, designId))
   return rows
     .sort((a, b) => b.number - a.number)
-    .map((r) => ({
-      category: r.e.category,
-      revision: r.number,
-      kind: r.e.kind,
-      status: r.e.status,
-      amountCents: r.e.amountCents,
-      paymentId: r.e.paymentId,
-      paidAt: r.paidAt,
-      // manaCents: the refund's share paid in MANA (now credit), which may be asked back as MANA; manaRefund: that request's status
-      report: r.reportId && r.reportStatus ? {
-        id: r.reportId, status: r.reportStatus, createdAt: r.reportedAt,
-        manaCents: r.manaCents ?? 0, creditedCents: r.creditedCents ?? 0, manaRefund: r.manaRefund ?? null,
-      } : null,
-      // `paidByMe`: the reader paid for it (LIV-159), so its report's outcome and MANA back are theirs to see
-      paidByMe: r.e.userId === readerId,
-      reportableUntil: r.e.userId === readerId && r.e.kind === 'revision' && r.e.amountCents > 0 && !r.reportStatus && r.paidAt
-        ? new Date(r.paidAt.getTime() + REPORT_WINDOW_DAYS * 24 * 3600 * 1000)
-        : null,
-    }))
+    .map((r) => {
+      const shown = support || r.e.userId === readerId
+      return {
+        category: r.e.category,
+        revision: r.number,
+        kind: r.e.kind,
+        status: r.e.status,
+        amountCents: shown ? r.e.amountCents : null,
+        paymentId: shown ? r.e.paymentId : null,
+        paidAt: r.paidAt,
+        // manaCents: the refund's share paid in MANA (now credit), which may be asked back as MANA; manaRefund: that request's status
+        report: r.reportId && r.reportStatus ? {
+          id: shown ? r.reportId : null, status: r.reportStatus, createdAt: r.reportedAt,
+          manaCents: shown ? r.manaCents ?? 0 : null, creditedCents: shown ? r.creditedCents ?? 0 : null, manaRefund: shown ? r.manaRefund ?? null : null,
+        } : null,
+        // `paidByMe`: the reader paid for it (LIV-159), so its report's outcome and MANA back are theirs to see
+        paidByMe: r.e.userId === readerId,
+        reportableUntil: r.e.userId === readerId && r.e.kind === 'revision' && r.e.amountCents > 0 && !r.reportStatus && r.paidAt
+          ? new Date(r.paidAt.getTime() + REPORT_WINDOW_DAYS * 24 * 3600 * 1000)
+          : null,
+      }
+    })
 }
 
 async function mailHeldReport(userId: string, pieceName: string, revision: number, text: string) {
