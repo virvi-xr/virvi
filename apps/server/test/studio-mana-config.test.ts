@@ -21,7 +21,7 @@ describe('manaSettingsFrom', () => {
 
   it('has the Polygon defaults', () => {
     expect(manaSettingsFrom({})).toMatchObject({
-      rpcUrl: 'https://polygon-rpc.com',
+      rpcUrl: 'https://polygon-bor-rpc.publicnode.com',
       token: '0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4',
       chainId: 137,
       confirmations: 30,

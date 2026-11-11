@@ -185,7 +185,7 @@ MANA is off until `STUDIO_MANA_RECIPIENT` is set. Then the Pay with MANA button 
 
 - `STUDIO_MANA_RECIPIENT`: the wallet that receives the MANA. Checked at boot: it must be a valid address with the right
   upper/lower-case checksum, or the server refuses to start. The server never holds a key for it.
-- `POLYGON_RPC_URL`: the Polygon node the server reads transfers from (default `https://polygon-rpc.com`, a free public
+- `POLYGON_RPC_URL`: the Polygon node the server reads transfers from (default `https://polygon-bor-rpc.publicnode.com`, a free public
   node). For production use a paid RPC, such as Alchemy's Polygon endpoint; a public node is slow and rate limited, and
   a flaky one delays settling.
 - `STUDIO_MANA_TOKEN`: the MANA token contract on Polygon, default `0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4`.
