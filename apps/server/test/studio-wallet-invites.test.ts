@@ -232,6 +232,46 @@ describe('design invites by linked wallet', () => {
     expect((await myInvites(cora)).map((i: { id: string }) => i.id)).toEqual([inv.id])
   })
 
+  for (const who of ['owner', 'member'] as const) {
+    it(`a visitor’s claimed invite merged onto the design’s ${who} is cancelled and its bell item read`, async () => {
+      const d = await createDesign(owner)
+      const w = randomWallet()
+      const inv = (await invite(owner, d.id, { wallet: w })).json().invite
+      const shell = await resolveVerifiedWalletUser(w, 'Visitor', 'visitor')
+      expect((await inviteNotes(shell.id)).filter((n) => !n.readAt)).toHaveLength(1)
+      let target = owner
+      if (who === 'member') {
+        target = await createUser({ email: 'cora@test.dev' })
+        await db.insert(studioDesignMembers).values({ designId: d.id, userId: target.id, role: 'viewer' })
+      }
+      expect(await linkVerifiedWallet(target.id, w)).toBe('linked')
+      expect(await myInvites(target)).toEqual([])
+      expect((await inviteNotes(target.id)).filter((n) => !n.readAt)).toEqual([])
+      const [row] = await db.select().from(studioDesignInvites).where(eq(studioDesignInvites.id, inv.id))
+      expect(row.cancelledAt).not.toBeNull()
+    })
+  }
+
+  it('an invite link’s page doesn’t show the wallet', async () => {
+    const d = await createDesign(owner)
+    const w = randomWallet()
+    const inv = (await invite(owner, d.id, { wallet: w })).json().invite
+    const [row] = await db.select().from(studioDesignInvites).where(eq(studioDesignInvites.id, inv.id))
+    const cora = await createUser()
+    const look = await app.inject({ method: 'GET', url: `${S}/invite-links/${row.token}`, headers: as(cora) })
+    expect(look.statusCode).toBe(200)
+    expect(Object.keys(look.json()).sort()).toEqual(['designId', 'designName', 'inviterName', 'role', 'status'])
+    expect(JSON.stringify(look.json())).not.toContain(w)
+  })
+
+  it('the 400 for both or neither starts with email, so the page asks for one', async () => {
+    const d = await createDesign(owner)
+    for (const payload of [{ email: 'a@test.dev', wallet: randomWallet() }, {}]) {
+      const res = await invite(owner, d.id, payload)
+      expect([res.statusCode, res.json().error]).toEqual([400, 'email or wallet is required, not both'])
+    }
+  })
+
   it('a failed claim never fails sign-in', async () => {
     const d = await createDesign(owner)
     const w = Wallet.createRandom()

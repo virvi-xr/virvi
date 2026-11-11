@@ -6,8 +6,8 @@ import { db } from '../src/db/connection.js'
 
 /**
  * The Design Studio wallet invites part of entrypoint.sh's schema fallback: run in a scratch schema on the invites
- * table as it was before, it makes email nullable and adds wallet, its open-invite index and the one-target check
- * exactly as drizzle-kit push made them from schema.ts.
+ * table as it was before, it makes email nullable and adds wallet, its open-invite index, the index the sign-in claim
+ * uses and the one-target check exactly as drizzle-kit push made them from schema.ts.
  */
 
 function fallbackScript(): string {
@@ -37,7 +37,7 @@ const shape = async (schema: string) => {
     WHERE table_schema = ${schema} AND table_name = 'studio_design_invites' AND column_name IN ('email', 'wallet') ORDER BY column_name`)
   const idx = await db.execute(sql`
     SELECT replace(indexdef, ${schema + '.'}, '') AS def FROM pg_indexes
-    WHERE schemaname = ${schema} AND indexname = 'studio_design_invites_open_wallet_uq'`)
+    WHERE schemaname = ${schema} AND indexname IN ('studio_design_invites_open_wallet_uq', 'studio_design_invites_wallet_wait_idx') ORDER BY indexname`)
   const chk = await db.execute(sql`
     SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
     WHERE n.nspname = ${schema} AND c.conname = 'studio_design_invites_one_target'`)
@@ -47,7 +47,7 @@ const shape = async (schema: string) => {
 describe('entrypoint schema fallback: Design Studio wallet invites', () => {
   it('makes the wallet columns, index and check exactly as schema.ts does, and runs again harmlessly', async () => {
     const statements = fallbackBlock('Design Studio invites by linked wallet')
-    expect(statements).toHaveLength(4)
+    expect(statements).toHaveLength(5)
     await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
     await db.execute(sql.raw(`CREATE SCHEMA ${SCHEMA}`))
     try {
@@ -64,7 +64,7 @@ describe('entrypoint schema fallback: Design Studio wallet invites', () => {
       await run()
       const want = await shape('public')
       expect(want.cols).toHaveLength(2)
-      expect(want.idx).toHaveLength(1)
+      expect(want.idx).toHaveLength(2)
       expect(want.chk).toHaveLength(1)
       expect(await shape(SCHEMA)).toEqual(want)
       await run()

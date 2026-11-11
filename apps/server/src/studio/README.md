@@ -66,11 +66,14 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
   stranger. Only the owner invites, changes roles, removes people, renames, archives and deletes.
 - **Invites.** The owner invites by email or by wallet address (`POST /designs/:id/invites` with `{ email }` or
   `{ wallet }`, not both) as collaborator or viewer; the invitee takes the link or accepts from `GET /invites`. A wallet
-  invite is matched to the account that has that wallet linked, sends no email, and with no such account yet waits on
-  the address: the first account to sign in with the wallet or link it gets it, with a bell item (`claimWalletInvites`;
-  never a trial, never on a design they own or are on). Only the owner's People view shows the address. An invite lasts 14 days, is resent at most once an hour and 3 times, and the
-  owner may send 50 a UTC day. Members plus pending invites are capped by `STUDIO_MAX_MEMBERS` (50). Trial accounts
-  can't invite, be invited or accept (`403 account_required`); a paused account can accept, view, finalize and pay, not prompt or render.
+  invite is matched to the account that has that wallet linked and sends no email. With no such account yet it waits on
+  the address: the first account to sign in with the wallet (in-world visitor sign-ins too), link it or sign up with it
+  from a trial gets it, with a bell item (`claimWalletInvites`; never a trial, never on a design they own or are on). A
+  visitor's claimed invite follows the wallet when it is linked to an account; one that lands on a design that account
+  owns or is on is cancelled. Only the owner's People view shows the address. An invite lasts 14 days, is resent at most
+  once an hour and 3 times, and the owner may send 50 a UTC day. Members plus pending invites are capped by
+  `STUDIO_MAX_MEMBERS` (50). Trial accounts can't invite, be invited or accept (`403 account_required`); a paused
+  account can accept, view, finalize and pay, not prompt or render.
 - **Who pays.** Whoever sends a prompt, finalizes or reports is recorded on the message, job or payment
   (`studio_messages.user_id`, `studio_jobs.user_id`, `studio_payments.user_id`; null means the owner). That person's
   daily allowance, cost ceiling, card, credit, free finalizes and MANA are the ones used, never the owner's.
@@ -105,8 +108,9 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    (`studio_designs.finalized_at`, `studio_jobs.counted_from`, and for the first-reply wait `studio_jobs.timings` and
    `studio_designs.warmed_at`), and the MANA and credit tables below. Collaboration (LIV-159) adds
    `studio_design_members`, `studio_design_invites` and `notifications` (invites by wallet: `studio_design_invites.wallet`,
-   `email` nullable, a check that exactly one is set and an open-invite index per wallet), the sender columns `studio_messages.user_id`
-   and `studio_jobs.user_id` (null means the owner), and makes `studio_payments.user_id` nullable with `ON DELETE SET NULL`
+   `email` nullable, a check that exactly one is set, an open-invite index per wallet and an index of waiting ones), the
+   sender columns `studio_messages.user_id` and `studio_jobs.user_id` (null means the owner), and makes
+   `studio_payments.user_id` nullable with `ON DELETE SET NULL`
    (a deleted payer's payment stays, because entitlements reference it). `STUDIO_MAX_MEMBERS` (default 50) caps members plus
    pending invites per design. Nothing needs running by hand first; to check
    the schema before a deploy, `drizzle-kit push` against production does the same.

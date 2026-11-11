@@ -99,6 +99,7 @@ describe('peopleRefusal', () => {
   })
   it('asks for an email or a wallet address on the server’s 400, and falls back for anything else', () => {
     expect(peopleRefusal({ status: 400, body: { error: 'email must be an email address' } })).toBe('Enter an email or a wallet address.')
+    expect(peopleRefusal({ status: 400, body: { error: 'email or wallet is required, not both' } })).toBe('Enter an email or a wallet address.')
     expect(peopleRefusal({ status: 400, body: { error: 'wallet must be a 0x wallet address' } })).toBe('Enter a full wallet address: 0x and 40 letters or numbers.')
     expect(peopleRefusal({ status: 500, body: { error: 'boom' } })).toBe('Something went wrong. Try again.')
   })

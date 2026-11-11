@@ -1,9 +1,10 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import {
   notifications, studioCreditLedger, studioDesignInvites, studioDesignMembers, studioJobs, studioMessages, studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions, studioIdeaUses,
   studioManaRefunds, studioMistakeReports, studioPauses, studioPayments, studioPromptCredits, studioScopeEvents, studioUsageDays,
 } from '../db/schema.js'
 import { addCredit, takeCredit } from './credit.js'
+import { markInvitesRead } from '../notifications/notifications.js'
 import type { Exec } from './quota.js'
 
 /**
@@ -53,6 +54,14 @@ export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: str
   await tx.update(studioDesignMembers).set({ userId: toUserId }).where(eq(studioDesignMembers.userId, fromUserId))
   await tx.update(studioDesignInvites).set({ userId: toUserId }).where(eq(studioDesignInvites.userId, fromUserId))
   await tx.update(studioDesignInvites).set({ invitedBy: toUserId }).where(eq(studioDesignInvites.invitedBy, fromUserId))
+  // A moved invite to a design the target owns or is on can only fail: it is cancelled, and its bell item read
+  const stale = await tx.update(studioDesignInvites).set({ cancelledAt: now }).where(and(
+    eq(studioDesignInvites.userId, toUserId), isNull(studioDesignInvites.acceptedAt), isNull(studioDesignInvites.declinedAt),
+    isNull(studioDesignInvites.cancelledAt),
+    sql`(EXISTS (SELECT 1 FROM studio_designs WHERE id = ${studioDesignInvites.designId} AND owner_id = ${toUserId})
+      OR EXISTS (SELECT 1 FROM studio_design_members WHERE design_id = ${studioDesignInvites.designId} AND user_id = ${toUserId} AND left_at IS NULL))`,
+  )).returning({ id: studioDesignInvites.id })
+  await markInvitesRead(stale.map((i) => i.id), now, tx)
   // Who sent a prompt or message
   await tx.update(studioJobs).set({ userId: toUserId }).where(eq(studioJobs.userId, fromUserId))
   await tx.update(studioMessages).set({ userId: toUserId }).where(eq(studioMessages.userId, fromUserId))

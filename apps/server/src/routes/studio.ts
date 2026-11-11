@@ -310,7 +310,7 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!d) return notFound(reply)
     // An email or a linked wallet address, not both
     const b = (request.body ?? {}) as { email?: unknown; wallet?: unknown; role?: unknown }
-    if ((b.email == null) === (b.wallet == null)) return reply.status(400).send({ error: 'send an email or a wallet, not both' })
+    if ((b.email == null) === (b.wallet == null)) return reply.status(400).send({ error: 'email or wallet is required, not both' })
     let target: InviteTarget
     if (b.wallet != null) {
       const wallet = normalWallet(b.wallet)

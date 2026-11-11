@@ -1837,6 +1837,9 @@ export const studioDesignInvites = pgTable('studio_design_invites', {
     .where(sql`${t.acceptedAt} IS NULL AND ${t.declinedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
   openWalletUq: uniqueIndex('studio_design_invites_open_wallet_uq').on(t.designId, t.wallet)
     .where(sql`${t.acceptedAt} IS NULL AND ${t.declinedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
+  // The sign-in claim (claimWalletInvites): wallet invites still waiting for an account
+  walletWaitIdx: index('studio_design_invites_wallet_wait_idx').on(t.wallet)
+    .where(sql`${t.wallet} IS NOT NULL AND ${t.userId} IS NULL`),
   oneTarget: check('studio_design_invites_one_target', sql`(${t.email} IS NULL) <> (${t.wallet} IS NULL)`),
 }))
 
