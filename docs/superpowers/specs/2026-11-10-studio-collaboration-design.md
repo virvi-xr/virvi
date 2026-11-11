@@ -94,7 +94,8 @@ Studio route, the live room, the downloads and the conversation assume a single 
   pending invites in the design's People panel.
 - Trial (guest) accounts can't be invited or accept until they've signed up. Wallet-only accounts without an email
   can't be invited by email; that's acceptable for now **(Claude's call)**.
-- A paused Studio account can accept and view, but can't prompt, chat, add to the pool or pay.
+- A paused Studio account can accept, view, finalize and pay, but can't prompt, chat or add to the pool. Pausing never
+  blocks paying **(owner, 2026-11-10)**.
 - Follow the org invite pattern that exists (`orgInvites`: email, token, expiry; `sendOrgInviteEmail`), but in its own
   table; designs are not orgs.
 - Rate-limit invites per owner (e.g. 50 a day) so the feature can't be used to send email spam.

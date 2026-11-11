@@ -67,7 +67,7 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
 - **Invites.** The owner invites by email (`POST /designs/:id/invites`) as collaborator or viewer; the invitee takes the
   link or accepts from `GET /invites`. An invite lasts 14 days, is resent at most once an hour and 3 times, and the
   owner may send 50 a UTC day. Members plus pending invites are capped by `STUDIO_MAX_MEMBERS` (50). Trial accounts
-  can't invite, be invited or accept (`403 account_required`); a paused account can accept and view, not act.
+  can't invite, be invited or accept (`403 account_required`); a paused account can accept, view, finalize and pay, not prompt or render.
 - **Who pays.** Whoever sends a prompt, finalizes or reports is recorded on the message, job or payment
   (`studio_messages.user_id`, `studio_jobs.user_id`, `studio_payments.user_id`; null means the owner). That person's
   daily allowance, cost ceiling, card, credit, free finalizes and MANA are the ones used, never the owner's.
@@ -128,8 +128,7 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    - An account with `STUDIO_FLAG_THRESHOLD` (3) turn-downs within `STUDIO_FLAG_WINDOW_HOURS` (24) is flagged once,
      and the owner is emailed at `STUDIO_FLAG_EMAIL` (unset: nothing is sent). Admins dismiss flags and pause or
      resume an account's studio access; a paused account can't send prompts, start designs, request renders, upload or
-     buy top-ups, and can still finalize, pay and download on their own designs (a paused collaborator can't pay on a
-     design shared with them, LIV-159).
+     buy top-ups, and can still finalize, pay and download, on their own designs and on designs shared with them.
    - A piece's first `STUDIO_INSTANT_REPORTS` (2) mistake reports refund at once; later ones are charged and wait for
      the owner's Approve or Decline on the same page, with an email.
    - **The owner's steps:** SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`) and

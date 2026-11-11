@@ -86,18 +86,13 @@ describe('finalizing a shared design', () => {
     await db.update(studioEntitlements).set({ status: 'ready', jobId: job.id, packageKey }).where(eq(studioEntitlements.id, e.id))
   }
 
-  it("a paused collaborator can't pay; an unpaused one still checks out", async () => {
+  it('a paused collaborator can still pay, like a paused owner', async () => {
     const { d } = await shared()
-    const other = await createUser()
-    await join(d.id, other, 'collaborator')
     await db.insert(studioPauses).values({ userId: collab.id })
     const res = await finalize(collab, d.id)
-    expect([res.statusCode, res.json().code]).toEqual([403, 'studio_paused'])
-    expect(await paymentsOf(d.id)).toEqual([])
-    expect(stripe.calls.sessions).toEqual([])
-    const ok = await finalize(other, d.id)
-    expect(ok.statusCode).toBe(200)
-    expect(ok.json().url).toMatch(/^https:\/\/checkout\.stripe\.test\//)
+    expect(res.statusCode).toBe(200)
+    expect(res.json().url).toMatch(/^https:\/\/checkout\.stripe\.test\//)
+    expect((await paymentsOf(d.id)).map((p) => p.userId)).toEqual([collab.id])
   })
 
   it('a collaborator pays by card; only they are recorded and charged', async () => {

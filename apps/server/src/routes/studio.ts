@@ -586,9 +586,7 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
     const a = await designAccess(request, { need: 'work', ...SUPPORT })
     if (!a || a === VIEWER) return refused(reply, a)
-    // A paused collaborator can't pay (LIV-159); a paused owner still finalizes their own design, as before, and
-    // support's free finalize isn't the member's to refuse
-    if (!a.support && a.role !== 'owner' && await isPaused(request.user.id)) return pausedRefusal(reply)
+    // Not refused for a paused account: pausing stops new work, never paying for what was made (owner or collaborator)
     const d = a.d
     const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown; method?: unknown }
     if (a.support) {

@@ -20,7 +20,7 @@
 - Copy: short plain sentences, no exclamation marks, no emoji. Phone width must work.
 - Limits (spec): 50 members per design (config `studioMaxMembers`, default 50, members + pending invites); invites expire after 14 days; 50 invites per owner per UTC day; notifications kept 90 days.
 - Roles: `owner` (studio_designs.owner_id), `collaborator`, `viewer`. Non-members and removed members get the same 404 as a stranger; a viewer on an action route gets `403 { error: 'viewer', code: 'viewer' }`.
-- Trial (guest) accounts can't invite, be invited, or accept (`403 { error: 'account_required' }`). A paused account can accept and view, not act (the existing `isPaused(request.user.id)` refusal).
+- Trial (guest) accounts can't invite, be invited, or accept (`403 { error: 'account_required' }`). A paused account can accept, view, finalize and pay, not prompt or render (the existing `isPaused(request.user.id)` refusal). Pausing never blocks paying (owner, 2026-11-10).
 - Notifications never carry prompt or chat text: names and design titles only.
 - Every new `:param` route is walked in `apps/server/test/cross-account-walk.test.ts` and listed in `apps/server/test/trial-guard.test.ts` per the existing rules, in the task that adds it.
 - Commit trailer on every commit:
