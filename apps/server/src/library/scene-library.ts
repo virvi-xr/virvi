@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, sql } from 'drizzle-orm'
+import { and, eq, inArray, lt, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { PackDisabledError, inDisabledPack } from '../catalog/visibility.js'
 import { assetLibraryItems, bookings, mediaAssets, sceneLibrary, scenes, systemFlags } from '../db/schema.js'
@@ -29,21 +29,32 @@ export const STALE_UPLOAD_MS = 15 * 60_000
 
 /**
  * Mark abandoned in-flight uploads (still 'uploading', or 'processing' after a crash mid-store) failed, and tell
- * the scenes they're linked to; returns how many. Runs before every library read and daily.
+ * the scenes they're linked to; returns how many. Images and video are media rows, 3D models asset-library items.
+ * Runs before every library read and daily.
  */
 export async function expireStaleUploads(now: Date = new Date()): Promise<number> {
-  const rows = await db
+  const before = new Date(now.getTime() - STALE_UPLOAD_MS)
+  const failed = { status: 'failed', error: "Upload didn't finish" }
+  const media = await db
     .update(mediaAssets)
-    .set({ status: 'failed', error: "Upload didn't finish" })
-    .where(and(inArray(mediaAssets.status, ['uploading', 'processing']), lt(mediaAssets.createdAt, new Date(now.getTime() - STALE_UPLOAD_MS))))
+    .set(failed)
+    .where(and(inArray(mediaAssets.status, ['uploading', 'processing']), lt(mediaAssets.createdAt, before)))
     .returning({ id: mediaAssets.id })
-  if (rows.length === 0) return 0
+  const models = await db
+    .update(assetLibraryItems)
+    .set({ ...failed, uploadCode: null })
+    .where(and(inArray(assetLibraryItems.status, ['uploading', 'processing']), lt(assetLibraryItems.createdAt, before)))
+    .returning({ id: assetLibraryItems.id })
+  if (media.length + models.length === 0) return 0
   const links = await db
     .select({ id: sceneLibrary.id, sceneId: sceneLibrary.sceneId })
     .from(sceneLibrary)
-    .where(inArray(sceneLibrary.mediaAssetId, rows.map((r) => r.id)))
+    .where(or(
+      media.length ? inArray(sceneLibrary.mediaAssetId, media.map((r) => r.id)) : sql`false`,
+      models.length ? inArray(sceneLibrary.assetItemId, models.map((r) => r.id)) : sql`false`,
+    ))
   for (const l of links) await publishLibraryChanged(l.sceneId, l.id)
-  return rows.length
+  return media.length + models.length
 }
 
 type LibraryRow = {
@@ -64,7 +75,7 @@ function toLibraryItem({ l, m, a }: LibraryRow): LibraryItem | null {
   if (a) {
     return {
       ...base, kind: 'model', name: a.name, contentType: 'model/gltf-binary', url: a.cdnUrl ?? '', sizeBytes: a.fileSizeBytes,
-      status: 'ready', error: null,
+      status: a.status as LibraryItem['status'], error: a.error,
     }
   }
   return null
@@ -199,7 +210,7 @@ export async function resolveMediaNames(sceneId: string, userId: string, urls: s
   }
   for (const a of models) {
     known.add(a.cdnUrl!)
-    if (names[a.cdnUrl!] === undefined && (a.uploadedBy === userId || a.isPublic || placed.has(a.cdnUrl!) || linkedIds.has(a.id))) names[a.cdnUrl!] = a.name
+    if (a.status === 'ready' && names[a.cdnUrl!] === undefined && (a.uploadedBy === userId || a.isPublic || placed.has(a.cdnUrl!) || linkedIds.has(a.id))) names[a.cdnUrl!] = a.name
   }
   return { names, missing: wanted.filter((u) => !known.has(u) && isUploadUrl(u)) }
 }

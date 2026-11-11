@@ -7,6 +7,6 @@ describe('siteLinks', () => {
   })
 
   it('leaves out docs and Discord when not configured, but always has privacy', () => {
-    expect(siteLinks({})).toEqual({ docs: null, privacy: '/privacy/', discord: null })
+    expect(siteLinks({})).toEqual({ docs: '/docs/', privacy: '/privacy/', discord: null })
   })
 })

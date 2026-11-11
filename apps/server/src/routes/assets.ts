@@ -11,7 +11,7 @@
 
 import { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
-import { eq, ilike, and, or, sql, arrayContains, inArray, isNull, like, notLike } from 'drizzle-orm'
+import { eq, ilike, and, or, sql, arrayContains, inArray, isNull, like, notLike, desc } from 'drizzle-orm'
 
 /** The `mine` filter's values: the caller's assets, only the Design Studio's, or only the rest. */
 const MINE = ['all', 'studio', 'uploads']
@@ -24,8 +24,10 @@ import { classifyUpload, extensionFor } from '../storage/upload-policy.js'
 import { assertStorageQuota } from '../media/quota.js'
 import { StoreMediaError } from '../media/store.js'
 import { verifySessionToken } from '../auth/tokens.js'
+import { isVirviAdmin } from '../auth/admin.js'
 import { generateThumbnail } from '../services/thumbnails.js'
 import { releaseRoomSetObject } from '../room-scan/sets.js'
+import { withoutUploadCode } from '../library/model-uploads.js'
 
 const CATALOG_MODEL = { error: 'catalog_model', message: "Catalog models can't be changed or deleted; switch the pack off in Admin → Catalog packs instead" }
 
@@ -47,7 +49,8 @@ export default async function assetRoutes(app: FastifyInstance) {
   const storage = createStorage()
 
   // ── Browse / Search ───────────────────────────────────────────────────
-  app.get('/api/assets', async (request, reply) => {
+  // Browsing is public; a trial bearer reads as signed out (public assets only). `config.trial` marks it as open to trials.
+  app.get('/api/assets', { config: { trial: true } }, async (request, reply) => {
     const query = request.query as {
       q?: string
       category?: string
@@ -104,8 +107,10 @@ export default async function assetRoutes(app: FastifyInstance) {
       conditions.push(arrayContains(assetLibraryItems.tags, [query.tag]))
     }
 
-    // Catalog: switched-off packs are hidden from browsing
+    // Catalog: switched-off packs are hidden from browsing. In-world uploads still in flight (or failed) have no file
+    // to place yet: the scene's library shows those
     conditions.push(browsableAsset())
+    conditions.push(eq(assetLibraryItems.status, 'ready'))
     if (query.style) conditions.push(eq(assetLibraryItems.style, query.style))
     if (query.venue) conditions.push(arrayContains(assetLibraryItems.venueTags, [query.venue]))
     if (query.pack) conditions.push(eq(assetLibraryItems.packId, query.pack))
@@ -135,8 +140,9 @@ export default async function assetRoutes(app: FastifyInstance) {
       .where(and(...conditions))
       .limit(limit)
       .offset(offset)
-      .orderBy(assetLibraryItems.createdAt)
-    const items = rows.map((r) => ({ ...r.a, pack: r.pack?.id ? r.pack : null }))
+      // Your own models newest first (a just-uploaded one is on the first page); browsing keeps the catalog's order
+      .orderBy(...(query.mine ? [desc(assetLibraryItems.createdAt), desc(assetLibraryItems.id)] : [assetLibraryItems.createdAt]))
+    const items = rows.map((r) => ({ ...withoutUploadCode(r.a), pack: r.pack?.id ? r.pack : null }))
 
     const [countResult] = await db
       .select({ count: sql<number>`count(*)` })
@@ -152,7 +158,7 @@ export default async function assetRoutes(app: FastifyInstance) {
   })
 
   // ── Get Single Asset ──────────────────────────────────────────────────
-  app.get('/api/assets/:id', async (request, reply) => {
+  app.get('/api/assets/:id', { config: { trial: true } }, async (request, reply) => {
     const { id } = request.params as { id: string }
 
     const asset = await db.query.assetLibraryItems.findFirst({
@@ -161,7 +167,9 @@ export default async function assetRoutes(app: FastifyInstance) {
 
     // Private assets are visible to their uploader and admins only
     const caller = optionalAccount(request.headers.authorization)
-    const visible = asset && (asset.isPublic || (caller && (asset.uploadedBy === caller.id || caller.role === 'admin')))
+    // An admin claim is checked against the database, so a demoted admin's old token sees only what anyone sees
+    const visible = asset && (asset.isPublic || (caller && (asset.uploadedBy === caller.id
+      || (caller.role === 'admin' && await isVirviAdmin(caller.id)))))
     if (!asset || !visible) {
       return reply.status(404).send({ error: 'Asset not found' })
     }
@@ -173,7 +181,7 @@ export default async function assetRoutes(app: FastifyInstance) {
           .from(catalogPacks)
           .where(eq(catalogPacks.id, asset.packId)))[0] ?? null
       : null
-    return reply.send({ asset: { ...asset, pack } })
+    return reply.send({ asset: { ...withoutUploadCode(asset), pack } })
   })
 
   // ── Upload New Asset ──────────────────────────────────────────────────
@@ -257,7 +265,7 @@ export default async function assetRoutes(app: FastifyInstance) {
         request.log.warn({ err }, 'Failed to generate thumbnail')
       }
 
-      return reply.status(201).send({ asset })
+      return reply.status(201).send({ asset: withoutUploadCode(asset) })
     },
   )
 
@@ -301,7 +309,7 @@ export default async function assetRoutes(app: FastifyInstance) {
         .where(eq(assetLibraryItems.id, id))
         .returning()
 
-      return reply.send({ asset: updated })
+      return reply.send({ asset: withoutUploadCode(updated) })
     },
   )
 
@@ -325,6 +333,8 @@ export default async function assetRoutes(app: FastifyInstance) {
       }
       // Deleting would break every scene that placed it; switch its pack off instead
       if (existing.packId) return reply.status(409).send(CATALOG_MODEL)
+      // An in-world upload still arriving: its file is being stored right now (dismiss it in-world once it's done or failed)
+      if (existing.status === 'uploading' || existing.status === 'processing') return reply.status(409).send({ error: 'upload_in_progress', message: "This model is still uploading. Try again once it's finished." })
 
       // A room set's GLB may still be placed by URL somewhere (a scene that placed it after its scan was deleted)
       if (await isRoomAsset(existing)) {
@@ -339,7 +349,7 @@ export default async function assetRoutes(app: FastifyInstance) {
   )
 
   // ── List Categories ───────────────────────────────────────────────────
-  app.get('/api/assets/categories', async (_request, reply) => {
+  app.get('/api/assets/categories', { config: { trial: true } }, async (_request, reply) => {
     const result = await db
       .select({ category: assetLibraryItems.category })
       .from(assetLibraryItems)

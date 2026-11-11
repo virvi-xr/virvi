@@ -8,6 +8,7 @@ export * from './platform.js';
 export * from './protocol.js';
 export * from './venues.js';
 export * from './analytics.js';
+export * from './heatmap-height.js';
 export * from './models.js';
 export * from './catalog.js';
 export * from './hyperfy.js';
@@ -22,3 +23,7 @@ export * from './scene-import.js'
 export * from './hud-protocol.js'
 export * from './showings.js'
 export * from './click-actions.js';
+export * from './scene-thumbnail.js'
+export * from './placements.js'
+export * from './frames.js'
+export * from './errors.js'

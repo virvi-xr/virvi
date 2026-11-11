@@ -107,7 +107,8 @@ export class MeshManager {
       return
     }
 
-    const entity = this.adapter.createEntity()
+    // A copy the platform already placed (Decentraland's deployed snapshot) is adopted, not created again
+    const entity = this.adapter.adoptEntity?.(data.sk) ?? this.adapter.createEntity()
     this.adapter.setName?.(entity, itemName(config.name, config.modelSrc, 'Model'))
 
     const position = data.position || { x: 0, y: 0, z: 0 }
@@ -115,12 +116,11 @@ export class MeshManager {
     const scale = data.scale || { x: 1, y: 1, z: 1 }
 
     this.adapter.setTransform(entity, { position, rotation, scale })
-    this.adapter.setGltfModel(entity, src)
-
-    // Set collider if needed
+    // Collisions before the model, so the model is set once with its collision mask (an adopted copy then needs no change)
     if (data.withCollisions) {
       this.adapter.setCollider(entity, { type: 'mesh' })
     }
+    this.adapter.setGltfModel(entity, src)
 
     const instance: MeshInstance = {
       sk: data.sk,

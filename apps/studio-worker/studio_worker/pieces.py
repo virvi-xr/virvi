@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, scene
+from . import config, emote_legs, scene
 
 CHECKER_TIMEOUT_SEC = 300
 
@@ -39,7 +39,7 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
         return [], None, 'out/ is not a folder'
     proposal, problems = None, []
     try:
-        proposal = json.loads(_read(out / 'proposal.json')) if os.path.lexists(out / 'proposal.json') else None
+        proposal = json.loads(read_regular(out / 'proposal.json')) if os.path.lexists(out / 'proposal.json') else None
     except (UnsafeFile, json.JSONDecodeError) as e:
         problems.append(f'out/proposal.json: {e}')
     pieces = []
@@ -54,7 +54,7 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
             problems.append(scene.folder_problem(d.name))
             continue
         try:
-            meta = json.loads(_read(d / 'piece.json'))
+            meta = json.loads(read_regular(d / 'piece.json'))
             glbs = [g for g in sorted(d.iterdir()) if g.suffix.lower() == '.glb']
             if not glbs:
                 problems.append(f'{rel}/ has a piece.json but no GLB')
@@ -73,10 +73,10 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
             copies, extras = [], []
             for g in glbs:
                 copies.append(staged / g.name)
-                copies[-1].write_bytes(_read(g))
+                copies[-1].write_bytes(read_regular(g))
             for e in scene.extras(d, meta) if kind == 'scene' else []:
                 extras.append(staged / e.name)
-                extras[-1].write_bytes(_read(e))
+                extras[-1].write_bytes(read_regular(e))
             (staged / 'piece.json').write_text(json.dumps(meta))
         except UnsafeFile as e:
             problems.append(str(e))
@@ -108,7 +108,7 @@ def read_declined(design: Path) -> str | None:
     if not os.path.lexists(path):
         return None
     try:
-        reason = json.loads(_read(path)).get('reason')
+        reason = json.loads(read_regular(path)).get('reason')
     except (UnsafeFile, json.JSONDecodeError, AttributeError, UnicodeDecodeError):
         reason = None
     return str(reason)[:120] if reason else 'no reason given'
@@ -118,17 +118,25 @@ class UnsafeFile(Exception):
     pass
 
 
-def _read(path: Path) -> bytes:
-    """A regular file's bytes, never through a symlink and never a hard link to something else."""
+def read_regular(path: Path, max_bytes: int | None = None) -> bytes:
+    """A regular file's bytes, never through a symlink, never a hard link to something else, never a pipe or device
+    (opened without blocking), and at most max_bytes when given."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            raise UnsafeFile(f'{_rel(path)} is not a regular file')
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         raise UnsafeFile(f'{_rel(path)} is not a regular file') from None
     with os.fdopen(fd, 'rb') as f:
         st = os.fstat(f.fileno())
         if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
             raise UnsafeFile(f'{_rel(path)} is not a regular file')
-        return f.read()
+        if max_bytes is not None and st.st_size > max_bytes:
+            raise UnsafeFile(f'{_rel(path)} is too large')
+        data = f.read() if max_bytes is None else f.read(max_bytes + 1)
+    if max_bytes is not None and len(data) > max_bytes:
+        raise UnsafeFile(f'{_rel(path)} is too large')
+    return data
 
 
 def _rel(path: Path) -> str:
@@ -170,9 +178,25 @@ def check(piece: Piece, kind: str) -> dict:
         hides = piece.meta.get('hides') or []
         cmd += ['--hides', ','.join(hides) if isinstance(hides, list) else str(hides)] if hides else []
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=CHECKER_TIMEOUT_SEC)
-    levels = [l.split()[0] for l in p.stdout.splitlines() if l.startswith('  ') and l.split()]
+    report = p.stdout + (legs_report(piece.glbs) if kind == 'emote' else '')
+    levels = [l.split()[0] for l in report.splitlines() if l.startswith('  ') and l.split()]
     return {'ran': True, 'pass': p.returncode == 0, 'warnings': levels.count('WARN'), 'failures': levels.count('FAIL'),
-            'report': p.stdout + p.stderr}
+            'report': report + p.stderr}
+
+
+def legs_report(glbs: list[Path]) -> str:
+    """The studio's own leg check (emote_legs), in the checker's line format: a WARN when the legs pass through each
+    other, never a FAIL, so the emote still saves."""
+    lines = ['Studio leg check:']
+    for g in glbs:
+        r = emote_legs.check(g)
+        if r is None:
+            lines.append(f'  INFO  {"legs check":<38} {g.name}: not checked (no avatar clip with both legs)')
+        elif r.crossing:
+            lines.append(f'  WARN  {"legs pass through each other":<38} {g.name}: {r.describe()}')
+        else:
+            lines.append(f'  PASS  {"legs apart":<38} {g.name}: thighs and shins stay clear of each other')
+    return '\n'.join(lines) + '\n'
 
 
 def new_hashes(pieces: list[Piece]) -> dict:

@@ -12,6 +12,7 @@ type Tab = 'users' | 'orgs'
 
 interface Stats {
   totalUsers: number
+  trialGuests?: number
   totalOrgs: number
   totalScenes: number
   totalMedia: number
@@ -170,6 +171,7 @@ export default function AdminPage() {
             <Link href="/admin/ads" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Ads</Link>
             <Link href="/admin/advertisers" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Advertisers</Link>
             <Link href="/admin/catalog" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Catalog packs</Link>
+            <Link href="/admin/errors" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Errors</Link>
             <Link href="/admin/studio" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Studio flags</Link>
             <Link href="/admin/studio/gift-codes" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Gift codes</Link>
           </div>
@@ -184,7 +186,7 @@ export default function AdminPage() {
           <div className="col-span-full"><Skeleton rows={1} /></div>
         ) : stats ? (
           <>
-            <StatCard label="Total Users" value={String(stats.totalUsers)} />
+            <StatCard label="Total Users" value={String(stats.totalUsers)} hint={stats.trialGuests ? `+ ${stats.trialGuests} trial guests` : undefined} />
             <StatCard label="Total Organizations" value={String(stats.totalOrgs)} />
             <StatCard label="Total Scenes" value={String(stats.totalScenes)} />
             <StatCard label="Storage Used" value={formatBytes(stats.totalStorageBytes)} />

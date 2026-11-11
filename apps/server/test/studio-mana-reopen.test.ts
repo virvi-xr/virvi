@@ -237,7 +237,7 @@ describe('reopening a MANA payment late in its grace (R9)', () => {
     const ent = (await entitlementsOf(d.id)).find((e) => e.paymentId === a.paymentId)!
     // Paid 500 MANA and 400 credit: the other 600 the owner absorbed
     expect(ent).toMatchObject({ amountCents: 900, creditCents: 400, method: 'mana' })
-    const res = await reportMistake(d, 'hat', 2, 'the brim clips', new Date(expiresAt + 30 * MIN))
+    const res = await reportMistake(d, 'hat', 2, 'the brim clips', new Date(expiresAt + 30 * MIN), u.id)
     expect(res).toMatchObject({ status: 'refunded', creditedCents: 900, manaCents: 500 })
     expect(await creditBalance(u.id)).toBe(900)
     await ledgerMatches(u)

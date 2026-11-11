@@ -89,7 +89,7 @@ export interface SerializedInstance {
  * `{ properties: { … } }`. The nested object is unwrapped at read time; outer keys win.
  * (scripts/unwrap-nested-properties.mjs fixes stored rows the same way.)
  */
-function flatProperties(raw: unknown): Record<string, unknown> {
+export function flatProperties(raw: unknown): Record<string, unknown> {
   const props = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
   const nested = props.properties
   if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return props

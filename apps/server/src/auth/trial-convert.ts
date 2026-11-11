@@ -6,7 +6,9 @@ import { config } from '../config.js'
 import { moveStudioData } from '../studio/merge.js'
 import { TRIAL_DAY } from '../studio/quota.js'
 import { issueAccountSession } from './sessions.js'
+import { initialRoleForNewUser } from './roles.js'
 import { recordTrialEvent, cleanAction } from './trial-events.js'
+import { moveTrialSceneData } from './trial-data.js'
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type User = typeof users.$inferSelect
@@ -52,12 +54,17 @@ export function refuseExpiredTrial(app: FastifyInstance) {
   }
 }
 
+/** True for convertTrial's error when the row stopped being a trial (a concurrent sign-up converted or merged it first). */
+export const isTrialGone = (e: unknown) => e instanceof Error && e.message === 'trial_gone'
+
 /** The trial becomes a normal account (same id, keeps everything); its trial prompts are dropped so the Free day starts full. */
 export async function convertTrial(trialId: string, set: { email?: string | null; displayName: string }, tx?: Tx): Promise<User> {
   const run = async (t: Tx) => {
+    // The trial's row is not an account yet, so a trial converting into the first account gets the first-user role
+    const role = await initialRoleForNewUser(t)
     const [user] = await t
       .update(users)
-      .set({ isTrial: false, trialLastActiveAt: null, displayName: set.displayName, ...(set.email !== undefined ? { email: set.email } : {}), updatedAt: new Date() })
+      .set({ isTrial: false, trialLastActiveAt: null, role, displayName: set.displayName, ...(set.email !== undefined ? { email: set.email } : {}), updatedAt: new Date() })
       .where(and(eq(users.id, trialId), eq(users.isTrial, true)))
       .returning()
     if (!user) throw new Error('trial_gone')
@@ -67,18 +74,23 @@ export async function convertTrial(trialId: string, set: { email?: string | null
   return tx ? run(tx) : db.transaction(run)
 }
 
-/** The trial's work moves into an existing account and the trial is deleted. */
-export async function mergeTrial(trialId: string, accountId: string, fromAction?: unknown): Promise<boolean> {
+/**
+ * The trial's work (Studio, scenes, imports, room scans, headsets) moves into an existing account and the trial is
+ * deleted. False when there was no trial left to merge; else how many headsets moved.
+ */
+export async function mergeTrial(trialId: string, accountId: string, fromAction?: unknown): Promise<false | { headsets: number }> {
   const merged = await db.transaction(async (tx) => {
     // Only a row that is still a trial merges (a second sign-in with the same old token finds nothing to move).
     const [trial] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, trialId), eq(users.isTrial, true))).for('update')
-    if (!trial) return false
+    if (!trial) return false as const
     // The trial's allowance is not the account's: drop it instead of adding it to the account's counters.
     await tx.delete(studioUsageDays).where(and(eq(studioUsageDays.userId, trialId), eq(studioUsageDays.day, TRIAL_DAY)))
     await moveStudioData(tx, trialId, accountId, new Date())
+    // Scenes, imports, room scans and headsets cascade with the trial row: they move first
+    const moved = await moveTrialSceneData(tx, trialId, accountId)
     await tx.delete(studioUsageDays).where(eq(studioUsageDays.userId, trialId))
     await tx.delete(users).where(eq(users.id, trialId))
-    return true
+    return moved
   })
   if (merged) recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
   return merged
@@ -91,6 +103,10 @@ export interface OAuthIdentity {
   displayName: string
   metadata: object
 }
+
+/** The sign-in answer's `movedHeadsets`: present only when a merge moved paired headsets onto the account. */
+export const movedHeadsetsField = (merged: false | { headsets: number } | null | undefined): { movedHeadsets?: number } =>
+  merged && merged.headsets > 0 ? { movedHeadsets: merged.headsets } : {}
 
 /**
  * The trial a token held by this browser names: a trial access or refresh token we signed, expired or not (the session in
@@ -125,11 +141,7 @@ export async function finishOAuth(app: FastifyInstance, identity: OAuthIdentity)
 
   const email = identity.email?.toLowerCase() || null
   // Auto-promote the first user to admin in single/scalable mode
-  let role: 'admin' | 'creator' = 'creator'
-  if (config.autoPromoteFirstUser) {
-    const anyUser = await db.query.users.findFirst()
-    if (!anyUser) role = 'admin'
-  }
+  const role = await initialRoleForNewUser()
   const [newUser] = await db.insert(users).values({ displayName: identity.displayName, email, role }).returning()
   await db.insert(userAuthMethods).values({ userId: newUser.id, type: 'oauth', identifier: identity.identifier, metadata: identity.metadata })
   return issueAccountSession(app, newUser)

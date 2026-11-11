@@ -425,4 +425,19 @@ class DeviceAuthTest {
     assertEquals(AuthState.SignedOut, a.state.value)
     ending.get()
   }
+
+  @Test
+  fun `credential is the paired device's id and secret, and hides the secret when printed`() {
+    val a = pairedAuth()
+    val c = a.credential()!!
+    assertEquals("dev1", c.deviceId)
+    assertEquals(store.map[DeviceAuth.KEY_SECRET], c.secret)
+    assertFalse(c.toString().contains(c.secret))
+  }
+
+  @Test
+  fun `credential is null unless paired`() {
+    val a = auth()
+    assertNull(a.credential())
+  }
 }

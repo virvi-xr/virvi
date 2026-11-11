@@ -156,7 +156,7 @@ fun BuilderHud(
       model.message?.let { Text(it, color = WARN, fontSize = 14.sp, fontWeight = FontWeight.Medium) }
       TabRow(selectedTabIndex = model.tab.ordinal) {
         Tab(model.tab == HudTab.LAYOUT, onClick = { actions.selectTab(HudTab.LAYOUT) }, text = { Text("Layout") })
-        Tab(model.tab == HudTab.ASSETS, onClick = { actions.selectTab(HudTab.ASSETS) }, text = { Text("Assets") })
+        Tab(model.tab == HudTab.ASSETS, onClick = { actions.selectTab(HudTab.ASSETS) }, text = { Text("Models") })
         // Personal headsets only ([BuilderHudModel.canStream])
         if (model.canStream) Tab(model.tab == HudTab.STREAM, onClick = { actions.selectTab(HudTab.STREAM) }, text = { Text("Stream") })
       }

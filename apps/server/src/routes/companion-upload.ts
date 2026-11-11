@@ -9,6 +9,9 @@
  *   GET  /api/upload/:code/qr.png         — QR code of the token's upload page link
  *   POST /api/upload/:code/start          — Announce a file: checks it, records it as 'uploading', spends one upload
  *   POST /api/upload/:code/:assetId       — Send that file's bytes (base64)
+ *
+ * Images and video are recorded in Images & Video (media_assets); 3D models in 3D Models (asset_library_items), private
+ * to the account they land in (LIV-132). `assetId` is that row's id either way.
  */
 
 import { FastifyInstance } from 'fastify'
@@ -16,7 +19,7 @@ import { randomBytes } from 'node:crypto'
 import { eq, and, gt, sql } from 'drizzle-orm'
 import QRCode from 'qrcode'
 import { db } from '../db/connection.js'
-import { mediaAssets, uploadTokens, users } from '../db/schema.js'
+import { assetLibraryItems, mediaAssets, uploadTokens, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims, type Actor } from '../auth/actor.js'
@@ -25,7 +28,9 @@ import { fromBody } from '../auth/scene-from.js'
 import { linkToScene, uploadDestination } from '../library/scene-library.js'
 import { publishLibraryChanged } from '../realtime/bus.js'
 import { reserveMedia, fillMedia, StoreMediaError } from '../media/store.js'
-import { classifyUpload } from '../storage/upload-policy.js'
+import { reserveModel, fillModel, withoutUploadCode } from '../library/model-uploads.js'
+import { moveMediaModel } from '../library/move-media-models.js'
+import { classifyUpload, isModelFile } from '../storage/upload-policy.js'
 
 const KINDS = ['image', 'model', 'video'] as const
 type UploadKind = (typeof KINDS)[number]
@@ -170,13 +175,13 @@ export default async function companionUploadRoutes(app: FastifyInstance) {
       bookingId = dest.bookingId
     }
 
-    let asset
+    const isModel = verdict.ok && kindOf(verdict.contentType) === 'model'
+    const opts = { quotaStatus: 413, quotaMessage: ownerId === token.userId ? undefined : "The scene owner's storage is full" }
+    let assetId: string
     try {
-      asset = await reserveMedia(
-        ownerId,
-        { filename: body.filename, contentType: body.contentType, sizeBytes, metadata: { uploadCode: code } },
-        { quotaStatus: 413, quotaMessage: ownerId === token.userId ? undefined : "The scene owner's storage is full" },
-      )
+      assetId = isModel
+        ? (await reserveModel(ownerId, { filename: body.filename, contentType: body.contentType, sizeBytes, uploadCode: code }, opts)).id
+        : (await reserveMedia(ownerId, { filename: body.filename, contentType: body.contentType, sizeBytes, metadata: { uploadCode: code } }, opts)).id
     } catch (err) {
       if (err instanceof StoreMediaError) return reply.status(err.status).send(err.body)
       throw err
@@ -189,12 +194,13 @@ export default async function companionUploadRoutes(app: FastifyInstance) {
       .where(and(eq(uploadTokens.id, token.id), sql`${uploadTokens.uploadCount} < ${uploadTokens.maxUploads}`))
       .returning({ uploadCount: uploadTokens.uploadCount })
     if (!spent) {
-      await db.delete(mediaAssets).where(eq(mediaAssets.id, asset.id))
+      if (isModel) await db.delete(assetLibraryItems).where(eq(assetLibraryItems.id, assetId))
+      else await db.delete(mediaAssets).where(eq(mediaAssets.id, assetId))
       return reply.status(410).send({ error: 'Upload limit reached' })
     }
 
-    if (token.sceneId) await linkToScene(token.sceneId, { mediaAssetId: asset.id }, token.userId, bookingId)
-    return reply.status(201).send({ assetId: asset.id, remainingUploads: token.maxUploads - spent.uploadCount })
+    if (token.sceneId) await linkToScene(token.sceneId, isModel ? { assetItemId: assetId } : { mediaAssetId: assetId }, token.userId, bookingId)
+    return reply.status(201).send({ assetId, remainingUploads: token.maxUploads - spent.uploadCount })
   })
 
   // ── Send a started upload's bytes (token auth) ────────────────────────
@@ -202,41 +208,52 @@ export default async function companionUploadRoutes(app: FastifyInstance) {
     const { code, assetId } = request.params as { code: string; assetId: string }
     const token = await liveToken(code)
     if (!token) return reply.status(404).send({ error: 'Invalid or expired upload code' })
-    const reserved = /^[0-9a-f-]{36}$/i.test(assetId)
-      ? await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, assetId) })
-      : undefined
-    if (!reserved || (reserved.metadata as { uploadCode?: string } | null)?.uploadCode !== code) {
-      return reply.status(404).send({ error: 'Upload not found' })
-    }
+    const isId = /^[0-9a-f-]{36}$/i.test(assetId)
+    const media = isId ? await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, assetId) }) : undefined
+    const model = isId && !media ? await db.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.id, assetId) }) : undefined
+    const codeOf = media ? (media.metadata as { uploadCode?: string } | null)?.uploadCode : model?.uploadCode
+    if (!(media || model) || codeOf !== code) return reply.status(404).send({ error: 'Upload not found' })
     const body = (request.body ?? {}) as { fileData?: string }
     if (typeof body.fileData !== 'string' || !body.fileData) return reply.status(400).send({ error: 'Missing required field: fileData' })
 
     // Claim it: only one data post per upload gets past 'uploading'
-    const [claimed] = await db
-      .update(mediaAssets)
-      .set({ status: 'processing' })
-      .where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.status, 'uploading')))
-      .returning({ id: mediaAssets.id })
+    const [claimed] = media
+      ? await db.update(mediaAssets).set({ status: 'processing' })
+          .where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.status, 'uploading'))).returning({ id: mediaAssets.id })
+      : await db.update(assetLibraryItems).set({ status: 'processing' })
+          .where(and(eq(assetLibraryItems.id, assetId), eq(assetLibraryItems.status, 'uploading'))).returning({ id: assetLibraryItems.id })
     if (!claimed) return reply.status(409).send({ error: 'Upload already sent' })
 
-    const announce = async () => {
-      if (!token.sceneId) return
-      const link = await db.query.sceneLibrary.findFirst({
-        where: (l, { and: all, eq: is }) => all(is(l.sceneId, token.sceneId!), is(l.mediaAssetId, assetId)),
-        columns: { id: true },
-      })
-      if (link) await publishLibraryChanged(token.sceneId, link.id)
-    }
+    // The library link to tell the scene about. A model reserved in media before LIV-132 moves to 3D Models once
+    // stored, keeping its link id, so the link is looked up once, by the id it had at the start.
+    const link = token.sceneId
+      ? await db.query.sceneLibrary.findFirst({
+          where: (l, { and: all, eq: is }) => all(is(l.sceneId, token.sceneId!), media ? is(l.mediaAssetId, assetId) : is(l.assetItemId, assetId)),
+          columns: { id: true },
+        })
+      : undefined
+    const announce = async () => { if (link) await publishLibraryChanged(token.sceneId!, link.id) }
     await announce() // processing
-    let asset
+    const data = Buffer.from(body.fileData, 'base64')
+    let stored
     try {
-      asset = await fillMedia(assetId, Buffer.from(body.fileData, 'base64'))
+      if (media) {
+        stored = await fillMedia(assetId, data)
+        // A model reserved in media before the split (a phone upload started across the deploy) goes to 3D Models now
+        const moved = isModelFile(stored.filename, stored.contentType) ? await moveMediaModel(assetId) : null // announces the link itself
+        if (moved?.assetItemId) {
+          const item = await db.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.id, moved.assetItemId) })
+          return reply.status(201).send({ asset: item ? withoutUploadCode(item) : null })
+        }
+      } else {
+        stored = withoutUploadCode(await fillModel(assetId, data))
+      }
     } catch (err) {
       await announce()
       if (err instanceof StoreMediaError) return reply.status(err.status).send(err.body)
       throw err
     }
     await announce()
-    return reply.status(201).send({ asset })
+    return reply.status(201).send({ asset: stored })
   })
 }

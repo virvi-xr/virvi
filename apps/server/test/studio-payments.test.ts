@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import Stripe from 'stripe'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
   studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioMistakeReports, studioPayments, studioPromptCredits,
@@ -795,6 +795,46 @@ describe('studio payments', () => {
       // exactly one checkout holds the credit, however many were opened
       expect(pays.filter((p) => p.giftsHeld === 1)).toHaveLength(1)
       expect(pays.reduce((sum, p) => sum + p.giftsHeld, 0)).toBe(1)
+      expect(await balanceOf(u)).toBe(0)
+    })
+
+    it('a checkout that commits while another is quoting is reused, not expired by a double-counted credit', async () => {
+      const u = await createUser()
+      const { d } = await hatAndMask(u)
+      await giveFinalizes(u, 1)
+      // The first checkout as it is once open; set aside so it can be committed at the worst moment
+      await finalize(u, d.id)
+      const [first] = await paymentOf(d.id)
+      await db.delete(studioPayments).where(eq(studioPayments.id, first.id))
+      await db.update(studioFinalizeCredits).set({ balance: 1 }).where(eq(studioFinalizeCredits.userId, u.id))
+      let release!: () => void
+      let locked!: () => void
+      const held = new Promise<void>((r) => { release = r })
+      const ready = new Promise<void>((r) => { locked = r })
+      // The second request reads the balance (1) and then waits to read what open checkouts hold
+      const commit = db.transaction(async (tx) => {
+        await tx.execute(sql`LOCK TABLE studio_payments IN ACCESS EXCLUSIVE MODE`)
+        locked()
+        await held
+        // the first checkout commits in between: the credit moves from the balance to its hold
+        await tx.insert(studioPayments).values(first)
+        await tx.update(studioFinalizeCredits).set({ balance: 0 }).where(eq(studioFinalizeCredits.userId, u.id))
+      })
+      await ready
+      const second = finalize(u, d.id)
+      for (let i = 0; i < 200; i++) {
+        const [{ n }] = await db.execute(sql`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`) as unknown as [{ n: number }]
+        if (n > 0) break
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      release()
+      await commit
+      const res = await second
+      // one credit, counted once: the same quote, so the open session is handed out again
+      expect(res.statusCode).toBe(200)
+      expect(res.json().url).toBe(first.stripeSessionUrl)
+      expect(stripe.calls.expired).toEqual([])
+      expect(await paymentOf(d.id)).toEqual([expect.objectContaining({ id: first.id, status: 'pending', giftsHeld: 1 })])
       expect(await balanceOf(u)).toBe(0)
     })
   })

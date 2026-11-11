@@ -1,90 +1,73 @@
 ---
 title: Multiplayer Events
-description: Using virvi.sendMessage and virvi.onMessage for custom real-time messaging between players.
+description: Send custom real-time messages between players in a scene with virvi.sendMessage and virvi.onMessage.
 ---
 
-Multiplayer Events let you send and receive custom real-time messages between all players in a scene. Built on Virvi's Colyseus infrastructure, this system enables interactive multiplayer experiences without managing your own networking.
+`sendMessage` and `onMessage` pass your own messages between everyone connected to a scene. They ride on the scene's Virvi room, so you don't run any networking yourself.
 
-## How It Works
+## How it works
 
-- Messages are broadcast through the Virvi Colyseus room for your scene.
-- All connected players in the same world instance receive the message.
-- Messages are fire-and-forget (not persisted). For persistent data, use [Scene State](/custom-features/scene-state/).
-- Message payloads are JSON-serializable objects.
+- Each Virvi scene has one real-time room (`virvi_scene`). Every player whose scene code has connected to Virvi is in it.
+- `sendMessage(id, data)` sends `{ messageId: id, data }` to the room. The server forwards it to **every other** client in the room. The sender does not get its own message back.
+- `onMessage(id, callback)` calls `callback(data)` for each message with that `id`.
+- Nothing is stored. A player who connects later never sees earlier messages.
+- `data` must survive JSON-like serialization: plain objects, arrays, strings, numbers, booleans and `null`.
 
-## Sending a Message
-
-Use `virvi.sendMessage` to broadcast a message to all players:
-
-```typescript
-import { virvi } from "@virvi/sdk";
-
-// Send a simple message
-virvi.sendMessage("emoji-reaction", {
-  emoji: "fire",
-  position: { x: 10, y: 2, z: 5 },
-});
-
-// Send a game event
-virvi.sendMessage("player-scored", {
-  playerId: virvi.userId,
-  points: 100,
-});
-```
-
-The first argument is the **message type** (a string you define). The second is the **payload** (any JSON-serializable object).
-
-## Receiving Messages
-
-Use `virvi.onMessage` to listen for incoming messages:
+## Send
 
 ```typescript
-virvi.onMessage("emoji-reaction", (data, senderId) => {
-  // Show the emoji effect at the specified position
-  spawnEmojiEffect(data.emoji, data.position);
-});
+import { createVirvi } from '@virvixr/dcl'
 
-virvi.onMessage("player-scored", (data, senderId) => {
-  // Update the scoreboard
-  updateScoreboard(data.playerId, data.points);
-});
+export async function main() {
+  const virvi = await createVirvi()
+
+  const sendReaction = (emoji: string) => {
+    if (virvi.connectionState !== 'connected') return // sendMessage throws "Not in a room" before this
+    virvi.sendMessage('emoji-reaction', { emoji, at: Date.now() })
+  }
+
+  sendReaction('fire')
+}
 ```
 
-The callback receives:
-
-- `data` — the message payload
-- `senderId` — the ID of the player who sent the message
-
-The sender also receives their own message, so you can use the same handler for local and remote events.
-
-## Removing Listeners
-
-Unsubscribe from a message type when you no longer need it:
+## Receive
 
 ```typescript
-const unsubscribe = virvi.onMessage("emoji-reaction", handler);
-
-// Later, stop listening
-unsubscribe();
+virvi.onMessage('emoji-reaction', (data) => {
+  const { emoji } = data as { emoji?: string }
+  if (typeof emoji === 'string') showEmoji(emoji)
+})
 ```
 
-## Common Use Cases
+The callback gets only `data`. Virvi doesn't add who sent it. If you need that, put it in the payload yourself, for example `virvi.user?.id` (and don't trust it: any client can send any payload).
 
-- **Emoji reactions** — let players broadcast reactions visible to everyone
-- **Multiplayer games** — sync game state like scores, turns, and actions
-- **Synchronized effects** — trigger visual or audio effects across all clients
-- **Collaborative building** — broadcast placement actions to all users
-- **Polls and voting** — collect responses from players in real time
+To act on your own message too, call your handler directly when you send.
 
-## Best Practices
+## One handler per message ID
 
-- **Keep payloads small.** Avoid sending large objects or binary data. Send references (IDs, URLs) instead of raw content.
-- **Use specific message types.** Instead of one generic message type with a sub-type field, use distinct type strings for each kind of event. This makes listeners cleaner and avoids unnecessary processing.
-- **Handle missing data gracefully.** Not all clients may be on the same code version. Validate incoming payloads before using them.
-- **Rate limit sends.** Avoid sending messages every frame. Batch or throttle frequent updates (e.g., position syncing) to avoid flooding the Colyseus room.
+`onMessage` keeps one callback per `id`. Calling it again with the same `id` replaces the earlier callback. It returns nothing, and there is no way to remove a handler. To stop reacting, have your callback check a flag.
 
-## Limitations
+```typescript
+let listening = true
+virvi.onMessage('emoji-reaction', (data) => {
+  if (!listening) return
+  // ...
+})
+// later
+listening = false
+```
 
-- Messages are not persisted. If a player connects after a message was sent, they will not receive it.
-- Messages are scoped to a single world instance. Players in different instances of the same scene do not receive each other's messages. For cross-world communication, use the [Command Center](/dashboard/command-center/).
-- Maximum payload size is subject to Colyseus room limits.
+## Who can send
+
+Any client in the room, signed in or not. The server forwards `user_message` without checking the sender's role or the payload. Treat every message as untrusted input:
+
+- Validate its shape before using it.
+- Never let a message alone grant anything (prizes, access, edits).
+- Throttle what you send: don't send every frame.
+
+## Limits
+
+- Messages reach players in the same room. In scalable mode without Redis, each server has its own room for the scene, so players on different servers don't hear each other.
+- Players whose scene doesn't run Virvi's code (or hasn't connected yet) don't get messages.
+- Not for cross-scene messages. The [Command Center](/docs/dashboard/command-center/) sends to registered platform hooks, not to these rooms.
+- Keep payloads small: send IDs or URLs, not content.

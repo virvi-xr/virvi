@@ -20,6 +20,25 @@ export async function currentRevisions(designId: string, exec: Exec = db): Promi
     .where(eq(studioPieces.designId, designId)))
 }
 
+/**
+ * What is worn when Finalize checks some of the pieces (LIV-81): the chosen pieces and the ones finalized already, each
+ * at its latest revision. `categories` is null when that is every piece (or nothing was chosen): the whole set, keyed
+ * as it always was. A piece left out never blocks or skews the check.
+ */
+export async function wornRevisions(
+  designId: string, chosen: string[] | null, exec: Exec = db,
+): Promise<{ revisions: string; categories: string[] | null }> {
+  if (!chosen) return { revisions: await currentRevisions(designId, exec), categories: null }
+  const pieces = await exec.select({
+    category: studioPieces.category, latestRevisionId: studioPieces.latestRevisionId,
+    finalized: sql<boolean>`EXISTS (SELECT 1 FROM studio_entitlements e WHERE e.design_id = studio_pieces.design_id AND e.category = studio_pieces.category)`,
+  }).from(studioPieces).where(eq(studioPieces.designId, designId))
+  const built = pieces.filter((p) => p.latestRevisionId)
+  const worn = built.filter((p) => chosen.includes(p.category) || p.finalized)
+  if (worn.length === built.length) return { revisions: await currentRevisions(designId, exec), categories: null }
+  return { revisions: revisionsKey(worn), categories: worn.map((p) => p.category).sort() }
+}
+
 const frameUrls = (designId: string, row: typeof studioSetRenders.$inferSelect, expires: Date) =>
   row.status === 'ready'
     ? Array.from({ length: row.frames }, (_, frame) => signRenderFrame(
@@ -37,6 +56,21 @@ export async function setViews(designId: string, revisions: string, exec: Exec =
 }
 
 /**
+ * A set view's frames when it is rendered already, never asking for one (a viewer looking, LIV-159): `ready` with its
+ * frame urls, else the view's status (`none` when never asked for). Null when the design has no pieces.
+ */
+export async function readySetFrames(
+  design: Design, view: View, now: Date, categories: string[] | null = null,
+): Promise<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: string } | null> {
+  const { revisions } = await wornRevisions(design.id, design.kind === 'scene' ? null : categories)
+  if (!revisions) return null
+  const [row] = await db.select().from(studioSetRenders).where(and(
+    eq(studioSetRenders.designId, design.id), eq(studioSetRenders.revisions, revisions), eq(studioSetRenders.viewKey, setViewKey(design.kind, view))))
+  if (row?.status !== 'ready') return { status: row?.status ?? 'none' }
+  return { status: 'ready', frames: row.frames, fps: row.fps, urls: frameUrls(design.id, row, frameUrlExpiry(now)) }
+}
+
+/**
  * An emote view of every piece worn: ready, or queued now (`queued` says a job was added rather than already
  * waiting). Null when the design has no pieces.
  */
@@ -44,12 +78,13 @@ export async function requestSetRender(
   design: Design,
   view: View,
   now: Date,
-  opts: { background?: boolean } = {},
+  opts: { background?: boolean; categories?: string[] | null } = {},
 ): Promise<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: 'queued'; queued: boolean } | null> {
   const key = setViewKey(design.kind, view)
   const done = await db.transaction(async (tx) => {
     await tx.select({ id: studioDesigns.id }).from(studioDesigns).where(eq(studioDesigns.id, design.id)).for('update')
-    const revisions = await currentRevisions(design.id, tx)
+    // A scene's walk-through is the building with all its furniture: it is never a selection's
+    const { revisions, categories } = await wornRevisions(design.id, design.kind === 'scene' ? null : opts.categories ?? null, tx)
     if (!revisions) return null
     const [row] = await tx.select().from(studioSetRenders).where(and(
       eq(studioSetRenders.designId, design.id), eq(studioSetRenders.revisions, revisions), eq(studioSetRenders.viewKey, key)))
@@ -62,7 +97,10 @@ export async function requestSetRender(
       payload: {
         type: 'render', kind: design.kind, agent: null, model: null, prompt: null, selectedSlots: null, limits: RENDER_LIMITS,
         render: design.kind === 'scene' ? { set: true, tour: true }
-          : { set: true, bodyShape: view.bodyShape, outfit: view.outfit, emote: design.kind === 'emote' ? OWN_EMOTE : view.emote },
+          : {
+            set: true, bodyShape: view.bodyShape, outfit: view.outfit, emote: design.kind === 'emote' ? OWN_EMOTE : view.emote,
+            ...(categories ? { categories } : {}), // only these pieces are worn
+          },
         revisions, // the pieces it is for: a change before it runs cancels it (results.ts cancelSupersededRenders)
       },
     }).returning({ id: studioJobs.id })
@@ -131,7 +169,7 @@ export async function recordCheck(
  * Opening Finalize renders every emote on both bodies with the default outfit, in the background, so a view the
  * person clicks still goes first. Returns how many were queued.
  */
-export async function queueFinalizeRenders(design: Design, now: Date): Promise<number> {
+export async function queueFinalizeRenders(design: Design, now: Date, categories: string[] | null = null): Promise<number> {
   if (design.kind === 'scene') {
     if (!(await hasBuilding(design.id))) return 0
     const r = await requestSetRender(design, TOUR_VIEW, now, { background: true })
@@ -141,16 +179,16 @@ export async function queueFinalizeRenders(design: Design, now: Date): Promise<n
   for (const emote of emotesFor(design.kind)) {
     for (const bodyShape of BODY_SHAPES) {
       const view = { bodyShape, outfit: 'default', emote: design.kind === 'emote' ? null : emote } as View
-      const r = await requestSetRender(design, view, now, { background: true })
+      const r = await requestSetRender(design, view, now, { background: true, categories })
       if (r?.status === 'queued' && r.queued) n++
     }
   }
   return n
 }
 
-/** What the design page shows of the emote step. */
-export async function setDetail(design: Design, now: Date, exec: Exec = db) {
-  const revisions = await currentRevisions(design.id, exec)
+/** What the design page shows of the emote step: for every piece, or for Finalize's selection (wornRevisions). */
+export async function setDetail(design: Design, now: Date, exec: Exec = db, categories: string[] | null = null) {
+  const { revisions } = await wornRevisions(design.id, design.kind === 'scene' ? null : categories, exec)
   const checks = revisions
     ? await exec.select({ emote: studioEmoteChecks.emote, bodyShape: studioEmoteChecks.bodyShape, state: studioEmoteChecks.state })
       .from(studioEmoteChecks)

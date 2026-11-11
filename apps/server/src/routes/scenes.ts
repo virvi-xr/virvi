@@ -1,4 +1,4 @@
-import { checkClickEvent } from '@virvixr/shared'
+import { checkClickEvent, checkFrame, FRAMEABLE_TYPES } from '@virvixr/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
@@ -10,21 +10,28 @@ import {
   sceneCollaborators,
   sceneRoles,
   users,
+  organizations,
+  orgMembers,
 } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import type { AuthUser } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
-import { getSceneAccess, hasScope, isFullAccess, isHostAccess, canWriteElement, diffKeys } from '../auth/permissions.js'
+import { recordTrialBlocked } from '../auth/trial-events.js'
+import { getSceneAccess, hasScope, isFullAccess, canWriteElement, diffKeys } from '../auth/permissions.js'
 import { config } from '../config.js'
 import { publishElementChanged, publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
 import { activatePreset, canManagePresets, cleanPresetName, createPreset, deletePreset, deleteRefusal, PRESET_NAME_MAX, renamePreset } from '../scenes/presets.js'
 import { dispatchPlatformCallbacks } from '../integrations/platform-hooks.js'
 import { serializeSingleElement } from '../services/scene-serializer.js'
 import { getSubscription } from '../integrations/stripe.js'
-import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
-import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
+import { liveScene } from '../scenes/live.js'
+import { mayManageDeletion } from '../scenes/deleted.js'
 import { authorizeVideoControl } from '../ws/scene-guard.js'
+import { checkParentInstance } from '../scenes/instance-parent.js'
 import { boundScene, fromElement, fromInstance, fromParam, fromPreset, isScenePass } from '../auth/scene-from.js'
+import { SceneGone, ThumbnailError, bodyLimitFor, removeSceneThumbnail, setSceneThumbnail } from '../scenes/thumbnail.js'
+import { StoreMediaError } from '../media/store.js'
+import { SCENE_THUMBNAIL_MAX_BYTES } from '@virvixr/shared'
 import { commitRoomSet, deleteOrphanedRoomSets, insertRoomSet, prepareRoomSetForPlacement, RoomSetError, roomSetIdsByElement, sceneOwnedRoomSets, type PreparedRoomSet } from '../room-scan/sets.js'
 
 type ElementChange = Parameters<typeof publishElementChanged>[0]
@@ -108,7 +115,7 @@ export async function sceneLimitError(userId: string) {
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(scenes)
-    .where(eq(scenes.ownerId, userId))
+    .where(and(eq(scenes.ownerId, userId), liveScene()))
   if (count < limit) return null
   return {
     error: 'scene_limit_reached' as const,
@@ -123,6 +130,36 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** Same limit as the New Scene Wizard. */
 const SCENE_NAME_MAX = 120
+
+/** The element types a trial may make; the rest (ad spaces, widgets, NFTs, custom) need an account. */
+const TRIAL_ELEMENT_TYPES = new Set(['model', 'image', 'video', 'sound'])
+
+/**
+ * Why a trial may not make or change an element like this (an `account_required` action), or null when it may.
+ * Any room-set GLB counts as placing a room set: it's the same test `prepareRoomSetForPlacement` starts with.
+ */
+function trialElementRefusal(type: unknown, properties: unknown): 'element_type' | 'room_set' | null {
+  if (typeof type !== 'string' || !TRIAL_ELEMENT_TYPES.has(type)) return 'element_type'
+  const src = (properties as { modelSrc?: unknown } | null | undefined)?.modelSrc
+  if (typeof src === 'string' && src.includes('/room-sets/')) return 'room_set'
+  return null
+}
+
+function trialElementChangeRefusal(
+  element: { type: string; properties: unknown },
+  body: { type?: unknown; properties?: unknown },
+): 'element_type' | 'room_set' | null {
+  if (body.type !== undefined && body.type !== element.type && trialElementRefusal(body.type, null) === 'element_type') return 'element_type'
+  const src = (body.properties as { modelSrc?: unknown } | null | undefined)?.modelSrc
+  const before = (element.properties as { modelSrc?: unknown } | null | undefined)?.modelSrc
+  if (src !== before && typeof src === 'string' && src.includes('/room-sets/')) return 'room_set'
+  return null
+}
+
+function refuseTrial(request: FastifyRequest, reply: FastifyReply, action: string) {
+  recordTrialBlocked(request.user.id, action)
+  return reply.status(403).send({ error: 'account_required', action })
+}
 
 /**
  * A click action in the body (LIV-126), checked and tidied in place; false when the reply (400 bad_click) was sent.
@@ -139,6 +176,29 @@ function tidyClick(body: { clickEvent?: unknown } | null | undefined, reply: Fas
   return true
 }
 
+/** JSON with object keys sorted: a stored jsonb value comes back with its keys reordered. */
+const canonicalJson = (v: unknown): string =>
+  JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x))
+
+/**
+ * A frame (LIV-129) being added or changed is checked and stored tidied (null removes it); one sent back as it was
+ * stored (the HUD and AR apps resend every property) is left alone. Only images and video screens have one.
+ */
+function tidyFrame(type: unknown, before: unknown, body: { properties?: unknown } | null | undefined, reply: FastifyReply): boolean {
+  const props = body?.properties
+  if (!props || typeof props !== 'object' || Array.isArray(props) || !('frame' in props)) return true
+  const p = props as Record<string, unknown>
+  const stored = before && typeof before === 'object' ? (before as Record<string, unknown>).frame : undefined
+  if (canonicalJson(p.frame) === canonicalJson(stored)) return true
+  const bad = (message: string) => { reply.status(400).send({ error: 'bad_frame', message }); return false }
+  if (p.frame !== null && (typeof type !== 'string' || !FRAMEABLE_TYPES.has(type))) return bad('Only images and video screens can have a frame.')
+  const c = checkFrame(p.frame)
+  if (!c.ok) return bad(c.error)
+  if (c.value) p.frame = c.value
+  else delete p.frame
+  return true
+}
+
 export default async function sceneRoutes(app: FastifyInstance) {
   // All scene routes require authentication
   app.addHook('preHandler', authenticate)
@@ -148,11 +208,16 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   // ── GET /api/scenes — list user's scenes ─────────────────────────────────
 
-  app.get('/api/scenes', { config: { scenePass: { sceneFrom: boundScene } } }, async (request, reply) => {
+  app.get('/api/scenes', { config: { scenePass: { sceneFrom: boundScene }, trial: true } }, async (request, reply) => {
     const actor = actorFromClaims(request.user)
+    // A trial sees the scenes it owns, never collaborations or roles (its access is owner-only).
+    if (actor.trial && actor.userId) {
+      const own = await db.query.scenes.findMany({ where: and(eq(scenes.ownerId, actor.userId), liveScene()), orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)] })
+      return reply.send({ scenes: own.map((s) => ({ ...s, relationship: 'owner' as const, canDelete: true })) })
+    }
     if (!actor.userId || !actor.verified) return reply.send({ scenes: [] })
     const owned = await db.query.scenes.findMany({
-      where: eq(scenes.ownerId, request.user.id),
+      where: and(eq(scenes.ownerId, request.user.id), liveScene()),
       orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
     })
     const collabs = await db.query.sceneCollaborators.findMany({
@@ -160,7 +225,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
     })
     const shared = collabs.length
       ? await db.query.scenes.findMany({
-          where: inArray(scenes.id, collabs.map((c) => c.sceneId)),
+          where: and(inArray(scenes.id, collabs.map((c) => c.sceneId)), liveScene()),
           orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
         })
       : []
@@ -190,13 +255,31 @@ export default async function sceneRoutes(app: FastifyInstance) {
     const extraIds = roleRows.map((r) => r.sceneId).filter((id) => !ownedIds.has(id) && !sharedIds.has(id))
     const extra = extraIds.length
       ? await db.query.scenes.findMany({
-          where: inArray(scenes.id, [...new Set(extraIds)]),
+          where: and(inArray(scenes.id, [...new Set(extraIds)]), liveScene()),
           orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
         })
       : []
+    // LIV-83: an owner or admin of an organization also sees its scenes, to delete them (the narrow org-admin check);
+    // opening one still needs access of their own (getSceneAccess isn't widened)
+    const adminOrgs = await db
+      .select({ id: organizations.id, name: organizations.name })
+      .from(orgMembers)
+      .innerJoin(organizations, eq(organizations.id, orgMembers.orgId))
+      .where(and(eq(orgMembers.userId, actor.userId), inArray(orgMembers.role, ['owner', 'admin']), isNull(organizations.deletedAt)))
+    const orgName = new Map(adminOrgs.map((o) => [o.id, o.name]))
+    const listed = new Set([...ownedIds, ...sharedIds, ...extra.map((s) => s.id)])
+    const orgScenes = adminOrgs.length
+      ? (await db.query.scenes.findMany({
+          where: and(inArray(scenes.orgId, adminOrgs.map((o) => o.id)), liveScene()),
+          orderBy: (scenes, { desc }) => [desc(scenes.updatedAt)],
+        })).filter((s) => !listed.has(s.id))
+      : []
+    const canDelete = (s: { ownerId: string; orgId: string | null }) => s.ownerId === actor.userId || actor.role === 'admin' || (!!s.orgId && orgName.has(s.orgId))
+    const org = (s: { orgId: string | null }) => (s.orgId && orgName.has(s.orgId) ? { orgName: orgName.get(s.orgId)! } : {})
     const list = [
-      ...owned.map((s) => ({ ...s, relationship: 'owner' as const })),
-      ...[...shared, ...extra].map((s) => ({ ...s, relationship: best.get(s.id)! })),
+      ...owned.map((s) => ({ ...s, relationship: 'owner' as const, canDelete: true, ...org(s) })),
+      ...[...shared, ...extra].map((s) => ({ ...s, relationship: best.get(s.id)!, canDelete: canDelete(s), ...org(s) })),
+      ...orgScenes.map((s) => ({ ...s, relationship: 'org_admin' as const, canDelete: true, ...org(s) })),
     ]
     // A scene pass sees only its own scene (the guard already required a bound sceneId).
     return reply.send({ scenes: isScenePass(request.user) ? list.filter((s) => s.id === request.user.sceneId) : list })
@@ -247,7 +330,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   // ── GET /api/scenes/:sceneId — get scene with full nested data ───────────
 
-  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: true } } }, async (request, reply) => {
+  app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: true }, trial: true } }, async (request, reply) => {
     const { sceneId } = request.params
 
     const scene = await db.query.scenes.findFirst({
@@ -292,14 +375,14 @@ export default async function sceneRoutes(app: FastifyInstance) {
       return reply.send({ scene: { ...rest, presets: await withRoomSets(scene.presets.filter((p) => visible.has(p.id))) } })
     }
 
-    return reply.send({ scene: { ...scene, presets: await withRoomSets(scene.presets) } })
+    return reply.send({ scene: { ...scene, presets: await withRoomSets(scene.presets), canDelete: await mayManageDeletion(actorFromClaims(request.user), scene) } })
   })
 
   // ── PUT /api/scenes/:sceneId — update scene ─────────────────────────────
 
   app.put<{ Params: { sceneId: string }; Body: Partial<CreateSceneBody> & { activePresetId?: string } }>(
     '/api/scenes/:sceneId',
-    { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: 'personal' } } },
+    { config: { scenePass: { sceneFrom: fromParam('sceneId'), hyperfy: true, ar: 'personal' }, trial: true } },
     async (request, reply) => {
       const { sceneId } = request.params
       const { name, description, activePresetId } = request.body
@@ -338,37 +421,48 @@ export default async function sceneRoutes(app: FastifyInstance) {
     },
   )
 
-  // ── DELETE /api/scenes/:sceneId — delete scene ───────────────────────────
+  // ── PUT/DELETE /api/scenes/:sceneId/thumbnail — the scene's thumbnail (LIV-88) ──
+  // Hosts, co-hosts and editors (scene.edit). The body is { fileData: base64 } of the cropped 16:9 image.
 
-  app.delete<{ Params: { sceneId: string } }>('/api/scenes/:sceneId', async (request, reply) => {
+  // The body limit is a 2 MB image as base64 plus the JSON around it: Fastify answers 413 before buffering more
+  app.put<{ Params: { sceneId: string }; Body: { fileData?: unknown } }>('/api/scenes/:sceneId/thumbnail', { bodyLimit: bodyLimitFor(SCENE_THUMBNAIL_MAX_BYTES) }, async (request, reply) => {
     const { sceneId } = request.params
-
-    const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) })
-    if (!scene) return reply.status(404).send({ error: 'Scene not found' })
-    // Host-only: co-hosts hold scene.admin but may not delete the scene.
-    if (!isHostAccess(await accessFor(request, sceneId))) {
-      return reply.status(403).send({ error: 'Forbidden' })
+    if (!UUID_RE.test(sceneId) || !(await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true } }))) {
+      return reply.status(404).send({ error: 'Scene not found' })
     }
-
-    // Hosted worlds' rows would cascade away with it, leaving their Fly app, database and files running untracked.
-    const blocked = await hostedWorldsBlockingDelete({ sceneId })
-    if (blocked) return reply.status(409).send(blocked)
-    // The cascade only unlinks the scene's room sets, so they (and their GLBs) are removed here
-    const roomSetsToDelete = await sceneOwnedRoomSets({ sceneId })
-    const imports = await importsGoingWith({ sceneId })
-    await db.delete(scenes).where(eq(scenes.id, sceneId))
-    await deleteOrphanedRoomSets(roomSetsToDelete)
-    await deleteImportFiles(imports)
-    await publishSceneTouched(sceneId) // wake waiting Hyperfy feed polls so they get 404 now
-    return reply.status(204).send()
+    if (!hasScope(await accessFor(request, sceneId), 'scene.edit')) return reply.status(403).send({ error: 'Forbidden' })
+    const fileData = request.body?.fileData
+    if (typeof fileData !== 'string' || !fileData) return reply.status(400).send({ error: 'missing_file', message: 'Choose an image to upload.' })
+    try {
+      const scene = await setSceneThumbnail(sceneId, Buffer.from(fileData, 'base64'))
+      return reply.send({ scene })
+    } catch (err) {
+      if (err instanceof ThumbnailError) return reply.status(err.status).send({ error: err.code, message: err.message })
+      if (err instanceof SceneGone) return reply.status(404).send({ error: 'Scene not found' })
+      if (err instanceof StoreMediaError) return reply.status(err.status).send(err.body)
+      throw err
+    }
   })
+
+  app.delete<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/thumbnail', async (request, reply) => {
+    const { sceneId } = request.params
+    if (!UUID_RE.test(sceneId) || !(await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true } }))) {
+      return reply.status(404).send({ error: 'Scene not found' })
+    }
+    if (!hasScope(await accessFor(request, sceneId), 'scene.edit')) return reply.status(403).send({ error: 'Forbidden' })
+    const scene = await removeSceneThumbnail(sceneId)
+    if (!scene) return reply.status(404).send({ error: 'Scene not found' })
+    return reply.send({ scene })
+  })
+
+  // DELETE /api/scenes/:sceneId (LIV-83: soft delete, restore, purge) is in routes/scene-delete.ts
 
   // ── Presets (LIV-84): create (blank or a copy), rename, delete, make live ──
   // Hosts, co-hosts and editors only; booking crew never manage presets (canManagePresets).
 
   app.post<{ Params: { sceneId: string }; Body: { name?: unknown; fromPresetId?: unknown } }>(
     '/api/scenes/:sceneId/presets',
-    { config: { scenePass: { sceneFrom: fromParam('sceneId') } } },
+    { config: { scenePass: { sceneFrom: fromParam('sceneId') }, trial: true } },
     async (request, reply) => {
       const { sceneId } = request.params
       const body = request.body ?? {}
@@ -402,7 +496,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { presetId: string }; Body: { name?: unknown } }>(
     '/api/presets/:presetId',
-    { config: { scenePass: { sceneFrom: fromPreset } } },
+    { config: { scenePass: { sceneFrom: fromPreset }, trial: true } },
     async (request, reply) => {
       const preset = await managedPreset(request, reply)
       if (!preset) return reply
@@ -413,7 +507,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
   )
 
   // Web only: deleting stays off the in-world HUD, so it can't happen by accident there (no scene pass).
-  app.delete<{ Params: { presetId: string } }>('/api/presets/:presetId', async (request, reply) => {
+  app.delete<{ Params: { presetId: string } }>('/api/presets/:presetId', { config: { trial: true } }, async (request, reply) => {
     const preset = await managedPreset(request, reply)
     if (!preset) return reply
     const refusal = await deleteRefusal(preset)
@@ -427,7 +521,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { presetId: string } }>(
     '/api/presets/:presetId/activate',
-    { config: { scenePass: { sceneFrom: fromPreset } } },
+    { config: { scenePass: { sceneFrom: fromPreset }, trial: true } },
     async (request, reply) => {
       const preset = await managedPreset(request, reply)
       if (!preset) return reply
@@ -440,7 +534,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { presetId: string }; Body: CreateElementBody }>(
     '/api/presets/:presetId/elements',
-    { config: { scenePass: { sceneFrom: fromPreset, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromPreset, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { presetId } = request.params
       if (!tidyClick(request.body, reply)) return reply
@@ -459,6 +553,9 @@ export default async function sceneRoutes(app: FastifyInstance) {
       if (!hasScope(await accessFor(request, preset.sceneId), 'scene.edit')) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
+      const trialRefusal = request.user.trial ? trialElementRefusal(type, properties) : null
+      if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
+      if (!tidyFrame(type, null, request.body, reply)) return reply
 
       // A room-set asset gets the scene's own copy of its set (generated and uploaded before the transaction)
       let prepared: PreparedRoomSet | null = null
@@ -508,7 +605,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.put<{ Params: { elementId: string }; Body: Partial<CreateElementBody> }>(
     '/api/elements/:elementId',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
       if (!tidyClick(request.body, reply)) return reply
@@ -529,6 +626,10 @@ export default async function sceneRoutes(app: FastifyInstance) {
       if (!canWriteElement(access, element, { propertyKeys, fieldKeys })) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
+      // A trial may keep what an element already is (a locked type, a room set placed before); only a new one is refused (LIV-138)
+      const trialRefusal = request.user.trial ? trialElementChangeRefusal(element, request.body) : null
+      if (trialRefusal) return refuseTrial(request, reply, trialRefusal)
+      if (!tidyFrame(request.body.type ?? element.type, element.properties, request.body, reply)) return reply
 
       const updates: Record<string, unknown> = { updatedAt: new Date() }
       for (const key of ['type', 'name', 'enabled', 'customId', 'customRendering', 'clickEvent', 'properties'] as const) {
@@ -556,7 +657,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { elementId: string }; Body: { enabled?: unknown } }>(
     '/api/elements/:elementId/live',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: 'personal' } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: 'personal' }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
       const enabled = request.body?.enabled
@@ -589,7 +690,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { elementId: string } }>(
     '/api/elements/:elementId',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
 
@@ -621,7 +722,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { elementId: string }; Body: CreateInstanceBody }>(
     '/api/elements/:elementId/instances',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
       if (!tidyClick(request.body, reply)) return reply
@@ -647,6 +748,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
         withCollisions,
         properties,
       } = request.body
+      const parent = await checkParentInstance(element.presetId, parentInstanceId)
+      if (!parent.ok) return reply.status(400).send({ error: 'bad_parent', message: parent.message })
 
       const [instance] = await db
         .insert(sceneElementInstances)
@@ -659,7 +762,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
           rotation: rotation ?? null,
           scale: scale ?? null,
           clickEvent: clickEvent ?? null,
-          parentInstanceId: parentInstanceId || null,
+          parentInstanceId: parent.parentInstanceId,
           withCollisions: withCollisions ?? false,
           properties: properties ?? null,
         })
@@ -680,7 +783,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.put<{ Params: { instanceId: string }; Body: UpdateInstanceBody }>(
     '/api/instances/:instanceId',
-    { config: { scenePass: { sceneFrom: fromInstance, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromInstance, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { instanceId } = request.params
       if (!tidyClick(request.body, reply)) return reply
@@ -703,11 +806,15 @@ export default async function sceneRoutes(app: FastifyInstance) {
         'rotation',
         'scale',
         'clickEvent',
-        'parentInstanceId',
         'withCollisions',
         'properties',
       ] as const) {
         if (request.body[key] !== undefined) updates[key] = request.body[key]
+      }
+      if (request.body.parentInstanceId !== undefined) {
+        const parent = await checkParentInstance(instance.element.presetId, request.body.parentInstanceId, instanceId)
+        if (!parent.ok) return reply.status(400).send({ error: 'bad_parent', message: parent.message })
+        updates.parentInstanceId = parent.parentInstanceId
       }
 
       const [updated] = await db
@@ -731,7 +838,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { instanceId: string } }>(
     '/api/instances/:instanceId',
-    { config: { scenePass: { sceneFrom: fromInstance } } },
+    { config: { scenePass: { sceneFrom: fromInstance }, trial: true } },
     async (request, reply) => {
       const { instanceId } = request.params
 
@@ -760,7 +867,7 @@ export default async function sceneRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { elementId: string } }>(
     '/api/elements/:elementId/instances',
-    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true } } },
+    { config: { scenePass: { sceneFrom: fromElement, hyperfy: true, ar: true }, trial: true } },
     async (request, reply) => {
       const { elementId } = request.params
 

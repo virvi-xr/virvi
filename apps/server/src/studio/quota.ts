@@ -31,6 +31,15 @@ export async function isTrialUser(userId: string, exec: Exec = db): Promise<bool
   return !!u?.isTrial
 }
 
+/**
+ * The day a job's cost and give-back go on. A job counted on TRIAL_DAY whose owner is no longer a trial (converted, or
+ * merged into an account, while it ran) books on today's row: the account's usage is per day and its trial row is gone.
+ */
+export async function jobDay(userId: string, countedDay: string | null, now: Date, exec: Exec = db): Promise<string> {
+  if (countedDay === TRIAL_DAY) return (await isTrialUser(userId, exec)) ? TRIAL_DAY : utcDay(now)
+  return countedDay ?? utcDay(now)
+}
+
 /** The usage day a user's prompts and cost are kept on. */
 export async function usageDay(userId: string, now: Date): Promise<string> {
   return (await isTrialUser(userId)) ? TRIAL_DAY : utcDay(now)
@@ -86,12 +95,13 @@ export async function promptStatus(userId: string, now: Date) {
  * it; once the allowance is spent, one gifted prompt, then one credit, each also in a single statement. Every
  * reservation, counted or not, is refused once today's spend reaches the cost ceiling, unless the user has gifted
  * prompts: past the ceiling an uncounted reservation (otherwise free) also takes one gifted prompt, so gifts cannot
- * fund unlimited runs; the job records `from: 'gift'` and the prompt is given back if the job errors.
+ * fund unlimited runs; the job records `from: 'gift'` and the prompt is given back if the job errors. `gifts: false`
+ * (a free try-again, LIV-142) never takes a gift: past the ceiling it is refused.
  */
 export async function reservePrompt(
   userId: string,
   now: Date,
-  opts: { counted: boolean },
+  opts: { counted: boolean; gifts?: boolean },
   exec: Exec = db,
 ): Promise<{ ok: true; day: string; from: PromptSource | null } | { ok: false; reason: 'allowance' | 'cost_ceiling' | 'trial_busy' }> {
   const { trial, allowance, ceiling } = await limitsFor(userId, exec)
@@ -112,7 +122,7 @@ export async function reservePrompt(
   if ((rows as unknown as unknown[]).length) return { ok: true, day, from: opts.counted ? 'allowance' : null }
   const { costUsd } = await usage(userId, day, exec)
   if (trial) return { ok: false, reason: costUsd >= ceiling ? 'cost_ceiling' : 'allowance' }
-  if (opts.counted || costUsd >= ceiling) {
+  if (opts.counted || (costUsd >= ceiling && opts.gifts !== false)) {
     const gift = await exec.execute(sql`
       UPDATE studio_prompt_credits SET gifted = gifted - 1, updated_at = now()
       WHERE user_id = ${userId} AND gifted > 0
@@ -128,8 +138,13 @@ export async function reservePrompt(
   return { ok: false, reason: 'allowance' }
 }
 
-/** Gives a counted prompt back: to the day's allowance, to the gifted balance, or as a credit when a credit paid for it. */
+/**
+ * Gives a counted prompt back: to the day's allowance, to the gifted balance, or as a credit when a credit paid for it.
+ * Pass the job's counted day, not `jobDay`: a trial prompt whose owner has since become an account was dropped with
+ * the trial's allowance at conversion, so there is nothing to give back (giving it to today would be a free prompt).
+ */
 export async function refundPrompt(userId: string, day: string, from: PromptSource | null, exec: Exec = db): Promise<void> {
+  if (day === TRIAL_DAY && from === 'allowance' && !(await isTrialUser(userId, exec))) return
   if (from === 'credit') {
     await exec.insert(studioPromptCredits).values({ userId, balance: 1 })
       .onConflictDoUpdate({ target: studioPromptCredits.userId, set: { balance: sql`${studioPromptCredits.balance} + 1`, updatedAt: new Date() } })

@@ -9,9 +9,11 @@ import { actorFromClaims } from '../auth/actor.js'
 import { authenticate } from '../middleware/auth.js'
 import { linkWalletGrants } from '../auth/permissions.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
-import { convertTrial, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
+import { convertTrial, isTrialGone, mergeTrial, movedHeadsetsField, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { linkVerifiedWallet, resolveVerifiedWalletUser } from '../auth/wallet-users.js'
+import { claimWalletInvites } from '../studio/invites.js'
 import { issueWalletSession } from '../auth/sessions.js'
+import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
 const TTL_MS = 5 * 60_000
@@ -29,6 +31,34 @@ function siweOrigin(): { host: string; origin: string } {
 }
 
 export default async function walletAuthRoutes(app: FastifyInstance) {
+  /**
+   * A trial visitor's wallet sign-in converts the trial (new wallet) or moves it into the wallet's account. Null when a
+   * concurrent sign-up converted or merged the trial first: the caller carries on as a sign-in without a trial.
+   */
+  async function signInFromTrial(trialId: string, recovered: string, fromAction: unknown) {
+    const known = await db.query.userAuthMethods.findFirst({
+      where: and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, recovered)),
+      with: { user: true },
+    })
+    const verified = !!known && (known.metadata as { verified?: unknown } | null)?.verified === true
+    const user = verified
+      ? await resolveVerifiedWalletUser(recovered, `${recovered.slice(0, 6)}…${recovered.slice(-4)}`, 'account')
+      : await db.transaction(async (tx) => {
+          const converted = await convertTrial(trialId, { displayName: `${recovered.slice(0, 6)}…${recovered.slice(-4)}` }, tx)
+          await tx.insert(userAuthMethods).values({ userId: trialId, type: 'wallet', identifier: recovered, metadata: { verified: true } })
+          return converted
+        }).catch((e) => { if (isTrialGone(e)) return null; throw e })
+    if (!user) return null
+    const merged = user.id !== trialId ? await mergeTrial(trialId, user.id, fromAction) : false
+    if (user.id === trialId) {
+      recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
+      // Now an account holding the wallet: design invites waiting on it become theirs
+      await claimWalletInvites(trialId, recovered)
+    }
+    await linkWalletGrants(user.id, recovered)
+    return { ...issueWalletSession(app, user, recovered), ...movedHeadsetsField(merged) }
+  }
+
   app.post<{ Body: { address?: string } }>('/api/auth/wallet/challenge', async (request, reply) => {
     const address = request.body?.address
     if (!address || !ADDRESS_RE.test(address)) return reply.status(400).send({ error: 'address must be a 0x wallet address' })
@@ -53,7 +83,7 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
     return reply.send({ nonce, message })
   })
 
-  app.post<{ Body: { address?: string; nonce?: string; signature?: string; fromAction?: string } }>('/api/auth/wallet/verify', { preHandler: refuseExpiredTrial(app) }, async (request, reply) => {
+  app.post<{ Body: { address?: string; nonce?: string; signature?: string; fromAction?: string } }>('/api/auth/wallet/verify', { preHandler: refuseExpiredTrial(app), config: { rateLimit: CREDENTIAL_RATE_LIMIT } }, async (request, reply) => {
     const { address, nonce, signature } = request.body ?? {}
     if (!address || !ADDRESS_RE.test(address) || !nonce || !signature) return reply.status(400).send({ error: 'address, nonce and signature are required' })
     // Single use: delete first so a failed attempt also burns the nonce.
@@ -69,32 +99,15 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
     }
     if (recovered !== challenge.address) return reply.status(401).send({ error: 'Invalid signature' })
 
-    // A trial visitor's wallet sign-in converts the trial (new wallet) or moves it into the wallet's account
     const trialId = await trialFromBearer(app, request)
-    if (trialId) {
-      const known = await db.query.userAuthMethods.findFirst({
-        where: and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, recovered)),
-        with: { user: true },
-      })
-      const fromAction = request.body?.fromAction
-      const verified = !!known && (known.metadata as { verified?: unknown } | null)?.verified === true
-      const user = verified
-        ? await resolveVerifiedWalletUser(recovered, `${recovered.slice(0, 6)}…${recovered.slice(-4)}`, 'account')
-        : await db.transaction(async (tx) => {
-            const converted = await convertTrial(trialId, { displayName: `${recovered.slice(0, 6)}…${recovered.slice(-4)}` }, tx)
-            await tx.insert(userAuthMethods).values({ userId: trialId, type: 'wallet', identifier: recovered, metadata: { verified: true } })
-            return converted
-          })
-      if (user.id !== trialId) await mergeTrial(trialId, user.id, fromAction)
-      else recordTrialEvent('signed_up', trialId, cleanAction(fromAction))
-      await linkWalletGrants(user.id, recovered)
-      return reply.send(issueWalletSession(app, user, recovered))
-    }
+    const fromTrial = trialId ? await signInFromTrial(trialId, recovered, request.body?.fromAction) : null
+    if (fromTrial) return reply.send(fromTrial)
 
     const auth = request.headers.authorization
     // Only an account session may link a wallet; a scene pass is ignored as if absent (it must never link one).
+    // A trial bearer that lost a concurrent conversion is ignored too: this is then a plain wallet sign-in.
     const bearerKind = auth?.startsWith('Bearer ') ? (app.jwt.decode<{ kind?: string }>(auth.slice(7)) as { kind?: string } | null)?.kind : undefined
-    if (auth?.startsWith('Bearer ') && bearerKind !== 'scene') {
+    if (!trialId && auth?.startsWith('Bearer ') && bearerKind !== 'scene') {
       let bearer: { id: string; refresh?: boolean; guest?: boolean; verified?: boolean; kind?: 'account' | 'scene' } | null = null
       try {
         bearer = app.jwt.verify<{ id: string; refresh?: boolean; guest?: boolean; verified?: boolean; kind?: 'account' | 'scene' }>(auth.slice(7))

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { eq, and, count, inArray } from 'drizzle-orm'
+import { eq, and, count, inArray, isNull } from 'drizzle-orm'
 import crypto from 'node:crypto'
 import { db } from '../db/connection.js'
 import { organizations, orgMembers, orgInvites, userAuthMethods, users } from '../db/schema.js'
@@ -22,7 +22,8 @@ export default async function organizationRoutes(app: FastifyInstance) {
       })
       .from(orgMembers)
       .innerJoin(organizations, eq(orgMembers.orgId, organizations.id))
-      .where(eq(orgMembers.userId, request.user.id))
+      // A deleted organization (LIV-83) is gone to its members
+      .where(and(eq(orgMembers.userId, request.user.id), isNull(organizations.deletedAt)))
     const counts = rows.length
       ? await db.select({ orgId: orgMembers.orgId, n: count() }).from(orgMembers)
         .where(inArray(orgMembers.orgId, rows.map((r) => r.id))).groupBy(orgMembers.orgId)
@@ -185,6 +186,8 @@ export default async function organizationRoutes(app: FastifyInstance) {
       const [invite] = await db.select().from(orgInvites).where(eq(orgInvites.token, token))
       if (!invite) return reply.status(404).send({ error: 'Invite not found' })
       if (invite.status !== 'pending') return reply.status(400).send({ error: `Invite already ${invite.status}` })
+      const [org] = await db.select({ deletedAt: organizations.deletedAt }).from(organizations).where(eq(organizations.id, invite.orgId))
+      if (!org || org.deletedAt) return reply.status(404).send({ error: 'Invite not found' })
       if (invite.expiresAt < new Date()) {
         await db.update(orgInvites).set({ status: 'expired' }).where(eq(orgInvites.id, invite.id))
         return reply.status(400).send({ error: 'Invite has expired' })
@@ -257,6 +260,7 @@ async function getOrgMembership(userId: string, orgId: string) {
   const [membership] = await db
     .select({ role: orgMembers.role })
     .from(orgMembers)
-    .where(and(eq(orgMembers.userId, userId), eq(orgMembers.orgId, orgId)))
+    .innerJoin(organizations, eq(organizations.id, orgMembers.orgId))
+    .where(and(eq(orgMembers.userId, userId), eq(orgMembers.orgId, orgId), isNull(organizations.deletedAt)))
   return membership || null
 }

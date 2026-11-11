@@ -2,26 +2,32 @@ import { createRequire } from 'node:module'
 const _require = createRequire(import.meta.url)
 const { Server: ColyseusServer } = _require('colyseus') as any
 const { WebSocketTransport } = _require('@colyseus/ws-transport') as any
-import { config, assertProductionSecrets, roomsDistributed } from './config.js'
+import { config, assertProductionSecrets, assertScalableRedis, roomsDistributed } from './config.js'
 import { startHookCrons } from './integrations/platform-hooks.js'
 import { defineRooms } from './ws/registry.js'
 import { runMigrations } from './db/migrate.js'
 import { buildApp } from './app.js'
 import { startLifecycleSweep } from './venues/lifecycle.js'
 import { startDclRedeploySweep } from './services/dcl/redeploy-sweep.js'
+import { startDclMapSweep } from './services/dcl/map-status.js'
 import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
 import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
 import { startRetentionSweep, RETENTION_SWEEP_MS } from './services/import/retention.js'
+import { startScenePurgeSweep, PURGE_SWEEP_MS, PURGE_AFTER_DAYS } from './scenes/deleted.js'
 import { startDurationBackfill } from './media/durations.js'
 import { setOnBuildDone } from './services/import/build-runner.js'
 import { deployImport } from './services/import/import-deploy.js'
 import { hyperfyHosting } from './services/hyperfy/infrastructure.js'
 import { startAnalyticsJobs } from './analytics/jobs.js'
 import { initBus } from './realtime/bus.js'
+import { installProcessErrorHandlers, startErrorJobs } from './errors/jobs.js'
 
 async function main() {
+  // LIV-66: an exception nothing caught is recorded before the process exits, as it always has
+  installProcessErrorHandlers()
   assertProductionSecrets({ mode: config.mode, nodeEnv: process.env.NODE_ENV, jwtSecret: config.jwtSecret })
+  assertScalableRedis({ mode: config.mode, redisUrl: config.redisUrl })
   console.log(`[virvi-server] Starting in "${config.mode}" mode`)
 
   // ── Auto-migrate ─────────────────────────────────────────────────────────
@@ -86,6 +92,10 @@ async function main() {
     startDclRedeploySweep(config.dclRedeploySweepMs)
     console.log(`[virvi-server] Decentraland redeploy sweep every ${config.dclRedeploySweepMs}ms`)
   }
+  if (config.dclMapSweepMs > 0) {
+    startDclMapSweep(config.dclMapSweepMs)
+    console.log(`[virvi-server] Decentraland map data sweep every ${config.dclMapSweepMs}ms`)
+  }
   if (hyperfyHosting().available) {
     startHostedWorldSweep(SWEEP_INTERVAL_MS)
     console.log(`[virvi-server] Hosted Hyperfy world sweep every ${SWEEP_INTERVAL_MS}ms`)
@@ -100,10 +110,15 @@ async function main() {
   // Ruling R27: import files 30 days after the import ended, deployed files no deploy keeps (it skips a missing bucket)
   startRetentionSweep(RETENTION_SWEEP_MS)
   console.log(`[virvi-server] Import file retention sweep 5 min after boot, then every ${RETENTION_SWEEP_MS}ms`)
+  // LIV-83: deleted scenes are removed for good after their 30 days
+  startScenePurgeSweep()
+  console.log(`[virvi-server] Deleted scene purge (after ${PURGE_AFTER_DAYS} days) 10 min after boot, then every ${PURGE_SWEEP_MS}ms`)
   startDurationBackfill()
   console.log('[virvi-server] Video length backfill 2 min after boot')
   startAnalyticsJobs()
   console.log('[virvi-server] Analytics jobs started')
+  startErrorJobs()
+  console.log(`[virvi-server] Error reporting: release ${config.release}, Linear filing ${config.linearApiKey && config.linearTeamId ? 'on' : 'off'}`)
 
   console.log(`[virvi-server] Ready at ${config.publicUrl}`)
 }

@@ -6,11 +6,13 @@ import { eq } from 'drizzle-orm'
 import { zipSync } from 'fflate'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { analyticsScenes, assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneImports } from '../src/db/schema.js'
+import { PLACEMENTS_FILE, decodePlacements, encodePlacements } from '@virvixr/shared'
+import { analyticsScenes, assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElementInstances, sceneImports, scenes } from '../src/db/schema.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { chainSigner, dclHash, virviSigner } from '../src/services/dcl/entity.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
-import { assembleImported, ModelRefused } from '../src/services/dcl/assemble.js'
+import { assembleImported, ModelRefused, pendingModels, placementsFile, placementsInScene } from '../src/services/dcl/assemble.js'
+import { BATCH_WINDOW_MS, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
 import {
   DEPLOY_WINDOW_MS, DeployerError, markFailed, prepareSignedDeploy, reconcileStaleDeployments, startVirviDeploy, submitSignedDeploy, whenSettled,
   type SignedBundle,
@@ -20,7 +22,7 @@ import { setBuildRunner, setOnBuildDone, startBuild, type BuildRunner } from '..
 import { createImport, SUPERSEDED_MESSAGE } from '../src/services/import/imports.js'
 import { deployImport, startImportDeploy } from '../src/services/import/import-deploy.js'
 import { resetDb } from './helpers/db.js'
-import { createElement, createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
+import { createElement, createInstance, createScene, createUser, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { FakeWorldsClient } from './helpers/fake-worlds.js'
 
 const WORLD = 'cafe.dcl.eth'
@@ -702,6 +704,74 @@ describe('deploying an imported build', () => {
     expect(worlds.deployed).toHaveLength(1)
   })
 
+  describe('a disconnect racing the automatic deploy of an upload', () => {
+    const disconnect = (id: string) => app.inject({ method: 'DELETE', url: `/api/dcl/destinations/${id}`, headers: auth(user) })
+
+    it('the deploy claimed the import first: the disconnect is refused and the deploy finishes', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      let release!: () => void
+      const held = new Promise<void>((r) => { release = r })
+      let asked!: () => void
+      const reached = new Promise<void>((r) => { asked = r })
+      const real = worlds.getDeployers.bind(worlds)
+      worlds.getDeployers = async (world: string) => { asked(); await held; return real(world) }
+
+      const running = deployImport(imp.id)
+      await reached
+      // Claimed, but nothing links it to the destination yet
+      expect(await importRow(imp.id)).toMatchObject({ status: 'deploying', destinationId: null, deploymentId: null })
+      const res = await disconnect(dest.id)
+      expect([res.statusCode, res.json().error]).toEqual([409, 'import_in_progress'])
+
+      release()
+      await running
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      expect((await importRow(imp.id)).status).toBe('deployed')
+      expect((await destByWorld())?.sceneId).toBe(scene.id)
+    })
+
+    it('the disconnect went first: the claimed deploy stops and never connects the World back to the old scene', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      // deployImport read the granted destination; the disconnect lands before its claim
+      expect((await disconnect(dest.id)).statusCode).toBe(200)
+      const [claimed] = await db.update(sceneImports).set({ status: 'deploying' }).where(eq(sceneImports.id, imp.id)).returning()
+      expect(await startImportDeploy(claimed, user.id, { virviOnly: true, claimed: true, fetch: fetcher })).toBeNull()
+      expect(await destByWorld()).toBeUndefined()
+      expect(await db.select().from(sceneDeployments)).toHaveLength(0)
+      expect(worlds.deployed).toHaveLength(0)
+    })
+
+    it('a destination gone while the claimed deploy reads Decentraland is never set up again by it (checked under the lock)', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      const real = worlds.getDeployers.bind(worlds)
+      // Removed outside the disconnect route's import check, after the deploy saw it granted
+      worlds.getDeployers = async (world: string) => {
+        await db.delete(dclWorldDestinations).where(eq(dclWorldDestinations.id, dest.id))
+        return real(world)
+      }
+      await deployImport(imp.id)
+      expect(await destByWorld()).toBeUndefined()
+      expect(await importRow(imp.id)).toMatchObject({ status: 'built', deploymentId: null })
+      expect(worlds.deployed).toHaveLength(0)
+    })
+
+    it('a Deploy the creator presses after the disconnect still sets the World up again (their choice)', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      expect((await disconnect(dest.id)).statusCode).toBe(200)
+      const res = await post(`/api/imports/${imp.id}/deploy`)
+      expect(res.statusCode).toBeLessThan(300)
+      expect((await destByWorld())?.sceneId).toBe(scene.id)
+    })
+  })
+
   it('an automatic deploy that fails before the World accepts goes from deploying back to built', async () => {
     const { scene } = await createScene(user, 'Cafe')
     await grantedDest(scene.id)
@@ -866,6 +936,251 @@ describe('deploying an imported build', () => {
       expect([r.statusCode, r.json().error]).toEqual([413, 'world_storage_full'])
     })
   })
+  describe('the placements snapshot (LIV-135 part 3)', () => {
+    const fileOf = (e: ReturnType<typeof entityOf>, file: string) => e.content.find((c) => c.file === file)
+    /** The deployment's placements file, decoded; null when it has none. */
+    function placementsOf(i = worlds.deployed.length - 1) {
+      const d = worlds.deployed[i]
+      const ref = fileOf(entityOf(i), PLACEMENTS_FILE)
+      if (!ref) return null
+      const bytes = d.files.get(ref.hash) ?? worlds.contents.get(ref.hash)
+      return bytes ? decodePlacements(dec(bytes)) : null
+    }
+    /** A scene with model `a` placed once. */
+    async function placedScene() {
+      const { scene, preset } = await createScene(user, 'Cafe')
+      const el = await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+      const copy = await createInstance(el.id)
+      return { scene, preset, el, copy }
+    }
+
+    it("a Virvi-signed import carries virvi/placements.json for its placed Virvi models; the owner's files and scene.json deploy as built, and the map checks start", async () => {
+      const { scene, copy } = await placedScene()
+      await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      expect((await importRow(imp.id)).status).toBe('deployed')
+      const e = entityOf()
+      expect(placementsOf()).toEqual([expect.objectContaining({ instanceId: copy.id, src: 'models/virvi/a.glb', position: { x: 1, y: 1, z: 1 } })])
+      expect(e.metadata).toEqual(JSON.parse(sceneJson()))
+      for (const [file, bytes] of builtFiles()) expect(fileOf(e, file)?.hash).toBe(await dclHash(bytes))
+      const dest = (await destByWorld())!
+      expect(dest.deployedFiles).toContain(PLACEMENTS_FILE)
+      expect([dest.mapStatus, dest.mapEntityId]).toEqual(['pending', worlds.deployed[0].entityId])
+    })
+
+    it('an import with no placed Virvi model deploys no snapshot', async () => {
+      const { scene, preset } = await createScene(user, 'Cafe')
+      await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+      await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      expect(fileOf(entityOf(), PLACEMENTS_FILE)).toBeUndefined()
+    })
+
+    it("the owner-signed path keeps the snapshot inline through the signature, and replaces one carried in the upload", async () => {
+      const { scene, copy } = await placedScene()
+      const stale = encodePlacements([{ instanceId: 'old', elementId: 'x', src: 'models/virvi/a.glb', position: { x: 9, y: 9, z: 9 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, collisions: false }])
+      const imp = await built({ sceneId: scene.id, files: builtFiles({ [PLACEMENTS_FILE]: enc(stale) }) })
+      const started = await startImportDeploy(await importRow(imp.id), user.id, { fetch: fetcher })
+      const { deployment, payload } = started as Extract<typeof started, { mode: 'sign' }>
+      const bundle = (await depRow(deployment.id)).assetBundle as SignedBundle
+      const src = bundle.newFiles.find((f) => f.file === PLACEMENTS_FILE)!
+      expect('base64' in src && decodePlacements(Buffer.from(src.base64, 'base64').toString('utf8')).map((p) => p.instanceId)).toEqual([copy.id])
+      await submitSignedDeploy(deployment.id, await chainFor(owner, payload), { fetch: fetcher })
+      expect((await importRow(imp.id)).status).toBe('deployed')
+      expect(placementsOf()!.map((p) => p.instanceId)).toEqual([copy.id])
+      expect(entityOf().content.filter((c) => c.file.toLowerCase() === PLACEMENTS_FILE)).toHaveLength(1)
+    })
+
+    it('counts toward the file budget, once even when the upload carries its own copy', async () => {
+      const { scene } = await placedScene()
+      const extra: Record<string, Uint8Array> = {}
+      for (let i = 0; i < 195; i++) extra[`assets/f${i}.txt`] = enc(`f${i}`)
+      // 4 built + 195 + model a = 200 (the budget), + the snapshot = 201
+      const crowded = await built({ sceneId: scene.id, files: builtFiles(extra, ['0,0']) })
+      await grantedDest(scene.id, { parcels: ['0,0'] })
+      await expect(deployImport(crowded.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'scene_too_big' })
+      expect((await importRow(crowded.id)).errorMessage).toMatch(/201 files/)
+
+      // An upload carrying Virvi's file has it replaced, not added: 4 + 194 + its copy + model a + the snapshot = 200
+      delete extra['assets/f194.txt']
+      const fits = await built({ sceneId: scene.id, files: builtFiles({ ...extra, [PLACEMENTS_FILE]: enc('{"v":1,"models":[]}') }, ['0,0']) })
+      await deployImport(fits.id, { fetch: fetcher })
+      await whenSettled((await importRow(fits.id)).deploymentId!)
+      expect((await importRow(fits.id)).status).toBe('deployed')
+      expect(entityOf().content).toHaveLength(200)
+    })
+
+    it('counts toward the World storage check', async () => {
+      const { scene } = await placedScene()
+      await db.insert(assetLibraryItems).values({ name: 'a', storageKey: 'm/a.glb', cdnUrl: `${CDN}/m/a.glb`, fileSizeBytes: 1000 })
+      const snapshot = placementsFile(await placementsInScene(scene.id), ['models/virvi/a.glb'])!.byteLength
+      const need = [...builtFiles().values()].reduce((n, b) => n + b.byteLength, 0) + 1000 + snapshot
+      await grantedDest(scene.id)
+      const short = await built({ sceneId: scene.id })
+      worlds.stats.set(user.wallet!, { maxAllowedBytes: need - 1, usedBytes: 0 })
+      await expect(deployImport(short.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'world_storage_full' })
+      const fits = await built({ sceneId: scene.id })
+      worlds.stats.set(user.wallet!, { maxAllowedBytes: need, usedBytes: 0 })
+      await deployImport(fits.id, { fetch: fetcher })
+      await whenSettled((await importRow(fits.id)).deploymentId!)
+      expect((await importRow(fits.id)).status).toBe('deployed')
+    })
+
+    it('after an import, a model placed in-world redeploys with the snapshot; a move alone redeploys nothing', async () => {
+      const { scene, preset } = await createScene(user, 'Cafe')
+      const dest = await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      const first = goLive()
+      expect(fileOf(entityOf(), PLACEMENTS_FILE)).toBeUndefined()
+
+      const el = await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+      const copy = await createInstance(el.id)
+      const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+      await whenSettled(dep.id)
+      expect((await depRow(dep.id)).status).toBe('deployed')
+      const next = entityOf()
+      expect(placementsOf()!.map((p) => p.instanceId)).toEqual([copy.id])
+      expect(next.metadata).toEqual(first.metadata)
+      for (const c of first.content) expect(next.content).toContainEqual(c)
+      const now = (await destByWorld())!
+      expect(now.adopted).toBe(true)
+      expect([now.mapStatus, now.mapEntityId]).toEqual(['pending', worlds.deployed[1].entityId])
+      goLive()
+
+      await db.update(sceneElementInstances).set({ position: { x: 5, y: 0, z: 5 } }).where(eq(sceneElementInstances.id, copy.id))
+      expect(await pendingModels((await destByWorld())!)).toEqual([])
+      expect(await sweepRedeploys(new Date(Date.now() + 2 * BATCH_WINDOW_MS), { fetch: fetcher })).toEqual({ started: 0, marked: 0 })
+      const again = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+      await whenSettled(again.id)
+      expect((await depRow(again.id)).errorMessage).toMatch(/already has everything/)
+      expect(worlds.deployed).toHaveLength(2)
+    })
+  })
+
+  describe('scene thumbnail (LIV-88)', () => {
+    const THUMB = 'images/scene-thumbnail-0123456789abcdef.png'
+    async function withThumbnail(sceneId: string) {
+      const key = `scenes/${sceneId}/thumbnail-0123456789abcdef.png`
+      await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 900_000 }).where(eq(scenes.id, sceneId))
+    }
+
+    it("the deployed scene.json gets only display.navmapThumbnail, and the image is in the deployment", async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      await withThumbnail(scene.id)
+      await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      const e = entityOf()
+      expect(e.metadata).toEqual({ ...JSON.parse(sceneJson()), display: { title: 'Owner Title', navmapThumbnail: THUMB } })
+      expect(e.content.map((c) => c.file)).toContain(THUMB)
+    })
+
+    it('without a thumbnail in Virvi the scene.json is deployed as built', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      await grantedDest(scene.id)
+      const imp = await built({ sceneId: scene.id })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      expect(entityOf().metadata).toEqual(JSON.parse(sceneJson()))
+    })
+
+    it('counts towards the file budget and the World storage before deploying', async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      await withThumbnail(scene.id)
+      const extra: Record<string, Uint8Array> = {}
+      for (let i = 0; i < 196; i++) extra[`assets/f${i}.txt`] = enc(`f${i}`)
+      const crowded = await built({ sceneId: scene.id, files: builtFiles(extra, ['0,0']) })
+      await grantedDest(scene.id, { parcels: ['0,0'] })
+      await expect(deployImport(crowded.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'scene_too_big' })
+
+      await db.delete(dclWorldDestinations)
+      const small = await built({ sceneId: scene.id })
+      const builtBytes = [...builtFiles().values()].reduce((n, b) => n + b.byteLength, 0)
+      worlds.stats.set(user.wallet!, { maxAllowedBytes: builtBytes + 500_000, usedBytes: 0 })
+      await grantedDest(scene.id)
+      await expect(deployImport(small.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'world_storage_full' })
+    })
+  })
+
+  describe('a "Download live" zip re-imported keeps its Virvi-named thumbnail (LIV-133)', () => {
+    const OWN = 'images/scene-thumbnail-fedcba9876543210.jpg'
+    const UPLOAD = 'images/scene-thumbnail-0123456789abcdef.png'
+    /** The built files of a downloaded live scene: Virvi's deployed thumbnail, named by its scene.json. */
+    function downloaded(): Map<string, Uint8Array> {
+      const files = builtFiles({ [OWN]: enc('the thumbnail Virvi deployed') })
+      const json = JSON.parse(dec(files.get('scene.json')!))
+      files.set('scene.json', enc(JSON.stringify({ ...json, display: { ...json.display, navmapThumbnail: OWN } })))
+      return files
+    }
+    const later = () => new Date(Date.now() + 2 * BATCH_WINDOW_MS)
+    /** Imports the downloaded zip into `sceneId` and deploys it; the World's destination after. */
+    async function reimport(sceneId: string) {
+      const imp = await built({ sceneId, files: downloaded() })
+      await deployImport(imp.id, { fetch: fetcher })
+      await whenSettled((await importRow(imp.id)).deploymentId!)
+      expect((await importRow(imp.id)).status).toBe('deployed')
+      goLive()
+      return (await destByWorld())!
+    }
+
+    for (const source of ['import', null] as const) {
+      it(`nothing is pending and nothing redeploys (the scene's thumbnail: ${source ?? 'none'}); a later redeploy keeps the file and navmapThumbnail`, async () => {
+        const { scene, preset } = await createScene(user, 'Cafe')
+        if (source) {
+          // LIV-89 recorded the downloaded thumbnail as the scene's imported one (re-encoded, so under another hash)
+          const key = `scenes/${scene.id}/thumbnail-1111111111111111.jpg`
+          await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 1000, thumbnailSource: source }).where(eq(scenes.id, scene.id))
+        }
+        await grantedDest(scene.id)
+        const dest = await reimport(scene.id)
+        expect(dest.deployedFiles).toContain(OWN)
+        expect(entityOf().metadata.display.navmapThumbnail).toBe(OWN)
+        expect(await pendingModels(dest)).toEqual([])
+        expect(await sweepRedeploys(later(), { fetch: fetcher })).toEqual({ started: 0, marked: 0 })
+        expect(worlds.deployed).toHaveLength(1)
+
+        // A model placed later redeploys the World: the scene's thumbnail stays
+        await createElement(preset.id, { type: 'model', name: 'a', properties: { modelSrc: `${CDN}/m/a.glb` } })
+        const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+        await whenSettled(dep.id)
+        const e = entityOf()
+        expect(worlds.deployed).toHaveLength(2)
+        expect(e.content.map((c) => c.file)).toEqual(expect.arrayContaining([OWN, 'models/virvi/a.glb']))
+        expect(e.metadata.display.navmapThumbnail).toBe(OWN)
+      })
+    }
+
+    it("a thumbnail uploaded in Virvi afterwards, then removed: Virvi's file and navmapThumbnail go, the scene's own file stays", async () => {
+      const { scene } = await createScene(user, 'Cafe')
+      await grantedDest(scene.id)
+      const dest = await reimport(scene.id)
+      const key = `scenes/${scene.id}/thumbnail-0123456789abcdef.png`
+      await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 1000, thumbnailSource: 'upload' }).where(eq(scenes.id, scene.id))
+      expect((await pendingModels(dest)).map((m) => m.file)).toEqual([UPLOAD])
+      await whenSettled((await startVirviDeploy(dest.id, user.id, { fetch: fetcher })).id)
+      expect(entityOf().metadata.display.navmapThumbnail).toBe(UPLOAD)
+      goLive()
+
+      await db.update(scenes).set({ thumbnailKey: null, thumbnailUrl: null, thumbnailBytes: null, thumbnailSource: null }).where(eq(scenes.id, scene.id))
+      const now = (await destByWorld())!
+      expect((await pendingModels(now)).map((m) => [m.file, m.removed])).toEqual([[UPLOAD, true]])
+      await whenSettled((await startVirviDeploy(dest.id, user.id, { fetch: fetcher })).id)
+      const e = entityOf()
+      expect(e.content.map((c) => c.file)).toContain(OWN)
+      expect(e.content.map((c) => c.file)).not.toContain(UPLOAD)
+      expect(e.metadata.display.navmapThumbnail).toBeUndefined()
+      goLive()
+      expect(await pendingModels((await destByWorld())!)).toEqual([])
+    })
+  })
+
   it("a re-upload of a scene using more than half the World's storage is not refused: the scene it replaces is credited", async () => {
     const { scene } = await createScene(user, 'Cafe')
     await grantedDest(scene.id)

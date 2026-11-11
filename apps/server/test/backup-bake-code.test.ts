@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { FRAME_MAT, frameParts, type FrameSettings } from '@virvixr/shared'
 import { bakeModule, HEIGHT_PER_WIDTH } from '../src/services/backup/bake-code.js'
 import type { AssetPlan, BackupSnapshot, BakedItem } from '../src/services/backup/snapshot.js'
 
@@ -191,6 +192,82 @@ describe('bakeModule', () => {
     expect(out).toContain('export function bakeVirviContent(): void {')
   })
 
+  describe('frames (LIV-129)', () => {
+    const thin = (o: Partial<FrameSettings> = {}): FrameSettings => ({ enabled: true, style: 'thin', color: '#1c1c1c', thickness: 5, ...o })
+    const calls = (out: string) => out.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('addFramePart(e, '))
+    /** The call the bake writes for each part the runtime draws (the geometry is shared with packages/core). */
+    const expected = (frame: FrameSettings, scale: { x: number; y: number; z: number }) =>
+      frameParts(frame, scale).map((p) => `addFramePart(e, { shape: "${p.shape}", x: ${p.position.x}, y: ${p.position.y}, width: ${p.scale.x}, height: ${p.scale.y}, depth: ${p.scale.z}, color: "${p.color}" })`)
+
+    it('a framed landscape image gets four bars around the picture, placed and turned with it', () => {
+      const out = bake(item('image', { props: { frame: thin() }, assets: { texture: bundle('images/p.png') } }))
+      expect(calls(out)).toEqual(expected(thin(), { x: 2, y: 1, z: 1 }))
+      // 5% of the shorter side (1 m): the top bar spans the picture and both side bars, 2 cm deep at most
+      expect(calls(out)[0]).toBe('addFramePart(e, { shape: "box", x: 0, y: 0.525, width: 2.1, height: 0.05, depth: 0.02, color: "#1c1c1c" })')
+      // The helper places each part from the picture's transform, as the runtime does
+      expect(out.match(/^function addFramePart\(/gm)).toHaveLength(1)
+      expect(out).toContain('position: Vector3.add(at.position, Vector3.rotate(Vector3.create(part.x, part.y, 0), at.rotation)), rotation: at.rotation')
+      expect(out).toContain('MeshRenderer.setBox(f)')
+      expect(out).toContain('Material.setPbrMaterial(f, { albedoColor: Color4.fromColor3(Color3.fromHexString(part.color), 1), roughness: 0.7, metallic: 0, specularIntensity: 0.2 })')
+      expect(out).toMatch(/import \{[^}]*Color4[^}]*\} from '@dcl\/sdk\/math'/)
+    })
+
+    it('a portrait picture sizes its bars from its width', () => {
+      const scale = { x: 1, y: 2, z: 1 }
+      const out = bake(item('image', { scale, props: { frame: thin({ style: 'classic', color: '#6b4a2b', thickness: 10 }) } }))
+      const lines = calls(out)
+      expect(lines).toEqual(expected(thin({ style: 'classic', color: '#6b4a2b', thickness: 10 }), scale))
+      expect(lines[2]).toBe('addFramePart(e, { shape: "box", x: -0.55, y: 0, width: 0.1, height: 2, depth: 0.04, color: "#6b4a2b" })')
+    })
+
+    it('Gallery adds the four mat strips between the picture and the bars', () => {
+      const frame = thin({ style: 'gallery', thickness: 2 })
+      const out = bake(item('image', { props: { frame } }))
+      const lines = calls(out)
+      expect(lines).toEqual(expected(frame, { x: 2, y: 1, z: 1 }))
+      expect(lines).toHaveLength(8)
+      const mat = lines.filter((l) => l.includes('shape: "plane"'))
+      expect(mat).toHaveLength(4)
+      for (const l of mat) expect(l).toContain(`color: "${FRAME_MAT.color}"`)
+      expect(out).toContain('MeshRenderer.setPlane(f)')
+    })
+
+    it('a video screen keeps its frame', () => {
+      const out = bake(item('video', { props: { offType: 2, frame: thin() }, assets: { 'playlist.0': bundle('videos/a.mp4', 'video') } }))
+      expect(calls(out)).toEqual(expected(thin(), { x: 2, y: 1, z: 1 }))
+    })
+
+    it('an ad space never has a frame', () => {
+      const out = bake(item('ad_space', { props: { shape: '1:1', frame: thin() } }))
+      expect(calls(out)).toEqual([])
+      expect(out).not.toContain('addFramePart')
+    })
+
+    it('a frame switched off, missing or not a frame draws nothing', () => {
+      for (const frame of [thin({ enabled: false }), undefined, { style: 'ornate', enabled: true }, 'thin']) {
+        const out = bake(item('image', { props: { frame } }))
+        expect(out).not.toContain('addFramePart')
+      }
+    })
+
+    it('a frame stored outside the rules is read like the runtime reads it', () => {
+      const out = bake(item('image', { props: { frame: { enabled: true, style: 'thin', color: 'red', thickness: 80 } } }))
+      expect(calls(out)).toEqual(expected(thin({ color: '#1c1c1c', thickness: 20 }), { x: 2, y: 1, z: 1 }))
+    })
+
+    it('a mirrored picture is framed by its size; a zero-size one has no frame', () => {
+      expect(calls(bake(item('image', { scale: { x: -2, y: 1, z: -1 }, props: { frame: thin() } })))).toEqual(expected(thin(), { x: 2, y: 1, z: 1 }))
+      expect(bake(item('image', { scale: { x: 0, y: 1, z: 1 }, props: { frame: thin() } }))).not.toContain('addFramePart')
+    })
+
+    it('frames sit in each picture\'s own block, with the helper written once', () => {
+      const out = bake(item('image', { name: 'One', props: { frame: thin() } }), item('video', { name: 'Two', props: { frame: thin({ style: 'gallery' }) } }))
+      expect(out.match(/^function addFramePart\(/gm)).toHaveLength(1)
+      expect(calls(out)).toHaveLength(12)
+      expect(out.indexOf('"One"')).toBeLessThan(out.indexOf('addFramePart(e,'))
+    })
+  })
+
   const here = dirname(fileURLToPath(import.meta.url))
   const dclModules = resolve(here, '../../../dcl-runtime/node_modules')
   const haveSdk = existsSync(join(dclModules, '@dcl/sdk/package.json'))
@@ -252,6 +329,9 @@ function fullSnapshot(): BackupSnapshot {
     item('model', { withCollisions: true, assets: { model: bundle('models/b.glb', 'model') } }),
     item('image', { withCollisions: true, props: { emission: 1, isTransparent: true }, assets: { texture: bundle('images/p.png') } }),
     item('image'),
+    item('image', { scale: { x: 1, y: 2, z: 1 }, props: { frame: { enabled: true, style: 'thin', color: '#1c1c1c', thickness: 3 } } }),
+    item('image', { props: { frame: { enabled: true, style: 'gallery', color: '#c9a227', thickness: 2 } } }),
+    item('video', { props: { offType: 1, frame: { enabled: true, style: 'classic', color: '#6b4a2b', thickness: 6 } }, assets: { offImage: bundle('images/off.png') } }),
     item('image', { click: { type: 1, externalLink: 'https://t.example', hoverText: 'Go', showFeedback: true } }),
     item('model', { click: { type: 5, teleportTo: '0,0', showFeedback: false }, assets: { model: bundle('models/c.glb', 'model') } }),
     item('image', { click: { type: 4, moveTo: { position: { x: 1, y: 0, z: 1 } }, showFeedback: false } }),

@@ -1,13 +1,16 @@
 import { and, eq, inArray, max, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPieces, studioRenders, studioRevisions, studioSetRenders } from '../db/schema.js'
+import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPieces, studioRenders, studioRevisions, studioSetRenders, users } from '../db/schema.js'
 import { checkFilePath, jobFileKey } from './store.js'
-import { recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
+import { jobDay, recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
 import { publishStudio } from './events.js'
 import { ORBIT_FRAMES, orbitKeyFor, queueFullOrbit, revisionsKey, type FixClipping, type View } from './designs.js'
 import { hasBuilding, requestSetRender, TOUR_VIEW } from './sets.js'
 import { addToLibrary } from './library.js'
 import { DECLINED_NOTE, SCOPE_CATEGORIES, logScopeEvent, maybeFlag, offTopicIsFree, offTopicNote } from './scope.js'
+import { recordJobFailure } from '../errors/record.js'
+import { finishTimings } from './timings.js'
+import { notifyPackageReady } from '../notifications/notifications.js'
 
 /** A worker's Result, as apps/studio-worker/CONTRACT.md defines it (only the fields Virvi reads are typed). */
 export type ContractResult = {
@@ -25,6 +28,7 @@ export type ContractResult = {
   error?: string | null
   scope?: { by: 'check' | 'agent'; category: string; note: string } | null // on off_topic and declined
   set?: { viewKey: string; frames: number; fps: number } | null // a set render job's emote view
+  worn?: string[] // the categories a selection's set render or clipping fix wore (CONTRACT.md); absent from older workers
 }
 
 export type ContractPiece = {
@@ -60,6 +64,9 @@ export function parseResult(body: unknown): { ok: true; result: ContractResult }
       return { ok: false, reason: 'scope is malformed' }
     }
   }
+  if (r.worn != null && (!Array.isArray(r.worn) || r.worn.length > 200 || !r.worn.every((c) => typeof c === 'string' && CATEGORY.test(c)))) {
+    return { ok: false, reason: 'worn is malformed' }
+  }
   if (r.set != null) {
     const st = r.set as Record<string, unknown>
     if (typeof st !== 'object' || typeof st.viewKey !== 'string' || !VIEW_KEY.test(st.viewKey)
@@ -94,12 +101,26 @@ export function parseResult(body: unknown): { ok: true; result: ContractResult }
 const SUPERSEDED = 'superseded: the pieces changed before it ran'
 
 /**
+ * Whether a job that named Finalize's selection (`categories`) was done with only those pieces worn: the worker says
+ * so in `worn`. An older worker ignores the selection and wears every piece, so its view isn't the selection's.
+ */
+export const confirmsSelection = (categories: string[] | undefined, worn: string[] | undefined) =>
+  !categories || (!!worn && [...worn].sort().join(',') === [...categories].sort().join(','))
+
+/**
  * After a prompt changed pieces: renders still waiting for the old pieces would render the new ones under the old
  * key, where nobody sees them, and hold up the current ones. Fails them before a worker takes them.
  */
 async function cancelSupersededRenders(designId: string, superseded: string[], exec: Exec, now: Date): Promise<void> {
-  const revisions = revisionsKey(await exec.select({ latestRevisionId: studioPieces.latestRevisionId }).from(studioPieces)
-    .where(eq(studioPieces.designId, designId)))
+  const latest = await exec.select({ latestRevisionId: studioPieces.latestRevisionId }).from(studioPieces)
+    .where(eq(studioPieces.designId, designId))
+  const revisions = revisionsKey(latest)
+  const current = latest.map((p) => p.latestRevisionId).filter((x): x is string => !!x)
+  // A view of Finalize's selection (render.categories) wears only those pieces: it is stale when one of them changed,
+  // not when another piece did. A whole-set view is stale on any change, a piece added included.
+  const staleSet = sql`(${studioJobs.payload}->'render'->'categories' IS NULL AND ${studioJobs.payload}->>'revisions' IS DISTINCT FROM ${revisions})
+    OR (${studioJobs.payload}->'render'->'categories' IS NOT NULL AND NOT (string_to_array(${studioJobs.payload}->>'revisions', ',')
+      <@ ARRAY[${sql.join([sql`''`, ...current.map((r) => sql`${r}`)], sql`, `)}]::text[]))`
   const pieceJobs = superseded.length
     ? sql`OR id IN (SELECT job_id FROM studio_renders WHERE revision_id IN (${sql.join(superseded.map((r) => sql`${r}`), sql`, `)})
         UNION SELECT pending_job_id FROM studio_renders WHERE revision_id IN (${sql.join(superseded.map((r) => sql`${r}`), sql`, `)}))`
@@ -107,7 +128,7 @@ async function cancelSupersededRenders(designId: string, superseded: string[], e
   const cancelled = await exec.update(studioJobs)
     .set({ status: 'failed', result: { outcome: 'error', error: SUPERSEDED, pieces: [] }, finishedAt: now })
     .where(and(eq(studioJobs.designId, designId), eq(studioJobs.type, 'render'), eq(studioJobs.status, 'queued'),
-      sql`((${studioJobs.payload}->'render'->>'set' = 'true' AND ${studioJobs.payload}->>'revisions' IS DISTINCT FROM ${revisions}) ${pieceJobs})`))
+      sql`((${studioJobs.payload}->'render'->>'set' = 'true' AND (${staleSet})) ${pieceJobs})`))
     .returning({ id: studioJobs.id })
   const ids = cancelled.map((j) => j.id)
   if (!ids.length) return
@@ -146,6 +167,18 @@ function systemNote(r: ContractResult, refunded: boolean): string | null {
   }
 }
 
+/**
+ * Who a prompt job's cost, give-back, off-topic and flag accounting goes to: its sender (LIV-159), or the design's owner
+ * for a job from before senders were kept. Null when that account is gone: studio_jobs.user_id has no FK, so a sender
+ * can delete their account while their prompt runs, and its accounting then goes to nobody (never the owner, who may be
+ * an heir). The row is held (KEY SHARE) so the account can't go before the transaction's writes land.
+ */
+export async function jobPayer(job: { userId: string | null }, design: { ownerId: string }, exec: Exec): Promise<string | null> {
+  const id = job.userId ?? design.ownerId
+  const [u] = await exec.select({ id: users.id }).from(users).where(eq(users.id, id)).for('key share')
+  return u ? id : null
+}
+
 /** The design is idle again once no prompt is waiting or running. */
 export async function settleDesign(designId: string, exec: Exec = db): Promise<void> {
   await exec.update(studioDesigns).set({ status: 'idle' }).where(and(
@@ -160,6 +193,7 @@ export async function settleDesign(designId: string, exec: Exec = db): Promise<v
  */
 export async function applyResult(jobId: string, result: ContractResult, now: Date): Promise<'applied' | 'already'> {
   const status = result.outcome === 'error' ? 'failed' : 'done'
+  let payer = null as string | null // set in the transaction
   const job = await db.transaction(async (tx) => {
     const [job] = await tx.update(studioJobs)
       .set({ status, result, finishedAt: now })
@@ -170,6 +204,8 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     const day = job.countedDay ?? utcDay(now)
 
     if (job.type === 'prompt') {
+      payer = design ? await jobPayer(job, design, tx) : null
+      const costDay = payer ? await jobDay(payer, job.countedDay, now, tx) : day
       const payload = job.payload as { agent?: string }
       const agent = result.agent ?? payload.agent ?? null
       if (result.reply || result.proposal) {
@@ -207,15 +243,16 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         if (design && ring > 0 && ring < ORBIT_FRAMES) await queueFullOrbit(tx, design, rev.id, p.category, 'male')
       }
       if (result.pieces.some((p) => p.files?.length)) await cancelSupersededRenders(job.designId, superseded, tx, now)
-      if (design) await recordCost(design.ownerId, day, result.costUsd ?? 0, tx)
-      const refunded = (job.counted || job.countedFrom === 'gift') && !!design && (result.outcome === 'error'
-        || (result.outcome === 'off_topic' && await offTopicIsFree(tx, design.ownerId, now)))
-      if (refunded) await refundPrompt(design!.ownerId, day, job.countedFrom as PromptSource | null, tx)
+      // Support's prompt (a Virvi admin's) is Virvi's spend: it goes on nobody's day, the trials' budget included
+      if (payer && !job.byAdminId) await recordCost(payer, costDay, result.costUsd ?? 0, tx)
+      const refunded = (job.counted || job.countedFrom === 'gift') && !!payer && (result.outcome === 'error'
+        || (result.outcome === 'off_topic' && await offTopicIsFree(tx, payer, now)))
+      if (refunded) await refundPrompt(payer!, day, job.countedFrom as PromptSource | null, tx)
       const note = systemNote(result, refunded)
       if (note) await tx.insert(studioMessages).values({ designId: job.designId, role: 'system', text: note, jobId: job.id })
-      if ((result.outcome === 'off_topic' || result.outcome === 'declined') && result.scope && design) {
+      if ((result.outcome === 'off_topic' || result.outcome === 'declined') && result.scope && design && payer && !job.byAdminId) {
         await logScopeEvent(tx, {
-          userId: design.ownerId, designId: design.id, jobId: job.id, by: result.scope.by, category: result.scope.category,
+          userId: payer, designId: design.id, jobId: job.id, by: result.scope.by, category: result.scope.category,
           note: result.scope.note, message: String((job.payload as { prompt?: unknown }).prompt ?? ''),
         })
       }
@@ -251,9 +288,10 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         await tx.update(studioRenders).set({ status: ready ? 'ready' : 'failed', frames: ready ? frames : 0 })
           .where(eq(studioRenders.id, row.id))
       }
+      const selection = (job.payload as { render?: { categories?: string[] } }).render?.categories
       for (const row of await tx.select().from(studioSetRenders).where(eq(studioSetRenders.jobId, job.id))) {
         const s = result.set
-        const ready = result.outcome !== 'error' && s?.viewKey === row.viewKey && s.frames > 0
+        const ready = result.outcome !== 'error' && s?.viewKey === row.viewKey && s.frames > 0 && confirmsSelection(selection, result.worn)
         await tx.update(studioSetRenders).set(ready ? { status: 'ready', frames: s!.frames, fps: s!.fps } : { status: 'failed', frames: 0 })
           .where(eq(studioSetRenders.id, row.id))
       }
@@ -263,18 +301,24 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
   })
   if (!job) return 'already'
   const fix = (job.payload as { fixClipping?: FixClipping }).fixClipping
-  if (job.type === 'prompt' && fix && result.outcome === 'ok') {
-    // A clipping fix renders the emote it fixed again straight away, for the new pieces
+  if (job.type === 'prompt' && fix && result.outcome === 'ok' && !confirmsSelection(fix.categories, result.worn)) {
+    // An older worker fixed it looking at every piece: re-rendering would keep that under the selection's key
+    console.warn(`[studio] clipping fix ${job.id} didn't confirm the selection it was for; its view isn't re-rendered`)
+  } else if (job.type === 'prompt' && fix && result.outcome === 'ok') {
+    // A clipping fix renders the emote it fixed again straight away, for the new pieces (Finalize's selection, if it
+    // was that view)
     const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, job.designId))
     if (d) {
-      await requestSetRender(d, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : fix.emote } as View, now)
+      await requestSetRender(d, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : fix.emote } as View, now,
+        { categories: fix.categories ?? null })
         .catch((err) => console.error('[studio] fix re-render failed:', err instanceof Error ? err.message : err))
     }
   }
   if (job.type === 'finalize') {
-    // Paid scene pieces go into the designer's asset library; a failure leaves them for the sweep to add
-    const ready = await db.select({ id: studioEntitlements.id }).from(studioEntitlements)
+    // Paid scene pieces go into the payer's asset library; a failure leaves them for the sweep to add
+    const ready = await db.select({ id: studioEntitlements.id, category: studioEntitlements.category }).from(studioEntitlements)
       .where(and(eq(studioEntitlements.jobId, job.id), eq(studioEntitlements.status, 'ready')))
+    await notifyPackageReady(job.designId, ready.map((r) => r.category))
     for (const { id } of ready) {
       await addToLibrary(id, now).catch((err) => console.error('[studio] library add failed:', err instanceof Error ? err.message : err))
     }
@@ -287,14 +331,22 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         .catch((err) => console.error('[studio] walk-through render failed:', err instanceof Error ? err.message : err))
     }
   }
-  if (result.outcome === 'off_topic' || result.outcome === 'declined') {
-    const [d] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, job.designId))
-    if (d) await maybeFlag(d.ownerId, now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
+  if ((result.outcome === 'off_topic' || result.outcome === 'declined') && !job.byAdminId && payer) {
+    await maybeFlag(payer, now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
   }
+  if (job.type === 'prompt') await finishTimings(job.id)
+  // LIV-66: a worker job that ended in an error is a failed background job
+  if (result.outcome === 'error') await recordStudioFailure(job, result.error || 'studio job failed')
   await publishStudio(job.designId, {
     type: 'job', jobId: job.id, status, outcome: result.outcome, ...(result.error ? { error: result.error } : {}),
   })
   return 'applied'
+}
+
+/** LIV-66: a failed worker job, held to its design owner's share of new job signatures. Never throws. */
+async function recordStudioFailure(job: { type: string; designId: string }, error: string): Promise<void> {
+  const [d] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, job.designId)).catch(() => [])
+  recordJobFailure(`studio_${job.type}`, new Error(error), { owner: d?.ownerId ?? job.designId })
 }
 
 /** Fails jobs that will never get a result (machine never started, or stopped answering), once each. */
@@ -306,6 +358,7 @@ export async function failJobs(
   if (!jobIds.length) return 0
   let n = 0
   for (const id of jobIds) {
+    // Each job on its own: one that can't be settled is logged and left for the next sweep, never stops the rest
     const r = await db.transaction(async (tx) => {
       const [job] = await tx.update(studioJobs)
         .set({ status: 'failed', result: { outcome: 'error', error, pieces: [] }, finishedAt: now })
@@ -314,7 +367,8 @@ export async function failJobs(
       if (!job) return null
       const [design] = await tx.select().from(studioDesigns).where(eq(studioDesigns.id, job.designId))
       if (job.type === 'prompt') {
-        if ((job.counted || job.countedFrom === 'gift') && design) await refundPrompt(design.ownerId, job.countedDay ?? utcDay(now), job.countedFrom as PromptSource | null, tx)
+        const payer = design && (job.counted || job.countedFrom === 'gift') ? await jobPayer(job, design, tx) : null
+        if (payer) await refundPrompt(payer, job.countedDay ?? utcDay(now), job.countedFrom as PromptSource | null, tx)
         await tx.insert(studioMessages).values({
           designId: job.designId, role: 'system', jobId: job.id,
           text: `${error}${job.counted ? ' Your prompt was not counted.' : ''}`,
@@ -331,10 +385,19 @@ export async function failJobs(
       }
       await settleDesign(job.designId, tx)
       return job
+    }).catch((err) => {
+      console.error(`[studio] failing job ${id} failed:`, err instanceof Error ? err.message : err)
+      return null
     })
     if (!r) continue
     n++
-    await publishStudio(r.designId, { type: 'job', jobId: r.id, status: 'failed', outcome: 'error', error })
+    try {
+      if (r.type === 'prompt') await finishTimings(r.id)
+      await recordStudioFailure(r, error)
+      await publishStudio(r.designId, { type: 'job', jobId: r.id, status: 'failed', outcome: 'error', error })
+    } catch (err) {
+      console.error(`[studio] after failing job ${id}:`, err instanceof Error ? err.message : err)
+    }
   }
   return n
 }

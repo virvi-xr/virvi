@@ -9,21 +9,25 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { signErrorMessage } from '@/lib/deploy'
 import {
-  buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, placeLabel, recentImports, signerPhrase, SIGNERS_UNKNOWN_NOTE, watchImport,
+  buildLogShown, importThumbnailShown, sceneMoveNotice, virviNote, importErrorMessage, importFailure, importLines, importPhase, importViewError, PHASE_BADGES, placeLabel, recentImports, signerPhrase, SIGNERS_UNKNOWN_NOTE, watchImport,
 } from '@/lib/import'
 import { folderTooBig, scenePathMap, zipSceneFilesAsync } from '@/lib/import-zip'
 import { jumpInUrl } from '@/lib/wizard/run'
+import { DEPLOY_LINE, WALLET_PROMPT } from '@/lib/wizard/trial-deploy'
+import { importLimitNote, importMaxBytes } from '@/lib/trial-scene'
+import { openSignUp } from '@/lib/trial'
+import { LockIcon } from '@/components/icons'
 import { Badge, PageHeader, PrimaryButton, Skeleton } from '@/components/ui'
 import { ProgressLines } from '@/components/wizard/ProgressLines'
 import { useWorldSigning, type SigningDestination } from '@/components/dcl/useWorldSigning'
 import { DownloadLiveButton } from '@/components/dcl/DownloadLiveButton'
 import { DownloadBackupButton } from '@/components/dcl/DownloadBackupButton'
 import { ParcelGrantCard } from '@/components/dcl/ParcelGrantCard'
+import { SceneThumbnail } from '../scenes/[sceneId]/SceneThumbnail'
 
 const secondary = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50'
 const errorBox = 'rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300'
 const infoBox = 'rounded-md border border-blue-900/60 bg-blue-950/40 px-3 py-2 text-blue-200'
-const MAX_MB = SCENE_IMPORT_MAX_BYTES / 1024 / 1024
 
 export default function ImportPage() {
   return (
@@ -38,7 +42,7 @@ type Sending = { step: 'zipping'; files: number } | { step: 'uploading' }
 type Prepared = { deploymentId: string; payload: string }
 
 function ImportContent() {
-  const { token } = useAuth()
+  const { token, user, loginWithWallet } = useAuth()
   const api = useApi()
   const router = useRouter()
   const id = useSearchParams().get('id') ?? ''
@@ -47,11 +51,15 @@ function ImportContent() {
   const [uploadError, setUploadError] = useState<{ message: string; importId: string | null } | null>(null)
   const [watchError, setWatchError] = useState<string | null>(null)
   const [watchKey, setWatchKey] = useState(0)
-  const [busy, setBusy] = useState<null | 'deploy' | 'sign'>(null)
+  const [busy, setBusy] = useState<null | 'connect' | 'deploy' | 'sign'>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [prepared, setPrepared] = useState<Prepared | null>(null)
+  /** The deploy moved the import onto the account's existing scene for its place: said again after the deploy. */
+  const [moved, setMoved] = useState<string | null>(null)
   const [dest, setDest] = useState<(SigningDestination & { kind?: 'world' | 'parcels'; ownerWallet: string }) | null>(null)
   const signing = useWorldSigning(dest)
+  const trial = !!user?.trial
+  const maxBytes = importMaxBytes(trial, SCENE_IMPORT_MAX_BYTES)
 
   // Follow the import in the URL until it is live or failed (a reload picks it up again)
   useEffect(() => {
@@ -70,13 +78,16 @@ function ImportContent() {
   useEffect(() => {
     if (!id) setView(null)
     setPrepared(null)
+    setMoved(null)
     setActionError(null)
   }, [id])
 
   const upload = async (zip: Blob) => {
-    if (zip.size > SCENE_IMPORT_MAX_BYTES) {
+    if (zip.size > maxBytes) {
       setSending(null)
-      setUploadError({ message: `The zip is larger than ${MAX_MB} MB. Remove large files the scene doesn't use, then try again.`, importId: null })
+      setUploadError({ message: `The zip is larger than ${maxBytes / 1024 / 1024} MB. Remove large files the scene doesn't use, then try again.`, importId: null })
+      // A trial's cap: the sheet offers an account, which takes larger zips
+      if (trial && zip.size <= SCENE_IMPORT_MAX_BYTES) openSignUp({ action: 'import_larger', ctx: {} }).catch(() => {})
       return
     }
     setSending({ step: 'uploading' })
@@ -133,11 +144,33 @@ function ImportContent() {
   /** Rulings R1, R3: a World without Virvi's permission waits for this; 200 means the wallet signs, 202 that Virvi deploys. */
   const deploy = async () => {
     if (!view) return
-    setBusy('deploy')
     setActionError(null)
     signing.reset()
+    // A trial's sandbox import: the wallet signs in first (creating the account, or moving the trial into the wallet's own),
+    // and the deploy claims the import for that account. This render's `api` still holds the trial's token: the server's
+    // `401 trial_ended` sends it again as the account (Ruling R5).
+    if (trialDeploy) {
+      setBusy('connect')
+      try {
+        await loginWithWallet('deploy')
+        // The account may already use a scene for this place, which the deploy would take: say so, and wait for a
+        // click (the page shows the notice and "Continue and deploy" as the account)
+        const fresh = (await api.getSceneImport(view.id)).import
+        if (sceneMoveNotice(fresh)) {
+          setView(fresh)
+          setBusy(null)
+          return
+        }
+      } catch (err) {
+        setActionError(importFailure(err).message)
+        setBusy(null)
+        return
+      }
+    }
+    setBusy('deploy')
     try {
       const r = await api.deploySceneImport(view.id)
+      setMoved(r.usesScene ? sceneMoveNotice({ sandbox: true, usesScene: r.usesScene, location: view.location }) : null)
       if (r.payload) {
         setPrepared({ deploymentId: r.deployment.id, payload: r.payload })
         const destinationId = (r.deployment.destinationId as string | null | undefined) ?? view.destinationId
@@ -172,6 +205,8 @@ function ImportContent() {
   }
 
   const phase = view ? importPhase(view) : sending ? 'uploading' : null
+  const trialDeploy = !!view?.sandbox && !!user?.trial
+  const moveNotice = view && !trialDeploy ? sceneMoveNotice(view) : null
   const canSign = !!view && phase === 'sign' && !!prepared && prepared.deploymentId === view.deploymentId && !!dest
   const showPicker = !sending && (!id || phase === 'live' || phase === 'failed' || (!view && !!watchError))
 
@@ -209,6 +244,9 @@ function ImportContent() {
 
           <ProgressLines lines={importLines(phase!, view?.location ?? null, view ?? undefined)} />
           {view && virviNote(view) && <p className={infoBox}>{virviNote(view)}</p>}
+          {view && importThumbnailShown(view) && (
+            <ImportThumbnail view={view} trial={trial} onChanged={() => api.getSceneImport(view.id).then((x) => setView(x.import)).catch(() => {})} />
+          )}
 
           {phase === 'uploading' && view && <p className="text-gray-400">Your scene is uploaded. Its build starts in a moment.</p>}
           {phase === 'building' && <p className="text-gray-400">Virvi is building your scene. This usually takes a minute or two.</p>}
@@ -216,13 +254,19 @@ function ImportContent() {
           {phase === 'ready' && view && (
             <>
               {view.errorMessage && view.errorMessage !== actionError && <p className={errorBox} role="alert">{view.errorMessage}</p>}
-              <p className="text-gray-400">
-                Your scene is built. Deploy it to {placeLabel(view.location)}: unless Virvi deploys there for you, you sign once with{' '}
-                {signerPhrase(view.location)}. It goes live a minute or so later.
-              </p>
+              {trialDeploy ? (
+                <p className="text-gray-400">Your scene is built. {DEPLOY_LINE}</p>
+              ) : (
+                <p className="text-gray-400">
+                  Your scene is built. Deploy it to {placeLabel(view.location)}: unless Virvi deploys there for you, you sign once with{' '}
+                  {signerPhrase(view.location)}. It goes live a minute or so later.
+                </p>
+              )}
+              {moveNotice && <p className={infoBox} role="status">{moveNotice}</p>}
               <PrimaryButton type="button" onClick={deploy} disabled={busy !== null}>
-                {busy === 'deploy' ? 'Preparing the deploy…' : 'Deploy'}
+                {busy === 'connect' ? 'Check your wallet…' : busy === 'deploy' ? 'Preparing the deploy…' : trialDeploy ? 'Connect your wallet and deploy' : moveNotice ? 'Continue and deploy' : 'Deploy'}
               </PrimaryButton>
+              {busy === 'connect' && <p className={infoBox} role="status">{WALLET_PROMPT}</p>}
             </>
           )}
 
@@ -243,6 +287,7 @@ function ImportContent() {
             <p className={infoBox} role="status">Check your wallet: sign once with {signerPhrase(view.location)}.</p>
           )}
 
+          {moved && phase !== 'ready' && <p className={infoBox}>{moved}</p>}
           {phase === 'deploying' && <p className="text-gray-400">Deploying to Decentraland. It is usually live within a minute.</p>}
 
           {phase === 'live' && view && (
@@ -268,7 +313,7 @@ function ImportContent() {
             </>
           )}
 
-          {view && view.location.kind === 'parcels' && view.destinationId && (phase === 'ready' || phase === 'live' || phase === 'failed') && (
+          {view && !trial && view.location.kind === 'parcels' && view.destinationId && (phase === 'ready' || phase === 'live' || phase === 'failed') && (
             <ParcelGrantCard destinationId={view.destinationId} onChanged={() => setWatchKey((k) => k + 1)} />
           )}
 
@@ -283,9 +328,44 @@ function ImportContent() {
         </div>
       )}
 
-      {showPicker && <Picker onFolder={pickFolder} onZip={pickZip} again={!!view} />}
+      {showPicker && <Picker onFolder={pickFolder} onZip={pickZip} again={!!view} maxMb={maxBytes / 1024 / 1024} note={importLimitNote(trial)} />}
 
       {!id && !sending && <RecentImports />}
+    </div>
+  )
+}
+
+/** LIV-89: the thumbnail the import picked up from scene.json (or why not), with Replace opening LIV-88's upload. */
+function ImportThumbnail({ view, trial, onChanged }: { view: SceneImportView; trial: boolean; onChanged: () => void }) {
+  const api = useApi()
+  const [replacing, setReplacing] = useState(false)
+  const shown = importThumbnailShown(view)
+  if (!shown) return null
+  if (replacing) {
+    return (
+      <div className="space-y-2">
+        <SceneThumbnail sceneId={view.sceneId} url={shown.url} source={view.thumbnail.source} openPicker api={api}
+          onChange={() => { setReplacing(false); onChanged() }} />
+        <button type="button" onClick={() => setReplacing(false)} className="text-sm text-gray-400 hover:text-gray-200">Close</button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-start gap-3">
+      {shown.url && <img src={shown.url} alt="Scene thumbnail" className="h-20 max-w-[160px] shrink-0 rounded border border-gray-700 object-contain" />}
+      <div className="min-w-0 space-y-1.5">
+        <p className="text-gray-200">{shown.label}</p>
+        {shown.note && <p className="text-gray-400">{shown.note}</p>}
+        {trial ? (
+          // Setting a thumbnail is account-only (PUT /api/scenes/:id/thumbnail)
+          <button type="button" onClick={() => openSignUp({ action: 'nav:scene/settings', ctx: { label: 'a custom thumbnail' } }).catch(() => {})}
+            className={`${secondary} inline-flex items-center gap-1.5`}>
+            <LockIcon size={13} /> {shown.action}<span className="sr-only">(needs a free account)</span>
+          </button>
+        ) : (
+          <button type="button" onClick={() => setReplacing(true)} className={secondary}>{shown.action}</button>
+        )}
+      </div>
     </div>
   )
 }
@@ -330,7 +410,7 @@ function RecentImports() {
 }
 
 /** The scene folder (the folder picker) or its .zip. */
-function Picker({ onFolder, onZip, again }: { onFolder: (f: File[]) => void; onZip: (f: File[]) => void; again: boolean }) {
+function Picker({ onFolder, onZip, again, maxMb, note }: { onFolder: (f: File[]) => void; onZip: (f: File[]) => void; again: boolean; maxMb: number; note: string | null }) {
   const folder = useRef<HTMLInputElement>(null)
   // React has no prop for the folder picker's attribute
   useEffect(() => { folder.current?.setAttribute('webkitdirectory', '') }, [])
@@ -345,9 +425,10 @@ function Picker({ onFolder, onZip, again }: { onFolder: (f: File[]) => void; onZ
       <div>
         <p className="text-base font-medium text-white">{again ? 'Upload again' : 'Choose your scene'}</p>
         <p className="mt-1 text-gray-400">
-          Pick the scene&apos;s folder, the one with scene.json in it, or a .zip of it (up to {MAX_MB} MB). Virvi zips the folder here
+          Pick the scene&apos;s folder, the one with scene.json in it, or a .zip of it (up to {maxMb} MB). Virvi zips the folder here
           and leaves node_modules, bin and .git on your computer.
         </p>
+        {note && <p className="mt-2 text-amber-200/80">{note}</p>}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <label className={again ? `${secondary} cursor-pointer` : 'clip-corner inline-flex cursor-pointer items-center gap-1.5 bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink hover:bg-accent-hover'}>

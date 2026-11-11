@@ -1,13 +1,13 @@
-import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, or, sql, type SQLWrapper } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
-  studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioManaRefunds, studioMistakeReports, studioPayments, studioPieces, studioPromptCredits,
+  studioCredits, studioDesignMembers, studioDesigns, studioEntitlements, studioFinalizeCredits, studioJobs, studioManaRefunds, studioMistakeReports, studioPayments, studioPieces, studioPromptCredits,
   studioRenders, studioRevisions, users, type PaymentLine,
 } from '../db/schema.js'
 import { config } from '../config.js'
 import { ensureCustomer, getStripe } from '../integrations/stripe.js'
 import { allocateCredit, chargedCents, dueCentsOf, instantReportsUsed, isVirviAdmin, priceLines, quoteFinalize, QuoteError } from './pricing.js'
-import { addCredit, creditBalance, takeCredit } from './credit.js'
+import { addCredit, takeCredit } from './credit.js'
 import { startWorker, type Design } from './designs.js'
 import type { Exec } from './quota.js'
 import { publishStudio } from './events.js'
@@ -88,8 +88,8 @@ async function openSession(params: Record<string, unknown>, paymentId: string): 
 }
 
 /** Adds free-finalize credits back to a user's balance. */
-async function returnGifts(tx: Exec, userId: string, n: number, now: Date): Promise<void> {
-  if (!(n > 0)) return
+async function returnGifts(tx: Exec, userId: string | null, n: number, now: Date): Promise<void> {
+  if (!(n > 0) || !userId) return // no payer account left: nobody to give them back to
   await tx.insert(studioFinalizeCredits).values({ userId, balance: n, updatedAt: now })
     .onConflictDoUpdate({ target: studioFinalizeCredits.userId, set: { balance: sql`${studioFinalizeCredits.balance} + ${n}`, updatedAt: now } })
 }
@@ -134,8 +134,9 @@ export async function expirePaymentIn(tx: Exec, paymentId: string, now: Date): P
  * locks the design and the free-finalize credits first, in the order a grant does.
  */
 async function holdCredit(
-  tx: Exec, pay: { id: string; userId: string; amountCents: number; lines: PaymentLine[] }, now: Date,
+  tx: Exec, pay: { id: string; userId: string | null; amountCents: number; lines: PaymentLine[] }, now: Date,
 ): Promise<{ lines: PaymentLine[]; creditCents: number; dueCents: number }> {
+  if (!pay.userId) return { lines: pay.lines, creditCents: 0, dueCents: pay.amountCents }
   const taken = await takeCredit(tx, pay.userId, pay.amountCents, 'hold', pay.id, now)
   if (!(taken > 0)) return { lines: pay.lines, creditCents: 0, dueCents: pay.amountCents }
   const lines = pay.lines.length ? allocateCredit(pay.lines, taken).lines : pay.lines
@@ -173,11 +174,22 @@ export async function expireOpen(pays: { id: string; method: string; stripeSessi
  * (waiting for confirmations): its holds are spent, not available.
  */
 export async function creditFor(userId: string, designId: string | null, now: Date, exec: Exec = db): Promise<number> {
-  const [held] = await exec.select({ n: sql<number>`coalesce(sum(${studioPayments.creditHeldCents}), 0)::int` }).from(studioPayments)
+  const held = exec.select({ n: sql<number>`coalesce(sum(${studioPayments.creditHeldCents}), 0)` }).from(studioPayments)
     .where(and(eq(studioPayments.userId, userId),
       designId ? and(eq(studioPayments.designId, designId), eq(studioPayments.kind, 'finalize')) : eq(studioPayments.kind, 'topup'),
       eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now), isNull(studioPayments.manaTxHash)))
-  return (await creditBalance(userId, exec)) + held.n
+  const balance = exec.select({ n: studioCredits.balanceCents }).from(studioCredits).where(eq(studioCredits.userId, userId))
+  return availableOf(exec, balance, held)
+}
+
+/**
+ * A balance plus what open checkouts hold, read in one statement so both come from one snapshot. Read apart, a
+ * checkout committing in between (the credit moving from the balance to its hold) is counted twice, and the quote
+ * then expires that checkout to take over a credit that isn't there.
+ */
+async function availableOf(exec: Exec, balance: SQLWrapper, held: SQLWrapper): Promise<number> {
+  const [row] = await exec.execute<{ n: number }>(sql`SELECT (coalesce((${balance}), 0) + (${held}))::int AS n`) as unknown as { n: number }[]
+  return row.n
 }
 
 /**
@@ -185,12 +197,12 @@ export async function creditFor(userId: string, designId: string | null, now: Da
  * checkouts hold (a new checkout takes those over).
  */
 export async function giftsFor(userId: string, designId: string, now: Date, exec: Exec = db): Promise<number> {
-  const [bal] = await exec.select({ balance: studioFinalizeCredits.balance }).from(studioFinalizeCredits)
+  const balance = exec.select({ n: studioFinalizeCredits.balance }).from(studioFinalizeCredits)
     .where(eq(studioFinalizeCredits.userId, userId))
-  const [held] = await exec.select({ n: sql<number>`coalesce(sum(${studioPayments.giftsHeld}), 0)::int` }).from(studioPayments)
+  const held = exec.select({ n: sql<number>`coalesce(sum(${studioPayments.giftsHeld}), 0)` }).from(studioPayments)
     .where(and(eq(studioPayments.userId, userId), eq(studioPayments.designId, designId), eq(studioPayments.kind, 'finalize'),
       eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now), isNull(studioPayments.manaTxHash)))
-  return (bal?.balance ?? 0) + held.n
+  return availableOf(exec, balance, held)
 }
 
 /**
@@ -206,6 +218,14 @@ export async function giftsFor(userId: string, designId: string, now: Date, exec
  * 10 minutes. An open MANA quote for the same lines with more than 2 minutes left is handed out again; otherwise this
  * design's open MANA quotes are expired (giving back their holds) and a new one is made. It is refused with MANA off
  * (mana_unavailable) or no fresh rate (rate_unavailable) before anything is held.
+ *
+ * On a shared design (LIV-159) the checkout is the paying member's: only their own open checkouts are reused or
+ * expired, and another member's open checkout for any of the same revisions refuses it (checkout_open), so a revision
+ * never has two payments started by two people.
+ *
+ * `byAdminId`: a Virvi admin finalizing on `user`'s (the owner's) behalf. It is an admin's finalize, every line free
+ * and no gift or credit of anyone's spent, granted at once without Stripe or MANA; the payment and entitlements are the
+ * owner's, as if they had paid, and the payment records the admin. Reports don't apply (they are the owner's).
  */
 export async function createFinalizeCheckout(
   design: Design,
@@ -214,32 +234,44 @@ export async function createFinalizeCheckout(
   reports: Record<string, string>,
   now: Date,
   method: CheckoutMethod = 'card',
+  opts: { byAdminId?: string } = {},
 ): Promise<CheckoutResult> {
+  const byAdminId = opts.byAdminId ?? null
+  if (byAdminId) { reports = {}; method = 'card' }
   if (method === 'mana') requireMana()
   const waived = Object.keys(reports)
   const withReports = (lines: PaymentLine[]) => lines.map((l) => (l.waived || l.held ? { ...l, reportText: reports[l.category] } : l))
-  const admin = await isVirviAdmin(user.id)
+  const admin = byAdminId ? true : await isVirviAdmin(user.id)
   const quote = await quoteFinalize(design, categories, waived, admin ? 0 : await giftsFor(user.id, design.id, now), db,
     { admin, credit: admin ? 0 : await creditFor(user.id, design.id, now) })
   if (!quote.lines.length) throw new QuoteError('nothing_to_pay', categories ?? [])
   const open = await db.select().from(studioPayments).where(and(
     eq(studioPayments.designId, design.id), eq(studioPayments.status, 'pending'), gt(studioPayments.expiresAt, now),
   ))
+  const covers = (p: typeof open[number]) => p.kind === 'finalize' && p.lines.some((l) => quote.lines.some((q) => q.revisionId === l.revisionId))
+  // Someone else is paying for one of these revisions; support's finalize expires theirs instead (below)
+  if (!byAdminId && open.some((p) => p.userId !== user.id && covers(p))) throw new PaymentError(409, 'checkout_open')
+  const mine = open.filter((p) => p.userId === user.id)
   if (quote.dueCents > 0 && method === 'card') {
-    const same = open.find((p) => p.stripeSessionUrl && sameLines(p.lines, withReports(quote.lines)))
+    const same = mine.find((p) => p.stripeSessionUrl && sameLines(p.lines, withReports(quote.lines)))
     if (same) return { url: same.stripeSessionUrl! }
   }
   if (quote.dueCents > 0 && method === 'mana') {
     // Never one whose transaction is claimed: it is paid, and a second transfer of its amount would match nothing
-    const same = open.find((p) => p.method === 'mana' && p.manaAmountWei && !p.manaTxHash && sameLines(p.lines, withReports(quote.lines))
+    const same = mine.find((p) => p.method === 'mana' && p.manaAmountWei && !p.manaTxHash && sameLines(p.lines, withReports(quote.lines))
       && p.expiresAt!.getTime() - now.getTime() > MANA_REUSE_MIN_MS)
     if (same) return { mana: manaQuoteOf(same) }
   }
   // The rate before anything is expired or held, so a refusal leaves everything as it was
   const rate = method === 'mana' && quote.dueCents > 0 ? await requireRate(now) : null
-  // A new MANA quote replaces this design's open ones; any checkout takes over the free finalizes and credit it needs
-  await expireOpen(open.filter((p) => (method === 'mana' && p.method === 'mana')
-    || (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0)), now)
+  // A new MANA quote replaces the user's open ones on this design; any checkout takes over the free finalizes and
+  // credit it needs from the user's own (another member's hold that member's). Support finalizing for the owner also
+  // closes every member's open checkouts for any of those pieces, so nobody is charged for what is now free. One Stripe
+  // won't expire (already paid), and a MANA transfer that still comes in for an expired quote, are granted as a
+  // duplicate: the line is owed back (MANA's share as Virvi credit).
+  const coversPiece = (p: typeof open[number]) => p.kind === 'finalize' && p.lines.some((l) => quote.lines.some((q) => q.category === l.category))
+  await expireOpen(open.filter((p) => (p.userId === user.id && ((method === 'mana' && p.method === 'mana')
+    || (quote.giftsUsed > 0 && p.giftsHeld > 0) || (quote.creditCents > 0 && p.creditHeldCents > 0))) || (!!byAdminId && coversPiece(p))), now)
 
   const expiresAt = new Date(now.getTime() + (method === 'mana' ? config.studioMana.quoteTtlMs : CHECKOUT_TTL_MS))
   const { pay, lines, mana } = await db.transaction(async (tx) => {
@@ -254,7 +286,7 @@ export async function createFinalizeCheckout(
     if (q.giftsUsed < quote.giftsUsed) throw new PaymentError(409, 'free_finalize_busy')
     const [pay] = await tx.insert(studioPayments).values({
       userId: user.id, designId: design.id, kind: 'finalize', amountCents: q.totalCents, lines: withReports(q.lines), giftsHeld: q.giftsUsed,
-      ...(q.totalCents > 0 ? { expiresAt, method } : {}),
+      byAdminId, ...(q.totalCents > 0 ? { expiresAt, method } : {}),
     }).returning()
     if (q.giftsUsed > 0) {
       await tx.update(studioFinalizeCredits).set({ balance: sql`${studioFinalizeCredits.balance} - ${q.giftsUsed}`, updatedAt: now })
@@ -267,6 +299,11 @@ export async function createFinalizeCheckout(
     const mana = method === 'mana' && held.dueCents > 0 ? await quoteMana(tx, pay, held.creditCents, held.dueCents, rate) : null
     return { pay: { ...pay, dueCents: held.dueCents }, lines: held.lines, mana }
   })
+  // An admin's finalize for someone else never reaches Stripe or MANA, whatever the quote says
+  if (byAdminId && pay.dueCents !== 0) {
+    await dropPayment(pay.id, now)
+    throw new PaymentError(409, 'not_free')
+  }
   if (pay.dueCents === 0) {
     try {
       await grantPayment(pay.id, null, now)
@@ -377,11 +414,17 @@ export async function createTopupCheckout(
 export async function grantPayment(paymentId: string, paymentIntent: string | null, now: Date): Promise<'granted' | 'already'> {
   const held: { name: string; revision: number; text: string }[] = []
   const out = await db.transaction(async (tx) => {
+    // The payer's account is gone: nobody to grant to. Leave it pending (the sweep expires it) and acknowledge the webhook
+    const [payer] = await tx.select({ userId: studioPayments.userId }).from(studioPayments).where(eq(studioPayments.id, paymentId))
+    if (payer && !payer.userId) {
+      console.warn(`[studio] payment ${paymentId} not granted: its payer account is gone`)
+      return null
+    }
     const [pay] = await tx.update(studioPayments)
       .set({ status: 'paid', paidAt: now, ...(paymentIntent ? { stripePaymentIntent: paymentIntent } : {}) })
       .where(and(eq(studioPayments.id, paymentId), eq(studioPayments.status, 'pending')))
       .returning()
-    if (!pay) return null
+    if (!pay || !pay.userId) return null // (a null payer was returned above; this narrows the type)
     if (pay.kind === 'topup') {
       await tx.insert(studioPromptCredits).values({ userId: pay.userId, balance: pay.prompts })
         .onConflictDoUpdate({ target: studioPromptCredits.userId, set: { balance: sql`${studioPromptCredits.balance} + ${pay.prompts}`, updatedAt: now } })
@@ -442,7 +485,7 @@ export async function grantPayment(paymentId: string, paymentIntent: string | nu
     return { pay, jobIds: await insertFinalizeJobs(tx, design, entitlementIds, now) }
   })
   if (!out) return 'already'
-  for (const h of held) await mailHeldReport(out.pay.userId, h.name, h.revision, h.text)
+  for (const h of held) if (out.pay.userId) await mailHeldReport(out.pay.userId, h.name, h.revision, h.text)
   await settleRefund(out.pay.id)
   await startFinalizeJobs(out.pay.designId, out.jobIds, now)
   return 'granted'
@@ -567,6 +610,7 @@ export async function reportMistake(
   revisionNumber: number,
   text: string,
   now: Date,
+  reporterId: string,
 ): Promise<RefundResult | { status: 'in_review' }> {
   const [row] = await db.select({ e: studioEntitlements, pay: studioPayments })
     .from(studioEntitlements)
@@ -576,6 +620,8 @@ export async function reportMistake(
     .where(and(eq(studioPieces.designId, design.id), eq(studioPieces.category, category), eq(studioRevisions.number, revisionNumber)))
   if (!row) throw new PaymentError(402, 'not_paid')
   const { e, pay } = row
+  // The refund is the payer's: nobody else on the design reports on what they paid for
+  if (e.userId !== reporterId) throw new PaymentError(404, 'not_found')
   if (e.kind !== 'revision') throw new PaymentError(409, 'not_a_revision')
   if (!(e.amountCents > 0)) throw new PaymentError(409, 'nothing_charged')
   if (refundSplit(e).stripeCents > 0 && !pay.stripePaymentIntent) throw new PaymentError(409, 'nothing_charged')
@@ -622,7 +668,8 @@ export function refundSplit(e: { amountCents: number; creditCents: number; metho
  * first; a refund Stripe already made for this entitlement (an answer that was lost) is recorded, not repeated. On a
  * refused refund the report is removed (a customer's instant report, so they can try again) or put back in review
  * (an owner's approval), and 502 is thrown. The credit share is added in the transaction that marks the report
- * refunded, and only if this call is the one that marks it, so a retried report never credits twice.
+ * refunded, and only if this call is the one that marks it, so a retried report never credits twice. A reporter whose
+ * account is gone (a handed-over design keeps their report) gets no credit: the refund is still recorded.
  */
 async function refundReport(
   e: typeof studioEntitlements.$inferSelect, pay: typeof studioPayments.$inferSelect, reportId: string,
@@ -696,8 +743,46 @@ export async function readyPackages(designId: string) {
   return [...newest.values()].sort((a, b) => a.category.localeCompare(b.category))
 }
 
-/** Every paid revision of a design, newest first, as the page lists them (never the package's location). */
-export async function finalizedRevisions(designId: string) {
+/**
+ * The packages someone keeps from designs they were on and left (LIV-159), newest first: each ready while a membership
+ * of theirs was open (joined_at <= ready <= left_at), or paid for by them, on a design they have no role on now (one
+ * they're back on serves them through its own routes). A package is ready when its finalize job finished: the result
+ * that marks it ready sets the job's finishedAt in the same transaction, and a retry points it at the new job.
+ * `entitlementId` narrows it to that one package.
+ */
+export async function pastPackages(userId: string, entitlementId?: string) {
+  const readyAt = studioJobs.finishedAt
+  const rows = await db.select({
+    entitlementId: studioEntitlements.id, designName: studioDesigns.name, category: studioEntitlements.category,
+    revisionNumber: studioRevisions.number, finalizedAt: readyAt, packageKey: studioEntitlements.packageKey, pieceName: studioPieces.name,
+  })
+    .from(studioEntitlements)
+    .innerJoin(studioDesigns, eq(studioDesigns.id, studioEntitlements.designId))
+    .innerJoin(studioRevisions, eq(studioRevisions.id, studioEntitlements.revisionId))
+    .innerJoin(studioPieces, eq(studioPieces.id, studioRevisions.pieceId))
+    .innerJoin(studioJobs, eq(studioJobs.id, studioEntitlements.jobId))
+    .where(and(
+      entitlementId ? eq(studioEntitlements.id, entitlementId) : undefined,
+      eq(studioEntitlements.status, 'ready'), isNotNull(studioEntitlements.packageKey), isNotNull(readyAt),
+      ne(studioDesigns.ownerId, userId),
+      sql`NOT EXISTS (SELECT 1 FROM ${studioDesignMembers} m WHERE m.design_id = ${studioEntitlements.designId} AND m.user_id = ${userId} AND m.left_at IS NULL)`,
+      or(
+        eq(studioEntitlements.userId, userId),
+        sql`EXISTS (SELECT 1 FROM ${studioDesignMembers} m WHERE m.design_id = ${studioEntitlements.designId} AND m.user_id = ${userId}
+          AND m.left_at IS NOT NULL AND m.joined_at <= ${readyAt} AND ${readyAt} <= m.left_at)`,
+      ),
+    ))
+    .orderBy(desc(readyAt), asc(studioEntitlements.id))
+  return rows.map((r) => ({ ...r, packageKey: r.packageKey!, finalizedAt: r.finalizedAt! }))
+}
+
+/**
+ * Every paid revision of a design, newest first, as the page lists them (never the package's location). Only the
+ * payer may report a mistake, so `reportableUntil` is set for `readerId`'s own payments alone, and `paidByMe` says which those are.
+ * Another member's line keeps what everyone needs (its status, for the package) but none of their payment: its amount,
+ * payment and its report's id, credit and MANA are null. `support` (Virvi support, reading as the owner) sees every line in full.
+ */
+export async function finalizedRevisions(designId: string, readerId: string, support = false) {
   const rows = await db.select({
     e: studioEntitlements, number: studioRevisions.number, paidAt: studioPayments.paidAt,
     reportId: studioMistakeReports.id, reportStatus: studioMistakeReports.status, reportedAt: studioMistakeReports.createdAt,
@@ -712,23 +797,28 @@ export async function finalizedRevisions(designId: string) {
     .where(eq(studioEntitlements.designId, designId))
   return rows
     .sort((a, b) => b.number - a.number)
-    .map((r) => ({
-      category: r.e.category,
-      revision: r.number,
-      kind: r.e.kind,
-      status: r.e.status,
-      amountCents: r.e.amountCents,
-      paymentId: r.e.paymentId,
-      paidAt: r.paidAt,
-      // manaCents: the refund's share paid in MANA (now credit), which may be asked back as MANA; manaRefund: that request's status
-      report: r.reportId && r.reportStatus ? {
-        id: r.reportId, status: r.reportStatus, createdAt: r.reportedAt,
-        manaCents: r.manaCents ?? 0, creditedCents: r.creditedCents ?? 0, manaRefund: r.manaRefund ?? null,
-      } : null,
-      reportableUntil: r.e.kind === 'revision' && r.e.amountCents > 0 && !r.reportStatus && r.paidAt
-        ? new Date(r.paidAt.getTime() + REPORT_WINDOW_DAYS * 24 * 3600 * 1000)
-        : null,
-    }))
+    .map((r) => {
+      const shown = support || r.e.userId === readerId
+      return {
+        category: r.e.category,
+        revision: r.number,
+        kind: r.e.kind,
+        status: r.e.status,
+        amountCents: shown ? r.e.amountCents : null,
+        paymentId: shown ? r.e.paymentId : null,
+        paidAt: r.paidAt,
+        // manaCents: the refund's share paid in MANA (now credit), which may be asked back as MANA; manaRefund: that request's status
+        report: r.reportId && r.reportStatus ? {
+          id: shown ? r.reportId : null, status: r.reportStatus, createdAt: r.reportedAt,
+          manaCents: shown ? r.manaCents ?? 0 : null, creditedCents: shown ? r.creditedCents ?? 0 : null, manaRefund: shown ? r.manaRefund ?? null : null,
+        } : null,
+        // `paidByMe`: the reader paid for it (LIV-159), so its report's outcome and MANA back are theirs to see
+        paidByMe: r.e.userId === readerId,
+        reportableUntil: r.e.userId === readerId && r.e.kind === 'revision' && r.e.amountCents > 0 && !r.reportStatus && r.paidAt
+          ? new Date(r.paidAt.getTime() + REPORT_WINDOW_DAYS * 24 * 3600 * 1000)
+          : null,
+      }
+    })
 }
 
 async function mailHeldReport(userId: string, pieceName: string, revision: number, text: string) {
@@ -770,14 +860,17 @@ export async function declineReport(reportId: string, adminId: string, now: Date
   return !!r
 }
 
-/** Held reports for the admin page, oldest first, with the piece, the revision's request and a frame of before and after. */
+/**
+ * Held reports for the admin page, oldest first, with the piece, the revision's request and a frame of before and after.
+ * A reporter who has since deleted their account (a handed-over design keeps their report) is listed as `gone`.
+ */
 export async function heldReports(now: Date) {
-  const rows = await db.select({ r: studioMistakeReports, e: studioEntitlements, rev: studioRevisions, piece: studioPieces, email: users.email })
+  const rows = await db.select({ r: studioMistakeReports, e: studioEntitlements, rev: studioRevisions, piece: studioPieces, email: users.email, reporter: users.id })
     .from(studioMistakeReports)
     .innerJoin(studioEntitlements, eq(studioEntitlements.id, studioMistakeReports.entitlementId))
     .innerJoin(studioRevisions, eq(studioRevisions.id, studioEntitlements.revisionId))
     .innerJoin(studioPieces, eq(studioPieces.id, studioRevisions.pieceId))
-    .innerJoin(users, eq(users.id, studioMistakeReports.userId))
+    .leftJoin(users, eq(users.id, studioMistakeReports.userId))
     .where(approvable(now))
     .orderBy(asc(studioMistakeReports.createdAt))
   const expires = frameUrlExpiry(now)
@@ -792,11 +885,11 @@ export async function heldReports(now: Date) {
       designId: piece.designId, revisionId: x.render.revisionId, viewKey: x.render.viewKey, category: piece.category, frame: 0, jobId: x.render.jobId,
     }, expires) : null
   }
-  return Promise.all(rows.map(async ({ r, e, rev, piece, email }) => {
+  return Promise.all(rows.map(async ({ r, e, rev, piece, email, reporter }) => {
     const [job] = rev.jobId ? await db.select({ payload: studioJobs.payload }).from(studioJobs).where(eq(studioJobs.id, rev.jobId)) : []
     return {
       id: r.id, text: r.text, refundCents: r.refundCents, createdAt: r.createdAt,
-      user: { id: r.userId, email },
+      user: { id: r.userId, email, gone: !reporter },
       designId: e.designId, piece: { category: piece.category, name: piece.name }, revisionNumber: rev.number,
       request: String((job?.payload as { prompt?: unknown } | undefined)?.prompt ?? ''),
       before: await frame(piece, rev.number - 1), after: await frame(piece, rev.number),

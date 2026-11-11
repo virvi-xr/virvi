@@ -5,13 +5,15 @@ import { CubeIcon, PaperclipIcon, XSmallIcon } from '@/components/icons'
 import { accountRequired } from '@/lib/trial'
 import { formatBytesShort, refusalMessage, uploadHint, uploadProblem, UPLOAD_ACCEPT, type StudioUpload } from '@/lib/studio'
 
-type Props = { designId: string; kind: string; uploads: StudioUpload[]; disabled: boolean; dropped: File[] | null; onChanged: () => Promise<void> }
+type Props = { designId: string; kind: string; uploads: StudioUpload[]; disabled: boolean; dropped: File[] | null; onChanged: () => Promise<void>; readOnly?: boolean
+  /** Called as files start uploading. */
+  onAttach?: () => void }
 
 /**
  * The files the agent can use (a logo for a shirt, a reference photo, a base mesh): attach, see, remove. Every prompt
- * gets all of them; the message says what to do with each.
+ * gets all of them; the message says what to do with each. `readOnly` (Virvi support): see them, nothing else.
  */
-export default function Uploads({ designId, kind, uploads, disabled, dropped, onChanged }: Props) {
+export default function Uploads({ designId, kind, uploads, disabled, dropped, onChanged, readOnly = false, onAttach }: Props) {
   const api = useApi()
   const input = useRef<HTMLInputElement>(null)
   const [sending, setSending] = useState<string[]>([])
@@ -19,6 +21,7 @@ export default function Uploads({ designId, kind, uploads, disabled, dropped, on
 
   const add = async (files: File[]) => {
     setError(null)
+    onAttach?.()
     for (const file of files) {
       const problem = uploadProblem(file)
       if (problem) { setError(`${file.name}: ${problem}`); continue }
@@ -39,7 +42,7 @@ export default function Uploads({ designId, kind, uploads, disabled, dropped, on
 
   // Files dropped on the conversation
   useEffect(() => {
-    if (dropped?.length && !disabled) add(dropped)
+    if (dropped?.length && !disabled && !readOnly) add(dropped)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dropped])
 
@@ -62,8 +65,10 @@ export default function Uploads({ designId, kind, uploads, disabled, dropped, on
               <Thumb designId={designId} upload={u} />
               <span className="max-w-40 truncate font-mono" title={u.name}>{u.name}</span>
               <span className="text-gray-500">{formatBytesShort(u.size)}</span>
-              <button type="button" onClick={() => remove(u)} disabled={disabled} aria-label={`Remove ${u.name}`}
-                className="text-gray-500 hover:text-white disabled:opacity-40"><XSmallIcon size={14} /></button>
+              {!readOnly && (
+                <button type="button" onClick={() => remove(u)} disabled={disabled} aria-label={`Remove ${u.name}`}
+                  className="text-gray-500 hover:text-white disabled:opacity-40"><XSmallIcon size={14} /></button>
+              )}
             </li>
           ))}
           {sending.map((n) => (
@@ -73,7 +78,7 @@ export default function Uploads({ designId, kind, uploads, disabled, dropped, on
           ))}
         </ul>
       )}
-      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+      {!readOnly && <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
         <button type="button" onClick={() => input.current?.click()} disabled={disabled}
           className="flex items-center gap-1.5 rounded-md border border-gray-800 px-2 py-1 text-gray-300 hover:bg-white/[0.04] disabled:opacity-40">
           <PaperclipIcon size={14} /> Attach files
@@ -81,7 +86,7 @@ export default function Uploads({ designId, kind, uploads, disabled, dropped, on
         <span>{uploadHint(kind)}</span>
         <input ref={input} type="file" multiple accept={UPLOAD_ACCEPT} className="hidden"
           onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ''; if (files.length) add(files) }} />
-      </div>
+      </div>}
       {error && <p className="mt-1 text-xs text-amber-300" role="alert">{error}</p>}
     </div>
   )

@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { VENUE_ROLE_SCOPES, isVenueRole } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { scenes, venues } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
+import { isSceneDeleted, liveSceneIds } from '../scenes/live.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getBookingGrant, getSceneAccess, isFullAccess } from '../auth/permissions.js'
 import {
@@ -72,7 +73,8 @@ export default async function venueRoutes(app: FastifyInstance) {
   })
 
   app.get('/api/venues', async (_request, reply) => {
-    const listed = await db.query.venues.findMany({ where: eq(venues.isListed, true) })
+    // A deleted scene's venue (LIV-83) is unlisted while it's deleted
+    const listed = await db.query.venues.findMany({ where: and(eq(venues.isListed, true), inArray(venues.sceneId, liveSceneIds())) })
     return reply.send({ venues: listed })
   })
 
@@ -85,7 +87,7 @@ export default async function venueRoutes(app: FastifyInstance) {
   app.get<{ Params: { venueId: string } }>('/api/venues/:venueId', async (request, reply) => {
     const venue = await db.query.venues.findFirst({ where: eq(venues.id, request.params.venueId) })
     // Unlisted venues are visible only to people with some access to the venue's scene.
-    if (!venue || (!venue.isListed && (await getSceneAccess(actorOf(request), venue.sceneId)).level === 'none')) {
+    if (!venue || (await isSceneDeleted(venue.sceneId)) || (!venue.isListed && (await getSceneAccess(actorOf(request), venue.sceneId)).level === 'none')) {
       return reply.status(404).send({ error: 'Venue not found' })
     }
     return reply.send({ venue })

@@ -48,7 +48,7 @@ The fallback image is what the space shows when it has no ad to show. That inclu
 - a stream is live and the space is video only;
 - a venue booking is running.
 
-Upload one, pick one from your Media Library, or paste a URL. It has no Ad label and no link.
+Upload one, pick one from your Images & Video, or paste a URL. It has no Ad label and no link.
 
 **Without a fallback image, the space hides itself.** The panel and its collider disappear until there is an ad to show. You never get a blank or black panel.
 

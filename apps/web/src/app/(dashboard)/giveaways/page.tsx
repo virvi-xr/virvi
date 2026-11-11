@@ -1,5 +1,5 @@
 'use client'
-import { useApi } from '@/lib/api'
+import { useApi, useDemoPrefix } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
@@ -18,6 +18,7 @@ export default function GiveawaysPage() {
 function GiveawaysContent() {
   const { token } = useAuth()
   const api = useApi()
+  const prefix = useDemoPrefix()
   const searchParams = useSearchParams()
   const router = useRouter()
   const selectedId = searchParams.get('id')
@@ -55,7 +56,7 @@ function GiveawaysContent() {
       <div className="mx-auto max-w-7xl">
         <GiveawayDetail id={selectedId} onDeleted={() => {
           setGiveaways(prev => prev.filter(g => g.id !== selectedId))
-          router.push('/giveaways')
+          router.push(`${prefix}/giveaways`)
         }} />
       </div>
     )
@@ -102,7 +103,7 @@ function GiveawaysContent() {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {giveaways.map(g => (
-            <button key={g.id} onClick={() => router.push(`/giveaways?id=${g.id}`)}
+            <button key={g.id} onClick={() => router.push(`${prefix}/giveaways?id=${g.id}`)}
               className="rounded-lg border border-gray-800 bg-gray-900 p-4 hover:border-gray-600 transition-colors text-left">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold">{g.name}</h3>
@@ -123,6 +124,7 @@ function GiveawaysContent() {
 function GiveawayDetail({ id, onDeleted }: { id: string; onDeleted: () => void }) {
   const { token } = useAuth()
   const api = useApi()
+  const prefix = useDemoPrefix()
   const [giveaway, setGiveaway] = useState<any>(null)
   const [claims, setClaims] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -245,7 +247,7 @@ function GiveawayDetail({ id, onDeleted }: { id: string; onDeleted: () => void }
   return (
     <div className="space-y-6">
       <PageHeader
-        crumbs={['Workspace', { label: 'Giveaways', href: '/giveaways' }, giveaway.name]}
+        crumbs={['Workspace', { label: 'Giveaways', href: `${prefix}/giveaways` }, giveaway.name]}
         title={giveaway.name}
         subtitle={<span className="text-sm text-gray-500">Claims: {giveaway.claimCount ?? 0} &middot; Items: {giveaway.items?.length ?? 0} &middot; ID: {giveaway.id}</span>}
         actions={

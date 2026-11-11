@@ -257,7 +257,7 @@ describe('GET /api/hyperfy/feed', () => {
     await sleep(200)
     const started = Date.now()
     const del = await app.inject({ method: 'DELETE', url: `/api/scenes/${sceneId}`, headers: { authorization: `Bearer ${tokenFor(owner)}` } })
-    expect(del.statusCode).toBe(204)
+    expect(del.statusCode).toBe(200)
     const res = await held
     expect(Date.now() - started).toBeLessThan(1000)
     expect(res.statusCode).toBe(404)

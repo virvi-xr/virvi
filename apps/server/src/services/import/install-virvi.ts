@@ -2,7 +2,9 @@ import { runtimeFiles } from '../dcl/runtime.js'
 import { ImportError, type SceneFolder } from './scene-zip.js'
 
 /** 2.5.0 carries the analytics item names; a scene on an older range is raised to it. */
-export const VIRVI_DCL_RANGE = '^2.8.0'
+export const VIRVI_DCL_RANGE = '^2.13.0'
+/** Every range installVirvi has ever written (VIRVI_DCL_RANGE included), so uninstalling recognises an older install's own dependency. Add the old value here whenever VIRVI_DCL_RANGE moves. */
+export const VIRVI_DCL_RANGES_WRITTEN: readonly string[] = ['^2.5.0', '^2.6.0', '^2.7.0', '^2.8.0', VIRVI_DCL_RANGE]
 
 export const PACKAGE = '@virvixr/dcl'
 export const HUD_ICON = 'images/virvi/hud-v.png'

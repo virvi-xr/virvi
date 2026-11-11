@@ -4,6 +4,7 @@
  * managers in packages/core/src/managers), with the rulings R1–R4 of Scene Import Plan 3.
  * Every string is written with JSON.stringify so names and URLs cannot break out of their literals.
  */
+import { FRAMEABLE_TYPES, frameOf, frameParts } from '@virvixr/shared'
 import type { AssetPlan, BackupSnapshot, BakedItem } from './snapshot.js'
 
 /**
@@ -161,6 +162,34 @@ function scaleOf(it: BakedItem) {
   return { ...it.scale, y: Number(it.scale.x) * HEIGHT_PER_WIDTH[shape] }
 }
 
+/**
+ * The item's frame (LIV-129) as the runtime draws it (packages/core src/managers/frame.ts, with the geometry it shares
+ * from @virvixr/shared): one call per bar or mat strip. Only images and video screens have one; a frame switched off,
+ * or not a frame, draws nothing, and one stored outside the rules is read as the runtime reads it.
+ */
+function frameLines(it: BakedItem): string[] {
+  if (!FRAMEABLE_TYPES.has(it.type)) return []
+  const frame = frameOf(it.props.frame)
+  if (!frame) return []
+  return frameParts(frame, scaleOf(it)).map((p) =>
+    `addFramePart(e, { shape: ${str(p.shape)}, x: ${num(p.position.x)}, y: ${num(p.position.y)}, width: ${num(p.scale.x)}, height: ${num(p.scale.y)}, depth: ${num(p.scale.z)}, color: ${str(p.color)} })`)
+}
+
+/** Draws one frame part as DclAdapter.setSolidShape does, placed like framePartTransforms in packages/core. */
+const FRAME_HELPER = [
+  "// One part of a picture's frame: a solid box (a bar) or plane (a Gallery mat strip), centred on the picture's plane",
+  "// at (x, y) metres from its middle in the picture's own space and turned with it. Sizes are metres, not scaled with",
+  '// the picture: the frame is placed from where the picture is when this runs, so move or resize the picture first.',
+  "function addFramePart(picture: Entity, part: { shape: 'box' | 'plane'; x: number; y: number; width: number; height: number; depth: number; color: string }): void {",
+  '  const at = Transform.get(picture)',
+  '  const f = engine.addEntity()',
+  '  Transform.create(f, { position: Vector3.add(at.position, Vector3.rotate(Vector3.create(part.x, part.y, 0), at.rotation)), rotation: at.rotation, scale: Vector3.create(part.width, part.height, part.depth) })',
+  "  if (part.shape === 'box') MeshRenderer.setBox(f)",
+  '  else MeshRenderer.setPlane(f)',
+  '  Material.setPbrMaterial(f, { albedoColor: Color4.fromColor3(Color3.fromHexString(part.color), 1), roughness: 0.7, metallic: 0, specularIntensity: 0.2 })',
+  '}',
+]
+
 /** Advances a playlist when a video stops at its end, as DclAdapter.onVideoEnded does. */
 const PLAYLIST_HELPER = [
   '/** Plays `list` in order on `player`, moving on whenever a video stops at its end. */',
@@ -189,12 +218,15 @@ const PLAYLIST_HELPER = [
 export function bakeModule(snap: BackupSnapshot): string {
   const blocks: string[][] = []
   let needsHelper = false
+  let needsFrames = false
   for (const it of snap.items) {
     const baked = bakeItem(it)
     if (!baked) continue
     needsHelper ||= !!baked.playlistHelper
     const { position: p, rotation: r } = it
     const s = scaleOf(it)
+    const frame = frameLines(it)
+    needsFrames ||= frame.length > 0
     blocks.push([
       '{',
       ...[
@@ -203,6 +235,7 @@ export function bakeModule(snap: BackupSnapshot): string {
         `Transform.create(e, { position: Vector3.create(${num(p.x)}, ${num(p.y)}, ${num(p.z)}), rotation: Quaternion.fromEulerDegrees(${num(r.x)}, ${num(r.y)}, ${num(r.z)}), scale: Vector3.create(${num(s.x)}, ${num(s.y)}, ${num(s.z)}) })`,
         ...baked.lines,
         ...clickLines(it),
+        ...frame,
       ].map((l) => `  ${l}`),
       '}',
     ])
@@ -210,6 +243,7 @@ export function bakeModule(snap: BackupSnapshot): string {
 
   const body = [
     ...(needsHelper ? [...PLAYLIST_HELPER, ''] : []),
+    ...(needsFrames ? [...FRAME_HELPER, ''] : []),
     '/** Places every item; call it once from main(). */',
     'export function bakeVirviContent(): void {',
     ...blocks.flat().map((l) => `  ${l}`),

@@ -1,9 +1,11 @@
 'use client'
-import { useCallback, useMemo } from 'react'
+import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
 import { requestHeaders } from './request-headers'
-import { accountRequired, openSignUp, type BlockedCtx } from './trial'
+import { reporter } from './errors/reporter'
+import type { ErrorDetail, ErrorSettings, ErrorsOverview, ErrorThresholds } from './errors/admin'
+import { accountRequired, openSignUp, readTextRecovering, sendRecovering, type BlockedCtx } from './trial'
 import { backupPath } from './backup'
 import type { Plot, RoomSetOptions } from '@virvixr/shared'
 import type { RoomNudge } from './room-set'
@@ -11,10 +13,19 @@ import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
-import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioUpload, StudioUsage } from './studio'
-import type { SceneImportView } from '@virvixr/shared'
+import { adminDesignsQuery, type AdminDesign } from './studio-support'
+import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioSet, StudioUpload, StudioUsage } from './studio'
+import type { PromptHelp } from './studio-prompt'
+import type { NotificationItem } from './notifications'
+import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, StudioInvite } from './studio-people'
+import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
+import type { FirstReplyStats } from './studio-wait'
+import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
 import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
-import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, LiveData, TimeseriesPoint } from './analytics/types'
+import { overlayDemoApi, type DemoApi } from './demo/store'
+import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
+import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
+import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
 
@@ -37,6 +48,8 @@ export interface WizardOptions {
   dcl: { virviDeploys: boolean; virviAddress: string | null }
   hyperfy: { allowed: boolean; requiredTier: string }
   scenes: { used: number; limit: number | null }
+  /** Set for a trial session: it walks the wizard up to Deploy. */
+  trial?: true
 }
 
 export interface WizardSceneBody {
@@ -96,7 +109,18 @@ export interface DclWorld {
   hasScene: boolean
   footprint: { base: string; parcels: string[] } | null
   storage: { maxAllowedBytes: number; usedBytes: number } | null
+  /** The Virvi scene the World is connected to, as the caller may see it; null when none (absent on older responses). */
+  connectedScene?: ConnectedScene | null
 }
+
+/**
+ * Who holds a World in Virvi: named only for someone with access to that scene, and disconnectable (with the
+ * destination to remove) only with full access. Otherwise just "another Virvi account".
+ */
+export type ConnectedScene =
+  | { sceneId: string; name: string; canDisconnect: true; destinationId: string }
+  | { sceneId: string; name: string; canDisconnect: false }
+  | { name: null; canDisconnect: false }
 
 export type DclDestinationMode = 'virvi' | 'sign'
 
@@ -119,9 +143,16 @@ export interface DclDestination {
   pendingSince: string | null
   adopted: boolean
   spawn: { x: number; y: number; z: number } | null
+  /** LIV-135: whether Decentraland built a map snapshot for `mapEntityId` (absent on older responses: unknown). */
+  mapStatus?: DclMapStatus
+  mapEntityId?: string | null
+  mapAssets?: number | null
+  mapCheckedAt?: string | null
   createdAt: string
   updatedAt: string
 }
+
+export type DclMapStatus = 'pending' | 'ready' | 'none' | 'unknown'
 
 /** A model in the scene that the World doesn't have yet. */
 export interface DclPendingModel {
@@ -131,6 +162,9 @@ export interface DclPendingModel {
   file: string
   triangles: number | null
   bytes: number | null
+  /** The scene's thumbnail rather than a model (LIV-88); `removed` when it was taken off since the last deploy. */
+  kind?: 'thumbnail'
+  removed?: true
 }
 
 /** A deployment row (the Hyperfy admin code never reaches the browser). */
@@ -205,22 +239,46 @@ export interface AdminArReport {
   createdAt: string
 }
 
-export const MEDIA_UPLOAD_RULES = 'Only PNG, JPG, WebP, GIF (≤ 10 MB), GLB (≤ 50 MB) or MP4/WebM video (≤ 70 MB)'
-
-/** Human-readable message for a failed media upload. */
-export function uploadErrorMessage(err: any): string {
-  const msg = err?.message || ''
-  // 'HTTP 413' is a non-JSON 413 (e.g. a proxy's body-size page) — still a size problem.
-  if (msg === 'unsupported_type' || msg === 'too_large' || msg === 'HTTP 413') return MEDIA_UPLOAD_RULES
-  return msg || 'Upload failed'
-}
+// Images & Video's rules and messages live with the libraries' wording
+export { MEDIA_UPLOAD_RULES, uploadErrorMessage } from './libraries'
 
 /** True if a media asset is a GLB model (old uploads may be stored as octet-stream). */
 export function isGlbAsset(asset: { contentType?: string; filename?: string }): boolean {
   return asset.contentType === 'model/gltf-binary' || !!asset.filename?.toLowerCase().endsWith('.glb')
 }
 
-export function useApi() {
+/**
+ * The Worlds of the session `bearer` belongs to. Deploy uses it right after a trial's wallet sign-in, with the token the
+ * sign-in returned: the page's own `api` still holds the trial's until it re-renders.
+ */
+export async function fetchDclNames(bearer: string): Promise<{ wallets: Array<{ address: string; names: DclWorld[] }> }> {
+  const res = await fetch(`${API_URL}/api/dcl/names`, { headers: requestHeaders(bearer, {}) })
+  if (res.ok) return res.json()
+  const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+  throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+}
+
+/**
+ * Set by `<DemoApiProvider>` (the guest demos under `/demo/*`): `useApi()` inside it answers from the in-browser demo and
+ * refuses everything else, and `useDemoPrefix()` keeps the pages' own links under `/demo`. Null everywhere else.
+ */
+export const DemoApiContext = createContext<{ api: DemoApi; onRefused: (action: string) => void } | null>(null)
+
+/** `/demo` inside a demo, else ''. Pages that link to themselves (`/events?id=`) put it in front. */
+export function useDemoPrefix(): '' | '/demo' {
+  return useContext(DemoApiContext) ? '/demo' : ''
+}
+
+/** The api `useApi()` returns: the real one's shape, which a demo keeps. */
+export type Api = ReturnType<typeof useRealApi>
+
+export function useApi(): Api {
+  const real = useRealApi()
+  const demo = useContext(DemoApiContext)
+  return useMemo(() => (demo ? overlayDemoApi(real, demo.api, demo.onRefused) : real), [real, demo])
+}
+
+function useRealApi() {
   const { token, user, logout, renew, swapToStoredAccount } = useAuth()
 
   /** A kind-less (pre-scene-pass) session, or a scene pass used outside its scope: drop it so the
@@ -229,19 +287,26 @@ export function useApi() {
     if ((status === 401 && err.message === 'Session expired — sign in again') || (status === 403 && err.error === 'scene_pass_not_allowed')) logout()
   }, [logout])
 
-  const apiFetch = useCallback(async <T = any>(path: string, options: RequestInit & { signUpCtx?: BlockedCtx } = {}): Promise<T> => {
-    const { signUpCtx, ...init } = options
+  /**
+   * `userAction`: the call is something the user asked for (a save, deploy, upload or payment), so its failure broke
+   * what they were doing and may offer a report (LIV-66 §4). Every other call is background: recorded, never prompted.
+   */
+  const apiFetch = useCallback(async <T = any>(path: string, options: RequestInit & { signUpCtx?: BlockedCtx; userAction?: boolean } = {}): Promise<T> => {
+    const { signUpCtx, userAction, ...init } = options
     const send = async (bearer: string | null) => {
-      let res = await fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(bearer, init) })
-      // The access token ran out: renew it with the stored refresh token and send the request once more
-      if (res.status === 401 && bearer) {
-        const ended = (await res.clone().json().catch(() => null))?.error === 'trial_ended'
-        const fresh = ended ? swapToStoredAccount(bearer) : await renew()
-        if (fresh) res = await fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(fresh, init) })
+      const started = performance.now()
+      const method = init.method ?? 'GET'
+      // The access token ran out: renew it with the stored refresh token (or follow the account a trial became) and send once more
+      const res = await sendRecovering((b) => fetch(`${API_URL}${path}`, { ...init, headers: requestHeaders(b, init) }), bearer, { swapToStoredAccount, renew })
+      const done = { method, path, status: res.status, ms: performance.now() - started, requestId: res.headers.get('x-request-id') }
+      if (res.ok) {
+        reporter.apiDone({ ...done, ok: true })
+        return { res, err: null as any }
       }
-      if (res.ok) return { res, err: null as any }
       // Non-JSON error bodies (proxy pages, e.g. a 413 from the edge) become `HTTP <status>`.
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      // LIV-66: every non-OK response is recorded, with the error body only (never the request's)
+      reporter.apiDone({ ...done, ok: false, body: err, userAction })
       dropDeadSession(res.status, err)
       return { res, err }
     }
@@ -280,6 +345,7 @@ export function useApi() {
         }
       }
       if (!res.ok) {
+        reporter.apiDone({ method: 'GET', path, status: res.status, ms: 0, requestId: res.headers.get('x-request-id'), ok: false, body: err })
         dropDeadSession(res.status, err)
         throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
       }
@@ -300,11 +366,29 @@ export function useApi() {
     getScenes: () => apiFetch<{ scenes: any[] }>('/api/scenes'),
     getScene: (id: string) => apiFetch<{ scene: any }>(`/api/scenes/${id}`),
     createScene: (name: string, description?: string) =>
-      apiFetch<{ scene: any; preset: any }>('/api/scenes', { method: 'POST', body: JSON.stringify({ name, description }) }),
+      apiFetch<{ scene: any; preset: any }>('/api/scenes', { method: 'POST', userAction: true, body: JSON.stringify({ name, description }) }),
     updateScene: (id: string, data: Record<string, any>) =>
-      apiFetch<{ scene: any }>(`/api/scenes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    deleteScene: (id: string) =>
-      apiFetch(`/api/scenes/${id}`, { method: 'DELETE' }),
+      apiFetch<{ scene: any }>(`/api/scenes/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
+    // Deleting a scene (LIV-83): soft delete, Recently deleted, restore, delete forever, removals
+    getDeletePlan: (id: string) => apiFetch<DeletePlan>(`/api/scenes/${id}/delete-plan`),
+    /** `remove`: ids from the plan's `running` to shut down or remove. */
+    deleteScene: (id: string, remove: string[] = [], seen: Record<string, string | null> = {}) =>
+      apiFetch<DeleteResult>(`/api/scenes/${id}`, { method: 'DELETE', body: JSON.stringify({ remove, seen }) }),
+    getDeletedScenes: () => apiFetch<{ scenes: DeletedScene[] }>('/api/scenes/deleted'),
+    restoreScene: (id: string) => apiFetch<{ scene: any; notRestored: Removal[] }>(`/api/scenes/${id}/restore`, { method: 'POST', body: '{}' }),
+    /** "Delete forever now": `name` must be the scene's. */
+    purgeScene: (id: string, name: string) => apiFetch(`/api/scenes/${id}/purge`, { method: 'POST', body: JSON.stringify({ name }) }),
+    /** `confirm`: "Remove anyway" for a removal whose live content changed. */
+    retryRemoval: (sceneId: string, removalId: string, confirm = false) =>
+      apiFetch<{ removal: Removal }>(`/api/scenes/${sceneId}/removals/${removalId}/retry`, { method: 'POST', body: JSON.stringify(confirm ? { confirm: true } : {}) }),
+    getRemovalSign: (sceneId: string, removalId: string) => apiFetch<RemovalSignRequest>(`/api/scenes/${sceneId}/removals/${removalId}/sign`),
+    submitRemovalSignature: (sceneId: string, removalId: string, body: { chain: unknown; timestamp?: number }) =>
+      apiFetch<{ removal: Removal }>(`/api/scenes/${sceneId}/removals/${removalId}/signature`, { method: 'POST', body: JSON.stringify(body) }),
+    /** The scene's thumbnail (LIV-88): the cropped 16:9 PNG or JPEG, base64. */
+    setSceneThumbnail: (id: string, fileData: string) =>
+      apiFetch<{ scene: any }>(`/api/scenes/${id}/thumbnail`, { method: 'PUT', userAction: true, body: JSON.stringify({ fileData }) }),
+    removeSceneThumbnail: (id: string) =>
+      apiFetch<{ scene: any }>(`/api/scenes/${id}/thumbnail`, { method: 'DELETE' }),
 
     // Scene Collaborators
     getSceneCollaborators: (sceneId: string) =>
@@ -358,17 +442,17 @@ export function useApi() {
 
     // Elements
     createElement: (presetId: string, data: Record<string, any>) =>
-      apiFetch<{ element: any }>(`/api/presets/${presetId}/elements`, { method: 'POST', body: JSON.stringify(data) }),
+      apiFetch<{ element: any }>(`/api/presets/${presetId}/elements`, { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     updateElement: (id: string, data: Record<string, any>) =>
-      apiFetch<{ element: any }>(`/api/elements/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ element: any }>(`/api/elements/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteElement: (id: string) =>
       apiFetch(`/api/elements/${id}`, { method: 'DELETE' }),
 
     // Instances
     createInstance: (elementId: string, data: Record<string, any>) =>
-      apiFetch<{ instance: any }>(`/api/elements/${elementId}/instances`, { method: 'POST', body: JSON.stringify(data) }),
+      apiFetch<{ instance: any }>(`/api/elements/${elementId}/instances`, { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     updateInstance: (id: string, data: Record<string, any>) =>
-      apiFetch<{ instance: any }>(`/api/instances/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ instance: any }>(`/api/instances/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteInstance: (id: string) =>
       apiFetch(`/api/instances/${id}`, { method: 'DELETE' }),
     deleteElementInstances: (elementId: string) =>
@@ -377,7 +461,7 @@ export function useApi() {
     // Media
     getMedia: () => apiFetch<{ assets: any[] }>('/api/media'),
     uploadMedia: (filename: string, contentType: string, data: string) =>
-      apiFetch<{ asset: any }>('/api/media/upload', { method: 'POST', body: JSON.stringify({ filename, contentType, data }) }),
+      apiFetch<{ asset: any }>('/api/media/upload', { method: 'POST', userAction: true, body: JSON.stringify({ filename, contentType, data }) }),
     deleteMedia: (assetId: string) =>
       apiFetch(`/api/media/${assetId}`, { method: 'DELETE' }),
     /** Scheduled showings on a video screen (LIV-87). */
@@ -413,11 +497,11 @@ export function useApi() {
       apiFetch<{ activePresetId: string }>(`/api/presets/${presetId}/activate`, { method: 'POST' }),
     /** Self-hosted branding (instance admins). undefined keeps a field, null clears it; images are base64. */
     updateBranding: (body: { name?: string | null; logo?: string | null; favicon?: string | null }) =>
-      apiFetch<{ name: string | null; logoUrl: string | null; faviconUrl: string | null }>('/api/instance/branding', { method: 'PUT', body: JSON.stringify(body) }),
+      apiFetch<{ name: string | null; logoUrl: string | null; faviconUrl: string | null }>('/api/instance/branding', { method: 'PUT', userAction: true, body: JSON.stringify(body) }),
     resetBranding: () => apiFetch<void>('/api/instance/branding', { method: 'DELETE' }),
     getSceneStreams: (sceneId: string) =>
       apiFetch<{ streams: import('./streams').SceneStream[] }>(`/api/scenes/${sceneId}/streams`),
-    /** Current Media Library names for media URLs placed in a scene (a playlist stores URLs only). */
+    /** Current Images & Video names for media URLs placed in a scene (a playlist stores URLs only). */
     getMediaNames: (sceneId: string, urls: string[]) =>
       apiFetch<MediaNames>(`/api/scenes/${sceneId}/media-names`, { method: 'POST', body: JSON.stringify({ urls }) }),
 
@@ -446,8 +530,11 @@ export function useApi() {
     getAnalyticsTimeseries: (id: string, q: AnalyticsRangeQuery & { bucket: 'hour' | 'day' }) =>
       apiFetch<{ points: TimeseriesPoint[] }>(`/api/analytics/locations/${id}/timeseries?${new URLSearchParams({ ...q })}`),
     getAnalyticsLive: (id: string) => apiFetch<LiveData>(`/api/analytics/locations/${id}/live`),
-    getAnalyticsHeatmap: (id: string, q: AnalyticsRangeQuery) =>
-      apiFetch<{ cells: HeatCell[] }>(`/api/analytics/locations/${id}/heatmap?${new URLSearchParams({ ...q })}`),
+    getAnalyticsHeatmap: async (id: string, q: AnalyticsRangeQuery): Promise<HeatmapData> => {
+      const r = await apiFetch<{ cells: HeatCell[]; heatmap3d?: boolean }>(`/api/analytics/locations/${id}/heatmap?${new URLSearchParams({ ...q })}`)
+      return { cells: r.cells, heatmap3d: r.heatmap3d === true }
+    },
+    getAnalyticsLayout: (id: string) => apiFetch<{ layout: { items: LayoutItem[] } | null }>(`/api/analytics/locations/${id}/layout`),
     getAnalyticsSessions: (id: string, cursor?: string) => {
       const query = new URLSearchParams({ limit: '50' })
       if (cursor) query.set('cursor', cursor)
@@ -474,7 +561,7 @@ export function useApi() {
 
     // Account
     updateProfile: (displayName: string) =>
-      apiFetch<{ user: any }>('/api/auth/profile', { method: 'PUT', body: JSON.stringify({ displayName }) }),
+      apiFetch<{ user: any }>('/api/auth/profile', { method: 'PUT', userAction: true, body: JSON.stringify({ displayName }) }),
     changePassword: (currentPassword: string, newPassword: string) =>
       apiFetch<{ success: boolean }>('/api/auth/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
     deleteAccount: (password: string) =>
@@ -482,7 +569,7 @@ export function useApi() {
 
     // Admin
     getAdminStats: () => apiFetch<{
-      totalUsers: number; totalOrgs: number; totalScenes: number;
+      totalUsers: number; trialGuests?: number; totalOrgs: number; totalScenes: number;
       totalMedia: number; totalStorageBytes: number;
       activeSubscriptionsByTier: Record<string, number>;
     }>('/api/admin/stats'),
@@ -517,15 +604,16 @@ export function useApi() {
     // Billing
     getBillingUsage: () => apiFetch<{ tier: string; limits: any; usage: any }>('/api/billing/usage'),
     getBillingSubscription: () => apiFetch<{ tier: string; status: string; billingEnabled?: boolean; limits: any }>('/api/billing/subscription'),
-    createCheckout: (priceId: string) => apiFetch<{ url: string }>('/api/billing/checkout', { method: 'POST', body: JSON.stringify({ priceId }) }),
+    createCheckout: (priceId: string) => apiFetch<{ url: string }>('/api/billing/checkout', { method: 'POST', userAction: true, body: JSON.stringify({ priceId }) }),
     getPortalUrl: () => apiFetch<{ url: string }>('/api/billing/portal', { method: 'POST', body: JSON.stringify({}) }),
 
     // New Scene Wizard
     getWizardCatalog: () => apiFetch<WizardCatalog>('/api/wizard/catalog'),
     getWizardOptions: () => apiFetch<WizardOptions>('/api/wizard/options'),
     /** 400 (incl. `unmeasured_asset`, `invalid_plot`), 403 `scene_limit_reached`, 422 `over_budget` ({ message, triangles, limit } on err.body). */
-    bootstrapWizardScene: (data: WizardSceneBody) =>
-      apiFetch<{ sceneId: string }>('/api/wizard/scenes', { method: 'POST', body: JSON.stringify(data) }),
+    /** The wizard's save. A trial is asked to sign up first; `ctx.sceneName` names the scene on the sheet. */
+    bootstrapWizardScene: (data: WizardSceneBody, signUpCtx?: BlockedCtx) =>
+      apiFetch<{ sceneId: string }>('/api/wizard/scenes', { method: 'POST', body: JSON.stringify(data), signUpCtx }),
 
     // Room scans and room sets
     getRoomScans: () => apiFetch<{ scans: RoomScanSummary[] }>('/api/room-scans'),
@@ -553,12 +641,18 @@ export function useApi() {
     // Decentraland Worlds
     getDclNames: () => apiFetch<{ wallets: Array<{ address: string; names: DclWorld[] }> }>('/api/dcl/names'),
     getDclWorld: (world: string) => apiFetch<DclWorld & { owner: boolean }>(`/api/dcl/worlds/${encodeURIComponent(world)}`),
-    /** Pass `plot` (and `spawn`) to build a new scene there, or omit both to adopt the live scene. 409 `world_in_use` carries `sceneId`. */
+    /** Pass `plot` (and `spawn`) to build a new scene there, or omit both to adopt the live scene. 409 `world_in_use` carries `sceneId` and `connectedScene`. */
     createDclDestination: (data: { sceneId: string; world: string; mode: DclDestinationMode; plot?: Plot; spawn?: { x: number; z: number } }) =>
-      apiFetch<{ destination: DclDestination; replaces?: { parcels: string[] } }>('/api/dcl/destinations', { method: 'POST', body: JSON.stringify(data) }),
+      apiFetch<{ destination: DclDestination; replaces?: { parcels: string[] } }>('/api/dcl/destinations', { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     /** The scene's World destinations, and Worlds set up in-world for it (Creator Hub `@virvixr/dcl` scenes) it can adopt. */
     getSceneDclDestinations: (sceneId: string) =>
       apiFetch<{ destinations: DclDestination[]; adoptable: Array<{ world: string }> }>(`/api/scenes/${sceneId}/dcl/destinations`),
+    /**
+     * Disconnects the World from its scene: nothing changes in Decentraland. `grantKept`: Virvi still holds the owner's
+     * deploy permission there (`message` says how to remove it). 409 `deploy_in_progress`, 409 `not_a_world`, 403 without full access.
+     */
+    disconnectDclDestination: (id: string) =>
+      apiFetch<{ world: string; sceneId: string; grantKept: boolean; message?: string }>(`/api/dcl/destinations/${id}`, { method: 'DELETE' }),
     getDclDestination: (id: string) =>
       apiFetch<{
         destination: DclDestination; kind: 'world' | 'parcels'; parcels: string[]
@@ -584,33 +678,26 @@ export function useApi() {
       apiFetch<{ destination: DclDestination }>(`/api/dcl/destinations/${id}/revoke`, { method: 'POST', body: JSON.stringify(data) }),
     /** Mode virvi answers 202 with just the deployment; mode sign adds the `payload` to sign (then `submitDeploySignature`). */
     deployDclDestination: (id: string) =>
-      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/dcl/destinations/${id}/deploy`, { method: 'POST' }),
+      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/dcl/destinations/${id}/deploy`, { method: 'POST', userAction: true }),
     /** 409 `expired`: prepare the deploy again. */
     submitDeploySignature: (deploymentId: string, chain: AuthChain) =>
-      apiFetch<{ deployment: DclDeployment }>(`/api/deploy/${deploymentId}/signature`, { method: 'POST', body: JSON.stringify({ chain }) }),
+      apiFetch<{ deployment: DclDeployment }>(`/api/deploy/${deploymentId}/signature`, { method: 'POST', userAction: true, body: JSON.stringify({ chain }) }),
     rebaseDclDestination: (id: string) =>
       apiFetch<{ destination: DclDestination }>(`/api/dcl/destinations/${id}/rebase`, { method: 'POST' }),
 
     // Scene imports (a Creator Hub or SDK7 scene built and deployed by Virvi)
     /** The scene zip as the raw body. Errors carry `{ error, message, importId? }` (the import made, for its build log). */
     uploadSceneImport: (zip: Blob) =>
-      apiFetch<{ import: SceneImportView }>('/api/imports', { method: 'POST', body: zip, headers: { 'Content-Type': 'application/zip' } }),
+      apiFetch<{ import: SceneImportView }>('/api/imports', { method: 'POST', userAction: true, body: zip, headers: { 'Content-Type': 'application/zip' } }),
     getSceneImport: (id: string) => apiFetch<{ import: SceneImportView }>(`/api/imports/${id}`),
     /** The caller's own last 10 imports, any scene, newest first. */
     listMySceneImports: () => apiFetch<{ imports: SceneImportView[] }>('/api/imports'),
     /** The whole build log, as text. */
-    getSceneImportLog: async (id: string): Promise<string> => {
-      const res = await fetch(`${API_URL}/api/imports/${id}/log`, { headers: requestHeaders(token, {}) })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        dropDeadSession(res.status, err)
-        throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
-      }
-      return res.text()
-    },
+    getSceneImportLog: (id: string): Promise<string> =>
+      readTextRecovering((b) => fetch(`${API_URL}/api/imports/${id}/log`, { headers: requestHeaders(b, {}) }), token, { swapToStoredAccount, renew }, dropDeadSession),
     /** 200 with the `payload` to sign (then `submitDeploySignature`), or 202 with just the deployment: Virvi deploys. */
     deploySceneImport: (id: string) =>
-      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string }>(`/api/imports/${id}/deploy`, { method: 'POST' }),
+      apiFetch<{ deployment: DclDeployment; payload?: string; expiresAt?: string; usesScene?: SceneImportMove }>(`/api/imports/${id}/deploy`, { method: 'POST', userAction: true }),
     /** What a World deployment put live, as a zip: through the authenticated route, never a plain link. */
     downloadDeployFiles: async (deploymentId: string): Promise<{ blob: Blob; filename: string }> => {
       const res = await fetch(`${API_URL}/api/deploy/${deploymentId}/files.zip`, { headers: requestHeaders(token, {}) })
@@ -693,7 +780,7 @@ export function useApi() {
     getStreamingSessions: (serverId: string) =>
       apiFetch<{ sessions: any[] }>(`/api/streaming/${serverId}/sessions`),
 
-    // 3D Asset Library
+    // 3D Models (the asset library)
     getAssets: (params?: { q?: string; category?: string; tag?: string; style?: string; venue?: string; pack?: string; mine?: string; scope?: string; maxTriangles?: string; maxFileSize?: string; limit?: string; offset?: string }) => {
       const query = new URLSearchParams()
       if (params?.q) query.set('q', params.q)
@@ -718,9 +805,47 @@ export function useApi() {
     // Catalog packs: public list (credits, pack filter); admins switch packs on and off
     getCatalogPacks: () => apiFetch<{ packs: CatalogPack[] }>('/api/catalog/packs'),
     getAdminCatalogPacks: () => apiFetch<{ packs: CatalogPack[] }>('/api/admin/catalog/packs'),
+    // Errors (admin, LIV-66)
+    getAdminErrors: () => apiFetch<ErrorsOverview>('/api/admin/errors'),
+    /** "Re-open for filing": forget a Linear issue closed without a fix, so the data can file it again. */
+    reopenAdminErrorForFiling: (id: string) =>
+      apiFetch<{ id: string; reopened: true }>(`/api/admin/errors/${id}`, { method: 'PATCH', body: JSON.stringify({ reopenForFiling: true }) }),
+    /** A report's screenshot (admin; the route needs the bearer, so it is fetched, never linked). */
+    getAdminErrorScreenshot: (reportId: string) => downloadBlob(`/api/admin/errors/reports/${reportId}/screenshot`, 'screenshot'),
+    // "Ask me about errors" (accounts; guests and trials keep theirs in the browser)
+    getErrorPromptSettings: () => apiFetch<{ askAboutErrors: boolean }>('/api/errors/prompt-settings'),
+    setErrorPromptSettings: (askAboutErrors: boolean) =>
+      apiFetch<{ askAboutErrors: boolean }>('/api/errors/prompt-settings', { method: 'PUT', body: JSON.stringify({ askAboutErrors }) }),
+    getAdminError: (id: string, days = 7) => apiFetch<ErrorDetail>(`/api/admin/errors/${id}?days=${days}`),
+    setAdminErrorResolved: (id: string, resolved: boolean) =>
+      apiFetch<{ id: string; resolvedAt: string | null }>(`/api/admin/errors/${id}`, { method: 'PATCH', body: JSON.stringify({ resolved }) }),
+    getAdminErrorSettings: () => apiFetch<ErrorSettings>('/api/admin/error-settings'),
+    saveAdminErrorSettings: (change: Partial<ErrorThresholds>) =>
+      apiFetch<{ thresholds: ErrorThresholds }>('/api/admin/error-settings', { method: 'PUT', body: JSON.stringify(change) }),
     setCatalogPackEnabled: (id: string, enabled: boolean) =>
       apiFetch<{ pack: CatalogPack }>(`/api/admin/catalog/packs/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
 
+    // Everyone's designs (admin: Virvi support opens them on the design page)
+    getAdminStudioDesigns: (query: { q?: string; kind?: string; cursor?: string | null } = {}) =>
+      apiFetch<{ designs: AdminDesign[]; nextCursor: string | null }>(`/api/admin/studio/designs${adminDesignsQuery(query)}`),
+    // Ratings (admin, LIV-142): the 👎 queue, the weekly digest, lessons for the agent and the default agent per kind
+    getAdminStudioRatings: (f: ReviewFilters = {}) => apiFetch<{ ratings: AdminRating[]; nextCursor: string | null }>(`/api/admin/studio/ratings${ratingsQuery(f)}`),
+    markAdminStudioRating: (id: string, change: { handled?: boolean; autoCheck?: boolean }) =>
+      apiFetch<{ id: string; handledAt: string | null; autoCheck: boolean }>(`/api/admin/studio/ratings/${id}`, { method: 'PATCH', body: JSON.stringify(change) }),
+    getAdminStudioDigest: (week?: string) => apiFetch<Digest>(`/api/admin/studio/digest${week ? `?week=${week}` : ''}`),
+    getAdminStudioLessons: () => apiFetch<LessonsList>('/api/admin/studio/lessons'),
+    createAdminStudioLesson: (body: { kind: string; text: string; sourceRatingIds?: string[] }) =>
+      apiFetch<AdminLesson>('/api/admin/studio/lessons', { method: 'POST', body: JSON.stringify(body) }),
+    draftAdminStudioLesson: (ratingIds: string[]) =>
+      apiFetch<AdminLesson>('/api/admin/studio/lessons/draft', { method: 'POST', body: JSON.stringify({ ratingIds }) }),
+    updateAdminStudioLesson: (id: string, change: { text?: string; enabled?: boolean; status?: 'approved' }) =>
+      apiFetch<AdminLesson>(`/api/admin/studio/lessons/${id}`, { method: 'PATCH', body: JSON.stringify(change) }),
+    deleteAdminStudioLesson: (id: string) => apiFetch<void>(`/api/admin/studio/lessons/${id}`, { method: 'DELETE' }),
+    getAdminStudioDefaults: () => apiFetch<KindDefaults>('/api/admin/studio/defaults'),
+    getAdminStudioIdeas: () => apiFetch<AdminIdeaCounts>('/api/admin/studio/ideas'),
+    getAdminStudioFirstReply: () => apiFetch<FirstReplyStats>('/api/admin/studio/first-reply'),
+    setAdminStudioDefault: (kind: string, agent: string) =>
+      apiFetch<{ defaults: KindDefaults['defaults'] }>(`/api/admin/studio/defaults/${kind}`, { method: 'PUT', body: JSON.stringify({ agent }) }),
     // Studio flags (admin)
     getAdminStudioFlags: (status: 'open' | 'closed') => apiFetch<{ flags: AdminStudioFlag[] }>(`/api/admin/studio/flags?status=${status}`),
     dismissAdminStudioFlag: (id: string) => apiFetch<void>(`/api/admin/studio/flags/${id}/dismiss`, { method: 'POST' }),
@@ -796,9 +921,9 @@ export function useApi() {
       license?: string
       author?: string
       isPublic?: boolean
-    }) => apiFetch<{ asset: any }>('/api/assets', { method: 'POST', body: JSON.stringify(data) }),
+    }) => apiFetch<{ asset: any }>('/api/assets', { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     updateAsset: (id: string, data: Record<string, any>) =>
-      apiFetch<{ asset: any }>(`/api/assets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ asset: any }>(`/api/assets/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteAsset: (id: string) =>
       apiFetch<{ deleted: boolean }>(`/api/assets/${id}`, { method: 'DELETE' }),
 
@@ -812,9 +937,9 @@ export function useApi() {
     getEvents: () => apiFetch<{ events: any[] }>('/api/events'),
     getEvent: (id: string) => apiFetch<{ event: any; presetSchedules?: import('./event-presets').EventPresetSchedule[]; scenePresets?: import('./event-presets').ScenePresetOption[]; showings?: import('./event-presets').EventShowing[] }>(`/api/events/${id}`),
     createEvent: (data: { name: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>
-      apiFetch<{ event: any }>('/api/events', { method: 'POST', body: JSON.stringify(data) }),
+      apiFetch<{ event: any }>('/api/events', { method: 'POST', userAction: true, body: JSON.stringify(data) }),
     updateEvent: (id: string, data: { name?: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>
-      apiFetch<{ event: any }>(`/api/events/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      apiFetch<{ event: any }>(`/api/events/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteEvent: (id: string) =>
       apiFetch(`/api/events/${id}`, { method: 'DELETE' }),
     linkSceneToEvent: (eventId: string, sceneId: string) =>
@@ -832,27 +957,61 @@ export function useApi() {
     createStudioDesign: (body: { kind: StudioKind; agent: string; name?: string }) =>
       apiFetch<StudioDesign>('/api/studio/designs', { method: 'POST', body: JSON.stringify(body) }),
     getStudioDesign: (id: string) => apiFetch<StudioDetail>(`/api/studio/designs/${id}`),
+    // 👍 / 👎 on a revision (LIV-142), and a 👎's free try-again
+    rateStudioRevision: (id: string, jobId: string, body: ReturnType<typeof ratingBody>) =>
+      apiFetch<StudioRevision>(`/api/studio/designs/${id}/revisions/${jobId}/rating`, { method: 'PUT', body: JSON.stringify(body) }),
+    clearStudioRating: (id: string, jobId: string) => apiFetch<void>(`/api/studio/designs/${id}/revisions/${jobId}/rating`, { method: 'DELETE' }),
+    tryStudioRevisionAgain: (id: string, jobId: string) =>
+      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/revisions/${jobId}/try-again`, { method: 'POST' }),
+    getStudioDefaults: () => apiFetch<{ agents: Record<StudioKind, string | null> }>('/api/studio/defaults'),
     updateStudioDesign: (id: string, patch: { name?: string; agent?: string; archived?: boolean }) =>
       apiFetch<StudioDesign>(`/api/studio/designs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     setStudioWall: (id: string, body: { shown: boolean; marketplaceUrl?: string | null }) =>
       apiFetch<WallState>(`/api/studio/designs/${id}/wall`, { method: 'PUT', body: JSON.stringify(body) }),
-    sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean }) =>
-      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', body: JSON.stringify(body) }),
+    // "Improve my prompt": a rewrite of the draft, never sent to the agent
+    studioPromptHelp: (id: string, body: { text: string; selectedSlots?: string[]; answers?: Record<string, string> }) =>
+      apiFetch<PromptHelp>(`/api/studio/designs/${id}/prompt-help`, { method: 'POST', body: JSON.stringify(body) }),
+    // Starting the design's machine while the person writes a prompt: always 204, fire and forget
+    warmStudioDesign: (id: string) => apiFetch<void>(`/api/studio/designs/${id}/warm`, { method: 'POST' }),
+    /** `query`: ideaParams (studio-ideas.ts). */
+    studioPromptIdeas: (id: string, query: string) => apiFetch<PromptIdeas>(`/api/studio/designs/${id}/prompt-ideas?${query}`),
+    sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean; ideaId?: string }) =>
+      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }
       | { category: string; mode: 'orbit' | 'scale' }) =>
       apiFetch<{ status: 'ready'; frames: number; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/renders`, { method: 'POST', body: JSON.stringify(body) }),
-    /** An emote view with every piece worn; a scene design's walk-through takes no view. */
-    requestStudioSetRender: (id: string, view?: RenderView) =>
-      apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/set-renders`, { method: 'POST', body: JSON.stringify(view ?? {}) }),
-    checkStudioEmote: (id: string, body: { emote: string; bodyShape: 'male' | 'female' }) =>
-      apiFetch<void>(`/api/studio/designs/${id}/emote-checks`, { method: 'POST', body: JSON.stringify({ ...body, state: 'fine' }) }),
-    reportStudioClipping: (id: string, body: { emote: string; bodyShape: 'male' | 'female'; outfit: string }) =>
-      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/clipping`, { method: 'POST', body: JSON.stringify(body) }),
-    requestStudioFinalizeRenders: (id: string) =>
-      apiFetch<{ queued: number }>(`/api/studio/designs/${id}/finalize-renders`, { method: 'POST' }),
-    getStudioQuote: (id: string) => apiFetch<Quote>(`/api/studio/designs/${id}/finalize`),
+    /**
+     * An emote view with every piece worn (or, with `categories`, Finalize's selection and the finalized pieces); a
+     * scene design's walk-through takes no view.
+     */
+    requestStudioSetRender: (id: string, view?: RenderView, categories: string[] | null = null) =>
+      apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/set-renders`, { method: 'POST', body: JSON.stringify({ ...view, ...(categories ? { categories } : {}) }) }),
+    /** A set view's frames when rendered already, never asking for a render (what a viewer may read, LIV-159). */
+    getStudioSetFrames: (id: string, view?: RenderView, categories: string[] | null = null) => {
+      const q = new URLSearchParams()
+      if (view) {
+        q.set('bodyShape', view.bodyShape)
+        q.set('outfit', view.outfit)
+        if (view.emote) q.set('emote', view.emote)
+      }
+      if (categories?.length) q.set('categories', categories.join(','))
+      const qs = q.toString()
+      return apiFetch<{ status: 'ready'; frames: number; fps: number | null; urls: string[] } | { status: string }>(`/api/studio/designs/${id}/set-frames${qs ? `?${qs}` : ''}`)
+    },
+    checkStudioEmote: (id: string, body: { emote: string; bodyShape: 'male' | 'female' }, categories: string[] | null = null) =>
+      apiFetch<void>(`/api/studio/designs/${id}/emote-checks`, { method: 'POST', body: JSON.stringify({ ...body, state: 'fine', ...(categories ? { categories } : {}) }) }),
+    reportStudioClipping: (id: string, body: { emote: string; bodyShape: 'male' | 'female'; outfit: string }, categories: string[] | null = null) =>
+      apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/clipping`, { method: 'POST', body: JSON.stringify({ ...body, ...(categories ? { categories } : {}) }) }),
+    requestStudioFinalizeRenders: (id: string, categories: string[] | null = null) =>
+      apiFetch<{ queued: number }>(`/api/studio/designs/${id}/finalize-renders`, categories ? { method: 'POST', body: JSON.stringify({ categories }) } : { method: 'POST' }),
+    /** The emote step for Finalize's selection: the chosen and finalized pieces worn together. */
+    getStudioSet: (id: string, categories: string[]) =>
+      apiFetch<StudioSet>(`/api/studio/designs/${id}/set?categories=${categories.join(',')}`),
+    /** The finalize quote: every payable piece, or only `categories`, priced by the server. */
+    getStudioQuote: (id: string, categories: string[] | null = null) =>
+      apiFetch<Quote>(`/api/studio/designs/${id}/finalize${categories?.length ? `?categories=${categories.join(',')}` : ''}`),
     finalizeStudio: (id: string, body: { categories?: string[]; reports?: Record<string, string>; method: CheckoutMethod }, signUpCtx?: BlockedCtx) =>
-      apiFetch<CheckoutResult>(`/api/studio/designs/${id}/finalize`, { method: 'POST', body: JSON.stringify(body), signUpCtx }),
+      apiFetch<CheckoutResult>(`/api/studio/designs/${id}/finalize`, { method: 'POST', userAction: true, body: JSON.stringify(body), signUpCtx }),
     redeemGiftCode: (code: string) =>
       apiFetch<{ prompts: number; finalizes: number }>('/api/studio/gift-codes/redeem', { method: 'POST', body: JSON.stringify({ code }) }),
     buyStudioPrompts: (packs: number, method: CheckoutMethod, signUpCtx?: BlockedCtx) =>
@@ -908,5 +1067,33 @@ export function useApi() {
     /** Every piece's newest ready package in one zip ("Download all"), through the same kind of authenticated route. */
     downloadStudioPackages: (id: string, signUpCtx?: BlockedCtx): Promise<{ blob: Blob; filename: string }> =>
       downloadBlob(`/api/studio/designs/${id}/packages`, 'design.zip', signUpCtx),
+    // Sharing a design (LIV-159): its people and invites, my invites, and packages kept from designs I've left
+    /** `invites` (with their links) for the owner alone. */
+    getStudioPeople: (id: string) => apiFetch<{ members: StudioMember[]; invites?: StudioInvite[] }>(`/api/studio/designs/${id}/people`),
+    inviteToStudioDesign: (id: string, to: InviteTarget, role: InviteRole) =>
+      apiFetch<{ invite: StudioInvite }>(`/api/studio/designs/${id}/invites`, { method: 'POST', body: JSON.stringify({ ...to, role }) }),
+    cancelStudioInvite: (id: string, inviteId: string) => apiFetch<void>(`/api/studio/designs/${id}/invites/${inviteId}/cancel`, { method: 'POST' }),
+    resendStudioInvite: (id: string, inviteId: string) =>
+      apiFetch<{ invite: StudioInvite }>(`/api/studio/designs/${id}/invites/${inviteId}/resend`, { method: 'POST' }),
+    setStudioMemberRole: (id: string, userId: string, role: InviteRole) =>
+      apiFetch<{ userId: string; role: InviteRole }>(`/api/studio/designs/${id}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+    /** The owner removing someone, or a member leaving (their own id). */
+    removeStudioMember: (id: string, userId: string) => apiFetch<void>(`/api/studio/designs/${id}/members/${userId}`, { method: 'DELETE' }),
+    // The bell (LIV-159): my notifications; `before` is the last item's updatedAt
+    getNotifications: (before?: string) =>
+      apiFetch<{ items: NotificationItem[]; more: boolean }>(`/api/notifications?limit=20${before ? `&before=${encodeURIComponent(before)}` : ''}`),
+    getUnreadNotifications: () => apiFetch<{ count: number }>('/api/notifications/unread-count'),
+    markNotificationRead: (id: string) => apiFetch<void>(`/api/notifications/${id}/read`, { method: 'POST' }),
+    markAllNotificationsRead: () => apiFetch<void>('/api/notifications/read-all', { method: 'POST' }),
+    getMyStudioInvites: () => apiFetch<MyInvite[]>('/api/studio/invites'),
+    acceptStudioInvite: (inviteId: string) =>
+      apiFetch<{ designId: string; role: InviteRole }>(`/api/studio/invites/${inviteId}/accept`, { method: 'POST' }),
+    declineStudioInvite: (inviteId: string) => apiFetch<void>(`/api/studio/invites/${inviteId}/decline`, { method: 'POST' }),
+    getStudioInviteLink: (token: string) => apiFetch<InviteLinkView>(`/api/studio/invite-links/${token}`),
+    acceptStudioInviteLink: (token: string) =>
+      apiFetch<{ designId: string; role: InviteRole }>(`/api/studio/invite-links/${token}/accept`, { method: 'POST' }),
+    getStudioPastPackages: () => apiFetch<PastPackage[]>('/api/studio/past-packages'),
+    downloadStudioPastPackage: (entitlementId: string): Promise<{ blob: Blob; filename: string }> =>
+      downloadBlob(`/api/studio/past-packages/${entitlementId}/package`, 'package.zip'),
   }), [apiFetch, downloadBlob, token, user?.trial, dropDeadSession, renew, swapToStoredAccount])
 }

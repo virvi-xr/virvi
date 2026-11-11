@@ -6,6 +6,7 @@ import fastifySwaggerUi from '@fastify/swagger-ui'
 import { randomUUID } from 'node:crypto'
 import { config } from './config.js'
 import { withRawJson } from './http/raw-json.js'
+import { isDocsPath, registerDocsSite, sendDocsNotFound } from './http/docs-site.js'
 import { registerJwt } from './middleware/auth.js'
 import authRoutes from './routes/auth.js'
 import walletAuthRoutes from './routes/wallet-auth.js'
@@ -19,6 +20,7 @@ import sceneRoutes from './routes/scenes.js'
 import sceneRoleRoutes from './routes/scene-roles.js'
 import sceneLibraryRoutes from './routes/scene-library.js'
 import { runStartupBackfill } from './library/scene-library.js'
+import { moveMediaModels } from './library/move-media-models.js'
 import eventRoutes from './routes/events.js'
 import sceneEventRoutes from './routes/scene-events.js'
 import giveawayRoutes from './routes/giveaways.js'
@@ -55,11 +57,18 @@ import wizardRoutes from './routes/wizard.js'
 import dclDestinationRoutes from './routes/dcl-destinations.js'
 import studioWorkerRoutes from './routes/studio-worker.js'
 import studioRoutes from './routes/studio.js'
+import notificationRoutes from './routes/notifications.js'
 import importBuildRoutes from './routes/import-build.js'
 import importRoutes from './routes/imports.js'
 import brandingRoutes from './routes/branding.js'
 import presetScheduleRoutes from './routes/preset-schedules.js'
+import { registerDeletedSceneGuard } from './auth/deleted-scene-guard.js'
+import sceneDeleteRoutes from './routes/scene-delete.js'
 import showingRoutes from './routes/showings.js'
+import errorRoutes from './routes/errors.js'
+import adminErrorRoutes from './routes/admin-errors.js'
+import { recordServerResponse } from './errors/record.js'
+import { errorUserHash } from './errors/user-hash.js'
 import { db } from './db/connection.js'
 import { sql } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
@@ -76,6 +85,13 @@ const SERVER_VERSION = '2.0.0'
  */
 export const redactPairingCode = (url: string) =>
   url.replace(/^(\/api\/(?:hyperfy|ar)\/pair\/)[^/?#]+/, '$1:code').replace(/^(\/(?:pair\/(?:headset\/)?|s\/))[^/?#]+/, '$1:code')
+    // a Design Studio invite link's token is its credential (LIV-159), the page's and the API's
+    .replace(/^(\/(?:api\/studio\/invite-links|studio\/invite)\/)[^/?#]+/, '$1:token')
+    // ...and the sign-in page's `next` back to it, raw or encoded (the rest of that value goes with it)
+    .replace(/([?&]next=(?:\/|%2F)studio(?:\/|%2F)invite(?:\/|%2F))[^&#]*/i, '$1:token')
+
+/** The response header carrying the request ID (Fastify's genReqId) */
+export const REQUEST_ID_HEADER = 'x-request-id'
 
 /** The metric label for a request no route matched (404s, the SPA fallback): fixed, so a url never becomes a label. */
 export const UNMATCHED_ROUTE = 'unmatched'
@@ -93,7 +109,7 @@ function serializeReq(request: FastifyRequest) {
 
 export interface BuildAppOptions {
   rateLimit?: boolean
-  /** Set false to skip the one-time scene library backfill at startup (tests). */
+  /** Set false to skip the startup data jobs (scene library backfill, moving models out of media) (tests). */
   backfill?: boolean
   logger?: boolean
   /** Test hook: capture log output. */
@@ -113,6 +129,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(fastifyCors, {
     origin: true,
     credentials: false,
+    exposedHeaders: [REQUEST_ID_HEADER], // the web app joins its error reports to the server's by it
+  })
+
+  // LIV-66: every response carries its request ID; every 5xx is recorded with it (and the exception behind it)
+  app.addHook('onRequest', async (request, reply) => {
+    reply.header(REQUEST_ID_HEADER, request.id)
+  })
+  app.addHook('onError', async (request, _reply, error) => {
+    ;(request as { thrownError?: unknown }).thrownError = error
+  })
+  app.addHook('onResponse', async (request, reply) => {
+    if (reply.statusCode < 500 || request.url.startsWith('/api/errors')) return
+    const u = request.user as { id?: string; kind?: string; orgId?: string | null; via?: string } | undefined
+    const counted = u?.id && !u.via && (u.kind === 'account' || u.kind === 'trial')
+    recordServerResponse({
+      status: reply.statusCode,
+      method: request.method,
+      routeTemplate: request.routeOptions?.url || UNMATCHED_ROUTE,
+      requestId: request.id,
+      userHash: counted ? errorUserHash(u.id!) : null,
+      orgId: counted ? u.orgId ?? null : null,
+    }, (request as { thrownError?: unknown }).thrownError)
   })
 
   // Rate limiting (global): API calls only. The dashboard's own files, uploads and well-known files don't count, or a
@@ -136,6 +174,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     for (const m of methods) if (m !== 'HEAD' && m !== 'OPTIONS') registeredRoutes.push({ method: m, url: r.url, scenePass: !!sp, hyperfy: !!sp?.hyperfy, ar: !!sp?.ar, arPersonal: sp?.ar === 'personal', trial: !!(r.config as { trial?: boolean } | undefined)?.trial })
   })
   app.decorate('registeredRoutes', registeredRoutes)
+  // LIV-83: routes naming a deleted scene answer 404 (after authenticate)
+  registerDeletedSceneGuard(app)
 
   // Swagger / OpenAPI docs
   await app.register(fastifySwagger, {
@@ -167,16 +207,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   console.log('[virvi-server] API docs available at /api/docs')
 
   // ── API Routes ───────────────────────────────────────────────────────────
-  // Auth routes get stricter rate limits to mitigate brute-force attacks
+  // Auth routes. Credential-guessing routes (login, register, password reset/change, wallet verify) set their own
+  // CREDENTIAL_RATE_LIMIT and trial start sets its own: a scope onRoute default would run after @fastify/rate-limit's
+  // root hook and never apply (LIV-136).
   await app.register(async (scope) => {
-    scope.addHook('onRoute', (routeOptions) => {
-      // A route's own rateLimit (e.g. POST /api/auth/trial) wins over the scope default
-      const own = (routeOptions.config as Record<string, unknown> | undefined)?.rateLimit
-      routeOptions.config = {
-        ...((routeOptions.config as Record<string, unknown>) || {}),
-        rateLimit: own ?? { max: 20, timeWindow: '1 minute' },
-      }
-    })
     // /api/auth/platform checks the signed body hash against request.rawBody
     withRawJson(scope)
     await scope.register(authRoutes)
@@ -190,12 +224,18 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     await scope.register(adRoutes)
   })
   await app.register(sceneRoutes)
+  await app.register(sceneDeleteRoutes)
   await app.register(sceneRoleRoutes)
   await app.register(sceneLibraryRoutes)
   await app.register(presetScheduleRoutes)
   await app.register(showingRoutes)
   if (opts.backfill !== false) {
-    runStartupBackfill().catch((err) => app.log.warn({ err }, 'scene library backfill failed'))
+    // Then move 3D models still in Images & Video to 3D Models (LIV-132): every boot, a no-op once none are left
+    runStartupBackfill()
+      .catch((err) => app.log.warn({ err }, 'scene library backfill failed'))
+      .then(() => moveMediaModels())
+      .then((n) => { if (n.moved || n.dropped || n.failed) app.log.info(n, 'moved 3D models from media to the asset library') })
+      .catch((err) => app.log.warn({ err }, 'moving 3D models out of media failed'))
   }
   await app.register(analyticsClaimSignedRoutes)
   await app.register(setupRoutes)
@@ -240,8 +280,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(dclDestinationRoutes)
   await app.register(studioWorkerRoutes)
   await app.register(studioRoutes)
+  await app.register(notificationRoutes)
   await app.register(importBuildRoutes)
   await app.register(importRoutes)
+  await app.register(errorRoutes)
+  await app.register(adminErrorRoutes)
 
   // GET /api/instance (mode, version, branding) and the admin branding routes
   await app.register(brandingRoutes, { version: SERVER_VERSION })
@@ -338,6 +381,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     }])
   })
 
+  // ── Docs (/docs, plus /llms.txt for agents) ───────────────────────────
+  const docsServed = await registerDocsSite(app, config.docsDir, config.webAppUrl)
+  console.log(`[virvi-server] Docs ${docsServed ? `served at /docs from ${resolve(config.docsDir)}` : `not built (${resolve(config.docsDir)})`}`)
+
   // ── Static Dashboard ─────────────────────────────────────────────────────
   const dashboardPath = resolve(config.dashboardDir)
   console.log(`[virvi-server] Dashboard path: ${dashboardPath} (exists: ${existsSync(dashboardPath)})`)
@@ -365,6 +412,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     }
     app.get('/studio/:designId', studioPage)
     app.get('/studio/:designId/', studioPage)
+    // A design's invite link (/studio/invite/<token>, LIV-159): one exported page for every token, at studio/invite/_/
+    app.get('/studio/invite/:token', (_request, reply) => reply.sendFile('studio/invite/_/index.html'))
+    app.get('/studio/invite/:token/', (_request, reply) => reply.sendFile('studio/invite/_/index.html'))
 
     // AR space pages (/s/<code>): the static export has one page for every code, at s/_/
     app.get('/s/:code', (_request, reply) => reply.sendFile('s/_/index.html'))
@@ -384,11 +434,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       if (request.url.startsWith('/api/')) {
         return reply.status(404).send({ error: 'Not found' })
       }
+      if (docsServed && isDocsPath(request.url)) return sendDocsNotFound(reply, config.docsDir)
       return reply.sendFile('index.html')
     })
   } else {
     console.log(`[virvi-server] No dashboard directory at ${dashboardPath} — API-only mode`)
-    app.setNotFoundHandler(async (_request, reply) => {
+    app.setNotFoundHandler(async (request, reply) => {
+      if (docsServed && isDocsPath(request.url)) return sendDocsNotFound(reply, config.docsDir)
       return reply.status(404).send({ error: 'Not found' })
     })
   }

@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { DCL_MAX_FILE_BYTES } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { assetLibraryItems } from '../src/db/schema.js'
+import { eq } from 'drizzle-orm'
+import { assetLibraryItems, scenes } from '../src/db/schema.js'
 import {
-  assembleFresh, assembleRedeploy, modelsInScene, pendingModels, wizardSceneJson, defaultModelFetcher, virviFileFetcher, FileTooBig, ModelRefused,
+  assembleFresh, assembleImported, assembleRedeploy, modelsInScene, navmapThumbnailFile, pendingModels, wizardSceneJson, defaultModelFetcher, virviFileFetcher, FileTooBig, ModelRefused,
   type ModelNeed,
 } from '../src/services/dcl/assemble.js'
 import { dclHash } from '../src/services/dcl/entity.js'
@@ -254,5 +255,181 @@ describe('modelsInScene / pendingModels', () => {
     expect(models[1]).toMatchObject({ triangles: null, bytes: null, instances: 0 })
     const pending = await pendingModels({ sceneId: scene.id, deployedFiles: ['MODELS/Virvi/chair.glb'] })
     expect(pending.map((m) => m.file)).toEqual(['models/virvi/Table.glb'])
+  })
+})
+
+describe('scene thumbnail in a deployment (LIV-88)', () => {
+  const HASH = '0123456789abcdef'
+  const FILE = `images/scene-thumbnail-${HASH}.png`
+  const OLD = 'images/scene-thumbnail-fedcba9876543210.jpg'
+  const thumb = (file = FILE): ModelNeed => ({
+    elementId: '', name: 'Scene thumbnail', url: `${CDN}/scenes/s/thumbnail-${file.slice(-20, -4)}.png`, file, triangles: null, bytes: 50, instances: 0, kind: 'thumbnail',
+  })
+  const enc2 = (s2: string) => new TextEncoder().encode(s2)
+
+  it('modelsInScene lists the thumbnail after the models; pendingModels says when it is new or was removed', async () => {
+    const user = await createUser()
+    const { scene, preset } = await createScene(user)
+    await createElement(preset.id, { type: 'model', name: 'Chair', properties: { modelSrc: `${CDN}/m/Chair.glb` } })
+    expect((await modelsInScene(scene.id)).map((m) => m.file)).toEqual(['models/virvi/Chair.glb'])
+    // The scene's thumbnail was deployed, then removed in Virvi
+    expect((await pendingModels({ sceneId: scene.id, deployedFiles: ['models/virvi/chair.glb', FILE] })).map((m) => [m.file, m.kind, m.removed])).toEqual([
+      [FILE, 'thumbnail', true],
+    ])
+
+    const key = `scenes/${scene.id}/thumbnail-${HASH}.png`
+    await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 4321 }).where(eq(scenes.id, scene.id))
+    const models = await modelsInScene(scene.id)
+    expect(models.map((m) => m.file)).toEqual(['models/virvi/Chair.glb', FILE])
+    expect(models[1]).toMatchObject({ name: 'Scene thumbnail', url: `${CDN}/${key}`, bytes: 4321, instances: 0, triangles: null, kind: 'thumbnail' })
+    expect((await pendingModels({ sceneId: scene.id, deployedFiles: ['models/virvi/chair.glb'] })).map((m) => m.file)).toEqual([FILE])
+    expect(await pendingModels({ sceneId: scene.id, deployedFiles: ['models/virvi/chair.glb', FILE] })).toEqual([])
+    // Replaced: the new one is pending (the old one goes with it)
+    expect((await pendingModels({ sceneId: scene.id, deployedFiles: ['models/virvi/chair.glb', OLD] })).map((m) => m.file)).toEqual([FILE])
+  })
+
+  it("an imported scene's own thumbnail (LIV-89) is never deployed by Virvi, and is no change to deploy", async () => {
+    const user = await createUser()
+    const { scene } = await createScene(user)
+    const key = `scenes/${scene.id}/thumbnail-${HASH}.png`
+    await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 4321, thumbnailSource: 'import' }).where(eq(scenes.id, scene.id))
+    expect(await modelsInScene(scene.id)).toEqual([])
+    expect(await pendingModels({ sceneId: scene.id, deployedFiles: ['images/own.png'] })).toEqual([])
+    // An uploaded one deployed earlier, then replaced by an import's: Virvi's file goes on the next deploy
+    expect((await pendingModels({ sceneId: scene.id, deployedFiles: [OLD] })).map((m) => [m.file, m.removed])).toEqual([[OLD, true]])
+    // Uploaded in Virvi, and LIV-88's rows from before the source was recorded (null): deployed
+    for (const thumbnailSource of ['upload', null] as const) {
+      await db.update(scenes).set({ thumbnailSource }).where(eq(scenes.id, scene.id))
+      expect((await modelsInScene(scene.id)).map((m) => m.file)).toEqual([FILE])
+      expect((await pendingModels({ sceneId: scene.id, deployedFiles: [] })).map((m) => m.file)).toEqual([FILE])
+    }
+  })
+
+  it('a fresh deploy includes the image and sets display.navmapThumbnail to it', async () => {
+    const metadata = wizardSceneJson({ title: 'T', world: 'w.dcl.eth', base: '0,0', parcels: ['0,0'], spawn: { x: 8, y: 0, z: 8 } })
+    const r = await assembleFresh({ metadata, models: [need('a'), thumb()], timestamp: 1, fetch: fetcher() })
+    expect(r.deployedFiles).toContain(FILE)
+    expect(r.added).toContain(FILE)
+    expect(r.metadata.display).toEqual({ title: 'T', navmapThumbnail: FILE })
+    const sceneJson = JSON.parse(new TextDecoder().decode(r.files.get(await dclHash(enc2(JSON.stringify(r.metadata))))!))
+    expect(sceneJson.display.navmapThumbnail).toBe(FILE)
+    expect(r.triangles).toBe(100)
+    // Without one there is no navmapThumbnail
+    const none = await assembleFresh({ metadata, models: [need('a')], timestamp: 1, fetch: fetcher() })
+    expect(none.metadata.display).toEqual({ title: 'T' })
+  })
+
+  it('a thumbnail Virvi could not fetch is refused and not named in scene.json', async () => {
+    const metadata = wizardSceneJson({ title: 'T', world: 'w.dcl.eth', base: '0,0', parcels: ['0,0'], spawn: { x: 8, y: 0, z: 8 } })
+    const r = await assembleFresh({ metadata, models: [{ ...thumb(), url: 'https://evil.example/t.png' }], timestamp: 1, fetch: fetcher() })
+    expect(r.refused.map((x) => x.file)).toEqual([FILE])
+    expect(r.refused[0].reason).toMatch(/^Thumbnail /)
+    expect(r.deployedFiles).not.toContain(FILE)
+    expect(r.metadata.display.navmapThumbnail).toBeUndefined()
+  })
+
+  it('a redeploy of a Virvi-built World adds a new thumbnail, drops the old file, and is a change', async () => {
+    const l = await live({ display: { title: 'T', navmapThumbnail: OLD } })
+    l.content.push({ file: OLD, hash: await dclHash(enc2('old thumb')) })
+    const r = await assembleRedeploy({ live: l, adopted: false, models: [need('a'), thumb()], timestamp: 1, fetch: fetcher() })
+    expect(r.changed).toBe(true)
+    expect(r.added).toEqual([FILE])
+    expect(r.deployedFiles).toContain(FILE)
+    expect(r.deployedFiles).not.toContain(OLD)
+    expect(r.metadata.display).toEqual({ title: 'T', navmapThumbnail: FILE })
+  })
+
+  it('removing the thumbnail removes the file and navmapThumbnail on the next redeploy', async () => {
+    const l = await live({ display: { title: 'T', navmapThumbnail: FILE } })
+    l.content.push({ file: FILE, hash: await dclHash(enc2('thumb')) })
+    const r = await assembleRedeploy({ live: l, adopted: false, models: [need('a')], timestamp: 1, fetch: fetcher() })
+    expect(r.changed).toBe(true)
+    expect(r.deployedFiles).not.toContain(FILE)
+    expect(r.metadata.display).toEqual({ title: 'T' })
+  })
+
+  it('a World already showing the thumbnail has nothing new', async () => {
+    const l = await live({ display: { title: 'T', navmapThumbnail: FILE } })
+    l.content.push({ file: FILE, hash: await dclHash(enc2('thumb')) })
+    const f = fetcher()
+    const r = await assembleRedeploy({ live: l, adopted: false, models: [need('a'), thumb()], timestamp: 1, fetch: f })
+    expect(f).not.toHaveBeenCalled()
+    expect(r.changed).toBe(false)
+    expect(r.metadata.display).toEqual({ title: 'T', navmapThumbnail: FILE })
+  })
+
+  it("an adopted scene changes only display.navmapThumbnail, and only when a thumbnail is set in Virvi", async () => {
+    const l = await live({ display: { title: 'Mine', navmapThumbnail: 'images/mine.png', description: 'd' } })
+    delete (l.metadata as { virvi?: unknown }).virvi
+    const before = structuredClone(l.metadata)
+    const r = await assembleRedeploy({ live: l, adopted: true, models: [need('a'), thumb()], timestamp: 1, fetch: fetcher(), title: 'Other' })
+    expect(r.changed).toBe(true)
+    expect(r.added).toEqual([FILE])
+    expect(r.metadata).toEqual({ ...before, display: { ...before.display, navmapThumbnail: FILE } })
+
+    // No thumbnail in Virvi: the owner's own navmapThumbnail stays, nothing changes
+    const none = await assembleRedeploy({ live: l, adopted: true, models: [need('a')], timestamp: 1, fetch: fetcher() })
+    expect(none.changed).toBe(false)
+    expect(none.metadata).toEqual(before)
+
+    // Removed in Virvi after it was deployed: Virvi's own file and navmapThumbnail go, nothing else
+    const shown = structuredClone(l)
+    shown.metadata.display = { ...shown.metadata.display, navmapThumbnail: FILE }
+    shown.content.push({ file: FILE, hash: await dclHash(enc2('thumb')) })
+    const removed = await assembleRedeploy({ live: shown, adopted: true, models: [need('a')], timestamp: 1, fetch: fetcher() })
+    expect(removed.changed).toBe(true)
+    expect(removed.deployedFiles).not.toContain(FILE)
+    const { navmapThumbnail: _n, ...display } = before.display
+    expect(removed.metadata).toEqual({ ...before, display })
+  })
+
+  describe("an imported scene's own Virvi-named thumbnail (LIV-133: a re-imported \"Download live\" zip)", () => {
+    it('navmapThumbnailFile: the file a scene.json names, as its deployed path lowercased; null for none or a link', () => {
+      const of = (v: unknown) => navmapThumbnailFile({ display: { title: 'T', navmapThumbnail: v } })
+      expect(of(' ./Images//Scene-Thumbnail-FEDCBA9876543210.jpg ')).toBe(OLD)
+      expect(of('images\\a.png')).toBe('images/a.png')
+      for (const v of [undefined, '', 'https://x.example/t.png', 'data:image/png;base64,AA', '../t.png', '/t.png', 7]) expect(of(v)).toBeNull()
+      expect(navmapThumbnailFile(undefined)).toBeNull()
+    })
+
+    it('is kept by a redeploy, file and navmapThumbnail, when Virvi has no thumbnail of its own', async () => {
+      const l = await live({ display: { title: 'T', navmapThumbnail: OLD } })
+      l.content.push({ file: OLD, hash: await dclHash(enc2('own thumb')) })
+      const r = await assembleRedeploy({ live: l, adopted: true, models: [need('a')], timestamp: 1, fetch: fetcher(), ownThumbnail: OLD })
+      expect(r.changed).toBe(false)
+      expect(r.deployedFiles).toContain(OLD)
+      expect(r.metadata.display).toEqual({ title: 'T', navmapThumbnail: OLD })
+    })
+
+    it('an upload in Virvi takes over navmapThumbnail, the own file staying; removing it takes only Virvi\'s file and key out', async () => {
+      const l = await live({ display: { title: 'T', navmapThumbnail: OLD } })
+      l.content.push({ file: OLD, hash: await dclHash(enc2('own thumb')) })
+      const up = await assembleRedeploy({ live: l, adopted: true, models: [need('a'), thumb()], timestamp: 1, fetch: fetcher(), ownThumbnail: OLD })
+      expect(up.deployedFiles).toEqual(expect.arrayContaining([OLD, FILE]))
+      expect(up.metadata.display).toEqual({ title: 'T', navmapThumbnail: FILE })
+
+      const shown = structuredClone(l)
+      shown.metadata.display = { title: 'T', navmapThumbnail: FILE }
+      shown.content.push({ file: FILE, hash: await dclHash(enc2('thumb')) })
+      const removed = await assembleRedeploy({ live: shown, adopted: true, models: [need('a')], timestamp: 1, fetch: fetcher(), ownThumbnail: OLD })
+      expect(removed.changed).toBe(true)
+      expect(removed.deployedFiles).toContain(OLD)
+      expect(removed.deployedFiles).not.toContain(FILE)
+      expect(removed.metadata.display).toEqual({ title: 'T' })
+    })
+  })
+
+  it('an imported scene gets only navmapThumbnail and the image when a thumbnail is set; otherwise its scene.json is untouched', async () => {
+    const files = new Map([['scene.json', enc2('{}')], ['bin/index.js', enc2('code')]])
+    const metadata = { ...wizardSceneJson({ title: 'Theirs', world: 'w.dcl.eth', base: '0,0', parcels: ['0,0'], spawn: { x: 8, y: 0, z: 8 } }), display: { title: 'Theirs', navmapThumbnail: 'images/theirs.png' } }
+    delete (metadata as { virvi?: unknown }).virvi
+    const before = structuredClone(metadata)
+    const withThumb = await assembleImported({ files, metadata, timestamp: 1, models: [thumb()], fetch: fetcher() })
+    expect(withThumb.metadata).toEqual({ ...before, display: { title: 'Theirs', navmapThumbnail: FILE } })
+    expect(withThumb.deployedFiles).toEqual(['bin/index.js', FILE, 'scene.json'])
+    expect(withThumb.added).toEqual([FILE])
+    const without = await assembleImported({ files, metadata, timestamp: 1, models: [], fetch: fetcher() })
+    expect(without.metadata).toEqual(before)
+    expect(without.deployedFiles).toEqual(['bin/index.js', 'scene.json'])
   })
 })

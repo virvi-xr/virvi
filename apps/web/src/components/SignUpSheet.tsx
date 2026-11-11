@@ -1,8 +1,14 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
-import { blockedCopy, dismissSignUp, resolveSignUp, subscribeSignUp, type SignUpRequest } from '@/lib/trial'
+import { blockedCopy, signUpButtons, dismissSignUp, resolveSignUp, signUpAutoDismiss, subscribeSignUp, SIGN_IN_UNLOCKS, type SignUpRequest } from '@/lib/trial'
+
+const BUTTON_STYLE = {
+  wallet: 'bg-orange-500 text-white hover:bg-orange-600',
+  google: 'bg-white text-gray-900 hover:bg-gray-100',
+  discord: 'bg-[#5865F2] text-white hover:bg-[#4752C4]',
+} as const
 
 const input = 'w-full rounded-lg bg-gray-800 px-4 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500'
 
@@ -24,6 +30,8 @@ export function SignUpSheet() {
   const [busy, setBusy] = useState(false)
   const [providers, setProviders] = useState<{ google: boolean; discord: boolean }>({ google: false, discord: false })
   const [hasWallet, setHasWallet] = useState(false)
+  // Set synchronously around the sheet's own sign-up/sign-in: the new user can land (and this re-render) before it resolves
+  const submitting = useRef(false)
 
   useEffect(() => subscribeSignUp(setReq), [])
   useEffect(() => {
@@ -42,19 +50,25 @@ export function SignUpSheet() {
 
   // The session stopped being a trial while a sign-up was pending: let the waiting call give up instead of hanging
   const isTrial = !!user?.trial
-  useEffect(() => { if (req && !isTrial) dismissSignUp() }, [req, isTrial])
+  // (not while the sheet's own call is in flight: it resolves the request itself, so the blocked action is retried)
+  useEffect(() => {
+    if (signUpAutoDismiss({ pending: !!req, isTrial, submitting: submitting.current })) dismissSignUp()
+  }, [req, isTrial, busy])
 
   if (!req || !isTrial) return null
   const copy = blockedCopy(req.action, req.ctx)
+  const buttons = signUpButtons(tab, providers, hasWallet)
 
   const run = async (go: () => Promise<string>) => {
     setError('')
     setBusy(true)
+    submitting.current = true
     try {
       resolveSignUp(await go())
     } catch (err: any) {
       setError(err?.code === 4001 ? 'Wallet sign-in cancelled' : err?.message || 'Something went wrong')
     } finally {
+      submitting.current = false
       setBusy(false)
     }
   }
@@ -88,7 +102,7 @@ export function SignUpSheet() {
           <h2 className="text-lg font-semibold">{titleWithEmphasis(copy.title, copy.emphasis)}</h2>
           <button type="button" onClick={dismissSignUp} aria-label="Close" className="text-gray-400 hover:text-white">✕</button>
         </div>
-        <p className="mt-1 text-sm text-gray-400">{tab === 'signin' ? 'Your trial designs move into this account.' : copy.unlocks}</p>
+        <p className="mt-1 text-sm text-gray-400">{tab === 'signin' ? SIGN_IN_UNLOCKS : copy.unlocks}</p>
 
         <div className="mt-4 flex gap-2 text-sm" role="tablist">
           {([['create', 'Create account'], ['signin', 'Sign in']] as const).map(([id, label]) => (
@@ -107,22 +121,13 @@ export function SignUpSheet() {
           </button>
         </form>
 
-        {(hasWallet || (tab === 'create' && (providers.google || providers.discord))) && (
+        {buttons.length > 0 && (
           <div className="mt-3 space-y-2">
-            {hasWallet && (
-              <button type="button" disabled={busy} onClick={() => run(() => loginWithWallet(req.action))}
-                className="block w-full rounded-lg bg-orange-500 py-2 text-center font-medium text-white hover:bg-orange-600 disabled:opacity-50">
-                {tab === 'create' ? 'Continue with wallet' : 'Sign in with wallet'}
-              </button>
-            )}
-            {tab === 'create' && providers.google && (
-              <button type="button" disabled={busy} onClick={() => oauth('google')}
-                className="block w-full rounded-lg bg-white py-2 text-center font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-50">Continue with Google</button>
-            )}
-            {tab === 'create' && providers.discord && (
-              <button type="button" disabled={busy} onClick={() => oauth('discord')}
-                className="block w-full rounded-lg bg-[#5865F2] py-2 text-center font-medium text-white hover:bg-[#4752C4] disabled:opacity-50">Continue with Discord</button>
-            )}
+            {buttons.map((b) => (
+              <button key={b.id} type="button" disabled={busy}
+                onClick={() => (b.id === 'wallet' ? run(() => loginWithWallet(req.action)) : oauth(b.id))}
+                className={`block w-full rounded-lg py-2 text-center font-medium disabled:opacity-50 ${BUTTON_STYLE[b.id]}`}>{b.label}</button>
+            ))}
           </div>
         )}
       </div>

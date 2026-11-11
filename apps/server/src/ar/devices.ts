@@ -8,6 +8,7 @@ import { getSceneAccess } from '../auth/permissions.js'
 import type { Actor } from '../auth/actor.js'
 import { isUuid } from '../auth/scene-from.js'
 import { issueArPass } from '../auth/scene-pass.js'
+import { trialExpiresAt } from '../auth/trial.js'
 import { sameHash, sha256 } from '../auth/hash.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
 import { mayBuild, sceneRoleOfAccess, spaceScene } from './access.js'
@@ -63,8 +64,9 @@ export async function devicePairingForApproval(code: string, now = new Date()): 
 }
 
 /**
- * Any signed-in, verified account may approve: what the headset may then do is the approver's own build access,
- * checked at every mint. Only one request can move a pending, live code on.
+ * Any signed-in, verified account may approve, and a trial may approve a personal headset (the route checks both):
+ * what the headset may then do is the approver's own build access, checked at every mint, and a trial's headset
+ * mints nothing (it only uploads room scans, `deviceForScanUpload`). Only one request can move a pending, live code on.
  */
 export async function approveDevicePairing(code: string, actor: Actor, kind: ArDeviceKind, now = new Date()): Promise<'approved' | 'expired'> {
   if (!actor.userId) return 'expired'
@@ -113,10 +115,14 @@ async function liveDevice(deviceId: string, secret: string, now: Date): Promise<
   return row
 }
 
-/** The approver as an actor: the same one their own scene passes act as (verified, first verified wallet). */
-async function approverOf(d: DeviceRow): Promise<{ user: typeof users.$inferSelect; wallet: string | null; actor: Actor } | null> {
+/**
+ * The approver as an actor: the same one their own scene passes act as (verified, first verified wallet). A trial
+ * approver is `'trial'`: its headset gets no pass and lists nothing, though a trial owns its own scenes (getSceneAccess).
+ */
+async function approverOf(d: DeviceRow): Promise<{ user: typeof users.$inferSelect; wallet: string | null; actor: Actor } | 'trial' | null> {
   const user = await db.query.users.findFirst({ where: eq(users.id, d.userId!) })
   if (!user) return null
+  if (user.isTrial) return 'trial'
   const [wallet] = await verifiedWalletsOf(user.id)
   return { user, wallet: wallet ?? null, actor: { userId: user.id, role: user.role, wallet: wallet ?? null, verified: true } }
 }
@@ -151,6 +157,7 @@ export async function mintArPassForScene(app: FastifyInstance, deviceId: string,
 async function mintForScene(app: FastifyInstance, device: DeviceRow, sceneId: string, now: Date): Promise<{ pass: string; passExpiresAt: Date; sceneId: string } | MintError> {
   const approver = await approverOf(device)
   if (!approver) return 'device_revoked'
+  if (approver === 'trial') return 'no_access'
   if (!mayBuild(await getSceneAccess(approver.actor, sceneId, now))) return 'no_access'
   const [bumped] = await db
     .update(arDevices)
@@ -183,6 +190,7 @@ export async function listDeviceScenes(deviceId: string, secret: string, now = n
   if (device.kind !== 'personal') return 'personal_only'
   const approver = await approverOf(device)
   if (!approver) return 'device_revoked'
+  if (approver === 'trial') return []
   const candidates = await candidateSceneIds(approver.user.id)
   if (!candidates.length) return []
   const rows = await db.select({ sceneId: scenes.id, sceneName: scenes.name }).from(scenes).where(inArray(scenes.id, candidates)).orderBy(scenes.name, scenes.id)
@@ -204,6 +212,7 @@ export async function listDeviceSpaces(deviceId: string, secret: string, now = n
   if (typeof device === 'string') return device
   const approver = await approverOf(device)
   if (!approver) return 'device_revoked'
+  if (approver === 'trial') return []
   const candidates = await candidateSceneIds(approver.user.id)
   if (!candidates.length) return []
   const rows = await db
@@ -229,6 +238,28 @@ export async function listDeviceSpaces(deviceId: string, secret: string, now = n
     ...s,
     markers: markers.filter((m) => m.spaceId === s.spaceId).map(({ markerId, floorId, code }) => ({ markerId, floorId, code })),
   }))
+}
+
+/**
+ * The approver a headset's room scan is saved to, with its id and secret: a live personal headset only. Its expiry
+ * slides forward like a mint's. This is how a trial's headset scans (it mints no pass); an account's may use it too.
+ * A trial approver idle past TRIAL_IDLE_DAYS (not swept yet) counts as revoked.
+ */
+export async function deviceForScanUpload(deviceId: string, secret: string, now = new Date()): Promise<{ userId: string } | 'bad_secret' | 'device_revoked' | 'personal_only'> {
+  const device = await liveDevice(deviceId, secret, now)
+  if (typeof device === 'string') return device
+  if (device.kind !== 'personal') return 'personal_only'
+  // A trial idle past its expiry is on its way out (the sweep may be removing it): its headset is done too
+  const [approver] = await db.select({ isTrial: users.isTrial, at: users.trialLastActiveAt }).from(users).where(eq(users.id, device.userId!))
+  if (!approver) return 'device_revoked'
+  if (approver.isTrial && (!approver.at || trialExpiresAt(approver.at) <= now)) return 'device_revoked'
+  const [bumped] = await db
+    .update(arDevices)
+    .set({ lastUsedAt: now, expiresAt: new Date(now.getTime() + AR_PAIRING.personalIdleTtlMs) })
+    .where(and(eq(arDevices.id, device.id), eq(arDevices.status, 'claimed'), gt(arDevices.expiresAt, now)))
+    .returning({ userId: arDevices.userId })
+  if (!bumped?.userId) return 'device_revoked'
+  return { userId: bumped.userId }
 }
 
 /**

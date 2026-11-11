@@ -7,7 +7,7 @@ import { db } from '../src/db/connection.js'
 import { users, studioDesigns } from '../src/db/schema.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
-import { actorFromClaims, ANONYMOUS } from '../src/auth/actor.js'
+import { actorFromClaims } from '../src/auth/actor.js'
 
 const ALLOWED = [
   'GET /api/studio/usage',
@@ -16,6 +16,9 @@ const ALLOWED = [
   'GET /api/studio/designs/:id',
   'PATCH /api/studio/designs/:id',
   'POST /api/studio/designs/:id/prompts',
+  'POST /api/studio/designs/:id/prompt-help',
+  'GET /api/studio/designs/:id/prompt-ideas',
+  'POST /api/studio/designs/:id/warm',
   'GET /api/studio/designs/:id/finalize',
   'POST /api/studio/designs/:id/pieces/:category/revisions/:number/report',
   'POST /api/studio/designs/:id/uploads',
@@ -25,6 +28,52 @@ const ALLOWED = [
   'POST /api/studio/designs/:id/set-renders',
   'POST /api/studio/designs/:id/emote-checks',
   'POST /api/studio/designs/:id/clipping',
+  'GET /api/studio/designs/:id/set',
+  'GET /api/studio/designs/:id/set-frames',
+  'PUT /api/studio/designs/:id/revisions/:jobId/rating',
+  'DELETE /api/studio/designs/:id/revisions/:jobId/rating',
+  'POST /api/studio/designs/:id/revisions/:jobId/try-again',
+  'GET /api/studio/defaults',
+  'GET /api/notifications',
+  'GET /api/notifications/unread-count',
+  'GET /api/scenes',
+  'GET /api/scenes/:sceneId',
+  'GET /api/scenes/:sceneId/delete-plan',
+  'GET /api/scenes/deleted',
+  'PUT /api/scenes/:sceneId',
+  'DELETE /api/scenes/:sceneId',
+  'POST /api/scenes/:sceneId/presets',
+  'POST /api/scenes/:sceneId/purge',
+  'POST /api/scenes/:sceneId/restore',
+  'PATCH /api/presets/:presetId',
+  'DELETE /api/presets/:presetId',
+  'POST /api/presets/:presetId/activate',
+  'POST /api/presets/:presetId/elements',
+  'PUT /api/elements/:elementId',
+  'POST /api/elements/:elementId/live',
+  'DELETE /api/elements/:elementId',
+  'POST /api/elements/:elementId/instances',
+  'PUT /api/instances/:instanceId',
+  'DELETE /api/instances/:instanceId',
+  'DELETE /api/elements/:elementId/instances',
+  'GET /api/wizard/catalog',
+  'GET /api/wizard/options',
+  'GET /api/room-scans',
+  'GET /api/room-scans/:id',
+  'DELETE /api/room-scans/:id',
+  'GET /api/room-scans/:id/preview.glb',
+  'GET /api/hyperfy/slots',
+  'GET /api/assets',
+  'GET /api/assets/:id',
+  'GET /api/assets/categories',
+  'POST /api/imports',
+  'GET /api/imports',
+  'GET /api/imports/:id',
+  'GET /api/imports/:id/log',
+  'GET /api/ar/pair/:code',
+  'POST /api/ar/pair/:code/approve',
+  'GET /api/ar/devices',
+  'DELETE /api/ar/devices/:id',
 ].sort()
 
 // Routes that are not public but never call `authenticate`: they check their own credential, so a trial bearer
@@ -87,14 +136,15 @@ describe('trial guard', () => {
     const gone = await app.inject({ method: 'GET', url: '/api/studio/designs', headers: h })
     expect([gone.statusCode, gone.json().error]).toEqual([401, 'trial_ended'])
     // Also on a route that is not allowlisted: ended wins over account_required
-    const other = await app.inject({ method: 'GET', url: '/api/scenes', headers: h })
+    const other = await app.inject({ method: 'POST', url: '/api/scenes', headers: h, payload: { name: 'x' } })
     expect([other.statusCode, other.json().error]).toEqual([401, 'trial_ended'])
   })
 
-  it('a trial token is no Colyseus session and no actor', async () => {
+  it('a trial token is no Colyseus session; its actor is an unverified trial creator', async () => {
     const t = await makeTrial(app)
     expect(verifySessionToken(t.accessToken)).toBeNull()
-    expect(actorFromClaims({ id: t.u.id, kind: 'trial', role: 'creator', email: null })).toBe(ANONYMOUS)
+    expect(actorFromClaims({ id: t.u.id, kind: 'trial', role: 'admin', email: null, wallet: '0xAB', verified: true }))
+      .toEqual({ userId: t.u.id, role: 'creator', wallet: null, verified: false, trial: true })
   })
 
   it('sets request.user.trial and refreshes trialLastActiveAt only when stale', async () => {

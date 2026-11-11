@@ -274,7 +274,8 @@ async function getElementConfig(
     where: eq(scenes.id, sceneId),
   })
 
-  if (!scene?.activePresetId) {
+  // A deleted scene (LIV-83) answers like a missing one
+  if (!scene?.activePresetId || scene.deletedAt) {
     return reply.status(404).send({ error: 'Scene not found or no active preset' })
   }
 
@@ -309,7 +310,8 @@ async function getSceneConfig(sceneId: string, reply: any) {
     where: eq(scenes.id, sceneId),
   })
 
-  if (!scene?.activePresetId) {
+  // A deleted scene (LIV-83) answers like a missing one
+  if (!scene?.activePresetId || scene.deletedAt) {
     return reply.status(404).send({ error: 'Scene not found or no active preset' })
   }
 

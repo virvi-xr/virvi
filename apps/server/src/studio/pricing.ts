@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioEntitlements, studioMistakeReports, studioPieces, studioRevisions, users, type PaymentLine } from '../db/schema.js'
+import { studioEntitlements, studioMistakeReports, studioPieces, studioRevisions, type PaymentLine } from '../db/schema.js'
 import { config } from '../config.js'
 import type { Design } from './designs.js'
 import type { Exec } from './quota.js'
@@ -166,10 +166,7 @@ export async function instantReportsUsed(designId: string, category: string, exe
  * revision lines are never free this way.
  */
 /** Whether a user is a Virvi admin, who finalizes without paying. Read from the database, not the session token. */
-export async function isVirviAdmin(userId: string, exec: Exec = db): Promise<boolean> {
-  const [u] = await exec.select({ role: users.role }).from(users).where(eq(users.id, userId))
-  return u?.role === 'admin'
-}
+export { isVirviAdmin } from '../auth/admin.js'
 
 /**
  * `admin`: a Virvi admin's quote, every line free and no gift credit spent. `credit`: the Virvi credit cents the

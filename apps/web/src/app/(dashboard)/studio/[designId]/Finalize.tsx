@@ -1,28 +1,41 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  checkoutBody, checkoutHref, checkoutReportsKey, dialogTotal, emoteChecklist, finalizeStrip, formatCents, lineNote, HELD_REPORT_COPY, PRICE_LABEL, REPORT_MAX, reportOk,
-  triangleWarning, type Quote, type StudioDetail, type StudioKind,
+  canReport, checkoutBody, checkoutHref, checkoutReportsKey, dialogTotal, emoteChecklist, finalizeChoices, finalizeStrip, formatCents, initialSelection,
+  latestOnly, lineNote, HELD_REPORT_COPY, PRICE_LABEL, REPORT_MAX, refusalMessage, reportOk, selectionCategories, selectionProblem, toggleSelection,
+  triangleWarning, wornDetail, type Quote, type StudioDetail, type StudioKind, type StudioSupportView, type WornState,
 } from '@/lib/studio'
-import { STATE_BADGE, emoteName, type EmoteTarget } from './EmotesStep'
+import { supportFinalizeLabel, supportOwnerName } from '@/lib/studio-support'
+import { NONE_TICKED, STATE_BADGE, WORN_NOTE, emoteName, type EmoteTarget } from './EmotesStep'
 
 /**
  * Every emote on both body shapes and whether the person has looked: a nudge, never a gate. Opening it renders the
- * ones that aren't yet, and each row opens that emote in the Emotes step.
+ * ones that aren't yet, and each row opens that emote in the Emotes step. With only some pieces ticked (`worn`), it
+ * is about those pieces and the finalized ones worn together; 'loading' while that selection's views are fetched,
+ * 'none' with nothing ticked.
  */
-export function EmoteChecklist({ designId, detail, onOpen }: { designId: string; detail: StudioDetail; onOpen: (t: EmoteTarget) => void }) {
+export function EmoteChecklist({ designId, detail: whole, worn = null, onOpen }: {
+  designId: string; detail: StudioDetail; worn?: WornState; onOpen: (t: EmoteTarget) => void
+}) {
   const api = useApi()
   const { user } = useAuth()
+  const waiting = worn === 'loading' || worn === 'none'
+  const selection = waiting ? null : worn
+  const detail = wornDetail(whole, selection)
   useEffect(() => {
     // finalize-renders is closed to a trial: asking would open an unrequested sign-up sheet
-    if (!user?.trial && detail.pieces.some((p) => p.revision)) api.requestStudioFinalizeRenders(designId).catch(() => {})
-  }, [designId, detail.set.revisions]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (waiting) return
+    if (!user?.trial && detail.pieces.some((p) => p.revision)) api.requestStudioFinalizeRenders(designId, selection?.categories ?? null).catch(() => {})
+  }, [designId, waiting ? null : detail.set.revisions]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (worn === 'none') return <p className="text-sm text-gray-400">{NONE_TICKED}</p>
+  if (worn === 'loading') return <p className="text-sm text-gray-400" aria-live="polite">Loading the emote checks for the pieces you ticked…</p>
   const { rows, checkedCount } = emoteChecklist(detail)
   return (
     <div>
+      {selection && <p className="mb-1 text-xs text-gray-400">{WORN_NOTE}</p>}
       <p className="text-sm text-gray-300">
         You’ve checked {checkedCount} of {rows.length}.{checkedCount < rows.length && ' Play each emote and say whether it looks right: clipping is fixed free.'}
       </p>
@@ -49,11 +62,23 @@ export function EmoteChecklist({ designId, detail, onOpen }: { designId: string;
 type Props = {
   designId: string; kind: StudioKind; quote: Quote | null; busy: boolean
   detail: StudioDetail; onOpenEmote: (t: EmoteTarget) => void
+  /** The ticked pieces (null: not chosen yet, so every payable piece), kept by the page while the dialog closes. */
+  selected: string[] | null; onSelected: (categories: string[] | null) => void
+  worn: WornState
+  /** Virvi support finalizing for the owner: free, at once, no checkout page; then the page re-reads the design. */
+  support?: StudioSupportView; onChanged?: () => Promise<void>
+  /** "Finalize this" on a 👍 (LIV-142): open the dialog with these pieces ticked; `n` tells one ask from the next. */
+  openWith?: { categories: string[]; n: number } | null
 }
 
-/** The finalize strip under the preview, and the dialog that pays for every payable piece at once. */
-export default function Finalize({ designId, kind, quote, busy, detail, onOpenEmote }: Props) {
+/** The finalize strip under the preview, and the dialog that pays for the ticked pieces (every payable one at first). */
+export default function Finalize({ designId, kind, quote, busy, detail, onOpenEmote, selected, onSelected, worn, support, onChanged, openWith }: Props) {
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!openWith || !quote || busy) return
+    onSelected(openWith.categories)
+    setOpen(true)
+  }, [openWith?.n]) // eslint-disable-line react-hooks/exhaustive-deps
   const strip = finalizeStrip(quote, kind)
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
@@ -66,19 +91,37 @@ export default function Finalize({ designId, kind, quote, busy, detail, onOpenEm
         <PrimaryButton type="button" className="mt-3" disabled={busy} onClick={() => setOpen(true)}>{strip.button}</PrimaryButton>
       )}
       {open && quote && (
-        <FinalizeDialog designId={designId} quote={quote} onClose={() => setOpen(false)}>
-          {kind !== 'scene' && <EmoteChecklist designId={designId} detail={detail} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />}
+        <FinalizeDialog designId={designId} quote={quote} selected={selected ?? initialSelection(quote)} onSelected={onSelected}
+          onClose={() => { setOpen(false); onSelected(null) }} support={support} onChanged={onChanged}>
+          {kind !== 'scene' && <EmoteChecklist designId={designId} detail={detail} worn={worn} onOpen={(t) => { setOpen(false); onOpenEmote(t) }} />}
         </FinalizeDialog>
       )}
     </div>
   )
 }
 
-function FinalizeDialog({ designId, quote, onClose, children }: {
-  designId: string; quote: Quote; onClose: () => void; children: React.ReactNode
+function FinalizeDialog({ designId, quote, selected, onSelected, onClose, children, support, onChanged }: {
+  designId: string; quote: Quote; selected: string[]; onSelected: (categories: string[]) => void; onClose: () => void; children: React.ReactNode
+  support?: StudioSupportView; onChanged?: () => Promise<void>
 }) {
+  const api = useApi()
   const [reports, setReports] = useState<Record<string, string>>({})
   const [paying, setPaying] = useState(false)
+  // The selection's quote, from the server: the total, free finalizes and which piece is the first are always its
+  const chosen = selectionCategories(selected, quote)
+  const chosenKey = chosen?.join(',') ?? ''
+  const [picked, setPicked] = useState<{ key: string; quote: Quote } | null>(null)
+  const [quoteError, setQuoteError] = useState<string | null>(null)
+  const gate = useRef(latestOnly())
+
+  useEffect(() => {
+    setQuoteError(null)
+    const id = gate.current.next()
+    if (!chosen?.length) return
+    api.getStudioQuote(designId, chosen)
+      .then((q) => { if (gate.current.isLatest(id)) setPicked({ key: chosenKey, quote: q }) })
+      .catch((err) => { if (gate.current.isLatest(id)) setQuoteError(refusalMessage(err as never, new Date()).text) })
+  }, [designId, chosenKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !paying) onClose() }
@@ -86,83 +129,122 @@ function FinalizeDialog({ designId, quote, onClose, children }: {
     return () => document.removeEventListener('keydown', esc)
   }, [onClose, paying])
 
-  const reported = Object.keys(reports)
+  // Everything ticked is the quote the page already has; a selection's comes back from the server
+  const shown = chosen === null ? quote : picked?.key === chosenKey ? picked.quote : null
+  const problem = selectionProblem(chosen ?? selected)
+  const reported = Object.keys(reports).filter((c) => shown?.lines.some((l) => l.category === c && canReport(l, selected)))
   const incomplete = reported.some((c) => !reportOk(reports[c]))
-  const total = dialogTotal(quote, reported)
+  const total = shown ? dialogTotal(shown, reported) : null
 
-  const toggle = (category: string) => setReports((prev) => {
+  const toggleReport = (category: string) => setReports((prev) => {
     const next = { ...prev }
     if (category in next) delete next[category]
     else next[category] = ''
     return next
   })
 
-  // Paying happens on the checkout page (card and MANA side by side, credit applied); the reports go with it
-  const pay = () => {
+  // Paying happens on the checkout page (card and MANA side by side, credit applied); the ticked pieces go in its
+  // link, the reports with it
+  const [payError, setPayError] = useState<string | null>(null)
+  // Support: the ticked pieces are finalized for the owner here and now, free
+  const finalizeForOwner = async () => {
     setPaying(true)
+    setPayError(null)
     try {
-      const body = checkoutBody(reports)
+      await api.finalizeStudio(designId, { ...(chosen ? { categories: chosen } : {}), method: 'card' })
+      await onChanged?.()
+      onClose()
+    } catch (err) {
+      setPayError(refusalMessage(err as never, new Date()).text)
+    } finally {
+      setPaying(false)
+    }
+  }
+
+  const pay = () => {
+    if (support) { finalizeForOwner(); return }
+    setPaying(true)
+    const body = checkoutBody(Object.fromEntries(reported.map((c) => [c, reports[c]])), chosen)
+    try {
       if (body.reports) sessionStorage.setItem(checkoutReportsKey(designId), JSON.stringify(body.reports))
       else sessionStorage.removeItem(checkoutReportsKey(designId))
     } catch {
       /* no storage (a private window): the checkout charges the reported lines, which can still be reported after */
     }
-    window.location.assign(checkoutHref({ kind: 'design', designId, categories: null }))
+    window.location.assign(checkoutHref({ kind: 'design', designId, categories: body.categories ?? null }))
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !paying) onClose() }}>
       <div role="dialog" aria-modal="true" aria-labelledby="finalize-title" className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
         <h2 id="finalize-title" className="text-lg font-semibold">Finalize</h2>
+        <p className="mt-1 text-sm text-gray-400">
+          {support
+            ? `Tick the pieces to finalize for ${supportOwnerName(support)}. They’re theirs at once, as if they had paid, and nobody is charged.`
+            : 'Tick the pieces to finalize now. You can keep working on the rest and finalize them later.'}
+        </p>
         <ul className="mt-4 divide-y divide-gray-800">
-          {quote.lines.map((l) => {
-            const reported = l.category in reports
+          {finalizeChoices(quote).map((c) => {
+            const ticked = c.pickable && selected.includes(c.category)
+            const l = ticked ? shown?.lines.find((x) => x.category === c.category) : undefined
+            const isReported = !!l && reported.includes(c.category)
             // Past the piece's instant refunds, a report is charged now and goes to the team
-            const held = reported && (quote.reportsHeld ?? []).includes(l.category)
-            const waived = reported && !held
-            const revision = l.priceKind.startsWith('revision')
+            const held = isReported && (shown?.reportsHeld ?? []).includes(c.category)
+            const waived = isReported && !held
+            const boxId = `finalize-${c.category}`
             return (
-              <li key={l.category} className="py-3">
+              <li key={c.category} className="py-3">
                 <div className="flex items-baseline justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{l.pieceName}</p>
-                    <p className="text-xs text-gray-500">{PRICE_LABEL[l.priceKind]} · revision {l.revisionNumber}</p>
-                  </div>
-                  <p className="shrink-0 text-right">
-                    <span className={waived || lineNote(l)?.startsWith('free') ? 'text-gray-500 line-through' : ''}>{formatCents(l.amountCents)}</span>
-                    {lineNote(l) ? <span className="block text-xs text-emerald-300">{lineNote(l)}</span> : waived && <span className="block text-xs text-emerald-300">not charged</span>}
-                  </p>
+                  <label htmlFor={boxId} className={`flex min-w-0 items-baseline gap-2 ${c.pickable ? 'cursor-pointer' : 'cursor-default'}`}>
+                    <input id={boxId} type="checkbox" className="self-center" checked={ticked || c.finalized} disabled={!c.pickable || paying}
+                      onChange={() => onSelected(toggleSelection(selected, c.category, quote))} />
+                    <span className="min-w-0">
+                      <span className={`block truncate font-medium ${c.pickable ? '' : 'text-gray-400'}`}>{c.name}</span>
+                      <span className="block text-xs text-gray-500">
+                        {c.reason ?? (l ? `${PRICE_LABEL[l.priceKind]} · revision ${l.revisionNumber}` : ticked ? 'Updating the price…' : 'Not finalizing now')}
+                      </span>
+                    </span>
+                  </label>
+                  {l && (
+                    <p className="shrink-0 text-right">
+                      <span className={waived || lineNote(l)?.startsWith('free') ? 'text-gray-500 line-through' : ''}>{formatCents(l.amountCents)}</span>
+                      {lineNote(l) ? <span className="block text-xs text-emerald-300">{lineNote(l)}</span> : waived && <span className="block text-xs text-emerald-300">not charged</span>}
+                    </p>
+                  )}
                 </div>
-                {revision && (
+                {l && !support && canReport(l, selected) && (
                   <label className="mt-2 flex items-center gap-2 text-sm text-gray-300">
-                    <input type="checkbox" checked={reported} onChange={() => toggle(l.category)} />
+                    <input type="checkbox" checked={c.category in reports} onChange={() => toggleReport(c.category)} />
                     This revision fixes the agent’s mistake
                   </label>
                 )}
                 {held && <p className="mt-2 text-xs text-gray-400">{HELD_REPORT_COPY}</p>}
-                {reported && (
+                {isReported && (
                   <label className="mt-2 block">
                     <span className="mb-1 block text-xs text-gray-400">What did the agent get wrong?</span>
-                    <textarea rows={3} maxLength={REPORT_MAX} value={reports[l.category]}
-                      onChange={(e) => setReports((prev) => ({ ...prev, [l.category]: e.target.value }))}
+                    <textarea rows={3} maxLength={REPORT_MAX} value={reports[c.category]}
+                      onChange={(e) => setReports((prev) => ({ ...prev, [c.category]: e.target.value }))}
                       className="w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400" />
-                    {!reportOk(reports[l.category]) && <span className="text-xs text-gray-500">At least 10 characters.</span>}
+                    {!reportOk(reports[c.category]) && <span className="text-xs text-gray-500">At least 10 characters.</span>}
                   </label>
                 )}
               </li>
             )
           })}
         </ul>
-        {quote.notes.map((n) => <p key={n} className="mt-3 text-sm text-gray-400">{n}</p>)}
+        {(shown?.notes ?? []).map((n) => <p key={n} className="mt-3 text-sm text-gray-400">{n}</p>)}
         <div className="mt-4 border-t border-gray-800 pt-4">{children}</div>
         <div className="mt-4 flex items-baseline justify-between border-t border-gray-800 pt-4">
           <span className="text-gray-400">Total</span>
-          <span className="text-xl font-semibold">{formatCents(total)}</span>
+          <span className="text-xl font-semibold" aria-live="polite">{problem ? formatCents(0) : total === null ? '…' : formatCents(total)}</span>
         </div>
+        {problem && <p className="mt-2 text-sm text-amber-300" role="status">{problem}</p>}
+        {!problem && quoteError && <p className="mt-2 text-sm text-amber-300" role="alert">{quoteError}</p>}
+        {payError && <p className="mt-2 text-sm text-amber-300" role="alert">{payError}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} disabled={paying} className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700">Cancel</button>
-          <PrimaryButton type="button" onClick={pay} disabled={paying || incomplete}>
-            {paying ? 'Opening checkout…' : total > 0 ? `Continue to pay ${formatCents(total)}` : 'Continue'}
+          <PrimaryButton type="button" onClick={pay} disabled={paying || incomplete || !!problem || total === null}>
+            {support ? supportFinalizeLabel(support, paying) : paying ? 'Opening checkout…' : total ? `Continue to pay ${formatCents(total)}` : 'Continue'}
           </PrimaryButton>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clampSide, normalizeWorldName, plotLabel, storageLine, toWizardAsset } from './helpers'
+import { clampSide, hostingChoice, normalizeWorldName, plotLabel, storageLine, toWizardAsset } from './helpers'
 
 const row = (over: Record<string, unknown> = {}) => ({
   id: 'a1', name: 'Oak', isPublic: true, packId: 'nature', cdnUrl: 'https://cdn.example/oak.glb', triangleCount: 1200,
@@ -44,5 +44,20 @@ describe('copy helpers', () => {
     expect(clampSide(12)).toBe(10)
     expect(clampSide(4.4)).toBe(4)
     expect(clampSide(NaN)).toBe(1)
+  })
+})
+
+describe('hostingChoice', () => {
+  const free = { used: 0, limit: 1, hostingAvailable: true }
+  it('a trial needs an account, even when the slots say hosting is available', () => {
+    expect(hostingChoice(true, free)).toBe('needs_account')
+    expect(hostingChoice(true, null)).toBe('needs_account')
+  })
+  it('an account can host while it has a slot', () => {
+    expect(hostingChoice(false, free)).toBe('available')
+    expect(hostingChoice(false, { used: 5, limit: null, hostingAvailable: true })).toBe('available')
+    expect(hostingChoice(false, { used: 1, limit: 1, hostingAvailable: true })).toBe('used_up')
+    expect(hostingChoice(false, { used: 0, limit: 1, hostingAvailable: false })).toBe('unavailable')
+    expect(hostingChoice(false, null)).toBe('loading')
   })
 })

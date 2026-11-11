@@ -24,7 +24,8 @@ data class RoomScanUi(
 
 /**
  * The **Scan this room** panel: [open] reads the headset's rooms ([read]) and shows their outline with a default name;
- * [upload] sends them as a layout ([RoomScanMapper]) with the AR pass of the space being built ([spaceId]). With no
+ * [upload] sends them as a layout ([RoomScanMapper]) with the AR pass of the space being built ([spaceId]), or, with no
+ * space being built, with the headset secret ([uploadWithDevice]). With no
  * rooms set up it offers [setUpSpace] (the system's Space Setup). Space Setup pauses the app, which closes the panel,
  * so the person taps **Scan this room** again afterwards; a `done` for a closed panel is dropped. Main thread only.
  */
@@ -32,6 +33,7 @@ class RoomScanFlow(
     private val scope: CoroutineScope,
     private val read: () -> RoomScanInput,
     private val upload: suspend (spaceId: String, name: String, layout: JsonObject) -> BuilderCall<RoomScanUpload>,
+    private val uploadWithDevice: suspend (name: String, layout: JsonObject) -> BuilderCall<RoomScanUpload>,
     private val spaceId: () -> String?,
     private val setUpSpace: (done: () -> Unit) -> Unit,
     private val show: (RoomScanUi) -> Unit,
@@ -61,7 +63,7 @@ class RoomScanFlow(
   fun upload() {
     val input = scan ?: return
     val space = spaceId()
-    if (!ui.canUpload || space == null) return
+    if (!ui.canUpload) return
     val name = ui.name.trim()
     val g = generation
     // The mapper drops non-finite readings; anything else it can't map is shown, never thrown.
@@ -74,7 +76,7 @@ class RoomScanFlow(
         }
     set(ui.copy(uploading = true, status = RoomScanCopy.UPLOADING))
     scope.launch {
-      val r = upload(space, name, layout)
+      val r = if (space != null) upload(space, name, layout) else uploadWithDevice(name, layout)
       if (g != generation) return@launch
       set(
           when (r) {

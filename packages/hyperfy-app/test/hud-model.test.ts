@@ -642,7 +642,7 @@ describe('off images (LIV-54)', () => {
   it('while loading, or with no images, a note instead of a list', () => {
     expect(hudModel(st({ imagePicking: 'v2' })).imagesNote).toBe('Loading images…')
     const empty = hudModel(st({ imageList: [], imagePicking: 'v2' }))
-    expect(empty.imagesNote).toBe('No images in the scene library yet: add one from Assets on virvi.io')
+    expect(empty.imagesNote).toBe('No images in the scene library yet: add one from Images & Video on virvi.io')
     expect(empty.imageOptions).toEqual([{ id: '', label: 'None', current: true }])
     expect(hudModel(st({ imageList: images })).imageOptions).toEqual([])
   })

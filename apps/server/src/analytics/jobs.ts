@@ -1,4 +1,4 @@
-import { and, eq, gte, isNull, lt, lte, sql } from 'drizzle-orm'
+import { and, eq, gte, isNull, like, lt, lte, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
   analyticsCopresenceDaily,
@@ -14,7 +14,8 @@ import {
   scenes,
 } from '../db/schema.js'
 import { config } from '../config.js'
-import { getSubscription } from '../integrations/stripe.js'
+import { HEATMAP_BAND_M, HEATMAP_BAND_SLACK_M, feetOffsetM, groundClamped } from '@virvixr/shared'
+import { getSubscription, type TierLimits } from '../integrations/stripe.js'
 import type { AnalyticsSceneRow } from './registry.js'
 import { purgeWalletChallenges } from './claims.js'
 import { purgeAuthHandoffCodes } from '../routes/auth-handoff.js'
@@ -130,24 +131,41 @@ export async function rollupHour(sceneId: string, hour: Date): Promise<void> {
     .onConflictDoUpdate({ target: [analyticsRollupHourly.sceneId, analyticsRollupHourly.hour], set: values })
 }
 
+/** heightBand (@virvixr/shared) in SQL, for a location kind; the constants are code, not input. */
+export function heightBandSql(y: ReturnType<typeof sql.raw>, kind: string) {
+  const offset = feetOffsetM(kind)
+  const raw = sql`floor(round((${y} - ${sql.raw(String(offset))} + ${sql.raw(String(HEATMAP_BAND_SLACK_M))}) * 100) / ${sql.raw(String(HEATMAP_BAND_M * 100))})::int`
+  return groundClamped(kind) ? sql`greatest(0, ${raw})` : raw
+}
+
 export async function rollupDay(sceneId: string, day: string, now = new Date()): Promise<void> {
   const d0 = new Date(`${day}T00:00:00Z`)
   const d1 = new Date(d0.getTime() + DAY)
+  const [loc] = await db.select({ kind: analyticsScenes.kind }).from(analyticsScenes).where(eq(analyticsScenes.id, sceneId))
+  const band = heightBandSql(sql.raw('y'), loc?.kind ?? 'parcels')
   await db.transaction(async (tx) => {
+    // One heatmap replace at a time, whoever runs it: the regular rollups and the height backfill can meet here, and
+    // during a rolling deploy so can the pre-LIV-85 code, which takes no lock of its own. This mode conflicts with
+    // itself and with the row-exclusive lock any delete or insert takes, so a second replace (old code or new) waits
+    // for the first to commit and its delete then sees, and removes, the first's rows. Reads are not blocked. The
+    // transaction holds only the heatmap replace; copresence is recomputed in its own, after the lock is released.
+    await tx.execute(sql`lock table analytics_heatmap_daily in share row exclusive mode`)
     await tx.delete(analyticsHeatmapDaily).where(and(eq(analyticsHeatmapDaily.sceneId, sceneId), eq(analyticsHeatmapDaily.day, day)))
     await tx.execute(sql`
-      insert into analytics_heatmap_daily (scene_id, day, cell_x, cell_z, dwell_sec, visits)
-      select ${sceneId}, ${day}::date, floor(x)::int, floor(z)::int,
+      insert into analytics_heatmap_daily (scene_id, day, cell_x, cell_y, cell_z, dwell_sec, visits)
+      select ${sceneId}, ${day}::date, floor(x)::int, ${band}, floor(z)::int,
              round(sum(least(coalesce(gap, 3), 15)))::int, count(distinct session_id)::int
       from (
-        select session_id, x, z,
+        select session_id, x, y, z,
                extract(epoch from (lead(occurred_at) over (partition by session_id order by occurred_at, seq) - occurred_at)) as gap
         from analytics_positions
         where scene_id = ${sceneId} and occurred_at >= ${ts(d0)} and occurred_at < ${ts(d1)}
           and abs(x) < 32768 and abs(z) < 32768
       ) p
-      group by 3, 4`)
+      group by 3, 4, 5`)
+  })
 
+  await db.transaction(async (tx) => {
     await tx.delete(analyticsCopresenceDaily).where(and(eq(analyticsCopresenceDaily.sceneId, sceneId), eq(analyticsCopresenceDaily.day, day)))
     await tx.execute(sql`
       insert into analytics_copresence_daily (scene_id, day, visitor_a, visitor_b, overlap_sec)
@@ -218,15 +236,34 @@ export async function runRollups(now = new Date()): Promise<{ hours: number; day
   return { hours: todo.length, days: dayCount }
 }
 
+/** A Virvi scene's plan: its owner's subscription limits; null when the scene is gone. */
+export async function planLimitsForScene(virviSceneId: string): Promise<TierLimits | null> {
+  const host = await db.query.scenes.findFirst({ where: eq(scenes.id, virviSceneId), columns: { ownerId: true } })
+  if (!host) return null
+  return (await getSubscription(host.ownerId)).limits
+}
+
+/**
+ * Whether a location's heatmap shows heights and the 3D view (LIV-85): every self-hosted install with all features
+ * unlocked; otherwise the plan of the Virvi scene whose setup the reader reads through (as retention follows the host's).
+ */
+export async function heatmap3dFor(virviSceneId: string | null | undefined): Promise<boolean> {
+  if (config.allFeaturesUnlocked) return true
+  if (!virviSceneId) return false
+  return (await planLimitsForScene(virviSceneId))?.analyticsHeatmap3d === true
+}
+
 export async function retentionDaysFor(scene: AnalyticsSceneRow): Promise<number> {
   if (scene.isPreview) return 7
   const active = await db.query.locationSetups.findFirst({ where: and(eq(locationSetups.analyticsSceneId, scene.id), isNull(locationSetups.endedAt)) })
   if (!active) return 30
-  const host = await db.query.scenes.findFirst({ where: eq(scenes.id, active.virviSceneId), columns: { ownerId: true } })
-  if (!host) return 30
-  if (config.allFeaturesUnlocked) return Infinity
-  const sub = await getSubscription(host.ownerId)
-  const d = sub.limits.analyticsRetentionDays
+  if (config.allFeaturesUnlocked) {
+    const host = await db.query.scenes.findFirst({ where: eq(scenes.id, active.virviSceneId), columns: { id: true } })
+    return host ? Infinity : 30
+  }
+  const limits = await planLimitsForScene(active.virviSceneId)
+  if (!limits) return 30
+  const d = limits.analyticsRetentionDays
   return d === Infinity || (typeof d === 'number' && Number.isFinite(d)) ? d : 30
 }
 
@@ -261,6 +298,68 @@ export async function runRetention(now = new Date()): Promise<{ deleted: number 
     }
   }
   return { deleted }
+}
+
+/** analytics_job_runs name of the once-only height backfill; `<name>:<location id>` rows record progress while it runs. */
+export const HEATMAP_BACKFILL_JOB = 'heatmap-height-backfill'
+
+/**
+ * Once only (LIV-85): re-run the daily heatmap rollup, which now records floor heights, for every day still fully
+ * inside each location's retention, so recent history gets heights. Older days, the day the retention cutoff falls
+ * in, and the day of the oldest raw position left (part of its positions may be gone) keep their height-less cells. rollupDay replaces a day's cells
+ * under the heatmap table lock, so a rerun or a concurrent rollup changes nothing; the job itself runs under the
+ * analytics job lock. Locations that fail are retried on the next run; the job is marked done once none fail.
+ * Returns null when it has already run.
+ */
+export async function runHeatmapHeightBackfill(
+  now = new Date(),
+  rollup: (sceneId: string, day: string, now?: Date) => Promise<void> = rollupDay,
+): Promise<{ scenes: number; days: number; failed: number } | null> {
+  const [done] = await db.select().from(analyticsJobRuns).where(eq(analyticsJobRuns.name, HEATMAP_BACKFILL_JOB))
+  if (done) return null
+  const today = now.toISOString().slice(0, 10)
+  const progress = new Set(
+    (await db.select({ name: analyticsJobRuns.name }).from(analyticsJobRuns).where(like(analyticsJobRuns.name, `${HEATMAP_BACKFILL_JOB}:%`))).map((r) => r.name),
+  )
+  let scenesDone = 0
+  let days = 0
+  let failed = 0
+  for (const scene of await db.select().from(analyticsScenes)) {
+    const key = `${HEATMAP_BACKFILL_JOB}:${scene.id}`
+    if (progress.has(key)) continue
+    try {
+      const retention = await retentionDaysFor(scene)
+      const firstDay = Number.isFinite(retention) ? new Date(Math.ceil((now.getTime() - retention * DAY) / DAY) * DAY) : null
+      // Every purge deletes what is older than its cutoff, so every cutoff so far is at or before the oldest raw
+      // position left: days after that position's day are complete, and its own day may not be (retention can have
+      // grown since, e.g. a setup ended or a plan upgraded). That day is skipped, so a rollup is never redone from less.
+      const [oldest] = rowsOf<{ day: string | null }>(
+        await db.execute(sql`select to_char(min(occurred_at) at time zone 'UTC', 'YYYY-MM-DD') as day from analytics_positions where scene_id = ${scene.id}`),
+      )
+      const rows = oldest?.day
+        ? rowsOf<{ day: string }>(
+            await db.execute(sql`
+              select distinct to_char(occurred_at at time zone 'UTC', 'YYYY-MM-DD') as day from analytics_positions
+              where scene_id = ${scene.id} and occurred_at >= ${ts(new Date(new Date(`${oldest.day}T00:00:00Z`).getTime() + DAY))}${firstDay ? sql` and occurred_at >= ${ts(firstDay)}` : sql``}
+              order by 1`),
+          )
+        : []
+      for (const { day } of rows) {
+        await rollup(scene.id, day, now)
+        days++
+      }
+      await db.insert(analyticsJobRuns).values({ name: key, lastRunDay: today }).onConflictDoNothing()
+      scenesDone++
+    } catch (err) {
+      failed++
+      console.error(`[virvi-server] heatmap height backfill failed for ${scene.id}:`, err)
+    }
+  }
+  if (!failed) {
+    await db.insert(analyticsJobRuns).values({ name: HEATMAP_BACKFILL_JOB, lastRunDay: today }).onConflictDoNothing()
+    await db.delete(analyticsJobRuns).where(like(analyticsJobRuns.name, `${HEATMAP_BACKFILL_JOB}:%`))
+  }
+  return { scenes: scenesDone, days, failed }
 }
 
 const dailyJobs: Array<{ name: string; fn: (now: Date) => Promise<unknown> }> = [{ name: 'retention', fn: runRetention }]
@@ -298,6 +397,8 @@ export function startAnalyticsJobs(): () => void {
   every(30_000, 71001, 'session-close', () => runSessionCloseSweep())
   every(5 * 60_000, 71002, 'rollups', () => runRollups())
   every(60 * 60_000, 71003, 'daily', () => runDailyJobs())
+  // Once only; afterwards each tick is a single lookup of its done record.
+  every(60 * 60_000, 71004, 'heatmap-height-backfill', () => runHeatmapHeightBackfill())
   // Kick every job once shortly after boot so restarts never skip a cycle.
   const kick = setTimeout(() => {
     for (const t of kicks) void t()

@@ -233,6 +233,18 @@ describe('backupSnapshot', () => {
     expect(banner.assets.fallbackImage).toMatchObject({ kind: 'link', use: 'texture', url: 'https://example.com/fb.png' })
   })
 
+  it('images and video screens carry their frame; ad spaces never do (LIV-129)', async () => {
+    const frame = { enabled: true, style: 'gallery', color: '#c9a227', thickness: 3 }
+    const img = await createElement(preset.id, { type: 'image', name: 'Poster', properties: { textureSrc: `${CDN}/p.png`, frame } })
+    const v = await createElement(preset.id, { type: 'video', name: 'Screen', properties: { offType: 0, frame } })
+    const ad = await createElement(preset.id, { type: 'ad_space', name: 'Banner', properties: { shape: '16:9', frame } })
+    for (const el of [img, v, ad]) await place(el.id)
+    const snap = await backupSnapshot(scene.id)
+    expect(snap.items.find((i) => i.name === 'Poster')!.props.frame).toEqual(frame)
+    expect(snap.items.find((i) => i.name === 'Screen')!.props.frame).toEqual(frame)
+    expect(snap.items.find((i) => i.name === 'Banner')!.props).not.toHaveProperty('frame')
+  })
+
   it('only looks up the URLs the preset uses', async () => {
     for (let i = 0; i < 20; i++) {
       await db.insert(mediaAssets).values({ ownerId: user.id, filename: `x${i}`, contentType: 'image/png', sizeBytes: 1, publicUrl: `${CDN}/noise/${i}.png` })

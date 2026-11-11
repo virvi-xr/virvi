@@ -135,6 +135,15 @@ describe('studio quota', () => {
     expect(await promptStatus(u.id, NOW)).toMatchObject({ used: 3, credits: 1, gifted: 0, left: 1 })
   })
 
+  it('a free try-again (gifts: false) never takes a gifted prompt past the ceiling', async () => {
+    const u = await createUser()
+    await db.insert(studioPromptCredits).values({ userId: u.id, gifted: 2 })
+    expect(await reservePrompt(u.id, NOW, { counted: false, gifts: false })).toEqual({ ok: true, day: '2026-10-25', from: null })
+    await recordCost(u.id, '2026-10-25', 6)
+    expect(await reservePrompt(u.id, NOW, { counted: false, gifts: false })).toEqual({ ok: false, reason: 'cost_ceiling' })
+    expect(await gifted(u.id)).toBe(2)
+  })
+
   it('gifted prompts run past the cost ceiling', async () => {
     const u = await createUser()
     await db.insert(studioPromptCredits).values({ userId: u.id, balance: 5, gifted: 2 })

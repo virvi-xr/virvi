@@ -17,7 +17,7 @@
  * accepted nothing, back to `built` (or `failed` for a PERMANENT error), all through `markFailed` (Ruling R19).
  */
 import { and, eq, inArray, isNull, lt, lte, or, sql, TransactionRollbackError } from 'drizzle-orm'
-import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, dclBudget, parseParcel, type ImportLocation } from '@virvixr/shared'
+import { DCL_MAX_FILE_BYTES, DCL_PARCEL_M, PLACEMENTS_FILE, dclBudget, parseParcel, type ImportLocation } from '@virvixr/shared'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments, sceneImports, scenes } from '../../db/schema.js'
 import { DirectoryUnavailableError } from '../../analytics/dcl-directory.js'
@@ -26,10 +26,12 @@ import { linkLocation } from '../../setup/setups.js'
 import { getImportStore } from '../../storage/private-store.js'
 import { ImportError, worldNameOf } from '../import/scene-zip.js'
 import {
-  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, modelsBesideBuilt, modelsInScene, pendingModels, wizardSceneJson,
+  assembleFresh, assembleImported, assembleRedeploy, builtByVirvi, defaultModelFetcher, frameEntitiesInScene, modelsBesideBuilt, modelsInScene, navmapThumbnailFile,
+  isPlacementsFile, ownThumbnailFile, pendingModels, placementsFile, placementsInScene, wizardSceneJson, PLACEMENTS_MAX_BYTES,
   type Assembled, type ModelFetcher, type ModelNeed,
 } from './assemble.js'
 import { keepDeployedFiles } from './deployed-files.js'
+import { startMapChecks } from './map-status.js'
 import { buildEntity, chainSigner, dclHash, verifyChain, virviSignerFor, type AuthChain, type ContentRef, type SceneMetadata, type VirviSigner } from './entity.js'
 import { parcelControl, readParcelRights } from './parcel-control.js'
 import { GRANT_REVOKED_MESSAGE, grantMissing, isAccessRefusal } from './parcel-grant.js'
@@ -37,6 +39,7 @@ import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
 import { CatalystError, contentServerFor } from './catalyst-client.js'
 import { getWorldsClient, WorldsError, type LiveEntity } from './worlds-client.js'
 import { worldOf } from './world-of.js'
+import { recordJobFailure } from '../../errors/record.js'
 
 /** The server's limit, inside Decentraland's ~5-minute entity timestamp window. */
 export const DEPLOY_WINDOW_MS = 240_000
@@ -170,6 +173,9 @@ export interface SignedBundle {
 async function loadDestination(id: string): Promise<Destination> {
   const dest = await db.query.dclWorldDestinations.findFirst({ where: eq(dclWorldDestinations.id, id) })
   if (!dest) throw new DeployerError(404, 'not_found')
+  // Nothing deploys for a deleted scene (LIV-83): not a route, an upload's automatic deploy or the sweep
+  const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { deletedAt: true } })
+  if (!scene || scene.deletedAt) throw new DeployerError(404, 'not_found', 'This scene was deleted.')
   return dest
 }
 
@@ -216,14 +222,19 @@ const plural = (n: number, one: string) => `${n.toLocaleString('en-US')} ${one}$
 
 /**
  * A plain sentence when the scene has more placed models than Decentraland's per-parcel limit, else null. No network.
- * Entities count every placed instance, as the wizard does. Triangles are only a warning (`sceneTriangleWarning`).
+ * Entities count every placed instance, as the wizard does, and the pieces of frames around images and video screens
+ * (`frames`, from frameEntitiesInScene; LIV-129). Triangles are only a warning (`sceneTriangleWarning`).
  */
-export function sceneLimitProblem(dest: Destination, all: ModelNeed[]): string | null {
+export function sceneLimitProblem(dest: Destination, all: ModelNeed[], frames = 0): string | null {
   const budget = dclBudget(dest.parcels.length)
   const parcels = plural(dest.parcels.length, 'parcel')
   const placed = all.reduce((n, m) => n + m.instances, 0)
-  if (placed > budget.entities) {
-    return `Your scene has ${plural(placed, 'placed model')}, over the ${budget.entities.toLocaleString('en-US')} your ${parcels} allow. Remove some to publish.`
+  if (placed + frames > budget.entities) {
+    const limit = budget.entities.toLocaleString('en-US')
+    if (frames > 0) {
+      return `Your scene has ${plural(placed, 'placed model')} and ${plural(frames, 'frame piece')}, over the ${limit} your ${parcels} allow. Remove some models or frames to publish.`
+    }
+    return `Your scene has ${plural(placed, 'placed model')}, over the ${limit} your ${parcels} allow. Remove some to publish.`
   }
   return null
 }
@@ -236,7 +247,7 @@ export function sceneTriangleWarning(dest: Destination, all: ModelNeed[]): strin
   const budget = dclBudget(dest.parcels.length)
   const triangles = all.reduce((n, m) => n + (m.triangles ?? 0) * m.instances, 0)
   if (triangles <= budget.triangles) return null
-  const unknown = all.filter((m) => m.triangles == null).length
+  const unknown = all.filter((m) => m.triangles == null && m.kind !== 'thumbnail').length
   const note = unknown > 0 ? ` ${unknown} model${unknown === 1 ? ' has' : 's have'} no triangle count yet and counted as 0.` : ''
   return `Your scene has ${plural(triangles, 'triangle')}, more than the ${budget.triangles.toLocaleString('en-US')} Decentraland recommends for your ` +
     `${plural(dest.parcels.length, 'parcel')}. It still deploys, but it may run slowly for visitors.${note}`
@@ -255,7 +266,7 @@ export async function storageProblem(dest: Destination, pending: ModelNeed[]): P
   }
   if (!stats || bytes <= stats.maxAllowedBytes - stats.usedBytes) return null
   const mb = (n: number) => (n / 1_000_000).toFixed(1)
-  return `The new models need ${mb(bytes)} MB of World storage but only ${mb(Math.max(0, stats.maxAllowedBytes - stats.usedBytes))} MB is left.`
+  return `The new files need ${mb(bytes)} MB of World storage but only ${mb(Math.max(0, stats.maxAllowedBytes - stats.usedBytes))} MB is left.`
 }
 
 /**
@@ -263,7 +274,7 @@ export async function storageProblem(dest: Destination, pending: ModelNeed[]): P
  * destination becomes over_budget and this throws 422 over_budget; a destination that fits again is cleared.
  */
 export async function assertDeployable(dest: Destination): Promise<void> {
-  const problem = sceneLimitProblem(dest, await modelsInScene(dest.sceneId)) ?? (await storageProblem(dest, await pendingModels(dest)))
+  const problem = sceneLimitProblem(dest, await modelsInScene(dest.sceneId), await frameEntitiesInScene(dest.sceneId)) ?? (await storageProblem(dest, await pendingModels(dest)))
   if (problem) {
     if (dest.status !== 'over_budget' || dest.statusDetail !== problem) await setDestStatus(dest.id, 'over_budget', problem)
     throw new DeployerError(422, 'over_budget', problem)
@@ -291,10 +302,14 @@ const MIB = 1024 * 1024
  */
 export async function assertImportFits(dest: Destination): Promise<void> {
   const prefix = await pendingImportPrefix(dest)
-  const files = await getImportStore().list(prefix)
-  const models = modelsBesideBuilt(await modelsInScene(dest.sceneId), files.map((f) => f.key.slice(prefix.length)))
+  // An upload's own copy of Virvi's placements file is replaced (assembleImported), so it isn't counted
+  const files = (await getImportStore().list(prefix)).filter((f) => !isPlacementsFile(f.key.slice(prefix.length)))
+  const paths = files.map((f) => f.key.slice(prefix.length))
+  const models = modelsBesideBuilt(await modelsInScene(dest.sceneId), paths)
+  // Virvi's placements file (LIV-135), as the deploy will build it from the files above
+  const placements = placementsFile(await placementsInScene(dest.sceneId), [...paths, ...models.map((m) => m.file)])
   const budget = dclBudget(dest.parcels.length)
-  const count = files.length + models.length
+  const count = files.length + models.length + (placements ? 1 : 0)
   if (count > budget.files) {
     throw new ImportError(413, 'scene_too_big', `Your scene has ${plural(count, 'file')}, over the ${budget.files.toLocaleString('en-US')} your ${plural(dest.parcels.length, 'parcel')} allow. Remove some files to deploy it.`)
   }
@@ -303,7 +318,7 @@ export async function assertImportFits(dest: Destination): Promise<void> {
   if (big) {
     throw new ImportError(413, 'file_too_big', `${big.key.slice(prefix.length)} is ${(big.size / MIB).toFixed(1)} MB, over Decentraland's ${DCL_MAX_FILE_BYTES / MIB} MB limit for one file.`)
   }
-  const bytes = files.reduce((n, f) => n + f.size, 0) + models.reduce((n, m) => n + (m.bytes ?? 0), 0)
+  const bytes = files.reduce((n, f) => n + f.size, 0) + models.reduce((n, m) => n + (m.bytes ?? 0), 0) + (placements?.byteLength ?? 0)
   if (dest.kind === 'parcels') {
     const max = PARCEL_MAX_BYTES_PER_PARCEL * dest.parcels.length
     if (bytes > max) {
@@ -405,20 +420,24 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     assertBuiltPlace(destinationLocation(dest), built)
     // The creator's code runs the npm package, never Virvi's runtime: without Virvi's marker the scene stays adopted
     const { virvi: _virvi, ...metadata } = built
-    // Models placed in-world deploy with it, or a re-upload would take them out of the World
+    // LIV-133: the file its scene.json names as navmapThumbnail is the scene's own once this import is live
+    await db.update(sceneImports).set({ navmapThumbnail: navmapThumbnailFile(built) }).where(eq(sceneImports.id, dest.pendingImportId))
+    // Models placed in-world deploy with it, or a re-upload would take them out of the World; and their placements (LIV-135)
     const models = await modelsInScene(dest.sceneId)
+    const placements = await placementsInScene(dest.sceneId)
     const pointers = dest.kind === 'parcels' ? dest.parcels : undefined
-    return { assembled: await assembleImported({ files, metadata, timestamp, models, fetch, pointers }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
+    return { assembled: await assembleImported({ files, metadata, timestamp, models, fetch, pointers, placements }), baseEntityId: live?.id ?? null, storedPrefix: prefix }
   }
   const live = await liveBaseFor(dest)
   const models = await modelsInScene(dest.sceneId)
+  const placements = await placementsInScene(dest.sceneId)
   const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, dest.sceneId), columns: { name: true } })
   if (dest.lastEntityId == null && !dest.adopted) {
     const metadata = wizardSceneJson({
       title: scene?.name ?? worldOf(dest), world: worldOf(dest), base: dest.base, parcels: dest.parcels,
       spawn: dest.spawn ?? defaultSpawn(dest.parcels),
     })
-    return { assembled: await assembleFresh({ metadata, models, timestamp, fetch }), baseEntityId: live?.id ?? null }
+    return { assembled: await assembleFresh({ metadata, models, timestamp, fetch, placements }), baseEntityId: live?.id ?? null }
   }
   if (!live) throw new DeployerError(409, 'no_live_scene', say(dest, 'Your World has no scene to add models to', 'These parcels have no scene to add models to'))
   let adopted = dest.adopted
@@ -428,7 +447,8 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     adopted = false
     await db.update(dclWorldDestinations).set({ adopted: false, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
   }
-  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name }), baseEntityId: live.id }
+  const ownThumbnail = await ownThumbnailFile(dest.id)
+  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name, ownThumbnail, placements }), baseEntityId: live.id }
 }
 
 /** Every file in the entity, path and hash, read from the entity file itself. */
@@ -459,11 +479,13 @@ async function retimestamp(a: Assembled, timestamp: number): Promise<{ a: Assemb
 
 async function describeNewFiles(a: Assembled, storedPrefix?: string): Promise<NewFileSource[]> {
   const models = new Map(a.newFileSources.map((s) => [s.file, s]))
-  // An import: the built files from the store, the scene's models by URL
+  // An import: the built files from the store, the scene's models by URL, Virvi's placements inline (never the upload's)
   if (storedPrefix) {
     return [...contentOf(a)].map(([file, hash]) => {
       const model = models.get(file)
-      return model ? { file, hash, url: model.url } : { file, hash, storageKey: storedPrefix + file }
+      if (model) return { file, hash, url: model.url }
+      if (file === PLACEMENTS_FILE) return inlineSource(file, hash, a.files.get(hash)!)
+      return { file, hash, storageKey: storedPrefix + file }
     })
   }
   const existing = new Set(a.existing.map((e) => e.file))
@@ -475,14 +497,21 @@ async function describeNewFiles(a: Assembled, storedPrefix?: string): Promise<Ne
     if (model) { out.push({ file, hash, url: model.url }); continue }
     const rt = runtime.get(file)
     if (rt && (await dclHash(rt)) === hash) { out.push({ file, hash, runtimeVersion: DCL_RUNTIME_VERSION }); continue }
-    const bytes = a.files.get(hash)!
-    if (bytes.byteLength > INLINE_MAX_BYTES) {
-      console.error('[world-deployer] generated file too big to keep for signing:', file, bytes.byteLength)
-      throw new DeployerError(500, 'deploy_failed', GENERIC_FAILURE)
-    }
-    out.push({ file, hash, base64: Buffer.from(bytes).toString('base64') })
+    out.push(inlineSource(file, hash, a.files.get(hash)!))
   }
   return out
+}
+
+/**
+ * A generated file kept inline for signing. The placements file (LIV-134) is generated from the scene, which may change
+ * before the owner signs, so it is kept inline up to its own cap.
+ */
+function inlineSource(file: string, hash: string, bytes: Uint8Array): NewFileSource {
+  if (bytes.byteLength > (file === PLACEMENTS_FILE ? PLACEMENTS_MAX_BYTES : INLINE_MAX_BYTES)) {
+    console.error('[world-deployer] generated file too big to keep for signing:', file, bytes.byteLength)
+    throw new DeployerError(500, 'deploy_failed', GENERIC_FAILURE)
+  }
+  return { file, hash, base64: Buffer.from(bytes).toString('base64') }
 }
 
 async function rebuildNewFiles(sources: NewFileSource[], fetch: ModelFetcher): Promise<Map<string, Uint8Array>> {
@@ -548,7 +577,10 @@ export async function markFailed(
     .update(sceneDeployments)
     .set({ status: 'failed', errorMessage: message, ...(extra.assetBundle !== undefined ? { assetBundle: extra.assetBundle } : {}) })
     .where(and(eq(sceneDeployments.id, deploymentId), ...(onlyIf ? [eq(sceneDeployments.status, onlyIf)] : [])))
-    .returning({ id: sceneDeployments.id })
+    .returning({ id: sceneDeployments.id, sceneId: sceneDeployments.sceneId, deployedBy: sceneDeployments.deployedBy })
+  if (failed.length) {
+    recordJobFailure('deploy', err instanceof Error ? err : new Error(message), { sceneId: failed[0].sceneId, owner: failed[0].deployedBy ?? failed[0].sceneId })
+  }
   if (failed.length) await importDeployFailed([deploymentId], { code: errorCodeOf(err), message: extra.importMessage ?? message })
 }
 
@@ -596,6 +628,8 @@ export async function afterDeploy(
       .update(dclWorldDestinations)
       .set({ lastEntityId: entityId, deployedFiles: deployedFiles.map((f) => f.toLowerCase()), status: 'ok', statusDetail: null, pendingSince: null, updatedAt: now })
       .where(eq(dclWorldDestinations.id, dest.id))
+    // LIV-135: look for the map snapshot Decentraland may build for this entity
+    await startMapChecks(tx, dest.id, entityId, now)
     await tx
       .update(sceneDeployments)
       .set({
@@ -841,6 +875,8 @@ export async function submitSignedDeploy(deploymentId: string, chain: AuthChain,
   // Claim it, so a second submit of the same signature can't upload twice. An import's deployment is claimed with its
   // import, which must still be waiting for this very deployment (a newer upload may have replaced it).
   const claimed = await db.transaction(async (tx) => {
+    // The destination's lock (startVirviDeploy, a disconnect): a disconnect either cancels this row first or sees it deploying
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${dest.id}))`)
     if (bundle.importId) {
       const imp = await tx.update(sceneImports)
         .set({ status: 'deploying', updatedAt: new Date() })

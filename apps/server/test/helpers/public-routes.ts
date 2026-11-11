@@ -33,6 +33,7 @@ export const PUBLIC_EXACT = [
   'POST /api/ar/devices/:id/end', // the headset secret is the auth
   'POST /api/ar/devices/:id/spaces', // the headset secret is the auth
   'POST /api/ar/devices/:id/scenes', // the headset secret is the auth
+  'POST /api/ar/devices/:id/room-scans', // the headset secret is the auth (saves to the headset's approver only)
   'GET /.well-known/assetlinks.json', // public: the Android app links file, nothing of ours in it
   'POST /api/ingest', // DCL signed fetch / ingest key
   'POST /api/analytics/claims/check-signed', // DCL signed fetch
@@ -48,6 +49,9 @@ export const PUBLIC_EXACT = [
   'GET /api/studio/wall', // public: the studio wall of fame (shown designs' names, creators and signed preview frames)
   'GET /api/catalog/packs', // public credits list (no bearer)
   'POST /api/advertiser-leads', // public: landing page early-access form (anonymous visitors, never reads a bearer)
+  'POST /api/errors', // public: error reports from guests, trials and accounts; an optional bearer only picks the user to count (hashed), never grants anything
+  'POST /api/errors/reports', // public: a crash screen's Report; an optional bearer only names the sender
+  'POST /api/errors/prompt', // public: "should I ask?" for an error; an optional account bearer applies that account's own prompt state, nothing else
   'GET /api/studio/render-frames/*', // the signed frame token is the auth (no bearer)
   'GET /api/health', // health check
   'GET /api/instance', // public: install mode and version (no secrets)

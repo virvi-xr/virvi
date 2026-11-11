@@ -73,7 +73,7 @@ function PublishContent() {
           <p className="text-base font-medium text-green-200">Everything is live in {copy.place}.</p>
         ) : (
           <div>
-            <p className="text-base font-medium text-white">{pendingLine(pending.length)}</p>
+            <p className="text-base font-medium text-white">{pendingLine(pending)}</p>
             {pending.length > 0 && (
               <ul className="mt-2 list-disc space-y-0.5 pl-5 text-gray-400">
                 {pending.map((m) => <li key={m.elementId}>{m.name}</li>)}

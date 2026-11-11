@@ -66,6 +66,4 @@ See `.gitignore`:
 
 - `.env`: `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, for local runs. On Fly they are the app's secrets, which the
   owner imports with `fly secrets import -a vlm-studio-worker < apps/studio-worker/.env`.
-- `assets/`: the official Decentraland base avatar `.blend` files. They are built into the image, which lives only in
-  Fly's private registry.
 - `runs/`: the spike's raw runs.

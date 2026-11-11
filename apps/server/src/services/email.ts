@@ -25,6 +25,18 @@ export async function sendEmail(to: string, subject: string, html: string) {
   return true
 }
 
+const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+
+/** An invite to a Design Studio design (LIV-159); the link opens the invite page, which offers sign-up first. */
+export async function sendDesignInviteEmail(to: string, designName: string, inviterName: string, link: string) {
+  return sendEmail(to, `${inviterName} invited you to ${designName} on Virvi`, `
+    <h2>You've been invited to a design</h2>
+    <p>${escapeHtml(inviterName)} invited you to join ${escapeHtml(designName)} in the Virvi Design Studio.</p>
+    <p><a href="${escapeHtml(link)}" style="background:#3b82f6;color:white;padding:10px 20px;border-radius:8px;text-decoration:none;display:inline-block">Open the invite</a></p>
+    <p style="color:#666;font-size:12px">The invite expires in 14 days. If you don't have a Virvi account, you can make one first.</p>
+  `)
+}
+
 export async function sendPasswordResetEmail(to: string, token: string) {
   const resetUrl = `${config.publicUrl}/auth/reset-password?token=${token}`
   return sendEmail(to, 'Reset your Virvi password', `
@@ -44,3 +56,4 @@ export async function sendOrgInviteEmail(to: string, orgName: string, inviterNam
     <p style="color:#666;font-size:12px">If you don't have a Virvi account, you'll be able to create one.</p>
   `)
 }
+

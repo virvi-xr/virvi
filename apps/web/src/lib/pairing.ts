@@ -50,9 +50,21 @@ export function headsetPairingCodeFromPath(pathname: string, paramCode: string |
   return m ? normalizePairingCode(decode(m[1])) : null
 }
 
+/** The headset pairing page for a code someone typed, or null when nothing usable was typed (a full page load: one static page). */
+export function headsetPairHref(typed: string): string | null {
+  const code = normalizePairingCode(typed)
+  return code ? `/pair/headset/${encodeURIComponent(code)}/` : null
+}
+
 export function headsetErrorMessage(err: unknown): string {
   const e = err instanceof Error ? (err as ApiError) : null
   if (e?.body?.error === 'unverified') return 'Verify your email before approving a headset.'
   if (e?.status === 404) return 'This code has expired or was already used. Ask the headset for a new one.'
   return 'Something went wrong. Try again in a moment.'
+}
+
+/** The pairing page's opening line: a trial's headset signs in to its trial, an account's to its account. */
+export function headsetSignInPrompt(deviceName: string | null, trial: boolean): string {
+  const into = trial ? 'your trial' : 'your account'
+  return deviceName ? `"${deviceName}" wants to sign in to ${into}.` : `A headset wants to sign in to ${into}.`
 }

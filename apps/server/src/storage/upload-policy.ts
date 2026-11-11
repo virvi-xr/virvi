@@ -17,6 +17,11 @@ export function classifyUpload(filename: string, contentType: string, size: numb
   return { ok: false, status: 415, error: 'unsupported_type' }
 }
 
+/** A 3D model file (GLB or glTF), by name or declared type. */
+export function isModelFile(filename: string, contentType: string): boolean {
+  return /\.(glb|gltf)$/i.test(filename) || /^model\/gltf/i.test(contentType || '')
+}
+
 /** Storage extension derived from a classified (allowlisted) content type. */
 export function extensionFor(contentType: string): string {
   switch (contentType) {

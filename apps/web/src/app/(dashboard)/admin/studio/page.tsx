@@ -10,6 +10,13 @@ import {
   SCOPE_CATEGORY_WORDS, TX_HASH, adminActionMessage, adminManaRows, flagSummary, formatCents, readUnrecordedRefunds, writeUnrecordedRefund,
   type AdminManaRefund, type AdminMistakeReport, type AdminStudioFlag, type AdminWallEntry,
 } from '@/lib/studio'
+import AdminDesigns from './Designs'
+import Feedback from './Feedback'
+import Lessons from './Lessons'
+import Digest from './Digest'
+import KindDefaults from './KindDefaults'
+import ExampleIdeas from './ExampleIdeas'
+import FirstReply from './FirstReply'
 
 const dateFmt = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' })
 const smallButton = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50'
@@ -174,8 +181,24 @@ function TransferRow({ t, api, onChanged }: { t: ReturnType<typeof adminManaRows
   )
 }
 
+/** What Virvi learns from 👍 / 👎 (LIV-142): the 👎 queue, lessons for the agent, the weekly digest and the default agents; and the example ideas left. */
+function Learning() {
+  const [version, setVersion] = useState(0)
+  const [drafting, setDrafting] = useState(false)
+  return (
+    <>
+      <Feedback drafting={drafting} onLessonDrafted={() => setVersion((v) => v + 1)} />
+      <Lessons version={version} onList={(l) => setDrafting(l.drafting)} />
+      <Digest />
+      <KindDefaults />
+      <ExampleIdeas />
+      <FirstReply />
+    </>
+  )
+}
+
 /**
- * Admin: accounts the studio flagged for repeatedly sending work that isn't a design (dismiss, or pause their studio
+ * Admin: everyone's designs (open one to help as Virvi support), accounts the studio flagged for repeatedly sending work that isn't a design (dismiss, or pause their studio
  * access), and mistake reports past a piece's instant refunds (approve or decline).
  */
 export default function AdminStudioPage() {
@@ -233,12 +256,15 @@ export default function AdminStudioPage() {
       <PageHeader
         crumbs={['System', { label: 'Admin', href: '/admin' }, 'Studio flags']}
         title="Studio flags"
-        subtitle="Accounts whose studio messages keep getting turned down as work that isn't a wearable or emote, and mistake reports waiting for a decision."
+        subtitle="Everyone's designs to open and help with, accounts whose studio messages keep getting turned down as work that isn't a wearable or emote, and mistake reports waiting for a decision."
         actions={<Link href="/admin/studio/gift-codes" className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2 text-sm hover:border-gray-700">Gift codes</Link>}
       />
       {error && <p className="mb-4 text-sm text-red-400" role="alert">{error}</p>}
 
-      <section aria-labelledby="flags-title">
+      <AdminDesigns />
+      <Learning />
+
+      <section aria-labelledby="flags-title" className="mt-10">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 id="flags-title" className="text-lg font-semibold">Flagged accounts</h2>
           <div className="flex gap-1 text-sm">
@@ -309,7 +335,7 @@ export default function AdminStudioPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="font-medium">{r.piece.name}: revision {r.revisionNumber} <span className="text-sm text-gray-500">· {formatCents(r.refundCents)}</span></p>
-                    <p className="text-sm text-gray-400">{r.user.email ?? r.user.id} · {dateFmt.format(new Date(r.createdAt))}</p>
+                    <p className="text-sm text-gray-400">{r.user.gone ? 'Deleted account' : r.user.email ?? r.user.id} · {dateFmt.format(new Date(r.createdAt))}</p>
                   </div>
                   <div className="flex gap-2">
                     <PrimaryButton type="button" disabled={busy} onClick={() => act(() => api.approveAdminStudioReport(r.id))}>

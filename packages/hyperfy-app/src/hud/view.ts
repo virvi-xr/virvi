@@ -88,7 +88,7 @@ const MODES: Array<[TransformMode, string]> = [
 const PANELS: Array<[Exclude<Panel, null>, string]> = [
   ['layout', 'Scene layout'],
   ['streams', 'Streams'],
-  ['assets', 'Assets'],
+  ['assets', '3D Models'],
 ]
 const TAB_LABEL: Record<AssetTab, string> = { library: 'Library', catalog: 'Catalog', link: 'Link' }
 

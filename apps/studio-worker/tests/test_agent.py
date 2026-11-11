@@ -51,7 +51,7 @@ def test_codex_is_pointed_at_the_key_proxy(tmp_path):
 def test_progress_streams_from_claude(tmp_path):
     progress = []
     r = run(tmp_path, 'claude', 'claude_stream.jsonl', progress=progress)
-    command = ('blender -b /opt/assets/AvatarShape_A.blend --python build_cap.py -- --out out/hat/neon_cap_male.glb '
+    command = ('blender -b /opt/assets/AvatarShape_B.blend --python build_cap.py -- --out out/hat/neon_cap_male.glb '
                '--visor glow --and-a-long-tail')
     assert progress == ['Reading the wearable skill.', 'Running: ' + command[:80],
                         'The cap is built and passes the checker.']

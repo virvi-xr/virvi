@@ -102,10 +102,12 @@ describe('scene library uploads', () => {
     const sent = await app.inject({ method: 'POST', url: `/api/upload/ownr22/${a.json().assetId}`, payload: { fileData: 'AAAA' } })
     expect(sent.statusCode).toBe(201)
     expect((await start('strg22')).statusCode).toBe(403)
+    // A model lands in 3D Models (LIV-132)
     const links = await db.select().from(sceneLibrary).where(eq(sceneLibrary.sceneId, scene.id))
-    expect(links.map((l) => l.mediaAssetId)).toEqual([a.json().assetId])
+    expect(links.map((l) => l.assetItemId)).toEqual([a.json().assetId])
     expect(links[0].addedBy).toBe(owner.id)
-    void assetLibraryItems; void mediaAssets
+    expect((await db.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.id, a.json().assetId) }))!.uploadedBy).toBe(owner.id)
+    void mediaAssets
   })
 
 })

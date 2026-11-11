@@ -1,15 +1,11 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import { desc } from 'drizzle-orm'
 import type { AdminAdvertiserLead, AdvertiserLeadInput } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { advertiserLeads } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
+import { requireAdmin } from '../auth/admin.js'
 
-async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  if (request.user.role !== 'admin') {
-    return reply.status(403).send({ error: 'Forbidden', message: 'Admin access required' })
-  }
-}
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const MAX_FIELD = 200

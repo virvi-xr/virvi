@@ -80,6 +80,11 @@ describe('entrypoint schema fallback: scene imports', () => {
       const [pushed] = (await db.execute(sql`SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'dcl_destinations_parcels_base'`)) as unknown as Array<{ indexdef: string }>
       expect(pushed.indexdef).toMatch(/UNIQUE INDEX dcl_destinations_parcels_base ON public\.dcl_world_destinations USING btree \(base\) WHERE \(kind = 'parcels'::dcl_destination_kind\)/)
       expect(statements).toContain("CREATE UNIQUE INDEX IF NOT EXISTS dcl_destinations_parcels_base ON dcl_world_destinations (base) WHERE kind = 'parcels'")
+      // LIV-91: a trial's sandbox imports (compared above with the pushed table) and its import count on users
+      expect(statements).toContain('ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS sandbox BOOLEAN NOT NULL DEFAULT FALSE')
+      expect(fallbackScript()).toContain("'trial_imports INTEGER NOT NULL DEFAULT 0'")
+      const trialCols = (await columns('public', 'users')).filter((c) => c.column_name === 'trial_imports')
+      expect(trialCols.map((c) => [c.data_type, c.is_nullable, c.column_default])).toEqual([['integer', 'NO', '0']])
       const destCols = (await columns('public', 'dcl_world_destinations')).filter((c) => c.column_name === 'kind' || c.column_name === 'world_name')
       expect(destCols.map((c) => [c.column_name, c.is_nullable, c.column_default])).toEqual([['kind', 'NO', "'world'::dcl_destination_kind"], ['world_name', 'YES', null]])
     } finally {

@@ -5,7 +5,8 @@ import { Wallet } from 'ethers'
 import { and, eq, isNull } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { analyticsScenes, assetLibraryItems, dclWorldDestinations, locationSetups, sceneDeployments, scenes } from '../src/db/schema.js'
+import { analyticsScenes, assetLibraryItems, dclWorldDestinations, locationSetups, sceneDeployments, sceneElementInstances, sceneElements, scenes } from '../src/db/schema.js'
+import { PLACEMENTS_FILE, decodePlacements, defaultFrame } from '@virvixr/shared'
 import { chainSigner, verifyChain, virviSigner } from '../src/services/dcl/entity.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
@@ -14,7 +15,7 @@ import {
   DEPLOY_WINDOW_MS, DeployerError, liveBaseFor, prepareSignedDeploy, sceneLimitProblem, sceneTriangleWarning, startVirviDeploy,
   submitSignedDeploy, whenSettled,
 } from '../src/services/dcl/world-deployer.js'
-import { modelsInScene } from '../src/services/dcl/assemble.js'
+import { frameEntitiesInScene, modelsInScene } from '../src/services/dcl/assemble.js'
 import { getActiveSetup, linkLocation, linkWorldLocation } from '../src/setup/setups.js'
 import { resetDb } from './helpers/db.js'
 import { createElement, createInstance, createScene, createUser } from './helpers/factories.js'
@@ -301,6 +302,64 @@ describe('prepareSignedDeploy / submitSignedDeploy (mode B)', () => {
   })
 })
 
+describe('the placements snapshot (LIV-134)', () => {
+  /** `n` placed copies of the scene's first model element. */
+  async function place(presetId: string, n: number) {
+    const el = await db.query.sceneElements.findFirst({ where: eq(sceneElements.presetId, presetId) })
+    const rows = Array.from({ length: n }, (_, i) => ({ elementId: el!.id, position: { x: i % 32, y: 0, z: Math.floor(i / 32) }, rotation: { x: 0, y: 90, z: 0 } }))
+    await db.insert(sceneElementInstances).values(rows)
+    return el!
+  }
+  const placementsSent = (i = 0) => {
+    const d = fake.deployed[i]
+    const ref = (JSON.parse(dec(d.files.get(d.entityId)!)).content as Array<{ file: string; hash: string }>).find((c) => c.file === PLACEMENTS_FILE)
+    return ref ? decodePlacements(dec(d.files.get(ref.hash)!)) : null
+  }
+
+  it('a mode A deploy ships the placed copies with the runtime', async () => {
+    const { user, preset, dest } = await setup()
+    const el = await place(preset.id, 2)
+    const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+    await whenSettled(dep.id)
+    expect((await destRow(dest.id)).deployedFiles).toEqual(['bin/index.js', 'images/virvi/hud-v.png', 'models/virvi/a.glb', 'scene.json', PLACEMENTS_FILE])
+    // One insert: both copies share createdAt, so their order is the ids' (random)
+    expect(placementsSent()!.map((p) => [p.elementId, p.src, p.position]).sort((a, b) => (a[2] as { x: number }).x - (b[2] as { x: number }).x)).toEqual([
+      [el.id, 'models/virvi/a.glb', { x: 0, y: 0, z: 0 }],
+      [el.id, 'models/virvi/a.glb', { x: 1, y: 0, z: 0 }],
+    ])
+  })
+
+  it('a mode B deploy keeps a large snapshot to sign, and the World gets exactly the signed entity', async () => {
+    const { owner, user, preset, dest } = await setup({ mode: 'sign' })
+    await place(preset.id, 1200) // well over the 64 KB other generated files may take
+    const parcels = Array.from({ length: 8 }, (_, x) => `${x},0`) // room for 1,200 models
+    await db.update(dclWorldDestinations).set({ parcels }).where(eq(dclWorldDestinations.id, dest.id))
+    const prep = await prepareSignedDeploy(dest.id, user.id, { fetch: fetcher })
+    const kept = ((prep.deployment.assetBundle as { newFiles: Array<{ file: string; base64?: string }> }).newFiles).find((f) => f.file === PLACEMENTS_FILE)
+    expect(Buffer.from(kept!.base64!, 'base64').byteLength).toBeGreaterThan(64 * 1024)
+    // Moving a copy after prepare changes nothing that was signed
+    await db.update(sceneElementInstances).set({ position: { x: 99, y: 0, z: 99 } })
+    const done = await submitSignedDeploy(prep.deployment.id, await ownerChain(owner, prep.payload), { fetch: fetcher })
+    expect(done.status).toBe('deployed')
+    expect(fake.deployed[0].entityId).toBe(prep.payload)
+    expect(placementsSent()).toHaveLength(1200)
+    expect(placementsSent()!.some((p) => p.position.x === 99)).toBe(false)
+  })
+
+  it('moving a copy alone is nothing to deploy (LIV-135 decides on drift redeploys)', async () => {
+    const { user, preset, dest } = await setup()
+    await place(preset.id, 1)
+    await whenSettled((await startVirviDeploy(dest.id, user.id, { fetch: fetcher })).id)
+    goLive()
+    await db.update(sceneElementInstances).set({ position: { x: 5, y: 0, z: 5 } })
+    const dep = await startVirviDeploy(dest.id, user.id, { fetch: fetcher })
+    await whenSettled(dep.id)
+    expect(fake.deployed).toHaveLength(1)
+    expect((await depRow(dep.id)).errorMessage).toMatch(/already has everything/)
+    expect((await destRow(dest.id)).deployedFiles).toContain(PLACEMENTS_FILE)
+  })
+})
+
 describe('every deploy path checks first', () => {
   /** 3 placed trees of 8,000 triangles: 24,000, over the 20,000 two parcels allow. */
   async function overBudget(mode: 'virvi' | 'sign') {
@@ -334,6 +393,36 @@ describe('every deploy path checks first', () => {
     const { dest } = await overBudget('virvi')
     const [model] = await modelsInScene(dest.sceneId)
     expect(sceneLimitProblem(dest, [{ ...model, triangles: 1, instances: 1_000 }])).toMatch(/1,000 placed models/)
+  })
+
+  /** A framed image with `copies` copies on the scene's live preset (LIV-129). */
+  async function framed(presetId: string, copies: number, frame: Record<string, unknown> = defaultFrame('gallery')) {
+    const el = await createElement(presetId, { type: 'image', name: 'framed', properties: { textureSrc: 'a.png', frame } })
+    await db.insert(sceneElementInstances).values(Array.from({ length: copies }, () => ({ elementId: el.id, position: { x: 1, y: 1, z: 1 } })))
+    return el
+  }
+
+  it('frames count in the entity budget: 4 per framed copy, 8 for Gallery, enabled ones only (LIV-129)', async () => {
+    const { dest, preset } = await overBudget('virvi')
+    expect(await frameEntitiesInScene(dest.sceneId)).toBe(0)
+    await framed(preset.id, 2)
+    await framed(preset.id, 3, defaultFrame('thin'))
+    await framed(preset.id, 5, { ...defaultFrame(), enabled: false })
+    const hidden = await framed(preset.id, 7)
+    await db.update(sceneElements).set({ enabled: false }).where(eq(sceneElements.id, hidden.id))
+    await createElement(preset.id, { type: 'image', name: 'plain', properties: { textureSrc: 'b.png' } })
+    expect(await frameEntitiesInScene(dest.sceneId)).toBe(2 * 8 + 3 * 4)
+  })
+
+  it('a scene whose frames take it over the parcels\' entity limit is a problem, and says frames are part of it', async () => {
+    const { dest, user, preset } = await overBudget('virvi') // 3 placed models, 2 parcels: 380 entities
+    const models = await modelsInScene(dest.sceneId)
+    expect(sceneLimitProblem(dest, models, 377)).toBeNull()
+    expect(sceneLimitProblem(dest, models, 384)).toBe(
+      'Your scene has 3 placed models and 384 frame pieces, over the 380 your 2 parcels allow. Remove some models or frames to publish.')
+    await framed(preset.id, 48) // 384 frame entities
+    await expect(startVirviDeploy(dest.id, user.id, { fetch: fetcher })).rejects.toMatchObject({ status: 422, code: 'over_budget' })
+    expect((await destRow(dest.id)).statusDetail).toMatch(/384 frame pieces/)
   })
 
   it('new model bytes over the World storage left is 422 over_budget', async () => {

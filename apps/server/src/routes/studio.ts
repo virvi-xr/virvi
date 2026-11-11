@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { recordTrialBlocked } from '../auth/trial-events.js'
-import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import sharp from 'sharp'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads } from '../db/schema.js'
+import { studioDesignMembers, studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { isTrialUser } from '../studio/quota.js'
 import { authenticate } from '../middleware/auth.js'
@@ -12,24 +12,38 @@ import { getSubscription } from '../integrations/stripe.js'
 import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
 import { verifyRenderFrame, framePath, framePngPath } from '../studio/render-urls.js'
 import { isVirviAdmin, quoteFinalize, QuoteError } from '../studio/pricing.js'
+import { isAdminRequest } from '../auth/admin.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
 import { GiftCodeError, redeemGiftCode } from '../studio/gift-codes.js'
 import { isPaused } from '../studio/scope.js'
-import { currentRevisions, emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, recordCheck, requestSetRender, TOUR_VIEW } from '../studio/sets.js'
+import { designMembers, designRole, type DesignRole } from '../studio/members.js'
+import {
+  INVITE_ROLES, InviteError, acceptInvite, cancelDesignInvites, cancelInvite, createInvite, declineInvite, designInvites, endMembership,
+  findDesignInvite, findInviteByToken, findMyInvite, linkView, myInvites, normalEmail, normalWallet, publicInvite, resendInvite, setMemberRole, type InviteRole, type InviteTarget,
+} from '../studio/invites.js'
+import { publishStudio } from '../studio/events.js'
+import { helpWithPrompt, PromptHelpError } from '../studio/prompt-help.js'
+import { EXCLUDE_MAX, IDEAS_COUNT_MAX, IDEA_ID, IDEA_MOVES, IDEA_PLAYBACKS, findIdea, pickIdeas, retiredIdeas, type IdeaMove, type IdeaPlayback, type IdeaQuery } from '../studio/prompt-ideas.js'
+import { warmDesign } from '../studio/warm.js'
+import { emotesFor, freeFixesLeft, hasBuilding, queueFinalizeRenders, readySetFrames, recordCheck, requestSetRender, setDetail, TOUR_VIEW, wornRevisions } from '../studio/sets.js'
 import { isFurniture, SCENE_CATEGORY } from '../studio/scene.js'
-import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
+import { createFinalizeCheckout, createTopupCheckout, creditFor, entitlementFor, giftsFor, queueFinalize, pastPackages, readyPackages, reportMistake, PaymentError, type CheckoutMethod } from '../studio/payments.js'
 import { listWall, setWallChoice } from '../studio/wall.js'
 import { storedZip } from '../studio/zip.js'
+import { kindDefaults } from '../studio/defaults.js'
+import { clearRating, downRating, feedbackText, findRevision, parseRating, rateRevision, type RatingTag } from '../studio/ratings.js'
 import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
-  designDetail, openDesignCount, totalDesignCount, publicDesign, queuePrompt, requestOrbit, requestRender, usage, type Design, type View,
+  designDetail, openDesignCount, ownerWords, totalDesignCount, publicDesign, publicDesigns, queuePrompt, requestOrbit, requestRender, usage, type Design, type FixClipping, type View,
 } from '../studio/designs.js'
 
 /**
- * The dashboard's Design Studio API. A design belongs to its owner alone: anyone else gets 404. Files never leave
- * through here, only signed render-frame URLs (render-urls.ts).
+ * The dashboard's Design Studio API. Each design route needs a role on the design (studio/members.ts): `view` (any
+ * role), `work` (owner or collaborator: a viewer gets 403 viewer) or `own` (the owner). Anyone without a role gets 404,
+ * except a Virvi admin helping on the routes that say so (Virvi support: `allowAdmin`). Files never leave through here,
+ * only signed render-frame URLs (render-urls.ts) and a paid revision's package.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -39,6 +53,10 @@ const AGENTS = ['claude', 'codex', 'grok']
 const REPORT_MIN = 10
 const REPORT_MAX = 2000
 const MAX_PACKS = 10
+// A prompt help's answers to its own quick-pick questions
+const HELP_ANSWERS_MAX = 10
+const HELP_ANSWER_MAX = 80
+const HELP_ANSWER_ID = /^[a-z0-9_-]{1,40}$/
 
 async function studioOn(_request: FastifyRequest, reply: FastifyReply) {
   if (!config.studioEnabled) return reply.status(404).send({ error: 'not_found' })
@@ -68,11 +86,67 @@ const slugOf = (name: string, fallback: string) =>
 /** "Download all" holds the packages in memory while it zips them: past this, download them one by one. */
 const DOWNLOAD_ALL_MAX_BYTES = 500 * 1024 * 1024
 
-async function ownDesign(request: FastifyRequest): Promise<Design | null> {
+/**
+ * A design the request may use: its role on it (null for support), and whether it is a Virvi admin helping on someone
+ * else's (support).
+ */
+type Access = { d: Design; role: DesignRole | null; support: boolean }
+/** What a route needs: to see the design (any role), to work on it (owner, collaborator) or to own it. */
+type Need = 'view' | 'work' | 'own'
+/** A viewer on a work route: refused 403 viewer, not hidden. */
+const VIEWER = 'viewer' as const
+/** The routes a Virvi admin may use on anyone's design: reading it, prompting, renders and checks, finalizing, packages. */
+const SUPPORT = { allowAdmin: true }
+
+const NEEDED: Record<Need, readonly DesignRole[]> = { view: ['owner', 'collaborator', 'viewer'], work: ['owner', 'collaborator'], own: ['owner'] }
+
+/** Whether the request may help on other people's designs: the same admin check as every admin route. */
+const canSupport = isAdminRequest
+
+/**
+ * The design in the route's :id, if the request's role meets the need; else support (allowAdmin, a Virvi admin), else
+ * VIEWER (a viewer on a work route) or null (404: no such design, no role, or an own route).
+ */
+async function designAccess(request: FastifyRequest, opts: { need: Need; allowAdmin?: boolean }): Promise<Access | typeof VIEWER | null> {
   const id = (request.params as { id: string }).id
   if (!UUID.test(id)) return null
-  const [d] = await db.select().from(studioDesigns).where(and(eq(studioDesigns.id, id), eq(studioDesigns.ownerId, request.user.id)))
-  return d ?? null
+  const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, id))
+  if (!d) return null
+  const role = d.ownerId === request.user.id ? 'owner' : await designRole(d.id, request.user.id)
+  if (role && NEEDED[opts.need].includes(role)) return { d, role, support: false }
+  if (opts.allowAdmin && await canSupport(request)) return { d, role: null, support: true }
+  return role === 'viewer' && opts.need === 'work' ? VIEWER : null
+}
+
+/** designAccess's refusal: 403 viewer, or the stranger's 404. */
+const refused = (reply: FastifyReply, a: typeof VIEWER | null) =>
+  a === VIEWER ? reply.status(403).send({ error: 'viewer', code: 'viewer' }) : notFound(reply)
+
+/** The owner's design, for the routes that stay the owner's alone (rename, archive, agent, members). */
+async function ownDesign(request: FastifyRequest): Promise<Design | null> {
+  const a = await designAccess(request, { need: 'own' })
+  return a && a !== VIEWER ? a.d : null
+}
+
+/** What the page shows a Virvi admin helping on someone else's design: whose it is. */
+async function supportView(d: Design) {
+  const [u] = await db.select({ displayName: users.displayName, email: users.email, isTrial: users.isTrial }).from(users).where(eq(users.id, d.ownerId))
+  return { ownerId: d.ownerId, ownerName: u?.displayName ?? null, ownerEmail: u?.email ?? null, trial: !!u?.isTrial }
+}
+
+const OPEN_LIMIT = 'Your plan has no room for another open design. Designs with pieces left to finalize count as open: finalize or archive one to make room.'
+const CATEGORY = /^[a-z_]{1,32}$/
+const BAD_CATEGORIES = 'categories must be piece categories'
+
+/**
+ * A chosen set of pieces: a list in a body, or `a,b` in a query. Absent (or an empty query) is null, every piece;
+ * undefined is a malformed one.
+ */
+function chosenCategories(raw: unknown, from: 'body' | 'query'): string[] | null | undefined {
+  if (raw == null || (from === 'query' && raw === '')) return null
+  const list = from === 'query' ? (typeof raw === 'string' ? raw.split(',') : null) : raw
+  if (!Array.isArray(list) || !list.length || !list.every((c) => typeof c === 'string' && CATEGORY.test(c))) return undefined
+  return [...new Set(list as string[])]
 }
 
 /** Agent check shared by create and update. */
@@ -87,10 +161,10 @@ export function quoteRefusal(reply: FastifyReply, err: QuoteError) {
 
 /** New work: refused for an account whose studio access the owner paused (it can still finalize and download). */
 async function notPaused(request: FastifyRequest, reply: FastifyReply) {
-  if (await isPaused(request.user.id)) {
-    return reply.status(403).send({ error: 'Your studio access is paused', code: 'studio_paused' })
-  }
+  if (await isPaused(request.user.id)) return pausedRefusal(reply)
 }
+
+const pausedRefusal = (reply: FastifyReply) => reply.status(403).send({ error: 'Your studio access is paused', code: 'studio_paused' })
 
 async function openLimit(userId: string) {
   if (await isTrialUser(userId)) return config.trialDesigns
@@ -140,7 +214,7 @@ export default async function studioRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'account_required', action: 'more_designs' })
       }
     } else if ((await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
-      return reply.status(403).send({ error: 'Your plan has no room for another open design', code: 'open_design_limit' })
+      return reply.status(403).send({ error: OPEN_LIMIT, code: 'open_design_limit' })
     }
     const [d] = await db.insert(studioDesigns).values({
       ownerId: request.user.id,
@@ -151,18 +225,35 @@ export default async function studioRoutes(app: FastifyInstance) {
     return reply.status(201).send(publicDesign(d))
   })
 
+  // The person's own designs and the ones shared with them (an open membership), each with their role; a shared one
+  // names its owner. Shared designs are never the person's open or total designs (studio/designs.ts counts by owner).
   app.get('/api/studio/designs', trialAuth, async (request) => {
     const archived = (request.query as { archived?: string }).archived === 'true'
+    const uid = request.user.id
+    const shared = await db.select({ designId: studioDesignMembers.designId, role: studioDesignMembers.role }).from(studioDesignMembers)
+      .where(and(eq(studioDesignMembers.userId, uid), isNull(studioDesignMembers.leftAt)))
+    const roles = new Map(shared.map((m) => [m.designId, m.role as DesignRole]))
+    const mine = eq(studioDesigns.ownerId, uid)
     const rows = await db.select().from(studioDesigns)
-      .where(and(eq(studioDesigns.ownerId, request.user.id), archived ? isNotNull(studioDesigns.archivedAt) : isNull(studioDesigns.archivedAt)))
+      .where(and(roles.size ? or(mine, inArray(studioDesigns.id, [...roles.keys()])) : mine,
+        archived ? isNotNull(studioDesigns.archivedAt) : isNull(studioDesigns.archivedAt)))
       .orderBy(desc(studioDesigns.createdAt))
-    return rows.map(publicDesign)
+    const ownerIds = [...new Set(rows.filter((d) => d.ownerId !== uid).map((d) => d.ownerId))]
+    const names = new Map(ownerIds.length
+      ? (await db.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, ownerIds))).map((u) => [u.id, u.displayName])
+      : [])
+    return (await publicDesigns(rows)).map((p, i) => rows[i].ownerId === uid
+      ? { ...p, role: 'owner' as const }
+      : { ...p, role: roles.get(p.id)!, ownerName: names.get(rows[i].ownerId) ?? null })
   })
 
   app.get('/api/studio/designs/:id', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
-    return designDetail(d, new Date())
+    const a = await designAccess(request, { need: 'view', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    // `role`: the reader's (null for support); `members`: everyone on it, the owner first. The ratings shown are the
+    // reader's own; support sees the owner's.
+    const detail = { ...await designDetail(a.d, new Date(), a.support ? a.d.ownerId : request.user.id, a.support), role: a.role, members: await designMembers(a.d.id) }
+    return a.support ? { ...detail, support: await supportView(a.d) } : detail
   })
 
   app.patch('/api/studio/designs/:id', trialAuth, async (request, reply) => {
@@ -182,28 +273,178 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (b.archived !== undefined) {
       if (typeof b.archived !== 'boolean') return reply.status(400).send({ error: 'archived must be true or false' })
       if (!b.archived && d.archivedAt && !(await isTrialUser(request.user.id)) && (await openDesignCount(request.user.id)) >= (await openLimit(request.user.id))) {
-        return reply.status(403).send({ error: 'Your plan has no room for another open design', code: 'open_design_limit' })
+        return reply.status(403).send({ error: OPEN_LIMIT, code: 'open_design_limit' })
       }
       set.archivedAt = b.archived ? (d.archivedAt ?? new Date()) : null
     }
+    const archiving = !!set.archivedAt && !d.archivedAt
     const [updated] = Object.keys(set).length
-      ? await db.update(studioDesigns).set(set).where(eq(studioDesigns.id, d.id)).returning()
+      ? await db.transaction(async (tx) => {
+        const rows = await tx.update(studioDesigns).set(set).where(eq(studioDesigns.id, d.id)).returning()
+        // Archiving cancels the design's invites (its members stay)
+        if (archiving) await cancelDesignInvites(d.id, set.archivedAt!, tx)
+        return rows
+      })
       : [d]
-    return publicDesign(updated)
+    return (await publicDesigns([updated]))[0]
+  })
+
+  // ── People: invites, roles, removing and leaving (studio/invites.ts). None of it is open to trials. ──
+
+  /** An invite route's refusal, as the page sees it. */
+  const inviteRefusal = (reply: FastifyReply, err: unknown) => {
+    if (err instanceof InviteError) return reply.status(err.status).send({ error: err.code, code: err.code })
+    throw err
+  }
+  const inviteRole = (raw: unknown): InviteRole | undefined =>
+    (INVITE_ROLES as readonly unknown[]).includes(raw) ? raw as InviteRole : undefined
+
+  // Everyone on the design, by anyone on it; the owner also sees the unanswered invites (expired ones too, to resend)
+  app.get('/api/studio/designs/:id/people', auth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'view' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const members = await designMembers(a.d.id)
+    return a.role === 'owner' ? { members, invites: await designInvites(a.d.id) } : { members }
+  })
+
+  app.post('/api/studio/designs/:id/invites', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    // An email or a linked wallet address, not both
+    const b = (request.body ?? {}) as { email?: unknown; wallet?: unknown; role?: unknown }
+    if ((b.email == null) === (b.wallet == null)) return reply.status(400).send({ error: 'email or wallet is required, not both' })
+    let target: InviteTarget
+    if (b.wallet != null) {
+      const wallet = normalWallet(b.wallet)
+      if (!wallet) return reply.status(400).send({ error: 'wallet must be a 0x wallet address' })
+      target = { wallet }
+    } else {
+      const email = normalEmail(b.email)
+      if (!email) return reply.status(400).send({ error: 'email must be an email address' })
+      target = { email }
+    }
+    const role = b.role == null ? 'collaborator' : inviteRole(b.role)
+    if (!role) return reply.status(400).send({ error: 'role must be collaborator or viewer' })
+    try {
+      return reply.status(201).send({ invite: publicInvite(await createInvite(d, target, role, new Date())) })
+    } catch (err) {
+      return inviteRefusal(reply, err)
+    }
+  })
+
+  app.post('/api/studio/designs/:id/invites/:inviteId/cancel', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const { inviteId } = request.params as { inviteId: string }
+    const i = UUID.test(inviteId) ? await findDesignInvite(d.id, inviteId) : null
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    await cancelInvite(i, new Date())
+    return reply.status(204).send()
+  })
+
+  // The same link, 14 more days, mailed again
+  app.post('/api/studio/designs/:id/invites/:inviteId/resend', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const { inviteId } = request.params as { inviteId: string }
+    const i = UUID.test(inviteId) ? await findDesignInvite(d.id, inviteId) : null
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    try {
+      return { invite: publicInvite(await resendInvite(i, d.name, new Date())) }
+    } catch (err) {
+      return inviteRefusal(reply, err)
+    }
+  })
+
+  // The invites matched to my account that I can still accept
+  app.get('/api/studio/invites', auth, async (request) => myInvites(request.user.id, new Date()))
+
+  // Accepting or declining an invite matched to my account (anyone else's is 404). Not behind notPaused.
+  app.post('/api/studio/invites/:inviteId/accept', auth, async (request, reply) => {
+    const { inviteId } = request.params as { inviteId: string }
+    const i = UUID.test(inviteId) ? await findMyInvite(request.user.id, inviteId) : null
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    try {
+      return await acceptInvite(i, request.user.id, new Date())
+    } catch (err) {
+      return inviteRefusal(reply, err)
+    }
+  })
+
+  app.post('/api/studio/invites/:inviteId/decline', auth, async (request, reply) => {
+    const { inviteId } = request.params as { inviteId: string }
+    const i = UUID.test(inviteId) ? await findMyInvite(request.user.id, inviteId) : null
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    await declineInvite(i, new Date())
+    return reply.status(204).send()
+  })
+
+  // An invite's link: the token is the credential, so any signed-in account holding it may see and accept it (how an
+  // invite sent to an email with no account yet is claimed).
+  const INVITE_TOKEN = /^[A-Za-z0-9_-]{20,100}$/
+  const linkInvite = async (request: FastifyRequest) => {
+    const { token } = request.params as { token: string }
+    return INVITE_TOKEN.test(token) ? findInviteByToken(token) : null
+  }
+
+  app.get('/api/studio/invite-links/:token', auth, async (request, reply) => {
+    const i = await linkInvite(request)
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    return linkView(i, new Date())
+  })
+
+  app.post('/api/studio/invite-links/:token/accept', auth, async (request, reply) => {
+    const i = await linkInvite(request)
+    if (!i) return reply.status(404).send({ error: 'invite_not_found' })
+    try {
+      return await acceptInvite(i, request.user.id, new Date())
+    } catch (err) {
+      return inviteRefusal(reply, err)
+    }
+  })
+
+  app.patch('/api/studio/designs/:id/members/:userId', work, async (request, reply) => {
+    const d = await ownDesign(request)
+    if (!d) return notFound(reply)
+    const { userId } = request.params as { userId: string }
+    const role = inviteRole((request.body as { role?: unknown } | undefined)?.role)
+    if (!role) return reply.status(400).send({ error: 'role must be collaborator or viewer' })
+    if (userId === d.ownerId) return reply.status(400).send({ error: 'owner', code: 'owner' })
+    if (!UUID.test(userId) || !(await setMemberRole(d.id, userId, role))) return reply.status(404).send({ error: 'member_not_found' })
+    return { userId, role }
+  })
+
+  // The owner removes anyone; a member removes only themselves (leaving). The owner can't be removed or leave. The
+  // live room disconnects them (member_removed).
+  app.delete('/api/studio/designs/:id/members/:userId', auth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'view' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const { userId } = request.params as { userId: string }
+    if (a.role !== 'owner' && userId !== request.user.id) return reply.status(404).send({ error: 'member_not_found' })
+    if (userId === a.d.ownerId) return reply.status(400).send({ error: 'owner', code: 'owner' })
+    if (!UUID.test(userId) || !(await endMembership(a.d.id, userId, new Date()))) return reply.status(404).send({ error: 'member_not_found' })
+    await publishStudio(a.d.id, { type: 'member_removed', userId })
+    return reply.status(204).send()
   })
 
   app.post('/api/studio/designs/:id/prompts', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; continue?: unknown; fixChecks?: unknown }
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    const byAdminId = a.support ? request.user.id : undefined
+    const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; continue?: unknown; fixChecks?: unknown; ideaId?: unknown }
+    // The example prompt the words came from: one of this kind's ideas. It only says what to retire, never reaches the agent
+    if (b.ideaId != null && (typeof b.ideaId !== 'string' || findIdea(b.ideaId)?.kind !== d.kind)) {
+      return reply.status(400).send({ error: 'ideaId must be one of the example prompts for this kind' })
+    }
     const cont = b.continue === true
     const fixChecks = b.fixChecks === true
     if (fixChecks) {
-      const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixChecks: true }, new Date())
+      const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixChecks: true, byAdminId, senderId: request.user.id }, new Date())
       if (!r.ok) return reply.status(r.status).send(r.body)
       return reply.status(202).send({ jobId: r.jobId })
     }
-    if (!cont && (typeof b.text !== 'string' || !b.text.trim() || b.text.length > MAX_PROMPT)) {
+    if (!cont && (typeof b.text !== 'string' || !ownerWords(b.text) || b.text.length > MAX_PROMPT)) {
       return reply.status(400).send({ error: `text must be 1-${MAX_PROMPT} characters` })
     }
     let slots: string[] | null = null
@@ -215,18 +456,138 @@ export default async function studioRoutes(app: FastifyInstance) {
       }
       slots = [...new Set(b.selectedSlots as string[])]
     }
-    const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont }, new Date())
+    const ideaId = !cont && typeof b.ideaId === 'string' ? b.ideaId : undefined
+    const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId, ideaId, senderId: request.user.id }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
   })
 
+  // Example prompts for the first message, following the chips, from the ideas nobody has used yet (prompt-ideas.ts).
+  // Who may read them is who may send a prompt. `exclude`: the ids the viewer already saw this visit.
+  app.get('/api/studio/designs/:id/prompt-ideas', trialAuth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const q = request.query as { count?: string; exclude?: string; slots?: string; mode?: string; move?: string; playback?: string }
+    const count = q.count == null ? 3 : Number(q.count)
+    if (!Number.isInteger(count) || count < 1 || count > IDEAS_COUNT_MAX) return reply.status(400).send({ error: `count must be 1-${IDEAS_COUNT_MAX}` })
+    const list = (raw: string | undefined) => (raw ? raw.split(',') : [])
+    const slots = list(q.slots)
+    if (!slots.every((s) => (WEARABLE_CATEGORIES as readonly string[]).includes(s))) return reply.status(400).send({ error: 'slots must be wearable categories' })
+    if (q.mode != null && !['slots', 'outfit', 'unsure'].includes(q.mode)) return reply.status(400).send({ error: 'mode must be slots, outfit or unsure' })
+    if (q.move && !(IDEA_MOVES as readonly string[]).includes(q.move)) return reply.status(400).send({ error: `move must be ${IDEA_MOVES.join(', ')}` })
+    if (q.playback && !(IDEA_PLAYBACKS as readonly string[]).includes(q.playback)) return reply.status(400).send({ error: 'playback must be loop or once' })
+    const kind = a.d.kind
+    if (kind !== 'wearable' && kind !== 'emote') return { ideas: [], more: false }
+    const query: IdeaQuery = kind === 'wearable'
+      ? { kind, mode: (q.mode as 'slots' | 'outfit' | 'unsure' | undefined) ?? 'slots', slots: [...new Set(slots)] }
+      : { kind, move: (q.move || null) as IdeaMove | null, playback: (q.playback || null) as IdeaPlayback | null }
+    // The latest ids when past the cap; anything that isn't an id can't match one, so it is dropped
+    const exclude = new Set(list(q.exclude).filter((id) => IDEA_ID.test(id)).slice(-EXCLUDE_MAX))
+    const r = pickIdeas(query, { retired: await retiredIdeas(), exclude, count })
+    return { ideas: r.ideas.map((i) => ({ id: i.id, text: i.text })), more: r.more }
+  })
+
+  // "Improve my prompt": a rewrite of the draft and a few quick-pick questions, never sent to the agent. Who may use it
+  // is who may send a prompt (support too); it has its own daily limit per account, apart from the prompt allowance.
+  app.post('/api/studio/designs/:id/prompt-help', trialWork, async (request, reply) => {
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const b = (request.body ?? {}) as { text?: unknown; selectedSlots?: unknown; answers?: unknown }
+    if (typeof b.text !== 'string' || !ownerWords(b.text) || b.text.length > MAX_PROMPT) {
+      return reply.status(400).send({ error: `text must be 1-${MAX_PROMPT} characters` })
+    }
+    let slots: string[] | null = null
+    if (b.selectedSlots != null) {
+      if (a.d.kind !== 'wearable') return reply.status(400).send({ error: 'only a wearable design has slots' })
+      if (!Array.isArray(b.selectedSlots) || !b.selectedSlots.length
+        || !b.selectedSlots.every((s) => (WEARABLE_CATEGORIES as readonly string[]).includes(s))) {
+        return reply.status(400).send({ error: 'selectedSlots must be wearable categories' })
+      }
+      slots = [...new Set(b.selectedSlots as string[])]
+    }
+    let answers: Record<string, string> | null = null
+    if (b.answers != null) {
+      const entries = typeof b.answers === 'object' && !Array.isArray(b.answers) ? Object.entries(b.answers as object) : null
+      if (!entries || entries.length > HELP_ANSWERS_MAX
+        || !entries.every(([k, v]) => HELP_ANSWER_ID.test(k) && typeof v === 'string' && v.trim() && v.length <= HELP_ANSWER_MAX)) {
+        return reply.status(400).send({ error: `answers must be at most ${HELP_ANSWERS_MAX} short answers` })
+      }
+      answers = Object.fromEntries(entries.map(([k, v]) => [k, (v as string).trim()]))
+    }
+    try {
+      return await helpWithPrompt(request.user.id, { kind: a.d.kind as 'wearable' | 'emote' | 'scene', text: ownerWords(b.text), selectedSlots: slots, answers }, new Date())
+    } catch (err) {
+      if (err instanceof PromptHelpError) return reply.status(err.status).send({ error: err.code })
+      throw err
+    }
+  })
+
+  // Starting the design's machine while the person writes a prompt (studio/warm.ts): who may is who may send one. It
+  // answers 204 whether it warmed or there was no point, so the page never shows anything for it.
+  app.post('/api/studio/designs/:id/warm', trialWork, async (request, reply) => {
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    await warmDesign(a.d, { support: a.support, userId: request.user.id }, new Date())
+    return reply.status(204).send()
+  })
+
+  // 👍 / 👎 on a revision (an agent reply that changed pieces, named by its job): by the owner or a collaborator, each
+  // their own. Support sees the
+  // ratings in the design detail but doesn't rate (LIV-142).
+  app.put('/api/studio/designs/:id/revisions/:jobId/rating', trialAuth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'work' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    const { jobId } = request.params as { jobId: string }
+    if (!UUID.test(jobId)) return notFound(reply)
+    const input = parseRating(request.body)
+    if (typeof input === 'string') return reply.status(400).send({ error: input })
+    const r = await rateRevision(d, jobId, request.user.id, input, new Date())
+    return r ?? reply.status(404).send({ error: 'revision_not_found' })
+  })
+
+  app.delete('/api/studio/designs/:id/revisions/:jobId/rating', trialAuth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'work' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    const { jobId } = request.params as { jobId: string }
+    if (!UUID.test(jobId)) return notFound(reply)
+    if (!(await clearRating(d.id, jobId, request.user.id))) return reply.status(404).send({ error: 'revision_not_found' })
+    return reply.status(204).send()
+  })
+
+  // "Try again with this feedback": a 👎'd revision's one free prompt, built from its tags and note
+  app.post('/api/studio/designs/:id/revisions/:jobId/try-again', trialWork, async (request, reply) => {
+    const a = await designAccess(request, { need: 'work' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    const { jobId } = request.params as { jobId: string }
+    if (!UUID.test(jobId)) return notFound(reply)
+    const rev = await findRevision(d.id, jobId)
+    if (!rev) return reply.status(404).send({ error: 'revision_not_found' })
+    const down = await downRating(jobId, request.user.id)
+    if (!down) return reply.status(409).send({ error: 'not_rated_down', code: 'not_rated_down' })
+    const text = feedbackText(rev.names, down.tags as RatingTag[], down.note)
+    const r = await queuePrompt(d, { text, selectedSlots: null, continue: false, feedbackFor: jobId, senderId: request.user.id }, new Date())
+    if (!r.ok) return reply.status(r.status).send(r.body)
+    return reply.status(202).send({ jobId: r.jobId })
+  })
+
+  // The agent a new design of each kind starts on, when an admin set one (null: the page's own default)
+  app.get('/api/studio/defaults', trialAuth, async () => ({ agents: await kindDefaults() }))
+
   app.get('/api/studio/designs/:id/finalize', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
+    // Support's quote is an admin's: every line free
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    // The dialog re-quotes as pieces are ticked: the total, free finalizes and first-piece prices are the server's
+    const categories = chosenCategories((request.query as { categories?: unknown }).categories, 'query')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
     try {
       const admin = await isVirviAdmin(request.user.id)
       const now = new Date()
-      return await quoteFinalize(d, null, [], admin ? 0 : await giftsFor(request.user.id, d.id, now), undefined,
+      return await quoteFinalize(d, categories, [], admin ? 0 : await giftsFor(request.user.id, d.id, now), undefined,
         { admin, credit: admin ? 0 : await creditFor(request.user.id, d.id, now) })
     } catch (err) {
       if (err instanceof QuoteError) return quoteRefusal(reply, err)
@@ -235,20 +596,27 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    // Not refused for a paused account: pausing stops new work, never paying for what was made (owner or collaborator)
+    const d = a.d
     const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown; method?: unknown }
+    if (a.support) {
+      // A Virvi admin finalizing for the owner: free, granted at once, the owner's as if they had paid
+      const chosen = chosenCategories(b.categories, 'body')
+      if (chosen === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+      try {
+        return await createFinalizeCheckout(d, { id: d.ownerId, email: null }, chosen, {}, new Date(), 'card', { byAdminId: request.user.id })
+      } catch (err) {
+        return checkoutRefusal(reply, err)
+      }
+    }
     const method = checkoutMethod(b.method)
     if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
     // an admin's finalize is granted without Stripe, and MANA doesn't use Stripe, so neither waits on it being set up
     if (method === 'card' && !config.stripeSecretKey && !(await isVirviAdmin(request.user.id))) return paymentsOff(reply)
-    let categories: string[] | null = null
-    if (b.categories != null) {
-      if (!Array.isArray(b.categories) || !b.categories.length || !b.categories.every((c) => typeof c === 'string' && /^[a-z_]{1,32}$/.test(c))) {
-        return reply.status(400).send({ error: 'categories must be piece categories' })
-      }
-      categories = [...new Set(b.categories as string[])]
-    }
+    const categories = chosenCategories(b.categories, 'body')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
     const reports: Record<string, string> = {}
     if (b.reports != null) {
       if (typeof b.reports !== 'object' || Array.isArray(b.reports)) return reply.status(400).send({ error: 'reports must map a category to what was wrong' })
@@ -266,9 +634,12 @@ export default async function studioRoutes(app: FastifyInstance) {
     }
   })
 
+  // Anyone on the design may ask, a viewer too: reportMistake refuses everyone but the revision's payer (a payer since
+  // made a viewer still reports on what they paid for)
   app.post('/api/studio/designs/:id/pieces/:category/revisions/:number/report', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
+    const a = await designAccess(request, { need: 'view' })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
     if (!config.stripeSecretKey) return paymentsOff(reply)
     const { category, number } = request.params as { category: string; number: string }
     if (!/^[a-z_]{1,32}$/.test(category) || !/^[1-9][0-9]{0,5}$/.test(number)) return reply.status(400).send({ error: 'unknown revision' })
@@ -277,16 +648,17 @@ export default async function studioRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: `a report must be ${REPORT_MIN}-${REPORT_MAX} characters` })
     }
     try {
-      return await reportMistake(d, category, Number(number), text.trim(), new Date())
+      return await reportMistake(d, category, Number(number), text.trim(), new Date(), request.user.id)
     } catch (err) {
       return checkoutRefusal(reply, err)
     }
   })
 
   /** The piece's paid revision from the route params, or the refusal already sent. */
-  async function paidRevision(request: FastifyRequest, reply: FastifyReply) {
-    const d = await ownDesign(request)
-    if (!d) return void notFound(reply)
+  async function paidRevision(request: FastifyRequest, reply: FastifyReply, need: Need) {
+    const a = await designAccess(request, { need, ...SUPPORT })
+    if (!a || a === VIEWER) return void refused(reply, a)
+    const d = a.d
     const { category, number } = request.params as { category: string; number: string }
     if (!/^[a-z_]{1,32}$/.test(category) || !/^[1-9][0-9]{0,5}$/.test(number)) return void reply.status(400).send({ error: 'unknown revision' })
     const found = await entitlementFor(d.id, category, Number(number))
@@ -294,11 +666,12 @@ export default async function studioRoutes(app: FastifyInstance) {
     return { d, ...found }
   }
 
-  // "Download all": every piece's newest ready package in one zip, to its owner. With the route below, the only ways
+  // "Download all": every piece's newest ready package in one zip, to anyone on the design. With the route below, the only ways
   // a model file leaves.
   app.get('/api/studio/designs/:id/packages', auth, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
+    const a = await designAccess(request, { need: 'view', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
     const ready = await readyPackages(d.id)
     if (!ready.length) return reply.status(409).send({ error: 'nothing_ready', code: 'nothing_ready' })
     const files: { name: string; data: Buffer }[] = []
@@ -322,33 +695,51 @@ export default async function studioRoutes(app: FastifyInstance) {
       .send(zip)
   })
 
-  // The paid revision's package, to its owner
-  app.get('/api/studio/designs/:id/pieces/:category/revisions/:number/package', auth, async (request, reply) => {
-    const paid = await paidRevision(request, reply)
-    if (!paid) return reply
-    const { e, name } = paid
-    if (e.status !== 'ready' || !e.packageKey) return reply.status(409).send({ error: e.status, code: e.status })
-    const obj = await getStudioStore().getStream(e.packageKey)
+  /** A ready package, streamed as `<piece>-r<n>.zip`. */
+  async function sendPackage(reply: FastifyReply, p: { packageKey: string; pieceName: string; category: string; revisionNumber: number }) {
+    const obj = await getStudioStore().getStream(p.packageKey)
     if (!obj) return reply.status(404).send({ error: 'package_missing', code: 'package_missing' })
-    const slug = slugOf(name, e.category)
-    const { number } = request.params as { number: string }
     if (obj.length !== undefined) reply.header('Content-Length', obj.length)
     return reply
       .type('application/zip')
-      .header('Content-Disposition', `attachment; filename="${slug}-r${number}.zip"`)
+      .header('Content-Disposition', `attachment; filename="${slugOf(p.pieceName, p.category)}-r${p.revisionNumber}.zip"`)
       .header('Cache-Control', 'private, no-store')
       .send(obj.body)
+  }
+
+  // The paid revision's package, to anyone on the design
+  app.get('/api/studio/designs/:id/pieces/:category/revisions/:number/package', auth, async (request, reply) => {
+    const paid = await paidRevision(request, reply, 'view')
+    if (!paid) return reply
+    const { e, name } = paid
+    if (e.status !== 'ready' || !e.packageKey) return reply.status(409).send({ error: e.status, code: e.status })
+    const { number } = request.params as { number: string }
+    return sendPackage(reply, { packageKey: e.packageKey, pieceName: name, category: e.category, revisionNumber: Number(number) })
+  })
+
+  // "Finalized while you were on it": the packages kept from designs the person has left (pastPackages). Not for
+  // trials: they can't be invited, so they never leave a design.
+  app.get('/api/studio/past-packages', auth, async (request) =>
+    (await pastPackages(request.user.id)).map(({ entitlementId, designName, category, revisionNumber, finalizedAt }) =>
+      ({ entitlementId, designName, category, revisionNumber, finalizedAt })))
+
+  app.get('/api/studio/past-packages/:entitlementId/package', auth, async (request, reply) => {
+    const { entitlementId } = request.params as { entitlementId: string }
+    const [p] = UUID.test(entitlementId) ? await pastPackages(request.user.id, entitlementId) : []
+    if (!p) return reply.status(404).send({ error: 'not_found' })
+    return sendPackage(reply, p)
   })
 
   app.post('/api/studio/designs/:id/pieces/:category/revisions/:number/package/retry', auth, async (request, reply) => {
-    const paid = await paidRevision(request, reply)
+    const paid = await paidRevision(request, reply, 'work')
     if (!paid) return reply
     if (paid.e.status !== 'failed') return reply.status(409).send({ error: 'not_failed', code: 'not_failed' })
     const [jobId] = await queueFinalize(paid.d.id, [paid.e.id], new Date())
     return reply.status(202).send({ jobId })
   })
 
-  app.post('/api/studio/topups', work, async (request, reply) => {
+  // Not behind notPaused: pausing never blocks paying (owner, 2026-11-10)
+  app.post('/api/studio/topups', auth, async (request, reply) => {
     const b = (request.body ?? {}) as { packs?: unknown; method?: unknown }
     const method = checkoutMethod(b.method)
     if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
@@ -408,8 +799,9 @@ export default async function studioRoutes(app: FastifyInstance) {
     files.removeAllContentTypeParsers()
     files.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: UPLOAD_LIMITS.modelBytes + 1024 }, (_req, body, done) => done(null, body))
     files.post('/api/studio/designs/:id/uploads', { ...trialWork, bodyLimit: UPLOAD_LIMITS.modelBytes + 1024 }, async (request, reply) => {
-      const d = await ownDesign(request)
-      if (!d) return notFound(reply)
+      const a = await designAccess(request, { need: 'work' })
+      if (!a || a === VIEWER) return refused(reply, a)
+      const d = a.d
       const name = (request.query as { name?: unknown }).name
       // A trial's files total TRIAL_UPLOAD_BYTES across all its designs; more takes an account
       if (request.user.trial) {
@@ -431,24 +823,27 @@ export default async function studioRoutes(app: FastifyInstance) {
   })
 
   app.get('/api/studio/designs/:id/uploads/:uploadId', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
+    const a = await designAccess(request, { need: 'view', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
     const uploadId = (request.params as { uploadId: string }).uploadId
-    const u = d && UUID.test(uploadId) ? await findUpload(d.id, uploadId) : null
+    const u = UUID.test(uploadId) ? await findUpload(a.d.id, uploadId) : null
     const obj = u ? await getStudioStore().get(uploadKey(u.designId, u.id)) : null
     if (!u || !obj) return reply.status(404).send({ error: 'upload_not_found' })
     return reply.type(u.contentType).header('Cache-Control', 'private, max-age=3600').header('X-Content-Type-Options', 'nosniff').send(obj.body)
   })
 
   app.delete('/api/studio/designs/:id/uploads/:uploadId', trialAuth, async (request, reply) => {
-    const d = await ownDesign(request)
+    const a = await designAccess(request, { need: 'work' })
+    if (!a || a === VIEWER) return refused(reply, a)
     const uploadId = (request.params as { uploadId: string }).uploadId
-    if (!d || !UUID.test(uploadId) || !(await deleteUpload(d.id, uploadId))) return reply.status(404).send({ error: 'upload_not_found' })
+    if (!UUID.test(uploadId) || !(await deleteUpload(a.d.id, uploadId))) return reply.status(404).send({ error: 'upload_not_found' })
     return reply.status(204).send()
   })
 
   app.post('/api/studio/designs/:id/renders', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
     const b = (request.body ?? {}) as { category?: unknown; bodyShape?: unknown; outfit?: unknown; emote?: unknown; mode?: unknown }
     if (d.kind === 'scene') {
       // Inspect for any scene piece; the scale turn for furniture (a building has the walk-through instead)
@@ -478,26 +873,45 @@ export default async function studioRoutes(app: FastifyInstance) {
     return r
   })
 
-  // An emote view with every piece worn: a base emote for a wearable design, the design's own (null) for an emote
+  /**
+   * The set view a request names (a body or a query): the walk-through for a scene design (it has a building), else an
+   * emote view (a base emote for a wearable design, the design's own, null, for an emote) and Finalize's selection.
+   */
+  const setViewOf = async (d: Design, b: { bodyShape?: unknown; outfit?: unknown; emote?: unknown; categories?: unknown }, from: 'body' | 'query') => {
+    if (d.kind === 'scene') {
+      if (!(await hasBuilding(d.id))) return { ok: false, status: 404, error: 'no_building' } as const
+      return { ok: true, view: TOUR_VIEW, categories: null } as const
+    }
+    if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return { ok: false, status: 400, error: 'bodyShape must be male or female' } as const
+    if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return { ok: false, status: 400, error: 'unknown outfit' } as const
+    const emote = (from === 'query' && b.emote === '' ? null : b.emote) ?? null
+    if (d.kind === 'emote' ? emote !== null : !(BASE_EMOTES as readonly unknown[]).includes(emote)) return { ok: false, status: 400, error: 'unknown emote' } as const
+    // Finalize's selection: only the chosen and finalized pieces are worn
+    const categories = chosenCategories(b.categories, from)
+    if (categories === undefined) return { ok: false, status: 400, error: BAD_CATEGORIES } as const
+    return { ok: true, view: { bodyShape: b.bodyShape, outfit: b.outfit, emote } as View, categories } as const
+  }
+
+  // An emote view with every piece worn, or a scene's walk-through: its frames when ready, else queued now
   app.post('/api/studio/designs/:id/set-renders', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { bodyShape?: unknown; outfit?: unknown; emote?: unknown }
-    if (d.kind === 'scene') {  // the building's walk-through, the one design-level view a scene design has
-      if (!(await hasBuilding(d.id))) return reply.status(404).send({ error: 'no_building' })
-      const r = await requestSetRender(d, TOUR_VIEW, new Date())
-      if (!r) return reply.status(404).send({ error: 'piece_not_found' })
-      return r.status === 'queued' ? { status: 'queued' } : r
-    }
-    if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
-    if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return reply.status(400).send({ error: 'unknown outfit' })
-    const emote = b.emote ?? null
-    if (d.kind === 'emote' ? emote !== null : !(BASE_EMOTES as readonly unknown[]).includes(emote)) {
-      return reply.status(400).send({ error: 'unknown emote' })
-    }
-    const r = await requestSetRender(d, { bodyShape: b.bodyShape, outfit: b.outfit, emote } as View, new Date())
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const v = await setViewOf(a.d, (request.body ?? {}) as Record<string, unknown>, 'body')
+    if (!v.ok) return reply.status(v.status).send({ error: v.error })
+    const r = await requestSetRender(a.d, v.view, new Date(), { categories: v.categories })
     if (!r) return reply.status(404).send({ error: 'piece_not_found' })
     return r.status === 'queued' ? { status: 'queued' } : r
+  })
+
+  // The same view's frames when it is rendered already, for anyone on the design (a viewer too, LIV-159): it never
+  // asks for a render, so nothing is queued or counted
+  app.get('/api/studio/designs/:id/set-frames', trialAuth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'view', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const v = await setViewOf(a.d, request.query as Record<string, unknown>, 'query')
+    if (!v.ok) return reply.status(v.status).send({ error: v.error })
+    const r = await readySetFrames(a.d, v.view, new Date(), v.categories)
+    return r ?? reply.status(404).send({ error: 'piece_not_found' })
   })
 
   /** An emote named in a check or report: a base emote for a wearable design, `own` (or null) for an emote design. */
@@ -506,15 +920,18 @@ export default async function studioRoutes(app: FastifyInstance) {
       : emotesFor(d.kind).includes(emote as string) ? emote as string : null
 
   app.post('/api/studio/designs/:id/emote-checks', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; state?: unknown }
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; state?: unknown; categories?: unknown }
     const emote = checkedEmote(d, b.emote)
     if (!emote) return reply.status(400).send({ error: 'unknown emote' })
     if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
     // Clipping is reported through /clipping, which also queues the fix
     if (b.state !== 'fine') return reply.status(400).send({ error: 'state must be fine' })
-    const revisions = await currentRevisions(d.id)
+    const categories = chosenCategories(b.categories, 'body')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    const { revisions } = await wornRevisions(d.id, categories)
     if (!revisions) return reply.status(404).send({ error: 'piece_not_found' })
     await recordCheck(d.id, revisions, emote, b.bodyShape as string, 'fine')
     return reply.status(204).send()
@@ -522,22 +939,26 @@ export default async function studioRoutes(app: FastifyInstance) {
 
   // "I see clipping": a free fix in the server's words, for an emote view the person has seen
   app.post('/api/studio/designs/:id/clipping', trialWork, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; outfit?: unknown }
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    const b = (request.body ?? {}) as { emote?: unknown; bodyShape?: unknown; outfit?: unknown; categories?: unknown }
     const emote = checkedEmote(d, b.emote)
     if (!emote) return reply.status(400).send({ error: 'unknown emote' })
     if (!(BODY_SHAPES as readonly unknown[]).includes(b.bodyShape)) return reply.status(400).send({ error: 'bodyShape must be male or female' })
     if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return reply.status(400).send({ error: 'unknown outfit' })
-    const fix = { emote, bodyShape: b.bodyShape, outfit: b.outfit } as { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit'] }
-    const revisions = await currentRevisions(d.id)
+    const chosen = chosenCategories(b.categories, 'body')
+    if (chosen === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    // The view seen was Finalize's selection: the fix looks at the same pieces worn
+    const { revisions, categories } = await wornRevisions(d.id, chosen)
+    const fix: FixClipping = { emote, bodyShape: b.bodyShape as View['bodyShape'], outfit: b.outfit as View['outfit'], ...(categories ? { categories } : {}) }
     const key = setViewKey(d.kind, { bodyShape: fix.bodyShape, outfit: fix.outfit, emote: d.kind === 'emote' ? null : emote } as View)
     const [seen] = revisions ? await db.select({ id: studioSetRenders.id }).from(studioSetRenders).where(and(
       eq(studioSetRenders.designId, d.id), eq(studioSetRenders.revisions, revisions), eq(studioSetRenders.viewKey, key),
       eq(studioSetRenders.status, 'ready'))) : []
     if (!seen) return reply.status(409).send({ error: 'not_seen', code: 'not_seen' })
     if (await freeFixesLeft(d.id, emote) <= 0) return reply.status(409).send({ error: 'clipping_fix_limit', code: 'clipping_fix_limit' })
-    const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixClipping: fix }, new Date())
+    const r = await queuePrompt(d, { text: null, selectedSlots: null, continue: false, fixClipping: fix, byAdminId: a.support ? request.user.id : undefined, senderId: request.user.id }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     await recordCheck(d.id, revisions, emote, fix.bodyShape, 'clipping')
     return reply.status(202).send({ jobId: r.jobId })
@@ -545,9 +966,23 @@ export default async function studioRoutes(app: FastifyInstance) {
 
   // Opening Finalize: every emote on both bodies, so the checklist fills while the person looks
   app.post('/api/studio/designs/:id/finalize-renders', work, async (request, reply) => {
-    const d = await ownDesign(request)
-    if (!d) return notFound(reply)
-    return { queued: await queueFinalizeRenders(d, new Date()) }
+    const a = await designAccess(request, { need: 'work', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    const categories = chosenCategories((request.body as { categories?: unknown } | null)?.categories, 'body')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    return { queued: await queueFinalizeRenders(d, new Date(), categories) }
+  })
+
+  // The emote step for Finalize's selection (`?categories=a,b`): views and checks of the chosen and finalized pieces
+  // worn together. Without it, the whole set's, as the design detail has it.
+  app.get('/api/studio/designs/:id/set', trialAuth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'view', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    const d = a.d
+    const categories = chosenCategories((request.query as { categories?: unknown }).categories, 'query')
+    if (categories === undefined) return reply.status(400).send({ error: BAD_CATEGORIES })
+    return setDetail(d, new Date(), undefined, categories)
   })
 
   // The owner's choice to show a finalized design on the wall of fame. Not behind notPaused: a paused account may still choose.

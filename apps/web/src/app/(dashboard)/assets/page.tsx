@@ -1,5 +1,6 @@
 'use client'
 import { useApi, fileToBase64 } from '@/lib/api'
+import { ASSET_LIBRARY } from '@/lib/libraries'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -16,7 +17,7 @@ const VIEW_KEY = 'virvi.assets.view'
 const fieldClass = 'w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-400'
 const assetHref = (id: string) => `/assets?id=${id}`
 
-/** Private assets always say so; `showPublic` (My Assets, the detail page) labels public ones too. */
+/** Private assets always say so; `showPublic` (My Models, the detail page) labels public ones too. */
 function VisibilityBadge({ asset, showPublic = false }: { asset: any; showPublic?: boolean }) {
   if (asset.isPublic && !showPublic) return null
   return <Badge tone={asset.isPublic ? 'neutral' : 'violet'}>{visibilityLabel(asset)}</Badge>
@@ -110,7 +111,7 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Asset name"
+                placeholder="Model name"
                 className={fieldClass}
               />
             </div>
@@ -168,7 +169,8 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
             </div>
           </div>
           {error && <p className="text-sm text-red-400" role="alert">{error}</p>}
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <p className="mr-auto max-w-md text-xs text-gray-500">{ASSET_LIBRARY.uploadHelp}</p>
             <button type="button" onClick={onClose} className="rounded-md bg-gray-800 px-4 py-2 text-sm hover:bg-gray-700">
               Cancel
             </button>
@@ -263,7 +265,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
   }
 
   if (loading) return <Skeleton />
-  if (!asset) return <p className="text-gray-500">Asset not found.</p>
+  if (!asset) return <p className="text-gray-500">Model not found.</p>
 
   // Uploads store { width, height, depth }; catalog models store their bounding box { x, y, z } in meters
   const raw = asset.dimensions as { width?: number; height?: number; depth?: number; x?: number; y?: number; z?: number } | null
@@ -272,14 +274,14 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
-        crumbs={['Tools', { label: 'Assets', href: '/assets' }, asset.name]}
+        crumbs={['Tools', { label: ASSET_LIBRARY.name, href: '/assets' }, asset.name]}
         title={asset.name}
         subtitle={asset.description || undefined}
         actions={!asset.packId && !editing && (
           // Catalog models are Virvi's, not yours: view and add only
           <div className="flex items-center gap-2">
             <button onClick={startEditing} className="rounded-md bg-gray-800 px-3 py-1.5 text-xs hover:bg-gray-700">Edit</button>
-            <ConfirmAction prompt="Delete this asset?" confirmLabel="Delete" onConfirm={handleDelete}
+            <ConfirmAction prompt="Delete this model?" confirmLabel="Delete" onConfirm={handleDelete}
               className="rounded-md bg-red-900/30 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/50">
               Delete
             </ConfirmAction>
@@ -296,7 +298,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
             ) : (
               <div className="text-center text-gray-500">
                 <div className="text-5xl mb-2">&#9651;</div>
-                <div className="text-xs">3D Asset</div>
+                <div className="text-xs">3D model</div>
               </div>
             )}
           </div>
@@ -450,7 +452,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
 
 // ── Add to scene ────────────────────────────────────────────────────────────
 
-/** Links the model into one of your scenes' Media Library (catalog models use no storage). */
+/** Links the model into one of your scenes' library, ready to place (catalog models use no storage). */
 function AddToScene({ assetId }: { assetId: string }) {
   const api = useApi()
   const [scenes, setScenes] = useState<any[] | null>(null)
@@ -472,7 +474,7 @@ function AddToScene({ assetId }: { assetId: string }) {
     try {
       await api.addModelToSceneLibrary(sceneId, assetId)
       const name = scenes?.find((s) => s.id === sceneId)?.name ?? 'the scene'
-      setMessage({ text: `Added to ${name}'s Media Library`, error: false })
+      setMessage({ text: `Added to ${name}, ready to place`, error: false })
     } catch (err: any) {
       setMessage({ text: err.message === 'pack_disabled' ? 'This pack is no longer available' : err.message === 'forbidden' ? "You can't add models to that scene" : 'Could not add the model', error: true })
     } finally {
@@ -484,7 +486,7 @@ function AddToScene({ assetId }: { assetId: string }) {
   if (scenes.length === 0) return <p className="text-xs text-gray-500">Create a scene to add this model to it.</p>
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
-      <p className="text-xs text-gray-500 mb-2">Add to a scene&apos;s Media Library</p>
+      <p className="text-xs text-gray-500 mb-2">Add to a scene, ready to place</p>
       <div className="flex gap-2">
         <select value={sceneId} onChange={(e) => setSceneId(e.target.value)} className="flex-1 rounded-md bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-400 border border-gray-800">
           {scenes.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -528,7 +530,7 @@ export default function AssetsPage() {
   const [styleFilter, setStyleFilter] = useState('')
   const [venueFilter, setVenueFilter] = useState('')
   const [packFilter, setPackFilter] = useState('')
-  // All Assets (public) or My Assets (yours: everything, Design Studio pieces, or uploads), kept in the link
+  // All Models (public) or My Models (yours: everything, Design Studio pieces, or uploads), kept in the link
   const { view: libraryView, kind: mineKind } = readAssetView(searchParams)
   const showView = (v: AssetView, k: MineKind = 'all') => router.replace(assetViewHref(v, k))
   const mine = libraryView === 'mine'
@@ -589,7 +591,7 @@ export default function AssetsPage() {
 
   const handleUploaded = (asset: any) => {
     fetchCategories()
-    // A private upload (the default) never shows in All Assets: go to My Assets, where it is
+    // A private upload (the default) never shows in All Models: go to My Models, where it is
     if (!mine && !asset.isPublic) { showView('mine'); return }
     setAssets((prev) => [asset, ...prev])
     setTotal((prev) => prev + 1)
@@ -639,17 +641,20 @@ export default function AssetsPage() {
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
-        crumbs={['Tools', 'Assets']}
-        title="3D Asset Library"
+        crumbs={['Tools', ASSET_LIBRARY.name]}
+        title={ASSET_LIBRARY.name}
         count={libraryTotal === null ? undefined : countLabel(libraryTotal)}
-        subtitle="Browse and manage your 3D assets."
+        subtitle={<>{ASSET_LIBRARY.purpose}. Images and video go in <Link href="/media" className="text-blue-300 underline">Images &amp; Video</Link>.</>}
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col items-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <button type="button" onClick={() => setShowRoomAsset(true)}
               className="rounded-md border border-gray-700 px-3 py-2 text-sm text-gray-200 hover:border-gray-600 hover:bg-white/[0.04]">
-              Make an asset from a room scan
+              Make a model from a room scan
             </button>
-            <PrimaryButton onClick={() => setShowUpload(!showUpload)}><PlusIcon size={16} /> Upload Asset</PrimaryButton>
+            <PrimaryButton onClick={() => setShowUpload(!showUpload)}><PlusIcon size={16} /> Upload Model</PrimaryButton>
+          </div>
+            <p className="max-w-md text-right text-xs text-gray-500">GLB models (≤ 50 MB). New uploads are private to you.</p>
           </div>
         }
       />
@@ -660,8 +665,8 @@ export default function AssetsPage() {
       {listError && <p className="mb-4 text-sm text-red-400" role="alert">{listError}</p>}
       {showUpload && <UploadForm onUploaded={handleUploaded} onClose={() => setShowUpload(false)} />}
 
-      <div className="mb-4 inline-flex rounded-md border border-gray-800 p-0.5 text-sm" role="tablist" aria-label="Which assets">
-        {([['All Assets', 'all'], ['My Assets', 'mine']] as const).map(([label, value]) => (
+      <div className="mb-4 inline-flex rounded-md border border-gray-800 p-0.5 text-sm" role="tablist" aria-label="Which models">
+        {([['All Models', 'all'], ['My Models', 'mine']] as const).map(([label, value]) => (
           <button key={value} type="button" role="tab" aria-selected={libraryView === value} onClick={() => showView(value)}
             className={`rounded px-3 py-1.5 ${libraryView === value ? 'bg-white/[0.06] text-white' : 'text-gray-400 hover:text-white'}`}>
             {label}
@@ -671,9 +676,9 @@ export default function AssetsPage() {
 
       {/* Filters */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <SearchField value={searchInput} onChange={setSearchInput} placeholder="Search assets..." label="Search assets" />
+        <SearchField value={searchInput} onChange={setSearchInput} placeholder="Search models..." label="Search models" />
         <div className="ml-auto flex items-center gap-3">
-          {!loading && <span className="text-sm text-gray-400">{plural(total, 'asset')}</span>}
+          {!loading && <span className="text-sm text-gray-400">{plural(total, 'model')}</span>}
           <ViewToggle value={view} onChange={chooseView} options={[['grid', GridIcon, 'Grid view'], ['list', ListIcon, 'List view']]} />
         </div>
       </div>
@@ -726,18 +731,18 @@ export default function AssetsPage() {
         </div>
       ) : assets.length === 0 ? (
         filtering ? (
-          <p className="py-12 text-center text-gray-500">No assets match your filters.</p>
+          <p className="py-12 text-center text-gray-500">No models match your filters.</p>
         ) : mine ? (
           <EmptyState icon={<LayersIcon size={40} />}
-            title={mineKind === 'studio' ? 'No Design Studio pieces yet' : mineKind === 'uploads' ? 'No uploads yet' : "You haven't added any assets yet"}
+            title={mineKind === 'studio' ? 'No Design Studio pieces yet' : mineKind === 'uploads' ? 'No uploads yet' : "You haven't added any models yet"}
             body={mineKind === 'studio'
               ? 'Pieces you finalize in the Design Studio show up here, ready to place in your scenes.'
-              : 'Assets you upload, make from a room scan or finalize in the Design Studio show up here, public or private.'}
-            action={mineKind === 'studio' ? undefined : <PrimaryButton onClick={() => setShowUpload(true)}><PlusIcon size={16} /> Upload Asset</PrimaryButton>} />
+              : 'Models you upload, make from a room scan or finalize in the Design Studio show up here, public or private.'}
+            action={mineKind === 'studio' ? undefined : <PrimaryButton onClick={() => setShowUpload(true)}><PlusIcon size={16} /> Upload Model</PrimaryButton>} />
         ) : (
-          <EmptyState icon={<LayersIcon size={40} />} title="No 3D assets yet"
+          <EmptyState icon={<LayersIcon size={40} />} title="No 3D models yet"
             body="Upload a .glb model to add it to your library and place it in your scenes."
-            action={<PrimaryButton onClick={() => setShowUpload(true)}><PlusIcon size={16} /> Upload Asset</PrimaryButton>} />
+            action={<PrimaryButton onClick={() => setShowUpload(true)}><PlusIcon size={16} /> Upload Model</PrimaryButton>} />
         )
       ) : view === 'grid' ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -779,10 +784,10 @@ function AssetThumb({ asset, className, compact = false }: { asset: any; classNa
 
 function assetMenu(asset: any, onDelete: () => void, open: () => void) {
   return [
-    { label: 'Open asset', onSelect: open },
+    { label: 'Open model', onSelect: open },
     ...(asset.cdnUrl ? [{ label: 'Copy URL', onSelect: () => { navigator.clipboard.writeText(asset.cdnUrl).catch(() => {}) } }] : []),
     // Catalog models are Virvi's, not yours: view and add only
-    ...(!asset.packId ? [{ label: 'Delete asset', onSelect: onDelete, danger: true, confirm: 'Click again to delete' }] : []),
+    ...(!asset.packId ? [{ label: 'Delete model', onSelect: onDelete, danger: true, confirm: 'Click again to delete' }] : []),
   ]
 }
 

@@ -9,12 +9,15 @@
  */
 
 import { FastifyInstance } from 'fastify'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { mediaAssets, scenes, streamingSessions } from '../db/schema.js'
+import { scenes, streamingSessions } from '../db/schema.js'
+import { liveScene } from '../scenes/live.js'
 import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
+import { storageUsedBytes } from '../media/quota.js'
 import { verifyWebhookEvent } from '../billing/webhook-verify.js'
+import { recordJobFailure } from '../errors/record.js'
 import {
   createCheckoutSession,
   createPortalSession,
@@ -105,13 +108,10 @@ export default async function billingRoutes(app: FastifyInstance) {
       const [sceneCount] = await db
         .select({ count: sql<number>`count(*)` })
         .from(scenes)
-        .where(eq(scenes.ownerId, request.user.id))
+        .where(and(eq(scenes.ownerId, request.user.id), liveScene()))
 
-      // Sum storage bytes
-      const [storageSum] = await db
-        .select({ total: sql<number>`coalesce(sum(${mediaAssets.sizeBytes}), 0)` })
-        .from(mediaAssets)
-        .where(eq(mediaAssets.ownerId, request.user.id))
+      // Storage used: the same total the upload quota checks (Images & Video, 3D Models uploads, thumbnails)
+      const storageBytes = await storageUsedBytes(request.user.id)
 
       // Sum streaming minutes this billing period
       let streamMinutes = 0
@@ -132,7 +132,7 @@ export default async function billingRoutes(app: FastifyInstance) {
         tier: sub.tier,
         usage: {
           scenes: Number(sceneCount.count),
-          storageBytes: Number(storageSum.total),
+          storageBytes,
           streamMinutes,
         },
         limits: sub.limits,
@@ -168,6 +168,7 @@ export default async function billingRoutes(app: FastifyInstance) {
         await handleWebhookEvent(event)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
+        recordJobFailure(`payment_webhook ${String(event?.type ?? 'unknown').slice(0, 60)}`, err)
         return reply.status(500).send({ error: `Webhook processing failed: ${message}` })
       }
 

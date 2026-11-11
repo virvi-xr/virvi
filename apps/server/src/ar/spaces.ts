@@ -1,8 +1,9 @@
-import { asc, count, eq, inArray } from 'drizzle-orm'
+import { and, asc, count, eq, inArray } from 'drizzle-orm'
 import { RING_DEFAULT_DIAMETER_MM, randomRingId, ringCodeOf, type ArFloorView, type ArMarkerView, type ArSpaceView } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { arFloors, arMarkers, arSpaces } from '../db/schema.js'
 import { publishSceneTouched } from '../realtime/bus.js'
+import { liveSceneIds } from '../scenes/live.js'
 import { isUuid } from '../auth/scene-from.js'
 import { floorScene, markerScene, spaceScene } from './access.js'
 
@@ -59,7 +60,8 @@ export async function listSpaces(sceneId: string): Promise<ArSpaceView[]> {
 
 export async function getSpace(id: string): Promise<ArSpaceView | null> {
   if (!isUuid(id)) return null
-  const [row] = await db.select().from(arSpaces).where(eq(arSpaces.id, id))
+  // A deleted scene's spaces (LIV-83) are gone with it: public feeds, analytics and reports get 404
+  const [row] = await db.select().from(arSpaces).where(and(eq(arSpaces.id, id), inArray(arSpaces.sceneId, liveSceneIds())))
   return row ? (await viewsOf([row]))[0] : null
 }
 

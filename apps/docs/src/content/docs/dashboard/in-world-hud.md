@@ -31,17 +31,17 @@ While you hold an item, other editors see "being moved by" and your name on it a
 
 ## Uploading from in-world
 
-Editors can add images and GLB models to the scene's Media Library while standing in it.
+Editors can add GLB models and images to the scene's library (the HUD's **3D Models** panel, the **Models** tab) while standing in it. This panel is the scene's own list; on the dashboard, 3D models live in 3D Models and images and video in Images & Video (see [Images & Video and 3D Models](/docs/dashboard/media-library/)). A model you upload from in-world goes in the scene owner's 3D Models, private.
 
-Open the Media Library panel and press **Upload**. The panel shows:
+Open the 3D Models panel and press **Upload**. The panel shows:
 
 - **Open on this computer:** opens the upload page in your browser. Decentraland asks you to confirm opening the link.
 - **A QR code:** scan it with your phone to upload a photo from your camera roll.
 - **The link and a 6-character code**, in case you'd rather type it in.
 
-Each link lasts 30 minutes and allows 10 uploads. Press **New link** for a fresh one. Only you can see the code; it's drawn in your own HUD, never in the scene. The link can only upload files to this scene's library. It doesn't sign anyone in.
+Each link lasts 30 minutes and allows 10 uploads. Press **New link** for a fresh one. Only you can see the code; it's drawn in your own HUD, never in the scene. The link can only upload files to this scene's library. It doesn't sign anyone in. Uploaded files are stored at unguessable links: anyone with a file's link can open it.
 
-Uploads appear in the Media Library straight away, newest first, with a status:
+Uploads appear in the 3D Models panel straight away, newest first, with a status:
 
 - **• Uploading / • Processing:** the file is on its way.
 - **✓ Available:** ready to **Place**.
@@ -56,8 +56,8 @@ The Stream panel lists the live preset's video screens. For each one, editors ca
 
 - **Choose stream:** pick one of the scene's streams, labelled "Main Stage (live)" or "Editor Cam (offline, yours)".
 - **Turn live on / off.**
-- **Change** the off image, the picture shown when the screen has nothing to play. It lists the Media Library's ready images (up to 8); **No off image** clears it.
-- **Showings** (screens in Schedule mode): the screen's showings with **End now**, **Play now** and **Delay 5 min**. See [Scheduled Showings](/dashboard/scheduled-showings/).
+- **Change** the off image, the picture shown when the screen has nothing to play. It lists the scene library's ready images (up to 8); **No off image** clears it.
+- **Showings** (screens in Schedule mode): the screen's showings with **End now**, **Play now** and **Delay 5 min**. See [Scheduled Showings](/docs/dashboard/scheduled-showings/).
 
 The Hyperfy HUD's Streams panel, the Quest's builder Stream tab and the Vision Pro's Stream tab have the same stream, live and off-image controls. The Quest's Stream tab is on personal headsets only.
 
@@ -67,5 +67,11 @@ In the Layout panel, an item with copies shows how many (×3) and a **Clear** bu
 
 ## Click actions
 
-From `@virvixr/dcl` 2.11.0, the Layout panel's **Click** button sets what clicking an image, model or screen does. See [Click Actions](/dashboard/click-actions/).
+From `@virvixr/dcl` 2.11.0, the Layout panel's **Click** button sets what clicking an image, model or screen does. See [Click Actions](/docs/dashboard/click-actions/).
 
+
+## Frames
+
+From `@virvixr/dcl` 2.12.0, the Layout panel's **Frame** button puts a frame around an image or video screen: **Off**, **Thin** (one slim modern border), **Classic** (a deeper, raised border, wood by default) or **Gallery** (a white mat with a slim frame around it), with a colour swatch and a thickness. Press **Save** and the frame shows at once, on every copy of the item. Thickness is a share of the picture's shorter side, so the frame stays in proportion when you resize it. The scene editor's image and video screen cards have the same **Frame** setting, with any colour. Ad spaces have no frame.
+
+A frame shows the same from both sides of the picture. Each framed copy adds 4 objects to the scene (8 for Gallery), and these count toward Decentraland's object limit for your parcels: publishing tells you if frames take the scene over it, and in-world a frame that would go over the limit is left off. The picture itself still shows.

@@ -21,11 +21,12 @@ function stable<T>(value: T): T {
 
 /**
  * The scene's whole active preset, exactly as the Decentraland room sends it, plus a version
- * (SHA-256 of its JSON). Null when the scene doesn't exist; `scene: null` when it has no active preset.
+ * (SHA-256 of its JSON). Null when the scene doesn't exist or is deleted; `scene: null` when it has no active preset.
  */
 export async function sceneSnapshot(sceneId: string): Promise<{ version: string; scene: SerializedScene | null } | null> {
-  const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true, activePresetId: true } })
-  if (!scene) return null
+  const scene = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { id: true, activePresetId: true, deletedAt: true } })
+  // A deleted scene (LIV-83) is gone to its feeds: Hyperfy and AR get 404
+  if (!scene || scene.deletedAt) return null
   const preset = scene.activePresetId
     ? await db.query.scenePresets.findFirst({
         where: eq(scenePresets.id, scene.activePresetId),

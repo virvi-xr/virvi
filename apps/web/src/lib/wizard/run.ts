@@ -5,8 +5,9 @@ import type { ImportLocation, Plot, RoomSetOptions } from '@virvixr/shared'
 import type { Eip1193Provider } from '../auth'
 import type { AuthChain, SignSession } from '../dcl-sign'
 import { hyperfyErrorMessage } from '../hyperfy'
+import { connectedSceneFromError, worldInUseView } from '../world-disconnect'
 import type {
-  DclDeployment, DclDestination, DclDestinationMode, DclGrantRequests, DclRevokeRequests, DclSignedSubmission, WizardSceneBody,
+  ConnectedScene, DclDeployment, DclDestination, DclDestinationMode, DclGrantRequests, DclRevokeRequests, DclSignedSubmission, WizardSceneBody,
 } from '../api'
 
 type ApiError = Error & { status?: number; code?: number; body?: { error?: string; message?: string } }
@@ -48,6 +49,7 @@ const CODE_MESSAGES: Record<string, string> = {
   invalid_spawn: 'The arrival point has to be inside the plot.',
   scene_limit_reached: 'Your plan has no room for another scene. Upgrade in Settings to make more.',
   not_found: "That couldn't be found. Reload the page and try again.",
+  forbidden: 'You need full access to this scene to do that. Ask its owner.',
 }
 
 /** A plain sentence for any failure in the wizard; never a raw error code. */
@@ -149,6 +151,7 @@ export interface RunApi {
   bootstrapWizardScene(data: WizardSceneBody): Promise<{ sceneId: string }>
   createDclDestination(data: { sceneId: string; world: string; mode: DclDestinationMode; plot?: Plot; spawn?: { x: number; z: number } }): Promise<{ destination: DclDestination }>
   patchDclDestination(id: string, data: { mode: DclDestinationMode }): Promise<{ destination: DclDestination }>
+  getSceneDclDestinations(sceneId: string): Promise<{ destinations: DclDestination[] }>
   getDclDestination(id: string): Promise<{ destination: DclDestination; lastDeployment: DclDeployment | null }>
   getDclGrant(id: string): Promise<DclGrantRequests>
   submitDclGrant(id: string, data: DclSignedSubmission): Promise<{ destination: DclDestination }>
@@ -180,9 +183,12 @@ export interface RunDeps {
   cancelled?: () => boolean
 }
 
-/** A failure the run stops on. `partial` marks grant_partial, which the page shows on its own. */
+/**
+ * A failure the run stops on. `partial` marks grant_partial, which the page shows on its own; `worldInUse` is the scene
+ * that holds the World (409 world_in_use), for the page's disconnect.
+ */
 export class RunError extends Error {
-  constructor(message: string, public readonly partial = false) {
+  constructor(message: string, public readonly partial = false, public readonly worldInUse: ConnectedScene | null = null) {
     super(message)
     this.name = 'RunError'
   }
@@ -203,6 +209,9 @@ export async function runWizard(plan: RunPlan, mem: RunMemory, deps: RunDeps, on
   const fail = (err: unknown): never => {
     if (err instanceof RunError) throw err
     if (errorCode(err) === 'grant_partial') throw new RunError(GRANT_PARTIAL_MESSAGE, true)
+    const held = connectedSceneFromError(err)
+    const view = held && plan.dcl ? worldInUseView(plan.dcl.world, held) : null
+    if (held && view) throw new RunError(view.text, false, held)
     throw new RunError(wizardErrorMessage(err))
   }
 
@@ -229,10 +238,18 @@ export async function runWizard(plan: RunPlan, mem: RunMemory, deps: RunDeps, on
     let deploymentId: string | null = null
     let settled: DclDeployment | null = null
     if (plan.dcl) {
+      let created = false
       if (!mem.destination) {
-        const { destination } = await api.createDclDestination({ sceneId, world: plan.dcl.world, mode: plan.dcl.mode, plot: plan.plot, spawn: plan.spawn })
-        mem.destination = destination
-      } else if (mem.destination.mode !== plan.dcl.mode) {
+        try {
+          const { destination } = await api.createDclDestination({ sceneId, world: plan.dcl.world, mode: plan.dcl.mode, plot: plan.plot, spawn: plan.spawn })
+          mem.destination = destination
+          created = true
+        } catch (err) {
+          // Connected to this very scene already (an earlier try made it, but its answer was lost): carry on with it
+          mem.destination = await ownDestination(err, sceneId, plan.dcl.world, api)
+        }
+      }
+      if (!created && mem.destination.mode !== plan.dcl.mode) {
         mem.destination = (await api.patchDclDestination(mem.destination.id, { mode: plan.dcl.mode })).destination
       }
       const destId = mem.destination.id
@@ -262,6 +279,15 @@ export async function runWizard(plan: RunPlan, mem: RunMemory, deps: RunDeps, on
     on({ wallet: null })
     fail(err)
   }
+}
+
+/** After a failed create: this scene's own destination for `world` when the 409 world_in_use names this scene; else rethrows. */
+async function ownDestination(err: unknown, sceneId: string, world: string, api: Pick<RunApi, 'getSceneDclDestinations'>): Promise<DclDestination> {
+  const held = connectedSceneFromError(err)
+  if (!held || !('sceneId' in held) || held.sceneId !== sceneId) throw err
+  const mine = (await api.getSceneDclDestinations(sceneId)).destinations.find((d) => d.worldName === world)
+  if (!mine) throw err
+  return mine
 }
 
 // ── Signing and deploying, shared by the wizard, the deploy page and the publish page ─────

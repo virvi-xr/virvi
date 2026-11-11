@@ -7,9 +7,10 @@ import {
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
   giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, apiKeys, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, roomScans, roomSets, arDevices,
-  dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports,
+  dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -30,6 +31,10 @@ const H = 3600_000
 const AD_ID = '00000000-0000-4000-8000-000000000001'
 const PUBLIC_TARGET = { parcels: ['0,0'], contentServer: 'https://1.1.1.1' }
 const B_PARCEL = '-40,-40'
+/** A well-formed pairing code nobody started. */
+const GUESSED_CODE = 'ZZZZZZ'
+/** A well-formed design invite token nobody was given. */
+const GUESSED_INVITE_TOKEN = 'Z'.repeat(43)
 
 /** Everything below is B's, except `aScene`/`aEvent`, which A owns and uses to reach for B's ids in a body. */
 async function fixtures() {
@@ -37,6 +42,7 @@ async function fixtures() {
   const b = await createUser({ wallet: randomWallet() })
   const collaborator = await createUser()
   const { scene, preset } = await createScene(b, 'B scene')
+  await db.update(scenes).set({ thumbnailUrl: 'https://cdn.example/b-thumb.png', thumbnailKey: `scenes/${scene.id}/thumbnail-0123456789abcdef.png`, thumbnailBytes: 10 }).where(eq(scenes.id, scene.id))
   const element = await createElement(preset.id)
   const instance = await createInstance(element.id)
   const adSpace = await createElement(preset.id, { type: 'ad_space', properties: { shape: '1:1', formats: 'both' } })
@@ -112,6 +118,7 @@ async function fixtures() {
   const [designPiece] = await db.insert(studioPieces).values({ designId: design.id, category: 'hat', name: 'B cap' }).returning()
   const [designRev] = await db.insert(studioRevisions).values({ pieceId: designPiece.id, number: 1, jobId: designJob.id, changeKind: 'new', meta: {}, files: [] }).returning()
   await db.update(studioPieces).set({ latestRevisionId: designRev.id }).where(eq(studioPieces.id, designPiece.id))
+  const [designRating] = await db.insert(studioRatings).values({ jobId: designJob.id, designId: design.id, userId: b.id, rating: 'down', tags: ['broken'], kind: 'wearable' }).returning()
   // B paid for revision 1 as a revision (so a report would refund it); its package is ready to download
   const [designPayment] = await db.insert(studioPayments).values({
     userId: b.id, designId: design.id, kind: 'finalize', status: 'paid', amountCents: 1000, paidAt: new Date(), stripePaymentIntent: 'pi_b',
@@ -122,6 +129,30 @@ async function fixtures() {
   }).returning()
   await db.insert(studioPromptCredits).values({ userId: b.id, balance: 3 })
   const [designUpload] = await db.insert(studioUploads).values({ designId: design.id, name: 'b-logo.png', kind: 'image', contentType: 'image/png', size: 4 }).returning()
+  // B's design is shared with the collaborator, and B invited someone else's account (an open invite, its link held by B)
+  await db.insert(studioDesignMembers).values({ designId: design.id, userId: collaborator.id, role: 'collaborator' })
+  const invitee = await createUser({ email: 'b-invitee@test.dev' })
+  const [designInvite] = await db.insert(studioDesignInvites).values({
+    designId: design.id, email: 'b-invitee@test.dev', role: 'viewer', token: 'b-invite-token', invitedBy: b.id, userId: invitee.id, expiresAt: new Date(Date.now() + 24 * H),
+  }).returning()
+
+  // B was on someone else's design and left; a package finalized while B was on it is still B's to download
+  const pastOwner = await createUser()
+  const [pastDesign] = await db.insert(studioDesigns).values({ ownerId: pastOwner.id, name: 'Old team cap', kind: 'wearable', agent: 'claude' }).returning()
+  const [pastPrompt] = await db.insert(studioJobs).values({ designId: pastDesign.id, type: 'prompt', status: 'done', payload: {} }).returning()
+  const [pastPiece] = await db.insert(studioPieces).values({ designId: pastDesign.id, category: 'hat', name: 'Old team cap' }).returning()
+  const [pastRev] = await db.insert(studioRevisions).values({ pieceId: pastPiece.id, number: 1, jobId: pastPrompt.id, changeKind: 'new', meta: {}, files: [] }).returning()
+  const [pastFinalize] = await db.insert(studioJobs).values({ designId: pastDesign.id, type: 'finalize', status: 'done', payload: {}, finishedAt: new Date(Date.now() - 2 * H) }).returning()
+  const [pastPayment] = await db.insert(studioPayments).values({
+    userId: pastOwner.id, designId: pastDesign.id, kind: 'finalize', status: 'paid', amountCents: 2900, paidAt: new Date(Date.now() - 3 * H),
+  }).returning()
+  const [pastPackage] = await db.insert(studioEntitlements).values({
+    revisionId: pastRev.id, paymentId: pastPayment.id, userId: pastOwner.id, designId: pastDesign.id, category: 'hat', kind: 'first', amountCents: 2900,
+    status: 'ready', jobId: pastFinalize.id, packageKey: `designs/${pastDesign.id}/jobs/${pastFinalize.id}/final/hat/package.zip`,
+  }).returning()
+  await db.insert(studioDesignMembers).values({ designId: pastDesign.id, userId: b.id, role: 'collaborator', joinedAt: new Date(Date.now() - 4 * H), leftAt: new Date(Date.now() - H) })
+
+  const [notification] = await db.insert(notifications).values({ userId: b.id, kind: 'studio_owner', data: { designId: design.id, designName: 'B cap' } }).returning()
 
   const roomFloor: Array<[number, number]> = [[0, 0], [4, 0], [4, 3], [0, 3]]
   const [roomScan] = await db.insert(roomScans).values({
@@ -132,11 +163,20 @@ async function fixtures() {
     scanId: roomScan.id, userId: b.id, options: { style: 'plain' }, nudges: [], storageKey: `room-sets/${b.id}/b.glb`, glbUrl: 'https://cdn.test/b.glb',
     triangles: 100, plot: { width: 1, depth: 1, base: { x: 0, y: 0 } }, offset: { x: 0.62, y: 0, z: 0.62 }, sceneElementId: element.id,
   }).returning()
+  // B's deleted scene (LIV-83), still holding a World, with a removal waiting for B's signature
+  const deletedScene = (await createScene(b, 'B deleted scene')).scene
+  await db.update(scenes).set({ deletedAt: new Date(), deletedBy: b.id }).where(eq(scenes.id, deletedScene.id))
+  const [goneDestination] = await db.insert(dclWorldDestinations).values({
+    sceneId: deletedScene.id, ownerUserId: b.id, ownerWallet: b.wallet!, worldName: 'b-gone.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'sign', lastEntityId: 'bafkreigone',
+  }).returning()
+  const [removal] = await db.insert(sceneRemovals).values({
+    sceneId: deletedScene.id, kind: 'dcl_world', targetId: goneDestination.id, label: 'Remove the scene from b-gone.dcl.eth', status: 'awaiting_signature', requestedBy: b.id,
+  }).returning()
   const aScene = (await createScene(a, 'A scene')).scene
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designUpload, designPayment, aScene, aEvent,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -149,7 +189,15 @@ const CASES: Case[] = [
   // scenes
   { route: 'GET /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}` },
   { route: 'PUT /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}`, body: () => ({ name: 'pwned' }) },
+  { route: 'PUT /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail`, body: () => ({ fileData: 'AAAA' }) },
+  { route: 'DELETE /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail` },
   { route: 'DELETE /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}` },
+  { route: 'GET /api/scenes/:sceneId/delete-plan', url: (f) => `/api/scenes/${f.scene.id}/delete-plan` },
+  { route: 'POST /api/scenes/:sceneId/restore', url: (f) => `/api/scenes/${f.deletedScene.id}/restore` },
+  { route: 'POST /api/scenes/:sceneId/purge', url: (f) => `/api/scenes/${f.deletedScene.id}/purge`, body: () => ({ name: 'B deleted scene' }) },
+  { route: 'POST /api/scenes/:sceneId/removals/:removalId/retry', url: (f) => `/api/scenes/${f.deletedScene.id}/removals/${f.removal.id}/retry` },
+  { route: 'GET /api/scenes/:sceneId/removals/:removalId/sign', url: (f) => `/api/scenes/${f.deletedScene.id}/removals/${f.removal.id}/sign` },
+  { route: 'POST /api/scenes/:sceneId/removals/:removalId/signature', url: (f) => `/api/scenes/${f.deletedScene.id}/removals/${f.removal.id}/signature`, body: () => ({ chain: [], timestamp: Date.now() }) },
   { route: 'POST /api/scenes/:sceneId/presets', url: (f) => `/api/scenes/${f.scene.id}/presets`, body: () => ({ name: 'pwned' }) },
   { route: 'GET /api/scenes/:sceneId/preset-schedules', url: (f) => `/api/scenes/${f.scene.id}/preset-schedules` },
   { route: 'POST /api/scenes/:sceneId/preset-schedules', url: (f) => `/api/scenes/${f.scene.id}/preset-schedules`, body: (f) => ({ presetId: f.preset.id, recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC', durationMinutes: 30 }) },
@@ -224,7 +272,11 @@ const CASES: Case[] = [
   { route: 'POST /api/ar/devices/:id/end', url: (f) => `/api/ar/devices/${f.arDevice.id}/end`, body: () => ({ secret: 'guess' }) },
   { route: 'POST /api/ar/devices/:id/spaces', url: (f) => `/api/ar/devices/${f.arDevice.id}/spaces`, body: () => ({ secret: 'guess' }) },
   { route: 'POST /api/ar/devices/:id/scenes', url: (f) => `/api/ar/devices/${f.arDevice.id}/scenes`, body: () => ({ secret: 'guess' }) },
+  { route: 'POST /api/ar/devices/:id/room-scans', url: (f) => `/api/ar/devices/${f.arDevice.id}/room-scans`, body: () => ({ secret: 'guess', name: 'pwned', layout: {} }) },
   { route: 'DELETE /api/ar/devices/:id', url: (f) => `/api/ar/devices/${f.arDevice.id}` },
+  // The pairing code is the auth (any signed-in account or trial holding it may approve): a guessed code finds nothing.
+  { route: 'GET /api/ar/pair/:code', url: () => `/api/ar/pair/${GUESSED_CODE}` },
+  { route: 'POST /api/ar/pair/:code/approve', url: () => `/api/ar/pair/${GUESSED_CODE}/approve`, body: () => ({ kind: 'personal' }) },
   // deploy
   { route: 'GET /api/deploy/:id', url: (f) => `/api/deploy/${f.dcl.id}` },
   { route: 'GET /api/deploy/:id/files.zip', url: (f) => `/api/deploy/${f.liveDeploy.id}/files.zip` },
@@ -237,6 +289,7 @@ const CASES: Case[] = [
   { route: 'PATCH /api/dcl/destinations/:id', url: (f) => `/api/dcl/destinations/${f.destination.id}`, body: () => ({ mode: 'virvi' }) },
   { route: 'GET /api/dcl/destinations/:id/grant', url: (f) => `/api/dcl/destinations/${f.destination.id}/grant` },
   { route: 'POST /api/dcl/destinations/:id/grant', url: (f) => `/api/dcl/destinations/${f.destination.id}/grant`, body: () => ({ chains: [[], []], timestamp: Date.now() }) },
+  { route: 'DELETE /api/dcl/destinations/:id', url: (f) => `/api/dcl/destinations/${f.destination.id}` },
   { route: 'DELETE /api/dcl/destinations/:id/grant', url: (f) => `/api/dcl/destinations/${f.destination.id}/grant` },
   { route: 'POST /api/dcl/destinations/:id/revoke', url: (f) => `/api/dcl/destinations/${f.destination.id}/revoke`, body: () => ({ chains: [[]], timestamp: Date.now() }) },
   { route: 'GET /api/dcl/destinations/:id/parcel-grant', url: (f) => `/api/dcl/destinations/${f.parcelsDestination.id}/parcel-grant` },
@@ -275,7 +328,10 @@ const CASES: Case[] = [
   { route: 'GET /api/studio/designs/:id', url: (f) => `/api/studio/designs/${f.design.id}` },
   { route: 'PATCH /api/studio/designs/:id', url: (f) => `/api/studio/designs/${f.design.id}`, body: () => ({ name: 'pwned', archived: true }) },
   { route: 'PUT /api/studio/designs/:id/wall', url: (f) => `/api/studio/designs/${f.design.id}/wall`, body: () => ({ shown: true }) },
-  { route: 'POST /api/studio/designs/:id/prompts', url: (f) => `/api/studio/designs/${f.design.id}/prompts`, body: () => ({ text: 'pwned' }) },
+  { route: 'POST /api/studio/designs/:id/prompts', url: (f) => `/api/studio/designs/${f.design.id}/prompts`, body: () => ({ text: 'pwned', ideaId: 'bucket-hat-palm' }) },
+  { route: 'POST /api/studio/designs/:id/prompt-help', url: (f) => `/api/studio/designs/${f.design.id}/prompt-help`, body: () => ({ text: 'pwned' }) },
+  { route: 'GET /api/studio/designs/:id/prompt-ideas', url: (f) => `/api/studio/designs/${f.design.id}/prompt-ideas?slots=hat` },
+  { route: 'POST /api/studio/designs/:id/warm', url: (f) => `/api/studio/designs/${f.design.id}/warm` },
   { route: 'GET /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize` },
   { route: 'POST /api/studio/designs/:id/finalize', url: (f) => `/api/studio/designs/${f.design.id}/finalize`, body: () => ({ reports: { hat: 'pwned pwned pwned' } }) },
   { route: 'POST /api/studio/designs/:id/pieces/:category/revisions/:number/report', url: (f) => `/api/studio/designs/${f.design.id}/pieces/hat/revisions/1/report`, body: () => ({ text: 'the agent broke it, refund me' }) },
@@ -292,6 +348,26 @@ const CASES: Case[] = [
   { route: 'GET /api/studio/payments/:paymentId', url: (f) => `/api/studio/payments/${f.designPayment.id}` },
   { route: 'POST /api/studio/payments/:paymentId/mana-tx', url: (f) => `/api/studio/payments/${f.designPayment.id}/mana-tx`, body: () => ({ txHash: '0x' + 'ab'.repeat(32) }) },
   { route: 'POST /api/studio/designs/:id/finalize-renders', url: (f) => `/api/studio/designs/${f.design.id}/finalize-renders` },
+  { route: 'GET /api/studio/designs/:id/set', url: (f) => `/api/studio/designs/${f.design.id}/set?categories=hat` },
+  { route: 'GET /api/studio/designs/:id/set-frames', url: (f) => `/api/studio/designs/${f.design.id}/set-frames?bodyShape=male&outfit=default&emote=run` },
+  // B's 👎 on B's revision: nobody else rates, clears it or spends its free try-again (LIV-142)
+  { route: 'PUT /api/studio/designs/:id/revisions/:jobId/rating', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/rating`, body: () => ({ rating: 'up' }) },
+  { route: 'DELETE /api/studio/designs/:id/revisions/:jobId/rating', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/rating` },
+  { route: 'GET /api/studio/designs/:id/people', url: (f) => `/api/studio/designs/${f.design.id}/people` },
+  { route: 'POST /api/studio/designs/:id/invites', url: (f) => `/api/studio/designs/${f.design.id}/invites`, body: () => ({ email: 'pwned@test.dev' }) },
+  { route: 'POST /api/studio/designs/:id/invites/:inviteId/cancel', url: (f) => `/api/studio/designs/${f.design.id}/invites/${f.designInvite.id}/cancel` },
+  { route: 'POST /api/studio/designs/:id/invites/:inviteId/resend', url: (f) => `/api/studio/designs/${f.design.id}/invites/${f.designInvite.id}/resend` },
+  { route: 'POST /api/studio/invites/:inviteId/accept', url: (f) => `/api/studio/invites/${f.designInvite.id}/accept` },
+  { route: 'POST /api/notifications/:id/read', url: (f) => `/api/notifications/${f.notification.id}/read` },
+  { route: 'POST /api/studio/invites/:inviteId/decline', url: (f) => `/api/studio/invites/${f.designInvite.id}/decline` },
+  // The link is the auth (anyone signed in holding it may accept): A, not holding B's, guesses one
+  { route: 'GET /api/studio/invite-links/:token', url: () => `/api/studio/invite-links/${GUESSED_INVITE_TOKEN}` },
+  { route: 'POST /api/studio/invite-links/:token/accept', url: () => `/api/studio/invite-links/${GUESSED_INVITE_TOKEN}/accept` },
+  { route: 'PATCH /api/studio/designs/:id/members/:userId', url: (f) => `/api/studio/designs/${f.design.id}/members/${f.collaborator.id}`, body: () => ({ role: 'viewer' }) },
+  { route: 'DELETE /api/studio/designs/:id/members/:userId', url: (f) => `/api/studio/designs/${f.design.id}/members/${f.collaborator.id}` },
+  // A package finalized while B was on a design B has left: A was never on it
+  { route: 'GET /api/studio/past-packages/:entitlementId/package', url: (f) => `/api/studio/past-packages/${f.pastPackage.id}/package` },
+  { route: 'POST /api/studio/designs/:id/revisions/:jobId/try-again', url: (f) => `/api/studio/designs/${f.design.id}/revisions/${f.designJob.id}/try-again` },
   { route: 'DELETE /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}` },
   { route: 'PATCH /api/hyperfy/worlds/:id', url: (f) => `/api/hyperfy/worlds/${f.world.id}`, body: () => ({ endsAt: null }) },
   { route: 'POST /api/hyperfy/worlds/:id/restore', url: (f) => `/api/hyperfy/worlds/${f.world.id}/restore` },
@@ -319,6 +395,7 @@ const CASES: Case[] = [
   { route: 'GET /api/analytics/locations/:id/timeseries', url: (f) => `/api/analytics/locations/${f.location.id}/timeseries` },
   { route: 'GET /api/analytics/locations/:id/live', url: (f) => `/api/analytics/locations/${f.location.id}/live` },
   { route: 'GET /api/analytics/locations/:id/heatmap', url: (f) => `/api/analytics/locations/${f.location.id}/heatmap` },
+  { route: 'GET /api/analytics/locations/:id/layout', url: (f) => `/api/analytics/locations/${f.location.id}/layout` },
   { route: 'GET /api/analytics/locations/:id/sessions', url: (f) => `/api/analytics/locations/${f.location.id}/sessions` },
   { route: 'PATCH /api/analytics/locations/:id', url: (f) => `/api/analytics/locations/${f.location.id}`, body: () => ({ walletVisibility: true }) },
   // orgs
@@ -350,6 +427,7 @@ const CASES: Case[] = [
   { route: 'PUT /api/admin/ads/:id/placements', url: () => `/api/admin/ads/${AD_ID}/placements`, body: () => ({ elementIds: [] }) },
   { route: 'GET /api/admin/ads/:id/report', url: () => `/api/admin/ads/${AD_ID}/report` },
   { route: 'POST /api/admin/ads/:id/review', url: () => `/api/admin/ads/${AD_ID}/review`, body: () => ({ decision: 'rejected', reason: 'x' }) },
+  { route: 'GET /api/admin/studio/designs', url: (f) => `/api/admin/studio/designs?q=${f.b.id}` },
   { route: 'POST /api/admin/studio/wall/:designId/hide', url: () => `/api/admin/studio/wall/${AD_ID}/hide`, body: () => ({ hidden: true }) },
   { route: 'POST /api/admin/studio/flags/:id/dismiss', url: () => `/api/admin/studio/flags/${AD_ID}/dismiss` },
   { route: 'POST /api/admin/studio/users/:userId/pause', url: (f) => `/api/admin/studio/users/${f.b.id}/pause` },
@@ -357,11 +435,18 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/studio/reports/:id/approve', url: () => `/api/admin/studio/reports/${AD_ID}/approve` },
   { route: 'POST /api/admin/studio/reports/:id/decline', url: () => `/api/admin/studio/reports/${AD_ID}/decline` },
   { route: 'POST /api/admin/studio/gift-codes/:id/off', url: () => `/api/admin/studio/gift-codes/${AD_ID}/off` },
+  { route: 'PUT /api/admin/studio/defaults/:kind', url: () => '/api/admin/studio/defaults/wearable', body: () => ({ agent: 'claude' }) },
+  { route: 'PATCH /api/admin/studio/lessons/:id', url: () => `/api/admin/studio/lessons/${AD_ID}`, body: () => ({ enabled: false }) },
+  { route: 'DELETE /api/admin/studio/lessons/:id', url: () => `/api/admin/studio/lessons/${AD_ID}` },
+  { route: 'PATCH /api/admin/studio/ratings/:id', url: (f) => `/api/admin/studio/ratings/${f.designRating.id}`, body: () => ({ handled: true }) },
   { route: 'GET /api/admin/studio/mana-refunds/:id/quote', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/quote` },
   { route: 'POST /api/admin/studio/mana-refunds/:id/sent', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/sent`, body: () => ({ txHash: '0x' + 'ab'.repeat(32), amountWei: '1' }) },
   { route: 'POST /api/admin/studio/mana-refunds/:id/decline', url: () => `/api/admin/studio/mana-refunds/${AD_ID}/decline` },
   { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/settle', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/settle`, body: (f) => ({ paymentId: f.designPayment.id }) },
   { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/returned', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/returned`, body: () => ({ returnTxHash: '0x' + 'cd'.repeat(32) }) },
+  { route: 'GET /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}` },
+  { route: 'PATCH /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}`, body: () => ({ resolved: true }) },
+  { route: 'GET /api/admin/errors/reports/:reportId/screenshot', url: () => `/api/admin/errors/reports/${AD_ID}/screenshot` },
   { route: 'GET /api/ad-spaces/:elementId', url: (f) => `/api/ad-spaces/${f.adSpace.id}` },
   { route: 'PUT /api/ad-spaces/:elementId/content', url: (f) => `/api/ad-spaces/${f.adSpace.id}/content`, body: () => ({ content: 'all' }) },
   { route: 'PUT /api/ad-spaces/:elementId/approvals/:adId', url: (f) => `/api/ad-spaces/${f.adSpace.id}/approvals/${AD_ID}`, body: () => ({ decision: 'approved' }) },
@@ -377,8 +462,6 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
   'GET /api/hyperfy/pair/:code': 'the pairing code is the auth: any signed-in user holding it sees the approval page',
   'POST /api/hyperfy/pair/:code/approve': 'the pairing code is the auth; approval checks the approver\'s own edit access to the world\'s scene (a stranger refuses the code, which is rate limited)',
   'POST /api/hyperfy/pair/:code/claim': 'the pairing code plus the browser secret is the auth',
-  'GET /api/ar/pair/:code': 'the pairing code is the auth: any signed-in account holding it sees the approval page',
-  'POST /api/ar/pair/:code/approve': "the pairing code is the auth; the headset then acts only with the approver's own build access, checked at each mint (rate limited)",
   'POST /api/ar/pair/:code/claim': 'the pairing code plus the headset secret is the auth',
   'POST /api/orgs/accept-invite': 'invite token only; the token names the org',
   'GET /api/auth/google/callback': 'OAuth callback; no bearer',
@@ -406,9 +489,10 @@ const TABLES = [
   sceneDeployments, streamingServers, events, eventSceneLinks, eventGiveawayLinks, giveaways,
   giveawayItems, assetLibraryItems, mediaAssets, organizations, orgMembers, orgInvites, venues, bookings, accessGrants,
   uploadTokens, platformCallbacks, analyticsScenes, locationSetups, hyperfyWorlds, hyperfyPairings, arSpaces, arFloors, arMarkers, arAdjustments, arDevices, roomScans, roomSets,
-  dclWorldDestinations, sceneImports,
+  dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))
@@ -444,8 +528,7 @@ describe('cross-account route walk', () => {
     f = await fixtures()
     const store = memoryStudioStore()
     setStudioStore(store)
-    const [paid] = await db.select().from(studioEntitlements)
-    await store.put(paid.packageKey!, Buffer.from('PK-b-package'), 'application/zip')
+    for (const paid of await db.select().from(studioEntitlements)) await store.put(paid.packageKey!, Buffer.from('PK-b-package'), 'application/zip')
     await store.put(uploadKey(f.design.id, f.designUpload.id), Buffer.from('b-png'), 'image/png')
     const importStore = memoryPrivateStore()
     setImportStore(importStore)
@@ -492,19 +575,25 @@ describe('cross-account route walk', () => {
 
   it("B's own token reads every GET case (the fixtures are real, so A's refusals are not misses)", async () => {
     const failed: string[] = []
-    for (const c of CASES.filter((c) => c.route.startsWith('GET ') && !c.route.includes('/hyperfy/') && !c.route.includes('/admin/'))) {
+    // (a pairing code or invite link case is a guess, so nobody's to read)
+    for (const c of CASES.filter((c) => c.route.startsWith('GET ') && !c.route.includes('/hyperfy/') && !c.route.includes('/admin/') && !c.route.includes('/ar/pair/') && !c.route.includes('/invite-links/'))) {
       const res = await app.inject({ method: 'GET', url: c.url(f), headers: { authorization: `Bearer ${tokenFor(f.b)}` } })
       if (res.statusCode !== 200) failed.push(`${c.route} → ${res.statusCode}`)
     }
     expect(failed).toEqual([])
   })
 
-  it("a trial that owns nothing cannot reach B's design through any allowlisted Studio route", async () => {
+  it("a trial that owns nothing cannot reach B's design or scene through any allowlisted route", async () => {
     const t = await createUser({ email: null })
     await db.update(users).set({ isTrial: true, trialLastActiveAt: new Date() }).where(eq(users.id, t.id))
     const { accessToken } = issueTrialSession(app, { id: t.id, displayName: t.displayName, role: 'creator', trialLastActiveAt: new Date() })
     const trialRoutes = new Set(((app as any).registeredRoutes as Array<{ method: string; url: string; trial: boolean }>).filter((r) => r.trial).map((r) => `${r.method} ${r.url}`))
-    const own = new Set(['GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs'])
+    const own = new Set([
+      'GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes',
+      'GET /api/wizard/catalog', 'GET /api/wizard/options', 'GET /api/room-scans', 'GET /api/hyperfy/slots', 'GET /api/assets', 'GET /api/assets/categories',
+      'POST /api/imports', 'GET /api/imports', 'GET /api/ar/devices', 'GET /api/scenes/deleted', 'GET /api/studio/defaults',
+      'GET /api/notifications', 'GET /api/notifications/unread-count',
+    ])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
     expect(cases.length).toBe(trialRoutes.size - own.size)
     const offenders: string[] = []

@@ -4,6 +4,7 @@ import { db } from '../db/connection.js'
 import { studioDesigns } from '../db/schema.js'
 import { config } from '../config.js'
 import { FlyApi, FlyError } from '../hyperfy/fly.js'
+import type { MachineAction } from './timings.js'
 
 /**
  * One Fly worker machine per design (apps/studio-worker), created on its first job and started for later ones. The
@@ -45,7 +46,7 @@ const CLAIM_STALE_MS = 2 * 60_000
 const DEAD = ['destroyed', 'destroying', 'failed']
 const IDLE_EXIT_SEC = '600'
 /** Fly reports an image with its digest (`repo:tag@sha256:…`); the tag is what STUDIO_WORKER_IMAGE names. */
-const sameImage = (a: string | null, b: string) => (a ?? '').split('@')[0] === b.split('@')[0]
+export const sameImage = (a: string | null, b: string) => (a ?? '').split('@')[0] === b.split('@')[0]
 
 function plain(err: unknown, secret?: string): string {
   let msg = err instanceof Error ? err.message : String(err)
@@ -53,9 +54,14 @@ function plain(err: unknown, secret?: string): string {
   return msg
 }
 
-/** Makes sure the design has a machine that is running or about to run, so its queued job gets taken. */
-export async function ensureWorker(designId: string, deps: Partial<MachineDeps> = {}): Promise<void> {
-  if (config.studioMachines === 'external') return // the worker is run by hand
+/**
+ * Makes sure the design has a machine that is running or about to run, so its queued job gets taken (or, with no job,
+ * so it boots and waits for one: POST /designs/:id/warm). Says what it did: `created` a machine (or another request
+ * is creating it), `started` a stopped one, found one `running` (or starting), or nothing, the worker being run by
+ * hand (`external`).
+ */
+export async function ensureWorker(designId: string, deps: Partial<MachineDeps> = {}): Promise<MachineAction> {
+  if (config.studioMachines === 'external') return 'external' // the worker is run by hand
   const d = { ...machineDeps(), ...deps }
   const app = config.studioFlyApp
   const [design] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, designId))
@@ -89,16 +95,16 @@ export async function ensureWorker(designId: string, deps: Partial<MachineDeps> 
         await d.fly.startMachine(app, design.machineId)
       } catch (err) {
         // Mid-stop, Fly refuses a start; the sweep starts it again for a job still waiting a minute later
-        if (state === 'stopping') return
+        if (state === 'stopping') return 'started'
         const raced = err instanceof FlyError && (err.status === 412 || /already/i.test(err.message))
         const now = raced ? await d.fly.getMachineState(app, design.machineId).catch(() => null) : null
         if (now !== 'started' && now !== 'starting') {
           throw new StudioMachineError(`The studio machine could not start: ${plain(err)}`)
         }
       }
-      return
+      return 'started'
     } else {
-      return // started, starting, created
+      return 'running' // started, starting, created
     }
   }
 
@@ -114,7 +120,7 @@ export async function ensureWorker(designId: string, deps: Partial<MachineDeps> 
       or(isNull(studioDesigns.machineClaimedAt), lt(studioDesigns.machineClaimedAt, new Date(now.getTime() - CLAIM_STALE_MS))),
     ))
     .returning({ id: studioDesigns.id })
-  if (!claimed.length) return // another request is creating it; that machine takes the job
+  if (!claimed.length) return 'created' // another request is creating it; that machine takes the job
 
   const release = () => db.update(studioDesigns).set({ machineClaimedAt: null, workerTokenHash: null })
     .where(and(eq(studioDesigns.id, designId), isNull(studioDesigns.machineId)))
@@ -135,6 +141,7 @@ export async function ensureWorker(designId: string, deps: Partial<MachineDeps> 
     throw new StudioMachineError(`The studio machine could not be created: ${plain(err, token)}`)
   }
   await db.update(studioDesigns).set({ machineId: id, machineClaimedAt: null }).where(eq(studioDesigns.id, designId))
+  return 'created'
 }
 
 /** Deletes the design's machine and forgets its token; a later job creates a new one. */

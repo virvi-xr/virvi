@@ -24,6 +24,11 @@ sealed interface AuthState {
   data class Paired(val deviceId: String, val kind: DeviceKind) : AuthState
 }
 
+/** The paired headset's id and secret, for the routes the secret itself authorises. The secret is not printed. */
+data class DeviceCredential(val deviceId: String, val secret: String) {
+  override fun toString() = "DeviceCredential(deviceId=$deviceId)"
+}
+
 sealed interface PassResult {
   data class Ok(val token: String, val sceneId: String) : PassResult {
     override fun toString() = "Ok(sceneId=$sceneId)"
@@ -247,6 +252,28 @@ class DeviceAuth(
     val secret = store.get(KEY_SECRET)
     signOut()
     if (id != null && secret != null) api.endSession(id, secret)
+  }
+
+  /** The headset's id and secret while it is paired; null otherwise. */
+  fun credential(): DeviceCredential? {
+    if (_state.value !is AuthState.Paired) return null
+    val id = store.get(KEY_ID) ?: return null
+    val secret = store.get(KEY_SECRET) ?: return null
+    return DeviceCredential(id, secret)
+  }
+
+  /**
+   * Runs [block] with the headset's [credential]. Not paired is [BuilderCall.Revoked]; an answer of revoked or bad
+   * secret signs the headset out (if it is still the same pairing) and is [BuilderCall.Revoked].
+   */
+  suspend fun <T> withCredential(block: suspend (DeviceCredential) -> BuilderCall<T>): BuilderCall<T> {
+    val c = credential() ?: return BuilderCall.Revoked
+    val r = block(c)
+    if (r is BuilderCall.Revoked || r is BuilderCall.BadSecret) {
+      if (store.get(KEY_ID) == c.deviceId) signOut()
+      return BuilderCall.Revoked
+    }
+    return r
   }
 
   /** The spaces the approver can build on. A revoked device is signed out here like everywhere else. */

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 /**
- * What POST /api/scenes/:id/media-names answers: the current Media Library name of each URL whose file the viewer
+ * What POST /api/scenes/:id/media-names answers: the current Images & Video name of each URL whose file the viewer
  * may see, and our upload URLs whose file was deleted. URLs in neither (pasted links) show their own filename.
  */
 export interface MediaNames {

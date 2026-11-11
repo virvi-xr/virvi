@@ -15,7 +15,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432" # this machine only; Docker publishing skips host firewalls
     environment:
       POSTGRES_DB: vlm  # virvi-rename: keep (local database name)
       POSTGRES_USER: vlm  # virvi-rename: keep (local database name)
@@ -32,7 +32,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379" # this machine only: Redis has no password
     volumes:
       - redisdata:/data
     healthcheck:
@@ -51,6 +51,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Everything in .env reaches the server (SMTP, OAuth, TRUST_PROXY_HOPS...); the lines below win over it.
+    env_file: .env
     environment:
       VIRVI_MODE: scalable
       DATABASE_URL: postgresql://vlm:${POSTGRES_PASSWORD:-vlm_prod}@postgres:5432/vlm
@@ -59,6 +61,7 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3010}
       STORAGE_PROVIDER: local
       LOCAL_STORAGE_PATH: /app/uploads
+      PORT: 3010 # the container's port; PORT in .env is the host port
     volumes:
       - uploads:/app/uploads
 

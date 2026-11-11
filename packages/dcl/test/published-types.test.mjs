@@ -35,15 +35,28 @@ test('dist/index.d.ts only imports packages a scene has', () => {
   assert.deepEqual(stray, [])
 })
 
+// LIV-135: an owner's scene awaits placeDeployedModels() and then calls createVirvi(); the adapter createVirvi builds can
+// only adopt the placed copies if both come from one copy of the placements module, shared through the main entry
+test('the bundle has one placements module, behind both placeDeployedModels and createVirvi', () => {
+  const js = fs.readFileSync(path.join(PKG, 'dist/index.js'), 'utf8')
+  for (const fn of ['placeDeployedModels', 'adoptPlaced', 'releasePlaced']) {
+    assert.equal(js.match(new RegExp(`^(?:async )?function ${fn}\\(`, 'gm'))?.length, 1, fn)
+  }
+  assert.match(js, /^export \{[^}]*\bplaceDeployedModels\b[^}]*\}/m)
+  assert.match(js, /^export \{[^}]*\bcreateVirvi\b[^}]*\}/m)
+})
+
 test('a Decentraland scene with only @dcl/sdk type-checks against the packed package', { timeout: 180_000 }, () => {
   const scene = sceneWithPackedPackage()
   fs.mkdirSync(path.join(scene, 'src'))
   fs.writeFileSync(path.join(scene, 'src/index.ts'), [
-    "import { createVirvi, type Virvi, type VirviInitConfig } from '@virvixr/dcl'",
-    'export function main() {',
+    "import { createVirvi, placeDeployedModels, type Virvi, type VirviInitConfig } from '@virvixr/dcl'",
+    'export async function main() {',
+    '  const placed: number = await placeDeployedModels()',
     '  const config: VirviInitConfig | undefined = undefined',
     '  const virvi: Promise<Virvi> = createVirvi(config)',
     '  void virvi',
+    '  void placed',
     '}',
   ].join('\n'))
   fs.writeFileSync(path.join(scene, 'tsconfig.json'), JSON.stringify({

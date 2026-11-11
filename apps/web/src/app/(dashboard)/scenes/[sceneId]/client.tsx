@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage, isGlbAsset } from '@/lib/api'
+import { ASSET_LIBRARY, MEDIA_LIBRARY, asPickerModel, modelPickerQuery } from '@/lib/libraries'
 import { useAuth } from '@/lib/auth'
 import { AD_SHAPES, type AdFormats, type ClickEvent } from '@virvixr/shared'
 import { shapeLabel, offImageLabel, adModeHint, isAdsMode, adSpaceRefreshKey } from '@/lib/ads'
@@ -11,8 +12,11 @@ import { PresetBar } from './PresetBar'
 import { PresetSchedules } from './PresetSchedules'
 import { ScreenShowings } from './ScreenShowings'
 import { ClickActionField } from './ClickAction'
+import { FrameField } from './FrameField'
 import { SceneRoles } from './SceneRoles'
 import { ArSpaces } from './ArSpaces'
+import { SceneThumbnail } from './SceneThumbnail'
+import { DeleteSceneSection } from './DeleteSceneSection'
 import { RoomSetPanel } from './RoomSetPanel'
 import { sceneHasRoomSet } from '@/lib/room-set'
 import { mediaLabel, useMediaNames } from '@/lib/media-names'
@@ -22,7 +26,10 @@ import { streamForSource, streamOptionLabel, type SceneStream } from '@/lib/stre
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Badge, PageHeader, Skeleton, type Tone } from '@/components/ui'
+import { Badge, PageHeader, SearchField, Skeleton, type Tone } from '@/components/ui'
+import { LockIcon } from '@/components/icons'
+import { LockedButton, LockedSection, askSceneSignUp } from '@/components/TrialLock'
+import { offTypeLocked, sceneTabLocked, TRIAL_LOCK_LABELS } from '@/lib/trial-scene'
 
 
 // ---------------------------------------------------------------------------
@@ -30,7 +37,7 @@ import { Badge, PageHeader, Skeleton, type Tone } from '@/components/ui'
 // ---------------------------------------------------------------------------
 
 type ElementType = 'video' | 'image' | 'sound' | 'model' | 'widget' | 'ad_space'
-type TabKey = ElementType | 'moderation' | 'roles' | 'ar'
+type TabKey = ElementType | 'moderation' | 'roles' | 'ar' | 'settings'
 
 interface Instance {
   id: string
@@ -67,8 +74,14 @@ interface Preset {
 interface Scene {
   id: string
   name: string
+  /** LIV-88: shown here and on the Scenes list, and deployed to Decentraland as the scene's navmapThumbnail. */
+  thumbnailUrl?: string | null
+  /** LIV-89: 'import' when it came from an imported scene's own scene.json (not deployed by Virvi). */
+  thumbnailSource?: 'upload' | 'import' | null
   activePresetId?: string | null
   presets: Preset[]
+  /** LIV-83: the caller may delete it (its host, an owner or admin of its organization). */
+  canDelete?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +98,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'moderation', label: 'Moderation' },
   { key: 'roles', label: 'Roles' },
   { key: 'ar', label: 'AR spaces' },
+  { key: 'settings', label: 'Settings' },
 ]
 
 const CONTROL_TYPES = [
@@ -119,6 +133,9 @@ const ELEMENT_TYPE_LABELS: Record<ElementType, string> = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** A trial's session (LIV-91): its account-only parts are shown locked and never fetched. */
+const useTrial = () => !!useAuth().user?.trial
 
 function NumberInput({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
   const [local, setLocal] = useState(String(value))
@@ -316,8 +333,9 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
 }) {
   const props = element.properties || {}
   const playlist: string[] = props.playlist || []
-  // The playlist stores URLs only: names are looked up, so a rename in the Media Library shows here
-  const names = useMediaNames(api, sceneId, playlist)
+  const trial = useTrial()
+  // The playlist stores URLs only: names are looked up, so a rename in Images & Video shows here (not for a trial)
+  const names = useMediaNames(api, sceneId, sceneTabLocked('media-names', trial) ? [] : playlist)
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
@@ -397,7 +415,9 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
           onChange={e => updateProp('offType', parseInt(e.target.value))}
           className="w-48 rounded bg-gray-950 px-3 py-1.5 text-sm text-white outline-none focus:border-blue-400 border border-gray-800">
           {OFF_TYPES.map(t => (
-            <option key={t.value} value={t.value}>{t.label}</option>
+            <option key={t.value} value={t.value} disabled={offTypeLocked(t.value, trial)}>
+              {t.label}{offTypeLocked(t.value, trial) ? ' (needs a free account)' : ''}
+            </option>
           ))}
         </select>
       </div>
@@ -410,9 +430,13 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
         <p className="text-xs text-gray-500">{adModeHint(props.offType ?? 0)}</p>
       )}
 
-      {isAdsMode(props.offType ?? 0) && <AdSpaceContent elementId={element.id} refreshKey={adSpaceRefreshKey(props)} api={api} />}
+      {isAdsMode(props.offType ?? 0) && (sceneTabLocked('ads', trial)
+        ? <LockedSection tab="ads" label="Ads" />
+        : <AdSpaceContent elementId={element.id} refreshKey={adSpaceRefreshKey(props)} api={api} />)}
 
-      {(props.offType ?? 0) === 6 && <ScreenShowings api={api} sceneId={sceneId} elementId={element.id} MediaPicker={MediaPicker} screens={screens} />}
+      {(props.offType ?? 0) === 6 && (sceneTabLocked('showings', trial)
+        ? <LockedSection tab="showings" label="Scheduled showings" />
+        : <ScreenShowings api={api} sceneId={sceneId} elementId={element.id} MediaPicker={MediaPicker} screens={screens} />)}
 
       {/* Playlist (a scheduled screen plays its showings instead) */}
       {(props.offType ?? 0) !== 6 && <div className="space-y-2">
@@ -440,14 +464,22 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
         )}
 
         <div className="flex items-center gap-2">
-          <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer shrink-0 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-            {uploading ? 'Uploading...' : 'Upload'}
-            <input ref={fileRef} type="file" accept="video/*" multiple onChange={handleUpload} className="hidden" />
-          </label>
-          <button onClick={() => setShowPicker(true)}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">
-            Media Library
-          </button>
+          {sceneTabLocked('uploads', trial) ? (
+            <LockedButton tab="uploads" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">Upload</LockedButton>
+          ) : (
+            <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer shrink-0 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              {uploading ? 'Uploading...' : 'Upload'}
+              <input ref={fileRef} type="file" accept="video/*" multiple onChange={handleUpload} className="hidden" />
+            </label>
+          )}
+          {sceneTabLocked('media-library', trial) ? (
+            <LockedButton tab="media-library" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">{MEDIA_LIBRARY.name}</LockedButton>
+          ) : (
+            <button onClick={() => setShowPicker(true)}
+              className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors shrink-0">
+              {MEDIA_LIBRARY.name}
+            </button>
+          )}
         </div>
         {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
 
@@ -477,6 +509,8 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
         </div>
       </div>
 
+      <FrameField properties={props} onSave={(properties) => onUpdateElement(element.id, { properties }, { rethrow: true })} />
+
       <div className="space-y-2">
         <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
         {element.instances.map(inst => (
@@ -491,10 +525,22 @@ function VideoElementEditor({ element, sceneId, screens, onUpdateElement, onUpda
 }
 
 // ---------------------------------------------------------------------------
-// Media Library Picker
+// Library Picker: Images & Video, or your 3D Models when picking a model
 // ---------------------------------------------------------------------------
 
-function MediaPicker({ api, accept, onSelect, onClose }: {
+/** A trial has no Images & Video (GET /api/media is account-only): opening a picker opens the sign-up sheet instead and
+ *  closes, so pickers reached from other parts (a click action's sound) never fetch it either. */
+function MediaPicker(props: Parameters<typeof LibraryPicker>[0]) {
+  const trial = useTrial()
+  return sceneTabLocked('media-library', trial) ? <LockedPicker onClose={props.onClose} /> : <LibraryPicker {...props} />
+}
+
+function LockedPicker({ onClose }: { onClose: () => void }) {
+  useEffect(() => { askSceneSignUp('media-library', TRIAL_LOCK_LABELS['media-library']); onClose() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  return null
+}
+
+function LibraryPicker({ api, accept, onSelect, onClose }: {
   api: ReturnType<typeof import('@/lib/api').useApi>
   accept?: string
   onSelect: (url: string) => void
@@ -505,6 +551,8 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  // Picking a model lists your 3D Models (LIV-132); everything else lists Images & Video
+  const modelsOnly = !!accept && accept.split(',').every(t => ['.glb', 'model/gltf-binary'].includes(t.trim().toLowerCase()))
 
   // `accept` is a comma-separated list like an <input accept>: "image/*", "model/gltf-binary", ".glb".
   // GLBs match by content type or by a .glb filename (old uploads may be stored as octet-stream).
@@ -518,12 +566,37 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
     })
   }
 
+  // Your 3D Models come a page at a time, newest first, with a search box, so every one of them can be reached
+  const [search, setSearch] = useState('')
+  const [total, setTotal] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const loadModels = (offset: number) =>
+    api.getAssets(modelPickerQuery(search, offset)).then(data => {
+      setTotal(data.total)
+      return data.assets.map(asPickerModel)
+    })
+
   useEffect(() => {
+    if (modelsOnly) return
     api.getMedia().then(data => {
       setAssets(data.assets.filter(matchesAccept))
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (!modelsOnly) return
+    let live = true
+    const t = setTimeout(() => {
+      loadModels(0).then(list => { if (live) { setAssets(list); setLoading(false) } }).catch(() => { if (live) setLoading(false) })
+    }, search ? 250 : 0)
+    return () => { live = false; clearTimeout(t) }
+  }, [search])
+
+  const loadMore = () => {
+    setLoadingMore(true)
+    loadModels(assets.length).then(list => setAssets(prev => [...prev, ...list])).catch(() => {}).finally(() => setLoadingMore(false))
+  }
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -546,21 +619,22 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div className="w-full max-w-2xl max-h-[80vh] rounded-lg border border-gray-700 bg-gray-900 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-          <h3 className="font-semibold">Media Library</h3>
+          <h3 className="font-semibold">{modelsOnly ? `Your ${ASSET_LIBRARY.name}` : MEDIA_LIBRARY.name}</h3>
           <div className="flex items-center gap-2">
-            <label className={`rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+            {!modelsOnly && <label className={`rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
               {uploading ? 'Uploading...' : 'Upload New'}
               <input ref={fileRef} type="file" accept={accept} onChange={handleUpload} className="hidden" />
-            </label>
+            </label>}
             <button onClick={onClose} className="text-gray-400 hover:text-white text-lg px-2">&times;</button>
           </div>
         </div>
         {uploadError && <p className="px-4 pt-3 text-xs text-red-400">{uploadError}</p>}
+        {modelsOnly && <div className="px-4 pt-3"><SearchField value={search} onChange={setSearch} placeholder="Search your models..." label="Search your models" /></div>}
         <div className="flex-1 overflow-y-auto p-4">
           {loading ? (
             <Skeleton rows={2} className="h-12" />
           ) : assets.length === 0 ? (
-            <p className="text-gray-500 text-sm text-center py-8">No media yet. Upload one above.</p>
+            <p className="text-gray-500 text-sm text-center py-8">{modelsOnly ? (search.trim() ? 'No models match your search.' : 'No models in your 3D Models yet. Use Upload GLB to add one.') : 'No images or video yet. Upload one above.'}</p>
           ) : (
             <div className="grid grid-cols-3 gap-3">
               {assets.map((asset: any) => (
@@ -579,6 +653,14 @@ function MediaPicker({ api, accept, onSelect, onClose }: {
                   </div>
                 </button>
               ))}
+            </div>
+          )}
+          {modelsOnly && !loading && assets.length < total && (
+            <div className="mt-4 text-center">
+              <button type="button" onClick={loadMore} disabled={loadingMore}
+                className="rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:border-gray-500 disabled:opacity-50">
+                {loadingMore ? 'Loading…' : `Load more (${assets.length} of ${total})`}
+              </button>
             </div>
           )}
         </div>
@@ -604,11 +686,15 @@ function LiveStreamField({ value, onChange, api, sceneId }: {
 }) {
   const [streams, setStreams] = useState<SceneStream[] | null>(null)
   const [urlInput, setUrlInput] = useState('')
+  // A trial pastes a URL: Virvi streams are account-only, so they are neither listed nor offered
+  const trial = useTrial()
+  const streamsLocked = sceneTabLocked('streams', trial)
   useEffect(() => {
+    if (streamsLocked) return
     let live = true
     api.getSceneStreams(sceneId).then(r => { if (live) setStreams(r.streams) }).catch(() => { if (live) setStreams([]) })
     return () => { live = false }
-  }, [api, sceneId])
+  }, [api, sceneId, streamsLocked])
   const chosen = streamForSource(value, streams)
 
   const handlePaste = () => {
@@ -652,10 +738,10 @@ function LiveStreamField({ value, onChange, api, sceneId }: {
 }
 
 // ---------------------------------------------------------------------------
-// Image field: upload, pick from the Media Library, or paste a URL
+// Image field: upload, pick from Images & Video, or paste a URL
 // ---------------------------------------------------------------------------
 
-/** An image an element shows (texture, ad fallback, video off image), named as it is in the Media Library. */
+/** An image an element shows (texture, ad fallback, video off image), named as it is in Images & Video. */
 function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
   label: string
   value: string | undefined
@@ -664,7 +750,8 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
   api: ReturnType<typeof import('@/lib/api').useApi>
   sceneId: string
 }) {
-  const names = useMediaNames(api, sceneId, value ? [value] : [])
+  const trial = useTrial()
+  const names = useMediaNames(api, sceneId, value && !sceneTabLocked('media-names', trial) ? [value] : [])
   const row = imageSourceRow(value, names)
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
@@ -707,14 +794,22 @@ function ImageSourceField({ label, value, onChange, hint, api, sceneId }: {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <label className={`shrink-0 cursor-pointer rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600 ${uploading ? 'pointer-events-none opacity-50' : ''}`}>
-          {uploading ? 'Uploading...' : 'Upload'}
-          <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
-        </label>
-        <button type="button" onClick={() => setShowPicker(true)}
-          className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">
-          Media Library
-        </button>
+        {sceneTabLocked('uploads', trial) ? (
+          <LockedButton tab="uploads" className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">Upload</LockedButton>
+        ) : (
+          <label className={`shrink-0 cursor-pointer rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600 ${uploading ? 'pointer-events-none opacity-50' : ''}`}>
+            {uploading ? 'Uploading...' : 'Upload'}
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} className="hidden" />
+          </label>
+        )}
+        {sceneTabLocked('media-library', trial) ? (
+          <LockedButton tab="media-library" className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">{MEDIA_LIBRARY.name}</LockedButton>
+        ) : (
+          <button type="button" onClick={() => setShowPicker(true)}
+            className="shrink-0 rounded bg-gray-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-gray-600">
+            {MEDIA_LIBRARY.name}
+          </button>
+        )}
         <input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handlePaste() }} onBlur={handlePaste}
           placeholder="or paste an image URL" aria-label={`${label}: paste an image URL`}
@@ -753,6 +848,8 @@ function ImageElementEditor({ element, sceneId, onUpdateElement, onUpdateInstanc
         onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
 
       <ImageSourceField label="Texture" value={props.textureSrc} onChange={setTexture} api={api} sceneId={sceneId} />
+
+      <FrameField properties={props} onSave={(properties) => onUpdateElement(element.id, { properties }, { rethrow: true })} />
 
       <div className="space-y-2">
         <InstancesHeader count={element.instances.length} onAdd={() => onAddInstance(element.id)} onDeleteAll={() => onDeleteAllInstances(element.id)} />
@@ -852,6 +949,7 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
   api: ReturnType<typeof import('@/lib/api').useApi>
 }) {
   const props = element.properties || {}
+  const trial = useTrial()
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
@@ -867,12 +965,13 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
     setUploading(true)
     setUploadError('')
     try {
+      // New models go in 3D Models, private to you (LIV-132)
       const base64 = await fileToBase64(file)
-      const { asset } = await api.uploadMedia(file.name, mediaContentType(file), base64)
-      setModel(asset.publicUrl)
+      const { asset } = await api.uploadAsset({ name: file.name.replace(/\.glb$/i, '') || file.name, fileData: base64, contentType: 'model/gltf-binary', filename: file.name })
+      setModel(asset.cdnUrl)
     } catch (err: any) {
       console.error('Upload failed:', err)
-      setUploadError(uploadErrorMessage(err))
+      setUploadError(['unsupported_type', 'too_large', 'HTTP 413'].includes(err?.message) ? 'Only GLB models (≤ 50 MB)' : (err?.message || 'Upload failed'))
     }
     setUploading(false)
     if (fileRef.current) fileRef.current.value = ''
@@ -884,21 +983,30 @@ function ModelElementEditor({ element, onUpdateElement, onRoomSetSaved, onUpdate
       <ClickActionField value={element.clickEvent} api={api} MediaPicker={MediaPicker}
         onSave={(clickEvent) => onUpdateElement(element.id, { clickEvent }, { rethrow: true })} />
 
-      {element.roomSetId && <RoomSetPanel roomSetId={element.roomSetId} onSaved={(url) => onRoomSetSaved(element.id, url)} />}
+      {element.roomSetId && !sceneTabLocked('room-set', trial) && <RoomSetPanel roomSetId={element.roomSetId} onSaved={(url) => onRoomSetSaved(element.id, url)} />}
 
       <div className="space-y-2">
         <TextInput label="Model URL" value={props.modelSrc || ''} onChange={setModel} />
         <div className="flex items-center gap-2">
-          <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-            {uploading ? 'Uploading...' : 'Upload GLB'}
-            <input ref={fileRef} type="file" accept=".glb,model/gltf-binary" onChange={handleUpload} className="hidden" />
-          </label>
-          <button onClick={() => setShowPicker(true)}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">
-            Choose from Media
-          </button>
+          {sceneTabLocked('uploads', trial) ? (
+            <LockedButton tab="uploads" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">Upload GLB</LockedButton>
+          ) : (
+            <label className={`rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              {uploading ? 'Uploading...' : 'Upload GLB'}
+              <input ref={fileRef} type="file" accept=".glb,model/gltf-binary" onChange={handleUpload} className="hidden" />
+            </label>
+          )}
+          {sceneTabLocked('media-library', trial) ? (
+            <LockedButton tab="media-library" className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">Choose from 3D Models</LockedButton>
+          ) : (
+            <button onClick={() => setShowPicker(true)}
+              className="rounded bg-gray-700 px-3 py-1.5 text-sm text-white hover:bg-gray-600 transition-colors">
+              Choose from 3D Models
+            </button>
+          )}
         </div>
         {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
+        <p className="text-xs text-gray-500">Upload GLB adds the model to your 3D Models. {ASSET_LIBRARY.uploadHelp}</p>
         <p className="text-xs text-gray-500">GLBs need <code className="text-gray-400">npx @virvixr/dcl sync</code> + a redeploy before they appear in-world.</p>
       </div>
 
@@ -1366,15 +1474,18 @@ export default function SceneEditorPage() {
   const searchParams = useSearchParams()
   const sceneId = (searchParams.get('id') || params.sceneId) as string
   const { token, user } = useAuth()
+  const trial = !!user?.trial
   const api = useApi()
-  const { room, connected, sendMessage } = useSceneRoom(sceneId, token)
+  // A trial token is no Colyseus session: a trial edits through the API only (no live updates, no moderation)
+  const live = !sceneTabLocked('realtime', trial)
+  const { room, connected, sendMessage } = useSceneRoom(sceneId, live ? token : null)
 
   const [scene, setScene] = useState<Scene | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('video')
   const [copied, setCopied] = useState(false)
-  const { connected: linked, reload: reloadConnected } = useConnected(sceneId)
+  const { connected: linked, reload: reloadConnected } = useConnected(sceneId, !sceneTabLocked('destinations', trial) && !sceneTabLocked('hyperfy', trial) && !sceneTabLocked('ar', trial))
   /** The name before this visit's last rename, while "Use the new name everywhere?" can still compare against it. */
   const [renamedFrom, setRenamedFrom] = useState<string | null>(null)
   const [namePanel, setNamePanel] = useState(false)
@@ -1723,7 +1834,14 @@ export default function SceneEditorPage() {
     <div className="space-y-6">
       <PageHeader
         crumbs={['Workspace', { label: 'Scenes', href: '/scenes' }, scene.name]}
-        title={<EditableSceneTitle name={scene.name} onSave={renameScene} />}
+        title={
+          <span className="flex items-center gap-3">
+            {scene.thumbnailUrl && (
+              <img src={scene.thumbnailUrl} alt="" className="aspect-video h-12 shrink-0 rounded border border-gray-700 object-cover" />
+            )}
+            <EditableSceneTitle name={scene.name} onSave={renameScene} />
+          </span>
+        }
         subtitle={
           <>
             {!namePanel && hasConnected(linked) && (
@@ -1739,12 +1857,12 @@ export default function SceneEditorPage() {
             </div>
           </>
         }
-        actions={
+        actions={live ? (
           <Badge tone={connected ? 'success' : 'neutral'}>
             <span className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-600'}`} />
             {connected ? 'Connected' : 'Disconnected'}
           </Badge>
-        }
+        ) : undefined}
       />
 
       {namePanel && linked && hasConnected(linked) && (
@@ -1761,14 +1879,26 @@ export default function SceneEditorPage() {
         onCreated={(id) => { setEditingPresetId(id); reloadScene() }}
         onRenamed={(id, name) => setScene(prev => prev && applyPresetsChange(prev, { action: 'upsert', preset: { id, name } }))}
         onDeleted={(id) => { setEditingPresetId(null); setScene(prev => prev && applyPresetsChange(prev, { action: 'delete', presetId: id })) }}
-        onMadeLive={(id) => setScene(prev => prev && { ...prev, activePresetId: id })} />
+        onMadeLive={(id) => setScene(prev => prev && { ...prev, activePresetId: id })}
+        schedules={!sceneTabLocked('schedules', trial)} />
 
-      <PresetSchedules api={api} sceneId={sceneId} presets={scene.presets.map(p => ({ id: p.id, name: p.name }))} />
+      {sceneTabLocked('schedules', trial)
+        ? <LockedSection tab="schedules" label="Preset schedules" detail="Make a preset go live on its own at set times. This needs a free account." />
+        : <PresetSchedules api={api} sceneId={sceneId} presets={scene.presets.map(p => ({ id: p.id, name: p.name }))} />}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800 pb-px">
         {TABS.map(tab => {
-          const count = tab.key === 'moderation' || tab.key === 'roles' || tab.key === 'ar' ? 0 : elements.filter(el => el.type === tab.key).length
+          const count = tab.key === 'moderation' || tab.key === 'roles' || tab.key === 'ar' || tab.key === 'settings' ? 0 : elements.filter(el => el.type === tab.key).length
+          if (sceneTabLocked(tab.key, trial)) {
+            return (
+              <button key={tab.key} type="button" onClick={() => askSceneSignUp(tab.key, tab.label)}
+                className="flex items-center gap-1.5 rounded-t-lg px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-800/50 hover:text-gray-400">
+                {tab.label} <LockIcon size={13} />
+                <span className="sr-only">(needs a free account)</span>
+              </button>
+            )
+          }
           return (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
@@ -1792,6 +1922,15 @@ export default function SceneEditorPage() {
 
       {/* AR spaces tab */}
       {activeTab === 'ar' && <ArSpaces sceneId={sceneId} />}
+
+      {/* Settings tab: the scene's thumbnail (LIV-88) */}
+      {activeTab === 'settings' && (
+        <>
+          <SceneThumbnail sceneId={sceneId} url={scene.thumbnailUrl ?? null} source={scene.thumbnailSource ?? null} api={api}
+            onChange={(url, source) => setScene(prev => prev && { ...prev, thumbnailUrl: url, thumbnailSource: source })} />
+          {scene.canDelete && <DeleteSceneSection sceneId={sceneId} />}
+        </>
+      )}
 
       {/* Widget tab */}
       {activeTab === 'widget' && (
@@ -1817,7 +1956,7 @@ export default function SceneEditorPage() {
       )}
 
       {/* Element list (video/image/model/sound) */}
-      {activeTab !== 'moderation' && activeTab !== 'widget' && activeTab !== 'roles' && activeTab !== 'ar' && (
+      {activeTab !== 'moderation' && activeTab !== 'widget' && activeTab !== 'roles' && activeTab !== 'ar' && activeTab !== 'settings' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-400">{ELEMENT_TYPE_LABELS[activeTab as ElementType]}s ({filteredElements.length})</p>
@@ -1854,7 +1993,9 @@ export default function SceneEditorPage() {
       )}
 
       {/* Collaborators */}
-      <CollaboratorsSection sceneId={sceneId} api={api} currentUserId={user?.id || ''} />
+      {sceneTabLocked('collaborators', trial)
+        ? <LockedSection tab="collaborators" label="Collaborators" detail="Invite people to edit this scene with you. This needs a free account." />
+        : <CollaboratorsSection sceneId={sceneId} api={api} currentUserId={user?.id || ''} />}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  canSend, checkoutBody, composerState, paidSummary, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
+  canSend, checkoutBody, composerState, paidByReader, paidSummary, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
   type FinalizedRevision, type Quote, type QuoteLine, type StudioDetail, type StudioPiece, type StudioEvent, type StudioProposal,
 } from './studio'
 import { formatBytesShort, uploadProblem } from './studio'
@@ -8,7 +8,7 @@ import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudi
 import { giftCodeStatus, latestRenderUrl, trialCtx, trialNudge } from './studio'
 import { adminActionMessage, readUnrecordedRefunds, writeUnrecordedRefund, adminManaMessage, adminManaRows, type AdminManaTransfer } from './studio'
 import { checkoutHref, checkoutTarget, checkoutTotals, countdown, manaBack } from './studio'
-import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, unsentHref, readUnsent, type StudioDesign, type StudioUsage } from './studio'
+import { AGENTS, DEFAULT_AGENT, agentLabel, otherAgents, designBadge, designIdFromPath, formatCents, refreshDue, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, untilReset, usageLine, keepUnsent, takeUnsent, type StudioDesign, type StudioUsage } from './studio'
 
 const NOW = new Date('2026-10-29T21:55:00Z')
 const at = (ms: number) => new Date(NOW.getTime() + ms).toISOString()
@@ -37,6 +37,11 @@ describe('AGENTS', () => {
 describe('refusalMessage', () => {
   const r = (code: string, body: Record<string, unknown> = {}, status = 409) => refusalMessage({ status, body: { code, ...body } }, NOW)
 
+  it('explains a viewer’s refusal and another member’s open checkout (LIV-159)', () => {
+    expect(r('viewer', { error: 'viewer' }, 403)).toEqual({ text: 'You can view this design. Ask the owner to make you a collaborator to send prompts.' })
+    expect(r('checkout_open')).toEqual({ text: 'Someone else on this design has a checkout open for these pieces. It clears by itself in about half an hour.' })
+  })
+
   it('names when the allowance comes back and offers a top-up', () => {
     expect(r('allowance', { resetsAt: at(125 * MIN) }, 429)).toEqual({
       text: 'You’ve used today’s prompts. More at midnight UTC (in 2 h 5 min).',
@@ -54,7 +59,7 @@ describe('refusalMessage', () => {
   })
   it('points the open-design limit at settings', () => {
     expect(r('open_design_limit', {}, 403)).toEqual({
-      text: 'Your plan has room for one open design. Archive or finalize the one you have, or upgrade.',
+      text: 'Your plan has room for one open design. A design with pieces left to finalize still counts. Archive it or finalize the rest, or upgrade.',
       action: 'settings',
     })
   })
@@ -200,6 +205,7 @@ describe('progressFor', () => {
   })
   it('falls back to the phase in plain words', () => {
     expect(progressFor([{ type: 'phase', jobId: 'j1', phase: 'checking' }], 'j1')).toBe('Running the checks…')
+    expect(progressFor([{ type: 'phase', jobId: 'j1', phase: 'screening' }], 'j1')).toBe('Checking your request…')
     expect(progressFor([{ type: 'phase', jobId: 'j1', phase: 'packaging' }], 'j1')).toBe('Packaging your files…')
   })
   it('shows a later phase over an older note', () => {
@@ -467,6 +473,12 @@ describe('revisionActions', () => {
   })
   it('closes the report window by date', () => {
     expect(revisionActions(f({ reportableUntil: at(-1000) }), NOW).report).toBe('closed')
+  })
+  it('shows a payment’s own lines (report outcome, MANA back, 3D Models) to whoever paid, never to support (LIV-159)', () => {
+    expect(paidByReader(f({ paidByMe: true }), false)).toBe(true)
+    expect(paidByReader(f({ paidByMe: false }), false)).toBe(false)
+    expect(paidByReader(f(), false)).toBe(false)
+    expect(paidByReader(f({ paidByMe: true }), true)).toBe(false)
   })
   it('offers no report on a first finalize or an uncharged revision', () => {
     expect(revisionActions(f({ kind: 'first', amountCents: 2900, reportableUntil: null }), NOW).report).toBe('none')
@@ -751,15 +763,42 @@ describe('latestRenderUrl', () => {
   })
 })
 
+function memoryStore() {
+  const m = new Map<string, string>()
+  return { m, getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, v) }, removeItem: (k: string) => { m.delete(k) } }
+}
+
 describe('unsent prompt hand-off', () => {
-  it('carries the prompt and why it did not send to the design page, and reads them back', () => {
-    const href = unsentHref('d1', 'A neon jacket & hat', 'Agents are busy. Try again.')
-    expect(href.startsWith('/studio/d1/?')).toBe(true)
-    expect(readUnsent(href.slice(href.indexOf('?')))).toEqual({ text: 'A neon jacket & hat', refusal: 'Agents are busy. Try again.' })
+  it('keeps the prompt and why it did not send for that design, out of the URL, and gives it back once', () => {
+    const store = memoryStore()
+    keepUnsent(store, 'd1', 'A neon jacket & hat', 'Agents are busy. Try again.')
+    expect([...store.m.keys()].every((k) => k.includes('d1'))).toBe(true)
+    expect(takeUnsent(store, 'd2')).toBeNull()
+    expect(takeUnsent(store, 'd1')).toEqual({ text: 'A neon jacket & hat', refusal: 'Agents are busy. Try again.' })
+    expect(takeUnsent(store, 'd1')).toBeNull()
+    expect(store.m.size).toBe(0)
   })
-  it('is null without a prompt', () => {
-    expect(readUnsent('')).toBeNull()
-    expect(readUnsent('?payment=x')).toBeNull()
+  it('keeps a full 4000-character prompt', () => {
+    const store = memoryStore()
+    const long = 'x'.repeat(4000)
+    keepUnsent(store, 'd1', long, '')
+    expect(takeUnsent(store, 'd1')).toEqual({ text: long, refusal: '' })
+  })
+  it('is null with nothing kept, a damaged entry, or no storage', () => {
+    const store = memoryStore()
+    expect(takeUnsent(store, 'd1')).toBeNull()
+    keepUnsent(store, 'd1', 'a', 'b')
+    for (const k of store.m.keys()) store.m.set(k, '{nope')
+    expect(takeUnsent(store, 'd1')).toBeNull()
+    expect(store.m.size).toBe(0)
+    expect(takeUnsent(null, 'd1')).toBeNull()
+    expect(() => keepUnsent(null, 'd1', 'a', 'b')).not.toThrow()
+  })
+  it('ignores blocked storage', () => {
+    const boom = () => { throw new Error('blocked') }
+    const store = { getItem: boom, setItem: boom, removeItem: boom }
+    expect(() => keepUnsent(store, 'd1', 'a', 'b')).not.toThrow()
+    expect(takeUnsent(store, 'd1')).toBeNull()
   })
 })
 

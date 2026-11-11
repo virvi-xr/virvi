@@ -2,16 +2,23 @@
 import { useEffect, useState, type Dispatch } from 'react'
 import Link from 'next/link'
 import { useApi, type DclWorld, type RoomScanSummary, type WizardOptions } from '@/lib/api'
-import { getBrowserWallet, signWalletChallenge } from '@/lib/auth'
+import { getBrowserWallet, signWalletChallenge, useAuth } from '@/lib/auth'
+import { openSignUp } from '@/lib/trial'
+import { headsetPairHref } from '@/lib/pairing'
 import { wizardErrorMessage } from '@/lib/wizard/run'
-import { normalizeWorldName, plotLabel, shortAddress } from '@/lib/wizard/helpers'
+import { hostingChoice, normalizeWorldName, plotLabel, shortAddress } from '@/lib/wizard/helpers'
 import type { WizardAction, WizardState } from '@/lib/wizard/state'
 import { Badge } from '@/components/ui'
+import { WorldInUseNotice } from '../WorldInUseNotice'
+import { LockIcon } from '@/components/icons'
 
 export type NamesState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; wallets: Array<{ address: string; names: DclWorld[] }> }
+
+/** A trial's Decentraland choice: the World is picked at Deploy, when the wallet that owns it is connected. */
+export const DCL_LATER_LABEL = "Decentraland World — you'll connect the wallet that owns it when you deploy."
 
 export const CONTRACT_WALLET_MESSAGE =
   "Contract wallets (like Safe) can't sign Decentraland World deploys yet. Connect an ordinary wallet that owns the name."
@@ -30,6 +37,8 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
   setContractBlocked: (v: boolean) => void
 }) {
   const api = useApi()
+  // A trial looks up no names and links no wallet: it picks "Decentraland World" and connects the wallet at Deploy
+  const trial = !!useAuth().user?.trial
   const [linking, setLinking] = useState(false)
   const [linkError, setLinkError] = useState('')
   const [typed, setTyped] = useState('')
@@ -46,10 +55,13 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
 
   const hyperfyAllowed = !!options?.hyperfy.allowed
   useEffect(() => {
-    if (!hyperfy || !hyperfyAllowed || slots) return
+    if (!hyperfy || !hyperfyAllowed || slots || trial) return
     api.getHyperfySlots().then(setSlots).catch(() => setSlots({ used: 0, limit: 0, hostingAvailable: false }))
-  }, [hyperfy, hyperfyAllowed])
-  const canHost = !!slots?.hostingAvailable && (slots.limit === null || slots.used < slots.limit)
+  }, [hyperfy, hyperfyAllowed, trial])
+  // Hosting is account-only: a trial sees it locked, whatever the slots say
+  const hosting = hostingChoice(trial, slots)
+  const canHost = hosting === 'available'
+
 
   const connect = async () => {
     setLinking(true)
@@ -82,7 +94,15 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
       dispatch({ type: 'setDcl', dcl: null })
       return
     }
-    dispatch({ type: 'setDcl', dcl: { world: world.world, wallet, hasScene: world.hasScene, footprint: world.footprint, storage: world.storage ?? undefined } })
+    dispatch({ type: 'setDcl', dcl: {
+      world: world.world, wallet, hasScene: world.hasScene, footprint: world.footprint, storage: world.storage ?? undefined, connectedScene: world.connectedScene ?? null,
+    } })
+  }
+
+  /** The World is free now: the replace question comes next, and the list no longer shows it connected. */
+  const disconnected = () => {
+    if (dcl) dispatch({ type: 'setDcl', dcl: { ...dcl, connectedScene: null } })
+    reloadNames()
   }
 
   const checkTyped = async (e: React.FormEvent) => {
@@ -117,10 +137,25 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
           placeholder="Name your scene" aria-label="Scene name" required maxLength={120} autoFocus className={inputClass} />
       </label>
 
-      <RoomScanPicker scans={scans} chosen={state.roomSet?.scanId ?? null} dispatch={dispatch} />
+      <RoomScanPicker scans={scans} chosen={state.roomSet?.scanId ?? null} dispatch={dispatch} trial={trial} />
 
+      {trial ? (
+        <section className="space-y-3 border-t border-gray-800 pt-4">
+          <h3 className="text-sm font-medium text-gray-200">Decentraland</h3>
+          <label className="flex items-start gap-2 text-sm text-gray-200">
+            <input type="checkbox" className="mt-0.5" checked={state.dclLater} onChange={(e) => dispatch({ type: 'setDclLater', on: e.target.checked })} />
+            <span>{DCL_LATER_LABEL}</span>
+          </label>
+        </section>
+      ) : (
       <section className="space-y-3 border-t border-gray-800 pt-4">
         <h3 className="text-sm font-medium text-gray-200">Your Decentraland World</h3>
+        {state.dclLater && (
+          <p className="rounded-md border border-blue-400/40 bg-blue-400/10 px-3 py-2 text-sm text-blue-100">
+            You chose Decentraland while trying Virvi: pick the World for this scene below.
+            <button type="button" onClick={() => dispatch({ type: 'setDclLater', on: false })} className="ml-2 text-xs text-gray-400 hover:text-white">Skip Decentraland</button>
+          </p>
+        )}
         {names.status === 'loading' && <p className="text-sm text-gray-500">Looking up your names…</p>}
         {names.status === 'error' && (
           <div className="space-y-2">
@@ -179,7 +214,8 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
           </details>
         )}
         {contractBlocked && <p className="rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2 text-sm text-yellow-200" role="alert">{CONTRACT_WALLET_MESSAGE}</p>}
-        {dcl?.hasScene && (
+        {dcl?.connectedScene && <WorldInUseNotice world={dcl.world} connected={dcl.connectedScene} onDisconnected={disconnected} />}
+        {dcl?.hasScene && !dcl.connectedScene && (
           <div className="space-y-2 rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2.5 text-sm text-yellow-100">
             <p>Your World already has a scene on {dcl.footprint?.parcels.length ?? 1} {(dcl.footprint?.parcels.length ?? 1) === 1 ? 'parcel' : 'parcels'}. Deploying will replace it.</p>
             <label className="flex items-center gap-2">
@@ -189,6 +225,7 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
           </div>
         )}
       </section>
+      )}
 
       <section className="space-y-3 border-t border-gray-800 pt-4">
         <h3 className="text-sm font-medium text-gray-200">Also put it in</h3>
@@ -208,14 +245,23 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
                   <input type="radio" name="hyperfy-kind" checked={hyperfy.kind === 'self'} onChange={() => dispatch({ type: 'setHyperfy', hyperfy: { ...hyperfy, kind: 'self' } })} />
                   One I run myself
                 </label>
-                <label className={`flex items-center gap-1.5 ${canHost ? '' : 'text-gray-500'}`}>
-                  <input type="radio" name="hyperfy-kind" disabled={!canHost} checked={hyperfy.kind === 'hosted'} onChange={() => dispatch({ type: 'setHyperfy', hyperfy: { ...hyperfy, kind: 'hosted' } })} />
-                  Hosted by Virvi
-                </label>
+                {hosting === 'needs_account' ? (
+                  <button type="button" onClick={() => { openSignUp({ action: 'hyperfy_hosting', ctx: {} }).catch(() => {}) }}
+                    className="flex items-center gap-1.5 text-gray-500 hover:text-gray-300">
+                    <LockIcon size={14} />
+                    Hosted by Virvi
+                    <span className="text-xs">(needs a free account)</span>
+                  </button>
+                ) : (
+                  <label className={`flex items-center gap-1.5 ${canHost ? '' : 'text-gray-500'}`}>
+                    <input type="radio" name="hyperfy-kind" disabled={!canHost} checked={hyperfy.kind === 'hosted'} onChange={() => dispatch({ type: 'setHyperfy', hyperfy: { ...hyperfy, kind: 'hosted' } })} />
+                    Hosted by Virvi
+                  </label>
+                )}
               </div>
-              {slots && !canHost && (
+              {(hosting === 'used_up' || hosting === 'unavailable') && (
                 <p className="text-xs text-gray-500">
-                  {slots.hostingAvailable ? "You've used all your hosted worlds." : "Hosted worlds aren't available right now."}
+                  {hosting === 'used_up' ? "You've used all your hosted worlds." : "Hosted worlds aren't available right now."}
                 </p>
               )}
               <input value={hyperfy.name} onChange={(e) => dispatch({ type: 'setHyperfyName', name: e.target.value })}
@@ -244,15 +290,15 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
 const metres = (v: number) => `${v.toFixed(1)} m`
 
 /** "Start from a room scan": one of the person's scans fixes the plot and becomes the scene's room. */
-function RoomScanPicker({ scans, chosen, dispatch }: { scans: RoomScanSummary[] | null | 'error'; chosen: string | null; dispatch: Dispatch<WizardAction> }) {
+function RoomScanPicker({ scans, chosen, dispatch, trial }: { scans: RoomScanSummary[] | null | 'error'; chosen: string | null; dispatch: Dispatch<WizardAction>; trial: boolean }) {
   if (scans === null) return null
   return (
     <section className="space-y-3 border-t border-gray-800 pt-4">
       <h3 className="text-sm font-medium text-gray-200">Start from a room scan</h3>
       {scans === 'error' && <p className="text-sm text-gray-500">Your room scans couldn&apos;t be loaded just now.</p>}
-      {scans !== 'error' && scans.length === 0 && (
+      {scans !== 'error' && scans.length === 0 && (trial ? <PairQuest /> : (
         <p className="text-sm text-gray-400">Scanning a room needs the Virvi AR app on a personal Quest.</p>
-      )}
+      ))}
       {scans !== 'error' && scans.length > 0 && (
         <ul className="space-y-2" role="radiogroup" aria-label="Your room scans">
           {scans.map((scan) => {
@@ -277,5 +323,21 @@ function RoomScanPicker({ scans, chosen, dispatch }: { scans: RoomScanSummary[] 
         </ul>
       )}
     </section>
+  )
+}
+
+/** A trial with no scans: the headset's pairing code opens the pairing page (a full load: it is one static page). */
+function PairQuest() {
+  const [code, setCode] = useState('')
+  const href = headsetPairHref(code)
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); if (href) window.location.assign(href) }} className="space-y-2">
+      <p className="text-sm text-gray-400">Pair your Quest to scan a room: open Virvi AR on the headset, then enter its code</p>
+      <div className="flex gap-2">
+        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Headset code" aria-label="Headset code"
+          autoCapitalize="characters" autoComplete="off" spellCheck={false} className={inputClass} />
+        <button type="submit" disabled={!href} className="shrink-0 rounded-md bg-gray-800 px-3 py-2 text-sm hover:bg-gray-700 disabled:opacity-50">Pair</button>
+      </div>
+    </form>
   )
 }

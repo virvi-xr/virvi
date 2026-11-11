@@ -5,10 +5,8 @@
 // Plot coordinates are metres from the south-west corner, x east and z north (see placement.ts).
 // In three.js, x stays east, y is up and north is -Z, so the plot spans x 0..width and Z 0..-depth,
 // and the default camera sits south of the plot looking north, the way players arrive.
-// rotationY is Decentraland's Euler degrees (positive turns clockwise seen from above), which is a
-// negative three.js rotation about Y.
-// Decentraland shows a glTF x-mirrored (glTF (x, y, z) at (-x, y, z)); with the z-mirror above that is a half
-// turn about Y, so every model gets MODEL_TURN (the Hyperfy app does the same).
+// The mapping (z mirrored, Decentraland's clockwise rotationY as a negative three.js turn, and MODEL_TURN for
+// Decentraland's x-mirrored glTFs) is lib/scene-transform.ts, shared with the analytics heatmap.
 // A room set's GLB is written that way too: plot point (x, z) at glTF (-x, z), so it draws at the plot origin.
 import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
@@ -17,6 +15,8 @@ import * as THREE from 'three'
 import { DCL_PARCEL_M, plotSizeM, type Plot } from '@virvixr/shared'
 import { footprint, type PlacedItem } from '@/lib/wizard/placement'
 import { GUIDE_PLOT } from '@/lib/wizard/state'
+import { MODEL_TURN, toThreeTransform } from '@/lib/scene-transform'
+import { hasWebGL } from '@/lib/webgl'
 
 export interface Preview3DProps {
   /** Null when there is no Decentraland plot: the 2×2 guide plot is drawn instead. */
@@ -49,16 +49,9 @@ const COLORS = {
 }
 
 const GROUND = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-const toRad = (deg: number) => (-deg * Math.PI) / 180
-
-function hasWebGL(): boolean {
-  try {
-    const c = document.createElement('canvas')
-    return !!(c.getContext('webgl2') || c.getContext('webgl'))
-  } catch {
-    return false
-  }
-}
+/** A plot item's three.js placement: on the ground at (x, z), turned rotationY about Y. */
+const placement = (item: { x: number; z: number; rotationY: number }) =>
+  toThreeTransform({ position: { x: item.x, y: 0, z: item.z }, rotation: { x: 0, y: item.rotationY, z: 0 }, scale: { x: 1, y: 1, z: 1 } })
 
 export default function Preview3D(props: Preview3DProps) {
   const [webgl] = useState(() => typeof document !== 'undefined' && hasWebGL())
@@ -253,9 +246,10 @@ function Item({ item, selected, editable, onSelect, onMove }: {
 }) {
   const handlers = useGroundDrag(editable, item, (x, z) => onMove(item.key, x, z), () => onSelect(item.key))
   const url = item.asset.cdnUrl
+  const t = placement(item)
   return (
-    <group position={[item.x, 0, -item.z]}>
-      <group rotation-y={toRad(item.rotationY)} {...handlers}>
+    <group position={t.position}>
+      <group rotation-y={t.rotation[1]} {...handlers}>
         {url ? (
           <Fallback key={url} fallback={<StandIn item={item} color={COLORS.failed} />}>
             <Suspense fallback={<StandIn item={item} color={COLORS.loading} />}>
@@ -270,9 +264,6 @@ function Item({ item, selected, editable, onSelect, onMove }: {
     </group>
   )
 }
-
-/** The half turn about Y that shows a glTF the way Decentraland does (see the note at the top). */
-const MODEL_TURN = Math.PI
 
 /** A GLB as Decentraland shows it; `_collider` meshes stay hidden. */
 function Model({ url }: { url: string }) {

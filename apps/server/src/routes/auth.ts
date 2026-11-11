@@ -5,6 +5,8 @@ import { OAuth2Client } from 'google-auth-library'
 import { eq, and } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { users, userAuthMethods, passwordResetTokens, scenes } from '../db/schema.js'
+import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
+import { handOverDesigns } from '../studio/handover.js'
 import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
 import { sendPasswordResetEmail } from '../services/email.js'
@@ -19,9 +21,10 @@ import { isOfficialRealm, isWorldRealm } from '../auth/official-realms.js'
 import { trialClaims } from '../auth/trial.js'
 import { issueAccountSession } from '../auth/sessions.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
-import { convertTrial, finishOAuth, mergeTrial, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
+import { convertTrial, finishOAuth, isTrialGone, mergeTrial, movedHeadsetsField, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
+import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
 
 interface RegisterBody {
   email: string
@@ -49,7 +52,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── POST /api/auth/register ──────────────────────────────────────────────
 
-  app.post<{ Body: RegisterBody }>('/api/auth/register', { preHandler: refuseExpiredTrial(app) }, async (request, reply) => {
+  app.post<{ Body: RegisterBody }>('/api/auth/register', { preHandler: refuseExpiredTrial(app), config: { rateLimit: CREDENTIAL_RATE_LIMIT } }, async (request, reply) => {
     const { email, password, displayName } = request.body
 
     if (!email || !password || !displayName) {
@@ -72,15 +75,23 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // A trial visitor's sign-up turns the same row into the account (it keeps everything); otherwise a new user
     const trialId = await trialFromBearer(app, request)
-    let user: typeof users.$inferSelect
+    let user: typeof users.$inferSelect | undefined
     if (trialId) {
+      // A concurrent sign-up may have converted the trial first: then this one is a sign-up without a trial
       user = await db.transaction(async (tx) => {
         const converted = await convertTrial(trialId, { email: email.toLowerCase(), displayName }, tx)
         await tx.insert(userAuthMethods).values({ userId: trialId, type: 'email', identifier: email.toLowerCase(), credentialHash: passwordHash })
         return converted
-      })
-      recordTrialEvent('signed_up', trialId, cleanAction(request.body.fromAction))
-    } else {
+      }).catch((e) => { if (isTrialGone(e)) return undefined; throw e })
+      if (user) recordTrialEvent('signed_up', trialId, cleanAction(request.body.fromAction))
+    }
+    if (!user) {
+      if (trialId) {
+        const taken = await db.query.userAuthMethods.findFirst({
+          where: and(eq(userAuthMethods.type, 'email'), eq(userAuthMethods.identifier, email.toLowerCase())),
+        })
+        if (taken) return reply.status(409).send({ error: 'Email already registered' })
+      }
       const role = await initialRoleForNewUser()
       ;[user] = await db.insert(users).values({ displayName, email: email.toLowerCase(), role }).returning()
       await db.insert(userAuthMethods).values({
@@ -96,7 +107,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // ── POST /api/auth/login ─────────────────────────────────────────────────
 
-  app.post<{ Body: LoginBody }>('/api/auth/login', { preHandler: refuseExpiredTrial(app) }, async (request, reply) => {
+  app.post<{ Body: LoginBody }>('/api/auth/login', { preHandler: refuseExpiredTrial(app), config: { rateLimit: CREDENTIAL_RATE_LIMIT } }, async (request, reply) => {
     const { email, password } = request.body
 
     if (!email || !password) {
@@ -136,9 +147,9 @@ export default async function authRoutes(app: FastifyInstance) {
 
     // Signing in from a trial moves the trial's work into this account
     const trialId = await trialFromBearer(app, request)
-    if (trialId && trialId !== user.id) await mergeTrial(trialId, user.id, request.body.fromAction)
+    const merged = trialId && trialId !== user.id ? await mergeTrial(trialId, user.id, request.body.fromAction) : false
 
-    return reply.send(issueAccountSession(app, user))
+    return reply.send({ ...issueAccountSession(app, user), ...movedHeadsetsField(merged) })
   })
 
   // ── POST /api/auth/refresh ───────────────────────────────────────────────
@@ -324,7 +335,7 @@ export default async function authRoutes(app: FastifyInstance) {
       let previewSceneId: string | null = null
       if (typeof sceneId === 'string' && /^[0-9a-f-]{36}$/i.test(sceneId)) {
         const row = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId) })
-        previewSceneId = row ? row.id : null
+        previewSceneId = row && !row.deletedAt ? row.id : null
       }
       const claims = {
         ...sceneClaims(dbUser, '', { sceneId: previewSceneId, locationId: null }),
@@ -567,7 +578,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.put<{ Body: { currentPassword: string; newPassword: string } }>(
     '/api/auth/password',
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate], config: { rateLimit: CREDENTIAL_RATE_LIMIT } },
     async (request, reply) => {
       const { currentPassword, newPassword } = request.body
 
@@ -611,6 +622,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.post<{ Body: { email: string } }>(
     '/api/auth/forgot-password',
+    { config: { rateLimit: CREDENTIAL_RATE_LIMIT } },
     async (request, reply) => {
       const { email } = request.body
 
@@ -651,6 +663,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.post<{ Body: { token: string; newPassword: string } }>(
     '/api/auth/reset-password',
+    { config: { rateLimit: CREDENTIAL_RATE_LIMIT } },
     async (request, reply) => {
       const { token, newPassword } = request.body
 
@@ -735,9 +748,15 @@ export default async function authRoutes(app: FastifyInstance) {
       if (blocked) return reply.status(409).send(blocked)
       // Delete user — cascading deletes handle related data
       const imports = await importsGoingWith({ userId: request.user.id })
-      await db.delete(users).where(eq(users.id, request.user.id))
+      // Their private 3D Models go in the same transaction (public ones stay, ownerless)
+      const models = await deleteUserWithModels(request.user.id, async (tx) => {
+        // Designs they share pass to a member first (LIV-159); the rest go with them
+        await handOverDesigns(tx, request.user.id, new Date())
+        return (await tx.delete(users).where(eq(users.id, request.user.id)).returning({ id: users.id })).length > 0
+      })
       // Their imports' rows cascaded; the private files go too
       await deleteImportFiles(imports)
+      await releaseModelFiles(models ?? [])
 
       return reply.status(204).send()
     },

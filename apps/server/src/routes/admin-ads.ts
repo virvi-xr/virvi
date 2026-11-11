@@ -1,19 +1,15 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
 import { AD_SHAPES, VideoSourceType } from '@virvixr/shared'
 import type { AdShape, AdminAd, AdminAdSpace } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { ads, adCreatives, adPlacements, mediaAssets, sceneElements, scenePresets, scenes } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
+import { requireAdmin } from '../auth/admin.js'
 import { adReport } from '../ads/report.js'
 import { recordReview, resetReview } from '../ads/review.js'
 import { spaceContentFor } from '../ads/content.js'
 
-async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  if (request.user.role !== 'admin') {
-    return reply.status(403).send({ error: 'Forbidden', message: 'Admin access required' })
-  }
-}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 

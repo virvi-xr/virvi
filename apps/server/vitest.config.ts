@@ -30,10 +30,18 @@ export default defineConfig({
       DATABASE_URL: TEST_DATABASE_URL,
       JWT_SECRET: 'test-secret',
       VIRVI_MODE: 'single',
+      TRIALS_ENABLED: 'true', // trial tests run in single mode, where trials default off
       LOG_LEVEL: 'silent',
       LIFECYCLE_SWEEP_MS: '0',
       DCL_REDEPLOY_SWEEP_MS: '0',
+      DCL_MAP_SWEEP_MS: '0',
+      // Never the real abgen CDN: tests inject a fetcher, and a default one that slipped through fails fast
+      DCL_MAP_MANIFEST_URL: 'http://127.0.0.1:9/abgen-manifests',
       ANALYTICS_JOBS: 'false',
+      ERROR_JOBS: 'false',
+      ERROR_FLUSH_MS: '0',
+      LINEAR_API_KEY: '', // never the real Linear from a developer shell
+      LINEAR_TEAM_ID: '',
       LOCAL_STORAGE_PATH: join(STORAGE, 'uploads'),
       PRIVATE_STORAGE_PATH: join(STORAGE, 'private'),
     },

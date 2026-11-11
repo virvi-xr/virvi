@@ -104,13 +104,13 @@ describe('platform hook callback safety', () => {
     const { scene } = await createScene(await createUser())
     await db.insert(platformCallbacks).values(
       Array.from({ length: MAX_CALLBACKS_PER_SCENE }, (_, i) => ({
-        sceneId: scene.id, platform: 'secondlife', callbackUrl: `https://203.0.113.${i + 1}/cb`,
+        sceneId: scene.id, platform: 'secondlife', callbackUrl: `https://93.184.216.${i + 1}/cb`,
       })),
     )
-    const over = await register(scene.id, 'https://203.0.113.200/cb')
+    const over = await register(scene.id, 'https://93.184.216.200/cb')
     expect(over.statusCode).toBe(429)
     expect(over.json()).toEqual({ error: 'too_many_callbacks' })
-    const again = await register(scene.id, 'https://203.0.113.1/cb')
+    const again = await register(scene.id, 'https://93.184.216.1/cb')
     expect(again.statusCode).toBe(200)
   })
 

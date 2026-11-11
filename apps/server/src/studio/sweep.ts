@@ -8,6 +8,8 @@ import { watchManaTransfers } from './mana/settle.js'
 import { config } from '../config.js'
 import { addMissingLibraryRows } from './library.js'
 import { sweepTrials } from '../auth/trial-sweep.js'
+import { sendWeeklyDigest } from './rating-review.js'
+import { markExpiredInvitesRead, pruneNotifications } from '../notifications/notifications.js'
 
 /**
  * The Design Studio sweep: fails jobs that will never get a result (refunding counted prompts), restarts machines for
@@ -54,7 +56,8 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
 
   const idle = await db.select({ id: studioDesigns.id }).from(studioDesigns).where(and(
     isNotNull(studioDesigns.machineId),
-    sql`COALESCE(${studioDesigns.lastJobAt}, ${studioDesigns.createdAt}) < ${new Date(now.getTime() - IDLE_MACHINE_MS).toISOString()}::timestamptz`,
+    // A machine warmed ahead of a prompt (warm.ts) is in use too: GREATEST skips a null warmed_at
+    sql`GREATEST(COALESCE(${studioDesigns.lastJobAt}, ${studioDesigns.createdAt}), ${studioDesigns.warmedAt}) < ${new Date(now.getTime() - IDLE_MACHINE_MS).toISOString()}::timestamptz`,
     sql`NOT EXISTS (SELECT 1 FROM studio_jobs j WHERE j.design_id = ${studioDesigns.id} AND j.status IN ('queued', 'taken'))`,
   ))
   let destroyed = 0
@@ -93,9 +96,14 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
       isNotNull(studioPayments.stripePaymentIntent), // a card refund through Stripe
       inArray(studioPayments.method, ['mana', 'credit']), // paid back as credit
     )))
-  for (const { id } of owing) await settleRefund(id)
+  for (const { id } of owing) {
+    await settleRefund(id).catch((err) => console.error('[studio-sweep] refund settle failed:', err instanceof Error ? err.message : err))
+  }
   // Paid scene pieces whose library rows didn't land (storage was down) get another try
   await addMissingLibraryRows(now).catch((err) => console.error('[studio-sweep] library retry failed:', err instanceof Error ? err.message : err))
+  await markExpiredInvitesRead(now).catch((err) => console.error('[studio-sweep] expired invite notifications failed:', err instanceof Error ? err.message : err))
+  // Notifications are kept 90 days from their last update
+  await pruneNotifications(now).catch((err) => console.error('[studio-sweep] notification prune failed:', err instanceof Error ? err.message : err))
   return { lost, destroyed }
 }
 
@@ -112,6 +120,9 @@ export function startStudioSweep(ms = STUDIO_SWEEP_MS): void {
       .catch((err) => console.error('[studio-sweep] failed:', err))
       .then(() => sweepTrials(now))
       .catch((err) => console.error('[trial-sweep] failed:', err))
+      // The ratings digest for admins, once a week (LIV-142); a week already dealt with is a single read
+      .then(() => sendWeeklyDigest(now))
+      .catch((err) => console.error('[studio-digest] failed:', err))
       .finally(() => { running = false })
   }, ms)
   timer.unref?.()

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
   users, userAuthMethods, studioCredits, studioFlags, studioCreditLedger, studioDesigns, studioEntitlements, studioFinalizeCredits, studioGiftCodes, studioGiftRedemptions,
-  studioPauses, studioPayments, studioPromptCredits, studioUsageDays,
+  studioIdeaUses, studioPauses, studioPayments, studioPromptCredits, studioUsageDays,
+  notifications, studioDesignInvites, studioDesignMembers, studioJobs, studioMessages,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
@@ -37,20 +38,23 @@ describe('studio data follows a wallet linked to an existing account', () => {
     const { payment, entitlement } = await entitle(d, rev)
     await store.put('pkg/hat.zip', Buffer.from('PK-hat'), 'application/zip')
     await db.update(studioEntitlements).set({ packageKey: 'pkg/hat.zip' }).where(eq(studioEntitlements.id, entitlement.id))
-    await db.insert(studioUsageDays).values([{ userId: shell.id, day: today(), prompts: 3, costUsd: 0.5 }, { userId: shell.id, day: '2020-01-01', prompts: 2, costUsd: 0.1 }])
-    await db.insert(studioUsageDays).values({ userId: e.id, day: today(), prompts: 1, costUsd: 0.25 })
+    await db.insert(studioUsageDays).values([{ userId: shell.id, day: today(), prompts: 3, costUsd: 0.5, promptHelps: 4 }, { userId: shell.id, day: '2020-01-01', prompts: 2, costUsd: 0.1 }])
+    await db.insert(studioUsageDays).values({ userId: e.id, day: today(), prompts: 1, costUsd: 0.25, promptHelps: 1 })
     await db.insert(studioPromptCredits).values({ userId: shell.id, balance: 2, gifted: 4 })
     await db.insert(studioPromptCredits).values({ userId: e.id, balance: 1, gifted: 1 })
     await db.insert(studioFinalizeCredits).values({ userId: shell.id, balance: 1 })
     await db.insert(studioCredits).values([{ userId: shell.id, balanceCents: 1200 }, { userId: e.id, balanceCents: 300 }])
+    await db.insert(studioIdeaUses).values({ ideaId: 'bucket-hat-palm', userId: shell.id, designId: d.id })
 
     expect(await linkVerifiedWallet(e.id, w)).toBe('linked')
+    // the idea stays retired, now under the account
+    expect(await db.select({ userId: studioIdeaUses.userId, designId: studioIdeaUses.designId }).from(studioIdeaUses)).toEqual([{ userId: e.id, designId: d.id }])
 
     expect((await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id)))[0].ownerId).toBe(e.id)
     expect((await db.select().from(studioPayments).where(eq(studioPayments.id, payment.id)))[0].userId).toBe(e.id)
     expect((await db.select().from(studioEntitlements).where(eq(studioEntitlements.id, entitlement.id)))[0].userId).toBe(e.id)
     const days = await db.select().from(studioUsageDays).where(eq(studioUsageDays.userId, e.id))
-    expect(days.find((r) => r.day === today())).toMatchObject({ prompts: 4, costUsd: 0.75 })
+    expect(days.find((r) => r.day === today())).toMatchObject({ prompts: 4, costUsd: 0.75, promptHelps: 5 })
     expect(days.find((r) => r.day === '2020-01-01')?.prompts).toBe(2)
     expect((await db.select().from(studioPromptCredits).where(eq(studioPromptCredits.userId, e.id)))[0]).toMatchObject({ balance: 3, gifted: 5 })
     expect((await db.select().from(studioFinalizeCredits).where(eq(studioFinalizeCredits.userId, e.id)))[0].balance).toBe(1)
@@ -204,5 +208,83 @@ describe('studio data follows a wallet linked to an existing account', () => {
     expect(await merge).toBe('linked')
     expect((await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id)))[0].ownerId).toBe(e.id)
   })
-})
+  // ── Collaboration (LIV-159) ──
+  const join = async (designId: string, userId: string, role: 'collaborator' | 'viewer', leftAt?: Date) =>
+    (await db.insert(studioDesignMembers).values({ designId, userId, role, leftAt }).returning())[0]
+  const openOn = async (designId: string) =>
+    db.select({ userId: studioDesignMembers.userId, role: studioDesignMembers.role }).from(studioDesignMembers)
+      .where(and(eq(studioDesignMembers.designId, designId), isNull(studioDesignMembers.leftAt)))
+  const invite = async (designId: string, invitedBy: string, userId: string | null) =>
+    (await db.insert(studioDesignInvites).values({
+      designId, email: `i${Math.random()}@test.dev`, role: 'viewer', token: `t${Math.random()}`, invitedBy, userId, expiresAt: new Date(Date.now() + 86400_000),
+    }).returning())[0]
 
+  it("moves the shell's memberships, past ones too", async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    const other = await createUser()
+    const d = await createDesign(other)
+    const past = await createDesign(other)
+    await join(d.id, shell.id, 'collaborator')
+    await join(past.id, shell.id, 'viewer', new Date())
+    await linkVerifiedWallet(e.id, w)
+    expect(await openOn(d.id)).toEqual([{ userId: e.id, role: 'collaborator' }])
+    const left = await db.select().from(studioDesignMembers).where(eq(studioDesignMembers.designId, past.id))
+    expect(left.map((m) => m.userId)).toEqual([e.id])
+  })
+
+  it('both on a design: one open membership, the stronger role', async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    const other = await createUser()
+    const up = await createDesign(other)
+    const keep = await createDesign(other)
+    await join(up.id, shell.id, 'collaborator'); await join(up.id, e.id, 'viewer')
+    await join(keep.id, shell.id, 'viewer'); await join(keep.id, e.id, 'collaborator')
+    await linkVerifiedWallet(e.id, w)
+    expect(await openOn(up.id)).toEqual([{ userId: e.id, role: 'collaborator' }])
+    expect(await openOn(keep.id)).toEqual([{ userId: e.id, role: 'collaborator' }])
+  })
+
+  it("the target owning the design drops the shell's membership, and either way round", async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    const mine = await createDesign(e)
+    const theirs = await createDesign(shell)
+    await join(mine.id, shell.id, 'collaborator')
+    await join(theirs.id, e.id, 'viewer')
+    await linkVerifiedWallet(e.id, w)
+    expect(await openOn(mine.id)).toEqual([])
+    expect(await openOn(theirs.id)).toEqual([])
+    expect((await db.select().from(studioDesigns).where(eq(studioDesigns.id, theirs.id)))[0].ownerId).toBe(e.id)
+  })
+
+  it('moves invites (to and from the shell), notifications, and who sent prompts and messages', async () => {
+    const { w, shell } = await shellWith()
+    const e = await createUser({ role: 'creator' })
+    const other = await createUser()
+    const d = await createDesign(other)
+    const own = await createDesign(shell)
+    const to = await invite(d.id, other.id, shell.id)
+    const from = await invite(own.id, shell.id, null)
+    await db.insert(notifications).values([
+      { userId: shell.id, kind: 'studio_invite', data: { inviteId: to.id } },
+      { userId: shell.id, kind: 'studio_prompts', data: { n: 1 }, groupKey: `prompts:${d.id}` },
+      { userId: e.id, kind: 'studio_prompts', data: { n: 2 }, groupKey: `prompts:${d.id}` },
+    ])
+    await join(d.id, shell.id, 'collaborator')
+    const [job] = await db.insert(studioJobs).values({ designId: d.id, type: 'prompt', status: 'done', payload: {}, userId: shell.id }).returning()
+    const [msg] = await db.insert(studioMessages).values({ designId: d.id, role: 'user', text: 'hi', userId: shell.id }).returning()
+    await linkVerifiedWallet(e.id, w)
+    const inv = async (id: string) => (await db.select().from(studioDesignInvites).where(eq(studioDesignInvites.id, id)))[0]
+    expect((await inv(to.id)).userId).toBe(e.id)
+    expect((await inv(from.id)).invitedBy).toBe(e.id)
+    const ns = await db.select().from(notifications)
+    expect(ns).toHaveLength(3)
+    expect(ns.every((n) => n.userId === e.id)).toBe(true)
+    // One unread per group: the shell's gives way
+    expect(ns.filter((n) => n.groupKey && !n.readAt)).toHaveLength(1)
+    expect((await db.select().from(studioJobs).where(eq(studioJobs.id, job.id)))[0].userId).toBe(e.id)
+    expect((await db.select().from(studioMessages).where(eq(studioMessages.id, msg.id)))[0].userId).toBe(e.id)
+  })
+})

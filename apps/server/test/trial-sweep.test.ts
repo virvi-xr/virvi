@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { users, studioDesigns, trialEvents } from '../src/db/schema.js'
+import { users, studioDesigns, trialEvents, scenes, sceneImports } from '../src/db/schema.js'
+import { setBuildRunner } from '../src/services/import/build-runner.js'
+import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
+import { setThumbnailStorage } from '../src/scenes/thumbnail.js'
 import { config } from '../src/config.js'
 import { sweepTrials } from '../src/auth/trial-sweep.js'
 import { finishOAuth } from '../src/auth/trial-convert.js'
@@ -11,7 +14,7 @@ import { setTurnstileFetch } from '../src/auth/turnstile.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { resetDb } from './helpers/db.js'
-import { testApp, createUser } from './helpers/factories.js'
+import { testApp, createUser, createScene } from './helpers/factories.js'
 import { createDesign, fakeFly } from './helpers/studio.js'
 
 const DAY = 86400_000
@@ -70,6 +73,73 @@ describe('trial expiry and funnel', () => {
     expect((await events()).filter((e) => e.kind === 'expired').map((e) => e.userId)).toEqual([old.id])
   })
 
+  /** A building import (machine `machineId`) on a scene of `u` with a stored thumbnail; records the runner stops, import-file and thumbnail deletes. */
+  async function withBuildingImport(u: { id: string }, machineId: string) {
+    const { scene } = await createScene(u as any, 'Imported')
+    const thumb = `scenes/${scene.id}/thumbnail-0123456789abcdef.png`
+    await db.update(scenes).set({ thumbnailKey: thumb, thumbnailUrl: `https://cdn.test/${thumb}`, thumbnailBytes: 10, thumbnailSource: 'import' }).where(eq(scenes.id, scene.id))
+    const [imp] = await db.insert(sceneImports).values({ userId: u.id, sceneId: scene.id, worldName: 'x.dcl.eth', kind: 'sdk7', sourceKey: 'k', status: 'building', machineId, sandbox: true }).returning()
+    return { scene, imp, thumb }
+  }
+  function recorders() {
+    const stopped: string[] = []
+    const prefixes: string[] = []
+    const thumbs: string[] = []
+    setBuildRunner({ async start() { return { machineId: 'x' } }, async stop(id) { stopped.push(id) } })
+    const store = memoryPrivateStore()
+    const real = store.deletePrefix.bind(store)
+    store.deletePrefix = async (p: string) => { prefixes.push(p); return real(p) }
+    setImportStore(store)
+    setThumbnailStorage({ upload: async () => '', delete: async (k: string) => { thumbs.push(k) }, getPublicUrl: (k: string) => k } as any)
+    return { stopped, prefixes, thumbs }
+  }
+
+  it('expiring a trial stops its build and deletes its files', async () => {
+    const r = recorders()
+    try {
+      const old = await makeTrial(15)
+      const { scene, imp, thumb } = await withBuildingImport(old, 'm1')
+      expect(await sweepTrials(NOW, { fly: fakeFly() })).toEqual({ expired: 1 })
+      expect(r.stopped).toEqual(['m1'])
+      expect(r.prefixes).toEqual([`imports/${imp.id}/`])
+      expect(r.thumbs).toEqual([thumb])
+      expect(await db.select().from(sceneImports).where(eq(sceneImports.id, imp.id))).toEqual([])
+      expect(await db.select().from(scenes).where(eq(scenes.id, scene.id))).toEqual([])
+    } finally {
+      setBuildRunner(null); setImportStore(null); setThumbnailStorage(null)
+    }
+  })
+
+  it('a converted account is never swept', async () => {
+    const r = recorders()
+    try {
+      const converted = await makeTrial(20, { isTrial: false })
+      const { imp } = await withBuildingImport(converted, 'm2')
+      expect(await sweepTrials(NOW, { fly: fakeFly() })).toEqual({ expired: 0 })
+      expect([r.stopped, r.prefixes, r.thumbs]).toEqual([[], [], []])
+      expect(await db.select().from(sceneImports).where(eq(sceneImports.id, imp.id))).toHaveLength(1)
+    } finally {
+      setBuildRunner(null); setImportStore(null); setThumbnailStorage(null)
+    }
+  })
+
+  it("a trial that converts while it is being expired keeps its build and files", async () => {
+    const r = recorders()
+    try {
+      const t = await makeTrial(15)
+      await withBuildingImport(t, 'm3')
+      // the trial converts between the leftovers read and the guarded delete
+      const store = memoryStudioStore()
+      store.deletePrefix = async () => { await db.update(users).set({ isTrial: false }).where(eq(users.id, t.id)) }
+      setStudioStore(store)
+      await createDesign(t)
+      expect(await sweepTrials(NOW, { fly: fakeFly() })).toEqual({ expired: 0 })
+      expect([r.stopped, r.prefixes, r.thumbs]).toEqual([[], [], []])
+    } finally {
+      setBuildRunner(null); setImportStore(null); setThumbnailStorage(null)
+    }
+  })
+
   it('never touches a converted account or an active trial', async () => {
     const converted = await makeTrial(20, { isTrial: false })
     const active = await makeTrial(1)
@@ -116,10 +186,10 @@ describe('trial expiry and funnel', () => {
     expect(p.statusCode).toBeLessThan(300)
     expect((await events()).filter((e) => e.kind === 'prompt').map((e) => e.userId)).toEqual([user.id])
 
-    const b1 = await app.inject({ method: 'GET', url: '/api/scenes', headers })
+    const b1 = await app.inject({ method: 'POST', url: '/api/scenes', headers, payload: { name: 'x' } })
     expect(b1.statusCode).toBe(403)
     await flushTrialEvents()
-    const b2 = await app.inject({ method: 'GET', url: '/api/scenes', headers })
+    const b2 = await app.inject({ method: 'POST', url: '/api/scenes', headers, payload: { name: 'x' } })
     expect(b2.statusCode).toBe(403)
     // an in-handler refusal after the first one adds none
     for (let i = 0; i < 2; i++) {
@@ -128,7 +198,7 @@ describe('trial expiry and funnel', () => {
     }
     const blocked = (await events()).filter((e) => e.kind === 'blocked')
     expect(blocked).toHaveLength(1)
-    expect(blocked[0]).toMatchObject({ userId: user.id, action: 'GET /api/scenes' })
+    expect(blocked[0]).toMatchObject({ userId: user.id, action: 'POST /api/scenes' })
 
     const reg = await app.inject({ method: 'POST', url: '/api/auth/register', headers, payload: { email: 'f@test.dev', password: 'hunter2hunter2', displayName: 'F', fromAction: 'more_prompts' } })
     expect(reg.statusCode).toBe(201)

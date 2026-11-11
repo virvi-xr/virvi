@@ -4,7 +4,10 @@ import { db } from '../db/connection.js'
 import { mediaAssets } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { createStorage } from '../storage/index.js'
-import { storeMedia, StoreMediaError } from '../media/store.js'
+import { storeMedia, StoreMediaError, USE_ASSET_LIBRARY } from '../media/store.js'
+import { isModelFile } from '../storage/upload-policy.js'
+
+export { USE_ASSET_LIBRARY }
 
 const storage = createStorage()
 
@@ -21,6 +24,9 @@ export default async function mediaRoutes(app: FastifyInstance) {
       if (!filename || !contentType || !data) {
         return reply.status(400).send({ error: 'filename, contentType, and data (base64) are required' })
       }
+
+      // Images & Video takes no models (storeMedia refuses them too; this answers before the bytes are decoded)
+      if (isModelFile(filename, contentType)) return reply.status(415).send(USE_ASSET_LIBRARY)
 
       try {
         const asset = await storeMedia(request.user.id, { filename, contentType, data: Buffer.from(data, 'base64') })

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import {
   analyticsSessions,
@@ -79,6 +79,124 @@ describe('analytics jobs', () => {
     const pairs = await db.select().from(analyticsCopresenceDaily)
     expect(pairs).toHaveLength(1)
     expect(pairs[0]).toMatchObject({ visitorA: 'A', visitorB: 'B', overlapSec: 420 })
+  })
+
+  it('daily heatmap keeps floors apart: a visitor on the ground and one 3 m up make two cells at the same x/z', async () => {
+    const s = await createAnalyticsScene() // Decentraland: y is about 0.9 m above the feet
+    const a = await insertSession(s.id, { visitorHash: 'A', startedAt: at(0), lastSeenAt: at(10) })
+    const b = await insertSession(s.id, { visitorHash: 'B', startedAt: at(0), lastSeenAt: at(10) })
+    await db.insert(analyticsPositions).values([
+      { sceneId: s.id, sessionId: a.id, seq: 1, occurredAt: at(0, 0), x: 5.5, y: 0.88, z: 6.5 },
+      { sceneId: s.id, sessionId: a.id, seq: 2, occurredAt: at(0, 3), x: 5.2, y: 2.3, z: 6.1 }, // jumping: still the ground floor
+      { sceneId: s.id, sessionId: b.id, seq: 1, occurredAt: at(0, 0), x: 5.5, y: 3.9, z: 6.5 },
+    ])
+    await rollupDay(s.id, '2026-10-01')
+    const cells = (await db.select().from(analyticsHeatmapDaily).where(eq(analyticsHeatmapDaily.sceneId, s.id)))
+      .map((c) => ({ x: c.cellX, y: c.cellY, z: c.cellZ, dwellSec: c.dwellSec, visits: c.visits }))
+      .sort((p, q) => p.y! - q.y!)
+    expect(cells).toEqual([
+      { x: 5, y: 0, z: 6, dwellSec: 6, visits: 1 },
+      { x: 5, y: 1, z: 6, dwellSec: 3, visits: 1 },
+    ])
+  })
+
+  it('Hyperfy positions are at the feet, so its floors band without the Decentraland offset', async () => {
+    const s = await createAnalyticsScene({ kind: 'hyperfy' })
+    const a = await insertSession(s.id, { startedAt: at(0), lastSeenAt: at(10) })
+    await db.insert(analyticsPositions).values([
+      { sceneId: s.id, sessionId: a.id, seq: 1, occurredAt: at(0, 0), x: 1, y: 0, z: 1 },
+      { sceneId: s.id, sessionId: a.id, seq: 2, occurredAt: at(1, 0), x: 1, y: 3, z: 1 },
+      { sceneId: s.id, sessionId: a.id, seq: 3, occurredAt: at(2, 0), x: 1, y: -3, z: 1 },
+    ])
+    await rollupDay(s.id, '2026-10-01')
+    const ys = (await db.select().from(analyticsHeatmapDaily)).map((c) => c.cellY).sort()
+    expect(ys).toEqual([-2, 0, 1])
+  })
+
+  it('re-running a day replaces its cells, and two runs at once leave one set', async () => {
+    const s = await createAnalyticsScene()
+    const a = await insertSession(s.id, { startedAt: at(0), lastSeenAt: at(10) })
+    await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: a.id, seq: 1, occurredAt: at(0), x: 1, y: 0.9, z: 1 })
+    await rollupDay(s.id, '2026-10-01')
+    await Promise.all([rollupDay(s.id, '2026-10-01'), rollupDay(s.id, '2026-10-01'), rollupDay(s.id, '2026-10-01')])
+    expect(await db.select().from(analyticsHeatmapDaily)).toHaveLength(1)
+  })
+
+  it('during a rolling deploy, a rollup by the old code (no day lock, height-less rows) and one by the new never both stay', async () => {
+    const s = await createAnalyticsScene()
+    const a = await insertSession(s.id, { startedAt: at(0), lastSeenAt: at(10) })
+    await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: a.id, seq: 1, occurredAt: at(0), x: 1, y: 0.9, z: 1 })
+    const day = '2026-10-01'
+    const oldRollup = (hold: Promise<void>, started: () => void) =>
+      db.transaction(async (tx) => {
+        // What the pre-LIV-85 rollupDay did: replace the day, no cell_y, no lock.
+        await tx.delete(analyticsHeatmapDaily).where(and(eq(analyticsHeatmapDaily.sceneId, s.id), eq(analyticsHeatmapDaily.day, day)))
+        await tx.insert(analyticsHeatmapDaily).values({ sceneId: s.id, day, cellX: 1, cellZ: 1, dwellSec: 3, visits: 1 })
+        started()
+        await hold
+      })
+    // Old first: the new rollup waits for it, then replaces its rows.
+    let release!: () => void
+    let started!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const inside = new Promise<void>((r) => (started = r))
+    const old = oldRollup(held, started)
+    await inside
+    const fresh = rollupDay(s.id, day)
+    await new Promise((r) => setTimeout(r, 300))
+    release()
+    await Promise.all([old, fresh])
+    expect((await db.select().from(analyticsHeatmapDaily)).map((c) => c.cellY)).toEqual([0])
+    // New first: the old rollup's delete waits for it, then replaces it (height-less until the next rollup; never doubled).
+    let ready!: () => void
+    const begun = new Promise<void>((r) => (ready = r))
+    const slow = db.transaction(async (tx) => {
+      await tx.execute(sql`lock table analytics_heatmap_daily in share row exclusive mode`)
+      ready()
+      await new Promise((r) => setTimeout(r, 300))
+    })
+    await begun
+    const late = rollupDay(s.id, day)
+    const legacy = oldRollup(Promise.resolve(), () => {})
+    await Promise.all([slow, late, legacy])
+    expect(await db.select().from(analyticsHeatmapDaily)).toHaveLength(1)
+  })
+
+  it('the heatmap table lock is released before the copresence recompute', async () => {
+    const s = await createAnalyticsScene()
+    const a = await insertSession(s.id, { startedAt: at(0), lastSeenAt: at(10) })
+    await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: a.id, seq: 1, occurredAt: at(0), x: 1, y: 0.9, z: 1 })
+    // Hold copresence so the rollup stalls there, then ask for the heatmap lock without waiting.
+    let release!: () => void
+    let ready!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const begun = new Promise<void>((r) => (ready = r))
+    const holder = db.transaction(async (tx) => {
+      await tx.execute(sql`lock table analytics_copresence_daily in access exclusive mode`)
+      ready()
+      await held
+    })
+    await begun
+    const rollup = rollupDay(s.id, '2026-10-01')
+    try {
+      await new Promise((r) => setTimeout(r, 400))
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`lock table analytics_heatmap_daily in share row exclusive mode nowait`)
+      })
+      expect(await db.select().from(analyticsHeatmapDaily)).toHaveLength(1)
+    } finally {
+      release()
+      await Promise.all([holder, rollup])
+    }
+  })
+
+  it('the heatmap key is the cell and its floor: a second row for both is refused, another floor is not', async () => {
+    const s = await createAnalyticsScene()
+    const row = { sceneId: s.id, day: '2026-10-01', cellX: 1, cellZ: 1, cellY: 0, dwellSec: 1, visits: 1 }
+    await db.insert(analyticsHeatmapDaily).values(row)
+    await expect(db.insert(analyticsHeatmapDaily).values(row)).rejects.toThrow()
+    await db.insert(analyticsHeatmapDaily).values({ ...row, cellY: 1 })
+    expect(await db.select().from(analyticsHeatmapDaily)).toHaveLength(2)
   })
 
   it('runRollups processes dirty hours and clears them', async () => {

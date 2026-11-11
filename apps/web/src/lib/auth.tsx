@@ -2,7 +2,9 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { API_URL } from './config'
 import { readSession, readTrialSession, type ScenePass } from './session'
-import { deviceId, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome } from './trial'
+import { deviceId, noteMovedHeadsets, renewedTrialBearer, stashTrialHandover, trialBearerStale, trialEndedOutcome, type TrialEntry } from './trial'
+import { adoptDraftOnSignIn, clearDraft } from './wizard/draft'
+import { clearDemoStores } from './demo/store'
 import { AUTH_KEY, readStoredAuth } from './auth-storage'
 import { refreshStoredSession } from './session-refresh'
 
@@ -11,7 +13,7 @@ interface User {
   displayName: string
   email: string | null
   role: string
-  /** A signed-out visitor's trial of the Design Studio. */
+  /** A signed-out visitor's trial (the Design Studio and the scene builder). */
   trial?: boolean
   expiresAt?: string
 }
@@ -25,17 +27,23 @@ interface AuthState {
   login: (email: string, password: string, fromAction?: string) => Promise<string>
   register: (email: string, password: string, displayName: string, fromAction?: string) => Promise<string>
   loginWithWallet: (fromAction?: string) => Promise<string>
-  /** Starts a trial session (a signed-out visitor trying the Design Studio). */
-  startTrial: (turnstileToken: string) => Promise<void>
+  /** Starts a trial session (a signed-out visitor trying Virvi); `entry` is the page it started from. */
+  startTrial: (turnstileToken: string, entry?: TrialEntry) => Promise<void>
   /** The URL for Google or Discord sign-in; from a trial it keeps the trial in this tab for the callback page to move in. */
   oauthUrl: (provider: 'google' | 'discord', fromAction?: string) => Promise<string>
   logout: () => void
+  /** The person signing out: also forgets this browser's wizard draft. (Not for a session that merely ended: a trial that
+   *  became an account keeps its draft.) */
+  signOut: () => void
   /** Swaps the stored refresh token for a new access token: the new token, or null (signed out when refused). */
   renew: () => Promise<string | null>
   updateUser: (updates: Partial<User>) => void
   /** A trial ended (converted elsewhere): adopt the account session stored by another tab and return its token, or sign out and return null. */
   swapToStoredAccount: (staleToken: string) => string | null
 }
+
+/** Demo state (`virvi.demo.<trialId>`) lives only as long as the trial in this browser. */
+const dropDemos = () => { try { clearDemoStores(localStorage) } catch {} }
 
 const postRefresh = (refreshToken: string) =>
   fetch(`${API_URL}/api/auth/refresh`, { method: 'POST', headers: { Authorization: `Bearer ${refreshToken}` } })
@@ -124,7 +132,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restore().finally(() => setLoading(false))
   }, [])
 
-  const adopt = (data: { accessToken: string; refreshToken?: string; user: User }) => {
+  /** `trialCarried`: the request carried this tab's trial into the account, so the trial's wizard draft goes with it. */
+  const adopt = (data: { accessToken: string; refreshToken?: string; user: User }, trialCarried = false) => {
+    adoptDraftOnSignIn(user, data.user, trialCarried)
+    // A merge moved the trial's paired headset onto the account: the dashboard says so once
+    noteMovedHeadsets(localStorage, data)
+    // The trial ended here (it became an account): its demos go
+    if (user?.trial && !data.user.trial) dropDemos()
     setToken(data.accessToken)
     setUser(data.user)
     setScenePass(null)
@@ -134,7 +148,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   /**
    * A sign-up/sign-in POST. From a trial the trial bearer goes along so the trial moves into the account: a token that ran
-   * out (or is about to) is renewed first, and a `401 trial_expired` renews and sends once more.
+   * out (or is about to) is renewed first, and a `401 trial_expired` renews and sends once more. `carried` says whether the
+   * request that answered went with the trial's bearer.
    */
   const post = async (path: string, body: object) => {
     const send = (bearer: string | null) =>
@@ -148,37 +163,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const renewed = async () => renewedTrialBearer(await renew(), !!readStoredAuth(localStorage))
     if (bearer && trialBearerStale(bearer, Date.now())) bearer = await renewed()
     let res = await send(bearer)
+    let carried = !!bearer
     if (res.status === 401 && bearer && (await res.clone().json().catch(() => null))?.error === 'trial_expired') {
       const fresh = await renewed()
       if (fresh) res = await send(fresh)
+      carried = !!fresh
     }
-    return res
+    return { res, carried }
   }
 
   const login = async (email: string, password: string, fromAction?: string) => {
-    const res = await post('/api/auth/login', { email, password, ...(fromAction ? { fromAction } : {}) })
+    const { res, carried } = await post('/api/auth/login', { email, password, ...(fromAction ? { fromAction } : {}) })
     if (!res.ok) throw new Error(await errorMessage(res, 'Login failed'))
-    return adopt(await res.json())
+    return adopt(await res.json(), carried)
   }
 
   const register = async (email: string, password: string, displayName: string, fromAction?: string) => {
-    const res = await post('/api/auth/register', { email, password, displayName, ...(fromAction ? { fromAction } : {}) })
+    const { res, carried } = await post('/api/auth/register', { email, password, displayName, ...(fromAction ? { fromAction } : {}) })
     if (!res.ok) throw new Error(await errorMessage(res, 'Registration failed'))
-    return adopt(await res.json())
+    return adopt(await res.json(), carried)
   }
 
   const loginWithWallet = async (fromAction?: string) => {
     const proof = await signWalletChallenge()
-    const res = await post('/api/auth/wallet/verify', { ...proof, ...(fromAction ? { fromAction } : {}) })
+    const { res, carried } = await post('/api/auth/wallet/verify', { ...proof, ...(fromAction ? { fromAction } : {}) })
     if (!res.ok) throw new Error(await errorMessage(res, 'Wallet sign-in failed'))
-    return adopt(await res.json())
+    return adopt(await res.json(), carried)
   }
 
-  const startTrial = async (turnstileToken: string) => {
+  const startTrial = async (turnstileToken: string, entry?: TrialEntry) => {
     const res = await fetch(`${API_URL}/api/auth/trial`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ turnstileToken, deviceId: deviceId() }),
+      body: JSON.stringify({ turnstileToken, deviceId: deviceId(), ...(entry ? { entry } : {}) }),
     })
     if (!res.ok) throw new Error(await errorMessage(res, 'Could not start a trial'))
     adopt(await res.json())
@@ -192,11 +209,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = useCallback(() => {
+    // Signed out, or the session ended (`trial_ended` with no account to follow, a refused renewal): demos go too
+    dropDemos()
     setToken(null)
     setUser(null)
     setScenePass(null)
     localStorage.removeItem(AUTH_KEY)
   }, [])
+
+  const signOut = useCallback(() => {
+    clearDraft()
+    logout()
+  }, [logout])
 
   const renew = useCallback(async () => {
     const r = await refreshStoredSession(localStorage, postRefresh)
@@ -214,6 +238,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const swapToStoredAccount = useCallback((staleToken: string) => {
     const stored = readStoredAuth(localStorage)
     if (stored && trialEndedOutcome(stored, staleToken) === 'swap') {
+      // `trial_ended`: the trial became the stored account, so its demos go
+      dropDemos()
       setToken(stored.token)
       setUser(stored.user as User)
       setScenePass(null)
@@ -241,7 +267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, scenePass, login, register, loginWithWallet, startTrial, oauthUrl, logout, renew, updateUser, swapToStoredAccount }}>
+    <AuthContext.Provider value={{ user, token, loading, scenePass, login, register, loginWithWallet, startTrial, oauthUrl, logout, signOut, renew, updateUser, swapToStoredAccount }}>
       {children}
     </AuthContext.Provider>
   )

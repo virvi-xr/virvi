@@ -1,9 +1,10 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import {
-  studioCreditLedger, studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions,
+  notifications, studioCreditLedger, studioDesignInvites, studioDesignMembers, studioJobs, studioMessages, studioCredits, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioGiftRedemptions, studioIdeaUses,
   studioManaRefunds, studioMistakeReports, studioPauses, studioPayments, studioPromptCredits, studioScopeEvents, studioUsageDays,
 } from '../db/schema.js'
 import { addCredit, takeCredit } from './credit.js'
+import { markInvitesRead } from '../notifications/notifications.js'
 import type { Exec } from './quota.js'
 
 /**
@@ -33,6 +34,43 @@ export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: str
   await tx.update(studioMistakeReports).set({ userId: toUserId }).where(eq(studioMistakeReports.userId, fromUserId))
   await tx.update(studioScopeEvents).set({ userId: toUserId }).where(eq(studioScopeEvents.userId, fromUserId))
   await tx.update(studioManaRefunds).set({ userId: toUserId }).where(eq(studioManaRefunds.userId, fromUserId))
+  await tx.update(studioIdeaUses).set({ userId: toUserId }).where(eq(studioIdeaUses.userId, fromUserId))
+
+  // Collaboration (LIV-159): one open membership per person and design. The target owning the design (theirs, or the
+  // source's that just moved) needs none; both on it keep the one row, with the stronger role. Past ones move too.
+  await tx.execute(sql`
+    update ${studioDesignMembers} m set left_at = ${now.toISOString()}::timestamptz
+    from ${studioDesigns} d
+    where d.id = m.design_id and d.owner_id = ${toUserId} and m.user_id in (${fromUserId}, ${toUserId}) and m.left_at is null`)
+  await tx.execute(sql`
+    update ${studioDesignMembers} t set role = 'collaborator'
+    from ${studioDesignMembers} f
+    where f.design_id = t.design_id and f.user_id = ${fromUserId} and t.user_id = ${toUserId}
+      and f.left_at is null and t.left_at is null and f.role = 'collaborator'`)
+  await tx.execute(sql`
+    update ${studioDesignMembers} f set left_at = ${now.toISOString()}::timestamptz
+    from ${studioDesignMembers} t
+    where t.design_id = f.design_id and f.user_id = ${fromUserId} and t.user_id = ${toUserId} and f.left_at is null and t.left_at is null`)
+  await tx.update(studioDesignMembers).set({ userId: toUserId }).where(eq(studioDesignMembers.userId, fromUserId))
+  await tx.update(studioDesignInvites).set({ userId: toUserId }).where(eq(studioDesignInvites.userId, fromUserId))
+  await tx.update(studioDesignInvites).set({ invitedBy: toUserId }).where(eq(studioDesignInvites.invitedBy, fromUserId))
+  // A moved invite to a design the target owns or is on can only fail: it is cancelled, and its bell item read
+  const stale = await tx.update(studioDesignInvites).set({ cancelledAt: now }).where(and(
+    eq(studioDesignInvites.userId, toUserId), isNull(studioDesignInvites.acceptedAt), isNull(studioDesignInvites.declinedAt),
+    isNull(studioDesignInvites.cancelledAt),
+    sql`(EXISTS (SELECT 1 FROM studio_designs WHERE id = ${studioDesignInvites.designId} AND owner_id = ${toUserId})
+      OR EXISTS (SELECT 1 FROM studio_design_members WHERE design_id = ${studioDesignInvites.designId} AND user_id = ${toUserId} AND left_at IS NULL))`,
+  )).returning({ id: studioDesignInvites.id })
+  await markInvitesRead(stale.map((i) => i.id), now, tx)
+  // Who sent a prompt or message
+  await tx.update(studioJobs).set({ userId: toUserId }).where(eq(studioJobs.userId, fromUserId))
+  await tx.update(studioMessages).set({ userId: toUserId }).where(eq(studioMessages.userId, fromUserId))
+  // One unread notification per group: where the target has one, the source's is read
+  await tx.execute(sql`
+    update ${notifications} f set read_at = ${now.toISOString()}::timestamptz
+    from ${notifications} t
+    where t.user_id = ${toUserId} and f.user_id = ${fromUserId} and t.group_key = f.group_key and t.read_at is null and f.read_at is null`)
+  await tx.update(notifications).set({ userId: toUserId }).where(eq(notifications.userId, fromUserId))
 
   // At most one flag is open per account: if the target already has one, the source's is dismissed instead of moved
   const [targetOpen] = await tx.select({ id: studioFlags.id }).from(studioFlags)
@@ -52,10 +90,11 @@ export async function moveStudioData(tx: Exec, fromUserId: string, toUserId: str
 
   // Counters, summed
   await tx.execute(sql`
-    insert into ${studioUsageDays} (user_id, day, prompts, cost_usd)
-    select ${toUserId}, day, prompts, cost_usd from ${studioUsageDays} where user_id = ${fromUserId}
+    insert into ${studioUsageDays} (user_id, day, prompts, cost_usd, prompt_helps)
+    select ${toUserId}, day, prompts, cost_usd, prompt_helps from ${studioUsageDays} where user_id = ${fromUserId}
     on conflict (user_id, day) do update set
-      prompts = ${studioUsageDays.prompts} + excluded.prompts, cost_usd = ${studioUsageDays.costUsd} + excluded.cost_usd`)
+      prompts = ${studioUsageDays.prompts} + excluded.prompts, cost_usd = ${studioUsageDays.costUsd} + excluded.cost_usd,
+      prompt_helps = ${studioUsageDays.promptHelps} + excluded.prompt_helps`)
   await tx.delete(studioUsageDays).where(eq(studioUsageDays.userId, fromUserId))
 
   await tx.execute(sql`

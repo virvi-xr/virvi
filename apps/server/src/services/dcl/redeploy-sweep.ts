@@ -13,11 +13,12 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments } from '../../db/schema.js'
-import { modelsInScene, pendingModels, type Assembled } from './assemble.js'
+import { frameEntitiesInScene, modelsInScene, pendingModels, type Assembled } from './assemble.js'
 import {
   DeployerError, liveBaseFor, reconcileStaleDeployments, refusedLine, REFUSED_PREFIX, sceneLimitProblem, startVirviDeploy,
   type Destination, type DeployOptions,
 } from './world-deployer.js'
+import { liveSceneIds } from '../../scenes/live.js'
 
 export { pendingModels }
 
@@ -50,7 +51,8 @@ export async function sweepRedeploys(now: Date = new Date(), opts: DeployOptions
   await reconcileStaleDeployments(now)
   let started = 0
   let marked = 0
-  for (const dest of await db.select().from(dclWorldDestinations)) {
+  // A deleted scene (LIV-83) never deploys
+  for (const dest of await db.select().from(dclWorldDestinations).where(inArray(dclWorldDestinations.sceneId, liveSceneIds()))) {
     try {
       const pending = await pendingModels(dest)
       if (pending.length === 0) {
@@ -82,7 +84,7 @@ export async function sweepRedeploys(now: Date = new Date(), opts: DeployOptions
         dest.status = 'ok'
       }
 
-      const problem = sceneLimitProblem(dest, await modelsInScene(dest.sceneId))
+      const problem = sceneLimitProblem(dest, await modelsInScene(dest.sceneId), await frameEntitiesInScene(dest.sceneId))
       if (problem) {
         // Another needs_review (changed outside Virvi, failures) keeps its own message.
         const mayShow = ['ok', 'unreachable', 'over_budget'].includes(dest.status)

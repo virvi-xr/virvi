@@ -30,7 +30,40 @@ export interface SceneImportView {
   filesExpired: boolean
   /** The scene already started Virvi itself, so Virvi wasn't added again. */
   virviAlreadyPresent: boolean
+  /**
+   * A trial's (guest's) import (LIV-91): it hasn't touched its place. Deploying it takes an account, which then claims
+   * the place for it.
+   */
+  sandbox: boolean
+  /** The scene's own thumbnail (LIV-89, scene.json display.navmapThumbnail) and the Virvi scene's thumbnail now. */
+  thumbnail: SceneImportThumbnail
   createdAt: string
+  /**
+   * A sandbox import read by an account (single-import read only): the account's scene this place already uses, which
+   * the deploy moves the import onto (its own sandbox scene, `sandboxSceneName`, stays in the account with the guest's
+   * edits). Absent when the deploy keeps the import's own scene.
+   */
+  usesScene?: SceneImportMove
+}
+
+/** The account's existing scene a sandbox import's deploy moves onto, and the import's own (guest) scene it leaves. */
+export interface SceneImportMove {
+  id: string
+  name: string
+  sandboxSceneName: string
+}
+
+export interface SceneImportThumbnail {
+  /**
+   * What this upload did with its navmapThumbnail: `imported` it became the scene's thumbnail; `kept` the one the owner
+   * uploaded in Virvi stays; `skipped` it couldn't be used (`note` says why); `removed` it names none, so an earlier
+   * import's thumbnail was taken off; null when it names none and there was nothing to change.
+   */
+  outcome: 'imported' | 'kept' | 'skipped' | 'removed' | null
+  note: string | null
+  /** The Virvi scene's thumbnail as it is now, and where it came from: `import` (a scene.json) or `upload` (in Virvi). */
+  url: string | null
+  source: 'upload' | 'import' | null
 }
 
 /** The largest zip an import accepts. */

@@ -2,13 +2,18 @@
 import { useEffect, useRef, useState, type Dispatch } from 'react'
 import Link from 'next/link'
 import { plotParcels } from '@virvixr/shared'
-import { useApi, type DclDeployment, type WizardOptions } from '@/lib/api'
-import { getBrowserWallet } from '@/lib/auth'
+import { fetchDclNames, useApi, type ConnectedScene, type DclDeployment, type DclWorld, type WizardOptions } from '@/lib/api'
+import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
-import { connectExtras, jumpInUrl, progressLines, runWizard, type Phase, type RunMemory, type RunPlan, type RunUpdate } from '@/lib/wizard/run'
+import { connectExtras, jumpInUrl, progressLines, runWizard, wizardErrorMessage, type Phase, type RunMemory, type RunPlan, type RunUpdate } from '@/lib/wizard/run'
 import { effectivePlot, type WizardAction, type WizardState } from '@/lib/wizard/state'
-import { PrimaryButton } from '@/components/ui'
+import { connectForDeploy, connectOutcome, DEPLOY_LINE, deployGate, noWorldMessage, WALLET_PROMPT, type WalletNames } from '@/lib/wizard/trial-deploy'
+import { shortAddress } from '@/lib/wizard/helpers'
+import { Badge, PrimaryButton } from '@/components/ui'
+import { CONTRACT_WALLET_MESSAGE, type NamesState } from './WhereStep'
 import { ProgressLines, useShownPhase } from '../ProgressLines'
+import { WorldInUseNotice } from '../WorldInUseNotice'
+import { afterDisconnect, worldInUseView } from '@/lib/world-disconnect'
 import { ROOM_LAYOUT_NOTICE } from '@/lib/room-set'
 
 /** The server keeps a storefront sign to this many characters. */
@@ -46,19 +51,27 @@ interface View {
   partial: string | null
   hyperfyError: string | null
   arError: string | null
+  /** The run stopped on 409 world_in_use: the scene holding the World, for its disconnect. */
+  worldInUse: ConnectedScene | null
 }
 
-const idle: View = { status: 'idle', phase: 'packing', models: null, wallet: null, deployment: null, error: null, partial: null, hyperfyError: null, arError: null }
+const idle: View = {
+  status: 'idle', phase: 'packing', models: null, wallet: null, deployment: null, error: null, partial: null, hyperfyError: null, arError: null, worldInUse: null,
+}
 
-export function DeployStep({ state, dispatch, options, memory, onRunning }: {
+export function DeployStep({ state, dispatch, options, memory, onRunning, names }: {
   state: WizardState
   dispatch: Dispatch<WizardAction>
   options: WizardOptions | null
   memory: RunMemory
   /** The page keeps the earlier steps closed while a run is going and once the scene exists. */
   onRunning: (running: boolean) => void
+  /** The account's Worlds (the page's lookup), for an account that carried a trial's "Decentraland World" here. */
+  names: NamesState
 }) {
   const api = useApi()
+  const { user, loginWithWallet } = useAuth()
+  const trial = !!user?.trial
   const [view, setView] = useState<View>(idle)
   const [copied, setCopied] = useState(false)
   const alive = useRef(true)
@@ -73,6 +86,18 @@ export function DeployStep({ state, dispatch, options, memory, onRunning }: {
   useEffect(() => {
     if (options && !virviOk && state.mode !== 'sign') dispatch({ type: 'setMode', mode: 'sign' })
   }, [options, virviOk])
+
+  // A trial that chose Decentraland signs in with its wallet here; an account carrying that choice picks the World
+  const gate = deployGate({ trial, dclLater: state.dclLater, dcl })
+  const [connecting, setConnecting] = useState(false)
+  const [connectError, setConnectError] = useState<string | null>(null)
+  /** The Worlds of the account the wallet sign-in made (the page's lookup catches up after it re-renders). */
+  const [connected, setConnected] = useState<WalletNames | null>(null)
+  const [checking, setChecking] = useState<string | null>(null)
+  const [contractBlocked, setContractBlocked] = useState(false)
+  // A World picked here that has a scene is replaced only once that's confirmed, as on Where
+  const [pickedHere, setPickedHere] = useState(false)
+  const [replaceOk, setReplaceOk] = useState(false)
 
   const atLimit = !memory.sceneId && !!options && options.scenes.limit !== null && options.scenes.used >= options.scenes.limit
   const running = view.status === 'running'
@@ -105,10 +130,11 @@ export function DeployStep({ state, dispatch, options, memory, onRunning }: {
   const start = async () => {
     const plan = makePlan()
     onRunning(true)
-    setView((v) => ({ ...v, status: 'running', error: null, phase: 'packing' }))
+    setView((v) => ({ ...v, status: 'running', error: null, worldInUse: null, phase: 'packing' }))
     try {
       await runWizard(plan, memory, {
-        api,
+        // A trial's save opens the sign-up sheet, which names the scene
+        api: { ...api, bootstrapWizardScene: (data) => api.bootstrapWizardScene(data, { sceneName: plan.name }) },
         wallet: getBrowserWallet,
         startSession: async (wallet, opts) => (await import('@/lib/dcl-sign')).startSignSession(wallet, opts),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -116,7 +142,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning }: {
       }, update)
       if (alive.current) setView((v) => ({ ...v, status: 'done', phase: 'live', partial: null }))
     } catch (err) {
-      const e = err as { message?: string; partial?: boolean }
+      const e = err as { message?: string; partial?: boolean; worldInUse?: ConnectedScene | null }
       if (!alive.current) return
       setView((v) => ({
         ...v,
@@ -124,11 +150,62 @@ export function DeployStep({ state, dispatch, options, memory, onRunning }: {
         wallet: null,
         error: e.partial ? null : e.message ?? 'Something went wrong. Try again in a moment.',
         partial: e.partial ? e.message ?? null : v.partial,
+        worldInUse: e.worldInUse ?? null,
       }))
     } finally {
       onRunning(false)
     }
   }
+
+  /** Uses a World from the account's list; a contract wallet can't sign World deploys (the same check as Where's). */
+  const pick = async (world: DclWorld, wallet: string): Promise<boolean> => {
+    setReplaceOk(false)
+    setContractBlocked(false)
+    setChecking(world.world)
+    const provider = getBrowserWallet()
+    let contract = false
+    if (provider && wallet) {
+      try {
+        contract = await (await import('@/lib/dcl-sign')).isContractWallet(provider, wallet)
+      } catch {
+        // The check is a courtesy; Decentraland's own answer comes at deploy.
+      }
+    }
+    if (!alive.current) return false
+    setChecking(null)
+    if (contract) {
+      setContractBlocked(true)
+      return false
+    }
+    setPickedHere(true)
+    dispatch({ type: 'setDcl', dcl: {
+      world: world.world, wallet, hasScene: world.hasScene, footprint: world.footprint, storage: world.storage ?? undefined, connectedScene: world.connectedScene ?? null,
+    } })
+    return true
+  }
+
+  /** Deploy, trial: the wallet signs in (creating the account, or moving the trial into its own), then the World is chosen. */
+  const connect = async () => {
+    setConnecting(true)
+    setConnectError(null)
+    try {
+      const { wallets } = await connectForDeploy({ loginWithWallet, names: fetchDclNames })
+      if (!alive.current) return
+      setConnected(wallets)
+      // The lone empty World is filled in and the step stops there: the deploy mode and Create and deploy are the user's
+      const out = connectOutcome(wallets)
+      if (out.kind === 'picked') await pick(out.world, out.wallet)
+    } catch (err) {
+      if (alive.current) setConnectError(wizardErrorMessage(err))
+    } finally {
+      if (alive.current) setConnecting(false)
+    }
+  }
+
+  const pickList = connected ?? (names.status === 'ready' ? names.wallets : null)
+  const listed = (pickList ?? []).flatMap((w) => w.names.map((n) => ({ ...n, wallet: w.address })))
+  const noWorld = connected ? noWorldMessage(connected) : null
+  const confirmPending = pickedHere && !!dcl?.hasScene && !replaceOk
 
   const [retrying, setRetrying] = useState(false)
   const retryExtras = async () => {
@@ -152,6 +229,33 @@ export function DeployStep({ state, dispatch, options, memory, onRunning }: {
   const lines = progressLines(shownPhase, view.models, view.status === 'failed')
   const live = done && (!dcl || view.deployment?.status === 'deployed')
   const started = view.status !== 'idle'
+  // Picked (on Where or here) while connected to another scene: that is settled first, before deploying over anything
+  const heldAtPick = !started && !!dcl && worldInUseView(dcl.world, dcl.connectedScene, memory.sceneId) !== null
+  const freed = () => { if (dcl) dispatch({ type: 'setDcl', dcl: { ...dcl, connectedScene: null } }) }
+  /**
+   * The run stopped on world_in_use and the World is free now. It is read again first: when it has a scene nobody agreed
+   * to replace (the pick didn't know of it), the replace question comes before the run carries on.
+   */
+  const resumeAfterDisconnect = async () => {
+    if (!dcl) return
+    let fresh: DclWorld
+    try {
+      fresh = await api.getDclWorld(dcl.world)
+    } catch (err) {
+      if (alive.current) setView((v) => ({ ...v, worldInUse: null, error: wizardErrorMessage(err) }))
+      return
+    }
+    if (!alive.current) return
+    const agreed = dcl.hasScene && (!pickedHere || replaceOk)
+    dispatch({ type: 'setDcl', dcl: { ...dcl, hasScene: fresh.hasScene, footprint: fresh.footprint, connectedScene: null } })
+    if (afterDisconnect(agreed, fresh) === 'confirm_replace') {
+      setPickedHere(true)
+      setReplaceOk(false)
+      setView((v) => ({ ...v, status: 'idle', error: null, worldInUse: null }))
+      return
+    }
+    start()
+  }
   // Until the scene exists its name can change; the deploy mode can change again after a failure.
   const nameEditable = !running && !memory.sceneId
   const modeEditable = view.status === 'idle' || view.status === 'failed'
@@ -218,10 +322,79 @@ export function DeployStep({ state, dispatch, options, memory, onRunning }: {
         <p className="rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2 text-yellow-100">{ROOM_LAYOUT_NOTICE}</p>
       )}
 
-      {view.error && <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300" role="alert">{view.error}</p>}
+      {view.error && dcl && worldInUseView(dcl.world, view.worldInUse, memory.sceneId) ? (
+        // The run's scene is kept (RunMemory): after the disconnect the run carries on and connects this World to it
+        <WorldInUseNotice world={dcl.world} connected={view.worldInUse} ownSceneId={memory.sceneId} onDisconnected={resumeAfterDisconnect} />
+      ) : view.error && <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300" role="alert">{view.error}</p>}
+      {heldAtPick && dcl && <WorldInUseNotice world={dcl.world} connected={dcl.connectedScene} ownSceneId={memory.sceneId} onDisconnected={freed} />}
 
-      {!done && (
-        <PrimaryButton type="button" onClick={start} disabled={running || atLimit || !state.name.trim()}>
+      {gate === 'wallet' && !done && (
+        <div className="space-y-2">
+          <p className="text-gray-300">{DEPLOY_LINE}</p>
+          <PrimaryButton type="button" onClick={connect} disabled={connecting || running || !state.name.trim()}>
+            {connecting ? 'Check your wallet…' : 'Connect your wallet'}
+          </PrimaryButton>
+        </div>
+      )}
+      {connecting && <p className="rounded-md border border-blue-900/60 bg-blue-950/40 px-3 py-2 text-blue-200" role="status">{WALLET_PROMPT}</p>}
+      {connectError && <p className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-2 text-red-300" role="alert">{connectError}</p>}
+
+      {gate === 'world' && !done && (
+        <section className="space-y-2">
+          <p className="text-gray-300">Pick the Decentraland World for this scene.</p>
+          {noWorld ? (
+            <p className="rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2 text-yellow-100" role="status">{noWorld}</p>
+          ) : pickList === null ? (
+            names.status === 'error'
+              ? <p className="text-red-300" role="alert">{names.message}</p>
+              : <p className="text-gray-500">Looking up your names…</p>
+          ) : listed.length === 0 ? (
+            <p className="text-gray-400">Your linked wallets don&apos;t own a Decentraland NAME. Connect the wallet that owns your World on Where, or skip Decentraland.</p>
+          ) : (
+            <ul className="space-y-2" aria-label="Your Worlds">
+              {listed.map((n) => (
+                <li key={n.world}>
+                  <button type="button" disabled={checking !== null || connecting} onClick={() => { pick(n, n.wallet) }}
+                    className="flex w-full items-center justify-between gap-3 rounded-md border border-gray-800 bg-gray-950 px-3 py-2.5 text-left hover:border-gray-700 disabled:opacity-60">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-white">{n.world}</span>
+                      <span className="block font-mono text-xs text-gray-500">{shortAddress(n.wallet)}</span>
+                    </span>
+                    {checking === n.world ? <span className="text-xs text-gray-500">Checking…</span> : n.hasScene && <Badge tone="warning">has a scene</Badge>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {contractBlocked && <p className="rounded-md border border-yellow-700/60 bg-yellow-950/30 px-3 py-2 text-yellow-200" role="alert">{CONTRACT_WALLET_MESSAGE}</p>}
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={() => dispatch({ type: 'goTo', step: 'where' })} className="text-blue-400 hover:text-blue-300">Back to Where</button>
+            <button type="button" onClick={() => dispatch({ type: 'setDclLater', on: false })} className="text-gray-400 hover:text-white">Skip Decentraland</button>
+          </div>
+        </section>
+      )}
+
+      {pickedHere && dcl && !started && (
+        <div className="space-y-2 rounded-md border border-gray-800 bg-gray-950 px-3 py-2.5">
+          <p className="text-white">
+            {dcl.world} <span className="font-mono text-xs text-gray-500">{shortAddress(dcl.wallet)}</span>
+            <button type="button" onClick={() => { setPickedHere(false); dispatch({ type: 'setDclLater', on: true }) }}
+              className="ml-3 text-xs text-gray-400 hover:text-white">Change</button>
+          </p>
+          {dcl.hasScene && !heldAtPick && (
+            <div className="space-y-2 text-yellow-100">
+              <p>This World already has a scene on {dcl.footprint?.parcels.length ?? 1} {(dcl.footprint?.parcels.length ?? 1) === 1 ? 'parcel' : 'parcels'}. Deploying will replace it.</p>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={replaceOk} onChange={(e) => setReplaceOk(e.target.checked)} />
+                Replace the scene that&apos;s there now
+              </label>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!done && gate === 'deploy' && (
+        <PrimaryButton type="button" onClick={start} disabled={running || atLimit || !state.name.trim() || confirmPending || heldAtPick}>
           {running ? 'Working…' : view.status === 'failed' ? 'Try again' : 'Create and deploy'}
         </PrimaryButton>
       )}

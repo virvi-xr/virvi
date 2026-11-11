@@ -9,6 +9,13 @@ export function payloadOf(token: string): Record<string, unknown> | null {
   } catch { return null }
 }
 
+/** The user a session token is for (`id`, or `sub`), or null. */
+export function tokenUserId(token: string): string | null {
+  const p = payloadOf(token)
+  const id = p?.id ?? p?.sub
+  return typeof id === 'string' && id ? id : null
+}
+
 /** A stored session is usable only if unexpired and of a known kind. Visitor passes (no scene) are never kept. */
 export function readSession(token: string, now: number): { ok: false } | { ok: true; scenePass: ScenePass | null } {
   const p = payloadOf(token)
@@ -31,7 +38,12 @@ export function readTrialSession(token: string, now: number): boolean {
   return !!p && typeof p.exp === 'number' && p.exp * 1000 > now && p.kind === 'trial'
 }
 
-/** Pages a trial session may open: the Design Studio and its designs. */
+/** Pages a trial session may open: the Design Studio, its scenes and the scene wizard, imports, and the demo views. */
 export function trialAllows(pathname: string): boolean {
-  return pathname === '/studio' || pathname.startsWith('/studio/')
+  const p = pathname.replace(/\/+$/, '')
+  if (p === '/studio' || p.startsWith('/studio/')) return true
+  if (p === '/scenes' || p === '/import') return true
+  // `/scenes/new` and `/scenes/<id>`
+  if (/^\/scenes\/[^/]+$/.test(p)) return true
+  return /^\/demo\/[^/]+$/.test(p)
 }

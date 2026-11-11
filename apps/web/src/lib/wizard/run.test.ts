@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { WrongWalletError, type SignSession } from '../dcl-sign'
 import {
   deployVirvi, emptyMemory, grantVirvi, GRANT_PARTIAL_MESSAGE, jumpInUrl, progressLines, publishSigned, revokeVirvi, runWizard,
-  watchDeployment, wizardErrorMessage, type RevokeApi, type RunApi, type RunDeps, type RunPlan, type RunUpdate,
+  RunError, watchDeployment, wizardErrorMessage, type RevokeApi, type RunApi, type RunDeps, type RunPlan, type RunUpdate,
 } from './run'
 
 const apiError = (status: number, body: Record<string, unknown>) =>
@@ -29,6 +29,7 @@ function fakeApi(script: Partial<Record<keyof RunApi, (...args: any[]) => any>> 
     bootstrapWizardScene: async () => ({ sceneId: 'scene-1' }),
     createDclDestination: async () => ({ destination: dest() }),
     patchDclDestination: async (_id, { mode }) => ({ destination: dest({ mode }) }),
+    getSceneDclDestinations: async () => ({ destinations: [] }),
     getDclDestination: async () => ({ destination: dest(), lastDeployment: { id: 'dep-busy', sceneId: 'scene-1', status: 'deploying' } }),
     getDclGrant: async () => ({
       virviAddress: '0xvirvi',
@@ -161,6 +162,53 @@ describe('runWizard, mode virvi', () => {
     expect(calls).not.toContain('getDclGrant')
     expect(d.sessions()).toBe(1)
     expect(mem.deploymentId).toBe('dep-2')
+  })
+
+  it('world_in_use stops with who holds the World; once it is disconnected, Try again connects it without a second scene', async () => {
+    const held = { sceneId: 's-old', name: 'Old cafe', canDisconnect: true, destinationId: 'd-old' }
+    let taken = true
+    const { api, calls } = fakeApi({
+      createDclDestination: async () => {
+        if (taken) throw apiError(409, { error: 'world_in_use', sceneId: 's-old', connectedScene: held })
+        return { destination: dest() }
+      },
+    })
+    const d = deps(api)
+    const mem = emptyMemory()
+    const err = await runWizard(plan(), mem, d.deps, () => {}).catch((e) => e)
+    expect(err).toBeInstanceOf(RunError)
+    expect(err.worldInUse).toEqual(held)
+    expect(err.message).toBe('cafe.dcl.eth is connected to your scene “Old cafe”.')
+    expect(mem.sceneId).toBe('scene-1')
+    expect(mem.destination).toBeNull()
+
+    taken = false
+    calls.length = 0
+    await runWizard(plan(), mem, d.deps, () => {})
+    expect(calls).not.toContain('bootstrapWizardScene')
+    expect(calls[0]).toBe('createDclDestination')
+    expect(mem.destination?.id).toBe('dest-1')
+  })
+
+  it('world_in_use naming this very scene (an earlier create whose answer was lost) carries on with its destination', async () => {
+    const mine = { sceneId: 'scene-1', name: 'My park', canDisconnect: true, destinationId: 'dest-1' }
+    const { api, calls } = fakeApi({
+      createDclDestination: async () => { throw apiError(409, { error: 'world_in_use', sceneId: 'scene-1', connectedScene: mine }) },
+      getSceneDclDestinations: async () => ({ destinations: [dest({ worldName: 'other.dcl.eth', id: 'x' }), dest({ worldName: 'cafe.dcl.eth', mode: 'sign' })] }),
+    })
+    const mem = emptyMemory()
+    mem.sceneId = 'scene-1'
+    await runWizard(plan(), mem, deps(api).deps, () => {})
+    expect(mem.destination?.id).toBe('dest-1')
+    expect(calls.slice(0, 3)).toEqual(['createDclDestination', 'getSceneDclDestinations', 'patchDclDestination'])
+    expect(mem.deploymentId).toBe('dep-1')
+  })
+
+  it("world_in_use for someone else's scene says so without naming it", async () => {
+    const { api } = fakeApi({ createDclDestination: async () => { throw apiError(409, { error: 'world_in_use', sceneId: 's-x', connectedScene: { name: null, canDisconnect: false } }) } })
+    const err = await runWizard(plan(), emptyMemory(), deps(api).deps, () => {}).catch((e) => e)
+    expect(err.worldInUse).toEqual({ name: null, canDisconnect: false })
+    expect(err.message).toMatch(/another Virvi account/)
   })
 
   it('switches the destination mode on a retry with the other mode', async () => {

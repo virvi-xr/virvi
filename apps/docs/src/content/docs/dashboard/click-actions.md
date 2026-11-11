@@ -8,7 +8,7 @@ A placed image, model or video screen can do something when a visitor clicks it.
 ## Actions
 
 - **Open a link.** Decentraland always asks the visitor before it opens.
-- **Play a sound**, from the Media Library or a link (an mp3 or ogg).
+- **Play a sound**, from Images & Video or a link (an mp3 or ogg).
 - **Move the visitor** to a spot in the scene (x, y, z in metres), optionally turning the camera to look at another spot.
 - **Teleport** the visitor to a parcel, such as `52,-20`.
 

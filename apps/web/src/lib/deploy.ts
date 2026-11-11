@@ -6,9 +6,18 @@ import { shortAddress } from './wizard/helpers'
 import { placeLabel } from './import'
 
 /** "3 models are waiting to go live", or that nothing is. */
-export function pendingLine(count: number): string {
-  if (count === 0) return 'Every model in the scene is live.'
-  return count === 1 ? '1 model is waiting to go live' : `${count} models are waiting to go live`
+/** What's waiting to go live: a count of models, or the pending list (which may hold the scene thumbnail, LIV-88). */
+export function pendingLine(pending: number | Array<{ kind?: 'thumbnail'; removed?: true }>): string {
+  if (typeof pending === 'number') {
+    if (pending === 0) return 'Every model in the scene is live.'
+    return pending === 1 ? '1 model is waiting to go live' : `${pending} models are waiting to go live`
+  }
+  const thumb = pending.find((p) => p.kind === 'thumbnail')
+  const models = pending.length - (thumb ? 1 : 0)
+  if (!thumb) return models === 0 ? 'Everything in the scene is live.' : pendingLine(models)
+  if (models === 0) return thumb.removed ? 'Removing the thumbnail is waiting to go live' : 'The new thumbnail is waiting to go live'
+  const what = thumb.removed ? 'removing the thumbnail' : 'the new thumbnail'
+  return `${models === 1 ? '1 model' : `${models} models`} and ${what} are waiting to go live`
 }
 
 export function modeLabel(dest: Pick<DclDestination, 'mode' | 'grantedAt'>): string {
@@ -108,4 +117,23 @@ export function publishCopy(d: Pick<DclDestination, 'kind' | 'worldName' | 'base
     yours: 'your World',
     notSigned: "This World is set to let Virvi deploy, but the permission isn't signed yet.",
   }
+}
+
+/**
+ * LIV-135: whether Decentraland built a map snapshot (its Initial Scene State) for what Virvi last deployed. Null when
+ * that was never checked, or what's live now isn't the entity that was checked (Use the live version).
+ */
+export function mapView(d: Pick<DclDestination, 'kind' | 'lastEntityId' | 'mapStatus' | 'mapEntityId' | 'mapAssets'>): {
+  line: string; tone: 'muted' | 'warning'; help: string
+} | null {
+  if (!d.mapStatus || d.mapStatus === 'unknown' || !d.mapEntityId || d.mapEntityId !== d.lastEntityId) return null
+  const help = d.kind === 'parcels'
+    ? 'The map photo itself only changes when Decentraland re-captures the map, which they do by hand now and then.'
+    : "The map photo itself only changes when Decentraland re-captures the map (by hand, now and then), and Worlds don't have a satellite map yet."
+  if (d.mapStatus === 'ready') {
+    const n = d.mapAssets
+    return { line: n == null ? 'Map data: ready' : `Map data: ready (${n} ${n === 1 ? 'model' : 'models'})`, tone: 'muted', help }
+  }
+  if (d.mapStatus === 'pending') return { line: 'Map data: waiting for Decentraland', tone: 'muted', help }
+  return { line: "No map data — Decentraland didn't build a map snapshot for this deploy", tone: 'warning', help }
 }

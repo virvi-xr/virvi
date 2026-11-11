@@ -1,7 +1,7 @@
 'use client'
 import { eventPresetLabel, eventPresetsFor, eventShowingLabel, eventShowingsFor, type EventPresetSchedule, type EventShowing, type ScenePresetOption } from '@/lib/event-presets'
 import { presetDisplayName } from '@/lib/presets'
-import { useApi } from '@/lib/api'
+import { useApi, useDemoPrefix } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
@@ -21,7 +21,8 @@ export default function EventsPage() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const eventHref = (id: string) => `/events?id=${id}`
+/** An event's page; `prefix` is `/demo` inside the demo. */
+const eventHref = (id: string, prefix = '') => `${prefix}/events?id=${id}`
 const inputClass = 'w-full rounded-md border border-gray-800 bg-gray-950 px-4 py-2 text-white outline-none focus:border-blue-400'
 
 // ── Main Content ─────────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ const inputClass = 'w-full rounded-md border border-gray-800 bg-gray-950 px-4 py
 function EventsContent() {
   const { token } = useAuth()
   const api = useApi()
+  const prefix = useDemoPrefix()
   const searchParams = useSearchParams()
   const router = useRouter()
   const selectedEventId = searchParams.get('id')
@@ -101,7 +103,7 @@ function EventsContent() {
           eventId={selectedEventId}
           onDeleted={() => {
             setEvents((prev) => prev.filter((e) => e.id !== selectedEventId))
-            router.push('/events')
+            router.push(`${prefix}/events`)
           }}
         />
       </div>
@@ -192,7 +194,7 @@ function EventsContent() {
           {shown.map((evt, i) => (
             <EventRow key={evt.id} event={evt} first={i === 0}
               onDescribe={(d) => saveDescription(evt.id, d)}
-              onOpen={() => router.push(eventHref(evt.id))}
+              onOpen={() => router.push(eventHref(evt.id, prefix))}
               onDelete={() => deleteEvent(evt.id)} />
           ))}
         </div>
@@ -217,15 +219,16 @@ function DateCell({ iso, label }: { iso?: string | null; label: string }) {
 }
 
 function EventRow({ event, first, onDescribe, onOpen, onDelete }: { event: any; first: boolean; onDescribe: (d: string) => Promise<void>; onOpen: () => void; onDelete: () => void }) {
+  const prefix = useDemoPrefix()
   return (
     <div className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-4 py-4 md:grid-cols-[minmax(0,1fr)_11rem_11rem_6rem] md:px-6 ${first ? '' : 'border-t border-gray-800'}`}>
       <div className="flex min-w-0 items-start gap-4">
-        <Link href={eventHref(event.id)} tabIndex={-1} aria-hidden="true"
+        <Link href={eventHref(event.id, prefix)} tabIndex={-1} aria-hidden="true"
           className="hidden h-14 w-14 shrink-0 items-center justify-center rounded-md border border-gray-800 bg-gray-950/40 text-gray-400 sm:flex">
           <CalendarIcon size={22} />
         </Link>
         <div className="min-w-0">
-          <Link href={eventHref(event.id)} className="block truncate text-lg font-semibold hover:text-blue-300">{event.name}</Link>
+          <Link href={eventHref(event.id, prefix)} className="block truncate text-lg font-semibold hover:text-blue-300">{event.name}</Link>
           <InlineDescription value={event.description} canEdit onSave={onDescribe} label="Event description" placeholder="What happens at this event?" spacing="mt-1.5" />
         </div>
       </div>
@@ -234,7 +237,7 @@ function EventRow({ event, first, onDescribe, onOpen, onDelete }: { event: any; 
         <DateCell iso={event.endTime} label="Ends" />
       </div>
       <div className="col-start-2 row-span-2 row-start-1 flex items-center justify-end gap-1 md:col-start-auto md:row-span-1 md:row-start-auto">
-        <Link href={eventHref(event.id)} aria-label={`Open ${event.name}`} className="rounded p-2 text-gray-400 hover:bg-white/[0.05] hover:text-blue-300">
+        <Link href={eventHref(event.id, prefix)} aria-label={`Open ${event.name}`} className="rounded p-2 text-gray-400 hover:bg-white/[0.05] hover:text-blue-300">
           <ArrowUpRightIcon size={20} />
         </Link>
         <RowMenu label={`Actions for ${event.name}`} items={[
@@ -258,6 +261,7 @@ const TIMING_BADGE: Record<EventTiming, [string, Tone]> = {
 function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () => void }) {
   const { token } = useAuth()
   const api = useApi()
+  const prefix = useDemoPrefix()
 
   const [event, setEvent] = useState<any>(null)
 
@@ -402,7 +406,7 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
   return (
     <div className="space-y-6">
       <PageHeader
-        crumbs={['Workspace', { label: 'Events', href: '/events' }, event.name]}
+        crumbs={['Workspace', { label: 'Events', href: `${prefix}/events` }, event.name]}
         title={event.name}
         subtitle={event.description || undefined}
         actions={<Badge tone={timingTone}>{timingLabel}</Badge>}

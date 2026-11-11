@@ -28,12 +28,15 @@ export function mapBounds(parcels: string[], baseParcel: string | null, points: 
   if (!points.length) return { minX: 0, minZ: 0, maxX: TILE, maxZ: TILE }
   const snapDown = (v: number) => Math.floor(v / TILE) * TILE
   const snapUp = (v: number) => (Math.floor(v / TILE) + 1) * TILE
-  return {
-    minX: snapDown(Math.min(...points.map((p) => p.x))),
-    minZ: snapDown(Math.min(...points.map((p) => p.z))),
-    maxX: snapUp(Math.max(...points.map((p) => p.x))),
-    maxZ: snapUp(Math.max(...points.map((p) => p.z))),
+  // Loops, not Math.min(...): a big heatmap has more points than a call can take as arguments.
+  let [minX, minZ, maxX, maxZ] = [Infinity, Infinity, -Infinity, -Infinity]
+  for (const p of points) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.z < minZ) minZ = p.z
+    if (p.z > maxZ) maxZ = p.z
   }
+  return { minX: snapDown(minX), minZ: snapDown(minZ), maxX: snapUp(maxX), maxZ: snapUp(maxZ) }
 }
 
 export function toSvg(b: MapBounds, width: number) {

@@ -53,6 +53,12 @@ export const organizations = pgTable('organizations', {
   metadata: jsonb('metadata'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * LIV-83: when the organization was deleted. The row stays (so its events, media and streaming servers don't cascade
+   * away while its scenes can still be restored) and is hidden everywhere; the purge removes it once none of its scenes
+   * is left deleted.
+   */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
 })
 
 export const organizationsRelations = relations(organizations, ({ one, many }) => ({
@@ -135,6 +141,8 @@ export const users = pgTable('users', {
   trialLastActiveAt: timestamp('trial_last_active_at', { withTimezone: true }),
   trialIpHash: text('trial_ip_hash'),
   trialDeviceHash: text('trial_device_hash'),
+  /** Scene imports this trial has started, failed ones included (TRIAL_IMPORTS caps it; reserveTrialImport). */
+  trialImports: integer('trial_imports').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -187,10 +195,37 @@ export const scenes = pgTable('scenes', {
   name: text('name').notNull(),
   description: text('description'),
   thumbnailUrl: text('thumbnail_url'),
+  /** The stored thumbnail (LIV-88), `scenes/<id>/thumbnail-<hash>.<ext>`; null when none. */
+  thumbnailKey: text('thumbnail_key'),
+  /** Its size, counted towards the owner's storage quota. */
+  thumbnailBytes: integer('thumbnail_bytes'),
+  /**
+   * Where the thumbnail came from (LIV-89): 'upload' (set in Virvi; deployed as display.navmapThumbnail) or 'import'
+   * (the imported scene's own navmapThumbnail; never deployed by Virvi, replaced by a re-import). Null when there is
+   * none, and on LIV-88's thumbnails from before it was recorded, which are uploads (entrypoint.sh backfills them).
+   */
+  thumbnailSource: text('thumbnail_source').$type<'upload' | 'import'>(),
   activePresetId: uuid('active_preset_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+  /**
+   * LIV-83: when the scene was deleted; null while it is live. A deleted scene is hidden everywhere (scenes/deleted.ts)
+   * and restorable for 30 days, then the purge sweep removes it for good.
+   */
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  deletedBy: uuid('deleted_by').references((): AnyPgColumn => users.id, { onDelete: 'set null' }),
+  /**
+   * Set when the scene was deleted with its organization (the org row is kept, marked deleted, until the purge; org_id
+   * is cleared): the org it belonged to, and the users who may restore it besides its owner, the org's owners and
+   * admins at the time. A restore makes the scene the restorer's own personal scene.
+   */
+  deletedOrgId: uuid('deleted_org_id'),
+  restorerIds: uuid('restorer_ids').array(),
+  /** Set while a purge is destroying the scene's hosted worlds (LIV-83): a restore is refused meanwhile. */
+  purgingAt: timestamp('purging_at', { withTimezone: true }),
+}, (t) => ({
+  deletedIdx: index('scenes_deleted_at_idx').on(t.deletedAt).where(sql`deleted_at IS NOT NULL`),
+}))
 
 export const scenesRelations = relations(scenes, ({ one, many }) => ({
   org: one(organizations, {
@@ -442,9 +477,20 @@ export const analyticsHeatmapDaily = pgTable('analytics_heatmap_daily', {
   day: date('day').notNull(),
   cellX: smallint('cell_x').notNull(),
   cellZ: smallint('cell_z').notNull(),
+  /**
+   * The floor band (LIV-85, `heightBand` in @virvixr/shared: 2 m bands of feet height, 0 = ground floor).
+   * Null for days rolled up before heights were recorded: drawn at ground level, labelled "height not recorded".
+   */
+  cellY: smallint('cell_y'),
   dwellSec: integer('dwell_sec').notNull().default(0),
   visits: integer('visits').notNull().default(0),
-}, (t) => ({ pk: primaryKey({ columns: [t.sceneId, t.day, t.cellX, t.cellZ] }) }))
+}, (t) => ({
+  // Was the primary key (scene_id, day, cell_x, cell_z); cell_y is nullable, so a unique index instead. Only days rolled up
+  // before LIV-85 have null heights, and nothing writes those again, so the usual NULLS DISTINCT is enough (drizzle-kit
+  // 0.31 can't read NULLS NOT DISTINCT back and would re-add it on every push). scripts/pre-push-upgrade.mjs swaps the
+  // keys before push (and entrypoint.sh's fallback repeats it).
+  cellUq: uniqueIndex('analytics_heatmap_daily_cell_uq').on(t.sceneId, t.day, t.cellX, t.cellZ, t.cellY),
+}))
 
 export const analyticsCopresenceDaily = pgTable('analytics_copresence_daily', {
   sceneId: uuid('scene_id').notNull().references(() => analyticsScenes.id, { onDelete: 'cascade' }),
@@ -658,7 +704,8 @@ export const assetLibraryItems = pgTable('asset_library_items', {
   license: text('license'), // 'cc0', 'cc-by', 'proprietary', etc.
   author: text('author'),
   isPublic: boolean('is_public').notNull().default(true),
-  uploadedBy: uuid('uploaded_by').references(() => users.id),
+  // Deleting an account deletes its private models first (library/user-models.ts); its public ones stay, ownerless
+  uploadedBy: uuid('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   // Catalog models (non-null packId): public, no uploader, never counted toward storage
   packId: text('pack_id').references(() => catalogPacks.id, { onDelete: 'restrict' }),
@@ -668,6 +715,11 @@ export const assetLibraryItems = pgTable('asset_library_items', {
   contentHash: text('content_hash'), // sha256 of the GLB
   // A Design Studio scene piece's dcl-sittables seats (FurnitureModel), kept for seating in Virvi later
   sittables: jsonb('sittables'),
+  // 'uploading' | 'processing' | 'ready' | 'failed': in-world (two-step) uploads; everything else is stored ready.
+  // An unfinished item has no cdnUrl yet (its storageKey is where the file will go).
+  status: text('status').notNull().default('ready'),
+  error: text('error'),
+  uploadCode: text('upload_code'), // the companion upload code that reserved it (its data post must match)
 }, (t) => ({
   packRefUq: uniqueIndex('asset_library_items_pack_ref').on(t.packId, t.sourceRef),
   contentHashIdx: index('asset_library_items_content_hash_idx').on(t.contentHash),
@@ -709,6 +761,10 @@ export const sceneDeployments = pgTable('scene_deployments', {
   destinationId: uuid('destination_id').references(() => dclWorldDestinations.id, { onDelete: 'set null' }),
   deployedAt: timestamp('deployed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  /** LIV-83: when deleting the scene removed this deployment from its platform (null: still up, or never removed). */
+  removedAt: timestamp('removed_at', { withTimezone: true }),
+  /** What the removal did: 'undeployed' (a World's scene), 'emptied' (an empty scene over the parcels). */
+  removalOutcome: text('removal_outcome'),
 })
 
 export const sceneDeploymentsRelations = relations(sceneDeployments, ({ one }) => ({
@@ -729,6 +785,9 @@ export const sceneDeploymentsRelations = relations(sceneDeployments, ({ one }) =
 export const dclDestinationModeEnum = pgEnum('dcl_destination_mode', ['virvi', 'sign'])
 export const dclDestinationKindEnum = pgEnum('dcl_destination_kind', ['world', 'parcels'])
 export const dclDestinationStatusEnum = pgEnum('dcl_destination_status', ['ok', 'needs_review', 'over_budget', 'unreachable'])
+
+/** pending: waiting for abgen; ready: published; none: not published within the check window; unknown: never checked. */
+export type MapStatus = 'pending' | 'ready' | 'none' | 'unknown'
 
 /** A Decentraland World a scene deploys to. Virvi never holds the owner's key. */
 export const dclWorldDestinations = pgTable('dcl_world_destinations', {
@@ -754,10 +813,19 @@ export const dclWorldDestinations = pgTable('dcl_world_destinations', {
   adopted: boolean('adopted').notNull().default(false), // true = the owner's own scene code, never touched
   spawn: jsonb('spawn').$type<{ x: number; y: number; z: number }>(), // metres, plot-relative; null = plot centre
   pendingImportId: uuid('pending_import_id').references((): AnyPgColumn => sceneImports.id, { onDelete: 'set null' }), // an uploaded scene waiting on this World
+  // LIV-135: whether Decentraland's abgen published an Initial Scene State (the map/LOD snapshot) for mapEntityId, the
+  // entity Virvi last deployed. 'unknown' = never checked (deployed before this, or not by Virvi); see services/dcl/map-status.ts
+  mapStatus: text('map_status').$type<MapStatus>().notNull().default('unknown'),
+  mapEntityId: text('map_entity_id'),
+  mapAssets: integer('map_assets'), // models in the snapshot; null when not ready (or too big to count)
+  mapSince: timestamp('map_since', { withTimezone: true }), // when mapEntityId went live: the check schedule counts from here
+  mapCheckAt: timestamp('map_check_at', { withTimezone: true }), // next check due; null once ready or given up
+  mapCheckedAt: timestamp('map_checked_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   sceneIdx: index('dcl_world_destinations_scene_idx').on(t.sceneId),
+  mapDueIdx: index('dcl_destinations_map_due').on(t.mapCheckAt).where(sql`map_status = 'pending'`),
   parcelsBaseUq: uniqueIndex('dcl_destinations_parcels_base').on(t.base).where(sql`kind = 'parcels'`),
 }))
 
@@ -811,6 +879,21 @@ export const sceneImports = pgTable('scene_imports', {
   filesDeletedAt: timestamp('files_deleted_at', { withTimezone: true }),
   /** The upload already started Virvi itself, so installVirvi added no code (only the dependency range and the icon). */
   virviAlreadyPresent: boolean('virvi_already_present').notNull().default(false),
+  /** What the upload did with its scene.json's navmapThumbnail (LIV-89): 'imported' | 'kept' | 'skipped' | 'removed'; null: nothing. */
+  thumbnailOutcome: text('thumbnail_outcome').$type<'imported' | 'kept' | 'skipped' | 'removed'>(),
+  /** Why a skipped thumbnail couldn't be used, as the import page shows it. */
+  thumbnailNote: text('thumbnail_note'),
+  /**
+   * The built scene.json's display.navmapThumbnail when it names a file in the scene (its path, lowercased), recorded
+   * when the import is deployed; null for none or a link (LIV-133). The newest deployed import's is the scene's own
+   * thumbnail file at its destination, which Virvi never removes, even under Virvi's own thumbnail name.
+   */
+  navmapThumbnail: text('navmap_thumbnail'),
+  /**
+   * A trial's (guest's) import (LIV-91): it never locks, blocks or supersedes its place, is never its place's latest
+   * import and never deploys on its own. An account clears it when it deploys the import (claimSandboxImport).
+   */
+  sandbox: boolean('sandbox').notNull().default(false),
 }, (t) => ({
   worldStatusIdx: index('scene_imports_world_status_idx').on(t.worldName, t.status),
   userCreatedIdx: index('scene_imports_user_created_idx').on(t.userId, t.createdAt),
@@ -843,7 +926,7 @@ export const streamingServers = pgTable('streaming_servers', {
   hlsPlaylistUrl: text('hls_playlist_url'), // e.g. https://cdn.virvi.io/streams/{id}/playlist.m3u8
   region: text('region').default('us-east-1'),
   infrastructureId: text('infrastructure_id'), // ECS task ARN, Fly machine ID, etc.
-  sceneId: uuid('scene_id').references(() => scenes.id), // optional: auto-link to a scene's video
+  sceneId: uuid('scene_id').references(() => scenes.id, { onDelete: 'set null' }), // optional: auto-link to a scene's video; deleting the scene unlinks it
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -1324,7 +1407,7 @@ export const authHandoffCodes = pgTable('auth_handoff_codes', {
 })
 
 // ── Scene Library ────────────────────────────────────────────────────────────
-// One shared media library per scene. Items stay in the owner's account (media_assets / asset_library_items) and are linked here.
+// One shared library per scene: images and video (media_assets) and 3D models (asset_library_items) stay in their owner's account and are linked here.
 
 export const sceneLibrary = pgTable(
   'scene_library',
@@ -1533,7 +1616,11 @@ export const studioDesigns = pgTable('studio_designs', {
   machineClaimedAt: timestamp('machine_claimed_at', { withTimezone: true }),
   // SHA-256 of the machine's STUDIO_WORKER_TOKEN; the token itself is never stored
   workerTokenHash: text('worker_token_hash').unique(),
-  // Set by the first paid finalize: a finalized design no longer counts as open, even while it is revised
+  // When the machine was last started ahead of a prompt (POST /designs/:id/warm): at most once per 5 minutes, and the
+  // sweep counts it as activity, so it doesn't destroy a machine just warmed
+  warmedAt: timestamp('warmed_at', { withTimezone: true }),
+  // Set by the first paid finalize. The design stops counting as open once every piece is finalized (LIV-81), even
+  // while it is revised; a partly finalized one still counts (designs.ts openDesignCount)
   finalizedAt: timestamp('finalized_at', { withTimezone: true }),
   // The wall of fame: the owner opted a finalized design in (shown), an admin took it down (hidden), and the owner's
   // link to the design's Marketplace page
@@ -1571,6 +1658,22 @@ export const studioRevisions = pgTable('studio_revisions', {
   numberUq: uniqueIndex('studio_revisions_piece_number_uq').on(t.pieceId, t.number),
 }))
 
+/**
+ * How a prompt job's machine was got (`machine`: made for it, started from stopped, already running, or run by hand),
+ * the seconds from the job's createdAt to each step, and the worker's own boot (`boot` seconds, and whether it
+ * restored a workspace). A step the job never reached, or an older worker never reported, is absent.
+ */
+export type JobTimings = {
+  machine?: 'created' | 'started' | 'running' | 'external'
+  taken?: number
+  screening?: number
+  building?: number
+  firstProgress?: number
+  done?: number
+  boot?: number
+  restored?: boolean
+}
+
 export const studioJobs = pgTable('studio_jobs', {
   id: uuid('id').primaryKey().defaultRandom(),
   designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
@@ -1585,8 +1688,18 @@ export const studioJobs = pgTable('studio_jobs', {
   counted: boolean('counted').notNull().default(false),
   countedDay: date('counted_day', { mode: 'string' }),
   countedFrom: text('counted_from'), // allowance | gift | credit: where a counted prompt is given back to
+  // A prompt a Virvi admin sent on the owner's design (Virvi support): never counted, its cost on nobody's allowance
+  byAdminId: uuid('by_admin_id'),
+  // Who sent a prompt job; null means the owner (every row from before collaboration)
+  userId: uuid('user_id'),
   // A render nobody is waiting on (the rest of an Inspect sphere): jobs/next hands these out after the others
   background: boolean('background').notNull().default(false),
+  // The owner's free "Try again with this feedback" (LIV-142): the prompt job of the 👎'd revision it retries. At
+  // most one per revision, held by the database
+  feedbackFor: uuid('feedback_for'),
+  // A prompt job's wait, filled in as it goes (studio/timings.ts): how its machine was got, and seconds from createdAt
+  // to each step. Null for other jobs and for prompts from before it
+  timings: jsonb('timings').$type<JobTimings>(),
   takenAt: timestamp('taken_at', { withTimezone: true }),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1596,6 +1709,7 @@ export const studioJobs = pgTable('studio_jobs', {
   oneOpenPromptUq: uniqueIndex('studio_jobs_one_open_prompt_uq')
     .on(t.designId)
     .where(sql`${t.type} = 'prompt' AND ${t.status} IN ('queued', 'taken')`),
+  feedbackForUq: uniqueIndex('studio_jobs_feedback_for_uq').on(t.feedbackFor).where(sql`${t.feedbackFor} IS NOT NULL`),
 }))
 
 export const studioMessages = pgTable('studio_messages', {
@@ -1606,9 +1720,152 @@ export const studioMessages = pgTable('studio_messages', {
   text: text('text').notNull(),
   jobId: uuid('job_id'),
   proposal: jsonb('proposal'),
+  // The collaborator who sent a user message; null means the owner (every row from before collaboration)
+  userId: uuid('user_id'),
+  // A user message a Virvi admin wrote (shown as Virvi support, never as the owner's words)
+  byAdminId: uuid('by_admin_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   designIdx: index('studio_messages_design_idx').on(t.designId, t.createdAt),
+}))
+
+// ── Design Studio ratings and what Virvi learns from them (LIV-142) ──────────────────────────────────────────────
+// A revision is a prompt job that changed pieces: its owner rates it 👍 or 👎 (one rating per user per revision; clearing
+// deletes the row). The revision's kind, agent, model, prompt and cost are copied in, so the queue and the digest read
+// them without the job.
+export const studioRatings = pgTable('studio_ratings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  jobId: uuid('job_id').notNull().references(() => studioJobs.id, { onDelete: 'cascade' }),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  rating: text('rating').notNull(), // up | down
+  tags: jsonb('tags').$type<string[]>().notNull().default([]), // a 👎's tags (studio/ratings.ts RATING_TAGS)
+  note: text('note'),
+  kind: text('kind').notNull(),
+  agent: text('agent'),
+  model: text('model'),
+  prompt: text('prompt'),
+  costUsd: doublePrecision('cost_usd'),
+  // The admin queue: a 👎 someone looked at, and one that could be caught by an automatic check
+  handledAt: timestamp('handled_at', { withTimezone: true }),
+  handledBy: uuid('handled_by'),
+  autoCheck: boolean('auto_check').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  jobUserUq: uniqueIndex('studio_ratings_job_user_uq').on(t.jobId, t.userId),
+  ratingIdx: index('studio_ratings_rating_idx').on(t.rating, t.createdAt),
+  designIdx: index('studio_ratings_design_idx').on(t.designId),
+}))
+
+// Lessons for the agent, per design kind: drafted (by an admin, or by Claude from a batch of 👎s), then approved by an
+// admin. Approved and on, they go with every new prompt of their kind (designs.ts queuePrompt, the job's `lessons`).
+export const studioLessons = pgTable('studio_lessons', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: text('kind').notNull(), // wearable | emote | scene
+  text: text('text').notNull(),
+  status: text('status').notNull().default('draft'), // draft | approved
+  enabled: boolean('enabled').notNull().default(true),
+  sourceRatingIds: jsonb('source_rating_ids').$type<string[]>().notNull().default([]),
+  drafted: text('drafted').notNull().default('admin'), // admin | claude
+  createdBy: uuid('created_by'),
+  updatedBy: uuid('updated_by'),
+  approvedBy: uuid('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  kindIdx: index('studio_lessons_kind_idx').on(t.kind, t.createdAt),
+}))
+
+// The weekly ratings digest: one row per week (its Monday, UTC) once a server claims it, so the email goes once across
+// restarts and servers. `sentAt` is set once mailed; a week with no ratings is never mailed. A claim an hour old with
+// nothing sent (the server died mid-send) is claimed again.
+export const studioDigestWeeks = pgTable('studio_digest_weeks', {
+  weekStart: date('week_start', { mode: 'string' }).primaryKey(),
+  ratings: integer('ratings').notNull().default(0),
+  claimedAt: timestamp('claimed_at', { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// The agent a new design of each kind starts on, set by an admin; a kind with no row keeps the page's own default
+export const studioKindDefaults = pgTable('studio_kind_defaults', {
+  kind: text('kind').primaryKey(),
+  agent: text('agent').notNull(),
+  updatedBy: uuid('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Example prompts someone sent as a design's first prompt (src/studio/prompt-ideas.ts): one row per idea, so it is never
+// offered again to anyone. Who and which design are kept for the record; deleting either keeps the idea retired.
+export const studioIdeaUses = pgTable('studio_idea_uses', {
+  ideaId: text('idea_id').primaryKey(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  designId: uuid('design_id').references(() => studioDesigns.id, { onDelete: 'set null' }),
+  usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// People on someone else's design (collaboration, LIV-159). A row is kept after the member leaves (leftAt set), so
+// "Finalized while you were on it" can still find the design. One open membership per user and design.
+export const studioDesignMembers = pgTable('studio_design_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(), // collaborator | viewer
+  joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+  leftAt: timestamp('left_at', { withTimezone: true }),
+}, (t) => ({
+  openUq: uniqueIndex('studio_design_members_open_uq').on(t.designId, t.userId).where(sql`${t.leftAt} IS NULL`),
+  userIdx: index('studio_design_members_user_idx').on(t.userId),
+}))
+
+// An invite to a design by email. The token is stored plainly, like orgInvites.token. userId is the account the email
+// matched when it was sent, if any.
+export const studioDesignInvites = pgTable('studio_design_invites', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
+  // Exactly one of the two: an email (trimmed, lower-cased) or a wallet (lower-cased 0x address)
+  email: text('email'),
+  wallet: text('wallet'),
+  role: text('role').notNull(), // collaborator | viewer
+  token: text('token').notNull().unique(), // 32 random bytes, base64url
+  invitedBy: uuid('invited_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  declinedAt: timestamp('declined_at', { withTimezone: true }),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  // The email: sent on create and each resend (at most one resend an hour, 3 in all)
+  resendCount: integer('resend_count').notNull().default(0),
+  lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+}, (t) => ({
+  openUq: uniqueIndex('studio_design_invites_open_uq').on(t.designId, t.email)
+    .where(sql`${t.acceptedAt} IS NULL AND ${t.declinedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
+  openWalletUq: uniqueIndex('studio_design_invites_open_wallet_uq').on(t.designId, t.wallet)
+    .where(sql`${t.acceptedAt} IS NULL AND ${t.declinedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
+  // The sign-in claim (claimWalletInvites): wallet invites still waiting for an account
+  walletWaitIdx: index('studio_design_invites_wallet_wait_idx').on(t.wallet)
+    .where(sql`${t.wallet} IS NOT NULL AND ${t.userId} IS NULL`),
+  oneTarget: check('studio_design_invites_one_target', sql`(${t.email} IS NULL) <> (${t.wallet} IS NULL)`),
+}))
+
+// In-app notifications. data carries names and design titles only, never prompt or chat text. An unread row with a
+// groupKey is updated in place instead of adding another.
+export const notifications = pgTable('notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(),
+  data: jsonb('data').notNull(),
+  groupKey: text('group_key'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  readAt: timestamp('read_at', { withTimezone: true }),
+}, (t) => ({
+  userCreatedIdx: index('notifications_user_created_idx').on(t.userId, t.createdAt.desc()),
+  unreadGroupUq: uniqueIndex('notifications_unread_group_uq').on(t.userId, t.groupKey)
+    .where(sql`${t.readAt} IS NULL AND ${t.groupKey} IS NOT NULL`),
 }))
 
 // Files the owner gives the agent: images (references, textures, logos) and GLBs. Kept at uploadKey(designId, id).
@@ -1707,6 +1964,7 @@ export const studioUsageDays = pgTable('studio_usage_days', {
   day: date('day', { mode: 'string' }).notNull(), // UTC
   prompts: integer('prompts').notNull().default(0),
   costUsd: doublePrecision('cost_usd').notNull().default(0),
+  promptHelps: integer('prompt_helps').notNull().default(0), // "Improve my prompt" uses (src/studio/prompt-help.ts), not prompts
 }, (t) => ({
   pk: primaryKey({ columns: [t.userId, t.day] }),
 }))
@@ -1754,7 +2012,8 @@ export type PaymentLine = {
 // A one-time Stripe Checkout: finalizing pieces, or a prompt top-up. Nothing is charged when every line is waived.
 export const studioPayments = pgTable('studio_payments', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  // Null once the payer's account is deleted: the payment stays, because entitlements reference it
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
   designId: uuid('design_id').references(() => studioDesigns.id, { onDelete: 'cascade' }), // null for a top-up
   kind: text('kind').notNull(), // finalize | topup
   status: text('status').notNull().default('pending'), // pending | paid | expired
@@ -1774,6 +2033,8 @@ export const studioPayments = pgTable('studio_payments', {
   // Owed back (a duplicate, or an overcharge found at grant time) until Stripe confirms it; the sweep retries
   refundDueCents: integer('refund_due_cents').notNull().default(0),
   refundAttempts: integer('refund_attempts').notNull().default(0),
+  // A finalize a Virvi admin granted on the owner's behalf, free (the payment is the owner's; this is who granted it)
+  byAdminId: uuid('by_admin_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   paidAt: timestamp('paid_at', { withTimezone: true }),
@@ -2012,3 +2273,230 @@ export const screenShowings = pgTable('screen_showings', {
   sceneIdx: index('screen_showings_scene_idx').on(t.sceneId),
   eventIdx: index('screen_showings_event_idx').on(t.eventId),
 }))
+
+// ── Scene removals (LIV-83): what deleting a scene shut down or removed, with each outcome ──
+
+/**
+ * One thing a scene's delete was asked to shut down or remove: a Virvi-hosted Hyperfy world ('hosted_world'), a
+ * self-run Hyperfy world Virvi stops serving ('hyperfy_world'), or a Decentraland World or Genesis City parcels
+ * destination ('dcl_world', 'dcl_parcels'). `target` keeps what's needed after the row it names is gone (the World's
+ * name, the parcels, the owner's wallet). Failed ones can be retried from the Recently deleted list; the rows go
+ * with the scene when it is purged.
+ */
+export const sceneRemovals = pgTable('scene_removals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull().$type<'hosted_world' | 'hyperfy_world' | 'dcl_world' | 'dcl_parcels'>(),
+  /** The hyperfy_worlds or dcl_world_destinations row it removes (no FK: the row goes once removed). */
+  targetId: uuid('target_id').notNull(),
+  label: text('label').notNull(),
+  target: jsonb('target').$type<Record<string, unknown>>().notNull().default({}),
+  /** pending | awaiting_signature | done | failed | needs_review (the live content changed: Virvi left it alone) */
+  status: text('status').notNull().$type<'pending' | 'awaiting_signature' | 'done' | 'failed' | 'needs_review'>().default('pending'),
+  errorMessage: text('error_message'),
+  /** A prepared Genesis City empty-scene deploy waiting for the owner's signature: entity id and timestamp. */
+  pending: jsonb('pending').$type<{ entityId: string; timestamp: number } | null>(),
+  requestedBy: uuid('requested_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (t) => ({
+  sceneIdx: index('scene_removals_scene_idx').on(t.sceneId),
+  targetUq: uniqueIndex('scene_removals_scene_target_uq').on(t.sceneId, t.targetId),
+}))
+
+// ── Error reporting (LIV-66) ────────────────────────────────────────────────
+// Errors from the web app and the server, grouped by signature (@virvixr/shared errorSignature). Raw events are kept 30
+// days, per-signature hourly counts 400 days (src/errors/retention.ts). Users are counted by a salted hash only.
+
+export const errorSignatures = pgTable('error_signatures', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  hash: text('hash').notNull(), // sha256 of `signature`, 32 hex digits
+  signature: text('signature').notNull(),
+  source: text('source').notNull(), // web | server
+  kind: text('kind').notNull(), // api | crash | exception | rejection | console | server_5xx | server_exception | job
+  status: integer('status'),
+  route: text('route'),
+  errorType: text('error_type'),
+  message: text('message'),
+  expected: text('expected'), // an EXPECTED_4XX reason: charted, never filed
+  firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  firstRelease: text('first_release'),
+  lastRelease: text('last_release'),
+  totalCount: bigint('total_count', { mode: 'number' }).notNull().default(0),
+  // Marked fixed on the Errors page (the stand-in for "its Linear issue is Done"); an event after it is a regression
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolvedBy: uuid('resolved_by'),
+  regressedAt: timestamp('regressed_at', { withTimezone: true }),
+  userReports: integer('user_reports').notNull().default(0),
+  // Full events stored today (limits.ts storedPerSignatureDay)
+  storedDay: date('stored_day'),
+  storedToday: integer('stored_today').notNull().default(0),
+  // A signed-in user (not only anonymous addresses) has hit it; anonymous-only, never-filed ones go after 30 quiet days
+  seenUsers: boolean('seen_users').notNull().default(false),
+  // Auto-filing (src/errors/filing.ts): one Linear issue per signature
+  linearIssueId: text('linear_issue_id'),
+  linearIssueKey: text('linear_issue_key'),
+  linearIssueUrl: text('linear_issue_url'),
+  linearFiledAt: timestamp('linear_filed_at', { withTimezone: true }),
+  linearFiledReason: text('linear_filed_reason'),
+  linearCommentedAt: timestamp('linear_commented_at', { withTimezone: true }),
+  linearQuietAt: timestamp('linear_quiet_at', { withTimezone: true }),
+  linearRegressionAt: timestamp('linear_regression_at', { withTimezone: true }),
+  // Set just before an issue is made and cleared once it is saved: a pass never makes a second issue for it (phase 2)
+  linearFilingAt: timestamp('linear_filing_at', { withTimezone: true }),
+  // When its Linear issue was completed, as last read from Linear (that marks it fixed, like the Errors page's Mark fixed)
+  linearDoneAt: timestamp('linear_done_at', { withTimezone: true }),
+  // Its issue was closed without a fix (Canceled, Won't fix): no new issue and no comments until an admin re-opens it
+  linearClosedAt: timestamp('linear_closed_at', { withTimezone: true }),
+  linearClosedState: text('linear_closed_state'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  hashUq: uniqueIndex('error_signatures_hash_uq').on(t.hash),
+  lastSeenIdx: index('error_signatures_last_seen_idx').on(t.lastSeenAt),
+  firstSeenIdx: index('error_signatures_first_seen_idx').on(t.firstSeenAt),
+}))
+
+export const errorEvents = pgTable('error_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  source: text('source').notNull(),
+  kind: text('kind').notNull(),
+  release: text('release'),
+  route: text('route'), // the page (web) or route template (server)
+  method: text('method'),
+  path: text('path'),
+  status: integer('status'),
+  requestId: text('request_id'),
+  browser: text('browser'),
+  os: text('os'),
+  userHash: text('user_hash'),
+  orgId: uuid('org_id'),
+  sceneId: uuid('scene_id'),
+  count: integer('count').notNull().default(1),
+  userFacing: boolean('user_facing').notNull().default(false),
+  errorType: text('error_type'),
+  message: text('message'),
+  stack: text('stack'),
+  errorBody: jsonb('error_body'),
+  breadcrumbs: jsonb('breadcrumbs'),
+}, (t) => ({
+  signatureIdx: index('error_events_signature_idx').on(t.signatureId, t.occurredAt),
+  requestIdx: index('error_events_request_idx').on(t.requestId),
+  receivedIdx: index('error_events_received_idx').on(t.receivedAt),
+}))
+
+export const errorHourly = pgTable('error_hourly', {
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  hour: timestamp('hour', { withTimezone: true }).notNull(),
+  count: bigint('count', { mode: 'number' }).notNull().default(0),
+  users: bigint('users', { mode: 'number' }).notNull().default(0), // distinct user hashes that hour
+  ips: bigint('ips', { mode: 'number' }).notNull().default(0), // distinct addresses that hour (day-salted 'ip:' hashes)
+}, (t) => ({
+  pk: primaryKey({ columns: [t.signatureId, t.hour] }),
+  hourIdx: index('error_hourly_hour_idx').on(t.hour),
+}))
+
+// Breakdowns per hour: dim is release | route | browser | os | org
+export const errorHourlyDims = pgTable('error_hourly_dims', {
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  hour: timestamp('hour', { withTimezone: true }).notNull(),
+  dim: text('dim').notNull(),
+  value: text('value').notNull(),
+  count: bigint('count', { mode: 'number' }).notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.signatureId, t.hour, t.dim, t.value] }),
+  hourIdx: index('error_hourly_dims_hour_idx').on(t.hour),
+}))
+
+// Which user hashes, and day-salted address hashes ('ip:…'), hit a signature in an hour (affected-user and distinct-address counts); kept 30 days
+export const errorHourlyUsers = pgTable('error_hourly_users', {
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  hour: timestamp('hour', { withTimezone: true }).notNull(),
+  userHash: text('user_hash').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.signatureId, t.hour, t.userHash] }),
+  hourIdx: index('error_hourly_users_hour_idx').on(t.hour),
+}))
+
+// What a user said they were doing, sent from a Report form (crash screen, prompt or help menu), with their account if
+// signed in: they chose to send it
+export const errorReports = pgTable('error_reports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  description: text('description').notNull(),
+  payload: jsonb('payload').notNull(),
+  release: text('release'),
+  // The optional screenshot, re-encoded without metadata, in the private store (errors/reports.ts); kept 30 days
+  screenshotKey: text('screenshot_key'),
+  screenshotType: text('screenshot_type'),
+  screenshotBytes: integer('screenshot_bytes'),
+  // Added to the signature's Linear issue as a comment (filing on)
+  linearPostedAt: timestamp('linear_posted_at', { withTimezone: true }),
+  // Never to be posted, and why: no_error (a help-menu report), account_issue_budget, linear_refused
+  linearSkipped: text('linear_skipped'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  signatureIdx: index('error_reports_signature_idx').on(t.signatureId, t.createdAt),
+  postedIdx: index('error_reports_posted_idx').on(t.linearPostedAt),
+}))
+
+// The account's "Ask me about errors" setting (§4): a preference only, nothing about any error. Guests and trials
+// keep theirs in the browser.
+export const errorPromptState = pgTable('error_prompt_state', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  optedOut: boolean('opted_out').notNull().default(false),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// When an account (by its error user hash, never its id) was last asked about an error; kept 30 days
+export const errorPromptAsked = pgTable('error_prompt_asked', {
+  userHash: text('user_hash').primaryKey(),
+  askedAt: timestamp('asked_at', { withTimezone: true }).notNull(),
+}, (t) => ({
+  askedIdx: index('error_prompt_asked_asked_idx').on(t.askedAt),
+}))
+
+// "We know about this" was shown to this account (by its error user hash) for this signature: once each
+export const errorPromptKnown = pgTable('error_prompt_known', {
+  signatureId: uuid('signature_id').notNull().references(() => errorSignatures.id, { onDelete: 'cascade' }),
+  userHash: text('user_hash').notNull(),
+  shownAt: timestamp('shown_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.signatureId, t.userHash] }),
+  shownIdx: index('error_prompt_known_shown_idx').on(t.shownAt),
+}))
+
+// Filing thresholds tuned on the Errors page (one row, id 'default'); unset keys use src/errors/settings.ts defaults
+export const errorSettings = pgTable('error_settings', {
+  id: text('id').primaryKey(),
+  thresholds: jsonb('thresholds').notNull().default({}),
+  updatedBy: uuid('updated_by'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Daily row budgets shared by every instance (src/errors/limits.ts DayBudget): global keys and per-address keys
+// ('sh:<day-salted address hash>'). Kept 2 days.
+export const errorBudget = pgTable('error_budget', {
+  day: date('day').notNull(),
+  key: text('key').notNull(),
+  n: bigint('n', { mode: 'number' }).notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.day, t.key] }),
+}))
+
+// Releases the server has run (registered at boot and daily): a browser's release counts only if it is one of these
+export const errorReleases = pgTable('error_releases', {
+  release: text('release').primaryKey(),
+  seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// The random key of each day's address hashes ('ip:…'); deleted after 2 days, which makes those hashes unlinkable
+export const errorIpKeys = pgTable('error_ip_keys', {
+  day: date('day').primaryKey(),
+  key: text('key').notNull(),
+})

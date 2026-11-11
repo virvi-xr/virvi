@@ -6,7 +6,8 @@
  */
 
 import { FastifyInstance } from 'fastify'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { liveScene } from '../scenes/live.js'
 import { db } from '../db/connection.js'
 import {
   events,
@@ -49,11 +50,12 @@ export default async function commandCenterRoutes(app: FastifyInstance) {
         .select({
           sceneId: scenes.id,
           sceneName: scenes.name,
+          sceneThumbnailUrl: scenes.thumbnailUrl,
           activePreset: scenes.activePresetId,
         })
         .from(eventSceneLinks)
         .innerJoin(scenes, eq(eventSceneLinks.sceneId, scenes.id))
-        .where(eq(eventSceneLinks.eventId, eventId))
+        .where(and(eq(eventSceneLinks.eventId, eventId), liveScene()))
 
       const worlds = await Promise.all(
         links.map(async (link) => {
@@ -65,6 +67,7 @@ export default async function commandCenterRoutes(app: FastifyInstance) {
           return {
             sceneId: link.sceneId,
             sceneName: link.sceneName,
+            sceneThumbnailUrl: link.sceneThumbnailUrl,
             platform: deployment?.platform || null,
             deploymentStatus: deployment?.status || null,
             deploymentType: deployment?.deploymentType || null,

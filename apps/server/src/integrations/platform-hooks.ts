@@ -12,40 +12,16 @@
 import { eq, lt, and } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { platformCallbacks } from '../db/schema.js'
-import { Agent, fetch as undiciFetch } from 'undici'
-import { assertPublicHttpUrl, defaultLookup, isPrivateAddress } from '../net/public-url.js'
+import { type Agent, fetch as undiciFetch } from 'undici'
+import { assertPublicHttpUrl } from '../net/public-url.js'
+import { guardedAgent as publicAgent, type Lookup } from '../net/public-agent.js'
 import { config } from '../config.js'
-
-type Lookup = (host: string) => Promise<string[]>
 
 /** Refuse non-public targets at send time too: DNS may have changed since registration. */
 const checkTarget = (url: string, lookup?: Lookup) =>
   assertPublicHttpUrl(url, { allowPrivate: config.allowPrivateCallbackUrls, lookup })
 
-/**
- * An undici Agent whose connect step resolves the host itself and refuses private
- * addresses, so the address we connect to is the one we checked (no DNS rebinding
- * between a pre-check and the connection).
- */
-function guardedAgent(lookup: Lookup = defaultLookup): Agent {
-  return new Agent({
-    connect: {
-      lookup: (host: string, options: any, cb: any) => {
-        lookup(host).then(
-          (addresses) => {
-            if (!config.allowPrivateCallbackUrls && (addresses.length === 0 || addresses.some(isPrivateAddress))) {
-              return cb(new Error(`Refusing non-public address for ${host}`))
-            }
-            const family = (a: string) => (a.includes(':') ? 6 : 4)
-            if (options?.all) cb(null, addresses.map((address) => ({ address, family: family(address) })))
-            else cb(null, addresses[0], family(addresses[0]))
-          },
-          (err) => cb(err),
-        )
-      },
-    },
-  })
-}
+const guardedAgent = (lookup?: Lookup) => publicAgent(lookup, { allowPrivate: () => config.allowPrivateCallbackUrls })
 
 const defaultAgent = guardedAgent()
 

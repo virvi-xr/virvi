@@ -12,9 +12,13 @@ const memo = (make: () => unknown, deps: unknown[]) => {
   slots[cursor - 1] = { deps, value }
   return value
 }
+// The demo context (`DemoApiContext`): null outside a demo, as on every real page
+let demoCtx: unknown = null
 vi.mock('react', () => ({
   useCallback: (fn: unknown, deps: unknown[]) => memo(() => fn, deps),
   useMemo: (make: () => unknown, deps: unknown[]) => memo(make, deps),
+  createContext: (v: unknown) => ({ defaultValue: v }),
+  useContext: () => demoCtx,
 }))
 let token = 't1'
 const logout = vi.fn()
@@ -22,10 +26,11 @@ const renew = vi.fn(async (): Promise<string | null> => 'fresh')
 vi.mock('./auth', () => ({ useAuth: () => ({ token, logout, renew }) }))
 
 const { useApi } = await import('./api')
+const { createDemoApi } = await import('./demo/store')
 const render = () => { cursor = 0; return useApi() }
 
 describe('useApi', () => {
-  beforeEach(() => { slots.length = 0; token = 't1' })
+  beforeEach(() => { slots.length = 0; token = 't1'; demoCtx = null })
 
   it('returns the same api between renders, so effects that depend on it run once', () => {
     const first = render()
@@ -64,6 +69,34 @@ describe('apiFetch', () => {
     const fetchMock = vi.fn(async () => respond(401, { error: 'Unauthorized' }))
     vi.stubGlobal('fetch', fetchMock)
     await expect(render().getScenes()).rejects.toMatchObject({ status: 401 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useApi inside a demo', () => {
+  beforeEach(() => { slots.length = 0; token = 't1' })
+
+  it('answers from the demo, refuses the rest, and never fetches', async () => {
+    const onRefused = vi.fn()
+    demoCtx = { api: createDemoApi({ trialId: 't1', now: () => Date.parse('2026-11-07T12:00:00Z') }), onRefused }
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = render()
+    expect((await api.getEvents()).events).toHaveLength(3)
+    for (const call of [() => api.getScene('s'), () => api.deleteScene('s'), () => api.setAnalyticsWalletVisibility('l', true),
+      () => api.createPresetSchedule('s', { presetId: 'p', eventId: 'e' }), () => api.getWallets(), () => api.downloadStudioPackages('d')]) {
+      await expect(call()).rejects.toMatchObject({ status: 403, body: { error: 'account_required' } })
+    }
+    expect(onRefused).toHaveBeenCalledWith('demo:getScene')
+    expect(fetchMock).not.toHaveBeenCalled()
+    demoCtx = null
+  })
+
+  it('outside a demo the real api is untouched: it calls the server', async () => {
+    demoCtx = null
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ events: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await render().getEvents()).toEqual({ events: [] })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

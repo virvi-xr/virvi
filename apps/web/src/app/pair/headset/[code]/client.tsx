@@ -6,7 +6,8 @@ import { formatPairingCode, type ArDeviceKind } from '@virvixr/shared'
 import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { signinPath } from '@/lib/landing-route'
-import { headsetErrorMessage, headsetPairingCodeFromPath } from '@/lib/pairing'
+import { headsetErrorMessage, headsetPairingCodeFromPath, headsetSignInPrompt } from '@/lib/pairing'
+import { pairChoices } from '@/lib/trial-scene'
 
 type Phase = 'loading' | 'ready' | 'approving' | 'done' | 'error'
 
@@ -15,7 +16,8 @@ const CHOICES: { kind: ArDeviceKind; title: string; detail: string }[] = [
   { kind: 'shared', title: 'Shared headset', detail: "Signs out when it's taken off. Each session needs a new code." },
 ]
 
-/** Opened from the link or QR a headset shows: a signed-in user approves it as personal or shared. */
+/** Opened from the link or QR a headset shows: a signed-in user approves it as personal or shared; a trial (LIV-91),
+ *  whose session counts as signed in here, as personal only. */
 export default function HeadsetPairClient() {
   const { user, loading: authLoading, scenePass, token } = useAuth()
   const api = useApi()
@@ -25,12 +27,14 @@ export default function HeadsetPairClient() {
   const [deviceName, setDeviceName] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState('')
+  const trial = !!user?.trial
+  const choices = CHOICES.filter(c => pairChoices(trial).includes(c.kind))
 
   useEffect(() => {
     setCode(headsetPairingCodeFromPath(window.location.pathname, params.code as string | undefined))
   }, [params.code])
 
-  // Signed-in accounts only: others go to sign-in and come back here.
+  // Signed-in accounts and trials only: others go to sign-in and come back here.
   useEffect(() => {
     if (!authLoading && (!user || scenePass)) router.push(signinPath(window.location.pathname + window.location.search))
   }, [authLoading, user, scenePass, router])
@@ -75,10 +79,10 @@ export default function HeadsetPairClient() {
         {(phase === 'ready' || phase === 'approving') && (
           <>
             <p className="mb-4 text-sm text-gray-200">
-              {deviceName ? `"${deviceName}" wants to sign in to your account.` : 'A headset wants to sign in to your account.'} What kind of headset is it?
+              {headsetSignInPrompt(deviceName, trial)} What kind of headset is it?
             </p>
             <div className="space-y-3">
-              {CHOICES.map(c => (
+              {choices.map(c => (
                 <button
                   key={c.kind}
                   type="button"
@@ -97,9 +101,12 @@ export default function HeadsetPairClient() {
         {phase === 'done' && (
           <>
             <p className="mb-3 text-sm text-green-300">Approved. You can put the headset back on.</p>
-            <p className="text-xs text-gray-500">
-              Manage paired headsets in <Link className="underline" href="/settings/">Settings</Link>.
-            </p>
+            {/* Settings is account-only: a trial's headset moves into the account it becomes */}
+            {!trial && (
+              <p className="text-xs text-gray-500">
+                Manage paired headsets in <Link className="underline" href="/settings/">Settings</Link>.
+              </p>
+            )}
           </>
         )}
       </div>

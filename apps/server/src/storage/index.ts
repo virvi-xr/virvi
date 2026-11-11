@@ -7,16 +7,23 @@ export interface StorageProvider {
   getPublicUrl(key: string): string
 }
 
+export type StorageProviderName = 'local' | 's3' | 'r2'
+const STORAGE_PROVIDERS: readonly StorageProviderName[] = ['local', 's3', 'r2']
+
+/**
+ * Which storage uploads go to: STORAGE_PROVIDER, else s3 in cloud mode and local disk otherwise. An unknown value
+ * (such as the old `supabase`) is an error rather than a silent fall back to local disk, which loses every upload
+ * when a container is replaced.
+ */
+export function resolveStorageProvider(env: NodeJS.ProcessEnv = process.env): StorageProviderName {
+  const value = env.STORAGE_PROVIDER?.trim()
+  if (!value) return env.VIRVI_MODE === 'cloud' ? 's3' : 'local'
+  if ((STORAGE_PROVIDERS as readonly string[]).includes(value)) return value as StorageProviderName
+  throw new Error(`STORAGE_PROVIDER=${value} isn't supported. Use local, s3 or r2.`)
+}
+
 export function createStorage(): StorageProvider {
-  const provider = process.env.STORAGE_PROVIDER || 'local'
-  switch (provider) {
-    case 's3':
-    case 'r2':
-      return new S3Storage()
-    case 'local':
-    default:
-      return new LocalStorage()
-  }
+  return resolveStorageProvider() === 'local' ? new LocalStorage() : new S3Storage()
 }
 
 class LocalStorage implements StorageProvider {

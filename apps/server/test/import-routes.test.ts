@@ -207,6 +207,30 @@ describe('scene import routes', () => {
       expect(res.statusCode).toBe(201)
       expect(res.json().import.sceneId).toBe(theirs)
     })
+
+    const live = (virvi: boolean) => ({
+      id: 'live-1', pointers: ['0,0'], content: [],
+      metadata: { scene: { parcels: ['0,0'], base: '0,0' }, ...(virvi ? { virvi: { apiUrl: 'https://virvi.io', wssUrl: 'wss://virvi.io', runtime: 3 } } : {}) },
+    }) as any
+
+    it("a setup left by Virvi's own deploys (a World disconnected from that scene) doesn't route the upload: it gets a new scene", async () => {
+      worlds.entities.set(WORLD, [live(true)])
+      await db.insert(sceneRoles).values({ sceneId: theirs, walletAddress: user.wallet!, userId: user.id, role: 'cohost', grantedByUserId: other.id })
+      const res = await upload(sceneZip({ title: 'Fresh' }))
+      expect(res.statusCode).toBe(201)
+      expect(res.json().import.sceneId).not.toBe(theirs)
+      // and it isn't refused as set up elsewhere for someone without access either
+      await db.delete(sceneImports)
+      await db.delete(sceneRoles)
+      expect((await upload(sceneZip())).statusCode).toBe(201)
+    })
+
+    it('a Creator Hub scene running there still routes the upload to its Virvi scene', async () => {
+      worlds.entities.set(WORLD, [live(false)])
+      await db.insert(sceneRoles).values({ sceneId: theirs, walletAddress: user.wallet!, userId: user.id, role: 'cohost', grantedByUserId: other.id })
+      const res = await upload(sceneZip())
+      expect(res.json().import.sceneId).toBe(theirs)
+    })
   })
 
   it('refuses a second import for a World mid-import', async () => {

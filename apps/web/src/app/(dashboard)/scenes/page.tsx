@@ -1,17 +1,22 @@
 'use client'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
 import SceneEditorPage from './[sceneId]/client'
-import { ArrowUpRightIcon, CheckIcon, CopyIcon, GridIcon, ListIcon, PlusIcon, ScenesIcon, UploadIcon } from '@/components/icons'
+import { ArrowUpRightIcon, CheckIcon, CopyIcon, GridIcon, ListIcon, PlusIcon, ScenesIcon, TrashIcon, UploadIcon } from '@/components/icons'
+import { DeleteSceneDialog } from '@/components/scenes/DeleteSceneDialog'
+import { RecentlyDeleted } from '@/components/scenes/RecentlyDeleted'
+import { deletedToast, restoredNote, type DeletedScene } from '@/lib/scene-delete'
+import { wizardErrorMessage } from '@/lib/wizard/run'
 import { EmptyState, InlineDescription, PageHeader, SearchField, useStoredView, ViewToggle, Skeleton } from '@/components/ui'
 import { filterScenes, placeholderHues, shortId } from '@/lib/scenes'
 import { countLabel, plural } from '@/lib/format'
+import { sceneListActions, TRIAL_SCENE_NOTE } from '@/lib/trial-scene'
 
-type Scene = { id: string; name: string; description?: string | null; thumbnailUrl?: string | null; relationship?: string }
-const RELATIONSHIP_LABEL: Record<string, string> = { cohost: 'Co-host', editor: 'Editor', viewer: 'Viewer' }
+type Scene = { id: string; name: string; description?: string | null; thumbnailUrl?: string | null; relationship?: string; canDelete?: boolean; orgName?: string }
+const RELATIONSHIP_LABEL: Record<string, string> = { cohost: 'Co-host', editor: 'Editor', viewer: 'Viewer', org_admin: 'Organization' }
 const VIEW_KEY = 'virvi.scenes.view'
 /** PrimaryButton's look, on a link to the New Scene Wizard. */
 const NEW_SCENE_CLASS = 'clip-corner inline-flex items-center gap-1.5 bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink transition-colors hover:bg-accent-hover'
@@ -19,6 +24,12 @@ const NEW_SCENE_CLASS = 'clip-corner inline-flex items-center gap-1.5 bg-accent 
 const IMPORT_CLASS = 'inline-flex items-center gap-1.5 rounded-md bg-gray-800 px-4 py-2.5 text-sm hover:bg-gray-700'
 /** Only owners and co-hosts can change a scene's details. */
 const canDescribe = (s: Scene) => !s.relationship || s.relationship === 'owner' || s.relationship === 'cohost'
+/** Delete is offered where the server says the caller may delete: their own scenes, and their organizations' as an owner or admin. */
+const canDelete = (s: Scene) => s.canDelete ?? (!s.relationship || s.relationship === 'owner')
+/** An org admin sees the org's scenes to delete them; opening one needs a role of their own. */
+const canOpen = (s: Scene) => s.relationship !== 'org_admin'
+
+type Toast = { text: string; restoreId?: string }
 
 export default function ScenesPage() {
   return (
@@ -29,21 +40,68 @@ export default function ScenesPage() {
 }
 
 function ScenesContent() {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
+  const trial = !!user?.trial
+  const actions = sceneListActions(trial)
   const api = useApi()
   const searchParams = useSearchParams()
+  const router = useRouter()
   const selectedSceneId = searchParams.get('id')
+  const justDeleted = searchParams.get('deleted')
   const [scenes, setScenes] = useState<Scene[]>([])
+  const [deleted, setDeleted] = useState<DeletedScene[]>([])
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [toast, setToast] = useState<Toast | null>(null)
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
   const [query, setQuery] = useState('')
   const [view, chooseView] = useStoredView(VIEW_KEY, ['grid', 'list'], 'grid')
 
+  const loadDeleted = () => api.getDeletedScenes().then(d => { setDeleted(d.scenes); return d.scenes }, () => deleted)
+  const reload = () => {
+    api.getScenes().then(data => setScenes(data.scenes)).catch(() => {})
+    return loadDeleted()
+  }
+
   useEffect(() => {
     if (!token) return
     api.getScenes().then(data => { setScenes(data.scenes); setLoading(false) }).catch(() => setLoading(false))
+    loadDeleted()
   }, [token])
+
+  // Sent here by the scene's Settings after a delete: say so, with Restore
+  useEffect(() => {
+    if (!token || !justDeleted || selectedSceneId) return
+    loadDeleted().then(list => {
+      const s = list.find(d => d.id === justDeleted)
+      if (s) setToast({ text: deletedToast(s.name), restoreId: s.id })
+    })
+    router.replace('/scenes')
+  }, [token, justDeleted])
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 12_000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  const afterDelete = (id: string, name: string) => {
+    setDeleting(null)
+    setScenes(prev => prev.filter(s => s.id !== id))
+    setToast({ text: deletedToast(name), restoreId: id })
+    loadDeleted()
+  }
+
+  const restore = async (id: string) => {
+    try {
+      const { scene, notRestored } = await api.restoreScene(id)
+      setToast({ text: restoredNote(scene.name, notRestored) })
+    } catch (err) {
+      setToast({ text: wizardErrorMessage(err) })
+    }
+    reload()
+  }
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -69,6 +127,7 @@ function ScenesContent() {
   }
 
   const shown = filterScenes(scenes, query)
+  const onDelete = (id: string) => setDeleting(id)
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -79,14 +138,16 @@ function ScenesContent() {
         subtitle="Manage your virtual worlds."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => setShowCreate(!showCreate)} className="rounded-md bg-gray-800 px-4 py-2.5 text-sm hover:bg-gray-700">Blank scene</button>
+            {actions.includes('blank') && (
+              <button type="button" onClick={() => setShowCreate(!showCreate)} className="rounded-md bg-gray-800 px-4 py-2.5 text-sm hover:bg-gray-700">Blank scene</button>
+            )}
             <Link href="/import" className={IMPORT_CLASS}><UploadIcon size={16} /> Import scene</Link>
             <Link href="/scenes/new" className={NEW_SCENE_CLASS}><PlusIcon size={16} /> New scene</Link>
           </div>
         }
       />
 
-      {showCreate && (
+      {showCreate && actions.includes('blank') && (
         <form onSubmit={handleCreate} className="mb-6 flex flex-wrap gap-2 rounded-lg border border-gray-800 bg-gray-900 p-3">
           <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
             placeholder="Blank scene name" autoFocus
@@ -123,11 +184,30 @@ function ScenesContent() {
         <p className="py-12 text-center text-gray-500">No scenes match “{query.trim()}”.</p>
       ) : view === 'grid' ? (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 min-[1900px]:grid-cols-3">
-          {shown.map(scene => <SceneCard key={scene.id} scene={scene} onDescribe={saveDescription} />)}
+          {shown.map(scene => <SceneCard key={scene.id} scene={scene} trial={trial} onDescribe={saveDescription} onDelete={onDelete} />)}
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
-          {shown.map((scene, i) => <SceneRow key={scene.id} scene={scene} first={i === 0} />)}
+          {shown.map((scene, i) => <SceneRow key={scene.id} scene={scene} trial={trial} first={i === 0} onDelete={onDelete} />)}
+        </div>
+      )}
+
+      <RecentlyDeleted scenes={deleted}
+        onRestored={(_id, note) => { setToast({ text: note }); reload() }}
+        onPurged={(id) => { setDeleted(prev => prev.filter(s => s.id !== id)); setToast({ text: 'Deleted for good.' }) }}
+        onRemoval={(sceneId, r) => setDeleted(prev => prev.map(s => (s.id === sceneId ? { ...s, removals: s.removals.map(x => (x.id === r.id ? r : x)) } : s)))} />
+
+      {deleting && (
+        <DeleteSceneDialog sceneId={deleting} onClose={() => setDeleting(null)} onDeleted={(r) => afterDelete(r.scene.id, r.scene.name)} />
+      )}
+
+      {toast && (
+        <div role="status" className="fixed bottom-4 left-1/2 z-50 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-sm shadow-lg">
+          <span>{toast.text}</span>
+          {toast.restoreId && (
+            <button type="button" onClick={() => { const id = toast.restoreId!; setToast(null); restore(id) }} className="font-medium text-blue-300 hover:text-blue-200">Restore</button>
+          )}
+          <button type="button" onClick={() => setToast(null)} aria-label="Dismiss" className="text-gray-500 hover:text-white">&times;</button>
         </div>
       )}
     </div>
@@ -173,10 +253,26 @@ function CopyId({ id }: { id: string }) {
 
 function RoleBadge({ scene }: { scene: Scene }) {
   if (!scene.relationship || scene.relationship === 'owner') return null
-  return <span className="rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-400">{RELATIONSHIP_LABEL[scene.relationship] ?? scene.relationship}</span>
+  const label = scene.relationship === 'org_admin' && scene.orgName ? `Organization: ${scene.orgName}` : RELATIONSHIP_LABEL[scene.relationship] ?? scene.relationship
+  return <span className="rounded bg-gray-800 px-2 py-0.5 text-xs font-normal text-gray-400">{label}</span>
 }
 
-function SceneCard({ scene, onDescribe }: { scene: Scene; onDescribe: (id: string, description: string) => Promise<void> }) {
+/** A trial's scenes are kept only while the trial lasts. */
+function TrialNote() {
+  return <p className="mt-1 text-xs text-amber-200/80">{TRIAL_SCENE_NOTE}</p>
+}
+
+function DeleteButton({ scene, onDelete }: { scene: Scene; onDelete: (id: string) => void }) {
+  if (!canDelete(scene)) return null
+  return (
+    <button type="button" onClick={() => onDelete(scene.id)} aria-label={`Delete ${scene.name}`} title="Delete scene"
+      className="shrink-0 rounded p-2 text-gray-500 hover:bg-red-500/10 hover:text-red-300">
+      <TrashIcon size={16} />
+    </button>
+  )
+}
+
+function SceneCard({ scene, trial, onDescribe, onDelete }: { scene: Scene; trial: boolean; onDescribe: (id: string, description: string) => Promise<void>; onDelete: (id: string) => void }) {
   return (
     <article className="corner-notch relative flex flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900 transition-colors hover:border-gray-700">
       <Link href={sceneHref(scene.id)} tabIndex={-1} aria-hidden="true"><ScenePreview scene={scene} className="h-52 w-full" /></Link>
@@ -185,20 +281,26 @@ function SceneCard({ scene, onDescribe }: { scene: Scene; onDescribe: (id: strin
           <Link href={sceneHref(scene.id)} className="hover:text-blue-300">{scene.name}</Link>
           <RoleBadge scene={scene} />
         </h2>
+        {trial && <TrialNote />}
         <InlineDescription value={scene.description} canEdit={canDescribe(scene)} onSave={d => onDescribe(scene.id, d)}
           label="Scene description" placeholder="What happens in this scene?" />
       </div>
       <footer className="flex items-center justify-between gap-3 border-t border-gray-800 px-6 py-3.5">
         <CopyId id={scene.id} />
-        <Link href={sceneHref(scene.id)} className="flex shrink-0 items-center gap-1.5 text-sm text-gray-200 hover:text-blue-300">
-          Open scene <ArrowUpRightIcon size={16} />
-        </Link>
+        <div className="flex shrink-0 items-center gap-1">
+          <DeleteButton scene={scene} onDelete={onDelete} />
+          {canOpen(scene) && (
+            <Link href={sceneHref(scene.id)} className="flex shrink-0 items-center gap-1.5 text-sm text-gray-200 hover:text-blue-300">
+              Open scene <ArrowUpRightIcon size={16} />
+            </Link>
+          )}
+        </div>
       </footer>
     </article>
   )
 }
 
-function SceneRow({ scene, first }: { scene: Scene; first: boolean }) {
+function SceneRow({ scene, trial, first, onDelete }: { scene: Scene; trial: boolean; first: boolean; onDelete: (id: string) => void }) {
   return (
     <div className={`flex items-center gap-4 px-4 py-3 ${first ? '' : 'border-t border-gray-800'}`}>
       <Link href={sceneHref(scene.id)} tabIndex={-1} aria-hidden="true" className="shrink-0 overflow-hidden rounded">
@@ -210,8 +312,10 @@ function SceneRow({ scene, first }: { scene: Scene; first: boolean }) {
           <RoleBadge scene={scene} />
         </p>
         <p className="truncate text-sm text-gray-500">{scene.description || 'No description'}</p>
+        {trial && <TrialNote />}
       </div>
       <div className="hidden md:block"><CopyId id={scene.id} /></div>
+      <DeleteButton scene={scene} onDelete={onDelete} />
       <Link href={sceneHref(scene.id)} aria-label={`Open ${scene.name}`} className="shrink-0 rounded p-2 text-gray-400 hover:bg-white/[0.05] hover:text-blue-300">
         <ArrowUpRightIcon size={18} />
       </Link>

@@ -1,7 +1,7 @@
 /** Trial sessions: reading "account required" refusals, the words for them, and the bridge to the sign-up sheet. */
 import { readTrialSession } from './session'
 
-export interface BlockedCtx { designName?: string; revisions?: number; /** The locked page's name, for a nav click. */ label?: string }
+export interface BlockedCtx { designName?: string; revisions?: number; /** The locked page's name, for a nav click. */ label?: string; /** The wizard's scene, for the save. */ sceneName?: string }
 export interface SignUpRequest { action: string; ctx: BlockedCtx; /** Which tab the sheet opens on (default: create account). */ tab?: 'create' | 'signin' }
 
 /** The refused action when an error is a trial's `403 account_required`, else null. */
@@ -17,9 +17,12 @@ const DEFAULT_TITLE = 'Create a free account to use this.'
 export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; unlocks: string; emphasis?: string } {
   const name = ctx.designName?.trim()
   const revs = ctx.revisions
+  if (action.startsWith('demo:')) {
+    return { title: 'Create a free account to use this with your own scenes.', unlocks: 'Your trial scenes move into your account.' }
+  }
   if (action.startsWith('nav:')) {
     const label = ctx.label?.trim()
-    return { title: `Create a free account to use ${label || 'this'}.`, unlocks: 'Your trial designs move into your account.' }
+    return { title: `Create a free account to use ${label || 'this'}.`, unlocks: 'Your trial designs and scenes move into your account.' }
   }
   switch (action) {
     case 'POST /api/studio/designs/:id/finalize': {
@@ -36,6 +39,34 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
       return { title: 'Create a free account to get more prompts.', unlocks: 'Accounts can top up prompts and keep designing.' }
     case 'POST /api/studio/gift-codes/redeem':
       return { title: 'Create a free account to redeem a gift code.', unlocks: 'Gift codes add prompts to your account.' }
+    case 'POST /api/wizard/scenes': {
+      const scene = ctx.sceneName?.trim()
+      return {
+        title: `Create a free account to save ${scene || 'your scene'}. Your layout is kept.`,
+        unlocks: 'Your scene, its layout and your room scans move into your account, ready to deploy.',
+        ...(scene ? { emphasis: scene } : {}),
+      }
+    }
+    case 'POST /api/imports/:id/deploy':
+      return { title: 'Create a free account to deploy your import.', unlocks: 'Your imported scene moves into your account and deploys to your World.' }
+    case 'GET /api/scenes/:sceneId/backup.zip':
+      return { title: 'Create a free account to download your scene.', unlocks: 'Accounts can download a backup of any scene they own.' }
+    case 'more_imports':
+      return { title: "Create a free account to import more scenes. You've used your trial's imports.", unlocks: 'Your imported scenes move into your account.' }
+    case 'import_larger':
+      return { title: 'Create a free account to import a scene this big.', unlocks: 'Accounts can import larger scene zips.' }
+    case 'more_scans':
+      return { title: 'Create a free account to keep more room scans.', unlocks: 'Your room scans move into your account, and you can keep more.' }
+    case 'shared_headset':
+      return { title: 'Create a free account to pair a shared headset.', unlocks: 'A trial can pair a personal headset; accounts can pair shared ones too.' }
+    case 'element_type':
+      return { title: 'Create a free account to add this kind of element.', unlocks: 'A trial can add models, images, videos and sounds; accounts can add everything.' }
+    case 'room_set':
+      return { title: 'Create a free account to add a room set to a scene.', unlocks: 'Your scenes and room scans move into your account.' }
+    case 'hyperfy_hosting':
+      return { title: 'Create a free account to have Virvi host a Hyperfy world.', unlocks: 'Accounts get hosted Hyperfy worlds with their plan.' }
+    case 'studio_invite':
+      return { title: `Create a free account to join ${name || 'this design'}.`, unlocks: 'Your trial designs and scenes move into your account.', ...(name ? { emphasis: name } : {}) }
     case 'more_designs':
       return { title: 'Create a free account to start another design.', unlocks: 'Accounts can keep more designs open at once.' }
     case 'more_prompts':
@@ -43,7 +74,7 @@ export function blockedCopy(action: string, ctx: BlockedCtx): { title: string; u
     case 'upload_more':
       return { title: 'Create a free account to upload more images.', unlocks: 'Accounts can add more reference images to a design.' }
     default:
-      return { title: DEFAULT_TITLE, unlocks: 'Your trial designs move into your account.' }
+      return { title: DEFAULT_TITLE, unlocks: 'Your trial designs and scenes move into your account.' }
   }
 }
 
@@ -57,6 +88,14 @@ const ACTION_LABELS: Record<string, string> = {
   more_designs: 'New design',
   more_prompts: 'Send',
   upload_more: 'Upload',
+  'POST /api/wizard/scenes': 'Create and deploy',
+  'POST /api/imports/:id/deploy': 'Deploy',
+  'GET /api/scenes/:sceneId/backup.zip': 'Download',
+  more_imports: 'Import',
+  import_larger: 'Import',
+  shared_headset: 'Approve',
+  element_type: 'Add',
+  room_set: 'Add',
 }
 
 /** The one-time note after Google or Discord sign-in sent a visitor back; null when there was no blocked action. */
@@ -67,10 +106,82 @@ export function signedInNote(action: string | null): string | null {
 }
 
 /** A trial's tokens were refused as ended: swap to the account session another tab stored, or sign out. */
+export type SignUpButton = { id: 'wallet' | 'google' | 'discord'; label: string }
+
+/** The sheet's other ways in, on both tabs: Google and Discord create the account or sign in to it alike. */
+export function signUpButtons(tab: 'create' | 'signin', providers: { google: boolean; discord: boolean }, hasWallet: boolean): SignUpButton[] {
+  const out: SignUpButton[] = []
+  if (hasWallet) out.push({ id: 'wallet', label: tab === 'create' ? 'Continue with wallet' : 'Sign in with wallet' })
+  if (providers.google) out.push({ id: 'google', label: 'Continue with Google' })
+  if (providers.discord) out.push({ id: 'discord', label: 'Continue with Discord' })
+  return out
+}
+
 export function trialEndedOutcome(stored: { token: string; user?: unknown } | null, currentToken: string): 'swap' | 'logout' {
   const user = stored?.user as { trial?: boolean } | null | undefined
   return stored && stored.token !== currentToken && user && !user.trial ? 'swap' : 'logout'
 }
+
+/**
+ * Sends a request and, on a 401 with a bearer, once more with a fresh one: a `trial_ended` (the trial became an account,
+ * here or in another tab) follows the stored account session, anything else renews. Ruling R5: this is how calls still
+ * holding the trial's token after a wallet sign-in at Deploy carry on as the account.
+ */
+export async function sendRecovering(
+  send: (bearer: string | null) => Promise<Response>,
+  bearer: string | null,
+  deps: { swapToStoredAccount: (staleToken: string) => string | null; renew: () => Promise<string | null> },
+): Promise<Response> {
+  const res = await send(bearer)
+  if (res.status !== 401 || !bearer) return res
+  const ended = (await res.clone().json().catch(() => null))?.error === 'trial_ended'
+  const fresh = ended ? deps.swapToStoredAccount(bearer) : await deps.renew()
+  return fresh ? send(fresh) : res
+}
+
+/**
+ * A text read (an import's build log) sent as apiFetch sends: a token that ran out is renewed, a trial that became an
+ * account (`401 trial_ended`) is sent once more as that account. A refusal throws `{ status, body }` after `onError`.
+ */
+export async function readTextRecovering(
+  send: (bearer: string | null) => Promise<Response>,
+  bearer: string | null,
+  deps: { swapToStoredAccount: (staleToken: string) => string | null; renew: () => Promise<string | null> },
+  onError?: (status: number, body: any) => void,
+): Promise<string> {
+  const res = await sendRecovering(send, bearer, deps)
+  if (res.ok) return res.text()
+  const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+  onError?.(res.status, err)
+  throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
+}
+
+const HEADSET_MOVED_KEY = 'virvi.notice.headsetMoved'
+type NoticeStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+/** A sign-in answer's `movedHeadsets` (a merge moved the trial's paired headsets onto the account): kept for one notice. */
+export function noteMovedHeadsets(storage: Pick<Storage, 'setItem'>, body: unknown): void {
+  const n = (body as { movedHeadsets?: unknown } | null)?.movedHeadsets
+  if (typeof n === 'number' && n > 0) {
+    try { storage.setItem(HEADSET_MOVED_KEY, String(n)) } catch {}
+  }
+}
+
+/** The moved-headset notice, once: reading it clears it. */
+export function takeMovedHeadsetNotice(storage: NoticeStorage): string | null {
+  let n = 0
+  try {
+    n = Number(storage.getItem(HEADSET_MOVED_KEY) ?? 0)
+    storage.removeItem(HEADSET_MOVED_KEY)
+  } catch {}
+  if (!(n > 0)) return null
+  return n === 1
+    ? 'Your paired headset is now on your account. You can remove it in Settings.'
+    : 'Your paired headsets are now on your account. You can remove them in Settings.'
+}
+
+/** The sign-in tab's line in the sign-up sheet. */
+export const SIGN_IN_UNLOCKS = 'Your trial designs and scenes move into this account.'
 
 /** A trial access token that has run out, or will within a minute: renew it before it carries the trial into a sign-up. */
 export function trialBearerStale(token: string, now: number): boolean {
@@ -88,6 +199,17 @@ export function renewedTrialBearer(fresh: string | null, sessionKept: boolean): 
   return null
 }
 
+export type TrialEntry = 'studio' | 'scene'
+
+/** Where a dashboard nav item goes for a trial: open as is, to its demo (badged "Demo"), or locked (null). */
+const TRIAL_OPEN = new Set(['/studio', '/scenes'])
+const TRIAL_DEMOS = new Set(['/analytics', '/events', '/giveaways'])
+export function trialNav(href: string): { href: string; demo: boolean } | null {
+  if (TRIAL_OPEN.has(href)) return { href, demo: false }
+  if (TRIAL_DEMOS.has(href)) return { href: `/demo${href}`, demo: true }
+  return null
+}
+
 const TRIAL_START_COPY: Record<string, string> = {
   trial_limit: 'Free tries from this network are used up for today. Create a free account to keep going.',
   bot_check_failed: "We couldn't confirm you're human. Try again.",
@@ -98,6 +220,25 @@ const TRIAL_START_COPY: Record<string, string> = {
 /** A refused trial start (the server's error code) in the page's words. */
 export function trialStartMessage(code: string | undefined): string {
   return (code && TRIAL_START_COPY[code]) || 'Something went wrong starting your trial. Try again in a moment.'
+}
+
+/** /try/studio's and /try/scene's Start: makes the trial session unless one exists. A refused start spent the bot-check
+ *  token, so the check is reset for the retry. `entry` says which page started it (the server's funnel records it). */
+export async function beginTrial(opts: {
+  signedIn: boolean
+  botToken: string | null
+  entry?: TrialEntry
+  startTrial: (botToken: string, entry?: TrialEntry) => Promise<unknown>
+  resetBotCheck: () => void
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (opts.signedIn) return { ok: true }
+  try {
+    await (opts.entry ? opts.startTrial(opts.botToken ?? '', opts.entry) : opts.startTrial(opts.botToken ?? ''))
+    return { ok: true }
+  } catch (err) {
+    opts.resetBotCheck()
+    return { ok: false, error: trialStartMessage((err as Error)?.message) }
+  }
 }
 
 /** A device id made once and kept: the server counts trials per device. */
@@ -141,6 +282,13 @@ function settle(): typeof pending {
   pending = null
   listener?.(null)
   return p
+}
+
+/** The sign-up sheet gives up a pending request once the session stops being a trial (signed in elsewhere, logged out),
+ *  but not while its own sign-up or sign-in is in flight: that call adopts the new user first and then resolves the request,
+ *  and giving up in between would reject the blocked action instead of retrying it. */
+export function signUpAutoDismiss(s: { pending: boolean; isTrial: boolean; submitting: boolean }): boolean {
+  return s.pending && !s.isTrial && !s.submitting
 }
 
 export function resolveSignUp(token: string): void { settle()?.resolve(token) }

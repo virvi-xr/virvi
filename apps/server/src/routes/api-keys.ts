@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes, createHash } from 'node:crypto'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { apiKeys, orgMembers } from '../db/schema.js'
+import { apiKeys, organizations, orgMembers } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 
 interface CreateKeyBody {
@@ -13,6 +13,13 @@ interface CreateKeyBody {
 
 interface DeleteKeyParams {
   keyId: string
+}
+
+/** The session's org when it's still there (LIV-83: a deleted organization is no context for a new key). */
+async function liveOrg(orgId: string | null | undefined): Promise<string | null> {
+  if (!orgId) return null
+  const [org] = await db.select({ id: organizations.id }).from(organizations).where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)))
+  return org?.id ?? null
 }
 
 export default async function apiKeyRoutes(app: FastifyInstance) {
@@ -38,7 +45,8 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
         const [member] = await db
           .select({ id: orgMembers.userId })
           .from(orgMembers)
-          .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, request.user.id)))
+          .innerJoin(organizations, eq(organizations.id, orgMembers.orgId))
+          .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, request.user.id), isNull(organizations.deletedAt)))
         if (!member) return reply.status(400).send({ error: 'Not a member of that organization' })
       }
 
@@ -56,7 +64,7 @@ export default async function apiKeyRoutes(app: FastifyInstance) {
         .insert(apiKeys)
         .values({
           userId: request.user.id,
-          orgId: orgId ?? request.user.orgId ?? null,
+          orgId: orgId ?? (await liveOrg(request.user.orgId)),
           name,
           keyHash,
           keyPrefix,

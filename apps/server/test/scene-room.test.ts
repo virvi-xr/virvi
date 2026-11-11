@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { sceneRoles, sceneElements, sceneElementInstances, sceneCollaborators, scenePresets, scenes } from '../src/db/schema.js'
+import { sceneRoles, sceneElements, sceneElementInstances, sceneCollaborators, scenePresets, scenes, users } from '../src/db/schema.js'
 import { createVenue, createBooking, addGrant, revokeGrant } from '../src/venues/service.js'
 import { resetDb } from './helpers/db.js'
 import { createUser, createScene, createElement, createInstance, tokenFor, expiredTokenFor, randomWallet } from './helpers/factories.js'
@@ -53,6 +53,24 @@ describe('VirviSceneRoom auth', () => {
     owner.room.send('scene_preset_update', update(s.screen.id, { liveSrc: 'https://new/live.m3u8', playlist: [] }))
     expect((await visitor.waitFor('scene_preset_update')).elementData.liveSrc).toBe('https://new/live.m3u8')
     expect((await propsOf(s.screen.id)).liveSrc).toBe('https://new/live.m3u8')
+  })
+
+  it('admin power in a room is the database’s: a demoted admin’s token can’t edit a stranger’s scene', async () => {
+    const s = await scene()
+    const admin = await createUser({ role: 'admin' })
+    const token = tokenFor(admin) // minted while admin
+    const ok = await joinScene(gs.url, s.scene.id, token)
+    await ok.waitFor('scene_preset_update') // init
+    ok.room.send('scene_preset_update', update(s.screen.id, { liveSrc: 'https://admin/live.m3u8', playlist: [] }))
+    await ok.waitFor('scene_preset_update_ack')
+    expect((await propsOf(s.screen.id)).liveSrc).toBe('https://admin/live.m3u8')
+    await ok.room.leave()
+    await db.update(users).set({ role: 'creator' }).where(eq(users.id, admin.id))
+    const demoted = await joinScene(gs.url, s.scene.id, token)
+    await demoted.waitFor('scene_preset_update') // init
+    demoted.room.send('scene_preset_update', update(s.screen.id, { liveSrc: 'https://demoted/x.m3u8' }))
+    expect((await demoted.waitFor('virvi_error')).code).toBe('forbidden')
+    expect((await propsOf(s.screen.id)).liveSrc).toBe('https://admin/live.m3u8')
   })
 
   it('expired token joins as anonymous and is told so', async () => {

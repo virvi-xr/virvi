@@ -52,3 +52,16 @@ export function clampSide(n: number): number {
 }
 
 export const shortAddress = (a: string) => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a)
+
+export type HostingChoice = 'available' | 'needs_account' | 'used_up' | 'unavailable' | 'loading'
+
+/**
+ * Whether "Hosted by Virvi" can be picked for a Hyperfy world. Hosting is account-only: a trial always needs an account,
+ * whatever GET /api/hyperfy/slots says (it reports the free tier's slots to trials).
+ */
+export function hostingChoice(trial: boolean, slots: { used: number; limit: number | null; hostingAvailable: boolean } | null): HostingChoice {
+  if (trial) return 'needs_account'
+  if (!slots) return 'loading'
+  if (!slots.hostingAvailable) return 'unavailable'
+  return slots.limit === null || slots.used < slots.limit ? 'available' : 'used_up'
+}

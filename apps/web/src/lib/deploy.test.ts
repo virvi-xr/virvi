@@ -1,12 +1,22 @@
 import { describe, it, expect } from 'vitest'
 import { WrongWalletError } from './dcl-sign'
-import { deploymentSummary, destinationHistory, modeLabel, pendingLine, publishCopy, signErrorMessage, signerWallets, statusView, destinationLocation } from './deploy'
+import { deploymentSummary, destinationHistory, mapView, modeLabel, pendingLine, publishCopy, signErrorMessage, signerWallets, statusView, destinationLocation } from './deploy'
 
 describe('pendingLine', () => {
   it('counts the models waiting to go live', () => {
     expect(pendingLine(3)).toBe('3 models are waiting to go live')
     expect(pendingLine(1)).toBe('1 model is waiting to go live')
     expect(pendingLine(0)).toBe('Every model in the scene is live.')
+  })
+
+  it('counts a thumbnail change apart from the models (LIV-88)', () => {
+    const m = { kind: undefined }
+    const t = { kind: 'thumbnail' as const }
+    expect(pendingLine([m, m])).toBe('2 models are waiting to go live')
+    expect(pendingLine([t])).toBe('The new thumbnail is waiting to go live')
+    expect(pendingLine([{ kind: 'thumbnail' as const, removed: true as const }])).toBe('Removing the thumbnail is waiting to go live')
+    expect(pendingLine([m, t])).toBe('1 model and the new thumbnail are waiting to go live')
+    expect(pendingLine([])).toBe('Everything in the scene is live.')
   })
 })
 
@@ -94,5 +104,34 @@ describe('publishCopy', () => {
       notSigned: "These parcels are set to let Virvi deploy, but Virvi isn't an operator on them yet.",
     })
     expect(JSON.stringify(copy)).not.toMatch(/null|World/)
+  })
+})
+
+describe('mapView (LIV-135)', () => {
+  const d = (over: Partial<Parameters<typeof mapView>[0]> = {}) =>
+    ({ kind: 'world' as const, lastEntityId: 'bafy1', mapStatus: 'pending' as const, mapEntityId: 'bafy1', mapAssets: null, ...over })
+
+  it('ready, with the model count', () => {
+    expect(mapView(d({ mapStatus: 'ready', mapAssets: 12 }))?.line).toBe('Map data: ready (12 models)')
+    expect(mapView(d({ mapStatus: 'ready', mapAssets: 1 }))?.line).toBe('Map data: ready (1 model)')
+    expect(mapView(d({ mapStatus: 'ready', mapAssets: null }))?.line).toBe('Map data: ready')
+  })
+
+  it('pending and none', () => {
+    expect(mapView(d())?.line).toBe('Map data: waiting for Decentraland')
+    expect(mapView(d({ mapStatus: 'none' }))?.line).toBe("No map data — Decentraland didn't build a map snapshot for this deploy")
+    expect(mapView(d({ mapStatus: 'none' }))?.tone).toBe('warning')
+  })
+
+  it('says nothing when it was never checked, or the live entity is no longer the one checked', () => {
+    expect(mapView(d({ mapStatus: 'unknown' }))).toBeNull()
+    expect(mapView(d({ mapStatus: undefined }))).toBeNull()
+    expect(mapView(d({ mapStatus: 'ready', mapAssets: 3, lastEntityId: 'bafyowner' }))).toBeNull()
+  })
+
+  it('the help line: Worlds have no satellite map yet; Genesis City updates when Decentraland re-captures', () => {
+    expect(mapView(d())?.help).toMatch(/Worlds don't have a satellite map/)
+    expect(mapView(d({ kind: 'parcels' }))?.help).toMatch(/re-captures/)
+    expect(mapView(d({ kind: 'parcels' }))?.help).not.toMatch(/Worlds don't/)
   })
 })

@@ -4,7 +4,7 @@ import { Wallet } from 'ethers'
 import { eq } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElements } from '../src/db/schema.js'
+import { assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElements, scenes } from '../src/db/schema.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { BATCH_WINDOW_MS, RETRY_BACKOFF_MS, startDclRedeploySweep, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
@@ -82,6 +82,11 @@ async function addModel(presetId: string, m: string, placed = 1, src = `${CDN}/m
   return el
 }
 
+async function setThumbnail(sceneId: string, hash: string) {
+  const key = `scenes/${sceneId}/thumbnail-${hash}.png`
+  await db.update(scenes).set({ thumbnailKey: key, thumbnailUrl: `${CDN}/${key}`, thumbnailBytes: 100 }).where(eq(scenes.id, sceneId))
+}
+
 async function sweepAndSettle(now: Date) {
   const r = await sweepRedeploys(now, { fetch: fetcher })
   await Promise.all((await deps()).map((d) => whenSettled(d.id)))
@@ -107,6 +112,11 @@ async function deployedOnce() {
 }
 
 describe('sweepRedeploys', () => {
+  it('a deploy that went live starts the map data checks for its entity (LIV-135)', async () => {
+    const { dest } = await deployedOnce()
+    expect(await destRow(dest.id)).toMatchObject({ mapStatus: 'pending', mapEntityId: fake.deployed[0].entityId, mapAssets: null })
+  })
+
   it('waits out the batch window: not at 30 s, deployed at 61 s', async () => {
     const { dest } = await setup()
     expect(await sweepAndSettle(at(0))).toMatchObject({ started: 0 })
@@ -270,6 +280,39 @@ describe('cross-task: what the sweep must never do', () => {
     await sweepAndSettle(at(0))
     await sweepAndSettle(at(61))
     expect(fake.deployed).toHaveLength(1) // a warning, not a stop
+  })
+
+  it("a scene thumbnail isn't a model without a triangle count", async () => {
+    const { preset, dest, scene } = await setup({ models: [] })
+    await db.insert(assetLibraryItems).values({ name: 'tree', storageKey: 'k1', cdnUrl: `${CDN}/m/tree.glb`, triangleCount: 6_000 })
+    await addModel(preset.id, 'tree', 4)
+    await setThumbnail(scene.id, '0123456789abcdef')
+    expect(sceneTriangleWarning(dest, await modelsInScene(dest.sceneId))).not.toMatch(/no triangle count/)
+  })
+
+  it('a new thumbnail marks the World pending and the redeploy carries it; removing it redeploys without it (LIV-88)', async () => {
+    const { dest, scene } = await deployedOnce()
+    await setThumbnail(scene.id, '0123456789abcdef')
+    await sweepAndSettle(at(100))
+    expect((await destRow(dest.id)).pendingSince).toEqual(at(100))
+    await sweepAndSettle(at(161))
+    expect(fake.deployed).toHaveLength(2)
+    let live = goLive()
+    expect(live.metadata.display).toMatchObject({ title: 'Cafe', navmapThumbnail: 'images/scene-thumbnail-0123456789abcdef.png' })
+    expect(live.content.map((c) => c.file)).toContain('images/scene-thumbnail-0123456789abcdef.png')
+    expect((await destRow(dest.id)).pendingSince).toBeNull()
+
+    await db.update(scenes).set({ thumbnailKey: null, thumbnailUrl: null, thumbnailBytes: null }).where(eq(scenes.id, scene.id))
+    await sweepAndSettle(at(200))
+    expect((await destRow(dest.id)).pendingSince).toEqual(at(200))
+    await sweepAndSettle(at(261))
+    expect(fake.deployed).toHaveLength(3)
+    live = goLive()
+    expect(live.metadata.display.navmapThumbnail).toBeUndefined()
+    expect(live.content.map((c) => c.file).filter((f) => f.startsWith('images/scene-thumbnail'))).toEqual([])
+    await sweepAndSettle(at(300))
+    expect((await destRow(dest.id)).pendingSince).toBeNull()
+    expect(fake.deployed).toHaveLength(3)
   })
 
   it('a sign destination held on a refused model stays held on the next sweeps', async () => {

@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: 'Privacy',
-  description: 'What Virvi collects in Decentraland scenes and from the advertiser early-access form, and how to have it removed.',
+  description: 'What Virvi collects in Decentraland scenes, in error reports and from the advertiser early-access form, and how to have it removed.',
 }
 
 // Keep in step with apps/docs/src/content/docs/privacy.md
@@ -79,6 +79,50 @@ export default function PrivacyPage() {
           deleted, or for help, email{' '}
           <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a>.
         </p>
+
+        <h2>Error reporting</h2>
+        <p>
+          When something goes wrong on virvi.io, the page and our server record the error so we can find and fix it. A report holds the error
+          message, the page, the build of Virvi, your browser and operating system, your organization and scene ids, the time, and the last few
+          things you did: pages you opened, the names of buttons and links you clicked, and the requests the page made (their address, result and
+          timing). Before anything leaves your browser, tokens, email addresses, wallet addresses, secrets and the query part of web addresses are
+          removed. It never includes what you type, passwords, wallet signatures, payment details, or what the page sent or received, other than
+          the error message that came back.
+        </p>
+        <ul className="list-disc pl-5">
+          <li>
+            <strong>How you're counted:</strong> by a keyed hash of your account id, so we can see how many people an error reached without
+            storing who. To count how many different places an error comes from, we also keep a hash of your network address made with a random
+            key that changes every day. The key and those hashes are deleted after 2 days, after which they can't be traced back to an address or
+            linked to another day. Your address itself is never stored.
+          </li>
+          <li>
+            <strong>How long:</strong> error details, the account hashes and the breakdowns by page, browser and release are kept for 30 days.
+            Hourly counts of each kind of error, with no identity, are kept for 400 days.
+          </li>
+          <li>
+            <strong>If you send a report:</strong> when a page breaks it records the error without your account. If something you were doing
+            fails and we need more detail, we may ask you about it, at most once a day; you can turn that off in Settings (or from the
+            message itself). Whether you report from there, a crash page or Report a bug in the menu, you see exactly what will be sent before
+            you press Submit, and nothing is sent before that. A report you send (what you wrote, that preview and a screenshot if you add one)
+            is linked to your account if you're signed in, so we can follow up. Reports are kept for 400 days, and screenshots for 30
+            days. Ask us at{' '}
+            <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a> to have one deleted sooner.
+          </li>
+          <li>
+            <strong>Asking only when it helps:</strong> to ask you at most once a day, and to say &ldquo;we know about this&rdquo; only once
+            for each problem, we keep when we last asked you and which problems we told you about by the account hash above (never your
+            account itself), for 30 days, and on your account only whether you turned asking off; if you're not signed in, this browser
+            keeps it.
+          </li>
+          <li>
+            <strong>Our issue tracker:</strong> when automatic bug filing is turned on, the details of errors that keep happening (the redacted
+            messages, pages, steps and counts above) are sent to Linear, the issue tracker we use, as bug reports, without your account. A report
+            you choose to send is added to that bug with what you wrote (with email addresses and similar details removed) and, if you're
+            signed in, your account id, never your name or email. Screenshots stay with us and are not sent to Linear. Those Linear comments
+            aren't removed by the 400-day limit or when you delete your account; ask us at support@virvi.io and we'll remove them.
+          </li>
+        </ul>
 
         <h2>Advertiser early access</h2>
         <p>

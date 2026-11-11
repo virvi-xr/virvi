@@ -384,8 +384,29 @@ def test_set_render_job_wears_every_piece(api, tmp_path):
     assert view == {'bodyShape': 'male', 'outfit': 'default', 'emote': 'run', 'mode': 'walk'}
     assert result['set'] == {'viewKey': 'walk-male-default-run', 'frames': 96, 'fps': 24.0}
     assert result['pieces'] == []
+    assert 'worn' not in result
     assert 'job-r/renders/set/walk-male-default-run/000.webp' in api.files
     assert 'job-r/renders/set/walk-male-default-run/095.webp' in api.files
+
+
+def test_set_render_job_for_a_selection_wears_only_those_pieces(api, tmp_path):
+    renders = []
+    design = design_with(tmp_path, 'feet', 'hat', 'upper_body')
+    result = jobs.run_job(render_job({'set': True, 'bodyShape': 'male', 'outfit': 'default', 'emote': 'run',
+                                      'categories': ['hat', 'upper_body']}),
+                          client(api), design, render_fn=fake_render(renders), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert sorted(p['category'] for p in renders[0][0]) == ['hat', 'upper_body']
+    assert result['set']['viewKey'] == 'walk-male-default-run'
+    assert result['worn'] == ['hat', 'upper_body']  # the server keeps a selection's view only when this confirms it
+
+
+def test_set_render_job_for_a_selection_with_no_piece_left_fails(api, tmp_path):
+    design = design_with(tmp_path, 'hat')
+    result = jobs.run_job(render_job({'set': True, 'bodyShape': 'male', 'outfit': 'default', 'emote': 'run',
+                                      'categories': ['feet']}),
+                          client(api), design, render_fn=fake_render([]), as_user=None)
+    assert result['outcome'] == 'error' and 'no pieces' in result['error']
 
 
 def test_set_render_failure_uploads_nothing(api, tmp_path):
@@ -413,6 +434,30 @@ def test_clipping_fix_shows_the_agent_frames_first(api, tmp_path, skills, monkey
                              'sample': 16}
     assert 'Frames of the clipping are in review/clipping/dance/' in seen['prompt']
     assert 'studio-preview out/hat --emote dance --body female --outfit outfit-2' in seen['prompt']
+
+
+def test_clipping_fix_for_a_selection_shows_only_those_pieces(api, tmp_path, skills, monkeypatch):
+    run(api, tmp_path, prompt_job(), 'claude_builds_hat.jsonl')
+    seen, real = {}, jobs.run_agent
+
+    def spy(agent, model, prompt, *a, **kw):
+        seen.update(prompt=prompt)
+        return real(agent, model, prompt, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    # a second piece the person didn't tick
+    other = tmp_path / 'out' / 'feet'
+    other.mkdir(parents=True)
+    for g in (FIXTURES / 'cap').glob('*.glb'):
+        (other / g.name).write_bytes(g.read_bytes())
+    (other / 'piece.json').write_text('{"name": "Neon boots", "category": "feet"}')
+    renders = []
+    job = prompt_job(jobId='job-2', prompt='Fix the clipping in the dance emote',
+                     fixClipping={'emote': 'dance', 'bodyShape': 'female', 'outfit': 'default', 'categories': ['hat']})
+    result = run(api, tmp_path, job, 'claude_stream.jsonl', renders)
+    assert renders, result
+    assert [p['category'] for p in renders[0][0]] == ['hat']
+    assert result['worn'] == ['hat']
+    assert 'studio-preview out/hat --emote dance' in seen['prompt']
 
 
 def test_clipping_frames_that_fail_stop_the_fix(api, tmp_path, skills, monkeypatch):
@@ -458,3 +503,260 @@ def test_claude_is_never_sent_back(api, tmp_path, skills, monkeypatch):
     calls = spy_on_runs(monkeypatch)
     run(api, tmp_path, prompt_job(), 'claude_builds_hat.jsonl')
     assert len(calls) == 1
+
+
+def emote_job(**kw):
+    return prompt_job(**{'kind': 'emote', 'prompt': 'an emote reading a book', 'selectedSlots': None, **kw})
+
+
+def spy_with_second_run(monkeypatch, fixture):
+    """Like spy_on_runs, but every run after the first replays `fixture`."""
+    calls = []
+    real = jobs.run_agent
+
+    def spy(agent, model, prompt, session, *a, **kw):
+        calls.append({'prompt': prompt, 'session': session})
+        if len(calls) > 1:
+            kw['command'] = fake_command(fixture)
+        return real(agent, model, prompt, session, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    return calls
+
+
+def test_emote_with_crossed_legs_is_sent_back_once_to_fix_them(api, tmp_path, skills, monkeypatch):
+    calls = spy_with_second_run(monkeypatch, 'claude_fixes_emote_legs.jsonl')
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert len(calls) == 2 and calls[1]['session'] == 'sess-emote'
+    again = calls[1]['prompt']
+    assert again.startswith(jobs.LEGS_AGAIN_START) and 'out/emote/reading_time.glb' in again
+    assert 'the thighs pass through each other at' in again and 'limb_overlaps' in again and '`leg`' in again
+    assert 'studio-preview out/emote' in again
+    assert ('job-1', {'type': 'progress', 'text': jobs.LEGS_PROGRESS}) in api.events
+    assert result['outcome'] == 'ok', result['error']
+    assert result['reply'] == 'Fixed the legs: they sit side by side now.'
+    assert result['costUsd'] == pytest.approx(0.03)
+    report = api.files['job-1/checks/emote.txt'].decode()
+    assert '  PASS  legs apart' in report and 'legs pass through each other' not in report
+
+
+def test_emote_legs_still_crossed_after_the_retry_save_with_a_warning(api, tmp_path, skills, monkeypatch):
+    calls = spy_on_runs(monkeypatch)  # the retry exports the same crossed legs again
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert len(calls) == 2  # sent back once, never twice
+    assert result['outcome'] == 'ok', result['error']
+    emote = result['pieces'][0]
+    assert emote['files'] and emote['checker']['pass'] is True and emote['checker']['warnings'] >= 1
+    report = api.files['job-1/checks/emote.txt'].decode()
+    assert any(l.startswith('  WARN  legs pass through each other') for l in report.splitlines())
+
+
+def test_emote_with_legs_apart_runs_once(api, tmp_path, skills, monkeypatch):
+    calls = spy_on_runs(monkeypatch)
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote.jsonl')
+    assert len(calls) == 1 and result['outcome'] == 'ok'
+    assert not any(e == {'type': 'progress', 'text': jobs.LEGS_PROGRESS} for _, e in api.events)
+
+
+def test_emote_not_exported_this_prompt_is_not_sent_back(api, tmp_path, skills, monkeypatch):
+    run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    calls = spy_on_runs(monkeypatch)
+    run(api, tmp_path, emote_job(jobId='job-2', prompt='what is it called?'), 'claude_stream.jsonl')
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('kind', ['wearable', 'scene'])
+def test_only_emotes_get_the_leg_retry(api, tmp_path, skills, monkeypatch, kind):
+    calls = spy_on_runs(monkeypatch)
+    run(api, tmp_path, prompt_job(kind=kind, selectedSlots=None), 'claude_builds_emote_crossed_legs.jsonl')
+    assert len(calls) == 1
+
+
+def spy_runs_with_limits(monkeypatch, later=None):
+    """Every run's prompt, session and limits; runs after the first replay `later` when given."""
+    calls = []
+    real = jobs.run_agent
+
+    def spy(agent, model, prompt, session, before, limits, *a, **kw):
+        calls.append({'prompt': prompt, 'session': session, 'limits': dict(limits)})
+        if later and len(calls) > 1:
+            kw['command'] = fake_command(later)
+        return real(agent, model, prompt, session, before, limits, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    return calls
+
+
+def test_the_leg_retry_gets_half_the_prompts_limits(api, tmp_path, skills, monkeypatch):
+    calls = spy_runs_with_limits(monkeypatch, 'claude_fixes_emote_legs.jsonl')
+    run(api, tmp_path, emote_job(limits={'timeoutSec': 30, 'maxTurns': 80, 'costCeilingUsd': 3.0}),
+        'claude_builds_emote_crossed_legs.jsonl')
+    assert calls[0]['limits'] == {'timeoutSec': 30, 'maxTurns': 80, 'costCeilingUsd': 3.0}
+    assert calls[1]['limits'] == {'timeoutSec': 15, 'maxTurns': 40, 'costCeilingUsd': 1.5}
+
+
+def test_a_failed_leg_retry_keeps_the_first_runs_emote(api, tmp_path, skills, monkeypatch):
+    calls = spy_runs_with_limits(monkeypatch, 'claude_legs_retry_fails.jsonl')
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert len(calls) == 2
+    assert result['outcome'] == 'ok', result['error']
+    assert result['reply'] == 'Built a reading emote.'  # the first run's: the retry never replied
+    assert result['costUsd'] == pytest.approx(0.05)  # both runs: 0.02, then 0.03 more
+    emote = result['pieces'][0]
+    assert emote['files'] and emote['checker']['warnings'] >= 1
+    glb = api.files['job-1/pieces/emote/reading_time.glb']
+    assert glb == (FIXTURES / 'emote_legs/crossed_thighs.glb').read_bytes()  # the half-written export was put back
+    assert not (tmp_path / 'out/emote/stray.glb').exists()
+    report = api.files['job-1/checks/emote.txt'].decode()
+    assert any(l.startswith('  WARN  legs pass through each other') for l in report.splitlines())
+
+
+def test_grok_looks_again_and_then_fixes_the_legs(api, tmp_path, skills, monkeypatch):
+    calls = spy_runs_with_limits(monkeypatch)
+    result = run(api, tmp_path, grok_job(kind='emote', selectedSlots=None), 'grok_builds_emote_crossed_legs.jsonl')
+    assert [c['prompt'] == jobs.LOOK_AGAIN for c in calls] == [False, True, False]
+    assert calls[2]['prompt'].startswith(jobs.LEGS_AGAIN_START) and 'read_file' in calls[2]['prompt']
+    assert calls[2]['session'] == 'sess-grok-1' and calls[2]['limits']['costCeilingUsd'] == 1.5
+    assert result['outcome'] == 'ok', result['error']
+    assert result['costUsd'] == pytest.approx(2.7)
+
+
+def test_a_failed_leg_retry_that_deleted_the_emote_still_saves_the_first_export(api, tmp_path, skills, monkeypatch):
+    spy_runs_with_limits(monkeypatch, 'claude_legs_retry_deletes_and_fails.jsonl')
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert result['outcome'] == 'ok', result['error']  # the stray out/hat/ export is gone too, or collect would refuse
+    assert api.files['job-1/pieces/emote/reading_time.glb'] == (FIXTURES / 'emote_legs/crossed_thighs.glb').read_bytes()
+    assert not (tmp_path / 'out/hat').exists()
+
+
+def test_a_leg_retry_whose_restore_fails_still_records_the_cost(api, tmp_path, skills, monkeypatch):
+    spy_runs_with_limits(monkeypatch, 'claude_legs_retry_fails.jsonl')
+
+    def broken(*a, **kw):
+        raise OSError(28, 'No space left on device')
+    monkeypatch.setattr(jobs.restore, 'restore', broken)
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote_crossed_legs.jsonl')
+    assert result['outcome'] == 'error'
+    assert 'could not put the emote back' in result['error']
+    assert result['costUsd'] == pytest.approx(0.05)
+
+
+def test_lessons_go_in_the_instructions_not_the_history(api, tmp_path, skills, monkeypatch):
+    seen = {}
+    real = jobs.run_agent
+
+    def spy(agent, model, prompt, session, *a, **kw):
+        seen.setdefault('prompt', prompt)
+        return real(agent, model, prompt, session, *a, **kw)
+    monkeypatch.setattr(jobs, 'run_agent', spy)
+    result = run(api, tmp_path, prompt_job(lessons=['Size hats to the head.', 'Keep visors  thin.']), 'claude_builds_hat.jsonl')
+    assert result['outcome'] == 'ok', result
+    instructions = seen['prompt'].split('Studio instructions:')[1]
+    assert 'Lessons from earlier designs (follow them unless the user asks otherwise):\n- Size hats to the head.\n' \
+           '- Keep visors thin.' in instructions
+    # the next prompt's history holds the user's words only
+    seen.clear()
+    run(api, tmp_path, prompt_job(jobId='job-2', agent='grok', model='grok-build-0.1', prompt='make it pink'),
+        'grok_builds_hat.jsonl')
+    assert 'Size hats' not in seen['prompt']
+
+
+def test_lessons_text_skips_junk_and_stays_bounded():
+    from studio_worker.instructions import LESSONS_MAX, closing, lessons_text
+    assert lessons_text(None) == '' and lessons_text([]) == '' and lessons_text([None, 3, '  ']) == ''
+    text = lessons_text(['x' * 3000, 'y' * 1500, 'z'])
+    assert '- ' + 'x' * 3000 in text and 'y' * 1500 not in text and len(text) < LESSONS_MAX + 200
+    assert 'Lessons from earlier designs' not in closing('emote', None)
+    assert 'Lessons from earlier designs' in closing('emote', None, lessons=['Loop cleanly.'])
+
+
+def test_instructions_name_each_avatar_file_s_body_shape():
+    """AvatarShape_A.blend is BaseFemale and AvatarShape_B.blend BaseMale (LIV-143): the agent pairs each GLB with its body."""
+    from studio_worker.instructions import closing
+    for kind in ('wearable', 'emote'):
+        text = ' '.join(closing(kind, None).split())
+        assert 'AvatarShape_A.blend is the female body (BaseFemale, the _female GLB)' in text
+        assert 'AvatarShape_B.blend the male body (BaseMale, the _male GLB)' in text
+
+
+def test_the_reply_keeps_the_workspace_out_of_sight():
+    """The user only reads the reply: no file names, paths, commands or tools, said in their terms instead."""
+    from studio_worker.instructions import closing
+    for kind, slots in (('wearable', None), ('wearable', ['hat']), ('emote', None), ('scene', None)):
+        text = ' '.join(closing(kind, slots).split())
+        done = text.index("When you're done, reply to the user in a few plain sentences")
+        rule = text.index('The user never sees your workspace, so your reply never mentions file names, folders, paths, '
+                          'commands, scripts, tools or skills')
+        assert done < rule < text.index('You build and discuss')
+        assert ('proposal.json' in text[rule:]) == (kind == 'wearable')  # only a wearable design proposes slots
+        for named in ('out/...', 'declined.json', 'uploads/...', 'studio-preview', 'the checker scripts',
+                      'Blender', 'the skills by name'):
+            assert named in text[rule:], named
+        assert '"I\'ve put together a few options", "the hat", "your reference image", "the checks"' in text
+        assert 'A file the user uploaded can be called by the name they gave it, without its folder.' in text
+
+
+def test_a_checked_prompt_says_screening_before_building(api, tmp_path, skills):
+    result = run_checked(api, tmp_path, prompt_job(check=True), 'claude_builds_hat.jsonl', verdict('design'))
+    assert result['outcome'] == 'ok', result
+    # `screening` is the off-topic check; `checking`, after the agent, is the pieces' checks
+    assert api.phases('job-1') == ['screening', 'building', 'checking', 'rendering', 'saving']
+
+
+def test_an_off_topic_prompt_says_screening_and_nothing_else(api, tmp_path):
+    run_checked(api, tmp_path, prompt_job(check=True), 'claude_builds_hat.jsonl', verdict('off_topic', 'coding'))
+    assert api.phases('job-1') == ['screening']
+
+
+def test_an_unchecked_prompt_starts_with_building(api, tmp_path, skills):
+    run(api, tmp_path, prompt_job(), 'claude_builds_hat.jsonl')
+    assert api.phases('job-1')[0] == 'building'
+
+
+def test_events_that_fail_to_send_never_fail_the_job(api, tmp_path, skills):
+    api.fail[('POST', '/events')] = 500
+    result = run_checked(api, tmp_path, prompt_job(check=True), 'claude_builds_hat.jsonl', verdict('design'))
+    assert result['outcome'] == 'ok', result
+    assert api.events == [] and api.results[-1]['outcome'] == 'ok'
+
+
+def worker_env(api, idle='1'):
+    return {'VIRVI_API_URL': api.url, 'STUDIO_WORKER_TOKEN': TOKEN, 'STUDIO_DESIGN_ID': 'design-1',
+            'STUDIO_IDLE_EXIT_SEC': idle}
+
+
+def test_the_first_job_hears_how_long_the_worker_took_to_boot(api, tmp_path, skills):
+    api.jobs += [prompt_job(), prompt_job(jobId='job-2')]
+    assert jobs.main(worker_env(api), design=tmp_path / 'design', poll_sec=0.1, render_fn=fake_render([]),
+                     command=fake_command('claude_builds_hat.jsonl'), as_user=None, started=jobs.time.monotonic() - 3) == 0
+    first = [e for j, e in api.events if j == 'job-1']
+    assert first[0]['type'] == 'boot' and first[0]['restored'] is False
+    assert 3 <= first[0]['seconds'] < 30
+    assert [e for j, e in api.events if e['type'] == 'boot' and j == 'job-2'] == []  # once per process
+
+
+def test_the_boot_event_says_whether_the_workspace_was_restored(api, tmp_path, skills):
+    src = tmp_path / 'src'
+    (src / 'out').mkdir(parents=True)
+    save_state(tmp_path / 'src-state', State())
+    api.workspace = pack(src, tmp_path / 'src-state')
+    api.jobs.append(prompt_job())
+    jobs.main(worker_env(api), design=tmp_path / 'design', poll_sec=0.1, render_fn=fake_render([]),
+              command=fake_command('claude_builds_hat.jsonl'), as_user=None)
+    boot = [e for j, e in api.events if e['type'] == 'boot']
+    assert len(boot) == 1 and boot[0]['restored'] is True and boot[0]['seconds'] >= 0
+
+
+def test_a_boot_event_that_fails_to_send_still_runs_the_job(api, tmp_path, skills):
+    api.fail[('POST', '/events')] = 400  # a server from before the boot event refuses it
+    api.jobs.append(prompt_job())
+    assert jobs.main(worker_env(api), design=tmp_path / 'design', poll_sec=0.1, render_fn=fake_render([]),
+                     command=fake_command('claude_builds_hat.jsonl'), as_user=None) == 0
+    assert api.results[-1]['outcome'] == 'ok'
+
+
+def test_boot_counts_from_when_the_entrypoint_began(api, tmp_path, skills):
+    api.jobs.append(prompt_job())
+    env = {**worker_env(api), 'STUDIO_BOOT_AT': str(jobs.time.time() - 7)}
+    jobs.main(env, design=tmp_path / 'design', poll_sec=0.1, render_fn=fake_render([]),
+              command=fake_command('claude_builds_hat.jsonl'), as_user=None)
+    boot = [e for j, e in api.events if e['type'] == 'boot']
+    assert 7 <= boot[0]['seconds'] < 30

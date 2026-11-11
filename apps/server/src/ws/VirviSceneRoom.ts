@@ -21,15 +21,17 @@ import { config } from '../config.js'
 import { verifySessionToken, type SessionClaims } from '../auth/tokens.js'
 import { pairingActive, pairingLive } from '../hyperfy/pairing.js'
 import { deviceActive, deviceLive } from '../ar/devices.js'
-import { ANONYMOUS, actorFromClaims, type Actor } from '../auth/actor.js'
+import { ANONYMOUS, type Actor } from '../auth/actor.js'
+import { checkedActor } from '../auth/admin.js'
 import { getSceneAccess, hasScope, isFullAccess, toVenueAccessMessage, type SceneAccess } from '../auth/permissions.js'
 import { authorizeSceneMessage, propertiesOf, type GuardResult, type GuardTarget } from './scene-guard.js'
 import { getSceneLibraryItem } from '../library/scene-library.js'
 import { venueTopic, publishSceneTouched, STREAMS_TOPIC, type VenueEvent, type StreamStatusEvent } from '../realtime/bus.js'
 import { normalizeUrl, withLiveStatus, withLiveVideo } from '../streaming/live-status.js'
-import { VideoSourceType, type VenueAccessMessage } from '@virvixr/shared'
+import { FRAMEABLE_TYPES, VideoSourceType, checkFrame, type VenueAccessMessage } from '@virvixr/shared'
 import { screenShowingsMessages, SHOWINGS_REFRESH_MS } from '../scenes/showings.js'
 import { hold, holderOf, release, releaseAll, sweepExpired } from './draft-holds.js'
+import { checkParentInstance } from '../scenes/instance-parent.js'
 
 interface JoinOptions {
   sessionToken: string
@@ -131,7 +133,7 @@ export class VirviSceneRoom extends Room {
     if (await VirviSceneRoom.linkedPassRevoked(claims)) return ANONYMOUS
     if (claims?.kind === 'scene') this.passExpiry.set(_client.sessionId, ((claims as { exp?: number }).exp ?? 0) * 1000)
     this.setLink(_client.sessionId, claims)
-    return actorFromClaims(claims)
+    return checkedActor(claims) // an admin claim is checked against the database
   }
 
   onCreate(options: JoinOptions) {
@@ -544,6 +546,16 @@ export class VirviSceneRoom extends Room {
 
   private async onVenueEvent(e: VenueEvent) {
     try {
+      if (e.type === 'scene_deleted') {
+        // Everyone connected sees the scene empty, then the room closes; a client that joins again gets nothing
+        this.broadcast('scene_preset_update', {
+          action: 'init',
+          scenePreset: { videos: [], images: [], sounds: [], models: [], widgets: [], nfts: [], claimPoints: [], adSpaces: [] },
+          sceneSettings: [],
+        })
+        await this.disconnect()
+        return
+      }
       if (e.type === 'element_changed') {
         await this.broadcastElementChange(e)
         // A screen just switched to Schedule mode needs its showings
@@ -656,7 +668,8 @@ export class VirviSceneRoom extends Room {
         where: eq(scenes.id, this.sceneId),
       })
 
-      if (!scene?.activePresetId) {
+      // A deleted scene (LIV-83) sends nothing: a deployment left up shows an empty scene
+      if (!scene?.activePresetId || scene.deletedAt) {
         console.log(`[VirviSceneRoom] No active preset for scene ${this.sceneId}`)
         // Still send init with empty preset so client doesn't hang
         client.send('scene_preset_update', {
@@ -731,12 +744,16 @@ export class VirviSceneRoom extends Room {
         customId: elementData.customId || null,
         customRendering: elementData.customRendering ?? false,
         clickEvent: elementData.clickEvent || null,
-        properties: this.extractProperties(elementData),
+        properties: this.extractProperties(elementData, element || 'custom'),
       })
     } else if (action === 'create' && instance && instanceData) {
       // Create a new instance
       const elementId = target.elementId
       if (!elementId) return
+      // Same parent rule as the REST routes (LIV-138); the copy is already broadcast, so a bad parent is dropped, not refused
+      const owner = await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, elementId), columns: { presetId: true } })
+      if (!owner) return
+      const parent = await checkParentInstance(owner.presetId, instanceData.parent)
 
       await db.insert(sceneElementInstances).values({
         id: instanceData.sk || instanceData.id || undefined,
@@ -748,9 +765,9 @@ export class VirviSceneRoom extends Room {
         rotation: instanceData.rotation || null,
         scale: instanceData.scale || null,
         clickEvent: instanceData.clickEvent || null,
-        parentInstanceId: instanceData.parent || null,
+        parentInstanceId: parent.ok ? parent.parentInstanceId : null,
         withCollisions: instanceData.withCollisions ?? false,
-        properties: this.extractProperties(instanceData),
+        properties: this.extractProperties(instanceData, null),
       })
     } else if (action === 'update' && !instance) {
       // Update an element
@@ -763,10 +780,11 @@ export class VirviSceneRoom extends Room {
         if (elementData.enabled !== undefined) updates.enabled = elementData.enabled
         if (elementData.customId !== undefined) updates.customId = elementData.customId
         if (elementData.clickEvent !== undefined) updates.clickEvent = elementData.clickEvent
-        const extracted = this.extractProperties(elementData)
-        if (Object.keys(extracted).length > 0) {
+        if (Object.keys(propertiesOf(elementData)).length > 0) {
           const row = await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, elementId) })
-          updates.properties = { ...((row?.properties as Record<string, unknown> | null) ?? {}), ...extracted }
+          // The stored type decides whether a frame is kept, never the message's
+          const extracted = this.extractProperties(elementData, row?.type ?? null)
+          if (Object.keys(extracted).length > 0) updates.properties = { ...((row?.properties as Record<string, unknown> | null) ?? {}), ...extracted }
         }
       }
 
@@ -784,7 +802,7 @@ export class VirviSceneRoom extends Room {
         if (instanceData.enabled !== undefined) updates.enabled = instanceData.enabled
         if (instanceData.clickEvent !== undefined) updates.clickEvent = instanceData.clickEvent
         if (instanceData.withCollisions !== undefined) updates.withCollisions = instanceData.withCollisions
-        const extracted = this.extractProperties(instanceData)
+        const extracted = this.extractProperties(instanceData, null)
         if (Object.keys(extracted).length > 0) {
           const row = await db.query.sceneElementInstances.findFirst({ where: eq(sceneElementInstances.id, instanceId) })
           updates.properties = { ...((row?.properties as Record<string, unknown> | null) ?? {}), ...extracted }
@@ -813,8 +831,16 @@ export class VirviSceneRoom extends Room {
    * Known structural fields (sk, name, enabled, position, etc.) are removed.
    * Everything else goes into the properties JSONB column.
    */
-  private extractProperties(data: Record<string, unknown>): Record<string, unknown> {
-    return propertiesOf(data)
+  private extractProperties(data: Record<string, unknown>, elementType: string | null): Record<string, unknown> {
+    const out = propertiesOf(data)
+    // A frame (LIV-129) is stored tidied, as the REST routes store it, and only on an image or video screen's element
+    // (`elementType` null: an instance, which has none); one no runtime could draw is dropped
+    if ('frame' in out) {
+      const c = elementType && FRAMEABLE_TYPES.has(elementType) ? checkFrame(out.frame) : null
+      if (c?.ok) out.frame = c.value
+      else delete out.frame
+    }
+    return out
   }
 
   /**
@@ -866,6 +892,6 @@ export class VirviSceneRoom extends Room {
     const scene = await db.query.scenes.findFirst({
       where: eq(scenes.id, this.sceneId),
     })
-    return scene?.activePresetId || null
+    return (!scene?.deletedAt && scene?.activePresetId) || null
   }
 }

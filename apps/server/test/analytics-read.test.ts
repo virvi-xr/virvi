@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { analyticsEvents, analyticsHeatmapDaily, analyticsPositions, analyticsRollupHourly, analyticsScenes, analyticsSessions, analyticsCopresenceDaily, sceneRoles } from '../src/db/schema.js'
+import { analyticsEvents, analyticsHeatmapDaily, analyticsPositions, analyticsRollupHourly, analyticsScenes, analyticsSessions, analyticsCopresenceDaily, sceneRoles, subscriptions, locationSetups, sceneCollaborators, assetLibraryItems, sceneElements, sceneElementInstances } from '../src/db/schema.js'
+import { config } from '../src/config.js'
 import { visitorHash } from '../src/analytics/hash.js'
 import { resetEmoteLabelCache } from '../src/analytics/labels.js'
 import { setDeleteMyDataLimiter } from '../src/routes/analytics-read.js'
 import { TokenBucketLimiter } from '../src/analytics/limiter.js'
 import { resetDb } from './helpers/db.js'
-import { testApp, createUser, randomWallet, createScene, tokenFor } from './helpers/factories.js'
+import { testApp, createUser, randomWallet, createScene, createElement, tokenFor } from './helpers/factories.js'
 import { createAnalyticsScene, insertSession } from './helpers/analytics.js'
 import { createSetup } from './helpers/setups.js'
 
@@ -126,7 +127,7 @@ describe('analytics read API', () => {
       { sceneId: s.id, sessionId: live.id, seq: 1, occurredAt: new Date(Date.now() - 6000), x: 1, y: 0, z: 1 },
       { sceneId: s.id, sessionId: live.id, seq: 2, occurredAt: new Date(Date.now() - 3000), x: 2, y: 0, z: 3 },
     ])
-    expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json()).toEqual({ count: 1, positions: [{ x: 2, z: 3 }] })
+    expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json()).toEqual({ count: 1, positions: [{ x: 2, y: 0, z: 3 }] })
   })
 
   it('heatmap sums cells over the range', async () => {
@@ -137,7 +138,159 @@ describe('analytics read API', () => {
       { sceneId: s.id, day: today, cellX: 3, cellZ: 4, dwellSec: 10, visits: 1 },
       { sceneId: s.id, day: yesterday, cellX: 3, cellZ: 4, dwellSec: 5, visits: 2 },
     ])
-    expect((await get(owner, `/api/analytics/locations/${s.id}/heatmap`)).json().cells).toEqual([{ x: 3, z: 4, dwellSec: 15, visits: 3 }])
+    expect((await get(owner, `/api/analytics/locations/${s.id}/heatmap`)).json().cells).toEqual([{ x: 3, z: 4, cellY: null, dwellSec: 15, visits: 3 }])
+  })
+
+  describe('heatmap height (LIV-85)', () => {
+    const prevUnlocked = config.allFeaturesUnlocked
+    afterEach(() => { config.allFeaturesUnlocked = prevUnlocked })
+    const today = () => new Date().toISOString().slice(0, 10)
+    const yesterday = () => new Date(Date.now() - 86400_000).toISOString().slice(0, 10)
+    async function twoFloors(sceneId: string) {
+      await db.insert(analyticsHeatmapDaily).values([
+        { sceneId, day: today(), cellX: 3, cellZ: 4, cellY: 0, dwellSec: 10, visits: 1 },
+        { sceneId, day: today(), cellX: 3, cellZ: 4, cellY: 1, dwellSec: 20, visits: 2 },
+        { sceneId, day: yesterday(), cellX: 3, cellZ: 4, cellY: 1, dwellSec: 1, visits: 1 },
+        { sceneId, day: yesterday(), cellX: 3, cellZ: 4, cellY: null, dwellSec: 4, visits: 1 }, // rolled up before heights
+      ])
+    }
+
+    it('paid plans get each floor as its own cell, and days without heights as cellY null', async () => {
+      const { owner, s } = await owned()
+      await twoFloors(s.id)
+      const body = (await get(owner, `/api/analytics/locations/${s.id}/heatmap`)).json()
+      expect(body.heatmap3d).toBe(true)
+      expect(body.cells).toEqual([
+        { x: 3, z: 4, cellY: 0, dwellSec: 10, visits: 1 },
+        { x: 3, z: 4, cellY: 1, dwellSec: 21, visits: 3 },
+        { x: 3, z: 4, cellY: null, dwellSec: 4, visits: 1 },
+      ])
+    })
+
+    it('level returns one floor; level 0 includes the cells with no height, which draw at ground level', async () => {
+      const { owner, s } = await owned()
+      await twoFloors(s.id)
+      const at = async (level: string) => (await get(owner, `/api/analytics/locations/${s.id}/heatmap?level=${level}`))
+      expect((await at('1')).json().cells).toEqual([{ x: 3, z: 4, cellY: 1, dwellSec: 21, visits: 3 }])
+      expect((await at('0')).json().cells).toEqual([
+        { x: 3, z: 4, cellY: 0, dwellSec: 10, visits: 1 },
+        { x: 3, z: 4, cellY: null, dwellSec: 4, visits: 1 },
+      ])
+      expect((await at('1.5')).statusCode).toBe(400)
+      expect((await at('up')).statusCode).toBe(400)
+      expect((await at('99999')).statusCode).toBe(400)
+    })
+
+    it('free plans get 2D cells summed over every floor, without cellY, and level is ignored', async () => {
+      config.allFeaturesUnlocked = false
+      const { owner, s } = await owned()
+      await twoFloors(s.id)
+      for (const url of [`/api/analytics/locations/${s.id}/heatmap`, `/api/analytics/locations/${s.id}/heatmap?level=1`, `/api/analytics/locations/${s.id}/heatmap?level=up`]) {
+        const res = await get(owner, url)
+        expect(res.statusCode).toBe(200)
+        expect(res.json()).toEqual({ heatmap3d: false, cells: [{ x: 3, z: 4, dwellSec: 35, visits: 5 }] })
+      }
+    })
+
+    it('live positions carry y only on plans with the 3D heatmap', async () => {
+      config.allFeaturesUnlocked = false
+      const { owner, s } = await owned()
+      const sess = await insertSession(s.id, { lastSeenAt: new Date() })
+      await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: sess.id, seq: 1, occurredAt: new Date(), x: 1, y: 3.9, z: 2 })
+      expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json().positions).toEqual([{ x: 1, z: 2 }])
+      await db.insert(subscriptions).values({ userId: owner.id, tier: 'creator' })
+      expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json().positions).toEqual([{ x: 1, y: 3.9, z: 2 }])
+    })
+
+    it("the plan is the linked scene owner's: creator and up get heights", async () => {
+      config.allFeaturesUnlocked = false
+      const { owner, s } = await owned()
+      await twoFloors(s.id)
+      await db.insert(subscriptions).values({ userId: owner.id, tier: 'creator' })
+      const body = (await get(owner, `/api/analytics/locations/${s.id}/heatmap`)).json()
+      expect(body.heatmap3d).toBe(true)
+      expect(body.cells).toHaveLength(3)
+    })
+
+    it("a viewer on a paid owner's scene gets heights too (the plan follows the scene, not the reader)", async () => {
+      config.allFeaturesUnlocked = false
+      const { owner, s } = await owned()
+      await db.insert(subscriptions).values({ userId: owner.id, tier: 'pro' })
+      const viewer = await createUser()
+      const setup = await db.query.locationSetups.findFirst({ where: eq(locationSetups.analyticsSceneId, s.id) })
+      await db.insert(sceneCollaborators).values({ sceneId: setup!.virviSceneId, userId: viewer.id, role: 'viewer' })
+      expect((await get(viewer, `/api/analytics/locations/${s.id}/heatmap`)).json().heatmap3d).toBe(true)
+    })
+  })
+
+  describe('layout (LIV-85)', () => {
+    async function linked() {
+      const owner = await createUser()
+      const { scene, preset } = await createScene(owner)
+      const s = await createAnalyticsScene()
+      await createSetup(s.id, scene.id)
+      return { owner, scene, preset, s }
+    }
+
+    it("returns the live preset's enabled instances: models with their GLB and size, other elements by type", async () => {
+      const { owner, preset, s } = await linked()
+      const url = 'https://cdn.example/models/stage.glb'
+      await db.insert(assetLibraryItems).values({ name: 'Stage', storageKey: 'k/stage.glb', cdnUrl: url, dimensions: { width: 4, height: 3, depth: 2 } })
+      const stage = await createElement(preset.id, { type: 'model', name: 'Stage', properties: { modelSrc: url } })
+      const screen = await createElement(preset.id, { type: 'video', name: 'Main Screen' })
+      const hidden = await createElement(preset.id, { type: 'image', name: 'Hidden poster', properties: {} })
+      await db.update(sceneElements).set({ enabled: false }).where(eq(sceneElements.id, hidden.id))
+      const [st] = await db.insert(sceneElementInstances).values({ elementId: stage.id, position: { x: 20, y: 0, z: 10 }, rotation: { x: 0, y: 90, z: 0 }, scale: { x: 2, y: 1, z: 1 } }).returning()
+      const [sc] = await db.insert(sceneElementInstances).values({ elementId: screen.id, position: { x: 0, y: 3, z: 0 }, parentInstanceId: st.id }).returning()
+      await db.insert(sceneElementInstances).values({ elementId: screen.id, enabled: false, position: { x: 1, y: 1, z: 1 } })
+      await db.insert(sceneElementInstances).values({ elementId: hidden.id, position: { x: 1, y: 1, z: 1 } })
+      const res = await get(owner, `/api/analytics/locations/${s.id}/layout`)
+      expect(res.statusCode).toBe(200)
+      const items = res.json().layout.items
+      expect(items).toHaveLength(2)
+      expect(items).toContainEqual({
+        id: st.id, parentId: null, type: 'model', name: 'Stage', src: url, dimensions: { x: 4, y: 3, z: 2 },
+        position: { x: 20, y: 0, z: 10 }, rotation: { x: 0, y: 90, z: 0 }, scale: { x: 2, y: 1, z: 1 },
+      })
+      expect(items).toContainEqual({
+        id: sc.id, parentId: st.id, type: 'video', name: 'Main Screen', src: null, dimensions: null,
+        position: { x: 0, y: 3, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
+      })
+    })
+
+    it('children of a disabled instance, or of an instance of a disabled element, are left out (never drawn at the wrong spot)', async () => {
+      const { owner, preset, s } = await linked()
+      const table = await createElement(preset.id, { type: 'model', name: 'Table' })
+      const lamp = await createElement(preset.id, { type: 'model', name: 'Lamp' })
+      const off = await createElement(preset.id, { type: 'image', name: 'Off poster', properties: {} })
+      await db.update(sceneElements).set({ enabled: false }).where(eq(sceneElements.id, off.id))
+      const [hiddenTable] = await db.insert(sceneElementInstances).values({ elementId: table.id, enabled: false, position: { x: 20, y: 0, z: 10 } }).returning()
+      const [onLamp] = await db.insert(sceneElementInstances).values({ elementId: lamp.id, position: { x: 0, y: 2, z: 0 }, parentInstanceId: hiddenTable.id }).returning()
+      await db.insert(sceneElementInstances).values({ elementId: lamp.id, position: { x: 0, y: 1, z: 0 }, parentInstanceId: onLamp.id })
+      const [poster] = await db.insert(sceneElementInstances).values({ elementId: off.id, position: { x: 5, y: 0, z: 5 } }).returning()
+      await db.insert(sceneElementInstances).values({ elementId: lamp.id, position: { x: 0, y: 1, z: 0 }, parentInstanceId: poster.id })
+      const [standing] = await db.insert(sceneElementInstances).values({ elementId: table.id, position: { x: 3, y: 0, z: 3 } }).returning()
+      await db.insert(sceneElementInstances).values({ elementId: lamp.id, position: { x: 0, y: 1, z: 0 }, parentInstanceId: standing.id })
+      const items = (await get(owner, `/api/analytics/locations/${s.id}/layout`)).json().layout.items
+      expect(items).toHaveLength(2)
+      expect(items.map((i: { parentId: string | null }) => i.parentId).sort()).toEqual([null, standing.id].sort())
+    })
+
+    it('a model whose GLB is not a web URL comes without src (drawn as its footprint)', async () => {
+      const { owner, preset, s } = await linked()
+      const m = await createElement(preset.id, { type: 'model', name: 'Local', properties: { modelSrc: 'models/house.glb' } })
+      await db.insert(sceneElementInstances).values({ elementId: m.id, position: { x: 1, y: 0, z: 1 } })
+      expect((await get(owner, `/api/analytics/locations/${s.id}/layout`)).json().layout.items[0]).toMatchObject({ src: null, dimensions: null })
+    })
+
+    it('an unlinked location has no layout; strangers get 403', async () => {
+      const owner = await createUser()
+      const s = await createAnalyticsScene()
+      const admin = await createUser({ role: 'admin' })
+      expect((await get(admin, `/api/analytics/locations/${s.id}/layout`)).json()).toEqual({ layout: null })
+      const { s: other } = await linked()
+      expect((await get(owner, `/api/analytics/locations/${other.id}/layout`)).statusCode).toBe(403)
+    })
   })
 
   it('turning wallet visibility off removes revealed identities; only managers may change it', async () => {
@@ -194,9 +347,9 @@ describe('analytics read API', () => {
     const { owner, s } = await owned()
     for (const [x, z] of [[5, 1], [1, 9], [1, 2]]) {
       const sess = await insertSession(s.id, { lastSeenAt: new Date() })
-      await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: sess.id, seq: 1, occurredAt: new Date(), x, y: 0, z })
+      await db.insert(analyticsPositions).values({ sceneId: s.id, sessionId: sess.id, seq: 1, occurredAt: new Date(), x, y: 3.9, z })
     }
-    expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json().positions).toEqual([{ x: 1, z: 2 }, { x: 1, z: 9 }, { x: 5, z: 1 }])
+    expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json().positions).toEqual([{ x: 1, y: 3.9, z: 2 }, { x: 1, y: 3.9, z: 9 }, { x: 5, y: 3.9, z: 1 }])
   })
 
   it('rejects a sessions cursor whose id is not a UUID', async () => {
@@ -268,7 +421,7 @@ describe('analytics read API', () => {
     expect((await get(owner, `/api/analytics/locations/${s.id}/summary?${q}`)).json()).toMatchObject({ sessions: 2, uniqueVisitors: 1, peakConcurrency: 1 })
     const ts = (await get(owner, `/api/analytics/locations/${s.id}/timeseries?bucket=hour&${q}`)).json()
     expect(ts.points.map((p: any) => p.sessions)).toEqual([2])
-    expect((await get(owner, `/api/analytics/locations/${s.id}/heatmap?${q}`)).json().cells).toEqual([{ x: 1, z: 1, dwellSec: 7, visits: 1 }])
+    expect((await get(owner, `/api/analytics/locations/${s.id}/heatmap?${q}`)).json().cells).toEqual([{ x: 1, z: 1, cellY: null, dwellSec: 7, visits: 1 }])
     expect((await get(owner, `/api/analytics/locations/${s.id}/live`)).json()).toEqual({ count: 0, positions: [] })
     const sessions = (await get(owner, `/api/analytics/locations/${s.id}/sessions`)).json().sessions
     expect(sessions).toHaveLength(1)

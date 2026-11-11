@@ -17,9 +17,21 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `payments.ts` | one-time Stripe Checkout for finalizing and top-ups, applied once from the webhook; entitlements, finalize jobs, mistake refunds |
 | `scope.ts` | keeping the studio to design work: the turn-down log, flags for the owner (and their email), pausing an account |
 | `credit.ts` | Virvi credit: a balance in USD cents per account, and a ledger row for every change |
-| `merge.ts` | moving a visitor wallet's studio data (records, counters, credit) onto an existing account |
+| `merge.ts` | moving a visitor wallet's studio data (records, counters, credit, memberships, invites, notifications) onto an existing account |
+| `handover.ts` | an owner's account deleted: each design they share passes to its longest-standing collaborator, else viewer (`studio_owner` notification); unshared ones go with the account |
 | `mana/` | paying in MANA: the rate (`rate.ts`), quotes (`quote.ts`), the Polygon reader (`polygon.ts`), settling and the watcher (`settle.ts`), MANA-back requests (`refunds.ts`) |
-| `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes |
+| `ratings.ts` | 👍 / 👎 on each revision (an agent reply that changed pieces), and a 👎's one free "Try again with this feedback" (LIV-142) |
+| `rating-review.ts` | what admins learn from ratings: the 👎 review queue, the weekly digest (the admin page's, and the Monday email to every admin, sent once per week), and the 👍 rate per agent and model for each kind |
+| `lessons.ts` | lessons for the agent per design kind: drafted, approved by an admin, then sent with every new prompt of that kind (the job's `lessons`), at most 4,000 characters live per kind |
+| `lesson-drafts.ts` | Claude (ANTHROPIC_API_KEY, Sonnet 5.5) drafting one lesson from a batch of 👎s of one kind |
+| `prompt-help.ts` | "Improve my prompt": Claude (ANTHROPIC_API_KEY, Haiku 5.5) rewriting a draft into a concrete request with a few quick-pick questions, never sent to the agent; its own daily limit per account |
+| `prompt-ideas.ts` | example prompts for a design's first message: about 200 wearable and 60 emote ideas in code, served a few at a time to follow the chips (`GET /designs/:id/prompt-ideas`), each retired for everyone once someone sends it as a first prompt, edited or not (`studio_idea_uses`); the admin page counts what is left per slot and move |
+| `defaults.ts` | the agent a new design of each kind starts on, set by an admin beside the 👍 rates (never automatically) |
+| `timings.ts` | how long each prompt waits for its first reply (`studio_jobs.timings`): the machine, each step's seconds, the finish log line, the admin page's First reply card and the design detail's `typicalFirstReplySec` |
+| `warm.ts` | starting a design's machine while the person writes a prompt (`POST /designs/:id/warm`), so the prompt doesn't wait for it |
+| `members.ts` | who a design is shared with (LIV-159): the owner, and open `studio_design_members` rows as collaborator or viewer |
+| `invites.ts` | inviting people to a design by email, linked wallet or link (14 days; resent at most once an hour and 3 times in all, `resend_count` and `last_sent_at`), accepting and declining, role changes, removing and leaving; at most `STUDIO_MAX_MEMBERS` members plus open invites per design and 50 invites per owner per UTC day; the email goes out only when SMTP is set |
+| `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes; then the trial sweep and the weekly ratings digest |
 
 Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/studio-worker.ts` (the workers,
 `/api/studio/worker`). Every studio route answers 404 unless the studio is enabled.
@@ -28,11 +40,46 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
 
 - **Finalizing** a piece pays for its latest revision: `GET /designs/:id/finalize` quotes it, `POST` opens a Stripe
   Checkout (or grants at once when every line is waived). The webhook makes an *entitlement* per paid revision and
-  queues a `finalize` job, which builds the package from that revision's stored files. The owner downloads it from
-  `GET /designs/:id/pieces/:category/revisions/:number/package`; a failed package is retried free with `…/package/retry`.
+  queues a `finalize` job, which builds the package from that revision's stored files. Anyone on the design downloads
+  it from `GET /designs/:id/pieces/:category/revisions/:number/package`; a failed package is retried free with
+  `…/package/retry`.
+- **Shared designs** (LIV-159): any collaborator finalizes and pays with their own card, credit, free finalizes or
+  MANA, and the payment and entitlements are theirs. Another member's open checkout for the same revision refuses a
+  second one (`409 checkout_open`). Only the payer reports a mistake on it, and a paid scene piece goes to the payer's
+  asset library (the owner's once the payer's account is gone). Someone who left keeps the packages that became ready
+  while they were on the design, and the ones they paid for: `GET /past-packages` and
+  `GET /past-packages/:entitlementId/package`.
+- **Some of the pieces** (LIV-81): both take `categories` (`?categories=a,b` on the quote), so the creator pays only
+  for the pieces ticked. A partly finalized design (`finalizedPieces` of `pieceCount`) stays open for prompts and
+  counts toward the open-design limit until every piece is finalized. Finalize's emote checks for a selection wear the
+  chosen pieces and the finalized ones only (`categories` on `set-renders`, `emote-checks`, `clipping`,
+  `finalize-renders`, and `GET /designs/:id/set`).
 - **Revisions** (every finalize after a piece's first) are half price. A customer who says the revision fixed the
   agent's mistake (`…/report`, within 30 days, or at checkout) is refunded that line in full, at once.
 - **Top-ups** (`POST /topups`) add prompts used after the day's allowance; they never expire.
+
+## Sharing (LIV-159)
+
+- **Roles.** The *owner* (`studio_designs.owner_id`) can do everything. A *collaborator* prompts, renders, uploads,
+  finalizes and downloads. A *viewer* reads the chat, renders and files; an action route answers
+  `403 { error: 'viewer', code: 'viewer' }`. Someone who isn't on the design, or was removed, gets the same 404 as a
+  stranger. Only the owner invites, changes roles, removes people, renames, archives and deletes.
+- **Invites.** The owner invites by email or by wallet address (`POST /designs/:id/invites` with `{ email }` or
+  `{ wallet }`, not both) as collaborator or viewer; the invitee takes the link or accepts from `GET /invites`. A wallet
+  invite is matched to the account that has that wallet linked and sends no email. With no such account yet it waits on
+  the address: the first account to sign in with the wallet (in-world visitor sign-ins too), link it or sign up with it
+  from a trial gets it, with a bell item (`claimWalletInvites`; never a trial, never on a design they own or are on). A
+  visitor's claimed invite follows the wallet when it is linked to an account; one that lands on a design that account
+  owns or is on is cancelled. Only the owner's People view shows the address. An invite lasts 14 days, is resent at most
+  once an hour and 3 times, and the owner may send 50 a UTC day. Members plus pending invites are capped by
+  `STUDIO_MAX_MEMBERS` (50). Trial accounts can't invite, be invited or accept (`403 account_required`); a paused
+  account can accept, view, finalize and pay, not prompt or render.
+- **Who pays.** Whoever sends a prompt, finalizes or reports is recorded on the message, job or payment
+  (`studio_messages.user_id`, `studio_jobs.user_id`, `studio_payments.user_id`; null means the owner). That person's
+  daily allowance, cost ceiling, card, credit, free finalizes and MANA are the ones used, never the owner's.
+- **Notifications.** The bell (`/api/notifications`) holds `studio_invite`, `studio_package_ready`, `studio_prompts`
+  and `studio_owner` (a design handed over when the owner's account is deleted). They carry names and design titles
+  only, never prompt or chat text, and are kept 90 days.
 
 ## Deploying (the owner's steps)
 
@@ -46,10 +93,26 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    - `STUDIO_FLY_APP` only if the worker app isn't `vlm-studio-worker`
    - optional: `STUDIO_CLAUDE_MODEL` (default `claude-opus-5-5`), `STUDIO_CODEX_MODEL` (default `gpt-6.1-sol`),
      `STUDIO_GROK_MODEL` (default `grok-build-0.1`)
+   - optional, for "Improve my prompt" (`POST /designs/:id/prompt-help`, which needs `ANTHROPIC_API_KEY` and answers
+     `503 prompt_help_unavailable` without it): `STUDIO_PROMPT_HELP_MODEL` (default `claude-haiku-5-5`) and
+     `STUDIO_PROMPT_HELP_PER_DAY` (default 30 per account and UTC day, trials included; `429 prompt_help_limit` past
+     it; 0 answers `503` like a missing key, so the button hides). It never uses a prompt or counts toward the cost ceiling; the count is `studio_usage_days.prompt_helps`,
+     added at boot like the other columns.
+   - The example prompts under "What makes a good prompt" need nothing set: the ideas are in `prompt-ideas.ts`, and the
+     ones already used are `studio_idea_uses` (one row per idea), made at boot like the other tables. An idea's id
+     never changes once shipped; to drop one, delete it from the pool. **Example ideas** on the admin page
+     (`GET /api/admin/studio/ideas`) shows how many are left per slot and move, flagging any with fewer than 3.
 3. **The schema.** The server makes it at boot: `entrypoint.sh` runs `drizzle-kit push` before it starts the server,
    then a hand-written fallback (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) in case push failed. That
-   covers the eleven `studio_*` tables (four of them for payments), two new columns (`studio_designs.finalized_at`,
-   `studio_jobs.counted_from`), and the MANA and credit tables below. Nothing needs running by hand first; to check
+   covers the `studio_*` tables (four of them for payments, and `studio_idea_uses` for the example prompts), new columns
+   (`studio_designs.finalized_at`, `studio_jobs.counted_from`, and for the first-reply wait `studio_jobs.timings` and
+   `studio_designs.warmed_at`), and the MANA and credit tables below. Collaboration (LIV-159) adds
+   `studio_design_members`, `studio_design_invites` and `notifications` (invites by wallet: `studio_design_invites.wallet`,
+   `email` nullable, a check that exactly one is set, an open-invite index per wallet and an index of waiting ones), the
+   sender columns `studio_messages.user_id` and `studio_jobs.user_id` (null means the owner), and makes
+   `studio_payments.user_id` nullable with `ON DELETE SET NULL`
+   (a deleted payer's payment stays, because entitlements reference it). `STUDIO_MAX_MEMBERS` (default 50) caps members plus
+   pending invites per design. Nothing needs running by hand first; to check
    the schema before a deploy, `drizzle-kit push` against production does the same.
 4. **Fly.** Confirm that the server's `FLY_API_TOKEN` can manage machines in `vlm-studio-worker`, in the
    `FLY_WORLDS_ORG` org (`vlm-worlds`). The agent keys are that app's secrets (`fly secrets import -a
@@ -72,8 +135,9 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
      Both are logged in `studio_scope_events`; the user sees only a category's fixed words, never the model's note.
    - An account with `STUDIO_FLAG_THRESHOLD` (3) turn-downs within `STUDIO_FLAG_WINDOW_HOURS` (24) is flagged once,
      and the owner is emailed at `STUDIO_FLAG_EMAIL` (unset: nothing is sent). Admins dismiss flags and pause or
-     resume an account's studio access; a paused account can't send prompts, start designs, request renders, upload or
-     buy top-ups, and can still finalize, pay and download.
+     resume an account's studio access; a paused account can't send prompts, start designs, request renders or upload,
+     and can still buy top-ups, finalize, pay and download, on their own designs and on designs shared with them.
+     Pausing never blocks paying.
    - A piece's first `STUDIO_INSTANT_REPORTS` (2) mistake reports refund at once; later ones are charged and wait for
      the owner's Approve or Decline on the same page, with an email.
    - **The owner's steps:** SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`) and
@@ -82,6 +146,33 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
      at boot), then the worker image: `fly deploy --build-only --push --remote-only --image-label <sha>` from
      `apps/studio-worker`, then `e2e/fly.sh <image>`, then `e2e/scope_eval.py` on a machine of that image (it fails if
      a designer's message would be turned down), then `STUDIO_WORKER_IMAGE` on Railway.
+
+## The first-reply wait
+
+After a prompt is sent, the page lists the steps until the agent's first progress line (Starting your studio,
+Checking your request, The agent is reading your request) with the time so far, and "Usually about N seconds" from
+`typicalFirstReplySec` (the median over the last 50 timed prompts, cached 5 minutes; absent below 5).
+
+- **Timings.** Each prompt job's `timings` (jsonb, null for other jobs and older prompts) holds `machine` (what
+  `ensureWorker` did for it: `created`, `started`, `running` or `external`) and the seconds from the job's
+  `createdAt` to `taken`, `screening` (the off-topic check, before the agent), `building`, `firstProgress` (the
+  first progress line the page shows, not a `Running:` command) and `done`, plus the worker's `boot` seconds and
+  whether it `restored` a workspace. Each is written once, as its event arrives; later progress lines write nothing.
+  A worker image from before the `boot` event and the `screening` phase gives no `boot` or `screening`, and the
+  rest still fills in. A finished prompt logs one line, ids and seconds only:
+  `[studio] job <id> timing: machine=created taken=24s boot=9s screening=31s building=35s first_progress=52s done=310s`.
+- **Admin.** `GET /api/admin/studio/first-reply` (the Studio admin page's First reply card): the median and 90th
+  percentile of created → first progress over the last 50 timed prompts, by `machine`, and the median of each step.
+- **Warming.** When someone starts typing a prompt, taps a slot or emote chip, or attaches a file, the page calls
+  `POST /designs/:id/warm` (once per 5 minutes per design): the machine is made or started with no job, and the
+  worker boots, restores and polls until a prompt comes or it exits idle after 600 s. It answers 204 whether it warmed
+  or not, and does nothing when the account couldn't send a prompt (no prompts left, past the cost ceiling; a paused
+  account gets the prompts route's 403), a job is already waiting or running, the design is archived,
+  `STUDIO_MACHINES=external`, or the design was warmed in the last 5 minutes (`studio_designs.warmed_at`). No job is
+  made, so nothing is counted or charged. The sweep counts `warmed_at` as activity, so it doesn't destroy a machine
+  just warmed on a design idle for days.
+- **Deploy order.** The server first (it accepts the `boot` event, and the timings columns are made at boot), then
+  the worker image, which adds the `boot` event and the `screening` phase.
 
 ## Paying with MANA and credit
 

@@ -28,8 +28,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] organizations table ensured');
       } catch(e) { console.log('[virvi-server] organizations:', e.message); }
 
+      // streaming_servers.scene_id: deleting a scene unlinks its streaming server (was no action, so the delete failed)
+      try {
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'streaming_servers_scene_id_scenes_id_fk' AND confdeltype <> 'n') THEN ALTER TABLE streaming_servers DROP CONSTRAINT streaming_servers_scene_id_scenes_id_fk; ALTER TABLE streaming_servers ADD CONSTRAINT streaming_servers_scene_id_scenes_id_fk FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE SET NULL; END IF; END \$\$\`;
+      } catch(e) { console.log('[virvi-server] streaming_servers scene fk:', e.message); }
+
       // trial account columns on users
-      for (const def of ['is_trial BOOLEAN NOT NULL DEFAULT false', 'trial_last_active_at TIMESTAMPTZ', 'trial_ip_hash TEXT', 'trial_device_hash TEXT']) {
+      for (const def of ['is_trial BOOLEAN NOT NULL DEFAULT false', 'trial_last_active_at TIMESTAMPTZ', 'trial_ip_hash TEXT', 'trial_device_hash TEXT', 'trial_imports INTEGER NOT NULL DEFAULT 0']) {
         try {
           await sql.unsafe(\`ALTER TABLE users ADD COLUMN IF NOT EXISTS \${def}\`);
         } catch(e) { console.log('[virvi-server] users trial column:', e.message); }
@@ -99,6 +104,9 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS files_deleted_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS original_key TEXT\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS virvi_already_present BOOLEAN NOT NULL DEFAULT FALSE\`;
+        await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS thumbnail_outcome TEXT, ADD COLUMN IF NOT EXISTS thumbnail_note TEXT\`;
+        await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS navmap_thumbnail TEXT\`;
+        await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS sandbox BOOLEAN NOT NULL DEFAULT FALSE\`;
         await sql\`ALTER TABLE scene_imports ALTER COLUMN world_name DROP NOT NULL\`;
         await sql\`ALTER TABLE scene_imports ADD COLUMN IF NOT EXISTS location_kind dcl_destination_kind NOT NULL DEFAULT 'world', ADD COLUMN IF NOT EXISTS base TEXT, ADD COLUMN IF NOT EXISTS parcels TEXT[] NOT NULL DEFAULT '{}'::text[]\`;
         await sql\`CREATE INDEX IF NOT EXISTS scene_imports_world_status_idx ON scene_imports (world_name, status)\`;
@@ -109,6 +117,13 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS dcl_destinations_parcels_base ON dcl_world_destinations (base) WHERE kind = 'parcels'\`;
         console.log('[virvi-server] scene_imports ensured');
       } catch(e) { console.log('[virvi-server] scene_imports:', e.message); }
+
+      // LIV-135 map data (abgen Initial Scene State) per destination; matches dclWorldDestinations.map* in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE dcl_world_destinations ADD COLUMN IF NOT EXISTS map_status TEXT NOT NULL DEFAULT 'unknown', ADD COLUMN IF NOT EXISTS map_entity_id TEXT, ADD COLUMN IF NOT EXISTS map_assets INTEGER, ADD COLUMN IF NOT EXISTS map_since TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS map_check_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS map_checked_at TIMESTAMPTZ\`;
+        await sql\`CREATE INDEX IF NOT EXISTS dcl_destinations_map_due ON dcl_world_destinations (map_check_at) WHERE map_status = 'pending'\`;
+        console.log('[virvi-server] dcl_world_destinations map columns ensured');
+      } catch(e) { console.log('[virvi-server] dcl_world_destinations map columns:', e.message); }
 
       // Hyperfy worlds; matches hyperfyWorlds in src/db/schema.ts
       try {
@@ -179,9 +194,18 @@ if [ -n "$DATABASE_URL" ]; then
       // Design Studio scene pieces in the asset library; matches assetLibraryItems.sittables and studioEntitlements.assetItemIds
       try {
         await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS sittables JSONB\`;
+        await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ready'\`;
+        await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS error TEXT\`;
+        await sql\`ALTER TABLE asset_library_items ADD COLUMN IF NOT EXISTS upload_code TEXT\`;
         await sql\`ALTER TABLE studio_entitlements ADD COLUMN IF NOT EXISTS asset_item_ids JSONB\`;
         console.log('[virvi-server] scene library columns ensured');
       } catch(e) { console.log('[virvi-server] scene library columns:', e.message); }
+
+      // uploaded_by: deleting an account leaves its public models ownerless (was no action, so the delete failed)
+      try {
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'asset_library_items_uploaded_by_users_id_fk' AND confdeltype <> 'n') THEN ALTER TABLE asset_library_items DROP CONSTRAINT asset_library_items_uploaded_by_users_id_fk; ALTER TABLE asset_library_items ADD CONSTRAINT asset_library_items_uploaded_by_users_id_fk FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL; END IF; END \$\$\`;
+        console.log('[virvi-server] asset_library_items.uploaded_by is ON DELETE SET NULL');
+      } catch(e) { console.log('[virvi-server] asset_library_items.uploaded_by:', e.message); }
 
       // Signed-out trial funnel; matches trialEvents in src/db/schema.ts (user_id is deliberately not a foreign key)
       try {
@@ -223,6 +247,16 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio_payments.gifts_held ensured');
       } catch(e) { console.log('[virvi-server] studio_payments.gifts_held:', e.message); }
 
+      // Scene thumbnail (LIV-88): matches scenes.thumbnailKey and scenes.thumbnailBytes in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_key TEXT\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_bytes INTEGER\`;
+        // LIV-89: where the thumbnail came from; every thumbnail from before it was recorded was uploaded in Virvi
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_source TEXT\`;
+        await sql\`UPDATE scenes SET thumbnail_source = 'upload' WHERE thumbnail_key IS NOT NULL AND thumbnail_source IS NULL\`;
+        console.log('[virvi-server] scenes thumbnail columns ensured');
+      } catch(e) { console.log('[virvi-server] scenes thumbnail columns:', e.message); }
+
       // Design Studio credit and MANA: new columns; matches studioPayments, studioEntitlements and studioMistakeReports in src/db/schema.ts
       try {
         await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS method TEXT NOT NULL DEFAULT 'card'\`;
@@ -255,6 +289,80 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] studio MANA foreign keys ensured');
       } catch(e) { console.log('[virvi-server] studio MANA foreign keys:', e.message); }
 
+      // Design Studio admin help: who in Virvi support sent a prompt or granted a finalize; matches studioJobs, studioMessages and studioPayments in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS by_admin_id UUID\`;
+        await sql\`ALTER TABLE studio_messages ADD COLUMN IF NOT EXISTS by_admin_id UUID\`;
+        await sql\`ALTER TABLE studio_payments ADD COLUMN IF NOT EXISTS by_admin_id UUID\`;
+        console.log('[virvi-server] studio admin help columns ensured');
+      } catch(e) { console.log('[virvi-server] studio admin help columns:', e.message); }
+
+      // Design Studio ratings and lessons (LIV-142); matches studioRatings, studioLessons, studioDigestWeeks, studioKindDefaults and studioJobs.feedbackFor in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS feedback_for UUID\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_jobs_feedback_for_uq ON studio_jobs (feedback_for) WHERE feedback_for IS NOT NULL\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_ratings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), job_id UUID NOT NULL CONSTRAINT studio_ratings_job_id_studio_jobs_id_fk REFERENCES studio_jobs(id) ON DELETE CASCADE, design_id UUID NOT NULL CONSTRAINT studio_ratings_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT studio_ratings_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, rating TEXT NOT NULL, tags JSONB NOT NULL DEFAULT '[]'::jsonb, note TEXT, kind TEXT NOT NULL, agent TEXT, model TEXT, prompt TEXT, cost_usd DOUBLE PRECISION, handled_at TIMESTAMPTZ, handled_by UUID, auto_check BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_ratings_job_user_uq ON studio_ratings (job_id, user_id)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_ratings_rating_idx ON studio_ratings (rating, created_at)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_ratings_design_idx ON studio_ratings (design_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_lessons (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), kind TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', enabled BOOLEAN NOT NULL DEFAULT true, source_rating_ids JSONB NOT NULL DEFAULT '[]'::jsonb, drafted TEXT NOT NULL DEFAULT 'admin', created_by UUID, updated_by UUID, approved_by UUID, approved_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_lessons_kind_idx ON studio_lessons (kind, created_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_digest_weeks (week_start DATE PRIMARY KEY, ratings INTEGER NOT NULL DEFAULT 0, claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), sent_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`ALTER TABLE studio_digest_weeks ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_kind_defaults (kind TEXT PRIMARY KEY, agent TEXT NOT NULL, updated_by UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        console.log('[virvi-server] studio ratings and lessons ensured');
+      } catch(e) { console.log('[virvi-server] studio ratings and lessons:', e.message); }
+
+      // Design Studio prompt help: how many times a day an account asked to improve a prompt; matches studioUsageDays.promptHelps in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_usage_days ADD COLUMN IF NOT EXISTS prompt_helps INTEGER NOT NULL DEFAULT 0\`;
+        console.log('[virvi-server] studio_usage_days.prompt_helps ensured');
+      } catch(e) { console.log('[virvi-server] studio_usage_days.prompt_helps:', e.message); }
+
+      // Design Studio prompt ideas: the example prompts someone sent as a first prompt, retired for everyone; matches studioIdeaUses in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS studio_idea_uses (idea_id TEXT PRIMARY KEY, user_id UUID CONSTRAINT studio_idea_uses_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, design_id UUID CONSTRAINT studio_idea_uses_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE SET NULL, used_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        console.log('[virvi-server] studio_idea_uses ensured');
+      } catch(e) { console.log('[virvi-server] studio_idea_uses:', e.message); }
+      // Design Studio first-reply wait: each prompt job's timings, and when a design's machine was last warmed; matches studioJobs.timings and studioDesigns.warmedAt in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS timings JSONB\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS warmed_at TIMESTAMPTZ\`;
+        console.log('[virvi-server] studio timings and warmed_at ensured');
+      } catch(e) { console.log('[virvi-server] studio timings and warmed_at:', e.message); }
+
+      // Design Studio collaboration (LIV-159): members, invites, senders, notifications, and a payment that outlives its payer; matches studioDesignMembers, studioDesignInvites, notifications, studioMessages.userId, studioJobs.userId and studioPayments.userId in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS studio_design_members (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), design_id UUID NOT NULL CONSTRAINT studio_design_members_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT studio_design_members_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL, joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), left_at TIMESTAMPTZ)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_design_members_open_uq ON studio_design_members (design_id, user_id) WHERE left_at IS NULL\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_design_members_user_idx ON studio_design_members (user_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS studio_design_invites (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), design_id UUID NOT NULL CONSTRAINT studio_design_invites_design_id_studio_designs_id_fk REFERENCES studio_designs(id) ON DELETE CASCADE, email TEXT NOT NULL, role TEXT NOT NULL, token TEXT NOT NULL UNIQUE, invited_by UUID NOT NULL CONSTRAINT studio_design_invites_invited_by_users_id_fk REFERENCES users(id) ON DELETE CASCADE, user_id UUID CONSTRAINT studio_design_invites_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL, accepted_at TIMESTAMPTZ, declined_at TIMESTAMPTZ, cancelled_at TIMESTAMPTZ)\`;
+        await sql\`ALTER TABLE studio_design_invites ADD COLUMN IF NOT EXISTS resend_count INTEGER NOT NULL DEFAULT 0\`;
+        await sql\`ALTER TABLE studio_design_invites ADD COLUMN IF NOT EXISTS last_sent_at TIMESTAMPTZ\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_design_invites_open_uq ON studio_design_invites (design_id, email) WHERE accepted_at IS NULL AND declined_at IS NULL AND cancelled_at IS NULL\`;
+        await sql\`CREATE TABLE IF NOT EXISTS notifications (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT notifications_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, data JSONB NOT NULL, group_key TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), read_at TIMESTAMPTZ)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications (user_id, created_at DESC)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS notifications_unread_group_uq ON notifications (user_id, group_key) WHERE read_at IS NULL AND group_key IS NOT NULL\`;
+        await sql\`ALTER TABLE studio_messages ADD COLUMN IF NOT EXISTS user_id UUID\`;
+        await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS user_id UUID\`;
+        console.log('[virvi-server] studio collaboration ensured');
+      } catch(e) { console.log('[virvi-server] studio collaboration:', e.message); }
+      // Design Studio invites by linked wallet: email or wallet, exactly one; matches studioDesignInvites in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_design_invites ADD COLUMN IF NOT EXISTS wallet TEXT\`;
+        await sql\`ALTER TABLE studio_design_invites ALTER COLUMN email DROP NOT NULL\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_design_invites_open_wallet_uq ON studio_design_invites (design_id, wallet) WHERE accepted_at IS NULL AND declined_at IS NULL AND cancelled_at IS NULL\`;
+        await sql\`CREATE INDEX IF NOT EXISTS studio_design_invites_wallet_wait_idx ON studio_design_invites (wallet) WHERE wallet IS NOT NULL AND user_id IS NULL\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'studio_design_invites_one_target' AND conrelid = 'studio_design_invites'::regclass) THEN ALTER TABLE studio_design_invites ADD CONSTRAINT studio_design_invites_one_target CHECK ((email IS NULL) <> (wallet IS NULL)); END IF; END \$\$\`;
+        console.log('[virvi-server] studio wallet invites ensured');
+      } catch(e) { console.log('[virvi-server] studio wallet invites:', e.message); }
+      // A deleted payer's payment stays (user_id null, ON DELETE SET NULL); matches studioPayments.userId in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_payments ALTER COLUMN user_id DROP NOT NULL\`;
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'studio_payments_user_id_users_id_fk' AND conrelid = 'studio_payments'::regclass AND confdeltype <> 'n') THEN ALTER TABLE studio_payments DROP CONSTRAINT studio_payments_user_id_users_id_fk; ALTER TABLE studio_payments ADD CONSTRAINT studio_payments_user_id_users_id_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL; END IF; END \$\$\`;
+        console.log('[virvi-server] studio_payments.user_id nullable ensured');
+      } catch(e) { console.log('[virvi-server] studio_payments.user_id nullable:', e.message); }
+
       // Hyperfy HUD pairings; matches hyperfyPairings in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS hyperfy_pairings (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), world_id UUID NOT NULL REFERENCES hyperfy_worlds(id) ON DELETE CASCADE, user_id UUID REFERENCES users(id) ON DELETE CASCADE, code_hash TEXT UNIQUE, secret_hash TEXT, hyperfy_player_id TEXT, player_name TEXT, status TEXT NOT NULL DEFAULT 'pending', code_expires_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
@@ -265,6 +373,89 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] hyperfy_pairings table ensured');
       } catch(e) { console.log('[virvi-server] hyperfy_pairings:', e.message); }
 
+      // Deleting a scene (LIV-83): soft delete, deployment removals; matches scenes, sceneDeployments and sceneRemovals in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS deleted_by UUID CONSTRAINT scenes_deleted_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS deleted_org_id UUID\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS restorer_ids UUID[]\`;
+        await sql\`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS purging_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ\`;
+        await sql\`CREATE INDEX IF NOT EXISTS scenes_deleted_at_idx ON scenes (deleted_at) WHERE deleted_at IS NOT NULL\`;
+        await sql\`ALTER TABLE scene_deployments ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE scene_deployments ADD COLUMN IF NOT EXISTS removal_outcome TEXT\`;
+        await sql\`CREATE TABLE IF NOT EXISTS scene_removals (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scene_id UUID NOT NULL CONSTRAINT scene_removals_scene_id_scenes_id_fk REFERENCES scenes(id) ON DELETE CASCADE, kind TEXT NOT NULL, target_id UUID NOT NULL, label TEXT NOT NULL, target JSONB NOT NULL DEFAULT '{}'::jsonb, status TEXT NOT NULL DEFAULT 'pending', error_message TEXT, pending JSONB, requested_by UUID CONSTRAINT scene_removals_requested_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), finished_at TIMESTAMPTZ)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS scene_removals_scene_idx ON scene_removals (scene_id)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS scene_removals_scene_target_uq ON scene_removals (scene_id, target_id)\`;
+        console.log('[virvi-server] scene delete columns ensured');
+      } catch(e) { console.log('[virvi-server] scene delete columns:', e.message); }
+      // Heatmap height (LIV-85): matches analyticsHeatmapDaily in src/db/schema.ts (and scripts/pre-push-upgrade.mjs)
+      try {
+        await sql\`DO \$\$ DECLARE pk text; BEGIN
+          IF to_regclass('analytics_heatmap_daily') IS NOT NULL THEN
+            ALTER TABLE analytics_heatmap_daily ADD COLUMN IF NOT EXISTS cell_y smallint;
+            SELECT conname INTO pk FROM pg_constraint WHERE conrelid = 'analytics_heatmap_daily'::regclass AND contype = 'p';
+            IF pk IS NOT NULL THEN EXECUTE format('ALTER TABLE analytics_heatmap_daily DROP CONSTRAINT %I', pk); END IF;
+            IF to_regclass('analytics_heatmap_daily_cell_uq') IS NULL THEN
+              CREATE UNIQUE INDEX analytics_heatmap_daily_cell_uq ON analytics_heatmap_daily (scene_id, day, cell_x, cell_z, cell_y);
+            END IF;
+          END IF;
+        END \$\$\`;
+        console.log('[virvi-server] heatmap cell_y ensured');
+      } catch(e) { console.log('[virvi-server] heatmap cell_y:', e.message); }
+      // Error reporting (LIV-66); matches errorSignatures, errorEvents, errorHourly, errorHourlyDims, errorHourlyUsers, errorReports, errorSettings, errorBudget, errorReleases, errorIpKeys, errorPromptState, errorPromptAsked and errorPromptKnown in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS error_signatures (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), hash TEXT NOT NULL, signature TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, status INTEGER, route TEXT, error_type TEXT, message TEXT, expected TEXT, first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), first_release TEXT, last_release TEXT, total_count BIGINT NOT NULL DEFAULT 0, resolved_at TIMESTAMPTZ, resolved_by UUID, regressed_at TIMESTAMPTZ, user_reports INTEGER NOT NULL DEFAULT 0, linear_issue_id TEXT, linear_issue_key TEXT, linear_issue_url TEXT, linear_filed_at TIMESTAMPTZ, linear_filed_reason TEXT, linear_commented_at TIMESTAMPTZ, linear_quiet_at TIMESTAMPTZ, linear_regression_at TIMESTAMPTZ, stored_day DATE, stored_today INTEGER NOT NULL DEFAULT 0, seen_users BOOLEAN NOT NULL DEFAULT false, linear_filing_at TIMESTAMPTZ, linear_done_at TIMESTAMPTZ, linear_closed_at TIMESTAMPTZ, linear_closed_state TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS error_signatures_hash_uq ON error_signatures (hash)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_signatures_last_seen_idx ON error_signatures (last_seen_at)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_signatures_first_seen_idx ON error_signatures (first_seen_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), signature_id UUID NOT NULL CONSTRAINT error_events_signature_id_error_signatures_id_fk REFERENCES error_signatures(id) ON DELETE CASCADE, occurred_at TIMESTAMPTZ NOT NULL, received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), source TEXT NOT NULL, kind TEXT NOT NULL, release TEXT, route TEXT, method TEXT, path TEXT, status INTEGER, request_id TEXT, browser TEXT, os TEXT, user_hash TEXT, org_id UUID, scene_id UUID, count INTEGER NOT NULL DEFAULT 1, user_facing BOOLEAN NOT NULL DEFAULT false, error_type TEXT, message TEXT, stack TEXT, error_body JSONB, breadcrumbs JSONB)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_events_signature_idx ON error_events (signature_id, occurred_at)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_events_request_idx ON error_events (request_id)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_events_received_idx ON error_events (received_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_hourly (signature_id UUID NOT NULL CONSTRAINT error_hourly_signature_id_error_signatures_id_fk REFERENCES error_signatures(id) ON DELETE CASCADE, hour TIMESTAMPTZ NOT NULL, count BIGINT NOT NULL DEFAULT 0, users BIGINT NOT NULL DEFAULT 0, ips BIGINT NOT NULL DEFAULT 0, CONSTRAINT error_hourly_signature_id_hour_pk PRIMARY KEY (signature_id, hour))\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_hourly_hour_idx ON error_hourly (hour)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_hourly_dims (signature_id UUID NOT NULL CONSTRAINT error_hourly_dims_signature_id_error_signatures_id_fk REFERENCES error_signatures(id) ON DELETE CASCADE, hour TIMESTAMPTZ NOT NULL, dim TEXT NOT NULL, value TEXT NOT NULL, count BIGINT NOT NULL DEFAULT 0, CONSTRAINT error_hourly_dims_signature_id_hour_dim_value_pk PRIMARY KEY (signature_id, hour, dim, value))\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_hourly_dims_hour_idx ON error_hourly_dims (hour)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_hourly_users (signature_id UUID NOT NULL CONSTRAINT error_hourly_users_signature_id_error_signatures_id_fk REFERENCES error_signatures(id) ON DELETE CASCADE, hour TIMESTAMPTZ NOT NULL, user_hash TEXT NOT NULL, CONSTRAINT error_hourly_users_signature_id_hour_user_hash_pk PRIMARY KEY (signature_id, hour, user_hash))\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_hourly_users_hour_idx ON error_hourly_users (hour)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_reports (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), signature_id UUID NOT NULL CONSTRAINT error_reports_signature_id_error_signatures_id_fk REFERENCES error_signatures(id) ON DELETE CASCADE, user_id UUID CONSTRAINT error_reports_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, description TEXT NOT NULL, payload JSONB NOT NULL, release TEXT, screenshot_key TEXT, screenshot_type TEXT, screenshot_bytes INTEGER, linear_posted_at TIMESTAMPTZ, linear_skipped TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_reports_signature_idx ON error_reports (signature_id, created_at)\`;
+        // Fix round 1 upgrades of tables made before it: 64-bit counters, per-day sampling and distinct addresses
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'stored_day') THEN ALTER TABLE error_signatures ADD COLUMN stored_day DATE; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'stored_today') THEN ALTER TABLE error_signatures ADD COLUMN stored_today INTEGER NOT NULL DEFAULT 0; END IF; END \$\$\`;
+        // Each ALTER runs only when needed: an ALTER TABLE locks the table even when it changes nothing (N3)
+        await sql\`DO \$\$ BEGIN IF (SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly' AND column_name = 'count') = 'integer' THEN ALTER TABLE error_hourly ALTER COLUMN count TYPE BIGINT; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF (SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly' AND column_name = 'users') = 'integer' THEN ALTER TABLE error_hourly ALTER COLUMN users TYPE BIGINT; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly' AND column_name = 'ips') THEN ALTER TABLE error_hourly ADD COLUMN ips BIGINT NOT NULL DEFAULT 0; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly' AND column_name = 'stored') THEN ALTER TABLE error_hourly DROP COLUMN stored; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF (SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_hourly_dims' AND column_name = 'count') = 'integer' THEN ALTER TABLE error_hourly_dims ALTER COLUMN count TYPE BIGINT; END IF; END \$\$\`;
+        // Fix round 2: shared daily budgets, known releases, per-day address keys, and who has hit a signature
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'seen_users') THEN ALTER TABLE error_signatures ADD COLUMN seen_users BOOLEAN NOT NULL DEFAULT false; END IF; END \$\$\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_budget (day DATE NOT NULL, key TEXT NOT NULL, n BIGINT NOT NULL DEFAULT 0, CONSTRAINT error_budget_day_key_pk PRIMARY KEY (day, key))\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_releases (release TEXT PRIMARY KEY, seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_ip_keys (day DATE PRIMARY KEY, key TEXT NOT NULL)\`;
+        // Phase 2: report prompts, screenshots, reports posted to Linear, and Done read back from Linear
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'linear_filing_at') THEN ALTER TABLE error_signatures ADD COLUMN linear_filing_at TIMESTAMPTZ; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'linear_done_at') THEN ALTER TABLE error_signatures ADD COLUMN linear_done_at TIMESTAMPTZ; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_reports' AND column_name = 'screenshot_key') THEN ALTER TABLE error_reports ADD COLUMN screenshot_key TEXT; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_reports' AND column_name = 'screenshot_type') THEN ALTER TABLE error_reports ADD COLUMN screenshot_type TEXT; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_reports' AND column_name = 'screenshot_bytes') THEN ALTER TABLE error_reports ADD COLUMN screenshot_bytes INTEGER; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_reports' AND column_name = 'linear_posted_at') THEN ALTER TABLE error_reports ADD COLUMN linear_posted_at TIMESTAMPTZ; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_reports' AND column_name = 'linear_skipped') THEN ALTER TABLE error_reports ADD COLUMN linear_skipped TEXT; END IF; END \$\$\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_reports_posted_idx ON error_reports (linear_posted_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_prompt_state (user_id UUID PRIMARY KEY CONSTRAINT error_prompt_state_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, opted_out BOOLEAN NOT NULL DEFAULT false, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'linear_closed_at') THEN ALTER TABLE error_signatures ADD COLUMN linear_closed_at TIMESTAMPTZ; END IF; END \$\$\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_signatures' AND column_name = 'linear_closed_state') THEN ALTER TABLE error_signatures ADD COLUMN linear_closed_state TEXT; END IF; END \$\$\`;
+        // Fix round 2: ask times by account hash only; the per-account table keeps the setting alone
+        await sql\`DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'error_prompt_state' AND column_name = 'asked_at') THEN ALTER TABLE error_prompt_state DROP COLUMN asked_at; END IF; END \$\$\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_prompt_asked (user_hash TEXT PRIMARY KEY, asked_at TIMESTAMPTZ NOT NULL)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_prompt_asked_asked_idx ON error_prompt_asked (asked_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_prompt_known (signature_id UUID NOT NULL CONSTRAINT error_prompt_known_signature_id_error_signatures_id_fk REFERENCES error_signatures(id) ON DELETE CASCADE, user_hash TEXT NOT NULL, shown_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT error_prompt_known_signature_id_user_hash_pk PRIMARY KEY (signature_id, user_hash))\`;
+        await sql\`CREATE INDEX IF NOT EXISTS error_prompt_known_shown_idx ON error_prompt_known (shown_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS error_settings (id TEXT PRIMARY KEY, thresholds JSONB NOT NULL DEFAULT '{}'::jsonb, updated_by UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        console.log('[virvi-server] error reporting tables ensured');
+      } catch(e) { console.log('[virvi-server] error reporting tables:', e.message); }
       // model enum value
       try {
         await sql\`ALTER TYPE element_type ADD VALUE IF NOT EXISTS 'model'\`;

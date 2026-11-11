@@ -2,7 +2,7 @@ import Foundation
 
 /// The HUD's tabs, in the Decentraland HUD's order (DclHUDRenderer NavBar).
 enum HudTab: String, CaseIterable {
-    case layout = "Layout", assets = "Assets", events = "Events", stream = "Stream"
+    case layout = "Layout", assets = "Models", events = "Events", stream = "Stream"
     case worlds = "Worlds", alerts = "Alerts", roles = "Roles", stats = "Stats"
 }
 

@@ -7,11 +7,21 @@ import { listWallForAdmin, setWallHidden } from '../studio/wall.js'
 import { createGiftCode, disableGiftCode, GiftCodeError, listGiftCodes } from '../studio/gift-codes.js'
 import { declineManaRefund, listManaRefunds, manaRefundQuote, recordManaRefundSent, type ManaRefundStatus } from '../studio/mana/refunds.js'
 import { listManaTransfers, markTransferReturned, settleTransferByHand, type ManaTransferStatus } from '../studio/mana/settle.js'
+import { requireAdmin } from '../auth/admin.js'
+import { decodeCursor, DESIGN_KINDS, listAdminDesigns } from '../studio/admin-designs.js'
+import { lastFullWeek, listDownRatings, markRating, MIN_SAMPLE, parseWeek, ratesBetween, weekDigest } from '../studio/rating-review.js'
+import { TAG_KEYS } from '../studio/ratings.js'
+import { createLesson, deleteLesson, isLessonKind, LessonError, lessonText, listLessons, updateLesson } from '../studio/lessons.js'
+import { DEFAULT_AGENTS, kindDefaultsDetail, setKindDefault } from '../studio/defaults.js'
+import { DRAFT_BATCH_MAX, draftingAvailable, draftLesson } from '../studio/lesson-drafts.js'
+import { ideaCounts } from '../studio/prompt-ideas.js'
+import { firstReplyStats } from '../studio/timings.js'
 
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 const REFUND_STATUSES: ManaRefundStatus[] = ['requested', 'sent', 'declined']
 const TRANSFER_STATUSES: ManaTransferStatus[] = ['unmatched', 'matched', 'settled_by_hand', 'returned']
 const MAX_NOTE = 500
+const MAX_QUERY = 200
 
 /** A refusal from the payment code as the page sees it. */
 function refusal(reply: FastifyReply, err: unknown) {
@@ -26,15 +36,148 @@ function transferKey(request: FastifyRequest): { txHash: string; logIndex: numbe
   return { txHash, logIndex: Number(logIndex) }
 }
 
-/** Admins only: the Studio flags page (src/studio/scope.ts). Accounts that keep sending off-topic work, and pausing them. */
-async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  if (request.user.role !== 'admin') {
-    return reply.status(403).send({ error: 'Forbidden', message: 'Admin access required' })
-  }
-}
 
 export default async function adminStudioRoutes(app: FastifyInstance) {
+  // Admins only (the database's role: src/auth/admin.ts): the Studio admin page
   const admin = { preHandler: [authenticate, requireAdmin] }
+
+  // Everyone's designs, trial ones included, to open and help with (Virvi support, on the design's own page)
+  app.get('/api/admin/studio/designs', admin, async (request, reply) => {
+    const { q, kind, cursor } = request.query as { q?: unknown; kind?: unknown; cursor?: unknown }
+    if (q !== undefined && (typeof q !== 'string' || q.length > MAX_QUERY)) return reply.status(400).send({ error: `q must be at most ${MAX_QUERY} characters` })
+    if (kind !== undefined && kind !== '' && !(DESIGN_KINDS as readonly unknown[]).includes(kind)) {
+      return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
+    }
+    const at = cursor === undefined || cursor === '' ? null : typeof cursor === 'string' ? decodeCursor(cursor) : null
+    if (cursor !== undefined && cursor !== '' && !at) return reply.status(400).send({ error: 'unknown cursor' })
+    return listAdminDesigns({ q: q as string | undefined, kind: (kind as string | undefined) || null, cursor: at })
+  })
+
+  // 👎 revisions to review (LIV-142), newest first
+  app.get('/api/admin/studio/ratings', admin, async (request, reply) => {
+    const q = request.query as Record<string, unknown>
+    const text = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null)
+    const kind = text(q.kind)
+    if (kind && !(DESIGN_KINDS as readonly string[]).includes(kind)) return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
+    const tag = text(q.tag)
+    if (tag && !(TAG_KEYS as string[]).includes(tag)) return reply.status(400).send({ error: 'unknown tag' })
+    const agent = text(q.agent)
+    const model = text(q.model)
+    if ((agent && agent.length > MAX_QUERY) || (model && model.length > MAX_QUERY)) return reply.status(400).send({ error: 'agent and model must be short' })
+    const handled = q.handled === 'true' ? true : q.handled === 'false' ? false : null
+    if (q.handled !== undefined && q.handled !== '' && handled === null) return reply.status(400).send({ error: 'handled must be true or false' })
+    const cursor = text(q.cursor)
+    const at = cursor ? decodeCursor(cursor) : null
+    if (cursor && !at) return reply.status(400).send({ error: 'unknown cursor' })
+    return listDownRatings({ kind, agent, model, tag, handled }, at, new Date())
+  })
+
+  app.patch('/api/admin/studio/ratings/:id', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'rating_not_found' })
+    const b = (request.body ?? {}) as { handled?: unknown; autoCheck?: unknown }
+    if ((b.handled !== undefined && typeof b.handled !== 'boolean') || (b.autoCheck !== undefined && typeof b.autoCheck !== 'boolean')) {
+      return reply.status(400).send({ error: 'handled and autoCheck must be true or false' })
+    }
+    if (b.handled === undefined && b.autoCheck === undefined) return reply.status(400).send({ error: 'nothing to change' })
+    const r = await markRating(id, request.user.id, { handled: b.handled as boolean | undefined, autoCheck: b.autoCheck as boolean | undefined }, new Date())
+    return r ?? reply.status(404).send({ error: 'rating_not_found' })
+  })
+
+  // The weekly ratings digest: `week` is its Monday (YYYY-MM-DD, UTC); without it, the last full week
+  app.get('/api/admin/studio/digest', admin, async (request, reply) => {
+    const raw = (request.query as { week?: unknown }).week
+    const week = raw === undefined || raw === '' ? lastFullWeek(new Date()) : parseWeek(raw)
+    if (!week) return reply.status(400).send({ error: 'week must be a Monday, as YYYY-MM-DD' })
+    return weekDigest(week)
+  })
+
+  // Lessons for the agent, per design kind: drafted, edited, approved, switched off (LIV-142)
+  const lessonRefusal = (reply: FastifyReply, err: unknown) => {
+    if (err instanceof LessonError) return reply.status(err.status).send({ error: err.code, code: err.code })
+    throw err
+  }
+  const ratingIds = (raw: unknown, max: number): string[] | null =>
+    Array.isArray(raw) && raw.length <= max && raw.every(isUuid) ? [...new Set(raw as string[])] : null
+
+  app.get('/api/admin/studio/lessons', admin, async (request, reply) => {
+    const kind = (request.query as { kind?: unknown }).kind
+    if (kind !== undefined && kind !== '' && !isLessonKind(kind)) return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
+    return { ...await listLessons(isLessonKind(kind) ? kind : null), drafting: draftingAvailable() }
+  })
+
+  app.post('/api/admin/studio/lessons', admin, async (request, reply) => {
+    const b = (request.body ?? {}) as { kind?: unknown; text?: unknown; sourceRatingIds?: unknown }
+    if (!isLessonKind(b.kind)) return reply.status(400).send({ error: 'kind must be wearable, emote or scene' })
+    const text = lessonText(b.text)
+    if (!text) return reply.status(400).send({ error: 'text must be 1-500 characters' })
+    const sources = b.sourceRatingIds === undefined ? [] : ratingIds(b.sourceRatingIds, DRAFT_BATCH_MAX)
+    if (!sources) return reply.status(400).send({ error: 'sourceRatingIds must be rating ids' })
+    try {
+      return reply.status(201).send(await createLesson(request.user.id, { kind: b.kind, text, sourceRatingIds: sources, drafted: 'admin' }, new Date()))
+    } catch (err) {
+      return lessonRefusal(reply, err)
+    }
+  })
+
+  // "Draft a lesson": Claude drafts one from the chosen 👎s (one kind); it is saved as a draft for the admin to edit
+  app.post('/api/admin/studio/lessons/draft', admin, async (request, reply) => {
+    const ids = ratingIds((request.body as { ratingIds?: unknown } | null)?.ratingIds, DRAFT_BATCH_MAX)
+    if (!ids?.length) return reply.status(400).send({ error: `ratingIds must be 1-${DRAFT_BATCH_MAX} rating ids` })
+    try {
+      const { kind, text } = await draftLesson(ids)
+      return reply.status(201).send(await createLesson(request.user.id, { kind, text, sourceRatingIds: ids, drafted: 'claude' }, new Date()))
+    } catch (err) {
+      return lessonRefusal(reply, err)
+    }
+  })
+
+  app.patch('/api/admin/studio/lessons/:id', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'lesson_not_found' })
+    const b = (request.body ?? {}) as { text?: unknown; enabled?: unknown; status?: unknown }
+    const text = b.text === undefined ? undefined : lessonText(b.text)
+    if (text === null) return reply.status(400).send({ error: 'text must be 1-500 characters' })
+    if (b.enabled !== undefined && typeof b.enabled !== 'boolean') return reply.status(400).send({ error: 'enabled must be true or false' })
+    if (b.status !== undefined && b.status !== 'approved') return reply.status(400).send({ error: "status can only become 'approved'" })
+    try {
+      return await updateLesson(id, request.user.id, { text, enabled: b.enabled as boolean | undefined, approve: b.status === 'approved' }, new Date())
+    } catch (err) {
+      return lessonRefusal(reply, err)
+    }
+  })
+
+  app.delete('/api/admin/studio/lessons/:id', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id) || !(await deleteLesson(id))) return reply.status(404).send({ error: 'lesson_not_found' })
+    return reply.status(204).send()
+  })
+
+  // The agent new designs of each kind start on, with the last four weeks' 👍 rates to choose it by. Set by hand only.
+  const RATES_DAYS = 28
+  // How long prompts wait for their first progress line: the last 50 timed prompt jobs, by how the machine was got
+  app.get('/api/admin/studio/first-reply', admin, async () => firstReplyStats())
+
+  app.get('/api/admin/studio/defaults', admin, async () => {
+    const now = new Date()
+    return {
+      defaults: await kindDefaultsDetail(),
+      rates: await ratesBetween(new Date(now.getTime() - RATES_DAYS * 24 * 3600_000), now),
+      ratesDays: RATES_DAYS, minSample: MIN_SAMPLE, agents: DEFAULT_AGENTS,
+    }
+  })
+
+  app.put('/api/admin/studio/defaults/:kind', admin, async (request, reply) => {
+    const { kind } = request.params as { kind: string }
+    if (!isLessonKind(kind)) return reply.status(404).send({ error: 'unknown kind' })
+    const agent = (request.body as { agent?: unknown } | null)?.agent
+    if (!(DEFAULT_AGENTS as readonly unknown[]).includes(agent)) return reply.status(400).send({ error: 'agent must be claude or codex' })
+    await setKindDefault(kind, agent as string, request.user.id, new Date())
+    return { defaults: await kindDefaultsDetail() }
+  })
+
+  // The example prompts left (not yet sent as anyone's first prompt), per slot and per move, of how many there are
+  app.get('/api/admin/studio/ideas', admin, async () => ideaCounts())
 
   app.get('/api/admin/studio/flags', admin, async (request) => {
     const status = (request.query as { status?: string }).status === 'closed' ? 'closed' : 'open'

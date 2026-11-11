@@ -3,15 +3,16 @@ import { useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, PrimaryButton } from '@/components/ui'
 import {
-  formatCents, formatCredit, manaBack, paidSummary, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
+  formatCents, formatCredit, manaBack, paidByReader, paidSummary, REPORT_MAX, refusalMessage, reportCopy, reportOk, revisionActions,
   type FinalizedRevision, type StudioPiece, type WallState,
 } from '@/lib/studio'
 import { WALL_BAD_LINK, wallToggleState } from '@/lib/wall'
 
-type Props = { designId: string; pieces: StudioPiece[]; wall: WallState; onChanged: () => Promise<void>; kind?: string }
+/** `wall`: the wall-of-fame choice, given only to the owner (the PUT is the owner's alone); without it, no wall toggle. */
+type Props = { designId: string; pieces: StudioPiece[]; wall?: WallState; onChanged: () => Promise<void>; kind?: string; support?: boolean; act?: boolean }
 
 /** Save a downloaded blob under its file name. */
-function save(blob: Blob, filename: string) {
+export function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -23,9 +24,10 @@ function save(blob: Blob, filename: string) {
 /**
  * Every paid piece's revisions, whichever tab is selected: download, a free retry when packaging failed, and mistake
  * reports. With two or more pieces ready, "Download all" fetches them as one zip; while pieces package, it says how many
- * are ready.
+ * are ready. A revision's payer (`paidByMe`, LIV-159) sees its mistake report and outcome, MANA back and their 3D Models
+ * link; `support`: Virvi support is looking, and sees none of them. `act`: not a viewer, so a failed package can be tried again.
  */
-export default function PaidRevisions({ designId, pieces, wall, onChanged, kind }: Props) {
+export default function PaidRevisions({ designId, pieces, wall, onChanged, kind, support = false, act = true }: Props) {
   const api = useApi()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +41,7 @@ export default function PaidRevisions({ designId, pieces, wall, onChanged, kind 
     setError(null)
     try {
       const { blob, filename } = await api.downloadStudioPackages(designId)
-      save(blob, filename)
+      saveBlob(blob, filename)
     } catch (err) {
       setError(refusalMessage(err as never, new Date()).text)
     } finally {
@@ -57,12 +59,12 @@ export default function PaidRevisions({ designId, pieces, wall, onChanged, kind 
         {summary.downloadAll && <PrimaryButton type="button" disabled={busy} onClick={downloadAll}>Download all</PrimaryButton>}
       </div>
       {error && <p className="px-4 pt-3 text-sm text-amber-300" role="alert">{error}</p>}
-      <WallChoice designId={designId} pieces={pieces} wall={wall} onChanged={onChanged} />
+      {wall && <WallChoice designId={designId} pieces={pieces} wall={wall} onChanged={onChanged} />}
       {paid.map((piece) => (
         <section key={piece.category} aria-label={piece.name}>
           {several && <h4 className="px-4 pt-3 text-xs font-medium uppercase tracking-wide text-gray-400">{piece.name}</h4>}
           <ul className="divide-y divide-gray-800">
-            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} />)}
+            {piece.finalized.map((f) => <PaidRevision key={f.revision} designId={designId} category={piece.category} f={f} onChanged={onChanged} scene={kind === 'scene'} mine={paidByReader(f, support)} act={act} />)}
           </ul>
         </section>
       ))}
@@ -115,7 +117,7 @@ function WallChoice({ designId, pieces, wall, onChanged }: { designId: string; p
   )
 }
 
-function PaidRevision({ designId, category, f, onChanged, scene }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean }) {
+function PaidRevision({ designId, category, f, onChanged, scene, mine, act }: { designId: string; category: string; f: FinalizedRevision; onChanged: () => Promise<void>; scene?: boolean; mine: boolean; act: boolean }) {
   const api = useApi()
   const actions = revisionActions(f, new Date())
   const [busy, setBusy] = useState(false)
@@ -139,7 +141,7 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
 
   const download = () => run(async () => {
     const { blob, filename } = await api.downloadStudioPackage(designId, category, f.revision)
-    save(blob, filename)
+    saveBlob(blob, filename)
   })
 
   const retry = () => run(async () => {
@@ -166,7 +168,7 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
         <div>
           <p className="font-medium">Revision {f.revision}</p>
           <p className="text-xs text-gray-500">
-            {f.kind === 'first' ? 'First finalize' : 'Revision'} · {formatCents(f.amountCents)}
+            {f.kind === 'first' ? 'First finalize' : 'Revision'}{f.amountCents !== null && ` · ${formatCents(f.amountCents)}`}
             {f.paidAt && ` · paid ${new Date(f.paidAt).toLocaleDateString()}`}
           </p>
         </div>
@@ -175,15 +177,15 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
             <Badge tone="success">{f.report.status === 'waived' ? 'Waived' : 'Refunded'}</Badge>
           )}
           {actions.packaging && <span className="text-gray-400">Packaging…</span>}
-          {actions.download && scene && <a href="/assets" className="text-blue-300 underline">In your asset library</a>}
+          {actions.download && scene && mine && <a href="/assets" className="text-blue-300 underline">In your 3D Models</a>}
           {actions.download && <PrimaryButton type="button" disabled={busy} onClick={download}>Download</PrimaryButton>}
-          {actions.retry && <PrimaryButton type="button" disabled={busy} onClick={retry}>Try again</PrimaryButton>}
-          {actions.report === 'open' && !reporting && refunded === null && (
+          {actions.retry && act && <PrimaryButton type="button" disabled={busy} onClick={retry}>Try again</PrimaryButton>}
+          {mine && actions.report === 'open' && !reporting && refunded === null && (
             <button type="button" onClick={() => setReporting(true)} className="text-gray-400 underline hover:text-white">Report a mistake</button>
           )}
         </div>
       </div>
-      {actions.retry && <p className="mt-1 text-xs text-gray-500">Packaging didn’t finish. Trying again is free.</p>}
+      {actions.retry && <p className="mt-1 text-xs text-gray-500">{act ? 'Packaging didn’t finish. Trying again is free.' : 'Packaging didn’t finish.'}</p>}
       {reporting && (
         <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); if (reportOk(text)) report() }}>
           <label className="block">
@@ -203,7 +205,7 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
           {refunded.creditedCents > 0 && ` ${formatCredit(refunded.creditedCents)} went to your Virvi credit, for your next checkout.`}
         </p>
       )}
-      {mana.offer && (
+      {mine && mana.offer && (
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <p className="text-gray-300">You paid {formatCredit(f.report!.manaCents!)} of this in MANA.</p>
           <button type="button" disabled={busy} onClick={manaInstead} className="rounded-md bg-gray-800 px-3 py-1.5 text-sm hover:bg-gray-700 disabled:opacity-50">
@@ -211,8 +213,8 @@ function PaidRevision({ designId, category, f, onChanged, scene }: { designId: s
           </button>
         </div>
       )}
-      {mana.note && <p className="mt-2 text-gray-300" role="status">{mana.note}</p>}
-      {f.report && reportCopy(f.report.status) && <p className="mt-2 text-gray-300" role="status">{reportCopy(f.report.status)}</p>}
+      {mine && mana.note && <p className="mt-2 text-gray-300" role="status">{mana.note}</p>}
+      {mine && f.report && reportCopy(f.report.status) && <p className="mt-2 text-gray-300" role="status">{reportCopy(f.report.status)}</p>}
       {error && <p className="mt-2 text-amber-300" role="alert">{error}</p>}
     </li>
   )

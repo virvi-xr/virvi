@@ -33,6 +33,14 @@ export interface VirviPlatformAdapter {
 
   // --- Entity Lifecycle ---
   createEntity(): EntityHandle;
+  /**
+   * Optional: an entity the platform created for this item before live state arrived (Decentraland's deployed
+   * placements snapshot, LIV-134), handed over once, or null. A manager uses it instead of createEntity for the same
+   * instance id, so the item isn't removed and created again.
+   */
+  adoptEntity?(instanceId: string): EntityHandle | null;
+  /** Optional: live state has arrived; remove every such entity no manager adopted. */
+  releaseUnadopted?(): void;
   /** Optional: give the entity a display name, which analytics report for clicks on it. Without it, clicks on Virvi items are anonymous. */
   setName?(entity: EntityHandle, name: string): void;
   destroyEntity(handle: EntityHandle): void;
@@ -52,6 +60,17 @@ export interface VirviPlatformAdapter {
   resolveModelSrc?(src: string): string | null;
   setMaterial(entity: EntityHandle, material: MaterialData): void;
   setVideoMaterial(entity: EntityHandle, video: VideoMaterialData): void;
+  /**
+   * Optional: draw the entity as a plain solid colour shape (channels 0-1), sized by its transform's scale: a 1×1×1
+   * box, or a 1×1 plane. Frames around images and video screens are built from these (LIV-129); without it, nothing
+   * is framed.
+   */
+  setSolidShape?(entity: EntityHandle, shape: 'box' | 'plane', color: { r: number; g: number; b: number }): void;
+  /**
+   * Optional: how many entities the scene has now. With `capabilities.maxEntities`, frames that would take the scene
+   * over the limit are left off; without either, frames are always drawn.
+   */
+  entityCount?(): number;
   /** Optional: show text on the entity (the "Ad" label). Without it, ads show no label. */
   setText?(entity: EntityHandle, text: string, opts: { fontSize: number }): void;
 

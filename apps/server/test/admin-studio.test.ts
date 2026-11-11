@@ -78,7 +78,6 @@ describe('studio admin: flags and pauses', () => {
       await app.inject({ method: 'POST', url: `/api/studio/designs/${d.id}/prompts`, headers: as(u), payload: { fixChecks: true } }),
       await app.inject({ method: 'POST', url: `/api/studio/designs/${d.id}/renders`, headers: as(u), payload: { categories: ['hat'], bodyShape: 'female', outfit: 'default', emote: null } }),
       await app.inject({ method: 'POST', url: `/api/studio/designs/${d.id}/uploads?name=logo.png`, headers: { ...as(u), 'content-type': 'image/png' }, payload: Buffer.from('x') }),
-      await app.inject({ method: 'POST', url: '/api/studio/topups', headers: as(u), payload: { packs: 1 } }),
     ]
     for (const res of refused) expect([res.statusCode, res.json().code]).toEqual([403, 'studio_paused'])
   })
@@ -96,6 +95,10 @@ describe('studio admin: flags and pauses', () => {
     const checkout = await app.inject({ method: 'POST', url: `/api/studio/designs/${d.id}/finalize`, headers: as(u), payload: { categories: ['feet'] } })
     expect(checkout.statusCode).toBe(200)
     expect(checkout.json().url).toMatch(/^https:\/\/checkout\.stripe\.test\//)
+    // Pausing never blocks paying: top-ups too (owner, 2026-11-10)
+    const topup = await app.inject({ method: 'POST', url: '/api/studio/topups', headers: as(u), payload: { packs: 1, method: 'card' } })
+    expect(topup.statusCode).toBe(200)
+    expect(topup.json().url).toMatch(/^https:\/\/checkout\.stripe\.test\//)
     const report = await app.inject({ method: 'POST', url: `/api/studio/designs/${d.id}/pieces/hat/revisions/2/report`, headers: as(u), payload: { text: 'the sleeve clips through the arm when waving' } })
     expect(report.statusCode).toBe(200)
     const pkg = await app.inject({ method: 'GET', url: `/api/studio/designs/${d.id}/pieces/hat/revisions/1/package`, headers: as(u) })

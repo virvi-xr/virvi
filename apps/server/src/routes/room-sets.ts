@@ -32,7 +32,8 @@ function refuse(reply: FastifyReply, err: unknown) {
 export default async function roomSetRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string }; Querystring: PreviewQuery }>(
     '/api/room-scans/:id/preview.glb',
-    { preHandler: [authenticate] },
+    // A trial previews its own scans in the wizard (nothing is stored); making or placing a room set needs an account
+    { preHandler: [authenticate], config: { trial: true } },
     async (request, reply) => {
       const scan = isUuid(request.params.id) ? await loadOwnedScan(request.user.id, request.params.id) : null
       if (!scan) return reply.status(404).send({ error: 'not_found' })

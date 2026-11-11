@@ -1,6 +1,6 @@
 'use client'
 // One scene's Decentraland World on the deploy page: mode, status, models waiting, Redeploy now, the
-// permission for Virvi, "Use the live version", "Download what went live" and the deploy history.
+// permission for Virvi, "Use the live version", "Download what went live", the deploy history and "Disconnect this World".
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useApi, type DclDeployment, type DclDestination, type DclPendingModel } from '@/lib/api'
@@ -8,11 +8,13 @@ import {
   deploymentStatusLabel, deploymentSummary, formatDateTime, modeLabel, pendingLine, signErrorMessage, statusView,
 } from '@/lib/deploy'
 import { errorCode, grantVirvi, jumpInUrl, progressLines, revokeVirvi } from '@/lib/wizard/run'
+import { disconnectedNotice, disconnectFromCardPrompt } from '@/lib/world-disconnect'
 import { Badge, ConfirmAction } from '@/components/ui'
 import { ProgressLines, useShownPhase } from '@/components/wizard/ProgressLines'
 import { useWorldSigning } from './useWorldSigning'
 import { DownloadLiveButton } from './DownloadLiveButton'
 import { DownloadBackupButton } from './DownloadBackupButton'
+import { MapDataLine } from './MapDataLine'
 
 interface Detail {
   /** Over the triangles Decentraland recommends: shown, never a stop. */
@@ -25,7 +27,7 @@ interface Detail {
 const button = 'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50'
 const secondary = 'rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 disabled:opacity-50'
 
-export function WorldDestinationCard({ destination, history, virviDeploys, offerGrant, onChanged }: {
+export function WorldDestinationCard({ destination, history, virviDeploys, offerGrant, onChanged, onDisconnected, canDisconnect = true }: {
   destination: DclDestination
   /** This destination's deployments, newest first. */
   history: DclDeployment[]
@@ -35,11 +37,15 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
   offerGrant?: boolean
   /** Something changed (a deploy, the mode): the page reloads the history. */
   onChanged: (dest: DclDestination) => void
+  /** The World was disconnected from the scene: the page drops the card and shows `notice`. */
+  onDisconnected: (dest: DclDestination, notice: string) => void
+  /** Full access to the scene (owner or co-host): only then is "Disconnect this World" offered. */
+  canDisconnect?: boolean
 }) {
   const api = useApi()
   const [dest, setDest] = useState(destination)
   const [detail, setDetail] = useState<Detail | null>(null)
-  const [busy, setBusy] = useState<null | 'grant' | 'revoke' | 'rebase' | 'mode'>(null)
+  const [busy, setBusy] = useState<null | 'grant' | 'revoke' | 'rebase' | 'mode' | 'disconnect'>(null)
   const [error, setError] = useState<string | null>(null)
   /** grant_partial: Virvi may hold World-wide rights, so removing them is offered until it works. */
   const [partial, setPartial] = useState(false)
@@ -90,6 +96,19 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
   const rebase = () => act('rebase', async () => (await api.rebaseDclDestination(dest.id)).destination,
     "Virvi now builds on what's live in your World.")
 
+  // Only Virvi's link goes: the World keeps what's live, and Virvi's permission stays until the owner removes it
+  const disconnect = async () => {
+    setBusy('disconnect')
+    setError(null)
+    setNotice(null)
+    try {
+      onDisconnected(dest, disconnectedNotice(await api.disconnectDclDestination(dest.id)))
+    } catch (err) {
+      setError(signErrorMessage(err, dest))
+      setBusy(null)
+    }
+  }
+
   const redeploy = async () => {
     setError(null)
     setNotice(null)
@@ -104,6 +123,8 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
   const pending = detail?.pending.length ?? null
   const last = detail?.lastDeployment ?? history[0] ?? null
   const lines = progressLines(shownPhase, view.models, view.status === 'failed')
+  // The button that removes Virvi's permission, as it reads now (null when the card doesn't offer it)
+  const revokeLabel = granted ? 'Switch to signing each deploy' : partial ? "Remove Virvi's permission" : null
 
   return (
     <div className="space-y-4 rounded-lg border border-gray-800 bg-gray-900 p-5 text-sm">
@@ -121,7 +142,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <p className="text-xs text-gray-500">Models</p>
-          <p className="text-gray-200">{pending === null ? '…' : pendingLine(pending)}</p>
+          <p className="text-gray-200">{pending === null ? '…' : pendingLine(detail!.pending)}</p>
           {pending !== null && pending > 0 && (
             <p className="mt-0.5 text-xs text-gray-500">{detail!.pending.map((m) => m.name).join(', ')}</p>
           )}
@@ -137,6 +158,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
               <DownloadBackupButton sceneId={dest.sceneId} destinationId={dest.id} className={secondary} />
             </div>
           )}
+          <MapDataLine destination={dest} />
         </div>
       </div>
 
@@ -184,7 +206,7 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
             onConfirm={revoke}
             className={secondary}
           >
-            {busy === 'revoke' ? 'Working…' : granted ? 'Switch to signing each deploy' : "Remove Virvi's permission"}
+            {busy === 'revoke' ? 'Working…' : revokeLabel}
           </ConfirmAction>
         )}
         {dest.status === 'needs_review' && (
@@ -197,6 +219,17 @@ export function WorldDestinationCard({ destination, history, virviDeploys, offer
             className={secondary}
           >
             Use the live version
+          </ConfirmAction>
+        )}
+        {canDisconnect && (
+          <ConfirmAction
+            disabled={running}
+            confirmLabel="Disconnect"
+            prompt={disconnectFromCardPrompt(dest.worldName, revokeLabel)}
+            onConfirm={disconnect}
+            className={`${secondary} sm:ml-auto`}
+          >
+            {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect this World'}
           </ConfirmAction>
         )}
       </div>

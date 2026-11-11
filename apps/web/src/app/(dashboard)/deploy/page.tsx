@@ -12,6 +12,7 @@ import { ConfirmAction, PageHeader, Skeleton } from '@/components/ui'
 import { AdoptWorldCard, WorldDestinationCard } from '@/components/dcl/WorldDestinationCard'
 import { ParcelDestinationCard } from '@/components/dcl/ParcelDestinationCard'
 import { wizardErrorMessage } from '@/lib/wizard/run'
+import { canDisconnectScene } from '@/lib/world-disconnect'
 
 export default function DeployPage() {
   return (
@@ -457,6 +458,15 @@ function DeployContent() {
       offerGrant: new Set([...w.offerGrant, dest.id]),
     })
 
+  // A World disconnected from the scene: its card goes. Its deployments stay in the scene's records (Download what went
+  // live still works by deployment), but this page lists history per World, so they no longer show here.
+  const [worldNotice, setWorldNotice] = useState<string | null>(null)
+  useEffect(() => setWorldNotice(null), [selectedSceneId])
+  const disconnected = (dest: DclDestination, notice: string) => {
+    setWorlds((w) => w && { ...w, destinations: w.destinations.filter((d) => d.id !== dest.id) })
+    setWorldNotice(notice)
+  }
+
   const handleSceneChange = (sceneId: string) => {
     setSelectedSceneId(sceneId)
     const url = sceneId ? `/deploy?scene=${sceneId}` : '/deploy'
@@ -503,6 +513,7 @@ function DeployContent() {
             <h2 className="text-lg font-semibold">Decentraland Worlds</h2>
             <p className="text-sm text-gray-500">Virvi deploys from what&apos;s live in your World, so you never need the scene&apos;s files.</p>
           </div>
+          {worldNotice && <p className="rounded-lg border border-blue-900/60 bg-blue-950/40 px-4 py-3 text-sm text-blue-200" role="status">{worldNotice}</p>}
           {worldsError ? (
             <p className="rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300" role="alert">{worldsError}</p>
           ) : !worlds ? (
@@ -526,6 +537,8 @@ function DeployContent() {
                   virviDeploys={virviDeploys}
                   offerGrant={worlds.offerGrant.has(d.id)}
                   onChanged={refreshHistory}
+                  onDisconnected={disconnected}
+                  canDisconnect={canDisconnectScene(scenes.find((s) => s.id === selectedSceneId)?.relationship)}
                 />
               ))}
               {worlds.adoptable.map((world) => (

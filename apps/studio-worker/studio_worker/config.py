@@ -8,8 +8,14 @@ ANIMATIONS = Path('/opt/dcl-animations')  # Decentraland's avatar animations, fo
 DESIGN = Path('/work/design')  # the design's workspace, owned by AGENT_USER
 AGENT_USER = 'agent'
 PREVIEW_URL = 'https://wearable-preview.decentraland.org/'
-# Outfit name -> wearable-preview `profile` value (a deterministic default outfit)
-OUTFITS = {'default': 'default1', 'outfit-2': 'default2', 'outfit-3': 'default3'}
+# Outfit name -> body shape -> wearable-preview `profile` value (a deterministic default outfit). The preview dresses the
+# requested body in the profile's own hair, face and clothes, so each body wears a profile made for it: default1 is a
+# BaseFemale avatar and looked like a woman on the male body (LIV-143). Long sleeves and trousers; then shorts; then a
+# skirt (a school skirt on the female body, a kilt on the male one). The female profiles wear no eyewear (it would sit
+# over an eyewear or mask piece) and have a human skin colour; default15 and default8 wear small earrings.
+OUTFITS = {'default': {'male': 'default81', 'female': 'default1'},
+           'outfit-2': {'male': 'default96', 'female': 'default15'},
+           'outfit-3': {'male': 'default83', 'female': 'default8'}}
 BASE_EMOTES = ('idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump')
 
 

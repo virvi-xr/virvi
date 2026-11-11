@@ -6,7 +6,8 @@ real.
 
 One machine works on one design. It restores the design's workspace, takes that design's jobs one at a time, and
 exits after `STUDIO_IDLE_EXIT_SEC` with no job, which stops the machine. The worker always pulls; Virvi never calls
-the machine.
+the machine. Virvi may start the machine before there is a job (when someone starts typing a prompt), so a worker can
+boot, restore, and poll for a while before its first job, or exit idle without one.
 
 ## Machine environment
 
@@ -112,16 +113,22 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   running the agent. False or missing for the server's own text (Continue, fixing the checks), which is never checked.
 - `render`, on a render job: `{"categories": ["hat"], "bodyShape": "male"|"female", "outfit": "default"|"outfit-2"|
   "outfit-3", "emote": null|"idle"|"wave"|"dance"|"clap"|"walk"|"run"|"jump"}`. A wearable view is a 36-frame spin;
-  an emote design's view is 36 frames through its animation. Two more shapes:
+  an emote design's view is 36 frames through its animation. An outfit is a base avatar made for the body shape
+  being rendered (`config.OUTFITS`), so each body keeps its own hair, face and clothes. Two more shapes:
   - `{"categories": ["hat"], "bodyShape", "mode": "orbit", "ring": bool}`: a wearable's Inspect view, `orbit-<shape>`,
     122 frames (24 with `ring`).
   - `{"set": true, "bodyShape", "outfit", "emote": <base emote>|"own"}`: every current piece worn together in a
-    walk-around, uploaded to `renders/set/<viewKey>/`. The result carries `set` and an empty `pieces`.
+    walk-around, uploaded to `renders/set/<viewKey>/`. The result carries `set` and an empty `pieces`. With
+    `"categories": [...]` (Finalize checking some of the pieces) only those pieces are worn.
 - `fixClipping`, on a prompt job: `{"emote": <base emote>|"own", "bodyShape", "outfit"}` when the prompt is the
-  server's free clipping fix. Before the agent runs, the worker writes 16 frames of that emote, every piece worn, to
+  server's free clipping fix (with `categories`, the pieces worn in the view the person saw: only those are worn in the
+  frames and named to studio-preview). Before the agent runs, the worker writes 16 frames of that emote, every piece worn, to
   `review/clipping/<emote>/NN.png`, and the prompt tells the agent to open them first and to check its fix with
   `studio-preview <pieces> --emote <emote> --body <shape> --outfit <outfit>`. If the frames can't be rendered, the
   job ends `error` without running the agent.
+- `lessons`, on a prompt job: `[str]`, the lessons Virvi admins approved for the design's kind (LIV-142), present only
+  when there are some (at most 4,000 characters together). The worker adds them to the studio instructions after the
+  user's words, never to the conversation history. A worker that predates them ignores the field.
 
 - `finalize`, on a finalize job: `{"designName": str, "pieces": [{"category", "name", "revision": n, "files":
   [contract paths]}]}`. `files` are the paid revision's files (its GLBs, `piece.json` and checker report). Virvi may add
@@ -158,9 +165,20 @@ Views, rendered in the worker's own Babylon page:
 {"type": "progress", "text": "Running: blender -b /opt/assets/AvatarShape_A.blend --python build_cap.py"}
 ```
 
-A prompt job's phases come in order: `building`, `checking`, `rendering` (only when a piece changed), `saving`. A
-render job sends `rendering`. Progress texts are the agent's messages and the commands it runs. Events are best
-effort: one that fails to send is dropped.
+A prompt job's phases come in order: `screening` (only when the job has `check`: the off-topic check, before the
+agent), `building`, `checking` (the pieces' checks), `rendering` (only when a piece changed), `saving`. A render job
+sends `rendering`. Progress texts are the agent's messages and the commands it runs.
+
+```json
+{"type": "boot", "seconds": 9.4, "restored": true}
+```
+
+The first job a worker process takes, of any type, starts with a `boot` event: the seconds from the process starting
+to its first poll for a job (booting and restoring the workspace), and whether there was a workspace to restore. Later
+jobs of the same process get none. Virvi records it for prompt jobs only (`studio_jobs.timings`).
+
+Events are best effort: one that fails to send is dropped, and the job goes on. A server older than the `boot` event
+answers it 400.
 
 ## Result
 
@@ -219,12 +237,19 @@ effort: one that fails to send is dropped.
   shown to the user. `costUsd` on any checked prompt includes the check's cost.
 - `changeKind`, from the agent: `"new"`, `"fix"` (a fix to a published piece) or `"design"` (a design change).
 - `checker.pass` false means the skills checker found a FAIL. The piece is still reported.
+- An emote's checker report ends with the studio's own leg check: a `WARN` (counted in `checker.warnings`, never a
+  FAIL) when its thighs or shins pass through each other. A prompt whose emote export has crossing legs sends the agent
+  back once, in the same session and with half the prompt's limits (time, turns, cost ceiling), to fix them;
+  `costUsd` and `tokens` cover both runs. If that retry doesn't finish (time, steps, ceiling, an error), the first
+  run's emote, reply and outcome stand and it saves with the WARN.
 - `costUsd` and `tokens` are this prompt's share only, even when the agent resumed a session. They are null for a
   render job.
 - **The workspace is saved before the result is posted.** If the save fails, the outcome is `error` and `pieces` is
   empty: nothing claims the revision is saved.
 - On a render job, `pieces` holds `{"category", "renders": {viewKey: frames}}` for each requested category. On a
   set render job `pieces` is empty and `set` is `{"viewKey", "frames", "fps"}` (absent unless the outcome is `ok`).
+- `worn`: on a set render or clipping fix whose job named `categories`, those categories, sorted: the worker
+  confirms it wore only them. Virvi doesn't keep a selection's view without it (an older worker wears every piece).
 - On a wearable prompt, each uploaded piece's `renders` holds `spin-male-default` (36) and the Inspect ring
   `orbit-male` (24). A ring that fails to render is left out and doesn't hold the piece back; only the spin does.
 

@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { programmeLength, type ProgrammeItem, type ShowingInstance } from '@virvixr/shared'
 import { db } from '../db/connection.js'
+import { liveSceneIds } from './live.js'
 import { events, eventSceneLinks, mediaAssets, sceneElements, screenShowings } from '../db/schema.js'
 import { publishSceneTouched, publishVenueEvent } from '../realtime/bus.js'
 import { isTimeZone, nextStarts, occurrencesBetween, utcToZoned, zonedToUtc, type ScheduleSpec } from './schedule-time.js'
@@ -257,7 +258,7 @@ export function parseShowingInput(body: Record<string, unknown>, base?: ShowingR
 }
 
 /**
- * Fills in each video's length: a length measured on upload (any Media Library file at that address) wins; else the
+ * Fills in each video's length: a length measured on upload (any Images & Video file at that address) wins; else the
  * one sent (an external video whose length the host typed). Throws ShowingError(400, 'unknown_length') naming the rest.
  */
 export async function resolveItems(items: ShowingInput['items']): Promise<Item[]> {
@@ -270,7 +271,7 @@ export async function resolveItems(items: ShowingInput['items']): Promise<Item[]
   const resolved = items.map((i) => ({ url: i.url, kind: i.kind, duration: measured.get(i.url) ?? i.duration ?? 0 }))
   const missing = itemsWithoutLength(resolved)
   if (missing.length) {
-    throw new ShowingError(400, 'unknown_length', "These videos have no known length, so they can't be scheduled. Upload them to the Media Library, or enter their length.", { urls: [...new Set(missing)] })
+    throw new ShowingError(400, 'unknown_length', "These videos have no known length, so they can't be scheduled. Upload them to Images & Video, or enter their length.", { urls: [...new Set(missing)] })
   }
   if (programmeLength(resolved) > MAX_PROGRAMME_SECONDS) throw new ShowingError(400, 'bad_showing', 'A showing can run up to 48 hours.')
   return resolved
@@ -383,7 +384,8 @@ export async function eventShowings(eventId: string) {
     id: screenShowings.id, sceneId: screenShowings.sceneId, elementId: screenShowings.elementId,
     screenName: sceneElements.name, title: screenShowings.title, enabled: screenShowings.enabled,
   }).from(screenShowings).innerJoin(sceneElements, eq(screenShowings.elementId, sceneElements.id))
-    .where(eq(screenShowings.eventId, eventId)).orderBy(screenShowings.createdAt)
+    // A deleted scene's (LIV-83) are left out until it's restored
+    .where(and(eq(screenShowings.eventId, eventId), inArray(screenShowings.sceneId, liveSceneIds()))).orderBy(screenShowings.createdAt)
 }
 
 /** The events linked to a scene, which its showings can follow. */

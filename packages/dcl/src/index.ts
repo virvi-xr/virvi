@@ -278,6 +278,6 @@ export function startVirviManager(entity: Entity, options: VirviManagerOptions =
 export default new VirviSmartItem()
 
 // Named exports for code-based usage
-export { createVirvi, startVirviAnalytics, stopVirviAnalytics } from '@virvixr/adapter-dcl'
+export { createVirvi, startVirviAnalytics, stopVirviAnalytics, placeDeployedModels } from '@virvixr/adapter-dcl'
 export type { Virvi } from '@virvixr/core'
 export type { VirviInitConfig, VirviStorage } from '@virvixr/shared'

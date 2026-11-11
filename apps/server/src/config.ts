@@ -4,11 +4,13 @@
  * Modes:
  *   single   — Self-hosted, one server, in-memory Colyseus presence
  *   scalable — Self-hosted, multiple servers + Redis presence
- *   cloud    — Hosted virvi.io SaaS, multi-tenant, billing enabled
+ *   cloud    — Hosted virvi.io SaaS, billing enabled
  */
 
 import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { getAddress } from 'ethers'
+import { resolveStorageProvider } from './storage/index.js'
 
 export type VirviMode = 'single' | 'scalable' | 'cloud'
 
@@ -38,6 +40,17 @@ function positiveInt(raw: string | undefined, def: number, zeroOk = false): numb
   const n = Number(raw)
   if (!Number.isInteger(n) || n < (zeroOk ? 0 : 1)) throw new Error(`invalid setting: ${raw}`)
   return n
+}
+
+/**
+ * TRIALS_ENABLED: signed-out Design Studio trials. Unset, they are on in cloud mode and off in single/scalable mode
+ * (the Design Studio only runs in cloud mode, and a self-hosted install has no bot check for them); `true` or `false`
+ * overrides. Another value refuses to start rather than guess.
+ */
+export function trialsEnabledFrom(raw: string | undefined, m: VirviMode): boolean {
+  if (raw === undefined || raw === '') return m === 'cloud'
+  if (raw === 'true' || raw === 'false') return raw === 'true'
+  throw new Error(`TRIALS_ENABLED must be true or false, not ${raw}`)
 }
 
 export type SceneBuildRunner = 'fly' | 'local' | 'off'
@@ -114,6 +127,13 @@ export function studioPricesFrom(e: Record<string, string | undefined>) {
   }
 }
 
+/** Refuse to start scalable mode without Redis: in-memory rooms would split players across servers without a word. */
+export function assertScalableRedis(c: { mode: VirviMode; redisUrl?: string }): void {
+  if (c.mode === 'scalable' && !c.redisUrl?.trim()) {
+    throw new Error('REDIS_URL must be set in scalable mode (use VIRVI_MODE=single for one server)')
+  }
+}
+
 /** Refuse to start a production-like server on the well-known development JWT secret. */
 export function assertProductionSecrets(c: { mode: VirviMode; nodeEnv?: string; jwtSecret: string }): void {
   const production = c.mode === 'cloud' || c.nodeEnv === 'production'
@@ -145,8 +165,8 @@ const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0
 
 /**
  * A deploy key (VIRVI_DCL_DEPLOY_KEY, VIRVI_DCL_PARCEL_DEPLOY_KEY) checked once at startup: a 32-byte hex secp256k1
- * private key, returned 0x-prefixed. A malformed key is treated as unset (Virvi deploys show as unavailable) with a
- * warning that names the variable but never includes the key, instead of throwing on every use.
+ * private key, returned 0x-prefixed; unset is null. A malformed key stops the server at boot with an error that names
+ * the variable but never includes the key.
  */
 export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY_KEY'): string | null {
   const hex = raw?.trim().replace(/^0x/i, '') ?? ''
@@ -155,8 +175,21 @@ export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY
     const n = BigInt(`0x${hex}`)
     if (n > 0n && n < SECP256K1_N) return `0x${hex}`
   }
-  console.warn(`[virvi-config] ${name} is not a valid private key (32 bytes of hex); Virvi deploys are off until it is fixed`)
-  return null
+  // Refuse to start rather than quietly turning deploys off. The message never includes the value.
+  throw new Error(`${name} is not a valid private key (32 bytes of hex). Fix it or unset it.`)
+}
+
+/** The first line of a RELEASE file (the deploy stamps the commit SHA there, since `railway up` from a checkout passes
+ * no RAILWAY_GIT_COMMIT_SHA); null when it's missing or unreadable. */
+export function readReleaseFile(path: string): string | null {
+  try { return readFileSync(path, 'utf8').split('\n')[0].trim() || null } catch { return null }
+}
+
+/** The build SHA a release is known by: VIRVI_RELEASE, else RAILWAY_GIT_COMMIT_SHA or SOURCE_COMMIT, else the stamped
+ * RELEASE file, cut to 12; else 'dev'. */
+export function releaseFrom(e: Record<string, string | undefined>, stamped: string | null = null): string {
+  const raw = (e.VIRVI_RELEASE || e.RAILWAY_GIT_COMMIT_SHA || e.SOURCE_COMMIT || stamped || '').trim()
+  return /^[A-Za-z0-9._-]+$/.test(raw) ? raw.slice(0, 12) : 'dev'
 }
 
 export const config = {
@@ -186,11 +219,17 @@ export const config = {
   jwtAccessExpiry: env('JWT_ACCESS_EXPIRY') || '15m',
   jwtRefreshExpiry: env('JWT_REFRESH_EXPIRY') || '7d',
   // Signed-out Design Studio trials (see auth/trial.ts)
+  trialsEnabled: trialsEnabledFrom(env('TRIALS_ENABLED'), mode),
   turnstileSecretKey: env('TURNSTILE_SECRET_KEY') || '',
   trialPrompts: intEnv('TRIAL_PROMPTS', 3),
   trialCostCeilingUsd: numEnv('TRIAL_COST_CEILING_USD', 3),
   trialDesigns: intEnv('TRIAL_DESIGNS', 2),
   trialUploadBytes: intEnv('TRIAL_UPLOAD_BYTES', 26214400),
+  // Scene imports a trial may start, ever (failed ones included), and the largest zip it may upload
+  trialImports: intEnv('TRIAL_IMPORTS', 2),
+  trialImportMaxBytes: intEnv('TRIAL_IMPORT_MAX_BYTES', 26214400),
+  // Room scans a trial may hold at once (deleting one makes room)
+  trialRoomScans: intEnv('TRIAL_ROOM_SCANS', 5),
   trialPerIpDay: intEnv('TRIAL_PER_IP_DAY', 3),
   trialPerDeviceDay: intEnv('TRIAL_PER_DEVICE_DAY', 3),
   trialDailyBudgetUsd: numEnv('TRIAL_DAILY_BUDGET_USD', 50),
@@ -231,14 +270,8 @@ export const config = {
   // All features unlocked when billing is disabled (self-hosted gets everything)
   allFeaturesUnlocked: !env('STRIPE_SECRET_KEY') && mode !== 'cloud',
 
-  // ── Multi-tenancy ───────────────────────────────────────────────────────
-  multiTenant: env('MULTI_TENANT')
-    ? env('MULTI_TENANT') === 'true'
-    : mode === 'cloud',
-
   // ── Storage ─────────────────────────────────────────────────────────────
-  storageProvider: env('STORAGE_PROVIDER')
-    || (mode === 'cloud' ? 's3' : 'local'),
+  storageProvider: resolveStorageProvider(), // throws at boot on an unknown STORAGE_PROVIDER
   cdnUrl: env('CDN_URL') || null,
 
   // Decentraland wallet Virvi deploys Worlds scenes with ("Let Virvi deploy for me"). Env only:
@@ -247,11 +280,6 @@ export const config = {
   // A separate wallet for Genesis City parcels, which owners make an update operator on-chain. Unset hides that
   // option (browser signing still works). Env only: never logged, never returned.
   virviDclParcelDeployKey: validDeployKey(env('VIRVI_DCL_PARCEL_DEPLOY_KEY'), 'VIRVI_DCL_PARCEL_DEPLOY_KEY'),
-
-  // Supabase (single mode default external storage)
-  supabaseUrl: env('SUPABASE_URL'),
-  supabaseAnonKey: env('SUPABASE_ANON_KEY'),
-  supabaseServiceKey: env('SUPABASE_SERVICE_KEY'),
 
   // S3 / R2
   s3Bucket: env('S3_BUCKET'),
@@ -303,6 +331,15 @@ export const config = {
   studioClaudeModel: env('STUDIO_CLAUDE_MODEL') || 'claude-opus-5-5',
   studioCodexModel: env('STUDIO_CODEX_MODEL') || 'gpt-6.1-sol',
   studioGrokModel: env('STUDIO_GROK_MODEL') || 'grok-build-0.1',
+  // Drafting agent lessons from a batch of 👎s on the Studio admin page (LIV-142, src/studio/lesson-drafts.ts). Unset,
+  // there is no Draft button and admins write lessons by hand. The workers' keys stay behind their key proxy
+  anthropicApiKey: env('ANTHROPIC_API_KEY') || null,
+  studioLessonModel: env('STUDIO_LESSON_MODEL') || 'claude-sonnet-5-5',
+  // "Improve my prompt" on a design's message box (src/studio/prompt-help.ts): its model, and how many a day per account
+  studioPromptHelpModel: env('STUDIO_PROMPT_HELP_MODEL') || 'claude-haiku-5-5',
+  studioPromptHelpPerDay: positiveInt(env('STUDIO_PROMPT_HELP_PER_DAY'), 30, true),
+  // Most people on one design (members plus pending invites), owner not counted (LIV-159)
+  studioMaxMembers: positiveInt(env('STUDIO_MAX_MEMBERS'), 50),
   studioPrices: studioPricesFrom(process.env),
   studioMana: manaSettingsFrom(process.env),
   // The studio scene's parcel (for example "-12,34"), where the checkout link sends a returning visitor
@@ -330,12 +367,6 @@ export const config = {
   // Reverse-proxy hops to trust for client IP (Railway = 1)
   trustProxyHops: ((n) => (Number.isNaN(n) || n < 0 ? 1 : n))(parseInt(env('TRUST_PROXY_HOPS') || '1')),
 
-  // ── CORS ──────────────────────────────────────────────────────────────
-  corsOrigins: [
-    env('PUBLIC_URL') || 'http://localhost:3010',
-    ...(env('CORS_ORIGINS') ? env('CORS_ORIGINS')!.split(',').map((s) => s.trim()).filter(Boolean) : []),
-  ],
-
   // ── Email ──────────────────────────────────────────────────────────────
   smtpHost: env('SMTP_HOST'),
   smtpPort: parseInt(env('SMTP_PORT') || '587'),
@@ -350,6 +381,9 @@ export const config = {
   // How often the venue booking lifecycle sweep runs (0 disables, used in tests)
   lifecycleSweepMs: parseInt(env('LIFECYCLE_SWEEP_MS') || '5000'),
   dclRedeploySweepMs: parseInt(env('DCL_REDEPLOY_SWEEP_MS') || '30000'),
+  // LIV-135: checks whether Decentraland built a map snapshot (Initial Scene State) for each new deploy (0 disables)
+  dclMapSweepMs: parseInt(env('DCL_MAP_SWEEP_MS') || '60000'),
+  dclMapManifestUrl: (env('DCL_MAP_MANIFEST_URL') || 'https://abgen-cdn.decentraland.org/LOD/lods-unity/manifests').replace(/\/+$/, ''),
 
   // Analytics background jobs (session close, rollups, retention); disabled in tests
   analyticsJobsEnabled: env('ANALYTICS_JOBS') !== 'false',
@@ -359,6 +393,39 @@ export const config = {
   dclLandSubgraphUrl: env('DCL_LAND_SUBGRAPH_URL') || 'https://subgraph.decentraland.org/land-manager',
   worldsUrl: env('DCL_WORLDS_URL') || 'https://worlds-content-server.decentraland.org',
 
+  // ── Error reporting (LIV-66, src/errors/) ─────────────────────────────
+  // The build this server runs (the Errors page's "since deploy"): VIRVI_RELEASE, else Railway's commit SHA, else 'dev'
+  release: releaseFrom(process.env, readReleaseFile(resolve(process.cwd(), 'RELEASE')) ?? readReleaseFile(resolve(process.cwd(), '../../RELEASE'))),
+  // ERROR_REPORTING=false stops recording (the ingest endpoint still answers 202 and drops what it gets)
+  errorReportingEnabled: env('ERROR_REPORTING') !== 'false',
+  // How often buffered error events are written (0 disables the flusher; tests flush by hand)
+  errorFlushMs: intEnv('ERROR_FLUSH_MS', 2000),
+  // Retention purge and Linear filing passes; disabled in tests
+  errorJobsEnabled: env('ERROR_JOBS') !== 'false',
+  // Filing to Linear is off until both are set. Env only: never logged, never returned
+  linearApiKey: env('LINEAR_API_KEY') || null,
+  linearTeamId: env('LINEAR_TEAM_ID') || null,
+  // Optional: the team's Triage state, labels (comma-separated, e.g. the Bug label) and the Bug template for new issues
+  linearTriageStateId: env('LINEAR_TRIAGE_STATE_ID') || null,
+  linearLabelIds: (env('LINEAR_LABEL_IDS') || '').split(',').map((s) => s.trim()).filter(Boolean),
+  linearTemplateId: env('LINEAR_TEMPLATE_ID') || null,
+  // Filing thresholds; each can be changed on the Errors page (stored in error_settings)
+  errorThresholds: {
+    newMinUsers: 2, // a new signature in a release hitting this many users
+    severeMinUsers: 3, // a 5xx or crash hitting this many users in an hour (for browser errors: users or addresses)...
+    severeMinCount: 10, // ...or a server-side one happening this many times in an hour (browser counts never count)
+    spikeFactor: 3, // this many times its usual rate for that hour of the week
+    spikeMinBaseline: 1, // "usual" is never taken as less than this many an hour
+    spikeMinCount: 5, // and a spike needs at least this many in the hour
+    spikeHistoryWeeks: 4, // how many past weeks make "usual"
+    quietDays: 7, // no events this long after being marked fixed: noted as quiet
+    maxIssuesPerPass: 5, // the most issues one filing pass makes (the rest wait for the next pass, or the page)
+    maxIssuesPerDay: 20, // and the most in a day
+    filing: true, // file at all (when Linear is set up)
+  },
+
   // ── Dashboard ───────────────────────────────────────────────────────────
   dashboardDir: env('DASHBOARD_DIR') || './dashboard',
+  /** The built docs site (apps/docs, Starlight with base /docs), served at /docs. Missing → no docs routes. */
+  docsDir: env('DOCS_DIR') || './apps/docs/dist',
 } as const

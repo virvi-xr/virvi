@@ -89,6 +89,32 @@ describe('AR static pages', () => {
     expect((await app.inject({ method: 'GET', url: '/studio/checkout/index.txt' })).body).toBe('CHECKOUT-RSC')
   })
 
+  it('serves the invite link page for /studio/invite/:token, and scrubs the token from logs (LIV-159)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'virvi-dash-'))
+    writeFileSync(join(dir, 'index.html'), 'HOME')
+    mkdirSync(join(dir, 'studio/_'), { recursive: true })
+    mkdirSync(join(dir, 'studio/invite/_'), { recursive: true })
+    writeFileSync(join(dir, 'studio/_/index.html'), 'STUDIO')
+    writeFileSync(join(dir, 'studio/invite/_/index.html'), 'INVITE')
+    ;(config as any).dashboardDir = dir
+    await app.close()
+    app = await testApp()
+    const token = 'abcdefghijklmnopqrstuvwxyz012345'
+    for (const url of [`/studio/invite/${token}`, `/studio/invite/${token}/`]) {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode).toBe(200)
+      expect(res.body).toBe('INVITE')
+    }
+    // the token is the invite's credential: never in a log line
+    expect(redactPairingCode(`/studio/invite/${token}/`)).toBe('/studio/invite/:token/')
+    expect(redactPairingCode(`/api/studio/invite-links/${token}/accept`)).toBe('/api/studio/invite-links/:token/accept')
+    expect(redactPairingCode(`/api/studio/invite-links/${token}`)).toBe('/api/studio/invite-links/:token')
+    // and the sign-in page a signed-out visitor is sent to, with the invite page as its `next`
+    expect(redactPairingCode(`/signin/?next=%2Fstudio%2Finvite%2F${token}%2F&mode=register`)).toBe('/signin/?next=%2Fstudio%2Finvite%2F:token&mode=register')
+    expect(redactPairingCode(`/signin/?mode=register&next=/studio/invite/${token}/`)).toBe('/signin/?mode=register&next=/studio/invite/:token')
+    expect(redactPairingCode('/signin/?next=%2Fstudio%2F')).toBe('/signin/?next=%2Fstudio%2F')
+  })
+
   describe('/.well-known/assetlinks.json', () => {
     const prevLinks = { pkg: config.androidAppPackage, sha: config.androidCertSha256 }
     afterEach(() => {

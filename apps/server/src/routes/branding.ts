@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
+import { isAdminRequest } from '../auth/admin.js'
 import { BrandingError } from '../branding/images.js'
 import { getBranding, NO_BRANDING, resetBranding, updateBranding } from '../branding/store.js'
 
@@ -10,7 +11,7 @@ async function selfHostedOnly(_request: FastifyRequest, reply: FastifyReply) {
 }
 
 async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  if (request.user.role !== 'admin') return reply.status(403).send({ error: 'Forbidden', message: 'Only an instance admin can change branding' })
+  if (!(await isAdminRequest(request))) return reply.status(403).send({ error: 'Forbidden', message: 'Only an instance admin can change branding' })
 }
 
 /** base64 string → bytes; null clears; anything else (missing) keeps the current value. */

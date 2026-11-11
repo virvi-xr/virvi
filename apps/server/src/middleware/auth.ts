@@ -9,6 +9,7 @@ import { pairingLive } from '../hyperfy/pairing.js'
 import { deviceLive, devicePersonal } from '../ar/devices.js'
 import { dclHudNeedsRedeploy } from '../auth/hud-protocol.js'
 import { config } from '../config.js'
+import { sessionRole } from '../auth/admin.js'
 import { REDEPLOY_REQUIRED } from '@virvixr/shared'
 
 const TRIAL_TOUCH_MS = 10 * 60_000
@@ -138,7 +139,9 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     if (decoded.kind !== 'account' && decoded.kind !== 'scene') {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Session expired — sign in again' })
     }
-    request.user = decoded
+    // A token claiming admin is checked against the database, so a demotion counts at once for every check that reads
+    // request.user.role (src/auth/admin.ts sessionRole); any other claim is used as it is, with no read
+    request.user = decoded.role === 'admin' ? { ...decoded, role: await sessionRole(decoded.id, decoded.role) } : decoded
     if (decoded.via === 'hyperfy' && !(decoded.pairingId && (await pairingLive(decoded.pairingId)))) {
       return reply.status(401).send({ error: 'pairing_revoked' })
     }

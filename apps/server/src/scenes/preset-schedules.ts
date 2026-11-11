@@ -2,6 +2,7 @@ import { and, desc, eq, gt, inArray, ne, or } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { bookings, eventSceneLinks, events, scenePresets, scenePresetScheduleRuns, scenePresetSchedules, scenes, venues } from '../db/schema.js'
 import { publishVenueEvent } from '../realtime/bus.js'
+import { liveScene, liveSceneIds } from './live.js'
 import { isTimeZone, latestStart, utcToZoned, nextStarts, occurrencesBetween, type Occurrence, type ScheduleSpec } from './schedule-time.js'
 
 /**
@@ -144,7 +145,8 @@ export async function eventPresetSchedules(eventId: string) {
     id: scenePresetSchedules.id, sceneId: scenePresetSchedules.sceneId, presetId: scenePresetSchedules.presetId,
     presetName: scenePresets.name, enabled: scenePresetSchedules.enabled,
   }).from(scenePresetSchedules).innerJoin(scenePresets, eq(scenePresetSchedules.presetId, scenePresets.id))
-    .where(eq(scenePresetSchedules.eventId, eventId)).orderBy(scenePresetSchedules.createdAt)
+    // A deleted scene's (LIV-83) are left out until it's restored
+    .where(and(eq(scenePresetSchedules.eventId, eventId), inArray(scenePresetSchedules.sceneId, liveSceneIds()))).orderBy(scenePresetSchedules.createdAt)
 }
 
 function overlaps(a: Occurrence, b: Occurrence): boolean {
@@ -282,7 +284,8 @@ export async function runPresetScheduleSweep(at = new Date()): Promise<SweepResu
     .from(scenePresetScheduleRuns)
     .innerJoin(scenePresetSchedules, eq(scenePresetScheduleRuns.scheduleId, scenePresetSchedules.id))
     .innerJoin(scenes, eq(scenePresetScheduleRuns.sceneId, scenes.id))
-    .where(inArray(scenePresetScheduleRuns.status, ['active', 'held']))
+    // A deleted scene's schedules wait (LIV-83): nothing switches its presets until it's restored
+    .where(and(inArray(scenePresetScheduleRuns.status, ['active', 'held']), liveScene()))
   const booked = await liveBookingScenes([...new Set(open.map((o) => o.run.sceneId))])
 
   for (const { run, schedule, activePresetId } of open) {
@@ -337,7 +340,7 @@ export async function runPresetScheduleSweep(at = new Date()): Promise<SweepResu
   const schedules = await db.select({ schedule: scenePresetSchedules, activePresetId: scenes.activePresetId })
     .from(scenePresetSchedules)
     .innerJoin(scenes, eq(scenePresetSchedules.sceneId, scenes.id))
-    .where(eq(scenePresetSchedules.enabled, true))
+    .where(and(eq(scenePresetSchedules.enabled, true), liveScene()))
   const bookedNow = await liveBookingScenes([...new Set(schedules.map((s) => s.schedule.sceneId))])
 
   for (const { schedule } of schedules) {

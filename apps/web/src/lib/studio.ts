@@ -1,3 +1,4 @@
+import type { StudioRevision } from './studio-ratings'
 /**
  * Design Studio: the page's types (the server's JSON, from apps/server/src/routes/studio.ts and studio/*.ts), its
  * copy, and the pure decisions the studio pages make. Kept free of React so it tests in node.
@@ -5,6 +6,7 @@
 import { formatMana, walletRejected } from './mana'
 import type { Tone } from '@/components/ui'
 import { blockedCopy } from './trial'
+import { VIEWER_NOTE, canAct } from './studio-people'
 
 export type StudioKind = 'wearable' | 'emote' | 'scene'
 
@@ -39,9 +41,21 @@ export type StudioDesign = {
   status: 'idle' | 'building' | string
   archivedAt: string | null
   lastJobAt: string | null
-  finalizedAt: string | null
+  finalizedAt: string | null // when the first piece was finalized
+  /** Of the pieces with a revision (`pieceCount`), how many have been finalized at some revision. */
+  finalizedPieces?: number
+  pieceCount?: number
   createdAt: string
+  /** The reader's role on it (LIV-159); a design shared with them also names its owner. */
+  role?: DesignRole
+  ownerName?: string | null
 }
+
+/** A person's role on a design (LIV-159): the owner, a collaborator (works on it) or a viewer (looks). */
+export type DesignRole = 'owner' | 'collaborator' | 'viewer'
+
+/** Someone on a design, the owner first (the server's `designMembers`). */
+export type StudioMember = { userId: string; displayName: string | null; role: DesignRole; joinedAt: string }
 
 /** `triangles`: a scene piece over its recommended triangle count (a warning, never a block). */
 export type Checker = { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } | null
@@ -55,15 +69,18 @@ export type FinalizedRevision = {
   revision: number
   kind: 'first' | 'revision'
   status: 'packaging' | 'ready' | 'failed' | string
-  amountCents: number
-  paymentId: string
+  /** `amountCents`, `paymentId` and the report's id, credit and MANA are null on another member's line (theirs to see). */
+  amountCents: number | null
+  paymentId: string | null
   paidAt: string | null
   /** `manaCents`: the refund's MANA share (now Virvi credit), which may be asked back as MANA; `manaRefund`: that request's status. */
   report: {
     status: 'pending' | 'refunded' | 'waived' | 'in_review' | 'declined' | string; createdAt: string
-    id?: string; manaCents?: number; creditedCents?: number; manaRefund?: 'requested' | 'sent' | 'declined' | string | null
+    id?: string | null; manaCents?: number | null; creditedCents?: number | null; manaRefund?: 'requested' | 'sent' | 'declined' | string | null
   } | null
   reportableUntil: string | null
+  /** The reader paid for it (LIV-159): its report's outcome, MANA back and the 3D Models link are theirs. */
+  paidByMe?: boolean
 }
 
 export type StudioPiece = {
@@ -85,7 +102,14 @@ export type StudioMessage = {
   proposal: StudioProposal | null
   jobId: string | null
   createdAt: string
+  /** A Virvi admin wrote it, helping on the design: shown as Virvi support, never as the owner's words. */
+  support?: boolean
+  /** Who wrote a person's message (LIV-159); null for the agent's, a system note and support's. */
+  sender?: { userId: string; displayName: string | null } | null
 }
+
+/** Whose design a Virvi admin is helping on (the server sends it only to an admin who isn't the owner). */
+export type StudioSupportView = { ownerId: string; ownerName: string | null; ownerEmail: string | null; trial: boolean }
 
 /** A clipping fix's emote view (the server's `fixClipping`). */
 export type FixClipping = { emote: string; bodyShape: 'male' | 'female'; outfit: string }
@@ -109,10 +133,21 @@ export type StudioDetail = {
   wall: WallState
   pieces: StudioPiece[]
   messages: StudioMessage[]
-  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; fixClipping?: FixClipping | null; phase?: string | null; progress?: string[] } | null
+  /** `senderName`: who sent the prompt running now (null for a render, or support's prompt). `phase` and `progress`: what
+   *  the worker last reported (the last 5 progress lines), for clients that poll. */
+  activeJob: { id: string; type: 'prompt' | 'render' | 'finalize' | string; status: string; createdAt?: string; fixClipping?: FixClipping | null; senderName?: string | null; phase?: string | null; progress?: string[] } | null
   set: StudioSet
   lastPrompt: { jobId: string; outcome: string | null; status: string } | null
   uploads: StudioUpload[]
+  /** Present when a Virvi admin is viewing someone else's design (Virvi support). */
+  support?: StudioSupportView
+  /** Each agent reply that changed pieces, with the owner's 👍 / 👎 (LIV-142). */
+  revisions?: StudioRevision[]
+  /** The usual seconds from sending a prompt to the agent's first progress line; absent until the server knows. */
+  typicalFirstReplySec?: number
+  /** The reader's role (null for Virvi support), and everyone on the design, the owner first (LIV-159). */
+  role?: DesignRole | null
+  members?: StudioMember[]
 }
 
 /** A file the owner gave the agent (the server's `publicUpload`). */
@@ -178,7 +213,8 @@ export type CheckoutMethod = 'card' | 'mana'
 export type StudioEvent =
   | { type: 'progress'; jobId: string; text: string }
   | { type: 'phase'; jobId: string; phase: string }
-  | { type: 'job'; jobId: string; status: 'queued' | 'taken' | 'done' | 'failed'; outcome?: string; error?: string }
+  | { type: 'job'; jobId: string; status: 'queued' | 'taken' | 'done' | 'failed'; outcome?: string; error?: string; senderName?: string | null }
+  | { type: 'member_removed'; userId: string }
 
 export type RenderView = { bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: string | null }
 
@@ -244,12 +280,16 @@ export function refusalMessage(
       return { text: 'The studio needs a rest for today. Come back tomorrow.' }
     case 'busy':
       return { text: 'The agent is still working on your last message.' }
+    case 'viewer':
+      return { text: VIEWER_NOTE }
+    case 'checkout_open':
+      return { text: 'Someone else on this design has a checkout open for these pieces. It clears by itself in about half an hour.' }
     case 'clipping_fix_limit':
       return { text: `We’ve tried to fix the clipping in ${emoteLabel(b.emote === OWN_EMOTE ? 'emote' : 'wearable', b.emote ?? 'emote')} twice. Describe what you see in a prompt and the agent will take another look.` }
     case 'not_seen':
       return { text: 'Play that emote first, then report what you see.' }
     case 'open_design_limit':
-      return { text: 'Your plan has room for one open design. Archive or finalize the one you have, or upgrade.', action: 'settings' }
+      return { text: 'Your plan has room for one open design. A design with pieces left to finalize still counts. Archive it or finalize the rest, or upgrade.', action: 'settings' }
     case 'checks_failed':
       return {
         text: `${joinAnd((b.categories ?? []).map(categoryLabel)) || 'A piece'} failed the checker. Ask the agent to fix it: it doesn’t use a prompt.`,
@@ -322,7 +362,10 @@ export const refreshDue = (fetchedAt: number, now: number) => now - fetchedAt >=
 
 export function designBadge(d: StudioDesign): { label: string; tone: Tone } {
   if (d.archivedAt) return { label: 'Archived', tone: 'neutral' }
-  if (d.finalizedAt) return { label: 'Finalized', tone: 'success' }
+  if (d.finalizedAt) {
+    const left = (d.pieceCount ?? 0) > (d.finalizedPieces ?? 0)
+    return { label: left ? `Finalized ${d.finalizedPieces ?? 0} of ${d.pieceCount}` : 'Finalized', tone: 'success' }
+  }
   if (d.status === 'building') return { label: 'Agent working', tone: 'info' }
   return { label: 'Draft', tone: 'violet' }
 }
@@ -380,6 +423,7 @@ export function giftRedeemSuccess(g: { prompts: number; finalizes: number }): st
 
 const PHASES: Record<string, string> = {
   building: 'Agent working…',
+  screening: 'Checking your request…',
   checking: 'Running the checks…',
   rendering: 'Rendering the preview…',
   saving: 'Saving…',
@@ -396,7 +440,7 @@ const shortenPaths = (text: string) => text.replace(/\/(?:work|opt|tmp)\/\S+/g, 
 export function progressFor(events: StudioEvent[], jobId: string): string | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]
-    if (e.jobId !== jobId) continue
+    if (!('jobId' in e) || e.jobId !== jobId) continue
     if (e.type === 'progress' && e.text.trim() && !e.text.startsWith('Running:')) return shortenPaths(e.text.trim())
     if (e.type === 'phase' && PHASES[e.phase]) return PHASES[e.phase]
   }
@@ -418,7 +462,7 @@ export function nextPoll(detail: StudioDetail, connected: boolean): number | nul
   return connected ? 30_000 : 5_000
 }
 
-export type ComposerMode = 'send' | 'busy' | 'continue' | 'out' | 'archived' | 'paused'
+export type ComposerMode = 'send' | 'busy' | 'continue' | 'out' | 'archived' | 'paused' | 'viewer'
 
 export const PAUSED_NOTE = 'Your studio access is paused, so you can’t send new messages. You can still finalize and download your designs. Contact support@virvi.io.'
 
@@ -429,10 +473,22 @@ export const canSend = (mode: ComposerMode) => mode === 'send' || mode === 'cont
 export const reloadsOn = (e: StudioEvent) =>
   e.type === 'job' && (e.status === 'queued' || e.status === 'done' || e.status === 'failed')
 
+/** Under the message box for a Virvi admin helping on someone else's design: no allowance meter, nothing is used. */
+export const SUPPORT_NOTE = 'Messages you send as Virvi support are free: they don’t use their prompts or yours.'
+
 export function composerState(detail: StudioDetail, usage: StudioUsage | null, now: Date): { mode: ComposerMode; note: string } {
-  const note = !usage ? '' : usage.trial ? `${usage.promptsLeft} of ${usage.allowance} free prompts left` : `${usage.promptsLeft} prompts left today · ${usage.plan} plan`
-  if (detail.design.archivedAt) return { mode: 'archived', note: 'This design is archived. Unarchive it to keep working on it.' }
-  if (usage?.paused) return { mode: 'paused', note: PAUSED_NOTE }
+  // The viewer's own pause: the server refuses new work then, Virvi support's included
+  const paused = !!usage?.paused
+  // Support: otherwise the usage the page has is the admin's own, which doesn't apply here
+  if (detail.support) usage = null
+  const note = detail.support ? SUPPORT_NOTE : !usage ? '' : usage.trial ? `${usage.promptsLeft} of ${usage.allowance} free prompts left` : `${usage.promptsLeft} prompts left today · ${usage.plan} plan`
+  // A viewer has no box at all (LIV-159)
+  if (!canAct(detail.role)) return { mode: 'viewer', note: VIEWER_NOTE }
+  if (detail.design.archivedAt) {
+    const owner = !detail.support && (detail.role ?? 'owner') === 'owner'
+    return { mode: 'archived', note: owner ? 'This design is archived. Unarchive it to keep working on it.' : 'This design is archived. Only its owner can unarchive it.' }
+  }
+  if (paused) return { mode: 'paused', note: PAUSED_NOTE }
   if (detail.activeJob?.type === 'prompt') return { mode: 'busy', note: 'The agent is still working on your last message.' }
   if (detail.lastPrompt?.outcome === 'ceiling' || detail.lastPrompt?.outcome === 'turns') return { mode: 'continue', note }
   if (usage && usage.promptsLeft <= 0) return { mode: 'out', note: refusalMessage({ body: { code: 'allowance', resetsAt: usage.resetsAt } }, now).text }
@@ -479,23 +535,25 @@ export const STEP_LABELS: Record<Step, string> = {
 
 /**
  * An emote design has nothing to inspect without the avatar. A scene design has no avatar or emotes: a building gets
- * its walk-through and furniture its scale view, once the design has one.
+ * its walk-through and furniture its scale view, once the design has one. `viewOnly` (a viewer, LIV-159): no
+ * Finalize, which is work; the other steps show what is rendered.
  */
-export function stepsFor(kind: string, categories: string[] = []): Step[] {
+export function stepsFor(kind: string, categories: string[] = [], viewOnly = false): Step[] {
+  const shown = (s: Step) => !viewOnly || s !== 'finalize'
   if (kind === 'scene') {
     const building = categories.includes('building')
     const furniture = categories.some((c) => c.startsWith('furniture_'))
-    return STEPS.filter((s) => s === 'design' || s === 'inspect' || s === 'finalize' || (s === 'tour' && building) || (s === 'scale' && furniture))
+    return STEPS.filter((s) => shown(s) && (s === 'design' || s === 'inspect' || s === 'finalize' || (s === 'tour' && building) || (s === 'scale' && furniture)))
   }
-  return STEPS.filter((s) => s !== 'tour' && s !== 'scale' && (kind !== 'emote' || s !== 'inspect'))
+  return STEPS.filter((s) => shown(s) && s !== 'tour' && s !== 'scale' && (kind !== 'emote' || s !== 'inspect'))
 }
 
 /** The step a design opens on: On avatar, or Inspect for a scene design (it has no avatar). */
 export const defaultStep = (kind: string): Step => kind === 'scene' ? 'inspect' : 'avatar'
 
 /** The step to show: the one picked, while the design has it (a walk-through needs the building first). */
-export const shownStep = (step: Step, kind: string, categories: string[]): Step =>
-  stepsFor(kind, categories).includes(step) ? step : defaultStep(kind)
+export const shownStep = (step: Step, kind: string, categories: string[], viewOnly = false): Step =>
+  stepsFor(kind, categories, viewOnly).includes(step) ? step : defaultStep(kind)
 /** The attach button's hint, with an example that fits the kind of design. */
 export const uploadHint = (kind: string) =>
   `Images or 3D files for the agent. Say what each is for, like “put ${kind === 'scene' ? 'sign.png over the door' : 'logo.png on the chest'}”.`
@@ -611,7 +669,7 @@ export function pieceTabStatus(piece: StudioPiece, detail: StudioDetail): 'ready
 const UNLOCKS: Record<StudioKind, string> = {
   wearable: 'Finalize to get the GLBs, thumbnail, Builder settings, listing text, curation report, renders and a promo clip.',
   emote: 'Finalize to get the GLB, thumbnail, emote report, renders and a promo clip.',
-  scene: 'Finalize to add each piece to your asset library, ready to place in a scene, and get its GLB, thumbnail, renders, seats and check report.',
+  scene: 'Finalize to add each piece to your 3D Models, ready to place in a scene, and get its GLB, thumbnail, renders, seats and check report.',
 }
 
 /** The strip under the preview: what finalizing unlocks, its price, and the pieces the checker blocks. */
@@ -629,10 +687,86 @@ export const REPORT_MAX = 2000
 
 export const reportOk = (text: string) => text.trim().length >= REPORT_MIN && text.length <= REPORT_MAX
 
-/** The checkout covers every payable piece; only reports the server will take are sent. */
-export function checkoutBody(reports: Record<string, string>): { reports?: Record<string, string> } {
-  const ok = Object.entries(reports).filter(([, t]) => reportOk(t)).map(([c, t]) => [c, t.trim()] as const)
-  return ok.length ? { reports: Object.fromEntries(ok) } : {}
+/**
+ * What the checkout is for: every payable piece (`categories` null), or the ticked ones. Only reports the server will
+ * take are sent, and none for a piece left out.
+ */
+export function checkoutBody(reports: Record<string, string>, categories: string[] | null = null): { categories?: string[]; reports?: Record<string, string> } {
+  const ok = Object.entries(reports).filter(([c, t]) => reportOk(t) && (!categories || categories.includes(c))).map(([c, t]) => [c, t.trim()] as const)
+  return { ...(categories ? { categories } : {}), ...(ok.length ? { reports: Object.fromEntries(ok) } : {}) }
+}
+
+/** A piece in the Finalize dialog: ticked or not when `pickable`; otherwise disabled, with why. */
+export type FinalizeChoice = { category: string; name: string; pickable: boolean; finalized: boolean; reason: string | null }
+
+const CHOICE_REASON: Record<Quote['pieces'][number]['state'], string | null> = {
+  payable: null,
+  entitled: 'Finalized',
+  blocked: 'Failed the checker. Ask the agent to fix it first.',
+  none: 'Not built yet',
+}
+
+/** A checkbox per piece, in the quote's order. A finalized piece with a newer revision is pickable: that's a revision. */
+export function finalizeChoices(quote: Quote): FinalizeChoice[] {
+  return quote.pieces.map((p) => ({
+    category: p.category, name: p.name, pickable: p.state === 'payable', finalized: p.state === 'entitled', reason: CHOICE_REASON[p.state] ?? null,
+  }))
+}
+
+const payable = (quote: Quote) => quote.pieces.filter((p) => p.state === 'payable').map((p) => p.category)
+
+/** Every payable piece ticked: what Finalize always paid for. */
+export const initialSelection = (quote: Quote): string[] => payable(quote)
+
+/** Ticks or unticks a piece; one that can't be finalized stays as it is. */
+export function toggleSelection(selected: string[], category: string, quote: Quote): string[] {
+  if (!payable(quote).includes(category)) return selected
+  const next = selected.includes(category) ? selected.filter((c) => c !== category) : [...selected, category]
+  return next.sort()
+}
+
+/** The ticked pieces the server is asked about, or null when they are every payable piece (the checkout as it always was). */
+export function selectionCategories(selected: string[], quote: Quote): string[] | null {
+  const all = payable(quote)
+  const ticked = all.filter((c) => selected.includes(c))
+  return ticked.length === all.length && all.length > 0 ? null : ticked
+}
+
+/** Why the dialog can't check out the selection, if it can't. */
+export const selectionProblem = (selected: string[]): string | null =>
+  selected.length ? null : 'Tick at least one piece to finalize.'
+
+/** A mistake report goes with a revision line only, and only while its piece is ticked. */
+export const canReport = (l: QuoteLine, selected: string[]) => l.priceKind.startsWith('revision') && selected.includes(l.category)
+
+/** Finalize's selection while only some pieces are ticked, and its emote step (the chosen and finalized pieces worn). */
+export type Worn = { categories: string[]; set: StudioSet }
+
+/**
+ * What the emote checklist and Emotes step show for Finalize's selection: null for every piece; 'none' with nothing
+ * ticked; 'loading' until the selection's own set (`fetched`, keyed by its categories) is in. Never the whole set while
+ * a selection is waiting, so no check is recorded against the wrong pieces.
+ */
+export type WornState = Worn | 'loading' | 'none' | null
+export function wornState(chosen: string[] | null, fetched: { key: string; set: StudioSet } | null): WornState {
+  if (!chosen) return null
+  if (!chosen.length) return 'none'
+  const key = chosen.join(',')
+  return fetched?.key === key ? { categories: chosen, set: fetched.set } : 'loading'
+}
+
+/** The checkout page's quote refused: 'nothing_left' shows the nothing-left page (the ticked pieces were paid meanwhile). */
+export function checkoutQuoteRefusal(err: { status?: number; body?: { code?: string; error?: string } }): 'nothing_left' | string {
+  return err.body?.code === 'nothing_to_pay' ? 'nothing_left' : refusalMessage(err as never, new Date()).text
+}
+
+/** The design as the emote checklist and Emotes step see it: with the selection's set when there is one. */
+export const wornDetail = (detail: StudioDetail, worn: Worn | null): StudioDetail => worn ? { ...detail, set: worn.set } : detail
+
+/** Requests answered out of order: only the newest one's answer is used. */
+export function latestOnly() {
+  let n = 0
+  return { next: () => ++n, isLatest: (id: number) => id === n }
 }
 
 /**
@@ -728,11 +862,14 @@ export function revisionActions(f: FinalizedRevision, now: Date): {
   download: boolean; retry: boolean; packaging: boolean; report: 'open' | 'done' | 'closed' | 'none'
 } {
   const report = f.report ? 'done'
-    : f.kind !== 'revision' || !(f.amountCents > 0) ? 'none'
+    : f.kind !== 'revision' || !((f.amountCents ?? 0) > 0) ? 'none'
       : f.reportableUntil && new Date(f.reportableUntil).getTime() > now.getTime() ? 'open'
         : 'closed'
   return { download: f.status === 'ready', retry: f.status === 'failed', packaging: f.status === 'packaging', report }
 }
+
+/** Whether a paid revision's payer's own lines show (report outcome, MANA back, 3D Models): the reader paid, and isn't Virvi support. */
+export const paidByReader = (f: Pick<FinalizedRevision, 'paidByMe'>, support: boolean) => !support && !!f.paidByMe
 
 /**
  * The paid-downloads panel's header, from each paid piece's newest paid revision: how many are ready, still packaging
@@ -804,7 +941,7 @@ export type AdminMistakeReport = {
   text: string
   refundCents: number
   createdAt: string
-  user: { id: string; email: string | null }
+  user: { id: string; email: string | null; gone: boolean } // gone: the reporter deleted their account
   designId: string
   piece: { category: string; name: string }
   revisionNumber: number
@@ -961,16 +1098,26 @@ export function writeUnrecordedRefund(store: KeyValueStore | null, id: string, e
   return next
 }
 
-/** The design page for a prompt that was not sent (the design was made, the prompt refused): its composer shows the prompt again. */
-export function unsentHref(designId: string, text: string, refusal: string): string {
-  return `/studio/${designId}/?${new URLSearchParams({ unsent: text, why: refusal })}`
+type RemovableStore = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+const unsentKey = (designId: string) => `virvi.unsent.${designId}`
+
+/** Keeps a prompt that was not sent (the design was made, the prompt refused) for that design's page, whose composer
+ *  shows it again. Session storage, not the URL: a prompt is up to 4000 characters and shouldn't sit in history or logs. */
+export function keepUnsent(store: RemovableStore | null, designId: string, text: string, refusal: string): void {
+  try { store?.setItem(unsentKey(designId), JSON.stringify({ text, refusal })) } catch { /* private window or blocked storage */ }
 }
 
-/** The unsent prompt (and why) `unsentHref` put in the query, or null. */
-export function readUnsent(search: string): { text: string; refusal: string } | null {
-  const q = new URLSearchParams(search)
-  const text = q.get('unsent')
-  return text ? { text, refusal: q.get('why') ?? '' } : null
+/** The unsent prompt (and why) `keepUnsent` kept for this design, once: it is removed as it is read. */
+export function takeUnsent(store: RemovableStore | null, designId: string): { text: string; refusal: string } | null {
+  try {
+    const raw = store?.getItem(unsentKey(designId))
+    if (raw == null) return null
+    store!.removeItem(unsentKey(designId))
+    const v = JSON.parse(raw) as { text?: unknown; refusal?: unknown }
+    return typeof v?.text === 'string' && v.text ? { text: v.text, refusal: typeof v.refusal === 'string' ? v.refusal : '' } : null
+  } catch {
+    return null
+  }
 }
 
 /** One shown design on the admin wall list, hidden ones included. */

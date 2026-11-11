@@ -66,6 +66,7 @@ export class SceneManager {
     switch (message.action) {
       case 'init':
         this.initPreset(message.scenePreset)
+        this.adapter.releaseUnadopted?.()
         break
       case 'create':
         if (message.instance) {
@@ -157,6 +158,8 @@ export class SceneManager {
     if (message.scenePreset) {
       this.initPreset(message.scenePreset)
     }
+    // Whatever the platform placed before live state and no manager adopted (LIV-134) is gone with the old state
+    this.adapter.releaseUnadopted?.()
     // Screens are created in preset order: an ads-mode screen may have started a video ad before the live screen existed
     this.streamChanged()
   }

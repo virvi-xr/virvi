@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
+import { liveScene } from '../scenes/live.js'
 import {
   analyticsCopresenceDaily,
   analyticsEvents,
@@ -23,6 +24,8 @@ import { boundScene, fromAnalyticsLocation, isScenePass } from '../auth/scene-fr
 import { visitorHash } from '../analytics/hash.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
 import { mergeLegacyEntityTargets, resolveEmoteLabels } from '../analytics/labels.js'
+import { heatmap3dFor } from '../analytics/jobs.js'
+import { sceneLayout } from '../analytics/layout.js'
 
 const DAY = 86_400_000
 const HOUR = 3_600_000
@@ -89,7 +92,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       reply.status(403).send({ error: 'Forbidden' })
       return null
     }
-    return { ...access.scene, until: access.until, since: access.since, canDelete: access.canDelete }
+    return { ...access.scene, until: access.until, since: access.since, canDelete: access.canDelete, tenureSceneId: access.virviSceneId ?? null }
   }
 
   app.get('/api/analytics/locations', { config: { scenePass: { sceneFrom: boundScene } } }, async (request, reply) => {
@@ -105,7 +108,8 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       const reachable = db
         .select({ id: scenes.id })
         .from(scenes)
-        .where(
+        .where(and(
+          liveScene(),
           or(
             eq(scenes.ownerId, actor.userId),
             inArray(scenes.id, db.select({ id: sceneCollaborators.sceneId }).from(sceneCollaborators).where(eq(sceneCollaborators.userId, actor.userId))),
@@ -118,7 +122,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
             ),
             inArray(scenes.id, db.select({ id: accessGrants.sceneId }).from(accessGrants).where(eq(accessGrants.userId, actor.userId))),
           ),
-        )
+        ))
       candidate = inArray(analyticsScenes.id, db.select({ id: locationSetups.analyticsSceneId }).from(locationSetups).where(inArray(locationSetups.virviSceneId, reachable)))
     }
     const all = await db.select().from(analyticsScenes).where(candidate)
@@ -238,30 +242,64 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       .where(and(eq(analyticsSessions.sceneId, scene.id), gte(analyticsSessions.lastSeenAt, since)))
     const ids = live.map((s) => s.id)
     const positions = ids.length
-      ? rowsOf<{ x: number; z: number }>(
+      ? rowsOf<{ x: number; y: number; z: number }>(
           await db.execute(sql`
-            select distinct on (session_id) x, z from analytics_positions
+            select distinct on (session_id) x, y, z from analytics_positions
             where scene_id = ${scene.id} and session_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
             order by session_id, occurred_at desc`),
         ).sort((a, b) => Number(a.x) - Number(b.x) || Number(a.z) - Number(b.z))
       : []
-    return reply.send({ count: ids.length, positions: positions.map((p) => ({ x: Number(p.x), z: Number(p.z) })) })
+    // y is as the platform reports it (Decentraland: about 0.9 m above the feet; see heatmap-height in @virvixr/shared).
+    // Heights are part of the 3D heatmap, so only plans with it get y.
+    const withY = positions.length > 0 && (await heatmap3dFor(scene.tenureSceneId))
+    return reply.send({
+      count: ids.length,
+      positions: positions.map((p) => (withY ? { x: Number(p.x), y: Number(p.y), z: Number(p.z) } : { x: Number(p.x), z: Number(p.z) })),
+    })
   })
 
-  app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>('/api/analytics/locations/:id/heatmap', { config: { scenePass: { sceneFrom: fromAnalyticsLocation } } }, async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string; level?: string } }>('/api/analytics/locations/:id/heatmap', { config: { scenePass: { sceneFrom: fromAnalyticsLocation } } }, async (request, reply) => {
     const r = range(request.query)
     if (!r) return reply.status(400).send({ error: 'from/to must be ISO dates with from <= to and a range of at most 400 days' })
     const scene = await guard(request, reply, request.params.id)
     if (!scene) return
     const cap = caps(scene.until, scene.since)
-    const cells = rowsOf<{ x: number; z: number; dwell: number; visits: number }>(
+    // Heights and the level filter are for paid plans (LIV-85); free plans get the 2D cells, summed over every floor.
+    const heatmap3d = await heatmap3dFor(scene.tenureSceneId)
+    let level: number | null = null
+    if (heatmap3d && request.query.level !== undefined) {
+      level = /^-?\d{1,5}$/.test(request.query.level) ? Number(request.query.level) : NaN
+      if (!Number.isInteger(level) || Math.abs(level) > 32767) return reply.status(400).send({ error: 'level must be a whole floor number' })
+    }
+    const where = sql`scene_id = ${scene.id} and day >= ${r.from.toISOString().slice(0, 10)}::date and day <= ${r.to.toISOString().slice(0, 10)}::date${cap.day ? sql` and day <= ${cap.day}::date` : sql``}${cap.fromDay ? sql` and day >= ${cap.fromDay}::date` : sql``}`
+    if (!heatmap3d) {
+      const cells = rowsOf<{ x: number; z: number; dwell: number; visits: number }>(
+        await db.execute(sql`
+          select cell_x as x, cell_z as z, sum(dwell_sec)::int as dwell, sum(visits)::int as visits
+          from analytics_heatmap_daily where ${where}
+          group by 1, 2 order by 1, 2`),
+      )
+      return reply.send({ heatmap3d, cells: cells.map((c) => ({ x: Number(c.x), z: Number(c.z), dwellSec: Number(c.dwell), visits: Number(c.visits) })) })
+    }
+    // Days rolled up before heights were recorded have cell_y null: they draw at ground level, so level 0 includes them.
+    const onLevel = level === null ? sql`` : level === 0 ? sql` and (cell_y = 0 or cell_y is null)` : sql` and cell_y = ${level}`
+    const cells = rowsOf<{ x: number; y: number | null; z: number; dwell: number; visits: number }>(
       await db.execute(sql`
-        select cell_x as x, cell_z as z, sum(dwell_sec)::int as dwell, sum(visits)::int as visits
-        from analytics_heatmap_daily
-        where scene_id = ${scene.id} and day >= ${r.from.toISOString().slice(0, 10)}::date and day <= ${r.to.toISOString().slice(0, 10)}::date${cap.day ? sql` and day <= ${cap.day}::date` : sql``}${cap.fromDay ? sql` and day >= ${cap.fromDay}::date` : sql``}
-        group by 1, 2 order by 1, 2`),
+        select cell_x as x, cell_y as y, cell_z as z, sum(dwell_sec)::int as dwell, sum(visits)::int as visits
+        from analytics_heatmap_daily where ${where}${onLevel}
+        group by 1, 2, 3 order by 1, 3, 2`),
     )
-    return reply.send({ cells: cells.map((c) => ({ x: Number(c.x), z: Number(c.z), dwellSec: Number(c.dwell), visits: Number(c.visits) })) })
+    return reply.send({
+      heatmap3d,
+      cells: cells.map((c) => ({ x: Number(c.x), z: Number(c.z), cellY: c.y === null ? null : Number(c.y), dwellSec: Number(c.dwell), visits: Number(c.visits) })),
+    })
+  })
+
+  // The live preset's layout of the Virvi scene the reader reads through (LIV-85): drawn under the heatmap, on every plan.
+  app.get<{ Params: { id: string } }>('/api/analytics/locations/:id/layout', { config: { scenePass: { sceneFrom: fromAnalyticsLocation } } }, async (request, reply) => {
+    const scene = await guard(request, reply, request.params.id)
+    if (!scene) return
+    return reply.send({ layout: scene.tenureSceneId ? await sceneLayout(scene.tenureSceneId) : null })
   })
 
   app.get<{ Params: { id: string }; Querystring: { cursor?: string; limit?: string } }>('/api/analytics/locations/:id/sessions', { config: { scenePass: { sceneFrom: fromAnalyticsLocation } } }, async (request, reply) => {

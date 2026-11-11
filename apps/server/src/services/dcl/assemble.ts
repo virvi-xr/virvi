@@ -6,13 +6,43 @@
  * and added, and a wizard-made scene on an older runtime gets the current one. Adopted scenes, and any
  * live scene without Virvi's `virvi` block (not made by the wizard), never have their code or metadata touched.
  * An imported scene (assembleImported) is deployed as its built files plus the scene's Virvi models.
+ *
+ * The scene's thumbnail (LIV-88) travels with the models (`kind: 'thumbnail'`, `images/scene-thumbnail-<hash>.<ext>`)
+ * and becomes `display.navmapThumbnail`. The owner's own scenes (adopted or imported) get only that key (replacing any
+ * of their own) and the file, and only while a thumbnail is set in Virvi; removing it takes Virvi's file and key out on
+ * the next deploy, leaving no navmapThumbnail until an import's next deploy brings its scene.json's back. A thumbnail
+ * taken from an imported scene's own navmapThumbnail (LIV-89) is never deployed: the scene already has it.
+ *
+ * Ruling (LIV-133): the file an imported scene's own scene.json names as navmapThumbnail (the newest deployed import's,
+ * ownThumbnailFile) is the owner's, never a stale Virvi thumbnail, even under Virvi's `images/scene-thumbnail-<hash>`
+ * name (a re-imported "Download live" zip carries Virvi's deployed one). Only the other Virvi-named files are Virvi's to
+ * remove. Why: a name can be copied but only Virvi's own deploys put a Virvi thumbnail in beside the scene's files, and
+ * the import's scene.json is what says which file is the scene's; so the import deploys, and stays, as it is.
+ *
+ * A Virvi-built scene also deploys `virvi/placements.json` (LIV-134, placementsFile): the placed copies of every model
+ * the deployment holds, which the runtime creates before it talks to Virvi, so Decentraland's LOD/map builder sees them.
+ * Ruling (LIV-134): it is rewritten from the scene on every Virvi-built deploy that goes ahead, but a difference in it
+ * alone is no change to deploy (`changed` ignores it, and pendingModels never lists it) — why: moves and removals don't
+ * trigger a redeploy today, and redeploying on snapshot drift is LIV-135's to decide, with its own cadence; a
+ * placements-only "change" would make Redeploy now and the sweep sign or upload for it.
+ *
+ * LIV-135 part 3: the owner's own scenes get the same file. An import (assembleImported) carries it for the Virvi models
+ * it ships, and an adopted scene's redeploy that goes ahead rewrites it as above, beside the owner's files: their code
+ * and scene.json are never changed for it. It does nothing until the owner's code calls `placeDeployedModels()`
+ * (@virvixr/dcl 2.11.0+) before `createVirvi(...)`.
+ * Ruling (LIV-135 part 3): `virvi/placements.json` is Virvi's file in every scene, so a copy of it in an upload (a
+ * re-imported "Download live" zip) or in an adopted scene's live entity is replaced by the current one, or dropped when
+ * nothing is placed — why: only Virvi writes that path (the owner's files the LIV-133 rule keeps are the ones their
+ * scene.json names), and a stale snapshot would place copies that were since moved or deleted, or whose models the
+ * deployment no longer holds.
  */
-import { and, count, eq, inArray } from 'drizzle-orm'
-import { DCL_MAX_FILE_BYTES, localModelFile } from '@virvixr/shared'
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { DCL_MAX_FILE_BYTES, DEPLOYED_THUMBNAIL_RE, frameEntitiesIn, frameEntityCount, PLACEMENTS_FILE, encodePlacements, localModelFile, type Placement, type Vec3 } from '@virvixr/shared'
 import { config } from '../../config.js'
 import { db } from '../../db/connection.js'
-import { assetLibraryItems, mediaAssets, sceneElementInstances, sceneElements, scenes } from '../../db/schema.js'
+import { assetLibraryItems, mediaAssets, sceneElementInstances, sceneElements, sceneImports, scenes } from '../../db/schema.js'
 import { assertPublicHttpUrl } from '../../net/public-url.js'
+import { deployedThumbnailFile } from '../../scenes/thumbnail.js'
 import { buildEntity, dclHash, type ContentRef, type SceneMetadata } from './entity.js'
 import { DCL_RUNTIME_VERSION, runtimeFiles } from './runtime.js'
 import type { LiveEntity } from './worlds-client.js'
@@ -28,6 +58,24 @@ export interface ModelNeed {
   bytes: number | null
   /** Placed instances of every element using this file (the wizard counts triangles per instance). */
   instances: number
+  /** The scene's thumbnail rather than a model (no element, no instances). */
+  kind?: 'thumbnail'
+  /** pendingModels only: the deployed thumbnail at `file` was removed in Virvi; nothing to fetch. */
+  removed?: true
+}
+
+const THUMBNAIL_NAME = 'Scene thumbnail'
+
+/**
+ * The scene's thumbnail as a file to deploy, or null when it has none or it is an imported scene's own (LIV-89): the
+ * scene's files already carry that one and its scene.json names it, so Virvi adds nothing. Only 'import' is left out,
+ * so a thumbnail from before the source was recorded (null; all were uploads) still deploys.
+ */
+async function thumbnailInScene(sceneId: string): Promise<ModelNeed | null> {
+  const s = await db.query.scenes.findFirst({ where: eq(scenes.id, sceneId), columns: { thumbnailKey: true, thumbnailUrl: true, thumbnailBytes: true, thumbnailSource: true } })
+  const file = deployedThumbnailFile(s?.thumbnailKey)
+  if (!s?.thumbnailUrl || !file || s.thumbnailSource === 'import') return null
+  return { elementId: '', name: THUMBNAIL_NAME, url: s.thumbnailUrl, file, triangles: null, bytes: s.thumbnailBytes, instances: 0, kind: 'thumbnail' }
 }
 
 export class ModelRefused extends Error {
@@ -63,8 +111,35 @@ export interface Assembled {
   metadata: SceneMetadata
 }
 
-/** The active preset's Virvi-hosted `.glb` model elements, one per deployed file. */
+/** The active preset's Virvi-hosted `.glb` model elements, one per deployed file, then the scene's thumbnail if it has one. */
 export async function modelsInScene(sceneId: string): Promise<ModelNeed[]> {
+  const thumbnail = await thumbnailInScene(sceneId)
+  const models = await modelElements(sceneId)
+  return thumbnail ? [...models, thumbnail] : models
+}
+
+/**
+ * Entities the runtime adds for frames on the live preset's images and video screens (LIV-129): 4 per framed copy,
+ * 8 for Gallery. Counted with placed models against the parcels' entity limit (sceneLimitProblem).
+ */
+export async function frameEntitiesInScene(sceneId: string): Promise<number> {
+  const rows = await db
+    .select({ id: sceneElements.id, type: sceneElements.type, enabled: sceneElements.enabled, properties: sceneElements.properties })
+    .from(sceneElements)
+    .innerJoin(scenes, eq(scenes.activePresetId, sceneElements.presetId))
+    .where(and(eq(scenes.id, sceneId), inArray(sceneElements.type, ['image', 'video'])))
+  const framed = rows.filter((r) => frameEntityCount((r.properties as { frame?: unknown } | null)?.frame) > 0)
+  if (!framed.length) return 0
+  const copies = await db
+    .select({ elementId: sceneElementInstances.elementId, n: count() })
+    .from(sceneElementInstances)
+    .where(and(inArray(sceneElementInstances.elementId, framed.map((r) => r.id)), eq(sceneElementInstances.enabled, true)))
+    .groupBy(sceneElementInstances.elementId)
+  const by = new Map(copies.map((c) => [c.elementId, Number(c.n)]))
+  return frameEntitiesIn(framed.map((r) => ({ type: r.type, enabled: r.enabled, properties: r.properties, copies: by.get(r.id) ?? 0 })))
+}
+
+async function modelElements(sceneId: string): Promise<ModelNeed[]> {
   const rows = await db
     .select({ id: sceneElements.id, name: sceneElements.name, properties: sceneElements.properties })
     .from(sceneElements)
@@ -124,10 +199,143 @@ export async function modelsInScene(sceneId: string): Promise<ModelNeed[]> {
   })
 }
 
-/** Models in the scene that the destination does not hold yet. */
-export async function pendingModels(dest: { sceneId: string; deployedFiles: string[] }): Promise<ModelNeed[]> {
+/**
+ * Largest placements file a deployment carries (~6,000 copies). A scene with more keeps the first copies that fit: the
+ * map and distant view miss the rest, the live scene doesn't. Also the most a mode B bundle keeps inline for it.
+ */
+export const PLACEMENTS_MAX_BYTES = 512 * 1024
+
+const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
+function vec3(raw: unknown, d: number): Vec3 {
+  const v = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  return { x: num(v.x, d), y: num(v.y, d), z: num(v.z, d) }
+}
+
+/**
+ * Every enabled copy of the active preset's enabled Virvi-hosted `.glb` model elements, in element then copy order,
+ * with `src` the model's `models/virvi/<basename>` path (placementsFile keeps those the deployment holds).
+ * Ruling (LIV-134): each copy's own stored transform, parents not resolved — why: the live runtime (MeshManager)
+ * ignores parentInstanceId and places every copy by its own transform, so the snapshot shows what visitors see, and
+ * adopting the live copy changes nothing.
+ */
+export async function placementsInScene(sceneId: string): Promise<Placement[]> {
+  const rows = await db
+    .select({
+      elementId: sceneElements.id, properties: sceneElements.properties, instanceId: sceneElementInstances.id,
+      position: sceneElementInstances.position, rotation: sceneElementInstances.rotation, scale: sceneElementInstances.scale,
+      collisions: sceneElementInstances.withCollisions,
+    })
+    .from(sceneElements)
+    .innerJoin(scenes, eq(scenes.activePresetId, sceneElements.presetId))
+    .innerJoin(sceneElementInstances, eq(sceneElementInstances.elementId, sceneElements.id))
+    .where(and(eq(scenes.id, sceneId), eq(sceneElements.type, 'model'), eq(sceneElements.enabled, true), eq(sceneElementInstances.enabled, true)))
+    .orderBy(sceneElements.createdAt, sceneElements.id, sceneElementInstances.createdAt, sceneElementInstances.id)
+  const out: Placement[] = []
+  for (const r of rows) {
+    const url = (r.properties as { modelSrc?: unknown } | null)?.modelSrc
+    const src = typeof url === 'string' ? localModelFile(url) : null
+    if (!src) continue
+    out.push({
+      instanceId: r.instanceId, elementId: r.elementId, src,
+      position: vec3(r.position, 0), rotation: vec3(r.rotation, 0), scale: vec3(r.scale, 1), collisions: r.collisions,
+    })
+  }
+  return out
+}
+
+/**
+ * The placements file for a deployment holding `deployed` (its content paths): the copies of models it holds, `src`
+ * set to the path as deployed (what the runtime resolves a model to), at most PLACEMENTS_MAX_BYTES. Null when nothing
+ * is placed. Refused, unsynced and non-glb models are never in it: they are not deployed.
+ */
+export function placementsFile(placements: Placement[], deployed: Iterable<string>): Uint8Array | null {
+  const byLower = new Map([...deployed].map((f) => [f.toLowerCase(), f]))
+  const list = placements.flatMap((p) => {
+    const src = byLower.get(p.src.toLowerCase())
+    return src ? [{ ...p, src }] : []
+  })
+  if (list.length === 0) return null
+  let bytes = new TextEncoder().encode(encodePlacements(list))
+  if (bytes.byteLength > PLACEMENTS_MAX_BYTES) {
+    // Too many copies: keep the first ones that fit (binary search on the count)
+    let lo = 0
+    let hi = list.length
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2)
+      if (new TextEncoder().encode(encodePlacements(list.slice(0, mid))).byteLength <= PLACEMENTS_MAX_BYTES) lo = mid
+      else hi = mid - 1
+    }
+    if (lo === 0) return null
+    console.warn(`[assemble] placements cut to ${lo} of ${list.length} copies to stay within ${PLACEMENTS_MAX_BYTES} bytes`)
+    bytes = new TextEncoder().encode(encodePlacements(list.slice(0, lo)))
+  }
+  return bytes
+}
+
+/** Virvi's placements file, whatever the case of its path. */
+export const isPlacementsFile = (file: string) => file.toLowerCase() === PLACEMENTS_FILE
+
+/** The file `metadata.display.navmapThumbnail` names in the scene, lowercased; null for none or a link. */
+export function navmapThumbnailFile(metadata: { display?: Record<string, unknown> } | undefined): string | null {
+  const raw = metadata?.display?.navmapThumbnail
+  if (typeof raw !== 'string') return null
+  const p = raw.trim().replace(/\\/g, '/')
+  if (!p || /^[a-z][a-z0-9+.-]+:/i.test(p) || p.startsWith('/') || p.includes('\0')) return null
+  const segs = p.split('/').filter((x) => x !== '' && x !== '.')
+  return segs.length && !segs.includes('..') ? segs.join('/').toLowerCase() : null
+}
+
+/**
+ * The scene's own thumbnail file at the destination: what the scene.json of the newest import deployed there names as
+ * navmapThumbnail (lowercased), null when none (or nothing was imported). See the LIV-133 ruling above.
+ */
+export async function ownThumbnailFile(destinationId: string): Promise<string | null> {
+  const [row] = await db.select({ file: sceneImports.navmapThumbnail }).from(sceneImports)
+    .where(and(eq(sceneImports.destinationId, destinationId), eq(sceneImports.status, 'deployed'), eq(sceneImports.sandbox, false)))
+    .orderBy(desc(sql`coalesce(${sceneImports.finishedAt}, ${sceneImports.createdAt})`), desc(sceneImports.createdAt))
+    .limit(1)
+  return row?.file ?? null
+}
+
+/** A Virvi-named thumbnail file that isn't the scene's own (`own`, lowercased): Virvi's to remove when it isn't current. */
+const virviThumbnailFile = (file: string, own: string | null | undefined) => DEPLOYED_THUMBNAIL_RE.test(file) && file.toLowerCase() !== own
+
+/**
+ * Models (and the thumbnail) in the scene that the destination does not hold yet; plus, when the scene's thumbnail was
+ * removed after it was deployed, an entry with `removed` for the deployed file, so the scene still has a change to deploy.
+ * A Virvi-named file that is the scene's own (ownThumbnailFile, looked up by the destination's `id`) is never removed.
+ */
+export async function pendingModels(dest: { id?: string; sceneId: string; deployedFiles: string[] }): Promise<ModelNeed[]> {
   const have = new Set(dest.deployedFiles.map((f) => f.toLowerCase()))
-  return (await modelsInScene(dest.sceneId)).filter((m) => !have.has(m.file.toLowerCase()))
+  const all = await modelsInScene(dest.sceneId)
+  const pending = all.filter((m) => !have.has(m.file.toLowerCase()))
+  const named = all.some((m) => m.kind === 'thumbnail') ? [] : dest.deployedFiles.filter((f) => DEPLOYED_THUMBNAIL_RE.test(f))
+  if (named.length) {
+    const own = dest.id ? await ownThumbnailFile(dest.id) : null
+    const stale = named.find((f) => virviThumbnailFile(f, own))
+    if (stale) pending.push({ elementId: '', name: `${THUMBNAIL_NAME} (removed)`, url: '', file: stale, triangles: null, bytes: 0, instances: 0, kind: 'thumbnail', removed: true })
+  }
+  return pending
+}
+
+/**
+ * The metadata with display.navmapThumbnail at the deployed thumbnail `file`, or, with none, without a navmapThumbnail
+ * Virvi set (one naming Virvi's thumbnail path other than the scene's own file, `own`). Setting one replaces an owner's
+ * own navmapThumbnail, which removing Virvi's doesn't bring back (an import's next deploy does, from its scene.json).
+ * Returns the same object when nothing changes.
+ */
+function withThumbnail(metadata: SceneMetadata, file: string | null, own?: string | null): SceneMetadata {
+  const current = metadata.display?.navmapThumbnail
+  if (file) return current === file ? metadata : { ...metadata, display: { ...metadata.display, navmapThumbnail: file } }
+  if (typeof current !== 'string' || !virviThumbnailFile(current, own)) return metadata
+  const { navmapThumbnail: _gone, ...display } = metadata.display
+  return { ...metadata, display: display as SceneMetadata['display'] }
+}
+
+/** The scene's thumbnail file among `models`, when the deployment holds it (`deployed`, lowercased paths). */
+function deployedThumbnail(models: ModelNeed[], deployed: Set<string>): string | null {
+  const t = models.find((m) => m.kind === 'thumbnail' && !m.removed)
+  return t && deployed.has(t.file.toLowerCase()) ? t.file : null
 }
 
 /** https, and a host that is ours: the CDN or the public API. Throws ModelRefused otherwise. */
@@ -231,9 +439,10 @@ async function fetchModels(models: ModelNeed[], fetcher: ModelFetcher) {
   const refused: Assembled['refused'] = []
   for (const m of models) {
     try {
-      assertVirviHosted(m.url)
+      const what = m.kind === 'thumbnail' ? 'Thumbnail' : 'Model'
+      assertVirviHosted(m.url, what)
       const bytes = await fetcher(m.url)
-      if (bytes.byteLength > DCL_MAX_FILE_BYTES) throw new ModelRefused('Model is over the 50 MB file limit')
+      if (bytes.byteLength > DCL_MAX_FILE_BYTES) throw new ModelRefused(`${what} is over the 50 MB file limit`)
       got.set(m.file, bytes)
       sources.push({ file: m.file, url: m.url })
     } catch (e) {
@@ -285,14 +494,19 @@ export async function assembleFresh(input: {
   models: ModelNeed[]
   timestamp: number
   fetch?: ModelFetcher
+  /** The scene's placed copies (placementsInScene), written to `virvi/placements.json`. */
+  placements?: Placement[]
 }): Promise<Assembled> {
   const { got, sources, refused } = await fetchModels(input.models, input.fetch ?? defaultModelFetcher)
+  const metadata = withThumbnail(input.metadata, deployedThumbnail(input.models, new Set([...got.keys()].map((f) => f.toLowerCase()))))
   const newFiles = new Map<string, Uint8Array>(await runtimeFiles())
-  newFiles.set('scene.json', new TextEncoder().encode(JSON.stringify(input.metadata)))
+  newFiles.set('scene.json', new TextEncoder().encode(JSON.stringify(metadata)))
   for (const [file, bytes] of got) newFiles.set(file, bytes)
+  const placements = placementsFile(input.placements ?? [], newFiles.keys())
+  if (placements) newFiles.set(PLACEMENTS_FILE, placements)
   return finish({
-    pointers: input.metadata.scene.parcels,
-    metadata: input.metadata,
+    pointers: metadata.scene.parcels,
+    metadata,
     existing: [],
     newFiles,
     timestamp: input.timestamp,
@@ -324,6 +538,10 @@ export async function assembleRedeploy(input: {
   /** The scene's name: a World Virvi built is redeployed under it when it differs from the live title. An adopted
    *  World keeps its own title, from the owner's scene.json. */
   title?: string
+  /** The scene's own thumbnail file (ownThumbnailFile, lowercased): kept, and kept as navmapThumbnail, whatever its name. */
+  ownThumbnail?: string | null
+  /** The scene's placed copies (placementsInScene): `virvi/placements.json`, rewritten when the deploy goes ahead. */
+  placements?: Placement[]
 }): Promise<Assembled> {
   const { live } = input
   const have = new Set(live.content.map((c) => c.file.toLowerCase()))
@@ -358,6 +576,25 @@ export async function assembleRedeploy(input: {
   }
   const renamed = !input.adopted && !!input.title && input.title !== metadata.display?.title
   if (renamed) metadata = { ...metadata, display: { ...metadata.display, title: input.title! } }
+  // The thumbnail: every Virvi thumbnail file but the current one (and the scene's own) goes, and navmapThumbnail
+  // follows what's deployed
+  const own = input.ownThumbnail?.toLowerCase() ?? null
+  const thumbFile = input.models.find((m) => m.kind === 'thumbnail' && !m.removed)?.file.toLowerCase()
+  const kept = existing.filter((c) => !virviThumbnailFile(c.file, own) || c.file.toLowerCase() === thumbFile)
+  const droppedThumbnail = kept.length !== existing.length
+  existing = kept
+  const before = metadata
+  metadata = withThumbnail(metadata, deployedThumbnail(input.models, new Set([...existing.map((c) => c.file), ...got.keys()].map((f) => f.toLowerCase()))), own)
+  const changed = got.size > 0 || upgrade || renamed || droppedThumbnail || metadata !== before
+  // A scene that deploys gets its placements rewritten (kept by hash when the same); see the LIV-134 ruling. An adopted
+  // scene too (LIV-135 part 3): the file sits beside the owner's, and nothing else of theirs changes for it.
+  if (changed) {
+    const prior = existing.find((c) => isPlacementsFile(c.file))
+    existing = existing.filter((c) => !isPlacementsFile(c.file))
+    const bytes = placementsFile(input.placements ?? [], [...existing.map((c) => c.file), ...newFiles.keys()])
+    if (bytes && prior && prior.file === PLACEMENTS_FILE && prior.hash === (await dclHash(bytes))) existing.push(prior)
+    else if (bytes) newFiles.set(PLACEMENTS_FILE, bytes)
+  }
   return finish({
     pointers: live.pointers,
     metadata,
@@ -368,7 +605,7 @@ export async function assembleRedeploy(input: {
     sources,
     refused,
     models: input.models,
-    changed: got.size > 0 || upgrade || renamed,
+    changed,
   })
 }
 
@@ -382,6 +619,7 @@ export function modelsBesideBuilt(models: ModelNeed[], builtPaths: Iterable<stri
  * An imported scene, built elsewhere: the entity is its built files plus the Virvi scene's models placed in-world (a
  * built file at the same path wins), every one new. Models are fetched and refused as in a redeploy. It replaces
  * whatever is live at its parcels, so nothing is kept from the live entity, and its code and scene.json are the owner's.
+ * Virvi adds `virvi/placements.json` for the placed copies of the Virvi models the deployment holds (none: no file).
  */
 export async function assembleImported(input: {
   files: Map<string, Uint8Array>
@@ -391,14 +629,22 @@ export async function assembleImported(input: {
   fetch?: ModelFetcher
   /** The entity's pointers; scene.parcels by default. */
   pointers?: string[]
+  /** The scene's placed copies (placementsInScene): `virvi/placements.json` for the Virvi models it ships (LIV-135). */
+  placements?: Placement[]
 }): Promise<Assembled> {
   const models = modelsBesideBuilt(input.models ?? [], input.files.keys())
   const { got, sources, refused } = await fetchModels(models, input.fetch ?? defaultModelFetcher)
-  const newFiles = new Map(input.files)
+  // Virvi's own placements file is never taken from the upload; see the LIV-135 part 3 ruling
+  const newFiles = new Map([...input.files].filter(([file]) => !isPlacementsFile(file)))
   for (const [file, bytes] of got) newFiles.set(file, bytes)
+  const placements = placementsFile(input.placements ?? [], newFiles.keys())
+  if (placements) newFiles.set(PLACEMENTS_FILE, placements)
+  // The owner's scene.json changes only when a thumbnail set in Virvi deploys with it: then only navmapThumbnail
+  const thumb = deployedThumbnail(models, new Set([...got.keys()].map((f) => f.toLowerCase())))
+  const metadata = thumb ? withThumbnail(input.metadata, thumb) : input.metadata
   const a = await finish({
-    pointers: input.pointers ?? input.metadata.scene.parcels,
-    metadata: input.metadata,
+    pointers: input.pointers ?? metadata.scene.parcels,
+    metadata,
     existing: [],
     newFiles,
     timestamp: input.timestamp,

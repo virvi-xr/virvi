@@ -5,7 +5,7 @@ import { Wallet } from 'ethers'
 import { eq } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { assetLibraryItems, dclWorldDestinations, sceneDeployments } from '../src/db/schema.js'
+import { assetLibraryItems, dclWorldDestinations, sceneCollaborators, sceneDeployments, sceneImports } from '../src/db/schema.js'
 import { setDclDirectory } from '../src/analytics/dcl-directory.js'
 import { dclHash, signedFetchPayload, virviSigner } from '../src/services/dcl/entity.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
@@ -101,8 +101,8 @@ describe('World destination routes', () => {
         wallets: [{
           address: user.wallet,
           names: [
-            { world: WORLD, hasScene: true, footprint: { base: '5,5', parcels: ['5,5', '5,6'] }, storage },
-            { world: 'empty.dcl.eth', hasScene: false, footprint: null, storage },
+            { world: WORLD, hasScene: true, footprint: { base: '5,5', parcels: ['5,5', '5,6'] }, storage, connectedScene: null },
+            { world: 'empty.dcl.eth', hasScene: false, footprint: null, storage, connectedScene: null },
           ],
         }],
       })
@@ -605,6 +605,171 @@ describe('World destination routes', () => {
     expect(entity.metadata).toEqual(theirs.metadata)
   })
 
+  describe('the scene a World is connected to', () => {
+    const plot = { width: 2, depth: 2, base: { x: 0, y: 0 } }
+    const create = (sceneId: string, u: TestUser = user) => req('POST', '/api/dcl/destinations', { sceneId, world: WORLD, mode: 'sign', plot }, u)
+
+    it('409 world_in_use names the scene and offers the disconnect to someone with full access to it', async () => {
+      const { scene } = await createScene(user, 'Old cafe')
+      const { scene: second } = await createScene(user, 'New cafe')
+      const dest = await insertDest(scene.id)
+      const res = await create(second.id)
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({
+        error: 'world_in_use', sceneId: scene.id,
+        connectedScene: { sceneId: scene.id, name: 'Old cafe', canDisconnect: true, destinationId: dest.id },
+      })
+    })
+
+    it('names the scene without the disconnect for someone who can only view it', async () => {
+      const other = await createUser()
+      const { scene } = await createScene(other, 'Their cafe')
+      await insertDest(scene.id, { ownerUserId: other.id })
+      await db.insert(sceneCollaborators).values({ sceneId: scene.id, userId: user.id, role: 'viewer' })
+      const { scene: mine } = await createScene(user)
+      const res = await create(mine.id)
+      expect(res.json().connectedScene).toEqual({ sceneId: scene.id, name: 'Their cafe', canDisconnect: false })
+    })
+
+    it("never names a scene the caller can't see", async () => {
+      const other = await createUser()
+      const { scene } = await createScene(other, 'Secret cafe')
+      await insertDest(scene.id, { ownerUserId: other.id })
+      const { scene: mine } = await createScene(user)
+      const res = await create(mine.id)
+      expect(res.statusCode).toBe(409)
+      expect(res.json().connectedScene).toEqual({ name: null, canDisconnect: false })
+      expect(JSON.stringify(res.json())).not.toContain('Secret cafe')
+    })
+
+    it('GET /api/dcl/worlds/:world and /api/dcl/names say so before anything is created, with the same rules', async () => {
+      const free = await req('GET', `/api/dcl/worlds/${WORLD}`)
+      expect(free.json().connectedScene).toBeNull()
+
+      const { scene } = await createScene(user, 'Old cafe')
+      const dest = await insertDest(scene.id)
+      const mine = await req('GET', `/api/dcl/worlds/${WORLD}`)
+      expect(mine.json().connectedScene).toEqual({ sceneId: scene.id, name: 'Old cafe', canDisconnect: true, destinationId: dest.id })
+
+      dir.ownedNames.set(user.wallet!, [WORLD])
+      const names = await req('GET', '/api/dcl/names')
+      expect(names.json().wallets[0].names[0].connectedScene).toEqual(mine.json().connectedScene)
+
+      const stranger = await createUser()
+      const theirs = await req('GET', `/api/dcl/worlds/${WORLD}`, undefined, stranger)
+      expect(theirs.json().connectedScene).toEqual({ name: null, canDisconnect: false })
+    })
+  })
+
+  describe('DELETE /api/dcl/destinations/:id (disconnect)', () => {
+    const plot = { width: 2, depth: 2, base: { x: 0, y: 0 } }
+
+    it('removes the destination so another of the owner\'s scenes can connect the World; nothing is sent to Decentraland', async () => {
+      const { scene } = await createScene(user, 'Old cafe')
+      const dest = await insertDest(scene.id, { mode: 'sign' })
+      const [done] = await db.insert(sceneDeployments).values({
+        sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', target: {}, destinationId: dest.id, status: 'deployed',
+      }).returning()
+      const res = await req('DELETE', `/api/dcl/destinations/${dest.id}`)
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toMatchObject({ world: WORLD, grantKept: false })
+      expect(await destRows()).toHaveLength(0)
+      // The scene's deploy history stays
+      expect((await db.query.sceneDeployments.findFirst({ where: eq(sceneDeployments.id, done.id) }))).toMatchObject({ status: 'deployed', destinationId: null })
+      expect(worlds.signed).toHaveLength(0)
+      expect(worlds.deployed).toHaveLength(0)
+
+      const { scene: second } = await createScene(user, 'New cafe')
+      const again = await req('POST', '/api/dcl/destinations', { sceneId: second.id, world: WORLD, mode: 'sign', plot })
+      expect(again.statusCode).toBe(201)
+    })
+
+    it("keeps Virvi's deploy permission and says so", async () => {
+      const { scene } = await createScene(user)
+      worlds.deployers.set(WORLD, { owner: user.wallet, deployers: [virvi] })
+      const dest = await insertDest(scene.id, { mode: 'virvi', grantedAt: new Date() })
+      const res = await req('DELETE', `/api/dcl/destinations/${dest.id}`)
+      expect(res.statusCode).toBe(200)
+      expect(res.json().grantKept).toBe(true)
+      expect(res.json().message).toMatch(/permission/)
+      expect(worlds.signed).toHaveLength(0)
+      expect(worlds.deployers.get(WORLD)!.deployers).toEqual([virvi])
+    })
+
+    it('needs full access: 403 for someone who can only view or edit, 404 for a stranger or an unknown id', async () => {
+      const { scene } = await createScene(user)
+      const dest = await insertDest(scene.id)
+      const viewer = await createUser()
+      const editor = await createUser()
+      await db.insert(sceneCollaborators).values([
+        { sceneId: scene.id, userId: viewer.id, role: 'viewer' },
+        { sceneId: scene.id, userId: editor.id, role: 'editor' },
+      ])
+      expect((await req('DELETE', `/api/dcl/destinations/${dest.id}`, undefined, viewer)).statusCode).toBe(403)
+      expect((await req('DELETE', `/api/dcl/destinations/${dest.id}`, undefined, editor)).statusCode).toBe(403)
+      expect((await req('DELETE', `/api/dcl/destinations/${dest.id}`, undefined, await createUser())).statusCode).toBe(404)
+      expect((await req('DELETE', `/api/dcl/destinations/${crypto.randomUUID()}`)).statusCode).toBe(404)
+      expect((await req('DELETE', '/api/dcl/destinations/nope')).statusCode).toBe(404)
+      expect(await destRows()).toHaveLength(1)
+    })
+
+    it('is refused while a deploy is running for it', async () => {
+      const { scene } = await createScene(user)
+      const dest = await insertDest(scene.id)
+      for (const status of ['pending', 'building', 'deploying'] as const) {
+        const [row] = await db.insert(sceneDeployments).values({
+          sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', target: {}, destinationId: dest.id, status,
+        }).returning()
+        const res = await req('DELETE', `/api/dcl/destinations/${dest.id}`)
+        expect([res.statusCode, res.json().error]).toEqual([409, 'deploy_in_progress'])
+        await db.delete(sceneDeployments).where(eq(sceneDeployments.id, row.id))
+      }
+      expect(await destRows()).toHaveLength(1)
+    })
+
+    it('is refused while an upload to that World is uploaded, building or deploying, linked to it or not', async () => {
+      const { scene } = await createScene(user)
+      const dest = await insertDest(scene.id)
+      for (const status of ['uploaded', 'building', 'deploying'] as const) {
+        // Not linked: an automatic deploy claims its import before it links it (Ruling R24)
+        const [imp] = await db.insert(sceneImports).values({
+          userId: user.id, sceneId: scene.id, worldName: WORLD, kind: 'sdk7', status, sourceKey: 'imports/x/source.zip',
+        }).returning()
+        const res = await req('DELETE', `/api/dcl/destinations/${dest.id}`)
+        expect([res.statusCode, res.json().error]).toEqual([409, 'import_in_progress'])
+        await db.delete(sceneImports).where(eq(sceneImports.id, imp.id))
+      }
+      // A built upload waiting for its Deploy doesn't hold the World
+      await db.insert(sceneImports).values({ userId: user.id, sceneId: scene.id, worldName: WORLD, kind: 'sdk7', status: 'built', sourceKey: 'imports/y/source.zip' })
+      expect((await req('DELETE', `/api/dcl/destinations/${dest.id}`)).statusCode).toBe(200)
+    })
+
+    it('cancels a deploy waiting for its signature, so that signature can never land', async () => {
+      const { scene } = await createScene(user)
+      const dest = await insertDest(scene.id, { mode: 'sign' })
+      const [waiting] = await db.insert(sceneDeployments).values({
+        sceneId: scene.id, platform: 'decentraland', deploymentType: 'world', target: {}, destinationId: dest.id, status: 'awaiting_signature',
+        assetBundle: { entityId: 'x', timestamp: Date.now() },
+      }).returning()
+      const res = await req('DELETE', `/api/dcl/destinations/${dest.id}`)
+      expect(res.statusCode).toBe(200)
+      expect(await db.query.sceneDeployments.findFirst({ where: eq(sceneDeployments.id, waiting.id) })).toMatchObject({
+        status: 'failed', errorMessage: expect.stringMatching(/disconnected/),
+      })
+      const late = await req('POST', `/api/deploy/${waiting.id}/signature`, { chain: [] })
+      expect(late.statusCode).toBeGreaterThanOrEqual(400)
+      expect(worlds.deployed).toHaveLength(0)
+    })
+
+    it('Genesis City parcels are refused: 409 not_a_world', async () => {
+      const { scene } = await createScene(user)
+      const dest = await insertDest(scene.id, { kind: 'parcels', worldName: null, base: '10,10', parcels: ['10,10'] })
+      const res = await req('DELETE', `/api/dcl/destinations/${dest.id}`)
+      expect([res.statusCode, res.json().error]).toEqual([409, 'not_a_world'])
+      expect(await destRows()).toHaveLength(1)
+    })
+  })
+
   describe('GET /api/scenes/:sceneId/dcl/destinations', () => {
     it("lists the scene's destinations and the set-up Worlds it could adopt", async () => {
       const { scene } = await createScene(user)
@@ -616,6 +781,7 @@ describe('World destination routes', () => {
       const { scene: other } = await createScene(user, 'Other')
       const hub = await createAnalyticsScene({ kind: 'world', locationKey: 'world:hub.dcl.eth', realm: 'hub.dcl.eth', worldName: 'hub.dcl.eth' })
       await createSetup(hub.id, scene.id)
+      worlds.entities.set('hub.dcl.eth', [liveEntity('hub1', ['0,0'])])
       const elsewhere = await createAnalyticsScene({ kind: 'world', locationKey: 'world:else.dcl.eth', realm: 'else.dcl.eth', worldName: 'else.dcl.eth' })
       await createSetup(elsewhere.id, other.id)
       const ended = await createAnalyticsScene({ kind: 'world', locationKey: 'world:old.dcl.eth', realm: 'old.dcl.eth', worldName: 'old.dcl.eth' })
@@ -631,6 +797,25 @@ describe('World destination routes', () => {
       expect(res.statusCode).toBe(200)
       expect(res.json().destinations.map((d: { id: string }) => d.id)).toEqual([dest.id])
       expect(res.json().adoptable).toEqual([{ world: 'hub.dcl.eth' }])
+    })
+
+    it('leaves out a World whose set-up scene Virvi built (one disconnected from this scene), or that Decentraland cannot read', async () => {
+      const { scene } = await createScene(user)
+      const built = liveEntity('e1', ['0,0'])
+      built.metadata = { ...built.metadata, virvi: { apiUrl: 'https://virvi.io', wssUrl: 'wss://virvi.io', runtime: 3 } }
+      worlds.entities.set(WORLD, [built])
+      const cafe = await createAnalyticsScene({ kind: 'world', locationKey: `world:${WORLD}`, realm: WORLD, worldName: WORLD, baseParcel: '0,0' })
+      await createSetup(cafe.id, scene.id)
+      // Disconnected: the setup Virvi's deploys made stays (the World still runs the scene), but it isn't offered back
+      const dest = await insertDest(scene.id)
+      expect((await req('DELETE', `/api/dcl/destinations/${dest.id}`)).statusCode).toBe(200)
+      expect((await req('GET', `/api/scenes/${scene.id}/dcl/destinations`)).json().adoptable).toEqual([])
+
+      worlds.entities.set(WORLD, [liveEntity('e2', ['0,0'])])
+      expect((await req('GET', `/api/scenes/${scene.id}/dcl/destinations`)).json().adoptable).toEqual([{ world: WORLD }])
+      worlds.down = true
+      const down = await req('GET', `/api/scenes/${scene.id}/dcl/destinations`)
+      expect([down.statusCode, down.json().adoptable]).toEqual([200, []])
     })
 
     it("is 404 for a scene the caller can't edit", async () => {

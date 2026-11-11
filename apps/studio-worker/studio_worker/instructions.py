@@ -30,7 +30,36 @@ piece (<name> in lowercase letters and underscores, e.g. out/furniture_round_tab
 Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is."""
 
 
-def closing(kind: str, selected_slots: list[str] | None, agent: str | None = None) -> str:
+def no_workspace(kind: str) -> str:
+    """The user only reads the reply: the workspace, its files and the tools that made them are never theirs to see."""
+    files = 'out/..., proposal.json, declined.json' if kind == 'wearable' else 'out/..., declined.json'
+    return ('The user never sees your workspace, so your reply never mentions file names, folders, paths, commands, '
+            f'scripts, tools or skills ({files}, uploads/..., studio-preview, the checker scripts, Blender, the skills '
+            'by name). Say it in the user\'s terms instead: "I\'ve put together a few options", "the hat", "your '
+            'reference image", "the checks". A file the user uploaded can be called by the name they gave it, without '
+            'its folder.')
+
+
+LESSONS_MAX = 4000  # the server keeps a kind's lessons within this; a longer list is cut, never sent whole
+
+
+def lessons_text(lessons: list | None) -> str:
+    """The admin-approved lessons for this kind of design (the job's `lessons`), as one more part of the instructions."""
+    kept, used = [], 0
+    for lesson in lessons or []:
+        if not isinstance(lesson, str) or not lesson.strip():
+            continue
+        text = ' '.join(lesson.split())
+        if used + len(text) > LESSONS_MAX:
+            break
+        kept.append(f'- {text}')
+        used += len(text)
+    if not kept:
+        return ''
+    return '\nLessons from earlier designs (follow them unless the user asks otherwise):\n' + '\n'.join(kept)
+
+
+def closing(kind: str, selected_slots: list[str] | None, agent: str | None = None, lessons: list | None = None) -> str:
     scope = 'Decentraland wearables and emotes'
     if kind == 'scene':
         scope = 'buildings, furniture and decor for Decentraland scenes'
@@ -42,11 +71,14 @@ def closing(kind: str, selected_slots: list[str] | None, agent: str | None = Non
         check = ('Run the skills\' checks on every piece you changed and fix every FAIL: check_scene_model.py for each '
                  'piece (with --sittables for anything sittable), and check_walk.py with route.json for the building.')
     elif kind == 'emote':
-        what = 'Build one Decentraland emote. Its folder is out/emote/.'
+        what = ('Build one Decentraland emote. Its folder is out/emote/. Pose with the skill\'s emotelib: the legs with '
+                '`leg` IK and the arms with `reach`, never raw rotations on the leg bones.')
         layout = LAYOUT % ', "loop": true | false'
         look = ('Before you finish, run `studio-preview out/emote` and open the images it prints: check the hands, '
                 'limbs and props through the animation and fix any clipping you see.')
-        check = 'Run the emote checker (check_emote.py) on the GLB and fix every FAIL.'
+        check = ('Run the emote checker (check_emote.py) on the GLB and fix every FAIL. Run emotelib\'s `limb_overlaps` '
+                 'on every frame, left leg against right leg and each arm against the torso and legs, and fix every '
+                 'overlap: limbs that touch on purpose rest against each other, never pass through.')
     else:
         what = (f'Build only these slots: {", ".join(selected_slots)}.' if selected_slots else
                 'If the idea is settled enough to build, build it.')
@@ -70,13 +102,15 @@ def closing(kind: str, selected_slots: list[str] | None, agent: str | None = Non
 
 ---
 Studio instructions:
-Use the dcl-avatar-skills. The official Decentraland base avatar .blend files are in {ASSETS}. Blender runs headless
-only: `blender -b`. {what}
+Use the dcl-avatar-skills. The official Decentraland base avatar .blend files are in {ASSETS}: AvatarShape_A.blend is
+the female body (BaseFemale, the _female GLB) and AvatarShape_B.blend the male body (BaseMale, the _male GLB). Blender
+runs headless only: `blender -b`. {what}
 {layout}
 Blender is for building only: never render in Blender (no thumbnails, turntables or test renders). `studio-preview` is how you look at your work.
 {look}
-{check}{shaping}
+{check}{shaping}{lessons_text(lessons)}
 When you're done, reply to the user in a few plain sentences: what you made or changed, and anything you need from them.
+{no_workspace(kind)}
 You build and discuss {scope}, and nothing else. If the user asks for something that isn't
 (coding help, writing unrelated to the listing, research, general questions), write out/declined.json as
 {{"reason": str}}, do nothing more and stop. If a message mixes design work with something else, do the design part only

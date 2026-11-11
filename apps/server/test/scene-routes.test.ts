@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { db } from '../src/db/connection.js'
 import { eq } from 'drizzle-orm'
-import { sceneCollaborators, sceneElements, sceneElementInstances } from '../src/db/schema.js'
+import { sceneCollaborators, sceneElements, sceneElementInstances, scenePresets } from '../src/db/schema.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor } from './helpers/factories.js'
 
@@ -125,7 +125,7 @@ describe('scene routes enforce collaborator roles', () => {
 
   it('owner keeps full access', async () => {
     const s = await setup()
-    expect((await app.inject({ method: 'DELETE', url: `/api/scenes/${s.scene.id}`, headers: as(s.owner) })).statusCode).toBe(204)
+    expect((await app.inject({ method: 'DELETE', url: `/api/scenes/${s.scene.id}`, headers: as(s.owner) })).statusCode).toBe(200)
   })
 
   it('renaming a scene trims the name; a viewer cannot; blank or over 120 characters is 400', async () => {
@@ -140,5 +140,59 @@ describe('scene routes enforce collaborator roles', () => {
       expect((await put(s.owner, bad)).statusCode, JSON.stringify(bad)).toBe(400)
     }
     expect((await put(s.owner, 'x'.repeat(120))).statusCode).toBe(200)
+  })
+
+  describe('instance parents (LIV-138)', () => {
+    const post = (u: any, elementId: string, payload: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: `/api/elements/${elementId}/instances`, headers: as(u), payload })
+    const put = (u: any, instanceId: string, payload: Record<string, unknown>) =>
+      app.inject({ method: 'PUT', url: `/api/instances/${instanceId}`, headers: as(u), payload })
+    const parentOf = async (id: string) =>
+      (await db.query.sceneElementInstances.findFirst({ where: eq(sceneElementInstances.id, id) }))!.parentInstanceId
+
+    it('a parent in the same preset is kept; null clears it', async () => {
+      const s = await setup()
+      const other = await createElement(s.preset.id, { name: 'Other' })
+      const created = await post(s.editor, other.id, { parentInstanceId: s.instance.id })
+      expect(created.statusCode).toBe(201)
+      expect(created.json().instance.parentInstanceId).toBe(s.instance.id)
+      const child = created.json().instance.id
+      const sibling = await createInstance(s.element.id)
+      expect((await put(s.editor, child, { parentInstanceId: sibling.id })).statusCode).toBe(200)
+      expect(await parentOf(child)).toBe(sibling.id)
+      expect((await put(s.editor, child, { parentInstanceId: null })).statusCode).toBe(200)
+      expect(await parentOf(child)).toBeNull()
+    })
+
+    it('an unknown parent, a parent elsewhere, or a parent in another preset is a 400', async () => {
+      const s = await setup()
+      const foreign = await createScene(s.stranger)
+      const foreignInst = await createInstance((await createElement(foreign.preset.id)).id)
+      const [night] = await db.insert(scenePresets).values({ sceneId: s.scene.id, name: 'Night' }).returning()
+      const nightInst = await createInstance((await createElement(night.id)).id)
+      for (const bad of ['00000000-0000-0000-0000-000000000000', 'not-a-uuid', foreignInst.id, nightInst.id, 42]) {
+        const c = await post(s.editor, s.element.id, { parentInstanceId: bad })
+        expect([String(bad), c.statusCode, c.json().error]).toEqual([String(bad), 400, 'bad_parent'])
+        const u = await put(s.editor, s.instance.id, { parentInstanceId: bad })
+        expect([String(bad), u.statusCode, u.json().error]).toEqual([String(bad), 400, 'bad_parent'])
+      }
+      expect(await parentOf(s.instance.id)).toBeNull()
+      expect(await db.select().from(sceneElementInstances).where(eq(sceneElementInstances.elementId, s.element.id))).toHaveLength(1)
+    })
+
+    it('an instance cannot be its own parent or close a loop', async () => {
+      const s = await setup()
+      const self = await put(s.editor, s.instance.id, { parentInstanceId: s.instance.id })
+      expect([self.statusCode, self.json().error]).toEqual([400, 'bad_parent'])
+      const b = await createInstance(s.element.id)
+      const c = await createInstance(s.element.id)
+      expect((await put(s.editor, b.id, { parentInstanceId: s.instance.id })).statusCode).toBe(200)
+      expect((await put(s.editor, c.id, { parentInstanceId: b.id })).statusCode).toBe(200)
+      const loop = await put(s.editor, s.instance.id, { parentInstanceId: c.id })
+      expect([loop.statusCode, loop.json().error]).toEqual([400, 'bad_parent'])
+      expect(await parentOf(s.instance.id)).toBeNull()
+      // Re-sending the parent it already has is fine
+      expect((await put(s.editor, c.id, { parentInstanceId: b.id, position: { x: 0, y: 0, z: 0 } })).statusCode).toBe(200)
+    })
   })
 })

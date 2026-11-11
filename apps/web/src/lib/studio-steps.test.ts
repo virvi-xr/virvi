@@ -145,7 +145,7 @@ describe('scene designs', () => {
 
 describe('scene finalize', () => {
   it('says the pieces go into the asset library', () => {
-    expect(finalizeStrip(null, 'scene').unlocks).toMatch(/asset library/)
+    expect(finalizeStrip(null, 'scene').unlocks).toMatch(/3D Models/)
   })
 })
 
@@ -157,6 +157,13 @@ describe('the step a design opens on', () => {
     expect(shownStep('tour', 'scene', ['furniture_chair'])).toBe('inspect')  // no building, so no walk-through
     expect(shownStep('tour', 'scene', ['building'])).toBe('tour')
     expect(shownStep('emotes', 'wearable', ['hat'])).toBe('emotes')
+  })
+  it('leaves a viewer every step but Finalize: emotes and the walk-through play what is rendered (LIV-159)', () => {
+    expect(stepsFor('wearable', ['hat'], true)).toEqual(['design', 'inspect', 'avatar', 'emotes'])
+    expect(stepsFor('emote', ['emote'], true)).toEqual(['design', 'avatar', 'emotes'])
+    expect(stepsFor('scene', ['building', 'furniture_chair'], true)).toEqual(['design', 'inspect', 'tour', 'scale'])
+    expect(shownStep('finalize', 'wearable', ['hat'], true)).toBe('avatar')
+    expect(shownStep('tour', 'scene', ['building'], true)).toBe('tour')
   })
 })
 

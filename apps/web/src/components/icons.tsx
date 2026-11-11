@@ -39,4 +39,7 @@ export const ArrowUpRightIcon = (p: IconProps) => <Icon {...p}><path d="M7 17 17
 export const PlusIcon = (p: IconProps) => <Icon {...p}><path d="M12 5v14M5 12h14" /></Icon>
 export const ChevronDownIcon = (p: IconProps) => <Icon {...p}><path d="m6 9 6 6 6-6" /></Icon>
 export const MoreIcon = (p: IconProps) => <Icon {...p}><path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth={2.5} /></Icon>
+export const BookIcon = (p: IconProps) => <Icon {...p}><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5zM4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5" /><path d="M8 7h8M8 11h6" /></Icon>
+export const BugIcon = (p: IconProps) => <Icon {...p}><rect x="7" y="7" width="10" height="13" rx="5" /><path d="M9 7.5V6a3 3 0 0 1 6 0v1.5M12 11v9M7 12H3M21 12h-4M7.5 17 4 19M16.5 17l3.5 2M7.5 9 4 7M16.5 9 20 7" /></Icon>
 export const TrashIcon = (p: IconProps) => <Icon {...p}><path d="M4 7h16M10 11v6M14 11v6" /><path d="M6 7l1 13h10l1-13M9 7V4h6v3" /></Icon>
+export const BellIcon = (p: IconProps) => <Icon {...p}><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15Z" /><path d="M10 21h4" /></Icon>

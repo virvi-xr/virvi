@@ -93,3 +93,105 @@ def write(path, nodes, materials=None, images=None):
     with open(path, 'wb') as fh:
         fh.write(out)
     return path
+
+
+# ---------------------------------------------------------------- emotes
+# A stripped-down avatar skeleton in the official rig's units: an `Armature` node scaled 0.01 holding bones in cm,
+# +Y up, +X the avatar's left. Leg lengths and hip width are the official avatar's (thigh 44.89, shin 40.71, hips ±8.91).
+EMOTE_BONES = {  # name: (parent, rest translation in cm)
+    'Avatar_Hips': ('Armature', (0, 95, 0)),
+    'Avatar_Spine': ('Avatar_Hips', (0, 10, 0)),
+    'Avatar_LeftUpLeg': ('Avatar_Hips', (8.91, -6.27, 0)),
+    'Avatar_LeftLeg': ('Avatar_LeftUpLeg', (0, -44.89, 0)),
+    'Avatar_LeftFoot': ('Avatar_LeftLeg', (0, -40.71, 0)),
+    'Avatar_RightUpLeg': ('Avatar_Hips', (-8.91, -6.27, 0)),
+    'Avatar_RightLeg': ('Avatar_RightUpLeg', (0, -44.89, 0)),
+    'Avatar_RightFoot': ('Avatar_RightLeg', (0, -40.71, 0)),
+}
+
+
+def quat(axis, deg):
+    """glTF quaternion (x, y, z, w) for a rotation of `deg` degrees about `axis`."""
+    a = np.asarray(axis, float)
+    a = a / np.linalg.norm(a)
+    h = np.radians(deg) / 2
+    return [*(a * np.sin(h)), float(np.cos(h))]
+
+
+def emote(path, keys, times=None, name='Test', prop=False, drop=(), interpolation='LINEAR', hips=None):
+    """An emote GLB on EMOTE_BONES. keys: one {bone: quaternion} per keyframe (bones left out keep their rest
+    rotation); times: the keyframes' seconds (default 0, 1, 2, ...); hips: optional hips translations per keyframe.
+    prop: also an `Armature_Prop` with one bone and a `<name>_Prop` clip (listed first, and longer). drop: bones
+    left out of the skeleton."""
+    times = list(range(len(keys))) if times is None else list(times)
+    bones = {n: v for n, v in EMOTE_BONES.items() if n not in drop}
+    names = ['Armature'] + list(bones) + (['Armature_Prop', 'Prop_Book'] if prop else [])
+    idx = {n: i for i, n in enumerate(names)}
+    gnodes = [{'name': n} for n in names]
+    gnodes[0].update(scale=[0.01, 0.01, 0.01])
+    for n, (parent, t) in bones.items():
+        gnodes[idx[n]]['translation'] = list(map(float, t))
+        if parent in idx:
+            gnodes[idx[parent]].setdefault('children', []).append(idx[n])
+    if prop:
+        gnodes[idx['Armature_Prop']].update(scale=[0.01, 0.01, 0.01], children=[idx['Prop_Book']])
+        gnodes[idx['Prop_Book']]['translation'] = [0.0, 100.0, 20.0]
+    blob = bytearray()
+    views, accessors = [], []
+
+    def add(arr, typ):
+        arr = np.asarray(arr, np.float32)
+        views.append({'buffer': 0, 'byteOffset': len(blob), 'byteLength': arr.nbytes})
+        blob.extend(arr.tobytes())
+        acc = {'bufferView': len(views) - 1, 'componentType': 5126, 'count': len(arr), 'type': typ}
+        if typ == 'SCALAR':
+            acc.update(min=[float(arr.min())], max=[float(arr.max())])
+        accessors.append(acc)
+        return len(accessors) - 1
+
+    def clip(clip_name, times, tracks):
+        t = add(times, 'SCALAR')
+        samplers, channels = [], []
+        for node, prop_path, values in tracks:
+            if interpolation == 'CUBICSPLINE':  # in-tangent, value, out-tangent per key; flat tangents
+                values = [row for v in values for row in (np.zeros(len(v)), v, np.zeros(len(v)))]
+            samplers.append({'input': t, 'output': add(values, 'VEC4' if prop_path == 'rotation' else 'VEC3'),
+                             'interpolation': interpolation})
+            channels.append({'sampler': len(samplers) - 1, 'target': {'node': idx[node], 'path': prop_path}})
+        return {'name': clip_name, 'samplers': samplers, 'channels': channels}
+
+    # the hips are always keyed, as a real emote keys every bone
+    animated = sorted({b for k in keys for b in k if b in bones} | ({'Avatar_Hips'} & set(bones)), key=list(bones).index)
+    tracks = [(b, 'rotation', [k.get(b, [0, 0, 0, 1]) for k in keys]) for b in animated]
+    if hips is not None:
+        tracks.append(('Avatar_Hips', 'translation', hips))
+    animations = [clip(name + '_Avatar', times, tracks)]
+    if prop:  # the prop clip comes first and runs longer, so a reader that takes the first clip gets it wrong
+        animations.insert(0, clip(name + '_Prop', [0, times[-1] + 5], [('Prop_Book', 'rotation', [[0, 0, 0, 1], quat((1, 0, 0), 90)])]))
+    roots = [idx['Armature']] + ([idx['Armature_Prop']] if prop else [])
+    gltf = {'asset': {'version': '2.0'}, 'scene': 0, 'scenes': [{'nodes': roots}], 'nodes': gnodes,
+            'animations': animations, 'accessors': accessors, 'bufferViews': views,
+            'buffers': [{'byteLength': len(blob)}]}
+    return write_glb(path, gltf, blob)
+
+
+def read_glb(path):
+    """(glTF JSON, BIN bytes) of a GLB, for tests that edit one."""
+    b = open(path, 'rb').read()
+    n = struct.unpack('<I', b[12:16])[0]
+    bn = struct.unpack('<I', b[20 + n:24 + n])[0]
+    return json.loads(b[20:20 + n]), bytearray(b[28 + n:28 + n + bn])
+
+
+def write_glb(path, gltf, blob):
+    blob = bytearray(blob)
+    while len(blob) % 4:
+        blob.append(0)
+    gltf['buffers'] = [{'byteLength': len(blob)}]
+    js = json.dumps(gltf).encode()
+    js += b' ' * (-len(js) % 4)
+    out = struct.pack('<III', 0x46546C67, 2, 28 + len(js) + len(blob)) + struct.pack('<II', len(js), 0x4E4F534A) + js + \
+        struct.pack('<II', len(blob), 0x004E4942) + bytes(blob)
+    with open(path, 'wb') as fh:
+        fh.write(out)
+    return path

@@ -1,7 +1,7 @@
 import { signinPath } from '@/lib/landing-route'
 import { siteLinks } from '@/lib/site'
 
-export function Nav({ onAdvertise }: { onAdvertise: () => void }) {
+export function Nav({ onAdvertise, onTry }: { onAdvertise: () => void; onTry: () => void }) {
   const { docs } = siteLinks()
   return (
     <header className="border-b border-gray-800">
@@ -13,8 +13,13 @@ export function Nav({ onAdvertise }: { onAdvertise: () => void }) {
           {docs && <a href={docs} className="hover:text-white">Docs</a>}
         </div>
         <div className="ml-auto flex items-center gap-2 md:ml-0">
-          <a href={signinPath()} className="rounded-lg px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white">Sign in</a>
-          <a href={signinPath(null, 'register')} className="clip-corner bg-accent px-4 py-2 text-sm font-semibold text-accent-ink hover:bg-accent-hover">Get started</a>
+          {/* The desktop links are hidden on phones; Docs stays reachable without signing in */}
+          {docs && <a href={docs} className="hidden rounded-lg px-2 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white min-[340px]:inline-block md:hidden">Docs</a>}
+          <button type="button" onClick={onTry} className="whitespace-nowrap rounded-lg border border-blue-500 px-3 py-2 text-sm font-semibold text-blue-200 hover:bg-blue-950 hover:text-white sm:px-4">
+            Try now
+          </button>
+          <a href={signinPath()} className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white">Sign in</a>
+          <a href={signinPath(null, 'register')} className="clip-corner hidden bg-accent sm:inline-block px-4 py-2 text-sm font-semibold text-accent-ink hover:bg-accent-hover">Get started</a>
         </div>
       </nav>
     </header>

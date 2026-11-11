@@ -2,6 +2,8 @@
 # The worker image's entrypoint. Locks outbound traffic to the allowlisting proxy, then runs the given command, or
 # the worker. Fails closed: if the firewall can't be set (no NET_ADMIN), nothing runs. IPv4 and IPv6 alike.
 set -euo pipefail
+# When the machine's entrypoint began (epoch seconds): the worker's boot event counts from here
+export STUDIO_BOOT_AT="${STUDIO_BOOT_AT:-$(date +%s.%N)}"
 
 filter=/etc/tinyproxy/filter
 {

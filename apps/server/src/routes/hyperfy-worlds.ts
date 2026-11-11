@@ -140,7 +140,8 @@ export default async function hyperfyWorldRoutes(app: FastifyInstance) {
     },
   )
 
-  app.get('/api/hyperfy/slots', { preHandler }, async (request) => ({
+  // Read-only, so the wizard's Where step can show it to a trial
+  app.get('/api/hyperfy/slots', { preHandler, config: { trial: true } }, async (request) => ({
     ...slotsBody(await hostedWorldSlots(request.user.id)),
     hostingAvailable: hyperfyHosting().available,
   }))

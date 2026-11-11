@@ -18,7 +18,7 @@ export interface SceneRoleEntry {
   createdAt?: string
 }
 
-/** One file in the signed-in user's Media library (`GET /api/media`). */
+/** One file in the signed-in user's Images & Video (`GET /api/media`). */
 export interface MediaLibraryAsset {
   id: string
   filename: string
@@ -340,7 +340,7 @@ export class VirviHttpClient {
     })
   }
 
-  // Media library
+  // Images & Video
   async getMedia(): Promise<{ assets: MediaLibraryAsset[] }> {
     return this._fetch('/api/media')
   }

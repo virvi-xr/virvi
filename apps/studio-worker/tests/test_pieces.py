@@ -74,6 +74,24 @@ def test_emote_checker_runs(tmp_path, skills):
     assert list(glbs_by_shape(pieces[0])) == ['unisex'] and glbs_by_shape(pieces[0])['unisex'].name == 'wave.glb'
 
 
+def test_emote_checker_adds_the_leg_check(tmp_path, skills):
+    lay_out(tmp_path, 'emote', [FIXTURES / 'wave.glb'], {**HAT, 'category': 'emote', 'loop': False})
+    fine = collect(tmp_path, 'emote', {})[0][0].checker
+    assert '  PASS  legs apart' in fine['report']
+    shutil.copy(FIXTURES / 'emote_legs/crossed_thighs.glb', tmp_path / 'out/emote/wave.glb')
+    crossed = collect(tmp_path, 'emote', {})[0][0].checker
+    line = next(l for l in crossed['report'].splitlines() if 'legs pass through each other' in l)
+    assert line.startswith('  WARN  ') and 'wave.glb' in line and 'the thighs pass through each other at' in line
+    warns = [l for l in crossed['report'].splitlines() if l.startswith('  WARN')]
+    assert line in warns and crossed['warnings'] == len(warns)
+    assert crossed['pass'] is True and crossed['failures'] == 0  # a warning: it still saves
+
+
+def test_wearable_checker_has_no_leg_check(tmp_path, skills):
+    cap(tmp_path)
+    assert 'legs' not in collect(tmp_path, 'wearable', {})[0][0].checker['report']
+
+
 def test_closing_names_the_slots_and_forbids_renders():
     text = closing('wearable', ['hat', 'eyewear'])
     for words in ('hat', 'eyewear', 'studio-preview', 'never render', '/opt/assets', 'piece.json'):
@@ -87,6 +105,14 @@ def test_closing_asks_for_listing_fields_on_wearables_only():
     assert 'listing-dcl-wearables' in wearable and 'at most 64 characters' in wearable
     emote = closing('emote', None)
     assert '"rarity"' not in emote and '"loop": true | false' in emote
+
+
+def test_closing_has_emotes_pose_legs_with_ik_and_check_limb_overlaps():
+    emote = closing('emote', None)
+    for words in ('emotelib', "`leg`", "`reach`", 'limb_overlaps', 'left leg against right leg'):
+        assert words in emote
+    for other in (closing('wearable', ['hat']), closing('scene', None)):
+        assert 'emotelib' not in other and 'limb_overlaps' not in other
 
 
 def test_pieces_are_read_into_the_stage(tmp_path, skills):
@@ -143,3 +169,23 @@ def test_closing_for_a_scene_design_names_the_skills_folders_and_checks():
     # its scope is buildings and furniture, so a cafe isn't declined as off-topic
     assert 'buildings, furniture and decor' in text
     assert 'wearables and emotes, and nothing else' not in text
+
+
+def test_a_fifo_glb_is_an_error_not_a_hang(tmp_path):
+    d = tmp_path / 'design/out/hat'
+    d.mkdir(parents=True)
+    (d / 'piece.json').write_text(json.dumps(HAT))
+    os.mkfifo(d / 'hat_male.glb')
+    pieces, _, error = collect(tmp_path / 'design', 'wearable', {}, stage=tmp_path / 'stage')
+    assert pieces == [] and 'out/hat/hat_male.glb' in error and 'not a regular file' in error
+
+
+def test_read_regular_caps_the_size(tmp_path):
+    import pytest
+    from studio_worker.pieces import UnsafeFile, read_regular
+    (tmp_path / 'out').mkdir()
+    big = tmp_path / 'out/big.glb'
+    big.write_bytes(b'x' * 1000)
+    assert read_regular(big) == b'x' * 1000 and read_regular(big, max_bytes=1000) == b'x' * 1000
+    with pytest.raises(UnsafeFile, match='too large'):
+        read_regular(big, max_bytes=999)

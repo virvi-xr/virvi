@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { studioDesigns, studioJobs, studioMessages } from '../src/db/schema.js'
@@ -111,5 +111,27 @@ describe('studio sweep', () => {
     expect((await promptStatus(a.owner.id, T0)).used).toBe(1)
     expect((await promptStatus(b.owner.id, T0)).used).toBe(1)
     expect(await db.select().from(studioMessages)).toHaveLength(2)
+  })
+
+  it('one job that fails to settle is logged and the sweep carries on', async () => {
+    const fly = fakeFly()
+    const bad = await countedTakenPrompt()
+    const good = await countedTakenPrompt()
+    const idle = await createDesign(await createUser(), { machineId: 'm-idle', lastJobAt: T0 })
+    // Settling the bad job's system message fails: its job rolls back, the others don't
+    await db.execute(`CREATE OR REPLACE FUNCTION no_message() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'nope'; END $$ LANGUAGE plpgsql`)
+    await db.execute(`CREATE TRIGGER no_message BEFORE INSERT ON studio_messages FOR EACH ROW WHEN (NEW.job_id = '${bad.job.id}') EXECUTE FUNCTION no_message()`)
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect((await sweepStudio(at(3 * 24 * 60 * MIN + MIN), { fly })).lost).toBe(1)
+      expect(logged).toHaveBeenCalledWith(`[studio] failing job ${bad.job.id} failed:`, expect.stringContaining('nope'))
+    } finally {
+      logged.mockRestore()
+      await db.execute('DROP TRIGGER no_message ON studio_messages')
+    }
+    const jobs = await db.select().from(studioJobs)
+    expect(jobs.find((j) => j.id === bad.job.id)?.status).toBe('taken')
+    expect(jobs.find((j) => j.id === good.job.id)?.status).toBe('failed')
+    expect((await db.select().from(studioDesigns).where(eq(studioDesigns.id, idle.id)))[0].machineId).toBeNull()
   })
 })

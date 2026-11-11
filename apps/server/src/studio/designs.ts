@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { listUploads, publicUpload, uploadPaths } from './uploads.js'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioFinalizeCredits, studioJobs, studioPayments, studioMessages, studioPieces, studioRenders, studioRevisions } from '../db/schema.js'
+import { studioDesigns, studioFinalizeCredits, studioJobs, studioPayments, studioMessages, studioPieces, studioRenders, studioRevisions, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { reservePrompt, promptStatus, TRIAL_DAY } from './quota.js'
 import { recordTrialEvent, recordTrialBlocked } from '../auth/trial-events.js'
@@ -15,6 +15,12 @@ import type { Exec } from './quota.js'
 import { setDetail } from './sets.js'
 import { wallState } from './wall.js'
 import { SCENE_ORBIT_KEY, SCENE_PROMPT_LIMITS, SCALE_KEY, TOUR_KEY } from './scene.js'
+import { designRevisions, lockTryAgains, tryAgainBlock } from './ratings.js'
+import { liveLessons } from './lessons.js'
+import { retireIdea } from './prompt-ideas.js'
+import { recordMachine, typicalFirstReplySec } from './timings.js'
+import { memberCount } from './members.js'
+import { inBackground, notifyPrompt } from '../notifications/notifications.js'
 
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
@@ -36,11 +42,17 @@ export function promptLimits(agent: string, kind = 'wearable'): typeof PROMPT_LI
 }
 export const RENDER_LIMITS = { timeoutSec: 300, maxTurns: 80, costCeilingUsd: 3 }
 export const CONTINUE_TEXT = 'Continue where you stopped.'
+/** What the agent sees before a Virvi admin's own words, so it knows support wrote them, not the designer. */
+export const SUPPORT_PREFIX = '[Virvi support] '
+const TYPED_PREFIX = /^(\s*\[\s*virvi\s+support\s*\]\s*)+/i
+/** An owner's words as the agent gets them: a "[Virvi support]" they typed at the start is dropped, so only support's prompts carry it. */
+export const ownerWords = (text: string) => text.replace(TYPED_PREFIX, '').trim()
 export const START_FAILED = 'The studio machine could not start.'
 export const fixChecksText = (categories: string[]) =>
   `Fix every FAIL the checker reported for: ${categories.join(', ')}. Change nothing else.`
 
-export type FixClipping = { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit'] }
+/** `categories`: the pieces worn in the view the person saw, when it was Finalize's selection (sets.ts wornRevisions). */
+export type FixClipping = { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit']; categories?: string[] }
 const OUTFIT_LABELS: Record<string, string> = { default: 'default', 'outfit-2': 'outfit 2', 'outfit-3': 'outfit 3' }
 /** What the person's clipping report says in the conversation. */
 export const clippingText = (kind: string, f: FixClipping) =>
@@ -84,13 +96,54 @@ export function revisionsKey(pieces: { latestRevisionId: string | null }[]): str
   return pieces.map((p) => p.latestRevisionId).filter((x): x is string => !!x).sort().join(',')
 }
 
-export function publicDesign(d: Design) {
-  return { id: d.id, name: d.name, kind: d.kind, agent: d.agent, status: d.status, archivedAt: d.archivedAt, lastJobAt: d.lastJobAt, finalizedAt: d.finalizedAt, createdAt: d.createdAt }
+/**
+ * How far a design is finalized: `pieceCount` pieces have a revision, `finalizedPieces` of them have been paid for at
+ * some revision (a later revision of a finalized piece keeps it finalized). `finalizedAt` is when the first was.
+ */
+export type FinalizedCount = { finalizedPieces: number; pieceCount: number }
+const NONE: FinalizedCount = { finalizedPieces: 0, pieceCount: 0 }
+
+export function publicDesign(d: Design, counts: FinalizedCount = NONE) {
+  return {
+    id: d.id, name: d.name, kind: d.kind, agent: d.agent, status: d.status, archivedAt: d.archivedAt, lastJobAt: d.lastJobAt,
+    finalizedAt: d.finalizedAt, finalizedPieces: counts.finalizedPieces, pieceCount: counts.pieceCount, createdAt: d.createdAt,
+  }
 }
+
+/** Each design's FinalizedCount, in one query. */
+export async function finalizedCounts(designIds: string[], exec: Exec = db): Promise<Map<string, FinalizedCount>> {
+  if (!designIds.length) return new Map()
+  const rows = await exec.select({
+    designId: studioPieces.designId,
+    pieceCount: sql<number>`count(*)::int`,
+    finalizedPieces: sql<number>`count(*) FILTER (WHERE EXISTS (SELECT 1 FROM studio_entitlements e
+      WHERE e.design_id = studio_pieces.design_id AND e.category = studio_pieces.category))::int`,
+  }).from(studioPieces)
+    .where(and(inArray(studioPieces.designId, designIds), isNotNull(studioPieces.latestRevisionId)))
+    .groupBy(studioPieces.designId)
+  return new Map(rows.map((r) => [r.designId, { finalizedPieces: r.finalizedPieces, pieceCount: r.pieceCount }]))
+}
+
+/** publicDesign for each design, with how far it is finalized. */
+export async function publicDesigns(rows: Design[]) {
+  const counts = await finalizedCounts(rows.map((d) => d.id))
+  return rows.map((d) => publicDesign(d, counts.get(d.id)))
+}
+
+/**
+ * Closed: paid for (finalizedAt) with no piece left that could be finalized now. A piece counts once it is finalized
+ * at some revision; one the checker blocks, or with no revision yet, can't be paid for, so it doesn't hold the design
+ * open (everything ticked closes a design as it always did). A partly finalized design with payable pieces left is
+ * still open (LIV-81: it counts toward the open-design limit).
+ */
+const fullyFinalized = sql`(studio_designs.finalized_at IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM studio_pieces p JOIN studio_revisions r ON r.id = p.latest_revision_id
+  WHERE p.design_id = studio_designs.id AND (r.checker->>'pass') IS DISTINCT FROM 'false'
+    AND NOT EXISTS (SELECT 1 FROM studio_entitlements e WHERE e.design_id = p.design_id AND e.category = p.category)))`
 
 export async function openDesignCount(userId: string): Promise<number> {
   const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(studioDesigns)
-    .where(and(eq(studioDesigns.ownerId, userId), isNull(studioDesigns.archivedAt), isNull(studioDesigns.finalizedAt)))
+    .where(and(eq(studioDesigns.ownerId, userId), isNull(studioDesigns.archivedAt), sql`NOT ${fullyFinalized}`))
   return n
 }
 
@@ -130,29 +183,38 @@ export async function usage(userId: string, limit: number, now: Date) {
   }
 }
 
-export async function designDetail(d: Design, now: Date) {
+export async function designDetail(d: Design, now: Date, readerId = d.ownerId, support = false) {
   const pieces = await db.select().from(studioPieces).where(eq(studioPieces.designId, d.id)).orderBy(asc(studioPieces.createdAt))
   const revIds = pieces.map((p) => p.latestRevisionId).filter((x): x is string => !!x)
   const revs = revIds.length ? await db.select().from(studioRevisions).where(inArray(studioRevisions.id, revIds)) : []
   const renders = revIds.length ? await db.select().from(studioRenders).where(inArray(studioRenders.revisionId, revIds)) : []
   const expires = frameUrlExpiry(now)
-  const finalized = await finalizedRevisions(d.id)
+  const finalized = await finalizedRevisions(d.id, readerId, support)
   const messages = await db.select().from(studioMessages).where(eq(studioMessages.designId, d.id))
     .orderBy(asc(studioMessages.createdAt), asc(studioMessages.id))
   const [active] = await db.select({
-    id: studioJobs.id, type: studioJobs.type, status: studioJobs.status,
+    id: studioJobs.id, type: studioJobs.type, status: studioJobs.status, createdAt: studioJobs.createdAt,
     fixClipping: sql<FixClipping | null>`${studioJobs.payload}->'fixClipping'`,
+    userId: studioJobs.userId, byAdminId: studioJobs.byAdminId,
     phase: studioJobs.phase, progress: studioJobs.progress,
   }).from(studioJobs)
     .where(and(eq(studioJobs.designId, d.id), inArray(studioJobs.status, ['queued', 'taken'])))
     .orderBy(sql`CASE WHEN ${studioJobs.type} = 'prompt' THEN 0 ELSE 1 END`, asc(studioJobs.createdAt))
     .limit(1)
+  // Who sent each prompt: a row from before senders were kept (user_id null) is the owner's
+  const senderIds = [...new Set([d.ownerId, ...messages.map((m) => m.userId), active?.userId].filter((x): x is string => !!x))]
+  const names = new Map((await db.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, senderIds)))
+    .map((u) => [u.id, u.displayName]))
+  const sender = (userId: string | null) => {
+    const id = userId ?? d.ownerId
+    return { userId: id, displayName: names.get(id) ?? null }
+  }
   const [last] = await db.select({ jobId: studioJobs.id, status: studioJobs.status, result: studioJobs.result }).from(studioJobs)
     .where(and(eq(studioJobs.designId, d.id), eq(studioJobs.type, 'prompt')))
     .orderBy(desc(studioJobs.createdAt))
     .limit(1)
   return {
-    design: publicDesign(d),
+    design: publicDesign(d, (await finalizedCounts([d.id])).get(d.id)),
     wall: wallState(d),
     pieces: pieces.map((p) => {
       const rev = revs.find((r) => r.id === p.latestRevisionId)
@@ -179,14 +241,36 @@ export async function designDetail(d: Design, now: Date) {
         finalized: finalized.filter((f) => f.category === p.category).map(({ category: _c, ...f }) => f),
       }
     }),
-    messages: messages.map((m) => ({ id: m.id, role: m.role, agent: m.agent, text: m.text, proposal: m.proposal, jobId: m.jobId, createdAt: m.createdAt })),
+    // `support`: a Virvi admin wrote it (shown as Virvi support); who, is for the audit, not the page. `sender`: who
+    // wrote a person's message (null for the agent's, the system's and support's)
+    messages: messages.map((m) => ({
+      id: m.id, role: m.role, agent: m.agent, text: m.text, proposal: m.proposal, jobId: m.jobId, createdAt: m.createdAt, support: !!m.byAdminId,
+      sender: m.role === 'user' && !m.byAdminId ? sender(m.userId) : null,
+    })),
     uploads: (await listUploads(d.id)).map(publicUpload),
-    activeJob: active ?? null,
+    // `senderName`: who sent the prompt running now (null for a render, or support's prompt)
+    activeJob: active
+      ? {
+        id: active.id, type: active.type, status: active.status, createdAt: active.createdAt, fixClipping: active.fixClipping,
+        // What the worker last reported, for clients that poll (the scene)
+        phase: active.phase, progress: active.progress,
+        senderName: active.type === 'prompt' && !active.byAdminId ? sender(active.userId).displayName : null,
+      }
+      : null,
     set: await setDetail(d, now),
+    // Each agent reply that changed pieces, and the reader's own 👍 / 👎 of it (LIV-142)
+    revisions: await designRevisions(d, readerId),
     lastPrompt: last
       ? { jobId: last.jobId, outcome: (last.result as { outcome?: string } | null)?.outcome ?? null, status: last.status }
       : null,
+    // The usual wait from sending a prompt to the agent's first progress line, in seconds; absent below 5 timed jobs
+    ...await typicalFirstReply(now),
   }
+}
+
+async function typicalFirstReply(now: Date): Promise<{ typicalFirstReplySec?: number }> {
+  const sec = await typicalFirstReplySec(now).catch(() => null)
+  return sec === null ? {} : { typicalFirstReplySec: sec }
 }
 
 type Refusal = { status: number; body: Record<string, unknown> }
@@ -194,23 +278,47 @@ class Refused extends Error {
   constructor(public r: Refusal) { super(String(r.body.code ?? r.body.error)) }
 }
 
-/** After a job is committed: make sure a machine will take it, or fail it plainly (refunding a counted prompt). */
+/**
+ * After a job is committed: make sure a machine will take it, or fail it plainly (refunding a counted prompt). A prompt
+ * job records how its machine was got (timings.ts).
+ */
 export async function startWorker(designId: string, jobId: string, now: Date): Promise<void> {
   try {
-    await ensureWorker(designId)
+    const machine = await ensureWorker(designId)
+    await recordMachine(jobId, machine).catch((err) => console.error('[studio] timings not recorded:', err instanceof Error ? err.message : err))
   } catch (err) {
     console.error('[studio] worker start failed:', err instanceof Error ? err.message : err)
     await failJobs([jobId], START_FAILED, now)
   }
 }
 
+/**
+ * `senderId`: who sent it (the owner or a collaborator, LIV-159): the prompt counts against their allowance, gifts,
+ * credits, cost ceiling and try-agains, not the owner's, and the job and the message record them. On a shared design
+ * the agent gets the sender's name in front of their own words, so it can tell who asked for what.
+ *
+ * `byAdminId`: a Virvi admin helping on the owner's design (Virvi support). Their prompt takes nothing from anyone's
+ * allowance, gifts, credits or trial quota, and the cost ceiling doesn't stop it; the per-prompt limits, one prompt at
+ * a time and an archived design's refusal still apply. The job and the message record the admin.
+ *
+ * `feedbackFor`: the sender's "Try again with this feedback" on a 👎'd revision (LIV-142), in their own words: free (no
+ * allowance, gift or credit; past the cost ceiling it is refused), once per revision.
+ */
 export async function queuePrompt(
   design: Design,
-  input: { text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping },
+  input: {
+    text: string | null; selectedSlots: string[] | null; continue: boolean; fixChecks?: boolean; fixClipping?: FixClipping; byAdminId?: string
+    feedbackFor?: string
+    senderId: string
+    /** The example prompt the words came from (prompt-ideas.ts): retired for everyone when this is the design's first prompt. */
+    ideaId?: string
+  },
   now: Date,
 ): Promise<{ ok: true; jobId: string } | ({ ok: false } & Refusal)> {
   let jobId: string
   let trialPrompt = false
+  let senderName: string | null = null
+  const senderId = input.senderId
   try {
     jobId = await db.transaction(async (tx) => {
       // One prompt at a time: lock the design, then check; the partial unique index backs this up
@@ -238,11 +346,20 @@ export async function queuePrompt(
         if (!categories.length) throw new Refused({ status: 409, body: { error: 'nothing_to_fix', code: 'nothing_to_fix' } })
         fixText = fixChecksText(categories)
       }
-      // A clipping report is the agent's mistake too: free, in the server's words
-      const counted = !input.continue && !input.fixChecks && !input.fixClipping
-      const r = await reservePrompt(d.ownerId, now, { counted }, tx)
+      if (input.feedbackFor) {
+        // One sender's try-agains one at a time, so the daily count holds across their designs
+        await lockTryAgains(tx, senderId)
+        const block = await tryAgainBlock(tx, d.id, senderId, input.feedbackFor, now)
+        if (block) throw new Refused({ status: block === 'try_again_limit' ? 429 : 409, body: { error: block, code: block } })
+      }
+      // A clipping report is the agent's mistake too: free, in the server's words. Support's prompts are never counted.
+      const support = input.byAdminId ?? null
+      const feedback = input.feedbackFor ?? null
+      const counted = !support && !feedback && !input.continue && !input.fixChecks && !input.fixClipping
+      const r = support ? { ok: true as const, day: null, from: null }
+        : await reservePrompt(senderId, now, { counted, ...(feedback ? { gifts: false } : {}) }, tx)
       if (!r.ok) {
-        const s = await promptStatus(d.ownerId, now)
+        const s = await promptStatus(senderId, now)
         if (s.trial && (r.reason === 'allowance' || r.reason === 'cost_ceiling')) throw new Refused({ status: 403, body: { error: 'account_required', action: 'more_prompts' } })
         if (r.reason === 'trial_busy') {
           throw new Refused({ status: 429, body: { error: 'trial_busy', message: 'Free tries are busy right now — create an account to keep going.' } })
@@ -250,9 +367,22 @@ export async function queuePrompt(
         throw new Refused({ status: 429, body: { error: r.reason, code: r.reason, resetsAt: s.resetsAt } })
       }
       trialPrompt = r.day === TRIAL_DAY
+      // Asked before this prompt's own message goes in: an idea is used up by the design's first prompt only
+      const first = !!input.ideaId && !(await tx.select({ id: studioMessages.id }).from(studioMessages)
+        .where(and(eq(studioMessages.designId, d.id), eq(studioMessages.role, 'user'))).limit(1)).length
       const fix = input.fixClipping
       const text = input.continue ? CONTINUE_TEXT : fix ? clippingText(d.kind, fix) : fixText ?? input.text!
-      await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text })
+      await tx.insert(studioMessages).values({ designId: d.id, role: 'user', text, userId: senderId, byAdminId: support })
+      if (!support) {
+        const [u] = await tx.select({ displayName: users.displayName }).from(users).where(eq(users.id, senderId))
+        senderName = u?.displayName ?? null
+      }
+      // Support's own words reach the agent marked as theirs; never scope-checked (that is for the designer's words).
+      // On a shared design a member's own words carry their name
+      const ownWords = !input.continue && !fix && !fixText
+      const named = !support && senderName && await memberCount(d.id, tx) > 0 ? `${senderName}: ` : ''
+      const prompt = fix ? clippingInstruction(d.kind, fix) : !ownWords ? text : support ? `${SUPPORT_PREFIX}${ownerWords(text)}` : `${named}${ownerWords(text)}`
+      const lessons = await liveLessons(d.kind, tx)
       const [job] = await tx.insert(studioJobs).values({
         designId: d.id,
         type: 'prompt',
@@ -261,36 +391,49 @@ export async function queuePrompt(
           kind: d.kind,
           agent: d.agent,
           model: modelFor(d.agent),
-          prompt: fix ? clippingInstruction(d.kind, fix) : text,
+          prompt,
           selectedSlots: input.selectedSlots,
           limits: promptLimits(d.agent, d.kind),
           render: null,
           uploads: await uploadPaths(d.id, tx),
-          check: counted, // the user's own words; Continue and fixing the checks are the server's
+          // the user's own words; Continue and fixing the checks are the server's (a try-again is the sender's)
+          check: counted || !!feedback,
           ...(fix ? { fixClipping: fix } : {}),
+          // Admin-approved lessons for this kind (LIV-142): the worker adds them to its instructions, never to the
+          // conversation. A worker that predates them ignores the field
+          ...(lessons.length ? { lessons } : {}),
         },
         counted,
         countedDay: r.day,
         countedFrom: r.from,
+        userId: senderId,
+        byAdminId: support,
+        feedbackFor: feedback,
       }).returning({ id: studioJobs.id })
       await tx.update(studioDesigns).set({ status: 'building', lastJobAt: now }).where(eq(studioDesigns.id, d.id))
+      if (first) await retireIdea(tx, input.ideaId!, senderId, d.id, now)
       return job.id
     })
   } catch (err) {
     if (err instanceof Refused) {
-      if (err.r.body.error === 'account_required') recordTrialBlocked(design.ownerId, String(err.r.body.action ?? 'more_prompts'))
+      if (err.r.body.error === 'account_required') recordTrialBlocked(senderId, String(err.r.body.action ?? 'more_prompts'))
       return { ok: false, ...err.r }
     }
-    if ((err as { code?: string }).code === '23505') return { ok: false, status: 409, body: { error: 'busy', code: 'busy' } }
+    if ((err as { code?: string }).code === '23505') {
+      if ((err as { constraint_name?: string }).constraint_name === 'studio_jobs_feedback_for_uq') return { ok: false, status: 409, body: { error: 'already_tried', code: 'already_tried' } }
+      return { ok: false, status: 409, body: { error: 'busy', code: 'busy' } }
+    }
     throw err
   }
-  if (trialPrompt) recordTrialEvent('prompt', design.ownerId)
-  await publishStudio(design.id, { type: 'job', jobId, status: 'queued' })
+  if (trialPrompt) recordTrialEvent('prompt', senderId)
+  await publishStudio(design.id, { type: 'job', jobId, status: 'queued', senderName })
   await startWorker(design.id, jobId, now)
+  // After the commit, off the prompt's way, and never failing it (notifyPrompt logs its own failures)
+  inBackground(notifyPrompt(design, senderId, senderName, !!input.byAdminId))
   return { ok: true, jobId }
 }
 
-const renderPayload = (kind: string, render: Record<string, unknown>) => ({
+export const renderPayload = (kind: string, render: Record<string, unknown>) => ({
   type: 'render', kind, agent: null, model: null, prompt: null, selectedSlots: null, limits: RENDER_LIMITS, render,
 })
 

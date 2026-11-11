@@ -3,16 +3,19 @@
  * headset claims its device id and then mints AR passes for the spaces it opens.
  *
  * POST   /api/ar/pair                — (public) Start a pairing with the sha256 of the headset's secret; returns the code
- * GET    /api/ar/pair/:code          — (account) What the approval page shows for a code
- * POST   /api/ar/pair/:code/approve  — (account) Approve a code as a personal or a shared headset
+ * GET    /api/ar/pair/:code          — (account or trial) What the approval page shows for a code
+ * POST   /api/ar/pair/:code/approve  — (account or trial) Approve a code as a personal or a shared headset (a trial:
+ *                                       personal only; its headset mints no pass and lists nothing, ar/devices.ts)
  * POST   /api/ar/pair/:code/claim    — (public, headset secret) Trade an approved code for the device id
  * POST   /api/ar/devices/:id/pass    — (public, headset secret) An AR pass for a space, or (personal headsets only) a
  *                                       whole scene, the approver can build on; body has exactly one of spaceId, sceneId
  * POST   /api/ar/devices/:id/end     — (public, headset secret) End the session (a shared headset is unpaired)
  * POST   /api/ar/devices/:id/spaces  — (public, headset secret) The spaces the approver can build on
  * POST   /api/ar/devices/:id/scenes  — (public, headset secret) The scenes the approver can build on
- * GET    /api/ar/devices             — (account) My headsets
- * DELETE /api/ar/devices/:id         — (account) Revoke one of my headsets
+ * GET    /api/ar/devices             — (account or trial) My headsets
+ * DELETE /api/ar/devices/:id         — (account or trial) Revoke one of my headsets
+ *
+ * POST /api/ar/devices/:id/room-scans (headset secret) lives in room-scans.ts.
  *
  * Codes and secrets are credentials: never logged, never echoed except the code the caller just made. No route here
  * takes a scene pass of any kind (no scenePass config), so a pass can't approve, list or revoke headsets.
@@ -23,6 +26,7 @@ import { normalizePairingCode, type ArPairApprovalInfo, type ArPairStartResponse
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
+import { recordTrialBlocked } from '../auth/trial-events.js'
 import { approveDevicePairing, claimDevicePairing, devicePairingForApproval, endDeviceSession, listDeviceScenes, listDeviceSpaces, listDevices, mintArPass, mintArPassForScene, revokeDevice, startDevicePairing } from '../ar/devices.js'
 
 const SHA256_HEX = /^[0-9a-f]{64}$/i
@@ -42,9 +46,12 @@ function codeParam(request: FastifyRequest, reply: FastifyReply): string | null 
   return code
 }
 
-/** Approving and managing headsets is for a signed-in account only; `authenticate` has already refused every pass. */
-function accountOnly(request: FastifyRequest, reply: FastifyReply): boolean {
-  if (request.user.kind !== 'account') {
+/**
+ * Approving and managing headsets is for a signed-in account or a trial (these routes opt in with `config.trial`);
+ * `authenticate` has already refused every pass.
+ */
+function accountOrTrial(request: FastifyRequest, reply: FastifyReply): boolean {
+  if (request.user.kind !== 'account' && request.user.kind !== 'trial') {
     void reply.status(403).send({ error: 'account_required' })
     return false
   }
@@ -63,8 +70,8 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     return reply.send(res)
   })
 
-  app.get('/api/ar/pair/:code', { preHandler: [authenticate] }, async (request, reply) => {
-    if (!accountOnly(request, reply)) return
+  app.get('/api/ar/pair/:code', { preHandler: [authenticate], config: { trial: true } }, async (request, reply) => {
+    if (!accountOrTrial(request, reply)) return
     const code = codeParam(request, reply)
     if (!code) return
     const info = await devicePairingForApproval(code)
@@ -73,15 +80,23 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     return reply.send(res)
   })
 
-  app.post('/api/ar/pair/:code/approve', { preHandler: [authenticate], config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
-    if (!accountOnly(request, reply)) return
+  app.post('/api/ar/pair/:code/approve', { preHandler: [authenticate], config: { trial: true, rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+    if (!accountOrTrial(request, reply)) return
     const code = codeParam(request, reply)
     if (!code) return
     const kind = (request.body as { kind?: unknown } | undefined)?.kind
     if (kind !== 'personal' && kind !== 'shared') return reply.status(400).send({ error: 'Missing or invalid field: kind (personal or shared)' })
     const actor = actorFromClaims(request.user)
-    // The headset will act as this account: an unverified one can't vouch for it.
-    if (!actor.userId || !actor.verified) return reply.status(403).send({ error: 'unverified' })
+    if (actor.trial) {
+      // A trial's headset only uploads its own room scans; a shared headset (visitors, a venue) needs an account.
+      if (kind === 'shared') {
+        recordTrialBlocked(request.user.id, 'shared_headset')
+        return reply.status(403).send({ error: 'account_required', action: 'shared_headset' })
+      }
+    } else if (!actor.userId || !actor.verified) {
+      // The headset will act as this account: an unverified one can't vouch for it.
+      return reply.status(403).send({ error: 'unverified' })
+    }
     const result = await approveDevicePairing(code, actor, kind)
     if (result === 'expired') return reply.status(404).send({ error: 'not_found' })
     return reply.send({ result })
@@ -142,13 +157,13 @@ export default async function arDeviceRoutes(app: FastifyInstance) {
     return reply.send(result)
   })
 
-  app.get('/api/ar/devices', { preHandler: [authenticate] }, async (request, reply) => {
-    if (!accountOnly(request, reply)) return
+  app.get('/api/ar/devices', { preHandler: [authenticate], config: { trial: true } }, async (request, reply) => {
+    if (!accountOrTrial(request, reply)) return
     return reply.send(await listDevices(request.user.id))
   })
 
-  app.delete('/api/ar/devices/:id', { preHandler: [authenticate] }, async (request, reply) => {
-    if (!accountOnly(request, reply)) return
+  app.delete('/api/ar/devices/:id', { preHandler: [authenticate], config: { trial: true } }, async (request, reply) => {
+    if (!accountOrTrial(request, reply)) return
     const { id } = request.params as { id: string }
     if (!(await revokeDevice(id, request.user.id))) return reply.status(404).send({ error: 'not_found' })
     return reply.status(204).send()

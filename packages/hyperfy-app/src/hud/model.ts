@@ -86,7 +86,7 @@ export function offImageLabel(src: string, images: HudImage[] | null): string {
 }
 
 export const IMAGES_LOADING = 'Loading images…'
-export const NO_IMAGES = 'No images in the scene library yet: add one from Assets on virvi.io'
+export const NO_IMAGES = 'No images in the scene library yet: add one from Images & Video on virvi.io'
 
 /** A screen's showing as the Streams panel uses it (LIV-87): its shows on now or coming up, start in UTC ms. */
 export interface HudShowing {

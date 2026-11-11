@@ -1,5 +1,7 @@
 'use client'
 import { useApi, fileToBase64, mediaContentType, uploadErrorMessage, isGlbAsset, MEDIA_UPLOAD_RULES } from '@/lib/api'
+import { MEDIA_LIBRARY, MODEL_NOT_MEDIA, splitModelFiles } from '@/lib/libraries'
+import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState, useRef } from 'react'
 import { CheckIcon, CopyIcon, CubeIcon, GridIcon, ListIcon, MediaIcon, PlusIcon, TrashIcon } from '@/components/icons'
@@ -44,10 +46,16 @@ export default function MediaPage() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
+    // 3D models go in 3D Models: skip them, upload the rest
+    const { media, models } = splitModelFiles(Array.from(files))
+    setError(models.length ? `${models.map(f => f.name).join(', ')}: ${MODEL_NOT_MEDIA}` : null)
+    if (media.length === 0) {
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
     setUploading(true)
-    setError(null)
     try {
-      for (const file of Array.from(files)) {
+      for (const file of media) {
         const base64 = await fileToBase64(file)
         const { asset } = await api.uploadMedia(file.name, mediaContentType(file), base64)
         setAssets(prev => [asset, ...prev])
@@ -80,24 +88,25 @@ export default function MediaPage() {
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/png,image/jpeg,image/webp,image/gif,.glb,model/gltf-binary,video/mp4,video/webm"
+        accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
         className="hidden"
         onChange={handleUpload}
       />
       <PageHeader
-        crumbs={['Tools', 'Media']}
-        title="Media Library"
+        crumbs={['Tools', MEDIA_LIBRARY.name]}
+        title={MEDIA_LIBRARY.name}
         count={loading ? undefined : countLabel(assets.length)}
-        subtitle="Manage the files behind your experiences."
+        subtitle={<>{MEDIA_LIBRARY.purpose}. 3D models go in <Link href="/assets" className="text-blue-300 underline">3D Models</Link>.</>}
         actions={
           <div className="flex flex-col items-end gap-2">
             <PrimaryButton onClick={upload} disabled={uploading}><PlusIcon size={16} /> {uploading ? 'Uploading...' : 'Upload File'}</PrimaryButton>
             <p className="max-w-md text-right text-xs text-gray-500">{MEDIA_UPLOAD_RULES}</p>
+            <p className="max-w-md text-right text-xs text-gray-500">{MEDIA_LIBRARY.uploadHelp}</p>
           </div>
         }
       />
 
-      {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mb-4 text-sm text-red-400" role="alert">{error}{error.includes(MODEL_NOT_MEDIA) && <> <Link href="/assets" className="underline">Open 3D Models</Link></>}</p>}
 
       {!loading && assets.length > 0 && (
         <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -121,8 +130,8 @@ export default function MediaPage() {
           {[0, 1, 2].map(i => <div key={i} className="h-80 animate-pulse rounded-lg border border-gray-800 bg-gray-900" />)}
         </div>
       ) : assets.length === 0 ? (
-        <EmptyState icon={<MediaIcon size={40} />} title="No media yet"
-          body="Images, 3D models and video you upload here can be placed in any of your scenes."
+        <EmptyState icon={<MediaIcon size={40} />} title="No images or video yet"
+          body="Images and video you upload here can be placed in any of your scenes. 3D models go in 3D Models."
           action={<PrimaryButton onClick={upload} disabled={uploading}><PlusIcon size={16} /> Upload File</PrimaryButton>} />
       ) : shown.length === 0 ? (
         <p className="py-12 text-center text-gray-500">No files match.</p>

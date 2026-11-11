@@ -13,7 +13,8 @@ import { createRequire } from 'node:module'
 const _require = createRequire(import.meta.url)
 const { Room } = _require('colyseus') as any
 type Client = any
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { liveScene } from '../scenes/live.js'
 import { db } from '../db/connection.js'
 import {
   events,
@@ -23,7 +24,8 @@ import {
 } from '../db/schema.js'
 import { dispatchPlatformCallbacks } from '../integrations/platform-hooks.js'
 import { verifySessionToken } from '../auth/tokens.js'
-import { actorFromClaims, type Actor } from '../auth/actor.js'
+import { type Actor } from '../auth/actor.js'
+import { checkedActor } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { accessibleSceneIds } from '../routes/command-center.js'
 
@@ -37,6 +39,8 @@ interface JoinOptions {
 interface WorldStatus {
   sceneId: string
   sceneName: string
+  /** The scene's thumbnail (LIV-88), null when it has none. */
+  sceneThumbnailUrl: string | null
   platform: string | null
   deploymentStatus: string | null
   visitorCount: number
@@ -50,7 +54,7 @@ export class VirviCommandCenterRoom extends Room {
 
   async onAuth(_client: Client, options: JoinOptions): Promise<Actor> {
     const claims = verifySessionToken(options?.sessionToken)
-    const actor = actorFromClaims(claims)
+    const actor = await checkedActor(claims) // an admin claim is checked against the database
     // Account sessions only: no anonymous visitors, no scene passes, no unverified wallets.
     if (claims?.kind !== 'account' || !actor.userId || !actor.verified) throw new Error('Unauthorized')
     return actor
@@ -160,11 +164,12 @@ export class VirviCommandCenterRoom extends Room {
           .select({
             sceneId: scenes.id,
             sceneName: scenes.name,
+            sceneThumbnailUrl: scenes.thumbnailUrl,
             activePreset: scenes.activePresetId,
           })
           .from(eventSceneLinks)
           .innerJoin(scenes, eq(eventSceneLinks.sceneId, scenes.id))
-          .where(eq(eventSceneLinks.eventId, this.eventId))
+          .where(and(eq(eventSceneLinks.eventId, this.eventId), liveScene()))
 
         worldStatuses = await Promise.all(
           links.map(async (link) => {
@@ -177,6 +182,7 @@ export class VirviCommandCenterRoom extends Room {
             return {
               sceneId: link.sceneId,
               sceneName: link.sceneName,
+              sceneThumbnailUrl: link.sceneThumbnailUrl,
               platform: deployment?.platform || null,
               deploymentStatus: deployment?.status || null,
               visitorCount: 0, // TODO: count from active Colyseus room clients

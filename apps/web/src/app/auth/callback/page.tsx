@@ -2,7 +2,9 @@
 import { useSearchParams } from 'next/navigation'
 import { safeNextPath } from '@/lib/next-path'
 import { API_URL } from '@/lib/config'
-import { takeTrialHandover } from '@/lib/trial'
+import { noteMovedHeadsets, takeTrialHandover } from '@/lib/trial'
+import { tokenUserId } from '@/lib/session'
+import { adoptDraft } from '@/lib/wizard/draft'
 import { useEffect, useState, Suspense } from 'react'
 
 function CallbackHandler() {
@@ -48,7 +50,15 @@ function CallbackHandler() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify(handover),
-          }).catch(() => null)
+          })
+            .then((res) => {
+              // The trial moved in: its wizard draft goes with it
+              const trialId = tokenUserId(handover.trialToken)
+              if (res.ok && trialId && user.id) adoptDraft(trialId, user.id)
+              // A paired headset moved too: the dashboard says so once
+              return res.ok ? res.json().then((body) => noteMovedHeadsets(localStorage, body)).catch(() => {}).then(() => res) : res
+            })
+            .catch(() => null)
         : Promise.resolve(null)
       moved.finally(() => { window.location.href = dest })
     } catch {

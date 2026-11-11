@@ -28,6 +28,17 @@ export function placeLabel(loc: ImportLocation): string {
   return loc.parcels.length > 1 ? `Genesis City ${loc.base} (${loc.parcels.length} parcels)` : `Genesis City ${loc.base}`
 }
 
+/**
+ * A sandbox import whose deploy moves it onto the account's existing scene for its place (the view's `usesScene`): what
+ * the page says before the deploy, which then waits for a click. Null when the deploy keeps the import's own scene.
+ */
+export function sceneMoveNotice(v: Pick<SceneImportView, 'sandbox' | 'usesScene' | 'location'>): string | null {
+  const move = v.sandbox ? v.usesScene : undefined
+  if (!move) return null
+  const place = v.location.kind === 'world' ? 'This World already uses' : 'These parcels already use'
+  return `${place} your scene ${move.name}. Virvi deploys with that scene's layout; your guest edits stay on ${move.sandboxSceneName} in your Scenes.`
+}
+
 /** Who signs the deploy, for the page's copy. */
 export const signerPhrase = (loc: ImportLocation): string =>
   loc.kind === 'world' ? `the wallet that owns ${loc.world}` : 'the wallet that owns or operates these parcels'
@@ -176,6 +187,24 @@ export const VIRVI_ALREADY_PRESENT = "Virvi was already in your scene, so it was
 /** N5: the note an import shows when the scene already started Virvi itself, else null. */
 export const virviNote = (v: Pick<SceneImportView, 'virviAlreadyPresent'>): string | null =>
   v.virviAlreadyPresent ? VIRVI_ALREADY_PRESENT : null
+
+export const THUMBNAIL_KEPT_NOTE = "Your scene.json names a thumbnail too. The one you uploaded in Virvi stays; Replace it here if you'd rather."
+
+/**
+ * LIV-89: what the import page shows of the scene's thumbnail: the one the import picked up from scene.json (or the
+ * owner's, which it kept), why one was skipped, and Replace (LIV-88's upload). Null when scene.json names none.
+ */
+export function importThumbnailShown(v: Pick<SceneImportView, 'thumbnail'>): { label: string; url: string | null; note: string | null; action: 'Replace' | 'Upload' } | null {
+  const t = v.thumbnail
+  if (!t?.outcome) return null
+  const url = t.url
+  const label = !url
+    ? (t.outcome === 'removed' ? 'Thumbnail: removed (scene.json has none)' : 'Thumbnail: none yet')
+    : t.source === 'import' ? 'Thumbnail: from scene.json' : 'Thumbnail: uploaded in Virvi'
+  // The kept note only while the owner's upload is still the scene's thumbnail
+  const note = t.outcome === 'skipped' ? t.note : t.outcome === 'kept' && url && t.source === 'upload' ? THUMBNAIL_KEPT_NOTE : null
+  return { label, url, note, action: url ? 'Replace' : 'Upload' }
+}
 
 const BUILD_CODES = new Set([
   'build_failed', 'build_timeout', 'build_start_failed', 'builds_unavailable', 'not_uploaded', 'bad_package_json', 'bad_source_encoding',

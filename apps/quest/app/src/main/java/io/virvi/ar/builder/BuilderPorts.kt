@@ -86,10 +86,16 @@ interface BuilderTools {
 data class AlignSticks(val leftX: Double = 0.0, val leftY: Double = 0.0, val rightX: Double = 0.0, val fine: Boolean = false)
 
 /**
- * The small builder panel: a line, the spaces to choose from (none when it is only a message), and the label of its
- * button ([BuilderController.cancel]).
+ * The small builder panel: a line, the spaces to choose from (none when it is only a message), the label of its
+ * button ([BuilderController.cancel]), and whether it offers **Scan this room** ([scanRoom]: a personal headset's
+ * space list, even an empty one; the scan then uploads with the headset secret).
  */
-data class BuilderPrompt(val text: String, val spaces: List<DeviceSpace> = emptyList(), val button: String = "Cancel")
+data class BuilderPrompt(
+    val text: String,
+    val spaces: List<DeviceSpace> = emptyList(),
+    val button: String = "Cancel",
+    val scanRoom: Boolean = false,
+)
 
 /** The align panel's content while aligning. */
 data class AlignUi(val state: AlignState, val notes: List<String>)

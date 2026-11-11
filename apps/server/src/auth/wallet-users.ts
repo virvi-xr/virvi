@@ -1,7 +1,8 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { accessGrants, mediaAssets, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
+import { accessGrants, assetLibraryItems, mediaAssets, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
 import { moveStudioData } from '../studio/merge.js'
+import { claimWalletInvites } from '../studio/invites.js'
 import { initialRoleForNewUser } from './roles.js'
 
 const isVerified = (m: { metadata: unknown }) => (m.metadata as { verified?: unknown } | null)?.verified === true
@@ -16,6 +17,7 @@ async function findWalletMethod(wallet: string) {
 /**
  * The user that owns this proven wallet, created on first sight. A player seen in-world (`visitor`) gets a viewer
  * account, tracked for analytics; signing in to the dashboard (`account`) creates a creator or promotes that viewer.
+ * Either way, design invites waiting on the wallet become theirs.
  */
 export async function resolveVerifiedWalletUser(wallet: string, displayName: string, as: 'visitor' | 'account') {
   const w = wallet.toLowerCase()
@@ -23,6 +25,7 @@ export async function resolveVerifiedWalletUser(wallet: string, displayName: str
   if (existing && isVerified(existing)) {
     // updated_at marks the wallet the account last signed in with (the wall of fame names that one)
     await db.update(userAuthMethods).set({ updatedAt: new Date() }).where(eq(userAuthMethods.id, existing.id))
+    await claimWalletInvites(existing.user.id, w)
     if (as === 'visitor' || existing.user.role !== 'viewer') return existing.user
     const [promoted] = await db.update(users).set({ role: 'creator', updatedAt: new Date() }).where(eq(users.id, existing.user.id)).returning()
     return promoted
@@ -31,6 +34,7 @@ export async function resolveVerifiedWalletUser(wallet: string, displayName: str
   const role = as === 'visitor' && initial === 'creator' ? 'viewer' : initial
   const [user] = await db.insert(users).values({ displayName, email: null, role }).returning()
   await db.insert(userAuthMethods).values({ userId: user.id, type: 'wallet', identifier: w, metadata: { verified: true } })
+  await claimWalletInvites(user.id, w)
   return user
 }
 
@@ -46,12 +50,13 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string) 
     await moveStudioData(tx, shellId, userId, new Date())
     const owns = (await tx.query.scenes.findFirst({ where: eq(scenes.ownerId, shellId), columns: { id: true } }))
       || (await tx.query.mediaAssets.findFirst({ where: eq(mediaAssets.ownerId, shellId), columns: { id: true } }))
+      || (await tx.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.uploadedBy, shellId), columns: { id: true } }))
     const rest = await tx.query.userAuthMethods.findFirst({ where: eq(userAuthMethods.userId, shellId), columns: { id: true } })
     if (!owns && !rest) await tx.delete(users).where(eq(users.id, shellId))
   })
 }
 
-/** Attach a proven wallet to an existing (e.g. email) user. */
+/** Attach a proven wallet to an existing (e.g. email) user; design invites waiting on it become theirs. */
 export async function linkVerifiedWallet(userId: string, wallet: string): Promise<'linked' | 'already' | 'conflict'> {
   const w = wallet.toLowerCase()
   const existing = await findWalletMethod(w)
@@ -59,8 +64,10 @@ export async function linkVerifiedWallet(userId: string, wallet: string): Promis
   if (existing && isVerified(existing) && existing.userId !== userId) {
     if (!isVisitorShell(existing.user)) return 'conflict'
     await absorbVisitor(existing.userId, userId, existing.id)
+    await claimWalletInvites(userId, w)
     return 'linked'
   }
   await db.insert(userAuthMethods).values({ userId, type: 'wallet', identifier: w, metadata: { verified: true } })
+  await claimWalletInvites(userId, w)
   return 'linked'
 }

@@ -86,6 +86,8 @@ export default async function eventRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
+      // A deleted scene (LIV-83) drops out of its events until it's restored
+      event.sceneLinks = event.sceneLinks.filter((l) => !l.scene?.deletedAt)
       // Scheduled presets that follow this event, and the presets of its scenes to pick from (LIV-86)
       const sceneIds = event.sceneLinks.map((l) => l.sceneId)
       const scenePresetRows = sceneIds.length

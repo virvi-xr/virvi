@@ -1,5 +1,5 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { eq, sql, ilike, or, count, desc } from 'drizzle-orm'
+import type { FastifyInstance } from 'fastify'
+import { and, eq, sql, ilike, or, count, desc, isNull } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
   users,
@@ -14,19 +14,14 @@ import {
 } from '../db/schema.js'
 import { listPacks } from '../catalog/packs.js'
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
+import { softDeleteOrg } from '../scenes/deleted.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { authenticate } from '../middleware/auth.js'
+import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
+import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
+import { handOverDesigns } from '../studio/handover.js'
 
-/**
- * Reusable preHandler that ensures the authenticated user has the 'admin' role.
- * Must be used AFTER `authenticate` so that `request.user` is populated.
- */
-async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
-  if (request.user.role !== 'admin') {
-    return reply.status(403).send({ error: 'Forbidden', message: 'Admin access required' })
-  }
-}
 
 export default async function adminRoutes(app: FastifyInstance) {
   // All admin routes require authentication + admin role
@@ -87,18 +82,24 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.get('/api/admin/stats', async (_request, reply) => {
     const [
-      [{ totalUsers }],
+      [{ totalUsers, trialGuests }],
       [{ totalOrgs }],
       [{ totalScenes }],
       [{ totalMedia }],
       [{ totalStorageBytes }],
       subscriptionsByTier,
     ] = await Promise.all([
-      db.select({ totalUsers: sql<number>`count(*)::int` }).from(users),
+      // Trial guests are not users: counted apart
+      db.select({
+        totalUsers: sql<number>`(count(*) FILTER (WHERE NOT ${users.isTrial}))::int`,
+        trialGuests: sql<number>`(count(*) FILTER (WHERE ${users.isTrial}))::int`,
+      }).from(users),
       db.select({ totalOrgs: sql<number>`count(*)::int` }).from(organizations),
-      db.select({ totalScenes: sql<number>`count(*)::int` }).from(scenes),
+      db.select({ totalScenes: sql<number>`count(*)::int` }).from(scenes).where(isNull(scenes.deletedAt)),
       db.select({ totalMedia: sql<number>`count(*)::int` }).from(mediaAssets),
-      db.select({ totalStorageBytes: sql<string>`coalesce(sum(${mediaAssets.sizeBytes}), 0)::bigint` }).from(mediaAssets),
+      // Images & Video plus people's 3D Models uploads, counted as the quota counts them (catalog and paid Studio pieces aside)
+      db.execute(sql`SELECT (coalesce((SELECT sum(size_bytes) FROM media_assets), 0) + coalesce((SELECT sum(file_size_bytes) FROM asset_library_items WHERE uploaded_by IS NOT NULL AND coalesce(source_ref, '') NOT LIKE 'studio:%'), 0))::bigint AS "totalStorageBytes"`)
+        .then((r) => (Array.isArray(r) ? r : (r as { rows: unknown[] }).rows) as Array<{ totalStorageBytes: string }>),
       db
         .select({
           tier: subscriptions.tier,
@@ -116,6 +117,7 @@ export default async function adminRoutes(app: FastifyInstance) {
 
     return reply.send({
       totalUsers,
+      trialGuests,
       totalOrgs,
       totalScenes,
       totalMedia,
@@ -133,12 +135,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     const offset = Number(request.query.offset) || 0
     const search = request.query.search?.trim()
 
-    const conditions = search
-      ? or(
-          ilike(users.displayName, `%${search}%`),
-          ilike(users.email, `%${search}%`),
-        )
-      : undefined
+    // Trial guests are not listed
+    const conditions = and(
+      eq(users.isTrial, false),
+      search ? or(ilike(users.displayName, `%${search}%`), ilike(users.email, `%${search}%`)) : undefined,
+    )
 
     const [rows, [{ total }]] = await Promise.all([
       db
@@ -240,8 +241,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     const blocked = await hostedWorldsBlockingDelete({ userId })
     if (blocked) return reply.status(409).send(blocked)
     const imports = await importsGoingWith({ userId })
-    await db.delete(users).where(eq(users.id, userId))
+    const models = await deleteUserWithModels(userId, async (tx) => {
+      // Designs they share pass to a member first (LIV-159); the rest go with them
+      await handOverDesigns(tx, userId, new Date())
+      return (await tx.delete(users).where(eq(users.id, userId)).returning({ id: users.id })).length > 0
+    })
     await deleteImportFiles(imports)
+    await releaseModelFiles(models ?? [])
     return reply.status(204).send()
   })
 
@@ -254,12 +260,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     const offset = Number(request.query.offset) || 0
     const search = request.query.search?.trim()
 
-    const conditions = search
+    // A deleted organization (LIV-83) is hidden until it's purged
+    const conditions = and(isNull(organizations.deletedAt), search
       ? or(
           ilike(organizations.name, `%${search}%`),
           ilike(organizations.slug, `%${search}%`),
         )
-      : undefined
+      : undefined)
 
     const [rows, [{ total }]] = await Promise.all([
       db
@@ -269,7 +276,7 @@ export default async function adminRoutes(app: FastifyInstance) {
           slug: organizations.slug,
           createdAt: organizations.createdAt,
           memberCount: sql<number>`(SELECT count(*)::int FROM org_members WHERE org_id = ${organizations.id})`,
-          sceneCount: sql<number>`(SELECT count(*)::int FROM scenes WHERE org_id = ${organizations.id})`,
+          sceneCount: sql<number>`(SELECT count(*)::int FROM scenes WHERE org_id = ${organizations.id} AND deleted_at IS NULL)`,
         })
         .from(organizations)
         .where(conditions)
@@ -289,16 +296,14 @@ export default async function adminRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { orgId: string } }>('/api/admin/orgs/:orgId', async (request, reply) => {
     const { orgId } = request.params
+    if (!isUuid(orgId)) return reply.status(404).send({ error: 'Organization not found' })
 
-    const existing = await db.query.organizations.findFirst({ where: eq(organizations.id, orgId) })
-    if (!existing) {
-      return reply.status(404).send({ error: 'Organization not found' })
-    }
-
-    // Hosted worlds' rows would cascade away with it, leaving their Fly app, database and files running untracked.
-    const blocked = await hostedWorldsBlockingDelete({ orgId })
-    if (blocked) return reply.status(409).send(blocked)
-    await db.delete(organizations).where(eq(organizations.id, orgId))
+    // LIV-83: the org's scenes are soft-deleted, not cascaded away: each stays restorable for 30 days by its owner or by
+    // the org's owners and admins now (recorded, since the org and its members go), and hosted worlds and deployments
+    // stay up until the purge.
+    // The org row is kept, marked deleted, so its events, media and streaming servers don't cascade away; the purge
+    // removes it once none of its scenes is left deleted.
+    if ((await softDeleteOrg(orgId, request.user.id)) === null) return reply.status(404).send({ error: 'Organization not found' })
     return reply.status(204).send()
   })
 }

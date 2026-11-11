@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { SceneImportStatus, SceneImportView } from '@virvixr/shared'
-import { buildLogShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, placeLabel, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
+import { sceneMoveNotice, buildLogShown, importThumbnailShown, virviNote, importErrorMessage, importFailure, importLines, importPhase, placeLabel, recentImports, watchImport, IMPORT_FALLBACK_MESSAGE } from './import'
 
 const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   id: 'imp-1',
@@ -17,6 +17,8 @@ const view = (over: Partial<SceneImportView> = {}): SceneImportView => ({
   logTail: null,
   filesExpired: false,
   virviAlreadyPresent: false,
+  sandbox: false,
+  thumbnail: { outcome: null, note: null, url: null, source: null },
   createdAt: '2026-11-01T00:00:00Z',
   ...over,
 })
@@ -193,5 +195,70 @@ describe('virviNote', () => {
   it('says Virvi was already in the scene, and nothing otherwise', () => {
     expect(virviNote(view({ virviAlreadyPresent: true }))).toBe("Virvi was already in your scene, so it wasn't added again.")
     expect(virviNote(view())).toBeNull()
+  })
+})
+
+describe('importThumbnailShown (LIV-89)', () => {
+  const t = (thumbnail: SceneImportView['thumbnail']) => importThumbnailShown(view({ thumbnail }))
+
+  it('shows the thumbnail the import picked up, with Replace', () => {
+    expect(t({ outcome: 'imported', note: null, url: 'https://cdn/t.jpg', source: 'import' })).toEqual({
+      label: 'Thumbnail: from scene.json', url: 'https://cdn/t.jpg', note: null, action: 'Replace',
+    })
+  })
+
+  it('one replaced in Virvi since says so', () => {
+    expect(t({ outcome: 'imported', note: null, url: 'https://cdn/u.jpg', source: 'upload' })).toMatchObject({ label: 'Thumbnail: uploaded in Virvi', action: 'Replace' })
+  })
+
+  it("says the owner's upload was kept", () => {
+    expect(t({ outcome: 'kept', note: null, url: 'https://cdn/u.jpg', source: 'upload' })).toEqual({
+      label: 'Thumbnail: uploaded in Virvi',
+      url: 'https://cdn/u.jpg',
+      note: "Your scene.json names a thumbnail too. The one you uploaded in Virvi stays; Replace it here if you'd rather.",
+      action: 'Replace',
+    })
+  })
+
+  it("the kept note goes once the scene's thumbnail is no longer the owner's upload", () => {
+    expect(t({ outcome: 'kept', note: null, url: null, source: null })).toMatchObject({ note: null, action: 'Upload' })
+    expect(t({ outcome: 'kept', note: null, url: 'https://cdn/i.jpg', source: 'import' })).toMatchObject({ note: null })
+  })
+
+  it('says an earlier import\'s thumbnail was removed because scene.json has none', () => {
+    expect(t({ outcome: 'removed', note: null, url: null, source: null })).toEqual({
+      label: 'Thumbnail: removed (scene.json has none)', url: null, note: null, action: 'Upload',
+    })
+    // Uploaded in Virvi since
+    expect(t({ outcome: 'removed', note: null, url: 'https://cdn/u.jpg', source: 'upload' })).toMatchObject({ label: 'Thumbnail: uploaded in Virvi', action: 'Replace' })
+  })
+
+  it("a skipped one shows the note, and an Upload when the scene has none", () => {
+    const note = "The scene's thumbnail couldn't be used: images/t.png isn't in the upload."
+    expect(t({ outcome: 'skipped', note, url: null, source: null })).toEqual({ label: 'Thumbnail: none yet', url: null, note, action: 'Upload' })
+    // An earlier import's stays
+    expect(t({ outcome: 'skipped', note, url: 'https://cdn/old.jpg', source: 'import' })).toMatchObject({ label: 'Thumbnail: from scene.json', note, action: 'Replace' })
+  })
+
+  it('nothing when scene.json names none', () => {
+    expect(t({ outcome: null, note: null, url: 'https://cdn/u.jpg', source: 'upload' })).toBeNull()
+  })
+})
+
+describe('sceneMoveNotice', () => {
+  const move = { id: 'scene-2', name: 'Cafe', sandboxSceneName: 'My guest cafe' }
+  it("names the account's scene the deploy uses and where the guest edits stay", () => {
+    expect(sceneMoveNotice(view({ sandbox: true, usesScene: move }))).toBe(
+      "This World already uses your scene Cafe. Virvi deploys with that scene's layout; your guest edits stay on My guest cafe in your Scenes.",
+    )
+  })
+  it('says parcels for a Genesis City import', () => {
+    expect(sceneMoveNotice(view({ sandbox: true, usesScene: move, location: { kind: 'parcels', base: '1,1', parcels: ['1,1'] } }))).toBe(
+      "These parcels already use your scene Cafe. Virvi deploys with that scene's layout; your guest edits stay on My guest cafe in your Scenes.",
+    )
+  })
+  it('says nothing without a move, or once the import is no sandbox', () => {
+    expect(sceneMoveNotice(view({ sandbox: true }))).toBeNull()
+    expect(sceneMoveNotice(view({ sandbox: false, usesScene: move }))).toBeNull()
   })
 })

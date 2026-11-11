@@ -23,6 +23,9 @@ class RoomScanFlowTest {
   private var pending: CompletableDeferred<BuilderCall<RoomScanUpload>>? = null
   private var mapFails = false
   private val uploads = ArrayList<Triple<String, String, JsonObject>>()
+  /** Uploads made with the headset secret (no space being built): name and layout. */
+  private val deviceUploads = ArrayList<Pair<String, JsonObject>>()
+  private var space: String? = "sp1"
   private var setUps = 0
   /** When true, Space Setup's `done` is held here (the activity paused meanwhile) instead of called at once. */
   private var holdSetUp = false
@@ -39,7 +42,11 @@ class RoomScanFlowTest {
             uploads += Triple(spaceId, name, layout)
             pending?.await() ?: answer ?: BuilderCall.Ok(RoomScanUpload.Uploaded("scan-1", name))
           },
-          spaceId = { "sp1" },
+          uploadWithDevice = { name, layout ->
+            deviceUploads += name to layout
+            answer ?: BuilderCall.Ok(RoomScanUpload.Uploaded("scan-2", name))
+          },
+          spaceId = { space },
           setUpSpace = { done ->
             setUps++
             if (holdSetUp) setUpDone = done else done()
@@ -158,5 +165,34 @@ class RoomScanFlowTest {
     assertEquals(RoomScanCopy.INVALID_SCAN, ui.status)
     assertTrue(uploads.isEmpty())
     assertFalse(ui.uploading)
+  }
+
+  @Test
+  fun `flow without a space uses the device upload`() {
+    space = null
+    flow.open()
+    flow.setName("Den")
+    flow.upload()
+    assertEquals("Den", deviceUploads.single().first)
+    assertEquals(1, deviceUploads.single().second["version"]!!.jsonPrimitive.int)
+    assertTrue(uploads.isEmpty())
+    assertEquals(RoomScanCopy.uploaded("Den"), ui.status)
+  }
+
+  @Test
+  fun `flow in a space keeps the pass upload`() {
+    flow.open()
+    flow.upload()
+    assertEquals("sp1", uploads.single().first)
+    assertTrue(deviceUploads.isEmpty())
+  }
+
+  @Test
+  fun `the trial's scan limit shows its line`() {
+    space = null
+    answer = BuilderCall.Ok(RoomScanUpload.Refused(RoomScanCopy.TRIAL_SCAN_LIMIT))
+    flow.open()
+    flow.upload()
+    assertEquals(RoomScanCopy.TRIAL_SCAN_LIMIT, ui.status)
   }
 }
