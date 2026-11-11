@@ -8,8 +8,10 @@ import type { DesignRole, StudioDesign, StudioMessage } from './studio'
 export type InviteRole = Exclude<DesignRole, 'owner'>
 export const INVITE_ROLES: InviteRole[] = ['collaborator', 'viewer']
 
-/** A pending invite as the owner sees it (`link` is its invite page, to copy). */
-export type StudioInvite = { id: string; email: string; role: InviteRole; expiresAt: string; link?: string }
+/** A pending invite as the owner sees it: to an email or a wallet address, one of them null (`link` is its invite page, to copy). */
+export type StudioInvite = { id: string; email: string | null; wallet?: string | null; role: InviteRole; expiresAt: string; link?: string }
+/** Who an invite is sent to, as the invite route takes it. */
+export type InviteTarget = { email: string } | { wallet: string }
 /** An invite matched to my account, on my Studio page. */
 export type MyInvite = { id: string; designId: string; designName: string; inviterName: string | null; role: InviteRole; expiresAt: string }
 /** What an invite link's page shows before it is accepted. */
@@ -64,15 +66,38 @@ export function inviteStatusCopy(status: InviteLinkView['status']): string | nul
   return null
 }
 
-/** What an invite, member or leave route's refusal means, in a line. */
-export function peopleRefusal(err: { status?: number; body?: { code?: string; error?: string } }): string {
+/** The invite field's text as the route takes it: something that starts 0x (and has no @) is a wallet, the rest an email. Null when empty. */
+export function inviteTarget(raw: string): InviteTarget | null {
+  const to = raw.trim()
+  if (!to) return null
+  return /^0x/i.test(to) && !to.includes('@') ? { wallet: to } : { email: to }
+}
+
+/** A wallet address as 0x1234…abcd. */
+export const shortWallet = (wallet: string) => `${wallet.slice(0, 6)}…${wallet.slice(-4)}`
+
+/** How a pending invite is named in the owner's list: its email, or its wallet shortened with the full address as `title`. */
+export function invitee(i: Pick<StudioInvite, 'email' | 'wallet'>): { label: string; title: string | undefined } {
+  if (!i.email && i.wallet) return { label: shortWallet(i.wallet), title: i.wallet }
+  return { label: i.email ?? '', title: undefined }
+}
+
+/** The line after a resend: an email invite is mailed again, a wallet invite only renewed (and its account told again). */
+export function resendDone(i: Pick<StudioInvite, 'email' | 'wallet'>): string {
+  const { label } = invitee(i)
+  return i.email ? `Sent the invite to ${label} again.` : `Renewed the invite for ${label}.`
+}
+
+/** What an invite, member or leave route's refusal means, in a line. `to`: what the invite was to, when there is one. */
+export function peopleRefusal(err: { status?: number; body?: { code?: string; error?: string } }, to?: 'email' | 'wallet'): string {
   const code = err.body?.code ?? err.body?.error
+  const wallet = to === 'wallet'
   switch (code) {
-    case 'already_member': return 'They’re already on this design.'
-    case 'already_invited': return 'They already have an invite to this design.'
+    case 'already_member': return wallet ? 'That wallet is already on this design.' : 'They’re already on this design.'
+    case 'already_invited': return wallet ? 'That wallet already has an invite to this design.' : 'They already have an invite to this design.'
     case 'members_full': return 'This design is full. Remove someone or cancel an invite to make room.'
     case 'invite_limit': return 'You’ve sent today’s invites. Try again tomorrow.'
-    case 'self': return 'That’s your own email address.'
+    case 'self': return wallet ? 'That’s your own wallet.' : 'That’s your own email address.'
     case 'archived': return 'This design is archived. Unarchive it to invite people.'
     case 'resend_too_soon': return 'This invite was sent less than an hour ago. Try again later.'
     case 'resend_limit': return 'This invite has been sent as many times as it can be. Cancel it and invite them again.'
@@ -80,7 +105,8 @@ export function peopleRefusal(err: { status?: number; body?: { code?: string; er
     case 'expired': return inviteStatusCopy(code)!
     case 'account_required': return 'Create a free account to join a design.'
   }
-  if (err.status === 400 && err.body?.error?.startsWith('email')) return 'Enter an email address.'
+  if (err.status === 400 && err.body?.error?.startsWith('email')) return 'Enter an email or a wallet address.'
+  if (err.status === 400 && err.body?.error?.startsWith('wallet')) return 'Enter a full wallet address: 0x and 40 letters or numbers.'
   return 'Something went wrong. Try again.'
 }
 

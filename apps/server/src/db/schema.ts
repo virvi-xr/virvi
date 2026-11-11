@@ -1817,7 +1817,9 @@ export const studioDesignMembers = pgTable('studio_design_members', {
 export const studioDesignInvites = pgTable('studio_design_invites', {
   id: uuid('id').primaryKey().defaultRandom(),
   designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
-  email: text('email').notNull(), // trimmed, lower-cased
+  // Exactly one of the two: an email (trimmed, lower-cased) or a wallet (lower-cased 0x address)
+  email: text('email'),
+  wallet: text('wallet'),
   role: text('role').notNull(), // collaborator | viewer
   token: text('token').notNull().unique(), // 32 random bytes, base64url
   invitedBy: uuid('invited_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -1833,6 +1835,9 @@ export const studioDesignInvites = pgTable('studio_design_invites', {
 }, (t) => ({
   openUq: uniqueIndex('studio_design_invites_open_uq').on(t.designId, t.email)
     .where(sql`${t.acceptedAt} IS NULL AND ${t.declinedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
+  openWalletUq: uniqueIndex('studio_design_invites_open_wallet_uq').on(t.designId, t.wallet)
+    .where(sql`${t.acceptedAt} IS NULL AND ${t.declinedAt} IS NULL AND ${t.cancelledAt} IS NULL`),
+  oneTarget: check('studio_design_invites_one_target', sql`(${t.email} IS NULL) <> (${t.wallet} IS NULL)`),
 }))
 
 // In-app notifications. data carries names and design titles only, never prompt or chat text. An unread row with a

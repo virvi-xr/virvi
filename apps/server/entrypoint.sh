@@ -334,6 +334,14 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS user_id UUID\`;
         console.log('[virvi-server] studio collaboration ensured');
       } catch(e) { console.log('[virvi-server] studio collaboration:', e.message); }
+      // Design Studio invites by linked wallet: email or wallet, exactly one; matches studioDesignInvites in src/db/schema.ts
+      try {
+        await sql\`ALTER TABLE studio_design_invites ADD COLUMN IF NOT EXISTS wallet TEXT\`;
+        await sql\`ALTER TABLE studio_design_invites ALTER COLUMN email DROP NOT NULL\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS studio_design_invites_open_wallet_uq ON studio_design_invites (design_id, wallet) WHERE accepted_at IS NULL AND declined_at IS NULL AND cancelled_at IS NULL\`;
+        await sql\`DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'studio_design_invites_one_target' AND conrelid = 'studio_design_invites'::regclass) THEN ALTER TABLE studio_design_invites ADD CONSTRAINT studio_design_invites_one_target CHECK ((email IS NULL) <> (wallet IS NULL)); END IF; END \$\$\`;
+        console.log('[virvi-server] studio wallet invites ensured');
+      } catch(e) { console.log('[virvi-server] studio wallet invites:', e.message); }
       // A deleted payer's payment stays (user_id null, ON DELETE SET NULL); matches studioPayments.userId in src/db/schema.ts
       try {
         await sql\`ALTER TABLE studio_payments ALTER COLUMN user_id DROP NOT NULL\`;

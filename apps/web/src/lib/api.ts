@@ -17,7 +17,7 @@ import { adminDesignsQuery, type AdminDesign } from './studio-support'
 import type { AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
 import type { NotificationItem } from './notifications'
-import type { InviteLinkView, InviteRole, MyInvite, PastPackage, StudioInvite } from './studio-people'
+import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, StudioInvite } from './studio-people'
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
 import type { FirstReplyStats } from './studio-wait'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
@@ -1063,8 +1063,8 @@ function useRealApi() {
     // Sharing a design (LIV-159): its people and invites, my invites, and packages kept from designs I've left
     /** `invites` (with their links) for the owner alone. */
     getStudioPeople: (id: string) => apiFetch<{ members: StudioMember[]; invites?: StudioInvite[] }>(`/api/studio/designs/${id}/people`),
-    inviteToStudioDesign: (id: string, email: string, role: InviteRole) =>
-      apiFetch<{ invite: StudioInvite }>(`/api/studio/designs/${id}/invites`, { method: 'POST', body: JSON.stringify({ email, role }) }),
+    inviteToStudioDesign: (id: string, to: InviteTarget, role: InviteRole) =>
+      apiFetch<{ invite: StudioInvite }>(`/api/studio/designs/${id}/invites`, { method: 'POST', body: JSON.stringify({ ...to, role }) }),
     cancelStudioInvite: (id: string, inviteId: string) => apiFetch<void>(`/api/studio/designs/${id}/invites/${inviteId}/cancel`, { method: 'POST' }),
     resendStudioInvite: (id: string, inviteId: string) =>
       apiFetch<{ invite: StudioInvite }>(`/api/studio/designs/${id}/invites/${inviteId}/resend`, { method: 'POST' }),

@@ -170,6 +170,19 @@ describe('design studio schema', () => {
     expect(old.userId).toBeNull()
   })
 
+  it('an invite has an email or a wallet, never both or neither; one open invite per wallet', async () => {
+    const { user: owner, d } = await design()
+    const base = { designId: d.id, role: 'viewer', invitedBy: owner.id, expiresAt: new Date(Date.now() + 864e5) }
+    const w = '0x' + 'ab'.repeat(20)
+    const [inv] = await db.insert(studioDesignInvites).values({ ...base, wallet: w, token: 'w1' }).returning()
+    expect([inv.email, inv.wallet]).toEqual([null, w])
+    await expect(db.insert(studioDesignInvites).values({ ...base, wallet: w, token: 'w2' })).rejects.toMatchObject({ code: '23505' })
+    await expect(db.insert(studioDesignInvites).values({ ...base, token: 'w3' })).rejects.toMatchObject({ code: '23514' })
+    await expect(db.insert(studioDesignInvites).values({ ...base, email: 'a@b.co', wallet: '0x' + 'cd'.repeat(20), token: 'w4' })).rejects.toMatchObject({ code: '23514' })
+    await db.update(studioDesignInvites).set({ cancelledAt: new Date() }).where(eq(studioDesignInvites.id, inv.id))
+    await db.insert(studioDesignInvites).values({ ...base, wallet: w, token: 'w5' })
+  })
+
   it('a second open membership for the same user and design is refused', async () => {
     const { d } = await design()
     const friend = await createUser()

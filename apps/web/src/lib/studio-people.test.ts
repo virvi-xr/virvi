@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  VIEWER_NOTE, acceptRefusal, boxState, canAct, inviteExpiry, inviteStatusCopy, inviteTokenFromPath, isInvitePath, peopleRefusal, promptSenderId, roleLabel,
-  senderLabel, splitDesigns,
+  VIEWER_NOTE, acceptRefusal, boxState, canAct, inviteExpiry, inviteStatusCopy, inviteTarget, inviteTokenFromPath, invitee, isInvitePath, peopleRefusal,
+  promptSenderId, resendDone, roleLabel, senderLabel, shortWallet, splitDesigns,
 } from './studio-people'
 import type { StudioDesign, StudioMessage } from './studio'
 
@@ -97,9 +97,45 @@ describe('peopleRefusal', () => {
     expect(peopleRefusal(err('used'))).toBe('This invite has already been used.')
     expect(peopleRefusal(err('expired'))).toBe('This invite has expired. Ask the owner to send a new one.')
   })
-  it('asks for an email address on the server’s 400, and falls back for anything else', () => {
-    expect(peopleRefusal({ status: 400, body: { error: 'email must be an email address' } })).toBe('Enter an email address.')
+  it('asks for an email or a wallet address on the server’s 400, and falls back for anything else', () => {
+    expect(peopleRefusal({ status: 400, body: { error: 'email must be an email address' } })).toBe('Enter an email or a wallet address.')
+    expect(peopleRefusal({ status: 400, body: { error: 'wallet must be a 0x wallet address' } })).toBe('Enter a full wallet address: 0x and 40 letters or numbers.')
     expect(peopleRefusal({ status: 500, body: { error: 'boom' } })).toBe('Something went wrong. Try again.')
+  })
+  it('speaks of the wallet when the invite was to one', () => {
+    expect(peopleRefusal(err('already_member'), 'wallet')).toBe('That wallet is already on this design.')
+    expect(peopleRefusal(err('already_invited'), 'wallet')).toBe('That wallet already has an invite to this design.')
+    expect(peopleRefusal(err('self', 400), 'wallet')).toBe('That’s your own wallet.')
+    expect(peopleRefusal(err('self', 400), 'email')).toBe('That’s your own email address.')
+    expect(peopleRefusal(err('members_full'), 'wallet')).toBe('This design is full. Remove someone or cancel an invite to make room.')
+  })
+})
+
+const W = '0x1234567890abcdef1234567890abcdef1234abcd'
+
+describe('inviteTarget', () => {
+  it('sends a 0x address as a wallet and anything else as an email, trimmed', () => {
+    expect(inviteTarget(`  ${W} `)).toEqual({ wallet: W })
+    expect(inviteTarget('0X1234567890ABCDEF1234567890ABCDEF1234ABCD')).toEqual({ wallet: '0X1234567890ABCDEF1234567890ABCDEF1234ABCD' })
+    expect(inviteTarget('0x123')).toEqual({ wallet: '0x123' })
+    expect(inviteTarget(' cora@test.dev ')).toEqual({ email: 'cora@test.dev' })
+    expect(inviteTarget('0xcora@test.dev')).toEqual({ email: '0xcora@test.dev' })
+    expect(inviteTarget('   ')).toBeNull()
+  })
+})
+
+describe('shortWallet and invitee', () => {
+  it('shortens an address to its start and end', () => {
+    expect(shortWallet(W)).toBe('0x1234…abcd')
+  })
+  it('names an invite by its email, or its wallet shortened with the full address as the title', () => {
+    expect(invitee({ email: 'cora@test.dev', wallet: null })).toEqual({ label: 'cora@test.dev', title: undefined })
+    expect(invitee({ email: null, wallet: W })).toEqual({ label: '0x1234…abcd', title: W })
+    expect(invitee({ email: 'cora@test.dev' })).toEqual({ label: 'cora@test.dev', title: undefined })
+  })
+  it('says what a resend did: mailed again, or renewed for a wallet', () => {
+    expect(resendDone({ email: 'cora@test.dev', wallet: null })).toBe('Sent the invite to cora@test.dev again.')
+    expect(resendDone({ email: null, wallet: W })).toBe('Renewed the invite for 0x1234…abcd.')
   })
 })
 

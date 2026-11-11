@@ -3,7 +3,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { ConfirmAction, PrimaryButton, SelectField } from '@/components/ui'
 import type { StudioDetail, StudioMember } from '@/lib/studio'
-import { INVITE_ROLES, inviteExpiry, peopleRefusal, roleLabel, type InviteRole, type StudioInvite } from '@/lib/studio-people'
+import {
+  INVITE_ROLES, inviteExpiry, inviteTarget, invitee, peopleRefusal, resendDone, roleLabel, shortWallet, type InviteRole, type InviteTarget, type StudioInvite,
+} from '@/lib/studio-people'
 
 type Props = { designId: string; detail: StudioDetail; meId: string | null; onChanged: () => Promise<void>; onClose: () => void }
 
@@ -11,7 +13,7 @@ const nameOf = (m: Pick<StudioMember, 'displayName'>) => m.displayName?.trim() |
 const small = 'rounded-md bg-gray-800 px-3 py-1.5 text-xs hover:bg-gray-700 disabled:opacity-50'
 
 /**
- * The design's People panel (LIV-159). The owner invites by email with a role, changes roles, removes people, and
+ * The design's People panel (LIV-159). The owner invites by email or wallet address with a role, changes roles, removes people, and
  * copies, resends or cancels pending invites; everyone else sees who is on the design and can leave it.
  */
 export default function People({ designId, detail, meId, onChanged, onClose }: Props) {
@@ -34,8 +36,11 @@ export default function People({ designId, detail, meId, onChanged, onClose }: P
   }, [designId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [load])
 
-  /** One change: the panel and the design both re-read after it (a role change or removal changes the page too). */
-  const run = async (fn: () => Promise<unknown>, done?: string): Promise<boolean> => {
+  /**
+   * One change: the panel and the design both re-read after it (a role change or removal changes the page too). `to`:
+   * what an invite was sent to, for its refusal's wording.
+   */
+  const run = async (fn: () => Promise<unknown>, done?: string, to?: 'email' | 'wallet'): Promise<boolean> => {
     setBusy(true)
     setError(null)
     setStatus(null)
@@ -46,7 +51,7 @@ export default function People({ designId, detail, meId, onChanged, onClose }: P
       await onChanged()
       return true
     } catch (err) {
-      setError(peopleRefusal(err as never))
+      setError(peopleRefusal(err as never, to))
       return false
     } finally {
       setBusy(false)
@@ -73,7 +78,8 @@ export default function People({ designId, detail, meId, onChanged, onClose }: P
         <button type="button" onClick={onClose} className="text-sm text-gray-400 hover:text-white">Close</button>
       </div>
 
-      {owner && <InviteForm busy={busy} onInvite={(email, role) => run(() => api.inviteToStudioDesign(designId, email, role), `Invited ${email}.`)} />}
+      {owner && <InviteForm busy={busy} onInvite={(to, role) => run(() => api.inviteToStudioDesign(designId, to, role),
+        `Invited ${'wallet' in to ? shortWallet(to.wallet) : to.email}.`, 'wallet' in to ? 'wallet' : 'email')} />}
       {status && <p className="px-4 pt-3 text-sm text-emerald-300" role="status">{status}</p>}
       {error && <p className="px-4 pt-3 text-sm text-amber-300" role="alert">{error}</p>}
 
@@ -106,7 +112,7 @@ export default function People({ designId, detail, meId, onChanged, onClose }: P
           <ul className="divide-y divide-gray-800">
             {invites.map((i) => (
               <PendingInvite key={i.id} invite={i} busy={busy}
-                onResend={() => run(() => api.resendStudioInvite(designId, i.id), `Sent the invite to ${i.email} again.`)}
+                onResend={() => run(() => api.resendStudioInvite(designId, i.id), resendDone(i))}
                 onCancel={() => run(() => api.cancelStudioInvite(designId, i.id))} />
             ))}
           </ul>
@@ -124,20 +130,21 @@ export default function People({ designId, detail, meId, onChanged, onClose }: P
   )
 }
 
-function InviteForm({ busy, onInvite }: { busy: boolean; onInvite: (email: string, role: InviteRole) => Promise<boolean> }) {
+function InviteForm({ busy, onInvite }: { busy: boolean; onInvite: (to: InviteTarget, role: InviteRole) => Promise<boolean> }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<InviteRole>('collaborator')
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const to = email.trim()
+    const to = inviteTarget(email)
     if (!to) return
     if (await onInvite(to, role)) setEmail('')
   }
   return (
     <form onSubmit={submit} className="flex flex-wrap items-end gap-2 border-b border-gray-800 px-4 py-3">
       <label className="min-w-0 flex-1 basis-56">
-        <span className="mb-1 block text-xs text-gray-400">Invite by email</span>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} autoComplete="off" placeholder="name@example.com"
+        <span className="mb-1 block text-xs text-gray-400">Email or wallet address</span>
+        <input type="text" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} autoComplete="off"
+          autoCapitalize="none" spellCheck={false} placeholder="name@example.com or 0x…"
           className="w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400" />
       </label>
       <SelectField label="Role" value={role} onChange={(r) => setRole(r as InviteRole)} className="w-40">
@@ -151,6 +158,7 @@ function InviteForm({ busy, onInvite }: { busy: boolean; onInvite: (email: strin
 function PendingInvite({ invite, busy, onResend, onCancel }: { invite: StudioInvite; busy: boolean; onResend: () => void; onCancel: () => void }) {
   const [copied, setCopied] = useState(false)
   const [showLink, setShowLink] = useState(false)
+  const who = invitee(invite)
   const copy = async () => {
     if (!invite.link) return
     try {
@@ -165,7 +173,7 @@ function PendingInvite({ invite, busy, onResend, onCancel }: { invite: StudioInv
     <li className="space-y-2 px-4 py-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-medium">{invite.email}</p>
+          <p className="truncate font-medium" title={who.title}>{who.label}</p>
           <p className="text-xs text-gray-500">{roleLabel(invite.role)} · {inviteExpiry(invite.expiresAt, new Date())}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -175,7 +183,7 @@ function PendingInvite({ invite, busy, onResend, onCancel }: { invite: StudioInv
         </div>
       </div>
       {showLink && invite.link && (
-        <input readOnly value={invite.link} aria-label={`Invite link for ${invite.email}`} onFocus={(e) => e.currentTarget.select()}
+        <input readOnly value={invite.link} aria-label={`Invite link for ${who.label}`} onFocus={(e) => e.currentTarget.select()}
           className="w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-1.5 font-mono text-xs text-gray-300" />
       )}
     </li>

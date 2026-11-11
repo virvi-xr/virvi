@@ -139,7 +139,7 @@ describe('design invites and people', () => {
     const d = await createDesign(owner)
     const cora = await createUser({ email: 'cora@test.dev' })
     const inv = (await invite(owner, d.id, { email: 'cora@test.dev' })).json().invite
-    expect((await people(owner, d.id)).json().invites).toEqual([{ id: inv.id, email: 'cora@test.dev', role: 'collaborator', expiresAt: inv.expiresAt, link: inv.link }])
+    expect((await people(owner, d.id)).json().invites).toEqual([{ id: inv.id, email: 'cora@test.dev', wallet: null, role: 'collaborator', expiresAt: inv.expiresAt, link: inv.link }])
     expect((await act(cora, `/designs/${d.id}/invites/${inv.id}/cancel`)).statusCode).toBe(404)
     expect((await act(owner, `/designs/${d.id}/invites/${inv.id}/cancel`)).statusCode).toBe(204)
     expect(await myInvites(cora)).toEqual([])

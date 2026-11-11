@@ -30,7 +30,7 @@ own Fly worker machine (`apps/studio-worker`), which talks to the routes here th
 | `timings.ts` | how long each prompt waits for its first reply (`studio_jobs.timings`): the machine, each step's seconds, the finish log line, the admin page's First reply card and the design detail's `typicalFirstReplySec` |
 | `warm.ts` | starting a design's machine while the person writes a prompt (`POST /designs/:id/warm`), so the prompt doesn't wait for it |
 | `members.ts` | who a design is shared with (LIV-159): the owner, and open `studio_design_members` rows as collaborator or viewer |
-| `invites.ts` | inviting people to a design by email or link (14 days; resent at most once an hour and 3 times in all, `resend_count` and `last_sent_at`), accepting and declining, role changes, removing and leaving; at most `STUDIO_MAX_MEMBERS` members plus open invites per design and 50 invites per owner per UTC day; the email goes out only when SMTP is set |
+| `invites.ts` | inviting people to a design by email, linked wallet or link (14 days; resent at most once an hour and 3 times in all, `resend_count` and `last_sent_at`), accepting and declining, role changes, removing and leaving; at most `STUDIO_MAX_MEMBERS` members plus open invites per design and 50 invites per owner per UTC day; the email goes out only when SMTP is set |
 | `sweep.ts` | every minute: fails lost jobs and refunds them, restarts machines for waiting jobs, destroys idle machines, settles MANA transfers and expires unpaid MANA quotes; then the trial sweep and the weekly ratings digest |
 
 Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/studio-worker.ts` (the workers,
@@ -64,8 +64,11 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
   finalizes and downloads. A *viewer* reads the chat, renders and files; an action route answers
   `403 { error: 'viewer', code: 'viewer' }`. Someone who isn't on the design, or was removed, gets the same 404 as a
   stranger. Only the owner invites, changes roles, removes people, renames, archives and deletes.
-- **Invites.** The owner invites by email (`POST /designs/:id/invites`) as collaborator or viewer; the invitee takes the
-  link or accepts from `GET /invites`. An invite lasts 14 days, is resent at most once an hour and 3 times, and the
+- **Invites.** The owner invites by email or by wallet address (`POST /designs/:id/invites` with `{ email }` or
+  `{ wallet }`, not both) as collaborator or viewer; the invitee takes the link or accepts from `GET /invites`. A wallet
+  invite is matched to the account that has that wallet linked, sends no email, and with no such account yet waits on
+  the address: the first account to sign in with the wallet or link it gets it, with a bell item (`claimWalletInvites`;
+  never a trial, never on a design they own or are on). Only the owner's People view shows the address. An invite lasts 14 days, is resent at most once an hour and 3 times, and the
   owner may send 50 a UTC day. Members plus pending invites are capped by `STUDIO_MAX_MEMBERS` (50). Trial accounts
   can't invite, be invited or accept (`403 account_required`); a paused account can accept, view, finalize and pay, not prompt or render.
 - **Who pays.** Whoever sends a prompt, finalizes or reports is recorded on the message, job or payment
@@ -101,7 +104,8 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    covers the `studio_*` tables (four of them for payments, and `studio_idea_uses` for the example prompts), new columns
    (`studio_designs.finalized_at`, `studio_jobs.counted_from`, and for the first-reply wait `studio_jobs.timings` and
    `studio_designs.warmed_at`), and the MANA and credit tables below. Collaboration (LIV-159) adds
-   `studio_design_members`, `studio_design_invites` and `notifications`, the sender columns `studio_messages.user_id`
+   `studio_design_members`, `studio_design_invites` and `notifications` (invites by wallet: `studio_design_invites.wallet`,
+   `email` nullable, a check that exactly one is set and an open-invite index per wallet), the sender columns `studio_messages.user_id`
    and `studio_jobs.user_id` (null means the owner), and makes `studio_payments.user_id` nullable with `ON DELETE SET NULL`
    (a deleted payer's payment stays, because entitlements reference it). `STUDIO_MAX_MEMBERS` (default 50) caps members plus
    pending invites per design. Nothing needs running by hand first; to check

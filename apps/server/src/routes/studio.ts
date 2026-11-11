@@ -18,7 +18,7 @@ import { isPaused } from '../studio/scope.js'
 import { designMembers, designRole, type DesignRole } from '../studio/members.js'
 import {
   INVITE_ROLES, InviteError, acceptInvite, cancelDesignInvites, cancelInvite, createInvite, declineInvite, designInvites, endMembership,
-  findDesignInvite, findInviteByToken, findMyInvite, linkView, myInvites, normalEmail, publicInvite, resendInvite, setMemberRole, type InviteRole,
+  findDesignInvite, findInviteByToken, findMyInvite, linkView, myInvites, normalEmail, normalWallet, publicInvite, resendInvite, setMemberRole, type InviteRole, type InviteTarget,
 } from '../studio/invites.js'
 import { publishStudio } from '../studio/events.js'
 import { helpWithPrompt, PromptHelpError } from '../studio/prompt-help.js'
@@ -308,13 +308,23 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/invites', work, async (request, reply) => {
     const d = await ownDesign(request)
     if (!d) return notFound(reply)
-    const b = (request.body ?? {}) as { email?: unknown; role?: unknown }
-    const email = normalEmail(b.email)
-    if (!email) return reply.status(400).send({ error: 'email must be an email address' })
+    // An email or a linked wallet address, not both
+    const b = (request.body ?? {}) as { email?: unknown; wallet?: unknown; role?: unknown }
+    if ((b.email == null) === (b.wallet == null)) return reply.status(400).send({ error: 'send an email or a wallet, not both' })
+    let target: InviteTarget
+    if (b.wallet != null) {
+      const wallet = normalWallet(b.wallet)
+      if (!wallet) return reply.status(400).send({ error: 'wallet must be a 0x wallet address' })
+      target = { wallet }
+    } else {
+      const email = normalEmail(b.email)
+      if (!email) return reply.status(400).send({ error: 'email must be an email address' })
+      target = { email }
+    }
     const role = b.role == null ? 'collaborator' : inviteRole(b.role)
     if (!role) return reply.status(400).send({ error: 'role must be collaborator or viewer' })
     try {
-      return reply.status(201).send({ invite: publicInvite(await createInvite(d, email, role, new Date())) })
+      return reply.status(201).send({ invite: publicInvite(await createInvite(d, target, role, new Date())) })
     } catch (err) {
       return inviteRefusal(reply, err)
     }
