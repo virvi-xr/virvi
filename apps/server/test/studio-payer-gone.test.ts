@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { studioCreditLedger, studioEntitlements, studioFinalizeCredits, studioPayments, users } from '../src/db/schema.js'
+import {
+  studioCreditLedger, studioDesignMembers, studioDesigns, studioEntitlements, studioFinalizeCredits, studioFlags, studioJobs, studioPayments,
+  studioPromptCredits, studioRevisions, studioScopeEvents, studioUsageDays, users,
+} from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { setStripe } from '../src/integrations/stripe.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
@@ -13,8 +16,9 @@ import { setPolygon } from '../src/studio/mana/polygon.js'
 import { watchManaTransfers } from '../src/studio/mana/settle.js'
 import { sweepStudio } from '../src/studio/sweep.js'
 import { resetDb } from './helpers/db.js'
-import { createUser } from './helpers/factories.js'
-import { fakeFly, fakePolygon, fakeStripe } from './helpers/studio.js'
+import { createUser, testApp } from './helpers/factories.js'
+import { createDesign, fakeFly, fakePolygon, fakeStripe, issueWorker, okResult, PROMPT_PAYLOAD, queueJob } from './helpers/studio.js'
+import { utcDay } from '../src/studio/quota.js'
 
 /**
  * A payment outlives its payer (studio_payments.user_id is ON DELETE SET NULL). With nobody to give anything back to or
@@ -110,5 +114,99 @@ describe('a payment whose payer account was deleted', () => {
     }
     expect(await row(paymentId)).toMatchObject({ userId: null, status: 'expired', giftsHeld: 0, creditHeldCents: 0 })
     expect(await db.select().from(studioEntitlements)).toEqual([])
+  })
+})
+
+/**
+ * LIV-159: a prompt's sender can delete their account while it is queued or running (studio_jobs.user_id has no FK).
+ * Its result, or its loss, settles the job and charges nobody: never the design's owner, never a row for the gone user.
+ */
+describe('a prompt whose sender account was deleted', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  const prev = { enabled: config.studioEnabled, image: config.studioWorkerImage }
+  beforeAll(() => {
+    ;(config as any).studioEnabled = true
+    ;(config as any).studioWorkerImage = 'registry.fly.io/vlm-studio-worker:test'
+  })
+  afterAll(() => {
+    ;(config as any).studioEnabled = prev.enabled
+    ;(config as any).studioWorkerImage = prev.image
+    setMachineDeps(null)
+    setStudioStore(null)
+  })
+  beforeEach(async () => {
+    await resetDb()
+    setStudioStore(memoryStudioStore())
+    setMachineDeps({ fly: fakeFly() })
+    app = await testApp()
+  })
+  afterEach(async () => { await app.close() })
+
+  /** A collaborator's credit-sourced prompt, taken at `takenAt`, whose sender then deletes their account. */
+  async function goneSender(takenAt = new Date()) {
+    const owner = await createUser()
+    const collab = await createUser()
+    const d = await createDesign(owner, { status: 'building', machineId: 'm1', lastJobAt: takenAt })
+    await db.insert(studioDesignMembers).values({ designId: d.id, userId: collab.id, role: 'collaborator' })
+    const job = await queueJob(d, PROMPT_PAYLOAD, {
+      userId: collab.id, counted: true, countedFrom: 'credit', countedDay: utcDay(takenAt), status: 'taken', takenAt, createdAt: takenAt,
+    })
+    await db.delete(users).where(eq(users.id, collab.id))
+    return { owner, d, job }
+  }
+  const nobodyCharged = async () => {
+    expect(await db.select().from(studioUsageDays)).toEqual([])
+    expect(await db.select().from(studioPromptCredits)).toEqual([])
+    expect(await db.select().from(studioScopeEvents)).toEqual([])
+  }
+  const post = async (d: { id: string }, jobId: string, over: Record<string, unknown>) => {
+    const token = await issueWorker(d, 'm1')
+    return app.inject({
+      method: 'POST', url: `/api/studio/worker/jobs/${jobId}/result`, headers: { authorization: `Bearer ${token}` },
+      payload: okResult(jobId, over) as any,
+    })
+  }
+  const jobRow = async (id: string) => (await db.select().from(studioJobs).where(eq(studioJobs.id, id)))[0]
+  const designRow = async (id: string) => (await db.select().from(studioDesigns).where(eq(studioDesigns.id, id)))[0]
+
+  it('its result is applied, the job settles and no cost or give-back is recorded', async () => {
+    const { d, job } = await goneSender()
+    const res = await post(d, job.id, { outcome: 'error', error: 'boom', pieces: [], costUsd: 0.5 })
+    expect(res.statusCode).toBe(204)
+    expect(await jobRow(job.id)).toMatchObject({ status: 'failed' })
+    expect((await designRow(d.id)).status).toBe('idle')
+    await nobodyCharged()
+  })
+
+  it('a paid result keeps its pieces and records no cost', async () => {
+    const { d, job } = await goneSender()
+    expect((await post(d, job.id, { costUsd: 0.74 })).statusCode).toBe(204)
+    expect(await jobRow(job.id)).toMatchObject({ status: 'done' })
+    expect(await db.select().from(studioRevisions)).toHaveLength(1)
+    await nobodyCharged()
+  })
+
+  it('an off-topic turn-down logs no scope event and flags nobody', async () => {
+    const { d, job } = await goneSender()
+    const res = await post(d, job.id, {
+      outcome: 'off_topic', pieces: [], costUsd: 0.1, scope: { by: 'agent', category: 'other', note: 'not a wearable' },
+    })
+    expect(res.statusCode).toBe(204)
+    expect(await jobRow(job.id)).toMatchObject({ status: 'done' })
+    expect(await db.select().from(studioFlags)).toEqual([])
+    await nobodyCharged()
+  })
+
+  it('the sweep fails it as lost and still runs its later steps', async () => {
+    const t0 = new Date('2026-11-04T12:00:00Z')
+    const fly = fakeFly()
+    const { d, job } = await goneSender(t0)
+    const idle = await createDesign(await createUser(), { machineId: 'm-idle', lastJobAt: t0 })
+    const now = new Date(t0.getTime() + 3 * 24 * 3600_000 + MIN)
+    expect(await sweepStudio(now, { fly })).toEqual({ lost: 1, destroyed: 2 }) // its design and the idle one
+    expect(await jobRow(job.id)).toMatchObject({ status: 'failed' })
+    expect((await designRow(d.id)).status).toBe('idle')
+    expect((await designRow(idle.id)).machineId).toBeNull()
+    await nobodyCharged()
   })
 })

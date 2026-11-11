@@ -1,6 +1,6 @@
 import { and, eq, inArray, max, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPieces, studioRenders, studioRevisions, studioSetRenders } from '../db/schema.js'
+import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPieces, studioRenders, studioRevisions, studioSetRenders, users } from '../db/schema.js'
 import { checkFilePath, jobFileKey } from './store.js'
 import { jobDay, recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
 import { publishStudio } from './events.js'
@@ -169,9 +169,15 @@ function systemNote(r: ContractResult, refunded: boolean): string | null {
 
 /**
  * Who a prompt job's cost, give-back, off-topic and flag accounting goes to: its sender (LIV-159), or the design's owner
- * for a job from before senders were kept.
+ * for a job from before senders were kept. Null when that account is gone: studio_jobs.user_id has no FK, so a sender
+ * can delete their account while their prompt runs, and its accounting then goes to nobody (never the owner, who may be
+ * an heir). The row is held (KEY SHARE) so the account can't go before the transaction's writes land.
  */
-export const jobPayer = (job: { userId: string | null }, design: { ownerId: string }): string => job.userId ?? design.ownerId
+export async function jobPayer(job: { userId: string | null }, design: { ownerId: string }, exec: Exec): Promise<string | null> {
+  const id = job.userId ?? design.ownerId
+  const [u] = await exec.select({ id: users.id }).from(users).where(eq(users.id, id)).for('key share')
+  return u ? id : null
+}
 
 /** The design is idle again once no prompt is waiting or running. */
 export async function settleDesign(designId: string, exec: Exec = db): Promise<void> {
@@ -187,6 +193,7 @@ export async function settleDesign(designId: string, exec: Exec = db): Promise<v
  */
 export async function applyResult(jobId: string, result: ContractResult, now: Date): Promise<'applied' | 'already'> {
   const status = result.outcome === 'error' ? 'failed' : 'done'
+  let payer = null as string | null // set in the transaction
   const job = await db.transaction(async (tx) => {
     const [job] = await tx.update(studioJobs)
       .set({ status, result, finishedAt: now })
@@ -197,7 +204,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     const day = job.countedDay ?? utcDay(now)
 
     if (job.type === 'prompt') {
-      const payer = design ? jobPayer(job, design) : null
+      payer = design ? await jobPayer(job, design, tx) : null
       const costDay = payer ? await jobDay(payer, job.countedDay, now, tx) : day
       const payload = job.payload as { agent?: string }
       const agent = result.agent ?? payload.agent ?? null
@@ -324,9 +331,8 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         .catch((err) => console.error('[studio] walk-through render failed:', err instanceof Error ? err.message : err))
     }
   }
-  if ((result.outcome === 'off_topic' || result.outcome === 'declined') && !job.byAdminId) {
-    const [d] = await db.select({ ownerId: studioDesigns.ownerId }).from(studioDesigns).where(eq(studioDesigns.id, job.designId))
-    if (d) await maybeFlag(jobPayer(job, d), now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
+  if ((result.outcome === 'off_topic' || result.outcome === 'declined') && !job.byAdminId && payer) {
+    await maybeFlag(payer, now).catch((err) => console.error('[studio] flag check failed:', err instanceof Error ? err.message : err))
   }
   if (job.type === 'prompt') await finishTimings(job.id)
   // LIV-66: a worker job that ended in an error is a failed background job
@@ -352,6 +358,7 @@ export async function failJobs(
   if (!jobIds.length) return 0
   let n = 0
   for (const id of jobIds) {
+    // Each job on its own: one that can't be settled is logged and left for the next sweep, never stops the rest
     const r = await db.transaction(async (tx) => {
       const [job] = await tx.update(studioJobs)
         .set({ status: 'failed', result: { outcome: 'error', error, pieces: [] }, finishedAt: now })
@@ -360,7 +367,8 @@ export async function failJobs(
       if (!job) return null
       const [design] = await tx.select().from(studioDesigns).where(eq(studioDesigns.id, job.designId))
       if (job.type === 'prompt') {
-        if ((job.counted || job.countedFrom === 'gift') && design) await refundPrompt(jobPayer(job, design), job.countedDay ?? utcDay(now), job.countedFrom as PromptSource | null, tx)
+        const payer = design && (job.counted || job.countedFrom === 'gift') ? await jobPayer(job, design, tx) : null
+        if (payer) await refundPrompt(payer, job.countedDay ?? utcDay(now), job.countedFrom as PromptSource | null, tx)
         await tx.insert(studioMessages).values({
           designId: job.designId, role: 'system', jobId: job.id,
           text: `${error}${job.counted ? ' Your prompt was not counted.' : ''}`,
@@ -377,12 +385,19 @@ export async function failJobs(
       }
       await settleDesign(job.designId, tx)
       return job
+    }).catch((err) => {
+      console.error(`[studio] failing job ${id} failed:`, err instanceof Error ? err.message : err)
+      return null
     })
     if (!r) continue
     n++
-    if (r.type === 'prompt') await finishTimings(r.id)
-    await recordStudioFailure(r, error)
-    await publishStudio(r.designId, { type: 'job', jobId: r.id, status: 'failed', outcome: 'error', error })
+    try {
+      if (r.type === 'prompt') await finishTimings(r.id)
+      await recordStudioFailure(r, error)
+      await publishStudio(r.designId, { type: 'job', jobId: r.id, status: 'failed', outcome: 'error', error })
+    } catch (err) {
+      console.error(`[studio] after failing job ${id}:`, err instanceof Error ? err.message : err)
+    }
   }
   return n
 }

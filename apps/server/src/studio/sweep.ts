@@ -96,7 +96,9 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
       isNotNull(studioPayments.stripePaymentIntent), // a card refund through Stripe
       inArray(studioPayments.method, ['mana', 'credit']), // paid back as credit
     )))
-  for (const { id } of owing) await settleRefund(id)
+  for (const { id } of owing) {
+    await settleRefund(id).catch((err) => console.error('[studio-sweep] refund settle failed:', err instanceof Error ? err.message : err))
+  }
   // Paid scene pieces whose library rows didn't land (storage was down) get another try
   await addMissingLibraryRows(now).catch((err) => console.error('[studio-sweep] library retry failed:', err instanceof Error ? err.message : err))
   await markExpiredInvitesRead(now).catch((err) => console.error('[studio-sweep] expired invite notifications failed:', err instanceof Error ? err.message : err))
