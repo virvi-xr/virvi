@@ -67,13 +67,14 @@ describe('notifications', () => {
     const { items } = await list(sam)
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({
-      kind: 'studio_invite', readAt: null, gone: false,
+      kind: 'studio_invite', readAt: null, gone: false, open: true,
       data: { designId: d.id, designName: 'Neon cap', inviterName: 'Olive', role: 'viewer' },
     })
     expect(await count(sam)).toBe(1)
     expect((await post(sam, `/api/studio/invites/${items[0].data.inviteId}/accept`)).statusCode).toBe(200)
     expect(await count(sam)).toBe(0)
-    expect((await list(sam)).items[0]).toMatchObject({ readAt: expect.any(String), gone: true })
+    // Accepted: I'm on the design now, so it isn't gone, only no longer open
+    expect((await list(sam)).items[0]).toMatchObject({ readAt: expect.any(String), gone: false, open: false })
   })
 
   it('declining or cancelling an invite marks it read, and an expired one is gone', async () => {
@@ -86,10 +87,12 @@ describe('notifications', () => {
     const id = async (u: TestUser) => (await list(u)).items[0].data.inviteId
     expect((await post(sam, `/api/studio/invites/${await id(sam)}/decline`)).statusCode).toBe(204)
     expect(await count(sam)).toBe(0)
+    expect((await list(sam)).items[0]).toMatchObject({ gone: true, open: false })
     expect((await post(olive, `/api/studio/designs/${d.id}/invites/${await id(kim)}/cancel`)).statusCode).toBe(204)
     expect(await count(kim)).toBe(0)
+    expect((await list(kim)).items[0]).toMatchObject({ gone: true, open: false })
     await db.update(studioDesignInvites).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(studioDesignInvites.userId, lee.id))
-    expect((await list(lee)).items[0]).toMatchObject({ readAt: null, gone: true })
+    expect((await list(lee)).items[0]).toMatchObject({ readAt: null, gone: true, open: false })
     await sweepStudio(new Date())
     expect(await count(lee)).toBe(0)
     expect((await list(lee)).items[0]).toMatchObject({ readAt: expect.any(String), gone: true })

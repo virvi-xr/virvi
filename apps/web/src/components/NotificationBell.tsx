@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useApi } from '@/lib/api'
 import { BellIcon } from '@/components/icons'
-import { badgeText, notificationText, type NotificationItem } from '@/lib/notifications'
+import { badgeText, inviteActionable, notificationText, type NotificationItem } from '@/lib/notifications'
 import { acceptRefusal, peopleRefusal, roleLabel } from '@/lib/studio-people'
 import { relativeTime } from '@/lib/studio'
 
@@ -144,7 +144,7 @@ export function NotificationBell({ align = 'left' }: { align?: 'left' | 'right' 
             <ul>
               {items.map((n) => {
                 const { text, href } = notificationText(n)
-                const invite = n.kind === 'studio_invite' && !n.gone
+                const invite = inviteActionable(n)
                 return (
                   <li key={n.id} className="border-b border-gray-900 last:border-b-0">
                     <div className="flex items-start gap-2 px-4 py-3">

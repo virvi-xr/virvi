@@ -166,7 +166,7 @@ async function openInvites(inviteIds: string[], now: Date): Promise<Set<string>>
   return new Set(rows.map((r) => r.id))
 }
 
-/** The user's notifications, newest update first, a page before `before`; `gone` marks ones that point at nothing they can reach now. */
+/** The user's notifications, newest update first, a page before `before`; `gone` marks ones that point at nothing they can reach now, `open` an invite still waiting on an answer. */
 export async function listNotifications(userId: string, before: Date | null, limit: number, now: Date) {
   const take = Math.min(Math.max(Math.floor(limit) || PAGE, 1), MAX_PAGE)
   const rows = await db.select().from(notifications)
@@ -174,12 +174,14 @@ export async function listNotifications(userId: string, before: Date | null, lim
     .orderBy(desc(notifications.updatedAt), desc(notifications.id)).limit(take + 1)
   const page = rows.slice(0, take)
   const dataOf = (n: typeof page[number]) => n.data as Data
-  const roles = await designsWithRole(userId, [...new Set(page.filter((n) => n.kind !== 'studio_invite').map((n) => String(dataOf(n).designId)))])
+  const roles = await designsWithRole(userId, [...new Set(page.map((n) => String(dataOf(n).designId)))])
   const open = await openInvites(page.filter((n) => n.kind === 'studio_invite').map((n) => String(dataOf(n).inviteId)), now)
   return {
     items: page.map((n) => ({
       id: n.id, kind: n.kind, data: n.data, createdAt: n.createdAt, updatedAt: n.updatedAt, readAt: n.readAt,
-      gone: n.kind === 'studio_invite' ? !open.has(String(dataOf(n).inviteId)) : !roles.has(String(dataOf(n).designId)),
+      // An invite is gone only when it is closed and I'm not on the design (an accepted one is closed but not gone)
+      gone: !roles.has(String(dataOf(n).designId)) && (n.kind !== 'studio_invite' || !open.has(String(dataOf(n).inviteId))),
+      open: n.kind === 'studio_invite' && open.has(String(dataOf(n).inviteId)),
     })),
     more: rows.length > take,
   }

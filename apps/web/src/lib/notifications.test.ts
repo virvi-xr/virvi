@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { badgeText, notificationText, senderNames } from './notifications'
+import { badgeText, inviteActionable, notificationText, senderNames } from './notifications'
 
-const base = { gone: false }
+const base = { gone: false, open: false }
 
 describe('notificationText', () => {
   it('names who invited you, linking the Studio page', () => {
-    expect(notificationText({ ...base, kind: 'studio_invite', data: { inviteId: 'i', designId: 'd1', designName: 'Red cap', inviterName: 'Sam', role: 'viewer' } }))
+    expect(notificationText({ ...base, open: true, kind: 'studio_invite', data: { inviteId: 'i', designId: 'd1', designName: 'Red cap', inviterName: 'Sam', role: 'viewer' } }))
       .toEqual({ text: 'Sam invited you to Red cap', href: '/studio' })
+  })
+  it('keeps an answered invite you are on as the invite line, linking the design', () => {
+    expect(notificationText({ ...base, kind: 'studio_invite', data: { inviteId: 'i', designId: 'd1', designName: 'Red cap', inviterName: 'Sam', role: 'viewer' } }))
+      .toEqual({ text: 'Sam invited you to Red cap', href: '/studio/d1' })
   })
   it('says one sender sent a prompt', () => {
     expect(notificationText({ ...base, kind: 'studio_prompts', data: { designId: 'd1', designName: 'Red cap', senders: ['Sam'], count: 1 } }))
@@ -30,9 +34,19 @@ describe('notificationText', () => {
   })
   it('says a gone item is no longer shared, with no link', () => {
     for (const kind of ['studio_invite', 'studio_prompts', 'studio_package_ready', 'studio_owner']) {
-      expect(notificationText({ gone: true, kind, data: { designId: 'd1', designName: 'Red cap', inviterName: 'Sam' } }))
+      expect(notificationText({ gone: true, open: false, kind, data: { designId: 'd1', designName: 'Red cap', inviterName: 'Sam' } }))
         .toEqual({ text: 'Red cap is no longer shared with you', href: null })
     }
+  })
+})
+
+describe('inviteActionable', () => {
+  it('shows Accept and Decline only for an open invite', () => {
+    const inv = { kind: 'studio_invite', gone: false }
+    expect(inviteActionable({ ...inv, open: true })).toBe(true)
+    expect(inviteActionable({ ...inv, open: false })).toBe(false)
+    expect(inviteActionable({ kind: 'studio_invite', gone: true, open: false })).toBe(false)
+    expect(inviteActionable({ kind: 'studio_prompts', gone: false, open: false })).toBe(false)
   })
 })
 

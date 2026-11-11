@@ -13,6 +13,8 @@ export type NotificationItem = {
   readAt: string | null
   /** The invite was answered or ran out, or I'm no longer on the design. */
   gone: boolean
+  /** An invite still waiting on my answer (false for every other kind). */
+  open: boolean
 }
 
 /** The unread badge: nothing at 0, the number up to 9, then 9+. */
@@ -33,15 +35,20 @@ export function senderNames(senders: string[]): string {
 
 const str = (v: unknown, fallback: string) => (typeof v === 'string' && v.trim() ? v : fallback)
 
+/** Accept and Decline show only while the invite is still open. */
+export function inviteActionable(item: Pick<NotificationItem, 'kind' | 'gone' | 'open'>): boolean {
+  return item.kind === 'studio_invite' && !item.gone && item.open
+}
+
 /** A notification's line and where clicking it goes (null when there is nowhere to go). */
-export function notificationText(item: Pick<NotificationItem, 'kind' | 'data' | 'gone'>): { text: string; href: string | null } {
+export function notificationText(item: Pick<NotificationItem, 'kind' | 'data' | 'gone' | 'open'>): { text: string; href: string | null } {
   const d = item.data
   const design = str(d.designName, 'a design')
   const designId = typeof d.designId === 'string' && d.designId ? d.designId : null
   if (item.gone) return { text: `${design} is no longer shared with you`, href: null }
-  // An invite is answered on the Studio page (or right in the list); the design opens once it is accepted
-  if (item.kind === 'studio_invite') return { text: `${str(d.inviterName, 'Someone')} invited you to ${design}`, href: '/studio' }
   const href = designId ? `/studio/${designId}` : null
+  // An open invite is answered on the Studio page (or right in the list); once answered and I'm on it, it opens the design
+  if (item.kind === 'studio_invite') return { text: `${str(d.inviterName, 'Someone')} invited you to ${design}`, href: item.open ? '/studio' : href }
   switch (item.kind) {
     case 'studio_prompts': {
       const senders = Array.isArray(d.senders) ? d.senders.filter((s): s is string => typeof s === 'string') : []
