@@ -76,11 +76,11 @@ describe('the studio pass on the collaboration routes', () => {
     const c = await pass(C, 'Cleo')
     const created = await post(a, '/designs', { kind: 'wearable', agent: 'claude' })
     expect(created.statusCode).toBe(201)
-    const designId = created.json().id ?? created.json().design?.id
-    expect(designId).toBeTruthy()
+    const designId = created.json().id
+    expect(typeof designId).toBe('string')
     return { a, b, c, designId: designId as string }
   }
-  const invite = async (a: any, b: any, designId: string, wallet: string, role: string) => {
+  const invite = async (a: any, designId: string, wallet: string, role: string) => {
     const res = await post(a, `/designs/${designId}/invites`, { wallet, role })
     expect(res.statusCode).toBe(201)
     return res.json().invite.id as string
@@ -88,7 +88,7 @@ describe('the studio pass on the collaboration routes', () => {
 
   it('invite, list, accept, list designs, people, prompt, leave, all with studio passes', async () => {
     const { a, b, designId } = await setup()
-    const inviteId = await invite(a, b, designId, B, 'collaborator')
+    const inviteId = await invite(a, designId, B, 'collaborator')
 
     const mine = await get(b, '/invites')
     expect(mine.statusCode).toBe(200)
@@ -100,7 +100,8 @@ describe('the studio pass on the collaboration routes', () => {
 
     const list = await get(b, '/designs')
     expect(list.statusCode).toBe(200)
-    const row = (list.json().designs ?? list.json()).find((d: any) => d.id === designId)
+    expect(Array.isArray(list.json())).toBe(true)
+    const row = list.json().find((d: any) => d.id === designId)
     expect(row).toMatchObject({ role: 'collaborator', ownerName: 'Alice' })
 
     const pa = await get(a, `/designs/${designId}/people`)
@@ -120,9 +121,20 @@ describe('the studio pass on the collaboration routes', () => {
     expect((await get(b, `/designs/${designId}`)).statusCode).toBe(404)
   })
 
+  it('the wall choice stays the owner\'s: a collaborator gets 404', async () => {
+    const { a, b, designId } = await setup()
+    const inviteId = await invite(a, designId, B, 'collaborator')
+    expect((await post(b, `/invites/${inviteId}/accept`)).statusCode).toBe(200)
+    const res = await app.inject({ method: 'PUT', url: `${S}/designs/${designId}/wall`, headers: b.h as any, payload: { shown: true } })
+    expect(res.statusCode).toBe(404)
+    // The route is there for the owner (an unfinalized design is refused, but not as missing)
+    const own = await app.inject({ method: 'PUT', url: `${S}/designs/${designId}/wall`, headers: a.h as any, payload: { shown: true } })
+    expect(own.statusCode).not.toBe(404)
+  })
+
   it('a viewer is refused a prompt with 403 viewer', async () => {
     const { a, c, designId } = await setup()
-    const inviteId = await invite(a, c, designId, C, 'viewer')
+    const inviteId = await invite(a, designId, C, 'viewer')
     expect((await post(c, `/invites/${inviteId}/accept`)).json()).toEqual({ designId, role: 'viewer' })
     const res = await post(c, `/designs/${designId}/prompts`, { text: 'hi', selectedSlots: ['hat'] })
     expect(res.statusCode).toBe(403)
@@ -131,7 +143,7 @@ describe('the studio pass on the collaboration routes', () => {
 
   it('declining an invite returns 204', async () => {
     const { a, b, designId } = await setup()
-    const inviteId = await invite(a, b, designId, B, 'collaborator')
+    const inviteId = await invite(a, designId, B, 'collaborator')
     expect((await post(b, `/invites/${inviteId}/decline`)).statusCode).toBe(204)
     expect((await get(b, '/invites')).json()).toEqual([])
   })
