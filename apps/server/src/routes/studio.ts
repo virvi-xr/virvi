@@ -726,7 +726,8 @@ export default async function studioRoutes(app: FastifyInstance) {
     return reply.status(202).send({ jobId })
   })
 
-  app.post('/api/studio/topups', work, async (request, reply) => {
+  // Not behind notPaused: pausing never blocks paying (owner, 2026-11-10)
+  app.post('/api/studio/topups', auth, async (request, reply) => {
     const b = (request.body ?? {}) as { packs?: unknown; method?: unknown }
     const method = checkoutMethod(b.method)
     if (!method) return reply.status(400).send({ error: "method must be 'card' or 'mana'" })
