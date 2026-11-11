@@ -177,4 +177,30 @@ describe('hand-over on account deletion', () => {
     expect((await designOf(b.id)).ownerId).toBe(c.id)
     expect(await db.select().from(studioDesigns)).toHaveLength(2)
   })
+
+  it("the old owner's history from before senders were kept stays theirs, not the heir's", async () => {
+    const d = await createDesign(owner)
+    const heir = await createUser({ name: 'Hal Heir' })
+    await join(d.id, heir, 'collaborator')
+    const [old] = await db.insert(studioMessages).values({ designId: d.id, role: 'user', text: 'an old prompt', createdAt: ago(60) }).returning()
+    const [support] = await db.insert(studioMessages).values({ designId: d.id, role: 'user', text: 'support', byAdminId: heir.id, createdAt: ago(50) }).returning()
+    const [agent] = await db.insert(studioMessages).values({ designId: d.id, role: 'agent', text: 'Done.', createdAt: ago(40) }).returning()
+    const [mine] = await db.insert(studioMessages).values({ designId: d.id, role: 'user', text: 'heir prompt', userId: heir.id, createdAt: ago(30) }).returning()
+    const [oldJob] = await db.insert(studioJobs).values({ designId: d.id, type: 'prompt', status: 'done', payload: {} }).returning()
+    const [heirJob] = await db.insert(studioJobs).values({ designId: d.id, type: 'prompt', status: 'done', payload: {}, userId: heir.id }).returning()
+    expect((await selfDelete(owner)).statusCode).toBe(204)
+
+    const msg = async (id: string) => (await db.select().from(studioMessages).where(eq(studioMessages.id, id)))[0]
+    expect((await msg(old.id)).userId).toBe(owner.id)
+    expect((await msg(support.id)).userId).toBeNull()
+    expect((await msg(agent.id)).userId).toBeNull()
+    expect((await msg(mine.id)).userId).toBe(heir.id)
+    const jobOf = async (id: string) => (await db.select().from(studioJobs).where(eq(studioJobs.id, id)))[0]
+    expect((await jobOf(oldJob.id)).userId).toBe(owner.id)
+    expect((await jobOf(heirJob.id)).userId).toBe(heir.id)
+    const got = (await app.inject({ method: 'GET', url: `${S}/designs/${d.id}`, headers: as(heir) })).json()
+    const old2 = got.messages.find((m: any) => m.text === 'an old prompt')
+    expect(old2.sender).toEqual({ userId: owner.id, displayName: null })
+    expect(got.messages.find((m: any) => m.text === 'heir prompt').sender).toEqual({ userId: heir.id, displayName: 'Hal Heir' })
+  })
 })
