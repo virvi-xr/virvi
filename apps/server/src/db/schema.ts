@@ -206,6 +206,12 @@ export const scenes = pgTable('scenes', {
    */
   thumbnailSource: text('thumbnail_source').$type<'upload' | 'import'>(),
   activePresetId: uuid('active_preset_id'),
+  /**
+   * LIV-33: the newest Decentraland HUD release seen calling for this scene (x-virvi-hud-version), and when a
+   * Decentraland HUD last called. Seen with no version: a HUD released before the header existed, so it is behind
+   */
+  dclHudVersion: text('dcl_hud_version'),
+  dclHudSeenAt: timestamp('dcl_hud_seen_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   /**

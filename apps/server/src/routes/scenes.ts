@@ -1,4 +1,5 @@
 import { checkClickEvent, checkFrame, FRAMEABLE_TYPES } from '@virvixr/shared'
+import { dclHudStatus } from '../scenes/hud-version.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq, and, or, isNull, sql, inArray } from 'drizzle-orm'
 import { db } from '../db/connection.js'
@@ -375,7 +376,8 @@ export default async function sceneRoutes(app: FastifyInstance) {
       return reply.send({ scene: { ...rest, presets: await withRoomSets(scene.presets.filter((p) => visible.has(p.id))) } })
     }
 
-    return reply.send({ scene: { ...scene, presets: await withRoomSets(scene.presets), canDelete: await mayManageDeletion(actorFromClaims(request.user), scene) } })
+    // `dclHud`: the Decentraland HUD release the scene runs and whether it is behind (LIV-33); null until a HUD has called
+    return reply.send({ scene: { ...scene, presets: await withRoomSets(scene.presets), canDelete: await mayManageDeletion(actorFromClaims(request.user), scene), dclHud: dclHudStatus(scene) } })
   })
 
   // ── PUT /api/scenes/:sceneId — update scene ─────────────────────────────

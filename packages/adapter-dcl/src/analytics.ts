@@ -19,11 +19,12 @@ import {
 } from '@dcl/sdk/ecs'
 import { Vector3, Color4 } from '@dcl/sdk/math'
 import { Collector, createTransport, resolveApiUrl } from '@virvixr/core'
-import { PARCEL_RE, type AnalyticsProbe, type AnalyticsSceneRef, type Vec3 } from '@virvixr/shared'
+import { PARCEL_RE, type AnalyticsProbe, type AnalyticsSceneRef, type Vec3, DCL_HUD_VERSION } from '@virvixr/shared'
 import { DclAdapter } from './DclAdapter'
 import { resolveTargetLabel } from './target-label'
 
-const SDK_VERSION = '2.0.0'
+// The HUD's real release (it said 2.0.0 for every release before)
+const SDK_VERSION = DCL_HUD_VERSION
 
 function targetName(entity: number): string {
   return resolveTargetLabel(entity, {

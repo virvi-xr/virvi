@@ -8,9 +8,10 @@ import '../auth/scene-from.js' // FastifyContextConfig.scenePass
 import { pairingLive } from '../hyperfy/pairing.js'
 import { deviceLive, devicePersonal } from '../ar/devices.js'
 import { dclHudNeedsRedeploy } from '../auth/hud-protocol.js'
+import { noteDclHud } from '../scenes/hud-version.js'
 import { config } from '../config.js'
 import { sessionRole } from '../auth/admin.js'
-import { REDEPLOY_REQUIRED } from '@virvixr/shared'
+import { HUD_VERSION_HEADER, REDEPLOY_REQUIRED } from '@virvixr/shared'
 
 const TRIAL_TOUCH_MS = 10 * 60_000
 
@@ -183,6 +184,8 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
       if (!decoded.sceneId || !target || target !== decoded.sceneId) {
         return reply.status(403).send({ error: 'scene_pass_not_allowed' })
       }
+      // A Decentraland HUD (a scene pass with no `via`): note which release it is (LIV-33), off the request's way
+      if (decoded.kind === 'scene' && !decoded.via) void noteDclHud(decoded.sceneId, request.headers[HUD_VERSION_HEADER])
       // After the scene check, so a pass that isn't allowed here still gets its 403.
       if (dclHudNeedsRedeploy(request, decoded, config.minDclHudProtocol)) {
         return reply.status(426).send({ error: REDEPLOY_REQUIRED, message: 'This scene needs a redeploy to edit' })

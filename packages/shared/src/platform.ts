@@ -20,6 +20,8 @@ export interface VirviPlatformAdapter {
   signedRequest?(url: string, init: { method: string; body: string; headers?: Record<string, string> }): Promise<{ status: number; body: string }>;
   /** The HUD's edit protocol, sent as x-virvi-hud-protocol so the server can ask an old HUD to redeploy. */
   hudProtocol?: number;
+  /** The HUD's release (DCL_HUD_VERSION), sent as x-virvi-hud-version so the server can tell a scene it is behind. */
+  hudVersion?: string;
   /** Optional analytics probe; adapters without one produce no automatic analytics. */
   analytics?: AnalyticsProbe;
   /** Where this scene is, for analytics ingestion. */

@@ -40,7 +40,7 @@ import type {
   Vec3,
   Quat,
 } from '@virvixr/shared'
-import { localModelFile, DCL_HUD_PROTOCOL } from '@virvixr/shared'
+import { localModelFile, DCL_HUD_PROTOCOL, DCL_HUD_VERSION } from '@virvixr/shared'
 import { adoptPlaced, releasePlaced } from './placements.js'
 
 /** Decentraland's entity limit for a scene, from its scene.json metadata: 200 per parcel; undefined when unknown. */
@@ -56,6 +56,7 @@ export function maxEntitiesFor(metadataJson: string | undefined): number | undef
 export class DclAdapter implements VirviPlatformAdapter {
   /** Sent with every request, so the server can tell an old HUD to redeploy (426 redeploy_required). */
   readonly hudProtocol = DCL_HUD_PROTOCOL
+  readonly hudVersion = DCL_HUD_VERSION
 
   /** Models with collisions on: the GltfContainer visible-mesh mask to (re)apply whenever their model is set. */
   private meshCollisionMasks = new Map<Entity, number>()

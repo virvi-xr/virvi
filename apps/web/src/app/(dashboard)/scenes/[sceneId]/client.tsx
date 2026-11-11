@@ -26,6 +26,7 @@ import { streamForSource, streamOptionLabel, type SceneStream } from '@/lib/stre
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { hudBehindNote, type DclHudStatus } from '@/lib/hud-version'
 import { Badge, PageHeader, SearchField, Skeleton, type Tone } from '@/components/ui'
 import { LockIcon } from '@/components/icons'
 import { LockedButton, LockedSection, askSceneSignUp } from '@/components/TrialLock'
@@ -74,6 +75,8 @@ interface Preset {
 interface Scene {
   id: string
   name: string
+  /** LIV-33: the Decentraland HUD release it runs, and whether it is behind (null until a HUD has called). */
+  dclHud?: DclHudStatus
   /** LIV-88: shown here and on the Scenes list, and deployed to Decentraland as the scene's navmapThumbnail. */
   thumbnailUrl?: string | null
   /** LIV-89: 'import' when it came from an imported scene's own scene.json (not deployed by Virvi). */
@@ -1864,6 +1867,13 @@ export default function SceneEditorPage() {
           </Badge>
         ) : undefined}
       />
+
+      {hudBehindNote(scene.dclHud) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100" role="status">
+          <p>{hudBehindNote(scene.dclHud)}</p>
+          <Link href={`/deploy?scene=${sceneId}`} className="shrink-0 rounded-md bg-amber-500/20 px-3 py-1.5 font-medium text-amber-50 hover:bg-amber-500/30">Redeploy</Link>
+        </div>
+      )}
 
       {namePanel && linked && hasConnected(linked) && (
         <UseNameEverywhere key={`${scene.name}:${renamedFrom ?? ''}`} sceneName={scene.name} oldName={renamedFrom} connected={linked}
