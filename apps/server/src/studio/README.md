@@ -128,7 +128,8 @@ The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STU
    - An account with `STUDIO_FLAG_THRESHOLD` (3) turn-downs within `STUDIO_FLAG_WINDOW_HOURS` (24) is flagged once,
      and the owner is emailed at `STUDIO_FLAG_EMAIL` (unset: nothing is sent). Admins dismiss flags and pause or
      resume an account's studio access; a paused account can't send prompts, start designs, request renders, upload or
-     buy top-ups, and can still finalize, pay and download.
+     buy top-ups, and can still finalize, pay and download on their own designs (a paused collaborator can't pay on a
+     design shared with them, LIV-159).
    - A piece's first `STUDIO_INSTANT_REPORTS` (2) mistake reports refund at once; later ones are charged and wait for
      the owner's Approve or Decline on the same page, with an email.
    - **The owner's steps:** SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`) and

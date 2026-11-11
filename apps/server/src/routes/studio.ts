@@ -159,10 +159,10 @@ export function quoteRefusal(reply: FastifyReply, err: QuoteError) {
 
 /** New work: refused for an account whose studio access the owner paused (it can still finalize and download). */
 async function notPaused(request: FastifyRequest, reply: FastifyReply) {
-  if (await isPaused(request.user.id)) {
-    return reply.status(403).send({ error: 'Your studio access is paused', code: 'studio_paused' })
-  }
+  if (await isPaused(request.user.id)) return pausedRefusal(reply)
 }
+
+const pausedRefusal = (reply: FastifyReply) => reply.status(403).send({ error: 'Your studio access is paused', code: 'studio_paused' })
 
 async function openLimit(userId: string) {
   if (await isTrialUser(userId)) return config.trialDesigns
@@ -586,6 +586,9 @@ export default async function studioRoutes(app: FastifyInstance) {
   app.post('/api/studio/designs/:id/finalize', auth, async (request, reply) => {
     const a = await designAccess(request, { need: 'work', ...SUPPORT })
     if (!a || a === VIEWER) return refused(reply, a)
+    // A paused collaborator can't pay (LIV-159); a paused owner still finalizes their own design, as before, and
+    // support's free finalize isn't the member's to refuse
+    if (!a.support && a.role !== 'owner' && await isPaused(request.user.id)) return pausedRefusal(reply)
     const d = a.d
     const b = (request.body ?? {}) as { categories?: unknown; reports?: unknown; method?: unknown }
     if (a.support) {
