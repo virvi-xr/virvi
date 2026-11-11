@@ -71,7 +71,7 @@ Everything is on one port.
 | `/hook/...` | Platform hooks for HTTP-only platforms. |
 | `/uploads/...` | Uploaded files, with local storage. |
 | `/docs/...` | These docs, built into the image (`DOCS_DIR`). Every page also has a `.md` version, plus `/docs/llms.txt`, `/docs/llms-full.txt` and `/llms.txt`. |
-| `/metrics` | Prometheus metrics, when enabled. No authentication. |
+| `/metrics` | Prometheus metrics, when enabled and `METRICS_TOKEN` is set. Needs `Authorization: Bearer <token>`. |
 | WebSocket on `/` | Real-time rooms (Colyseus): `virvi_scene`, `virvi_command_center`, `virvi_studio`. |
 
 Without a dashboard folder the server runs API-only. Without a docs folder it has no `/docs` routes. The Docker image has both.
@@ -93,9 +93,9 @@ On any host, set [`TRUST_PROXY_HOPS`](/docs/self-hosting/environment-variables/#
 - `PUBLIC_URL`, and the dashboard build arguments for your address.
 - `TRUST_PROXY_HOPS` for your proxy setup (`0` with no proxy).
 - `STREAMING_WEBHOOK_KEY` if you turn streaming on.
-- Block `/metrics` at your proxy if it is on.
+- `METRICS_TOKEN` if you scrape `/metrics`; without it the route isn't served.
 - Keep Postgres (5432) and Redis (6379) off public interfaces. The Compose files publish them on `127.0.0.1` only.
-- `SMTP_*` and `EMAIL_FROM` so password resets work, and `AR_REPORTS_EMAIL` so space reports reach you.
+- `SMTP_*` and `EMAIL_FROM` so password resets work, and `AR_REPORTS_EMAIL` so space reports are emailed to you.
 - Sign up first, so you are the instance admin.
 
 ## Branding

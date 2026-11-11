@@ -74,7 +74,7 @@ import { sql } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { register, httpRequestsTotal, httpRequestDurationSeconds } from './metrics.js'
+import { bearerMatches, register, httpRequestsTotal, httpRequestDurationSeconds } from './metrics.js'
 
 /** The server release, reported by the API docs, /api/health and /api/instance. */
 const SERVER_VERSION = '2.0.0'
@@ -346,12 +346,19 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       }
     })
 
-    app.get('/metrics', async (_request, reply) => {
-      const metrics = await register.metrics()
-      return reply.type(register.contentType).send(metrics)
-    })
-
-    console.log(`[virvi-server] Prometheus metrics enabled at /metrics`)
+    // Only with METRICS_TOKEN, sent as `Authorization: Bearer <token>`: the metrics name routes, traffic and
+    // internals, so they are never public. Without a token they are counted but not served.
+    const metricsToken = config.metricsToken
+    if (metricsToken) {
+      app.get('/metrics', async (request, reply) => {
+        if (!bearerMatches(request.headers.authorization, metricsToken)) return reply.status(401).send({ error: 'unauthorized' })
+        const metrics = await register.metrics()
+        return reply.type(register.contentType).send(metrics)
+      })
+      console.log(`[virvi-server] Prometheus metrics at /metrics (METRICS_TOKEN required)`)
+    } else {
+      console.warn(`[virvi-server] Metrics are on but not served: set METRICS_TOKEN to scrape /metrics`)
+    }
   }
 
   // ── Serve uploaded media files (local storage) ────────────────────────

@@ -118,7 +118,7 @@ Without `SMTP_HOST`, no email is sent (password resets, invites); the server log
 | `SMTP_PORT` | `587` | SMTP port. |
 | `SMTP_USER`, `SMTP_PASS` | none | SMTP credentials. |
 | `EMAIL_FROM` | `noreply@virvi.io` | Sender address. Set your own. |
-| `AR_REPORTS_EMAIL` | `support@virvi.io` | Where a visitor's "Report this space" (AR spaces) is emailed. Set your own address, or reports go to Virvi support. |
+| `AR_REPORTS_EMAIL` | none (`support@virvi.io` on virvi.io) | Where a visitor's "Report this space" (AR spaces) is emailed. Unset, reports are kept and listed for admins but nobody is emailed. |
 
 ## Guest trials
 
@@ -161,7 +161,7 @@ These connect the server to the [streaming media server](/docs/self-hosting/dock
 | `ENABLE_STREAMING` | `false` (on in cloud mode) | `true` lets users create stream keys. |
 | `RTMP_INGEST_URL` | `rtmp://localhost:1935/live` | RTMP address shown to streamers (the OBS "Server"). |
 | `HLS_BASE_URL` | `http://localhost:8000/streams` | Public base of HLS playback URLs. |
-| `STREAMING_WEBHOOK_KEY` | none | Shared secret with the media server (`VIRVI_WEBHOOK_KEY` there). Unset, single and scalable mode accept unauthenticated calls to `/api/streaming/authorize`, `/api/streaming/live-keys` and `/api/streaming/webhook`. Set it whenever the server is reachable from the internet. |
+| `STREAMING_WEBHOOK_KEY` | none | Shared secret with the media server (`VIRVI_WEBHOOK_KEY` there). Unset, single mode accepts unauthenticated calls to `/api/streaming/authorize`, `/api/streaming/live-keys` and `/api/streaming/webhook`; scalable and cloud mode refuse them (503). Set it whenever the server is reachable from the internet. |
 
 ## Decentraland
 
@@ -196,7 +196,8 @@ Billing is for cloud mode.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `ENABLE_METRICS` | `false` in single mode; always on in scalable and cloud | `true` serves Prometheus metrics at `/metrics`. The route has no authentication: block it at your proxy if the server is public. |
+| `ENABLE_METRICS` | `false` in single mode; always on in scalable and cloud | `true` collects Prometheus metrics. They're served at `/metrics` only with `METRICS_TOKEN` set. |
+| `METRICS_TOKEN` | none | The token a scraper sends to read `/metrics`, as `Authorization: Bearer <token>`. Unset, `/metrics` isn't served. |
 | `ANALYTICS_JOBS` | on | `false` stops analytics background jobs (session close, rollups, retention). |
 | `ERROR_REPORTING` | on | `false` stops recording error events in the database. |
 | `LIFECYCLE_SWEEP_MS` | `5000` | How often venue bookings are advanced (`0` disables). |
@@ -209,7 +210,7 @@ The dashboard is a static export. These are baked in when the image is built (`d
 
 | Build argument | Default | What it does |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:3010` | Where the dashboard sends API calls. Set it to your `PUBLIC_URL`, or the dashboard only works from `localhost:3010`. |
+| `NEXT_PUBLIC_API_URL` | `PUBLIC_URL` with Docker Compose, else `http://localhost:3010` | Where the dashboard sends API calls. Built into the dashboard: rebuild after changing it. |
 | `NEXT_PUBLIC_WSS_URL` | `ws://localhost:3010` | Where the dashboard opens WebSockets: your `PUBLIC_URL` with `wss://` (or `ws://`). |
 | `NEXT_PUBLIC_DOCS_URL` | the server's own `/docs/` | Docs link on the landing page. |
 | `NEXT_PUBLIC_DISCORD_URL` | none | Discord link on the landing page; hidden when unset. |

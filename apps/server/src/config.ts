@@ -214,7 +214,9 @@ export const config = {
 
   // ── Virvi Spaces reports ───────────────────────────────────────────────────
   // Where a visitor's "Report this space" is emailed (best-effort; reports are always stored and shown on /admin)
-  arReportsEmail: env('AR_REPORTS_EMAIL') || 'support@virvi.io',
+  // Where AR space reports go: support@virvi.io on Virvi's own servers only, so a self-hosted install's reports never
+  // come to Virvi. Unset elsewhere: reports are kept but not emailed
+  arReportsEmail: env('AR_REPORTS_EMAIL') || (mode === 'cloud' ? 'support@virvi.io' : ''),
 
   // ── Database ────────────────────────────────────────────────────────────
   databaseUrl: env('DATABASE_URL')!,
@@ -367,6 +369,8 @@ export const config = {
 
   // ── Metrics ─────────────────────────────────────────────────────────────
   metricsEnabled: env('ENABLE_METRICS') === 'true' || mode !== 'single',
+  // The token a scraper sends to read /metrics (Authorization: Bearer). Unset: /metrics isn't served. A secret
+  metricsToken: env('METRICS_TOKEN')?.trim() || undefined,
 
   // ── Auto-Promote First User ─────────────────────────────────────────────
   // In single/scalable mode, the first signup automatically becomes admin
@@ -374,7 +378,8 @@ export const config = {
 
   // ── Rate Limiting ──────────────────────────────────────────────────────
   rateLimitMax: parseInt(env('RATE_LIMIT_MAX') || '300'),
-  // Reverse-proxy hops to trust for client IP (Railway = 1)
+  // Reverse-proxy hops to trust for the client's IP: how many proxies sit in front of the server (Railway is 2). Too
+  // many lets a client choose its own IP for per-IP rate limits; 0 when nothing is in front
   trustProxyHops: ((n) => (Number.isNaN(n) || n < 0 ? 1 : n))(parseInt(env('TRUST_PROXY_HOPS') || '1')),
 
   // ── Email ──────────────────────────────────────────────────────────────

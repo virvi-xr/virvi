@@ -38,11 +38,12 @@ function safeEqual(a: string, b: string): boolean {
 
 /**
  * Media server → API auth (`X-Webhook-Key` = STREAMING_WEBHOOK_KEY). With no key configured the
- * endpoints are open off-cloud (local dev) and refuse in cloud mode — never open in production.
+ * endpoints are open only in single mode (one machine, local dev) and refuse in scalable and cloud mode, which
+ * run behind public addresses.
  */
 export function mediaServerAuth(headers: Record<string, unknown>): { ok: true } | { ok: false; status: 401 | 503; error: string } {
   const key = process.env.STREAMING_WEBHOOK_KEY
-  if (!key) return config.mode === 'cloud' ? { ok: false, status: 503, error: 'webhook_not_configured' } : { ok: true }
+  if (!key) return config.mode !== 'single' ? { ok: false, status: 503, error: 'webhook_not_configured' } : { ok: true }
   const provided = headers['x-webhook-key']
   if (typeof provided !== 'string' || !safeEqual(provided, key)) return { ok: false, status: 401, error: 'Invalid webhook key' }
   return { ok: true }

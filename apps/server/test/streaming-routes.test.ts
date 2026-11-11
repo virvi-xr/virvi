@@ -77,7 +77,7 @@ describe('streaming routes', () => {
     expect((await media('POST', '/api/streaming/authorize', { streamKey: 'k1' })).statusCode).toBe(403)
   })
 
-  it('no secret configured: 503 in cloud mode, open off-cloud', async () => {
+  it('no secret configured: 503 in cloud and scalable mode, open only in single mode', async () => {
     delete process.env.STREAMING_WEBHOOK_KEY
     const owner = await createUser()
     await stream(owner.id)
@@ -85,6 +85,8 @@ describe('streaming routes', () => {
     const res = await media('POST', '/api/streaming/webhook', { streamKey: 'k1', status: 'live' }, null)
     expect(res.statusCode).toBe(503)
     expect(res.json()).toEqual({ error: 'webhook_not_configured' })
+    expect((await media('POST', '/api/streaming/authorize', { streamKey: 'k1' }, null)).statusCode).toBe(503)
+    ;(config as any).mode = 'scalable'
     expect((await media('POST', '/api/streaming/authorize', { streamKey: 'k1' }, null)).statusCode).toBe(503)
     ;(config as any).mode = 'single'
     expect((await media('POST', '/api/streaming/authorize', { streamKey: 'k1' }, null)).statusCode).toBe(200)

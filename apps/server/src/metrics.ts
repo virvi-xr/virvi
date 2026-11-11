@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import client, { Registry } from 'prom-client'
 
 export const register = new Registry()
@@ -45,3 +46,11 @@ export const mediaUploadBytesTotal = new client.Counter({
   help: 'Total bytes uploaded for media',
   registers: [register],
 })
+
+/** Whether an Authorization header is `Bearer <token>`, compared in constant time. */
+export function bearerMatches(header: unknown, token: string): boolean {
+  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false
+  const a = Buffer.from(header.slice(7))
+  const b = Buffer.from(token)
+  return a.length === b.length && timingSafeEqual(a, b)
+}

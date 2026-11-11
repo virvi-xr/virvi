@@ -19,6 +19,8 @@ export async function createArReport(
 ): Promise<void> {
   const [row] = await db.insert(arReports).values({ spaceId: space.id, reason, platform }).returning({ createdAt: arReports.createdAt })
   const name = escapeHtml(space.name)
+  // No address set (a self-hosted install that didn't choose one): the report is kept, and nobody is emailed
+  if (!config.arReportsEmail) return
   void Promise.resolve()
     .then(() =>
       sendEmail(

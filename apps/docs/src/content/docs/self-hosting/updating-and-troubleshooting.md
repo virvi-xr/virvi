@@ -134,7 +134,7 @@ The log shows `Venue constraints could not be ensured — double-booking protect
 ### The dashboard doesn't load, or loads but can't sign in
 
 - Log shows `No dashboard directory at ... — API-only mode`: the image was built without the dashboard, or `DASHBOARD_DIR` points elsewhere. Rebuild the image, or fix `DASHBOARD_DIR`.
-- The page loads but every request fails, or goes to `localhost:3010`: the image was built without your address. Rebuild with `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_WSS_URL` ([Your own domain](/docs/self-hosting/docker-compose/#your-own-domain)).
+- The page loads but every request fails, or goes to `localhost:3010`: the image was built without your address. Set `PUBLIC_URL` and `NEXT_PUBLIC_WSS_URL` in `.env` and rebuild ([Your own domain](/docs/self-hosting/docker-compose/#your-own-domain)).
 - Real-time updates don't arrive: your proxy isn't passing WebSocket upgrades to port 3010.
 - Uploaded files 404 or point at the wrong host: set `PUBLIC_URL` to the public address.
 

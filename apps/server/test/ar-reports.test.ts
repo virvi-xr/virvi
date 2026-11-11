@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { db } from '../src/db/connection.js'
 import { arReports } from '../src/db/schema.js'
+import { config } from '../src/config.js'
 import { AR_REPORT_LIMIT, setArReportLimiter } from '../src/routes/ar-feed.js'
 import { TokenBucketLimiter } from '../src/analytics/limiter.js'
 import { sendEmail } from '../src/services/email.js'
@@ -18,8 +19,10 @@ describe('AR space reports', () => {
   let sceneId: string
   let spaceId: string
 
+  const prevEmail = config.arReportsEmail
   beforeEach(async () => {
     await resetDb()
+    ;(config as any).arReportsEmail = 'support@virvi.io'
     vi.mocked(sendEmail).mockReset()
     vi.mocked(sendEmail).mockResolvedValue(true)
     setArReportLimiter(new TokenBucketLimiter())
@@ -29,6 +32,7 @@ describe('AR space reports', () => {
     spaceId = (await app.inject({ method: 'POST', url: `/api/scenes/${sceneId}/ar/spaces`, headers: as(owner), payload: { name: 'Arcade <b>' } })).json().id
   })
   afterEach(async () => {
+    ;(config as any).arReportsEmail = prevEmail
     await app.close()
   })
 
@@ -53,6 +57,15 @@ describe('AR space reports', () => {
     expect(html).not.toContain('<b>Arcade <b>')
     expect(html).toContain(spaceId)
     expect(html).toContain(sceneId)
+  })
+
+  it('with no report address (a self-hosted install that set none) the report is kept and nobody is emailed', async () => {
+    ;(config as any).arReportsEmail = ''
+    await publish()
+    expect((await report()).statusCode).toBe(201)
+    expect(await db.select().from(arReports)).toHaveLength(1)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(sendEmail).not.toHaveBeenCalled()
   })
 
   it('refuses an unpublished, unknown or malformed space id', async () => {

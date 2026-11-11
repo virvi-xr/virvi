@@ -28,7 +28,14 @@ services:
       retries: 5
 
   virvi:
-    build: .
+    build:
+      context: .
+      # The dashboard is built with its API address inlined (Next.js NEXT_PUBLIC_*): PUBLIC_URL from .env, so a server
+      # on a real domain doesn't get a dashboard that calls localhost. NEXT_PUBLIC_WSS_URL: wss://<your domain>
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-${PUBLIC_URL:-http://localhost:3010}}
+        NEXT_PUBLIC_WSS_URL: ${NEXT_PUBLIC_WSS_URL:-ws://localhost:3010}
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
     restart: unless-stopped
     ports:
       - "${PORT:-3010}:3010"

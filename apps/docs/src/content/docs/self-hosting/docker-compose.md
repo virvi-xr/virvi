@@ -77,14 +77,19 @@ Open `http://localhost:3010` and sign up. The first account on a new install bec
 
 Two things change when people reach the server at a real address, such as `https://virvi.example.com`.
 
-**1. The dashboard's API address is built into the image.** The dashboard calls `http://localhost:3010` unless you build it with your address:
+**1. The dashboard's addresses are built into the image.** The Compose files build it with `PUBLIC_URL` from `.env` as its API address. Add its WebSocket address to `.env` too, then rebuild:
 
 ```bash
-docker compose -f docker-compose.single.yml build \
-  --build-arg NEXT_PUBLIC_API_URL=https://virvi.example.com \
-  --build-arg NEXT_PUBLIC_WSS_URL=wss://virvi.example.com
-docker compose -f docker-compose.single.yml up -d
+# .env
+PUBLIC_URL=https://virvi.example.com
+NEXT_PUBLIC_WSS_URL=wss://virvi.example.com
 ```
+
+```bash
+docker compose -f docker-compose.single.yml up -d --build
+```
+
+Rebuild whenever you change either one.
 
 **2. The server needs its public address and the proxy count.** Set `PUBLIC_URL=https://virvi.example.com` in `.env`, and set [`TRUST_PROXY_HOPS`](/docs/self-hosting/environment-variables/#trust_proxy_hops) for your proxy (see below).
 
@@ -126,7 +131,7 @@ Other things to know:
 
 - All containers share the `uploads` volume, so local storage works only while they run on one Docker host. Across hosts, use `STORAGE_PROVIDER=s3` or `r2`.
 - Scene imports need `SCENE_IMPORT_S3_URI` in scalable mode; the scalable file has no private volume.
-- `/metrics` is always on in scalable mode and has no authentication. Don't expose it.
+- `/metrics` is served only with `METRICS_TOKEN` set, and a scraper must send it as `Authorization: Bearer <token>`.
 - Every container syncs the database schema when it starts.
 
 ## Live streaming
