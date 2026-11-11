@@ -1,10 +1,10 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { formatElapsed, typicalHint, type WaitStep } from '@/lib/studio-wait'
+import { waitProgress, type WaitStep } from '@/lib/studio-wait'
 
 /**
  * The wait before the agent's first progress line: each step with a tick when done, a spinner while current and dimmed
- * before, the time since the prompt was sent, and the usual wait when the server knows it.
+ * before, and a bar of how much of the usual wait is left (the time left, when the server knows the usual wait).
  */
 export default function WaitSteps({ steps, since, typicalSec }: { steps: WaitStep[]; since: number; typicalSec?: number }) {
   const [now, setNow] = useState(() => Date.now())
@@ -12,7 +12,7 @@ export default function WaitSteps({ steps, since, typicalSec }: { steps: WaitSte
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
-  const hint = typicalHint(typicalSec)
+  const { fraction, left } = waitProgress((now - since) / 1000, typicalSec, steps)
   return (
     <div className="not-italic">
       <ol className="space-y-1">
@@ -32,10 +32,11 @@ export default function WaitSteps({ steps, since, typicalSec }: { steps: WaitSte
           </li>
         ))}
       </ol>
-      <p className="mt-1.5 text-xs text-gray-500" aria-live="off">
-        <span className="tabular-nums">{formatElapsed((now - since) / 1000)}</span>
-        {hint && <span> · {hint}</span>}
-      </p>
+      <div className="mt-2 h-1.5 w-48 max-w-full overflow-hidden rounded-full bg-gray-800" role="progressbar" aria-label="Getting ready"
+        aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)} aria-valuetext={left ?? undefined}>
+        <div className="h-full rounded-full bg-blue-400 transition-[width] duration-1000 ease-linear" style={{ width: `${fraction * 100}%` }} />
+      </div>
+      {left && <p className="mt-1 text-xs text-gray-500" aria-live="off">{left}</p>}
     </div>
   )
 }

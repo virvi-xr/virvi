@@ -14,7 +14,7 @@ import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
 import type { ArFileFormat, ArMounting } from './ar'
 import { adminDesignsQuery, type AdminDesign } from './studio-support'
-import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioSet, StudioUpload, StudioUsage } from './studio'
+import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioMessage, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
 import type { NotificationItem } from './notifications'
 import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, StudioInvite } from './studio-people'
@@ -977,6 +977,9 @@ function useRealApi() {
     studioPromptIdeas: (id: string, query: string) => apiFetch<PromptIdeas>(`/api/studio/designs/${id}/prompt-ideas?${query}`),
     sendStudioPrompt: (id: string, body: { text?: string; selectedSlots?: string[]; continue?: boolean; fixChecks?: boolean; ideaId?: string }) =>
       apiFetch<{ jobId: string }>(`/api/studio/designs/${id}/prompts`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
+    /** Virvi support's note to the people on a design: starts no agent (support only). */
+    sendStudioSupportNote: (id: string, text: string) =>
+      apiFetch<{ message: StudioMessage }>(`/api/studio/designs/${id}/support-notes`, { method: 'POST', userAction: true, body: JSON.stringify({ text }) }),
     requestStudioRender: (id: string, body: ({ category: string } & RenderView) | { category: string; bodyShape: 'male' | 'female'; mode: 'orbit' }
       | { category: string; mode: 'orbit' | 'scale' }) =>
       apiFetch<{ status: 'ready'; frames: number; urls: string[] } | { status: 'queued' }>(`/api/studio/designs/${id}/renders`, { method: 'POST', body: JSON.stringify(body) }),

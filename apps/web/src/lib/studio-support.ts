@@ -27,6 +27,7 @@ export function supportBanner(s: StudioSupportView): string {
 export function messageLabel(m: Pick<StudioMessage, 'role' | 'agent' | 'support' | 'sender'>, detail: Pick<StudioDetail, 'support'>, meId?: string | null): string | null {
   if (m.role === 'system') return null
   if (m.role === 'agent') return agentLabel(m.agent)
+  if (m.role === 'note' && detail.support) return `${SUPPORT_LABEL} · to ${supportOwnerName(detail.support)}`
   if (m.support) return SUPPORT_LABEL
   if (detail.support) return m.sender?.displayName?.trim() || supportOwnerName(detail.support)
   return senderLabel(m, meId)
@@ -37,6 +38,7 @@ export function messageLabel(m: Pick<StudioMessage, 'role' | 'agent' | 'support'
  * sent: the owner's), support's for an admin.
  */
 export function messageIsViewers(m: Pick<StudioMessage, 'role' | 'support' | 'sender'>, detail: Pick<StudioDetail, 'support'>, meId?: string | null): boolean {
+  if (m.role === 'note') return !!detail.support
   if (m.role !== 'user') return false
   if (detail.support) return !!m.support
   return m.sender && meId ? m.sender.userId === meId : !m.support
@@ -70,6 +72,22 @@ export function designControls(detail: Pick<StudioDetail, 'support' | 'role'>): 
   const owner = role === 'owner'
   const member = !support && canAct(role)
   return { designMenu: owner, switchAgent: owner, uploads: member, topup: member, people: !support, act: canAct(role) }
+}
+
+/** Under a support note, for support only: where it went. */
+export function noteCaption(detail: Pick<StudioDetail, 'support'>): string | null {
+  return detail.support ? 'Not sent to the agent: it reads this with the next prompt.' : null
+}
+
+/** Support's composer: message the agent, or write to the people on the design only (a note). */
+export function supportTargets(s: StudioSupportView): { agent: string; people: string } {
+  return { agent: 'To the agent', people: `To ${supportOwnerName(s)} only` }
+}
+
+/** The conversation's last message, notes left out: what the proposal picker and the first-prompt help go by. */
+export function lastConversational<M extends Pick<StudioMessage, 'role'>>(messages: M[]): M | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role !== 'note') return messages[i]
+  return undefined
 }
 
 /** The Finalize dialog's button for support: the pieces are finalized for the owner at once, free. */

@@ -36,19 +36,24 @@ export function waitSteps(job: { id: string; status: string }, events: StudioEve
   return steps
 }
 
-/** Seconds as `m:ss`. */
-export function formatElapsed(sec: number): string {
-  const s = Math.max(0, Math.floor(sec))
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
-}
-
-/** The design detail's typicalFirstReplySec in round words, or null without one. */
-export function typicalHint(sec: number | null | undefined): string | null {
-  if (sec == null || !Number.isFinite(sec)) return null
-  const fives = Math.max(5, Math.round(sec / 5) * 5)
-  if (fives <= 45) return `Usually about ${fives} seconds`
-  if (sec < 90) return 'Usually about a minute'
-  return `Usually about ${Math.round(sec / 60)} minutes`
+/**
+ * The wait as a bar and the time left (the owner, 2026-11-11: show what's left, not what has gone). `typicalSec`: the
+ * usual first reply (the design detail's). The bar reaches 90% at the usual wait, then creeps on but never fills
+ * before the agent answers; a done step holds it up. With no usual wait known, it moves with the steps and gives no time.
+ */
+export function waitProgress(elapsedSec: number, typicalSec: number | null | undefined, steps: WaitStep[]): { fraction: number; left: string | null } {
+  const byStep = (steps.filter((s) => s.state === 'done').length / Math.max(1, steps.length)) * 0.9
+  if (typicalSec == null || !Number.isFinite(typicalSec) || typicalSec <= 0) return { fraction: byStep, left: null }
+  const e = Math.max(0, elapsedSec)
+  const t = e / typicalSec
+  const byTime = t <= 1 ? 0.9 * t : 0.9 + 0.08 * (1 - Math.exp(-(t - 1)))
+  const remaining = typicalSec - e
+  const left = remaining <= 0 ? 'Almost there, taking a little longer than usual'
+    : remaining <= 10 ? 'A few seconds left'
+      : remaining < 55 ? `About ${Math.ceil(remaining / 5) * 5} seconds left`
+        : remaining < 90 ? 'About a minute left'
+          : `About ${Math.round(remaining / 60)} minutes left`
+  return { fraction: Math.max(byStep, byTime), left }
 }
 
 export const WARM_EVERY_MS = 5 * 60_000

@@ -36,7 +36,7 @@ import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
   BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
-  designDetail, openDesignCount, ownerWords, totalDesignCount, publicDesign, publicDesigns, queuePrompt, requestOrbit, requestRender, usage, type Design, type FixClipping, type View,
+  addSupportNote, designDetail, NOTE_MAX, openDesignCount, ownerWords, totalDesignCount, publicDesign, publicDesigns, queuePrompt, requestOrbit, requestRender, usage, type Design, type FixClipping, type View,
 } from '../studio/designs.js'
 
 /**
@@ -460,6 +460,19 @@ export default async function studioRoutes(app: FastifyInstance) {
     const r = await queuePrompt(d, { text: cont ? null : (b.text as string).trim(), selectedSlots: slots, continue: cont, byAdminId, ideaId, senderId: request.user.id }, new Date())
     if (!r.ok) return reply.status(r.status).send(r.body)
     return reply.status(202).send({ jobId: r.jobId })
+  })
+
+  // A Virvi support note (support only): shown to the people on the design and rings their bells, but starts no agent
+  // and uses nothing. The agent gets it as context with the design's next prompt (designs.ts, notesForAgent)
+  app.post('/api/studio/designs/:id/support-notes', auth, async (request, reply) => {
+    const a = await designAccess(request, { need: 'view', ...SUPPORT })
+    if (!a || a === VIEWER) return refused(reply, a)
+    if (!a.support) return reply.status(403).send({ error: 'support_only', code: 'support_only' })
+    const text = (request.body as { text?: unknown } | null)?.text
+    if (typeof text !== 'string' || !text.trim() || text.length > NOTE_MAX) {
+      return reply.status(400).send({ error: `text must be 1-${NOTE_MAX} characters` })
+    }
+    return reply.status(201).send({ message: await addSupportNote(a.d, request.user.id, text.trim()) })
   })
 
   // Example prompts for the first message, following the chips, from the ideas nobody has used yet (prompt-ideas.ts).

@@ -11,7 +11,7 @@ import {
 } from '@/lib/studio'
 import { canRate, canTryAgain, revisionUnder } from '@/lib/studio-ratings'
 import Rating from './Rating'
-import { designControls, messageIsViewers, messageLabel, runningPrompt } from '@/lib/studio-support'
+import { designControls, lastConversational, messageIsViewers, messageLabel, noteCaption, runningPrompt, supportTargets } from '@/lib/studio-support'
 import { boxState } from '@/lib/studio-people'
 import { customerReply } from '@/lib/studio-reply'
 import {
@@ -40,6 +40,8 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [refusal, setRefusal] = useState<Refusal | null>(null)
+  // Support writes to the agent (a prompt) or to the people on the design only (a note, which starts nothing)
+  const [to, setTo] = useState<'agent' | 'people'>('agent')
   const listRef = useRef<HTMLDivElement>(null)
   const [dropped, setDropped] = useState<File[] | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -85,11 +87,11 @@ export default function Conversation({ designId, detail, usage, events, onChange
   if (active && seen.current?.id !== active.id) seen.current = { id: active.id, at: Date.now() }
   const waitSince = (active?.createdAt && Date.parse(active.createdAt)) || (seen.current?.at ?? Date.now())
   const failing = detail.pieces.filter((p) => p.revision?.checker?.pass === false)
-  const lastMessage = detail.messages[detail.messages.length - 1]
+  const lastMessage = lastConversational(detail.messages)
   const openProposal = lastMessage?.role === 'agent' && lastMessage.proposal?.slots?.length && !active ? lastMessage : null
   const kind = detail.design.kind
   // Before the first message of a wearable or an emote: the chips and the guide
-  const firstPrompt = detail.messages.length === 0 && !active && helpsWith(kind)
+  const firstPrompt = !lastConversational(detail.messages) && !active && helpsWith(kind)
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
@@ -185,6 +187,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
           const rev = revisionUnder(m, detail)
           return (
             <Message key={m.id} m={m} label={messageLabel(m, detail, meId)} viewers={messageIsViewers(m, detail, meId)} raw={!!detail.support}>
+              {m.role === 'note' && noteCaption(detail) && <p className="mt-1 text-xs text-emerald-300/70">{noteCaption(detail)}</p>}
               {m === openProposal && m.proposal && controls.act && (
                 <ProposalPicker proposal={m.proposal} raw={!!detail.support} disabled={sending || composer.mode === 'out' || composer.mode === 'paused'}
                   onBuild={(slots) => send({ text: `Build these: ${slots.map(categoryLabel).join(', ')}`, selectedSlots: slots })} />
@@ -213,6 +216,17 @@ export default function Conversation({ designId, detail, usage, events, onChange
 
       <div className="border-t border-gray-800 p-3">
         <Uploads designId={designId} kind={detail.design.kind} uploads={detail.uploads ?? []} disabled={composer.mode === 'archived' || composer.mode === 'paused'} dropped={dropped} onChanged={onChanged} readOnly={!controls.uploads} onAttach={warm} />
+        {detail.support && (
+          <div role="radiogroup" aria-label="Send to" className="mb-2 inline-flex rounded-md border border-gray-800 p-0.5 text-sm">
+            {(['agent', 'people'] as const).map((t) => (
+              <button key={t} type="button" role="radio" aria-checked={to === t} onClick={() => setTo(t)}
+                className={`rounded px-3 py-1 ${to === t ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                {supportTargets(detail.support!)[t]}
+              </button>
+            ))}
+          </div>
+        )}
+        {detail.support && to === 'people' ? <NoteForm designId={designId} onChanged={onChanged} /> : (<>
         {refusal && <RefusalLine refusal={refusal} usage={controls.topup ? usage : null} onFix={() => send({ fixChecks: true })} />}
         {failing.length > 0 && !active && controls.act && (
           <button type="button" disabled={sending} onClick={() => send({ fixChecks: true })}
@@ -267,6 +281,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
             )}
           </form>
         )}
+        </>)}
       </div>
     </section>
   )
@@ -285,7 +300,7 @@ function Message({ m, label, viewers, raw, children }: { m: StudioMessage; label
       </div>
     )
   }
-  const words = m.role === 'user'
+  const words = m.role === 'user' || m.role === 'note'
   const tone = m.support ? 'bg-emerald-600/15 text-emerald-50 border border-emerald-500/30' : words ? 'bg-blue-600/20 text-blue-50' : 'border border-gray-800 bg-gray-950 text-gray-200'
   return (
     <div className={`max-w-[85%] break-words rounded-lg px-3 py-2 text-sm ${viewers ? 'self-end' : 'self-start'} ${words ? 'whitespace-pre-wrap' : ''} ${tone}`}>
@@ -293,6 +308,46 @@ function Message({ m, label, viewers, raw, children }: { m: StudioMessage; label
       {words ? m.text : <Markdown text={raw ? m.text : customerReply(m.text)} />}
       {children}
     </div>
+  )
+}
+
+/**
+ * Support's note to the people on the design: it shows in their conversation and rings their bell, starts no agent and
+ * can be sent while the agent works. The agent reads it with the next prompt.
+ */
+function NoteForm({ designId, onChanged }: { designId: string; onChanged: () => Promise<void> }) {
+  const api = useApi()
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const submit = async () => {
+    const t = text.trim()
+    if (!t || sending) return
+    setSending(true)
+    setError(null)
+    try {
+      await api.sendStudioSupportNote(designId, t)
+      setText('')
+      await onChanged()
+    } catch (err) {
+      setError(refusalMessage(err as never, new Date()).text)
+    } finally {
+      setSending(false)
+    }
+  }
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); submit() }}>
+      {error && <p className="mb-2 text-sm text-amber-300" role="alert">{error}</p>}
+      <label htmlFor="studio-note" className="sr-only">Message the people on this design</label>
+      <textarea id="studio-note" value={text} rows={3} maxLength={MAX_PROMPT} onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
+        placeholder="Write to them as Virvi support. The agent doesn’t run."
+        className="w-full resize-y rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-white outline-none focus:border-emerald-400" />
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-gray-500">They see it and get a notification. The agent reads it with the next prompt.</p>
+        <PrimaryButton type="submit" disabled={sending || !text.trim()}>{sending ? 'Sending…' : 'Send'}</PrimaryButton>
+      </div>
+    </form>
   )
 }
 

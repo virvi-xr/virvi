@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { WARM_EVERY_MS, createWarmer, formatElapsed, typicalHint, waitSteps } from './studio-wait'
+import { WARM_EVERY_MS, createWarmer, waitProgress, waitSteps } from './studio-wait'
 import type { StudioEvent } from './studio'
 
 const job = (status = 'queued') => ({ id: 'j1', status })
@@ -64,25 +64,37 @@ describe('the steps before the first reply', () => {
   })
 })
 
-describe('the elapsed time and the usual wait', () => {
-  it('shows minutes and seconds', () => {
-    expect(formatElapsed(0)).toBe('0:00')
-    expect(formatElapsed(42.7)).toBe('0:42')
-    expect(formatElapsed(65)).toBe('1:05')
-    expect(formatElapsed(725)).toBe('12:05')
-    expect(formatElapsed(-3)).toBe('0:00')
+describe('the progress bar: how much of the usual wait is left', () => {
+  const steps = (done: number) => (['start', 'check', 'read'] as const).map((key, i) => ({
+    key, label: key, state: i < done ? 'done' as const : i === done ? 'current' as const : 'todo' as const,
+  }))
+  it('counts the time left down, never the time gone', () => {
+    expect(waitProgress(0, 60, steps(0))).toMatchObject({ left: 'About a minute left' })
+    expect(waitProgress(10, 60, steps(0))).toMatchObject({ left: 'About 50 seconds left' })
+    expect(waitProgress(33, 60, steps(1))).toMatchObject({ left: 'About 30 seconds left' })
+    expect(waitProgress(52, 60, steps(2))).toMatchObject({ left: 'A few seconds left' })
+    expect(waitProgress(0, 200, steps(0))).toMatchObject({ left: 'About 3 minutes left' })
+    expect(waitProgress(130, 200, steps(0))).toMatchObject({ left: 'About a minute left' })
   })
-
-  it('says the usual wait in round numbers, and nothing without one', () => {
-    expect(typicalHint(undefined)).toBeNull()
-    expect(typicalHint(null)).toBeNull()
-    expect(typicalHint(2)).toBe('Usually about 5 seconds')
-    expect(typicalHint(23)).toBe('Usually about 25 seconds')
-    expect(typicalHint(44)).toBe('Usually about 45 seconds')
-    expect(typicalHint(48)).toBe('Usually about a minute')
-    expect(typicalHint(80)).toBe('Usually about a minute')
-    expect(typicalHint(100)).toBe('Usually about 2 minutes')
-    expect(typicalHint(310)).toBe('Usually about 5 minutes')
+  it('fills with the time, but never reaches the end before the agent answers', () => {
+    const at = (sec: number) => waitProgress(sec, 60, steps(0)).fraction
+    expect(at(0)).toBe(0)
+    expect(at(30)).toBeCloseTo(0.45)
+    expect(at(30)).toBeLessThan(at(45))
+    expect(at(60)).toBeCloseTo(0.9)
+    expect(at(600)).toBeLessThan(1)
+    expect(at(600)).toBeGreaterThan(at(90))
+  })
+  it('past the usual wait it says so, without a clock', () => {
+    expect(waitProgress(75, 60, steps(2))).toMatchObject({ left: 'Almost there, taking a little longer than usual' })
+  })
+  it('with no usual wait known, it moves with the steps and gives no time', () => {
+    expect(waitProgress(20, null, steps(0))).toEqual({ fraction: 0, left: null })
+    expect(waitProgress(20, undefined, steps(2)).fraction).toBeCloseTo(0.6)
+    expect(waitProgress(20, null, steps(2)).left).toBeNull()
+  })
+  it('a step already done holds the bar up even when the clock is behind', () => {
+    expect(waitProgress(1, 60, steps(2)).fraction).toBeCloseTo(0.6)
   })
 })
 

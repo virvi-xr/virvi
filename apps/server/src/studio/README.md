@@ -85,6 +85,16 @@ Routes: `src/routes/studio.ts` (the dashboard, `/api/studio`) and `src/routes/st
   and `studio_owner` (a design handed over when the owner's account is deleted). They carry names and design titles
   only, never prompt or chat text, and are kept 90 days.
 
+## Virvi support notes
+
+A Virvi admin helping on a design (support mode) writes either to the agent (a prompt, marked `[Virvi support]`) or to
+the people on the design only: `POST /designs/:id/support-notes`, a `note` message. A note shows in the conversation as
+Virvi support, rings the owner's and members' bells (`studio_support_note`, one unread item per design, no note text),
+starts no job, uses nothing and can be sent while the agent works. The agent gets every note it hasn't had at the start
+of the design's next prompt (`NOTE_PREFIX`, `notesForAgent` in `designs.ts`): the notes since the newest prompt job it
+ran, so a prompt stopped as off topic or failed sends them again. An owner's words that start with `[Virvi support…]`
+lose it, so they can't pass for a note.
+
 ## Deploying (the owner's steps)
 
 The studio is on when `VIRVI_MODE=cloud` and both `STUDIO_WORKER_IMAGE` and `STUDIO_S3_URI` are set.

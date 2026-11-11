@@ -96,7 +96,8 @@ export type StudioProposal = { slots: { category: string; recommended: boolean; 
 
 export type StudioMessage = {
   id: string
-  role: 'user' | 'agent' | 'system'
+  /** `note`: Virvi support's note to the people on the design; it starts no agent (the agent reads it with the next prompt) */
+  role: 'user' | 'agent' | 'system' | 'note'
   agent: string | null
   text: string
   proposal: StudioProposal | null
@@ -225,6 +226,8 @@ export type StudioEvent =
   | { type: 'phase'; jobId: string; phase: string }
   | { type: 'job'; jobId: string; status: 'queued' | 'taken' | 'done' | 'failed'; outcome?: string; error?: string; senderName?: string | null }
   | { type: 'member_removed'; userId: string }
+  /** A message that started no job (a Virvi support note) */
+  | { type: 'message' }
 
 export type RenderView = { bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: string | null }
 
@@ -481,7 +484,7 @@ export const canSend = (mode: ComposerMode) => mode === 'send' || mode === 'cont
 
 /** A job starting (maybe from another tab) or ending changes the design: re-read it. Progress doesn't. */
 export const reloadsOn = (e: StudioEvent) =>
-  e.type === 'job' && (e.status === 'queued' || e.status === 'done' || e.status === 'failed')
+  e.type === 'message' || (e.type === 'job' && (e.status === 'queued' || e.status === 'done' || e.status === 'failed'))
 
 /** Under the message box for a Virvi admin helping on someone else's design: no allowance meter, nothing is used. */
 export const SUPPORT_NOTE = 'Messages you send as Virvi support are free: they don’t use their prompts or yours.'

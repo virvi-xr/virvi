@@ -8,6 +8,8 @@ export type StudioEvent =
   | { type: 'job'; jobId: string; status: 'queued' | 'taken' | 'done' | 'failed'; outcome?: string; error?: string; senderName?: string | null }
   /** The user is no longer on the design: the room disconnects their clients, and the others re-read who is on it. */
   | { type: 'member_removed'; userId: string }
+  /** A message that started no job (a Virvi support note): re-read the design. */
+  | { type: 'message' }
 
 export const studioTopic = (designId: string) => `studio:${designId}`
 

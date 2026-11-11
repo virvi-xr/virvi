@@ -329,6 +329,7 @@ const CASES: Case[] = [
   { route: 'PATCH /api/studio/designs/:id', url: (f) => `/api/studio/designs/${f.design.id}`, body: () => ({ name: 'pwned', archived: true }) },
   { route: 'PUT /api/studio/designs/:id/wall', url: (f) => `/api/studio/designs/${f.design.id}/wall`, body: () => ({ shown: true }) },
   { route: 'POST /api/studio/designs/:id/prompts', url: (f) => `/api/studio/designs/${f.design.id}/prompts`, body: () => ({ text: 'pwned', ideaId: 'bucket-hat-palm' }) },
+  { route: 'POST /api/studio/designs/:id/support-notes', url: (f) => `/api/studio/designs/${f.design.id}/support-notes`, body: () => ({ text: 'pwned' }) },
   { route: 'POST /api/studio/designs/:id/prompt-help', url: (f) => `/api/studio/designs/${f.design.id}/prompt-help`, body: () => ({ text: 'pwned' }) },
   { route: 'GET /api/studio/designs/:id/prompt-ideas', url: (f) => `/api/studio/designs/${f.design.id}/prompt-ideas?slots=hat` },
   { route: 'POST /api/studio/designs/:id/warm', url: (f) => `/api/studio/designs/${f.design.id}/warm` },

@@ -9,7 +9,7 @@ import type { Exec } from '../studio/quota.js'
  * groupKey, an unread row for the same key is updated in place (its data merged, updatedAt moved) instead of adding
  * another; once it is read, the next one starts a new row. Kept 90 days from their last update.
  */
-export type NotificationKind = 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner'
+export type NotificationKind = 'studio_invite' | 'studio_prompts' | 'studio_package_ready' | 'studio_owner' | 'studio_support_note'
 type Data = Record<string, unknown>
 
 export const NOTIFICATION_DAYS = 90
@@ -127,6 +127,18 @@ export async function notifyPrompt(design: { id: string; name: string }, senderI
           const senders = Array.isArray(old.senders) ? old.senders as string[] : []
           return { ...next, senders: senders.includes(sender) ? senders : [...senders, sender], count: (Number(old.count) || 0) + 1 }
         },
+      })
+    }
+  })
+}
+
+/** Virvi support wrote to the people on a design: each of them hears of it, as one unread item per design (the count grows). */
+export async function notifySupportNote(design: { id: string; name: string }): Promise<void> {
+  await quietly('support note', async () => {
+    for (const id of await memberIds(design.id)) {
+      await notify(id, 'studio_support_note', { designId: design.id, designName: design.name, count: 1 }, {
+        groupKey: `studio_support_note:${design.id}`,
+        merge: (old, next) => ({ ...next, count: (Number(old.count) || 0) + 1 }),
       })
     }
   })
