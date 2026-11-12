@@ -99,8 +99,8 @@ def _phase(client, job_id):
 
 
 def _inputs(job_id: str, piece: dict, client, into: Path) -> tuple[list[Path], dict, str, list[Path]]:
-    """The paid revision's GLBs, piece.json, checker report and a scene piece's other JSON (route, layout, seats),
-    downloaded into `into`."""
+    """The paid revision's GLBs, piece.json, checker report, a scene piece's other JSON (route, layout, seats) and an
+    emote's sound, downloaded into `into`."""
     category = piece['category']
     glbs, meta, report, extras = [], None, '', []
     for f in piece.get('files') or []:
@@ -121,6 +121,9 @@ def _inputs(job_id: str, piece: dict, client, into: Path) -> tuple[list[Path], d
                 raise PieceFailed('piece.json is not JSON') from None
         elif f == f'checks/{category}.txt':
             report = data.decode(errors='replace')
+        elif f.startswith(f'pieces/{category}/') and name.lower().endswith(('.mp3', '.ogg')):
+            (into / name).write_bytes(data)
+            extras.append(into / name)
         elif f.startswith(f'pieces/{category}/') and name.endswith('.json'):
             (into / name).write_bytes(data)
             extras.append(into / name)
@@ -177,6 +180,13 @@ def _package(job, piece, kind, design_name, client, render_fn, tools: Tools, wor
     out.mkdir(exist_ok=True)
     for g in glbs:
         shutil.copy(g, out / g.name)
+    sound = next((e for e in extras if e.suffix.lower() in ('.mp3', '.ogg')), None) if emote else None
+    if sound:
+        shutil.copy(sound, out / sound.name)
+        # The Builder takes an emote with sound as one zip: the GLB and its audio side by side
+        with zipfile.ZipFile(out / 'emote.zip', 'w', zipfile.ZIP_DEFLATED) as z:
+            for f in [*glbs, sound]:
+                z.write(f, f.name)
     sections = []
 
     # Thumbnail: a wearable alone, rendered in Blender; an emote, the avatar halfway through it
@@ -274,7 +284,7 @@ def _package(job, piece, kind, design_name, client, render_fn, tools: Tools, wor
     if not ok or not promo.exists():
         raise PieceFailed(f'promo clip failed: {log.strip()[-300:]}')
 
-    (out / 'REPORT.md').write_text(_report(name, category, emote, sections))
+    (out / 'REPORT.md').write_text(_report(name, category, emote, sections, sound=bool(sound)))
     zipped = work / 'package.zip'
     with zipfile.ZipFile(zipped, 'w', zipfile.ZIP_DEFLATED) as z:
         for f in sorted(out.rglob('*')):
@@ -354,17 +364,18 @@ NOT_RUN_EMOTE = """## Not run here
 
 The studio can't run these. Do them yourself before you submit:
 
-- **Builder upload:** upload the GLB and `thumbnail.png` in the Decentraland Builder as a new emote.
+- **Builder upload:** upload {upload} and `thumbnail.png` in the Decentraland Builder as a new emote.
 - **Builder preview:** play it on the Builder's own avatar preview, on both body shapes.
 - **In-world self-preview:** play it in the Decentraland desktop explorer (the Builder's "See in world").
 - **Official validator:** run Decentraland's `wearable-validator` on the uploaded emote.
 """
 
 
-def _report(name: str, category: str, emote: bool, sections: list[tuple[str, bool, str]]) -> str:
+def _report(name: str, category: str, emote: bool, sections: list[tuple[str, bool, str]], sound: bool = False) -> str:
     lines = [f'# {name}: curation report', '', f'Category: `{category}`', '',
              '| Check | Result |', '|---|---|']
     lines += [f'| {title} | {"PASS" if ok else "FAIL"} |' for title, ok, _ in sections]
     for title, ok, log in sections:
         lines += ['', f'## {title}: {"PASS" if ok else "FAIL"}', '', '```', _clip(log) or '(no output)', '```']
-    return '\n'.join(lines) + '\n\n' + (NOT_RUN_EMOTE if emote else NOT_RUN)
+    upload = '`emote.zip` (the GLB with its sound)' if sound else 'the GLB'
+    return '\n'.join(lines) + '\n\n' + (NOT_RUN_EMOTE.format(upload=upload) if emote else NOT_RUN)

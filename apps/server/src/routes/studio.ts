@@ -3,15 +3,15 @@ import { recordTrialBlocked } from '../auth/trial-events.js'
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import sharp from 'sharp'
 import { db } from '../db/connection.js'
-import { studioDesignMembers, studioDesigns, studioJobs, studioPayments, studioRenders, studioSetRenders, studioUploads, users } from '../db/schema.js'
+import { studioDesignMembers, studioDesigns, studioJobs, studioPayments, studioPieces, studioRenders, studioRevisions, studioSetRenders, studioUploads, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { isTrialUser } from '../studio/quota.js'
 import { HELP_MAX, requestHelp } from '../studio/help.js'
 import { authenticate } from '../middleware/auth.js'
 import { STUDIO_ROUTE_SCENE_PASS } from '../auth/scene-from.js'
 import { getSubscription } from '../integrations/stripe.js'
-import { getStudioStore, jobFileKey, uploadKey } from '../studio/store.js'
-import { verifyRenderFrame, framePath, framePngPath } from '../studio/render-urls.js'
+import { getStudioStore, jobFileKey, soundFile, uploadKey } from '../studio/store.js'
+import { verifyPieceSound, verifyRenderFrame, framePath, framePngPath } from '../studio/render-urls.js'
 import { isVirviAdmin, quoteFinalize, QuoteError } from '../studio/pricing.js'
 import { isAdminRequest } from '../auth/admin.js'
 import { addUpload, deleteUpload, findUpload, UploadError, UPLOAD_LIMITS } from '../studio/uploads.js'
@@ -1048,6 +1048,20 @@ export default async function studioRoutes(app: FastifyInstance) {
     max: async (request: FastifyRequest) => (wantsPng(request) ? 600 : 3000),
     keyGenerator: (request: FastifyRequest) => `${request.ip}${wantsPng(request) ? ':png' : ''}`,
   }
+  // An emote revision's sound (designs.ts soundUrl), for the website's and the scene's previews. Like a frame, the signed
+  // token is the authority, and it reaches only a sound its revision still lists.
+  app.get('/api/studio/piece-sounds/*', { preHandler: studioOn, schema: { hide: true }, config: { rateLimit: { timeWindow: '1 minute', max: 300 } } }, async (request, reply) => {
+    const s = verifyPieceSound((request.params as { '*': string })['*'], new Date())
+    const forbidden = () => reply.status(403).send({ error: 'forbidden' })
+    if (!s || !UUID.test(s.jobId) || !UUID.test(s.designId) || !UUID.test(s.revisionId)) return forbidden()
+    const [rev] = await db.select({ files: studioRevisions.files, jobId: studioRevisions.jobId, designId: studioPieces.designId, category: studioPieces.category })
+      .from(studioRevisions).innerJoin(studioPieces, eq(studioPieces.id, studioRevisions.pieceId)).where(eq(studioRevisions.id, s.revisionId))
+    if (!rev || rev.designId !== s.designId || rev.jobId !== s.jobId || soundFile(rev.category, rev.files) !== s.path) return forbidden()
+    const obj = await getStudioStore().get(jobFileKey(s.designId, s.jobId, s.path))
+    if (!obj) return reply.status(404).send({ error: 'sound_not_found' })
+    return reply.type(s.path.endsWith('.mp3') ? 'audio/mpeg' : 'audio/ogg').header('Cache-Control', 'private, max-age=3600').send(obj.body)
+  })
+
   app.get('/api/studio/render-frames/*', { preHandler: studioOn, schema: { hide: true }, config: { rateLimit: frameLimit } }, async (request, reply) => {
     const f = verifyRenderFrame((request.params as { '*': string })['*'], new Date())
     const forbidden = () => reply.status(403).send({ error: 'forbidden' })

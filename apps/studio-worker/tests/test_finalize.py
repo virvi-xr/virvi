@@ -117,6 +117,8 @@ def give_inputs(api, job_id, category, files, meta, glb=b'glTF-bytes', report=' 
             api.inputs[f'{job_id}/{f}'] = glb + f.encode()
         elif f.endswith('piece.json'):
             api.inputs[f'{job_id}/{f}'] = json.dumps(meta).encode()
+        elif f.endswith('.ogg'):
+            api.inputs[f'{job_id}/{f}'] = b'OggS-sound'
         else:
             api.inputs[f'{job_id}/{f}'] = report.encode()
     return {'category': category, 'name': meta['name'], 'revision': 2, 'files': files, 'sourceJobId': 'src-1'}
@@ -215,7 +217,23 @@ def test_emote_package(api, tmp_path):
     assert any(c[1]['mode'] == 'thumbnail' for c in renders)
     assert not any(k == 'blender' for k, _ in tools.calls)
     assert [c[1]['mode'] for c in renders if c[2] == 72] == ['emote']
-    assert 'Emote checker' in package(api, 'job-f', 'emote').read('REPORT.md').decode()
+    assert 'emote.zip' not in names
+    report = package(api, 'job-f', 'emote').read('REPORT.md').decode()
+    assert 'Emote checker' in report and 'upload the GLB and `thumbnail.png`' in report
+
+
+def test_emote_package_with_sound(api, tmp_path):
+    files = ['pieces/emote/fart.glb', 'pieces/emote/fart.ogg', 'pieces/emote/piece.json', 'checks/emote.txt']
+    meta = {'name': 'Silent But Deadly', 'description': 'A guilty giggle', 'category': 'emote', 'tags': ['fun'],
+            'loop': True, 'changeKind': 'new'}
+    piece = give_inputs(api, 'job-f', 'emote', files, meta)
+    result = run(api, tmp_path, finalize_job([piece], kind='emote'), FakeTools(), [])
+    assert result['outcome'] == 'ok', result['error']
+    zipped = package(api, 'job-f', 'emote')
+    assert {'fart.glb', 'fart.ogg', 'emote.zip'} <= set(zipped.namelist())
+    builder = zipfile.ZipFile(io.BytesIO(zipped.read('emote.zip')))
+    assert sorted(builder.namelist()) == ['fart.glb', 'fart.ogg'] and builder.read('fart.ogg') == b'OggS-sound'
+    assert '`emote.zip` (the GLB with its sound)' in zipped.read('REPORT.md').decode()
 
 
 def test_missing_input_fails_piece(api, tmp_path):

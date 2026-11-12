@@ -51,3 +51,37 @@ export const framePath = (f: Pick<RenderFrame, 'category' | 'viewKey' | 'frame'>
 
 /** The frame's PNG (the server's own conversion, for Decentraland), stored beside its WebP on first request. */
 export const framePngPath = (f: Pick<RenderFrame, 'category' | 'viewKey' | 'frame'>) => framePath(f).replace(/\.webp$/, '.png')
+
+/**
+ * An emote revision's sound, for the studio's previews: signed like a frame, under its own key, naming one revision's
+ * sound file; the route checks the revision still lists it. The file name goes on the end so players know the type.
+ */
+export type PieceSound = { designId: string; revisionId: string; jobId: string; path: string }
+
+const soundKey = () => createHmac('sha256', config.jwtSecret).update('studio-piece-sounds').digest()
+const soundMac = (body: string) => createHmac('sha256', soundKey()).update(body).digest('base64url')
+
+export function signPieceSound(s: PieceSound, expiresAt: Date): string {
+  const body = Buffer.from(JSON.stringify({ d: s.designId, r: s.revisionId, j: s.jobId, p: s.path, e: expiresAt.getTime() })).toString('base64url')
+  return `${config.publicUrl}/api/studio/piece-sounds/${body}.${soundMac(body)}/${s.path.split('/').pop()}`
+}
+
+export function verifyPieceSound(token: string, now: Date): PieceSound | null {
+  const [signed, name, extra] = token.split('/')
+  if (!signed || !name || extra !== undefined) return null
+  const [body, sig, more] = signed.split('.')
+  if (!body || !sig || more !== undefined) return null
+  const want = Buffer.from(soundMac(body))
+  const got = Buffer.from(sig)
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return null
+  let c: Record<string, unknown>
+  try {
+    c = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+  } catch {
+    return null
+  }
+  if (typeof c.e !== 'number' || c.e <= now.getTime()) return null
+  const str = (v: unknown) => typeof v === 'string' && v.length > 0 && v.length <= 200
+  if (!str(c.d) || !str(c.r) || !str(c.j) || !str(c.p) || (c.p as string).split('/').pop() !== name) return null
+  return { designId: c.d as string, revisionId: c.r as string, jobId: c.j as string, path: c.p as string }
+}

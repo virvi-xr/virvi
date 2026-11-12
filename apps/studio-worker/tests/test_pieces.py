@@ -74,6 +74,53 @@ def test_emote_checker_runs(tmp_path, skills):
     assert list(glbs_by_shape(pieces[0])) == ['unisex'] and glbs_by_shape(pieces[0])['unisex'].name == 'wave.glb'
 
 
+OGG = b'OggS' + bytes(200)
+
+
+def test_an_emote_keeps_its_sound(tmp_path):
+    d = lay_out(tmp_path, 'emote', [FIXTURES / 'wave.glb'], {**HAT, 'category': 'emote', 'loop': False})
+    (d / 'fart.ogg').write_bytes(OGG)
+    pieces, _, error = collect(tmp_path, 'emote', {}, run_checker=False)
+    assert error is None
+    assert [e.name for e in pieces[0].extras] == ['fart.ogg']
+    assert 'fart.ogg' in new_hashes(pieces)['emote']
+
+
+def test_a_new_sound_changes_the_emote(tmp_path):
+    d = lay_out(tmp_path, 'emote', [FIXTURES / 'wave.glb'], {**HAT, 'category': 'emote', 'loop': False})
+    before = new_hashes(collect(tmp_path, 'emote', {}, run_checker=False)[0])
+    (d / 'fart.ogg').write_bytes(OGG)
+    assert collect(tmp_path, 'emote', before, run_checker=False)[0][0].changed is True
+
+
+def test_an_emote_sound_is_checked(tmp_path):
+    d = lay_out(tmp_path, 'emote', [FIXTURES / 'wave.glb'], {**HAT, 'category': 'emote', 'loop': False})
+    for files, words in (({'a.ogg': OGG, 'b.mp3': b'ID3' + bytes(9)}, '2 sound files'),
+                         ({'a.wav': b'RIFF'}, '.mp3 or .ogg'),
+                         ({'a.ogg': b'not audio'}, 'not ogg audio'),
+                         ({'a.mp3': b'ID3' + bytes(3 * 1024 * 1024)}, '3 MB')):
+        for f in d.iterdir():
+            if f.suffix in ('.ogg', '.mp3', '.wav'):
+                f.unlink()
+        for name, data in files.items():
+            (d / name).write_bytes(data)
+        pieces, _, error = collect(tmp_path, 'emote', {}, run_checker=False)
+        assert pieces == [] and words in error, (files.keys(), error)
+
+
+def test_a_wearable_ignores_sound_files(tmp_path):
+    d = cap(tmp_path)
+    (d / 'x.ogg').write_bytes(OGG)
+    pieces, _, error = collect(tmp_path, 'wearable', {}, run_checker=False)
+    assert error is None and pieces[0].extras == []
+
+
+def test_closing_asks_for_an_emote_sound_only_when_wanted():
+    emote = closing('emote', None)
+    assert 'out/emote/' in emote and '.ogg or .mp3' in emote and '--audio' in emote
+    assert '.ogg or .mp3' not in closing('wearable', None)
+
+
 def test_emote_checker_adds_the_leg_check(tmp_path, skills):
     lay_out(tmp_path, 'emote', [FIXTURES / 'wave.glb'], {**HAT, 'category': 'emote', 'loop': False})
     fine = collect(tmp_path, 'emote', {})[0][0].checker

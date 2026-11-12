@@ -14,10 +14,10 @@ export const jobFileKey = (designId: string, jobId: string, path: string) => `de
 export const uploadKey = (designId: string, uploadId: string) => `designs/${designId}/uploads/${uploadId}`
 
 // The worker's file paths, from apps/studio-worker/CONTRACT.md
-// pieces/<category>/<file>.glb|json, checks/<category>.txt, checks/<category>/<view>-blank-<nnn>.png (a render's blank
+// pieces/<category>/<file>.glb|json (and pieces/emote/<file>.ogg|mp3, an emote's sound), checks/<category>.txt, checks/<category>/<view>-blank-<nnn>.png (a render's blank
 // frame), renders/<category>/<viewKey>/<nnn>.webp, final/<category>/package.zip and, for a scene piece,
 // final/<category>/thumbnail.png
-const FILE_PATH = /^(pieces\/([a-z_]+)\/[A-Za-z0-9._-]+\.(glb|json)|checks\/([a-z_]+)(?:\.txt|\/[a-z0-9-]+\.png)|renders\/([a-z_]+)\/[a-z0-9-]+\/[0-9]{3}\.webp|final\/([a-z_]+)\/(?:package\.zip|thumbnail\.png))$/
+const FILE_PATH = /^(pieces\/([a-z_]+)\/[A-Za-z0-9._-]+\.(glb|json|ogg|mp3)|checks\/([a-z_]+)(?:\.txt|\/[a-z0-9-]+\.png)|renders\/([a-z_]+)\/[a-z0-9-]+\/[0-9]{3}\.webp|final\/([a-z_]+)\/(?:package\.zip|thumbnail\.png))$/
 const MAX_PATH = 200
 
 export function checkFilePath(
@@ -27,6 +27,7 @@ export function checkFilePath(
   if (path.split('/').some((seg) => seg === '..' || seg === '.')) return { ok: false, reason: 'path has a relative segment' }
   const m = FILE_PATH.exec(path)
   if (!m) return { ok: false, reason: 'path is not a piece, check, render or package file' }
+  if (m[2] && (m[3] === 'ogg' || m[3] === 'mp3') && m[2] !== 'emote') return { ok: false, reason: 'only an emote has a sound' }
   if (m[2]) return { ok: true, kind: 'piece', category: m[2] }
   if (m[4]) return { ok: true, kind: 'check', category: m[4] }
   if (m[5]) return { ok: true, kind: 'render', category: m[5] }
@@ -56,3 +57,7 @@ export function getStudioStore(): StudioStore {
 export function setStudioStore(s: StudioStore | null): void {
   store = s
 }
+
+/** An emote revision's sound: the one .ogg or .mp3 among its files (the worker sends at most one). */
+export const soundFile = (category: string, files: string[]): string | null =>
+  category === 'emote' ? files.find((f) => /^pieces\/emote\/[A-Za-z0-9._-]+\.(ogg|mp3)$/.test(f)) ?? null : null

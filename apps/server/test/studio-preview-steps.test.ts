@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
-import { studioDesignMembers, studioDesigns, studioJobs, studioMessages, studioRenders, studioSetRenders } from '../src/db/schema.js'
+import { studioDesignMembers, studioDesigns, studioJobs, studioMessages, studioRenders, studioRevisions, studioSetRenders } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, jobFileKey } from '../src/studio/store.js'
-import { signRenderFrame, frameUrlExpiry } from '../src/studio/render-urls.js'
+import { signPieceSound, signRenderFrame, frameUrlExpiry } from '../src/studio/render-urls.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { promptStatus } from '../src/studio/quota.js'
 import { resetDb } from './helpers/db.js'
@@ -256,6 +256,32 @@ describe('studio preview steps', () => {
       const v = await createUser()
       const w = await twoPieces(v)
       expect((await setRender(v, w.id, { bodyShape: 'male', outfit: 'default', emote: 'run', angle: 'back' })).statusCode).toBe(400)
+    })
+
+    it("an emote's sound: a signed link in the detail that plays it, and reaches nothing else", async () => {
+      const u = await createUser()
+      const d = (await create(u, { kind: 'emote', agent: 'claude' })).json()
+      expect((await detail(u, d.id)).pieces).toEqual([])
+      const rev = await addRevision(d, 'emote')
+      expect((await detail(u, d.id)).pieces[0].revision.sound).toBeNull()
+      await db.update(studioRevisions).set({ files: [...rev.files, 'pieces/emote/fart.ogg'] }).where(eq(studioRevisions.id, rev.id))
+      await store.put(jobFileKey(d.id, rev.jobId, 'pieces/emote/fart.ogg'), Buffer.from('OggS-fart'), 'audio/ogg')
+      const url: string = (await detail(u, d.id)).pieces[0].revision.sound
+      expect(url).toMatch(/\/api\/studio\/piece-sounds\/[^/]+\/fart\.ogg$/)
+      const path = new URL(url).pathname
+      const res = await app.inject({ method: 'GET', url: path })
+      expect(res.statusCode).toBe(200)
+      expect(res.headers['content-type']).toMatch(/^audio\/ogg/)
+      expect(res.body).toBe('OggS-fart')
+      // no bearer needed, but the token can't be bent to another file or name
+      const [signed] = path.split('/').slice(-2)
+      expect((await app.inject({ method: 'GET', url: `${S}/piece-sounds/${signed}/other.ogg` })).statusCode).toBe(403)
+      expect((await app.inject({ method: 'GET', url: `${S}/piece-sounds/${signed.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'))}/fart.ogg` })).statusCode).toBe(403)
+      const forged = signPieceSound({ designId: d.id, revisionId: rev.id, jobId: rev.jobId, path: 'pieces/emote/neon_male.glb' }, frameUrlExpiry(new Date()))
+      expect((await app.inject({ method: 'GET', url: new URL(forged).pathname })).statusCode).toBe(403)
+      // a newer revision without the sound: the old link stops working
+      await addRevision(d, 'emote')
+      expect((await detail(u, d.id)).pieces[0].revision.sound).toBeNull()
     })
 
     it('set view input is checked', async () => {

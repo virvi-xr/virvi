@@ -9,7 +9,8 @@ import { ensureWorker } from './machines.js'
 import { failJobs } from './results.js'
 import { publishStudio } from './events.js'
 import { openHelp, resolveHelp } from './help.js'
-import { signRenderFrame, frameUrlExpiry } from './render-urls.js'
+import { signPieceSound, signRenderFrame, frameUrlExpiry } from './render-urls.js'
+import { soundFile } from './store.js'
 import { finalizedRevisions } from './payments.js'
 import { creditBalance } from './credit.js'
 import type { Exec } from './quota.js'
@@ -87,6 +88,12 @@ export const OWN_EMOTE = 'own'
 /** Inspect's frames: the eye-level ring, then the whole sphere (CONTRACT.md, `orbit-<bodyShape>`). */
 export const ORBIT_RING = 24
 export const ORBIT_FRAMES = 122
+
+/** A signed link to an emote revision's sound, or null when it has none. */
+export function soundUrl(designId: string, category: string, rev: { id: string; jobId: string; files: string[] }, expires: Date): string | null {
+  const path = soundFile(category, rev.files)
+  return path ? signPieceSound({ designId, revisionId: rev.id, jobId: rev.jobId, path }, expires) : null
+}
 
 /** The contract's view key, `<mode>-<bodyShape>-<outfit>[-<emote>]`: the one place it is made. */
 export function viewKey(kind: string, view: View): string {
@@ -253,7 +260,11 @@ export async function designDetail(d: Design, now: Date, readerId = d.ownerId, s
         id: p.id,
         category: p.category,
         name: p.name,
-        revision: rev ? { number: rev.number, changeKind: rev.changeKind, checker: rev.checker, createdAt: rev.createdAt } : null,
+        revision: rev ? {
+          number: rev.number, changeKind: rev.changeKind, checker: rev.checker, createdAt: rev.createdAt,
+          // an emote's sound, for the previews to play with it
+          sound: soundUrl(d.id, p.category, rev, expires),
+        } : null,
         renders: views,
         finalized: finalized.filter((f) => f.category === p.category).map(({ category: _c, ...f }) => f),
       }

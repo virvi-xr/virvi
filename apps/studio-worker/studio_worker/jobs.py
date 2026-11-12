@@ -32,6 +32,8 @@ from .instructions import closing, uploads_text
 from .pieces import Piece, UnsafeFile, collect, glbs_by_shape, glbs_exported, glbs_outside, new_hashes, read_declined, read_regular
 from .workspace import load_state, pack, prompt_with_context, save_state, state_dir, unpack
 
+SOUND_TYPES = {'.mp3': 'audio/mpeg', '.ogg': 'audio/ogg'}
+
 IDLE_EXIT_SEC = 600
 # When this process started, as near as Python can tell: the boot event counts from here
 STARTED = time.monotonic()
@@ -456,8 +458,9 @@ def _upload_piece(client, job_id, piece: Piece) -> None:
     for f in piece.glbs + [piece.glbs[0].parent / 'piece.json']:
         client.put_file(job_id, f'pieces/{piece.category}/{f.name}', f.read_bytes(),
                         'model/gltf-binary' if f.suffix == '.glb' else 'application/json')
-    for e in piece.extras:
-        client.put_file(job_id, f'pieces/{piece.category}/{e.name}', e.read_bytes(), 'application/json')
+    for e in piece.extras:  # a scene piece's JSON, an emote's sound
+        client.put_file(job_id, f'pieces/{piece.category}/{e.name}', e.read_bytes(),
+                        SOUND_TYPES.get(e.suffix.lower(), 'application/json'))
     client.put_file(job_id, f'checks/{piece.category}.txt', piece.checker.get('report', '').encode(), 'text/plain')
 
 

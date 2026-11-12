@@ -66,7 +66,8 @@ PACKAGE = {
                  'Decentraland\'s Builder, its name, description, tags and rarity, a thumbnail, renders of both body '
                  'shapes from four sides, a short clip of it on a dancing avatar and a curation report.'),
     'emote': ('A finalized emote comes as one download holding the animation as a GLB file (one file that plays on '
-              'both body shapes), a thumbnail, renders, a short clip of it playing and a curation report.'),
+              'both body shapes), its sound if it has one (with a zip of the two ready for the Builder), a thumbnail, '
+              'renders, a short clip of it playing and a curation report.'),
     'scene': ('Each finalized building or furniture piece comes as one download holding its 3D model (a GLB file, '
               'ready for Blender and other 3D tools), any seats and layout it has, a thumbnail, renders from four '
               'sides, for a building a walk-through clip, and a report of its checks.'),
@@ -96,11 +97,16 @@ def closing(kind: str, selected_slots: list[str] | None, agent: str | None = Non
                  'piece (with --sittables for anything sittable), and check_walk.py with route.json for the building.')
     elif kind == 'emote':
         what = ('Build one Decentraland emote. Its folder is out/emote/. Pose with the skill\'s emotelib: the legs with '
-                '`leg` IK and the arms with `reach`, never raw rotations on the leg bones.')
+                '`leg` IK and the arms with `reach`, never raw rotations on the leg bones. When the request asks for '
+                'sound, make it yourself (original audio, never a sample you found: ffmpeg can synthesise and mix it) '
+                'and put exactly one .ogg or .mp3 in out/emote/ beside the GLB, as long as the animation and timed to '
+                'it; it ships with the emote and plays in the studio\'s preview. Keep drafts and .wav files out of '
+                'out/emote/. With no sound asked for, add none.')
         layout = LAYOUT % ', "loop": true | false'
         look = ('Before you finish, run `studio-preview out/emote` and open the images it prints: check the hands, '
                 'limbs and props through the animation and fix any clipping you see.')
-        check = ('Run the emote checker (check_emote.py) on the GLB and fix every FAIL. Run emotelib\'s `limb_overlaps` '
+        check = ('Run the emote checker (check_emote.py) on the GLB, with --audio <file> when it has a sound, and fix '
+                 'every FAIL. Run emotelib\'s `limb_overlaps` '
                  'on every frame, left leg against right leg and each arm against the torso and legs, and fix every '
                  'overlap: limbs that touch on purpose rest against each other, never pass through.')
     else:

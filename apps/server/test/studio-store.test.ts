@@ -8,6 +8,10 @@ describe('studio store', () => {
   it('file paths follow the contract', () => {
     expect(checkFilePath('pieces/hat/neon_cap_male.glb')).toEqual({ ok: true, kind: 'piece', category: 'hat' })
     expect(checkFilePath('pieces/hat/piece.json')).toEqual({ ok: true, kind: 'piece', category: 'hat' })
+    expect(checkFilePath('pieces/emote/fart.ogg')).toEqual({ ok: true, kind: 'piece', category: 'emote' })
+    expect(checkFilePath('pieces/emote/fart.mp3')).toEqual({ ok: true, kind: 'piece', category: 'emote' })
+    expect(checkFilePath('pieces/hat/fart.ogg').ok).toBe(false)
+    expect(checkFilePath('pieces/emote/fart.wav').ok).toBe(false)
     expect(checkFilePath('checks/hat.txt')).toEqual({ ok: true, kind: 'check', category: 'hat' })
     // the frame a render stopped on as blank, kept privately (CONTRACT.md)
     expect(checkFilePath('checks/hat/orbit-male-blank-003.png')).toEqual({ ok: true, kind: 'check', category: 'hat' })

@@ -21,7 +21,7 @@ class Piece:
     meta: dict  # piece.json
     changed: bool
     checker: dict  # ran, pass, failures, warnings, report (and triangles, for a scene piece)
-    extras: list[Path] = field(default_factory=list)  # a scene piece's route/layout/sittables JSON
+    extras: list[Path] = field(default_factory=list)  # a scene piece's route/layout/sittables JSON, an emote's sound
 
 
 def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, stage: Path | None = None
@@ -74,7 +74,15 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
             for g in glbs:
                 copies.append(staged / g.name)
                 copies[-1].write_bytes(read_regular(g))
-            for e in scene.extras(d, meta) if kind == 'scene' else []:
+            if kind == 'emote':
+                sound, problem = emote_sound(d, sum(g.stat().st_size for g in glbs))
+                if problem:
+                    problems.append(problem)
+                    continue
+                travels = [sound] if sound else []
+            else:
+                travels = scene.extras(d, meta) if kind == 'scene' else []
+            for e in travels:
                 extras.append(staged / e.name)
                 extras[-1].write_bytes(read_regular(e))
             (staged / 'piece.json').write_text(json.dumps(meta))
@@ -137,6 +145,45 @@ def read_regular(path: Path, max_bytes: int | None = None) -> bytes:
     if max_bytes is not None and len(data) > max_bytes:
         raise UnsafeFile(f'{_rel(path)} is too large')
     return data
+
+
+# An emote's sound (Decentraland plays it with the emote): one .mp3 or .ogg beside the GLB, the item 3 MB at most
+SOUND_SUFFIXES = ('.mp3', '.ogg')
+OTHER_AUDIO = ('.wav', '.m4a', '.aac', '.flac', '.opus', '.aif', '.aiff')
+ITEM_MAX_BYTES = 3 * 1024 * 1024
+
+
+def is_sound(data: bytes, suffix: str) -> bool:
+    """The bytes are the audio the name says: an Ogg stream, or an MP3 (an ID3 tag or a frame sync)."""
+    if suffix == '.ogg':
+        return data[:4] == b'OggS'
+    return data[:3] == b'ID3' or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0)
+
+
+def emote_sound(folder: Path, glb_bytes: int) -> tuple[Path | None, str | None]:
+    """out/emote/'s sound file, if it has one: (path, None), (None, None) without one, or (None, problem)."""
+    rel = _rel(folder)
+    files = [f for f in sorted(folder.iterdir()) if f.is_file() or os.path.islink(f)]
+    other = [f.name for f in files if f.suffix.lower() in OTHER_AUDIO]
+    if other:
+        return None, (f'{rel}/{other[0]}: an emote\'s sound has to be .mp3 or .ogg: convert it (ffmpeg) or move it '
+                      f'out of {rel}/')
+    sounds = [f for f in files if f.suffix.lower() in SOUND_SUFFIXES]
+    if not sounds:
+        return None, None
+    if len(sounds) > 1:
+        return None, f'{rel}/ has {len(sounds)} sound files: an emote plays one ({", ".join(f.name for f in sounds)})'
+    sound = sounds[0]
+    try:
+        data = read_regular(sound)
+    except UnsafeFile as e:
+        return None, str(e)
+    if not is_sound(data, sound.suffix.lower()):
+        return None, f'{rel}/{sound.name} is not {sound.suffix.lower()[1:]} audio'
+    if glb_bytes + len(data) > ITEM_MAX_BYTES:
+        return None, (f'{rel}/: the GLB and {sound.name} come to {(glb_bytes + len(data)) / 1048576:.2f} MB; an emote '
+                      'is 3 MB at most with its sound: shorten or compress the sound')
+    return sound, None
 
 
 def _rel(path: Path) -> str:
