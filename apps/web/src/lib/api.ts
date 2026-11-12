@@ -228,6 +228,16 @@ export function mediaContentType(file: File): string {
 export type { AdminAdSpace } from '@virvixr/shared'
 
 /** A visitor's report of a Virvi Spaces space, as the admin page lists it. */
+/** An open report of a shared model (LIV-20), as the admin page lists it. */
+export type AdminAssetReport = {
+  id: string
+  reason: string
+  details: string | null
+  createdAt: string
+  asset: { id: string; name: string; thumbnailUrl: string | null; author: string | null; license: string | null }
+  owner: { id: string; displayName: string | null; email: string | null } | null
+}
+
 export interface AdminArReport {
   id: string
   spaceId: string
@@ -922,10 +932,20 @@ function useRealApi() {
       textureCount?: number
       materialCount?: number
       dimensions?: { width: number; height: number; depth: number }
-      license?: string
       author?: string
-      isPublic?: boolean
     }) => apiFetch<{ asset: any }>('/api/assets', { method: 'POST', userAction: true, body: JSON.stringify(data) }),
+    // Sharing (LIV-20): public and its license change only here
+    shareAsset: (id: string, data: { license: string; rightsConfirmed: boolean; credit?: string }) =>
+      apiFetch<{ asset: any }>(`/api/assets/${id}/share`, { method: 'POST', userAction: true, body: JSON.stringify(data) }),
+    unshareAsset: (id: string) =>
+      apiFetch<{ asset: any }>(`/api/assets/${id}/unshare`, { method: 'POST', userAction: true }),
+    reportAsset: (id: string, data: { reason: string; details?: string }) =>
+      apiFetch<{ reported: boolean }>(`/api/assets/${id}/report`, { method: 'POST', userAction: true, body: JSON.stringify(data) }),
+    getAdminAssetReports: () => apiFetch<{ reports: AdminAssetReport[] }>('/api/admin/asset-reports'),
+    dismissAdminAssetReport: (id: string) =>
+      apiFetch<{ dismissed: boolean }>(`/api/admin/asset-reports/${id}/dismiss`, { method: 'POST' }),
+    takeDownAsset: (id: string, reason: string) =>
+      apiFetch<{ takenDown: boolean }>(`/api/admin/assets/${id}/takedown`, { method: 'POST', body: JSON.stringify({ reason }) }),
     updateAsset: (id: string, data: Record<string, any>) =>
       apiFetch<{ asset: any }>(`/api/assets/${id}`, { method: 'PUT', userAction: true, body: JSON.stringify(data) }),
     deleteAsset: (id: string) =>

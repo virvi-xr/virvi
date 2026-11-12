@@ -727,9 +727,31 @@ export const assetLibraryItems = pgTable('asset_library_items', {
   status: text('status').notNull().default('ready'),
   error: text('error'),
   uploadCode: text('upload_code'), // the companion upload code that reserved it (its data post must match)
+  // Sharing (LIV-20): when the owner last confirmed they have the rights and shared it (license holds a SHARE_LICENSES id)
+  sharedAt: timestamp('shared_at', { withTimezone: true }),
+  // The marketplace's price (LIV-21), in US cents; null is free. Nothing sets it yet
+  priceCents: integer('price_cents'),
+  // Taken down by Virvi (a report, a copyright claim): no longer public, and its owner can't share it again
+  takenDownAt: timestamp('taken_down_at', { withTimezone: true }),
+  takedownReason: text('takedown_reason'),
 }, (t) => ({
   packRefUq: uniqueIndex('asset_library_items_pack_ref').on(t.packId, t.sourceRef),
   contentHashIdx: index('asset_library_items_content_hash_idx').on(t.contentHash),
+}))
+
+/** A signed-in person's report of a shared model (LIV-20): one open report per person per model. */
+export const assetReports = pgTable('asset_reports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  assetItemId: uuid('asset_item_id').notNull().references(() => assetLibraryItems.id, { onDelete: 'cascade' }),
+  reporterId: uuid('reporter_id').references(() => users.id, { onDelete: 'set null' }),
+  reason: text('reason').notNull(), // copyright | offensive | private_info | broken | spam | other
+  details: text('details'),
+  status: text('status').notNull().default('open'), // open | taken_down | dismissed
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+}, (t) => ({
+  openUq: uniqueIndex('asset_reports_open_uq').on(t.assetItemId, t.reporterId).where(sql`${t.status} = 'open'`),
+  statusIdx: index('asset_reports_status_idx').on(t.status, t.createdAt),
 }))
 
 export const assetLibraryItemsRelations = relations(assetLibraryItems, ({ one }) => ({

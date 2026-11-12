@@ -475,14 +475,17 @@ describe('room sets', () => {
       const asset = (await makeAsset(owner, { scanId: scan.id, name: 'Lounge', options: {} })).json().asset
       const update = (body: Record<string, unknown>) => app.inject({ method: 'PUT', url: `/api/assets/${asset.id}`, headers: bearer(owner), payload: body })
 
+      // Sharing is the only way to make a model public (LIV-20), and it refuses a room asset
+      const share = () => app.inject({ method: 'POST', url: `/api/assets/${asset.id}/share`, headers: bearer(owner), payload: { license: 'cc0-1.0', rightsConfirmed: true } })
       const refused = await update({ isPublic: true, name: 'Public lounge' })
       expect(refused.statusCode).toBe(400)
-      expect(refused.json()).toEqual({ error: 'room_assets_private' })
+      expect(refused.json().error).toBe('use_share')
+      expect((await share()).json().error).toBe('room_assets_private')
       // Moving it out of the room category first doesn't help: it's still backed by a room set
       expect((await update({ category: 'furniture' })).statusCode).toBe(200)
-      expect((await update({ isPublic: true })).statusCode).toBe(400)
+      expect((await share()).json().error).toBe('room_assets_private')
 
-      const renamed = await update({ name: 'Front room', isPublic: false })
+      const renamed = await update({ name: 'Front room' })
       expect(renamed.statusCode).toBe(200)
       expect(renamed.json().asset).toMatchObject({ name: 'Front room', isPublic: false })
       const [row] = await db.select().from(assetLibraryItems).where(eq(assetLibraryItems.id, asset.id))

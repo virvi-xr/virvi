@@ -1,22 +1,26 @@
 /**
  * Asset Library Routes — Browse, search, and manage 3D assets.
  *
- * GET    /api/assets            — Browse/search asset catalog (?mine=all|studio|uploads, ?scope=public)
+ * GET    /api/assets            — Browse/search asset catalog (?mine=all|studio|uploads, ?scope=public|community)
  * GET    /api/assets/:id        — Get single asset details
  * POST   /api/assets            — Upload a new asset (authenticated)
  * PUT    /api/assets/:id        — Update asset metadata (authenticated)
  * DELETE /api/assets/:id        — Delete an asset (authenticated)
  * GET    /api/assets/categories — List all categories
+ * POST   /api/assets/:id/share  — Share your model under a license (LIV-20); /unshare makes it private again
+ * POST   /api/assets/:id/report — Report a shared model
+ * Admin: GET /api/admin/asset-reports, POST /api/admin/asset-reports/:id/dismiss, POST /api/admin/assets/:id/takedown
  */
 
 import { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { eq, ilike, and, or, sql, arrayContains, inArray, isNull, like, notLike, desc } from 'drizzle-orm'
+import type { FastifyReply } from 'fastify'
 
 /** The `mine` filter's values: the caller's assets, only the Design Studio's, or only the rest. */
 const MINE = ['all', 'studio', 'uploads']
 import { db } from '../db/connection.js'
-import { assetLibraryItems, catalogPacks, roomSets } from '../db/schema.js'
+import { assetLibraryItems, catalogPacks, users } from '../db/schema.js'
 import { browsableAsset } from '../catalog/visibility.js'
 import { authenticate } from '../middleware/auth.js'
 import { createStorage } from '../storage/index.js'
@@ -24,10 +28,22 @@ import { classifyUpload, extensionFor } from '../storage/upload-policy.js'
 import { assertStorageQuota } from '../media/quota.js'
 import { StoreMediaError } from '../media/store.js'
 import { verifySessionToken } from '../auth/tokens.js'
-import { isVirviAdmin } from '../auth/admin.js'
+import { isVirviAdmin, requireAdmin } from '../auth/admin.js'
 import { generateThumbnail } from '../services/thumbnails.js'
 import { releaseRoomSetObject } from '../room-scan/sets.js'
-import { withoutUploadCode } from '../library/model-uploads.js'
+import { isUuid } from '../auth/scene-from.js'
+import {
+  dismissReport, forViewer, isRoomAsset, listOpenReports, releaseToUsers, reportModel, shareModel, ShareError, takeDownModel,
+  unshareModel, usedByOthers,
+} from '../library/sharing.js'
+
+/** Whether a model is public and what license it's under change only through sharing (LIV-20). */
+const USE_SHARE = { error: 'use_share', message: 'Share or unshare the model to change who can use it and its license' }
+
+function shareRefusal(reply: FastifyReply, err: unknown) {
+  if (err instanceof ShareError) return reply.status(err.status).send({ error: err.code, message: err.message })
+  throw err
+}
 
 const CATALOG_MODEL = { error: 'catalog_model', message: "Catalog models can't be changed or deleted; switch the pack off in Admin → Catalog packs instead" }
 
@@ -36,13 +52,6 @@ function optionalAccount(authorization: string | undefined) {
   const bearer = authorization?.startsWith('Bearer ') ? authorization.slice(7) : null
   const claims = bearer && !bearer.startsWith('virvi_') ? verifySessionToken(bearer) : null
   return claims?.kind === 'account' ? claims : null
-}
-
-/** Made from a room scan: category `room`, or backed by a room set. */
-async function isRoomAsset(asset: { id: string; category: string | null }): Promise<boolean> {
-  if (asset.category === 'room') return true
-  const [set] = await db.select({ id: roomSets.id }).from(roomSets).where(eq(roomSets.assetItemId, asset.id)).limit(1)
-  return !!set
 }
 
 export default async function assetRoutes(app: FastifyInstance) {
@@ -69,11 +78,13 @@ export default async function assetRoutes(app: FastifyInstance) {
     const conditions: any[] = []
 
     // Public assets, plus the caller's own private ones when authenticated. `scope=public` (the Asset Library's All Assets
-    // view) keeps to public assets only, so it stays clearly different from My Assets.
-    if (query.scope !== undefined && query.scope !== 'public') return reply.status(400).send({ error: 'scope must be public' })
+    // view) keeps to public assets only, so it stays clearly different from My Assets; `scope=community` is the models
+    // people shared (LIV-20), without Virvi's catalog.
+    if (query.scope !== undefined && query.scope !== 'public' && query.scope !== 'community') return reply.status(400).send({ error: 'scope must be public or community' })
     const caller = optionalAccount(request.headers.authorization)
+    if (query.scope === 'community') conditions.push(isNull(assetLibraryItems.packId))
     conditions.push(
-      caller && query.scope !== 'public'
+      caller && query.scope === undefined
         ? or(eq(assetLibraryItems.isPublic, true), eq(assetLibraryItems.uploadedBy, caller.id))
         : eq(assetLibraryItems.isPublic, true),
     )
@@ -142,7 +153,7 @@ export default async function assetRoutes(app: FastifyInstance) {
       .offset(offset)
       // Your own models newest first (a just-uploaded one is on the first page); browsing keeps the catalog's order
       .orderBy(...(query.mine ? [desc(assetLibraryItems.createdAt), desc(assetLibraryItems.id)] : [assetLibraryItems.createdAt]))
-    const items = rows.map((r) => ({ ...withoutUploadCode(r.a), pack: r.pack?.id ? r.pack : null }))
+    const items = rows.map((r) => ({ ...forViewer(r.a, caller?.id ?? null), pack: r.pack?.id ? r.pack : null }))
 
     const [countResult] = await db
       .select({ count: sql<number>`count(*)` })
@@ -181,7 +192,7 @@ export default async function assetRoutes(app: FastifyInstance) {
           .from(catalogPacks)
           .where(eq(catalogPacks.id, asset.packId)))[0] ?? null
       : null
-    return reply.send({ asset: { ...withoutUploadCode(asset), pack } })
+    return reply.send({ asset: { ...forViewer(asset, caller?.id ?? null), pack } })
   })
 
   // ── Upload New Asset ──────────────────────────────────────────────────
@@ -203,7 +214,6 @@ export default async function assetRoutes(app: FastifyInstance) {
         dimensions?: { width: number; height: number; depth: number }
         license?: string
         author?: string
-        isPublic?: boolean
       }
 
       if (!body.name || !body.fileData || !body.contentType) {
@@ -243,9 +253,10 @@ export default async function assetRoutes(app: FastifyInstance) {
           textureCount: body.textureCount || null,
           materialCount: body.materialCount || null,
           dimensions: body.dimensions || null,
-          license: body.license || null,
+          // New uploads are private, with no license until they're shared (LIV-20)
+          license: null,
           author: body.author || null,
-          isPublic: body.isPublic ?? false,
+          isPublic: false,
           uploadedBy: request.user.id,
         })
         .returning()
@@ -265,7 +276,7 @@ export default async function assetRoutes(app: FastifyInstance) {
         request.log.warn({ err }, 'Failed to generate thumbnail')
       }
 
-      return reply.status(201).send({ asset: withoutUploadCode(asset) })
+      return reply.status(201).send({ asset: forViewer(asset, request.user.id) })
     },
   )
 
@@ -291,17 +302,14 @@ export default async function assetRoutes(app: FastifyInstance) {
       }
       // Catalog models are shared by every scene that uses them: they change only through the importer
       if (existing.packId) return reply.status(409).send(CATALOG_MODEL)
-      // A room set is the layout of someone's home: it never becomes public
-      if (body.isPublic === true && (await isRoomAsset(existing))) return reply.status(400).send({ error: 'room_assets_private' })
+      if (body.isPublic !== undefined || body.license !== undefined) return reply.status(400).send(USE_SHARE)
 
       const updates: Record<string, unknown> = {}
       if (body.name !== undefined) updates.name = body.name
       if (body.description !== undefined) updates.description = body.description
       if (body.category !== undefined) updates.category = body.category
       if (body.tags !== undefined) updates.tags = body.tags
-      if (body.license !== undefined) updates.license = body.license
       if (body.author !== undefined) updates.author = body.author
-      if (body.isPublic !== undefined) updates.isPublic = body.isPublic
 
       const [updated] = await db
         .update(assetLibraryItems)
@@ -309,7 +317,7 @@ export default async function assetRoutes(app: FastifyInstance) {
         .where(eq(assetLibraryItems.id, id))
         .returning()
 
-      return reply.send({ asset: withoutUploadCode(updated) })
+      return reply.send({ asset: forViewer(updated, request.user.id) })
     },
   )
 
@@ -336,6 +344,13 @@ export default async function assetRoutes(app: FastifyInstance) {
       // An in-world upload still arriving: its file is being stored right now (dismiss it in-world once it's done or failed)
       if (existing.status === 'uploading' || existing.status === 'processing') return reply.status(409).send({ error: 'upload_in_progress', message: "This model is still uploading. Try again once it's finished." })
 
+      // Another account's scene has it (it was shared): it stays for them, private and no longer yours (LIV-20). An admin
+      // deleting someone else's model removes it for everyone
+      if (existing.uploadedBy === request.user.id && (await usedByOthers(id, request.user.id))) {
+        await releaseToUsers(id)
+        return reply.send({ deleted: true })
+      }
+
       // A room set's GLB may still be placed by URL somewhere (a scene that placed it after its scan was deleted)
       if (await isRoomAsset(existing)) {
         await releaseRoomSetObject({ storageKey: existing.storageKey, glbUrl: existing.cdnUrl ?? '' }, { assetItemId: id })
@@ -361,5 +376,56 @@ export default async function assetRoutes(app: FastifyInstance) {
       .filter(Boolean)
 
     return reply.send({ categories })
+  })
+
+  // ── Sharing (LIV-20) ──────────────────────────────────────────────────
+  app.post('/api/assets/:id/share', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+    const [me] = await db.select({ id: users.id, displayName: users.displayName }).from(users).where(eq(users.id, request.user.id))
+    if (!me) return reply.status(401).send({ error: 'unauthorized' })
+    try {
+      return reply.send({ asset: forViewer(await shareModel(id, me, (request.body ?? {}) as Record<string, unknown>), me.id) })
+    } catch (err) { return shareRefusal(reply, err) }
+  })
+
+  app.post('/api/assets/:id/unshare', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+    try {
+      return reply.send({ asset: forViewer(await unshareModel(id, request.user.id), request.user.id) })
+    } catch (err) { return shareRefusal(reply, err) }
+  })
+
+  app.post('/api/assets/:id/report', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+    const body = (request.body ?? {}) as { reason?: unknown; details?: unknown }
+    try {
+      const { created } = await reportModel(id, request.user.id, body.reason, body.details)
+      return reply.status(created ? 201 : 200).send({ reported: true })
+    } catch (err) { return shareRefusal(reply, err) }
+  })
+
+  const admin = { preHandler: [authenticate, requireAdmin] }
+
+  app.get('/api/admin/asset-reports', admin, async (_request, reply) => reply.send({ reports: await listOpenReports() }))
+
+  app.post('/api/admin/asset-reports/:id/dismiss', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+    try {
+      await dismissReport(id)
+      return reply.send({ dismissed: true })
+    } catch (err) { return shareRefusal(reply, err) }
+  })
+
+  app.post('/api/admin/assets/:id/takedown', admin, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    if (!isUuid(id)) return reply.status(404).send({ error: 'not_found' })
+    try {
+      await takeDownModel(id, (request.body as { reason?: unknown } | undefined)?.reason)
+      return reply.send({ takenDown: true })
+    } catch (err) { return shareRefusal(reply, err) }
   })
 }

@@ -85,9 +85,12 @@ Changes made through these routes reach players in the scene in real time.
 | GET | `/api/assets` | No | Browse or search 3D models (the asset library) |
 | GET | `/api/assets/:id` | No | One model |
 | GET | `/api/assets/categories` | No | Categories |
-| POST | `/api/assets` | Yes | Upload a GLB. Private unless `isPublic: true` |
-| PUT | `/api/assets/:id` | Yes | Update its details |
-| DELETE | `/api/assets/:id` | Yes | Delete it |
+| POST | `/api/assets` | Yes | Upload a GLB. Always private until you share it |
+| PUT | `/api/assets/:id` | Yes | Update its details (not `isPublic` or `license`: use share) |
+| DELETE | `/api/assets/:id` | Yes | Delete it. One that another account's scene uses stays for that scene |
+| POST | `/api/assets/:id/share` | Yes | Share your model: `{ license, rightsConfirmed: true, credit? }` |
+| POST | `/api/assets/:id/unshare` | Yes | Make it private again; scenes that have it keep it |
+| POST | `/api/assets/:id/report` | Yes | Report a shared model: `{ reason, details? }` |
 | GET | `/api/catalog/packs` | No | The free [catalog packs](/docs/dashboard/catalog-packs/) |
 | GET | `/api/scenes/:sceneId/library` | Yes | The scene's shared library |
 | POST | `/api/scenes/:sceneId/library` | Yes | Add one of your files to it |
@@ -97,7 +100,12 @@ Changes made through these routes reach players in the scene in real time.
 `GET /api/assets` lists public assets, plus your own private ones when you send a token. To narrow it:
 
 - `scope=public` lists public assets only, even when you're signed in.
+- `scope=community` lists only models people shared, without Virvi's catalog.
 - `mine=all`, `mine=studio` or `mine=uploads` lists only your own assets: all of them, only Design Studio pieces, or only the rest. A signed-out request gets an empty list.
+
+Each asset has `mine` (it's yours). `uploadedBy` is only included on your own; other people's carry their credit in `author`.
+
+`license` for `share` is one of `cc0-1.0`, `cc-by-4.0`, `cc-by-sa-4.0`, `cc-by-nd-4.0`, `cc-by-nc-4.0`, `cc-by-nc-sa-4.0`, `cc-by-nc-nd-4.0` or `virvi-only`. A report's `reason` is one of `copyright`, `offensive`, `private_info`, `broken`, `spam` or `other`.
 
 
 ## Decentraland deploys

@@ -10,6 +10,9 @@ import { creditLine, licenseLabel } from '@/lib/catalog'
 import { countLabel, formatBytes, plural } from '@/lib/format'
 import { CubeIcon, GridIcon, LayersIcon, ListIcon, PlusIcon } from '@/components/icons'
 import { RoomAssetDialog } from './RoomAssetDialog'
+import { ReportDialog, ShareDialog } from './ShareDialogs'
+import { canManage, canReport, sharedNote } from '@/lib/asset-sharing'
+import { shareLicense } from '@virvixr/shared'
 import { assetListScope, assetViewHref, readAssetView, visibilityLabel, type AssetView, type MineKind } from '@/lib/asset-views'
 import { Badge, ConfirmAction, EmptyState, PageHeader, PrimaryButton, RowMenu, SearchField, SelectField, useStoredView, ViewToggle, Skeleton } from '@/components/ui'
 
@@ -39,7 +42,6 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('')
   const [tagsInput, setTagsInput] = useState('')
-  const [license, setLicense] = useState('cc0')
   const [author, setAuthor] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -49,7 +51,6 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
     setDescription('')
     setCategory('')
     setTagsInput('')
-    setLicense('cc0')
     setAuthor('')
     setFile(null)
     if (fileRef.current) fileRef.current.value = ''
@@ -75,7 +76,6 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
         fileData: base64,
         contentType,
         filename: file.name,
-        license: license || undefined,
         author: author || undefined,
       })
       onUploaded(asset)
@@ -146,26 +146,15 @@ function UploadForm({ onUploaded, onClose }: { onUploaded: (asset: any) => void;
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">License</label>
-              <select aria-label="License"
-                value={license}
-                onChange={(e) => setLicense(e.target.value)}
-                className={fieldClass}
-              >
-                <option value="cc0">CC0 (Public Domain)</option>
-                <option value="cc-by">CC-BY (Attribution)</option>
-                <option value="proprietary">Proprietary</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Author</label>
-              <input aria-label="Author"
+              <label className="block text-xs text-gray-400 mb-1">Credit as</label>
+              <input aria-label="Credit as"
                 type="text"
                 value={author}
                 onChange={(e) => setAuthor(e.target.value)}
-                placeholder="Author name"
+                placeholder="Your name, if left empty"
                 className={fieldClass}
               />
+              <p className="mt-1 text-xs text-gray-500">It stays private to you. Share it from the model’s page to pick a license.</p>
             </div>
           </div>
           {error && <p className="text-sm text-red-400" role="alert">{error}</p>}
@@ -197,6 +186,8 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [dialog, setDialog] = useState<'share' | 'report' | null>(null)
+  const [unsharing, setUnsharing] = useState(false)
 
   // Edit state
   const [editName, setEditName] = useState('')
@@ -256,6 +247,18 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
     }
   }
 
+  const handleUnshare = async () => {
+    setUnsharing(true)
+    setError(null)
+    try {
+      setAsset((await api.unshareAsset(assetId)).asset)
+    } catch (err: any) {
+      setError('Couldn’t make it private: ' + (err.message || 'Unknown error'))
+    } finally {
+      setUnsharing(false)
+    }
+  }
+
   const copyUrl = () => {
     if (asset?.cdnUrl) {
       navigator.clipboard.writeText(asset.cdnUrl)
@@ -277,17 +280,32 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
         crumbs={['Tools', { label: ASSET_LIBRARY.name, href: '/assets' }, asset.name]}
         title={asset.name}
         subtitle={asset.description || undefined}
-        actions={!asset.packId && !editing && (
-          // Catalog models are Virvi's, not yours: view and add only
-          <div className="flex items-center gap-2">
+        actions={!editing && (canManage(asset) ? (
+          // Your own model. Catalog models are Virvi's, and other people's are theirs: view, add and report only
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button onClick={startEditing} className="rounded-md bg-gray-800 px-3 py-1.5 text-xs hover:bg-gray-700">Edit</button>
-            <ConfirmAction prompt="Delete this model?" confirmLabel="Delete" onConfirm={handleDelete}
+            {asset.isPublic ? (
+              <>
+                <button onClick={() => setDialog('share')} className="rounded-md bg-gray-800 px-3 py-1.5 text-xs hover:bg-gray-700">Change license</button>
+                <ConfirmAction prompt="Make it private? Scenes that already have it keep it." confirmLabel="Make private" onConfirm={handleUnshare}
+                  className="rounded-md bg-gray-800 px-3 py-1.5 text-xs hover:bg-gray-700">
+                  {unsharing ? 'Making private…' : 'Make private'}
+                </ConfirmAction>
+              </>
+            ) : !asset.takenDownAt && asset.category !== 'room' && (
+              <button onClick={() => setDialog('share')} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700">Share with the community</button>
+            )}
+            <ConfirmAction prompt={asset.isPublic ? 'Delete this model? Scenes that already have it keep it.' : 'Delete this model?'} confirmLabel="Delete" onConfirm={handleDelete}
               className="rounded-md bg-red-900/30 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/50">
               Delete
             </ConfirmAction>
           </div>
-        )}
+        ) : canReport(asset) ? (
+          <button onClick={() => setDialog('report')} className="rounded-md bg-gray-800 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700">Report</button>
+        ) : null)}
       />
+      {dialog === 'share' && <ShareDialog asset={asset} onClose={() => setDialog(null)} onShared={(a) => { setAsset(a); setDialog(null) }} />}
+      {dialog === 'report' && <ReportDialog asset={asset} onClose={() => setDialog(null)} />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Thumbnail */}
@@ -376,6 +394,18 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
                 {asset.tags?.map((tag: string) => <Badge key={tag}>{tag}</Badge>)}
                 {asset.license && <span className="text-xs text-gray-400 first-letter:uppercase">{licenseLabel(asset.license)}</span>}
               </div>
+              {sharedNote(asset) && (
+                <p className="text-sm text-gray-400">
+                  {asset.author ? <>Shared by <span className="text-gray-200">{asset.author}</span>. </> : null}
+                  {sharedNote(asset)}
+                  {shareLicense(asset.license)?.url && <> <a href={shareLicense(asset.license)!.url!} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline">Full license</a></>}
+                </p>
+              )}
+              {asset.mine && asset.takenDownAt && (
+                <p className="rounded-md border border-red-900/60 bg-red-900/20 p-3 text-sm text-red-300" role="status">
+                  Virvi took this model down{asset.takedownReason ? `: ${asset.takedownReason}` : ''}. It stays in your library and in scenes that have it, but it can’t be shared. Email support@virvi.io if you think that’s a mistake.
+                </p>
+              )}
 
               {/* Stats grid */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -411,7 +441,7 @@ function AssetDetail({ assetId, onDeleted }: { assetId: string; onDeleted: (id: 
                 )}
                 {asset.author && (
                   <div className="rounded-lg bg-gray-900 border border-gray-800 p-3">
-                    <p className="text-xs text-gray-500">Author</p>
+                    <p className="text-xs text-gray-500">Credit</p>
                     <p className="text-sm font-medium mt-0.5">{asset.author}</p>
                   </div>
                 )}
@@ -666,7 +696,7 @@ export default function AssetsPage() {
       {showUpload && <UploadForm onUploaded={handleUploaded} onClose={() => setShowUpload(false)} />}
 
       <div className="mb-4 inline-flex rounded-md border border-gray-800 p-0.5 text-sm" role="tablist" aria-label="Which models">
-        {([['All Models', 'all'], ['My Models', 'mine']] as const).map(([label, value]) => (
+        {([['All Models', 'all'], ['Community', 'community'], ['My Models', 'mine']] as const).map(([label, value]) => (
           <button key={value} type="button" role="tab" aria-selected={libraryView === value} onClick={() => showView(value)}
             className={`rounded px-3 py-1.5 ${libraryView === value ? 'bg-white/[0.06] text-white' : 'text-gray-400 hover:text-white'}`}>
             {label}
@@ -739,6 +769,10 @@ export default function AssetsPage() {
               ? 'Pieces you finalize in the Design Studio show up here, ready to place in your scenes.'
               : 'Models you upload, make from a room scan or finalize in the Design Studio show up here, public or private.'}
             action={mineKind === 'studio' ? undefined : <PrimaryButton onClick={() => setShowUpload(true)}><PlusIcon size={16} /> Upload Model</PrimaryButton>} />
+        ) : libraryView === 'community' ? (
+          <EmptyState icon={<LayersIcon size={40} />} title="Nothing shared yet"
+            body="Models other Virvi users share show up here, credited to them. Share one of yours from its page in My Models."
+            action={<PrimaryButton onClick={() => showView('mine')}>Go to My Models</PrimaryButton>} />
         ) : (
           <EmptyState icon={<LayersIcon size={40} />} title="No 3D models yet"
             body="Upload a .glb model to add it to your library and place it in your scenes."
@@ -786,8 +820,8 @@ function assetMenu(asset: any, onDelete: () => void, open: () => void) {
   return [
     { label: 'Open model', onSelect: open },
     ...(asset.cdnUrl ? [{ label: 'Copy URL', onSelect: () => { navigator.clipboard.writeText(asset.cdnUrl).catch(() => {}) } }] : []),
-    // Catalog models are Virvi's, not yours: view and add only
-    ...(!asset.packId ? [{ label: 'Delete model', onSelect: onDelete, danger: true, confirm: 'Click again to delete' }] : []),
+    // Only your own: catalog models are Virvi's, and shared ones their owner's
+    ...(canManage(asset) ? [{ label: 'Delete model', onSelect: onDelete, danger: true, confirm: 'Click again to delete' }] : []),
   ]
 }
 

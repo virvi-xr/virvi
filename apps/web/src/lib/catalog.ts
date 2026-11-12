@@ -1,4 +1,5 @@
 // Catalog credits shown with each model and on the credits page.
+import { SHARE_LICENSES } from '@virvixr/shared'
 
 export type AssetPack = { id: string; name: string; license: string; attribution: string }
 
@@ -12,7 +13,7 @@ const LICENSES: Record<string, string> = {
 }
 
 export function licenseLabel(license: string): string {
-  return LICENSES[license] ?? license
+  return LICENSES[license] ?? SHARE_LICENSES.find((l) => l.id === license)?.name ?? license
 }
 
 /** "by <artist> · <pack> · <license>" for a catalog model; '' for a user upload (no pack). */

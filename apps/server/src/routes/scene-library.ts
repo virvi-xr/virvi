@@ -71,11 +71,12 @@ export default async function sceneLibraryRoutes(app: FastifyInstance) {
     const owns = mediaAssetId
       ? await db.query.mediaAssets.findFirst({ where: and(eq(mediaAssets.id, mediaAssetId), eq(mediaAssets.ownerId, request.user.id)) })
       : await db.query.assetLibraryItems.findFirst({
-          // Your own upload, or a public catalog model (linkToScene refuses one in a switched-off pack)
+          // Your own upload, or a public model: Virvi's catalog (linkToScene refuses one in a switched-off pack) or one someone
+          // shared (LIV-20)
           where: and(
             eq(assetLibraryItems.id, assetItemId!),
             eq(assetLibraryItems.status, 'ready'),
-            or(...(isScenePass(request.user) ? [] : [eq(assetLibraryItems.uploadedBy, request.user.id)]), and(eq(assetLibraryItems.isPublic, true), isNotNull(assetLibraryItems.packId))),
+            or(...(isScenePass(request.user) ? [] : [eq(assetLibraryItems.uploadedBy, request.user.id)]), eq(assetLibraryItems.isPublic, true)),
           ),
         })
     if (!owns) return reply.status(403).send({ error: 'forbidden' })
