@@ -10,6 +10,7 @@ export class FakeDclDirectory implements DclDirectory {
   worldDeployers = new Map<string, string[]>()
   catalystHosts: string[] = []
   ownedNames = new Map<string, string[]>()
+  profileNames = new Map<string, string>() // wallet → Decentraland profile name
   down = false
   catalystsDown = false
   /** Only the land subgraph (estates) is down. */
@@ -50,6 +51,7 @@ export class FakeDclDirectory implements DclDirectory {
   async getWorldOwner(name: string) { this.hit(); return this.worldOwners.get(name.toLowerCase()) ?? null }
   async getWorldDeployers(name: string) { this.hit(); return this.worldDeployers.get(name.toLowerCase()) ?? [] }
   async getOwnedNames(address: string) { this.hit(); return this.ownedNames.get(address.toLowerCase()) ?? [] }
+  async getProfileName(address: string) { this.hit(); return this.profileNames.get(address.toLowerCase()) ?? null }
   async getCatalystHosts() {
     this.calls++
     if (this.catalystsDown) throw new DirectoryUnavailableError('fake catalyst list down')

@@ -58,13 +58,18 @@ const names = new Map<string, { label: string | null; at: number }>()
 /** For tests: forget every cached DCL name. */
 export const _resetWallNamesCache = () => names.clear()
 
-/** The wallet's first DCL name without `.dcl.eth`, cached an hour per wallet; null when it has none or the directory fails. */
+/**
+ * The wallet's name in Decentraland: the name on its profile (what people see over the avatar), else its first DCL
+ * NAME without `.dcl.eth`. Cached an hour per wallet; null when it has neither or the directory fails.
+ */
 async function dclName(wallet: string): Promise<string | null> {
   const hit = names.get(wallet)
   if (hit && Date.now() - hit.at < NAMES_TTL_MS) return hit.label
   try {
-    const [first] = await getDclDirectory().getOwnedNames(wallet)
-    const label = first ? first.replace(/\.dcl\.eth$/i, '') : null
+    const dir = getDclDirectory()
+    const profile = await dir.getProfileName(wallet).catch(() => null)
+    const [first] = profile ? [] : await dir.getOwnedNames(wallet)
+    const label = profile ?? (first ? first.replace(/\.dcl\.eth$/i, '') : null)
     names.set(wallet, { label, at: Date.now() })
     return label
   } catch {
@@ -79,7 +84,7 @@ const shortWallet = (wallet: string) => {
 }
 
 /**
- * What the wall calls a creator: a DCL name, else a short wallet, else a plain label. Never an email or display name.
+ * What the wall calls a creator: their Decentraland name (profile, else an owned NAME), else a short wallet, else a plain label. Never an email or display name.
  * With a primary wallet (the verified one last signed in with) only that wallet is named, so the label never names a
  * wallet the owner didn't sign in with. Only with no primary are the other linked wallets tried, oldest first.
  */

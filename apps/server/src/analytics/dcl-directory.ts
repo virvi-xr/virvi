@@ -30,6 +30,9 @@ export interface DclDirectory {
   getCatalystHosts(): Promise<string[]>
   /** The wallet's DCL NAMEs as World names (`<name>.dcl.eth`, lowercased). */
   getOwnedNames(address: string): Promise<string[]>
+  /** The name on the wallet's Decentraland profile, as people see it in-world (`Name#abcd` when it isn't a claimed
+   *  NAME); null when the wallet has no profile. */
+  getProfileName(address: string): Promise<string | null>
 }
 
 export class DirectoryUnavailableError extends Error {}
@@ -105,6 +108,7 @@ export class HttpDclDirectory implements DclDirectory {
   private catalysts = new TtlCache<string[]>(CATALYSTS_TTL_MS)
   private catalystsFailedAt = -Infinity
   private ownedNames = new TtlCache<string[]>()
+  private profileNames = new TtlCache<string | null>()
 
   constructor(private catalyst = config.catalystUrl, private worlds = config.worldsUrl, private subgraph = config.dclLandSubgraphUrl) {}
 
@@ -178,6 +182,20 @@ export class HttpDclDirectory implements DclDirectory {
    * `GET /lambdas/users/{address}/names` -> `{ elements: [{ name, contractAddress, tokenId, price }], totalAmount, pageNum, pageSize }`
    * (name has no `.dcl.eth` suffix); paged, so follow pageNum until totalAmount is covered.
    */
+  /** `GET /lambdas/profiles/{address}` -> `{ avatars: [{ name, hasClaimedName }] }`. */
+  async getProfileName(address: string): Promise<string | null> {
+    const a = address.toLowerCase()
+    return this.profileNames.getOrLoad(a, async () => {
+      const body = (await getJson(`${this.catalyst}/lambdas/profiles/${encodeURIComponent(a)}`)) as {
+        avatars?: Array<{ name?: unknown; hasClaimedName?: unknown }>
+      } | null
+      const avatar = body?.avatars?.[0]
+      const name = typeof avatar?.name === 'string' ? avatar.name.trim() : ''
+      if (!name) return null
+      return avatar?.hasClaimedName === true ? name : `${name}#${a.slice(-4)}`
+    })
+  }
+
   async getOwnedNames(address: string): Promise<string[]> {
     const a = address.toLowerCase()
     return this.ownedNames.getOrLoad(a, async () => {

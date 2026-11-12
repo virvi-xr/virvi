@@ -188,6 +188,15 @@ describe('studio wall of fame', () => {
     expect(creator('C')).toBe('A Virvi creator')
   })
 
+  it('prefers the name on the Decentraland profile over the first NAME the wallet owns', async () => {
+    const W = '0x3333333333333333333333333333333333333333'
+    const u = await createUser({ wallet: W })
+    dir.ownedNames.set(W, ['arzcrypto.dcl.eth', 'unknower.dcl.eth'])
+    dir.profileNames.set(W, 'Unknower')
+    await shown(u, { name: 'P' })
+    expect((await wall()).json().entries[0].creator).toBe('Unknower')
+  })
+
   describe('an owner with several wallets', () => {
     const OLD = '0x2222222222222222222222222222222222222222'
     const short = (w: string) => { const c = getAddress(w); return `${c.slice(0, 6)}…${c.slice(-4)}` }
