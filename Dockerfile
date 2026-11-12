@@ -5,7 +5,8 @@
 # =============================================================================
 
 # ── Stage 1: Build ───────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+# Pinned by digest so a build of the same commit later uses the same Node (LIV-165: reproducible website files)
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
@@ -40,6 +41,9 @@ ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY
 # below sees as an ARG (next.config.ts reads it); NEXT_PUBLIC_RELEASE overrides it
 ARG NEXT_PUBLIC_RELEASE
 ARG RAILWAY_GIT_COMMIT_SHA
+# Set by CI (.github/workflows/release.yml): the full commit SHA and the run that built this image (LIV-165)
+ARG VIRVI_COMMIT
+ARG VIRVI_BUILD_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WSS_URL=$NEXT_PUBLIC_WSS_URL
 ENV NEXT_PUBLIC_DOCS_URL=$NEXT_PUBLIC_DOCS_URL
@@ -48,6 +52,11 @@ ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
 ENV NEXT_PUBLIC_RELEASE=$NEXT_PUBLIC_RELEASE
 
 RUN pnpm turbo build
+
+# The release record (LIV-165): every website file's SHA-256, and what this image was built from, including the public
+# NEXT_PUBLIC_* values a rebuild needs to match (they are in the served JavaScript anyway; nothing secret goes here)
+RUN node scripts/release-manifest.mjs apps/web/out > apps/web/out/release-manifest.json \
+    && node scripts/build-info.mjs > build-info.json
 
 # Copy the Next.js static export into the dashboard directory
 RUN cp -r apps/web/out dashboard \
@@ -64,7 +73,7 @@ RUN find apps/server/src -name '*.ts' -not -path '*/db/schema.ts' -delete 2>/dev
     true
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
 WORKDIR /app
 
 # Optional: FFmpeg for HLS streaming support

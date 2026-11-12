@@ -55,6 +55,8 @@ export const PUBLIC_EXACT = [
   'GET /api/studio/render-frames/*', // the signed frame token is the auth (no bearer)
   'GET /api/studio/piece-sounds/*', // the signed sound token is the auth (no bearer)
   'GET /api/health', // health check
+  'GET /api/transparency', // what this server says it runs (LIV-165): public by design
+  'GET /.well-known/security.txt', // security contact (LIV-165)
   'GET /api/instance', // public: install mode and version (no secrets)
   'GET /metrics', // Prometheus scrape
   'GET /', // static dashboard

@@ -1,0 +1,106 @@
+# Builds each release from a public commit and signs a record of what it built (LIV-165). Production deploys the image
+# this pushes, by its commit tag, so anyone can check what virvi.io runs: see /transparency and scripts/verify-release.sh.
+#
+# Repository variables (Settings → Secrets and variables → Actions → Variables) hold the public NEXT_PUBLIC_* values
+# the website is built with. They are inlined into the website's JavaScript, so nothing secret goes there.
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  IMAGE: ghcr.io/virvi-xr/virvi
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build settings
+        id: args
+        run: |
+          echo "release=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          {
+            echo 'list<<ARGS'
+            echo "NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}"
+            echo "NEXT_PUBLIC_WSS_URL=${{ vars.NEXT_PUBLIC_WSS_URL }}"
+            echo "NEXT_PUBLIC_DOCS_URL=${{ vars.NEXT_PUBLIC_DOCS_URL }}"
+            echo "NEXT_PUBLIC_DISCORD_URL=${{ vars.NEXT_PUBLIC_DISCORD_URL }}"
+            echo "NEXT_PUBLIC_TURNSTILE_SITE_KEY=${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}"
+            echo "NEXT_PUBLIC_RELEASE=${GITHUB_SHA::12}"
+            echo "VIRVI_COMMIT=${GITHUB_SHA}"
+            echo "VIRVI_BUILD_URL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo 'ARGS'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: ${{ steps.args.outputs.list }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:main
+
+      - name: Sign where the image came from
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Take out the website manifest
+        run: |
+          cid=$(docker create "${IMAGE}:${GITHUB_SHA}")
+          docker cp "$cid:/app/dashboard/release-manifest.json" release-manifest.json
+          docker rm "$cid"
+
+      # Two builds of one commit must give the same website files, or nobody could check them
+      - name: Rebuild from scratch and compare
+        run: |
+          args=()
+          while IFS= read -r kv; do [ -n "$kv" ] && args+=(--build-arg "$kv"); done <<'ARGS'
+          ${{ steps.args.outputs.list }}
+          ARGS
+          docker buildx build --no-cache --load --target builder "${args[@]}" -t rebuild .
+          cid=$(docker create rebuild)
+          docker cp "$cid:/app/apps/web/out/release-manifest.json" rebuilt-manifest.json
+          docker rm "$cid"
+          if ! cmp -s release-manifest.json rebuilt-manifest.json; then
+            echo "::error::The website build isn't reproducible: these files differ"
+            node -e "const a=require('./release-manifest.json').files,b=require('./rebuilt-manifest.json').files;for(const k of new Set([...Object.keys(a),...Object.keys(b)]))if(a[k]!==b[k])console.log(k)"
+            exit 1
+          fi
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release-manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: release-manifest.json

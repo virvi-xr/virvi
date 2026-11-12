@@ -10,6 +10,7 @@ export function Footer({ onAdvertise }: { onAdvertise: () => void }) {
         <button type="button" onClick={onAdvertise} className="hover:text-white">Advertise</button>
         {discord && <a href={discord} className="hover:text-white">Discord</a>}
         {privacy && <a href={privacy} className="hover:text-white">Privacy</a>}
+        <a href="/transparency/" className="hover:text-white">Transparency</a>
       </div>
     </footer>
   )
