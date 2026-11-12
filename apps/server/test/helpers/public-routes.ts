@@ -53,6 +53,7 @@ export const PUBLIC_EXACT = [
   'POST /api/errors/reports', // public: a crash screen's Report; an optional bearer only names the sender
   'POST /api/errors/prompt', // public: "should I ask?" for an error; an optional account bearer applies that account's own prompt state, nothing else
   'GET /api/studio/render-frames/*', // the signed frame token is the auth (no bearer)
+  'GET /api/studio/piece-sounds/*', // the signed sound token is the auth (no bearer)
   'GET /api/health', // health check
   'GET /api/instance', // public: install mode and version (no secrets)
   'GET /metrics', // Prometheus scrape
