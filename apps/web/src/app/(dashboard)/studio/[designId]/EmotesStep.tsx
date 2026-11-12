@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, type Tone } from '@/components/ui'
 import {
-  checkedEmotes, emoteState, refusalMessage, setViewKey, OWN_EMOTE,
+  checkedEmotes, emoteSoundOf, emoteState, refusalMessage, setViewKey, OWN_EMOTE,
   type EmoteState, type RenderView, type StudioDetail,
 } from '@/lib/studio'
 import SpinStage from './SpinStage'
@@ -118,7 +118,7 @@ export default function EmotesStep({ designId, detail, target, onChanged, catego
         {!hasPieces ? (
           <p className="absolute inset-0 flex items-center justify-center px-8 text-center text-sm text-gray-400">The agent hasn’t built anything yet. Describe what you want on the left.</p>
         ) : ready ? (
-          <SpinStage view={key} urls={urls} loop fps={shown!.fps ?? undefined} label={`${emoteName(emote)}, ${bodyShape}, ${categories ? 'the pieces you’re finalizing worn' : 'every piece worn'}`} />
+          <SpinStage view={key} urls={urls} loop fps={shown!.fps ?? undefined} sound={emoteSoundOf(detail)} label={`${emoteName(emote)}, ${bodyShape}, ${categories ? 'the pieces you’re finalizing worn' : 'every piece worn'}`} />
         ) : shown?.status === 'ready' ? (
           <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-400" aria-live="polite">Loading…</p>
         ) : shown?.status === 'failed' ? (

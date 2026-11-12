@@ -3,6 +3,7 @@ import {
   canSend, checkoutBody, composerState, paidByReader, paidSummary, reloadsOn, revisionActions, viewButtonRendering, dialogTotal, finalizeStrip, frameAt, paymentBanner, initialTicks, nextPoll, pieceTabStatus, progressFor, slotSelection, stageState, viewKey,
   type FinalizedRevision, type Quote, type QuoteLine, type StudioDetail, type StudioPiece, type StudioEvent, type StudioProposal,
 } from './studio'
+import { emoteSoundOf } from './studio'
 import { formatBytesShort, uploadProblem } from './studio'
 import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudioFlag } from './studio'
 import { giftCodeStatus, latestRenderUrl, trialCtx, trialNudge } from './studio'
@@ -806,5 +807,15 @@ describe('refusalMessage for an account-only action', () => {
   it('uses the sign-up sheet words when the sheet was closed', () => {
     expect(refusalMessage({ status: 403, body: { error: 'account_required', action: 'upload_more' } as never }, NOW).text)
       .toBe('Create a free account to upload more images.')
+  })
+})
+
+describe('emoteSoundOf', () => {
+  const d = (kind: string, sound: string | null | undefined) => ({ design: { kind }, pieces: [{ category: kind === 'emote' ? 'emote' : 'hat', revision: { sound } }] }) as any
+  it("is an emote design's own sound, and nothing for a wearable or a silent emote", () => {
+    expect(emoteSoundOf(d('emote', 'https://api.virvi.io/api/studio/piece-sounds/t/fart.ogg'))).toBe('https://api.virvi.io/api/studio/piece-sounds/t/fart.ogg')
+    expect(emoteSoundOf(d('emote', null))).toBeNull()
+    expect(emoteSoundOf(d('emote', undefined))).toBeNull()
+    expect(emoteSoundOf(d('wearable', 'x'))).toBeNull()
   })
 })

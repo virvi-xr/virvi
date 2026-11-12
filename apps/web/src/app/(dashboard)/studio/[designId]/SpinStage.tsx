@@ -15,14 +15,19 @@ function preload(urls: string[]): Promise<void> {
 
 /**
  * A rendered view on the stage: drag to turn it (one stage width is one full turn); `loop` also plays it at `fps`
- * (12 unless given), for an animation. The frames shown stay until the next view's frames have all loaded.
+ * (12 unless given), for an animation. The frames shown stay until the next view's frames have all loaded. `sound`:
+ * an emote's sound, played with the loop (back to its start each time round, quiet while dragged), with a mute toggle.
  */
-export default function SpinStage({ view, urls, loop, label, fps = LOOP_FPS }: { view: string; urls: string[]; loop: boolean; label: string; fps?: number }) {
+export default function SpinStage({ view, urls, loop, label, fps = LOOP_FPS, sound = null }: { view: string; urls: string[]; loop: boolean; label: string; fps?: number; sound?: string | null }) {
   const [shown, setShown] = useState<string[]>([])
   const [frame, setFrame] = useState(0)
   const [loading, setLoading] = useState(true)
   const drag = useRef<{ x: number; start: number; width: number } | null>(null)
   const shownView = useRef<string | null>(null)
+  const audio = useRef<HTMLAudioElement | null>(null)
+  const [soundOn, setSoundOn] = useState(true)
+  const [dragging, setDragging] = useState(false)
+  const playing = !!sound && soundOn && loop && !loading && shown.length > 1 && !dragging
   const key = urls.join('\n')
 
   useEffect(() => {
@@ -48,8 +53,24 @@ export default function SpinStage({ view, urls, loop, label, fps = LOOP_FPS }: {
     return () => clearInterval(t)
   }, [loop, shown.length, fps])
 
+  // The sound follows the frames: it starts where they are, and goes back to its start when they loop
+  useEffect(() => {
+    const a = audio.current
+    if (!a) return
+    if (!playing) { a.pause(); return }
+    a.currentTime = frame / fps
+    // A browser that won't play sound before the person has clicked on the page: show it muted until they do
+    a.play().catch(() => setSoundOn(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, sound])
+  useEffect(() => {
+    const a = audio.current
+    if (playing && a && frame === 0) a.currentTime = 0
+  }, [frame, playing])
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (shown.length < 2) return
+    setDragging(true)
     e.currentTarget.setPointerCapture(e.pointerId)
     drag.current = { x: e.clientX, start: frame, width: e.currentTarget.clientWidth }
   }
@@ -57,7 +78,7 @@ export default function SpinStage({ view, urls, loop, label, fps = LOOP_FPS }: {
     const d = drag.current
     if (d) setFrame(frameAt(d.start, e.clientX - d.x, d.width, shown.length))
   }
-  const onPointerUp = () => { drag.current = null }
+  const onPointerUp = () => { drag.current = null; setDragging(false) }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (shown.length < 2) return
@@ -75,6 +96,16 @@ export default function SpinStage({ view, urls, loop, label, fps = LOOP_FPS }: {
       {shown[frame] && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={shown[frame]} alt="" draggable={false} className="pointer-events-none h-full w-full object-contain" />
+      )}
+      {sound && (
+        <>
+          <audio ref={audio} src={sound} loop preload="auto" />
+          <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => setSoundOn((on) => !on)}
+            aria-pressed={soundOn} aria-label={soundOn ? 'Mute the emote’s sound' : 'Play the emote’s sound'}
+            className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-gray-200 hover:text-white">
+            {soundOn ? '🔊 Sound on' : '🔇 Muted'}
+          </button>
+        </>
       )}
       {loading && (
         <span className="absolute bottom-2 right-2 rounded bg-black/60 px-2 py-0.5 text-xs text-gray-300">Loading…</span>

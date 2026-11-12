@@ -87,7 +87,8 @@ export type StudioPiece = {
   id: string
   category: string
   name: string
-  revision: { number: number; changeKind: string; checker: Checker; createdAt: string } | null
+  /** `sound`: an emote's sound, a signed link, when it has one. */
+  revision: { number: number; changeKind: string; checker: Checker; createdAt: string; sound?: string | null } | null
   renders: Record<string, StudioView>
   finalized: FinalizedRevision[]
 }
@@ -1146,4 +1147,10 @@ export function takeUnsent(store: RemovableStore | null, designId: string): { te
 export type AdminWallEntry = {
   designId: string; name: string; kind: StudioKind; creator: string; marketplaceUrl: string | null; shownAt: string
   hidden: boolean; ownerEmail: string | null
+}
+
+/** The sound an emote view plays with: an emote design's own, from its emote piece's revision. */
+export function emoteSoundOf(detail: Pick<StudioDetail, 'design' | 'pieces'>): string | null {
+  if (detail.design.kind !== 'emote') return null
+  return detail.pieces.find((p) => p.category === 'emote')?.revision?.sound ?? null
 }
