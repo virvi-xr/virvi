@@ -219,7 +219,7 @@ MANA is off until `STUDIO_MANA_RECIPIENT` is set. Then the Pay with MANA button 
 - `STUDIO_MANA_TOKEN`: the MANA token contract on Polygon, default `0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4`.
   **Confirm this address on Polygonscan (and in Decentraland's docs) before turning MANA on.** If it is wrong, nothing
   is ever settled by mistake: payments just don't verify.
-- `STUDIO_SCENE_PARCEL`: the studio scene's base parcel as `x,y` (for example `-12,34`). The studio pass (below) is only
+- `STUDIO_SCENE_PARCEL`: the base parcel of each copy of the studio scene, as `x,y`, separated by `;` or spaces (for example `104,60;-9,-122`). The studio pass (below) is only
   issued to a scene on this parcel, and only from an official Genesis City realm: a World or someone else's realm that
   claims the parcel gets no studio pass.
 

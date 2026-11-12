@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { authHandoffCodes } from '../src/db/schema.js'
-import { config } from '../src/config.js'
+import { config, parcelList } from '../src/config.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
 import { memoryStudioStore, setStudioStore } from '../src/studio/store.js'
 import { resetDb } from './helpers/db.js'
@@ -30,14 +30,14 @@ const PARCEL = '-12,34'
 
 describe('the studio pass', () => {
   let app: Awaited<ReturnType<typeof testApp>>
-  const prev = { enabled: config.studioEnabled, parcel: config.studioSceneParcel }
+  const prev = { enabled: config.studioEnabled, parcels: config.studioSceneParcels }
   beforeAll(() => {
     ;(config as any).studioEnabled = true
-    ;(config as any).studioSceneParcel = PARCEL
+    ;(config as any).studioSceneParcels = [PARCEL]
   })
   afterAll(() => {
     ;(config as any).studioEnabled = prev.enabled
-    ;(config as any).studioSceneParcel = prev.parcel
+    ;(config as any).studioSceneParcels = prev.parcels
     setStudioStore(null)
   })
   beforeEach(async () => {
@@ -131,14 +131,30 @@ describe('the studio pass', () => {
       }
     })
 
+    it('every listed copy of the studio gets the pass, and only those', async () => {
+      ;(config as any).studioSceneParcels = parcelList('104,60; -9,-122 -54,147')
+      try {
+        for (const parcel of ['104,60', '-9,-122', '-54,147']) expect((await signIn({ 'x-test-parcel': parcel })).json().studio, parcel).toBe(true)
+        expect((await signIn({ 'x-test-parcel': '-12,34' })).json().studio).toBeUndefined()
+      } finally {
+        ;(config as any).studioSceneParcels = [PARCEL]
+      }
+    })
+
+    it('reads the parcel list leniently', () => {
+      expect(parcelList('104,60;-9,-122')).toEqual(['104,60', '-9,-122'])
+      expect(parcelList(' 1,2 ;; nope 3,-4 ')).toEqual(['1,2', '3,-4'])
+      expect(parcelList(undefined)).toEqual([])
+    })
+
     it('no studio parcel set: nobody gets a studio pass', async () => {
-      ;(config as any).studioSceneParcel = null
+      ;(config as any).studioSceneParcels = []
       try {
         const body = (await signIn()).json()
         expect(body.studio).toBeUndefined()
         expect(verifySessionToken(body.accessToken)!.via).toBeUndefined()
       } finally {
-        ;(config as any).studioSceneParcel = PARCEL
+        ;(config as any).studioSceneParcels = [PARCEL]
       }
     })
   })

@@ -192,6 +192,12 @@ export function releaseFrom(e: Record<string, string | undefined>, stamped: stri
   return /^[A-Za-z0-9._-]+$/.test(raw) ? raw.slice(0, 12) : 'dev'
 }
 
+
+/** "104,60; -9,-122" → ["104,60", "-9,-122"]: Genesis City parcels, anything malformed dropped. */
+export function parcelList(raw: string | undefined | null): string[] {
+  return (raw ?? '').split(/[;\s]+/).map((p) => p.trim()).filter((p) => /^-?\d+,-?\d+$/.test(p))
+}
+
 export const config = {
   mode,
 
@@ -342,8 +348,9 @@ export const config = {
   studioMaxMembers: positiveInt(env('STUDIO_MAX_MEMBERS'), 50),
   studioPrices: studioPricesFrom(process.env),
   studioMana: manaSettingsFrom(process.env),
-  // The studio scene's parcel (for example "-12,34"), where the checkout link sends a returning visitor
-  studioSceneParcel: env('STUDIO_SCENE_PARCEL') || null,
+  // The studio scene's parcels: each copy of the scene's base parcel, "x,y", separated by ";" or spaces
+  // (for example "104,60; -9,-122"). Only these get the studio pass.
+  studioSceneParcels: parcelList(env('STUDIO_SCENE_PARCEL')),
   // Development only: a cloud-mode server on your machine gives the studio pass to a Decentraland local preview
   // (realm localhost or 127.0.0.1) on STUDIO_SCENE_PARCEL. Never set in production, and ignored when NODE_ENV=production.
   studioLocalPreview: env('STUDIO_LOCAL_PREVIEW') === 'true' && process.env.NODE_ENV !== 'production',

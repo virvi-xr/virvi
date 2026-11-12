@@ -33,16 +33,16 @@ const C = '0x00000000000000000000000000000000000000c3'
 
 describe('the studio pass on the collaboration routes', () => {
   let app: Awaited<ReturnType<typeof testApp>>
-  const prev = { enabled: config.studioEnabled, parcel: config.studioSceneParcel, image: config.studioWorkerImage }
+  const prev = { enabled: config.studioEnabled, parcels: config.studioSceneParcels, image: config.studioWorkerImage }
   beforeAll(() => {
     ;(config as any).studioEnabled = true
-    ;(config as any).studioSceneParcel = PARCEL
+    ;(config as any).studioSceneParcels = [PARCEL]
     ;(config as any).studioWorkerImage = 'registry.fly.io/vlm-studio-worker:test'
     initBus({ publish: () => {}, subscribe: () => {}, unsubscribe: () => {} })
   })
   afterAll(() => {
     ;(config as any).studioEnabled = prev.enabled
-    ;(config as any).studioSceneParcel = prev.parcel
+    ;(config as any).studioSceneParcels = prev.parcels
     ;(config as any).studioWorkerImage = prev.image
     setStudioStore(null)
     setMachineDeps(null)

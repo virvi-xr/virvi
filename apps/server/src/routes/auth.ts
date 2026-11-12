@@ -251,8 +251,7 @@ export default async function authRoutes(app: FastifyInstance) {
               (config.mode !== 'cloud' || config.studioLocalPreview) && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(signed.scene.realm.hostname)
             // The studio scene: its Genesis City parcel, on an official realm (a World or a stranger's realm can claim any parcel).
             studio =
-              !!config.studioSceneParcel &&
-              signed.scene.parcel === config.studioSceneParcel &&
+              config.studioSceneParcels.includes(signed.scene.parcel) &&
               (localPreview || (!isWorldRealm(signed.scene) && (await isOfficialRealm(signed.scene))))
             if (studio) {
               request.log.info({ ctx: { parcel: signed.scene.parcel, realm: signed.scene.realm } }, 'studio scene sign-in')
