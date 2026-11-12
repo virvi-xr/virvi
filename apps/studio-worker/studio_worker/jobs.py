@@ -390,13 +390,19 @@ def _tour_render(job, client, pieces, render_fn, result):
 
 
 def _set_render(job, client, pieces, spec, render_fn, result):
-    """Every piece (or Finalize's selection) worn together, walking round once through the emote: renders/set/<viewKey>/."""
+    """Every piece (or Finalize's selection) worn together, walking round once through the emote (or, with an `angle`,
+    playing it from that side): renders/set/<viewKey>/."""
     pieces = _chosen(pieces, spec.get('categories'))
     if not pieces:
         result['error'] = 'the design has no pieces'
         return
     view = {'bodyShape': spec.get('bodyShape') or 'male', 'outfit': spec.get('outfit') or 'default',
             'emote': spec.get('emote') or 'own', 'mode': 'walk'}
+    if spec.get('angle') is not None:  # the emote from one side, the camera still
+        if spec['angle'] not in renderer.PLAY_ANGLES:
+            result['error'] = f"unknown angle {spec['angle']!r}"
+            return
+        view = {**view, 'mode': 'play', 'angle': spec['angle']}
     key = view_key(view)
     _phase(client, job['jobId'], 'rendering')
     with tempfile.TemporaryDirectory() as tmp:
@@ -419,7 +425,8 @@ def view_key(view: dict) -> str:
         return view['mode']
     if view['mode'] == 'orbit':
         return f"orbit-{view['bodyShape']}"
-    return '-'.join([view['mode'], view['bodyShape'], view['outfit']] + ([view['emote']] if view.get('emote') else []))
+    return '-'.join([view['mode'], view['bodyShape'], view['outfit']] + ([view['emote']] if view.get('emote') else [])
+                    + ([view['angle']] if view['mode'] == 'play' else []))
 
 
 def _render_and_upload(client, job_id, piece: Piece, view, render_fn) -> tuple[dict, str | None]:

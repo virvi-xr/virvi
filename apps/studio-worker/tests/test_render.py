@@ -162,6 +162,31 @@ def test_walk_schedule_without_a_length():
     assert render.walk_schedule(0) == ([0.0] * 96, 24.0)
 
 
+def test_play_schedule_steps_once_through_at_12_a_second():
+    times, fps = render.play_schedule(3.0)
+    assert len(times) == 36 and fps == pytest.approx(12.0) and times[1] == pytest.approx(3.0 / 36)
+
+
+def test_play_schedule_caps_a_long_emote_at_72():
+    times, fps = render.play_schedule(10.0)
+    assert len(times) == 72 and fps == pytest.approx(7.2) and times[-1] < 10.0
+
+
+def test_play_schedule_without_a_length():
+    assert render.play_schedule(0) == ([0.0], 12.0)
+
+
+@pytest.mark.parametrize('angle, turn', [('front', None), ('side', math.pi / 2), ('back', math.pi)])
+def test_play_turns_once_to_its_side_then_holds_the_camera_still(tmp_path, stub, angle, turn):
+    calls = stub()  # the stub's emote length is 3.0 s
+    r = render.render([WAVE], {**SPIN, 'mode': 'play', 'emote': 'own', 'angle': angle}, tmp_path, watchdog_sec=60)
+    assert r['ok'] is True, r
+    assert len(r['frames']) == 36 and r['fps'] == pytest.approx(12.0)
+    assert len([c for c in calls if c['method'] == 'goTo']) == 36
+    turns = [c['params'][0]['alpha'] for c in calls if c['method'] == 'changeCameraPosition']
+    assert turns == ([] if turn is None else [pytest.approx(turn)])
+
+
 def test_orbit_and_walk_queries():
     assert 'type=wearable' in render._query({**SPIN, 'mode': 'orbit'})
     # with an outfit the page would show the outfit's first wearable (the eyes) instead of the item

@@ -27,7 +27,11 @@ import { inBackground, notifyPrompt, notifySupportNote } from '../notifications/
 /** What the dashboard's studio routes share: limits, view keys, the design detail, and queuing prompts and renders. */
 
 export type Design = typeof studioDesigns.$inferSelect
-export type View = { bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: null | typeof BASE_EMOTES[number] }
+export type View = {
+  bodyShape: 'male' | 'female'; outfit: 'default' | 'outfit-2' | 'outfit-3'; emote: null | typeof BASE_EMOTES[number]
+  /** An emote design's play view: its emote from this side, the camera still (a set render, `play-…`). */
+  angle?: typeof EMOTE_ANGLES[number]
+}
 
 export const PROMPT_LIMITS = { timeoutSec: 1500, maxTurns: 80, costCeilingUsd: 3 }
 /** The outcomes a free Continue may follow: the agent stopped at a limit with its work in hand. */
@@ -76,6 +80,8 @@ export const WEARABLE_CATEGORIES = [
 export const BODY_SHAPES = ['male', 'female'] as const
 export const OUTFITS = ['default', 'outfit-2', 'outfit-3'] as const
 export const BASE_EMOTES = ['idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump'] as const
+/** The sides an emote design's play views show it from. */
+export const EMOTE_ANGLES = ['front', 'side', 'back'] as const
 /** An emote design's emote view plays its own animation. */
 export const OWN_EMOTE = 'own'
 /** Inspect's frames: the eye-level ring, then the whole sphere (CONTRACT.md, `orbit-<bodyShape>`). */
@@ -92,10 +98,14 @@ export const orbitKey = (bodyShape: View['bodyShape']) => `orbit-${bodyShape}`
 /** Inspect's view key: a scene piece has no body shape. */
 export const orbitKeyFor = (kind: string, bodyShape: View['bodyShape']) => kind === 'scene' ? SCENE_ORBIT_KEY : orbitKey(bodyShape)
 
-/** An emote view with every piece worn: `walk-<bodyShape>-<outfit>-<emote>`, `own` for an emote design. */
+/**
+ * An emote view with every piece worn: `walk-<bodyShape>-<outfit>-<emote>`, `own` for an emote design, which also has
+ * play views from one side, `play-<bodyShape>-<outfit>-own-<angle>`.
+ */
 export function setViewKey(kind: string, view: View): string {
   if (kind === 'scene') return TOUR_KEY
-  return `walk-${view.bodyShape}-${view.outfit}-${kind === 'emote' ? OWN_EMOTE : view.emote}`
+  const emote = kind === 'emote' ? OWN_EMOTE : view.emote
+  return view.angle ? `play-${view.bodyShape}-${view.outfit}-${emote}-${view.angle}` : `walk-${view.bodyShape}-${view.outfit}-${emote}`
 }
 
 /** The set of piece revisions a design-level view belongs to: the latest revision ids, sorted and joined. */

@@ -75,6 +75,9 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
 - `walk-<bodyShape>-<outfit>-<emote>` (an emote view, under `renders/set/`): the emote stepped through its timeline
   at 24 frames a second while the camera turns once round, over at least 4 s (a short emote loops) and at most 120
   frames. `<emote>` is `own` for an emote design's own animation.
+- `play-<bodyShape>-<outfit>-own-<angle>` (an emote design's play view, under `renders/set/`): the emote stepped once
+  through its timeline with the camera still, from the `front`, `side` (turned a quarter, as a look's `right`) or
+  `back`, at 12 frames a second and at most 72 frames (a longer emote's `fps` is lower).
 
 ## Job
 
@@ -120,6 +123,7 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   - `{"set": true, "bodyShape", "outfit", "emote": <base emote>|"own"}`: every current piece worn together in a
     walk-around, uploaded to `renders/set/<viewKey>/`. The result carries `set` and an empty `pieces`. With
     `"categories": [...]` (Finalize checking some of the pieces) only those pieces are worn.
+    With `"angle": "front"|"side"|"back"` it is a play view instead of a walk-around.
 - `fixClipping`, on a prompt job: `{"emote": <base emote>|"own", "bodyShape", "outfit"}` when the prompt is the
   server's free clipping fix (with `categories`, the pieces worn in the view the person saw: only those are worn in the
   frames and named to studio-preview). Before the agent runs, the worker writes 16 frames of that emote, every piece worn, to

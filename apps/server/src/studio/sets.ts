@@ -99,6 +99,7 @@ export async function requestSetRender(
         render: design.kind === 'scene' ? { set: true, tour: true }
           : {
             set: true, bodyShape: view.bodyShape, outfit: view.outfit, emote: design.kind === 'emote' ? OWN_EMOTE : view.emote,
+            ...(view.angle ? { angle: view.angle } : {}), // a play view: from that side, the camera still
             ...(categories ? { categories } : {}), // only these pieces are worn
           },
         revisions, // the pieces it is for: a change before it runs cancels it (results.ts cancelSupersededRenders)

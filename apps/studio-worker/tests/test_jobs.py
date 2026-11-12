@@ -42,7 +42,8 @@ def fake_render(calls):
             else:
                 paths.append(out / f'{i:03d}.webp')
                 Image.new('RGB', (8, 8), (i, 0, 0)).save(paths[-1], 'WEBP')
-        return {'ok': True, 'frames': paths, 'error': None, 'bootSec': 1.0, **({'fps': 24.0} if mode in ('walk', 'tour') else {})}
+        fps = {'walk': 24.0, 'tour': 24.0, 'play': 12.0}.get(mode)
+        return {'ok': True, 'frames': paths, 'error': None, 'bootSec': 1.0, **({'fps': fps} if fps else {})}
     return render
 
 
@@ -387,6 +388,25 @@ def test_set_render_job_wears_every_piece(api, tmp_path):
     assert 'worn' not in result
     assert 'job-r/renders/set/walk-male-default-run/000.webp' in api.files
     assert 'job-r/renders/set/walk-male-default-run/095.webp' in api.files
+
+
+def test_set_render_job_with_an_angle_plays_the_emote_from_that_side(api, tmp_path):
+    renders = []
+    design = design_with(tmp_path, 'hat')
+    result = jobs.run_job(render_job({'set': True, 'bodyShape': 'male', 'outfit': 'default', 'emote': 'own', 'angle': 'back'}),
+                          client(api), design, render_fn=fake_render(renders), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert renders[0][1] == {'bodyShape': 'male', 'outfit': 'default', 'emote': 'own', 'mode': 'play', 'angle': 'back'}
+    assert result['set'] == {'viewKey': 'play-male-default-own-back', 'frames': 36, 'fps': 12.0}
+    assert 'job-r/renders/set/play-male-default-own-back/000.webp' in api.files
+
+
+def test_set_render_job_with_an_unknown_angle_fails(api, tmp_path):
+    renders = []
+    design = design_with(tmp_path, 'hat')
+    result = jobs.run_job(render_job({'set': True, 'bodyShape': 'male', 'outfit': 'default', 'emote': 'own', 'angle': 'top'}),
+                          client(api), design, render_fn=fake_render(renders), as_user=None)
+    assert result['outcome'] != 'ok' and 'angle' in result['error'] and renders == []
 
 
 def test_set_render_job_for_a_selection_wears_only_those_pieces(api, tmp_path):

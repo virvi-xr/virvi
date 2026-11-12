@@ -39,6 +39,10 @@ ORBIT_ROWS = (90, 60, 120, 30, 150)
 ORBIT_COLS = 24
 ORBIT_FRAMES = len(ORBIT_ROWS) * ORBIT_COLS + 2
 WALK_FPS, WALK_MIN_SEC, WALK_MAX_FRAMES = 24, 4.0, 120
+# A play view: the emote from one side, the camera still, 12 a second (scenes play it back on a hologram), 72 at most
+PLAY_FPS, PLAY_MAX_FRAMES = 12, 72
+# How far the camera turns from the front for each play view (radians, the same way a spin and a look turn)
+PLAY_ANGLES = {'front': 0.0, 'side': math.pi / 2, 'back': math.pi}
 EMOTE_SAMPLE = 16  # frames studio-preview --emote keeps
 SCENE_MODES = ('scene-orbit', 'scale', 'tour')  # rendered by scene_render, in the worker's own Babylon page
 SCENE_KINDS = ('building', 'furniture', 'decor')
@@ -68,15 +72,26 @@ def walk_schedule(length: float) -> tuple[list[float], float]:
     return [(i * total / n) % length for i in range(n)], n / total
 
 
+def play_schedule(length: float) -> tuple[list[float], float]:
+    """The animation times of a play view's frames and the rate they play back at: one pass through the emote at 12 a
+    second, at most 72 frames (a longer emote plays back slower). One frame at 0 without a length."""
+    if not length or length <= 0:
+        return [0.0], float(PLAY_FPS)
+    n = max(1, min(PLAY_MAX_FRAMES, round(length * PLAY_FPS)))
+    return [i * length / n for i in range(n)], n / length
+
+
 def render(pieces: list[dict], view: dict, out: Path, frames: int = 36, size: int = 512,
            watchdog_sec: int = 300) -> dict:
     """pieces: [{'category', 'glbs': {'male'|'female'|'unisex': Path}, 'meta'}];
-    view: {'bodyShape': 'male'|'female', 'outfit', 'emote', 'mode': 'spin'|'emote'|'look'|'thumbnail'|'orbit'|'walk'}.
+    view: {'bodyShape': 'male'|'female', 'outfit', 'emote', 'mode': 'spin'|'emote'|'look'|'thumbnail'|'orbit'|'walk'|'play'}
+    (a play view also has 'angle': 'front'|'side'|'back').
     A thumbnail is one 256 px square PNG on a transparent background (an emote paused halfway). An orbit is the item
     alone from every angle (`ring` keeps the eye-level 24); a walk-around steps the emote through its timeline while
-    the camera turns once (`sample`: keep that many evenly spaced frames, as PNGs). Both ignore `frames`.
+    the camera turns once (`sample`: keep that many evenly spaced frames, as PNGs); a play view steps the emote through
+    once with the camera still, turned to its angle. They ignore `frames`.
     Returns {'ok', 'frames': [Path], 'error': None|'timeout'|'item_not_loaded'|'blank'|str, 'bootSec'}, plus
-    'fps' for a walk-around, and on 'blank' `blankFrame`: {'index', 'path'}, that frame as a PNG beside `out`."""
+    'fps' for a walk-around or a play view, and on 'blank' `blankFrame`: {'index', 'path'}, that frame as a PNG beside `out`."""
     if view.get('mode') in SCENE_MODES:
         from . import scene_render
         return scene_render.render(pieces, view, out, frames, size, watchdog_sec)
@@ -232,6 +247,13 @@ def _run(spec: dict) -> dict:
                      for prev, i in zip([-1] + keep, keep)]
             if view.get('sample'):
                 names = [f'{j:02d}.png' for j in range(len(keep))]
+        elif mode == 'play':
+            page.evaluate("__studio.call('emote', 'pause')")
+            times, fps = play_schedule(page.evaluate("__studio.call('emote', 'getLength')") or 0)
+            turn = PLAY_ANGLES[view.get('angle') or 'front']
+            steps = [[('emote', 'goTo', [t])] for t in times]
+            if turn:
+                steps[0].insert(0, ('scene', 'changeCameraPosition', [{'alpha': turn}]))
         else:
             n = 4 if mode == 'look' else frames
             turn = ('scene', 'changeCameraPosition', [{'alpha': 2 * math.pi / n}])

@@ -36,7 +36,7 @@ import { clearRating, downRating, feedbackText, findRevision, parseRating, rateR
 import { reportManaTx } from '../studio/mana/settle.js'
 import { requestManaRefund } from '../studio/mana/refunds.js'
 import {
-  BASE_EMOTES, BODY_SHAPES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
+  BASE_EMOTES, BODY_SHAPES, EMOTE_ANGLES, OUTFITS, OWN_EMOTE, WEARABLE_CATEGORIES, setViewKey,
   addSupportNote, designDetail, NOTE_MAX, openDesignCount, ownerWords, totalDesignCount, publicDesign, publicDesigns, queuePrompt, requestOrbit, requestRender, usage, type Design, type FixClipping, type View,
 } from '../studio/designs.js'
 
@@ -905,7 +905,7 @@ export default async function studioRoutes(app: FastifyInstance) {
    * The set view a request names (a body or a query): the walk-through for a scene design (it has a building), else an
    * emote view (a base emote for a wearable design, the design's own, null, for an emote) and Finalize's selection.
    */
-  const setViewOf = async (d: Design, b: { bodyShape?: unknown; outfit?: unknown; emote?: unknown; categories?: unknown }, from: 'body' | 'query') => {
+  const setViewOf = async (d: Design, b: { bodyShape?: unknown; outfit?: unknown; emote?: unknown; angle?: unknown; categories?: unknown }, from: 'body' | 'query') => {
     if (d.kind === 'scene') {
       if (!(await hasBuilding(d.id))) return { ok: false, status: 404, error: 'no_building' } as const
       return { ok: true, view: TOUR_VIEW, categories: null } as const
@@ -914,10 +914,13 @@ export default async function studioRoutes(app: FastifyInstance) {
     if (!(OUTFITS as readonly unknown[]).includes(b.outfit)) return { ok: false, status: 400, error: 'unknown outfit' } as const
     const emote = (from === 'query' && b.emote === '' ? null : b.emote) ?? null
     if (d.kind === 'emote' ? emote !== null : !(BASE_EMOTES as readonly unknown[]).includes(emote)) return { ok: false, status: 400, error: 'unknown emote' } as const
+    // An emote design's play views: the emote from one side (none of a wearable's base emotes have them)
+    const angle = (from === 'query' && b.angle === '' ? null : b.angle) ?? null
+    if (angle !== null && (d.kind !== 'emote' || !(EMOTE_ANGLES as readonly unknown[]).includes(angle))) return { ok: false, status: 400, error: 'unknown angle' } as const
     // Finalize's selection: only the chosen and finalized pieces are worn
     const categories = chosenCategories(b.categories, from)
     if (categories === undefined) return { ok: false, status: 400, error: BAD_CATEGORIES } as const
-    return { ok: true, view: { bodyShape: b.bodyShape, outfit: b.outfit, emote } as View, categories } as const
+    return { ok: true, view: { bodyShape: b.bodyShape, outfit: b.outfit, emote, ...(angle ? { angle } : {}) } as View, categories } as const
   }
 
   // An emote view with every piece worn, or a scene's walk-through: its frames when ready, else queued now

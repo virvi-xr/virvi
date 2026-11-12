@@ -231,6 +231,33 @@ describe('studio preview steps', () => {
       expect((job.payload as any).render.emote).toBe('own')
     })
 
+    it('an emote design has play views from the front, side and back, each its own set render', async () => {
+      const u = await createUser()
+      const d = (await create(u, { kind: 'emote', agent: 'claude' })).json()
+      await addRevision(d, 'emote')
+      for (const angle of ['front', 'side', 'back']) {
+        const key = `play-male-default-own-${angle}`
+        expect((await setRender(u, d.id, { bodyShape: 'male', outfit: 'default', emote: null, angle })).json()).toEqual({ status: 'queued' })
+        const [row] = await db.select().from(studioSetRenders).where(eq(studioSetRenders.viewKey, key))
+        const [job] = await db.select().from(studioJobs).where(eq(studioJobs.id, row.jobId))
+        expect((job.payload as any).render).toMatchObject({ set: true, emote: 'own', angle })
+        await finish(row.jobId, renderResult(row.jobId, [], { set: { viewKey: key, frames: 36, fps: 12 } }))
+      }
+      const views = (await detail(u, d.id)).set.views
+      expect(views['play-male-default-own-back']).toMatchObject({ status: 'ready', frames: 36, fps: 12 })
+      expect(Object.keys(views).sort()).toEqual(['play-male-default-own-back', 'play-male-default-own-front', 'play-male-default-own-side'])
+    })
+
+    it('only an emote design has play views, and only from known sides', async () => {
+      const u = await createUser()
+      const e = (await create(u, { kind: 'emote', agent: 'claude' })).json()
+      await addRevision(e, 'emote')
+      expect((await setRender(u, e.id, { bodyShape: 'male', outfit: 'default', emote: null, angle: 'top' })).statusCode).toBe(400)
+      const v = await createUser()
+      const w = await twoPieces(v)
+      expect((await setRender(v, w.id, { bodyShape: 'male', outfit: 'default', emote: 'run', angle: 'back' })).statusCode).toBe(400)
+    })
+
     it('set view input is checked', async () => {
       const u = await createUser()
       const d = await twoPieces(u)

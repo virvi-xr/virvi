@@ -109,6 +109,7 @@ describe('design studio schema', () => {
     expect(revisionsKey([])).toBe('')
     expect(setViewKey('emote', { bodyShape: 'female', outfit: 'default', emote: null })).toBe('walk-female-default-own')
     expect(setViewKey('wearable', { bodyShape: 'male', outfit: 'outfit-2', emote: 'run' })).toBe('walk-male-outfit-2-run')
+    expect(setViewKey('emote', { bodyShape: 'male', outfit: 'default', emote: null, angle: 'side' })).toBe('play-male-default-own-side')
     expect(orbitKey('female')).toBe('orbit-female')
     expect(BASE_EMOTES).toEqual(['idle', 'wave', 'dance', 'clap', 'walk', 'run', 'jump'])
   })
