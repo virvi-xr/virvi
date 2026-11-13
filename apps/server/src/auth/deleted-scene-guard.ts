@@ -1,5 +1,5 @@
 /**
- * LIV-83: every route that names a scene (or a preset, element, instance, preset schedule or showing of one) answers
+ * LIV-83: every route that names a scene (or a preset, element, instance, preset schedule, showing or raffle of one) answers
  * 404 `Scene not found` while that scene is deleted, the same as for a scene that doesn't exist. Routes opt out with
  * `config: { deletedScene: true }`: only the delete routes themselves (restore, purge, retry), which run their own check.
  *
@@ -11,7 +11,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, RouteOptions, preHa
 import { eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { scenes } from '../db/schema.js'
-import { fromElement, fromInstance, fromParam, fromPreset, fromPresetSchedule, fromShowing, type SceneFrom } from './scene-from.js'
+import { fromElement, fromInstance, fromParam, fromPreset, fromPresetSchedule, fromRaffle, fromShowing, type SceneFrom } from './scene-from.js'
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -27,6 +27,7 @@ const RESOLVERS: Array<[param: string, from: SceneFrom]> = [
   ['instanceId', fromInstance],
   ['scheduleId', fromPresetSchedule],
   ['showingId', fromShowing],
+  ['raffleId', fromRaffle],
 ]
 
 /** The resolvers for the scene-naming params in a route's url. */

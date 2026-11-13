@@ -1,3 +1,5 @@
+import type { PublicDraw, PublicRaffle } from '@virvixr/shared'
+
 /**
  * Venue events fan out to scene rooms through Colyseus presence pub/sub,
  * so REST handlers and the lifecycle sweep reach rooms on any server.
@@ -20,6 +22,10 @@ export type VenueEvent =
   | ({ type: 'presets_changed'; sceneId: string } & PresetsChange)
   /** The scene was deleted (LIV-83): its rooms empty and close. */
   | { type: 'scene_deleted'; sceneId: string }
+  /** The scene's open or drawn raffle changed (LIV-55); null when none is left. Visitor-safe: no names. */
+  | { type: 'raffle_changed'; sceneId: string; raffle: PublicRaffle | null }
+  /** A raffle draw happened (LIV-55): the wheel spins. */
+  | { type: 'raffle_draw'; sceneId: string; draw: PublicDraw }
 
 /** A preset was created, renamed or deleted (the list editors see; switching the live one is preset_changed). */
 export type PresetsChange =

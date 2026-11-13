@@ -49,3 +49,25 @@ export function cleanDisplayName(raw: string | null | undefined, wallet: string)
     .trim()
   return cleaned || shortWallet(wallet)
 }
+
+/** What visitors may see of a raffle: no entrant names or wallets. Sent in `raffle_changed` and to scenes. */
+export interface PublicRaffle {
+  id: string
+  sceneId: string
+  name: string
+  prize: string
+  rules: string | null
+  status: RaffleStatus
+  winnersCount: number
+  entryCount: number
+}
+
+/** One spin, for the wheel: at most WHEEL_MAX_NAMES names (always including the winners), `more` for the rest of the pool. */
+export interface PublicDraw {
+  drawId: string
+  raffleId: string
+  names: string[]
+  more: number
+  /** In draw order: the wheel lands on the first. */
+  winners: { entryId: string; displayName: string }[]
+}

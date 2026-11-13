@@ -7,7 +7,7 @@ import { createSetup } from './helpers/setups.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
 import { issueArPass, issueHyperfyPass } from '../src/auth/scene-pass.js'
 import { db } from '../src/db/connection.js'
-import { arDevices, arSpaces, hyperfyPairings, hyperfyWorlds, screenShowings } from '../src/db/schema.js'
+import { arDevices, arSpaces, hyperfyPairings, hyperfyWorlds, raffles, screenShowings } from '../src/db/schema.js'
 import { VideoSourceType } from '@virvixr/shared'
 import { PUBLIC_EXACT, IGNORES_SCENE_PASS, isPublic } from './helpers/public-routes.js'
 
@@ -86,9 +86,14 @@ describe('scene pass guard', () => {
     const b = await createScene(owner, 'B')
     const el = await createElement(b.preset.id)
     const inst = await createInstance(el.id)
+    const [raffle] = await db.insert(raffles).values({ sceneId: b.scene.id, name: 'R', prize: 'P', winnersCount: 1, mode: 'one_per_person' }).returning()
     const t = pass(owner, a.scene.id)
     const h = { authorization: `Bearer ${t}` }
     const reqs: Array<[string, string]> = [
+      ['GET', `/api/scenes/${b.scene.id}/raffles`], ['POST', `/api/scenes/${b.scene.id}/raffles`],
+      ['GET', `/api/raffles/${raffle.id}`], ['PATCH', `/api/raffles/${raffle.id}`], ['POST', `/api/raffles/${raffle.id}/open`],
+      ['POST', `/api/raffles/${raffle.id}/snapshot`], ['POST', `/api/raffles/${raffle.id}/draw`], ['POST', `/api/raffles/${raffle.id}/close`],
+      ['POST', `/api/raffles/${raffle.id}/cancel`], ['GET', `/api/raffles/${raffle.id}/draws/00000000-0000-4000-8000-000000000000`],
       ['GET', `/api/scenes/${b.scene.id}`], ['PUT', `/api/scenes/${b.scene.id}`],
       ['POST', `/api/presets/${b.preset.id}/elements`], ['PUT', `/api/elements/${el.id}`], ['DELETE', `/api/elements/${el.id}`],
       ['POST', `/api/elements/${el.id}/instances`], ['PUT', `/api/instances/${inst.id}`], ['DELETE', `/api/instances/${inst.id}`],

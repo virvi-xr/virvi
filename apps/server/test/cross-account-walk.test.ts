@@ -10,7 +10,7 @@ import {
   dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -172,11 +172,21 @@ async function fixtures() {
   const [removal] = await db.insert(sceneRemovals).values({
     sceneId: deletedScene.id, kind: 'dcl_world', targetId: goneDestination.id, label: 'Remove the scene from b-gone.dcl.eth', status: 'awaiting_signature', requestedBy: b.id,
   }).returning()
+  const [raffle] = await db.insert(raffles).values({
+    sceneId: scene.id, createdBy: b.id, name: 'B raffle', prize: 'B prize', winnersCount: 1, mode: 'one_per_person', status: 'open',
+    hostTermsAcceptedAt: new Date(), openedAt: new Date(),
+  }).returning()
+  const [raffleEntry] = await db.insert(raffleEntries).values({ raffleId: raffle.id, userId: collaborator.id, wallet: randomWallet(), displayName: 'B entrant', consentVersion: 1, lastSeenAt: new Date(), secondsPresent: 600 }).returning()
+  const [raffleSnapshot] = await db.insert(raffleSnapshots).values({ raffleId: raffle.id, trigger: 'manual', entryIds: [raffleEntry.id] }).returning()
+  const [raffleDraw] = await db.insert(raffleDraws).values({
+    raffleId: raffle.id, snapshotIds: [raffleSnapshot.id], mode: 'one_per_person', pool: [{ entryId: raffleEntry.id, tickets: 1 }], seed: 'ab'.repeat(32), winnerEntryIds: [raffleEntry.id], drawnBy: b.id,
+    drawnAt: new Date(Date.now() - H),
+  }).returning()
   const aScene = (await createScene(a, 'A scene')).scene
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -205,6 +215,17 @@ const CASES: Case[] = [
   { route: 'DELETE /api/preset-schedules/:scheduleId', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}` },
   { route: 'POST /api/preset-schedules/:scheduleId/skip', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}/skip`, body: () => ({}) },
   { route: 'DELETE /api/preset-schedules/:scheduleId/skip', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}/skip?occurrenceStart=2031-01-01T10%3A00%3A00.000Z` },
+  // raffles (LIV-55)
+  { route: 'GET /api/scenes/:sceneId/raffles', url: (f) => `/api/scenes/${f.scene.id}/raffles` },
+  { route: 'POST /api/scenes/:sceneId/raffles', url: (f) => `/api/scenes/${f.scene.id}/raffles`, body: () => ({ name: 'pwned', prize: 'x', winnersCount: 1, mode: 'one_per_person', acceptHostTerms: true }) },
+  { route: 'GET /api/raffles/:raffleId', url: (f) => `/api/raffles/${f.raffle.id}` },
+  { route: 'PATCH /api/raffles/:raffleId', url: (f) => `/api/raffles/${f.raffle.id}`, body: () => ({ name: 'pwned' }) },
+  { route: 'POST /api/raffles/:raffleId/open', url: (f) => `/api/raffles/${f.raffle.id}/open` },
+  { route: 'POST /api/raffles/:raffleId/snapshot', url: (f) => `/api/raffles/${f.raffle.id}/snapshot` },
+  { route: 'POST /api/raffles/:raffleId/draw', url: (f) => `/api/raffles/${f.raffle.id}/draw`, body: (f) => ({ snapshotIds: [f.raffleSnapshot.id] }) },
+  { route: 'POST /api/raffles/:raffleId/close', url: (f) => `/api/raffles/${f.raffle.id}/close` },
+  { route: 'POST /api/raffles/:raffleId/cancel', url: (f) => `/api/raffles/${f.raffle.id}/cancel` },
+  { route: 'GET /api/raffles/:raffleId/draws/:drawId', url: (f) => `/api/raffles/${f.raffle.id}/draws/${f.raffleDraw.id}` },
   { route: 'GET /api/elements/:elementId/showings', url: (f) => `/api/elements/${f.element.id}/showings` },
   { route: 'POST /api/elements/:elementId/showings', url: (f) => `/api/elements/${f.element.id}/showings`, body: () => ({ items: [{ url: 'https://cdn.example/a.mp4', duration: 60 }], recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC' }) },
   { route: 'PATCH /api/showings/:showingId', url: (f) => `/api/showings/${f.showing.id}`, body: () => ({ enabled: false }) },
@@ -501,7 +522,7 @@ const TABLES = [
   dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))
