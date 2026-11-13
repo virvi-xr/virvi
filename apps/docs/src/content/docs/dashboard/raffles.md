@@ -16,7 +16,7 @@ A **raffle** lets visitors in your scene enter for a prize, then picks winners o
    - **Auto-snapshot**: off, or every 5, 10, 15 or 30 minutes.
    - **Rules**: a template is filled in for you. Edit it to match your giveaway.
 3. Tick the host terms: *This raffle is free to enter and needs no purchase. I'm responsible for following the giveaway and sweepstakes rules where I and my entrants live, and for delivering prizes.*
-4. Create the raffle, then press **Open**. A scene can have one open raffle at a time.
+4. Create the raffle, then press **Open**. A scene can have one running raffle (open or drawn) at a time; close it before opening another.
 
 You can edit a raffle while it is a draft or open. The mode can't change once a snapshot exists.
 
@@ -31,7 +31,7 @@ Press **Snapshot** whenever you want to record who is there, or use auto-snapsho
 Press **Spin**. Every visitor in the scene sees the wheel land. The wheel shows up to 60 names (always including the winners), and the rest of the pool is shown as a count. You can spin again for more winners: earlier winners are left out, and a spin within 15 seconds of the last is refused. The first spin closes entry.
 
 - **One entry per person:** every qualifying entrant has one ticket.
-- **Weighted by time present:** each entrant has one ticket for every snapshot they were in.
+- **Weighted by time present:** each entrant has one ticket for every snapshot they were in, counting only the snapshots chosen for that spin.
 
 By default a spin uses all snapshots. Entrants who withdrew are never drawn.
 
@@ -45,7 +45,7 @@ Only visitors who are signed in with a verified wallet can enter, and only from 
 
 > Your display name (or a shortened wallet address if you have no name) will be shown on the raffle wheel to everyone in this scene, and your name and wallet will be shared with the host so they can deliver your prize. You can withdraw until the draw.
 
-They can also read your rules. Names are cleaned up to at most 40 characters. Entrants can withdraw before the draw, and a withdrawn entry is deleted.
+They can also read your rules. Names are cleaned up to at most 40 characters. Entrants can withdraw while the raffle is open or drawn, and a withdrawn entry is deleted. A withdrawn winner stays in that draw's record as "withdrawn entrant" and is left out of later draws.
 
 ## Delivering prizes
 
@@ -59,7 +59,7 @@ Every draw keeps a record. In the raffle's **Draws** list, choose **View record*
 
 ### Algorithm v1
 
-The pool is a list of `(entryId, tickets)` sorted by entry id (plain string comparison). One-per-person gives every entry 1 ticket; weighted gives each entry one ticket per snapshot it was in, and entries earlier winners or withdrawn entries are removed first.
+The pool is a list of `(entryId, tickets)` sorted by entry id (plain string comparison). One-per-person gives every entry 1 ticket; weighted gives each entry one ticket per snapshot it was in (counting only the snapshots chosen for the spin). Entries of earlier winners, and withdrawn entries, are removed first.
 
 To pick winners, repeat for `k = 0, 1, 2, ...` until you have the requested number of winners or the pool is empty:
 

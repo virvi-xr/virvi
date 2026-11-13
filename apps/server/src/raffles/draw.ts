@@ -3,7 +3,7 @@ import type { RaffleMode } from '@virvixr/shared'
 
 /**
  * The raffle draw, algorithm v1 (LIV-55). Pure and replayable: the same pool, seed and draw id always give the same
- * winners, so anyone can check a draw after the seed is revealed. Published at /docs/raffles; do not change it,
+ * winners, so anyone can check a draw after the seed is revealed. Published at https://virvi.io/docs/dashboard/raffles/; do not change it,
  * add a v2 instead.
  */
 export type PoolEntry = { entryId: string; tickets: number }

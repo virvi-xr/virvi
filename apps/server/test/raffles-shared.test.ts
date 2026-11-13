@@ -69,6 +69,6 @@ describe('raffle copy', () => {
   it('rules template is at most 150 words and has its placeholders', () => {
     expect(RAFFLE_RULES_TEMPLATE.split(/\s+/).filter(Boolean).length).toBeLessThanOrEqual(150)
     for (const p of ['{prize}', '{winners}', '{host}']) expect(RAFFLE_RULES_TEMPLATE).toContain(p)
-    expect(RAFFLE_RULES_TEMPLATE).toContain('/docs/raffles')
+    expect(RAFFLE_RULES_TEMPLATE).toContain('https://virvi.io/docs/dashboard/raffles/')
   })
 })

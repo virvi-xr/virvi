@@ -31,7 +31,7 @@ export const RAFFLE_HOST_TERMS =
 export const RAFFLE_RULES_TEMPLATE = `Official rules. Prize: {prize}. Winners: {winners}. Host: {host}.
 Eligibility: anyone 18 or older with a verified wallet, where not prohibited by law.
 How to enter: entry is free. Enter in the scene. No purchase is needed.
-How winners are picked: a random draw among entrants who were present in the host's snapshots. The algorithm is published at /docs/raffles.
+How winners are picked: a random draw among entrants who were present in the host's snapshots. The algorithm is published at https://virvi.io/docs/dashboard/raffles/.
 Prizes: the host delivers each prize to the winning wallet within 30 days.
 Withdrawal: you can withdraw your entry any time before the draw.`
 

@@ -57,15 +57,15 @@ export default function PrivacyPage() {
           <li>
             <strong>What's shared, and with whom:</strong> your display name (or a shortened wallet address if you have no name) is shown on the
             raffle wheel to everyone in the scene. Your name and wallet address are shared with the scene's host so they can deliver your prize.
-            Other visitors never see wallet addresses.
+            Other visitors never see full wallet addresses (a visitor with no name is shown as a shortened wallet like 0x1234…abcd).
           </li>
           <li>
             <strong>Check-ins:</strong> while you are entered, the scene sends a check-in every 30 seconds so the host can tell who is present.
-            Check-ins stop when you withdraw or the raffle ends, and only the total time you were present is kept.
+            Check-ins stop when you withdraw or the raffle ends, and only your total time present and when you were last seen are kept.
           </li>
           <li>
-            <strong>Withdrawing:</strong> you can withdraw until the draw, which deletes your entry. Past draw records keep only an anonymous
-            entry id, so they still check out.
+            <strong>Withdrawing:</strong> you can withdraw while the raffle is open or drawn, which deletes your entry. Past draw records keep only an anonymous
+            entry id, so they still check out; a withdrawn winner shows there as "withdrawn entrant" and is left out of later draws.
           </li>
           <li>
             <strong>Retention:</strong> 30 days after a raffle ends, the names and wallet addresses on its entries are removed.
