@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Virvi is open source (AGPL-3.0). A self-hosted install has every feature unlocked: no billing, no plan limits.
+Virvi is open source (GPL-3.0; the `@virvixr/dcl` package that goes into your scenes is Apache-2.0). A self-hosted install has every feature unlocked: no billing, no plan limits.
 
 ## What you run
 

@@ -170,4 +170,9 @@ pnpm --filter @virvixr/server test
 
 ## License
 
-Proprietary. All rights reserved.
+Virvi is open source, under the same licenses VLM used:
+
+- Everything in this repository is under the [GNU General Public License v3.0](LICENSE) (GPL-3.0), except:
+- `packages/dcl` (the `@virvixr/dcl` npm package) and `packages/hud`, which go into creators' own Decentraland scenes, are under the [Apache License 2.0](packages/dcl/LICENSE), so your scene can use any license you like.
+
+Copyright 2023-2026 Virtual Land Manager LLC.

@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "description": "Virvi In-World Management HUD — platform-agnostic logic layer",
-  "license": "AGPL-3.0",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "The isolated box that builds an imported Decentraland scene",
-  "license": "AGPL-3.0",
+  "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "test": "node --test"

@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "description": "Virvi \u2014 manage virtual metaverse scenes across platforms",
-  "license": "AGPL-3.0",
+  "license": "GPL-3.0-only",
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
