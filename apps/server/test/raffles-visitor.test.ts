@@ -6,6 +6,7 @@ import { locationSetups, raffleDraws, raffleEntries, raffles } from '../src/db/s
 import { initBus } from '../src/realtime/bus.js'
 import { issueScenePass } from '../src/auth/scene-pass.js'
 import { checkInRaffle } from '../src/raffles/service.js'
+import { verifySessionToken } from '../src/auth/tokens.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { createAnalyticsScene } from './helpers/analytics.js'
@@ -39,8 +40,8 @@ describe('raffle visitor routes (LIV-55)', () => {
   })
 
   /** A real visitor pass: a Decentraland signed fetch to POST /api/auth/platform. */
-  async function visitorPass(opts: { name?: string; wallet?: 'a' | 'b'; isGuest?: boolean } = {}) {
-    const body = JSON.stringify({ user: { displayName: opts.name ?? 'Visitor A' } })
+  async function visitorPass(opts: { name?: string | null; wallet?: 'a' | 'b'; isGuest?: boolean } = {}) {
+    const body = JSON.stringify(opts.name === null ? {} : { user: { displayName: opts.name ?? 'Visitor A' } })
     const { headers, wallet } = await signedSceneHeaders({ method: 'POST', path: PLATFORM, body, wallet: opts.wallet, metadata: opts.isGuest ? { isGuest: true } : undefined })
     const res = await app.inject({ method: 'POST', url: PLATFORM, headers: { ...headers, 'content-type': 'application/json' }, payload: body })
     expect(res.statusCode, res.body).toBe(200)
@@ -239,6 +240,21 @@ describe('raffle visitor routes (LIV-55)', () => {
     await enter(r.id, blank.token)
     const [row2] = await db.select().from(raffleEntries)
     expect(row2.displayName).toBe(`${v.wallet.slice(0, 6)}…${v.wallet.slice(-4)}`)
+  })
+
+  it('a signed sign-in with no name is stored as the short wallet, not "Guest"', async () => {
+    const r = await raffle()
+    const v = await visitorPass({ name: null })
+    expect(verifySessionToken(v.token)?.displayName).toBeUndefined()
+    expect((await enter(r.id, v.token)).statusCode).toBe(201)
+    const [row] = await db.select().from(raffleEntries)
+    expect(row.displayName).toBe(`${v.wallet.slice(0, 6)}…${v.wallet.slice(-4)}`)
+    expect(row.displayName).toMatch(/^0x[0-9a-f]{4}…[0-9a-f]{4}$/)
+  })
+
+  it("the pass carries the sign-in name cleaned and capped at 40 characters", async () => {
+    const v = await visitorPass({ name: '\u0007' + 'n'.repeat(500) })
+    expect(verifySessionToken(v.token)?.displayName).toBe('n'.repeat(40))
   })
 
   it('/api/me/raffle-entries lists my entries with a win', async () => {

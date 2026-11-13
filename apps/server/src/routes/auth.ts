@@ -230,7 +230,10 @@ export default async function authRoutes(app: FastifyInstance) {
       let binding: SceneBinding | null = null
       let studio = false
       // Postgres text can't hold NUL: a name carrying one would fail the sign-in with a 500
-      let displayName = String(platformUser?.displayName || platformUser?.name || 'Guest').replace(/\u0000/g, '') || 'Guest'
+      const suppliedName = String(platformUser?.displayName || platformUser?.name || '').replace(/\u0000/g, '')
+      let displayName = suppliedName || 'Guest'
+      // The name the pass carries (raffle entries copy it): only one the visitor's signed body supplied; else the short wallet stands in
+      let signInName: string | null = suppliedName || null
 
       // ── Try to verify DCL signed fetch headers ────────────────────────────
       if (hasDclAuthHeaders(request.headers as Record<string, string | string[] | undefined>)) {
@@ -246,7 +249,10 @@ export default async function authRoutes(app: FastifyInstance) {
           )
           if (!signed.scene.isGuest) {
             verifiedWallet = signed.wallet.toLowerCase()
-            if (!signed.bodySigned) displayName = `${verifiedWallet.slice(0, 6)}…${verifiedWallet.slice(-4)}`
+            if (!signed.bodySigned) {
+              displayName = `${verifiedWallet.slice(0, 6)}…${verifiedWallet.slice(-4)}`
+              signInName = null
+            }
             request.log.info({ wallet: verifiedWallet, bodySigned: signed.bodySigned }, 'DCL signed fetch verified')
             const localPreview =
               (config.mode !== 'cloud' || config.studioLocalPreview) && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(signed.scene.realm.hostname)
@@ -326,7 +332,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
       if (verifiedWallet) {
         return reply.send({
-          ...issueScenePass(app, dbUser, verifiedWallet, binding ?? { sceneId: null, locationId: null }, undefined, displayName),
+          ...issueScenePass(app, dbUser, verifiedWallet, binding ?? { sceneId: null, locationId: null }, undefined, signInName ?? undefined),
           verified: true,
         })
       }

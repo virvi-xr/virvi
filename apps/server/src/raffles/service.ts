@@ -5,7 +5,7 @@ import {
   WHEEL_MAX_NAMES, shortWallet, type PublicDraw, type PublicRaffle, type RaffleMode, type RaffleStatus,
 } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { raffleDraws, raffleEntries, raffles, raffleSnapshots, scenes, users } from '../db/schema.js'
+import { raffleDraws, raffleEntries, raffles, raffleSnapshots, scenes } from '../db/schema.js'
 import { checkInDelta, isPresent } from '../presence/attendance.js'
 import { publishVenueEvent } from '../realtime/bus.js'
 import { buildPool, drawWinners } from './draw.js'
@@ -362,8 +362,8 @@ export async function currentRaffle(sceneId: string, caller: Caller) {
 export async function enterRaffle(row: RaffleRow, caller: { userId: string; wallet: string; signInName: string | null }, consentVersion: unknown, now = new Date()) {
   if (consentVersion !== RAFFLE_CONSENT_VERSION) throw new RaffleError(400, 'consent_required', 'Agree to the raffle terms to enter.')
   if (row.status !== 'open') throw new RaffleError(409, 'entry_closed', 'This raffle is not taking entries.')
-  let name = caller.signInName
-  if (!name) name = (await db.query.users.findFirst({ where: eq(users.id, caller.userId), columns: { displayName: true } }))?.displayName ?? null
+  // The pass's sign-in name (the Decentraland name); without one, cleanDisplayName gives the short wallet
+  const name = caller.signInName
   const wallet = caller.wallet.toLowerCase()
   let entry: EntryRow | undefined
   try {

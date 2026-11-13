@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { cleanDisplayName } from '@virvixr/shared'
 import { config } from '../config.js'
 import type { SessionClaims } from './tokens.js'
 import type { SessionUser } from './sessions.js'
@@ -13,8 +14,8 @@ export function sceneClaims(user: { id: string; role: string }, wallet: string |
  * No refresh token: a pass lives 15 min past the last signed request, so one taken by a hostile realm dies soon after the player leaves.
  */
 export function issueScenePass(app: FastifyInstance, user: SessionUser, wallet: string, b: SceneBinding, expiresAt?: Date, signInName?: string) {
-  // signInName: the name this sign-in came with (the Decentraland name, or the short wallet), copied at raffle entry
-  const claims: SessionClaims = { ...sceneClaims(user, wallet, b), ...(signInName ? { displayName: signInName } : {}) }
+  // signInName: the Decentraland name this sign-in came with, cleaned and capped as raffle entries store it (LIV-55)
+  const claims: SessionClaims = { ...sceneClaims(user, wallet, b), ...(signInName ? { displayName: cleanDisplayName(signInName, wallet) } : {}) }
   return {
     user: { id: user.id, displayName: user.displayName, email: null, role: user.role },
     // expiresAt (hand-off): never later than the pass the code was minted from. A number here is seconds.
