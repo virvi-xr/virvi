@@ -413,10 +413,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     app.get('/u/:code/', (_request, reply) => reply.sendFile('u/_/index.html'))
     // Design Studio pages (/studio/<designId>): one exported page for every design, at studio/_/
     // '/studio/' itself also matches here with an empty id (the designs list), and so does the list's RSC payload,
-    // /studio/index.txt, which the client router fetches. /studio/checkout/ is its own page.
+    // /studio/index.txt, which the client router fetches, and /studio/index.html. /studio/checkout/ is its own page.
     const studioPage = (request: { params: unknown }, reply: { sendFile: (f: string) => unknown }) => {
       const id = (request.params as { designId?: string }).designId
-      return reply.sendFile(!id ? 'studio/index.html' : id === 'index.txt' ? 'studio/index.txt'
+      return reply.sendFile(!id || id === 'index.html' ? 'studio/index.html' : id === 'index.txt' ? 'studio/index.txt'
         : id === 'checkout' ? 'studio/checkout/index.html' : 'studio/_/index.html')
     }
     app.get('/studio/:designId', studioPage)

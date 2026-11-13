@@ -68,6 +68,8 @@ describe('AR static pages', () => {
     expect((await app.inject({ method: 'GET', url: '/studio/' })).body).toBe('LIST')
     // the list page's RSC payload, which the client router fetches, is not a design id
     expect((await app.inject({ method: 'GET', url: '/studio/index.txt' })).body).toBe('LIST-RSC')
+    // The list page's own file, as the release manifest names it (LIV-165's served-file check fetches it)
+    expect((await app.inject({ method: 'GET', url: '/studio/index.html' })).body).toBe('LIST')
   })
 
   it('serves the checkout page for /studio/checkout, with its query, not the design page', async () => {

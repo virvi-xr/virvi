@@ -13,6 +13,8 @@ WEB="${WEB:-https://virvi.io}"
 API="${API:-https://api.virvi.io}"
 REPO="${REPO:-virvi-xr/virvi}"
 for tool in git docker curl node gh; do command -v "$tool" >/dev/null || { echo "Needs $tool"; exit 2; }; done
+node -e 'process.exit(typeof fetch === "function" ? 0 : 1)' || { echo "Needs Node 18 or newer (this is $(node -v))"; exit 2; }
+gh attestation --help >/dev/null 2>&1 || { echo "Needs GitHub CLI 2.49 or newer for 'gh attestation' (this is $(gh --version | head -1))"; exit 2; }
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
