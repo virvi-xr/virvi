@@ -43,6 +43,14 @@ describe('raffle client calls (LIV-55)', () => {
     }
   })
 
+  it('the host tab reads the scene raffles and one raffle', async () => {
+    const { virvi, last } = setup()
+    await virvi.raffleList()
+    expect(last()).toMatchObject({ url: 'https://api.example/api/scenes/scene%201/raffles', method: 'GET' })
+    await virvi.raffleDetail('r1')
+    expect(last()).toMatchObject({ url: 'https://api.example/api/raffles/r1', method: 'GET' })
+  })
+
   it('room messages reach the callbacks, and unsubscribing stops them', () => {
     const { virvi } = setup()
     const handlers = new Map<string, (m: unknown) => void>()

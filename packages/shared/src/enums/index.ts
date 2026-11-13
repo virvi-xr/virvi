@@ -107,4 +107,5 @@ export enum HUDPanelType {
   NOTIFICATIONS = 'notifications',
   UPGRADE = 'upgrade',
   ROLES = 'roles',
+  RAFFLE = 'raffle',
 }

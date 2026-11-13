@@ -14,6 +14,8 @@ import { offImageChoices, screensFromPreset, withLiveSource, withOffImage, type 
 import type { HUDMediaItem } from './DclHUDRenderer.js'
 import { toLayoutItem, withCopies, clearedMessage, type HUDLayoutItem } from './layout.js'
 import { withFrame } from './frames.js'
+import { startSceneRaffles } from './raffle/connect.js'
+import { pickHostRaffle, presentNow, raffleHostError, type HUDRaffle } from './raffle/host.js'
 import { locationKeyFor } from '@virvixr/shared'
 import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
 
@@ -173,7 +175,10 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
   if (config?.sceneId) {
     ensureRenderer()
     try {
+      // Before connecting: the room sends the running raffle on join
+      const raffles = startSceneRaffles(virvi, adapter, { guest: (await adapter.getPlatformUser()).isGuest, hud: renderer })
       await virvi.init({ env: 'prod', ...config })
+      raffles.connected()
 
       if (renderer) {
         renderer.setCurrentScene(config.sceneId, 'Scene')
@@ -219,12 +224,16 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
     // content only — no renderer, no HUD; failures are only logged. Platform auth gives guests a
     // guest session, which the room accepts as an analytics/content client.
     let contentStarted = false
+    // Everyone here also gets the raffle card (guests: the sign-in line, from the room's messages alone)
     const connectContentOnly = (sceneId: string) => {
       if (contentStarted) return
       contentStarted = true
       void (async () => {
+        // Before connecting: the room sends the running raffle on join
+        const raffles = startSceneRaffles(virvi, adapter, { guest: user.isGuest, hud: null })
         await virvi.authenticate({ env: 'prod', ...config })
         await virvi.connectToScene(sceneId)
+        raffles.connected()
         console.log('[Virvi] Showing Virvi content for scene', sceneId)
       })().catch((err) => console.log('[Virvi] Virvi content unavailable:', String(err)))
     }
@@ -298,6 +307,22 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
         void refreshNextSwitch()
       }
 
+      // Raffle tab (LIV-55): the running raffle, else the newest draft, with who checked in within the last minute
+      let hostRaffle: HUDRaffle | null = null
+      const toast = (message: string, type: 'info' | 'error') =>
+        renderer?.showNotification({ id: `virvi-raffle-${Date.now()}`, type, title: 'Raffle', message, timestamp: Date.now() })
+      const refreshRaffle = async () => {
+        try {
+          const r = pickHostRaffle((await virvi.raffleList()).raffles)
+          const running = r?.status === 'open' || r?.status === 'drawn'
+          const present = r && running ? presentNow((await virvi.raffleDetail(r.id)).entries, Date.now()) : 0
+          hostRaffle = r ? { id: r.id, name: r.name, status: r.status, entryCount: r.entryCount, presentNow: present } : null
+        } catch (err) {
+          toast(raffleHostError(err, { connected: connected() }), 'error')
+        }
+        renderer?.setRaffle(hostRaffle)
+      }
+
       const refresh = async () => {
         try {
           const data = await virvi.httpClient.getSceneRoles(sceneId)
@@ -368,6 +393,8 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           if (edits() && !presets.some((p) => p.id === id)) void refreshPresets().catch(() => {})
           else if (edits()) void refreshNextSwitch()
         }),
+        // Opens, closes and entry counts (debounced by the server) while the Raffle tab is open
+        virvi.onRaffleChanged(() => { if (edits() && renderer?.raffleTabOpen()) void refreshRaffle() }),
         () => virvi.events.off('connection_lost', onConnectionLost),
         () => reconnector.stop(),
       ]
@@ -478,6 +505,33 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           if (action === 'edit_value' && ['x', 'y', 'z'].includes(data?.axis) && typeof data?.value === 'number') {
             editMode.setValue(data.axis, data.value)
           }
+          return
+        }
+
+        // Raffle tab (LIV-55): host, co-hosts and editors (raffle.run); the server refuses everyone else
+        if (action.startsWith('raffle_')) {
+          if (!edits()) return
+          if (action === 'raffle_refresh') return refreshRaffle()
+          const id = hostRaffle?.id
+          if (!id || busy) return
+          busy = true
+          renderer?.setRaffleBusy(true)
+          try {
+            if (action === 'raffle_open') { await virvi.raffleOpen(id); toast('Raffle open', 'info') }
+            if (action === 'raffle_snapshot') {
+              const { snapshot } = await virvi.raffleSnapshot(id)
+              const n = Array.isArray(snapshot?.entryIds) ? snapshot.entryIds.length : 0
+              toast(`Snapshot taken: ${n} ${n === 1 ? 'entrant qualifies' : 'entrants qualify'}`, 'info')
+            }
+            if (action === 'raffle_draw') { await virvi.raffleDraw(id); toast('Spinning the wheel', 'info') }
+            if (action === 'raffle_close') { await virvi.raffleClose(id); toast('Raffle closed', 'info') }
+          } catch (err) {
+            toast(raffleHostError(err, { connected: connected() }), 'error')
+          } finally {
+            busy = false
+            renderer?.setRaffleBusy(false)
+          }
+          await refreshRaffle()
           return
         }
 
@@ -759,7 +813,10 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       renderer?.setCurrentScene(sceneId, sceneRef.title || 'Scene')
       // Installed before connecting so the error screen's Retry works even if this first connect fails
       if (renderer) installConnectedHandler(sceneId, role)
+      // Also before connecting: the room sends the running raffle on join
+      const raffles = startSceneRaffles(virvi, adapter, { guest: user.isGuest, hud: renderer })
       await virvi.connectToScene(sceneId)
+      raffles.connected()
       await ensureHUD()
       console.log('[Virvi] Connected to scene as', role, sceneId)
     }

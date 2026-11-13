@@ -34,6 +34,8 @@ import type { UploadToken } from '@virvixr/client'
 import { nearbyPlayers } from './players.js'
 import { markHudPress } from './hud/press.js'
 import { EditModeBar, NO_EDIT_MODE, type EditModeHUDState } from './hud/EditModeBar.js'
+import { STATUS_LABEL, type HUDRaffle } from './raffle/host.js'
+import { plainText } from './raffle/card.js'
 import { HUD_ICON_MISSING_HINT, HUD_ICON_SRC, hudIconDot, hudIconInScene } from './hud/icon.js'
 
 // ---------------------------------------------------------------------------
@@ -134,6 +136,11 @@ interface HUDState {
   showings: HUDShowing[] | null
   /** What the last control did, or why it was refused. */
   showingsNote: { text: string; error: boolean } | null
+
+  // Raffle tab (host, co-hosts, editors; LIV-55): the scene's running raffle, else its newest draft
+  raffle: HUDRaffle | null
+  raffleLoaded: boolean
+  raffleBusy: boolean
 }
 
 type SceneRole = 'host' | 'cohost' | 'editor' | 'viewer'
@@ -214,7 +221,14 @@ const state: HUDState = {
   showingsFor: null,
   showings: null,
   showingsNote: null,
+
+  raffle: null,
+  raffleLoaded: false,
+  raffleBusy: false,
 }
+
+/** The raffle overlay (raffle/RaffleOverlay.tsx), drawn in this tree so the scene has one Virvi UI root. */
+let overlay: (() => ReactEcs.JSX.Element | null) | null = null
 
 // Callbacks
 let onPanelAction: ((panel: HUDPanelType, action: string, data?: any) => void) | null = null
@@ -723,6 +737,7 @@ function NavBar() {
   const tabs: Array<{ type: HUDPanelType | typeof ACTION_STATS; label: string }> = [
     ...panels,
     ...(hasRoles ? [{ type: HUDPanelType.ROLES, label: 'Roles' }] : []),
+    ...(canEdit() ? [{ type: HUDPanelType.RAFFLE, label: 'Raffle' }] : []),
     // The HUD only renders the NavBar for connected role holders, so every role gets Stats
     { type: ACTION_STATS, label: 'Stats' },
   ]
@@ -766,6 +781,8 @@ function NavBar() {
               state.showingsFor = null
               state.offImagePicking = null
               if (opened && canEdit()) onSceneAction?.('streams_refresh')
+            } else if (p.type === HUDPanelType.RAFFLE) {
+              if (opened) onSceneAction?.('raffle_refresh')
             } else if (p.type === HUDPanelType.EVENT_CONTROL) {
               state.presetConfirm = null
               state.presetDraft = null
@@ -1605,6 +1622,43 @@ function WorldStatusPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Panel: Raffle (LIV-55). Creating and editing raffles stay on the dashboard.
+// ---------------------------------------------------------------------------
+
+function RafflePanel() {
+  const r = state.raffle
+  const act = (a: string) => () => { if (!state.raffleBusy) onSceneAction?.(a) }
+  const running = r?.status === 'open' || r?.status === 'drawn'
+  return (
+    <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
+      <PanelHeader title="Raffle" subtitle={state.currentSceneName || undefined} onClose={() => { state.activePanel = null }} />
+      <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', padding: 8 }}>
+        {!state.raffleLoaded ? (
+          <Label value="Loading…" fontSize={11} color={C.textDim} uiTransform={{ height: 24 }} />
+        ) : !r ? (
+          <Label value="No raffle to run. Create one on the dashboard." fontSize={11} color={C.textDim} textAlign="top-left"
+            uiTransform={{ width: '100%', height: 24 }} />
+        ) : (
+          <UiEntity uiTransform={{ width: '100%', flexDirection: 'column' }}>
+            <Label value={plainText(r.name)} fontSize={13} color={C.text} textAlign="top-left" uiTransform={{ width: '100%', height: 22 }} />
+            <Label value={`${STATUS_LABEL[r.status] ?? r.status} · ${r.entryCount} ${r.entryCount === 1 ? 'entry' : 'entries'} · ${r.presentNow} present now`}
+              fontSize={11} color={C.textDim} textAlign="top-left" uiTransform={{ width: '100%', height: 20 }} />
+            <UiEntity uiTransform={{ width: '100%', height: 30, flexDirection: 'row', justifyContent: 'space-between', margin: { top: 6 } }}>
+              {r.status === 'draft' && <Button label="Open" color={C.accent} onPress={act('raffle_open')} width={76} height={28} fontSize={11} />}
+              {running && <Button label="Snapshot" onPress={act('raffle_snapshot')} width={76} height={28} fontSize={11} />}
+              {running && <Button label="Spin" color={C.accent} onPress={act('raffle_draw')} width={76} height={28} fontSize={11} />}
+              {running && <Button label="Close" color={C.danger} onPress={act('raffle_close')} width={76} height={28} fontSize={11} />}
+              <Button label="Refresh" onPress={act('raffle_refresh')} width={76} height={28} fontSize={11} />
+            </UiEntity>
+            {state.raffleBusy && <Label value="One moment…" fontSize={10} color={C.textDim} uiTransform={{ height: 20 }} />}
+          </UiEntity>
+        )}
+      </UiEntity>
+    </UiEntity>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Panel: Notifications
 // ---------------------------------------------------------------------------
 
@@ -1712,9 +1766,12 @@ function NotificationToast() {
 
 function VirviHUD() {
   const isSetup = state.connectionState !== 'connected' || state.isNewScene
+  const Overlay = overlay
 
   return (
     <UiEntity uiTransform={{ width: '100%', height: '100%', positionType: 'absolute' }}>
+      {/* The raffle card and wheel, under the HUD's own panels; shown with the HUD toggled off too */}
+      {Overlay && <Overlay />}
       <HUDToggleButton />
 
       {state.hudVisible && (() => {
@@ -1773,6 +1830,7 @@ function VirviHUD() {
                 {state.activePanel === HUDPanelType.WORLD_STATUS && <WorldStatusPanel />}
                 {state.activePanel === HUDPanelType.NOTIFICATIONS && <NotificationsPanel />}
                 {state.activePanel === HUDPanelType.ROLES && <RolesPanel />}
+                {state.activePanel === HUDPanelType.RAFFLE && canEdit() && <RafflePanel />}
               </UiEntity>
             )
           }
@@ -1894,6 +1952,7 @@ export class DclHUDRenderer implements HUDRenderer {
     state.setupOffer = false
     if (role !== 'host') state.confirmTransfer = null
     if (role !== 'host' && role !== 'cohost' && state.activePanel === HUDPanelType.ROLES) state.activePanel = null
+    if (role === 'viewer' && state.activePanel === HUDPanelType.RAFFLE) state.activePanel = null
   }
 
   setRoles(data: RolesData): void {
@@ -2108,6 +2167,26 @@ export class DclHUDRenderer implements HUDRenderer {
 
   renderWorldStatusGrid(worlds: WorldStatus[]): void {
     state.worlds = worlds
+  }
+
+  // --- Raffle tab (LIV-55) ---
+
+  setRaffle(raffle: HUDRaffle | null): void {
+    state.raffle = raffle
+    state.raffleLoaded = true
+  }
+
+  setRaffleBusy(busy: boolean): void {
+    state.raffleBusy = busy
+  }
+
+  raffleTabOpen(): boolean {
+    return state.activePanel === HUDPanelType.RAFFLE
+  }
+
+  /** Draw the raffle overlay inside this HUD's tree (one UI root). */
+  setOverlay(component: () => ReactEcs.JSX.Element | null): void {
+    overlay = component
   }
 
   supportsPanel(panel: HUDPanelType): boolean {

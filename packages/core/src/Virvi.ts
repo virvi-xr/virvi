@@ -599,6 +599,8 @@ export class Virvi {
   }
 
   // Host calls (need raffle.run)
+  raffleList() { return this.http.listRaffles(this.requireSceneId()) }
+  raffleDetail(raffleId: string) { return this.http.getRaffleDetail(raffleId) }
   raffleOpen(raffleId: string) { return this.http.raffleAction(raffleId, 'open') }
   raffleSnapshot(raffleId: string) { return this.http.raffleAction(raffleId, 'snapshot') }
   raffleDraw(raffleId: string) { return this.http.raffleAction(raffleId, 'draw') }
