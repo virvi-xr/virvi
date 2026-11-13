@@ -3,7 +3,7 @@ title: Decentraland Setup
 description: Install @virvixr/dcl in a Decentraland SDK 7 scene, connect it to hosted or self-hosted Virvi, and use its APIs from code.
 ---
 
-Everything for Decentraland is in one npm package, `@virvixr/dcl` (current version 2.14.0). Import from it, not from the internal `@virvixr/adapter-dcl` or `@virvixr/core` packages, which aren't published.
+Everything for Decentraland is in one npm package, `@virvixr/dcl` (current version 2.15.0). Import from it, not from the internal `@virvixr/adapter-dcl` or `@virvixr/core` packages, which aren't published.
 
 ## Install
 

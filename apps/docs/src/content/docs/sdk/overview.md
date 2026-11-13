@@ -7,7 +7,7 @@ description: Which Virvi package to install, how the SDK packages fit together, 
 
 | You are building | Install | Notes |
 |---|---|---|
-| A Decentraland SDK 7 scene | `@virvixr/dcl` (2.14.0) from npm | The only Virvi SDK package on npm. See [Decentraland Setup](/docs/sdk/decentraland/install/). |
+| A Decentraland SDK 7 scene | `@virvixr/dcl` (2.15.0) from npm | The only Virvi SDK package on npm. See [Decentraland Setup](/docs/sdk/decentraland/install/). |
 | A Hyperfy world | The Virvi app (`virvi.hyp`) | Downloaded from your Virvi server, not npm. See [Hyperfy Setup](/docs/sdk/hyperfy/install/). |
 | A script, bot or backend | Nothing | Call the [REST API](/docs/api/rest-reference/) with an [API key](/docs/api/authentication/#api-keys). |
 | A platform that can only make HTTP calls | Nothing | Use the [platform hooks](/docs/api/rest-reference/#platform-hooks) (`/hook/*`). |

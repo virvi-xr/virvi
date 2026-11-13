@@ -42,4 +42,4 @@ If your agent can't browse, download `llms-full.txt` and add it to the conversat
 - **Tell the agent which Virvi it's talking to.** Hosted (`https://virvi.io`) or your own server's URL. Self-hosted installs serve the same docs at `<your server>/docs`, matching your version.
 - **Keep keys out of prompts.** Create an API key in the dashboard and put it in an environment variable; tell the agent the variable's name, not the key.
 - **Ask for a plan first** on anything that deploys or changes a live scene. Virvi applies changes to visitors in real time.
-- **Versions matter.** These docs match `@virvixr/dcl` 2.14.0, the only SDK package on npm. The API is described by each server at `/api/docs/json`. If something in the docs doesn't match what your agent sees, check the package version and tell us with *Report a bug* in the dashboard.
+- **Versions matter.** These docs match `@virvixr/dcl` 2.15.0, the only SDK package on npm. The API is described by each server at `/api/docs/json`. If something in the docs doesn't match what your agent sees, check the package version and tell us with *Report a bug* in the dashboard.
