@@ -119,8 +119,12 @@ export function snapshotOut(s: SnapshotRow) {
   return { id: s.id, takenAt: s.takenAt, trigger: s.trigger, entryIds: s.entryIds }
 }
 
-/** The name shown for an entrant: its stored name, else the short wallet. */
-export const entrantName = (e: { displayName: string | null; wallet: string | null }) => e.displayName ?? (e.wallet ? shortWallet(e.wallet) : 'Entrant')
+/** The name shown for an entrant, in draws and the detail view alike: its stored name, else the short wallet, else null. */
+export const entrantName = (e: { displayName: string | null; wallet: string | null }): string | null =>
+  e.displayName ?? (e.wallet ? shortWallet(e.wallet) : null)
+
+/** The wheel's label for an entrant with neither a name nor a wallet. */
+const REMOVED_ENTRANT = 'Removed entrant'
 
 export async function entryCounts(raffleIds: string[]): Promise<Map<string, number>> {
   if (!raffleIds.length) return new Map()
@@ -226,7 +230,7 @@ export async function takeSnapshot(raffleId: string, trigger: 'manual' | 'auto',
   })
 }
 
-export type Winner = { entryId: string; displayName: string; wallet: string | null }
+export type Winner = { entryId: string; displayName: string | null; wallet: string | null }
 
 /** Pick up to WHEEL_MAX_NAMES names for the wheel: every winner, then others at random; shuffled. */
 function wheelNames(winners: string[], pool: string[], names: Map<string, string>): { names: string[]; more: number } {
@@ -246,12 +250,15 @@ function wheelNames(winners: string[], pool: string[], names: Map<string, string
 /**
  * Draw winners (Settled details 6 and 7), in one transaction holding the raffle's row lock: refused within
  * DRAW_COOLDOWN_MS of the last draw; the pool is the chosen snapshots (default all) less earlier winners and entries
- * that are gone. An empty pool stores nothing. `raffle_draw` is published after the commit.
+ * that are gone. `count` is 1 to winnersCount; by default winnersCount on the first draw and 1 on a re-spin (one
+ * replacement). An empty pool stores nothing. `raffle_draw` is published after the commit.
  */
-export async function drawRaffle(raffleId: string, actorUserId: string, snapshotIds?: string[], now = new Date()) {
+export async function drawRaffle(raffleId: string, actorUserId: string, snapshotIds?: string[], now = new Date(), count?: unknown) {
   if (snapshotIds !== undefined && (!Array.isArray(snapshotIds) || !snapshotIds.every((id) => typeof id === 'string' && UUID.test(id)))) {
     throw new RaffleError(400, 'bad_snapshots', 'Pick snapshots of this raffle.')
   }
+  const badCount = (max: number) => new RaffleError(400, 'bad_count', `Pick 1 to ${max} winners for this spin.`)
+  if (count !== undefined && (typeof count !== 'number' || !Number.isInteger(count) || count < 1)) throw badCount(RAFFLE_WINNERS_MAX)
   const out = await db.transaction(async (tx) => {
     const [row] = await tx.select().from(raffles).where(eq(raffles.id, raffleId)).for('update')
     if (!row) throw new RaffleError(404, 'raffle_not_found', 'Raffle not found.')
@@ -269,13 +276,15 @@ export async function drawRaffle(raffleId: string, actorUserId: string, snapshot
       .from(raffleEntries).where(eq(raffleEntries.raffleId, row.id))
     const byId = new Map(entries.map((e) => [e.id, e]))
     const earlier = await tx.select({ winners: raffleDraws.winnerEntryIds }).from(raffleDraws).where(eq(raffleDraws.raffleId, row.id))
+    if (typeof count === 'number' && count > row.winnersCount) throw badCount(row.winnersCount)
+    const winnersWanted = typeof count === 'number' ? count : earlier.length ? 1 : row.winnersCount
     const exclude = new Set(earlier.flatMap((d) => d.winners))
     const pool = buildPool(row.mode as RaffleMode, snaps.map((s) => ({ entryIds: s.entryIds.filter((id) => byId.has(id)) })), exclude)
     if (!pool.length) throw new RaffleError(409, 'empty_pool', 'Nobody qualifies for this draw. Take a snapshot while entrants are present.')
 
     const drawId = randomUUID()
     const seed = randomBytes(32).toString('hex')
-    const winnerIds = drawWinners(pool, row.winnersCount, seed, drawId)
+    const winnerIds = drawWinners(pool, winnersWanted, seed, drawId)
     const [draw] = await tx.insert(raffleDraws).values({
       id: drawId, raffleId: row.id, snapshotIds: snaps.map((s) => s.id), mode: row.mode as RaffleMode, algorithm: DRAW_ALGORITHM,
       pool, seed, winnerEntryIds: winnerIds, drawnBy: actorUserId, drawnAt: now,
@@ -284,8 +293,9 @@ export async function drawRaffle(raffleId: string, actorUserId: string, snapshot
 
     const names = new Map(pool.map((p) => [p.entryId, entrantName(byId.get(p.entryId)!)]))
     const winners: Winner[] = winnerIds.map((id) => ({ entryId: id, displayName: names.get(id)!, wallet: byId.get(id)!.wallet }))
-    const wheel = wheelNames(winnerIds, pool.map((p) => p.entryId), names)
-    const publicDraw: PublicDraw = { drawId, raffleId: row.id, ...wheel, winners: winners.map((w) => ({ entryId: w.entryId, displayName: w.displayName })) }
+    const wheelLabels = new Map([...names].map(([id, n]) => [id, n ?? REMOVED_ENTRANT]))
+    const wheel = wheelNames(winnerIds, pool.map((p) => p.entryId), wheelLabels)
+    const publicDraw: PublicDraw = { drawId, raffleId: row.id, ...wheel, winners: winners.map((w) => ({ entryId: w.entryId, displayName: wheelLabels.get(w.entryId)! })) }
     return { sceneId: row.sceneId, draw, winners, publicDraw }
   })
   try {
@@ -307,13 +317,13 @@ export async function raffleDetail(row: RaffleRow) {
   const byId = new Map(entries.map((e) => [e.id, e]))
   return {
     raffle: hostRaffle(row, entries.length),
-    entries: entries.map((e) => ({ id: e.id, displayName: e.displayName, wallet: e.wallet, secondsPresent: e.secondsPresent, lastSeenAt: e.lastSeenAt, createdAt: e.createdAt })),
+    entries: entries.map((e) => ({ id: e.id, displayName: entrantName(e), wallet: e.wallet, secondsPresent: e.secondsPresent, lastSeenAt: e.lastSeenAt, createdAt: e.createdAt })),
     snapshots: snaps.map(snapshotOut),
     draws: draws.map((d) => ({
       id: d.id, drawnAt: d.drawnAt, mode: d.mode, algorithm: d.algorithm, snapshotIds: d.snapshotIds, poolSize: d.pool.length,
       winners: d.winnerEntryIds.map((id) => {
         const e = byId.get(id)
-        return e ? { entryId: id, displayName: e.displayName, wallet: e.wallet } : { entryId: id, displayName: null, wallet: null, deleted: true as const }
+        return e ? { entryId: id, displayName: entrantName(e), wallet: e.wallet } : { entryId: id, displayName: null, wallet: null, deleted: true as const }
       }),
     })),
   }
@@ -385,11 +395,19 @@ export async function enterRaffle(row: RaffleRow, caller: { userId: string; wall
   return entry!
 }
 
-/** Withdraw the user's entry while the raffle is open or drawn. Earlier draw records keep its id. */
+/**
+ * Withdraw the user's entry while the raffle is open or drawn. Earlier draw records keep its id. Under the raffle's
+ * row lock, like entering, so a withdrawal never lands in the middle of a draw or after a close.
+ */
 export async function withdrawEntry(row: RaffleRow, userId: string) {
-  if (!ACTIVE.includes(row.status)) throw new RaffleError(409, 'entry_closed', "This raffle has ended; entries can't be withdrawn.")
-  const gone = await db.delete(raffleEntries).where(and(eq(raffleEntries.raffleId, row.id), eq(raffleEntries.userId, userId))).returning({ id: raffleEntries.id })
-  if (!gone.length) throw new RaffleError(404, 'not_entered', "You're not in this raffle.")
+  const ended = () => new RaffleError(409, 'entry_closed', "This raffle has ended; entries can't be withdrawn.")
+  if (!ACTIVE.includes(row.status)) throw ended()
+  await db.transaction(async (tx) => {
+    const [locked] = await tx.select({ status: raffles.status }).from(raffles).where(eq(raffles.id, row.id)).for('update')
+    if (!locked || !ACTIVE.includes(locked.status)) throw ended()
+    const gone = await tx.delete(raffleEntries).where(and(eq(raffleEntries.raffleId, row.id), eq(raffleEntries.userId, userId))).returning({ id: raffleEntries.id })
+    if (!gone.length) throw new RaffleError(404, 'not_entered', "You're not in this raffle.")
+  })
   emitRaffleChanged(row.sceneId)
 }
 

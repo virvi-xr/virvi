@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { DRAW_COOLDOWN_MS, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX, WHEEL_MAX_NAMES } from '@virvixr/shared'
+import { DRAW_COOLDOWN_MS, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX, WHEEL_MAX_NAMES, shortWallet } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
 import { hyperfyPairings, hyperfyWorlds, raffleDraws, raffleEntries, raffles, raffleSnapshots, sceneCollaborators } from '../src/db/schema.js'
 import { initBus } from '../src/realtime/bus.js'
@@ -386,6 +386,51 @@ describe('raffle host API (LIV-55)', () => {
     expect(all).toHaveLength(2)
     expect(all[1].raffle).toMatchObject({ id: r.id, name: 'Renamed again', status: 'open', entryCount: 0 })
   }, 10_000)
+
+  it('the first spin draws winnersCount by default; a re-spin draws 1; count picks how many', async () => {
+    const r = await openRaffle({ winnersCount: 3 })
+    for (let i = 0; i < 8; i++) await entrant(r.id)
+    await call('POST', `/api/raffles/${r.id}/snapshot`)
+    const first = await call('POST', `/api/raffles/${r.id}/draw`, host, {})
+    expect(first.statusCode, first.body).toBe(200)
+    expect(first.json().winners).toHaveLength(3)
+    await pastCooldown(r.id)
+    const again = await call('POST', `/api/raffles/${r.id}/draw`, host, {})
+    expect(again.statusCode, again.body).toBe(200)
+    expect(again.json().winners).toHaveLength(1)
+    expect(again.json().draw.winnerEntryIds).toHaveLength(1)
+    await pastCooldown(r.id)
+    const two = await call('POST', `/api/raffles/${r.id}/draw`, host, { count: 2 })
+    expect(two.json().winners).toHaveLength(2)
+    expect(drawWinners(two.json().draw.pool, 2, two.json().draw.seed, two.json().draw.id)).toEqual(two.json().draw.winnerEntryIds)
+  })
+
+  it('an explicit count on the first spin; a count outside 1..winnersCount is bad_count', async () => {
+    const r = await openRaffle({ winnersCount: 3 })
+    for (let i = 0; i < 4; i++) await entrant(r.id)
+    await call('POST', `/api/raffles/${r.id}/snapshot`)
+    for (const count of [0, 4, 1.5, '2', -1, null]) {
+      const bad = await call('POST', `/api/raffles/${r.id}/draw`, host, { count })
+      expect([bad.statusCode, bad.json().error], String(count)).toEqual([400, 'bad_count'])
+    }
+    expect(await db.select().from(raffleDraws)).toEqual([])
+    const one = await call('POST', `/api/raffles/${r.id}/draw`, host, { count: 1 })
+    expect(one.statusCode, one.body).toBe(200)
+    expect(one.json().winners).toHaveLength(1)
+  })
+
+  it('names an entrant the same way in the draw and the detail view: the stored name, else the short wallet', async () => {
+    const r = await openRaffle()
+    const e = await entrant(r.id)
+    await db.update(raffleEntries).set({ displayName: null }).where(eq(raffleEntries.id, e.id))
+    await call('POST', `/api/raffles/${r.id}/snapshot`)
+    const draw = await call('POST', `/api/raffles/${r.id}/draw`, host, {})
+    const short = shortWallet(e.wallet!)
+    expect(draw.json().winners).toEqual([{ entryId: e.id, displayName: short, wallet: e.wallet }])
+    const d = (await call('GET', `/api/raffles/${r.id}`)).json()
+    expect(d.entries[0].displayName).toBe(short)
+    expect(d.draws[0].winners).toEqual([{ entryId: e.id, displayName: short, wallet: e.wallet }])
+  })
 
   it('takeSnapshot and drawRaffle work without the routes', async () => {
     const r = await openRaffle()

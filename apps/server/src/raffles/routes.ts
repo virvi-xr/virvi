@@ -111,7 +111,8 @@ export default async function raffleRoutes(app: FastifyInstance) {
     const row = await ownRaffle(request, reply)
     if (!row) return reply
     try {
-      const { draw, winners } = await drawRaffle(row.id, request.user.id, body(request).snapshotIds as string[] | undefined)
+      const b = body(request)
+      const { draw, winners } = await drawRaffle(row.id, request.user.id, b.snapshotIds as string[] | undefined, new Date(), b.count)
       return reply.send({ draw: drawRecord(draw), winners })
     } catch (e) {
       return fail(reply, e)

@@ -5,7 +5,7 @@ import { db } from '../src/db/connection.js'
 import { locationSetups, raffleDraws, raffleEntries, raffles } from '../src/db/schema.js'
 import { initBus } from '../src/realtime/bus.js'
 import { issueScenePass } from '../src/auth/scene-pass.js'
-import { checkInRaffle } from '../src/raffles/service.js'
+import { checkInRaffle, withdrawEntry } from '../src/raffles/service.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -159,6 +159,36 @@ describe('raffle visitor routes (LIV-55)', () => {
     await db.update(raffles).set({ status: 'closed' }).where(eq(raffles.id, r.id))
     const closed = await call('DELETE', `/api/raffles/${r.id}/entry`, v.token)
     expect([closed.statusCode, closed.json().error]).toEqual([409, 'entry_closed'])
+    expect(await db.select().from(raffleEntries)).toHaveLength(1)
+  })
+
+  it('a withdrawal waits for the raffle row lock, so it cannot race a draw or close', async () => {
+    const r = await raffle()
+    const v = await visitorPass()
+    await enter(r.id, v.token)
+    let release!: () => void
+    const held = new Promise<void>((res) => { release = res })
+    let locked!: () => void
+    const lockTaken = new Promise<void>((res) => { locked = res })
+    // Another transaction (a draw, a close) holds the lock and ends the raffle
+    const tx = db.transaction(async (t) => {
+      await t.select().from(raffles).where(eq(raffles.id, r.id)).for('update')
+      await t.update(raffles).set({ status: 'closed', endedAt: new Date() }).where(eq(raffles.id, r.id))
+      locked()
+      await held
+    })
+    await lockTaken
+    const withdraw = withdrawEntry(r, v.user.id).then(() => 'ok', (e) => e.code)
+    let duringLock: number
+    try {
+      await sleep(150)
+      duringLock = (await db.select().from(raffleEntries)).length
+    } finally {
+      release()
+      await tx
+    }
+    expect(duringLock).toBe(1)
+    expect(await withdraw).toBe('entry_closed')
     expect(await db.select().from(raffleEntries)).toHaveLength(1)
   })
 

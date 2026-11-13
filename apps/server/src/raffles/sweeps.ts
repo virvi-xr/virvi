@@ -28,23 +28,25 @@ export async function runRaffleSweep(now = new Date()): Promise<{ snapshots: num
     .where(and(inArray(raffles.status, [...ACTIVE]), isNotNull(raffles.nextAutoSnapshotAt), lte(raffles.nextAutoSnapshotAt, now)))
   let snapshots = 0
   for (const { id } of due) {
-    if (await takeSnapshot(id, 'auto', now)) snapshots++
+    // One raffle's failure doesn't hold up the others; the next sweep tries it again
+    try {
+      if (await takeSnapshot(id, 'auto', now)) snapshots++
+    } catch (err) {
+      console.error('[raffles] auto snapshot failed:', id, (err as Error)?.message)
+    }
   }
   return { snapshots, closed: closing.length }
 }
 
-/** Clear names and wallets from entries of raffles that ended RAFFLE_RETENTION_DAYS ago. Draws keep only ids. */
+/**
+ * Delete the entries of raffles that ended RAFFLE_RETENTION_DAYS ago. Draw records keep only entry ids and their
+ * stored pool, so they still replay.
+ */
 export async function scrubEndedRaffles(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - RAFFLE_RETENTION_DAYS * DAY_MS)
   const rows = await db
-    .update(raffleEntries)
-    .set({ wallet: null, displayName: null })
-    .where(
-      and(
-        or(isNotNull(raffleEntries.wallet), isNotNull(raffleEntries.displayName)),
-        inArray(raffleEntries.raffleId, db.select({ id: raffles.id }).from(raffles).where(and(isNotNull(raffles.endedAt), lte(raffles.endedAt, cutoff)))),
-      ),
-    )
+    .delete(raffleEntries)
+    .where(inArray(raffleEntries.raffleId, db.select({ id: raffles.id }).from(raffles).where(and(isNotNull(raffles.endedAt), lte(raffles.endedAt, cutoff)))))
     .returning({ id: raffleEntries.id })
   return rows.length
 }

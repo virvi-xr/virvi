@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { raffleDraws, raffleEntries, raffles, raffleSnapshots } from '../src/db/schema.js'
@@ -9,6 +9,19 @@ import { setDeleteMyDataLimiter } from '../src/routes/analytics-read.js'
 import { TokenBucketLimiter } from '../src/analytics/limiter.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
+
+// takeSnapshot as written, except it throws for the raffle ids in this set
+const failSnapshotFor = vi.hoisted(() => new Set<string>())
+vi.mock('../src/raffles/service.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/raffles/service.js')>()
+  return {
+    ...real,
+    takeSnapshot: async (...args: Parameters<typeof real.takeSnapshot>) => {
+      if (failSnapshotFor.has(args[0])) throw new Error('snapshot exploded')
+      return real.takeSnapshot(...args)
+    },
+  }
+})
 
 const DAY = 86_400_000
 const MIN = 60_000
@@ -91,20 +104,49 @@ describe('raffle sweeps, retention and delete-my-data (LIV-55)', () => {
     expect(published.filter((e) => e.type === 'raffle_changed').map((e) => e.sceneId).sort()).toEqual([sceneId, s2].sort())
   })
 
-  it('the scrub nulls names and wallets 30 days after the raffle ended, and not before', async () => {
+  it('the scrub deletes the entries 30 days after the raffle ended, and not before; draws still replay', async () => {
     const now = new Date()
     const ended = await raffle({ status: 'closed', endedAt: new Date(now.getTime() - 30 * DAY) })
     const recent = await raffle({ sceneId: (await createScene(host)).scene.id, status: 'closed', endedAt: new Date(now.getTime() - 30 * DAY + MIN) })
     const live = await raffle({ sceneId: (await createScene(host)).scene.id })
     const a = (await entry(ended.id)).entry
+    const a2 = (await entry(ended.id)).entry
     const b = (await entry(recent.id)).entry
     const c = (await entry(live.id)).entry
-    expect(await scrubEndedRaffles(now)).toBe(1)
+    const pool = [{ entryId: a.id, tickets: 1 }, { entryId: a2.id, tickets: 1 }].sort((x, y) => (x.entryId < y.entryId ? -1 : 1))
+    const [draw] = await db.insert(raffleDraws).values({ raffleId: ended.id, mode: 'one_per_person', pool, seed: 'cd'.repeat(32), winnerEntryIds: [] }).returning()
+    const winners = drawWinners(pool, 1, draw.seed, draw.id)
+    await db.update(raffleDraws).set({ winnerEntryIds: winners }).where(eq(raffleDraws.id, draw.id))
+
+    expect(await scrubEndedRaffles(now)).toBe(2)
     const get = async (id: string) => (await db.select().from(raffleEntries).where(eq(raffleEntries.id, id)))[0]
-    expect(await get(a.id)).toMatchObject({ wallet: null, displayName: null })
+    expect(await get(a.id)).toBeUndefined()
+    expect(await get(a2.id)).toBeUndefined()
     expect(await get(b.id)).toMatchObject({ wallet: b.wallet, displayName: 'Visitor' })
     expect(await get(c.id)).toMatchObject({ wallet: c.wallet, displayName: 'Visitor' })
     expect(await scrubEndedRaffles(now)).toBe(0)
+
+    const rec = (await db.select().from(raffleDraws).where(eq(raffleDraws.id, draw.id)))[0]
+    expect(drawWinners(rec.pool, 1, rec.seed, rec.id)).toEqual(rec.winnerEntryIds)
+    const detail = await app.inject({ method: 'GET', url: `/api/raffles/${ended.id}`, headers: { authorization: `Bearer ${tokenFor(host)}` } })
+    expect(detail.json().entries).toEqual([])
+    expect(detail.json().draws[0].winners).toEqual([{ entryId: winners[0], displayName: null, wallet: null, deleted: true }])
+  })
+
+  it('a snapshot that fails for one raffle does not stop the others; the log has the id and message only', async () => {
+    const now = new Date()
+    const bad = await raffle({ autoSnapshotMinutes: 5, nextAutoSnapshotAt: new Date(now.getTime() - 1000) })
+    const good = await raffle({ sceneId: (await createScene(host)).scene.id, autoSnapshotMinutes: 5, nextAutoSnapshotAt: new Date(now.getTime() - 1000) })
+    failSnapshotFor.add(bad.id)
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(await runRaffleSweep(now)).toEqual({ snapshots: 1, closed: 0 })
+      expect(await snaps(good.id)).toHaveLength(1)
+      expect(logged.mock.calls).toEqual([['[raffles] auto snapshot failed:', bad.id, 'snapshot exploded']])
+    } finally {
+      failSnapshotFor.clear()
+      logged.mockRestore()
+    }
   })
 
   it('delete-my-data removes the caller\'s entries, reports the count, and the draw still replays', async () => {
