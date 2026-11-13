@@ -27,6 +27,7 @@ import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
 import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
+import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, raffleBody } from './raffles'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
 
@@ -441,6 +442,17 @@ function useRealApi() {
       const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
       return { blob: await res.blob(), filename: m?.[1] ?? `virvi-ring-${id}.${format}` }
     },
+
+    // Raffles (LIV-55)
+    listRaffles: (sceneId: string) => apiFetch<{ raffles: HostRaffle[] }>(`/api/scenes/${sceneId}/raffles`),
+    createRaffle: (sceneId: string, body: ReturnType<typeof raffleBody>) =>
+      apiFetch<{ raffle: HostRaffle }>(`/api/scenes/${sceneId}/raffles`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
+    getRaffle: (raffleId: string) => apiFetch<RaffleDetail>(`/api/raffles/${raffleId}`),
+    raffleAction: (raffleId: string, action: 'open' | 'snapshot' | 'close' | 'cancel') =>
+      apiFetch<{ raffle?: HostRaffle; snapshot?: RaffleSnapshotRow }>(`/api/raffles/${raffleId}/${action}`, { method: 'POST', userAction: true }),
+    drawRaffle: (raffleId: string, snapshotIds?: string[]) =>
+      apiFetch<{ draw: any; winners: RaffleWinner[] }>(`/api/raffles/${raffleId}/draw`, { method: 'POST', userAction: true, body: JSON.stringify(snapshotIds ? { snapshotIds } : {}) }),
+    getRaffleDraw: (raffleId: string, drawId: string) => apiFetch<any>(`/api/raffles/${raffleId}/draws/${drawId}`),
 
     // Scene roles (wallet-based)
     getSceneRoles: (sceneId: string) =>

@@ -14,6 +14,7 @@ import { ScreenShowings } from './ScreenShowings'
 import { ClickActionField } from './ClickAction'
 import { FrameField } from './FrameField'
 import { SceneRoles } from './SceneRoles'
+import { Raffles } from './Raffles'
 import { ArSpaces } from './ArSpaces'
 import { SceneThumbnail } from './SceneThumbnail'
 import { DeleteSceneSection } from './DeleteSceneSection'
@@ -38,7 +39,7 @@ import { offTypeLocked, sceneTabLocked, TRIAL_LOCK_LABELS } from '@/lib/trial-sc
 // ---------------------------------------------------------------------------
 
 type ElementType = 'video' | 'image' | 'sound' | 'model' | 'widget' | 'ad_space'
-type TabKey = ElementType | 'moderation' | 'roles' | 'ar' | 'settings'
+type TabKey = ElementType | 'moderation' | 'roles' | 'raffles' | 'ar' | 'settings'
 
 interface Instance {
   id: string
@@ -100,6 +101,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'ad_space', label: 'Ad spaces' },
   { key: 'moderation', label: 'Moderation' },
   { key: 'roles', label: 'Roles' },
+  { key: 'raffles', label: 'Raffles' },
   { key: 'ar', label: 'AR spaces' },
   { key: 'settings', label: 'Settings' },
 ]
@@ -1596,7 +1598,7 @@ export default function SceneEditorPage() {
   // Edits go to the preset chosen in the preset bar, else the live one; never just "the first preset"
   const activePreset = editingPreset(scene, editingPresetId)
   const elements = activePreset?.elements || []
-  const filteredElements = activeTab === 'moderation' || activeTab === 'roles' || activeTab === 'ar' ? [] : elements.filter(el => el.type === activeTab)
+  const filteredElements = activeTab === 'moderation' || activeTab === 'roles' || activeTab === 'raffles' || activeTab === 'ar' ? [] : elements.filter(el => el.type === activeTab)
 
   // -----------------------------------------------------------------------
   // Update handlers
@@ -1899,7 +1901,7 @@ export default function SceneEditorPage() {
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800 pb-px">
         {TABS.map(tab => {
-          const count = tab.key === 'moderation' || tab.key === 'roles' || tab.key === 'ar' || tab.key === 'settings' ? 0 : elements.filter(el => el.type === tab.key).length
+          const count = tab.key === 'moderation' || tab.key === 'roles' || tab.key === 'raffles' || tab.key === 'ar' || tab.key === 'settings' ? 0 : elements.filter(el => el.type === tab.key).length
           if (sceneTabLocked(tab.key, trial)) {
             return (
               <button key={tab.key} type="button" onClick={() => askSceneSignUp(tab.key, tab.label)}
@@ -1929,6 +1931,9 @@ export default function SceneEditorPage() {
 
       {/* Roles tab */}
       {activeTab === 'roles' && <SceneRoles sceneId={sceneId} />}
+
+      {/* Raffles tab */}
+      {activeTab === 'raffles' && <Raffles sceneId={sceneId} sceneName={scene.name} />}
 
       {/* AR spaces tab */}
       {activeTab === 'ar' && <ArSpaces sceneId={sceneId} />}
@@ -1966,7 +1971,7 @@ export default function SceneEditorPage() {
       )}
 
       {/* Element list (video/image/model/sound) */}
-      {activeTab !== 'moderation' && activeTab !== 'widget' && activeTab !== 'roles' && activeTab !== 'ar' && activeTab !== 'settings' && (
+      {activeTab !== 'moderation' && activeTab !== 'widget' && activeTab !== 'roles' && activeTab !== 'raffles' && activeTab !== 'ar' && activeTab !== 'settings' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-gray-400">{ELEMENT_TYPE_LABELS[activeTab as ElementType]}s ({filteredElements.length})</p>

@@ -6,7 +6,7 @@ import type { SignUpRequest } from './trial'
 
 /**
  * The scene editor's parts a trial may use: the name, presets and elements (of the trial element types). Every other
- * tab or section (roles, collaborators, destinations, hyperfy, streams, showings, schedules, ar, widgets, ad spaces,
+ * tab or section (roles, raffles, collaborators, destinations, hyperfy, streams, showings, schedules, ar, widgets, ad spaces,
  * moderation, settings, realtime, media names, room sets, …) is locked: unknown keys are locked too.
  */
 export const TRIAL_SCENE_TABS: readonly string[] = ['name', 'presets', 'elements', 'model', 'image', 'video', 'sound']
