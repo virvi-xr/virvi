@@ -1,4 +1,4 @@
-import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch } from '@virvixr/shared'
+import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle } from '@virvixr/shared'
 import type { AuthResponse, MediaAsset } from './types.js'
 import { VirviAuth } from './auth.js'
 
@@ -289,6 +289,30 @@ export class VirviHttpClient {
 
   async createHandoff(): Promise<{ code: string; expiresAt: string }> {
     return this._fetch('/api/auth/handoff', { method: 'POST', body: '{}' })
+  }
+
+  // Raffles (LIV-55)
+  /** The scene's running raffle, and the caller's entry. */
+  async getCurrentRaffle(sceneId: string): Promise<{ raffle: PublicRaffle | null; myEntry: { entered: true; won: boolean } | null; canEnter: boolean; reason?: 'guest' | 'closed' }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/raffle/current`)
+  }
+
+  async enterRaffle(raffleId: string, consentVersion: number): Promise<{ entry: { entered: true; won: boolean } }> {
+    return this._fetch(`/api/raffles/${encodeURIComponent(raffleId)}/entry`, { method: 'POST', body: JSON.stringify({ consentVersion }) })
+  }
+
+  async withdrawRaffle(raffleId: string): Promise<void> {
+    await this._fetch(`/api/raffles/${encodeURIComponent(raffleId)}/entry`, { method: 'DELETE' })
+  }
+
+  /** Counts the entrant as present; the server accepts one every few seconds at most. */
+  async raffleCheckIn(raffleId: string): Promise<void> {
+    await this._fetch(`/api/raffles/${encodeURIComponent(raffleId)}/presence`, { method: 'POST', body: '{}' })
+  }
+
+  /** Host actions: `open`, `snapshot`, `draw` and `close` each POST to /api/raffles/:id/<action>. */
+  async raffleAction(raffleId: string, action: 'open' | 'snapshot' | 'draw' | 'close'): Promise<any> {
+    return this._fetch(`/api/raffles/${encodeURIComponent(raffleId)}/${action}`, { method: 'POST', body: '{}' })
   }
 
   async getScenes(): Promise<{ scenes: Scene[] }> {

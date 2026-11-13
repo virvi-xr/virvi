@@ -1,5 +1,5 @@
-import type { SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
-import { HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER } from '@virvixr/shared'
+import type { PublicDraw, PublicRaffle, SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
+import { HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
 import { VirviHttpClient, ColyseusManager } from '@virvixr/client'
 import { SceneManager } from './SceneManager.js'
 import { VirviStorageImpl } from './storage.js'
@@ -383,6 +383,15 @@ export class Virvi {
       this.sceneManager.handleScreenShowings(message as any)
     })
 
+    // Raffles (LIV-55): also sent once on join, so guests and late joiners see the running raffle
+    this.colyseus.onMessage('raffle_changed', (message: unknown) => {
+      this.events.emit('raffle_changed', (message as { raffle?: PublicRaffle | null } | null)?.raffle ?? null)
+    })
+
+    this.colyseus.onMessage('raffle_draw', (message: unknown) => {
+      if ((message as PublicDraw | null)?.drawId) this.events.emit('raffle_draw', message)
+    })
+
     this.colyseus.onMessage('scene_video_status', (message: unknown) => {
       this.sceneManager.handleVideoStatus(message as any)
     })
@@ -552,6 +561,53 @@ export class Virvi {
     }
     this.events.on('library_changed', handler)
     return () => this.events.off('library_changed', handler)
+  }
+
+  /** The scene's running raffle changed (or ended: null). Also called once on join; returns an unsubscribe. */
+  onRaffleChanged(listener: (raffle: PublicRaffle | null) => void): () => void {
+    const handler = (r: PublicRaffle | null) => {
+      try { listener(r) } catch { /* swallow */ }
+    }
+    this.events.on('raffle_changed', handler)
+    return () => this.events.off('raffle_changed', handler)
+  }
+
+  /** A raffle draw happened: spin the wheel. Returns an unsubscribe. */
+  onRaffleDraw(listener: (draw: PublicDraw) => void): () => void {
+    const handler = (d: PublicDraw) => {
+      try { listener(d) } catch { /* swallow */ }
+    }
+    this.events.on('raffle_draw', handler)
+    return () => this.events.off('raffle_draw', handler)
+  }
+
+  /** The current scene's running raffle, with the caller's entry and whether they can enter. */
+  getCurrentRaffle() {
+    return this.http.getCurrentRaffle(this.requireSceneId())
+  }
+
+  enterRaffle(raffleId: string) {
+    return this.http.enterRaffle(raffleId, RAFFLE_CONSENT_VERSION)
+  }
+
+  withdrawRaffle(raffleId: string) {
+    return this.http.withdrawRaffle(raffleId)
+  }
+
+  raffleCheckIn(raffleId: string) {
+    return this.http.raffleCheckIn(raffleId)
+  }
+
+  // Host calls (need raffle.run)
+  raffleOpen(raffleId: string) { return this.http.raffleAction(raffleId, 'open') }
+  raffleSnapshot(raffleId: string) { return this.http.raffleAction(raffleId, 'snapshot') }
+  raffleDraw(raffleId: string) { return this.http.raffleAction(raffleId, 'draw') }
+  raffleClose(raffleId: string) { return this.http.raffleAction(raffleId, 'close') }
+
+  private requireSceneId(): string {
+    const id = this._sceneId ?? this.binding?.sceneId
+    if (!id) throw new Error('No scene')
+    return id
   }
 
   /** Called with the current missingModels() count whenever it changes; returns an unsubscribe. */

@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 const _require = createRequire(import.meta.url)
 const { Room } = _require('colyseus') as any
 type Client = any
+import { activeRaffle, publicRaffle } from '../raffles/service.js'
 import { eq, and, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
@@ -413,6 +414,18 @@ export class VirviSceneRoom extends Room {
     // Sent after init so existing clients that wait for init are unaffected
     client.send('auth_status', { authenticated: !!actor.userId && actor.verified })
     await this.sendVenueAccess(client)
+    await this.sendCurrentRaffle(client)
+  }
+
+  /** Guests and late joiners can't use REST for this: hand them the scene's running raffle (or null) on join. */
+  private async sendCurrentRaffle(client: Client) {
+    if (!this.sceneId) return
+    try {
+      const row = await activeRaffle(this.sceneId)
+      client.send('raffle_changed', { raffle: row ? publicRaffle(row) : null })
+    } catch (err) {
+      console.error('[VirviSceneRoom] current raffle failed:', err)
+    }
   }
 
   onLeave(client: Client, consented: boolean) {
@@ -591,6 +604,14 @@ export class VirviSceneRoom extends Room {
           this.broadcast('scene_change_preset', { scenePreset: await withLiveStatus(serializePreset(preset)), user: null })
           await this.sendShowings()
         }
+        return
+      }
+      if (e.type === 'raffle_changed') {
+        this.broadcast('raffle_changed', { raffle: e.raffle })
+        return
+      }
+      if (e.type === 'raffle_draw') {
+        this.broadcast('raffle_draw', e.draw)
         return
       }
       this.accessGeneration++
