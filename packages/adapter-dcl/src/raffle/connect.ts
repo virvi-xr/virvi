@@ -1,7 +1,8 @@
 /**
  * Raffles in the scene (LIV-55): feeds the overlay's card from the room's `raffle_changed` (sent on join and on every
  * change, so guests need no REST), spins the wheel on `raffle_draw`, and checks entrants in while they're entered.
- * Verified visitors also read GET …/raffle/current once connected, for their own entry (entered / won).
+ * Verified visitors also read GET …/raffle/current on every (re)connect, for their own entry (entered / won): a
+ * winner who dropped and missed the draw still sees "You won!" on rejoining.
  */
 import type { Virvi } from '@virvixr/core'
 import { cardReducer, CheckInClock, checkInWanted, errorCodeOf, initialCard, raffleEntryError, type CardAction, type CardEvent } from './card.js'
@@ -11,17 +12,12 @@ import { httpStatusOf } from '../edit-errors.js'
 type Systems = { registerSystem(fn: (dt: number) => void): void }
 type Hud = Parameters<typeof mountRaffleOverlay>[0]
 
-export interface SceneRaffles {
-  /** Call after each connect: verified visitors read their own entry. */
-  connected(): void
-}
-
-const started = new WeakMap<Virvi, SceneRaffles>()
+const started = new WeakSet<Virvi>()
 
 /** Start once per Virvi, before connecting, so the room's first `raffle_changed` (sent on join) isn't missed. */
-export function startSceneRaffles(virvi: Virvi, systems: Systems, opts: { guest: boolean; hud: Hud }): SceneRaffles {
-  const existing = started.get(virvi)
-  if (existing) return existing
+export function startSceneRaffles(virvi: Virvi, systems: Systems, opts: { guest: boolean; hud: Hud }): void {
+  if (started.has(virvi)) return
+  started.add(virvi)
 
   let card = initialCard(opts.guest)
   const dispatch = (e: CardEvent) => {
@@ -40,16 +36,30 @@ export function startSceneRaffles(virvi: Virvi, systems: Systems, opts: { guest:
     }
   }
 
+  /** The running raffle and my entry from the server; a win found while the wheel spins waits for it to land. */
+  const syncMine = () => {
+    void readMine().then((cur) => {
+      if (!cur) return
+      dispatch({ type: 'raffle', raffle: cur.raffle })
+      if (!cur.myEntry) return
+      dispatch({ type: 'mine', entered: true, won: card.won })
+      if (cur.myEntry.won) pendingWon = true
+    })
+  }
+
   virvi.onRaffleChanged((raffle) => dispatch({ type: 'raffle', raffle }))
   virvi.onRaffleDraw((draw) => {
-    if (draw.raffleId !== card.raffle?.id) return
+    // The room only forwards this scene's draws: always spin, even if the card hasn't had raffle_changed yet (join race)
     startWheel(draw)
+    if (draw.raffleId !== card.raffle?.id) return syncMine()
     dispatch({ type: 'drawn', won: false })
     if (!card.entered) return
     void readMine().then((cur) => {
       if (cur?.raffle?.id === draw.raffleId && cur.myEntry?.won) pendingWon = true
     })
   })
+  // Every (re)connect, the automatic reconnector and Retry included
+  virvi.onStateChange((state) => { if (state === 'connected') syncMine() })
 
   const clock = new CheckInClock()
   let checking = false
@@ -100,16 +110,4 @@ export function startSceneRaffles(virvi: Virvi, systems: Systems, opts: { guest:
 
   mountRaffleOverlay(opts.hud)
   setRaffleCard(card)
-
-  const api: SceneRaffles = {
-    connected() {
-      void readMine().then((cur) => {
-        if (!cur) return
-        dispatch({ type: 'raffle', raffle: cur.raffle })
-        if (cur.myEntry) dispatch({ type: 'mine', entered: true, won: cur.myEntry.won })
-      })
-    },
-  }
-  started.set(virvi, api)
-  return api
 }

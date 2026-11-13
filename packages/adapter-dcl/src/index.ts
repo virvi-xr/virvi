@@ -175,10 +175,9 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
   if (config?.sceneId) {
     ensureRenderer()
     try {
-      // Before connecting: the room sends the running raffle on join
-      const raffles = startSceneRaffles(virvi, adapter, { guest: (await adapter.getPlatformUser()).isGuest, hud: renderer })
+      // Before connecting: the room sends the running raffle on join; each connect re-reads my entry
+      startSceneRaffles(virvi, adapter, { guest: (await adapter.getPlatformUser()).isGuest, hud: renderer })
       await virvi.init({ env: 'prod', ...config })
-      raffles.connected()
 
       if (renderer) {
         renderer.setCurrentScene(config.sceneId, 'Scene')
@@ -229,11 +228,10 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       if (contentStarted) return
       contentStarted = true
       void (async () => {
-        // Before connecting: the room sends the running raffle on join
-        const raffles = startSceneRaffles(virvi, adapter, { guest: user.isGuest, hud: null })
+        // Before connecting: the room sends the running raffle on join; each connect re-reads my entry
+        startSceneRaffles(virvi, adapter, { guest: user.isGuest, hud: null })
         await virvi.authenticate({ env: 'prod', ...config })
         await virvi.connectToScene(sceneId)
-        raffles.connected()
         console.log('[Virvi] Showing Virvi content for scene', sceneId)
       })().catch((err) => console.log('[Virvi] Virvi content unavailable:', String(err)))
     }
@@ -814,9 +812,8 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       // Installed before connecting so the error screen's Retry works even if this first connect fails
       if (renderer) installConnectedHandler(sceneId, role)
       // Also before connecting: the room sends the running raffle on join
-      const raffles = startSceneRaffles(virvi, adapter, { guest: user.isGuest, hud: renderer })
+      startSceneRaffles(virvi, adapter, { guest: user.isGuest, hud: renderer })
       await virvi.connectToScene(sceneId)
-      raffles.connected()
       await ensureHUD()
       console.log('[Virvi] Connected to scene as', role, sceneId)
     }
