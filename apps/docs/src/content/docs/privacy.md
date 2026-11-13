@@ -21,8 +21,8 @@ Call `POST /api/analytics/me/delete` with your session token. A dashboard contro
 A scene owner can run a raffle. Nothing about you is entered unless you choose to enter and agree to the raffle terms, and only while signed in with a verified wallet inside that scene.
 - **What's shared, and with whom:** your display name (or a shortened wallet address if you have no name) is shown on the raffle wheel to everyone in the scene. Your name and wallet address are shared with the scene's host so they can deliver your prize. Other visitors never see full wallet addresses (a visitor with no name is shown as a shortened wallet like 0x1234…abcd).
 - **Check-ins:** while you are entered, the scene sends a check-in every 30 seconds so the host can tell who is present. Check-ins stop when you withdraw or the raffle ends, and only your total time present and when you were last seen are kept.
-- **Withdrawing:** you can withdraw while the raffle is open or drawn, which deletes your entry. Past draw records keep only an anonymous entry id, so they still check out; a withdrawn winner shows there as "withdrawn entrant" and is left out of later draws.
-- **Retention:** 30 days after a raffle ends, the names and wallet addresses on its entries are removed.
+- **Withdrawing:** you can withdraw while the raffle is open or drawn, which deletes your entry. Past draw records keep only an anonymous entry id, so they still check out; a withdrawn winner shows there as "Removed entrant" and is left out of later draws.
+- **Retention:** 30 days after a raffle ends, its entries (with your name and wallet address) are deleted. Its draw records keep only anonymous entry ids.
 - **Deleting your data:** deleting your data (below) also deletes your raffle entries.
 
 ## Virvi Spaces on Quest

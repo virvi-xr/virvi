@@ -65,10 +65,11 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Withdrawing:</strong> you can withdraw while the raffle is open or drawn, which deletes your entry. Past draw records keep only an anonymous
-            entry id, so they still check out; a withdrawn winner shows there as "withdrawn entrant" and is left out of later draws.
+            entry id, so they still check out; a withdrawn winner shows there as "Removed entrant" and is left out of later draws.
           </li>
           <li>
-            <strong>Retention:</strong> 30 days after a raffle ends, the names and wallet addresses on its entries are removed.
+            <strong>Retention:</strong> 30 days after a raffle ends, its entries (with your name and wallet address) are deleted. Its draw records keep only
+            anonymous entry ids.
           </li>
           <li>
             <strong>Deleting your data:</strong> deleting your data (above) also deletes your raffle entries.

@@ -3,7 +3,7 @@ title: Raffles
 description: Run a free raffle in your scene, pick winners with a draw anyone can replay, and deliver the prizes.
 ---
 
-A **raffle** lets visitors in your scene enter for a prize, then picks winners on a wheel that everyone in the scene sees. Raffles are free to enter. Anyone who can edit the scene can run one, from the **Raffles** tab of the scene in the dashboard.
+A **raffle** lets visitors in your scene enter for a prize, then picks winners on a wheel that everyone in the scene sees. Raffles are free to enter. The scene's host, co-hosts and editors can run one, from the **Raffles** tab of the scene in the dashboard.
 
 ## Running a raffle
 
@@ -18,7 +18,7 @@ A **raffle** lets visitors in your scene enter for a prize, then picks winners o
 3. Tick the host terms: *This raffle is free to enter and needs no purchase. I'm responsible for following the giveaway and sweepstakes rules where I and my entrants live, and for delivering prizes.*
 4. Create the raffle, then press **Open**. A scene can have one running raffle (open or drawn) at a time; close it before opening another.
 
-You can edit a raffle while it is a draft or open. The mode can't change once a snapshot exists.
+You can edit a raffle while it is a draft or open: open it and press **Edit**. The fields are the same as when you created it. The mode can't change once a snapshot exists.
 
 ### Snapshots and the minimum time
 
@@ -28,16 +28,16 @@ Press **Snapshot** whenever you want to record who is there, or use auto-snapsho
 
 ### Drawing
 
-Press **Spin**. Every visitor in the scene sees the wheel land. The wheel shows up to 60 names (always including the winners), and the rest of the pool is shown as a count. You can spin again for more winners: earlier winners are left out, and a spin within 15 seconds of the last is refused. The first spin closes entry.
+Press **Spin**. Every visitor in the scene sees the wheel land. The wheel shows up to 60 names (always including the winners), and the rest of the pool is shown as a count. The first spin picks all of the raffle's winners and closes entry. You can spin again, for example when a winner doesn't claim their prize: a re-spin picks **one** replacement by default, and earlier winners are left out. A spin within 15 seconds of the last is refused. Before a spin you can change **Winners this spin** (1 up to the raffle's number of winners). The in-world Raffle tab always uses the default.
 
 - **One entry per person:** every qualifying entrant has one ticket.
 - **Weighted by time present:** each entrant has one ticket for every snapshot they were in, counting only the snapshots chosen for that spin.
 
-By default a spin uses all snapshots. Entrants who withdrew are never drawn.
+By default a spin uses all snapshots; untick any under **Snapshots to draw from** to leave them out. Entrants who withdrew are never drawn.
 
 ### Closing
 
-Press **Close** when you are finished, or **Cancel** for a raffle you will not draw. A raffle left running is closed for you 7 days after its last draw, or 30 days after it opened.
+Press **Close** when you are finished, or **Cancel** for a raffle you will not draw. Both ask you to confirm first. A raffle left running is closed for you 7 days after its last draw, or 30 days after it opened.
 
 ## What entrants see and agree to
 
@@ -45,23 +45,23 @@ Only visitors who are signed in with a verified wallet can enter, and only from 
 
 > Your display name (or a shortened wallet address if you have no name) will be shown on the raffle wheel to everyone in this scene, and your name and wallet will be shared with the host so they can deliver your prize. You can withdraw until the draw.
 
-They can also read your rules. Names are cleaned up to at most 40 characters. Entrants can withdraw while the raffle is open or drawn, and a withdrawn entry is deleted. A withdrawn winner stays in that draw's record as "withdrawn entrant" and is left out of later draws.
+They can also read your rules. Names are cleaned up to at most 40 characters. Entrants can withdraw while the raffle is open or drawn, and a withdrawn entry is deleted. A withdrawn winner stays in that draw's record, shows as "Removed entrant" and is left out of later draws.
 
 ## Delivering prizes
 
 Open the raffle in the dashboard. Winners are listed with their name and wallet address, with a **Copy** button for the wallet. Delivering each prize is up to you; the default rules promise delivery within 30 days. Winners also see that they won in the scene.
 
-Entrant names and wallets are cleared 30 days after the raffle ends, so deliver and save what you need before then.
+A raffle's entries, with their names and wallets, are deleted 30 days after the raffle ends, so deliver and save what you need before then.
 
 ## Verifying a draw
 
-Every draw keeps a record. In the raffle's **Draws** list, choose **View record** to see the algorithm version, the seed, the mode, the snapshots used, the pool (each entry id with its tickets) and the winners. The seed is chosen at random at the moment of the draw and is only recorded with the result. You can share the record with your entrants. The record uses anonymous entry ids, not names, and keeps working after entrants are deleted (they show as "withdrawn entrant").
+Every draw keeps a record. In the raffle's **Draws** list, choose **View record** to see the algorithm version, the seed, the mode, the snapshots used, the pool (each entry id with its tickets) and the winners. The seed is chosen at random at the moment of the draw and is only recorded with the result. You can share the record with your entrants. The record uses anonymous entry ids, not names, and keeps working after entrants are deleted (they show as "Removed entrant").
 
 ### Algorithm v1
 
 The pool is a list of `(entryId, tickets)` sorted by entry id (plain string comparison). One-per-person gives every entry 1 ticket; weighted gives each entry one ticket per snapshot it was in (counting only the snapshots chosen for the spin). Entries of earlier winners, and withdrawn entries, are removed first.
 
-To pick winners, repeat for `k = 0, 1, 2, ...` until you have the requested number of winners or the pool is empty:
+To pick winners, repeat for `k = 0, 1, 2, ...` until you have the number of winners the spin asked for or the pool is empty (to check a record, use the length of its `winnerEntryIds`):
 
 1. Compute `HMAC-SHA256(key = seed bytes, message = "virvi-raffle:<drawId>:<k>")`. The seed is 32 bytes, given as hex in the record. The draw id is the record's `id`.
 2. Read the first 8 bytes as an unsigned big-endian integer `r`.
