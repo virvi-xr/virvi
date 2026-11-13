@@ -61,6 +61,37 @@ describe('startSceneRaffles', () => {
     expect(t.virvi.getCurrentRaffle).toHaveBeenCalledTimes(3)
   })
 
+  it("a verified visitor the server won't let enter sees no Enter button", async () => {
+    const t = setup()
+    t.virvi.getCurrentRaffle.mockResolvedValue({ raffle: raffle(), myEntry: null, canEnter: false, reason: undefined } as any)
+    t.emit('state', 'connected')
+    await flush()
+    expect(overlay.card).toMatchObject({ entered: false, entryBlocked: "Raffle entry isn't available in this scene right now." })
+    // The pass is refused for this scene
+    t.virvi.getCurrentRaffle.mockRejectedValue(httpError(403, 'scene_pass_not_allowed'))
+    t.emit('changed', raffle({ id: 'r2' }))
+    t.emit('state', 'connected')
+    await flush()
+    expect(overlay.card).toMatchObject({ raffle: { id: 'r2' }, entryBlocked: "Raffle entry isn't available in this scene right now." })
+    // Allowed
+    t.virvi.getCurrentRaffle.mockResolvedValue({ raffle: raffle({ id: 'r2' }), myEntry: null, canEnter: true })
+    t.emit('state', 'connected')
+    await flush()
+    expect(overlay.card!.entryBlocked).toBeNull()
+  })
+
+  it('withdrawing after the raffle ended says so', async () => {
+    const t = setup()
+    t.emit('changed', raffle())
+    t.virvi.getCurrentRaffle.mockResolvedValue({ raffle: raffle(), myEntry: { entered: true, won: false }, canEnter: false })
+    t.emit('state', 'connected')
+    await flush()
+    t.virvi.withdrawRaffle.mockRejectedValueOnce(httpError(409, 'entry_closed'))
+    overlay.handler!('withdraw')
+    await flush()
+    expect(overlay.card!.note).toBe('This raffle has ended.')
+  })
+
   it('guests never call REST', async () => {
     const t = setup(true)
     t.emit('state', 'connected')

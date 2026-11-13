@@ -17,12 +17,16 @@ export interface RaffleCard {
   busy: boolean
   /** Why the last enter or withdraw didn't go through. */
   note: string | null
+  /** Why the server says I can't enter this raffle (GET …/raffle/current's canEnter false), shown instead of Enter. */
+  entryBlocked: string | null
 }
 
 export type CardEvent =
   | { type: 'raffle'; raffle: PublicRaffle | null }
   /** The caller's entry, from GET …/raffle/current. */
   | { type: 'mine'; entered: boolean; won: boolean }
+  /** Whether the server lets me enter (GET …/raffle/current's canEnter and reason, or the code it refused that read with). */
+  | { type: 'eligibility'; canEnter: boolean; reason?: string | null }
   | { type: 'enter' }
   | { type: 'confirm' }
   | { type: 'cancel' }
@@ -37,7 +41,17 @@ export type CardEvent =
 
 export type CardAction = 'enter' | 'confirm' | 'cancel' | 'withdraw' | 'rules' | 'close'
 
-export const initialCard = (guest: boolean): RaffleCard => ({ raffle: null, guest, entered: false, won: false, view: 'card', busy: false, note: null })
+export const initialCard = (guest: boolean): RaffleCard => ({ raffle: null, guest, entered: false, won: false, view: 'card', busy: false, note: null, entryBlocked: null })
+
+export const ENTRY_UNAVAILABLE = "Raffle entry isn't available in this scene right now."
+const GUEST_LINE = 'Sign in with a wallet to enter'
+
+/** The line shown for the server's reason a visitor can't enter (a closed raffle already shows "Entries closed"). */
+function blockedLine(reason: string | null | undefined): string | null {
+  if (reason === 'guest') return GUEST_LINE
+  if (reason === 'closed') return null
+  return ENTRY_UNAVAILABLE
+}
 
 const running = (r: PublicRaffle | null) => !!r && (r.status === 'open' || r.status === 'drawn')
 const hasRules = (r: PublicRaffle | null) => !!r?.rules?.trim()
@@ -45,14 +59,16 @@ const hasRules = (r: PublicRaffle | null) => !!r?.rules?.trim()
 export function cardReducer(s: RaffleCard, e: CardEvent): RaffleCard {
   switch (e.type) {
     case 'raffle': {
-      // Another raffle (or none): the last one's entry and views don't carry over
-      if (!e.raffle || e.raffle.id !== s.raffle?.id) return { ...initialCard(s.guest), raffle: e.raffle }
+      // Another raffle (or none): the last one's entry and views don't carry over; why I can't enter (my pass, not the raffle) does
+      if (!e.raffle || e.raffle.id !== s.raffle?.id) return { ...initialCard(s.guest), raffle: e.raffle, entryBlocked: s.entryBlocked }
       return { ...s, raffle: e.raffle, view: running(e.raffle) ? s.view : 'card' }
     }
     case 'mine':
       return { ...s, entered: e.entered, won: e.won }
+    case 'eligibility':
+      return { ...s, entryBlocked: e.canEnter ? null : blockedLine(e.reason) }
     case 'enter':
-      if (s.guest || s.busy || s.entered || s.raffle?.status !== 'open') return s
+      if (s.guest || s.busy || s.entered || s.entryBlocked || s.raffle?.status !== 'open') return s
       return { ...s, view: 'consent', note: null }
     case 'confirm':
       if (s.view !== 'consent' || s.busy) return s
@@ -110,7 +126,8 @@ export function cardView(s: RaffleCard): CardViewModel {
   if (s.won) line = WON_LINE
   else if (r.status === 'drawn') { line = 'Entries closed'; main = withdraw }
   else if (s.entered) { line = 'Entered ✓'; main = withdraw }
-  else if (s.guest) line = 'Sign in with a wallet to enter'
+  else if (s.guest) line = GUEST_LINE
+  else if (s.entryBlocked) line = s.entryBlocked
   else { line = null; main = s.busy ? [] : [{ id: 'enter', label: 'Enter raffle' }] }
   return { ...base, visible: true, line, body: null, actions: [...main, ...rules] }
 }
@@ -151,15 +168,17 @@ export function errorCodeOf(err: unknown): string | null {
 const ENTRY_ERRORS: Record<string, string> = {
   entry_closed: 'Entries are closed.',
   wallet_required: 'Sign in with a wallet to enter.',
-  scene_pass_required: 'Do this from inside the scene.',
+  scene_pass_required: ENTRY_UNAVAILABLE,
+  scene_pass_not_allowed: ENTRY_UNAVAILABLE,
   consent_required: 'Agree to the raffle terms to enter.',
   not_entered: "You're not in this raffle.",
   raffle_not_found: 'This raffle has ended.',
 }
 
-/** Text for a failed enter or withdraw. */
-export function raffleEntryError(err: unknown): string {
+/** Text for a failed enter or withdraw (entry_closed on a withdrawal means the raffle has ended). */
+export function raffleEntryError(err: unknown, action: 'enter' | 'withdraw' = 'enter'): string {
   const code = errorCodeOf(err)
+  if (code === 'entry_closed' && action === 'withdraw') return 'This raffle has ended.'
   if (code && ENTRY_ERRORS[code]) return ENTRY_ERRORS[code]
   if (httpStatusOf(err) === 429) return 'Too many tries. Wait a moment.'
   return 'Something went wrong. Try again.'

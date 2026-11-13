@@ -27,21 +27,24 @@ export function startSceneRaffles(virvi: Virvi, systems: Systems, opts: { guest:
   // The draw result for me waits until the wheel has landed, so the card doesn't give it away
   let pendingWon: boolean | null = null
 
+  /** GET …/raffle/current, or null; a refused pass (scene_pass_not_allowed …) means I can't enter from here. */
   const readMine = async () => {
     if (opts.guest) return null
     try {
       return await virvi.getCurrentRaffle()
-    } catch {
+    } catch (err) {
+      const code = errorCodeOf(err)
+      if (code?.startsWith('scene_pass_')) dispatch({ type: 'eligibility', canEnter: false, reason: code })
       return null // the card still works from the room's messages
     }
   }
 
-  /** The running raffle and my entry from the server; a win found while the wheel spins waits for it to land. */
+  /** The running raffle, my entry and whether I may enter, from the server; a win found while the wheel spins waits for it to land. */
   const syncMine = () => {
     void readMine().then((cur) => {
       if (!cur) return
       dispatch({ type: 'raffle', raffle: cur.raffle })
-      if (!cur.myEntry) return
+      if (!cur.myEntry) return dispatch({ type: 'eligibility', canEnter: cur.canEnter, reason: cur.reason })
       dispatch({ type: 'mine', entered: true, won: card.won })
       if (cur.myEntry.won) pendingWon = true
     })
@@ -101,7 +104,7 @@ export function startSceneRaffles(virvi: Virvi, systems: Systems, opts: { guest:
       dispatch({ type: 'withdraw' })
       virvi.withdrawRaffle(raffleId).then(
         () => dispatch({ type: 'withdrawn' }),
-        (err) => dispatch(errorCodeOf(err) === 'not_entered' ? { type: 'withdrawn' } : { type: 'failed', note: raffleEntryError(err) }),
+        (err) => dispatch(errorCodeOf(err) === 'not_entered' ? { type: 'withdrawn' } : { type: 'failed', note: raffleEntryError(err, 'withdraw') }),
       )
       return
     }

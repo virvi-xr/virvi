@@ -92,6 +92,22 @@ describe('raffle card', () => {
     expect(cardView(s).note).toBe('Entries are closed.')
   })
 
+  it("follows the server's canEnter: no Enter button and a short reason when it says no", () => {
+    const open = run(initialCard(false), { type: 'raffle', raffle: raffle() })
+    const blocked = run(open, { type: 'eligibility', canEnter: false, reason: 'scene_pass_not_allowed' })
+    expect(cardView(blocked).line).toBe("Raffle entry isn't available in this scene right now.")
+    expect(actions(blocked)).toEqual(['rules'])
+    expect(run(blocked, { type: 'enter' }).view).toBe('card')
+    expect(cardView(run(open, { type: 'eligibility', canEnter: false, reason: 'scene_pass_required' })).line).toBe("Raffle entry isn't available in this scene right now.")
+    expect(cardView(run(open, { type: 'eligibility', canEnter: false, reason: 'guest' })).line).toBe('Sign in with a wallet to enter')
+    expect(cardView(run(open, { type: 'eligibility', canEnter: false })).line).toBe("Raffle entry isn't available in this scene right now.")
+    // The reason is about my pass, so it carries over to the next raffle; allowed again, the Enter button is back
+    expect(actions(run(blocked, { type: 'raffle', raffle: raffle({ id: 'r2' }) }))).toEqual(['rules'])
+    expect(actions(run(blocked, { type: 'eligibility', canEnter: true }))).toEqual(['enter', 'rules'])
+    // An entrant still sees their entry, whatever the reason
+    expect(cardView(run(blocked, { type: 'mine', entered: true, won: false })).line).toBe('Entered ✓')
+  })
+
   it('1 entry reads singular', () => {
     expect(cardView(run(initialCard(false), { type: 'raffle', raffle: raffle({ entryCount: 1 }) })).entries).toBe('1 entry')
   })
@@ -103,6 +119,12 @@ describe('raffleEntryError', () => {
     expect(raffleEntryError(new Error('HTTP 403: {"error":"wallet_required"}'))).toBe('Sign in with a wallet to enter.')
     expect(raffleEntryError(new Error('HTTP 429: {"error":"rate_limited"}'))).toBe('Too many tries. Wait a moment.')
     expect(raffleEntryError(new Error('boom'))).toBe('Something went wrong. Try again.')
+    expect(raffleEntryError(new Error('HTTP 403: {"error":"scene_pass_required"}'))).toBe("Raffle entry isn't available in this scene right now.")
+    expect(raffleEntryError(new Error('HTTP 403: {"error":"scene_pass_not_allowed"}'))).toBe("Raffle entry isn't available in this scene right now.")
+  })
+  it('withdrawing from an ended raffle says it has ended', () => {
+    expect(raffleEntryError(new Error('HTTP 409: {"error":"entry_closed"}'), 'withdraw')).toBe('This raffle has ended.')
+    expect(raffleEntryError(new Error('HTTP 409: {"error":"entry_closed"}'), 'enter')).toBe('Entries are closed.')
   })
 })
 
