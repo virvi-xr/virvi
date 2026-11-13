@@ -56,7 +56,9 @@ RUN pnpm turbo build
 # The release record (LIV-165): every website file's SHA-256, and what this image was built from, including the public
 # NEXT_PUBLIC_* values a rebuild needs to match (they are in the served JavaScript anyway; nothing secret goes here)
 RUN node scripts/release-manifest.mjs apps/web/out > apps/web/out/release-manifest.json \
-    && node scripts/build-info.mjs > build-info.json
+    && node scripts/build-info.mjs > build-info.json \
+    && if [ -n "$VIRVI_COMMIT" ]; then printf '%s\n' "$VIRVI_COMMIT" | cut -c1-12 > RELEASE; fi
+# ^ a CI build names its release after the commit, as stamp-release.sh does for `railway up` (otherwise it's 'dev')
 
 # Copy the Next.js static export into the dashboard directory
 RUN cp -r apps/web/out dashboard \
