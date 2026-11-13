@@ -12,7 +12,7 @@ import { accessGrants, bookings, sceneCollaborators, sceneRoles, scenes, venues 
 import type { Actor } from './actor.js'
 import { sceneRoleFor } from './scene-roles.js'
 
-export type SceneScope = VenueScope | 'scene.edit' | 'scene.admin' | 'analytics.view' | 'roles.manage'
+export type SceneScope = VenueScope | 'scene.edit' | 'scene.admin' | 'analytics.view' | 'roles.manage' | 'raffle.run'
 export type AccessLevel = 'admin' | 'owner' | 'cohost' | 'editor' | 'viewer' | 'grant' | 'none'
 
 export interface BookingAccess {
@@ -31,8 +31,8 @@ export interface SceneAccess {
   booking: BookingAccess | null
 }
 
-const ALL_SCOPES: SceneScope[] = [...VENUE_SCOPES, 'scene.edit', 'scene.admin', 'analytics.view', 'roles.manage']
-const EDITOR_SCOPES: SceneScope[] = [...VENUE_SCOPES.filter((s) => s !== 'crew'), 'scene.edit', 'analytics.view']
+const ALL_SCOPES: SceneScope[] = [...VENUE_SCOPES, 'scene.edit', 'scene.admin', 'analytics.view', 'roles.manage', 'raffle.run']
+const EDITOR_SCOPES: SceneScope[] = [...VENUE_SCOPES.filter((s) => s !== 'crew'), 'scene.edit', 'analytics.view', 'raffle.run']
 const NONE: SceneAccess = { level: 'none', scopes: new Set(), booking: null }
 
 const full = (level: 'admin' | 'owner' | 'cohost'): SceneAccess => ({ level, scopes: new Set(ALL_SCOPES), booking: null })
