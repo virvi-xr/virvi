@@ -9,6 +9,7 @@ import {
   analyticsPositions,
   analyticsRollupHourly,
   analyticsScenes,
+  raffleEntries,
   analyticsSessions,
   accessGrants,
   locationSetups,
@@ -364,7 +365,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
     if (!wallets.size) return reply.status(400).send({ error: 'Sign in with your wallet to delete your visitor data' })
     const limit = deleteLimiter.take(`del:${actor.userId}`, 1, DELETE_LIMIT.capacity, DELETE_LIMIT.refillPerSec)
     if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
-    const deleted = { sessions: 0, events: 0, positions: 0, copresence: 0 }
+    const deleted = { sessions: 0, events: 0, positions: 0, copresence: 0, raffleEntries: 0 }
     const all = await db.select({ id: analyticsScenes.id, salt: analyticsScenes.salt }).from(analyticsScenes)
     for (const scene of all) {
       const hashes = [...wallets].map((w) => visitorHash(scene.salt, w))
@@ -394,6 +395,8 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       deleted.positions += counts.positions
       deleted.copresence += counts.copresence
     }
+    // Raffle entries go by account; draws keep only entry ids, so earlier draws still replay
+    deleted.raffleEntries = (await db.delete(raffleEntries).where(eq(raffleEntries.userId, actor.userId)).returning({ id: raffleEntries.id })).length
     return reply.send({ deleted })
   })
 }

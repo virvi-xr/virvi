@@ -4,6 +4,7 @@ import { bookings, scenes, venues } from '../db/schema.js'
 import { publishVenueEvent, type VenueEvent } from '../realtime/bus.js'
 import { liveSceneIds } from '../scenes/live.js'
 import { runPresetScheduleSweep } from '../scenes/preset-schedules.js'
+import { runRaffleSweep } from '../raffles/sweeps.js'
 
 // Must match liveWindowStart / liveWindowEnd in src/auth/permissions.ts.
 const setupLead = sql`make_interval(mins => (${venues.rules}->>'setupLeadMinutes')::int)`
@@ -104,9 +105,12 @@ export async function runLifecycleSweep(at = new Date()) {
   return { wentLive, ended, purgedPresets }
 }
 
+const RAFFLE_SWEEP_INTERVAL_MS = 30_000
+
 export function startLifecycleSweep(intervalMs: number): () => void {
   if (intervalMs <= 0) return () => {}
   let running = false
+  let lastRaffleSweep = 0
   const timer = setInterval(async () => {
     if (running) return
     running = true
@@ -120,6 +124,15 @@ export function startLifecycleSweep(intervalMs: number): () => void {
       await runPresetScheduleSweep()
     } catch (err) {
       console.error('[virvi-server] Preset schedule sweep failed:', err)
+    }
+    // Raffle auto-snapshots and auto-close, at most once every 30 s
+    try {
+      if (Date.now() - lastRaffleSweep >= RAFFLE_SWEEP_INTERVAL_MS) {
+        lastRaffleSweep = Date.now()
+        await runRaffleSweep()
+      }
+    } catch (err) {
+      console.error('[virvi-server] Raffle sweep failed:', err)
     } finally {
       running = false
     }
