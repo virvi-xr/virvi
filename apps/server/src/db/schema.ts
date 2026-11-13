@@ -21,7 +21,8 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus } from '@virvixr/shared'
+import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
 
@@ -2545,3 +2546,74 @@ export const errorIpKeys = pgTable('error_ip_keys', {
   day: date('day').primaryKey(),
   key: text('key').notNull(),
 })
+
+// ── Raffles (LIV-55) ─────────────────────────────────────────────────────────
+// A host runs a raffle in a scene; visitors opt in, attendance is counted by check-ins, snapshots freeze who was
+// present, and each draw keeps its pool and seed so it replays to the same winners.
+
+export const raffles = pgTable('raffles', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  name: text('name').notNull(),
+  prize: text('prize').notNull(),
+  rules: text('rules'),
+  winnersCount: integer('winners_count').notNull(),
+  mode: text('mode').$type<RaffleMode>(),
+  minPresentSeconds: integer('min_present_seconds').notNull().default(300),
+  autoSnapshotMinutes: integer('auto_snapshot_minutes'),
+  status: text('status').$type<RaffleStatus>().notNull().default('draft'),
+  hostTermsAcceptedAt: timestamp('host_terms_accepted_at', { withTimezone: true }),
+  openedAt: timestamp('opened_at', { withTimezone: true }),
+  firstDrawnAt: timestamp('first_drawn_at', { withTimezone: true }),
+  lastDrawnAt: timestamp('last_drawn_at', { withTimezone: true }),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  nextAutoSnapshotAt: timestamp('next_auto_snapshot_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  oneActivePerScene: uniqueIndex('raffles_one_active_per_scene').on(t.sceneId).where(sql`status in ('open','drawn')`),
+  autoSnapshotIdx: index('raffles_status_next_auto_snapshot_idx').on(t.status, t.nextAutoSnapshotAt),
+}))
+
+// wallet and displayName are nullable so the retention scrub can clear them
+export const raffleEntries = pgTable('raffle_entries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  raffleId: uuid('raffle_id').notNull().references(() => raffles.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  wallet: text('wallet'),
+  displayName: text('display_name'),
+  consentVersion: integer('consent_version').notNull(),
+  consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
+  secondsPresent: integer('seconds_present').notNull().default(0),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  walletUq: uniqueIndex('raffle_entries_raffle_wallet_uq').on(t.raffleId, t.wallet),
+  userUq: uniqueIndex('raffle_entries_raffle_user_uq').on(t.raffleId, t.userId),
+}))
+
+export const raffleSnapshots = pgTable('raffle_snapshots', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  raffleId: uuid('raffle_id').notNull().references(() => raffles.id, { onDelete: 'cascade' }),
+  takenAt: timestamp('taken_at', { withTimezone: true }).notNull().defaultNow(),
+  trigger: text('trigger').$type<'manual' | 'auto'>().notNull(),
+  entryIds: uuid('entry_ids').array().notNull().default(sql`'{}'::uuid[]`),
+}, (t) => ({
+  raffleIdx: index('raffle_snapshots_raffle_idx').on(t.raffleId),
+}))
+
+export const raffleDraws = pgTable('raffle_draws', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  raffleId: uuid('raffle_id').notNull().references(() => raffles.id, { onDelete: 'cascade' }),
+  snapshotIds: uuid('snapshot_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  mode: text('mode').$type<RaffleMode>().notNull(),
+  algorithm: text('algorithm').notNull().default('v1'),
+  pool: jsonb('pool').$type<PoolEntry[]>().notNull(),
+  seed: text('seed').notNull(),
+  winnerEntryIds: uuid('winner_entry_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  drawnBy: uuid('drawn_by').references(() => users.id, { onDelete: 'set null' }),
+  drawnAt: timestamp('drawn_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  raffleIdx: index('raffle_draws_raffle_idx').on(t.raffleId),
+}))

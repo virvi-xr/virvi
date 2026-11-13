@@ -456,6 +456,20 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE TABLE IF NOT EXISTS error_settings (id TEXT PRIMARY KEY, thresholds JSONB NOT NULL DEFAULT '{}'::jsonb, updated_by UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         console.log('[virvi-server] error reporting tables ensured');
       } catch(e) { console.log('[virvi-server] error reporting tables:', e.message); }
+      // Raffles (LIV-55); matches raffles, raffleEntries, raffleSnapshots and raffleDraws in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS raffles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scene_id UUID NOT NULL CONSTRAINT raffles_scene_id_scenes_id_fk REFERENCES scenes(id) ON DELETE CASCADE, created_by UUID CONSTRAINT raffles_created_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL, name TEXT NOT NULL, prize TEXT NOT NULL, rules TEXT, winners_count INTEGER NOT NULL, mode TEXT, min_present_seconds INTEGER NOT NULL DEFAULT 300, auto_snapshot_minutes INTEGER, status TEXT NOT NULL DEFAULT 'draft', host_terms_accepted_at TIMESTAMPTZ, opened_at TIMESTAMPTZ, first_drawn_at TIMESTAMPTZ, last_drawn_at TIMESTAMPTZ, ended_at TIMESTAMPTZ, next_auto_snapshot_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS raffles_one_active_per_scene ON raffles (scene_id) WHERE status in ('open','drawn')\`;
+        await sql\`CREATE INDEX IF NOT EXISTS raffles_status_next_auto_snapshot_idx ON raffles (status, next_auto_snapshot_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS raffle_entries (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), raffle_id UUID NOT NULL CONSTRAINT raffle_entries_raffle_id_raffles_id_fk REFERENCES raffles(id) ON DELETE CASCADE, user_id UUID NOT NULL CONSTRAINT raffle_entries_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, wallet TEXT, display_name TEXT, consent_version INTEGER NOT NULL, consented_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), seconds_present INTEGER NOT NULL DEFAULT 0, last_seen_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS raffle_entries_raffle_wallet_uq ON raffle_entries (raffle_id, wallet)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS raffle_entries_raffle_user_uq ON raffle_entries (raffle_id, user_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS raffle_snapshots (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), raffle_id UUID NOT NULL CONSTRAINT raffle_snapshots_raffle_id_raffles_id_fk REFERENCES raffles(id) ON DELETE CASCADE, taken_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), trigger TEXT NOT NULL, entry_ids UUID[] NOT NULL DEFAULT '{}'::uuid[])\`;
+        await sql\`CREATE INDEX IF NOT EXISTS raffle_snapshots_raffle_idx ON raffle_snapshots (raffle_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS raffle_draws (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), raffle_id UUID NOT NULL CONSTRAINT raffle_draws_raffle_id_raffles_id_fk REFERENCES raffles(id) ON DELETE CASCADE, snapshot_ids UUID[] NOT NULL DEFAULT '{}'::uuid[], mode TEXT NOT NULL, algorithm TEXT NOT NULL DEFAULT 'v1', pool JSONB NOT NULL, seed TEXT NOT NULL, winner_entry_ids UUID[] NOT NULL DEFAULT '{}'::uuid[], drawn_by UUID CONSTRAINT raffle_draws_drawn_by_users_id_fk REFERENCES users(id) ON DELETE SET NULL, drawn_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS raffle_draws_raffle_idx ON raffle_draws (raffle_id)\`;
+        console.log('[virvi-server] raffle tables ensured');
+      } catch(e) { console.log('[virvi-server] raffle tables:', e.message); }
       // model enum value
       try {
         await sql\`ALTER TYPE element_type ADD VALUE IF NOT EXISTS 'model'\`;
