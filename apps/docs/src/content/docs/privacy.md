@@ -15,7 +15,15 @@ When a scene uses Virvi, the scene sends anonymous usage events to Virvi while y
 Raw events are kept for the scene owner's plan (7–365 days, unlimited on the top tier and self-hosted installs), 30 days for unclaimed scenes, and 7 days for local previews. Aggregated statistics (counts, heatmaps) are kept longer and contain no identities.
 
 ## Deleting your data
-Call `POST /api/analytics/me/delete` with your session token. A dashboard control for this is coming. This removes your sessions, events and positions from every scene.
+Call `POST /api/analytics/me/delete` with your session token. A dashboard control for this is coming. This removes your sessions, events and positions from every scene, and your raffle entries.
+
+## Raffles
+A scene owner can run a raffle. Nothing about you is entered unless you choose to enter and agree to the raffle terms, and only while signed in with a verified wallet inside that scene.
+- **What's shared, and with whom:** your display name (or a shortened wallet address if you have no name) is shown on the raffle wheel to everyone in the scene. Your name and wallet address are shared with the scene's host so they can deliver your prize. Other visitors never see wallet addresses.
+- **Check-ins:** while you are entered, the scene sends a check-in every 30 seconds so the host can tell who is present. Check-ins stop when you withdraw or the raffle ends, and only the total time you were present is kept.
+- **Withdrawing:** you can withdraw until the draw, which deletes your entry. Past draw records keep only an anonymous entry id, so they still check out.
+- **Retention:** 30 days after a raffle ends, the names and wallet addresses on its entries are removed.
+- **Deleting your data:** deleting your data (below) also deletes your raffle entries.
 
 ## Virvi Spaces on Quest
 Virvi Spaces is the Meta Quest app that shows a Virvi space in your room. It talks to virvi.io. Pictures, videos and 3D models in a space load from wherever its owner hosts them, which may be outside virvi.io; those hosts see the headset's network address like any website would.

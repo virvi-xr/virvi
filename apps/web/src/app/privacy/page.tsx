@@ -43,10 +43,37 @@ export default function PrivacyPage() {
         <h2>Deleting your data</h2>
         <p>
           Call <code className="rounded bg-gray-800 px-1.5 py-0.5 text-sm">POST /api/analytics/me/delete</code> with your session token. A
-          dashboard control for this is coming. This removes your sessions, events and positions from every scene.
+          dashboard control for this is coming. This removes your sessions, events and positions from every scene, and your raffle entries.
           To ask for your data to be deleted, or for help, email{' '}
           <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a>.
         </p>
+
+        <h2>Raffles</h2>
+        <p>
+          A scene owner can run a raffle. Nothing about you is entered unless you choose to enter and agree to the raffle terms, and only while
+          signed in with a verified wallet inside that scene.
+        </p>
+        <ul className="list-disc pl-5">
+          <li>
+            <strong>What's shared, and with whom:</strong> your display name (or a shortened wallet address if you have no name) is shown on the
+            raffle wheel to everyone in the scene. Your name and wallet address are shared with the scene's host so they can deliver your prize.
+            Other visitors never see wallet addresses.
+          </li>
+          <li>
+            <strong>Check-ins:</strong> while you are entered, the scene sends a check-in every 30 seconds so the host can tell who is present.
+            Check-ins stop when you withdraw or the raffle ends, and only the total time you were present is kept.
+          </li>
+          <li>
+            <strong>Withdrawing:</strong> you can withdraw until the draw, which deletes your entry. Past draw records keep only an anonymous
+            entry id, so they still check out.
+          </li>
+          <li>
+            <strong>Retention:</strong> 30 days after a raffle ends, the names and wallet addresses on its entries are removed.
+          </li>
+          <li>
+            <strong>Deleting your data:</strong> deleting your data (above) also deletes your raffle entries.
+          </li>
+        </ul>
 
         <h2>Virvi Spaces on Quest</h2>
         <p>
