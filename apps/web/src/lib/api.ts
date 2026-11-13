@@ -27,7 +27,7 @@ import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
 import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
-import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, raffleBody } from './raffles'
+import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
 
@@ -450,8 +450,10 @@ function useRealApi() {
     getRaffle: (raffleId: string) => apiFetch<RaffleDetail>(`/api/raffles/${raffleId}`),
     raffleAction: (raffleId: string, action: 'open' | 'snapshot' | 'close' | 'cancel') =>
       apiFetch<{ raffle?: HostRaffle; snapshot?: RaffleSnapshotRow }>(`/api/raffles/${raffleId}/${action}`, { method: 'POST', userAction: true }),
-    drawRaffle: (raffleId: string, snapshotIds?: string[]) =>
-      apiFetch<{ draw: any; winners: RaffleWinner[] }>(`/api/raffles/${raffleId}/draw`, { method: 'POST', userAction: true, body: JSON.stringify(snapshotIds ? { snapshotIds } : {}) }),
+    updateRaffle: (raffleId: string, body: ReturnType<typeof editBody>) =>
+      apiFetch<{ raffle: HostRaffle }>(`/api/raffles/${raffleId}`, { method: 'PATCH', userAction: true, body: JSON.stringify(body) }),
+    drawRaffle: (raffleId: string, body: ReturnType<typeof drawBody> | Record<string, never> = {}) =>
+      apiFetch<{ draw: any; winners: RaffleWinner[] }>(`/api/raffles/${raffleId}/draw`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     getRaffleDraw: (raffleId: string, drawId: string) => apiFetch<any>(`/api/raffles/${raffleId}/draws/${drawId}`),
 
     // Scene roles (wallet-based)

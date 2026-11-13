@@ -4,8 +4,8 @@ import { MIN_PRESENT_MAX_MINUTES, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX } from '
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import {
-  AUTO_SNAPSHOT_CHOICES, MODE_LABELS, STATUS_LABELS, blankRaffle, fillRules, minutesPresent, raffleActions, raffleBody, raffleErrorMessage,
-  raffleFormError, rulesHost, winnerLabel,
+  AUTO_SNAPSHOT_CHOICES, MODE_LABELS, STATUS_LABELS, blankRaffle, confirmAction, drawBody, editBody, entryLabel, fillRules, minutesPresent,
+  raffleActions, raffleBody, raffleErrorMessage, raffleFormError, raffleToInput, rulesHost, spinCountDefault, winnerLabel,
 } from '@/lib/raffles'
 import type { HostRaffle, RaffleDetail, RaffleInput, RaffleMode, RaffleStatus, RaffleWinner } from '@/lib/raffles'
 
@@ -60,7 +60,7 @@ export function Raffles({ sceneId, sceneName }: { sceneId: string; sceneName: st
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [sceneId, token])
 
-  if (openId) return <RafflePage raffleId={openId} onBack={() => { setOpenId(null); load() }} />
+  if (openId) return <RafflePage raffleId={openId} sceneId={sceneId} sceneName={sceneName} onBack={() => { setOpenId(null); load() }} />
   if (creating) return <RaffleForm sceneId={sceneId} sceneName={sceneName} onCancel={() => setCreating(false)} onCreated={(r) => { setCreating(false); setOpenId(r.id) }} />
 
   return (
@@ -88,13 +88,16 @@ export function Raffles({ sceneId, sceneName }: { sceneId: string; sceneName: st
   )
 }
 
-function RaffleForm({ sceneId, sceneName, onCancel, onCreated }: { sceneId: string; sceneName: string; onCancel: () => void; onCreated: (r: HostRaffle) => void }) {
+/** The create form, or with `editing` the edit form for a draft or open raffle (same fields, no host terms). */
+function RaffleForm({ sceneId, sceneName, editing, onCancel, onCreated }: {
+  sceneId: string; sceneName: string; editing?: HostRaffle; onCancel: () => void; onCreated: (r: HostRaffle) => void
+}) {
   const api = useApi()
   const { user } = useAuth()
   const host = rulesHost(user?.displayName, sceneName)
-  const [f, setF] = useState<RaffleInput>(() => ({ ...blankRaffle(), rules: fillRules('', 1, host) }))
-  // The rules follow the prize and winners until the host edits them
-  const [rulesEdited, setRulesEdited] = useState(false)
+  const [f, setF] = useState<RaffleInput>(() => (editing ? raffleToInput(editing) : { ...blankRaffle(), rules: fillRules('', 1, host) }))
+  // The rules follow the prize and winners until the host edits them (an existing raffle's rules are left as they are)
+  const [rulesEdited, setRulesEdited] = useState(!!editing)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -102,18 +105,20 @@ function RaffleForm({ sceneId, sceneName, onCancel, onCreated }: { sceneId: stri
     const next = { ...cur, ...patch }
     return rulesEdited || patch.rules !== undefined ? next : { ...next, rules: fillRules(next.prize, next.winnersCount, host) }
   })
-  const blocked = raffleFormError(f)
+  const blocked = raffleFormError(f, { editing: !!editing })
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (blocked) { setError(blocked); return }
     setBusy(true)
-    try { onCreated((await api.createRaffle(sceneId, raffleBody(f))).raffle) } catch (err) { setError(raffleErrorMessage(err)) } finally { setBusy(false) }
+    try {
+      onCreated(editing ? (await api.updateRaffle(editing.id, editBody(f))).raffle : (await api.createRaffle(sceneId, raffleBody(f))).raffle)
+    } catch (err) { setError(raffleErrorMessage(err)) } finally { setBusy(false) }
   }
 
   return (
     <form onSubmit={submit} className="rounded-lg border border-gray-800 bg-gray-900 p-6 space-y-4">
-      <h3 className="text-sm font-medium text-gray-300">New raffle</h3>
+      <h3 className="text-sm font-medium text-gray-300">{editing ? 'Edit raffle' : 'New raffle'}</h3>
       {error && <div role="alert" className="rounded-md bg-red-900/50 border border-red-700 px-4 py-2 text-sm text-red-300">{error}</div>}
       <label className="block text-xs text-gray-400">Name
         <input className={`${INPUT} mt-1 w-full`} value={f.name} maxLength={80} onChange={(e) => set({ name: e.target.value })} />
@@ -144,26 +149,33 @@ function RaffleForm({ sceneId, sceneName, onCancel, onCreated }: { sceneId: stri
       <label className="block text-xs text-gray-400">Rules
         <textarea className={`${INPUT} mt-1 w-full font-mono`} rows={8} value={f.rules} onChange={(e) => { setRulesEdited(true); set({ rules: e.target.value }) }} />
       </label>
-      <label className="flex items-start gap-2 text-xs text-gray-300">
-        <input type="checkbox" className="mt-0.5" checked={f.acceptHostTerms} onChange={(e) => set({ acceptHostTerms: e.target.checked })} />
-        <span>{RAFFLE_HOST_TERMS}</span>
-      </label>
+      {!editing && (
+        <label className="flex items-start gap-2 text-xs text-gray-300">
+          <input type="checkbox" className="mt-0.5" checked={f.acceptHostTerms} onChange={(e) => set({ acceptHostTerms: e.target.checked })} />
+          <span>{RAFFLE_HOST_TERMS}</span>
+        </label>
+      )}
       <div className="flex gap-2">
-        <button type="submit" disabled={busy || blocked !== null} className="rounded-md bg-orange-600 px-3 py-1.5 text-sm text-white hover:bg-orange-500 disabled:opacity-50">Create raffle</button>
+        <button type="submit" disabled={busy || blocked !== null} className="rounded-md bg-orange-600 px-3 py-1.5 text-sm text-white hover:bg-orange-500 disabled:opacity-50">{editing ? 'Save changes' : 'Create raffle'}</button>
         <button type="button" onClick={onCancel} className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700">Back</button>
       </div>
     </form>
   )
 }
 
-function RafflePage({ raffleId, onBack }: { raffleId: string; onBack: () => void }) {
+function RafflePage({ raffleId, sceneId, sceneName, onBack }: { raffleId: string; sceneId: string; sceneName: string; onBack: () => void }) {
   const { token } = useAuth()
   const api = useApi()
   const [detail, setDetail] = useState<RaffleDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // The last spin's winners, until the next action
   const [spun, setSpun] = useState<RaffleWinner[] | null>(null)
   const [record, setRecord] = useState<{ id: string; json: string } | null>(null)
+  const [editing, setEditing] = useState(false)
+  // The next spin: how many winners (null: the default) and the snapshots left out (new ones are included)
+  const [spinCount, setSpinCount] = useState<number | null>(null)
+  const [leftOut, setLeftOut] = useState<Set<string>>(new Set())
 
   const load = async () => {
     try { setDetail(await api.getRaffle(raffleId)) } catch (err) { setError(raffleErrorMessage(err)) }
@@ -171,20 +183,39 @@ function RafflePage({ raffleId, onBack }: { raffleId: string; onBack: () => void
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [raffleId, token])
 
+  const r = detail?.raffle
+  const count = spinCount ?? (r && detail ? spinCountDefault(r.winnersCount, detail.draws.length) : 1)
+  const allSnapshots = detail?.snapshots.map((s) => s.id) ?? []
+
   const act = async (action: keyof typeof ACTION_LABELS) => {
-    setBusy(true); setError(null)
+    const question = confirmAction(action)
+    if (question && !window.confirm(question)) return
+    setBusy(true); setError(null); setSpun(null)
     try {
-      if (action === 'draw') setSpun((await api.drawRaffle(raffleId)).winners)
-      else await api.raffleAction(raffleId, action)
+      if (action === 'draw') {
+        setSpun((await api.drawRaffle(raffleId, drawBody(count, allSnapshots.filter((id) => !leftOut.has(id)), allSnapshots))).winners)
+        setSpinCount(null)
+      } else await api.raffleAction(raffleId, action)
       await load()
     } catch (err) { setError(raffleErrorMessage(err)) } finally { setBusy(false) }
   }
+
+  const toggleSnapshot = (id: string) => setLeftOut((cur) => {
+    const next = new Set(cur)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
 
   const viewRecord = async (drawId: string) => {
     try { setRecord({ id: drawId, json: JSON.stringify(await api.getRaffleDraw(raffleId, drawId), null, 2) }) } catch (err) { setError(raffleErrorMessage(err)) }
   }
 
-  const r = detail?.raffle
+  if (editing && r) {
+    return <RaffleForm sceneId={sceneId} sceneName={sceneName} editing={r} onCancel={() => setEditing(false)} onCreated={() => { setEditing(false); load() }} />
+  }
+
+  const canSpin = r?.status === 'open' || r?.status === 'drawn'
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-6 space-y-6">
       <button type="button" onClick={onBack} className="text-xs text-orange-400 hover:underline">← All raffles</button>
@@ -198,6 +229,10 @@ function RafflePage({ raffleId, onBack }: { raffleId: string; onBack: () => void
             </div>
             <div className="flex items-center gap-2">
               <StatusChip status={r.status} />
+              {(r.status === 'draft' || r.status === 'open') && (
+                <button type="button" disabled={busy} onClick={() => { setSpun(null); setEditing(true) }}
+                  className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-50">Edit</button>
+              )}
               {raffleActions(r.status).map((a) => (
                 <button key={a} type="button" disabled={busy} onClick={() => act(a)}
                   className={`rounded-md px-3 py-1.5 text-sm disabled:opacity-50 ${a === 'cancel' || a === 'close' ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-orange-600 text-white hover:bg-orange-500'}`}>
@@ -206,6 +241,28 @@ function RafflePage({ raffleId, onBack }: { raffleId: string; onBack: () => void
               ))}
             </div>
           </div>
+
+          {canSpin && (
+            <section aria-label="Next spin" className="flex flex-wrap items-end gap-4 text-xs text-gray-400">
+              <label>Winners this spin
+                <input type="number" min={1} max={r.winnersCount} className={`${INPUT} mt-1 block w-24`} value={count}
+                  onChange={(e) => setSpinCount(Number(e.target.value))} />
+              </label>
+              {detail.snapshots.length > 0 && (
+                <fieldset>
+                  <legend className="mb-1">Snapshots to draw from</legend>
+                  <div className="flex flex-wrap gap-3">
+                    {detail.snapshots.map((s) => (
+                      <label key={s.id} className="inline-flex items-center gap-1 text-gray-300">
+                        <input type="checkbox" checked={!leftOut.has(s.id)} onChange={() => toggleSnapshot(s.id)} />
+                        {when(s.takenAt)} ({s.entryIds.length})
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              )}
+            </section>
+          )}
 
           {spun && (
             <section aria-label="Winners">
@@ -220,14 +277,17 @@ function RafflePage({ raffleId, onBack }: { raffleId: string; onBack: () => void
               <table className="w-full text-left text-sm">
                 <thead className="text-xs text-gray-500"><tr><th className="py-1">Name</th><th>Wallet</th><th>Minutes present</th><th>Last seen</th></tr></thead>
                 <tbody>
-                  {detail.entries.map((e) => (
+                  {detail.entries.map((e) => {
+                    const { name, wallet } = entryLabel(e)
+                    return (
                     <tr key={e.id} className="border-t border-gray-800">
-                      <td className="py-1 text-gray-100">{e.displayName}</td>
-                      <td><CopyWallet wallet={e.wallet} /></td>
+                      <td className={`py-1 ${wallet ? 'text-gray-100' : 'text-gray-500 italic'}`}>{name}</td>
+                      <td>{wallet && <CopyWallet wallet={wallet} />}</td>
                       <td className="text-gray-300">{minutesPresent(e.secondsPresent)}</td>
                       <td className="text-gray-400">{when(e.lastSeenAt)}</td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             )}

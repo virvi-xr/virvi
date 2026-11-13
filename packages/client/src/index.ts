@@ -1,5 +1,5 @@
 export { VirviHttpClient } from './http.js'
-export type { SetupStatus, SceneRoleEntry, MediaLibraryAsset, SceneLibraryItem, UploadToken, HostRaffleSummary } from './http.js'
+export type { SetupStatus, SceneRoleEntry, MediaLibraryAsset, SceneLibraryItem, UploadToken, HostRaffleSummary, RafflePatch } from './http.js'
 export { VirviAuth } from './auth.js'
 export { ColyseusManager } from './colyseus.js'
 export { ensureNetworkPolyfills } from './polyfills.js'

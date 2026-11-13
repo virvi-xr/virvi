@@ -1,6 +1,6 @@
 import type { PublicDraw, PublicRaffle, SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
 import { HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
-import { VirviHttpClient, ColyseusManager } from '@virvixr/client'
+import { VirviHttpClient, ColyseusManager, type RafflePatch } from '@virvixr/client'
 import { SceneManager } from './SceneManager.js'
 import { VirviStorageImpl } from './storage.js'
 import type { Selected } from './transform/session.js'
@@ -601,6 +601,7 @@ export class Virvi {
   // Host calls (need raffle.run)
   raffleList() { return this.http.listRaffles(this.requireSceneId()) }
   raffleDetail(raffleId: string) { return this.http.getRaffleDetail(raffleId) }
+  updateRaffle(raffleId: string, patch: RafflePatch) { return this.http.updateRaffle(raffleId, patch) }
   raffleOpen(raffleId: string) { return this.http.raffleAction(raffleId, 'open') }
   raffleSnapshot(raffleId: string) { return this.http.raffleAction(raffleId, 'snapshot') }
   raffleDraw(raffleId: string) { return this.http.raffleAction(raffleId, 'draw') }

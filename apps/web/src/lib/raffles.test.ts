@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { RAFFLE_RULES_TEMPLATE } from '@virvixr/shared'
-import { blankRaffle, fillRules, minutesPresent, raffleActions, raffleBody, raffleErrorMessage, raffleFormError, rulesHost, winnerLabel } from './raffles'
+import {
+  blankRaffle, confirmAction, drawBody, editBody, entryLabel, fillRules, minutesPresent, raffleActions, raffleBody, raffleErrorMessage, raffleFormError,
+  raffleToInput, rulesHost, spinCountDefault, winnerLabel, type HostRaffle,
+} from './raffles'
 import { sceneTabLocked } from './trial-scene'
 
 const filled = { ...blankRaffle(), name: 'Friday', prize: 'A signed poster' }
@@ -44,8 +47,53 @@ describe('spin results', () => {
     const w = { entryId: 'e1', displayName: '<b>Ana</b>', wallet: '0xabc' }
     expect(winnerLabel(w)).toEqual({ name: '<b>Ana</b>', wallet: '0xabc' })
   })
-  it('shows a deleted entrant without a wallet', () => {
-    expect(winnerLabel({ entryId: 'e2', displayName: null, wallet: null, deleted: true })).toEqual({ name: 'Deleted entrant', wallet: null })
+  it('shows a removed winner without a wallet', () => {
+    expect(winnerLabel({ entryId: 'e2', displayName: null, wallet: null, deleted: true })).toEqual({ name: 'Removed entrant', wallet: null })
+    expect(winnerLabel({ entryId: 'e3', displayName: null, wallet: null })).toEqual({ name: 'Removed entrant', wallet: null })
+  })
+  it('shows an entry with no name or wallet as a removed entrant, with no wallet to copy', () => {
+    const at = { secondsPresent: 0, lastSeenAt: null, createdAt: '2026-11-13T00:00:00Z' }
+    expect(entryLabel({ id: 'e1', displayName: null, wallet: null, ...at })).toEqual({ name: 'Removed entrant', wallet: null })
+    expect(entryLabel({ id: 'e1', displayName: null, wallet: '0xabc', ...at })).toEqual({ name: 'Removed entrant', wallet: null })
+    expect(entryLabel({ id: 'e2', displayName: 'Ana', wallet: '0xabc', ...at })).toEqual({ name: 'Ana', wallet: '0xabc' })
+  })
+})
+
+describe('spinning', () => {
+  it('defaults to every winner on the first spin and one replacement after', () => {
+    expect(spinCountDefault(3, 0)).toBe(3)
+    expect(spinCountDefault(3, 2)).toBe(1)
+  })
+  it('sends the count, and the snapshots only when some are left out', () => {
+    expect(drawBody(2, ['s1', 's2'], ['s1', 's2'])).toEqual({ count: 2 })
+    expect(drawBody(1, ['s2'], ['s1', 's2'])).toEqual({ count: 1, snapshotIds: ['s2'] })
+    expect(drawBody(1, [], ['s1'])).toEqual({ count: 1, snapshotIds: [] })
+  })
+  it('asks before Close and Cancel only', () => {
+    expect(confirmAction('close')).toMatch(/close/i)
+    expect(confirmAction('cancel')).toMatch(/cancel/i)
+    expect(confirmAction('open')).toBeNull()
+    expect(confirmAction('draw')).toBeNull()
+  })
+  it('maps bad_count', () => {
+    expect(raffleErrorMessage(new Error('bad_count'))).not.toBe('Something went wrong. Try again.')
+  })
+})
+
+describe('editing a raffle', () => {
+  const r: HostRaffle = {
+    id: 'r1', sceneId: 's1', name: 'Friday', prize: 'Hat', rules: null, winnersCount: 2, mode: 'weighted', minPresentMinutes: 3,
+    autoSnapshotMinutes: 10, status: 'open', entryCount: 0, openedAt: null, endedAt: null,
+  }
+  it('fills the form from the raffle, terms not needed', () => {
+    const f = raffleToInput(r)
+    expect(f).toMatchObject({ name: 'Friday', prize: 'Hat', rules: '', winnersCount: 2, mode: 'weighted', minPresentMinutes: 3, autoSnapshotMinutes: 10 })
+    expect(raffleFormError(f, { editing: true })).toBeNull()
+    expect(raffleFormError({ ...f, name: '' }, { editing: true })).toMatch(/name/)
+  })
+  it('sends the same fields as create, without the host terms', () => {
+    const body = editBody({ ...raffleToInput(r), rules: '  Be nice. ' })
+    expect(body).toEqual({ name: 'Friday', prize: 'Hat', winnersCount: 2, mode: 'weighted', minPresentMinutes: 3, autoSnapshotMinutes: 10, rules: 'Be nice.' })
   })
 })
 

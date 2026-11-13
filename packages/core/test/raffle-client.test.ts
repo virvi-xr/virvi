@@ -43,6 +43,18 @@ describe('raffle client calls (LIV-55)', () => {
     }
   })
 
+  it('updateRaffle sends the patch to the raffle', async () => {
+    const { virvi, last } = setup()
+    await virvi.updateRaffle('r1', { name: 'Renamed', winnersCount: 2 })
+    expect(last()).toEqual({ url: 'https://api.example/api/raffles/r1', method: 'PATCH', body: { name: 'Renamed', winnersCount: 2 } })
+  })
+
+  it('the HUD spin sends no count, so the server picks its default', async () => {
+    const { virvi, last } = setup()
+    await virvi.raffleDraw('r1')
+    expect(last()).toEqual({ url: 'https://api.example/api/raffles/r1/draw', method: 'POST', body: {} })
+  })
+
   it('the host tab reads the scene raffles and one raffle', async () => {
     const { virvi, last } = setup()
     await virvi.raffleList()

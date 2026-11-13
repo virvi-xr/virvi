@@ -1,4 +1,4 @@
-import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle, RaffleStatus } from '@virvixr/shared'
+import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle, RaffleMode, RaffleStatus } from '@virvixr/shared'
 import type { AuthResponse, MediaAsset } from './types.js'
 import { VirviAuth } from './auth.js'
 
@@ -40,6 +40,17 @@ export interface HostRaffleSummary {
   prize: string
   status: RaffleStatus
   entryCount: number
+}
+
+/** The fields PATCH /api/raffles/:raffleId takes; leave a field out to keep it. */
+export interface RafflePatch {
+  name?: string
+  prize?: string
+  rules?: string | null
+  winnersCount?: number
+  mode?: RaffleMode
+  minPresentMinutes?: number | null
+  autoSnapshotMinutes?: number | null
 }
 
 export class VirviHttpClient {
@@ -327,6 +338,11 @@ export class VirviHttpClient {
   /** Host: one raffle with its entries (names, wallets, time present), snapshots and draws. */
   async getRaffleDetail(raffleId: string): Promise<{ raffle: HostRaffleSummary; entries: { id: string; lastSeenAt: string | null; secondsPresent: number }[] }> {
     return this._fetch(`/api/raffles/${encodeURIComponent(raffleId)}`)
+  }
+
+  /** Host: edit a draft or open raffle (any of the create fields; the mode can't change after a snapshot). */
+  async updateRaffle(raffleId: string, patch: RafflePatch): Promise<{ raffle: HostRaffleSummary }> {
+    return this._fetch(`/api/raffles/${encodeURIComponent(raffleId)}`, { method: 'PATCH', body: JSON.stringify(patch) })
   }
 
   /** Host actions: `open`, `snapshot`, `draw` and `close` each POST to /api/raffles/:id/<action>. */
