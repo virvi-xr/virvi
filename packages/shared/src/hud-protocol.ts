@@ -17,7 +17,7 @@ export const REDEPLOY_REQUIRED = 'redeploy_required'
  * test checks they match). A request without the header is from a HUD released before 2.14.0.
  */
 export const HUD_VERSION_HEADER = 'x-virvi-hud-version'
-export const DCL_HUD_VERSION = '2.13.0'
+export const DCL_HUD_VERSION = '2.14.0'
 
 /** "2.13.0" → [2, 13, 0]; null for anything that isn't three whole numbers. */
 export function parseHudVersion(v: unknown): [number, number, number] | null {

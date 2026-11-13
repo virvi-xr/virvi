@@ -3,7 +3,7 @@ title: Scene State
 description: Virvi has no per-player key-value store in the SDK; here is what to use for saved and shared state instead.
 ---
 
-The Virvi SDK (`@virvixr/dcl` 2.13.0) has **no** `setState` or `getState`, and the server has no per-player key-value store. Earlier versions of these docs described one; it doesn't exist.
+The Virvi SDK (`@virvixr/dcl` 2.14.0) has **no** `setState` or `getState`, and the server has no per-player key-value store. Earlier versions of these docs described one; it doesn't exist.
 
 Pick by what the state is for.
 

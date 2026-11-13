@@ -22,7 +22,7 @@ describe('installVirvi', () => {
     const r = await installVirvi(folder({ 'package.json': pkg(), 'src/index.ts': "import { engine } from '@dcl/sdk/ecs'\n\nexport function main() {\n  engine.addSystem(() => {})\n}\n" }))
     const p = JSON.parse(text(r.files, 'package.json'))
     expect(p.dependencies['@virvixr/dcl']).toBe(VIRVI_DCL_RANGE)
-    expect(VIRVI_DCL_RANGE).toBe('^2.13.0')
+    expect(VIRVI_DCL_RANGE).toBe('^2.14.0')
     expect(Object.keys(p)).toEqual(['name', 'version', 'devDependencies', 'dependencies'])
     expect(text(r.files, 'package.json').endsWith('}\n')).toBe(true)
     expect(text(r.files, 'src/index.ts')).toBe("import { createVirvi } from '@virvixr/dcl'\nimport { engine } from '@dcl/sdk/ecs'\n\nexport function main() {\n  void createVirvi()\n  engine.addSystem(() => {})\n}\n")
@@ -32,14 +32,14 @@ describe('installVirvi', () => {
 
   it('raises an older @virvixr/dcl and replaces non-semver specs, never lowers', async () => {
     const run = async (spec: string) => JSON.parse(text((await installVirvi(folder({ 'package.json': pkg({ '@virvixr/dcl': spec, left: '1.0.0' }), 'src/index.ts': 'export function main() {}' }))).files, 'package.json'))
-    expect((await run('^2.4.0')).dependencies).toEqual({ '@virvixr/dcl': '^2.13.0', left: '1.0.0' })
-    expect((await run('~2.1.9'))['dependencies']['@virvixr/dcl']).toBe('^2.13.0')
-    expect((await run('>=1.0.0'))['dependencies']['@virvixr/dcl']).toBe('^2.13.0')
-    expect((await run('latest'))['dependencies']['@virvixr/dcl']).toBe('^2.13.0')
-    expect((await run('file:../dcl'))['dependencies']['@virvixr/dcl']).toBe('^2.13.0')
-    expect((await run('github:a/b'))['dependencies']['@virvixr/dcl']).toBe('^2.13.0')
-    expect((await run('*'))['dependencies']['@virvixr/dcl']).toBe('^2.13.0')
-    expect((await run('^2.13.1'))['dependencies']['@virvixr/dcl']).toBe('^2.13.1')
+    expect((await run('^2.4.0')).dependencies).toEqual({ '@virvixr/dcl': '^2.14.0', left: '1.0.0' })
+    expect((await run('~2.1.9'))['dependencies']['@virvixr/dcl']).toBe('^2.14.0')
+    expect((await run('>=1.0.0'))['dependencies']['@virvixr/dcl']).toBe('^2.14.0')
+    expect((await run('latest'))['dependencies']['@virvixr/dcl']).toBe('^2.14.0')
+    expect((await run('file:../dcl'))['dependencies']['@virvixr/dcl']).toBe('^2.14.0')
+    expect((await run('github:a/b'))['dependencies']['@virvixr/dcl']).toBe('^2.14.0')
+    expect((await run('*'))['dependencies']['@virvixr/dcl']).toBe('^2.14.0')
+    expect((await run('^2.14.1'))['dependencies']['@virvixr/dcl']).toBe('^2.14.1')
     expect((await run('^10.0.0'))['dependencies']['@virvixr/dcl']).toBe('^10.0.0')
   })
 
@@ -63,7 +63,7 @@ describe('installVirvi', () => {
 
   it('leaves a file that already imports createVirvi alone, and uses index.tsx / index.js', async () => {
     const src = "import { createVirvi } from '@virvixr/dcl'\nexport function main() {\n  void createVirvi()\n}\n"
-    const r = await installVirvi(folder({ 'package.json': pkg({ '@virvixr/dcl': '^2.13.0' }), 'src/index.ts': src }))
+    const r = await installVirvi(folder({ 'package.json': pkg({ '@virvixr/dcl': '^2.14.0' }), 'src/index.ts': src }))
     expect(text(r.files, 'src/index.ts')).toBe(src)
     expect(r.changed).toEqual(['images/virvi/hud-v.png'])
     const js = await installVirvi(folder({ 'package.json': pkg(), 'src/index.js': 'export function main() {}' }))
@@ -136,7 +136,7 @@ describe('installVirvi', () => {
       const pk = JSON.stringify({ name: 'x', devDependencies: { '@virvixr/dcl': '^2.0.0' } }, null, 2)
       const r = await installVirvi(folder({ 'package.json': pk, 'src/index.ts': 'export function main() {}' }))
       const p = JSON.parse(text(r.files, 'package.json'))
-      expect(p.devDependencies['@virvixr/dcl']).toBe('^2.13.0')
+      expect(p.devDependencies['@virvixr/dcl']).toBe('^2.14.0')
       expect(p.dependencies).toBeUndefined()
     })
 
@@ -157,7 +157,7 @@ describe('installVirvi', () => {
       }, 'creator-hub'))
       expect(text(r.files, 'src/index.ts')).toBe(MAIN)
       expect(text(r.files, 'assets/scene/Scripts/VirviManager.ts')).toBe(VIRVI_MANAGER)
-      expect(JSON.parse(text(r.files, 'package.json')).dependencies['@virvixr/dcl']).toBe('^2.13.0')
+      expect(JSON.parse(text(r.files, 'package.json')).dependencies['@virvixr/dcl']).toBe('^2.14.0')
       expect(r.alreadyInstalled).toBe(true)
       expect(r.changed.sort()).toEqual(['images/virvi/hud-v.png', 'package.json'])
     })
@@ -166,7 +166,7 @@ describe('installVirvi', () => {
       const other = "import { createVirvi } from '@virvixr/dcl'\nexport function startAll() {\n  void createVirvi()\n}\n"
       const r = await installVirvi(folder({ 'package.json': pkg(), 'src/other.ts': other, 'src/index.ts': "import { startAll } from './other'\n" + MAIN }))
       expect(text(r.files, 'src/index.ts')).toBe("import { startAll } from './other'\n" + MAIN)
-      expect(JSON.parse(text(r.files, 'package.json')).dependencies['@virvixr/dcl']).toBe('^2.13.0')
+      expect(JSON.parse(text(r.files, 'package.json')).dependencies['@virvixr/dcl']).toBe('^2.14.0')
       expect(r.alreadyInstalled).toBe(true)
     })
 

@@ -9,7 +9,7 @@ Virvi draws every image, video screen, model and sound in the live preset for yo
 
 Elements and instances have a `customRendering` field (default `false`). You can set it through the API, for example `PUT /api/elements/:elementId` with `{ "customRendering": true }`, and it comes back with the scene's data.
 
-The SDK (`@virvixr/dcl` 2.13.0) ignores it: Virvi still draws the element. Treat it as a label your own code can read, not as a switch.
+The SDK (`@virvixr/dcl` 2.14.0) ignores it: Virvi still draws the element. Treat it as a label your own code can read, not as a switch.
 
 ## Ways to draw content yourself
 

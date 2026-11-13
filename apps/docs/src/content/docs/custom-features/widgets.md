@@ -8,7 +8,7 @@ A widget is a scene element that holds one control value, such as an on/off swit
 ## Current status
 
 - **Dashboard:** a scene's editor has a **Widgets** section. You can add a widget, pick its control type and set its value. It is saved in the preset like any other element.
-- **SDK:** `@virvixr/dcl` 2.13.0 does **not** pass widgets to scene code. `virvi.storage.widgets` stays empty, and the `widgets` option in `VirviInitConfig` is accepted but not used. There is no `onWidgetChange` or `onWidgetClick`.
+- **SDK:** `@virvixr/dcl` 2.14.0 does **not** pass widgets to scene code. `virvi.storage.widgets` stays empty, and the `widgets` option in `VirviInitConfig` is accepted but not used. There is no `onWidgetChange` or `onWidgetClick`.
 - **Hyperfy app:** widgets aren't supported.
 
 So today a widget's value can't drive your scene through the SDK.

@@ -70,7 +70,7 @@ describe('uninstallVirvi', () => {
     const f = folder({ 'package.json': pkg({ '@virvixr/dcl': '^2.4.0' }), 'src/index.ts': MAIN, 'src/own.ts': own })
     const back = uninstallVirvi((await installVirvi(f)).files)
     expect(back.leftovers).toEqual(['src/own.ts'])
-    expect(JSON.parse(strFromU8(back.files.get('package.json')!)).dependencies['@virvixr/dcl']).toBe('^2.13.0')
+    expect(JSON.parse(strFromU8(back.files.get('package.json')!)).dependencies['@virvixr/dcl']).toBe('^2.14.0')
     expect(strFromU8(back.files.get('src/own.ts')!)).toBe(own)
   })
 
