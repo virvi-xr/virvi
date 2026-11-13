@@ -19,6 +19,8 @@ export interface SessionClaims {
   pairingId?: string
   worldId?: string
   deviceId?: string
+  /** On a Decentraland scene pass: the name the visitor signed in with (raffle entries copy it, LIV-55). */
+  displayName?: string
 }
 
 const verifier = createVerifier({ key: config.jwtSecret })

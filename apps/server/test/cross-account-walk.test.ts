@@ -226,6 +226,9 @@ const CASES: Case[] = [
   { route: 'POST /api/raffles/:raffleId/close', url: (f) => `/api/raffles/${f.raffle.id}/close` },
   { route: 'POST /api/raffles/:raffleId/cancel', url: (f) => `/api/raffles/${f.raffle.id}/cancel` },
   { route: 'GET /api/raffles/:raffleId/draws/:drawId', url: (f) => `/api/raffles/${f.raffle.id}/draws/${f.raffleDraw.id}` },
+  { route: 'POST /api/raffles/:raffleId/entry', url: (f) => `/api/raffles/${f.raffle.id}/entry`, body: () => ({ consentVersion: 1 }) },
+  { route: 'DELETE /api/raffles/:raffleId/entry', url: (f) => `/api/raffles/${f.raffle.id}/entry` },
+  { route: 'POST /api/raffles/:raffleId/presence', url: (f) => `/api/raffles/${f.raffle.id}/presence` },
   { route: 'GET /api/elements/:elementId/showings', url: (f) => `/api/elements/${f.element.id}/showings` },
   { route: 'POST /api/elements/:elementId/showings', url: (f) => `/api/elements/${f.element.id}/showings`, body: () => ({ items: [{ url: 'https://cdn.example/a.mp4', duration: 60 }], recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC' }) },
   { route: 'PATCH /api/showings/:showingId', url: (f) => `/api/showings/${f.showing.id}`, body: () => ({ enabled: false }) },
@@ -511,6 +514,7 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
   'GET /api/imports/build/:id/source': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
   'POST /api/imports/build/:id/result': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
   'POST /api/imports/build/:id/failed': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
+  'GET /api/scenes/:sceneId/raffle/current': "any signed-in caller may read a scene's running raffle: the visitor-safe PublicRaffle (no names or wallets) and only the caller's own entry (raffles-visitor.test.ts)",
 }
 
 // Every table holding B's fixtures; a refused request must leave all of them as they were.

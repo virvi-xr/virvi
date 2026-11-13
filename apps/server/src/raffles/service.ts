@@ -1,12 +1,12 @@
 import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import {
-  AUTO_SNAPSHOT_MINUTES, DRAW_ALGORITHM, DRAW_COOLDOWN_MS, MIN_PRESENT_DEFAULT_MINUTES, MIN_PRESENT_MAX_MINUTES, RAFFLE_WINNERS_MAX,
+  AUTO_SNAPSHOT_MINUTES, RAFFLE_CONSENT_VERSION, cleanDisplayName, DRAW_ALGORITHM, DRAW_COOLDOWN_MS, MIN_PRESENT_DEFAULT_MINUTES, MIN_PRESENT_MAX_MINUTES, RAFFLE_WINNERS_MAX,
   WHEEL_MAX_NAMES, shortWallet, type PublicDraw, type PublicRaffle, type RaffleMode, type RaffleStatus,
 } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { raffleDraws, raffleEntries, raffles, raffleSnapshots } from '../db/schema.js'
-import { isPresent } from '../presence/attendance.js'
+import { raffleDraws, raffleEntries, raffles, raffleSnapshots, scenes, users } from '../db/schema.js'
+import { checkInDelta, isPresent } from '../presence/attendance.js'
 import { publishVenueEvent } from '../realtime/bus.js'
 import { buildPool, drawWinners } from './draw.js'
 
@@ -322,6 +322,102 @@ export async function raffleDetail(row: RaffleRow) {
 export async function getDraw(raffleId: string, drawId: string): Promise<DrawRow | null> {
   if (!UUID.test(drawId)) return null
   return (await db.query.raffleDraws.findFirst({ where: and(eq(raffleDraws.id, drawId), eq(raffleDraws.raffleId, raffleId)) })) ?? null
+}
+
+// ── Visitors ─────────────────────────────────────────────────────────────────
+
+/** Whether each of the user's entries (by raffle) has won a draw. */
+async function wonEntryIds(raffleIds: string[]): Promise<Set<string>> {
+  if (!raffleIds.length) return new Set()
+  const rows = await db.select({ winners: raffleDraws.winnerEntryIds }).from(raffleDraws).where(inArray(raffleDraws.raffleId, raffleIds))
+  return new Set(rows.flatMap((r) => r.winners))
+}
+
+export interface Caller {
+  userId: string
+  /** The caller's scene pass is bound to this scene, with a verified wallet. */
+  wallet: string | null
+  verified: boolean
+  passSceneId: string | null
+}
+
+/** The scene's running raffle as visitors see it, the caller's entry, and whether they can enter from here. */
+export async function currentRaffle(sceneId: string, caller: Caller) {
+  const row = await activeRaffle(sceneId)
+  const entry = row
+    ? await db.query.raffleEntries.findFirst({ where: and(eq(raffleEntries.raffleId, row.id), eq(raffleEntries.userId, caller.userId)), columns: { id: true } })
+    : undefined
+  const myEntry = entry ? { entered: true as const, won: (await wonEntryIds([row!.id])).has(entry.id) } : null
+  const visitor = caller.passSceneId === sceneId
+  const hasWallet = !!caller.wallet && caller.verified
+  const canEnter = !!row && row.status === 'open' && !myEntry && visitor && hasWallet
+  const reason: 'guest' | 'closed' | undefined = !row || row.status !== 'open' ? 'closed' : !hasWallet ? 'guest' : undefined
+  return { raffle: row ? publicRaffle(row) : null, myEntry, canEnter, ...(reason ? { reason } : {}) }
+}
+
+/**
+ * Enter a raffle: the caller's pass must be bound to its scene with a verified wallet (checked by the route), the
+ * consent version current and the raffle open. Entering counts as the first check-in.
+ */
+export async function enterRaffle(row: RaffleRow, caller: { userId: string; wallet: string; signInName: string | null }, consentVersion: unknown, now = new Date()) {
+  if (consentVersion !== RAFFLE_CONSENT_VERSION) throw new RaffleError(400, 'consent_required', 'Agree to the raffle terms to enter.')
+  if (row.status !== 'open') throw new RaffleError(409, 'entry_closed', 'This raffle is not taking entries.')
+  let name = caller.signInName
+  if (!name) name = (await db.query.users.findFirst({ where: eq(users.id, caller.userId), columns: { displayName: true } }))?.displayName ?? null
+  const wallet = caller.wallet.toLowerCase()
+  let entry: EntryRow | undefined
+  try {
+    entry = await db.transaction(async (tx) => {
+      // Under the raffle's lock, so an entry never lands after the first draw closed entry
+      const [locked] = await tx.select({ status: raffles.status }).from(raffles).where(eq(raffles.id, row.id)).for('update')
+      if (locked?.status !== 'open') throw new RaffleError(409, 'entry_closed', 'This raffle is not taking entries.')
+      const [e] = await tx.insert(raffleEntries).values({
+        raffleId: row.id, userId: caller.userId, wallet, displayName: cleanDisplayName(name, wallet),
+        consentVersion: RAFFLE_CONSENT_VERSION, consentedAt: now, lastSeenAt: now, createdAt: now,
+      }).returning()
+      return e
+    })
+  } catch (err) {
+    if (isUniqueViolation(err)) throw new RaffleError(409, 'already_entered', "You're already in this raffle.")
+    throw err
+  }
+  emitRaffleChanged(row.sceneId)
+  return entry!
+}
+
+/** Withdraw the user's entry while the raffle is open or drawn. Earlier draw records keep its id. */
+export async function withdrawEntry(row: RaffleRow, userId: string) {
+  if (!ACTIVE.includes(row.status)) throw new RaffleError(409, 'entry_closed', "This raffle has ended; entries can't be withdrawn.")
+  const gone = await db.delete(raffleEntries).where(and(eq(raffleEntries.raffleId, row.id), eq(raffleEntries.userId, userId))).returning({ id: raffleEntries.id })
+  if (!gone.length) throw new RaffleError(404, 'not_entered', "You're not in this raffle.")
+  emitRaffleChanged(row.sceneId)
+}
+
+/**
+ * A check-in: null when the raffle isn't open or drawn or the user has no entry; 'too_soon' when it is closer than
+ * CHECKIN_MIN_GAP_MS to the last; otherwise the time since the last (capped) is added.
+ */
+export async function checkInRaffle(raffleId: string, userId: string, now = new Date()): Promise<'ok' | 'too_soon' | null> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select({ status: raffles.status }).from(raffles).where(eq(raffles.id, raffleId))
+    if (!row || !ACTIVE.includes(row.status)) return null
+    const [entry] = await tx.select({ id: raffleEntries.id, lastSeenAt: raffleEntries.lastSeenAt }).from(raffleEntries)
+      .where(and(eq(raffleEntries.raffleId, raffleId), eq(raffleEntries.userId, userId))).for('update')
+    if (!entry) return null
+    const { accepted, addSeconds } = checkInDelta(entry.lastSeenAt, now)
+    if (!accepted) return 'too_soon'
+    await tx.update(raffleEntries).set({ lastSeenAt: now, secondsPresent: sql`${raffleEntries.secondsPresent} + ${addSeconds}` }).where(eq(raffleEntries.id, entry.id))
+    return 'ok'
+  })
+}
+
+/** The user's raffle entries, newest first. */
+export async function myRaffleEntries(userId: string) {
+  const rows = await db.select({ entryId: raffleEntries.id, raffleId: raffles.id, sceneName: scenes.name, raffleName: raffles.name, status: raffles.status, enteredAt: raffleEntries.createdAt })
+    .from(raffleEntries).innerJoin(raffles, eq(raffleEntries.raffleId, raffles.id)).innerJoin(scenes, eq(raffles.sceneId, scenes.id))
+    .where(eq(raffleEntries.userId, userId)).orderBy(desc(raffleEntries.createdAt), desc(raffleEntries.id))
+  const won = await wonEntryIds([...new Set(rows.map((r) => r.raffleId))])
+  return rows.map(({ entryId, ...r }) => ({ raffleId: r.raffleId, sceneName: r.sceneName, raffleName: r.raffleName, status: r.status, won: won.has(entryId), enteredAt: r.enteredAt }))
 }
 
 // ── raffle_changed, at most once every 2 s per scene ─────────────────────────

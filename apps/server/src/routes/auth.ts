@@ -229,7 +229,8 @@ export default async function authRoutes(app: FastifyInstance) {
       let verifiedWallet: string | null = null
       let binding: SceneBinding | null = null
       let studio = false
-      let displayName = platformUser?.displayName || platformUser?.name || 'Guest'
+      // Postgres text can't hold NUL: a name carrying one would fail the sign-in with a 500
+      let displayName = String(platformUser?.displayName || platformUser?.name || 'Guest').replace(/\u0000/g, '') || 'Guest'
 
       // ── Try to verify DCL signed fetch headers ────────────────────────────
       if (hasDclAuthHeaders(request.headers as Record<string, string | string[] | undefined>)) {
@@ -325,7 +326,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
       if (verifiedWallet) {
         return reply.send({
-          ...issueScenePass(app, dbUser, verifiedWallet, binding ?? { sceneId: null, locationId: null }),
+          ...issueScenePass(app, dbUser, verifiedWallet, binding ?? { sceneId: null, locationId: null }, undefined, displayName),
           verified: true,
         })
       }

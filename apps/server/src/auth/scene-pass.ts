@@ -12,8 +12,9 @@ export function sceneClaims(user: { id: string; role: string }, wallet: string |
  * A scene pass: acts as the wallet's user only inside the bound scene (sceneId null = visitor).
  * No refresh token: a pass lives 15 min past the last signed request, so one taken by a hostile realm dies soon after the player leaves.
  */
-export function issueScenePass(app: FastifyInstance, user: SessionUser, wallet: string, b: SceneBinding, expiresAt?: Date) {
-  const claims = sceneClaims(user, wallet, b)
+export function issueScenePass(app: FastifyInstance, user: SessionUser, wallet: string, b: SceneBinding, expiresAt?: Date, signInName?: string) {
+  // signInName: the name this sign-in came with (the Decentraland name, or the short wallet), copied at raffle entry
+  const claims: SessionClaims = { ...sceneClaims(user, wallet, b), ...(signInName ? { displayName: signInName } : {}) }
   return {
     user: { id: user.id, displayName: user.displayName, email: null, role: user.role },
     // expiresAt (hand-off): never later than the pass the code was minted from. A number here is seconds.

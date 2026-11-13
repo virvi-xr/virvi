@@ -33,6 +33,8 @@ export interface AuthUser {
   pairingId?: string
   worldId?: string
   deviceId?: string
+  /** On a Decentraland scene pass: the name the visitor signed in with. */
+  displayName?: string
 }
 
 declare module 'fastify' {

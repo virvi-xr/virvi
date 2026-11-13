@@ -94,6 +94,8 @@ describe('scene pass guard', () => {
       ['GET', `/api/raffles/${raffle.id}`], ['PATCH', `/api/raffles/${raffle.id}`], ['POST', `/api/raffles/${raffle.id}/open`],
       ['POST', `/api/raffles/${raffle.id}/snapshot`], ['POST', `/api/raffles/${raffle.id}/draw`], ['POST', `/api/raffles/${raffle.id}/close`],
       ['POST', `/api/raffles/${raffle.id}/cancel`], ['GET', `/api/raffles/${raffle.id}/draws/00000000-0000-4000-8000-000000000000`],
+      ['GET', `/api/scenes/${b.scene.id}/raffle/current`], ['POST', `/api/raffles/${raffle.id}/entry`], ['DELETE', `/api/raffles/${raffle.id}/entry`],
+      ['POST', `/api/raffles/${raffle.id}/presence`],
       ['GET', `/api/scenes/${b.scene.id}`], ['PUT', `/api/scenes/${b.scene.id}`],
       ['POST', `/api/presets/${b.preset.id}/elements`], ['PUT', `/api/elements/${el.id}`], ['DELETE', `/api/elements/${el.id}`],
       ['POST', `/api/elements/${el.id}/instances`], ['PUT', `/api/instances/${inst.id}`], ['DELETE', `/api/instances/${inst.id}`],
