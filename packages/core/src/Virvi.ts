@@ -1,5 +1,5 @@
 import type { PublicDraw, PublicRaffle, SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
-import { HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
+import { BEAT_CONSENT_VERSION, HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
 import { VirviHttpClient, ColyseusManager, type RafflePatch } from '@virvixr/client'
 import { SceneManager } from './SceneManager.js'
 import { VirviStorageImpl } from './storage.js'
@@ -606,6 +606,13 @@ export class Virvi {
   raffleSnapshot(raffleId: string) { return this.http.raffleAction(raffleId, 'snapshot') }
   raffleDraw(raffleId: string) { return this.http.raffleAction(raffleId, 'draw') }
   raffleClose(raffleId: string) { return this.http.raffleAction(raffleId, 'close') }
+
+  // BEATs (LIV-11), on the connected scene
+  currentBeat() { return this.http.currentBeat(this.requireSceneId()) }
+  trackBeat(beatId: string) { return this.http.trackBeat(this.requireSceneId(), beatId, BEAT_CONSENT_VERSION) }
+  beatCheckIn(beatId: string) { return this.http.beatCheckIn(this.requireSceneId(), beatId) }
+  claimBeat(beatId: string) { return this.http.claimBeat(this.requireSceneId(), beatId) }
+  stopTrackingBeat(beatId: string) { return this.http.stopTrackingBeat(this.requireSceneId(), beatId) }
 
   private requireSceneId(): string {
     const id = this._sceneId ?? this.binding?.sceneId

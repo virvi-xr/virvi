@@ -1,4 +1,4 @@
-import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle, RaffleMode, RaffleStatus } from '@virvixr/shared'
+import type { Scene, AuthProof, VirviPlatformAdapter, AnalyticsSceneRef, SceneLibraryItemData, AdServeRequest, AdServeResponse, AdEventBatch, PublicRaffle, RaffleMode, RaffleStatus, VisitorBeat } from '@virvixr/shared'
 import type { AuthResponse, MediaAsset } from './types.js'
 import { VirviAuth } from './auth.js'
 
@@ -348,6 +348,30 @@ export class VirviHttpClient {
   /** Host actions: `open`, `snapshot`, `draw` and `close` each POST to /api/raffles/:id/<action>. */
   async raffleAction(raffleId: string, action: 'open' | 'snapshot' | 'draw' | 'close'): Promise<any> {
     return this._fetch(`/api/raffles/${encodeURIComponent(raffleId)}/${action}`, { method: 'POST', body: '{}' })
+  }
+
+  // BEATs (LIV-11). Errors carry the server's code in the message, like every other call.
+  /** The scene's BEAT for the card (null when there is none), with the caller's claim. */
+  async currentBeat(sceneId: string): Promise<{ beat: VisitorBeat | null }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/beat/current`)
+  }
+
+  /** Opt in to having attendance tracked for the BEAT. */
+  async trackBeat(sceneId: string, beatId: string, consentVersion: number): Promise<{ beat: VisitorBeat }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/beat/${encodeURIComponent(beatId)}/track`, { method: 'POST', body: JSON.stringify({ consentVersion }) })
+  }
+
+  /** Counts the visitor as present; the server accepts one every few seconds at most. */
+  async beatCheckIn(sceneId: string, beatId: string): Promise<{ beat: VisitorBeat }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/beat/${encodeURIComponent(beatId)}/checkin`, { method: 'POST', body: '{}' })
+  }
+
+  async claimBeat(sceneId: string, beatId: string): Promise<{ beat: VisitorBeat }> {
+    return this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/beat/${encodeURIComponent(beatId)}/claim`, { method: 'POST', body: '{}' })
+  }
+
+  async stopTrackingBeat(sceneId: string, beatId: string): Promise<void> {
+    await this._fetch(`/api/scenes/${encodeURIComponent(sceneId)}/beat/${encodeURIComponent(beatId)}/track`, { method: 'DELETE' })
   }
 
   async getScenes(): Promise<{ scenes: Scene[] }> {
