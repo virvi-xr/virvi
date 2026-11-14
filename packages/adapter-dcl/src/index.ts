@@ -15,6 +15,7 @@ import type { HUDMediaItem } from './DclHUDRenderer.js'
 import { toLayoutItem, withCopies, clearedMessage, type HUDLayoutItem } from './layout.js'
 import { withFrame } from './frames.js'
 import { startSceneRaffles } from './raffle/connect.js'
+import { startSceneBeats } from './beat/connect.js'
 import { pickHostRaffle, presentNow, raffleHostError, type HUDRaffle } from './raffle/host.js'
 import { locationKeyFor } from '@virvixr/shared'
 import type { VirviInitConfig, VirviStorage } from '@virvixr/shared'
@@ -176,7 +177,10 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
     ensureRenderer()
     try {
       // Before connecting: the room sends the running raffle on join; each connect re-reads my entry
-      startSceneRaffles(virvi, adapter, { guest: (await adapter.getPlatformUser()).isGuest, hud: renderer })
+      const isGuest = (await adapter.getPlatformUser()).isGuest
+      startSceneRaffles(virvi, adapter, { guest: isGuest, hud: renderer })
+      // The BEAT card reads the scene's BEAT on every connect
+      startSceneBeats(virvi, adapter, { guest: isGuest, hud: renderer, openUrl: (url) => adapter.openUrl(url) })
       await virvi.init({ env: 'prod', ...config })
 
       if (renderer) {
@@ -230,6 +234,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       void (async () => {
         // Before connecting: the room sends the running raffle on join; each connect re-reads my entry
         startSceneRaffles(virvi, adapter, { guest: user.isGuest, hud: null })
+        startSceneBeats(virvi, adapter, { guest: user.isGuest, hud: null, openUrl: (url) => adapter.openUrl(url) })
         await virvi.authenticate({ env: 'prod', ...config })
         await virvi.connectToScene(sceneId)
         console.log('[Virvi] Showing Virvi content for scene', sceneId)
@@ -813,6 +818,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
       if (renderer) installConnectedHandler(sceneId, role)
       // Also before connecting: the room sends the running raffle on join
       startSceneRaffles(virvi, adapter, { guest: user.isGuest, hud: renderer })
+      startSceneBeats(virvi, adapter, { guest: user.isGuest, hud: renderer, openUrl: (url) => adapter.openUrl(url) })
       await virvi.connectToScene(sceneId)
       await ensureHUD()
       console.log('[Virvi] Connected to scene as', role, sceneId)

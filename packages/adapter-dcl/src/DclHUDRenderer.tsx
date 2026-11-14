@@ -227,8 +227,8 @@ const state: HUDState = {
   raffleBusy: false,
 }
 
-/** The raffle overlay (raffle/RaffleOverlay.tsx), drawn in this tree so the scene has one Virvi UI root. */
-let overlay: (() => ReactEcs.JSX.Element | null) | null = null
+/** The raffle and BEAT overlays (raffle/RaffleOverlay.tsx, beat/BeatOverlay.tsx), drawn in this tree so the scene has one Virvi UI root. */
+const overlays: (() => ReactEcs.JSX.Element | null)[] = []
 
 // Callbacks
 let onPanelAction: ((panel: HUDPanelType, action: string, data?: any) => void) | null = null
@@ -1766,12 +1766,11 @@ function NotificationToast() {
 
 function VirviHUD() {
   const isSetup = state.connectionState !== 'connected' || state.isNewScene
-  const Overlay = overlay
 
   return (
     <UiEntity uiTransform={{ width: '100%', height: '100%', positionType: 'absolute' }}>
-      {/* The raffle card and wheel, under the HUD's own panels; shown with the HUD toggled off too */}
-      {Overlay && <Overlay />}
+      {/* The raffle card and wheel and the BEAT card, under the HUD's own panels; shown with the HUD toggled off too */}
+      {overlays.map((Overlay, i) => <Overlay key={i} />)}
       <HUDToggleButton />
 
       {state.hudVisible && (() => {
@@ -2184,9 +2183,9 @@ export class DclHUDRenderer implements HUDRenderer {
     return state.activePanel === HUDPanelType.RAFFLE
   }
 
-  /** Draw the raffle overlay inside this HUD's tree (one UI root). */
-  setOverlay(component: () => ReactEcs.JSX.Element | null): void {
-    overlay = component
+  /** Draw an overlay (the raffle's, the BEAT card) inside this HUD's tree (one UI root). Adding one twice is a no-op. */
+  addOverlay(component: () => ReactEcs.JSX.Element | null): void {
+    if (!overlays.includes(component)) overlays.push(component)
   }
 
   supportsPanel(panel: HUDPanelType): boolean {

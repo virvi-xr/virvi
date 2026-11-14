@@ -73,6 +73,7 @@ async function toVisitor(b: BeatRow, claim: ClaimRow | null): Promise<VisitorBea
     status: b.status,
     soldOut: (await takenCount(db, b.id)) >= b.supplyCap,
     claimUntil: claimUntil(b).toISOString(),
+    test: b.chain === 'polygon-amoy',
     myClaim: claim ? { status: claim.status, secondsPresent: claim.secondsPresent, txUrl: claim.mintTx ? beatTxUrl(b.chain, claim.mintTx) : null } : null,
   }
 }

@@ -3,7 +3,7 @@
  * closed states, the guest line) and the wheel everyone in the scene sees on a draw. Drawn from this module's
  * state; raffle/connect.ts feeds it.
  *
- * One UI root: with a host HUD the overlay renders inside the HUD's tree (DclHUDRenderer.setOverlay); without one
+ * One UI root: with a host HUD the overlay renders inside the HUD's tree (DclHUDRenderer.addOverlay); without one
  * (visitors) it is its own ReactEcsRenderer.addUiRenderer root. Every name is shown as plain text (plainText).
  */
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label } from '@dcl/sdk/react-ecs'
@@ -72,10 +72,10 @@ export const wheelShowing = () => !!ui.wheel
 let mounted = false
 
 /** Mount once: inside the host HUD's tree when there is one, else as its own UI root. */
-export function mountRaffleOverlay(hud: { setOverlay(component: () => ReactEcs.JSX.Element | null): void } | null): void {
+export function mountRaffleOverlay(hud: { addOverlay(component: () => ReactEcs.JSX.Element | null): void } | null): void {
   if (mounted) return
   mounted = true
-  if (hud) hud.setOverlay(RaffleOverlay)
+  if (hud) hud.addOverlay(RaffleOverlay)
   // Same 1920x1080 design size as the HUD; under the HUD (zIndex 1000), over the scene's own UI
   else ReactEcsRenderer.addUiRenderer(engine.addEntity(), RaffleOverlay, { virtualWidth: 1920, virtualHeight: 1080, zIndex: 900 })
 }

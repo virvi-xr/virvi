@@ -40,13 +40,13 @@ The price covers your supply cap, and you see it before you pay. It's $5.00 for 
 
 ## What visitors see and agree to
 
-Visitors in your scene see your BEAT from 30 minutes before it starts. Only visitors signed in with a verified wallet can take part. Before anything is stored, they see and must agree to:
+Visitors in your scene see your BEAT on a card from 30 minutes before it starts. Only visitors signed in with a verified wallet can take part; a visitor without one is told once to connect a wallet. When a visitor presses **Track my attendance**, before anything is stored, they see and must agree to:
 
 > To track your attendance for the {name} BEAT, Virvi stores your wallet address and display name for this BEAT. The hosts of this event will see them, and your wallet is needed to send you the token. You can stop tracking at any time before you claim.
 
 `{name}` is your BEAT's name. Nothing is stored for visitors who don't agree.
 
-Time only counts while the event runs, and time in all of the BEAT's scenes adds up. Once a visitor reaches the minimum time, they can press **Claim** until 24 hours after the event ends. Their BEAT is then sent to their wallet, usually within a few minutes. A visitor can stop tracking at any time before they claim, which deletes what was stored.
+Time only counts while the event runs, and time in all of the BEAT's scenes adds up. Once a visitor reaches the minimum time, they can press **Claim your BEAT** until 24 hours after the event ends. Their BEAT is then sent to their wallet, usually within a few minutes. A visitor can press **Stop tracking** at any time before they claim, which deletes what was stored.
 
 ## What you see
 

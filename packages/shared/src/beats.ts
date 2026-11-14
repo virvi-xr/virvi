@@ -86,5 +86,7 @@ export interface VisitorBeat {
   status: BeatStatus
   soldOut: boolean
   claimUntil: string
+  /** On Polygon Amoy, the test network: the card shows a "Test" label. */
+  test: boolean
   myClaim: { status: BeatClaimStatus; secondsPresent: number; txUrl: string | null } | null
 }

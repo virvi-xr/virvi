@@ -4,7 +4,7 @@ import { Virvi } from '../src/Virvi.js'
 
 const BEAT: VisitorBeat = {
   id: 'b1', name: 'Launch', imageUrl: 'https://img.example/b1.png', startsAt: '2026-11-14T10:00:00.000Z', endsAt: '2026-11-14T12:00:00.000Z',
-  minPresentSeconds: 600, status: 'live', soldOut: false, claimUntil: '2026-11-15T12:00:00.000Z', myClaim: null,
+  minPresentSeconds: 600, status: 'live', soldOut: false, claimUntil: '2026-11-15T12:00:00.000Z', test: false, myClaim: null,
 }
 
 function setup(respond: () => Response = () => new Response(JSON.stringify({ beat: BEAT }), { status: 200 })) {
