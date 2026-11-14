@@ -54,6 +54,7 @@ export const PUBLIC_EXACT = [
   'POST /api/errors/prompt', // public: "should I ask?" for an error; an optional account bearer applies that account's own prompt state, nothing else
   'GET /api/studio/render-frames/*', // the signed frame token is the auth (no bearer)
   'GET /api/studio/piece-sounds/*', // the signed sound token is the auth (no bearer)
+  'GET /api/beats/metadata/:chain/:file', // public: BEAT token metadata and contract.json for wallets and marketplaces (LIV-11); dark unless BEAT_ENABLED
   'GET /api/health', // health check
   'GET /api/transparency', // what this server says it runs (LIV-165): public by design
   'GET /.well-known/security.txt', // security contact (LIV-165)

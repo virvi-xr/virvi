@@ -231,6 +231,11 @@ const CASES: Case[] = [
   { route: 'POST /api/beats/:beatId/cap', url: (f) => `/api/beats/${f.beat.id}/cap`, body: () => ({ supplyCap: 200 }) },
   { route: 'GET /api/scenes/:sceneId/beats', url: (f) => `/api/scenes/${f.scene.id}/beats` },
   { route: 'POST /api/beats', url: () => '/api/beats', body: (f) => ({ name: 'pwned', description: '', imageMediaId: f.media.id, startsAt: new Date(Date.now() + 72 * H).toISOString(), endsAt: new Date(Date.now() + 74 * H).toISOString(), minPresentMinutes: 5, supplyCap: 10, tradeable: false, sceneIds: [f.scene.id] }) },
+  // BEAT visitors: A's account token is no scene pass (403), and stopping finds no claim of A's (404)
+  { route: 'POST /api/scenes/:sceneId/beat/:beatId/track', url: (f) => `/api/scenes/${f.scene.id}/beat/${f.beat.id}/track`, body: () => ({ consentVersion: 1 }) },
+  { route: 'DELETE /api/scenes/:sceneId/beat/:beatId/track', url: (f) => `/api/scenes/${f.scene.id}/beat/${f.beat.id}/track` },
+  { route: 'POST /api/scenes/:sceneId/beat/:beatId/checkin', url: (f) => `/api/scenes/${f.scene.id}/beat/${f.beat.id}/checkin` },
+  { route: 'POST /api/scenes/:sceneId/beat/:beatId/claim', url: (f) => `/api/scenes/${f.scene.id}/beat/${f.beat.id}/claim` },
   // raffles (LIV-55)
   { route: 'GET /api/scenes/:sceneId/raffles', url: (f) => `/api/scenes/${f.scene.id}/raffles` },
   { route: 'POST /api/scenes/:sceneId/raffles', url: (f) => `/api/scenes/${f.scene.id}/raffles`, body: () => ({ name: 'pwned', prize: 'x', winnersCount: 1, mode: 'one_per_person', acceptHostTerms: true }) },
@@ -530,6 +535,8 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
   'GET /api/imports/build/:id/source': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
   'POST /api/imports/build/:id/result': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
   'POST /api/imports/build/:id/failed': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
+  'GET /api/scenes/:sceneId/beat/current': "any signed-in caller may read a scene's current BEAT: the visitor-safe VisitorBeat (no names or wallets) and only the caller's own claim (beat-visitor.test.ts)",
+  'GET /api/beats/metadata/:chain/:file': 'public by design: token metadata for wallets and marketplaces, nothing but what the token shows on chain; draft and cancelled BEATs are 404 (beat-metadata.test.ts)',
   'GET /api/scenes/:sceneId/raffle/current': "any signed-in caller may read a scene's running raffle: the visitor-safe PublicRaffle (no names or wallets) and only the caller's own entry (raffles-visitor.test.ts)",
 }
 
