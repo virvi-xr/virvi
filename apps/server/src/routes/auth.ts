@@ -6,6 +6,7 @@ import { eq, and } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { users, userAuthMethods, passwordResetTokens, scenes } from '../db/schema.js'
 import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
+import { deleteMyBeatData } from '../beats/retention.js'
 import { handOverDesigns } from '../studio/handover.js'
 import { authenticate } from '../middleware/auth.js'
 import { config } from '../config.js'
@@ -758,6 +759,8 @@ export default async function authRoutes(app: FastifyInstance) {
       const models = await deleteUserWithModels(request.user.id, async (tx) => {
         // Designs they share pass to a member first (LIV-159); the rest go with them
         await handOverDesigns(tx, request.user.id, new Date())
+        // BEAT claims: unminted go, minted lose name and link (the FK alone would leave a name behind), minting are flagged
+        await deleteMyBeatData(request.user.id, new Date(), tx)
         return (await tx.delete(users).where(eq(users.id, request.user.id)).returning({ id: users.id })).length > 0
       })
       // Their imports' rows cascaded; the private files go too

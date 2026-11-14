@@ -1,3 +1,4 @@
+import { deleteMyBeatData } from '../beats/retention.js'
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
@@ -365,7 +366,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
     if (!wallets.size) return reply.status(400).send({ error: 'Sign in with your wallet to delete your visitor data' })
     const limit = deleteLimiter.take(`del:${actor.userId}`, 1, DELETE_LIMIT.capacity, DELETE_LIMIT.refillPerSec)
     if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
-    const deleted = { sessions: 0, events: 0, positions: 0, copresence: 0, raffleEntries: 0 }
+    const deleted = { sessions: 0, events: 0, positions: 0, copresence: 0, raffleEntries: 0, beatClaims: 0 }
     const all = await db.select({ id: analyticsScenes.id, salt: analyticsScenes.salt }).from(analyticsScenes)
     for (const scene of all) {
       const hashes = [...wallets].map((w) => visitorHash(scene.salt, w))
@@ -397,6 +398,9 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
     }
     // Raffle entries go by account; draws keep only entry ids, so earlier draws still replay
     deleted.raffleEntries = (await db.delete(raffleEntries).where(eq(raffleEntries.userId, actor.userId)).returning({ id: raffleEntries.id })).length
+    // BEAT claims: unminted ones go, minted ones lose their name and account link, minting ones are flagged for the job
+    const beat = await deleteMyBeatData(actor.userId, new Date())
+    deleted.beatClaims = beat.deleted + beat.unlinked + beat.pending
     return reply.send({ deleted })
   })
 }

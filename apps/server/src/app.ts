@@ -70,6 +70,7 @@ import sceneDeleteRoutes from './routes/scene-delete.js'
 import showingRoutes from './routes/showings.js'
 import errorRoutes from './routes/errors.js'
 import adminErrorRoutes from './routes/admin-errors.js'
+import adminBeatRoutes from './routes/admin-beats.js'
 import { recordServerResponse } from './errors/record.js'
 import { errorUserHash } from './errors/user-hash.js'
 import { db } from './db/connection.js'
@@ -291,6 +292,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(importRoutes)
   await app.register(errorRoutes)
   await app.register(adminErrorRoutes)
+  await app.register(adminBeatRoutes)
 
   // GET /api/instance (mode, version, branding) and the admin branding routes
   await app.register(brandingRoutes, { version: SERVER_VERSION })

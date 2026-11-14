@@ -21,6 +21,7 @@ import { purgeWalletChallenges } from './claims.js'
 import { purgeAuthHandoffCodes } from '../routes/auth-handoff.js'
 import { expireStaleUploads } from '../library/scene-library.js'
 import { scrubEndedRaffles } from '../raffles/sweeps.js'
+import { scrubBeats } from '../beats/retention.js'
 
 const HOUR = 3_600_000
 const DAY = 86_400_000
@@ -373,6 +374,7 @@ registerDailyJob('wallet-challenge-purge', (now) => purgeWalletChallenges(now))
 registerDailyJob('auth-handoff-purge', (now) => purgeAuthHandoffCodes(now))
 registerDailyJob('stale-upload-expire', (now) => expireStaleUploads(now))
 registerDailyJob('raffle-retention', (now) => scrubEndedRaffles(now))
+registerDailyJob('beat-retention', (now) => scrubBeats(now))
 
 export function startAnalyticsJobs(): () => void {
   if (!config.analyticsJobsEnabled) return () => {}

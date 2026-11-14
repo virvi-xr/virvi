@@ -20,6 +20,7 @@ import { authenticate } from '../middleware/auth.js'
 import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { deleteUserWithModels, releaseModelFiles } from '../library/user-models.js'
+import { deleteMyBeatData } from '../beats/retention.js'
 import { handOverDesigns } from '../studio/handover.js'
 
 
@@ -244,6 +245,8 @@ export default async function adminRoutes(app: FastifyInstance) {
     const models = await deleteUserWithModels(userId, async (tx) => {
       // Designs they share pass to a member first (LIV-159); the rest go with them
       await handOverDesigns(tx, userId, new Date())
+      // BEAT claims: unminted go, minted lose name and link, minting are flagged for the job
+      await deleteMyBeatData(userId, new Date(), tx)
       return (await tx.delete(users).where(eq(users.id, userId)).returning({ id: users.id })).length > 0
     })
     await deleteImportFiles(imports)
