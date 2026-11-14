@@ -103,6 +103,12 @@ describe('the studio pass', () => {
       expect(body.user.id).toBe(claims.id)
     })
 
+    it("the studio parcel on the main realm reported through Decentraland's gateway gets a studio pass (seen live 2026-11-14)", async () => {
+      const body = (await signIn({ 'x-test-realm': 'gateway.decentraland.org' })).json()
+      expect(body.studio).toBe(true)
+      expect(verifySessionToken(body.accessToken)!.via).toBe('studio')
+    })
+
     it('a guest from the studio parcel gets a guest token', async () => {
       const res = await signIn({ 'x-test-guest': '1' })
       const body = res.json()

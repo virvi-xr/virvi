@@ -146,6 +146,16 @@ describe('scene binding', () => {
       expect(await bindSceneRequest(ctx({ hostname: WORLDS, sceneId: 'bafyVictim' }), '0xa')).toEqual({ locationId: null, sceneId: null })
     })
 
+    it('Genesis City through the gateway: only the bare gateway host counts (seen live 2026-11-14)', async () => {
+      const { scene, loc } = await victimGc()
+      const g = (hostname: string) => bindSceneRequest(ctx({ hostname, sceneId: 'bafyVictim' }), '0xa')
+      expect(await g('gateway.decentraland.org')).toEqual({ locationId: loc.id, sceneId: scene.id })
+      expect(await g('GATEWAY.decentraland.org')).toEqual({ locationId: loc.id, sceneId: scene.id })
+      expect(await g('gateway.decentraland.org/evil')).toEqual({ locationId: null, sceneId: null })
+      expect(await g('gateway.decentraland.org/worlds-content-server/world/victim.dcl.eth')).toEqual({ locationId: null, sceneId: null })
+      expect(await g('gateway.decentraland.org.evil.com')).toEqual({ locationId: null, sceneId: null })
+    })
+
     it('official hostname with a mismatched entity → visitor pass at the location', async () => {
       const { loc } = await victimGc()
       expect(await bindSceneRequest(ctx({ hostname: 'peer.decentraland.org', sceneId: 'bafyAttackerCopy' }), '0xa')).toEqual({ locationId: loc.id, sceneId: null })
@@ -156,7 +166,8 @@ describe('scene binding', () => {
     it('official hostname + matching entity → bound, for Decentraland hosts and DAO catalysts', async () => {
       const { scene, loc, dir } = await victimGc()
       dir.catalystHosts = ['peer.melonwave.com', 'peer-ec1.decentraland.org']
-      for (const hostname of ['realm-provider.decentraland.org', 'peer.decentraland.org', 'PEER-EC1.decentraland.org', 'peer.melonwave.com'])
+      // Current explorers report the main realm through Decentraland's gateway too (seen live 2026-11-14, the studio parcel)
+      for (const hostname of ['realm-provider.decentraland.org', 'peer.decentraland.org', 'PEER-EC1.decentraland.org', 'peer.melonwave.com', 'gateway.decentraland.org'])
         expect(await bindSceneRequest(ctx({ hostname, sceneId: 'bafyVictim' }), '0xa'), hostname).toEqual({ locationId: loc.id, sceneId: scene.id })
     })
 

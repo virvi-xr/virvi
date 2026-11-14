@@ -34,7 +34,9 @@ export const DCL_WORLDS_HOSTS = ['worlds-content-server.decentraland.org']
 /** Decentraland's gateway, which current explorers report for Worlds as `gateway.decentraland.org/worlds-content-server/world/<name>`. */
 export const DCL_WORLDS_GATEWAY = { host: 'gateway.decentraland.org', pathPrefix: '/worlds-content-server' }
 
-const genesisHosts = () => new Set([...DCL_GENESIS_HOSTS, hostOf(config.catalystUrl)].filter(Boolean) as string[])
+// Current explorers also report the main realm as the bare gateway host (seen live 2026-11-14 on the studio parcel); with
+// a path it is a World or nothing, which the World branch and DNS_NAME handle.
+const genesisHosts = () => new Set([...DCL_GENESIS_HOSTS, DCL_WORLDS_GATEWAY.host, hostOf(config.catalystUrl)].filter(Boolean) as string[])
 const worldsHosts = () => new Set([...DCL_WORLDS_HOSTS, hostOf(config.worldsUrl)].filter(Boolean) as string[])
 
 // A plain DNS name: no scheme, port, path, whitespace or trailing dot.
