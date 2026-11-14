@@ -47,6 +47,20 @@ contract GasBurner {
 /// A plain contract wallet built on OpenZeppelin's ERC1155Holder.
 contract HolderWallet is ERC1155Holder {}
 
+/// A legitimate wallet whose receiver hook needs about 30k gas, then accepts.
+contract NeedyReceiver is ERC1155Holder {
+    function onERC1155Received(address, address, uint256, uint256, bytes memory)
+        public
+        view
+        override
+        returns (bytes4)
+    {
+        uint256 start = gasleft();
+        while (start - gasleft() < 30_000) {}
+        return this.onERC1155Received.selector;
+    }
+}
+
 /// Stand-in for Safe's CompatibilityFallbackHandler: answers the ERC-1155 receiver hook.
 contract SafeFallbackHandler is ERC1155Holder {}
 
@@ -600,6 +614,39 @@ contract VirviBeatTest is Test {
         assertEq(beat.balanceOf(safe, LOCKED), 1);
         assertEq(beat.balanceOf(holder, LOCKED), 1);
         assertEq(beat.RECEIVER_GAS(), 120_000);
+    }
+
+    /// Raises the call-gas limit until `mintTo` first succeeds. Below that, every attempt must revert: a
+    /// starved good receiver must never be skipped (that is what gas estimation would land on).
+    function _firstSucceedingLimit(address r, uint256 from, uint256 step) internal returns (uint256) {
+        for (uint256 lim = from; lim < 1_000_000; lim += step) {
+            vm.prank(minter);
+            try beat.mintTo{gas: lim}(LOCKED, _list(r)) returns (uint256 count) {
+                assertEq(count, 1, "a starved good receiver was skipped instead of reverting");
+                return lim;
+            } catch {}
+        }
+        revert("never succeeded");
+    }
+
+    function test_Receiver_StarvedGoodReceiverRevertsNeverSkipped() public {
+        address r = address(new NeedyReceiver());
+        uint256 snap = vm.snapshotState();
+        uint256 coarse = _firstSucceedingLimit(r, 60_000, 100);
+        vm.revertToState(snap);
+        uint256 exact = _firstSucceedingLimit(r, coarse - 100, 1);
+        vm.revertToState(snap);
+
+        // Just under the threshold: the whole call reverts with InsufficientGas.
+        vm.expectRevert(VirviBeat.InsufficientGas.selector);
+        vm.prank(minter);
+        beat.mintTo{gas: exact - 1}(LOCKED, _list(r));
+        assertFalse(beat.minted(LOCKED, r));
+
+        // Just over: it mints.
+        vm.prank(minter);
+        assertEq(beat.mintTo{gas: exact}(LOCKED, _list(r)), 1);
+        assertEq(beat.balanceOf(r, LOCKED), 1);
     }
 
     function test_Receiver_MintOneGuardedIsSelfOnly() public {

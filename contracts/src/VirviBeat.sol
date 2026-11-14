@@ -25,6 +25,12 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
     /// @notice Gas given to each mint to a recipient that has code, including its receiver hook.
     uint256 public constant RECEIVER_GAS = 120_000;
 
+    /// @notice Gas required on top of the capped call (beyond the 1/64 the EVM keeps back) before a guarded
+    /// mint starts: it pays for the catch path, the `MintSkipped` log, the loop step and returning, even when
+    /// the receiver uses its whole cap. The catch path needs a few thousand; 10k leaves margin and costs
+    /// nothing, because it is only checked, not spent.
+    uint256 public constant GUARD_RESERVE = 10_000;
+
     /// @notice How long the admin role takes to hand over.
     uint48 public constant ADMIN_DELAY = 1 days;
 
@@ -60,6 +66,7 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
     error NotTradeable(uint256 id);
     error OnlyHolderCanBurn();
     error OnlySelf();
+    error InsufficientGas();
 
     event BeatCreated(uint256 indexed id, bool tradeable);
     event BeatClosed(uint256 indexed id);
@@ -116,7 +123,8 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
     /// second one.
     /// @dev A recipient with code (a contract, or an EIP-7702 delegated wallet) is minted through a
     /// self-call capped at RECEIVER_GAS. If its receiver hook fails, it is skipped with `MintSkipped`, stays
-    /// un-minted so a later retry can succeed, and the rest of the batch still mints.
+    /// un-minted so a later retry can succeed, and the rest of the batch still mints. If too little gas is
+    /// left to give that call its full cap, the whole call reverts with `InsufficientGas`.
     /// @return newlyMinted How many addresses this call minted.
     function mintTo(uint256 id, address[] calldata to)
         external
@@ -135,6 +143,11 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
                 _recordAndMint(id, account);
                 ++newlyMinted;
             } else {
+                // The call must get its full RECEIVER_GAS (the 63/64 rule hands on less when gas is short).
+                // A receiver starved of gas would otherwise be skipped while the transaction still succeeds,
+                // and gas estimation would settle on exactly that. Reverting forces it to budget the cap.
+                // forge-lint: disable-next-line(require-revert-in-loop)
+                if (gasleft() < RECEIVER_GAS * 64 / 63 + GUARD_RESERVE) revert InsufficientGas();
                 // The capped self-call is the isolation: one bad receiver can't fail or drain the batch.
                 // forge-lint: disable-next-line(calls-loop)
                 try this.mintOneGuarded{gas: RECEIVER_GAS}(id, account) {

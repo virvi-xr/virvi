@@ -210,6 +210,9 @@ slither . --config-file slither.config.json
 (`owner()` is the admin, 1-day handover delay), ERC-6454 `isTransferable`, ERC-4906
 `BatchMetadataUpdate` on a base change, and ERC-7572 `contractURI()` (`{base}contract.json`).
 `createBeat` emits `URI(uri(id), id)`. `name()` is `Virvi BEAT` and `symbol()` is `BEAT`.
+The admin can change the 1-day handover delay with `changeDefaultAdminDelay`. A decrease is scheduled
+so that no handover can finish sooner than the current delay would allow (it waits current minus new);
+an increase waits the new delay, at most 5 days.
 
 **Recipients with code.** `mintTo` mints directly to addresses without code. An address with code (a
 contract, or an EIP-7702 delegated wallet) is minted through `this.mintOneGuarded` with
@@ -217,7 +220,9 @@ contract, or an EIP-7702 delegated wallet) is minted through `this.mintOneGuarde
 emitted, its `minted` flag stays unset, and the batch carries on. `mintTo` returns only the successes.
 On that path the ERC-1155 `operator` (in `TransferSingle` and in `onERC1155Received`) is the contract
 itself, not the minter. A Safe-style proxy uses about 77k of the 120k. If the transaction runs low on gas
-(under about 122k left at that point), a good receiver can be skipped too; a retry mints it.
+(less than `RECEIVER_GAS * 64 / 63 + GUARD_RESERVE`, about 132k, left at that point), the whole call
+reverts with `InsufficientGas` rather than skip a good receiver, so gas estimation always budgets the full
+cap. A one-recipient mint to a contract wallet needs a gas limit of about 145k.
 
 **Gas** (forge 1.9.0, measured in tests):
 - Deploy: about 2.76M gas.
@@ -238,6 +243,7 @@ Last run: 28 contracts, 102 detectors, **1 low finding, accepted**:
   batch (that isolation is the point of the call).
 
 `forge lint` notes silenced inline, each with a reason in the code: `require-revert-in-loop` in `_update`
-(any locked id must fail the whole transfer), `calls-loop` (as above), and `reentrancy-events` on the
+(any locked id must fail the whole transfer) and on the `InsufficientGas` check in `mintTo` (a starved
+guarded mint must fail the whole call), `calls-loop` (as above), and `reentrancy-events` on the
 `URI` emit in `createBeat` (it calls this contract's own `uri` view, not an external contract) and on
 `MintSkipped` (it reports the outcome of the guarded call, so it must come after it).
