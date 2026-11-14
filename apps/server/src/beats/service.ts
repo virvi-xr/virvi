@@ -62,6 +62,9 @@ async function canManage(c: BeatCaller, row: BeatRow, sceneIds: string[]) {
   return c.admin || row.ownerUserId === c.userId || (await mayRunAll(c, sceneIds))
 }
 
+/** Test-only seams (never set in production). */
+export const testHooks: { afterCancelRead?: (beatId: string) => Promise<void> } = {}
+
 export function beatAvailability(admin: boolean) {
   const { enabled, chain } = config.beats
   return { enabled, chain, test: isAmoy(chain), canCreate: enabled && (!isAmoy(chain) || admin) }
@@ -384,6 +387,12 @@ async function lockBeat(tx: Tx, beatId: string) {
  * the refund returns. The state is read again under the lock, so a draft that was paid meanwhile is refunded. Cancelling
  * an already cancelled BEAT changes nothing (200). Task 6's refundBeat must be idempotent per BEAT: a crash between the
  * refund and the status update leaves the BEAT paid, and a retry calls it again.
+ *
+ * Task 6 notes: the advisory lock `beat:<id>` (lockBeat) only orders the writers that take it. Payment confirmation and the
+ * paid -> live transition must take it too. refundBeat should be short: this transaction stays open around it, and it may
+ * itself set `cancelled` (the final update then finds nothing to change and accepts that). copyBeatImage must write
+ * image_url only if image_media_id still equals the image it copied. The update below is guarded on the status read here,
+ * so a confirmation that slips in anyway gives 409 `conflict`, never a cancel without its refund.
  */
 export async function cancelBeat(c: BeatCaller, beatId: string, now = new Date()): Promise<PublicBeat> {
   const { row: seen } = await loadManageable(c, beatId)
@@ -400,7 +409,14 @@ export async function cancelBeat(c: BeatCaller, beatId: string, now = new Date()
     }
     if (row.startsAt.getTime() <= now.getTime()) throw late()
     if (row.status === 'paid') await refundBeat(row.id, now)
-    await tx.update(beats).set({ status: 'cancelled', updatedAt: now }).where(and(eq(beats.id, row.id), inArray(beats.status, ['draft', 'paid'])))
+    await testHooks.afterCancelRead?.(row.id)
+    // Only from the status we read: a payment confirmation (no lock of ours) may have turned a draft paid since, and
+    // must not be cancelled without its refund
+    const done = await tx.update(beats).set({ status: 'cancelled', updatedAt: now }).where(and(eq(beats.id, row.id), eq(beats.status, row.status))).returning({ id: beats.id })
+    if (!done.length) {
+      const [now2] = await tx.select({ status: beats.status }).from(beats).where(eq(beats.id, beatId))
+      if (now2?.status !== 'cancelled') throw new BeatError(409, 'conflict', 'This BEAT just changed. Reload and try again.')
+    }
   })
   return getBeatRow(beatId)
 }

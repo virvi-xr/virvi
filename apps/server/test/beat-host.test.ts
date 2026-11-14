@@ -5,6 +5,7 @@ import { db } from '../src/db/connection.js'
 import { arDevices, beatClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, sceneCollaborators } from '../src/db/schema.js'
 import { issueArPass, issueHyperfyPass, issueScenePass, issueStudioPass } from '../src/auth/scene-pass.js'
 import { copyBeatImage, refundBeat } from '../src/beats/payments.js'
+import { testHooks } from '../src/beats/service.js'
 import { setImageSizeReader } from '../src/beats/image.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -312,6 +313,17 @@ describe('BEAT host API (LIV-11)', () => {
       spy.mockRestore()
       expect(refundBeat).toHaveBeenCalledTimes(1)
       expect([res.statusCode, res.json().error]).toEqual([501, 'not_implemented'])
+      expect((await db.query.beats.findFirst({ where: eq(beats.id, id) }))!.status).toBe('paid')
+    })
+
+    it('a payment confirmed between the cancel\'s read and its update is never cancelled without a refund', async () => {
+      const id = (await create()).json().id
+      testHooks.afterCancelRead = async (beatId) => {
+        await db.update(beats).set({ status: 'paid', tokenId: 98 }).where(eq(beats.id, beatId))
+      }
+      let res
+      try { res = await call('POST', `/api/beats/${id}/cancel`) } finally { testHooks.afterCancelRead = undefined }
+      expect([res.statusCode, res.json().error]).toEqual([409, 'conflict'])
       expect((await db.query.beats.findFirst({ where: eq(beats.id, id) }))!.status).toBe('paid')
     })
 
