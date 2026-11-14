@@ -7,6 +7,7 @@ import { expirePayment, queueFinalize, settleRefund } from './payments.js'
 import { watchManaTransfers } from './mana/settle.js'
 import { config } from '../config.js'
 import { addMissingLibraryRows } from './library.js'
+import { sweepBeatPayments } from '../beats/payments.js'
 import { sweepTrials } from '../auth/trial-sweep.js'
 import { sendWeeklyDigest } from './rating-review.js'
 import { markExpiredInvitesRead, pruneNotifications } from '../notifications/notifications.js'
@@ -99,6 +100,8 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
   for (const { id } of owing) {
     await settleRefund(id).catch((err) => console.error('[studio-sweep] refund settle failed:', err instanceof Error ? err.message : err))
   }
+  // BEAT checkouts left pending past their session's life, and paid BEATs still missing their frozen artwork
+  await sweepBeatPayments(now).catch((err) => console.error('[studio-sweep] BEAT payments failed:', err instanceof Error ? err.message : err))
   // Paid scene pieces whose library rows didn't land (storage was down) get another try
   await addMissingLibraryRows(now).catch((err) => console.error('[studio-sweep] library retry failed:', err instanceof Error ? err.message : err))
   await markExpiredInvitesRead(now).catch((err) => console.error('[studio-sweep] expired invite notifications failed:', err instanceof Error ? err.message : err))

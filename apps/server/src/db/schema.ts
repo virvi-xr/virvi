@@ -2142,7 +2142,7 @@ export const studioCreditLedger = pgTable('studio_credit_ledger', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   deltaCents: integer('delta_cents').notNull(),
-  reason: text('reason').notNull(), // hold | release | spend | refund | merge | mana_refund_request | mana_refund_declined
+  reason: text('reason').notNull(), // hold | release | spend | refund | merge | mana_refund_request | mana_refund_declined | beat
   refId: text('ref_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

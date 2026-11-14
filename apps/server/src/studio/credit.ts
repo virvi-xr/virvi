@@ -4,7 +4,7 @@ import { studioCreditLedger, studioCredits, users } from '../db/schema.js'
 import type { Exec } from './quota.js'
 
 /** Why a credit balance changed; one ledger row per change. */
-export type LedgerReason = 'hold' | 'release' | 'spend' | 'refund' | 'merge' | 'mana_refund_request' | 'mana_refund_declined'
+export type LedgerReason = 'hold' | 'release' | 'spend' | 'refund' | 'merge' | 'mana_refund_request' | 'mana_refund_declined' | 'beat'
 
 /** A user's USD credit in cents (0 when they have none). */
 export async function creditBalance(userId: string, exec: Exec = db): Promise<number> {

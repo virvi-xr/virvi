@@ -103,7 +103,8 @@ describe('scene pass guard', () => {
       ['POST', `/api/raffles/${raffle.id}/presence`],
       // BEAT reads by id answer 404 to a pass for a scene the BEAT isn't on (beat-host.test.ts); the rest refuse any pass
       ['GET', `/api/scenes/${b.scene.id}/beats`], ['PATCH', `/api/beats/${beat.id}`], ['POST', `/api/beats/${beat.id}/cancel`],
-      ['POST', `/api/beats/${beat.id}/end-early`], ['GET', '/api/beats'], ['POST', '/api/beats'], ['GET', '/api/beats/availability'],
+      ['POST', `/api/beats/${beat.id}/end-early`], ['GET', `/api/beats/${beat.id}/quote?cap=150`], ['POST', `/api/beats/${beat.id}/checkout`],
+      ['POST', `/api/beats/${beat.id}/cap`], ['GET', '/api/beats'], ['POST', '/api/beats'], ['GET', '/api/beats/availability'],
       ['GET', `/api/scenes/${b.scene.id}`], ['PUT', `/api/scenes/${b.scene.id}`],
       ['POST', `/api/presets/${b.preset.id}/elements`], ['PUT', `/api/elements/${el.id}`], ['DELETE', `/api/elements/${el.id}`],
       ['POST', `/api/elements/${el.id}/instances`], ['PUT', `/api/instances/${inst.id}`], ['DELETE', `/api/instances/${inst.id}`],

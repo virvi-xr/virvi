@@ -5,12 +5,13 @@ import {
 } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
-import { beatClaims, beats, beatScenes, mediaAssets, orgMembers, scenes } from '../db/schema.js'
+import { beatClaims, beats, beatScenes, mediaAssets, orgMembers, scenes, users } from '../db/schema.js'
 import type { Actor } from '../auth/actor.js'
 import { getSceneAccess, hasScope } from '../auth/permissions.js'
 import { BeatError } from './errors.js'
 import { readImageSize } from './image.js'
-import { copyBeatImage, refundBeat } from './payments.js'
+import { lockBeat } from './lock.js'
+import { beatQuote, copyBeatImage, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
 
 /**
  * BEATs (LIV-11), the host side: create, list, read, edit, claimants, cancel and end early. No Fastify here; the routes
@@ -377,11 +378,6 @@ async function getBeatRow(beatId: string): Promise<PublicBeat> {
 
 // ── Cancel and end early ─────────────────────────────────────────────────────
 
-/** One writer at a time per BEAT (edit, cancel). An advisory lock, not only a row lock: refundBeat runs on its own connection and may write this row. */
-async function lockBeat(tx: Tx, beatId: string) {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`beat:${beatId}`}))`)
-}
-
 /**
  * Cancels before the start: a draft just becomes cancelled; a paid BEAT is refunded first, and marked cancelled only after
  * the refund returns. The state is read again under the lock, so a draft that was paid meanwhile is refunded. Cancelling
@@ -428,6 +424,44 @@ export async function endBeatEarly(c: BeatCaller, beatId: string, now = new Date
     .where(and(eq(beats.id, row.id), eq(beats.status, 'live'))).returning({ id: beats.id })
   if (!ended) throw new BeatError(409, 'not_live', "This BEAT isn't running right now.")
   return getBeatRow(row.id)
+}
+
+// ── Payments ─────────────────────────────────────────────────────────────────
+
+/** What a supply costs: a draft's at `cap` (its own supply when omitted), or a paid BEAT's raise to `cap`. */
+export async function quoteBeat(c: BeatCaller, beatId: string, capRaw: unknown): Promise<BeatQuote> {
+  const { row } = await loadManageable(c, beatId)
+  const cap = capRaw === undefined || capRaw === '' ? row.supplyCap : parseCap(typeof capRaw === 'string' && /^\d+$/.test(capRaw) ? Number(capRaw) : NaN)
+  if (row.status === 'paid' || row.status === 'live') {
+    if (cap <= row.supplyCap) throw new BeatError(400, 'bad_cap', `The new supply must be more than ${row.supplyCap}.`)
+  } else if (row.status !== 'draft') {
+    throw new BeatError(409, 'locked', "This BEAT can't be changed any more.")
+  }
+  return beatQuote(row, cap)
+}
+
+function parseMethod(v: unknown): BeatPayMethod {
+  if (v === undefined) return 'card'
+  if (v !== 'card' && v !== 'credit') throw new BeatError(400, 'bad_request', 'Pay by card or with credit.')
+  return v
+}
+
+async function payerOf(c: BeatCaller) {
+  const [u] = await db.select({ email: users.email }).from(users).where(eq(users.id, c.userId))
+  return { id: c.userId, email: u?.email ?? null, admin: c.admin }
+}
+
+/** Pays for a draft BEAT: a Stripe Checkout URL for card, or paid at once by credit (or free, on Amoy). */
+export async function checkoutBeat(c: BeatCaller, beatId: string, body: Body, now = new Date()): Promise<BeatCheckoutResult> {
+  const { row } = await loadManageable(c, beatId)
+  return createBeatCheckout(row, await payerOf(c), parseMethod(body.method), now)
+}
+
+/** Raises a paid or live BEAT's supply before its end; the cap changes once the top-up is paid. */
+export async function raiseBeatCap(c: BeatCaller, beatId: string, body: Body, now = new Date()): Promise<BeatCheckoutResult> {
+  const { row } = await loadManageable(c, beatId)
+  const method = parseMethod(body.method)
+  return createCapTopup(row, await payerOf(c), parseCap(body.supplyCap), method, now)
 }
 
 /** True when the scene exists and isn't deleted (the scene page section answers 404 otherwise). */

@@ -337,6 +337,9 @@ export async function handleWebhookEvent(event: any): Promise<void> {
   // Design Studio one-time payments (src/studio/payments.ts); imported here to keep the two modules acyclic at load
   const { handleStudioSession } = await import('../studio/payments.js')
   if (await handleStudioSession(event)) return
+  // BEAT payments (src/beats/payments.ts): sessions tagged metadata kind 'beat'; each handler ignores the other's
+  const { handleBeatSession } = await import('../beats/payments.js')
+  if (await handleBeatSession(event)) return
 
   switch (event.type) {
     case 'checkout.session.completed': {

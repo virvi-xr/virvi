@@ -5,7 +5,7 @@ import { db } from '../src/db/connection.js'
 import { arDevices, beatClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, sceneCollaborators } from '../src/db/schema.js'
 import { issueArPass, issueHyperfyPass, issueScenePass, issueStudioPass } from '../src/auth/scene-pass.js'
 import { copyBeatImage, refundBeat } from '../src/beats/payments.js'
-import { testHooks } from '../src/beats/service.js'
+import { BeatError, testHooks } from '../src/beats/service.js'
 import { setImageSizeReader } from '../src/beats/image.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -13,7 +13,7 @@ import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser
 // The payment steps are Task 6's: count the calls, keep the stubs' behaviour
 vi.mock('../src/beats/payments.js', async (orig) => {
   const a = await orig<typeof import('../src/beats/payments.js')>()
-  return { refundBeat: vi.fn(a.refundBeat), copyBeatImage: vi.fn(a.copyBeatImage) }
+  return { ...a, refundBeat: vi.fn(a.refundBeat), copyBeatImage: vi.fn(a.copyBeatImage) }
 })
 
 const as = (u: TestUser) => ({ authorization: `Bearer ${tokenFor(u)}` })
@@ -214,14 +214,16 @@ describe('BEAT host API (LIV-11)', () => {
     it('a failed image copy leaves the new media URL showing, and the same edit tries the copy again', async () => {
       const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 20 })
       const next = await media(host, 700, 700)
+      const unreadable = () => Promise.reject(new BeatError(502, 'bad_image', "This BEAT's image can't be read."))
+      vi.mocked(copyBeatImage).mockImplementationOnce(unreadable).mockImplementationOnce(unreadable)
       const first = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
-      expect([first.statusCode, first.json().error]).toEqual([501, 'not_implemented'])
+      expect([first.statusCode, first.json().error]).toEqual([502, 'bad_image'])
       expect(copyBeatImage).toHaveBeenCalledTimes(1)
       const row = await db.query.beats.findFirst({ where: eq(beats.id, b.id) })
       expect([row!.imageMediaId, row!.imageUrl]).toEqual([next.id, null])
       expect((await call('GET', `/api/beats/${b.id}`)).json().imageUrl).toBe(next.publicUrl)
       const retry = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
-      expect(retry.statusCode).toBe(501)
+      expect(retry.statusCode).toBe(502)
       expect(copyBeatImage).toHaveBeenCalledTimes(2)
     })
 
@@ -288,9 +290,9 @@ describe('BEAT host API (LIV-11)', () => {
     it('a paid BEAT cancel goes through the refund step', async () => {
       const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 7 })
       const res = await call('POST', `/api/beats/${b.id}/cancel`)
-      // Task 6 fills the refund in; until then the stub answers not_implemented and the BEAT stays paid
-      expect([res.statusCode, res.json().error]).toEqual([501, 'not_implemented'])
-      expect((await db.query.beats.findFirst({ where: eq(beats.id, b.id) }))!.status).toBe('paid')
+      // Nothing was paid through a payment row here, so nothing is refunded (beat-payments.test.ts covers refunds)
+      expect([res.statusCode, res.json().status]).toEqual([200, 'cancelled'])
+      expect(refundBeat).toHaveBeenCalledTimes(1)
     })
 
     it('cancelling an already cancelled BEAT changes nothing and answers 200', async () => {
@@ -312,8 +314,7 @@ describe('BEAT host API (LIV-11)', () => {
       const res = await call('POST', `/api/beats/${id}/cancel`)
       spy.mockRestore()
       expect(refundBeat).toHaveBeenCalledTimes(1)
-      expect([res.statusCode, res.json().error]).toEqual([501, 'not_implemented'])
-      expect((await db.query.beats.findFirst({ where: eq(beats.id, id) }))!.status).toBe('paid')
+      expect([res.statusCode, res.json().status]).toEqual([200, 'cancelled'])
     })
 
     it('a payment confirmed between the cancel\'s read and its update is never cancelled without a refund', async () => {

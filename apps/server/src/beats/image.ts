@@ -8,13 +8,23 @@ export type ImageSizeReader = (url: string) => Promise<{ width: number; height: 
 
 const MAX_BYTES = 10 * 1024 * 1024
 
-async function readFromUrl(url: string): Promise<{ width: number; height: number } | null> {
+/** The file at a URL, at most 10 MB; null when it can't be read. */
+async function fetchBytes(url: string): Promise<Buffer | null> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000), redirect: 'error' })
     if (!res.ok) return null
     if (Number(res.headers.get('content-length') ?? 0) > MAX_BYTES) return null
     const buf = Buffer.from(await res.arrayBuffer())
-    if (buf.length > MAX_BYTES) return null
+    return buf.length > MAX_BYTES ? null : buf
+  } catch {
+    return null
+  }
+}
+
+async function readFromUrl(url: string): Promise<{ width: number; height: number } | null> {
+  try {
+    const buf = await fetchBytes(url)
+    if (!buf) return null
     const meta = await sharp(buf, { failOn: 'error' }).metadata()
     return meta.width && meta.height ? { width: meta.width, height: meta.height } : null
   } catch {
@@ -26,4 +36,12 @@ let reader: ImageSizeReader = readFromUrl
 export const readImageSize: ImageSizeReader = (url) => reader(url)
 export function setImageSizeReader(r: ImageSizeReader | null): void {
   reader = r ?? readFromUrl
+}
+
+/** The image file's bytes, for the frozen copy made at payment (tests replace it: setImageBytesReader). */
+export type ImageBytesReader = (url: string) => Promise<Buffer | null>
+let bytesReader: ImageBytesReader = fetchBytes
+export const readImageBytes: ImageBytesReader = (url) => bytesReader(url)
+export function setImageBytesReader(r: ImageBytesReader | null): void {
+  bytesReader = r ?? fetchBytes
 }

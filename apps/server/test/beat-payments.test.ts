@@ -1,0 +1,458 @@
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
+import Stripe from 'stripe'
+import { and, eq, sql } from 'drizzle-orm'
+import { config } from '../src/config.js'
+import { db } from '../src/db/connection.js'
+import { beatPayments, beats, beatScenes, mediaAssets, studioCreditLedger, studioCredits } from '../src/db/schema.js'
+import { setStripe } from '../src/integrations/stripe.js'
+import { setImageBytesReader, setImageSizeReader } from '../src/beats/image.js'
+import {
+  copyBeatImage, grantBeatPayment, handleBeatSession, refundBeat, setBeatStorage, sweepBeatPayments,
+} from '../src/beats/payments.js'
+import { sweepStudio } from '../src/studio/sweep.js'
+import type { StorageProvider } from '../src/storage/index.js'
+import { resetDb } from './helpers/db.js'
+import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
+import { fakeFly, fakeStripe } from './helpers/studio.js'
+
+const WEBHOOK_SECRET = 'whsec_beat_test'
+const signer = new Stripe('sk_test_dummy')
+const H = 3_600_000
+const MIN = 60_000
+const as = (u: TestUser) => ({ authorization: `Bearer ${tokenFor(u)}` })
+
+/** Storage in memory: key → bytes, with the public URL a CDN would give. */
+function memoryStorage() {
+  const files = new Map<string, Buffer>()
+  const s: StorageProvider & { files: Map<string, Buffer> } = {
+    files,
+    async upload(key, data) { files.set(key, data); return s.getPublicUrl(key) },
+    async delete(key) { files.delete(key) },
+    getPublicUrl: (key) => `https://cdn.virvi.test/${key}`,
+  }
+  return s
+}
+
+describe('BEAT payments (LIV-11)', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  let stripe: ReturnType<typeof fakeStripe>
+  let storage: ReturnType<typeof memoryStorage>
+  let host: TestUser
+  let sceneA: string
+  let image: typeof mediaAssets.$inferSelect
+  const bytes = new Map<string, Buffer | (() => Promise<Buffer | null>)>()
+  const prev = { beats: config.beats, key: config.stripeSecretKey, billing: config.billingEnabled, secret: config.stripeWebhookSecret }
+  const setBeats = (patch: Record<string, unknown>) => { ;(config as any).beats = { ...config.beats, ...patch } }
+
+  beforeAll(() => {
+    ;(config as any).stripeSecretKey = 'sk_test_beats'
+    ;(config as any).billingEnabled = true
+    ;(config as any).stripeWebhookSecret = WEBHOOK_SECRET
+  })
+  afterAll(() => {
+    ;(config as any).stripeSecretKey = prev.key
+    ;(config as any).billingEnabled = prev.billing
+    ;(config as any).stripeWebhookSecret = prev.secret
+    setStripe(null)
+  })
+  beforeEach(async () => {
+    await resetDb()
+    await db.execute(sql`ALTER SEQUENCE beat_token_id_polygon_seq RESTART WITH 1`)
+    await db.execute(sql`ALTER SEQUENCE beat_token_id_polygon_amoy_seq RESTART WITH 1`)
+    stripe = fakeStripe()
+    setStripe(stripe)
+    storage = memoryStorage()
+    setBeatStorage(storage)
+    bytes.clear()
+    setImageSizeReader(async () => ({ width: 1024, height: 1024 }))
+    setImageBytesReader(async (url) => {
+      const b = bytes.get(url)
+      return typeof b === 'function' ? b() : b ?? null
+    })
+    setBeats({ enabled: true, chain: 'polygon', price: { baseCents: 500, includedMints: 100, extraMintCents: 2 } })
+    app = await testApp()
+    host = await createUser({ wallet: randomWallet() })
+    sceneA = (await createScene(host, 'A')).scene.id
+    image = await media(host, 'image/png')
+  })
+  afterEach(async () => {
+    ;(config as any).beats = prev.beats
+    setImageSizeReader(null)
+    setImageBytesReader(null)
+    setBeatStorage(null)
+    await app.close()
+  })
+
+  async function media(owner: TestUser, contentType = 'image/png') {
+    const url = `https://cdn.example/${Math.random().toString(36).slice(2)}.png`
+    bytes.set(url, Buffer.from(`art-${url}`))
+    const [m] = await db.insert(mediaAssets).values({ ownerId: owner.id, filename: 'b.png', contentType, sizeBytes: 1, storageKey: 'k', publicUrl: url }).returning()
+    return m
+  }
+  async function seed(over: Partial<typeof beats.$inferInsert> = {}) {
+    const [b] = await db.insert(beats).values({
+      chain: 'polygon', ownerUserId: host.id, name: 'Seed', description: '', imageMediaId: image.id,
+      startsAt: new Date(Date.now() + 2 * H), endsAt: new Date(Date.now() + 4 * H), ...over,
+    }).returning()
+    await db.insert(beatScenes).values({ beatId: b.id, sceneId: sceneA })
+    return b
+  }
+  const call = (method: string, url: string, user: TestUser = host, payload?: unknown) =>
+    app.inject({ method: method as any, url, headers: as(user), payload: payload as any })
+  const beatOf = async (id: string) => (await db.select().from(beats).where(eq(beats.id, id)))[0]
+  const paymentsOf = async (id: string) => db.select().from(beatPayments).where(eq(beatPayments.beatId, id))
+  async function webhook(type: string, object: Record<string, unknown>) {
+    const payload = JSON.stringify({ id: `evt_${Math.random()}`, object: 'event', type, data: { object } })
+    return app.inject({
+      method: 'POST', url: '/api/billing/webhook',
+      headers: { 'content-type': 'application/json', 'stripe-signature': signer.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET }) },
+      payload,
+    })
+  }
+  const session = (paymentId: string, intent = 'pi_beat_1') => ({
+    id: 'cs_x', object: 'checkout.session', mode: 'payment', payment_status: 'paid', payment_intent: intent, metadata: { kind: 'beat', paymentId },
+  })
+  async function payByCard(beatId: string, intent = 'pi_beat_1') {
+    const res = await call('POST', `/api/beats/${beatId}/checkout`, host, { method: 'card' })
+    expect(res.statusCode, res.body).toBe(200)
+    const [pay] = (await paymentsOf(beatId)).filter((p) => p.status === 'pending')
+    const hook = await webhook('checkout.session.completed', session(pay.id, intent))
+    expect(hook.statusCode, hook.body).toBe(200)
+    return pay
+  }
+  const giveCredit = (u: TestUser, cents: number) => db.insert(studioCredits).values({ userId: u.id, balanceCents: cents, updatedAt: new Date() })
+  const balance = async (u: TestUser) => (await db.select().from(studioCredits).where(eq(studioCredits.userId, u.id)))[0]?.balanceCents ?? 0
+
+  describe('quote', () => {
+    it('cap 150 is 600 cents in two lines', async () => {
+      const b = await seed()
+      const res = await call('GET', `/api/beats/${b.id}/quote?cap=150`)
+      expect(res.statusCode, res.body).toBe(200)
+      const q = res.json()
+      expect(q.cents).toBe(600)
+      expect(q.refundableUnclaimed).toBe(false)
+      expect(q.lines).toHaveLength(2)
+      expect(q.lines.map((l: any) => l.cents)).toEqual([500, 100])
+    })
+
+    it("a bad cap is bad_cap, and someone else's BEAT is not found", async () => {
+      const b = await seed()
+      expect((await call('GET', `/api/beats/${b.id}/quote?cap=0`)).json().error).toBe('bad_cap')
+      expect((await call('GET', `/api/beats/${b.id}/quote?cap=abc`)).json().error).toBe('bad_cap')
+      const stranger = await createUser()
+      expect((await call('GET', `/api/beats/${b.id}/quote?cap=150`, stranger)).statusCode).toBe(404)
+    })
+
+    it('a paid BEAT is quoted the top-up', async () => {
+      const b = await seed({ status: 'paid', tokenId: 7 })
+      const q = (await call('GET', `/api/beats/${b.id}/quote?cap=150`)).json()
+      expect(q.cents).toBe(100)
+    })
+  })
+
+  describe('card checkout and the webhook', () => {
+    it('creates a pending payment and a Stripe session tagged kind beat', async () => {
+      const b = await seed({ supplyCap: 150 })
+      const res = await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json().url).toMatch(/^https:\/\/checkout\.stripe\.test\//)
+      const [pay] = await paymentsOf(b.id)
+      expect(pay).toMatchObject({ kind: 'create', method: 'card', status: 'pending', amountCents: 600, capFrom: 0, capTo: 150, userId: host.id })
+      expect(pay.stripeSessionId).toMatch(/^cs_test_/)
+      expect(stripe.calls.sessions).toHaveLength(1)
+      const s = stripe.calls.sessions[0]
+      expect(s.metadata).toEqual({ kind: 'beat', paymentId: pay.id })
+      expect(s.line_items.reduce((n: number, l: any) => n + l.price_data.unit_amount * l.quantity, 0)).toBe(600)
+      expect((await beatOf(b.id)).status).toBe('draft')
+    })
+
+    it('a bad method is bad_request; a paid BEAT is locked; a started one too_late', async () => {
+      const b = await seed()
+      expect((await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'mana' })).json().error).toBe('bad_request')
+      const paid = await seed({ status: 'paid', tokenId: 3, startsAt: new Date(Date.now() + 10 * H), endsAt: new Date(Date.now() + 11 * H) })
+      expect((await call('POST', `/api/beats/${paid.id}/checkout`, host, { method: 'card' })).json().error).toBe('locked')
+      const started = await seed({ startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + 20 * H) })
+      expect((await call('POST', `/api/beats/${started.id}/checkout`, host, { method: 'card' })).json().error).toBe('too_late')
+    })
+
+    it('checkout.session.completed grants it; granting again is already', async () => {
+      const b = await seed()
+      const pay = await payByCard(b.id)
+      const beat = await beatOf(b.id)
+      expect(beat).toMatchObject({ status: 'paid', paymentId: pay.id, tokenId: 1, supplyCap: 100, createdOnChainTx: null })
+      const [after] = await paymentsOf(b.id)
+      expect(after).toMatchObject({ status: 'paid', stripePaymentIntent: 'pi_beat_1' })
+      expect(after.paidAt).toBeInstanceOf(Date)
+      expect(await grantBeatPayment(pay.id, 'pi_beat_1', new Date())).toBe('already')
+      expect((await beatOf(b.id)).tokenId).toBe(1)
+    })
+
+    it('two concurrent grants of one payment assign one token id', async () => {
+      const b = await seed()
+      await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      const [pay] = await paymentsOf(b.id)
+      const results = await Promise.all([grantBeatPayment(pay.id, 'pi_a', new Date()), grantBeatPayment(pay.id, 'pi_a', new Date())])
+      expect(results.sort()).toEqual(['already', 'granted'])
+      expect((await beatOf(b.id)).tokenId).toBe(1)
+      const [{ n }] = await db.execute<{ n: string }>(sql`select nextval('beat_token_id_polygon_seq')::text as n`) as unknown as { n: string }[]
+      expect(n).toBe('2')
+    })
+
+    it('a second paid checkout for the same BEAT is refunded, not given a second token id', async () => {
+      const b = await seed()
+      await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      stripe.failExpire = true // the first session can't be expired: both get paid
+      await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      const pays = await paymentsOf(b.id)
+      expect(pays).toHaveLength(2)
+      const results = await Promise.all(pays.map((p, i) => grantBeatPayment(p.id, `pi_${i}`, new Date())))
+      expect(results).toEqual(['granted', 'granted'])
+      const beat = await beatOf(b.id)
+      expect(beat.tokenId).toBe(1)
+      const after = await paymentsOf(b.id)
+      expect(after.map((p) => p.status).sort()).toEqual(['paid', 'refunded'])
+      const stray = after.find((p) => p.status === 'refunded')!
+      expect(beat.paymentId).not.toBe(stray.id)
+      expect(stripe.calls.refunds).toHaveLength(1)
+      expect(stripe.calls.refunds[0].params).toMatchObject({ payment_intent: stray.stripePaymentIntent, amount: 500 })
+    })
+
+    it('a new checkout expires the open one through Stripe', async () => {
+      const b = await seed()
+      await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      const [first] = await paymentsOf(b.id)
+      await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      expect(stripe.calls.expired).toEqual([first.stripeSessionId])
+      expect((await db.select().from(beatPayments).where(eq(beatPayments.id, first.id)))[0].status).toBe('expired')
+    })
+
+    it('checkout.session.expired expires the payment; a studio session is not ours', async () => {
+      const b = await seed()
+      await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      const [pay] = await paymentsOf(b.id)
+      expect((await webhook('checkout.session.expired', { ...session(pay.id), payment_status: 'unpaid' })).statusCode).toBe(200)
+      expect((await paymentsOf(b.id))[0].status).toBe('expired')
+      expect(await handleBeatSession({ type: 'checkout.session.completed', data: { object: { object: 'checkout.session', mode: 'payment', metadata: { vlm_studio_payment_id: pay.id } } } })).toBe(false)
+    })
+
+    it('a payment that lands on a cancelled BEAT is refunded', async () => {
+      const b = await seed()
+      await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      const [pay] = await paymentsOf(b.id)
+      expect((await call('POST', `/api/beats/${b.id}/cancel`)).statusCode).toBe(200)
+      await webhook('checkout.session.completed', session(pay.id, 'pi_late'))
+      expect((await paymentsOf(b.id))[0].status).toBe('refunded')
+      expect(stripe.calls.refunds[0].params).toMatchObject({ payment_intent: 'pi_late', amount: 500 })
+      expect((await beatOf(b.id))).toMatchObject({ status: 'cancelled', tokenId: null })
+    })
+  })
+
+  describe('token ids on Amoy', () => {
+    it("an admin's checkout is paid at once as a free test payment; ids count up from 1", async () => {
+      setBeats({ chain: 'polygon-amoy' })
+      const admin = await createUser({ role: 'admin', wallet: randomWallet() })
+      const one = await seed({ chain: 'polygon-amoy', ownerUserId: admin.id })
+      const two = await seed({ chain: 'polygon-amoy', ownerUserId: admin.id, startsAt: new Date(Date.now() + 10 * H), endsAt: new Date(Date.now() + 11 * H) })
+      for (const b of [one, two]) {
+        const res = await call('POST', `/api/beats/${b.id}/checkout`, admin, { method: 'card' })
+        expect(res.statusCode, res.body).toBe(200)
+        expect(res.json()).toEqual({ paid: true })
+      }
+      expect((await beatOf(one.id)).tokenId).toBe(1)
+      expect((await beatOf(two.id)).tokenId).toBe(2)
+      const [pay] = await paymentsOf(one.id)
+      expect(pay).toMatchObject({ method: 'test', amountCents: 0, status: 'paid' })
+      expect(stripe.calls.sessions).toHaveLength(0)
+    })
+
+    it('a non-admin may not pay for a test BEAT', async () => {
+      setBeats({ chain: 'polygon-amoy' })
+      const b = await seed({ chain: 'polygon-amoy' })
+      const res = await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      expect([res.statusCode, res.json().error]).toEqual([403, 'forbidden'])
+    })
+  })
+
+  describe('frozen image copy', () => {
+    it('copies the image on payment; deleting the media row leaves the copy', async () => {
+      const b = await seed()
+      await payByCard(b.id)
+      const key = 'beats/polygon/1.png'
+      expect(storage.files.get(key)?.toString()).toBe(`art-${image.publicUrl}`)
+      expect((await beatOf(b.id)).imageUrl).toBe(`https://cdn.virvi.test/${key}`)
+      await db.delete(mediaAssets).where(eq(mediaAssets.id, image.id))
+      const res = await call('GET', `/api/beats/${b.id}`)
+      expect(res.json().imageUrl).toBe(`https://cdn.virvi.test/${key}`)
+      expect(storage.files.has(key)).toBe(true)
+    })
+
+    it('does not write image_url when the image changed while it copied', async () => {
+      const b = await seed({ status: 'paid', tokenId: 4 })
+      const other = await media(host, 'image/webp')
+      bytes.set(image.publicUrl!, async () => {
+        await db.update(beats).set({ imageMediaId: other.id }).where(eq(beats.id, b.id))
+        return Buffer.from('old art')
+      })
+      await copyBeatImage(b.id)
+      expect((await beatOf(b.id)).imageUrl).toBeNull()
+      const url = await copyBeatImage(b.id)
+      expect(url).toBe('https://cdn.virvi.test/beats/polygon/4.webp')
+      expect((await beatOf(b.id)).imageUrl).toBe(url)
+    })
+
+    it('a copy that failed at payment is retried by the sweep', async () => {
+      const b = await seed()
+      bytes.delete(image.publicUrl!)
+      await payByCard(b.id)
+      expect((await beatOf(b.id))).toMatchObject({ status: 'paid', imageUrl: null })
+      bytes.set(image.publicUrl!, Buffer.from('art'))
+      await sweepBeatPayments(new Date())
+      expect((await beatOf(b.id)).imageUrl).toBe('https://cdn.virvi.test/beats/polygon/1.png')
+    })
+  })
+
+  describe('credit', () => {
+    it('with enough credit the checkout is paid at once and the balance drops', async () => {
+      await giveCredit(host, 1000)
+      const b = await seed()
+      const res = await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'credit' })
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json()).toEqual({ paid: true })
+      expect(await balance(host)).toBe(500)
+      const [pay] = await paymentsOf(b.id)
+      expect(pay).toMatchObject({ method: 'credit', amountCents: 500, creditCents: 500, status: 'paid' })
+      const ledger = await db.select().from(studioCreditLedger).where(eq(studioCreditLedger.userId, host.id))
+      expect(ledger).toEqual([expect.objectContaining({ deltaCents: -500, reason: 'beat', refId: pay.id })])
+      expect((await beatOf(b.id))).toMatchObject({ status: 'paid', tokenId: 1 })
+      expect(stripe.calls.sessions).toHaveLength(0)
+    })
+
+    it('with too little credit method credit is insufficient_credit and nothing changes', async () => {
+      await giveCredit(host, 499)
+      const b = await seed()
+      const res = await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'credit' })
+      expect([res.statusCode, res.json().error]).toEqual([402, 'insufficient_credit'])
+      expect(await balance(host)).toBe(499)
+      expect(await paymentsOf(b.id)).toHaveLength(0)
+      expect((await beatOf(b.id)).status).toBe('draft')
+    })
+  })
+
+  describe('cap top-ups', () => {
+    it('100 to 150 charges 100 cents and raises the cap only once granted', async () => {
+      const b = await seed()
+      await payByCard(b.id)
+      const res = await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 150 })
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json().url).toBeTruthy()
+      const top = (await paymentsOf(b.id)).find((p) => p.kind === 'topup')!
+      expect(top).toMatchObject({ status: 'pending', capFrom: 100, capTo: 150, amountCents: 100, method: 'card' })
+      expect(stripe.calls.sessions[1].metadata).toEqual({ kind: 'beat', paymentId: top.id })
+      expect((await beatOf(b.id)).supplyCap).toBe(100)
+      await webhook('checkout.session.completed', session(top.id, 'pi_top'))
+      expect((await beatOf(b.id))).toMatchObject({ supplyCap: 150, tokenId: 1, status: 'paid' })
+    })
+
+    it('a lower or equal cap is bad_cap; after the end is too_late; a draft is locked', async () => {
+      const b = await seed({ status: 'paid', tokenId: 9, supplyCap: 150 })
+      expect((await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 120 })).json().error).toBe('bad_cap')
+      expect((await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 150 })).json().error).toBe('bad_cap')
+      const over = await seed({ status: 'live', tokenId: 10, startsAt: new Date(Date.now() - 3 * H), endsAt: new Date(Date.now() - H) })
+      const late = await call('POST', `/api/beats/${over.id}/cap`, host, { supplyCap: 200 })
+      expect([late.statusCode, late.json().error]).toEqual([409, 'too_late'])
+      const draft = await seed({ startsAt: new Date(Date.now() + 10 * H), endsAt: new Date(Date.now() + 11 * H) })
+      expect((await call('POST', `/api/beats/${draft.id}/cap`, host, { supplyCap: 200 })).json().error).toBe('locked')
+    })
+
+    it('a live BEAT can top up with credit at once', async () => {
+      await giveCredit(host, 300)
+      const b = await seed({ status: 'live', tokenId: 11, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) })
+      const res = await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 200, method: 'credit' })
+      expect(res.json()).toEqual({ paid: true })
+      expect((await beatOf(b.id)).supplyCap).toBe(200)
+      expect(await balance(host)).toBe(100)
+    })
+
+    it('a top-up overtaken by another is refunded, not applied', async () => {
+      const b = await seed({ status: 'paid', tokenId: 12 })
+      stripe.failExpire = true
+      await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 150 })
+      await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 200 })
+      const [a, c] = (await paymentsOf(b.id)).sort((x, y) => x.capTo - y.capTo)
+      await webhook('checkout.session.completed', session(c.id, 'pi_200'))
+      await webhook('checkout.session.completed', session(a.id, 'pi_150'))
+      expect((await beatOf(b.id)).supplyCap).toBe(200)
+      expect((await db.select().from(beatPayments).where(eq(beatPayments.id, a.id)))[0].status).toBe('refunded')
+      expect(stripe.calls.refunds.map((r) => r.params.payment_intent)).toEqual(['pi_150'])
+    })
+  })
+
+  describe('refunds on cancel', () => {
+    it('a paid card BEAT is refunded in full through Stripe, once', async () => {
+      const b = await seed()
+      await payByCard(b.id, 'pi_cancel')
+      const res = await call('POST', `/api/beats/${b.id}/cancel`)
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json().status).toBe('cancelled')
+      expect(stripe.calls.refunds).toHaveLength(1)
+      expect(stripe.calls.refunds[0].params).toMatchObject({ payment_intent: 'pi_cancel', amount: 500 })
+      const [pay] = await paymentsOf(b.id)
+      expect(pay.status).toBe('refunded')
+      expect(pay.refundedAt).toBeInstanceOf(Date)
+      expect(await refundBeat(b.id, new Date())).toEqual({ stripeCents: 0, creditCents: 0 })
+      expect(stripe.calls.refunds).toHaveLength(1)
+    })
+
+    it('a retry after Stripe refunded but before the status was saved does not refund twice', async () => {
+      const b = await seed()
+      const pay = await payByCard(b.id, 'pi_crash')
+      expect(await refundBeat(b.id, new Date())).toEqual({ stripeCents: 500, creditCents: 0 })
+      // The crash: Stripe made the refund, the row still says paid
+      await db.update(beatPayments).set({ status: 'paid', refundedAt: null }).where(eq(beatPayments.id, pay.id))
+      await db.update(beats).set({ status: 'paid' }).where(eq(beats.id, b.id))
+      await refundBeat(b.id, new Date())
+      expect(stripe.calls.refunds).toHaveLength(1)
+      expect((await paymentsOf(b.id))[0].status).toBe('refunded')
+      expect((await beatOf(b.id)).status).toBe('cancelled')
+    })
+
+    it('a BEAT paid by credit and topped up by card gets both back', async () => {
+      await giveCredit(host, 500)
+      const b = await seed()
+      expect((await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'credit' })).json()).toEqual({ paid: true })
+      const res = await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 150 })
+      expect(res.json().url).toBeTruthy()
+      const top = (await paymentsOf(b.id)).find((p) => p.kind === 'topup')!
+      await webhook('checkout.session.completed', session(top.id, 'pi_topup'))
+      expect(await balance(host)).toBe(0)
+      expect((await call('POST', `/api/beats/${b.id}/cancel`)).json().status).toBe('cancelled')
+      expect(await balance(host)).toBe(500)
+      expect(stripe.calls.refunds.map((r) => r.params)).toEqual([expect.objectContaining({ payment_intent: 'pi_topup', amount: 100 })])
+      expect((await paymentsOf(b.id)).every((p) => p.status === 'refunded')).toBe(true)
+      const ledger = await db.select().from(studioCreditLedger).where(and(eq(studioCreditLedger.userId, host.id), eq(studioCreditLedger.reason, 'refund')))
+      expect(ledger.map((l) => l.deltaCents)).toEqual([500])
+    })
+  })
+
+  describe('expiry', () => {
+    it('the studio sweep expires a stale pending payment and leaves a fresh one', async () => {
+      const b = await seed()
+      const now = new Date()
+      const [stale] = await db.insert(beatPayments).values({ beatId: b.id, userId: host.id, kind: 'create', capFrom: 0, capTo: 100, method: 'card', amountCents: 500, createdAt: new Date(now.getTime() - 40 * MIN) }).returning()
+      const [fresh] = await db.insert(beatPayments).values({ beatId: b.id, userId: host.id, kind: 'create', capFrom: 0, capTo: 100, method: 'card', amountCents: 500, createdAt: new Date(now.getTime() - 5 * MIN) }).returning()
+      await sweepStudio(now, { fly: fakeFly() })
+      const rows = await paymentsOf(b.id)
+      expect(rows.find((p) => p.id === stale.id)!.status).toBe('expired')
+      expect(rows.find((p) => p.id === fresh.id)!.status).toBe('pending')
+    })
+
+    it('a card payment Stripe completes after it expired is still granted', async () => {
+      const b = await seed()
+      await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      const [pay] = await paymentsOf(b.id)
+      await db.update(beatPayments).set({ status: 'expired' }).where(eq(beatPayments.id, pay.id))
+      await webhook('checkout.session.completed', session(pay.id))
+      expect((await beatOf(b.id))).toMatchObject({ status: 'paid', tokenId: 1 })
+    })
+  })
+})

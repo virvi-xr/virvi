@@ -5,8 +5,8 @@ import { actorFromClaims } from '../auth/actor.js'
 import { isAdminRequest } from '../auth/admin.js'
 import { boundScene, fromParam } from '../auth/scene-from.js'
 import {
-  BeatError, beatAvailability, cancelBeat, createBeat, endBeatEarly, getBeat, listBeats, listClaimants, listSceneBeats, mayRunBeatsIn,
-  sceneExists, updateBeat, type BeatCaller,
+  BeatError, beatAvailability, cancelBeat, checkoutBeat, createBeat, endBeatEarly, getBeat, listBeats, listClaimants, listSceneBeats, mayRunBeatsIn,
+  quoteBeat, raiseBeatCap, sceneExists, updateBeat, type BeatCaller,
 } from './service.js'
 
 /**
@@ -86,6 +86,31 @@ export default async function beatRoutes(app: FastifyInstance) {
   app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/end-early', async (request, reply) => {
     try {
       return reply.send(await endBeatEarly(await caller(request), request.params.beatId))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  // Payments: host-only, so no scene pass (403 scene_pass_not_allowed)
+  app.get<{ Params: { beatId: string }; Querystring: { cap?: string } }>('/api/beats/:beatId/quote', async (request, reply) => {
+    try {
+      return reply.send(await quoteBeat(await caller(request), request.params.beatId, request.query.cap))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/checkout', async (request, reply) => {
+    try {
+      return reply.send(await checkoutBeat(await caller(request), request.params.beatId, body(request)))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/cap', async (request, reply) => {
+    try {
+      return reply.send(await raiseBeatCap(await caller(request), request.params.beatId, body(request)))
     } catch (e) {
       return fail(reply, e)
     }

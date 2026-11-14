@@ -10,7 +10,7 @@ import {
   dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -226,6 +226,9 @@ const CASES: Case[] = [
   { route: 'GET /api/beats/:beatId/claimants', url: (f) => `/api/beats/${f.beat.id}/claimants` },
   { route: 'POST /api/beats/:beatId/cancel', url: (f) => `/api/beats/${f.beat.id}/cancel` },
   { route: 'POST /api/beats/:beatId/end-early', url: (f) => `/api/beats/${f.beat.id}/end-early` },
+  { route: 'GET /api/beats/:beatId/quote', url: (f) => `/api/beats/${f.beat.id}/quote?cap=150` },
+  { route: 'POST /api/beats/:beatId/checkout', url: (f) => `/api/beats/${f.beat.id}/checkout`, body: () => ({ method: 'credit' }) },
+  { route: 'POST /api/beats/:beatId/cap', url: (f) => `/api/beats/${f.beat.id}/cap`, body: () => ({ supplyCap: 200 }) },
   { route: 'GET /api/scenes/:sceneId/beats', url: (f) => `/api/scenes/${f.scene.id}/beats` },
   { route: 'POST /api/beats', url: () => '/api/beats', body: (f) => ({ name: 'pwned', description: '', imageMediaId: f.media.id, startsAt: new Date(Date.now() + 72 * H).toISOString(), endsAt: new Date(Date.now() + 74 * H).toISOString(), minPresentMinutes: 5, supplyCap: 10, tradeable: false, sceneIds: [f.scene.id] }) },
   // raffles (LIV-55)
@@ -539,7 +542,7 @@ const TABLES = [
   dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))
