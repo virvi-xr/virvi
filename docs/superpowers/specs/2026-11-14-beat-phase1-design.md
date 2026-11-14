@@ -166,7 +166,7 @@ Where this section and the text above differ, this section wins. All are **[my c
 1. **Metadata.**
    - Each chain's contract has its own base: `https://api.virvi.io/api/beats/metadata/{chain}/` (`polygon-amoy` or `polygon`). Token ids are a sequence per chain.
    - **Frozen at first mint:** once any claim of a BEAT is minted, its name, description and image can't change.
-   - **Image copy:** at payment, the artwork is copied to `beats/{chain}/{tokenId}.{ext}` in public storage. The host can't delete that copy, and deleting the original upload doesn't affect it.
+   - **Image copy:** at payment, the artwork is copied to `beats/{chain}/{tokenId}-{imageMediaId}.{ext}` in public storage. The host can't delete that copy, and deleting the original upload doesn't affect it.
    - **What the docs say:** the admin can change the base URI, which is where wallets look up names and images, but can never move, burn or change anyone's tokens.
 2. **After paying.**
    - **Before `starts_at` and before any mint,** the host can edit the name, description, artwork, window, scenes and minimum time.

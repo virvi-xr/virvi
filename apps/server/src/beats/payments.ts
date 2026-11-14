@@ -113,11 +113,13 @@ async function checkout(
   // just paid) stays pending, and its grant refunds whichever payment comes second.
   await expireOpen(row.id, what.kind, now)
   const [pay] = await db.insert(beatPayments).values({ ...values, method: 'card' }).returning()
+  const stripeDown = () => new BeatError(502, 'stripe_error', "We couldn't reach the card processor. Try again.")
+  let session: { id: string; url: string }
   try {
     const customer = await ensureCustomer(payer.id, payer.email)
     const metadata = { kind: 'beat', paymentId: pay.id }
     const expiresAt = new Date(now.getTime() + CHECKOUT_TTL_MS)
-    const session = await (await getStripe()).checkout.sessions.create({
+    session = await (await getStripe()).checkout.sessions.create({
       mode: 'payment',
       customer,
       line_items: what.quote.lines.filter((l) => l.cents > 0).map((l) => ({
@@ -129,13 +131,26 @@ async function checkout(
       cancel_url: appUrl(`/beats/${row.id}`),
       expires_at: Math.floor(expiresAt.getTime() / 1000),
     })
-    await db.update(beatPayments).set({ stripeSessionId: session.id }).where(eq(beatPayments.id, pay.id))
-    return { url: session.url }
   } catch (err) {
+    // No session exists, so nothing can be paid against this row
     console.error('[beats] checkout session failed:', err instanceof Error ? err.message : err)
     await db.delete(beatPayments).where(and(eq(beatPayments.id, pay.id), eq(beatPayments.status, 'pending')))
-    throw new BeatError(502, 'stripe_error', "We couldn't reach the card processor. Try again.")
+    throw stripeDown()
   }
+  try {
+    await db.update(beatPayments).set({ stripeSessionId: session.id }).where(eq(beatPayments.id, pay.id))
+  } catch (err) {
+    // The session exists and carries this row's id: keep the row (a payment that still comes in is granted) and expire
+    // the session so it isn't paid. The sweep expires the row.
+    console.error(`[beats] saving the session of payment ${pay.id} failed:`, err instanceof Error ? err.message : err)
+    try {
+      await (await getStripe()).checkout.sessions.expire(session.id)
+    } catch (e) {
+      console.error(`[beats] checkout ${pay.id} could not be expired:`, e instanceof Error ? e.message : e)
+    }
+    throw stripeDown()
+  }
+  return { url: session.url }
 }
 
 /** Expires a BEAT's open card checkouts of one kind through Stripe; one Stripe won't expire is left pending. */
@@ -216,7 +231,8 @@ export async function grantBeatPayment(paymentId: string, paymentIntent: string 
   if (out.stray) {
     console.warn(`[beats] payment ${out.pay.id} refunded: ${out.stray}`)
     await stripeRefund(out.pay)
-    await db.update(beatPayments).set({ status: 'refunded', paidAt: now, refundedAt: now })
+    // Never applied, so no paid_at: only refunded_at
+    await db.update(beatPayments).set({ status: 'refunded', refundedAt: now })
       .where(and(eq(beatPayments.id, out.pay.id), inArray(beatPayments.status, ['pending', 'expired'])))
     return 'granted'
   }
@@ -300,9 +316,10 @@ export async function refundBeat(beatId: string, now: Date): Promise<{ stripeCen
 // ── The frozen artwork ───────────────────────────────────────────────────────
 
 /**
- * Copies the BEAT's image to `beats/{chain}/{tokenId}.{ext}` and records the copy's URL. The copy is not a media row, so
- * deleting the original or its library item leaves it. image_url is written only if the BEAT still has the image that
- * was copied (two quick edits can finish out of order). Returns the copy's URL.
+ * Copies the BEAT's image to `beats/{chain}/{tokenId}-{imageMediaId}.{ext}` and records the copy's URL. The copy is not a
+ * media row, so deleting the original or its library item leaves it. The key names the image, so a slow copy of an older
+ * image writes its own file and never overwrites the current one; image_url is written only if the BEAT still has the
+ * image that was copied (two quick edits can finish out of order). Returns the copy's URL.
  */
 export async function copyBeatImage(beatId: string): Promise<string> {
   const [row] = await db.select().from(beats).where(eq(beats.id, beatId))
@@ -318,7 +335,7 @@ export async function copyBeatImage(beatId: string): Promise<string> {
   if (!m?.publicUrl || !ext) throw new BeatError(400, 'bad_image', "This BEAT's image can't be read.")
   const data = await readImageBytes(m.publicUrl)
   if (!data) throw new BeatError(502, 'bad_image', "This BEAT's image can't be read.")
-  const url = await storage().upload(`beats/${row.chain}/${row.tokenId}.${ext}`, data, m.contentType)
+  const url = await storage().upload(`beats/${row.chain}/${row.tokenId}-${mediaId}.${ext}`, data, m.contentType)
   await db.update(beats).set({ imageUrl: url }).where(and(eq(beats.id, beatId), eq(beats.imageMediaId, mediaId)))
   return url
 }

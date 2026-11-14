@@ -217,6 +217,26 @@ describe('BEAT payments (LIV-11)', () => {
       expect(stripe.calls.refunds[0].params).toMatchObject({ payment_intent: stray.stripePaymentIntent, amount: 500 })
     })
 
+    it('a session whose id could not be saved is expired, and its payment row is kept', async () => {
+      const b = await seed()
+      const other = await seed({ startsAt: new Date(Date.now() + 10 * H), endsAt: new Date(Date.now() + 11 * H) })
+      await db.insert(beatPayments).values({ beatId: other.id, userId: host.id, kind: 'create', capFrom: 0, capTo: 100, method: 'card', amountCents: 500, stripeSessionId: 'cs_dup' })
+      stripe.checkout.sessions.create = async (params: any) => { stripe.calls.sessions.push(params); return { id: 'cs_dup', url: 'https://checkout.stripe.test/dup' } }
+      const res = await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      expect([res.statusCode, res.json().error]).toEqual([502, 'stripe_error'])
+      expect(stripe.calls.expired).toEqual(['cs_dup'])
+      const [kept] = await paymentsOf(b.id)
+      expect(kept).toMatchObject({ status: 'pending', method: 'card' })
+    })
+
+    it('a session Stripe refused leaves no payment row', async () => {
+      const b = await seed()
+      stripe.failSessions = true
+      const res = await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
+      expect([res.statusCode, res.json().error]).toEqual([502, 'stripe_error'])
+      expect(await paymentsOf(b.id)).toHaveLength(0)
+    })
+
     it('a new checkout expires the open one through Stripe', async () => {
       const b = await seed()
       await call('POST', `/api/beats/${b.id}/checkout`, host, { method: 'card' })
@@ -241,7 +261,10 @@ describe('BEAT payments (LIV-11)', () => {
       const [pay] = await paymentsOf(b.id)
       expect((await call('POST', `/api/beats/${b.id}/cancel`)).statusCode).toBe(200)
       await webhook('checkout.session.completed', session(pay.id, 'pi_late'))
-      expect((await paymentsOf(b.id))[0].status).toBe('refunded')
+      const [late] = await paymentsOf(b.id)
+      expect(late.status).toBe('refunded')
+      expect(late.paidAt).toBeNull() // never applied
+      expect(late.refundedAt).toBeInstanceOf(Date)
       expect(stripe.calls.refunds[0].params).toMatchObject({ payment_intent: 'pi_late', amount: 500 })
       expect((await beatOf(b.id))).toMatchObject({ status: 'cancelled', tokenId: null })
     })
@@ -277,7 +300,7 @@ describe('BEAT payments (LIV-11)', () => {
     it('copies the image on payment; deleting the media row leaves the copy', async () => {
       const b = await seed()
       await payByCard(b.id)
-      const key = 'beats/polygon/1.png'
+      const key = `beats/polygon/1-${image.id}.png`
       expect(storage.files.get(key)?.toString()).toBe(`art-${image.publicUrl}`)
       expect((await beatOf(b.id)).imageUrl).toBe(`https://cdn.virvi.test/${key}`)
       await db.delete(mediaAssets).where(eq(mediaAssets.id, image.id))
@@ -296,8 +319,29 @@ describe('BEAT payments (LIV-11)', () => {
       await copyBeatImage(b.id)
       expect((await beatOf(b.id)).imageUrl).toBeNull()
       const url = await copyBeatImage(b.id)
-      expect(url).toBe('https://cdn.virvi.test/beats/polygon/4.webp')
+      expect(url).toBe(`https://cdn.virvi.test/beats/polygon/4-${other.id}.webp`)
       expect((await beatOf(b.id)).imageUrl).toBe(url)
+    })
+
+    it('an older copy of the same type finishing last never replaces the new artwork', async () => {
+      const b = await seed({ status: 'paid', tokenId: 5 })
+      const next = await media(host, 'image/png')
+      let release!: () => void
+      const gate = new Promise<void>((r) => { release = r })
+      let started!: () => void
+      const reading = new Promise<void>((r) => { started = r })
+      bytes.set(image.publicUrl!, async () => { started(); await gate; return Buffer.from('old art') })
+      bytes.set(next.publicUrl!, Buffer.from('new art'))
+      const slow = copyBeatImage(b.id) // reads the old image, then waits
+      await reading
+      await db.update(beats).set({ imageMediaId: next.id }).where(eq(beats.id, b.id))
+      const fast = await copyBeatImage(b.id)
+      release()
+      await slow
+      const key = `beats/polygon/5-${next.id}.png`
+      expect(fast).toBe(`https://cdn.virvi.test/${key}`)
+      expect((await beatOf(b.id)).imageUrl).toBe(`https://cdn.virvi.test/${key}`)
+      expect(storage.files.get(key)?.toString()).toBe('new art')
     })
 
     it('a copy that failed at payment is retried by the sweep', async () => {
@@ -307,7 +351,7 @@ describe('BEAT payments (LIV-11)', () => {
       expect((await beatOf(b.id))).toMatchObject({ status: 'paid', imageUrl: null })
       bytes.set(image.publicUrl!, Buffer.from('art'))
       await sweepBeatPayments(new Date())
-      expect((await beatOf(b.id)).imageUrl).toBe('https://cdn.virvi.test/beats/polygon/1.png')
+      expect((await beatOf(b.id)).imageUrl).toBe(`https://cdn.virvi.test/beats/polygon/1-${image.id}.png`)
     })
   })
 
