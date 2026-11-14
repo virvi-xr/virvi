@@ -144,6 +144,20 @@ export function beatEditBody(f: BeatInput, status: BeatStatus) {
   }
 }
 
+/** The form fields an edit touches. A minimum-time error comes back as `bad_window`, so the minutes clear that too. */
+const PATCH_FIELDS: Partial<Record<keyof BeatInput, BeatField[]>> = {
+  name: ['name'], description: ['description'], imageMediaId: ['image'], imageUrl: ['image'], startsAt: ['window'], endsAt: ['window'],
+  minPresentMinutes: ['minutes', 'window'], sceneIds: ['scenes'], supplyCap: ['cap'],
+}
+export function fieldsOfPatch(patch: Partial<BeatInput>): BeatField[] {
+  return [...new Set((Object.keys(patch) as (keyof BeatInput)[]).flatMap((k) => PATCH_FIELDS[k] ?? []))]
+}
+
+/** A server refusal stays beside its field until the host edits that field. */
+export function shownFieldError(error: FieldError | null, edited: ReadonlySet<BeatField>): FieldError | null {
+  return error && !edited.has(error.field) ? error : null
+}
+
 // ── Server errors ────────────────────────────────────────────────────────────
 
 /** Every code the create, edit and payment routes answer, the field it belongs beside, and a message if the server sends none. */
@@ -193,6 +207,10 @@ export function reviewModel(q: BeatQuote, o: { test: boolean; creditCents: numbe
   }
 }
 
+/** An API path with the BEAT id encoded (the id comes from the page's `?id=`). */
+export const beatApiPath = (beatId: string, sub?: string) => `/api/beats/${encodeURIComponent(beatId)}${sub ? `/${sub}` : ''}`
+export const sceneBeatsPath = (sceneId: string) => `/api/scenes/${encodeURIComponent(sceneId)}/beats`
+
 /** The body checkout and cap take: a test BEAT sends no method (the server records it as a test payment). */
 export const payBody = (method: ReviewMethod) => (method === 'test' ? {} : { method })
 
@@ -219,9 +237,12 @@ export function beatActions(b: PublicBeat, now: Date): BeatAction[] {
 
 export const ACTION_LABELS: Record<BeatAction, string> = { pay: 'Pay', edit: 'Edit', cancel: 'Cancel', raise_cap: 'Raise cap', end_early: 'End early' }
 
-/** The question asked before an action that can't be undone, or null. */
-export function confirmBeatAction(a: BeatAction): string | null {
-  if (a === 'cancel') return 'Cancel this BEAT? A paid BEAT is refunded to the card.'
+/** A cancelled paid BEAT is refunded the way it was paid (card, or Virvi credit); the detail doesn't say which. */
+export const BEAT_REFUND_NOTE = "You'll get a full refund."
+
+/** The question asked before an action that can't be undone, or null. A paid (non-test) BEAT's cancel promises the refund. */
+export function confirmBeatAction(a: BeatAction, b?: Pick<PublicBeat, 'status' | 'test'>): string | null {
+  if (a === 'cancel') return b?.status === 'paid' && !b.test ? `Cancel this BEAT? ${BEAT_REFUND_NOTE}` : 'Cancel this BEAT?'
   if (a === 'end_early') return 'End this BEAT now? Claims already made still mint.'
   return null
 }
@@ -272,3 +293,27 @@ export function paymentNote(param: string | null, b: PublicBeat, waitCap: number
 
 /** Where a cap raise remembers the cap it waits for across the Stripe redirect (per BEAT). */
 export const topupKey = (beatId: string) => `virvi.beat.topup.${beatId}`
+
+/**
+ * Re-reads the BEAT until it is `settled`, waiting `delayMs()` before each read. A failed read is skipped, never the end
+ * of polling (a network blip after Stripe must not leave "Confirming it…" up for good). `stopped` ends it (unmount).
+ */
+export async function pollPayment(o: {
+  load: () => Promise<PublicBeat>
+  onBeat: (b: PublicBeat) => void
+  settled: (b: PublicBeat) => boolean
+  delayMs: () => number
+  wait?: (ms: number) => Promise<void>
+  stopped: () => boolean
+}): Promise<void> {
+  const wait = o.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  while (!o.stopped()) {
+    await wait(o.delayMs())
+    if (o.stopped()) return
+    let b: PublicBeat
+    try { b = await o.load() } catch { continue }
+    if (o.stopped()) return
+    o.onBeat(b)
+    if (o.settled(b)) return
+  }
+}

@@ -7,11 +7,11 @@ import { BEAT_SUPPLY_CAP_MAX } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import {
-  ACTION_LABELS, BEAT_FROZEN_NOTE, PAYMENT_POLL_MS, beatActions, beatCounts, beatEditBody, beatFieldError, beatToInput, beatWindow, confirmBeatAction,
-  paymentNote, topupKey, type BeatAction, type BeatAvailability, type BeatClaimant, type BeatInput, type FieldError, type PublicBeat,
+  ACTION_LABELS, PAYMENT_POLL_MS, beatActions, beatCounts, beatEditBody, beatFieldError, beatToInput, beatWindow, confirmBeatAction,
+  paymentNote, pollPayment, topupKey, type BeatAction, type BeatAvailability, type BeatClaimant, type BeatInput, type FieldError, type PublicBeat,
 } from '@/lib/beats'
 import { PageHeader, Skeleton } from '@/components/ui'
-import { BeatBadges, BeatsGate } from '@/components/beats/BeatBits'
+import { BeatBadges, BeatsGate, FrozenNote } from '@/components/beats/BeatBits'
 import { BeatForm } from '@/components/beats/BeatForm'
 import { BeatReview } from '@/components/beats/BeatReview'
 import { Claimants } from '@/components/beats/Claimants'
@@ -69,21 +69,29 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
 
   useEffect(() => { if (token) load() }, [token, load])
 
-  // The webhook may land after the redirect: poll until the BEAT shows paid (or the raised cap), then drop the param
+  // The webhook may land after the redirect: poll until the BEAT shows paid (or the raised cap), then drop the param.
+  // A failed read doesn't end the polling (pollPayment skips it and waits again).
   const note = beat && payment ? paymentNote(payment.param, beat, payment.waitCap, payment.startedAt, new Date()) : null
+  const waiting = !!note && !note.settled
   useEffect(() => {
-    if (!payment || !beat) return
-    if (!note || note.settled) {
-      const url = new URL(window.location.href)
-      url.searchParams.delete('payment')
-      window.history.replaceState(window.history.state, '', url.pathname + url.search)
-      try { sessionStorage.removeItem(topupKey(beat.id)) } catch {}
-      return
-    }
-    const slow = Date.now() - payment.startedAt > 2 * 60_000
-    const t = setTimeout(load, slow ? SLOW_POLL_MS : PAYMENT_POLL_MS)
-    return () => clearTimeout(t)
-  }, [note?.settled, note?.text, beat, payment, load])
+    if (!payment || !beat || waiting) return
+    const url = new URL(window.location.href)
+    url.searchParams.delete('payment')
+    window.history.replaceState(window.history.state, '', url.pathname + url.search)
+    try { sessionStorage.removeItem(topupKey(beat.id)) } catch {}
+  }, [waiting, beat, payment])
+  useEffect(() => {
+    if (!payment || !waiting) return
+    let stopped = false
+    pollPayment({
+      load: () => apiRef.current.getBeat(beatId),
+      onBeat: (b) => setBeat(b),
+      settled: (b) => { const n = paymentNote(payment.param, b, payment.waitCap, payment.startedAt, new Date()); return !n || n.settled },
+      delayMs: () => (Date.now() - payment.startedAt > 2 * 60_000 ? SLOW_POLL_MS : PAYMENT_POLL_MS),
+      stopped: () => stopped,
+    })
+    return () => { stopped = true }
+  }, [waiting, payment, beatId])
 
   if (missing) return <p className="text-sm text-gray-400">BEAT not found.</p>
   if (!beat) return error ? <div role="alert" className="rounded-md border border-red-700 bg-red-900/50 px-4 py-2 text-sm text-red-300">{error}</div> : <Skeleton />
@@ -92,7 +100,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
     if (a === 'edit') { setFormError(null); setMode({ kind: 'edit' }); return }
     if (a === 'pay') { setMode({ kind: 'pay' }); return }
     if (a === 'raise_cap') { setMode({ kind: 'raise', cap: null }); return }
-    const question = confirmBeatAction(a)
+    const question = confirmBeatAction(a, beat)
     if (question && !window.confirm(question)) return
     setBusy(true); setError(null)
     try {
@@ -131,7 +139,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
 
       {note && <div role="status" className="rounded-md border border-gray-700 bg-gray-900 px-4 py-2 text-sm text-gray-200">{note.text}</div>}
       {error && <div role="alert" className="rounded-md border border-red-700 bg-red-900/50 px-4 py-2 text-sm text-red-300">{error}</div>}
-      {beat.frozen && <p className="text-sm text-gray-400">{BEAT_FROZEN_NOTE}</p>}
+      <FrozenNote frozen={beat.frozen} />
 
       {mode.kind === 'edit' && (
         <BeatForm initial={beatToInput(beat)} editing={beat} error={formError} busy={busy} submitLabel="Save changes" onSubmit={saveEdit} onCancel={back} />

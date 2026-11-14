@@ -5,7 +5,7 @@ import {
   BEAT_DESCRIPTION_MAX, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_MAX, type PublicBeat,
 } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
-import { BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, beatFormError, type BeatField, type BeatInput, type FieldError } from '@/lib/beats'
+import { BEAT_IMAGE_HINT, beatFormError, fieldsOfPatch, shownFieldError, type BeatField, type BeatInput, type FieldError } from '@/lib/beats'
 import { MediaPicker } from '@/components/MediaPicker'
 
 const INPUT = 'rounded-md bg-gray-950 px-3 py-2 text-sm text-white outline-none border border-gray-800 focus:border-blue-400 disabled:opacity-60'
@@ -19,8 +19,8 @@ function FieldNote({ error, field }: { error: FieldError | null; field: BeatFiel
 }
 
 /**
- * `editing`: the BEAT being changed (a paid one keeps its supply and tradeable; a frozen one its name, description and
- * artwork). `error` is the last refusal, shown beside its field; `submitLabel` names the button.
+ * `editing`: the BEAT being changed (a paid one keeps its supply and tradeable; a frozen one is never edited, as Edit isn't
+ * offered). `error` is the last refusal, shown beside its field until that field is edited; `submitLabel` names the button.
  */
 export function BeatForm({ initial, editing, error, busy, submitLabel, onSubmit, onCancel }: {
   initial: BeatInput
@@ -36,7 +36,14 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, onSubmit,
   const [local, setLocal] = useState<FieldError | null>(null)
   const [picking, setPicking] = useState(false)
   const [scenes, setScenes] = useState<SceneOption[] | null>(null)
-  const set = (patch: Partial<BeatInput>) => { setLocal(null); setF((cur) => ({ ...cur, ...patch })) }
+  // The fields edited since the last server refusal: its message goes once its own field changes
+  const [edited, setEdited] = useState<ReadonlySet<BeatField>>(new Set())
+  useEffect(() => { setEdited(new Set()) }, [error])
+  const set = (patch: Partial<BeatInput>) => {
+    setLocal(null)
+    setEdited((cur) => new Set([...cur, ...fieldsOfPatch(patch)]))
+    setF((cur) => ({ ...cur, ...patch }))
+  }
 
   useEffect(() => {
     let live = true
@@ -48,8 +55,7 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, onSubmit,
   }, [])
 
   const paid = !!editing && editing.status !== 'draft'
-  const frozen = !!editing?.frozen
-  const shown = local ?? error
+  const shown = local ?? shownFieldError(error, edited)
   // A scene picked before the list loads (the scene page's link), or one the host can't open from here, still shows
   const options: SceneOption[] = [
     ...(scenes ?? []),
@@ -67,15 +73,14 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, onSubmit,
   return (
     <form onSubmit={submit} className="space-y-5 rounded-lg border border-gray-800 bg-gray-900 p-6">
       {shown?.field === 'form' && <div role="alert" className="rounded-md border border-red-700 bg-red-900/50 px-4 py-2 text-sm text-red-300">{shown.message}</div>}
-      {frozen && <p className="text-sm text-gray-400">{BEAT_FROZEN_NOTE}</p>}
 
       <label className={LABEL}>Name
-        <input className={`${INPUT} mt-1 w-full`} value={f.name} maxLength={BEAT_NAME_MAX} disabled={frozen} onChange={(e) => set({ name: e.target.value })} />
+        <input className={`${INPUT} mt-1 w-full`} value={f.name} maxLength={BEAT_NAME_MAX} onChange={(e) => set({ name: e.target.value })} />
         <FieldNote error={shown} field="name" />
       </label>
 
       <label className={LABEL}>Description
-        <textarea className={`${INPUT} mt-1 w-full`} rows={3} value={f.description} maxLength={BEAT_DESCRIPTION_MAX} disabled={frozen}
+        <textarea className={`${INPUT} mt-1 w-full`} rows={3} value={f.description} maxLength={BEAT_DESCRIPTION_MAX}
           onChange={(e) => set({ description: e.target.value })} />
         <FieldNote error={shown} field="description" />
       </label>
@@ -87,7 +92,7 @@ export function BeatForm({ initial, editing, error, busy, submitLabel, onSubmit,
             ? <img src={f.imageUrl} alt="" className="h-20 w-20 rounded-md border border-gray-800 object-cover" />
             : <div className="h-20 w-20 rounded-md border border-dashed border-gray-700" />}
           <div>
-            <button type="button" disabled={frozen} onClick={() => setPicking(true)}
+            <button type="button" onClick={() => setPicking(true)}
               className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-50">
               {f.imageUrl ? 'Change image' : 'Pick image'}
             </button>

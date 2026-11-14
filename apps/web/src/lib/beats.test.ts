@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_SUPPLY_CAP_DEFAULT, type PublicBeat } from '@virvixr/shared'
 import {
   BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, BEAT_NO_REFUND, BEAT_TEST_BADGE, BEATS_UNAVAILABLE, beatActions, beatBody, beatEditBody, beatFieldError, beatFormError,
   beatHref, beatsNavVisible, blankBeat, claimantRow, claimantWallets, confirmBeatAction, fromLocalInput, newBeatHref, paymentNote, reviewModel,
   toLocalInput, type BeatAvailability, type BeatClaimant,
+  BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError,
 } from './beats'
 
 const NOW = new Date('2026-11-14T12:00:00Z')
@@ -164,7 +165,7 @@ describe('actions', () => {
     expect(beatActions(beat({ status: 'paid', frozen: true }), NOW)).toEqual(['cancel', 'raise_cap'])
   })
   it('asks before cancel and end early only', () => {
-    expect(confirmBeatAction('cancel')).toMatch(/Cancel this BEAT\?/)
+    expect(confirmBeatAction('cancel', beat({ status: 'draft' }))).toBe('Cancel this BEAT?')
     expect(confirmBeatAction('end_early')).toMatch(/End this BEAT now\?/)
     expect(confirmBeatAction('edit')).toBeNull()
   })
@@ -197,5 +198,58 @@ describe('links', () => {
     expect(beatHref('b1')).toBe('/beats?id=b1')
     expect(newBeatHref('s1')).toBe('/beats/new?scene=s1')
     expect(newBeatHref()).toBe('/beats/new')
+  })
+})
+
+describe('fix round 1', () => {
+  it('a paid BEAT\'s cancel promises a full refund, without naming the card (credit is refunded as credit)', () => {
+    expect(BEAT_REFUND_NOTE).toBe("You'll get a full refund.")
+    expect(confirmBeatAction('cancel', beat({ status: 'paid' }))).toBe("Cancel this BEAT? You'll get a full refund.")
+    expect(confirmBeatAction('cancel', beat({ status: 'paid' }))).not.toMatch(/card/)
+    expect(confirmBeatAction('cancel', beat({ status: 'draft' }))).toBe('Cancel this BEAT?')
+  })
+
+  it('encodes beat and scene ids in API paths', () => {
+    expect(beatApiPath('../admin/x')).toBe('/api/beats/..%2Fadmin%2Fx')
+    expect(beatApiPath('../admin/x', 'cancel')).toBe('/api/beats/..%2Fadmin%2Fx/cancel')
+    expect(beatApiPath('b1', 'quote')).toBe('/api/beats/b1/quote')
+    expect(sceneBeatsPath('s/1?x')).toBe('/api/scenes/s%2F1%3Fx/beats')
+  })
+
+  it('keeps polling after a failed reload, and stops once the BEAT shows paid', async () => {
+    const load = vi.fn()
+      .mockRejectedValueOnce(new Error('HTTP 502'))
+      .mockResolvedValueOnce(beat({ status: 'paid' }))
+    const seen: PublicBeat[] = []
+    await pollPayment({
+      load, onBeat: (b) => seen.push(b), settled: (b) => b.status !== 'draft', delayMs: () => 0, wait: async () => {}, stopped: () => false,
+    })
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(seen.map((b) => b.status)).toEqual(['paid'])
+  })
+
+  it('stops polling when the page goes away', async () => {
+    let stop = false
+    const load = vi.fn(async () => { stop = true; return beat({ status: 'draft' }) })
+    await pollPayment({ load, onBeat: () => {}, settled: () => false, delayMs: () => 0, wait: async () => {}, stopped: () => stop })
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('maps each edited input to its field', () => {
+    expect(fieldsOfPatch({ name: 'x' })).toEqual(['name'])
+    expect(fieldsOfPatch({ imageMediaId: 'm', imageUrl: 'u' })).toEqual(['image'])
+    expect(fieldsOfPatch({ startsAt: 'x' })).toEqual(['window'])
+    expect(fieldsOfPatch({ minPresentMinutes: 3 })).toEqual(['minutes', 'window'])
+    expect(fieldsOfPatch({ sceneIds: [] })).toEqual(['scenes'])
+    expect(fieldsOfPatch({ supplyCap: 3 })).toEqual(['cap'])
+  })
+
+  it("clears a field's server error once the host edits that field, and only that field", () => {
+    const err = { field: 'name' as const, message: 'Give the BEAT a name of 1 to 60 characters.' }
+    expect(shownFieldError(err, new Set())).toEqual(err)
+    expect(shownFieldError(err, new Set(['cap']))).toEqual(err)
+    expect(shownFieldError(err, new Set(['name']))).toBeNull()
+    expect(shownFieldError({ field: 'window', message: 'm' }, new Set(fieldsOfPatch({ minPresentMinutes: 1 })))).toBeNull()
+    expect(shownFieldError(null, new Set(['name']))).toBeNull()
   })
 })

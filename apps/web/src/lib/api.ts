@@ -28,7 +28,7 @@ import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignReques
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
 import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
 import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
-import type { BeatAvailability, BeatCheckoutResult, BeatClaimant, BeatQuote, PublicBeat, beatBody, beatEditBody, payBody } from './beats'
+import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutResult, type BeatClaimant, type BeatQuote, type PublicBeat, type beatBody, type beatEditBody, type payBody } from './beats'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
 
@@ -460,20 +460,20 @@ function useRealApi() {
     // BEATs (LIV-11): availability answers even while BEATs are dark; everything else 404s then
     getBeatAvailability: () => apiFetch<BeatAvailability>('/api/beats/availability'),
     listBeats: () => apiFetch<PublicBeat[]>('/api/beats'),
-    listSceneBeats: (sceneId: string) => apiFetch<PublicBeat[]>(`/api/scenes/${sceneId}/beats`),
-    getBeat: (beatId: string) => apiFetch<PublicBeat>(`/api/beats/${beatId}`),
+    listSceneBeats: (sceneId: string) => apiFetch<PublicBeat[]>(sceneBeatsPath(sceneId)),
+    getBeat: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId)),
     createBeat: (body: ReturnType<typeof beatBody>) =>
       apiFetch<PublicBeat>('/api/beats', { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     updateBeat: (beatId: string, body: ReturnType<typeof beatEditBody>) =>
-      apiFetch<PublicBeat>(`/api/beats/${beatId}`, { method: 'PATCH', userAction: true, body: JSON.stringify(body) }),
-    getBeatClaimants: (beatId: string) => apiFetch<BeatClaimant[]>(`/api/beats/${beatId}/claimants`),
-    cancelBeat: (beatId: string) => apiFetch<PublicBeat>(`/api/beats/${beatId}/cancel`, { method: 'POST', userAction: true }),
-    endBeatEarly: (beatId: string) => apiFetch<PublicBeat>(`/api/beats/${beatId}/end-early`, { method: 'POST', userAction: true }),
-    getBeatQuote: (beatId: string, cap?: number) => apiFetch<BeatQuote>(`/api/beats/${beatId}/quote${cap === undefined ? '' : `?cap=${cap}`}`),
+      apiFetch<PublicBeat>(beatApiPath(beatId), { method: 'PATCH', userAction: true, body: JSON.stringify(body) }),
+    getBeatClaimants: (beatId: string) => apiFetch<BeatClaimant[]>(beatApiPath(beatId, 'claimants')),
+    cancelBeat: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'cancel'), { method: 'POST', userAction: true }),
+    endBeatEarly: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'end-early'), { method: 'POST', userAction: true }),
+    getBeatQuote: (beatId: string, cap?: number) => apiFetch<BeatQuote>(`${beatApiPath(beatId, 'quote')}${cap === undefined ? '' : `?cap=${cap}`}`),
     checkoutBeat: (beatId: string, body: ReturnType<typeof payBody>) =>
-      apiFetch<BeatCheckoutResult>(`/api/beats/${beatId}/checkout`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
+      apiFetch<BeatCheckoutResult>(beatApiPath(beatId, 'checkout'), { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     raiseBeatCap: (beatId: string, supplyCap: number, body: ReturnType<typeof payBody>) =>
-      apiFetch<BeatCheckoutResult>(`/api/beats/${beatId}/cap`, { method: 'POST', userAction: true, body: JSON.stringify({ ...body, supplyCap }) }),
+      apiFetch<BeatCheckoutResult>(beatApiPath(beatId, 'cap'), { method: 'POST', userAction: true, body: JSON.stringify({ ...body, supplyCap }) }),
 
     // Scene roles (wallet-based)
     getSceneRoles: (sceneId: string) =>
