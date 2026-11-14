@@ -35,7 +35,7 @@ Hosts want a reason for people to show up, and something that proves they were t
 The contract is built on OpenZeppelin Contracts 5 (`ERC1155`, `AccessControl`), pinned to an exact version.
 
 **Roles:**
-- `DEFAULT_ADMIN_ROLE`: the owner's admin wallet. **[owner, open question 1]**
+- `DEFAULT_ADMIN_ROLE`: the owner's admin wallet, `0x7BC6B7cd586BeF73136e2fb9bdF2eA56D2809220` (owner decision 1). The deploy script takes it as `BEAT_ADMIN`; its key stays in the owner's 1Password and never reaches Virvi's servers.
   - It grants and revokes `MINTER_ROLE`, and sets the metadata base URI.
   - It holds no power over anyone's tokens.
 - `MINTER_ROLE`: Virvi's minter wallet, the 1Password key.
@@ -91,7 +91,7 @@ The contract is built on OpenZeppelin Contracts 5 (`ERC1155`, `AccessControl`), 
 2. **Pay.**
    - Price: **$5 for the first 100 of the cap, then $0.02 for each one after**, so price = 500 + 2 × max(0, cap − 100) cents. The cap is the most the host can be charged.
    - Paid up front by card (a Stripe one-off checkout, the studio-payments pattern) or by Virvi credit if the account has any. **[my call]**
-   - Unclaimed mints aren't refunded in phase 1. The review step says so. **[my call, open question 2]**
+   - Unclaimed mints aren't refunded in phase 1. The review step says so. **[owner decision 2]**
    - Prices are server settings: `BEAT_PRICE_BASE_CENTS=500`, `BEAT_INCLUDED_MINTS=100`, `BEAT_PRICE_EXTRA_MINT_CENTS=2`.
 3. **Create on chain.** When payment is confirmed, the minting service calls `createBeat(tokenId, tradeable)` and the status becomes `paid`, then `live` at `starts_at`. The token id is a server sequence per chain.
 4. **Presence (in-world, during the window).**
@@ -147,10 +147,10 @@ BEATs ship dark behind `BEAT_ENABLED` (default off) and a per-chain `BEAT_CONTRA
 
 The in-world parts ship as `@virvixr/dcl` 2.16.0 and runtime v15.
 
-## Open questions for the owner
+## Owner decisions (2026-11-14)
 
-1. **The contract's admin wallet.** It should be a different wallet from the minter, ideally a hardware wallet or a Safe. It can add or remove minters and change the metadata address, but can't touch anyone's tokens. Which address?
-2. **Unclaimed mints.** Should part of the price be refunded when fewer people claim than the cap? Recommended for phase 1: no. Keep the up-front price simple, and let hosts start with the default cap of 100, which costs $5 flat.
+1. **Admin wallet:** `0x7BC6B7cd586BeF73136e2fb9bdF2eA56D2809220`, separate from the minter.
+2. **Unclaimed mints:** not refunded in phase 1.
 
 ## Left to the builder
 
