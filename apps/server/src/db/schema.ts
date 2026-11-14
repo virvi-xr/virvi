@@ -18,10 +18,11 @@ import {
   date,
   doublePrecision,
   bigint,
+  pgSequence,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatStatus, BeatClaimStatus } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -2616,4 +2617,116 @@ export const raffleDraws = pgTable('raffle_draws', {
   drawnAt: timestamp('drawn_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   raffleIdx: index('raffle_draws_raffle_idx').on(t.raffleId),
+}))
+
+// ── BEATs (LIV-11) ───────────────────────────────────────────────────────────
+// A BEAT is a free ERC-1155 attendance token: a host creates one for scenes and a window, visitors opt in and are
+// counted by check-ins, then claim it and the minter sends it to their wallet. Token ids come from one sequence per chain.
+
+export const beatTokenIdPolygonAmoySeq = pgSequence('beat_token_id_polygon_amoy_seq', { startWith: 1 })
+export const beatTokenIdPolygonSeq = pgSequence('beat_token_id_polygon_seq', { startWith: 1 })
+
+export const beats = pgTable('beats', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Null until paid, when the next id of the chain's sequence is taken
+  tokenId: bigint('token_id', { mode: 'number' }),
+  chain: text('chain').$type<BeatChain>().notNull(),
+  ownerUserId: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  imageMediaId: uuid('image_media_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+  imageUrl: text('image_url'), // the frozen copy's public URL, once paid
+  startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+  endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+  minPresentSeconds: integer('min_present_seconds').notNull().default(300),
+  supplyCap: integer('supply_cap').notNull().default(100),
+  tradeable: boolean('tradeable').notNull().default(false),
+  status: text('status').$type<BeatStatus>().notNull().default('draft'),
+  frozenAt: timestamp('frozen_at', { withTimezone: true }),
+  createdOnChainTx: text('created_on_chain_tx'),
+  createdOnChainAt: timestamp('created_on_chain_at', { withTimezone: true }),
+  closedOnChainAt: timestamp('closed_on_chain_at', { withTimezone: true }),
+  paymentId: uuid('payment_id').references((): AnyPgColumn => beatPayments.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  chainTokenUq: uniqueIndex('beats_chain_token_id_uq').on(t.chain, t.tokenId),
+  statusStartsIdx: index('beats_status_starts_at_idx').on(t.status, t.startsAt),
+}))
+
+export const beatScenes = pgTable('beat_scenes', {
+  beatId: uuid('beat_id').notNull().references(() => beats.id, { onDelete: 'cascade' }),
+  sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.beatId, t.sceneId] }),
+  sceneIdx: index('beat_scenes_scene_idx').on(t.sceneId),
+}))
+
+// A card or credit payment for a BEAT's supply: the first purchase ('create') or a later cap raise ('topup')
+export const beatPayments = pgTable('beat_payments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  beatId: uuid('beat_id').notNull().references(() => beats.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  kind: text('kind').$type<'create' | 'topup'>().notNull(),
+  capFrom: integer('cap_from').notNull(),
+  capTo: integer('cap_to').notNull(),
+  method: text('method').$type<'card' | 'credit' | 'test'>().notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  creditCents: integer('credit_cents').notNull().default(0),
+  status: text('status').$type<'pending' | 'paid' | 'expired' | 'refunded'>().notNull().default('pending'),
+  stripeSessionId: text('stripe_session_id').unique(),
+  stripePaymentIntent: text('stripe_payment_intent'),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+  refundedAt: timestamp('refunded_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// Every transaction the minter sends, so it can be reconciled after a crash. wallets is nullable so the 30-day scrub can clear it.
+export const beatMintBatches = pgTable('beat_mint_batches', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  chain: text('chain').$type<BeatChain>().notNull(),
+  kind: text('kind').$type<'create' | 'mint' | 'close'>().notNull(),
+  beatId: uuid('beat_id').references(() => beats.id, { onDelete: 'set null' }),
+  tokenId: bigint('token_id', { mode: 'number' }).notNull(),
+  wallets: text('wallets').array(),
+  nonce: bigint('nonce', { mode: 'number' }).notNull(),
+  txHash: text('tx_hash'),
+  rawTx: text('raw_tx'),
+  txHashes: text('tx_hashes').array().notNull().default(sql`'{}'::text[]`), // every hash signed for this nonce, newest last
+  status: text('status').$type<'sending' | 'sent' | 'confirmed' | 'failed'>().notNull().default('sending'),
+  attempts: integer('attempts').notNull().default(0),
+  lastError: text('last_error'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  chainNonceUq: uniqueIndex('beat_mint_batches_chain_nonce_uq').on(t.chain, t.nonce),
+  chainStatusIdx: index('beat_mint_batches_chain_status_idx').on(t.chain, t.status),
+}))
+
+// Only visitors who opted in have a row. userId and displayName are nullable: delete-my-data on a minted row
+// (its wallet is public on chain) drops the link to the account and keeps the row.
+export const beatClaims = pgTable('beat_claims', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  beatId: uuid('beat_id').notNull().references(() => beats.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  wallet: text('wallet').notNull(),
+  displayName: text('display_name'),
+  consentVersion: integer('consent_version').notNull(),
+  consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
+  secondsPresent: integer('seconds_present').notNull().default(0),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  status: text('status').$type<BeatClaimStatus>().notNull().default('present'),
+  deleteRequested: boolean('delete_requested').notNull().default(false),
+  batchId: uuid('batch_id').references(() => beatMintBatches.id, { onDelete: 'set null' }),
+  mintTx: text('mint_tx'),
+  failReason: text('fail_reason'),
+  claimedAt: timestamp('claimed_at', { withTimezone: true }),
+  mintedAt: timestamp('minted_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  walletUq: uniqueIndex('beat_claims_beat_wallet_uq').on(t.beatId, t.wallet),
+  userUq: uniqueIndex('beat_claims_beat_user_uq').on(t.beatId, t.userId).where(sql`${t.userId} is not null`),
+  statusIdx: index('beat_claims_beat_status_idx').on(t.beatId, t.status),
 }))
