@@ -13,7 +13,7 @@ import {
 
 /**
  * Raffles (LIV-55).
- * Host routes: for everyone with `raffle.run` (hosts, co-hosts, editors). Viewers, booking crew and other accounts get
+ * Host routes: for everyone with `events.run` (hosts, co-hosts, editors). Viewers, booking crew and other accounts get
  * 403. The host HUD's scene pass may call them for its own scene.
  * Visitor routes: entering and checking in take a Decentraland scene pass bound to the raffle's scene with a verified
  * wallet (the visitor is in the scene); anyone signed in may read a scene's current raffle (no names).
@@ -25,7 +25,7 @@ export default async function raffleRoutes(app: FastifyInstance) {
   const sceneScoped = { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }
   const raffleScoped = { config: { scenePass: { sceneFrom: fromRaffle } } }
 
-  const mayRun = async (request: FastifyRequest, sceneId: string) => hasScope(await getSceneAccess(actorFromClaims(request.user), sceneId), 'raffle.run')
+  const mayRun = async (request: FastifyRequest, sceneId: string) => hasScope(await getSceneAccess(actorFromClaims(request.user), sceneId), 'events.run')
   const forbidden = (reply: FastifyReply) => reply.status(403).send({ error: 'forbidden', message: "You can't run raffles in this scene." })
 
   const fail = (reply: FastifyReply, e: unknown) => {

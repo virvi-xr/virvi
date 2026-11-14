@@ -8,7 +8,7 @@ import { createUser, createScene, randomWallet, type TestUser } from './helpers/
 
 const actor = (u: TestUser) => actorFromClaims({ id: u.id, email: u.email, role: u.role, wallet: u.wallet, verified: true })
 
-describe('raffle.run scope', () => {
+describe('events.run scope', () => {
   beforeEach(resetDb)
 
   it('goes to the owner, editors (collab and role) and cohosts, not viewers', async () => {
@@ -26,7 +26,7 @@ describe('raffle.run scope', () => {
       { sceneId: scene.id, walletAddress: roleEditor.wallet!, userId: roleEditor.id, role: 'editor', grantedByUserId: owner.id },
       { sceneId: scene.id, walletAddress: cohost.wallet!, userId: cohost.id, role: 'cohost', grantedByUserId: owner.id },
     ])
-    const has = async (u: TestUser) => hasScope(await getSceneAccess(actor(u), scene.id), 'raffle.run')
+    const has = async (u: TestUser) => hasScope(await getSceneAccess(actor(u), scene.id), 'events.run')
     expect(await has(owner)).toBe(true)
     expect(await has(collabEditor)).toBe(true)
     expect(await has(roleEditor)).toBe(true)

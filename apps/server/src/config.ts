@@ -9,7 +9,8 @@
 
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
-import { getAddress } from 'ethers'
+import { getAddress, parseEther } from 'ethers'
+import { BEAT_CHAINS, type BeatChain } from '@virvixr/shared'
 import { resolveStorageProvider } from './storage/index.js'
 
 export type VirviMode = 'single' | 'scalable' | 'cloud'
@@ -177,6 +178,55 @@ export function validDeployKey(raw: string | undefined, name = 'VIRVI_DCL_DEPLOY
   }
   // Refuse to start rather than quietly turning deploys off. The message never includes the value.
   throw new Error(`${name} is not a valid private key (32 bytes of hex). Fix it or unset it.`)
+}
+
+/**
+ * BEAT (free attendance token) settings, checked once at startup (LIV-11). Off unless BEAT_ENABLED=true. A bad chain,
+ * contract address, minter key or number refuses to start; no message ever includes the key.
+ */
+export function beatSettingsFrom(e: Record<string, string | undefined>) {
+  const chain = (e.BEAT_CHAIN || 'polygon-amoy') as BeatChain
+  if (!BEAT_CHAINS.includes(chain)) throw new Error(`BEAT_CHAIN must be one of: ${BEAT_CHAINS.join(', ')}`)
+  const contracts: Partial<Record<BeatChain, string>> = {}
+  for (const [name, c] of [['BEAT_CONTRACT_POLYGON_AMOY', 'polygon-amoy'], ['BEAT_CONTRACT_POLYGON', 'polygon']] as const) {
+    const raw = e[name]
+    if (raw === undefined || raw === '') continue
+    try {
+      contracts[c] = getAddress(raw)
+    } catch {
+      throw new Error(`${name} must be a valid, correctly checksummed address`)
+    }
+  }
+  const whole = (name: string, def: number) => {
+    const raw = e[name]
+    if (raw === undefined || raw === '') return def
+    if (!/^\d+$/.test(raw)) throw new Error(`${name} must be a whole number`)
+    return Number(raw)
+  }
+  let minGasWei: bigint
+  try {
+    minGasWei = parseEther(e.BEAT_MIN_GAS_POL || '1')
+  } catch {
+    throw new Error('BEAT_MIN_GAS_POL must be a decimal amount of POL')
+  }
+  const publicUrl = (e.PUBLIC_URL || 'http://localhost:3010').replace(/\/+$/, '')
+  return {
+    enabled: e.BEAT_ENABLED === 'true',
+    chain,
+    contracts,
+    minterKey: validDeployKey(e.BEAT_MINTER_KEY, 'BEAT_MINTER_KEY'),
+    rpc: {
+      'polygon-amoy': e.POLYGON_AMOY_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com',
+      polygon: e.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
+    } as Record<BeatChain, string>,
+    price: {
+      baseCents: whole('BEAT_PRICE_BASE_CENTS', 500),
+      includedMints: whole('BEAT_INCLUDED_MINTS', 100),
+      extraMintCents: whole('BEAT_PRICE_EXTRA_MINT_CENTS', 2),
+    },
+    minGasWei,
+    metadataBase: `${publicUrl}/api/beats/metadata/`,
+  }
 }
 
 /** The first line of a RELEASE file (the deploy stamps the commit SHA there, since `railway up` from a checkout passes
@@ -350,6 +400,8 @@ export const config = {
   studioMaxMembers: positiveInt(env('STUDIO_MAX_MEMBERS'), 50),
   studioPrices: studioPricesFrom(process.env),
   studioMana: manaSettingsFrom(process.env),
+  // BEAT attendance tokens (LIV-11): dark unless BEAT_ENABLED=true
+  beats: beatSettingsFrom(process.env),
   // The studio scene's parcels: each copy of the scene's base parcel, "x,y", separated by ";" or spaces
   // (for example "104,60; -9,-122"). Only these get the studio pass.
   studioSceneParcels: parcelList(env('STUDIO_SCENE_PARCEL')),

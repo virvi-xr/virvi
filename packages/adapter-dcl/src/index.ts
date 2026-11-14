@@ -506,7 +506,7 @@ export async function createVirvi(config?: Partial<VirviInitConfig> & { enableHu
           return
         }
 
-        // Raffle tab (LIV-55): host, co-hosts and editors (raffle.run); the server refuses everyone else
+        // Raffle tab (LIV-55): host, co-hosts and editors (events.run); the server refuses everyone else
         if (action.startsWith('raffle_')) {
           if (!edits()) return
           if (action === 'raffle_refresh') return refreshRaffle()
