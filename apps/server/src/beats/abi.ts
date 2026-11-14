@@ -91,3 +91,7 @@ export const VIRVI_BEAT_ABI = [
   'error ZeroAddress()',
   'error ZeroId()',
 ] as const
+
+/** The gas the contract hands each recipient with code for its receiver hook (VirviBeat.RECEIVER_GAS in
+ * contracts/src/VirviBeat.sol). The minting job adds it per such recipient on top of the node's estimate. */
+export const BEAT_RECEIVER_GAS = 120_000n

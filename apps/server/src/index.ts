@@ -22,6 +22,8 @@ import { hyperfyHosting } from './services/hyperfy/infrastructure.js'
 import { startAnalyticsJobs } from './analytics/jobs.js'
 import { initBus } from './realtime/bus.js'
 import { installProcessErrorHandlers, startErrorJobs } from './errors/jobs.js'
+import { startBeatJobs } from './beats/job.js'
+import { BEAT_JOB_EVERY_MS } from '@virvixr/shared'
 
 async function main() {
   // LIV-66: an exception nothing caught is recorded before the process exits, as it always has
@@ -119,6 +121,10 @@ async function main() {
   console.log('[virvi-server] Analytics jobs started')
   startErrorJobs()
   console.log(`[virvi-server] Error reporting: release ${config.release}, Linear filing ${config.linearApiKey && config.linearTeamId ? 'on' : 'off'}`)
+  if (config.beats.enabled) {
+    startBeatJobs()
+    console.log(`[virvi-server] BEAT minting job every ${BEAT_JOB_EVERY_MS}ms`)
+  }
 
   console.log(`[virvi-server] Ready at ${config.publicUrl}`)
 }
