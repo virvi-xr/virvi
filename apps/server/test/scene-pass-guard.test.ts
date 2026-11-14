@@ -6,6 +6,7 @@ import { createAnalyticsScene } from './helpers/analytics.js'
 import { createSetup } from './helpers/setups.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
 import { issueArPass, issueHyperfyPass } from '../src/auth/scene-pass.js'
+import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { arDevices, arSpaces, hyperfyPairings, hyperfyWorlds, raffles, beats, beatScenes, screenShowings } from '../src/db/schema.js'
 import { VideoSourceType } from '@virvixr/shared'
@@ -15,8 +16,10 @@ const pass = (u: any, sceneId: string | null, locationId: string | null = null) 
 
 describe('scene pass guard', () => {
   let app: Awaited<ReturnType<typeof testApp>>
-  beforeEach(async () => { await resetDb(); app = await testApp() })
-  afterEach(async () => { await app.close() })
+  const prevBeats = config.beats
+  // BEAT routes are dark (404 before any guard) unless enabled: the walks need them answering
+  beforeEach(async () => { await resetDb(); ;(config as any).beats = { ...config.beats, enabled: true }; app = await testApp() })
+  afterEach(async () => { ;(config as any).beats = prevBeats; await app.close() })
 
   it('every route without scenePass config refuses a scene pass (route walk)', async () => {
     const owner = await createUser({ wallet: '0x00000000000000000000000000000000000000a1' })
@@ -98,8 +101,9 @@ describe('scene pass guard', () => {
       ['POST', `/api/raffles/${raffle.id}/cancel`], ['GET', `/api/raffles/${raffle.id}/draws/00000000-0000-4000-8000-000000000000`],
       ['GET', `/api/scenes/${b.scene.id}/raffle/current`], ['POST', `/api/raffles/${raffle.id}/entry`], ['DELETE', `/api/raffles/${raffle.id}/entry`],
       ['POST', `/api/raffles/${raffle.id}/presence`],
-      ['GET', `/api/scenes/${b.scene.id}/beats`], ['GET', `/api/beats/${beat.id}`], ['PATCH', `/api/beats/${beat.id}`],
-      ['GET', `/api/beats/${beat.id}/claimants`], ['POST', `/api/beats/${beat.id}/cancel`], ['POST', `/api/beats/${beat.id}/end-early`],
+      // BEAT reads by id answer 404 to a pass for a scene the BEAT isn't on (beat-host.test.ts); the rest refuse any pass
+      ['GET', `/api/scenes/${b.scene.id}/beats`], ['PATCH', `/api/beats/${beat.id}`], ['POST', `/api/beats/${beat.id}/cancel`],
+      ['POST', `/api/beats/${beat.id}/end-early`], ['GET', '/api/beats'], ['POST', '/api/beats'], ['GET', '/api/beats/availability'],
       ['GET', `/api/scenes/${b.scene.id}`], ['PUT', `/api/scenes/${b.scene.id}`],
       ['POST', `/api/presets/${b.preset.id}/elements`], ['PUT', `/api/elements/${el.id}`], ['DELETE', `/api/elements/${el.id}`],
       ['POST', `/api/elements/${el.id}/instances`], ['PUT', `/api/instances/${inst.id}`], ['DELETE', `/api/instances/${inst.id}`],

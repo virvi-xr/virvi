@@ -5,6 +5,7 @@ import { testApp, createUser } from './helpers/factories.js'
 import { isPublic } from './helpers/public-routes.js'
 import { db } from '../src/db/connection.js'
 import { users, studioDesigns } from '../src/db/schema.js'
+import { config } from '../src/config.js'
 import { issueTrialSession } from '../src/auth/trial.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
 import { actorFromClaims } from '../src/auth/actor.js'
@@ -90,8 +91,10 @@ async function makeTrial(app: Awaited<ReturnType<typeof testApp>>) {
 
 describe('trial guard', () => {
   let app: Awaited<ReturnType<typeof testApp>>
-  beforeEach(async () => { await resetDb(); app = await testApp() })
-  afterEach(async () => { await app.close() })
+  const prevBeats = config.beats
+  // BEAT routes are dark (404 before any guard) unless enabled: the walk needs them answering
+  beforeEach(async () => { await resetDb(); ;(config as any).beats = { ...config.beats, enabled: true }; app = await testApp() })
+  afterEach(async () => { ;(config as any).beats = prevBeats; await app.close() })
 
   const routes = () => (app as any).registeredRoutes as Array<{ method: string; url: string; trial: boolean }>
 
@@ -167,7 +170,6 @@ describe('trial guard', () => {
   it('a trial over its upload total gets account_required upload_more', async () => {
     const t = await makeTrial(app)
     const h = { authorization: `Bearer ${t.accessToken}` }
-    const { config } = await import('../src/config.js')
     const [design] = await db.insert(studioDesigns).values({ ownerId: t.u.id, name: 'T', kind: 'wearable', agent: 'claude' }).returning()
     const id = design.id
     const prev = config.trialUploadBytes

@@ -10,8 +10,9 @@ const MAX_BYTES = 10 * 1024 * 1024
 
 async function readFromUrl(url: string): Promise<{ width: number; height: number } | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000), redirect: 'error' })
     if (!res.ok) return null
+    if (Number(res.headers.get('content-length') ?? 0) > MAX_BYTES) return null
     const buf = Buffer.from(await res.arrayBuffer())
     if (buf.length > MAX_BYTES) return null
     const meta = await sharp(buf, { failOn: 'error' }).metadata()

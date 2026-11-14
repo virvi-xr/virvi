@@ -21,12 +21,17 @@ export { BeatError } from './errors.js'
 export type BeatRow = typeof beats.$inferSelect
 
 /** Who is calling: their account, their scene access actor, and whether they are a Virvi admin (read from the database). */
-export interface BeatCaller { userId: string; actor: Actor; admin: boolean }
+export interface BeatCaller {
+  userId: string; actor: Actor; admin: boolean
+  /** A Decentraland scene pass's scene: the BEAT must include it, or it doesn't exist to this caller. */
+  passSceneId?: string | null
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DAY_MS = 86_400_000
 const SCENES_MAX = 20
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
 const isAmoy = (chain: BeatChain) => chain === 'polygon-amoy'
 
@@ -114,6 +119,7 @@ async function loadVisible(c: BeatCaller, beatId: string) {
   const row = await db.query.beats.findFirst({ where: eq(beats.id, beatId) })
   if (!row) throw notFound()
   const sceneIds = await sceneIdsOf(row.id)
+  if (c.passSceneId && !sceneIds.includes(c.passSceneId)) throw notFound()
   if (!(await canSee(c, row, sceneIds))) throw notFound()
   return { row, sceneIds }
 }
@@ -185,13 +191,13 @@ type Body = Record<string, unknown>
 const has = (b: Body, k: string) => b[k] !== undefined
 
 function parseName(v: unknown): string {
-  if (typeof v !== 'string' || !v.trim() || v.trim().length > BEAT_NAME_MAX) throw new BeatError(400, 'bad_name', `Give the BEAT a name of 1 to ${BEAT_NAME_MAX} characters.`)
+  if (typeof v !== 'string' || !v.trim() || [...v.trim()].length > BEAT_NAME_MAX) throw new BeatError(400, 'bad_name', `Give the BEAT a name of 1 to ${BEAT_NAME_MAX} characters.`)
   return v.trim()
 }
 
 function parseDescription(v: unknown): string {
   if (v === undefined || v === null) return ''
-  if (typeof v !== 'string' || v.trim().length > BEAT_DESCRIPTION_MAX) throw new BeatError(400, 'bad_name', `The description can be up to ${BEAT_DESCRIPTION_MAX} characters.`)
+  if (typeof v !== 'string' || [...v.trim()].length > BEAT_DESCRIPTION_MAX) throw new BeatError(400, 'bad_name', `The description can be up to ${BEAT_DESCRIPTION_MAX} characters.`)
   return v.trim()
 }
 
@@ -249,6 +255,7 @@ async function checkImage(c: BeatCaller, mediaId: unknown): Promise<string> {
   })
   if (!media || media.status !== 'ready' || !media.publicUrl) throw bad('Pick an image from your library.')
   if (!IMAGE_TYPES.includes(media.contentType)) throw bad('The image must be a PNG, JPEG or WebP.')
+  if (media.sizeBytes > IMAGE_MAX_BYTES) throw bad('The image file is too big (10 MB at most).')
   const size = await readImageSize(media.publicUrl)
   if (!size) throw bad("We couldn't read that image.")
   if (size.width !== size.height) throw bad('The image must be square.')
@@ -311,7 +318,7 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
  * image, window, scenes and minimum time change; the cap and tradeable can't (a cap raise is a top-up). Otherwise locked.
  */
 export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now = new Date()): Promise<PublicBeat> {
-  const { row: seen, sceneIds: seenScenes } = await loadManageable(c, beatId)
+  const { row: seen } = await loadManageable(c, beatId)
   const locked = (m = "This BEAT can't be changed any more.") => new BeatError(409, 'locked', m)
   const editable = (r: BeatRow) => r.status === 'draft' || (r.status === 'paid' && r.startsAt.getTime() > now.getTime() && r.frozenAt === null)
   if (!editable(seen)) throw locked()
@@ -324,6 +331,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now 
   const newImage = imageChanged ? await checkImage(c, body.imageMediaId) : null
 
   const result = await db.transaction(async (tx) => {
+    await lockBeat(tx, beatId)
     const [row] = await tx.select().from(beats).where(eq(beats.id, beatId)).for('update')
     if (!row || !editable(row)) throw locked()
     const paid = row.status === 'paid'
@@ -338,20 +346,25 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now 
     if (paid && supplyCap !== row.supplyCap) throw locked('The supply is paid for. Add more supply instead.')
     if (paid && tradeable !== row.tradeable) throw locked("Whether it can be traded can't change after payment.")
     const imageMediaId = newImage ?? row.imageMediaId
-    const sceneIds = newScenes ?? seenScenes
+    // The BEAT's scenes as they are now, read after the lock (another edit may have moved them since loadManageable)
+    const sceneIds = newScenes ?? (await tx.select({ sceneId: beatScenes.sceneId }).from(beatScenes).where(eq(beatScenes.beatId, row.id))).map((r) => r.sceneId)
     await lockScenes(tx, sceneIds)
     await checkOverlap(tx, sceneIds, startsAt, endsAt, row.id)
     const [updated] = await tx.update(beats).set({
       name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, updatedAt: now,
+      // A new image on a paid BEAT: the frozen copy is stale until copyBeatImage redoes it; the live media URL shows meanwhile
+      ...(paid && imageChanged ? { imageUrl: null } : {}),
     }).where(eq(beats.id, row.id)).returning()
     if (newScenes) {
       await tx.delete(beatScenes).where(eq(beatScenes.beatId, row.id))
       await tx.insert(beatScenes).values(newScenes.map((sceneId) => ({ beatId: row.id, sceneId })))
     }
-    return { updated, copyImage: paid && imageChanged }
+    return updated
   })
-  if (result.copyImage) await copyBeatImage(result.updated.id)
-  return getBeatRow(result.updated.id)
+  // A paid BEAT without its frozen copy (this edit changed the image, or an earlier copy failed) gets it redone, so a retry
+  // of the same edit tries again. The edit itself is committed either way.
+  if (result.status === 'paid' && result.imageUrl === null) await copyBeatImage(result.id)
+  return getBeatRow(result.id)
 }
 
 async function getBeatRow(beatId: string): Promise<PublicBeat> {
@@ -361,15 +374,35 @@ async function getBeatRow(beatId: string): Promise<PublicBeat> {
 
 // ── Cancel and end early ─────────────────────────────────────────────────────
 
-/** Cancels before the start: a draft just becomes cancelled; a paid BEAT is refunded first. After the start it's too late. */
+/** One writer at a time per BEAT (edit, cancel). An advisory lock, not only a row lock: refundBeat runs on its own connection and may write this row. */
+async function lockBeat(tx: Tx, beatId: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`beat:${beatId}`}))`)
+}
+
+/**
+ * Cancels before the start: a draft just becomes cancelled; a paid BEAT is refunded first, and marked cancelled only after
+ * the refund returns. The state is read again under the lock, so a draft that was paid meanwhile is refunded. Cancelling
+ * an already cancelled BEAT changes nothing (200). Task 6's refundBeat must be idempotent per BEAT: a crash between the
+ * refund and the status update leaves the BEAT paid, and a retry calls it again.
+ */
 export async function cancelBeat(c: BeatCaller, beatId: string, now = new Date()): Promise<PublicBeat> {
-  const { row } = await loadManageable(c, beatId)
-  if (row.status === 'cancelled' || row.status === 'ended') throw new BeatError(409, 'locked', 'This BEAT is already over.')
-  if (row.status === 'live' || row.startsAt.getTime() <= now.getTime()) throw new BeatError(409, 'too_late', "This BEAT has started, so it can't be cancelled. End it early instead.")
-  if (row.status === 'paid') await refundBeat(row.id, now)
-  await db.update(beats).set({ status: 'cancelled', updatedAt: now })
-    .where(and(eq(beats.id, row.id), inArray(beats.status, ['draft', 'paid', 'cancelled'])))
-  return getBeatRow(row.id)
+  const { row: seen } = await loadManageable(c, beatId)
+  await db.transaction(async (tx) => {
+    await lockBeat(tx, beatId)
+    const [row] = await tx.select().from(beats).where(eq(beats.id, beatId))
+    if (!row) throw notFound()
+    if (row.status === 'cancelled') return
+    const late = () => new BeatError(409, 'too_late', "This BEAT has started, so it can't be cancelled. End it early instead.")
+    if (row.status === 'ended' || row.status === 'live') {
+      // It moved on since we looked: say so rather than guess
+      if (row.status !== seen.status) throw new BeatError(409, 'conflict', 'This BEAT just changed. Reload and try again.')
+      throw row.status === 'live' ? late() : new BeatError(409, 'locked', 'This BEAT is already over.')
+    }
+    if (row.startsAt.getTime() <= now.getTime()) throw late()
+    if (row.status === 'paid') await refundBeat(row.id, now)
+    await tx.update(beats).set({ status: 'cancelled', updatedAt: now }).where(and(eq(beats.id, row.id), inArray(beats.status, ['draft', 'paid'])))
+  })
+  return getBeatRow(beatId)
 }
 
 /** Ends a live BEAT now. */

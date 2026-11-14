@@ -1,12 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { arDevices, beatClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, sceneCollaborators } from '../src/db/schema.js'
 import { issueArPass, issueHyperfyPass, issueScenePass, issueStudioPass } from '../src/auth/scene-pass.js'
+import { copyBeatImage, refundBeat } from '../src/beats/payments.js'
 import { setImageSizeReader } from '../src/beats/image.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
+
+// The payment steps are Task 6's: count the calls, keep the stubs' behaviour
+vi.mock('../src/beats/payments.js', async (orig) => {
+  const a = await orig<typeof import('../src/beats/payments.js')>()
+  return { refundBeat: vi.fn(a.refundBeat), copyBeatImage: vi.fn(a.copyBeatImage) }
+})
 
 const as = (u: TestUser) => ({ authorization: `Bearer ${tokenFor(u)}` })
 const H = 3_600_000
@@ -25,6 +32,8 @@ describe('BEAT host API (LIV-11)', () => {
 
   beforeEach(async () => {
     await resetDb()
+    vi.mocked(refundBeat).mockClear()
+    vi.mocked(copyBeatImage).mockClear()
     sizes.clear()
     setImageSizeReader(async (url) => sizes.get(url) ?? null)
     setBeats({ enabled: true, chain: 'polygon' })
@@ -134,6 +143,17 @@ describe('BEAT host API (LIV-11)', () => {
       expect(await code({ imageMediaId: undefined })).toEqual([400, 'bad_image'])
     })
 
+    it('counts a name in characters, not UTF-16 units: 60 emoji pass, 61 fail', async () => {
+      expect((await create({ name: '🎉'.repeat(60) })).statusCode).toBe(201)
+      expect(await code({ name: '🎉'.repeat(61), startsAt: iso(30 * H), endsAt: iso(31 * H) })).toEqual([400, 'bad_name'])
+    })
+
+    it('refuses an image file over 10 MB before reading it', async () => {
+      const [m] = await db.insert(mediaAssets).values({ ownerId: host.id, filename: 'big.png', contentType: 'image/png', sizeBytes: 11 * 1024 * 1024, storageKey: 'k', publicUrl: 'https://cdn.example/big.png' }).returning()
+      sizes.set('https://cdn.example/big.png', { width: 1024, height: 1024 })
+      expect(await code({ imageMediaId: m.id })).toEqual([400, 'bad_image'])
+    })
+
     it('accepts the boundary values: 60-character name, 512 px image, 5000 cap, 31 days, 120 minutes', async () => {
       const edge = (await media(host, 512, 512)).id
       const res = await create({
@@ -172,7 +192,7 @@ describe('BEAT host API (LIV-11)', () => {
     })
 
     it('a paid BEAT can be edited before the start, but not its cap', async () => {
-      const b = await seed({ status: 'paid', tokenId: 1 })
+      const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 1 })
       const ok = await call('PATCH', `/api/beats/${b.id}`, host, { name: 'Better name', description: 'New', minPresentMinutes: 15, sceneIds: [sceneA, sceneB] })
       expect(ok.statusCode, ok.body).toBe(200)
       expect(ok.json()).toMatchObject({ name: 'Better name', minPresentSeconds: 900 })
@@ -182,12 +202,39 @@ describe('BEAT host API (LIV-11)', () => {
     })
 
     it('editing after the start, or after frozen_at, is locked', async () => {
-      const started = await seed({ status: 'paid', tokenId: 2, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) })
+      const started = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 2, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) })
       const a = await call('PATCH', `/api/beats/${started.id}`, host, { name: 'Late' })
       expect([a.statusCode, a.json().error]).toEqual([409, 'locked'])
-      const frozen = await seed({ status: 'paid', tokenId: 3, frozenAt: new Date(), startsAt: new Date(Date.now() + 10 * H), endsAt: new Date(Date.now() + 12 * H) }, [sceneB])
+      const frozen = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 3, frozenAt: new Date(), startsAt: new Date(Date.now() + 10 * H), endsAt: new Date(Date.now() + 12 * H) }, [sceneB])
       const b = await call('PATCH', `/api/beats/${frozen.id}`, host, { name: 'Frozen' })
       expect([b.statusCode, b.json().error]).toEqual([409, 'locked'])
+    })
+
+    it('a failed image copy leaves the new media URL showing, and the same edit tries the copy again', async () => {
+      const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 20 })
+      const next = await media(host, 700, 700)
+      const first = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
+      expect([first.statusCode, first.json().error]).toEqual([501, 'not_implemented'])
+      expect(copyBeatImage).toHaveBeenCalledTimes(1)
+      const row = await db.query.beats.findFirst({ where: eq(beats.id, b.id) })
+      expect([row!.imageMediaId, row!.imageUrl]).toEqual([next.id, null])
+      expect((await call('GET', `/api/beats/${b.id}`)).json().imageUrl).toBe(next.publicUrl)
+      const retry = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
+      expect(retry.statusCode).toBe(501)
+      expect(copyBeatImage).toHaveBeenCalledTimes(2)
+    })
+
+    it('a paid BEAT edit that keeps the image does not copy it again', async () => {
+      const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 21 })
+      expect((await call('PATCH', `/api/beats/${b.id}`, host, { name: 'Same image' })).statusCode).toBe(200)
+      expect(copyBeatImage).not.toHaveBeenCalled()
+    })
+
+    it('an edit without sceneIds checks overlap against the BEAT\'s scenes as stored', async () => {
+      await seed({ startsAt: new Date(Date.now() + 10 * H), endsAt: new Date(Date.now() + 12 * H) }, [sceneB])
+      const id = (await create({ sceneIds: [sceneB], startsAt: iso(20 * H), endsAt: iso(22 * H) })).json().id
+      const clash = await call('PATCH', `/api/beats/${id}`, host, { startsAt: iso(9 * H), endsAt: iso(11 * H) })
+      expect([clash.statusCode, clash.json().error]).toEqual([409, 'overlap'])
     })
 
     it('validates an edit and refuses an overlap with another BEAT', async () => {
@@ -226,7 +273,7 @@ describe('BEAT host API (LIV-11)', () => {
     })
 
     it('cancelling after the start is too_late; an ended BEAT is locked', async () => {
-      const started = await seed({ status: 'paid', tokenId: 4, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) })
+      const started = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 4, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) })
       const a = await call('POST', `/api/beats/${started.id}/cancel`)
       expect([a.statusCode, a.json().error]).toEqual([409, 'too_late'])
       const live = await seed({ status: 'live', tokenId: 5, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) }, [sceneB])
@@ -238,11 +285,46 @@ describe('BEAT host API (LIV-11)', () => {
     })
 
     it('a paid BEAT cancel goes through the refund step', async () => {
-      const b = await seed({ status: 'paid', tokenId: 7 })
+      const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 7 })
       const res = await call('POST', `/api/beats/${b.id}/cancel`)
       // Task 6 fills the refund in; until then the stub answers not_implemented and the BEAT stays paid
       expect([res.statusCode, res.json().error]).toEqual([501, 'not_implemented'])
       expect((await db.query.beats.findFirst({ where: eq(beats.id, b.id) }))!.status).toBe('paid')
+    })
+
+    it('cancelling an already cancelled BEAT changes nothing and answers 200', async () => {
+      const id = (await create()).json().id
+      expect((await call('POST', `/api/beats/${id}/cancel`)).statusCode).toBe(200)
+      const again = await call('POST', `/api/beats/${id}/cancel`)
+      expect([again.statusCode, again.json().status]).toEqual([200, 'cancelled'])
+      expect(refundBeat).not.toHaveBeenCalled()
+    })
+
+    it('a draft paid while the cancel was waiting is refunded: the state is read under the lock', async () => {
+      const id = (await create()).json().id
+      // The cancel's first read sees a draft; the row turns paid before its transaction reads it again
+      const orig = db.transaction.bind(db)
+      const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (fn: any, cfg?: any) => {
+        await db.update(beats).set({ status: 'paid', tokenId: 99 }).where(eq(beats.id, id))
+        return orig(fn, cfg)
+      })
+      const res = await call('POST', `/api/beats/${id}/cancel`)
+      spy.mockRestore()
+      expect(refundBeat).toHaveBeenCalledTimes(1)
+      expect([res.statusCode, res.json().error]).toEqual([501, 'not_implemented'])
+      expect((await db.query.beats.findFirst({ where: eq(beats.id, id) }))!.status).toBe('paid')
+    })
+
+    it('a BEAT that went live while the cancel waited answers 409 conflict', async () => {
+      const id = (await create()).json().id
+      const orig = db.transaction.bind(db)
+      const spy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (fn: any, cfg?: any) => {
+        await db.update(beats).set({ status: 'ended' }).where(eq(beats.id, id))
+        return orig(fn, cfg)
+      })
+      const res = await call('POST', `/api/beats/${id}/cancel`)
+      spy.mockRestore()
+      expect([res.statusCode, res.json().error]).toEqual([409, 'conflict'])
     })
 
     it('end early ends a live BEAT now; anything else is not_live', async () => {
@@ -325,15 +407,37 @@ describe('BEAT host API (LIV-11)', () => {
   })
 
   describe('scene passes', () => {
-    it('a Decentraland pass for the BEAT\'s first scene reads it; another scene, Hyperfy, AR and studio passes are refused everywhere', async () => {
-      const id = (await create()).json().id
+    it('a Decentraland pass reads a BEAT on its scene but cannot change a multi-scene BEAT; a pass for another scene sees nothing', async () => {
+      const id = (await create({ sceneIds: [sceneA, sceneB] })).json().id
+      const sceneC = (await createScene(host, 'C')).scene.id
       const hdr = (accessToken: string) => ({ authorization: `Bearer ${accessToken}` })
       const dcl = (sid: string) => hdr(issueScenePass(app, host as any, host.wallet!, { sceneId: sid, locationId: null }).accessToken)
-      expect((await app.inject({ method: 'GET', url: `/api/beats/${id}`, headers: dcl(sceneA) })).statusCode).toBe(200)
-      expect((await app.inject({ method: 'GET', url: `/api/scenes/${sceneA}/beats`, headers: dcl(sceneA) })).statusCode).toBe(200)
-      const wrong = await app.inject({ method: 'GET', url: `/api/beats/${id}`, headers: dcl(sceneB) })
-      expect([wrong.statusCode, wrong.json().error]).toEqual([403, 'scene_pass_not_allowed'])
+      const go = (method: string, url: string, headers: Record<string, string>, payload?: unknown) => app.inject({ method: method as any, url, headers, payload: payload as any })
+      // Reads: for either scene the BEAT is on
+      for (const sid of [sceneA, sceneB]) {
+        expect((await go('GET', `/api/beats/${id}`, dcl(sid))).statusCode).toBe(200)
+        expect((await go('GET', `/api/beats/${id}/claimants`, dcl(sid))).statusCode).toBe(200)
+      }
+      expect((await go('GET', `/api/scenes/${sceneA}/beats`, dcl(sceneA))).statusCode).toBe(200)
+      // A pass for a scene the BEAT isn't on: 404, like a BEAT that doesn't exist
+      for (const url of [`/api/beats/${id}`, `/api/beats/${id}/claimants`]) {
+        expect([url, (await go('GET', url, dcl(sceneC))).statusCode]).toEqual([url, 404])
+      }
+      // Writes, list and create refuse any pass
+      for (const [method, url] of [['PATCH', `/api/beats/${id}`], ['POST', `/api/beats/${id}/cancel`], ['POST', `/api/beats/${id}/end-early`], ['GET', '/api/beats'], ['POST', '/api/beats'], ['GET', '/api/beats/availability']] as const) {
+        const r = await go(method, url, dcl(sceneA), method === 'GET' ? undefined : { name: 'moved', sceneIds: [sceneC] })
+        expect([method, url, r.statusCode, r.json().error]).toEqual([method, url, 403, 'scene_pass_not_allowed'])
+      }
+      const row = await db.query.beats.findFirst({ where: eq(beats.id, id) })
+      expect([row!.status, row!.name]).toEqual(['draft', 'Opening night'])
+      expect(await db.select().from(beatScenes).where(eq(beatScenes.beatId, id))).toHaveLength(2)
+      const visitor = hdr(issueScenePass(app, host as any, host.wallet!, { sceneId: null, locationId: null }).accessToken)
+      expect((await go('GET', `/api/beats/${id}`, visitor)).statusCode).toBe(403)
+    })
 
+    it('Hyperfy, AR and studio passes are refused on every BEAT route', async () => {
+      const id = (await create()).json().id
+      const hdr = (accessToken: string) => ({ authorization: `Bearer ${accessToken}` })
       const other = { id: host.id, role: host.role }
       const [world] = await db.insert(hyperfyWorlds).values({ sceneId: sceneA, ownerId: host.id, name: 'W', keyHash: 'beat-world-hash', keyPrefix: 'virviw_b' }).returning()
       const soon = new Date(Date.now() + H)
@@ -369,6 +473,14 @@ describe('BEAT host API (LIV-11)', () => {
 
     it('needs a sign-in', async () => {
       expect((await app.inject({ method: 'GET', url: '/api/beats/availability' })).statusCode).toBe(401)
+    })
+
+    it('answers 404 to a signed-out caller too while disabled', async () => {
+      setBeats({ enabled: false })
+      for (const [method, url] of [['GET', '/api/beats'], ['POST', '/api/beats'], ['GET', '/api/beats/availability']] as const) {
+        const r = await app.inject({ method, url })
+        expect([method, url, r.statusCode]).toEqual([method, url, url.endsWith('availability') ? 401 : 404])
+      }
     })
 
     it('every route but availability is 404 when disabled', async () => {

@@ -3,7 +3,7 @@ import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { isAdminRequest } from '../auth/admin.js'
-import { fromBeat, fromParam } from '../auth/scene-from.js'
+import { boundScene, fromParam } from '../auth/scene-from.js'
 import {
   BeatError, beatAvailability, cancelBeat, createBeat, endBeatEarly, getBeat, listBeats, listClaimants, listSceneBeats, mayRunBeatsIn,
   sceneExists, updateBeat, type BeatCaller,
@@ -11,24 +11,27 @@ import {
 
 /**
  * BEAT host routes (LIV-11). Dark unless BEAT_ENABLED: every route but availability answers 404.
- * Who may do what is decided in the service (the creator, or `events.run` on the BEAT's scenes). A Decentraland scene
- * pass may call the BEAT-scoped routes for the BEAT's first scene; Hyperfy, AR and studio passes are refused everywhere
- * (their `scenePass` flags stay unset), and the routes without a scene take no scene pass.
+ * Who may do what is decided in the service (the creator, or `events.run` on the BEAT's scenes). Only the read routes take
+ * a Decentraland scene pass (and only for a BEAT that includes the pass's scene); writes, list, create and availability
+ * refuse every scene pass, and Hyperfy, AR and studio passes are refused everywhere (their `scenePass` flags stay unset).
  */
 export default async function beatRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', authenticate)
-  // After authenticate, so every route's guards still answer first
-  app.addHook('preHandler', async (request, reply) => {
+  // Dark launch: before authenticate, so a signed-out caller can't tell the routes exist either
+  app.addHook('onRequest', async (request, reply) => {
     if (!config.beats.enabled && request.routeOptions.url !== '/api/beats/availability') {
       return reply.status(404).send({ error: 'not_found', message: 'Not found.' })
     }
   })
+  app.addHook('preHandler', authenticate)
 
-  const beatScoped = { config: { scenePass: { sceneFrom: fromBeat } } }
+  // Only the read routes take a scene pass. `boundScene` lets a Decentraland pass through; the service then holds it to
+  // BEATs that include its scene (404 otherwise). Writes and the scene-less routes take none (403 scene_pass_not_allowed).
+  const beatRead = { config: { scenePass: { sceneFrom: boundScene } } }
   const sceneScoped = { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }
 
   const caller = async (request: FastifyRequest): Promise<BeatCaller> => ({
     userId: request.user.id, actor: actorFromClaims(request.user), admin: await isAdminRequest(request),
+    passSceneId: request.user.kind === 'scene' ? request.user.sceneId ?? null : null,
   })
   const body = (request: FastifyRequest) => (request.body && typeof request.body === 'object' ? request.body : {}) as Record<string, unknown>
   const fail = (reply: FastifyReply, e: unknown) => {
@@ -48,7 +51,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     }
   })
 
-  app.get<{ Params: { beatId: string } }>('/api/beats/:beatId', beatScoped, async (request, reply) => {
+  app.get<{ Params: { beatId: string } }>('/api/beats/:beatId', beatRead, async (request, reply) => {
     try {
       return reply.send(await getBeat(await caller(request), request.params.beatId))
     } catch (e) {
@@ -56,7 +59,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     }
   })
 
-  app.patch<{ Params: { beatId: string } }>('/api/beats/:beatId', beatScoped, async (request, reply) => {
+  app.patch<{ Params: { beatId: string } }>('/api/beats/:beatId', async (request, reply) => {
     try {
       return reply.send(await updateBeat(await caller(request), request.params.beatId, body(request)))
     } catch (e) {
@@ -64,7 +67,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     }
   })
 
-  app.get<{ Params: { beatId: string } }>('/api/beats/:beatId/claimants', beatScoped, async (request, reply) => {
+  app.get<{ Params: { beatId: string } }>('/api/beats/:beatId/claimants', beatRead, async (request, reply) => {
     try {
       return reply.send(await listClaimants(await caller(request), request.params.beatId))
     } catch (e) {
@@ -72,7 +75,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     }
   })
 
-  app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/cancel', beatScoped, async (request, reply) => {
+  app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/cancel', async (request, reply) => {
     try {
       return reply.send(await cancelBeat(await caller(request), request.params.beatId))
     } catch (e) {
@@ -80,7 +83,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     }
   })
 
-  app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/end-early', beatScoped, async (request, reply) => {
+  app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/end-early', async (request, reply) => {
     try {
       return reply.send(await endBeatEarly(await caller(request), request.params.beatId))
     } catch (e) {
