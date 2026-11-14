@@ -127,8 +127,9 @@ async function checkout(
       })),
       metadata,
       payment_intent_data: { metadata },
-      success_url: appUrl(`/beats/${row.id}?payment=${pay.id}`),
-      cancel_url: appUrl(`/beats/${row.id}`),
+      // The dashboard's BEAT page is /beats?id= (its static export has one page for every id, as /scenes?id=)
+      success_url: appUrl(`/beats?id=${row.id}&payment=${pay.id}`),
+      cancel_url: appUrl(`/beats?id=${row.id}&payment=cancelled`),
       expires_at: Math.floor(expiresAt.getTime() / 1000),
     })
   } catch (err) {

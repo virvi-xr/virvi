@@ -162,6 +162,9 @@ describe('BEAT payments (LIV-11)', () => {
       expect(stripe.calls.sessions).toHaveLength(1)
       const s = stripe.calls.sessions[0]
       expect(s.metadata).toEqual({ kind: 'beat', paymentId: pay.id })
+      // Back to the dashboard's BEAT page, which follows /scenes?id= under the static export
+      expect(s.success_url).toMatch(new RegExp(`/beats\\?id=${b.id}&payment=${pay.id}$`))
+      expect(s.cancel_url).toMatch(new RegExp(`/beats\\?id=${b.id}&payment=cancelled$`))
       expect(s.line_items.reduce((n: number, l: any) => n + l.price_data.unit_amount * l.quantity, 0)).toBe(600)
       expect((await beatOf(b.id)).status).toBe('draft')
     })

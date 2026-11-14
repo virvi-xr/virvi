@@ -20,6 +20,8 @@ export const SparkleIcon = (p: IconProps) => <Icon {...p}><path d="M12 3c.6 4.2 
 export const PaperclipIcon = (p: IconProps) => <Icon {...p}><path d="m20.5 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9" /></Icon>
 export const XSmallIcon = (p: IconProps) => <Icon {...p}><path d="M6 6l12 12M18 6 6 18" /></Icon>
 export const GiftIcon = (p: IconProps) => <Icon {...p}><rect x="3" y="8" width="18" height="4" rx="1" /><path d="M5 12v9h14v-9M12 8v13" /><path d="M12 8c-1.5-3-5-3.5-5-1.25S10 8 12 8Zm0 0c1.5-3 5-3.5 5-1.25S14 8 12 8Z" /></Icon>
+/** A BEAT: a medal on a ribbon (proof of attendance). */
+export const MedalIcon = (p: IconProps) => <Icon {...p}><path d="M8 3h8l-2.5 6h-3L8 3Z" /><circle cx="12" cy="15" r="5.5" /><path d="m12 12.5.8 1.6 1.7.2-1.25 1.2.3 1.7-1.55-.8-1.55.8.3-1.7-1.25-1.2 1.7-.2.8-1.6Z" /></Icon>
 export const MediaIcon = (p: IconProps) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="1.5" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></Icon>
 export const LayersIcon = (p: IconProps) => <Icon {...p}><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 13 9 5 9-5" /><path d="m3 17.5 9 5 9-5" /></Icon>
 export const BroadcastIcon = (p: IconProps) => <Icon {...p}><circle cx="12" cy="12" r="2" /><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8" /></Icon>

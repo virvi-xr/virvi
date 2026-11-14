@@ -8,13 +8,15 @@ import { openSignUp, signedInNote, takeMovedHeadsetNotice, trialNav } from '@/li
 import { signinPath } from '@/lib/landing-route'
 import { isInvitePath } from '@/lib/studio-people'
 import { useStudioAvailable } from '@/lib/use-studio'
+import { useBeatAvailability } from '@/lib/use-beats'
+import { beatsNavVisible } from '@/lib/beats'
 import Link from 'next/link'
 import { BrandMark } from '@/components/BrandMark'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
 import {
   BroadcastIcon, CalendarIcon, ChartIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LockIcon, LogoutIcon, MediaIcon,
-  ScenesIcon, ShieldIcon, SparkleIcon, BugIcon, BookIcon,
+  MedalIcon, ScenesIcon, ShieldIcon, SparkleIcon, BugIcon, BookIcon,
 } from '@/components/icons'
 import { siteLinks } from '@/lib/site'
 import { reporter } from '@/lib/errors/reporter'
@@ -50,6 +52,8 @@ const NAV_PARENT: Record<string, string> = { '/import': '/scenes' }
 const ADMIN_ITEM: NavItem = { href: '/admin', label: 'Admin', icon: ShieldIcon }
 // Shown only where the studio is on (the server's studio routes answer)
 const STUDIO_ITEM: NavItem = { href: '/studio', label: 'Design Studio', icon: SparkleIcon }
+// Shown only where the server says BEATs are on (LIV-11)
+const BEATS_ITEM: NavItem = { href: '/beats', label: 'BEATs', icon: MedalIcon, description: 'Attendance tokens for your events' }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout, signOut, scenePass } = useAuth()
@@ -65,14 +69,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // is on a route trials may use.
   const trial = !!user?.trial
   const studioOn = useStudioAvailable()
+  const beatsOn = beatsNavVisible(useBeatAvailability(), { trial, scenePass: !!scenePass })
   const navSections = useMemo(() => {
     if (scenePass) return []
     return baseNavSections.map((s) => {
-      if (s.label === 'Workspace' && (studioOn || trial)) return { ...s, items: [...s.items, STUDIO_ITEM] }
+      if (s.label === 'Workspace') {
+        const items = beatsOn ? [...s.items, BEATS_ITEM] : s.items
+        return studioOn || trial ? { ...s, items: [...items, STUDIO_ITEM] } : { ...s, items }
+      }
       if (s.label === 'System' && user?.role === 'admin') return { ...s, items: [...s.items, ADMIN_ITEM] }
       return s
     })
-  }, [user?.role, scenePass, studioOn, trial])
+  }, [user?.role, scenePass, studioOn, trial, beatsOn])
 
   useEffect(() => {
     if (!loading && !user) {
