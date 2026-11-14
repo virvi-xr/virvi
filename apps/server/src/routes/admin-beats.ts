@@ -27,18 +27,20 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAdmin)
 
   app.get('/api/admin/beats', async (_request, reply) => {
-    const chains: Array<{ chain: BeatChain; contract: string | null; minter: string; balanceWei: string; paused: boolean; reason: BeatPauseReason }> = []
+    const chains: Array<{ chain: BeatChain; contract: string | null; minter: string; balanceWei: string | null; balanceError: boolean; paused: boolean; reason: BeatPauseReason }> = []
     for (const chain of BEAT_CHAINS) {
       const client = beatChainClient(chain)
       if (!client) continue
-      let balanceWei = '0'
+      let balanceWei: string | null = null
+      let balanceError = false
       try {
         balanceWei = (await client.balanceWei()).toString()
       } catch (err) {
+        balanceError = true
         console.error(`[beats] admin balance read on ${chain} failed:`, safeErr(err))
       }
       const { paused, reason } = beatPaused(chain)
-      chains.push({ chain, contract: config.beats.contracts[chain] ?? null, minter: client.minterAddress, balanceWei, paused, reason })
+      chains.push({ chain, contract: config.beats.contracts[chain] ?? null, minter: client.minterAddress, balanceWei, balanceError, paused, reason })
     }
 
     const countRows = await db.select({ status: beatClaims.status, n: sql<number>`count(*)::int` }).from(beatClaims).groupBy(beatClaims.status)
@@ -51,7 +53,7 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
 
     const rows = await db.select().from(beatMintBatches).orderBy(desc(beatMintBatches.createdAt), desc(beatMintBatches.nonce)).limit(BATCH_LIST_MAX)
     const batches = rows.map((b) => {
-      const hash = b.txHashes.at(-1) ?? b.txHash
+      const hash = b.txHash ?? b.txHashes.at(-1) ?? null
       return {
         id: b.id, chain: b.chain, kind: b.kind, tokenId: String(b.tokenId), nonce: b.nonce, status: b.status, attempts: b.attempts,
         txUrl: hash ? beatTxUrl(b.chain, hash) : null, createdAt: b.createdAt.toISOString(),

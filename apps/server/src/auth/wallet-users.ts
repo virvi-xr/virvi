@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { accessGrants, assetLibraryItems, mediaAssets, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
 import { moveStudioData } from '../studio/merge.js'
@@ -48,6 +48,9 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string) 
     await tx.update(accessGrants).set({ userId }).where(eq(accessGrants.userId, shellId))
     await tx.update(sceneRoles).set({ userId }).where(eq(sceneRoles.userId, shellId))
     await moveStudioData(tx, shellId, userId, new Date())
+    // BEAT claims follow the account, except on a BEAT it already claimed (the unique index; the FK then nulls that one's user_id)
+    await tx.execute(sql`update beat_claims c set user_id = ${userId}::uuid where c.user_id = ${shellId}::uuid
+      and not exists (select 1 from beat_claims o where o.beat_id = c.beat_id and o.user_id = ${userId}::uuid)`)
     const owns = (await tx.query.scenes.findFirst({ where: eq(scenes.ownerId, shellId), columns: { id: true } }))
       || (await tx.query.mediaAssets.findFirst({ where: eq(mediaAssets.ownerId, shellId), columns: { id: true } }))
       || (await tx.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.uploadedBy, shellId), columns: { id: true } }))

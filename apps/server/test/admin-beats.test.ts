@@ -78,7 +78,7 @@ describe('admin BEAT routes (LIV-11)', () => {
   it('shows the chain, balance, pause reason, counts, failed claims and batches with explorer links', async () => {
     const b = await seedBeat(901)
     const w1 = wallet()
-    const failed = await db.insert(beatClaims).values({ beatId: b.id, wallet: w1, displayName: 'F', consentVersion: 1, status: 'failed', failReason: 'receiver_rejected' }).returning()
+    await db.insert(beatClaims).values({ beatId: b.id, wallet: w1, displayName: 'F', consentVersion: 1, status: 'failed', failReason: 'receiver_rejected' }).returning()
     await db.insert(beatClaims).values({ beatId: b.id, wallet: wallet(), consentVersion: 1, status: 'claimed', claimedAt: T0 })
     await db.insert(beatClaims).values({ beatId: b.id, wallet: wallet(), consentVersion: 1, status: 'present' })
     await runBeatTick(T0) // mints the claimed one
@@ -87,11 +87,10 @@ describe('admin BEAT routes (LIV-11)', () => {
     let json = res.json()
     expect(json.chains).toEqual([{
       chain: 'polygon-amoy', contract: '0x00000000000000000000000000000000000b3a75', minter: fake.minterAddress,
-      balanceWei: parseEther('7').toString(), paused: false, reason: null,
+      balanceWei: parseEther('7').toString(), balanceError: false, paused: false, reason: null,
     }])
     expect(json.counts).toEqual({ claimed: 0, minting: 1, failed: 1 })
     expect(json.failed).toEqual([{ beatId: b.id, name: 'Beat 901', wallet: w1, failReason: 'receiver_rejected' }])
-    expect(failed).toHaveLength(1)
     expect(json.batches).toHaveLength(1)
     const [batch] = await db.select().from(beatMintBatches)
     expect(json.batches[0]).toMatchObject({ id: batch.id, chain: 'polygon-amoy', kind: 'mint', tokenId: '901', nonce: batch.nonce, status: 'sent', attempts: batch.attempts })
@@ -116,10 +115,34 @@ describe('admin BEAT routes (LIV-11)', () => {
     expect((await call('GET', '/api/admin/beats')).json().chains).toEqual([])
   })
 
+  it('links the hash that mined (tx_hash), not the newest one signed; literal URLs on both chains', async () => {
+    const b = await seedBeat(910)
+    const h = (c: string) => '0x' + c.repeat(64)
+    await db.insert(beatMintBatches).values([
+      { chain: 'polygon-amoy', kind: 'mint', beatId: b.id, tokenId: 910, nonce: 1, status: 'confirmed', txHash: h('a'), txHashes: [h('a'), h('b')] },
+      { chain: 'polygon', kind: 'mint', beatId: b.id, tokenId: 910, nonce: 2, status: 'confirmed', txHash: h('c'), txHashes: [h('c')] },
+      { chain: 'polygon-amoy', kind: 'mint', beatId: b.id, tokenId: 910, nonce: 3, status: 'sent', txHash: null, txHashes: [h('d'), h('e')] },
+    ])
+    const rows = (await call('GET', '/api/admin/beats')).json().batches as Array<{ nonce: number; txUrl: string | null }>
+    const url = (n: number) => rows.find((r) => r.nonce === n)!.txUrl
+    expect(url(1)).toBe(`https://amoy.polygonscan.com/tx/0x${'a'.repeat(64)}`)
+    expect(url(2)).toBe(`https://polygonscan.com/tx/0x${'c'.repeat(64)}`)
+    expect(url(3)).toBe(`https://amoy.polygonscan.com/tx/0x${'e'.repeat(64)}`)
+  })
+
+  it('a failed balance read shows balanceWei null with balanceError, a good one shows false', async () => {
+    expect((await call('GET', '/api/admin/beats')).json().chains[0]).toMatchObject({ balanceWei: parseEther('7').toString(), balanceError: false })
+    fake.setDown(true)
+    const res = await call('GET', '/api/admin/beats')
+    expect(res.statusCode).toBe(200)
+    expect(res.json().chains[0]).toMatchObject({ balanceWei: null, balanceError: true })
+  })
+
   it('keeps only the last 50 batches', async () => {
     const b = await seedBeat(903)
     await db.insert(beatMintBatches).values(Array.from({ length: 55 }, (_, i) => ({ chain: 'polygon-amoy' as const, kind: 'mint' as const, beatId: b.id, tokenId: 903, nonce: i, status: 'confirmed' as const })))
-    expect((await call('GET', '/api/admin/beats')).json().batches).toHaveLength(50)
+    const rows = (await call('GET', '/api/admin/beats')).json().batches as Array<{ nonce: number }>
+    expect(rows.map((r) => r.nonce)).toEqual(Array.from({ length: 50 }, (_, i) => 54 - i))
   })
 
   it('retry-failed puts failed claims back to claimed, for one BEAT or all', async () => {

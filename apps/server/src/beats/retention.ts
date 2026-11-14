@@ -17,9 +17,11 @@ import type { Exec } from '../studio/quota.js'
 const DAY_MS = 86_400_000
 
 /** One transaction (or the caller's, so account deletion can include it). Only this user's claims are touched. */
-export async function deleteMyBeatData(userId: string, now: Date, exec?: Exec): Promise<{ deleted: number; unlinked: number; pending: number }> {
-  void now
+export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec): Promise<{ deleted: number; unlinked: number; pending: number }> {
   const run = async (tx: Exec) => {
+    // Lock the user's claims first: the job settles and picks claims under FOR UPDATE, so none can change status between
+    // the three statements below (a claim leaving `minting` after the delete ran would otherwise escape all three)
+    await tx.select({ id: beatClaims.id }).from(beatClaims).where(eq(beatClaims.userId, userId)).for('update')
     const mine = eq(beatClaims.userId, userId)
     const deleted = await tx.delete(beatClaims)
       .where(and(mine, inArray(beatClaims.status, ['present', 'claimed', 'failed'])))

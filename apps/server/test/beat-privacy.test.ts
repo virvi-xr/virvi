@@ -8,6 +8,7 @@ import { db } from '../src/db/connection.js'
 import { beatClaims, beatMintBatches, beatPayments, beats, userAuthMethods, users } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
+import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
 import { deleteMyBeatData, scrubBeats } from '../src/beats/retention.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { resetDb } from './helpers/db.js'
@@ -86,13 +87,19 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       }
       const mine = await mk()
       const bOther = await seedBeat()
-      const theirs = await claim(bOther.id, other, 'claimed')
+      const theirs: Record<string, typeof beatClaims.$inferSelect> = {}
+      for (const st of ['present', 'claimed', 'minting', 'minted', 'failed'] as const) {
+        theirs[st] = await claim((await seedBeat()).id, other, st, { displayName: `Other ${st}` })
+      }
+      void bOther
       const res = await deleteMyBeatData(me.id, T0)
       expect(res).toEqual({ deleted: 3, unlinked: 1, pending: 1 })
       for (const s of ['present', 'claimed', 'failed']) expect(await byId(mine[s].id), s).toBeUndefined()
       expect(await byId(mine.minted.id)).toMatchObject({ userId: null, displayName: null, wallet: me.wallet, status: 'minted' })
       expect(await byId(mine.minting.id)).toMatchObject({ userId: me.id, deleteRequested: true, status: 'minting' })
-      expect(await byId(theirs.id)).toMatchObject({ userId: other.id, displayName: 'Visitor', deleteRequested: false })
+      for (const st of Object.keys(theirs)) {
+        expect(await byId(theirs[st].id), `other user's ${st} claim`).toMatchObject({ status: st, userId: other.id, displayName: `Other ${st}`, deleteRequested: false })
+      }
       // Nothing left to do the second time except the flag already set
       expect(await deleteMyBeatData(me.id, T0)).toEqual({ deleted: 0, unlinked: 0, pending: 1 })
     })
@@ -145,6 +152,62 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       await runBeatTick(at(3 * MIN))
       expect(await byId(bad.id)).toBeUndefined()
       expect((await db.select().from(beatMintBatches)).map((x) => x.status)).toContain('failed')
+    })
+
+    it('locks the user\'s claims first: a claim the job moves out of minting while it waits is still deleted', async () => {
+      const b = await seedBeat()
+      const spare = await claim(b.id, me, 'claimed')
+      const racing = await claim((await seedBeat()).id, me, 'minting')
+      let release!: () => void
+      const gate = new Promise<void>((r) => { release = r })
+      let locked!: () => void
+      const held = new Promise<void>((r) => { locked = r })
+      // The job's settle: minting -> failed, uncommitted while delete-my-data starts
+      const job = db.transaction(async (tx) => {
+        await tx.update(beatClaims).set({ status: 'failed', failReason: 'reverted' }).where(eq(beatClaims.id, racing.id))
+        locked()
+        await gate
+      })
+      await held
+      const del = deleteMyBeatData(me.id, T0)
+      let done = false
+      void del.then(() => { done = true })
+      await new Promise((r) => setTimeout(r, 400))
+      expect(done).toBe(false) // it waits on the job's row
+      release()
+      await job
+      expect(await del).toEqual({ deleted: 2, unlinked: 0, pending: 0 })
+      expect(await byId(racing.id)).toBeUndefined()
+      expect(await byId(spare.id)).toBeUndefined()
+    })
+
+    it('admin deleting a user removes their BEAT data too', async () => {
+      const admin = await createUser({ role: 'admin' })
+      const claimed = await claim((await seedBeat()).id, me, 'claimed')
+      const minted = await claim((await seedBeat()).id, me, 'minted', { mintedAt: at(-H), displayName: 'Named' })
+      const r = await app.inject({ method: 'DELETE', url: `/api/admin/users/${me.id}`, headers: { authorization: `Bearer ${tokenFor(admin)}` } })
+      expect(r.statusCode).toBe(204)
+      expect(await byId(claimed.id)).toBeUndefined()
+      expect(await byId(minted.id)).toMatchObject({ userId: null, displayName: null, wallet: me.wallet })
+    })
+
+    it('absorbing a visitor shell moves its claims, except on BEATs the absorbing user already claimed', async () => {
+      const w = wallet()
+      const shell = await createUser({ role: 'viewer', email: null, wallet: w, name: 'Shell' })
+      const account = await createUser({ role: 'creator' })
+      const free = await seedBeat()
+      const both = await seedBeat()
+      const moved = await claim(free.id, shell, 'claimed', { displayName: 'Shell name' })
+      const dup = await claim(both.id, shell, 'claimed', { displayName: 'Shell dup' })
+      const keep = await claim(both.id, account, 'claimed', { wallet: wallet(), displayName: 'Account name' })
+      expect(await linkVerifiedWallet(account.id, w)).toBe('linked')
+      expect(await db.select().from(users).where(eq(users.id, shell.id))).toHaveLength(0)
+      expect(await byId(moved.id)).toMatchObject({ userId: account.id, displayName: 'Shell name' })
+      expect(await byId(dup.id)).toMatchObject({ userId: null })
+      expect(await byId(keep.id)).toMatchObject({ userId: account.id, displayName: 'Account name' })
+      // and the account's delete-my-data now reaches the moved claim
+      expect(await deleteMyBeatData(account.id, T0)).toMatchObject({ deleted: 2 })
+      expect(await byId(moved.id)).toBeUndefined()
     })
   })
 

@@ -556,6 +556,20 @@ describe('BEAT minting job (LIV-11)', () => {
     expect((await claimsOf(b.id))[0].status).toBe('failed')
   })
 
+  it('BeatExists after a confirmed create of ours records the hash that mined, not the newest one signed', async () => {
+    const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(2 * H) })
+    const mined = '0x' + 'a'.repeat(64)
+    const newer = '0x' + 'b'.repeat(64)
+    await db.insert(beatMintBatches).values({
+      chain: 'polygon-amoy', kind: 'create', beatId: b.id, tokenId: b.tokenId!, nonce: 0, status: 'confirmed',
+      txHash: mined, txHashes: [mined, newer], confirmedAt: at(-H),
+    })
+    fake.createdBeat(BigInt(b.tokenId!))
+    await runBeatTick(T0)
+    expect((await beatOf(b.id)).createdOnChainTx).toBe(mined)
+    expect(beatPaused('polygon-amoy').paused).toBe(false)
+  })
+
   it('BeatExists after an earlier unsent create of ours is still an id_conflict', async () => {
     const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(10 * H) })
     fake.failBroadcast('NETWORK_ERROR', 5)

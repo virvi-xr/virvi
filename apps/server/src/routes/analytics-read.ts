@@ -1,7 +1,7 @@
-import { deleteMyBeatData } from '../beats/retention.js'
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
+import { deleteMyBeatData } from '../beats/retention.js'
 import { liveScene } from '../scenes/live.js'
 import {
   analyticsCopresenceDaily,

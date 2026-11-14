@@ -544,7 +544,7 @@ async function estimateReverted(
           sql`(${beatMintBatches.status} in ('confirmed', 'sent') or (${beatMintBatches.status} = 'failed' and ${beatMintBatches.lastError} = 'replaced'))`,
         )).orderBy(asc(beatMintBatches.createdAt)).limit(1)
       if (mine) {
-        await db.update(beats).set({ createdOnChainTx: mine.txHashes.at(-1) ?? mine.txHash, createdOnChainAt: now }).where(eq(beats.id, plan.beatId))
+        await db.update(beats).set({ createdOnChainTx: mine.status === 'confirmed' ? mine.txHash ?? mine.txHashes.at(-1) : mine.txHashes.at(-1) ?? mine.txHash, createdOnChainAt: now }).where(eq(beats.id, plan.beatId))
         console.warn(`[beats] BEAT ${plan.beatId} already exists on chain from batch ${mine.id}`)
         return 'next'
       }
