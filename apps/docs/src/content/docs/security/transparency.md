@@ -31,13 +31,18 @@ The script:
 
 It prints PASS, or the files that differ.
 
+## Smart contracts
+
+[BEATs](/docs/dashboard/beats/) are made by one public contract on each network. `GET /api/transparency` lists each one as `contracts`: its network, its address, its page on Polygonscan (`explorerUrl`) and its source in the repo at the running commit (`sourceUrl`). The source published on Polygonscan should match that file.
+
 ## Checking it with an AI agent
 
-The Transparency page has a short prompt to paste into an AI agent that can read GitHub and websites. It asks the agent to check four things:
+The Transparency page has a short prompt to paste into an AI agent that can read GitHub and websites. It asks the agent to check five things:
 - every place the code asks a wallet to sign something, so nothing can leave your wallet without your approval;
 - every smart contract the code talks to;
 - that the code matches the [privacy page](/privacy/);
-- that the live commit is in the public repo.
+- that the live commit is in the public repo;
+- that each contract's source on Polygonscan matches the file in the repo.
 
 ## What it proves
 

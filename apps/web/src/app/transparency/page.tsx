@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { API_URL } from '@/lib/config'
 import { REPO_URL, agentPrompt, type ReleaseInfo } from '@/lib/transparency'
+import { Contracts } from './Contracts'
 
 // Keep in step with apps/docs/src/content/docs/security/transparency.md
 const code = 'rounded bg-gray-800 px-1.5 py-0.5 text-sm'
@@ -64,6 +65,15 @@ export default function TransparencyPage() {
 
         <h2>What’s running now</h2>
         <Running info={info} error={error} />
+
+        <h2>Smart contracts</h2>
+        <p>
+          BEATs, Virvi’s free attendance tokens, are made by one public contract on each network. Its source is published on Polygonscan, the
+          public record of the Polygon blockchain, so you can check it matches the code in the repo.
+        </p>
+        <div className="mt-3">
+          {info ? <Contracts contracts={info.contracts ?? []} /> : !error && <p className="text-gray-500">Loading…</p>}
+        </div>
 
         <h2>Ask your AI agent to check</h2>
         <p>Paste this into an AI agent that can read GitHub and websites. It reviews the code for you and reports back in plain language.</p>

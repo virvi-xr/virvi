@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { MIN_PRESENT_MAX_MINUTES, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { CopyWallet } from '@/components/CopyWallet'
 import {
   AUTO_SNAPSHOT_CHOICES, MODE_LABELS, STATUS_LABELS, blankRaffle, confirmAction, drawBody, editBody, entryLabel, fillRules, minutesPresent,
   raffleActions, raffleBody, raffleErrorMessage, raffleFormError, raffleToInput, rulesHost, spinCountDefault, winnerLabel,
@@ -19,19 +20,6 @@ const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : 'â€
 
 function StatusChip({ status }: { status: RaffleStatus }) {
   return <span className={`rounded-full px-2 py-0.5 text-xs ${CHIP[status]}`}>{STATUS_LABELS[status]}</span>
-}
-
-function CopyWallet({ wallet }: { wallet: string }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className="font-mono text-xs text-gray-400" title={wallet}>{`${wallet.slice(0, 6)}â€¦${wallet.slice(-4)}`}</span>
-      <button type="button" aria-label={`Copy wallet ${wallet}`} className="text-xs text-orange-400 hover:underline"
-        onClick={() => { navigator.clipboard?.writeText(wallet).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }}>
-        {copied ? 'Copied' : 'Copy'}
-      </button>
-    </span>
-  )
 }
 
 function Winner({ w }: { w: RaffleWinner }) {

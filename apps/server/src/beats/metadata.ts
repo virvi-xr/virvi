@@ -17,7 +17,7 @@ const SHOWN: BeatStatus[] = ['paid', 'live', 'ended']
 const MAX_ID = (1n << 63n) - 1n
 const DECIMAL = /^(0|[1-9][0-9]*)\.json$/
 const HEX = /^([0-9a-f]{64})\.json$/
-const COLLECTION_DESCRIPTION = 'BEATs are free attendance tokens for Virvi events.'
+const COLLECTION_DESCRIPTION = 'BEATs are free tokens that show you were at a Virvi event.'
 
 const base = (url: string) => url.replace(/\/+$/, '') + '/'
 /** A URL made absolute against the server (a local upload's public URL is a path). */

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { beatConsentText } from '@virvixr/shared'
 
 export const metadata: Metadata = {
   title: 'Privacy',
@@ -43,7 +44,8 @@ export default function PrivacyPage() {
         <h2>Deleting your data</h2>
         <p>
           Call <code className="rounded bg-gray-800 px-1.5 py-0.5 text-sm">POST /api/analytics/me/delete</code> with your session token. A
-          dashboard control for this is coming. This removes your sessions, events and positions from every scene, and your raffle entries.
+          dashboard control for this is coming. This removes your sessions, events and positions from every scene, your raffle entries, and your
+          BEAT data (see BEATs below for tokens already sent).
           To ask for your data to be deleted, or for help, email{' '}
           <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a>.
         </p>
@@ -73,6 +75,39 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Deleting your data:</strong> deleting your data (above) also deletes your raffle entries.
+          </li>
+        </ul>
+
+        <h2>BEATs</h2>
+        <p>
+          A BEAT is a free token that shows you were at an event. Nothing about you is stored unless you choose to track your attendance and
+          agree to this, while signed in with a verified wallet inside the event's scene:
+        </p>
+        <blockquote className="my-3 border-l-2 border-gray-700 pl-4 text-gray-400">{beatConsentText('{name}')}</blockquote>
+        <ul className="list-disc pl-5">
+          <li>
+            <strong>What's stored:</strong> your wallet address, your display name, and how long you were present at the event (from a check-in
+            every 30 seconds while you're in the scene).
+          </li>
+          <li>
+            <strong>Who sees it:</strong> the event's hosts (the BEAT's creator, and anyone who can run events in its scenes) see your display
+            name, wallet and whether you claimed. Virvi staff can also see them, to fix problems.
+          </li>
+          <li>
+            <strong>On the blockchain:</strong> once your BEAT is sent, the token and your wallet address are recorded on Polygon, a public
+            blockchain. Anyone can see them, and they can't be deleted, by you or by Virvi. The BEAT's name and picture are served by Virvi.
+          </li>
+          <li>
+            <strong>Stopping:</strong> you can stop tracking at any time before you claim, which deletes what was stored.
+          </li>
+          <li>
+            <strong>Retention:</strong> if you opted in but never claimed, your data is deleted 30 days after the BEAT ends. The list of wallets
+            in each transaction Virvi sends is deleted 30 days after it settles; the transaction's id stays.
+          </li>
+          <li>
+            <strong>Deleting your data:</strong> deleting your data (above), or your account, deletes your BEAT data that hasn't been sent. For a
+            BEAT already sent, the token stays in your wallet and on the blockchain, but Virvi removes your display name and the link to your
+            account. A BEAT being sent at that moment is deleted if the send fails, or unlinked like this if it arrives.
           </li>
         </ul>
 

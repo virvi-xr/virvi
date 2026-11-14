@@ -22,12 +22,13 @@ import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, S
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
 import type { FirstReplyStats } from './studio-wait'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
-import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
+import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, BeatChain, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
 import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
 import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
+import type { AdminBeatsOverview } from './admin-beats'
 import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutResult, type BeatClaimant, type BeatQuote, type PublicBeat, type beatBody, type beatEditBody, type payBody } from './beats'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
@@ -852,6 +853,11 @@ function useRealApi() {
     getAdminCatalogPacks: () => apiFetch<{ packs: CatalogPack[] }>('/api/admin/catalog/packs'),
     // Errors (admin, LIV-66)
     getAdminErrors: () => apiFetch<ErrorsOverview>('/api/admin/errors'),
+    getAdminBeats: () => apiFetch<AdminBeatsOverview>('/api/admin/beats'),
+    retryAdminBeatsFailed: (beatId?: string) =>
+      apiFetch<{ retried: number }>('/api/admin/beats/retry-failed', { method: 'POST', userAction: true, body: JSON.stringify(beatId ? { beatId } : {}) }),
+    clearAdminBeatPause: (chain: BeatChain) =>
+      apiFetch<{ ok: boolean }>('/api/admin/beats/clear-pause', { method: 'POST', userAction: true, body: JSON.stringify({ chain }) }),
     /** "Re-open for filing": forget a Linear issue closed without a fix, so the data can file it again. */
     reopenAdminErrorForFiling: (id: string) =>
       apiFetch<{ id: string; reopened: true }>(`/api/admin/errors/${id}`, { method: 'PATCH', body: JSON.stringify({ reopenForFiling: true }) }),

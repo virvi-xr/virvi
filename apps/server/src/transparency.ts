@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { BEAT_CHAINS, beatAddressUrl, type BeatChain } from '@virvixr/shared'
 
 /**
  * What this server says it runs, for the Transparency page (LIV-165). CI builds each release from a public commit and
@@ -17,6 +18,16 @@ const SHA = /^[0-9a-f]{40}$/
 
 function readJson(path: string): Record<string, unknown> | null {
   try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return null }
+}
+
+/** The BEAT contracts (LIV-11), each with its explorer page and its source in the repo at the running commit. */
+export function beatContracts(contracts: Partial<Record<BeatChain, string>>, commit: string | null) {
+  return BEAT_CHAINS.filter((chain) => contracts[chain]).map((chain) => ({
+    chain,
+    address: contracts[chain]!,
+    explorerUrl: beatAddressUrl(chain, contracts[chain]!),
+    sourceUrl: `${REPO_URL}/blob/${commit ?? 'main'}/contracts/src/VirviBeat.sol`,
+  }))
 }
 
 export function releaseInfo(opts: { buildInfoPath: string; dashboardDir: string; release: string }) {

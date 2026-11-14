@@ -10,6 +10,9 @@ describe('the AI agent prompt (LIV-165)', () => {
     expect(prompt).toContain('https://virvi.io/privacy/')
     expect(prompt).toContain('https://api.virvi.io/api/transparency')
   })
+  it('asks the agent to check the verified contract source against the repo (LIV-11)', () => {
+    expect(prompt).toMatch(/Polygonscan-verified source.*matches the file at its sourceUrl/i)
+  })
   it('stays short enough for anyone to read before pasting', () => {
     expect(prompt.split(/\s+/).length).toBeLessThan(170)
   })

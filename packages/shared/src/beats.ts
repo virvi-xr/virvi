@@ -49,6 +49,10 @@ export function beatTxUrl(chain: BeatChain, hash: string): string {
   return `${BEAT_CHAIN_INFO[chain].explorer}/tx/${hash}`
 }
 
+export function beatAddressUrl(chain: BeatChain, address: string): string {
+  return `${BEAT_CHAIN_INFO[chain].explorer}/address/${address}`
+}
+
 export function beatTokenUrl(chain: BeatChain, contract: string, tokenId: string): string {
   return `${BEAT_CHAIN_INFO[chain].explorer}/token/${contract}?a=${tokenId}`
 }

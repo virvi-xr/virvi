@@ -15,7 +15,7 @@ When a scene uses Virvi, the scene sends anonymous usage events to Virvi while y
 Raw events are kept for the scene owner's plan (7–365 days, unlimited on the top tier and self-hosted installs), 30 days for unclaimed scenes, and 7 days for local previews. Aggregated statistics (counts, heatmaps) are kept longer and contain no identities.
 
 ## Deleting your data
-Call `POST /api/analytics/me/delete` with your session token. A dashboard control for this is coming. This removes your sessions, events and positions from every scene, and your raffle entries.
+Call `POST /api/analytics/me/delete` with your session token. A dashboard control for this is coming. This removes your sessions, events and positions from every scene, your raffle entries, and your BEAT data (see BEATs below for tokens already sent).
 
 ## Raffles
 A scene owner can run a raffle. Nothing about you is entered unless you choose to enter and agree to the raffle terms, and only while signed in with a verified wallet inside that scene.
@@ -24,6 +24,18 @@ A scene owner can run a raffle. Nothing about you is entered unless you choose t
 - **Withdrawing:** you can withdraw while the raffle is open or drawn, which deletes your entry. Past draw records keep only an anonymous entry id, so they still check out; a withdrawn winner shows there as "Removed entrant" and is left out of later draws.
 - **Retention:** 30 days after a raffle ends, its entries (with your name and wallet address) are deleted. Its draw records keep only anonymous entry ids.
 - **Deleting your data:** deleting your data (below) also deletes your raffle entries.
+
+## BEATs
+A BEAT is a free token that shows you were at an event. Nothing about you is stored unless you choose to track your attendance and agree to this, while signed in with a verified wallet inside the event's scene:
+
+> To track your attendance for the {name} BEAT, Virvi stores your wallet address and display name for this BEAT. The hosts of this event will see them, and your wallet is needed to send you the token. You can stop tracking at any time before you claim.
+
+- **What's stored:** your wallet address, your display name, and how long you were present at the event (from a check-in every 30 seconds while you're in the scene).
+- **Who sees it:** the event's hosts (the BEAT's creator, and anyone who can run events in its scenes) see your display name, wallet and whether you claimed. Virvi staff can also see them, to fix problems.
+- **On the blockchain:** once your BEAT is sent, the token and your wallet address are recorded on Polygon, a public blockchain. Anyone can see them, and they can't be deleted, by you or by Virvi. The BEAT's name and picture are served by Virvi.
+- **Stopping:** you can stop tracking at any time before you claim, which deletes what was stored.
+- **Retention:** if you opted in but never claimed, your data is deleted 30 days after the BEAT ends. The list of wallets in each transaction Virvi sends is deleted 30 days after it settles; the transaction's id stays.
+- **Deleting your data:** deleting your data (above), or your account, deletes your BEAT data that hasn't been sent. For a BEAT already sent, the token stays in your wallet and on the blockchain, but Virvi removes your display name and the link to your account. A BEAT being sent at that moment is deleted if the send fails, or unlinked like this if it arrives.
 
 ## Virvi Spaces on Quest
 Virvi Spaces is the Meta Quest app that shows a Virvi space in your room. It talks to virvi.io. Pictures, videos and 3D models in a space load from wherever its owner hosts them, which may be outside virvi.io; those hosts see the headset's network address like any website would.
