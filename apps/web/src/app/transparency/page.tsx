@@ -68,7 +68,7 @@ export default function TransparencyPage() {
 
         <h2>Smart contracts</h2>
         <p>
-          BEATs, Virvi’s free attendance tokens, are made by one public contract on each network. Its source is published on Polygonscan, the
+          BEATs, Virvi’s free attendance tokens, are made by one public contract on each network. Its source should be published on Polygonscan, the
           public record of the Polygon blockchain, so you can check it matches the code in the repo.
         </p>
         <div className="mt-3">

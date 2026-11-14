@@ -23,7 +23,7 @@ BEATs are being tested on Polygon Amoy, Polygon's practice network, and only Vir
    - **Scenes:** where the event happens. You need to be able to run events in each one. A scene can have one BEAT at a time.
    - **Supply cap:** the most BEATs that can be claimed, from 1 to 5,000. The default is 100.
    - **Tradeable:** whether holders can send their BEAT to another wallet. This can never change once you pay.
-3. Review the price and pay by card or with Virvi credit.
+3. Review the price and pay by card, or with Virvi credit if you have enough to cover it.
 
 ## The price
 
@@ -56,29 +56,29 @@ You and anyone who can run events in one of the BEAT's scenes can see this.
 
 ## Locked once minted
 
-Once the first BEAT is minted, its name, description and artwork are locked and can't change. Your artwork is copied when you pay, so deleting the original from your media library doesn't affect it.
+Once the first BEAT is minted, Virvi locks its name, description and artwork: neither you nor Virvi's dashboard can change them. (They're served by Virvi, not stored on the blockchain; see [The BEAT contract](#the-beat-contract).) Your artwork is copied when you pay, so deleting the original from your media library doesn't affect it.
 
 ## The BEAT contract
 
 Every BEAT is made by one public Virvi contract on Polygon: a program on the blockchain that anyone can read. Its address is on the [Transparency page](/transparency/).
 
 **What it does:**
-- It sends each BEAT to a wallet **only once, ever**. Sending the same list again is safe, and nobody gets two.
+- It sends each BEAT to a wallet **only once, ever**. Sending the same list again is safe: Virvi never sends anyone a second one. (If your BEAT is tradeable, a holder can still pass theirs to a wallet that already has one.)
 - A BEAT that isn't tradeable can't be moved to another wallet by anyone.
 - Only the holder can burn (destroy) their own BEAT.
-- A BEAT can be closed, after which no more of it can be sent. BEATs already in wallets stay where they are.
+- A BEAT can be closed by Virvi, after which no more of it can be minted. BEATs already in wallets stay where they are.
 
 **What Virvi's admin can do:**
 - Change the web address where every BEAT's name and image are looked up, including BEATs already given out. Names and images aren't stored on the blockchain, so how a BEAT looks can change. Who owns it can't.
 - Add or remove the wallets that can create and send BEATs.
-- Hand the admin role to another wallet. This takes two steps, with a one-day wait.
+- Hand the admin role to another wallet. This takes two steps, with a wait (one day now) between them.
 
 **What nobody can do:**
-- Nobody, not Virvi and not you, can move, burn or take back a BEAT that's in someone's wallet.
-- The contract can't be paused, upgraded or deleted, and it can't hold or pay out money.
+- Nobody but the holder, not Virvi and not you, can move, burn or take back a BEAT that's in someone's wallet.
+- The contract can't be paused, upgraded or deleted, and it can't be paid or pay anyone out: sending POL to it fails.
 
 The contract has been checked with an automatic tool, but no independent auditor has reviewed it.
 
 ## Deleting data
 
-A visitor who deletes their Virvi data, or their account, loses everything stored for BEATs they haven't been sent yet. A BEAT that has already been minted stays in their wallet: the blockchain is public and can't be changed, so the token and its wallet stay visible to anyone. Virvi removes the link to their account and their display name, so it no longer shows who they are. See [Privacy](/docs/privacy/).
+A visitor who deletes their Virvi data, or their account, loses everything stored for BEATs they haven't been sent yet. A BEAT that has already been minted stays in their wallet: the blockchain is public and can't be changed, so the token and its wallet stay visible to anyone. Virvi removes the link to their Virvi account and their display name. Their wallet address stays in your claimant list and on Polygon, because it's on the public blockchain. See [Privacy](/docs/privacy/).

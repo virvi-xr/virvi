@@ -3,7 +3,7 @@ import { beatConsentText } from '@virvixr/shared'
 
 export const metadata: Metadata = {
   title: 'Privacy',
-  description: 'What Virvi collects in Decentraland scenes, in error reports and from the advertiser early-access form, and how to have it removed.',
+  description: 'What Virvi collects in Decentraland scenes, for BEATs, in error reports and from the advertiser early-access form, and how to have it removed.',
 }
 
 // Keep in step with apps/docs/src/content/docs/privacy.md
@@ -102,7 +102,8 @@ export default function PrivacyPage() {
           </li>
           <li>
             <strong>Retention:</strong> if you opted in but never claimed, your data is deleted 30 days after the BEAT ends. The list of wallets
-            in each transaction Virvi sends is deleted 30 days after it settles; the transaction's id stays.
+            in each transaction Virvi sends is deleted 30 days after it settles; the transaction's id stays. If you claimed, your wallet
+            address and display name are kept with your BEAT until you delete your data (above).
           </li>
           <li>
             <strong>Deleting your data:</strong> deleting your data (above), or your account, deletes your BEAT data that hasn't been sent. For a

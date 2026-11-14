@@ -34,7 +34,7 @@ A BEAT is a free token that shows you were at an event. Nothing about you is sto
 - **Who sees it:** the event's hosts (the BEAT's creator, and anyone who can run events in its scenes) see your display name, wallet and whether you claimed. Virvi staff can also see them, to fix problems.
 - **On the blockchain:** once your BEAT is sent, the token and your wallet address are recorded on Polygon, a public blockchain. Anyone can see them, and they can't be deleted, by you or by Virvi. The BEAT's name and picture are served by Virvi.
 - **Stopping:** you can stop tracking at any time before you claim, which deletes what was stored.
-- **Retention:** if you opted in but never claimed, your data is deleted 30 days after the BEAT ends. The list of wallets in each transaction Virvi sends is deleted 30 days after it settles; the transaction's id stays.
+- **Retention:** if you opted in but never claimed, your data is deleted 30 days after the BEAT ends. The list of wallets in each transaction Virvi sends is deleted 30 days after it settles; the transaction's id stays. If you claimed, your wallet address and display name are kept with your BEAT until you delete your data (above).
 - **Deleting your data:** deleting your data (above), or your account, deletes your BEAT data that hasn't been sent. For a BEAT already sent, the token stays in your wallet and on the blockchain, but Virvi removes your display name and the link to your account. A BEAT being sent at that moment is deleted if the send fails, or unlinked like this if it arrives.
 
 ## Virvi Spaces on Quest
