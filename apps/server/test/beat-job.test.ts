@@ -489,6 +489,105 @@ describe('BEAT minting job (LIV-11)', () => {
     expect(await statusCount(b.id)).toEqual({ minted: 4 })
   })
 
+  it('a broadcast batch whose later rebroadcasts fail up to the max stays open: its nonce is kept and it mints', async () => {
+    const b = await seed({ created: true })
+    const ws = [wallet(), wallet()]
+    await claims(b.id, ws)
+    await runBeatTick(T0)
+    const [first] = await batches()
+    expect(first.status).toBe('sent')
+    expect(first.attempts).toBe(0)
+    // The tx sits in the mempool; every reprice and rebroadcast after it fails
+    fake.failBroadcast('NETWORK_ERROR', 20)
+    for (let i = 1; i <= 8; i++) await runBeatTick(at(i * H))
+    const [row] = await batches()
+    expect(row.id).toBe(first.id)
+    expect(row.status).toBe('sending')
+    expect(row.attempts).toBeGreaterThanOrEqual(5)
+    expect(row.lastError?.startsWith('unsent')).toBe(false)
+    expect(await statusCount(b.id)).toEqual({ minting: 2 })
+    expect(recordJobFailure).toHaveBeenCalledTimes(1)
+    // Its nonce stays reserved: a new claim waits instead of taking it
+    await claims(b.id, [wallet()], { claimedAt: at(H) })
+    await runBeatTick(at(9 * H))
+    expect(await batches()).toHaveLength(1)
+    fake.mine(6)
+    await runBeatTick(at(10 * H))
+    const settled = await batches()
+    expect(settled[0].status).toBe('confirmed')
+    expect(settled[0].txHash).toBe(first.txHashes[0])
+    const rows = await claimsOf(b.id)
+    expect(rows.filter((c) => ws.includes(c.wallet)).map((c) => c.status)).toEqual(['minted', 'minted'])
+    // The next batch takes the next nonce
+    expect(settled[1].nonce).toBe(first.nonce + 1)
+    expect(recordJobFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it('a successful broadcast after failures resets attempts', async () => {
+    const b = await seed({ created: true })
+    await claims(b.id, [wallet()])
+    fake.failBroadcast('NETWORK_ERROR', 2)
+    await runBeatTick(T0)
+    await runBeatTick(at(H))
+    expect((await batches())[0].attempts).toBe(2)
+    await runBeatTick(at(2 * H))
+    const [row] = await batches()
+    expect(row.status).toBe('sent')
+    expect(row.attempts).toBe(0)
+    expect(row.nextAttemptAt).toBeNull()
+  })
+
+  it('a single-wallet mint that reverts on chain fails its claim and batch, with no automatic retry', async () => {
+    const b = await seed({ created: true })
+    await claims(b.id, [wallet()])
+    await runBeatTick(T0)
+    fake.revertNext('BeatClosedError', { kind: 'mint' })
+    fake.mine(6)
+    await runBeatTick(at(MIN))
+    const [row] = await batches()
+    expect(row.status).toBe('failed')
+    expect(row.lastError).toMatch(/^reverted/)
+    const [c] = await claimsOf(b.id)
+    expect(c.status).toBe('failed')
+    expect(c.failReason).toBe('reverted')
+    for (let i = 2; i < 5; i++) { await runBeatTick(at(i * MIN)); fake.mine(6) }
+    expect(await batches()).toHaveLength(1)
+    expect(fake.mempool()).toHaveLength(0)
+    expect((await claimsOf(b.id))[0].status).toBe('failed')
+  })
+
+  it('BeatExists after an earlier unsent create of ours is still an id_conflict', async () => {
+    const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(10 * H) })
+    fake.failBroadcast('NETWORK_ERROR', 5)
+    await runBeatTick(T0)
+    for (let i = 1; i <= 3; i++) await runBeatTick(at(i * H))
+    // Meanwhile someone else's create of that id lands
+    fake.createdBeat(BigInt(b.tokenId!))
+    // Our create gives up unsent, and the same tick's next create estimate meets BeatExists
+    await runBeatTick(at(4 * H))
+    const all = await batches()
+    expect(all).toHaveLength(1)
+    expect(all[0].status).toBe('failed')
+    expect(all[0].lastError).toMatch(/^unsent:/)
+    expect(beatPaused('polygon-amoy')).toEqual({ paused: true, reason: 'id_conflict' })
+    expect((await beatOf(b.id)).createdOnChainTx).toBeNull()
+    // One for the give-up, one for the conflict
+    expect(recordJobFailure).toHaveBeenCalledTimes(2)
+    expect(String((vi.mocked(recordJobFailure).mock.calls[1][1] as Error).message)).toContain('already exists')
+  })
+
+  it('a create whose estimate keeps reverting is reported once, not every tick', async () => {
+    const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(2 * H) })
+    fake.revertNext('AccessControlUnauthorizedAccount', { kind: 'create', times: 3 })
+    for (let i = 0; i < 3; i++) await runBeatTick(at(i * MIN))
+    expect(fake.mempool()).toHaveLength(0)
+    expect(recordJobFailure).toHaveBeenCalledTimes(1)
+    expect(String((vi.mocked(recordJobFailure).mock.calls[0][1] as Error).message)).toContain(b.id)
+    // Once it estimates again it goes out
+    await runBeatTick(at(3 * MIN))
+    expect(fake.mempool()).toHaveLength(1)
+  })
+
   it('ruling 5: a batch whose estimate reverts falls back to one wallet at a time, failing only the bad one', async () => {
     const b = await seed({ created: true })
     const [w1, w2, w3] = [wallet(), wallet(), wallet()]

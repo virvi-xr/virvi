@@ -43,6 +43,8 @@ const maxBatch = new Map<string, number>()
 const singles = new Map<string, Set<string>>()
 /** BEATs already reported as unable to go live (their create payment isn't paid), so it's reported once. */
 const reportedNotPaid = new Set<string>()
+/** BEATs whose create estimate reverted (other than BeatExists), already reported once. */
+const reportedCreateRevert = new Set<string>()
 
 export const beatJobTestHooks: { afterInsert?: (batchId: string) => Promise<void> } = {}
 
@@ -52,6 +54,7 @@ export function resetBeatJobState(): void {
   maxBatch.clear()
   singles.clear()
   reportedNotPaid.clear()
+  reportedCreateRevert.clear()
 }
 
 /** Whether a chain's minting is paused, and why. Set each tick; `id_conflict` stays until restart or clearBeatPause. */
@@ -202,6 +205,8 @@ async function reconcile(client: BeatChainClient, b: Batch, now: Date, r: BeatTi
   for (const hash of [...b.txHashes].reverse()) {
     const rc = await client.receipt(hash)
     if (!rc) continue
+    // Depth counts the blocks after the inclusion block (as studioMana does), so it is one block stricter than the
+    // constant read as ethers' confirmations(): Amoy waits for 6 blocks including the inclusion one, Polygon for 31
     if ((await client.latestBlock()) - rc.blockNumber < need) return false
     if (rc.ok) await confirmBatch(client, b, hash, rc.logs, now, r)
     else await revertedBatch(client, b, now, r)
@@ -234,21 +239,30 @@ async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, no
     code = rpcCode(err)
     if (code !== 'NONCE_EXPIRED' && code !== 'REPLACEMENT_UNDERPRICED') {
       const attempts = b.attempts + 1
-      if (attempts >= BEAT_SEND_MAX_ATTEMPTS) {
+      // Never accepted by any broadcast: no node has it, and reconcile checked its nonce isn't used
+      const neverSent = b.sentAt === null && b.txHashes.length <= 1
+      if (attempts >= BEAT_SEND_MAX_ATTEMPTS && neverSent) {
         await db.update(beatMintBatches).set({ attempts }).where(eq(beatMintBatches.id, b.id))
-        // Unsent: its nonce was never used (reconcile checked), so the next transaction takes it again
+        // Unsent: the next transaction takes its nonce again
         await unminedBatch(client, b, now, r, { lastError: `unsent:${code}`, unminted: 'failed' })
         fail(`beat_${b.kind}`, `BEAT ${b.kind} batch ${b.id} (BEAT ${b.beatId}) not sent after ${attempts} attempts (${code})`, b.beatId)
         return 'gave_up'
       }
+      // A batch that was broadcast before may still be pending somewhere, so it stays open and keeps its nonce: it's
+      // reported once at the max, keeps being rebroadcast (backoff capped), and settles by a receipt or the nonce check
+      if (attempts === BEAT_SEND_MAX_ATTEMPTS) {
+        fail(`beat_${b.kind}`, `BEAT ${b.kind} batch ${b.id} (BEAT ${b.beatId}) not rebroadcast after ${attempts} attempts (${code}); it stays open at nonce ${b.nonce}`, b.beatId)
+      }
+      const wait = 2 ** Math.min(attempts, BEAT_SEND_MAX_ATTEMPTS) * 60_000
       await db.update(beatMintBatches).set({
-        attempts, lastError: code, nextAttemptAt: new Date(now.getTime() + 2 ** attempts * 60_000),
+        attempts, lastError: code, nextAttemptAt: new Date(now.getTime() + wait),
       }).where(eq(beatMintBatches.id, b.id))
       console.warn(`[beats] batch ${b.id} broadcast failed (${code}), attempt ${attempts}`)
       return 'retry'
     }
   }
-  await db.update(beatMintBatches).set({ status: 'sent', sentAt: now, nextAttemptAt: null, ...(code ? { lastError: code } : {}) })
+  // Accepted: a fresh failure budget for any later rebroadcast or reprice
+  await db.update(beatMintBatches).set({ status: 'sent', sentAt: now, attempts: 0, nextAttemptAt: null, ...(code ? { lastError: code } : {}) })
     .where(eq(beatMintBatches.id, b.id))
   return 'sent'
 }
@@ -391,7 +405,9 @@ async function unminedBatch(
     console.warn(`[beats] batch ${b.id} (BEAT ${beatId}) ${o.lastError}: ${done.length} minted, ${rest.length} ${o.unminted}`)
     return
   }
-  const created = b.kind === 'create' && b.beatId ? await client.exists(tokenId) : false
+  // Only a replaced nonce can have carried our create; an unsent one never left us, so an existing id there is someone
+  // else's and the next create's estimate reports it as a conflict
+  const created = b.kind === 'create' && b.beatId && o.lastError === 'replaced' ? await client.exists(tokenId) : false
   await db.transaction(async (tx) => {
     await tx.update(beatMintBatches).set({ status: 'failed', lastError: o.lastError }).where(eq(beatMintBatches.id, b.id))
     // Our create landed under a hash whose receipt we can't see: the newest one we signed stands for it
@@ -520,8 +536,13 @@ async function estimateReverted(
   if (plan.kind === 'create') {
     if (name === 'BeatExists') {
       // Ours when an earlier create of ours for this BEAT went out (its receipt was lost); anyone else's is a conflict
+      // Only a batch whose nonce could have carried our create counts: confirmed, sent, or replaced (never unsent or
+      // reverted on chain)
       const [mine] = await db.select().from(beatMintBatches)
-        .where(and(eq(beatMintBatches.beatId, plan.beatId), eq(beatMintBatches.kind, 'create'))).orderBy(asc(beatMintBatches.createdAt)).limit(1)
+        .where(and(
+          eq(beatMintBatches.beatId, plan.beatId), eq(beatMintBatches.kind, 'create'),
+          sql`(${beatMintBatches.status} in ('confirmed', 'sent') or (${beatMintBatches.status} = 'failed' and ${beatMintBatches.lastError} = 'replaced'))`,
+        )).orderBy(asc(beatMintBatches.createdAt)).limit(1)
       if (mine) {
         await db.update(beats).set({ createdOnChainTx: mine.txHashes.at(-1) ?? mine.txHash, createdOnChainAt: now }).where(eq(beats.id, plan.beatId))
         console.warn(`[beats] BEAT ${plan.beatId} already exists on chain from batch ${mine.id}`)
@@ -532,7 +553,10 @@ async function estimateReverted(
       return 'stop'
     }
     skip.add(plan.beatId)
-    fail('beat_create', `BEAT ${plan.beatId} create estimate reverted (${name})`, plan.beatId)
+    if (!reportedCreateRevert.has(plan.beatId)) {
+      reportedCreateRevert.add(plan.beatId)
+      fail('beat_create', `BEAT ${plan.beatId} create estimate reverted (${name})`, plan.beatId)
+    } else console.warn(`[beats] BEAT ${plan.beatId} create estimate reverted (${name})`)
     return 'next'
   }
   if (plan.kind === 'close') {
