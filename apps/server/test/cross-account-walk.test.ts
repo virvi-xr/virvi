@@ -10,7 +10,7 @@ import {
   dclWorldDestinations, adSpaceSettings, adSpaceApprovals, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -172,6 +172,11 @@ async function fixtures() {
   const [removal] = await db.insert(sceneRemovals).values({
     sceneId: deletedScene.id, kind: 'dcl_world', targetId: goneDestination.id, label: 'Remove the scene from b-gone.dcl.eth', status: 'awaiting_signature', requestedBy: b.id,
   }).returning()
+  const [beat] = await db.insert(beats).values({
+    chain: 'polygon', ownerUserId: b.id, name: 'B beat', description: '', imageMediaId: media.id, startsAt: new Date(Date.now() + 48 * H), endsAt: new Date(Date.now() + 50 * H),
+  }).returning()
+  await db.insert(beatScenes).values({ beatId: beat.id, sceneId: scene.id })
+  await db.insert(beatClaims).values({ beatId: beat.id, userId: collaborator.id, wallet: randomWallet(), displayName: 'B claimant', consentVersion: 1 })
   const [raffle] = await db.insert(raffles).values({
     sceneId: scene.id, createdBy: b.id, name: 'B raffle', prize: 'B prize', winnersCount: 1, mode: 'one_per_person', status: 'open',
     hostTermsAcceptedAt: new Date(), openedAt: new Date(),
@@ -186,7 +191,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -215,6 +220,14 @@ const CASES: Case[] = [
   { route: 'DELETE /api/preset-schedules/:scheduleId', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}` },
   { route: 'POST /api/preset-schedules/:scheduleId/skip', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}/skip`, body: () => ({}) },
   { route: 'DELETE /api/preset-schedules/:scheduleId/skip', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}/skip?occurrenceStart=2031-01-01T10%3A00%3A00.000Z` },
+  // BEATs (LIV-11)
+  { route: 'GET /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}` },
+  { route: 'PATCH /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}`, body: () => ({ name: 'pwned' }) },
+  { route: 'GET /api/beats/:beatId/claimants', url: (f) => `/api/beats/${f.beat.id}/claimants` },
+  { route: 'POST /api/beats/:beatId/cancel', url: (f) => `/api/beats/${f.beat.id}/cancel` },
+  { route: 'POST /api/beats/:beatId/end-early', url: (f) => `/api/beats/${f.beat.id}/end-early` },
+  { route: 'GET /api/scenes/:sceneId/beats', url: (f) => `/api/scenes/${f.scene.id}/beats` },
+  { route: 'POST /api/beats', url: () => '/api/beats', body: (f) => ({ name: 'pwned', description: '', imageMediaId: f.media.id, startsAt: new Date(Date.now() + 72 * H).toISOString(), endsAt: new Date(Date.now() + 74 * H).toISOString(), minPresentMinutes: 5, supplyCap: 10, tradeable: false, sceneIds: [f.scene.id] }) },
   // raffles (LIV-55)
   { route: 'GET /api/scenes/:sceneId/raffles', url: (f) => `/api/scenes/${f.scene.id}/raffles` },
   { route: 'POST /api/scenes/:sceneId/raffles', url: (f) => `/api/scenes/${f.scene.id}/raffles`, body: () => ({ name: 'pwned', prize: 'x', winnersCount: 1, mode: 'one_per_person', acceptHostTerms: true }) },
@@ -526,7 +539,7 @@ const TABLES = [
   dclWorldDestinations, sceneImports, sceneRemovals,
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
-  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws,
+  studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))
@@ -545,12 +558,14 @@ describe('cross-account route walk', () => {
   let f: F
   const prevStreaming = config.streamingEnabled
   const prevStudio = config.studioEnabled
+  const prevBeats = config.beats
   const prevDeployKey = config.virviDclDeployKey
   const prevParcelKey = config.virviDclParcelDeployKey
   beforeEach(async () => {
     await resetDb()
     ;(config as any).streamingEnabled = true
     ;(config as any).studioEnabled = true
+    ;(config as any).beats = { ...config.beats, enabled: true }
     // Never reach Decentraland: B's World is owned by B in the fake
     ;(config as any).virviDclDeployKey = Wallet.createRandom().privateKey
     ;(config as any).virviDclParcelDeployKey = Wallet.createRandom().privateKey
@@ -574,6 +589,7 @@ describe('cross-account route walk', () => {
   afterEach(async () => {
     ;(config as any).streamingEnabled = prevStreaming
     ;(config as any).studioEnabled = prevStudio
+    ;(config as any).beats = prevBeats
     setStudioStore(null)
     setImportStore(null)
     ;(config as any).virviDclDeployKey = prevDeployKey

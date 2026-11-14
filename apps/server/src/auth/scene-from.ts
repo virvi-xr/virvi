@@ -1,7 +1,7 @@
 import type { FastifyContextConfig, FastifyRequest } from 'fastify'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { analyticsScenes, raffles, sceneElementInstances, sceneElements, scenePresets, scenePresetSchedules, screenShowings } from '../db/schema.js'
+import { analyticsScenes, beatScenes, raffles, sceneElementInstances, sceneElements, scenePresets, scenePresetSchedules, screenShowings } from '../db/schema.js'
 
 /**
  * Resolves the scene a request targets, so `authenticate` can hold a scene pass to its own scene.
@@ -89,4 +89,11 @@ export const fromAnalyticsLocation: SceneFrom = async (r) => {
   if (!id) return null
   const l = await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.id, id), columns: { virviSceneId: true } })
   return l?.virviSceneId ?? null
+}
+/** A BEAT's first scene (by id). Multi-scene BEATs are authorized in the service, which checks every scene. */
+export const fromBeat: SceneFrom = async (r) => {
+  const id = param(r, 'beatId')
+  if (!id) return null
+  const row = await db.query.beatScenes.findFirst({ where: eq(beatScenes.beatId, id), columns: { sceneId: true }, orderBy: asc(beatScenes.sceneId) })
+  return row?.sceneId ?? null
 }

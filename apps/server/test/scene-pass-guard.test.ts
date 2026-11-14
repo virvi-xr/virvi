@@ -7,7 +7,7 @@ import { createSetup } from './helpers/setups.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
 import { issueArPass, issueHyperfyPass } from '../src/auth/scene-pass.js'
 import { db } from '../src/db/connection.js'
-import { arDevices, arSpaces, hyperfyPairings, hyperfyWorlds, raffles, screenShowings } from '../src/db/schema.js'
+import { arDevices, arSpaces, hyperfyPairings, hyperfyWorlds, raffles, beats, beatScenes, screenShowings } from '../src/db/schema.js'
 import { VideoSourceType } from '@virvixr/shared'
 import { PUBLIC_EXACT, IGNORES_SCENE_PASS, isPublic } from './helpers/public-routes.js'
 
@@ -87,6 +87,8 @@ describe('scene pass guard', () => {
     const el = await createElement(b.preset.id)
     const inst = await createInstance(el.id)
     const [raffle] = await db.insert(raffles).values({ sceneId: b.scene.id, name: 'R', prize: 'P', winnersCount: 1, mode: 'one_per_person' }).returning()
+    const [beat] = await db.insert(beats).values({ chain: 'polygon', ownerUserId: owner.id, name: 'B', description: '', startsAt: new Date(Date.now() + 3_600_000), endsAt: new Date(Date.now() + 7_200_000) }).returning()
+    await db.insert(beatScenes).values({ beatId: beat.id, sceneId: b.scene.id })
     const t = pass(owner, a.scene.id)
     const h = { authorization: `Bearer ${t}` }
     const reqs: Array<[string, string]> = [
@@ -96,6 +98,8 @@ describe('scene pass guard', () => {
       ['POST', `/api/raffles/${raffle.id}/cancel`], ['GET', `/api/raffles/${raffle.id}/draws/00000000-0000-4000-8000-000000000000`],
       ['GET', `/api/scenes/${b.scene.id}/raffle/current`], ['POST', `/api/raffles/${raffle.id}/entry`], ['DELETE', `/api/raffles/${raffle.id}/entry`],
       ['POST', `/api/raffles/${raffle.id}/presence`],
+      ['GET', `/api/scenes/${b.scene.id}/beats`], ['GET', `/api/beats/${beat.id}`], ['PATCH', `/api/beats/${beat.id}`],
+      ['GET', `/api/beats/${beat.id}/claimants`], ['POST', `/api/beats/${beat.id}/cancel`], ['POST', `/api/beats/${beat.id}/end-early`],
       ['GET', `/api/scenes/${b.scene.id}`], ['PUT', `/api/scenes/${b.scene.id}`],
       ['POST', `/api/presets/${b.preset.id}/elements`], ['PUT', `/api/elements/${el.id}`], ['DELETE', `/api/elements/${el.id}`],
       ['POST', `/api/elements/${el.id}/instances`], ['PUT', `/api/instances/${inst.id}`], ['DELETE', `/api/instances/${inst.id}`],
