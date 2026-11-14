@@ -79,7 +79,16 @@ describe.skipIf(!ready)('BEAT chain client on anvil', () => {
     expect(await client.exists(1n)).toBe(true)
 
     const wallets = [Wallet.createRandom().address, Wallet.createRandom().address, Wallet.createRandom().address]
+    // Reads just before and just after the tx (well inside ethers' default 250ms cache) must not be stale
+    expect(await client.nonce('latest')).toBe(1)
+    expect(await client.isMinted(1n, wallets[0])).toBe(false)
+    const blockBefore = await client.latestBlock()
+    const t0 = Date.now()
     const minted = await send({ kind: 'mint', tokenId: 1n, wallets })
+    expect(await client.nonce('latest')).toBe(2)
+    expect(await client.isMinted(1n, wallets[0])).toBe(true)
+    expect(await client.latestBlock()).toBeGreaterThan(blockBefore)
+    expect(Date.now() - t0).toBeLessThan(250)
     expect(minted.receipt.ok).toBe(true)
     expect(minted.receipt.blockNumber).toBeGreaterThan(0)
     for (const w of wallets) expect(await client.isMinted(1n, w)).toBe(true)

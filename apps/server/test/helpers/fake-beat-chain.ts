@@ -20,10 +20,15 @@ import {
  *   ZeroId, existing id → BeatExists. Mints skip the zero address, wallets already minted and repeats in the list.
  *   Wallets with code that reject (`rejectReceiver`) are skipped with a MintSkipped log and stay un-minted.
  * - Gas: `gasFor(call)` is what `estimate` returns (60k + 35k per plain wallet + 130k per wallet with code). A mined
- *   tx whose gas limit is below that reverts with InsufficientGas.
+ *   tx whose gas limit is below that reverts with InsufficientGas when the mint has a wallet with code (the contract's
+ *   guard), else with 'unknown' (out of gas), and uses its whole gas limit.
+ * - Money: `broadcast` throws INSUFFICIENT_FUNDS when the balance is below gasLimit × maxFeePerGas. Mining charges gas
+ *   used × min(maxFeePerGas, baseFee + tip), with baseFee from `baseFeeWei` (default 30 gwei).
  * - Re-broadcasting a tx that's in the mempool or mined resolves (as "already known" / "nonce too low" for the same
  *   hash would). Another tx at a mined nonce throws BeatRpcError NONCE_EXPIRED; one at a pending tx's nonce replaces
  *   it when both fees are at least 10% higher, else throws REPLACEMENT_UNDERPRICED.
+ * - `sign` without fees uses `setFees` as given (the real client's tip floor isn't modelled); the result carries the
+ *   gas limit used, and passing it back never re-estimates.
  */
 export interface FakeBeatChain extends BeatChainClient {
   readonly contract: string
@@ -65,13 +70,15 @@ export interface FakeBeatChain extends BeatChainClient {
 }
 
 export type FakeTx = { hash: string; raw: string; nonce: number; call: BeatCall; fees: BeatFees; gasLimit: bigint }
-export type FakeMinedTx = FakeTx & { blockNumber: number; ok: boolean; reason: string | null; logs: BeatLog[] }
+export type FakeMinedTx = FakeTx & { blockNumber: number; ok: boolean; reason: string | null; logs: BeatLog[]; gasUsed: bigint }
 
 export type FakeBeatChainOptions = {
   chain?: BeatChain
   minterKey?: string
   /** Default 10 POL. */
   balanceWei?: bigint
+  /** The base fee mined txs pay (default 30 gwei). */
+  baseFeeWei?: bigint
   fees?: BeatFees
   codeWallets?: string[]
   rejectingWallets?: string[]
@@ -98,6 +105,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
   let block = 100
   let balance = opts.balanceWei ?? 10n * 10n ** 18n
   let fees: BeatFees = opts.fees ?? { maxFeePerGas: 60n * GWEI, maxPriorityFeePerGas: 30n * GWEI }
+  const baseFee = opts.baseFeeWei ?? 30n * GWEI
   let down = false
   let minedNonce = 0
   const beats = new Map<string, { tradeable: boolean; closed: boolean; minted: Set<string> }>()
@@ -123,7 +131,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
   }
 
   /** Runs the call against state; returns the revert name, or applies it (when `apply`) and returns its logs. */
-  function run(call: BeatCall, apply: boolean, gasLimit?: bigint): { reason: string } | { logs: BeatLog[] } {
+  function run(call: BeatCall, apply: boolean, gasLimit?: bigint): { reason: string; outOfGas?: boolean } | { logs: BeatLog[] } {
     const i = scripted.findIndex((s) => !s.kind || s.kind === call.kind)
     if (i >= 0) {
       const s = scripted[i]
@@ -149,7 +157,9 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
       const r = walletReverts.get(lc(w))
       if (r) return { reason: r }
     }
-    if (gasLimit !== undefined && gasLimit < gasFor(call)) return { reason: 'InsufficientGas' }
+    if (gasLimit !== undefined && gasLimit < gasFor(call)) {
+      return { reason: call.wallets.some((w) => code.has(lc(w))) ? 'InsufficientGas' : 'unknown', outOfGas: true }
+    }
     const logs: BeatLog[] = []
     const minting = new Set<string>()
     for (const w of call.wallets) {
@@ -180,8 +190,10 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
       minedNonce++
       const out = run(tx.call, true, tx.gasLimit)
       const ok = 'logs' in out
-      balance -= gasFor(tx.call) * tx.fees.maxFeePerGas
-      mined.set(tx.hash, { ...tx, blockNumber: block, ok, reason: ok ? null : out.reason, logs: ok ? out.logs : [] })
+      const gasUsed = !ok && out.outOfGas ? tx.gasLimit : gasFor(tx.call) < tx.gasLimit ? gasFor(tx.call) : tx.gasLimit
+      const paid = baseFee + tx.fees.maxPriorityFeePerGas
+      balance -= gasUsed * (paid < tx.fees.maxFeePerGas ? paid : tx.fees.maxFeePerGas)
+      mined.set(tx.hash, { ...tx, blockNumber: block, ok, reason: ok ? null : out.reason, logs: ok ? out.logs : [], gasUsed })
     }
   }
 
@@ -213,7 +225,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
         type: 2, chainId: BigInt(BEAT_CHAIN_INFO[chain].chainId), to: CONTRACT, data: encodeBeatCall(call), nonce,
         gasLimit: gas, maxFeePerGas: use.maxFeePerGas, maxPriorityFeePerGas: use.maxPriorityFeePerGas, value: 0n,
       })
-      return { raw, hash: keccak256(raw), fees: use }
+      return { raw, hash: keccak256(raw), fees: use, gasLimit: gas }
     },
 
     async broadcast(raw) {
@@ -224,6 +236,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
       if (mined.has(hash) || [...pool.values()].some((p) => p.hash === hash)) return
       if (dropCount > 0) { dropCount--; return }
       if (t.nonce < minedNonce) throw new BeatRpcError('broadcast', 'NONCE_EXPIRED')
+      if (balance < t.gasLimit * t.maxFeePerGas!) throw new BeatRpcError('broadcast', 'INSUFFICIENT_FUNDS')
       const tx: FakeTx = {
         hash, raw, nonce: t.nonce, call: decodeCall(t.data), gasLimit: t.gasLimit,
         fees: { maxFeePerGas: t.maxFeePerGas!, maxPriorityFeePerGas: t.maxPriorityFeePerGas! },

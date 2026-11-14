@@ -23,7 +23,10 @@ export type BeatCall =
 export type BeatFees = { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
 export type BeatLog = { address: string; topics: readonly string[]; data: string }
 export type BeatReceipt = { ok: boolean; blockNumber: number; logs: BeatLog[] }
-export type BeatSigned = { raw: string; hash: string; fees: BeatFees }
+export type BeatSigned = { raw: string; hash: string; fees: BeatFees; gasLimit: bigint }
+
+/** The lowest tip the default fee path signs with, on both chains (Polygon and Amoy reject tips under ~25-30 gwei). */
+export const BEAT_MIN_PRIORITY_FEE_WEI = 30_000_000_000n
 
 export interface BeatChainClient {
   readonly chain: BeatChain
@@ -35,7 +38,13 @@ export interface BeatChainClient {
   codeAt(address: string): Promise<boolean>
   /** The node's gas estimate for the call from the minter, nothing added. Throws BeatRevert when it reverts. */
   estimate(call: BeatCall): Promise<bigint>
-  /** Signs the call at this nonce. Fees default to the node's fee data; the gas limit defaults to `estimate(call)`. */
+  /**
+   * Signs the call at this nonce. The result carries the fees and gas limit it used.
+   * - Fees: as given when passed; otherwise from the node, with the tip at least BEAT_MIN_PRIORITY_FEE_WEI and
+   *   maxFeePerGas = max(the node's maxFee, 2 × latest base fee + tip).
+   * - Gas limit: as given when passed; otherwise `estimate(call)`. A replacement (same nonce, bumped fees) must pass
+   *   the original's gasLimit, so it never re-estimates against state the original may already have changed.
+   */
   sign(call: BeatCall, nonce: number, fees?: BeatFees, gasLimit?: bigint): Promise<BeatSigned>
   /** Sends a signed transaction. "Already known", or "nonce too low" when this exact transaction is on chain, is success. */
   broadcast(raw: string): Promise<void>
@@ -64,12 +73,25 @@ export class BeatRpcError extends Error {
   }
 }
 
-export function encodeBeatCall(call: BeatCall): string {
-  switch (call.kind) {
-    case 'create': return beatInterface.encodeFunctionData('createBeat', [call.tokenId, call.tradeable])
-    case 'mint': return beatInterface.encodeFunctionData('mintTo', [call.tokenId, call.wallets])
-    case 'close': return beatInterface.encodeFunctionData('closeBeat', [call.tokenId])
+const codeOf = (err: any) => (typeof err?.code === 'string' ? err.code : 'UNKNOWN_ERROR')
+
+/** Runs `fn`, turning any failure into a payload-free BeatRpcError (ethers' messages echo arguments, i.e. wallets). */
+function safely<T>(op: string, fn: () => T): T {
+  try { return fn() } catch (err) {
+    if (err instanceof BeatRpcError || err instanceof BeatRevert) throw err
+    throw new BeatRpcError(op, codeOf(err))
   }
+}
+
+/** The calldata for a call. A bad argument (say, a malformed wallet) throws BeatRpcError('encode', ...) without it. */
+export function encodeBeatCall(call: BeatCall): string {
+  return safely('encode', () => {
+    switch (call.kind) {
+      case 'create': return beatInterface.encodeFunctionData('createBeat', [call.tokenId, call.tradeable])
+      case 'mint': return beatInterface.encodeFunctionData('mintTo', [call.tokenId, call.wallets])
+      case 'close': return beatInterface.encodeFunctionData('closeBeat', [call.tokenId])
+    }
+  })
 }
 
 const MINT_SKIPPED = beatInterface.getEvent('MintSkipped')!.topicHash
@@ -105,8 +127,6 @@ function rpcMessage(err: any): string {
   return parts.filter((p) => typeof p === 'string').join(' | ')
 }
 
-const codeOf = (err: any) => (typeof err?.code === 'string' ? err.code : 'UNKNOWN_ERROR')
-
 class RpcBeatChain implements BeatChainClient {
   readonly minterAddress: string
   readonly #wallet: Wallet
@@ -124,31 +144,29 @@ class RpcBeatChain implements BeatChainClient {
     try {
       return await fn()
     } catch (err) {
+      if (err instanceof BeatRpcError || err instanceof BeatRevert) throw err
       throw new BeatRpcError(op, codeOf(err))
     }
   }
 
   async #view(fn: string, args: unknown[]): Promise<any> {
-    const data = beatInterface.encodeFunctionData(fn, args)
+    const data = safely('encode', () => beatInterface.encodeFunctionData(fn, args))
     const out = await this.#rpc(fn, () => this.#provider.call({ to: this.#contract, data }))
-    return beatInterface.decodeFunctionResult(fn, out)[0]
+    return safely('decode', () => beatInterface.decodeFunctionResult(fn, out)[0])
   }
 
   balanceWei() { return this.#rpc('balance', () => this.#provider.getBalance(this.minterAddress)) }
-  // Raw requests for nonces, the block number and the tx lookup in broadcast: ethers caches identical provider reads
-  // (and the block number) briefly, which would hand back a stale value right after a transaction lands.
-  async nonce(tag: 'latest' | 'pending') {
-    return Number(await this.#rpc('nonce', () => this.#provider.send('eth_getTransactionCount', [this.minterAddress, tag])))
-  }
+  nonce(tag: 'latest' | 'pending') { return this.#rpc('nonce', () => this.#provider.getTransactionCount(this.minterAddress, tag)) }
   async codeAt(address: string) { return (await this.#rpc('code', () => this.#provider.getCode(address))) !== '0x' }
-  async latestBlock() { return Number(await this.#rpc('block', () => this.#provider.send('eth_blockNumber', []))) }
+  latestBlock() { return this.#rpc('block', () => this.#provider.getBlockNumber()) }
   async isMinted(tokenId: bigint, wallet: string) { return Boolean(await this.#view('minted', [tokenId, wallet])) }
   async exists(tokenId: bigint) { return Boolean(await this.#view('exists', [tokenId])) }
   skippedIn(logs: BeatLog[]) { return skippedIn(this.#contract, logs) }
 
   async estimate(call: BeatCall): Promise<bigint> {
+    const data = encodeBeatCall(call)
     try {
-      return await this.#provider.estimateGas({ from: this.minterAddress, to: this.#contract, data: encodeBeatCall(call) })
+      return await this.#provider.estimateGas({ from: this.minterAddress, to: this.#contract, data })
     } catch (err: any) {
       if (codeOf(err) === 'CALL_EXCEPTION') throw new BeatRevert(revertName(revertData(err)))
       throw new BeatRpcError('estimate', codeOf(err))
@@ -156,21 +174,27 @@ class RpcBeatChain implements BeatChainClient {
   }
 
   async sign(call: BeatCall, nonce: number, fees?: BeatFees, gasLimit?: bigint): Promise<BeatSigned> {
+    const data = encodeBeatCall(call)
     const f = fees ?? await this.#feeData()
     const gas = gasLimit ?? await this.estimate(call)
-    const raw = await this.#wallet.signTransaction({
-      type: 2, chainId: BigInt(BEAT_CHAIN_INFO[this.chain].chainId), to: this.#contract, data: encodeBeatCall(call),
+    const raw = await this.#rpc('sign', () => this.#wallet.signTransaction({
+      type: 2, chainId: BigInt(BEAT_CHAIN_INFO[this.chain].chainId), to: this.#contract, data,
       nonce, gasLimit: gas, maxFeePerGas: f.maxFeePerGas, maxPriorityFeePerGas: f.maxPriorityFeePerGas, value: 0n,
-    })
-    return { raw, hash: keccak256(raw), fees: f }
+    }))
+    return { raw, hash: keccak256(raw), fees: f, gasLimit: gas }
   }
 
+  /** The node's fees (eth_maxPriorityFeePerGas and the latest base fee, through ethers' getFeeData), with the tip
+   * raised to the floor and maxFee to at least 2 × base fee + tip. */
   async #feeData(): Promise<BeatFees> {
-    const d = await this.#rpc('fees', () => this.#provider.getFeeData())
-    const maxFeePerGas = d.maxFeePerGas ?? d.gasPrice
-    const maxPriorityFeePerGas = d.maxPriorityFeePerGas ?? d.gasPrice
-    if (maxFeePerGas == null || maxPriorityFeePerGas == null) throw new BeatRpcError('fees', 'MISSING_FEE_DATA')
-    return { maxFeePerGas, maxPriorityFeePerGas }
+    const [d, block] = await this.#rpc('fees', () => Promise.all([this.#provider.getFeeData(), this.#provider.getBlock('latest')]))
+    const nodeTip = d.maxPriorityFeePerGas ?? d.gasPrice ?? 0n
+    const tip = nodeTip > BEAT_MIN_PRIORITY_FEE_WEI ? nodeTip : BEAT_MIN_PRIORITY_FEE_WEI
+    const base = block?.baseFeePerGas
+    const floor = base != null ? 2n * base + tip : tip
+    const nodeMax = d.maxFeePerGas ?? d.gasPrice ?? 0n
+    if (base == null && nodeMax === 0n && nodeTip === 0n) throw new BeatRpcError('fees', 'MISSING_FEE_DATA')
+    return { maxFeePerGas: nodeMax > floor ? nodeMax : floor, maxPriorityFeePerGas: tip }
   }
 
   async broadcast(raw: string): Promise<void> {
@@ -180,8 +204,9 @@ class RpcBeatChain implements BeatChainClient {
       const code = codeOf(err)
       if (/already known|known transaction|already imported/i.test(rpcMessage(err))) return
       if (code === 'NONCE_EXPIRED') {
-        const mine = await this.#rpc('broadcast', () => this.#provider.send('eth_getTransactionByHash', [keccak256(raw)]))
-        if (mine) return
+        const hash = keccak256(raw)
+        const found = await this.#rpc('broadcast', () => this.#provider.getTransaction(hash))
+        if (found && found.hash.toLowerCase() === hash.toLowerCase()) return
       }
       throw new BeatRpcError('broadcast', code)
     }
@@ -197,10 +222,22 @@ class RpcBeatChain implements BeatChainClient {
   }
 }
 
-/** A client for any RPC endpoint and contract (the anvil test uses this; the server uses beatChainClient). */
+/**
+ * A client for any RPC endpoint and contract (the anvil test uses this; the server uses beatChainClient).
+ * - The network is a plain `new Network(name, chainId)`, not ethers' registered one, whose Polygon entry fetches fees
+ *   from the Polygon gas station and fails when that's down; fees come from the node.
+ * - `cacheTimeout: -1` turns off ethers' 250ms sharing of identical reads, so a nonce, receipt or block number read
+ *   right after a transaction lands is never stale.
+ */
 export function createBeatChainClient(opts: { chain: BeatChain; rpcUrl: string; contract: string; minterKey: string }): BeatChainClient {
-  const provider = new JsonRpcProvider(opts.rpcUrl, Network.from(BEAT_CHAIN_INFO[opts.chain].chainId), { staticNetwork: true })
-  return new RpcBeatChain(opts.chain, provider, opts.contract, opts.minterKey)
+  const network = new Network(opts.chain, BEAT_CHAIN_INFO[opts.chain].chainId)
+  const provider = new JsonRpcProvider(opts.rpcUrl, network, { staticNetwork: network, cacheTimeout: -1 })
+  return beatChainClientOn(opts.chain, provider, opts.contract, opts.minterKey)
+}
+
+/** A client over a given provider (unit tests pass a stub). */
+export function beatChainClientOn(chain: BeatChain, provider: JsonRpcProvider, contract: string, minterKey: string): BeatChainClient {
+  return new RpcBeatChain(chain, provider, contract, minterKey)
 }
 
 const built = new Map<BeatChain, BeatChainClient>()
