@@ -299,6 +299,7 @@ export async function refundBeat(beatId: string, now: Date): Promise<{ stripeCen
   let creditCents = 0
   for (const pay of paid) {
     const card = pay.method === 'card' ? await stripeRefund(pay) : 0
+    let alert: string | null = null
     await db.transaction(async (tx) => {
       const [done] = await tx.update(beatPayments).set({ status: 'refunded', refundedAt: now })
         .where(and(eq(beatPayments.id, pay.id), eq(beatPayments.status, 'paid'))).returning()
@@ -308,30 +309,34 @@ export async function refundBeat(beatId: string, now: Date): Promise<{ stripeCen
         await addCredit(tx, done.userId, done.creditCents, 'refund', done.id, now)
         creditCents += done.creditCents
       }
-      if (done.kind === 'topup') await revertTopup(tx, beatId, done.capTo - done.capFrom, now)
+      if (done.kind === 'topup') alert = await revertTopup(tx, beatId, done.capTo - done.capFrom, now)
       await tx.update(beats).set({ status: 'cancelled', updatedAt: now }).where(and(
         eq(beats.id, beatId), eq(beats.status, 'paid'),
         sql`not exists (select 1 from beat_payments p where p.beat_id = ${beatId} and p.status = 'paid')`,
       ))
     })
+    // Only once the refund (and the cap it set) has committed
+    if (alert) {
+      console.error(`[beats] ${alert}`)
+      recordJobFailure('beat_refund', new Error(alert), { owner: beatId })
+    }
   }
   return { stripeCents, creditCents }
 }
 
-/** Lowers the BEAT's cap by a refunded top-up's raise, to no less than its claims (any status but present). */
-async function revertTopup(tx: Pick<typeof db, 'select' | 'update'>, beatId: string, raise: number, now: Date): Promise<void> {
+/** Lowers the BEAT's cap by a refunded top-up's raise, to no less than its claims (any status but present). Returns
+ * the admin alert to record once the transaction commits when the claims kept it from fully reverting, else null. */
+async function revertTopup(tx: Pick<typeof db, 'select' | 'update'>, beatId: string, raise: number, now: Date): Promise<string | null> {
   const [row] = await tx.select({ cap: beats.supplyCap }).from(beats).where(eq(beats.id, beatId)).for('update')
-  if (!row || raise <= 0) return
+  if (!row || raise <= 0) return null
   const [c] = await tx.select({ n: sql<number>`count(*)::int` }).from(beatClaims)
     .where(and(eq(beatClaims.beatId, beatId), sql`${beatClaims.status} <> 'present'`))
   const claims = c?.n ?? 0
   const cap = Math.max(claims, row.cap - raise)
   await tx.update(beats).set({ supplyCap: cap, updatedAt: now }).where(eq(beats.id, beatId))
-  if (cap > row.cap - raise) {
-    const message = `BEAT ${beatId}: a refunded top-up of ${raise} could only lower the cap from ${row.cap} to ${cap}, the claims already made`
-    console.error(`[beats] ${message}`)
-    recordJobFailure('beat_refund', new Error(message), { owner: beatId })
-  }
+  return cap > row.cap - raise
+    ? `BEAT ${beatId}: a refunded top-up of ${raise} could only lower the cap from ${row.cap} to ${cap}, the claims already made`
+    : null
 }
 
 // ── The frozen artwork ───────────────────────────────────────────────────────

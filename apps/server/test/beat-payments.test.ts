@@ -543,9 +543,13 @@ describe('BEAT payments (LIV-11)', () => {
       await db.insert(beatClaims).values(Array.from({ length: 120 }, (_, i) => ({ beatId: b.id, wallet: randomWallet(), consentVersion: 1, status: statuses[i % 4] })))
       // Present visitors haven't claimed: they don't count
       await db.insert(beatClaims).values(Array.from({ length: 10 }, () => ({ beatId: b.id, wallet: randomWallet(), consentVersion: 1, status: 'present' as const })))
+      // M4: the alert is raised once the refund has committed (another connection already sees the lowered cap)
+      const seen: Promise<number>[] = []
+      vi.mocked(recordJobFailure).mockImplementationOnce(() => { seen.push(db.select().from(beats).where(eq(beats.id, b.id)).then((r) => r[0].supplyCap)) })
       await refundBeat(b.id, new Date())
       expect((await beatOf(b.id)).supplyCap).toBe(120)
       expect(recordJobFailure).toHaveBeenCalledTimes(1)
+      expect(await Promise.all(seen)).toEqual([120])
       const [job, err, f] = vi.mocked(recordJobFailure).mock.calls[0]
       expect(job).toBe('beat_refund')
       expect((err as Error).message).toContain(b.id)
