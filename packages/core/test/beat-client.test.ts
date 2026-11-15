@@ -66,4 +66,20 @@ describe('BEAT client calls (LIV-11)', () => {
       await expect(virvi.claimBeat('b1')).rejects.toThrow(new RegExp(`HTTP 409.*${code}`))
     }
   })
+
+  it('beat_available reaches onBeatAvailable, and unsubscribing stops it', () => {
+    const { virvi } = setup()
+    const handlers = new Map<string, (m: unknown) => void>()
+    vi.spyOn((virvi as any).colyseus, 'onMessage').mockImplementation(((type: string, cb: (m: unknown) => void) => { handlers.set(type, cb) }) as any)
+    ;(virvi as any).registerMessageHandlers()
+    const seen = vi.fn()
+    const off = virvi.onBeatAvailable(seen)
+    handlers.get('beat_available')!({ beat: { name: 'Launch', test: true } })
+    handlers.get('beat_available')!({ beat: null })
+    handlers.get('beat_available')!(null)
+    expect(seen.mock.calls).toEqual([[{ name: 'Launch', test: true }], [null], [null]])
+    off()
+    handlers.get('beat_available')!({ beat: { name: 'Launch', test: true } })
+    expect(seen).toHaveBeenCalledTimes(3)
+  })
 })

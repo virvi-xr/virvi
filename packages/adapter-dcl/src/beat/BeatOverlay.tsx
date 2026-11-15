@@ -2,14 +2,14 @@
  * The in-world BEAT card (LIV-11): opt in with consent, progress while tracking, claim, and what happened to the claim.
  * Drawn from this module's state; beat/connect.ts feeds it.
  *
- * One UI root: with a host HUD the card renders inside the HUD's tree (DclHUDRenderer.addOverlay); without one
- * (visitors) it is its own ReactEcsRenderer.addUiRenderer root. The BEAT's name is shown as plain text (plainText).
+ * The card sits in the shared right-hand column (card-column.tsx) above the raffle card, so the two stack instead of
+ * overlapping. The BEAT's name is shown as plain text (plainText).
  */
-import ReactEcs, { ReactEcsRenderer, UiEntity, Label } from '@dcl/sdk/react-ecs'
+import ReactEcs, { UiEntity, Label } from '@dcl/sdk/react-ecs'
 import { Color4 } from '@dcl/sdk/math'
-import { engine } from '@dcl/sdk/ecs'
-import type { VisitorBeat } from '@virvixr/shared'
+import type { CardBeat } from './card.js'
 import { markHudPress } from '../hud/press.js'
+import { addColumnCard, CARD_GAP, mountCardColumn } from '../card-column.js'
 import { plainText } from '../raffle/card.js'
 import { cardView, initialBeatUi, type BeatAction, type BeatUi } from './card.js'
 
@@ -26,13 +26,13 @@ const C = {
   virvi: Color4.create(8 / 255, 221 / 255, 235 / 255, 1),
 }
 
-const ui: { beat: VisitorBeat | null; state: BeatUi; onAction: ((a: BeatAction) => void) | null } = {
+const ui: { beat: CardBeat | null; state: BeatUi; onAction: ((a: BeatAction) => void) | null } = {
   beat: null,
   state: initialBeatUi(true),
   onAction: null,
 }
 
-export function setBeatCard(card: { beat: VisitorBeat | null; ui: BeatUi }): void {
+export function setBeatCard(card: { beat: CardBeat | null; ui: BeatUi }): void {
   ui.beat = card.beat
   ui.state = card.ui
 }
@@ -43,13 +43,12 @@ export function setBeatCardHandler(handler: (a: BeatAction) => void): void {
 
 let mounted = false
 
-/** Mount once: inside the host HUD's tree when there is one, else as its own UI root. */
+/** Mount once, in the shared right-hand card column, above the raffle card. */
 export function mountBeatOverlay(hud: { addOverlay(component: () => ReactEcs.JSX.Element | null): void } | null): void {
   if (mounted) return
   mounted = true
-  if (hud) hud.addOverlay(BeatOverlay)
-  // Same 1920x1080 design size as the HUD; under the HUD (zIndex 1000), over the scene's own UI
-  else ReactEcsRenderer.addUiRenderer(engine.addEntity(), BeatOverlay, { virtualWidth: 1920, virtualHeight: 1080, zIndex: 900 })
+  addColumnCard(BeatOverlay, 0)
+  mountCardColumn(hud)
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +84,7 @@ export function BeatOverlay() {
   const good = v.state === 'minted' || v.state === 'claimable'
   return (
     <UiEntity
-      uiTransform={{ positionType: 'absolute', position: { right: 12, top: 140 }, width: CARD_W, flexDirection: 'column', padding: 12 }}
+      uiTransform={{ width: CARD_W, flexDirection: 'column', padding: 12, margin: { top: CARD_GAP } }}
       uiBackground={{ color: C.bg }}
       onMouseDown={markHudPress}
     >

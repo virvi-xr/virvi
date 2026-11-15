@@ -1,5 +1,5 @@
 import type { PublicDraw, PublicRaffle, SceneLibraryChangeData, TransformData, TransformDraftData, VirviPlatformAdapter, VirviInitConfig, VirviStorage as VirviStorageType, HUDRenderer, BudgetLimits, Scene } from '@virvixr/shared'
-import { BEAT_CONSENT_VERSION, HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
+import { BEAT_CONSENT_VERSION, type AvailableBeat, HUD_PROTOCOL_HEADER, HUD_VERSION_HEADER, RAFFLE_CONSENT_VERSION } from '@virvixr/shared'
 import { VirviHttpClient, ColyseusManager, type RafflePatch } from '@virvixr/client'
 import { SceneManager } from './SceneManager.js'
 import { VirviStorageImpl } from './storage.js'
@@ -388,6 +388,11 @@ export class Virvi {
       this.events.emit('raffle_changed', (message as { raffle?: PublicRaffle | null } | null)?.raffle ?? null)
     })
 
+    // BEATs (LIV-11): sent once on join, so guests (no REST) learn the scene has a BEAT
+    this.colyseus.onMessage('beat_available', (message: unknown) => {
+      this.events.emit('beat_available', (message as { beat?: AvailableBeat | null } | null)?.beat ?? null)
+    })
+
     this.colyseus.onMessage('raffle_draw', (message: unknown) => {
       if ((message as PublicDraw | null)?.drawId) this.events.emit('raffle_draw', message)
     })
@@ -570,6 +575,15 @@ export class Virvi {
     }
     this.events.on('raffle_changed', handler)
     return () => this.events.off('raffle_changed', handler)
+  }
+
+  /** The scene's BEAT (name and test flag) or null, sent once on join when BEATs are on. Returns an unsubscribe. */
+  onBeatAvailable(listener: (beat: AvailableBeat | null) => void): () => void {
+    const handler = (b: AvailableBeat | null) => {
+      try { listener(b) } catch { /* swallow */ }
+    }
+    this.events.on('beat_available', handler)
+    return () => this.events.off('beat_available', handler)
   }
 
   /** A raffle draw happened: spin the wheel. Returns an unsubscribe. */

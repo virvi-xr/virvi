@@ -3,6 +3,7 @@ const _require = createRequire(import.meta.url)
 const { Room } = _require('colyseus') as any
 type Client = any
 import { activeRaffle, publicRaffle } from '../raffles/service.js'
+import { availableBeat } from '../beats/visitor.js'
 import { eq, and, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
@@ -415,6 +416,17 @@ export class VirviSceneRoom extends Room {
     client.send('auth_status', { authenticated: !!actor.userId && actor.verified })
     await this.sendVenueAccess(client)
     await this.sendCurrentRaffle(client)
+    await this.sendBeatAvailable(client)
+  }
+
+  /** Guests can't use REST: tell them on join whether the scene has a BEAT (name and test flag only) to connect a wallet for. */
+  private async sendBeatAvailable(client: Client) {
+    if (!this.sceneId || !config.beats.enabled) return
+    try {
+      client.send('beat_available', { beat: await availableBeat(this.sceneId) })
+    } catch (err) {
+      console.error('[VirviSceneRoom] beat availability failed:', err)
+    }
   }
 
   /** Guests and late joiners can't use REST for this: hand them the scene's running raffle (or null) on join. */

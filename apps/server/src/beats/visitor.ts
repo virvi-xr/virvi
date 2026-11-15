@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 import {
   BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION, beatTxUrl, cleanDisplayName,
-  type BeatClaimStatus, type BeatStatus, type VisitorBeat,
+  type AvailableBeat, type BeatClaimStatus, type BeatStatus, type VisitorBeat,
 } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
@@ -85,24 +85,40 @@ async function visitorView(beatId: string, userId: string): Promise<{ beat: Visi
 }
 
 /**
- * The scene's BEAT for the card: paid, live or ended, from BEAT_CARD_LEAD_MS before its start until the claim grace
- * after its end. One that is running wins over one still in its grace or not yet started, then the latest start.
+ * The scene's BEAT with one of `statuses`, from BEAT_CARD_LEAD_MS before its start until `afterEndMs` after its end
+ * (test BEATs hidden on mainnet). One that is running wins over one still in its grace or not yet started, then the
+ * latest start.
  */
-export async function currentBeat(sceneId: string, userId: string, now = new Date()): Promise<{ beat: VisitorBeat | null }> {
-  if (!UUID.test(sceneId)) throw notFound()
+async function sceneBeat(sceneId: string, now: Date, statuses: BeatStatus[], afterEndMs: number): Promise<BeatRow | null> {
   const t = now.toISOString()
   const rows = await db.select({ b: beats }).from(beats)
     .innerJoin(beatScenes, eq(beatScenes.beatId, beats.id))
     .where(and(
       eq(beatScenes.sceneId, sceneId),
-      inArray(beats.status, VISIBLE),
+      inArray(beats.status, statuses),
       lte(beats.startsAt, new Date(now.getTime() + BEAT_CARD_LEAD_MS)),
-      gte(beats.endsAt, new Date(now.getTime() - BEAT_CLAIM_GRACE_MS)),
+      gte(beats.endsAt, new Date(now.getTime() - afterEndMs)),
     ))
     .orderBy(sql`(${beats.startsAt} <= ${t}::timestamptz and ${beats.endsAt} >= ${t}::timestamptz) desc`, desc(beats.startsAt))
-  const b = rows.map((r) => r.b).find((r) => !hidden(r))
+  return rows.map((r) => r.b).find((r) => !hidden(r)) ?? null
+}
+
+/** The scene's BEAT for the card: paid, live or ended, from the lead time until the claim grace after its end. */
+export async function currentBeat(sceneId: string, userId: string, now = new Date()): Promise<{ beat: VisitorBeat | null }> {
+  if (!UUID.test(sceneId)) throw notFound()
+  const b = await sceneBeat(sceneId, now, VISIBLE, BEAT_CLAIM_GRACE_MS)
   if (!b) return { beat: null }
   return { beat: await toVisitor(b, await myClaimRow(db, b.id, userId)) }
+}
+
+/**
+ * For the room's `beat_available` (guests can't use REST): the scene's paid or live BEAT inside the card window
+ * (lead time to end), as its name and test flag only.
+ */
+export async function availableBeat(sceneId: string, now = new Date()): Promise<AvailableBeat | null> {
+  if (!UUID.test(sceneId)) return null
+  const b = await sceneBeat(sceneId, now, ['paid', 'live'], 0)
+  return b ? { name: b.name, test: b.chain === 'polygon-amoy' } : null
 }
 
 /**

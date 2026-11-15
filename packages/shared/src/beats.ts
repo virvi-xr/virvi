@@ -76,6 +76,9 @@ export interface PublicBeat {
   test: boolean
 }
 
+/** The room's `beat_available` on join (for guests, who can't use REST): the scene's BEAT in its card window. */
+export interface AvailableBeat { name: string; test: boolean }
+
 export interface VisitorBeat {
   id: string
   name: string

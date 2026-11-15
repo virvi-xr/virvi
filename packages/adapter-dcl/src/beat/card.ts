@@ -2,7 +2,7 @@
  * The visitor's BEAT card (LIV-11): which state a BEAT is in for me, and what the card shows. Pure (no @dcl/sdk), so
  * it is unit-tested; BeatOverlay.tsx draws it and beat/connect.ts feeds it.
  */
-import { beatConsentText, type VisitorBeat } from '@virvixr/shared'
+import { beatConsentText, type AvailableBeat, type VisitorBeat } from '@virvixr/shared'
 import { httpStatusOf } from '../edit-errors.js'
 import { errorCodeOf } from '../raffle/card.js'
 
@@ -57,13 +57,21 @@ export interface BeatViewModel {
 
 export const GUEST_LINE = 'Connect a wallet to earn this BEAT'
 
+/** What the card can be given: the visitor's BEAT (HTTP), or for a guest the room's `beat_available` (name and test flag). */
+export type CardBeat = VisitorBeat | AvailableBeat
+
+const isVisitorBeat = (b: CardBeat): b is VisitorBeat => 'id' in b
+/** One per BEAT: its id, or for a guest's announced BEAT (no id) its name. */
+export const beatKey = (b: CardBeat | null): string | null => (b ? (isVisitorBeat(b) ? b.id : b.name) : null)
+
 const minutes = (n: number) => `${n} ${n === 1 ? 'minute' : 'minutes'}`
 const minMinutes = (b: VisitorBeat) => Math.max(1, Math.ceil(b.minPresentSeconds / 60))
 
 /** The BEAT's state for me at `now` (ms), before the consent view is layered on. */
-export function beatState(beat: VisitorBeat | null, now: number, ui: Pick<BeatUi, 'guest' | 'noticeDone'>): BeatCardState {
+export function beatState(beat: CardBeat | null, now: number, ui: Pick<BeatUi, 'guest' | 'noticeDone'>): BeatCardState {
   if (!beat) return 'hidden'
   if (ui.guest) return ui.noticeDone ? 'hidden' : 'guest'
+  if (!isVisitorBeat(beat)) return 'hidden'
   const c = beat.myClaim
   if (c?.status === 'minted') return 'minted'
   if (c?.status === 'claimed' || c?.status === 'minting') return 'pending'
@@ -76,20 +84,18 @@ export function beatState(beat: VisitorBeat | null, now: number, ui: Pick<BeatUi
   return c ? 'tracking' : 'offer'
 }
 
-export function cardView(beat: VisitorBeat | null, now: number, ui: BeatUi = initialBeatUi(false)): BeatViewModel {
+export function cardView(beat: CardBeat | null, now: number, ui: BeatUi = initialBeatUi(false)): BeatViewModel {
   let state = beatState(beat, now, ui)
   if (state === 'offer' && ui.view === 'consent') state = 'consent'
   const base: BeatViewModel = {
     state, visible: state !== 'hidden', title: beat?.name ?? '', test: !!beat?.test, line: null, body: null, progress: null, txUrl: null, actions: [], note: ui.note,
   }
   if (!beat) return base
+  if (state === 'guest') return { ...base, line: GUEST_LINE, actions: [{ id: 'dismiss', label: 'OK' }] }
+  if (state === 'hidden' || !isVisitorBeat(beat)) return base
   const name = beat.name
   const idle = !ui.busy
   switch (state) {
-    case 'hidden':
-      return base
-    case 'guest':
-      return { ...base, line: GUEST_LINE, actions: [{ id: 'dismiss', label: 'OK' }] }
     case 'offer':
       return { ...base, line: `Attend for ${minutes(minMinutes(beat))} to earn the ${name} BEAT`, actions: idle ? [{ id: 'track', label: 'Track my attendance' }] : [] }
     case 'consent':
@@ -117,9 +123,9 @@ export function cardView(beat: VisitorBeat | null, now: number, ui: BeatUi = ini
 }
 
 /** Check in (rather than just read the BEAT) while tracking and short of the minimum. */
-export const checkInWanted = (beat: VisitorBeat | null, now: number, ui: BeatUi) => beatState(beat, now, ui) === 'tracking'
+export const checkInWanted = (beat: CardBeat | null, now: number, ui: BeatUi) => beatState(beat, now, ui) === 'tracking'
 
-/** The guest notice: shown once per BEAT for the session (memory only), until dismissed or `showMs` of engine time. */
+/** The guest notice: shown once per BEAT (beatKey) for the session (memory only), until dismissed or `showMs` of engine time. */
 export class GuestNotice {
   private shownMs = new Map<string, number>()
   private finished = new Set<string>()

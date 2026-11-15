@@ -1,5 +1,5 @@
 /**
- * The in-world raffle overlay (LIV-55): the visitor's raffle card (enter with consent, withdraw, rules, won and
+ * The in-world raffle overlay (LIV-55): the visitor's raffle card (drawn in the shared card column, card-column.tsx) (enter with consent, withdraw, rules, won and
  * closed states, the guest line) and the wheel everyone in the scene sees on a draw. Drawn from this module's
  * state; raffle/connect.ts feeds it.
  *
@@ -11,6 +11,7 @@ import { Color4 } from '@dcl/sdk/math'
 import { engine } from '@dcl/sdk/ecs'
 import type { PublicDraw } from '@virvixr/shared'
 import { markHudPress } from '../hud/press.js'
+import { addColumnCard, CARD_GAP, mountCardColumn } from '../card-column.js'
 import { cardView, initialCard, plainText, type CardAction, type RaffleCard } from './card.js'
 import { WHEEL_SHOW_MS, WHEEL_SPIN_MS, WINNERS_CARD_MS, angleAt, drumRows, sliceAtPointer, spinPlan, wheelSlices, winnerSlice, type SpinKeyframe, type WheelSlice } from './wheel.js'
 
@@ -75,6 +76,9 @@ let mounted = false
 export function mountRaffleOverlay(hud: { addOverlay(component: () => ReactEcs.JSX.Element | null): void } | null): void {
   if (mounted) return
   mounted = true
+  // The card goes in the shared right-hand column (under the BEAT card); the wheel is this overlay's own
+  addColumnCard(RaffleCardView, 1)
+  mountCardColumn(hud)
   if (hud) hud.addOverlay(RaffleOverlay)
   // Same 1920x1080 design size as the HUD; under the HUD (zIndex 1000), over the scene's own UI
   else ReactEcsRenderer.addUiRenderer(engine.addEntity(), RaffleOverlay, { virtualWidth: 1920, virtualHeight: 1080, zIndex: 900 })
@@ -112,7 +116,7 @@ function RaffleCardView() {
   const bodyWidth = CARD_W - 28
   return (
     <UiEntity
-      uiTransform={{ positionType: 'absolute', position: { right: 12, bottom: 160 }, width: CARD_W, flexDirection: 'column', padding: 12 }}
+      uiTransform={{ width: CARD_W, flexDirection: 'column', padding: 12, margin: { top: CARD_GAP } }}
       uiBackground={{ color: C.bg }}
       onMouseDown={markHudPress}
     >
@@ -208,7 +212,6 @@ function WinnersCard({ winners }: { winners: string[] }) {
 export function RaffleOverlay() {
   return (
     <UiEntity uiTransform={{ width: '100%', height: '100%', positionType: 'absolute' }}>
-      <RaffleCardView />
       <Wheel />
     </UiEntity>
   )
