@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { PageHeader, Skeleton } from '@/components/ui'
 import { AdminBeatsView } from '@/components/beats/AdminBeats'
-import { BEATS_OFF, clearPause, loadAdminBeats, retryFailed, type AdminBeatsOverview } from '@/lib/admin-beats'
+import { BEATS_OFF, clearPause, giveUp, loadAdminBeats, retryFailed, type AdminBeatsOverview } from '@/lib/admin-beats'
 
 /** Admin: the BEAT minters, claims and transactions (LIV-11). */
 export default function AdminBeatsPage() {
@@ -38,7 +38,8 @@ export default function AdminBeatsPage() {
         : data === 'off' ? <p className="text-sm text-gray-400">{BEATS_OFF}</p>
         : <AdminBeatsView data={data} busy={busy}
             onRetry={(beatId) => run(() => retryFailed(api, beatId))}
-            onClearPause={(chain: BeatChain) => run(() => clearPause(api, chain))} />}
+            onClearPause={(chain: BeatChain) => run(() => clearPause(api, chain))}
+            onGiveUp={(beatId) => run(() => giveUp(api, beatId))} />}
     </div>
   )
 }

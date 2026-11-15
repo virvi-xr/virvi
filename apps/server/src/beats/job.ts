@@ -11,6 +11,7 @@ import { withLock } from '../errors/jobs.js'
 import { recordJobFailure } from '../errors/record.js'
 import { BEAT_RECEIVER_GAS } from './abi.js'
 import { BeatRevert, BeatRpcError, beatChainClient, beatInterface, type BeatCall, type BeatChainClient, type BeatLog, type BeatSigned } from './chain.js'
+import { BeatError } from './errors.js'
 import { lockBeat } from './lock.js'
 import { sweepBeatPayments } from './payments.js'
 
@@ -112,10 +113,19 @@ function shortOf(chain: BeatChain): void {
 /**
  * Claim failure reasons that are final for that wallet, so they never hold a BEAT open: the contract skipped or the
  * wallet's receiver hook refused it (`receiver_rejected`, `ERC1155InvalidReceiver`), or the BEAT is already closed on
- * chain (`BeatClosedError`). Every other reason (send_failed, reverted, InsufficientGas, unknown, ...) can succeed on
- * an admin's retry, so a BEAT with such a claim isn't closed.
+ * chain (`BeatClosedError`), or an admin gave up on it so the BEAT can close (`given_up`). Every other reason
+ * (send_failed, reverted, InsufficientGas, unknown, ...) can succeed on an admin's retry, so a BEAT with such a claim
+ * isn't closed.
  */
-export const BEAT_FINAL_FAIL_REASONS = ['receiver_rejected', 'ERC1155InvalidReceiver', 'BeatClosedError'] as const
+export const BEAT_FINAL_FAIL_REASONS = ['receiver_rejected', 'ERC1155InvalidReceiver', 'BeatClosedError', 'given_up'] as const
+/** The reason an admin's give-up writes; retryFailedClaims leaves these claims failed. */
+export const BEAT_GIVEN_UP = 'given_up'
+
+/** A claim that failed for a reason an admin's retry could still mint (not in BEAT_FINAL_FAIL_REASONS). */
+export const retryableFailed = and(
+  eq(beatClaims.status, 'failed'),
+  sql`coalesce(${beatClaims.failReason}, '') not in (${sql.join(BEAT_FINAL_FAIL_REASONS.map((x) => sql`${x}`), sql`, `)})`,
+)!
 
 function decodeCall(data: string): BeatCall {
   const tx = beatInterface.parseTransaction({ data })
@@ -726,9 +736,11 @@ async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, non
  * in `skippedClosed`.
  */
 export async function retryFailedClaims(beatId?: string): Promise<{ retried: number; skippedClosed: number }> {
-  const scope = (id: string) => and(eq(beatClaims.status, 'failed'), eq(beatClaims.beatId, id))
+  // Given-up claims stay failed: the admin chose to let the BEAT close without them
+  const notGivenUp = sql`coalesce(${beatClaims.failReason}, '') <> ${BEAT_GIVEN_UP}`
+  const scope = (id: string) => and(eq(beatClaims.status, 'failed'), eq(beatClaims.beatId, id), notGivenUp)
   const ids = await db.selectDistinct({ id: beatClaims.beatId }).from(beatClaims)
-    .where(and(eq(beatClaims.status, 'failed'), beatId ? eq(beatClaims.beatId, beatId) : undefined))
+    .where(and(eq(beatClaims.status, 'failed'), notGivenUp, beatId ? eq(beatClaims.beatId, beatId) : undefined))
   let retried = 0
   let skippedClosed = 0
   for (const { id } of ids) {
@@ -750,6 +762,26 @@ export async function retryFailedClaims(beatId?: string): Promise<{ retried: num
     })
   }
   return { retried, skippedClosed }
+}
+
+/**
+ * The admin's give-up: an ended BEAT past its claim grace that is held open by claims failed for a retryable reason gets
+ * those claims marked `given_up` (final), so the next tick closes it. Under the BEAT's lock, as retry and a close's
+ * insert. 404 for an unknown BEAT, 409 `too_early` unless it has ended and its grace is over.
+ */
+export async function giveUpFailedClaims(beatId: string, now: Date): Promise<{ givenUp: number }> {
+  return db.transaction(async (tx) => {
+    await lockBeat(tx, beatId)
+    const [row] = await tx.select({ status: beats.status, endsAt: beats.endsAt }).from(beats).where(eq(beats.id, beatId))
+    if (!row) throw new BeatError(404, 'not_found', 'BEAT not found.')
+    if (row.status !== 'ended' || row.endsAt.getTime() + BEAT_CLAIM_GRACE_MS > now.getTime()) {
+      throw new BeatError(409, 'too_early', 'Only a BEAT that ended and is past its claim grace can be closed this way.')
+    }
+    const rows = await tx.update(beatClaims).set({ failReason: BEAT_GIVEN_UP })
+      .where(and(eq(beatClaims.beatId, beatId), retryableFailed)).returning({ id: beatClaims.id })
+    console.log(`[beats] BEAT ${beatId}: an admin gave up on ${rows.length} failed claims`)
+    return { givenUp: rows.length }
+  })
 }
 
 /** Runs the tick every BEAT_JOB_EVERY_MS (the first 30 s after boot). Returns a stopper. */

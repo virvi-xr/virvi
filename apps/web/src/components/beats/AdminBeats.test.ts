@@ -10,9 +10,10 @@ const data = (over: Partial<AdminBeatsOverview> = {}): AdminBeatsOverview => ({
   counts: { claimed: 4, minting: 2, failed: 1 },
   failed: [{ beatId: 'b1', name: 'Launch party', wallet: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', failReason: 'reverted' }],
   batches: [{ id: 't1', chain: 'polygon-amoy', kind: 'mint', tokenId: '7', nonce: 3, status: 'confirmed', attempts: 1, txUrl: 'https://amoy.polygonscan.com/tx/0xaa', createdAt: '2026-11-14T12:00:00Z' }],
+  held: [],
   ...over,
 })
-const render = (d: AdminBeatsOverview) => renderToStaticMarkup(createElement(AdminBeatsView, { data: d, busy: false, onRetry: () => {}, onClearPause: () => {} }))
+const render = (d: AdminBeatsOverview) => renderToStaticMarkup(createElement(AdminBeatsView, { data: d, busy: false, onRetry: () => {}, onClearPause: () => {}, onGiveUp: () => {} }))
 
 describe('AdminBeatsView (LIV-11)', () => {
   it('shows the minter with a copy button, the balance in POL, the counts, failed claims and batch links', () => {
@@ -47,5 +48,12 @@ describe('AdminBeatsView (LIV-11)', () => {
     const html = render(data({ chains: [{ ...data().chains[0], balanceWei: null, balanceError: true }] }))
     expect(html).toContain('Balance unavailable')
     expect(html).not.toContain('0 POL')
+  })
+  it('offers "Stop retrying and close" (an in-page confirm, not a browser one) only for BEATs a give-up can close', () => {
+    expect(render(data())).not.toContain('Stop retrying and close')
+    const html = render(data({ held: [{ beatId: 'b1', name: 'Launch party', retryable: 3 }] }))
+    expect(html).toContain('Stop retrying and close')
+    expect(html).toContain('3 failed claims hold it open')
+    expect(html).not.toContain('confirm(')
   })
 })

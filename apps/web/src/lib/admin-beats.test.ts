@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BEATS_OFF, balanceLabel, clearPause, formatPol, loadAdminBeats, pauseMessage, retryFailed, type AdminBeatChain } from './admin-beats'
+import { BEATS_OFF, balanceLabel, clearPause, formatPol, giveUp, loadAdminBeats, pauseMessage, retryFailed, type AdminBeatChain } from './admin-beats'
 
 const chain = (over: Partial<AdminBeatChain> = {}): AdminBeatChain => ({
   chain: 'polygon-amoy', contract: null, minter: '0x1234567890abcdef1234567890abcdef12345678',
@@ -56,5 +56,12 @@ describe('admin BEATs helpers (LIV-11)', () => {
     const api = { clearAdminBeatPause: vi.fn().mockResolvedValue({ ok: true }) }
     await clearPause(api, 'polygon')
     expect(api.clearAdminBeatPause).toHaveBeenCalledWith('polygon')
+  })
+  it('Stop retrying and close calls the API for that BEAT and says what happens next', async () => {
+    const api = { giveUpAdminBeat: vi.fn().mockResolvedValue({ givenUp: 2 }) }
+    expect(await giveUp(api, 'b1')).toBe('2 failed claims won\'t be retried. The BEAT closes on chain shortly.')
+    expect(api.giveUpAdminBeat).toHaveBeenCalledWith('b1')
+    api.giveUpAdminBeat.mockResolvedValue({ givenUp: 1 })
+    expect(await giveUp(api, 'b1')).toBe('1 failed claim won\'t be retried. The BEAT closes on chain shortly.')
   })
 })

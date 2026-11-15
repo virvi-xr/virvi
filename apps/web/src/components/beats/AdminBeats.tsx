@@ -43,8 +43,8 @@ function ChainCard({ c, busy, onClearPause }: { c: AdminBeatChain; busy: boolean
 }
 
 /** The admin BEATs page body: minters per chain, claim counts, failed claims and recent transactions. */
-export function AdminBeatsView({ data, busy, onRetry, onClearPause }: {
-  data: AdminBeatsOverview; busy: boolean; onRetry: (beatId?: string) => void; onClearPause: (chain: BeatChain) => void
+export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: {
+  data: AdminBeatsOverview; busy: boolean; onRetry: (beatId?: string) => void; onClearPause: (chain: BeatChain) => void; onGiveUp: (beatId: string) => void
 }) {
   return (
     <div className="space-y-4">
@@ -83,6 +83,23 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause }: {
           </div>
         )}
       </section>
+
+      {data.held.length > 0 && (
+        <section className="rounded-lg border border-gray-800">
+          <h2 className="border-b border-gray-800 px-3 py-2 text-sm font-semibold">Held open by failed claims</h2>
+          <ul className="divide-y divide-gray-800 text-sm">
+            {data.held.map((h) => (
+              <li key={h.beatId} className="flex flex-wrap items-center justify-between gap-3 p-3">
+                <span>{h.name} <span className="text-xs text-gray-400">{h.retryable} failed {h.retryable === 1 ? 'claim holds' : 'claims hold'} it open</span></span>
+                <ConfirmAction prompt={`Stop retrying ${h.name}'s failed claims and close it on chain? They won't be minted.`} confirmLabel="Stop and close"
+                  onConfirm={() => onGiveUp(h.beatId)} disabled={busy} className={btn}>
+                  Stop retrying and close
+                </ConfirmAction>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="rounded-lg border border-gray-800">
         <h2 className="border-b border-gray-800 px-3 py-2 text-sm font-semibold">Recent transactions</h2>

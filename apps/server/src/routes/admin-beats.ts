@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
-import { desc, eq, sql } from 'drizzle-orm'
-import { BEAT_CHAINS, beatTxUrl, type BeatChain } from '@virvixr/shared'
+import { and, desc, eq, isNull, lte, sql } from 'drizzle-orm'
+import { BEAT_CHAINS, BEAT_CLAIM_GRACE_MS, beatTxUrl, type BeatChain } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { beatClaims, beatMintBatches, beats } from '../db/schema.js'
 import { config } from '../config.js'
@@ -8,14 +8,17 @@ import { authenticate } from '../middleware/auth.js'
 import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { beatChainClient, beatChainMissing } from '../beats/chain.js'
-import { beatPaused, type BeatPauseReason, clearBeatPause, retryFailedClaims, safeErr } from '../beats/job.js'
+import { BeatError } from '../beats/errors.js'
+import {
+  beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
+} from '../beats/job.js'
 
 const FAILED_LIST_MAX = 200
 const BATCH_LIST_MAX = 50
 
 /**
  * The admin BEAT page (LIV-11): minter balance and pauses per chain (and the server's chain, with what it's missing,
- * when it has no minter or contract), claim counts, failed claims and the latest transactions. Site admins only, and dark with the rest of BEAT: 404 unless BEAT_ENABLED. Responses carry visitors'
+ * when it has no minter or contract), claim counts, failed claims, the BEATs they hold open, and the latest transactions. Site admins only, and dark with the rest of BEAT: 404 unless BEAT_ENABLED. Responses carry visitors'
  * wallets (admins need them for failed claims); nothing here logs them.
  */
 export default async function adminBeatRoutes(app: FastifyInstance) {
@@ -71,13 +74,32 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
         txUrl: hash ? beatTxUrl(b.chain, hash) : null, createdAt: b.createdAt.toISOString(),
       }
     })
-    return reply.send({ chains, counts, failed, batches })
+    // BEATs a give-up would let close: ended past the claim grace, not closed on chain, held by retryable failed claims
+    const held = await db.select({ beatId: beats.id, name: beats.name, retryable: sql<number>`count(*)::int` })
+      .from(beatClaims).innerJoin(beats, eq(beats.id, beatClaims.beatId))
+      .where(and(
+        eq(beats.status, 'ended'), lte(beats.endsAt, new Date(Date.now() - BEAT_CLAIM_GRACE_MS)), isNull(beats.closedOnChainAt), retryableFailed,
+      ))
+      .groupBy(beats.id, beats.name, beats.endsAt).orderBy(beats.endsAt)
+    return reply.send({ chains, counts, failed, batches, held })
   })
 
   app.post<{ Body: { beatId?: unknown } }>('/api/admin/beats/retry-failed', async (request, reply) => {
     const beatId = request.body?.beatId
     if (beatId !== undefined && (typeof beatId !== 'string' || !isUuid(beatId))) return reply.status(400).send({ error: 'bad_beat_id', message: 'Not a BEAT id.' })
     return reply.send(await retryFailedClaims(beatId as string | undefined))
+  })
+
+  // Stop retrying a BEAT's failed claims so it can close on chain (they become final: `given_up`)
+  app.post<{ Params: { id: string } }>('/api/admin/beats/:id/give-up', async (request, reply) => {
+    const { id } = request.params
+    if (!isUuid(id)) return reply.status(400).send({ error: 'bad_beat_id', message: 'Not a BEAT id.' })
+    try {
+      return reply.send(await giveUpFailedClaims(id, new Date()))
+    } catch (e) {
+      if (e instanceof BeatError) return reply.status(e.status).send({ error: e.code, message: e.message })
+      throw e
+    }
   })
 
   // An id_conflict pause is sticky: an admin lifts it once the clash has been looked into

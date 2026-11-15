@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { Wallet, parseEther } from 'ethers'
-import { beatTxUrl } from '@virvixr/shared'
+import { BEAT_CLAIM_GRACE_MS, beatTxUrl } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { beatClaims, beatMintBatches, beatPayments, beats } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
-import { beatPaused, resetBeatJobState, runBeatTick } from '../src/beats/job.js'
+import { beatPaused, resetBeatJobState, retryFailedClaims, runBeatTick } from '../src/beats/job.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
@@ -191,5 +191,83 @@ describe('admin BEAT routes (LIV-11)', () => {
       expect(bad.statusCode).toBe(400)
       expect(bad.json().error).toBe('bad_chain')
     }
+  })
+
+  describe('give up on failed claims and close', () => {
+    const MIN = 60_000
+    /** An ended BEAT on chain; `ago` is how long before now it ended (real time: the route reads the clock). */
+    async function endedBeat(tokenId: number, ago: number) {
+      const b = await seedBeat(tokenId)
+      const endsAt = new Date(Date.now() - ago)
+      await db.update(beats).set({ status: 'ended', startsAt: new Date(endsAt.getTime() - H), endsAt }).where(eq(beats.id, b.id))
+      return b
+    }
+    const failed = (beatId: string, failReason: string | null) =>
+      db.insert(beatClaims).values({ beatId, wallet: wallet(), consentVersion: 1, status: 'failed', failReason }).returning()
+
+    it('marks the retryable failed claims given_up (final ones untouched), and the next tick closes the BEAT', async () => {
+      const b = await endedBeat(920, BEAT_CLAIM_GRACE_MS + MIN)
+      const [r1] = await failed(b.id, 'send_failed')
+      const [r2] = await failed(b.id, null)
+      const [f1] = await failed(b.id, 'receiver_rejected')
+      await runBeatTick(new Date())
+      expect(fake.mempool()).toHaveLength(0) // held open by the retryable failures
+      const res = await call('POST', `/api/admin/beats/${b.id}/give-up`)
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ givenUp: 2 })
+      const rows = await db.select().from(beatClaims).where(eq(beatClaims.beatId, b.id))
+      const reason = (id: string) => rows.find((r) => r.id === id)!
+      expect([reason(r1.id), reason(r2.id)].map((r) => [r.status, r.failReason])).toEqual([['failed', 'given_up'], ['failed', 'given_up']])
+      expect(reason(f1.id).failReason).toBe('receiver_rejected')
+      await runBeatTick(new Date())
+      expect(fake.mempool().map((t) => t.call)).toEqual([{ kind: 'close', tokenId: 920n }])
+    })
+
+    it('is refused with 409 before the claim grace is over, or for a BEAT that has not ended; 404 for an unknown one', async () => {
+      const b = await endedBeat(921, BEAT_CLAIM_GRACE_MS - MIN)
+      await failed(b.id, 'reverted')
+      const res = await call('POST', `/api/admin/beats/${b.id}/give-up`)
+      expect(res.statusCode).toBe(409)
+      expect(res.json().error).toBe('too_early')
+      const live = await seedBeat(922)
+      await failed(live.id, 'reverted')
+      expect((await call('POST', `/api/admin/beats/${live.id}/give-up`)).statusCode).toBe(409)
+      expect((await db.select().from(beatClaims)).every((r) => r.failReason === 'reverted')).toBe(true)
+      expect((await call('POST', '/api/admin/beats/00000000-0000-4000-8000-000000000000/give-up')).statusCode).toBe(404)
+      expect((await call('POST', '/api/admin/beats/nope/give-up')).statusCode).toBe(400)
+    })
+
+    it('is for site admins only, and 404 while BEAT is dark', async () => {
+      const b = await endedBeat(923, BEAT_CLAIM_GRACE_MS + MIN)
+      expect((await call('POST', `/api/admin/beats/${b.id}/give-up`, plain)).statusCode).toBe(403)
+      expect((await call('POST', `/api/admin/beats/${b.id}/give-up`, null)).statusCode).toBe(401)
+      set({ enabled: false })
+      expect((await call('POST', `/api/admin/beats/${b.id}/give-up`)).statusCode).toBe(404)
+    })
+
+    it('retry skips given_up claims', async () => {
+      const b = await endedBeat(924, BEAT_CLAIM_GRACE_MS + MIN)
+      await failed(b.id, 'given_up')
+      const [other] = await failed(b.id, 'reverted')
+      expect(await retryFailedClaims(b.id)).toEqual({ retried: 1, skippedClosed: 0 })
+      expect(await retryFailedClaims()).toEqual({ retried: 0, skippedClosed: 0 })
+      const rows = await db.select().from(beatClaims).where(eq(beatClaims.beatId, b.id))
+      expect(rows.map((r) => [r.id === other.id, r.status, r.failReason]).sort()).toEqual([[false, 'failed', 'given_up'], [true, 'claimed', null]])
+    })
+
+    it('the overview lists the BEATs a give-up can close: ended past the grace, not closed, with retryable failed claims', async () => {
+      const eligible = await endedBeat(925, BEAT_CLAIM_GRACE_MS + MIN)
+      await failed(eligible.id, 'send_failed')
+      await failed(eligible.id, 'reverted')
+      await failed(eligible.id, 'receiver_rejected')
+      const early = await endedBeat(926, BEAT_CLAIM_GRACE_MS - MIN)
+      await failed(early.id, 'send_failed')
+      const finalOnly = await endedBeat(927, BEAT_CLAIM_GRACE_MS + MIN)
+      await failed(finalOnly.id, 'given_up')
+      const shut = await endedBeat(928, BEAT_CLAIM_GRACE_MS + MIN)
+      await db.update(beats).set({ closedOnChainAt: new Date() }).where(eq(beats.id, shut.id))
+      await failed(shut.id, 'send_failed')
+      expect((await call('GET', '/api/admin/beats')).json().held).toEqual([{ beatId: eligible.id, name: 'Beat 925', retryable: 2 }])
+    })
   })
 })

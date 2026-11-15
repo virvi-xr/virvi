@@ -22,6 +22,8 @@ export interface AdminBeatsOverview {
   counts: { claimed: number; minting: number; failed: number }
   failed: Array<{ beatId: string; name: string; wallet: string; failReason: string | null }>
   batches: Array<{ id: string; chain: BeatChain; kind: string; tokenId: string; nonce: number; status: string; attempts: number; txUrl: string | null; createdAt: string }>
+  /** Ended BEATs past their claim grace that claims failed for a retryable reason keep open on chain: "Stop retrying and close" applies. */
+  held: Array<{ beatId: string; name: string; retryable: number }>
 }
 
 export const BEATS_OFF = 'BEATs are off.'
@@ -78,4 +80,10 @@ export async function retryFailed(
 /** Lift a chain's id-conflict pause, once the clash has been looked into. */
 export async function clearPause(api: { clearAdminBeatPause: (chain: BeatChain) => Promise<{ ok: boolean }> }, chain: BeatChain): Promise<void> {
   await api.clearAdminBeatPause(chain)
+}
+
+/** Stop retrying and close: the BEAT's retryable failed claims become final (given up), and the next tick closes it. */
+export async function giveUp(api: { giveUpAdminBeat: (beatId: string) => Promise<{ givenUp: number }> }, beatId: string): Promise<string> {
+  const { givenUp } = await api.giveUpAdminBeat(beatId)
+  return `${givenUp} failed ${givenUp === 1 ? 'claim' : 'claims'} won't be retried. The BEAT closes on chain shortly.`
 }
