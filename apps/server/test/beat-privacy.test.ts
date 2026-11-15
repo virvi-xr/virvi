@@ -5,7 +5,7 @@ import { Wallet, parseEther } from 'ethers'
 import { BEAT_RETENTION_DAYS } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beatMintBatches, beatPayments, beats, raffleEntries, raffles, userAuthMethods, users } from '../src/db/schema.js'
+import { beatClaims, beatMintBatches, beatPayments, beats, raffleDraws, raffleEntries, raffles, userAuthMethods, users } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
 import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
@@ -236,6 +236,26 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       expect(await entryById(dup.id)).toBeUndefined()
       expect(await entryById(keep.id)).toMatchObject({ userId: account.id, displayName: 'Account name' })
       expect((await db.select().from(raffleEntries).where(eq(raffleEntries.userId, account.id))).map((e) => e.id).sort()).toEqual([moved.id, keep.id].sort())
+    })
+
+    it('M3: where the visitor\'s duplicate entry won a draw, it is the one kept (moved), and the account\'s losing one goes', async () => {
+      const w = wallet()
+      const shell = await createUser({ role: 'viewer', email: null, wallet: w, name: 'Shell' })
+      const account = await createUser({ role: 'creator' })
+      const r = await raffle('Won')
+      const winner = await entry(r.id, shell, w, 'Shell winner')
+      const loser = await entry(r.id, account, wallet(), 'Account loser')
+      await db.insert(raffleDraws).values({ raffleId: r.id, mode: 'one_per_person', pool: [], seed: 's', winnerEntryIds: [winner.id] })
+      // and where the account's own entry won, it stays and the visitor's goes
+      const r2 = await raffle('Mine won')
+      const theirs = await entry(r2.id, shell, w, 'Shell other')
+      const mine = await entry(r2.id, account, wallet(), 'Account winner')
+      await db.insert(raffleDraws).values({ raffleId: r2.id, mode: 'one_per_person', pool: [], seed: 's', winnerEntryIds: [mine.id] })
+      expect(await linkVerifiedWallet(account.id, w)).toBe('linked')
+      expect(await entryById(winner.id)).toMatchObject({ userId: account.id, displayName: 'Shell winner' })
+      expect(await entryById(loser.id)).toBeUndefined()
+      expect(await entryById(mine.id)).toMatchObject({ userId: account.id })
+      expect(await entryById(theirs.id)).toBeUndefined()
     })
 
     it('a visitor that keeps its account (it owns a scene) still hands its entries over', async () => {

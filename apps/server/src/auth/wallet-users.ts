@@ -51,8 +51,12 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string) 
     // BEAT claims follow the account, except on a BEAT it already claimed (the unique index; the FK then nulls that one's user_id)
     await tx.execute(sql`update beat_claims c set user_id = ${userId}::uuid where c.user_id = ${shellId}::uuid
       and not exists (select 1 from beat_claims o where o.beat_id = c.beat_id and o.user_id = ${userId}::uuid)`)
-    // Raffle entries too (else the visitor's deletion would cascade them away). Where the account already entered the
-    // same raffle (one entry per user), its own entry stays and the visitor's goes
+    // Raffle entries too (else the visitor's deletion would cascade them away). Where both entered the same raffle (one
+    // entry per user), the account's own entry stays and the visitor's goes, unless only the visitor's won a draw: then
+    // the winning one is kept, so the draw's winner stays a live entry
+    const won = (e: string) => sql.raw(`exists (select 1 from raffle_draws d where d.raffle_id = ${e}.raffle_id and ${e}.id = any(d.winner_entry_ids))`)
+    await tx.execute(sql`delete from raffle_entries a where a.user_id = ${userId}::uuid and not ${won('a')}
+      and exists (select 1 from raffle_entries v where v.raffle_id = a.raffle_id and v.user_id = ${shellId}::uuid and ${won('v')})`)
     await tx.execute(sql`update raffle_entries e set user_id = ${userId}::uuid where e.user_id = ${shellId}::uuid
       and not exists (select 1 from raffle_entries o where o.raffle_id = e.raffle_id and o.user_id = ${userId}::uuid)`)
     await tx.delete(raffleEntries).where(eq(raffleEntries.userId, shellId))
