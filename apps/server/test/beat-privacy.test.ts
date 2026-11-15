@@ -5,14 +5,14 @@ import { Wallet, parseEther } from 'ethers'
 import { BEAT_RETENTION_DAYS } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beatMintBatches, beatPayments, beats, userAuthMethods, users } from '../src/db/schema.js'
+import { beatClaims, beatMintBatches, beatPayments, beats, raffleEntries, raffles, userAuthMethods, users } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
 import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
 import { deleteMyBeatData, scrubBeats } from '../src/beats/retention.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { resetDb } from './helpers/db.js'
-import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
+import { testApp, createScene, createUser, tokenFor, type TestUser } from './helpers/factories.js'
 import { fakeBeatChain, type FakeBeatChain } from './helpers/fake-beat-chain.js'
 
 vi.mock('../src/errors/record.js', async (orig) => ({
@@ -208,6 +208,47 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       // and the account's delete-my-data now reaches the moved claim
       expect(await deleteMyBeatData(account.id, T0)).toMatchObject({ deleted: 2 })
       expect(await byId(moved.id)).toBeUndefined()
+    })
+  })
+
+  describe('raffle entries when a visitor is absorbed', () => {
+    async function raffle(name: string) {
+      const scene = (await createScene(host, name)).scene.id
+      const [r] = await db.insert(raffles).values({ sceneId: scene, createdBy: host.id, name, prize: 'A hat', winnersCount: 1, status: 'open' }).returning()
+      return r
+    }
+    const entry = async (raffleId: string, u: TestUser, w: string, displayName: string) =>
+      (await db.insert(raffleEntries).values({ raffleId, userId: u.id, wallet: w, displayName, consentVersion: 1, secondsPresent: 120 }).returning())[0]
+    const entryById = async (id: string) => (await db.select().from(raffleEntries).where(eq(raffleEntries.id, id)))[0]
+
+    it('move to the absorbing account; where it already entered the same raffle, its own entry is kept and the visitor\'s dropped', async () => {
+      const w = wallet()
+      const shell = await createUser({ role: 'viewer', email: null, wallet: w, name: 'Shell' })
+      const account = await createUser({ role: 'creator' })
+      const solo = await raffle('Solo')
+      const both = await raffle('Both')
+      const moved = await entry(solo.id, shell, w, 'Shell name')
+      const dup = await entry(both.id, shell, w, 'Shell dup')
+      const keep = await entry(both.id, account, wallet(), 'Account name')
+      expect(await linkVerifiedWallet(account.id, w)).toBe('linked')
+      expect(await db.select().from(users).where(eq(users.id, shell.id))).toHaveLength(0)
+      expect(await entryById(moved.id)).toMatchObject({ userId: account.id, wallet: w, displayName: 'Shell name', secondsPresent: 120 })
+      expect(await entryById(dup.id)).toBeUndefined()
+      expect(await entryById(keep.id)).toMatchObject({ userId: account.id, displayName: 'Account name' })
+      expect((await db.select().from(raffleEntries).where(eq(raffleEntries.userId, account.id))).map((e) => e.id).sort()).toEqual([moved.id, keep.id].sort())
+    })
+
+    it('a visitor that keeps its account (it owns a scene) still hands its entries over', async () => {
+      const w = wallet()
+      const shell = await createUser({ role: 'viewer', email: null, wallet: w, name: 'Shell' })
+      await createScene(shell, 'Shell scene')
+      const account = await createUser({ role: 'creator' })
+      const r = await raffle('Kept')
+      const moved = await entry(r.id, shell, w, 'Shell name')
+      expect(await linkVerifiedWallet(account.id, w)).toBe('linked')
+      expect(await db.select().from(users).where(eq(users.id, shell.id))).toHaveLength(1)
+      expect(await entryById(moved.id)).toMatchObject({ userId: account.id })
+      expect(await db.select().from(raffleEntries).where(eq(raffleEntries.userId, shell.id))).toHaveLength(0)
     })
   })
 

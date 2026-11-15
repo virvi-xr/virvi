@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { accessGrants, assetLibraryItems, mediaAssets, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
+import { accessGrants, assetLibraryItems, mediaAssets, raffleEntries, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
 import { moveStudioData } from '../studio/merge.js'
 import { claimWalletInvites } from '../studio/invites.js'
 import { initialRoleForNewUser } from './roles.js'
@@ -41,7 +41,7 @@ export async function resolveVerifiedWalletUser(wallet: string, displayName: str
 /** A viewer account made for an in-world visitor, never signed in to the dashboard. */
 const isVisitorShell = (u: { role: string; email: string | null }) => u.role === 'viewer' && u.email === null
 
-/** Move a visitor account's wallet, grants and roles to `userId`; drop the visitor account if it owns nothing. */
+/** Move a visitor account's wallet, grants, roles, BEAT claims and raffle entries to `userId`; drop the visitor account if it owns nothing. */
 async function absorbVisitor(shellId: string, userId: string, methodId: string) {
   await db.transaction(async (tx) => {
     await tx.update(userAuthMethods).set({ userId }).where(eq(userAuthMethods.id, methodId))
@@ -51,6 +51,11 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string) 
     // BEAT claims follow the account, except on a BEAT it already claimed (the unique index; the FK then nulls that one's user_id)
     await tx.execute(sql`update beat_claims c set user_id = ${userId}::uuid where c.user_id = ${shellId}::uuid
       and not exists (select 1 from beat_claims o where o.beat_id = c.beat_id and o.user_id = ${userId}::uuid)`)
+    // Raffle entries too (else the visitor's deletion would cascade them away). Where the account already entered the
+    // same raffle (one entry per user), its own entry stays and the visitor's goes
+    await tx.execute(sql`update raffle_entries e set user_id = ${userId}::uuid where e.user_id = ${shellId}::uuid
+      and not exists (select 1 from raffle_entries o where o.raffle_id = e.raffle_id and o.user_id = ${userId}::uuid)`)
+    await tx.delete(raffleEntries).where(eq(raffleEntries.userId, shellId))
     const owns = (await tx.query.scenes.findFirst({ where: eq(scenes.ownerId, shellId), columns: { id: true } }))
       || (await tx.query.mediaAssets.findFirst({ where: eq(mediaAssets.ownerId, shellId), columns: { id: true } }))
       || (await tx.query.assetLibraryItems.findFirst({ where: eq(assetLibraryItems.uploadedBy, shellId), columns: { id: true } }))
