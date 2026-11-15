@@ -498,6 +498,7 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/settle', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/settle`, body: (f) => ({ paymentId: f.designPayment.id }) },
   { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/returned', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/returned`, body: () => ({ returnTxHash: '0x' + 'cd'.repeat(32) }) },
   { route: 'GET /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}` },
+  { route: 'POST /api/admin/beats/:id/give-up', url: (f) => `/api/admin/beats/${f.beat.id}/give-up`, body: () => ({}) },
   { route: 'PATCH /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}`, body: () => ({ resolved: true }) },
   { route: 'GET /api/admin/errors/reports/:reportId/screenshot', url: () => `/api/admin/errors/reports/${AD_ID}/screenshot` },
   { route: 'GET /api/ad-spaces/:elementId', url: (f) => `/api/ad-spaces/${f.adSpace.id}` },
