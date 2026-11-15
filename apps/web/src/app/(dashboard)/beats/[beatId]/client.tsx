@@ -7,7 +7,7 @@ import { BEAT_SUPPLY_CAP_MAX } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import {
-  ACTION_LABELS, PAYMENT_POLL_MS, beatActions, beatCounts, beatEditBody, beatFieldError, beatToInput, beatWindow, confirmBeatAction,
+  ACTION_LABELS, PAYMENT_POLL_MS, beatActions, beatsPayable, beatCounts, beatEditBody, beatFieldError, beatToInput, beatWindow, confirmBeatAction,
   paymentNote, pollPayment, topupKey, type BeatAction, type BeatAvailability, type BeatClaimant, type BeatInput, type FieldError, type PublicBeat,
 } from '@/lib/beats'
 import { PageHeader, Skeleton } from '@/components/ui'
@@ -119,7 +119,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
   }
 
   const counts = beatCounts(beat)
-  const actions = beatActions(beat, new Date())
+  const actions = beatActions(beat, new Date(), { payable: beatsPayable(availability) })
   const back = () => { setMode({ kind: 'view' }); load() }
 
   return (

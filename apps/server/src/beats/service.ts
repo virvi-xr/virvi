@@ -70,12 +70,17 @@ export const testHooks: { afterCancelRead?: (beatId: string) => Promise<void> } 
 /** False while the server's chain lacks a contract or the minter key: the job could never put a BEAT on chain. */
 const chainReady = () => beatChainMissing(config.beats.chain).length === 0
 
-/** BEATs that are switched on but whose chain isn't set up read as not enabled (`not_configured`), so nobody pays. */
+/**
+ * BEATs that are switched on but whose chain isn't set up stay enabled (hosts still see their existing BEATs) with
+ * `reason: 'not_configured'` and no create, so nobody pays: create, checkout and top-ups refuse then (requireChainReady).
+ */
 export function beatAvailability(admin: boolean) {
-  const { chain } = config.beats
-  const notConfigured = config.beats.enabled && !chainReady()
-  const enabled = config.beats.enabled && !notConfigured
-  return { enabled, chain, test: isAmoy(chain), canCreate: enabled && (!isAmoy(chain) || admin), reason: notConfigured ? 'not_configured' as const : null }
+  const { chain, enabled } = config.beats
+  const notConfigured = enabled && !chainReady()
+  return {
+    enabled, chain, test: isAmoy(chain), canCreate: enabled && !notConfigured && (!isAmoy(chain) || admin),
+    reason: notConfigured ? 'not_configured' as const : null,
+  }
 }
 
 /** Create, checkout and top-ups take money (or credit) for a chain, so they refuse while it isn't set up. */

@@ -8,9 +8,9 @@ import { shortWallet } from './studio-people'
 
 export type { PublicBeat, BeatStatus, BeatClaimStatus }
 
-/** GET /api/beats/availability (answers even while BEATs are dark). */
-/** `reason` is 'not_configured' when BEATs are switched on but the server's chain has no contract or minter key yet
- * (they then read as not enabled, so nobody pays). */
+/** GET /api/beats/availability (answers even while BEATs are dark). `reason` is 'not_configured' when BEATs are
+ * switched on but the server's chain has no contract or minter key yet: they stay enabled (existing BEATs list and
+ * open) with canCreate false, and create, checkout and top-ups refuse. */
 export interface BeatAvailability { enabled: boolean; chain: BeatChain; test: boolean; canCreate: boolean; reason?: 'not_configured' | null }
 /** GET /api/beats/:id/quote. */
 export interface BeatQuote { cents: number; lines: { label: string; cents: number }[]; refundableUnclaimed: false }
@@ -29,6 +29,8 @@ export interface BeatClaimant {
 // ── Copy ─────────────────────────────────────────────────────────────────────
 
 export const BEATS_UNAVAILABLE = "BEATs aren't available yet."
+/** Shown above the BEATs while the network isn't set up (`not_configured`). */
+export const BEATS_NETWORK_UNAVAILABLE = 'BEATs on this network are temporarily unavailable. Existing BEATs are safe.'
 export const BEAT_TEST_BADGE = 'Test (Polygon Amoy)'
 export const BEAT_IMAGE_HINT = `Square, at least ${BEAT_IMAGE_MIN_PX} × ${BEAT_IMAGE_MIN_PX}`
 export const BEAT_NO_REFUND = "You pay for the cap up front. Unclaimed BEATs aren't refunded."
@@ -53,6 +55,9 @@ export const newBeatHref = (sceneId?: string) => (sceneId ? `/beats/new?scene=${
 export function beatsNavVisible(a: BeatAvailability | null, who: { trial: boolean; scenePass: boolean }): boolean {
   return !!a?.enabled && !who.trial && !who.scenePass
 }
+
+/** Whether hosts can pay now (a draft's supply, a cap raise): not while the network isn't set up. */
+export const beatsPayable = (a: BeatAvailability) => a.enabled && a.reason !== 'not_configured'
 
 // ── Form ─────────────────────────────────────────────────────────────────────
 
@@ -222,9 +227,10 @@ export type BeatAction = 'pay' | 'edit' | 'cancel' | 'raise_cap' | 'end_early'
 
 /**
  * What the host can do now: pay a draft; edit before the start (a draft any time, nothing once frozen); cancel before
- * the start; raise the cap once paid and before the end; end early while live.
+ * the start; raise the cap once paid and before the end; end early while live. `payable` false (the network isn't set
+ * up) drops Pay and Raise cap.
  */
-export function beatActions(b: PublicBeat, now: Date): BeatAction[] {
+export function beatActions(b: PublicBeat, now: Date, o: { payable?: boolean } = {}): BeatAction[] {
   const t = now.getTime()
   const beforeStart = new Date(b.startsAt).getTime() > t
   const beforeEnd = new Date(b.endsAt).getTime() > t
@@ -234,7 +240,7 @@ export function beatActions(b: PublicBeat, now: Date): BeatAction[] {
   if ((b.status === 'draft' || b.status === 'paid') && beforeStart) out.push('cancel')
   if ((b.status === 'paid' || b.status === 'live') && beforeEnd) out.push('raise_cap')
   if (b.status === 'live') out.push('end_early')
-  return out
+  return o.payable === false ? out.filter((a) => a !== 'pay' && a !== 'raise_cap') : out
 }
 
 export const ACTION_LABELS: Record<BeatAction, string> = { pay: 'Pay', edit: 'Edit', cancel: 'Cancel', raise_cap: 'Raise cap', end_early: 'End early' }

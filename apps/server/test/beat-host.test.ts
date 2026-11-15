@@ -485,18 +485,34 @@ describe('BEAT host API (LIV-11)', () => {
       expect((await call('GET', '/api/beats/availability')).json()).toEqual({ enabled: false, chain: 'polygon', test: false, canCreate: false, reason: null })
     })
 
-    it('M4: enabled without a contract or minter key for the server chain reports not enabled, and create refuses', async () => {
+    it('M4: enabled without a contract or minter key for the server chain: BEATs stay on but nobody can create or pay', async () => {
       const admin = await createUser({ role: 'admin' })
+      const draft = await seed({ name: 'Draft' })
+      const paid = await seed({ name: 'Paid', status: 'paid', tokenId: 41, startsAt: new Date(Date.now() + 6 * H), endsAt: new Date(Date.now() + 8 * H) }, [sceneB])
       for (const patch of [{ contracts: { 'polygon-amoy': BEATS_READY.contracts['polygon-amoy'] } }, { minterKey: null }]) {
         setBeats({ enabled: true, chain: 'polygon', ...BEATS_READY, ...patch })
         for (const who of [host, admin]) {
-          expect((await call('GET', '/api/beats/availability', who)).json()).toEqual({ enabled: false, chain: 'polygon', test: false, canCreate: false, reason: 'not_configured' })
+          expect((await call('GET', '/api/beats/availability', who)).json()).toEqual({ enabled: true, chain: 'polygon', test: false, canCreate: false, reason: 'not_configured' })
         }
-        const res = await call('POST', '/api/beats', admin, valid())
-        expect([res.statusCode, res.json().error]).toEqual([503, 'not_configured'])
-        expect(res.json().message).toBe("BEATs aren't set up yet. Try again later.")
+        // Existing BEATs still list and open
+        const list = await call('GET', '/api/beats')
+        expect(list.statusCode).toBe(200)
+        expect(list.json().map((b: { name: string }) => b.name).sort()).toEqual(['Draft', 'Paid'])
+        expect((await call('GET', `/api/beats/${paid.id}`)).json()).toMatchObject({ name: 'Paid', status: 'paid' })
+        expect((await call('GET', `/api/beats/${paid.id}/claimants`)).statusCode).toBe(200)
+        expect((await call('GET', `/api/scenes/${sceneA}/beats`)).json().map((b: { id: string }) => b.id)).toEqual([draft.id])
+        // Create, checkout and top-up refuse
+        const refusals = [
+          await call('POST', '/api/beats', admin, valid()),
+          await call('POST', `/api/beats/${draft.id}/checkout`, host, { method: 'card' }),
+          await call('POST', `/api/beats/${paid.id}/cap`, host, { supplyCap: 200, method: 'card' }),
+        ]
+        for (const res of refusals) {
+          expect([res.statusCode, res.json().error]).toEqual([503, 'not_configured'])
+          expect(res.json().message).toBe("BEATs aren't set up yet. Try again later.")
+        }
       }
-      expect(await db.select().from(beats)).toHaveLength(0)
+      expect(await db.select().from(beats)).toHaveLength(2)
     })
 
     it('needs a sign-in', async () => {

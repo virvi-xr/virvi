@@ -4,7 +4,7 @@ import {
   BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, BEAT_NO_REFUND, BEAT_TEST_BADGE, BEATS_UNAVAILABLE, beatActions, beatBody, beatEditBody, beatFieldError, beatFormError,
   beatHref, beatsNavVisible, blankBeat, claimantRow, claimantWallets, confirmBeatAction, fromLocalInput, newBeatHref, paymentNote, reviewModel,
   toLocalInput, type BeatAvailability, type BeatClaimant,
-  BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError,
+  BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
 } from './beats'
 
 const NOW = new Date('2026-11-14T12:00:00Z')
@@ -12,6 +12,7 @@ const HOUR = 3_600_000
 const on: BeatAvailability = { enabled: true, chain: 'polygon', test: false, canCreate: true }
 const amoy: BeatAvailability = { enabled: true, chain: 'polygon-amoy', test: true, canCreate: true }
 const off: BeatAvailability = { enabled: false, chain: 'polygon', test: false, canCreate: false }
+const unconfigured: BeatAvailability = { enabled: true, chain: 'polygon', test: false, canCreate: false, reason: 'not_configured' }
 
 function beat(over: Partial<PublicBeat> = {}): PublicBeat {
   return {
@@ -251,5 +252,22 @@ describe('fix round 1', () => {
     expect(shownFieldError(err, new Set(['name']))).toBeNull()
     expect(shownFieldError({ field: 'window', message: 'm' }, new Set(fieldsOfPatch({ minPresentMinutes: 1 })))).toBeNull()
     expect(shownFieldError(null, new Set(['name']))).toBeNull()
+  })
+})
+
+describe('an unconfigured network (not_configured)', () => {
+  const past = new Date(NOW.getTime() - HOUR).toISOString()
+  it('keeps the BEATs nav', () => {
+    expect(beatsNavVisible(unconfigured, { trial: false, scenePass: false })).toBe(true)
+  })
+  it('says existing BEATs are safe', () => {
+    expect(BEATS_NETWORK_UNAVAILABLE).toBe('BEATs on this network are temporarily unavailable. Existing BEATs are safe.')
+  })
+  it('is not payable, so the detail offers no Pay or Raise cap', () => {
+    expect(beatsPayable(unconfigured)).toBe(false)
+    expect(beatsPayable(on)).toBe(true)
+    expect(beatActions(beat({ status: 'draft' }), NOW, { payable: false })).toEqual(['edit', 'cancel'])
+    expect(beatActions(beat({ status: 'live', startsAt: past }), NOW, { payable: false })).toEqual(['end_early'])
+    expect(beatActions(beat({ status: 'paid' }), NOW, { payable: true })).toEqual(['edit', 'cancel', 'raise_cap'])
   })
 })

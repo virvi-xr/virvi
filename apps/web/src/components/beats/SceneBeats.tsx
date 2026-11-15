@@ -6,7 +6,7 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { beatFieldError, beatHref, beatWindow, newBeatHref, type PublicBeat } from '@/lib/beats'
 import { useBeatAvailability } from '@/lib/use-beats'
-import { BeatBadges } from './BeatBits'
+import { BeatBadges, BeatsNotice } from './BeatBits'
 
 /** Renders nothing while BEATs are off. */
 export function SceneBeats({ sceneId }: { sceneId: string }) {
@@ -32,6 +32,7 @@ export function SceneBeats({ sceneId }: { sceneId: string }) {
           <Link href={newBeatHref(sceneId)} className="rounded-md bg-orange-600 px-3 py-1.5 text-sm text-white hover:bg-orange-500">New BEAT</Link>
         )}
       </div>
+      <BeatsNotice a={availability} />
       {error && <div className="mb-3 rounded-md border border-red-700 bg-red-900/50 px-4 py-2 text-sm text-red-300">{error}</div>}
       {beats && beats.length === 0 && <p className="text-sm text-gray-500">No BEATs in this scene yet.</p>}
       <ul className="space-y-2">

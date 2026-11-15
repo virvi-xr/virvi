@@ -30,6 +30,8 @@ function NewBeat({ availability }: { availability: BeatAvailability }) {
   const [error, setError] = useState<FieldError | null>(null)
   const [busy, setBusy] = useState(false)
 
+  // While the network isn't set up, the gate's notice above says why; there is no form to show
+  if (availability.reason === 'not_configured') return null
   if (!availability.canCreate) return <p className="text-sm text-gray-400">BEATs aren&apos;t open to everyone yet.</p>
 
   const review = async (f: BeatInput) => {
