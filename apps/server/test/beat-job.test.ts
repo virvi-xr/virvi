@@ -57,6 +57,7 @@ describe('BEAT minting job (LIV-11)', () => {
     setBeatChainClientForTests('polygon-amoy', null)
     setBeatChainClientForTests('polygon', null)
     beatJobTestHooks.afterInsert = undefined
+    beatJobTestHooks.beforeInsert = undefined
   })
 
   let nextToken = 1
@@ -740,6 +741,28 @@ describe('BEAT minting job (LIV-11)', () => {
       await claims(closing.id, [wallet()], { status: 'failed', failReason: 'receiver_rejected' })
       await db.insert(beatMintBatches).values({ chain: 'polygon-amoy', kind: 'close', beatId: closing.id, tokenId: closing.tokenId!, nonce: 40, status: 'sent', txHashes: ['0xc1'] })
       expect(await retryFailedClaims(closing.id)).toEqual({ retried: 0, skippedClosed: 1 })
+    })
+
+    it('a retry that lands between a close plan and its insert wins: the close waits and the claim mints', async () => {
+      const b = await seed({ status: 'ended', startsAt: at(-40 * H), endsAt: new Date(T0.getTime() - BEAT_CLAIM_GRACE_MS - MIN), created: true })
+      await claims(b.id, [wallet()], { status: 'failed', failReason: 'receiver_rejected' })
+      let retried: Awaited<ReturnType<typeof retryFailedClaims>> | null = null
+      beatJobTestHooks.beforeInsert = async (plan) => {
+        if (plan.kind !== 'close' || retried) return
+        retried = await retryFailedClaims(b.id)
+      }
+      await runBeatTick(T0)
+      expect(retried).toEqual({ retried: 1, skippedClosed: 0 })
+      // The close was dropped at insert; the retried claim went out instead
+      expect(fake.mempool().map((t) => t.call.kind)).toEqual(['mint'])
+      fake.mine(6)
+      await runBeatTick(at(MIN))
+      expect(await statusCount(b.id)).toEqual({ minted: 1 })
+      expect(fake.mempool()[0].call).toEqual({ kind: 'close', tokenId: BigInt(b.tokenId!) })
+      fake.mine(6)
+      await runBeatTick(at(2 * MIN))
+      expect(fake.isClosed(BigInt(b.tokenId!))).toBe(true)
+      expect(await statusCount(b.id)).toEqual({ minted: 1 })
     })
 
     it('M2: a cancelled BEAT that exists on chain gets a close, after everything else', async () => {

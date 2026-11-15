@@ -49,7 +49,11 @@ const reportedCreateRevert = new Set<string>()
  * batch: they stay paused for low gas even when the balance is above BEAT_MIN_GAS_POL. Cleared at each chain pass. */
 const shortOfFunds = new Set<BeatChain>()
 
-export const beatJobTestHooks: { afterInsert?: (batchId: string) => Promise<void> } = {}
+export const beatJobTestHooks: {
+  afterInsert?: (batchId: string) => Promise<void>
+  /** Runs after a plan is signed and before its batch is recorded (tests interleave other writers here). */
+  beforeInsert?: (plan: { kind: 'create' | 'mint' | 'close'; beatId: string }) => Promise<void>
+} = {}
 
 /** Tests: forget the in-memory pauses, batch caps and single-wallet flags. */
 export function resetBeatJobState(): void {
@@ -594,10 +598,12 @@ async function trySend(
     console.warn(`[beats] ${client.chain} minter can't pay for the next ${plan.kind} batch; paused for low gas`)
     return 'stop'
   }
+  await beatJobTestHooks.beforeInsert?.({ kind: plan.kind, beatId: plan.beatId })
   const batch = await insertBatch(client.chain, plan, signed, nonce, now)
   if (!batch) {
-    // The BEAT or its claims changed since they were read: read again (a create that's no longer due is skipped)
-    if (plan.kind !== 'mint') skip.add(plan.beatId)
+    // The BEAT or its claims changed since they were read: read again. A create that's no longer due is skipped; a
+    // close isn't, since what held it (a retried claim, say) is planned ahead of it
+    if (plan.kind === 'create') skip.add(plan.beatId)
     return 'stale'
   }
   await beatJobTestHooks.afterInsert?.(batch.id)
@@ -674,8 +680,9 @@ async function nextNonce(client: BeatChainClient): Promise<number> {
 
 /**
  * Records the batch (`sending`, with its signed raw tx and hash) and sets its claims `minting`, in one transaction,
- * before anything is broadcast. Null when the plan is stale: a claim is no longer claimed (or is locked by a delete), or
- * a create's BEAT is no longer due (taken under the BEAT's lock, so it serialises with cancel).
+ * before anything is broadcast. Null when the plan is stale: a claim is no longer claimed (or is locked by a delete), a
+ * create's BEAT is no longer due (taken under the BEAT's lock, so it serialises with cancel), or a close is now held by
+ * a claim (under the BEAT's lock, so it serialises with retryFailedClaims).
  */
 async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, nonce: number, now: Date): Promise<Batch | null> {
   return db.transaction(async (tx) => {
@@ -685,6 +692,12 @@ async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, non
         .leftJoin(beatPayments, eq(beatPayments.id, beats.paymentId)).where(eq(beats.id, plan.beatId))
       // An ended BEAT may still be created (its claims wait on it); the plan checked it still has claims or grace left
       if (!row || !(row.status === 'paid' || row.status === 'live' || row.status === 'ended') || row.created || row.pay !== 'paid') return null
+    }
+    if (plan.kind === 'close') {
+      // Under the BEAT's lock, as retryFailedClaims: a retry that landed after the plan was read holds the close
+      await lockBeat(tx, plan.beatId)
+      const [held] = await tx.select({ id: beats.id }).from(beats).where(and(eq(beats.id, plan.beatId), holdsClose))
+      if (held) return null
     }
     if (plan.kind === 'mint') {
       const got = await tx.select({ id: beatClaims.id }).from(beatClaims)
@@ -713,18 +726,30 @@ async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, non
  * in `skippedClosed`.
  */
 export async function retryFailedClaims(beatId?: string): Promise<{ retried: number; skippedClosed: number }> {
-  const scope = and(eq(beatClaims.status, 'failed'), beatId ? eq(beatClaims.beatId, beatId) : undefined)
-  // Closed, or a close is in flight (it was sent while only final failures were left)
-  const closed = db.select({ id: beats.id }).from(beats).where(or(
-    isNotNull(beats.closedOnChainAt),
-    sql`exists (select 1 from beat_mint_batches m where m.beat_id = ${beats.id} and m.kind = 'close' and m.status in ('sending', 'sent'))`,
-  ))
-  const rows = await db.update(beatClaims).set({ status: 'claimed', failReason: null })
-    .where(and(scope, notInArray(beatClaims.beatId, closed)))
-    .returning({ id: beatClaims.id })
-  const [skipped] = await db.select({ n: sql<number>`count(*)::int` }).from(beatClaims)
-    .where(and(scope, inArray(beatClaims.beatId, closed)))
-  return { retried: rows.length, skippedClosed: skipped?.n ?? 0 }
+  const scope = (id: string) => and(eq(beatClaims.status, 'failed'), eq(beatClaims.beatId, id))
+  const ids = await db.selectDistinct({ id: beatClaims.beatId }).from(beatClaims)
+    .where(and(eq(beatClaims.status, 'failed'), beatId ? eq(beatClaims.beatId, beatId) : undefined))
+  let retried = 0
+  let skippedClosed = 0
+  for (const { id } of ids) {
+    // Under the BEAT's lock, as a close's insert: either the close is recorded first (and this sees it in flight), or
+    // these claims are back to claimed first (and the close's insert sees them and waits)
+    await db.transaction(async (tx) => {
+      await lockBeat(tx, id)
+      const [shut] = await tx.select({ id: beats.id }).from(beats).where(and(eq(beats.id, id), or(
+        isNotNull(beats.closedOnChainAt),
+        sql`exists (select 1 from beat_mint_batches m where m.beat_id = ${beats.id} and m.kind = 'close' and m.status in ('sending', 'sent'))`,
+      )))
+      if (shut) {
+        const [n] = await tx.select({ n: sql<number>`count(*)::int` }).from(beatClaims).where(scope(id))
+        skippedClosed += n?.n ?? 0
+        return
+      }
+      const rows = await tx.update(beatClaims).set({ status: 'claimed', failReason: null }).where(scope(id)).returning({ id: beatClaims.id })
+      retried += rows.length
+    })
+  }
+  return { retried, skippedClosed }
 }
 
 /** Runs the tick every BEAT_JOB_EVERY_MS (the first 30 s after boot). Returns a stopper. */
