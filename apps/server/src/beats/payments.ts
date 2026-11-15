@@ -1,8 +1,9 @@
-import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import { beatPriceCents, beatTopupCents, type BeatChain } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
-import { beatPayments, beats, mediaAssets } from '../db/schema.js'
+import { beatClaims, beatPayments, beats, mediaAssets } from '../db/schema.js'
+import { recordJobFailure } from '../errors/record.js'
 import { ensureCustomer, getStripe } from '../integrations/stripe.js'
 import { createStorage, type StorageProvider } from '../storage/index.js'
 import { addCredit, creditBalance, takeCredit } from '../studio/credit.js'
@@ -285,13 +286,15 @@ async function stripeRefund(pay: Pick<PaymentRow, 'id' | 'amountCents' | 'credit
 }
 
 /**
- * Refunds every paid payment of a BEAT: card amounts through Stripe, credit back as Virvi credit. Each payment is marked
- * refunded on its own, and the one that leaves none paid also sets the BEAT cancelled, so a retry after a crash refunds
- * only what is still paid. It takes no BEAT lock: cancel holds `beat:<id>` around this call. Returns what this call
- * gave back.
+ * Refunds every paid payment of a BEAT, newest first (top-ups before the create): card amounts through Stripe, credit
+ * back as Virvi credit. Each payment is marked refunded on its own, and the one that leaves none paid also sets the BEAT
+ * cancelled, so a retry after a crash refunds only what is still paid. A refunded top-up takes its cap raise back in the
+ * same transaction (once, with its status), never below the claims already made: then the cap stays at that count and
+ * admins are told. It takes no BEAT lock: cancel holds `beat:<id>` around this call. Returns what this call gave back.
  */
 export async function refundBeat(beatId: string, now: Date): Promise<{ stripeCents: number; creditCents: number }> {
   const paid = await db.select().from(beatPayments).where(and(eq(beatPayments.beatId, beatId), eq(beatPayments.status, 'paid')))
+    .orderBy(desc(beatPayments.createdAt), desc(beatPayments.capTo))
   let stripeCents = 0
   let creditCents = 0
   for (const pay of paid) {
@@ -305,6 +308,7 @@ export async function refundBeat(beatId: string, now: Date): Promise<{ stripeCen
         await addCredit(tx, done.userId, done.creditCents, 'refund', done.id, now)
         creditCents += done.creditCents
       }
+      if (done.kind === 'topup') await revertTopup(tx, beatId, done.capTo - done.capFrom, now)
       await tx.update(beats).set({ status: 'cancelled', updatedAt: now }).where(and(
         eq(beats.id, beatId), eq(beats.status, 'paid'),
         sql`not exists (select 1 from beat_payments p where p.beat_id = ${beatId} and p.status = 'paid')`,
@@ -312,6 +316,22 @@ export async function refundBeat(beatId: string, now: Date): Promise<{ stripeCen
     })
   }
   return { stripeCents, creditCents }
+}
+
+/** Lowers the BEAT's cap by a refunded top-up's raise, to no less than its claims (any status but present). */
+async function revertTopup(tx: Pick<typeof db, 'select' | 'update'>, beatId: string, raise: number, now: Date): Promise<void> {
+  const [row] = await tx.select({ cap: beats.supplyCap }).from(beats).where(eq(beats.id, beatId)).for('update')
+  if (!row || raise <= 0) return
+  const [c] = await tx.select({ n: sql<number>`count(*)::int` }).from(beatClaims)
+    .where(and(eq(beatClaims.beatId, beatId), sql`${beatClaims.status} <> 'present'`))
+  const claims = c?.n ?? 0
+  const cap = Math.max(claims, row.cap - raise)
+  await tx.update(beats).set({ supplyCap: cap, updatedAt: now }).where(eq(beats.id, beatId))
+  if (cap > row.cap - raise) {
+    const message = `BEAT ${beatId}: a refunded top-up of ${raise} could only lower the cap from ${row.cap} to ${cap}, the claims already made`
+    console.error(`[beats] ${message}`)
+    recordJobFailure('beat_refund', new Error(message), { owner: beatId })
+  }
 }
 
 // ── The frozen artwork ───────────────────────────────────────────────────────

@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest'
 import Stripe from 'stripe'
 import { and, eq, sql } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatPayments, beats, beatScenes, mediaAssets, studioCreditLedger, studioCredits } from '../src/db/schema.js'
+import { beatClaims, beatPayments, beats, beatScenes, mediaAssets, studioCreditLedger, studioCredits } from '../src/db/schema.js'
+import { recordJobFailure } from '../src/errors/record.js'
 import { setStripe } from '../src/integrations/stripe.js'
 import { setImageBytesReader, setImageSizeReader } from '../src/beats/image.js'
 import {
@@ -15,6 +16,11 @@ import { resetDb } from './helpers/db.js'
 import { BEATS_READY } from './helpers/beats-ready.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { fakeFly, fakeStripe } from './helpers/studio.js'
+
+vi.mock('../src/errors/record.js', async (orig) => ({
+  ...(await orig<typeof import('../src/errors/record.js')>()),
+  recordJobFailure: vi.fn(),
+}))
 
 const WEBHOOK_SECRET = 'whsec_beat_test'
 const signer = new Stripe('sk_test_dummy')
@@ -58,6 +64,7 @@ describe('BEAT payments (LIV-11)', () => {
   })
   beforeEach(async () => {
     await resetDb()
+    vi.mocked(recordJobFailure).mockClear()
     await db.execute(sql`ALTER SEQUENCE beat_token_id_polygon_seq RESTART WITH 1`)
     await db.execute(sql`ALTER SEQUENCE beat_token_id_polygon_amoy_seq RESTART WITH 1`)
     stripe = fakeStripe()
@@ -499,6 +506,52 @@ describe('BEAT payments (LIV-11)', () => {
       expect((await paymentsOf(b.id)).every((p) => p.status === 'refunded')).toBe(true)
       const ledger = await db.select().from(studioCreditLedger).where(and(eq(studioCreditLedger.userId, host.id), eq(studioCreditLedger.reason, 'refund')))
       expect(ledger.map((l) => l.deltaCents)).toEqual([500])
+    })
+  })
+
+  describe('a refunded top-up lowers the cap again', () => {
+    it('a cancel that fails partway (the top-up refunded, the create not) reverts the raise; the retry finishes without reverting twice', async () => {
+      const b = await seed()
+      await payByCard(b.id, 'pi_create')
+      await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 150 })
+      const top = (await paymentsOf(b.id)).find((p) => p.kind === 'topup')!
+      await webhook('checkout.session.completed', session(top.id, 'pi_top'))
+      expect((await beatOf(b.id)).supplyCap).toBe(150)
+      const create = stripe.refunds.create.bind(stripe.refunds)
+      stripe.refunds.create = (async (params: any, opts: any) => {
+        if (params.payment_intent === 'pi_create') throw new Error('refund refused')
+        return create(params, opts)
+      }) as typeof stripe.refunds.create
+      expect((await call('POST', `/api/beats/${b.id}/cancel`)).statusCode).toBe(500)
+      expect((await paymentsOf(b.id)).map((p) => [p.kind, p.status]).sort()).toEqual([['create', 'paid'], ['topup', 'refunded']])
+      expect(await beatOf(b.id)).toMatchObject({ status: 'paid', supplyCap: 100 })
+      stripe.refunds.create = create
+      expect((await call('POST', `/api/beats/${b.id}/cancel`)).json().status).toBe('cancelled')
+      expect((await beatOf(b.id)).supplyCap).toBe(100)
+      // Again: nothing left to refund, the cap stays
+      expect(await refundBeat(b.id, new Date())).toEqual({ stripeCents: 0, creditCents: 0 })
+      expect((await beatOf(b.id)).supplyCap).toBe(100)
+      expect(recordJobFailure).not.toHaveBeenCalled()
+    })
+
+    it('never below the claims already made: keeps max(claims, cap - topup) and records an admin alert', async () => {
+      const b = await seed({ status: 'paid', tokenId: 20, supplyCap: 150 })
+      const [create] = await db.insert(beatPayments).values({ beatId: b.id, userId: host.id, kind: 'create', capFrom: 0, capTo: 100, method: 'test', amountCents: 0, status: 'paid', paidAt: new Date() }).returning()
+      await db.update(beats).set({ paymentId: create.id }).where(eq(beats.id, b.id))
+      await db.insert(beatPayments).values({ beatId: b.id, userId: host.id, kind: 'topup', capFrom: 100, capTo: 150, method: 'credit', amountCents: 100, creditCents: 100, status: 'paid', paidAt: new Date() })
+      const statuses = ['claimed', 'minting', 'minted', 'failed'] as const
+      await db.insert(beatClaims).values(Array.from({ length: 120 }, (_, i) => ({ beatId: b.id, wallet: randomWallet(), consentVersion: 1, status: statuses[i % 4] })))
+      // Present visitors haven't claimed: they don't count
+      await db.insert(beatClaims).values(Array.from({ length: 10 }, () => ({ beatId: b.id, wallet: randomWallet(), consentVersion: 1, status: 'present' as const })))
+      await refundBeat(b.id, new Date())
+      expect((await beatOf(b.id)).supplyCap).toBe(120)
+      expect(recordJobFailure).toHaveBeenCalledTimes(1)
+      const [job, err, f] = vi.mocked(recordJobFailure).mock.calls[0]
+      expect(job).toBe('beat_refund')
+      expect((err as Error).message).toContain(b.id)
+      expect(f).toEqual({ owner: b.id })
+      await refundBeat(b.id, new Date())
+      expect(recordJobFailure).toHaveBeenCalledTimes(1)
     })
   })
 
