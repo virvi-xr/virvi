@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BEATS_OFF, balanceLabel, clearPause, formatPol, giveUp, loadAdminBeats, pauseMessage, retryFailed, type AdminBeatChain } from './admin-beats'
+import { BEATS_OFF, balanceLabel, clearPause, formatPol, formatPol4, giveUp, loadAdminBeats, lowGasDetail, pauseMessage, retryFailed, type AdminBeatChain } from './admin-beats'
 
 const chain = (over: Partial<AdminBeatChain> = {}): AdminBeatChain => ({
   chain: 'polygon-amoy', contract: null, minter: '0x1234567890abcdef1234567890abcdef12345678',
-  balanceWei: '0', balanceError: false, paused: false, reason: null, missing: [], ...over,
+  balanceWei: '0', balanceError: false, paused: false, reason: null, missing: [],
+  minGasWei: '1000000000000000000', batchCostWei: null, topUpWei: null, ...over,
 })
 
 describe('admin BEATs helpers (LIV-11)', () => {
@@ -63,5 +64,22 @@ describe('admin BEATs helpers (LIV-11)', () => {
     expect(api.giveUpAdminBeat).toHaveBeenCalledWith('b1')
     api.giveUpAdminBeat.mockResolvedValue({ givenUp: 1 })
     expect(await giveUp(api, 'b1')).toBe('1 failed claim won\'t be retried. The BEAT closes on chain shortly.')
+  })
+  it('formats POL with exactly 4 decimals, cut down or rounded up', () => {
+    expect(formatPol4('1000000000000000000')).toBe('1.0000 POL')
+    expect(formatPol4('1234567890123456789')).toBe('1.2345 POL')
+    expect(formatPol4('1234567890123456789', 'up')).toBe('1.2346 POL')
+    expect(formatPol4('1234500000000000000', 'up')).toBe('1.2345 POL')
+    expect(formatPol4('0')).toBe('0.0000 POL')
+    expect(formatPol4('1', 'up')).toBe('0.0001 POL')
+  })
+  it('a low-gas pause says the balance, the minimum and how much to top up', () => {
+    expect(lowGasDetail(chain())).toBeNull()
+    const low = chain({ paused: true, reason: 'low_gas', balanceWei: '250000000000000000' })
+    expect(lowGasDetail({ ...low, batchCostWei: '400000000000000000', topUpWei: '1150000000000000001' })).toBe(
+      'Balance 0.2500 POL. Minimum 1.0000 POL. Top up 1.1501 POL: the minimum plus one full 200-claim batch at current fees.')
+    expect(lowGasDetail({ ...low, topUpWei: '750000000000000000' })).toBe('Balance 0.2500 POL. Minimum 1.0000 POL. Top up 0.7500 POL to reach the minimum.')
+    // An unreadable balance: no top-up figure
+    expect(lowGasDetail({ ...low, balanceWei: null, balanceError: true })).toBe('Balance unavailable. Minimum 1.0000 POL.')
   })
 })

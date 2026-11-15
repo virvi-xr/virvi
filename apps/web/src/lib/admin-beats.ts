@@ -1,5 +1,5 @@
 /** The admin BEATs page's data (GET /api/admin/beats, apps/server/src/routes/admin-beats.ts) and its pure helpers (LIV-11). */
-import type { BeatChain } from '@virvixr/shared'
+import { BEAT_MAX_BATCH, type BeatChain } from '@virvixr/shared'
 
 export type BeatPauseReason = 'low_gas' | 'no_client' | 'id_conflict' | null
 
@@ -15,6 +15,12 @@ export interface AdminBeatChain {
   reason: BeatPauseReason
   /** The settings this chain still needs before it can mint (empty once it's set up), e.g. BEAT_MINTER_KEY. */
   missing: string[]
+  /** BEAT_MIN_GAS_POL, in wei. */
+  minGasWei: string
+  /** One full mint batch at the fees the job last signed with; null until the job has signed a mint since it started. */
+  batchCostWei: string | null
+  /** While paused for low gas (balance readable): the minimum plus batchCostWei (when known), less the balance. */
+  topUpWei: string | null
 }
 
 export interface AdminBeatsOverview {
@@ -39,6 +45,27 @@ export function formatPol(wei: string): string {
   const whole = w / WEI_PER_POL
   const frac = ((w % WEI_PER_POL) / STEP).toString().padStart(PLACES, '0').replace(/0+$/, '')
   return `${whole}${frac ? `.${frac}` : ''} POL`
+}
+
+/** Wei as POL with exactly 4 decimals, cut down (a balance) or rounded up (an amount to send, so it's never short). */
+export function formatPol4(wei: string, round: 'down' | 'up' = 'down'): string {
+  let units = BigInt(wei) / STEP
+  if (round === 'up' && BigInt(wei) % STEP !== BigInt(0)) units += BigInt(1)
+  const per = WEI_PER_POL / STEP
+  return `${units / per}.${(units % per).toString().padStart(PLACES, '0')} POL`
+}
+
+/** A low-gas pause's figures: the balance, the minimum, and what to top up (the minimum plus one full batch when the
+ * job knows its cost, else just the minimum). Null unless the chain is paused for low gas. */
+export function lowGasDetail(c: Pick<AdminBeatChain, 'paused' | 'reason' | 'balanceWei' | 'balanceError' | 'minGasWei' | 'batchCostWei' | 'topUpWei'>): string | null {
+  if (!c.paused || c.reason !== 'low_gas') return null
+  const balance = c.balanceError || c.balanceWei === null ? `${BALANCE_UNAVAILABLE}.` : `Balance ${formatPol4(c.balanceWei)}.`
+  const parts = [balance, `Minimum ${formatPol4(c.minGasWei)}.`]
+  if (c.topUpWei !== null && !(c.balanceError || c.balanceWei === null)) {
+    const why = c.batchCostWei !== null ? `: the minimum plus one full ${BEAT_MAX_BATCH}-claim batch at current fees.` : ' to reach the minimum.'
+    parts.push(`Top up ${formatPol4(c.topUpWei, 'up')}${why}`)
+  }
+  return parts.join(' ')
 }
 
 /** The minter's balance, or "Balance unavailable" (never 0) when it couldn't be read. */

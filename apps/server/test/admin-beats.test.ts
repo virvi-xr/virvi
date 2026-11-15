@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { Wallet, parseEther } from 'ethers'
-import { BEAT_CLAIM_GRACE_MS, beatTxUrl } from '@virvixr/shared'
+import { Transaction, Wallet, parseEther } from 'ethers'
+import { BEAT_CLAIM_GRACE_MS, BEAT_MAX_BATCH, beatTxUrl } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { beatClaims, beatMintBatches, beatPayments, beats } from '../src/db/schema.js'
@@ -88,6 +88,7 @@ describe('admin BEAT routes (LIV-11)', () => {
     expect(json.chains).toEqual([{
       chain: 'polygon-amoy', contract: '0x00000000000000000000000000000000000b3a75', minter: fake.minterAddress,
       balanceWei: parseEther('7').toString(), balanceError: false, paused: false, reason: null, missing: [],
+      minGasWei: parseEther('1').toString(), batchCostWei: expect.any(String), topUpWei: null,
     }])
     expect(json.counts).toEqual({ claimed: 0, minting: 1, failed: 1 })
     expect(json.failed).toEqual([{ beatId: b.id, name: 'Beat 901', wallet: w1, failReason: 'receiver_rejected' }])
@@ -116,7 +117,7 @@ describe('admin BEAT routes (LIV-11)', () => {
     // The server's own chain is shown as not set up rather than hidden (M4); another chain without a client is left out
     expect((await call('GET', '/api/admin/beats')).json().chains).toEqual([{
       chain: 'polygon-amoy', contract: null, minter: null, balanceWei: null, balanceError: false, paused: true, reason: 'no_client',
-      missing: ['BEAT_CONTRACT_POLYGON_AMOY', 'BEAT_MINTER_KEY'],
+      missing: ['BEAT_CONTRACT_POLYGON_AMOY', 'BEAT_MINTER_KEY'], minGasWei: parseEther('1').toString(), batchCostWei: null, topUpWei: null,
     }])
     set({ contracts: { 'polygon-amoy': '0x00000000000000000000000000000000000b3a75' } })
     expect((await call('GET', '/api/admin/beats')).json().chains[0]).toMatchObject({ contract: '0x00000000000000000000000000000000000b3a75', missing: ['BEAT_MINTER_KEY'] })
@@ -268,6 +269,34 @@ describe('admin BEAT routes (LIV-11)', () => {
       await db.update(beats).set({ closedOnChainAt: new Date() }).where(eq(beats.id, shut.id))
       await failed(shut.id, 'send_failed')
       expect((await call('GET', '/api/admin/beats')).json().held).toEqual([{ beatId: eligible.id, name: 'Beat 925', retryable: 2 }])
+    })
+  })
+
+  describe('low-gas top-up', () => {
+    it('gives the balance, the minimum, and a top-up of the minimum plus one full batch at the fees the job last signed', async () => {
+      const b = await seedBeat(930)
+      for (let i = 0; i < 3; i++) await db.insert(beatClaims).values({ beatId: b.id, wallet: wallet(), consentVersion: 1, status: 'claimed', claimedAt: new Date(T0.getTime() - H + i) })
+      await runBeatTick(T0) // signs a mint of 3: the job now knows its gas and fees
+      const [batch] = await db.select().from(beatMintBatches)
+      const tx = Transaction.from(batch.rawTx!)
+      const perBatch = ((tx.gasLimit * BigInt(BEAT_MAX_BATCH) + 2n) / 3n) * tx.maxFeePerGas!
+      // Not low yet: the fields are there, but no top-up is suggested
+      let c = (await call('GET', '/api/admin/beats')).json().chains[0]
+      expect(c).toMatchObject({ minGasWei: parseEther('1').toString(), batchCostWei: perBatch.toString(), topUpWei: null })
+      fake.setBalance(parseEther('0.25'))
+      await runBeatTick(new Date(T0.getTime() + 60_000))
+      c = (await call('GET', '/api/admin/beats')).json().chains[0]
+      expect(c).toMatchObject({
+        reason: 'low_gas', balanceWei: parseEther('0.25').toString(), minGasWei: parseEther('1').toString(),
+        batchCostWei: perBatch.toString(), topUpWei: (parseEther('1') + perBatch - parseEther('0.25')).toString(),
+      })
+    })
+
+    it('without a batch to go by, the top-up is the minimum minus the balance', async () => {
+      fake.setBalance(parseEther('0.25'))
+      await runBeatTick(T0)
+      const c = (await call('GET', '/api/admin/beats')).json().chains[0]
+      expect(c).toMatchObject({ reason: 'low_gas', minGasWei: parseEther('1').toString(), batchCostWei: null, topUpWei: parseEther('0.75').toString() })
     })
   })
 })

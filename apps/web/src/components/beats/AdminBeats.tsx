@@ -2,7 +2,7 @@
 import { BEAT_CHAIN_INFO, beatAddressUrl, type BeatChain } from '@virvixr/shared'
 import { CopyWallet } from '@/components/CopyWallet'
 import { Badge, ConfirmAction, tableHeadBand } from '@/components/ui'
-import { balanceLabel, pauseMessage, type AdminBeatChain, type AdminBeatsOverview } from '@/lib/admin-beats'
+import { balanceLabel, lowGasDetail, pauseMessage, type AdminBeatChain, type AdminBeatsOverview } from '@/lib/admin-beats'
 
 const link = 'text-blue-400 hover:underline'
 const btn = 'rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500 disabled:opacity-50'
@@ -10,6 +10,7 @@ const label = (chain: BeatChain) => BEAT_CHAIN_INFO[chain]?.label ?? chain
 
 function ChainCard({ c, busy, onClearPause }: { c: AdminBeatChain; busy: boolean; onClearPause: (chain: BeatChain) => void }) {
   const pause = pauseMessage(c)
+  const lowGas = lowGasDetail(c)
   return (
     <section className="rounded-lg border border-gray-800 p-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -31,6 +32,7 @@ function ChainCard({ c, busy, onClearPause }: { c: AdminBeatChain; busy: boolean
       {pause && (
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <p role="status" className="text-amber-300">{pause}</p>
+          {lowGas && <p className="w-full tabular-nums text-gray-300">{lowGas}</p>}
           {c.reason === 'id_conflict' && (
             <ConfirmAction prompt={`Clear the pause on ${label(c.chain)}? Minting starts again.`} confirmLabel="Clear pause" onConfirm={() => onClearPause(c.chain)} disabled={busy} className={btn}>
               Clear pause

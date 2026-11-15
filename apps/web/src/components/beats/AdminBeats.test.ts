@@ -6,7 +6,7 @@ import type { AdminBeatsOverview } from '@/lib/admin-beats'
 
 const MINTER = '0x1234567890abcdef1234567890abcdef12345678'
 const data = (over: Partial<AdminBeatsOverview> = {}): AdminBeatsOverview => ({
-  chains: [{ chain: 'polygon-amoy', contract: null, minter: MINTER, balanceWei: '1500000000000000000', balanceError: false, paused: false, reason: null, missing: [] }],
+  chains: [{ chain: 'polygon-amoy', contract: null, minter: MINTER, balanceWei: '1500000000000000000', balanceError: false, paused: false, reason: null, missing: [], minGasWei: '1000000000000000000', batchCostWei: null, topUpWei: null }],
   counts: { claimed: 4, minting: 2, failed: 1 },
   failed: [{ beatId: 'b1', name: 'Launch party', wallet: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', failReason: 'reverted' }],
   batches: [{ id: 't1', chain: 'polygon-amoy', kind: 'mint', tokenId: '7', nonce: 3, status: 'confirmed', attempts: 1, txUrl: 'https://amoy.polygonscan.com/tx/0xaa', createdAt: '2026-11-14T12:00:00Z' }],
@@ -27,8 +27,9 @@ describe('AdminBeatsView (LIV-11)', () => {
     expect(html).toContain(`https://amoy.polygonscan.com/address/${MINTER}`)
   })
   it('shows the low-gas pause', () => {
-    const html = render(data({ chains: [{ ...data().chains[0], paused: true, reason: 'low_gas', balanceWei: '1' }] }))
+    const html = render(data({ chains: [{ ...data().chains[0], paused: true, reason: 'low_gas', balanceWei: '250000000000000000', batchCostWei: '400000000000000000', topUpWei: '1150000000000000000' }] }))
     expect(html).toContain('Minting paused: top up the minter')
+    expect(html).toContain('Balance 0.2500 POL. Minimum 1.0000 POL. Top up 1.1500 POL: the minimum plus one full 200-claim batch at current fees.')
     expect(html).not.toContain('Clear pause')
   })
   it('shows an id clash with a Clear pause button', () => {
@@ -37,7 +38,7 @@ describe('AdminBeatsView (LIV-11)', () => {
     expect(html).toContain('Clear pause')
   })
   it('shows a chain that is not set up, with what it is missing, instead of hiding it', () => {
-    const html = render(data({ chains: [{ chain: 'polygon', contract: null, minter: null, balanceWei: null, balanceError: false, paused: true, reason: 'no_client', missing: ['BEAT_CONTRACT_POLYGON', 'BEAT_MINTER_KEY'] }] }))
+    const html = render(data({ chains: [{ chain: 'polygon', contract: null, minter: null, balanceWei: null, balanceError: false, paused: true, reason: 'no_client', missing: ['BEAT_CONTRACT_POLYGON', 'BEAT_MINTER_KEY'], minGasWei: '1000000000000000000', batchCostWei: null, topUpWei: null }] }))
     expect(html).toContain('Polygon')
     expect(html).toContain('Not set up')
     expect(html).toContain("Not set up: set BEAT_CONTRACT_POLYGON and BEAT_MINTER_KEY. Hosts can&#x27;t pay for BEATs until then.")

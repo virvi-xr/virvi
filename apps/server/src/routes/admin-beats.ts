@@ -10,7 +10,7 @@ import { isUuid } from '../auth/scene-from.js'
 import { beatChainClient, beatChainMissing } from '../beats/chain.js'
 import { BeatError } from '../beats/errors.js'
 import {
-  beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
+  beatBatchCostWei, beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
 } from '../beats/job.js'
 
 const FAILED_LIST_MAX = 200
@@ -33,7 +33,11 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
     const chains: Array<{
       chain: BeatChain; contract: string | null; minter: string | null; balanceWei: string | null; balanceError: boolean; paused: boolean
       reason: BeatPauseReason; missing: string[]
+      /** BEAT_MIN_GAS_POL in wei; what one full mint batch costs at the last signed fees (null until known); and, while
+       * paused for low gas with a readable balance, the suggested top-up: the minimum plus that batch, less the balance. */
+      minGasWei: string; batchCostWei: string | null; topUpWei: string | null
     }> = []
+    const minGasWei = config.beats.minGasWei
     for (const chain of BEAT_CHAINS) {
       const client = beatChainClient(chain)
       if (!client) {
@@ -41,7 +45,7 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
         if (chain === config.beats.chain) {
           chains.push({
             chain, contract: config.beats.contracts[chain] ?? null, minter: null, balanceWei: null, balanceError: false,
-            paused: true, reason: 'no_client', missing: beatChainMissing(chain),
+            paused: true, reason: 'no_client', missing: beatChainMissing(chain), minGasWei: minGasWei.toString(), batchCostWei: null, topUpWei: null,
           })
         }
         continue
@@ -55,7 +59,16 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
         console.error(`[beats] admin balance read on ${chain} failed:`, safeErr(err))
       }
       const { paused, reason } = beatPaused(chain)
-      chains.push({ chain, contract: config.beats.contracts[chain] ?? null, minter: client.minterAddress, balanceWei, balanceError, paused, reason, missing: [] })
+      const batchCost = beatBatchCostWei(chain)
+      let topUpWei: string | null = null
+      if (reason === 'low_gas' && balanceWei !== null) {
+        const need = minGasWei + (batchCost ?? 0n) - BigInt(balanceWei)
+        topUpWei = (need > 0n ? need : 0n).toString()
+      }
+      chains.push({
+        chain, contract: config.beats.contracts[chain] ?? null, minter: client.minterAddress, balanceWei, balanceError, paused, reason, missing: [],
+        minGasWei: minGasWei.toString(), batchCostWei: batchCost?.toString() ?? null, topUpWei,
+      })
     }
 
     const countRows = await db.select({ status: beatClaims.status, n: sql<number>`count(*)::int` }).from(beatClaims).groupBy(beatClaims.status)
