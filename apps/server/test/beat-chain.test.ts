@@ -131,6 +131,17 @@ describe('the RPC client against a stub provider', () => {
     expect(err.message).not.toContain('deadbeef')
   })
 
+  it('reports a broadcast refused for lack of funds as INSUFFICIENT_FUNDS, by ethers code or by the node message', async () => {
+    const signer = beatChainClientOn('polygon-amoy', stubProvider().p, CONTRACT, key)
+    const s = await signer.sign({ kind: 'close', tokenId: 1n }, 0, { maxFeePerGas: 50n * GWEI, maxPriorityFeePerGas: 30n * GWEI }, 60_000n)
+    for (const [code, message] of [['INSUFFICIENT_FUNDS', 'insufficient funds'], ['UNKNOWN_ERROR', 'insufficient funds for gas * price + value: balance 0'], ['SERVER_ERROR', 'Insufficient funds for gas']]) {
+      const p = stubProvider({ broadcastTransaction: async () => { throw rpcError(code, message) } }).p
+      const err = await beatChainClientOn('polygon-amoy', p, CONTRACT, key).broadcast(s.raw).catch((e) => e)
+      expect(err, message).toMatchObject({ name: 'BeatRpcError', code: 'INSUFFICIENT_FUNDS' })
+      expect(err.message).not.toContain('balance 0')
+    }
+  })
+
   it('throws a payload-free BeatRpcError for a malformed wallet in a mint', async () => {
     const c = beatChainClientOn('polygon-amoy', stubProvider().p, CONTRACT, key)
     const bad = '0x' + 'ab'.repeat(19) + 'zz'

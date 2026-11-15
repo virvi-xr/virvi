@@ -8,6 +8,7 @@ import { copyBeatImage, refundBeat } from '../src/beats/payments.js'
 import { BeatError, testHooks } from '../src/beats/service.js'
 import { setImageSizeReader } from '../src/beats/image.js'
 import { resetDb } from './helpers/db.js'
+import { BEATS_READY } from './helpers/beats-ready.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 
 // The payment steps are Task 6's: count the calls, keep the stubs' behaviour
@@ -37,7 +38,7 @@ describe('BEAT host API (LIV-11)', () => {
     vi.mocked(copyBeatImage).mockClear()
     sizes.clear()
     setImageSizeReader(async (url) => sizes.get(url) ?? null)
-    setBeats({ enabled: true, chain: 'polygon' })
+    setBeats({ enabled: true, chain: 'polygon', ...BEATS_READY })
     app = await testApp()
     host = await createUser({ wallet: randomWallet() })
     sceneA = (await createScene(host, 'A')).scene.id
@@ -475,13 +476,27 @@ describe('BEAT host API (LIV-11)', () => {
 
   describe('availability and the dark launch', () => {
     it('reports enabled, chain, test and canCreate', async () => {
-      expect((await call('GET', '/api/beats/availability')).json()).toEqual({ enabled: true, chain: 'polygon', test: false, canCreate: true })
+      expect((await call('GET', '/api/beats/availability')).json()).toEqual({ enabled: true, chain: 'polygon', test: false, canCreate: true, reason: null })
       setBeats({ chain: 'polygon-amoy' })
-      expect((await call('GET', '/api/beats/availability')).json()).toEqual({ enabled: true, chain: 'polygon-amoy', test: true, canCreate: false })
+      expect((await call('GET', '/api/beats/availability')).json()).toEqual({ enabled: true, chain: 'polygon-amoy', test: true, canCreate: false, reason: null })
       const admin = await createUser({ role: 'admin' })
       expect((await call('GET', '/api/beats/availability', admin)).json().canCreate).toBe(true)
       setBeats({ enabled: false, chain: 'polygon' })
-      expect((await call('GET', '/api/beats/availability')).json()).toEqual({ enabled: false, chain: 'polygon', test: false, canCreate: false })
+      expect((await call('GET', '/api/beats/availability')).json()).toEqual({ enabled: false, chain: 'polygon', test: false, canCreate: false, reason: null })
+    })
+
+    it('M4: enabled without a contract or minter key for the server chain reports not enabled, and create refuses', async () => {
+      const admin = await createUser({ role: 'admin' })
+      for (const patch of [{ contracts: { 'polygon-amoy': BEATS_READY.contracts['polygon-amoy'] } }, { minterKey: null }]) {
+        setBeats({ enabled: true, chain: 'polygon', ...BEATS_READY, ...patch })
+        for (const who of [host, admin]) {
+          expect((await call('GET', '/api/beats/availability', who)).json()).toEqual({ enabled: false, chain: 'polygon', test: false, canCreate: false, reason: 'not_configured' })
+        }
+        const res = await call('POST', '/api/beats', admin, valid())
+        expect([res.statusCode, res.json().error]).toEqual([503, 'not_configured'])
+        expect(res.json().message).toBe("BEATs aren't set up yet. Try again later.")
+      }
+      expect(await db.select().from(beats)).toHaveLength(0)
     })
 
     it('needs a sign-in', async () => {

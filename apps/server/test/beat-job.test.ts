@@ -314,7 +314,7 @@ describe('BEAT minting job (LIV-11)', () => {
     for (const w of ws) expect(String((err as Error).message).toLowerCase()).not.toContain(lc(w).slice(2))
     expect(fake.mempool()).toHaveLength(0)
 
-    expect(await retryFailedClaims(b.id)).toBe(3)
+    expect(await retryFailedClaims(b.id)).toEqual({ retried: 3, skippedClosed: 0 })
     const back = await claimsOf(b.id)
     expect(back.every((c) => c.status === 'claimed' && c.failReason === null)).toBe(true)
     await runBeatTick(at(5 * H))
@@ -634,6 +634,154 @@ describe('BEAT minting job (LIV-11)', () => {
     } finally {
       for (const s of spies) s.mockRestore()
     }
+  })
+
+  describe('final review fixes', () => {
+    it('C1: a BEAT that ends before its create (low gas) is created and its claims minted once gas returns', async () => {
+      const b = await seed({ status: 'live', startsAt: at(-H), endsAt: at(H) })
+      await claims(b.id, [wallet(), wallet()])
+      fake.setBalance(parseEther('0.5'))
+      await runBeatTick(T0)
+      expect(fake.mempool()).toHaveLength(0)
+      await runBeatTick(at(2 * H))
+      expect((await beatOf(b.id)).status).toBe('ended')
+      expect(fake.mempool()).toHaveLength(0)
+      fake.setBalance(parseEther('10'))
+      await runBeatTick(at(2 * H + MIN))
+      expect(fake.mempool()).toHaveLength(1)
+      expect(fake.mempool()[0].call.kind).toBe('create')
+      fake.mine(6)
+      await runBeatTick(at(2 * H + 2 * MIN))
+      expect((await beatOf(b.id)).createdOnChainTx).not.toBeNull()
+      expect(fake.mempool()[0].call.kind).toBe('mint')
+      fake.mine(6)
+      await runBeatTick(at(2 * H + 3 * MIN))
+      expect(await statusCount(b.id)).toEqual({ minted: 2 })
+    })
+
+    it('C1: an ended BEAT past its grace with no claims is not created', async () => {
+      await seed({ status: 'ended', startsAt: at(-30 * H), endsAt: new Date(T0.getTime() - BEAT_CLAIM_GRACE_MS - MIN) })
+      await runBeatTick(T0)
+      expect(fake.mempool()).toHaveLength(0)
+    })
+
+    it('I1: a balance above the minimum but below the batch cost pauses low_gas; claims stay claimed', async () => {
+      setBeats({ minGasWei: parseEther('0.001') })
+      const b = await seed({ created: true })
+      await claims(b.id, [wallet(), wallet()])
+      fake.setBalance(parseEther('0.005')) // the batch costs about 0.0086 POL at 60 gwei
+      const r = await runBeatTick(T0)
+      expect(r.paused).toContain('polygon-amoy')
+      expect(beatPaused('polygon-amoy')).toEqual({ paused: true, reason: 'low_gas' })
+      expect(fake.mempool()).toHaveLength(0)
+      expect(await batches()).toHaveLength(0)
+      expect(await statusCount(b.id)).toEqual({ claimed: 2 })
+      fake.setBalance(parseEther('10'))
+      expect((await runBeatTick(at(MIN))).sent).toBe(1)
+      expect(beatPaused('polygon-amoy')).toEqual({ paused: false, reason: null })
+    })
+
+    it('I1: a broadcast rejected for insufficient funds pauses low_gas and never counts an attempt', async () => {
+      const b = await seed({ created: true })
+      await claims(b.id, [wallet(), wallet()])
+      fake.failBroadcast('INSUFFICIENT_FUNDS', 8)
+      for (let i = 0; i < 8; i++) {
+        await runBeatTick(at(i * H))
+        expect(beatPaused('polygon-amoy')).toEqual({ paused: true, reason: 'low_gas' })
+        const [row] = await batches()
+        expect(row.status).toBe('sending')
+        expect(row.attempts).toBe(0)
+      }
+      expect(await statusCount(b.id)).toEqual({ minting: 2 })
+      expect(recordJobFailure).not.toHaveBeenCalled()
+      await runBeatTick(at(9 * H))
+      expect((await batches())[0].status).toBe('sent')
+      expect(beatPaused('polygon-amoy')).toEqual({ paused: false, reason: null })
+      fake.mine(6)
+      await runBeatTick(at(9 * H + MIN))
+      expect(await statusCount(b.id)).toEqual({ minted: 2 })
+    })
+
+    it('I2: no close while a claim has failed for a retryable reason; a final one does not hold it', async () => {
+      const past = new Date(T0.getTime() - BEAT_CLAIM_GRACE_MS - MIN)
+      const held = await seed({ status: 'ended', startsAt: at(-40 * H), endsAt: past, created: true })
+      const free = await seed({ status: 'ended', startsAt: at(-40 * H), endsAt: past, created: true })
+      await claims(held.id, [wallet()], { status: 'failed', failReason: 'send_failed' })
+      await claims(free.id, [wallet()], { status: 'failed', failReason: 'receiver_rejected' })
+      await runBeatTick(T0)
+      expect(fake.mempool().map((t) => t.call)).toEqual([{ kind: 'close', tokenId: BigInt(free.tokenId!) }])
+      fake.mine(6)
+      await runBeatTick(at(MIN))
+      await runBeatTick(at(2 * MIN))
+      expect(fake.mempool()).toHaveLength(0)
+      expect((await beatOf(held.id)).closedOnChainAt).toBeNull()
+      // Retrying it mints the claim, and only then does the BEAT close
+      expect(await retryFailedClaims(held.id)).toEqual({ retried: 1, skippedClosed: 0 })
+      await runBeatTick(at(3 * MIN))
+      expect(fake.mempool()[0].call.kind).toBe('mint')
+      fake.mine(6)
+      await runBeatTick(at(4 * MIN))
+      expect(await statusCount(held.id)).toEqual({ minted: 1 })
+      expect(fake.mempool()[0].call).toEqual({ kind: 'close', tokenId: BigInt(held.tokenId!) })
+    })
+
+    it('I2: retryFailedClaims skips claims of BEATs closed on chain and says how many', async () => {
+      const closed = await seed({ status: 'ended', startsAt: at(-40 * H), endsAt: at(-30 * H), created: true })
+      await db.update(beats).set({ closedOnChainAt: at(-H) }).where(eq(beats.id, closed.id))
+      const open = await seed({ created: true })
+      await claims(closed.id, [wallet(), wallet()], { status: 'failed', failReason: 'send_failed' })
+      await claims(open.id, [wallet()], { status: 'failed', failReason: 'send_failed' })
+      expect(await retryFailedClaims(closed.id)).toEqual({ retried: 0, skippedClosed: 2 })
+      expect(await retryFailedClaims()).toEqual({ retried: 1, skippedClosed: 2 })
+      expect(await statusCount(closed.id)).toEqual({ failed: 2 })
+      expect(await statusCount(open.id)).toEqual({ claimed: 1 })
+      // A close in flight counts as closed
+      const closing = await seed({ status: 'ended', startsAt: at(-40 * H), endsAt: at(-30 * H), created: true })
+      await claims(closing.id, [wallet()], { status: 'failed', failReason: 'receiver_rejected' })
+      await db.insert(beatMintBatches).values({ chain: 'polygon-amoy', kind: 'close', beatId: closing.id, tokenId: closing.tokenId!, nonce: 40, status: 'sent', txHashes: ['0xc1'] })
+      expect(await retryFailedClaims(closing.id)).toEqual({ retried: 0, skippedClosed: 1 })
+    })
+
+    it('M2: a cancelled BEAT that exists on chain gets a close, after everything else', async () => {
+      const cancelled = await seed({ status: 'cancelled', startsAt: at(H), endsAt: at(2 * H), created: true })
+      const live = await seed({ created: true })
+      await claims(live.id, [wallet()])
+      await runBeatTick(T0)
+      expect(fake.mempool()[0].call.kind).toBe('mint')
+      fake.mine(6)
+      await runBeatTick(at(MIN))
+      expect(fake.mempool()[0].call).toEqual({ kind: 'close', tokenId: BigInt(cancelled.tokenId!) })
+      fake.mine(6)
+      await runBeatTick(at(2 * MIN))
+      expect(fake.isClosed(BigInt(cancelled.tokenId!))).toBe(true)
+      expect((await beatOf(cancelled.id)).closedOnChainAt).toEqual(at(2 * MIN))
+    })
+
+    it('M8: a tick re-plans a stale mint at most 3 times, then ends', async () => {
+      const b = await seed({ created: true })
+      await claims(b.id, [wallet(), wallet()])
+      const sign = vi.spyOn(fake, 'sign')
+      let release!: () => void
+      let locked!: () => void
+      const holding = new Promise<void>((res) => { release = res })
+      const ready = new Promise<void>((res) => { locked = res })
+      // A delete-my-data transaction holds the claim locks for the whole tick
+      const holder = db.transaction(async (tx) => {
+        await tx.select({ id: beatClaims.id }).from(beatClaims).where(eq(beatClaims.beatId, b.id)).for('update')
+        locked()
+        await holding
+      })
+      await ready
+      try {
+        await runBeatTick(T0)
+      } finally {
+        release()
+        await holder
+      }
+      expect(sign).toHaveBeenCalledTimes(3)
+      expect(await batches()).toHaveLength(0)
+      expect(await statusCount(b.id)).toEqual({ claimed: 2 })
+    })
   })
 
   it('also sweeps BEAT payments, and a failing sweep does not stop minting', async () => {

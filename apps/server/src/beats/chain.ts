@@ -127,6 +127,13 @@ function rpcMessage(err: any): string {
   return parts.filter((p) => typeof p === 'string').join(' | ')
 }
 
+/** The ethers code, with any refusal for lack of funds as INSUFFICIENT_FUNDS: ethers maps the usual node message to it,
+ * but some nodes word it so ethers doesn't, and the job pauses for low gas on this code alone. */
+function noFundsCode(err: any): string {
+  const code = codeOf(err)
+  return code === 'INSUFFICIENT_FUNDS' || /insufficient funds/i.test(rpcMessage(err)) ? 'INSUFFICIENT_FUNDS' : code
+}
+
 class RpcBeatChain implements BeatChainClient {
   readonly minterAddress: string
   readonly #wallet: Wallet
@@ -169,7 +176,7 @@ class RpcBeatChain implements BeatChainClient {
       return await this.#provider.estimateGas({ from: this.minterAddress, to: this.#contract, data })
     } catch (err: any) {
       if (codeOf(err) === 'CALL_EXCEPTION') throw new BeatRevert(revertName(revertData(err)))
-      throw new BeatRpcError('estimate', codeOf(err))
+      throw new BeatRpcError('estimate', noFundsCode(err))
     }
   }
 
@@ -201,7 +208,7 @@ class RpcBeatChain implements BeatChainClient {
     try {
       await this.#provider.broadcastTransaction(raw)
     } catch (err) {
-      const code = codeOf(err)
+      const code = noFundsCode(err)
       if (/already known|known transaction|already imported/i.test(rpcMessage(err))) return
       if (code === 'NONCE_EXPIRED') {
         const hash = keccak256(raw)
@@ -257,6 +264,15 @@ export function beatChainClient(chain: BeatChain): BeatChainClient | null {
     built.set(chain, c)
   }
   return c
+}
+
+const CONTRACT_ENV: Record<BeatChain, string> = { 'polygon-amoy': 'BEAT_CONTRACT_POLYGON_AMOY', polygon: 'BEAT_CONTRACT_POLYGON' }
+
+/** The settings a chain still needs before it can mint (empty when it has a client): its contract, the minter key. */
+export function beatChainMissing(chain: BeatChain): string[] {
+  if (overrides.has(chain)) return []
+  const b = config.beats
+  return [...(b.contracts[chain] ? [] : [CONTRACT_ENV[chain]]), ...(b.minterKey ? [] : ['BEAT_MINTER_KEY'])]
 }
 
 /** Tests put a fake in for a chain; null removes it and forgets the built client, so the next call reads config again. */

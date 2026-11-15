@@ -235,6 +235,19 @@ describe('BEAT visitor routes (LIV-11)', () => {
       expect([again.statusCode, again.json().beat.myClaim.status]).toEqual([200, 'claimed'])
     })
 
+    it('M1: no claim before the start, even with a minimum of 0 (not_yet); at the start it succeeds', async () => {
+      const b = await seed({ status: 'paid', startsAt: at(10 * M), endsAt: at(2 * H), minPresentSeconds: 0 })
+      const v = await present(b, 0)
+      const early = await claim(v, b)
+      expect([early.statusCode, early.json().error]).toEqual([409, 'not_yet'])
+      expect(early.json().message).toBe("This event hasn't started yet.")
+      expect((await claimRow(b.id, v.user.id)).status).toBe('present')
+      await db.update(beats).set({ status: 'live', startsAt: at(-1000) }).where(eq(beats.id, b.id))
+      const ok = await claim(v, b)
+      expect(ok.statusCode, ok.body).toBe(200)
+      expect((await claimRow(b.id, v.user.id)).status).toBe('claimed')
+    })
+
     it('claiming 23 hours after the end succeeds, and 25 hours after gets too_late', async () => {
       const ok = await seed({ status: 'ended', startsAt: at(-26 * H), endsAt: at(-23 * H) })
       const v = await visitor()

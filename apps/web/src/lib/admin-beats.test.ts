@@ -3,7 +3,7 @@ import { BEATS_OFF, balanceLabel, clearPause, formatPol, loadAdminBeats, pauseMe
 
 const chain = (over: Partial<AdminBeatChain> = {}): AdminBeatChain => ({
   chain: 'polygon-amoy', contract: null, minter: '0x1234567890abcdef1234567890abcdef12345678',
-  balanceWei: '0', balanceError: false, paused: false, reason: null, ...over,
+  balanceWei: '0', balanceError: false, paused: false, reason: null, missing: [], ...over,
 })
 
 describe('admin BEATs helpers (LIV-11)', () => {
@@ -32,14 +32,25 @@ describe('admin BEATs helpers (LIV-11)', () => {
     await expect(loadAdminBeats(boom)).rejects.toThrow()
   })
   it('Retry failed calls the API, for all or for one BEAT, and says how many went again', async () => {
-    const api = { retryAdminBeatsFailed: vi.fn().mockResolvedValue({ retried: 3 }) }
+    const api = { retryAdminBeatsFailed: vi.fn().mockResolvedValue({ retried: 3, skippedClosed: 0 }) }
     expect(await retryFailed(api)).toBe('3 failed claims will be sent again.')
     expect(api.retryAdminBeatsFailed).toHaveBeenLastCalledWith(undefined)
-    api.retryAdminBeatsFailed.mockResolvedValue({ retried: 1 })
+    api.retryAdminBeatsFailed.mockResolvedValue({ retried: 1, skippedClosed: 0 })
     expect(await retryFailed(api, 'b1')).toBe('1 failed claim will be sent again.')
     expect(api.retryAdminBeatsFailed).toHaveBeenLastCalledWith('b1')
-    api.retryAdminBeatsFailed.mockResolvedValue({ retried: 0 })
+    api.retryAdminBeatsFailed.mockResolvedValue({ retried: 0, skippedClosed: 0 })
     expect(await retryFailed(api)).toBe('No failed claims to retry.')
+  })
+  it('says how many failed claims are on closed BEATs and could not be retried', async () => {
+    const api = { retryAdminBeatsFailed: vi.fn().mockResolvedValue({ retried: 2, skippedClosed: 3 }) }
+    expect(await retryFailed(api)).toBe("2 failed claims will be sent again. 3 on closed BEATs can't be retried.")
+    api.retryAdminBeatsFailed.mockResolvedValue({ retried: 0, skippedClosed: 1 })
+    expect(await retryFailed(api)).toBe("1 on closed BEATs can't be retried.")
+  })
+  it('says what a chain that is not set up is missing', () => {
+    const off = chain({ minter: null, balanceWei: null, paused: true, reason: 'no_client', missing: ['BEAT_CONTRACT_POLYGON', 'BEAT_MINTER_KEY'] })
+    expect(pauseMessage(off)).toBe("Not set up: set BEAT_CONTRACT_POLYGON and BEAT_MINTER_KEY. Hosts can't pay for BEATs until then.")
+    expect(pauseMessage({ ...off, missing: ['BEAT_MINTER_KEY'] })).toBe("Not set up: set BEAT_MINTER_KEY. Hosts can't pay for BEATs until then.")
   })
   it('Clear pause calls the API for that chain', async () => {
     const api = { clearAdminBeatPause: vi.fn().mockResolvedValue({ ok: true }) }

@@ -227,23 +227,29 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       expect(await byId(recentPresent.id)).toBeUndefined()
     })
 
-    it('nulls batch wallets 30 days after settling (confirmed, or failed by sent time), keeps hashes and open batches', async () => {
+    it('nulls batch wallets and raw txs 30 days after settling (confirmed, or failed by sent time), keeps hashes and open batches', async () => {
       const b = await seedBeat()
       const mk = (nonce: number, status: 'confirmed' | 'failed' | 'sent', when: Date, extra: Partial<typeof beatMintBatches.$inferInsert> = {}) =>
         db.insert(beatMintBatches).values({
           chain: 'polygon-amoy', kind: 'mint', beatId: b.id, tokenId: 1, wallets: [wallet()], nonce, txHash: '0xabc', txHashes: ['0xabc'],
-          status, createdAt: when, ...extra,
+          rawTx: '0x02f8raw', status, createdAt: when, ...extra,
         }).returning().then((r) => r[0])
       const confOld = await mk(1, 'confirmed', at(-31 * DAY), { confirmedAt: at(-30 * DAY) })
       const confNew = await mk(2, 'confirmed', at(-31 * DAY), { confirmedAt: at(-(30 * DAY - H)) })
       const failOld = await mk(3, 'failed', at(-31 * DAY), { sentAt: at(-30 * DAY) })
       const open = await mk(4, 'sent', at(-40 * DAY), { sentAt: at(-40 * DAY) })
-      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 2 })
+      // Scrubbed of its wallets before raw txs were scrubbed too: its raw tx (calldata = every wallet) still goes
+      const halfDone = await mk(5, 'failed', at(-50 * DAY), { wallets: null, lastError: 'unsent:NETWORK_ERROR' })
+      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 3 })
       const row = async (id: string) => (await db.select().from(beatMintBatches).where(eq(beatMintBatches.id, id)))[0]
-      expect(await row(confOld.id)).toMatchObject({ wallets: null, txHash: '0xabc', txHashes: ['0xabc'] })
-      expect((await row(failOld.id)).wallets).toBeNull()
+      expect(await row(confOld.id)).toMatchObject({ wallets: null, rawTx: null, txHash: '0xabc', txHashes: ['0xabc'] })
+      expect(await row(failOld.id)).toMatchObject({ wallets: null, rawTx: null })
+      expect(await row(halfDone.id)).toMatchObject({ wallets: null, rawTx: null, txHashes: ['0xabc'], lastError: 'unsent:NETWORK_ERROR' })
+      expect(await row(confNew.id)).toMatchObject({ rawTx: '0x02f8raw' })
       expect((await row(confNew.id)).wallets).toHaveLength(1)
+      expect(await row(open.id)).toMatchObject({ rawTx: '0x02f8raw' })
       expect((await row(open.id)).wallets).toHaveLength(1)
+      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 0 })
     })
   })
 })

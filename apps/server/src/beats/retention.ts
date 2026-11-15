@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, lte, or, sql } from 'drizzle-orm'
 import { BEAT_RETENTION_DAYS } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { beatClaims, beatMintBatches, beats } from '../db/schema.js'
@@ -37,8 +37,8 @@ export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec):
   return exec ? run(exec) : db.transaction(run)
 }
 
-/** The daily sweep: `present` claims of BEATs that ended BEAT_RETENTION_DAYS ago go, and so do the wallets of batches
- * settled that long ago (their hashes stay). A batch's settle time is confirmed_at, else sent_at, else created_at: a
+/** The daily sweep: `present` claims of BEATs that ended BEAT_RETENTION_DAYS ago go, and so do the wallets and signed raw
+ * txs of batches settled that long ago (their hashes stay). A batch's settle time is confirmed_at, else sent_at, else created_at: a
  * failed batch has no confirmed_at. */
 export async function scrubBeats(now: Date): Promise<{ present: number; batches: number }> {
   const cutoff = new Date(now.getTime() - BEAT_RETENTION_DAYS * DAY_MS)
@@ -46,9 +46,11 @@ export async function scrubBeats(now: Date): Promise<{ present: number; batches:
   const present = await db.delete(beatClaims)
     .where(and(eq(beatClaims.status, 'present'), inArray(beatClaims.beatId, ended)))
     .returning({ id: beatClaims.id })
-  const batches = await db.update(beatMintBatches).set({ wallets: null })
+  // raw_tx goes with the wallets: a mint's calldata is mintTo(id, wallets), and for a batch that never mined those wallets
+  // aren't public. last_error holds codes only, and claims' fail_reason a revert name, so nothing else keeps a wallet
+  const batches = await db.update(beatMintBatches).set({ wallets: null, rawTx: null })
     .where(and(
-      isNotNull(beatMintBatches.wallets),
+      or(isNotNull(beatMintBatches.wallets), isNotNull(beatMintBatches.rawTx)),
       inArray(beatMintBatches.status, ['confirmed', 'failed']),
       // postgres-js rejects a Date bound inside a raw sql template, so it goes as an ISO literal
       sql`coalesce(${beatMintBatches.confirmedAt}, ${beatMintBatches.sentAt}, ${beatMintBatches.createdAt}) <= ${cutoff.toISOString()}::timestamptz`,

@@ -855,7 +855,7 @@ function useRealApi() {
     getAdminErrors: () => apiFetch<ErrorsOverview>('/api/admin/errors'),
     getAdminBeats: () => apiFetch<AdminBeatsOverview>('/api/admin/beats'),
     retryAdminBeatsFailed: (beatId?: string) =>
-      apiFetch<{ retried: number }>('/api/admin/beats/retry-failed', { method: 'POST', userAction: true, body: JSON.stringify(beatId ? { beatId } : {}) }),
+      apiFetch<{ retried: number; skippedClosed: number }>('/api/admin/beats/retry-failed', { method: 'POST', userAction: true, body: JSON.stringify(beatId ? { beatId } : {}) }),
     clearAdminBeatPause: (chain: BeatChain) =>
       apiFetch<{ ok: boolean }>('/api/admin/beats/clear-pause', { method: 'POST', userAction: true, body: JSON.stringify({ chain }) }),
     /** "Re-open for filing": forget a Linear issue closed without a fix, so the data can file it again. */

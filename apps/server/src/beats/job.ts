@@ -1,5 +1,5 @@
 import { Transaction } from 'ethers'
-import { and, asc, eq, inArray, isNotNull, isNull, lte, notInArray, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
 import {
   BEAT_CHAINS, BEAT_CHAIN_INFO, BEAT_CLAIM_GRACE_MS, BEAT_FEE_BUMP_PERCENT, BEAT_JOB_EVERY_MS, BEAT_MAX_BATCH,
   BEAT_REPRICE_AFTER_MS, BEAT_SEND_MAX_ATTEMPTS, type BeatChain,
@@ -45,6 +45,9 @@ const singles = new Map<string, Set<string>>()
 const reportedNotPaid = new Set<string>()
 /** BEATs whose create estimate reverted (other than BeatExists), already reported once. */
 const reportedCreateRevert = new Set<string>()
+/** Chains whose node refused a transaction this tick for insufficient funds, or whose balance can't pay for the next
+ * batch: they stay paused for low gas even when the balance is above BEAT_MIN_GAS_POL. Cleared at each chain pass. */
+const shortOfFunds = new Set<BeatChain>()
 
 export const beatJobTestHooks: { afterInsert?: (batchId: string) => Promise<void> } = {}
 
@@ -55,6 +58,7 @@ export function resetBeatJobState(): void {
   singles.clear()
   reportedNotPaid.clear()
   reportedCreateRevert.clear()
+  shortOfFunds.clear()
 }
 
 /** Whether a chain's minting is paused, and why. Set each tick; `id_conflict` stays until restart or clearBeatPause. */
@@ -92,6 +96,22 @@ export function safeErr(err: unknown): string {
 }
 
 const rpcCode = (err: unknown) => (err instanceof BeatRpcError ? err.code : 'UNKNOWN_ERROR')
+/** The node refused for lack of POL (chain.ts turns ethers' code and the node's "insufficient funds" message into this). */
+const noFunds = (err: unknown) => rpcCode(err) === 'INSUFFICIENT_FUNDS'
+
+/** Pauses the chain for low gas until a later tick finds enough POL. Nothing is counted against any batch or claim. */
+function shortOf(chain: BeatChain): void {
+  shortOfFunds.add(chain)
+  setPause(chain, 'low_gas')
+}
+
+/**
+ * Claim failure reasons that are final for that wallet, so they never hold a BEAT open: the contract skipped or the
+ * wallet's receiver hook refused it (`receiver_rejected`, `ERC1155InvalidReceiver`), or the BEAT is already closed on
+ * chain (`BeatClosedError`). Every other reason (send_failed, reverted, InsufficientGas, unknown, ...) can succeed on
+ * an admin's retry, so a BEAT with such a claim isn't closed.
+ */
+export const BEAT_FINAL_FAIL_REASONS = ['receiver_rejected', 'ERC1155InvalidReceiver', 'BeatClosedError'] as const
 
 function decodeCall(data: string): BeatCall {
   const tx = beatInterface.parseTransaction({ data })
@@ -187,14 +207,16 @@ async function tick(now: Date): Promise<BeatTickResult> {
 async function runChain(client: BeatChainClient, now: Date, r: BeatTickResult): Promise<void> {
   const chain = client.chain
   if (pauses.get(chain) === 'no_client') pauses.delete(chain)
+  shortOfFunds.delete(chain)
   const [open] = await db.select().from(beatMintBatches)
     .where(and(eq(beatMintBatches.chain, chain), inArray(beatMintBatches.status, ['sending', 'sent'])))
     .orderBy(asc(beatMintBatches.nonce)).limit(1)
   const settled = open ? await reconcile(client, open, now, r) : true
-  const low = (await client.balanceWei()) < config.beats.minGasWei
+  const balance = await client.balanceWei()
+  const low = shortOfFunds.has(chain) || balance < config.beats.minGasWei
   setPause(chain, low ? 'low_gas' : null)
   if (!settled || low || pauses.get(chain) === 'id_conflict') return
-  await sendNext(client, now, r)
+  await sendNext(client, now, r, balance)
 }
 
 // ── Reconciling the open transaction ─────────────────────────────────────────
@@ -228,8 +250,9 @@ async function reconcile(client: BeatChainClient, b: Batch, now: Date, r: BeatTi
 
 /**
  * Broadcasts a batch's raw tx and marks it sent. NONCE_EXPIRED (the nonce is used: the next tick reconciles it) and
- * REPLACEMENT_UNDERPRICED (an earlier signing of this nonce is still pending) count as sent. Any other failure leaves it
- * `sending` with a backoff of 2^attempts minutes; at BEAT_SEND_MAX_ATTEMPTS it gives up.
+ * REPLACEMENT_UNDERPRICED (an earlier signing of this nonce is still pending) count as sent. INSUFFICIENT_FUNDS pauses
+ * the chain for low gas and counts nothing. Any other failure leaves it `sending` with a backoff of 2^attempts minutes;
+ * at BEAT_SEND_MAX_ATTEMPTS it gives up.
  */
 async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, now: Date, r: BeatTickResult): Promise<'sent' | 'retry' | 'gave_up'> {
   let code: string | null = null
@@ -237,6 +260,13 @@ async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, no
     await client.broadcast(raw)
   } catch (err) {
     code = rpcCode(err)
+    if (noFunds(err)) {
+      // Not the batch's fault: it stays `sending` with its nonce and claims, uncounted, and goes again once there's gas
+      shortOf(b.chain)
+      await db.update(beatMintBatches).set({ lastError: code, nextAttemptAt: null }).where(eq(beatMintBatches.id, b.id))
+      console.warn(`[beats] batch ${b.id} refused for insufficient funds; ${b.chain} paused for low gas`)
+      return 'retry'
+    }
     if (code !== 'NONCE_EXPIRED' && code !== 'REPLACEMENT_UNDERPRICED') {
       const attempts = b.attempts + 1
       // Never accepted by any broadcast: no node has it, and reconcile checked its nonce isn't used
@@ -426,18 +456,33 @@ type Plan =
 
 /** How many tries a tick makes at finding something that estimates; a failed estimate costs nothing on chain. */
 const PLANS_PER_TICK = 50
+/** How many plans found stale at insert (a claim locked by delete-my-data, say) a tick re-plans before it ends. */
+const STALE_PLANS_PER_TICK = 3
 
-async function sendNext(client: BeatChainClient, now: Date, r: BeatTickResult): Promise<void> {
+async function sendNext(client: BeatChainClient, now: Date, r: BeatTickResult, balance: bigint): Promise<void> {
   const skip = new Set<string>()
+  let stale = 0
   for (let i = 0; i < PLANS_PER_TICK; i++) {
     const plan = await nextPlan(client, skip, now)
     if (!plan) return
-    if ((await trySend(client, plan, skip, now, r)) === 'stop') return
+    const out = await trySend(client, plan, skip, now, r, balance)
+    if (out === 'stop') return
+    if (out === 'stale' && ++stale >= STALE_PLANS_PER_TICK) return
   }
 }
 
-/** Priority: (a) a create for the oldest paid or live BEAT not yet on chain; (b) a mint for the BEAT with the oldest
- * claimed claim; (c) a close for an ended BEAT past its grace with nothing pending. */
+/** The claims that keep a BEAT from being closed: pending ones, and failed ones an admin's retry could still mint. */
+const holdsClose = sql`exists (select 1 from beat_claims c where c.beat_id = ${beats.id} and (c.status in ('claimed', 'minting')
+  or (c.status = 'failed' and coalesce(c.fail_reason, '') not in (${sql.join(BEAT_FINAL_FAIL_REASONS.map((x) => sql`${x}`), sql`, `)}))))`
+
+/**
+ * Priority:
+ * (a) a create for the oldest BEAT not yet on chain that is paid or live, or ended with claims still to mint or still
+ *     inside its claim grace (one that ended before its create could go out, say while the minter was out of gas);
+ * (b) a mint for the BEAT with the oldest claimed claim;
+ * (c) a close for an ended BEAT past its grace with no claim pending or retryable (BEAT_FINAL_FAIL_REASONS);
+ * (d) a close for a cancelled BEAT that exists on chain, so nothing can be minted into it.
+ */
 async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): Promise<Plan | null> {
   const chain = client.chain
   const notSkipped = (col: typeof beats.id) => (skip.size ? notInArray(col, [...skip]) : undefined)
@@ -445,7 +490,14 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
   const [create] = await db.select({ id: beats.id, tokenId: beats.tokenId, tradeable: beats.tradeable }).from(beats)
     .innerJoin(beatPayments, eq(beatPayments.id, beats.paymentId))
     .where(and(
-      eq(beats.chain, chain), inArray(beats.status, ['paid', 'live']), isNull(beats.createdOnChainTx), isNotNull(beats.tokenId),
+      eq(beats.chain, chain), isNull(beats.createdOnChainTx), isNotNull(beats.tokenId),
+      or(
+        inArray(beats.status, ['paid', 'live']),
+        and(eq(beats.status, 'ended'), or(
+          gt(beats.endsAt, new Date(now.getTime() - BEAT_CLAIM_GRACE_MS)),
+          sql`exists (select 1 from beat_claims c where c.beat_id = ${beats.id} and c.status in ('claimed', 'minting', 'failed'))`,
+        )),
+      ),
       eq(beatPayments.status, 'paid'), notSkipped(beats.id),
     )).orderBy(asc(beats.createdAt)).limit(1)
   if (create) return { kind: 'create', beatId: create.id, codeCount: 0, call: { kind: 'create', tokenId: BigInt(create.tokenId!), tradeable: create.tradeable } }
@@ -461,10 +513,17 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
   const [close] = await db.select({ id: beats.id, tokenId: beats.tokenId }).from(beats)
     .where(and(
       eq(beats.chain, chain), eq(beats.status, 'ended'), lte(beats.endsAt, new Date(now.getTime() - BEAT_CLAIM_GRACE_MS)),
-      isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt), notSkipped(beats.id),
-      sql`not exists (select 1 from beat_claims c where c.beat_id = ${beats.id} and c.status in ('claimed', 'minting'))`,
+      isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt), notSkipped(beats.id), sql`not ${holdsClose}`,
     )).orderBy(asc(beats.endsAt)).limit(1)
   if (close) return { kind: 'close', beatId: close.id, codeCount: 0, call: { kind: 'close', tokenId: BigInt(close.tokenId!) } }
+
+  // Nothing is minted into a cancelled BEAT, so its claims don't hold it open
+  const [cancelled] = await db.select({ id: beats.id, tokenId: beats.tokenId }).from(beats)
+    .where(and(
+      eq(beats.chain, chain), eq(beats.status, 'cancelled'), isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt),
+      isNotNull(beats.tokenId), notSkipped(beats.id),
+    )).orderBy(asc(beats.updatedAt)).limit(1)
+  if (cancelled) return { kind: 'close', beatId: cancelled.id, codeCount: 0, call: { kind: 'close', tokenId: BigInt(cancelled.tokenId!) } }
   return null
 }
 
@@ -504,23 +563,42 @@ async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint
   }
 }
 
-/** Estimates, signs, records and broadcasts one plan. 'stop' once a transaction is open (or the chain paused). */
-async function trySend(client: BeatChainClient, plan: Plan, skip: Set<string>, now: Date, r: BeatTickResult): Promise<'stop' | 'next'> {
+/**
+ * Estimates, signs, records and broadcasts one plan. 'stop' once a transaction is open (or the chain paused); 'stale'
+ * when the plan's BEAT or claims changed before it was recorded. A batch the balance can't pay for (gas limit × max fee)
+ * is never recorded or sent: the chain pauses for low gas and its claims stay claimed.
+ */
+async function trySend(
+  client: BeatChainClient, plan: Plan, skip: Set<string>, now: Date, r: BeatTickResult, balance: bigint,
+): Promise<'stop' | 'next' | 'stale'> {
   let estimate: bigint
   try {
     estimate = await client.estimate(plan.call)
   } catch (err) {
+    if (noFunds(err)) { shortOf(client.chain); return 'stop' }
     if (!(err instanceof BeatRevert)) throw err
     return estimateReverted(client, plan, err.name, skip, now, r)
   }
   const gasLimit = (estimate + BEAT_RECEIVER_GAS * BigInt(plan.codeCount)) * 110n / 100n
   const nonce = await nextNonce(client)
-  const signed = await client.sign(plan.call, nonce, undefined, gasLimit)
+  let signed: BeatSigned
+  try {
+    signed = await client.sign(plan.call, nonce, undefined, gasLimit)
+  } catch (err) {
+    if (noFunds(err)) { shortOf(client.chain); return 'stop' }
+    throw err
+  }
+  // Signing only fixes the fees; nothing has been recorded or sent, so stopping here costs nothing
+  if (balance < signed.gasLimit * signed.fees.maxFeePerGas) {
+    shortOf(client.chain)
+    console.warn(`[beats] ${client.chain} minter can't pay for the next ${plan.kind} batch; paused for low gas`)
+    return 'stop'
+  }
   const batch = await insertBatch(client.chain, plan, signed, nonce, now)
   if (!batch) {
     // The BEAT or its claims changed since they were read: read again (a create that's no longer due is skipped)
     if (plan.kind !== 'mint') skip.add(plan.beatId)
-    return 'next'
+    return 'stale'
   }
   await beatJobTestHooks.afterInsert?.(batch.id)
   const sent = await broadcastBatch(client, batch, signed.raw, now, r)
@@ -605,7 +683,8 @@ async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, non
       await lockBeat(tx, plan.beatId)
       const [row] = await tx.select({ status: beats.status, created: beats.createdOnChainTx, pay: beatPayments.status }).from(beats)
         .leftJoin(beatPayments, eq(beatPayments.id, beats.paymentId)).where(eq(beats.id, plan.beatId))
-      if (!row || !(row.status === 'paid' || row.status === 'live') || row.created || row.pay !== 'paid') return null
+      // An ended BEAT may still be created (its claims wait on it); the plan checked it still has claims or grace left
+      if (!row || !(row.status === 'paid' || row.status === 'live' || row.status === 'ended') || row.created || row.pay !== 'paid') return null
     }
     if (plan.kind === 'mint') {
       const got = await tx.select({ id: beatClaims.id }).from(beatClaims)
@@ -628,12 +707,24 @@ async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, non
 
 // ── Admin and start-up ───────────────────────────────────────────────────────
 
-/** The admin's retry: failed claims (of one BEAT, or all) go back to `claimed` without their fail reason. */
-export async function retryFailedClaims(beatId?: string): Promise<number> {
+/**
+ * The admin's retry: failed claims (of one BEAT, or all) go back to `claimed` without their fail reason. Claims of a
+ * BEAT already closed on chain (or whose close is in flight) can never be minted, so they stay failed and are counted
+ * in `skippedClosed`.
+ */
+export async function retryFailedClaims(beatId?: string): Promise<{ retried: number; skippedClosed: number }> {
+  const scope = and(eq(beatClaims.status, 'failed'), beatId ? eq(beatClaims.beatId, beatId) : undefined)
+  // Closed, or a close is in flight (it was sent while only final failures were left)
+  const closed = db.select({ id: beats.id }).from(beats).where(or(
+    isNotNull(beats.closedOnChainAt),
+    sql`exists (select 1 from beat_mint_batches m where m.beat_id = ${beats.id} and m.kind = 'close' and m.status in ('sending', 'sent'))`,
+  ))
   const rows = await db.update(beatClaims).set({ status: 'claimed', failReason: null })
-    .where(and(eq(beatClaims.status, 'failed'), beatId ? eq(beatClaims.beatId, beatId) : undefined))
+    .where(and(scope, notInArray(beatClaims.beatId, closed)))
     .returning({ id: beatClaims.id })
-  return rows.length
+  const [skipped] = await db.select({ n: sql<number>`count(*)::int` }).from(beatClaims)
+    .where(and(scope, inArray(beatClaims.beatId, closed)))
+  return { retried: rows.length, skippedClosed: skipped?.n ?? 0 }
 }
 
 /** Runs the tick every BEAT_JOB_EVERY_MS (the first 30 s after boot). Returns a stopper. */

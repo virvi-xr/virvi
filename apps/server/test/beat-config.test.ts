@@ -15,7 +15,7 @@ describe('beatSettingsFrom', () => {
     expect(b.rpc.polygon).toBe('https://polygon-bor-rpc.publicnode.com')
     expect(b.price).toEqual({ baseCents: 500, includedMints: 100, extraMintCents: 2 })
     expect(b.minGasWei).toBe(10n ** 18n)
-    expect(b.metadataBase).toMatch(/\/api\/beats\/metadata\/$/)
+    expect(b).not.toHaveProperty('metadataBase')
   })
   it('reads settings', () => {
     const key = Wallet.createRandom().privateKey
@@ -31,6 +31,11 @@ describe('beatSettingsFrom', () => {
     expect(b.rpc.polygon).toBe('https://rpc.example')
     expect(b.price).toEqual({ baseCents: 700, includedMints: 50, extraMintCents: 3 })
     expect(b.minGasWei).toBe(5n * 10n ** 17n)
+  })
+  it('refuses a base price of 0, which would make paid BEATs free', () => {
+    expect(() => beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '0' })).toThrow('BEAT_PRICE_BASE_CENTS must be more than 0')
+    expect(() => beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '-5' })).toThrow(/BEAT_PRICE_BASE_CENTS/)
+    expect(beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '1' }).price.baseCents).toBe(1)
   })
   it('refuses a bad chain', () => {
     expect(() => beatSettingsFrom({ BEAT_CHAIN: 'ethereum' })).toThrow(/BEAT_CHAIN/)

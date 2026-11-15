@@ -174,7 +174,7 @@ export async function checkInBeat(sceneId: string, beatId: string, userId: strin
 }
 
 /**
- * Claim: a present claim with enough time, before the grace runs out, while the supply lasts. Under the BEAT row's lock,
+ * Claim: a present claim with enough time, from the start until the grace runs out, while the supply lasts. Under the BEAT row's lock,
  * so concurrent claims count the supply one at a time. A claim already further along is returned as it is.
  */
 export async function claimBeat(sceneId: string, beatId: string, userId: string, now = new Date()): Promise<{ beat: VisitorBeat }> {
@@ -185,6 +185,8 @@ export async function claimBeat(sceneId: string, beatId: string, userId: string,
     const claim = await myClaimRow(tx, b.id, userId, true)
     if (!claim) throw notTracking()
     if (claim.status !== 'present') return
+    // Tracking opens before the start, so with a minimum of 0 the time alone would allow it
+    if (now.getTime() < b.startsAt.getTime()) throw new BeatError(409, 'not_yet', "This event hasn't started yet.")
     if (now.getTime() > claimUntil(b).getTime()) throw new BeatError(409, 'too_late', 'The time to claim this BEAT is over.')
     if (claim.secondsPresent < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
     if ((await takenCount(tx, b.id)) >= b.supplyCap) throw new BeatError(409, 'all_claimed', 'All of these BEATs have been claimed.')

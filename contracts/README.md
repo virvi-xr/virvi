@@ -64,6 +64,10 @@ blockchain) that creates them, on Polygon.
    on mainnet (the real cost is usually under 1 POL, depending on the gas price that day). What isn't
    spent stays in the wallet.
 4. **The minter address**: Virvi's server wallet.
+
+   **One contract and one minter for each server.** Staging and production each get their own contract
+   and their own minter wallet. Never share either between them, even on Amoy: each server numbers its
+   BEATs from 1, so two servers on one contract would clash, and minting would stop.
 5. For publishing the code on Polygonscan (below): a free **Etherscan API key** from etherscan.io (My
    Account, API Keys). It also works for Polygonscan.
 

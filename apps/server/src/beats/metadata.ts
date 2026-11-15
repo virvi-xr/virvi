@@ -7,7 +7,7 @@ import { beats, mediaAssets } from '../db/schema.js'
 
 /**
  * BEAT token metadata (LIV-11): public JSON that wallets and marketplaces read, at the contract's URI
- * `{metadataBase}{chain}/{id}.json`. `{id}` is decimal or the 64 lowercase hex digits ERC-1155's `{id}` substitution
+ * `{PUBLIC_URL}/api/beats/metadata/{chain}/{id}.json` (the base URI is set on the contract at deploy, contracts/README.md). `{id}` is decimal or the 64 lowercase hex digits ERC-1155's `{id}` substitution
  * gives; `contract.json` is the ERC-7572 collection metadata. No bearer is read. Dark (404) unless BEAT_ENABLED, by the
  * hook in beats/routes.ts.
  */

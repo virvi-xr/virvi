@@ -9,6 +9,7 @@ import { beatClaims, beats, beatScenes, mediaAssets, orgMembers, scenes, users }
 import type { Actor } from '../auth/actor.js'
 import { getSceneAccess, hasScope } from '../auth/permissions.js'
 import { BeatError } from './errors.js'
+import { beatChainMissing } from './chain.js'
 import { readImageSize } from './image.js'
 import { lockBeat } from './lock.js'
 import { beatQuote, copyBeatImage, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
@@ -66,9 +67,20 @@ async function canManage(c: BeatCaller, row: BeatRow, sceneIds: string[]) {
 /** Test-only seams (never set in production). */
 export const testHooks: { afterCancelRead?: (beatId: string) => Promise<void> } = {}
 
+/** False while the server's chain lacks a contract or the minter key: the job could never put a BEAT on chain. */
+const chainReady = () => beatChainMissing(config.beats.chain).length === 0
+
+/** BEATs that are switched on but whose chain isn't set up read as not enabled (`not_configured`), so nobody pays. */
 export function beatAvailability(admin: boolean) {
-  const { enabled, chain } = config.beats
-  return { enabled, chain, test: isAmoy(chain), canCreate: enabled && (!isAmoy(chain) || admin) }
+  const { chain } = config.beats
+  const notConfigured = config.beats.enabled && !chainReady()
+  const enabled = config.beats.enabled && !notConfigured
+  return { enabled, chain, test: isAmoy(chain), canCreate: enabled && (!isAmoy(chain) || admin), reason: notConfigured ? 'not_configured' as const : null }
+}
+
+/** Create, checkout and top-ups take money (or credit) for a chain, so they refuse while it isn't set up. */
+function requireChainReady(): void {
+  if (!chainReady()) throw new BeatError(503, 'not_configured', "BEATs aren't set up yet. Try again later.")
 }
 
 // ── Reading ──────────────────────────────────────────────────────────────────
@@ -291,6 +303,7 @@ async function lockScenes(tx: Tx, sceneIds: string[]) {
 export async function createBeat(c: BeatCaller, body: Body, now = new Date()): Promise<PublicBeat> {
   const chain = config.beats.chain
   if (isAmoy(chain) && !c.admin) throw new BeatError(403, 'forbidden', "BEATs aren't open to everyone yet.")
+  requireChainReady()
   const sceneIds = parseSceneIds(body.sceneIds)
   await requireRunAll(c, sceneIds)
   const name = parseName(body.name)
@@ -454,12 +467,14 @@ async function payerOf(c: BeatCaller) {
 /** Pays for a draft BEAT: a Stripe Checkout URL for card, or paid at once by credit (or free, on Amoy). */
 export async function checkoutBeat(c: BeatCaller, beatId: string, body: Body, now = new Date()): Promise<BeatCheckoutResult> {
   const { row } = await loadManageable(c, beatId)
+  requireChainReady()
   return createBeatCheckout(row, await payerOf(c), parseMethod(body.method), now)
 }
 
 /** Raises a paid or live BEAT's supply before its end; the cap changes once the top-up is paid. */
 export async function raiseBeatCap(c: BeatCaller, beatId: string, body: Body, now = new Date()): Promise<BeatCheckoutResult> {
   const { row } = await loadManageable(c, beatId)
+  requireChainReady()
   const method = parseMethod(body.method)
   return createCapTopup(row, await payerOf(c), parseCap(body.supplyCap), method, now)
 }

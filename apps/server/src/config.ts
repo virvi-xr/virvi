@@ -209,7 +209,8 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
   } catch {
     throw new Error('BEAT_MIN_GAS_POL must be a decimal amount of POL')
   }
-  const publicUrl = (e.PUBLIC_URL || 'http://localhost:3010').replace(/\/+$/, '')
+  const baseCents = whole('BEAT_PRICE_BASE_CENTS', 500)
+  if (baseCents <= 0) throw new Error('BEAT_PRICE_BASE_CENTS must be more than 0')
   return {
     enabled: e.BEAT_ENABLED === 'true',
     chain,
@@ -220,12 +221,11 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
       polygon: e.POLYGON_RPC_URL || 'https://polygon-bor-rpc.publicnode.com',
     } as Record<BeatChain, string>,
     price: {
-      baseCents: whole('BEAT_PRICE_BASE_CENTS', 500),
+      baseCents,
       includedMints: whole('BEAT_INCLUDED_MINTS', 100),
       extraMintCents: whole('BEAT_PRICE_EXTRA_MINT_CENTS', 2),
     },
     minGasWei,
-    metadataBase: `${publicUrl}/api/beats/metadata/`,
   }
 }
 

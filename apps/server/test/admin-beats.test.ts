@@ -87,7 +87,7 @@ describe('admin BEAT routes (LIV-11)', () => {
     let json = res.json()
     expect(json.chains).toEqual([{
       chain: 'polygon-amoy', contract: '0x00000000000000000000000000000000000b3a75', minter: fake.minterAddress,
-      balanceWei: parseEther('7').toString(), balanceError: false, paused: false, reason: null,
+      balanceWei: parseEther('7').toString(), balanceError: false, paused: false, reason: null, missing: [],
     }])
     expect(json.counts).toEqual({ claimed: 0, minting: 1, failed: 1 })
     expect(json.failed).toEqual([{ beatId: b.id, name: 'Beat 901', wallet: w1, failReason: 'receiver_rejected' }])
@@ -104,7 +104,7 @@ describe('admin BEAT routes (LIV-11)', () => {
     expect(json.chains[0]).toMatchObject({ balanceWei: parseEther('0.5').toString(), paused: true, reason: 'low_gas' })
   })
 
-  it('lists only chains with a client; a chain with no contract shows contract null; batches without a hash have no link', async () => {
+  it('lists chains with a client, and the server chain even without one; a chain with no contract shows contract null; batches without a hash have no link', async () => {
     set({ contracts: {} })
     const b = await seedBeat(902)
     await db.insert(beatMintBatches).values({ chain: 'polygon-amoy', kind: 'mint', beatId: b.id, tokenId: 902, nonce: 7, status: 'failed', txHashes: [] })
@@ -112,7 +112,14 @@ describe('admin BEAT routes (LIV-11)', () => {
     expect(json.chains.map((c: { chain: string; contract: unknown }) => [c.chain, c.contract])).toEqual([['polygon-amoy', null]])
     expect(json.batches[0].txUrl).toBeNull()
     setBeatChainClientForTests('polygon-amoy', null)
-    expect((await call('GET', '/api/admin/beats')).json().chains).toEqual([])
+    set({ minterKey: null })
+    // The server's own chain is shown as not set up rather than hidden (M4); another chain without a client is left out
+    expect((await call('GET', '/api/admin/beats')).json().chains).toEqual([{
+      chain: 'polygon-amoy', contract: null, minter: null, balanceWei: null, balanceError: false, paused: true, reason: 'no_client',
+      missing: ['BEAT_CONTRACT_POLYGON_AMOY', 'BEAT_MINTER_KEY'],
+    }])
+    set({ contracts: { 'polygon-amoy': '0x00000000000000000000000000000000000b3a75' } })
+    expect((await call('GET', '/api/admin/beats')).json().chains[0]).toMatchObject({ contract: '0x00000000000000000000000000000000000b3a75', missing: ['BEAT_MINTER_KEY'] })
   })
 
   it('links the hash that mined (tx_hash), not the newest one signed; literal URLs on both chains', async () => {
@@ -149,11 +156,20 @@ describe('admin BEAT routes (LIV-11)', () => {
     const a = await seedBeat(904)
     const c = await seedBeat(905)
     for (const beat of [a, a, c]) await db.insert(beatClaims).values({ beatId: beat.id, wallet: wallet(), consentVersion: 1, status: 'failed', failReason: 'reverted' })
-    expect((await call('POST', '/api/admin/beats/retry-failed', admin, { beatId: a.id })).json()).toEqual({ retried: 2 })
+    expect((await call('POST', '/api/admin/beats/retry-failed', admin, { beatId: a.id })).json()).toEqual({ retried: 2, skippedClosed: 0 })
     expect((await db.select().from(beatClaims).where(eq(beatClaims.beatId, c.id)))[0].status).toBe('failed')
-    expect((await call('POST', '/api/admin/beats/retry-failed', admin, {})).json()).toEqual({ retried: 1 })
+    expect((await call('POST', '/api/admin/beats/retry-failed', admin, {})).json()).toEqual({ retried: 1, skippedClosed: 0 })
     expect((await db.select().from(beatClaims)).every((r) => r.status === 'claimed' && r.failReason === null)).toBe(true)
     expect((await call('POST', '/api/admin/beats/retry-failed', admin, { beatId: 'nope' })).statusCode).toBe(400)
+  })
+
+  it('retry-failed leaves the failed claims of a BEAT closed on chain, and says how many', async () => {
+    const shut = await seedBeat(907)
+    await db.update(beats).set({ status: 'ended', closedOnChainAt: T0 }).where(eq(beats.id, shut.id))
+    const open = await seedBeat(908)
+    for (const beat of [shut, shut, open]) await db.insert(beatClaims).values({ beatId: beat.id, wallet: wallet(), consentVersion: 1, status: 'failed', failReason: 'send_failed' })
+    expect((await call('POST', '/api/admin/beats/retry-failed', admin, {})).json()).toEqual({ retried: 1, skippedClosed: 2 })
+    expect((await db.select().from(beatClaims).where(eq(beatClaims.beatId, shut.id))).map((r) => r.status)).toEqual(['failed', 'failed'])
   })
 
   it('clear-pause lifts an id_conflict pause and rejects an unknown chain', async () => {

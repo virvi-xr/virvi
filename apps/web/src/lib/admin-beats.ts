@@ -6,12 +6,15 @@ export type BeatPauseReason = 'low_gas' | 'no_client' | 'id_conflict' | null
 export interface AdminBeatChain {
   chain: BeatChain
   contract: string | null
-  minter: string
+  /** Null for the server's chain when it has no minter key or contract yet (see `missing`). */
+  minter: string | null
   /** Wei, as a decimal string; null when the balance couldn't be read. */
   balanceWei: string | null
   balanceError: boolean
   paused: boolean
   reason: BeatPauseReason
+  /** The settings this chain still needs before it can mint (empty once it's set up), e.g. BEAT_MINTER_KEY. */
+  missing: string[]
 }
 
 export interface AdminBeatsOverview {
@@ -42,8 +45,9 @@ export function balanceLabel(c: Pick<AdminBeatChain, 'balanceWei' | 'balanceErro
 }
 
 /** Why minting is paused on a chain, plainly, or null while it runs. */
-export function pauseMessage(c: Pick<AdminBeatChain, 'paused' | 'reason'>): string | null {
+export function pauseMessage(c: Pick<AdminBeatChain, 'paused' | 'reason'> & { missing?: string[] }): string | null {
   if (!c.paused) return null
+  if (c.missing?.length) return `Not set up: set ${c.missing.join(' and ')}. Hosts can't pay for BEATs until then.`
   if (c.reason === 'low_gas') return 'Minting paused: top up the minter'
   if (c.reason === 'id_conflict') return 'Minting paused: a BEAT id already exists on chain. Check before clearing.'
   if (c.reason === 'no_client') return "Minting paused: the minter isn't set up"
@@ -60,11 +64,15 @@ export async function loadAdminBeats(api: { getAdminBeats: () => Promise<AdminBe
   }
 }
 
-/** Retry failed: every failed claim, or one BEAT's. Returns what to tell the admin. */
-export async function retryFailed(api: { retryAdminBeatsFailed: (beatId?: string) => Promise<{ retried: number }> }, beatId?: string): Promise<string> {
-  const { retried } = await api.retryAdminBeatsFailed(beatId)
-  if (retried === 0) return 'No failed claims to retry.'
-  return `${retried} failed ${retried === 1 ? 'claim' : 'claims'} will be sent again.`
+/** Retry failed: every failed claim, or one BEAT's. Returns what to tell the admin, including the claims of BEATs
+ * already closed on chain, which can't be minted any more. */
+export async function retryFailed(
+  api: { retryAdminBeatsFailed: (beatId?: string) => Promise<{ retried: number; skippedClosed: number }> }, beatId?: string,
+): Promise<string> {
+  const { retried, skippedClosed } = await api.retryAdminBeatsFailed(beatId)
+  const closed = skippedClosed > 0 ? `${skippedClosed} on closed BEATs can't be retried.` : ''
+  if (retried === 0) return closed || 'No failed claims to retry.'
+  return [`${retried} failed ${retried === 1 ? 'claim' : 'claims'} will be sent again.`, closed].filter(Boolean).join(' ')
 }
 
 /** Lift a chain's id-conflict pause, once the clash has been looked into. */

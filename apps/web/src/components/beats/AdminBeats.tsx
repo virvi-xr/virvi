@@ -14,13 +14,17 @@ function ChainCard({ c, busy, onClearPause }: { c: AdminBeatChain; busy: boolean
     <section className="rounded-lg border border-gray-800 p-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold">{label(c.chain)}</h2>
-        {pause ? <Badge tone="danger">Paused</Badge> : <Badge tone="success">Minting</Badge>}
+        {c.missing.length ? <Badge tone="danger">Not set up</Badge> : pause ? <Badge tone="danger">Paused</Badge> : <Badge tone="success">Minting</Badge>}
       </div>
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
         <dt className="text-gray-500">Minter</dt>
-        <dd className="flex flex-wrap items-center gap-3"><CopyWallet wallet={c.minter} /><a href={beatAddressUrl(c.chain, c.minter)} target="_blank" rel="noreferrer" className={`${link} text-xs`}>Polygonscan</a></dd>
-        <dt className="text-gray-500">Balance</dt>
-        <dd className={c.balanceError ? 'text-amber-300' : 'tabular-nums'}>{balanceLabel(c)}</dd>
+        {c.minter
+          ? <dd className="flex flex-wrap items-center gap-3"><CopyWallet wallet={c.minter} /><a href={beatAddressUrl(c.chain, c.minter)} target="_blank" rel="noreferrer" className={`${link} text-xs`}>Polygonscan</a></dd>
+          : <dd className="text-gray-500">Not set</dd>}
+        {c.minter && <>
+          <dt className="text-gray-500">Balance</dt>
+          <dd className={c.balanceError ? 'text-amber-300' : 'tabular-nums'}>{balanceLabel(c)}</dd>
+        </>}
         <dt className="text-gray-500">Contract</dt>
         <dd>{c.contract ? <a href={beatAddressUrl(c.chain, c.contract)} target="_blank" rel="noreferrer" className={`${link} break-all font-mono text-xs`}>{c.contract}</a> : <span className="text-gray-500">Not set</span>}</dd>
       </dl>

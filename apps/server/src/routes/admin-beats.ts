@@ -7,15 +7,15 @@ import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
-import { beatChainClient } from '../beats/chain.js'
+import { beatChainClient, beatChainMissing } from '../beats/chain.js'
 import { beatPaused, type BeatPauseReason, clearBeatPause, retryFailedClaims, safeErr } from '../beats/job.js'
 
 const FAILED_LIST_MAX = 200
 const BATCH_LIST_MAX = 50
 
 /**
- * The admin BEAT page (LIV-11): minter balance and pauses per chain, claim counts, failed claims and the latest
- * transactions. Site admins only, and dark with the rest of BEAT: 404 unless BEAT_ENABLED. Responses carry visitors'
+ * The admin BEAT page (LIV-11): minter balance and pauses per chain (and the server's chain, with what it's missing,
+ * when it has no minter or contract), claim counts, failed claims and the latest transactions. Site admins only, and dark with the rest of BEAT: 404 unless BEAT_ENABLED. Responses carry visitors'
  * wallets (admins need them for failed claims); nothing here logs them.
  */
 export default async function adminBeatRoutes(app: FastifyInstance) {
@@ -27,10 +27,22 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAdmin)
 
   app.get('/api/admin/beats', async (_request, reply) => {
-    const chains: Array<{ chain: BeatChain; contract: string | null; minter: string; balanceWei: string | null; balanceError: boolean; paused: boolean; reason: BeatPauseReason }> = []
+    const chains: Array<{
+      chain: BeatChain; contract: string | null; minter: string | null; balanceWei: string | null; balanceError: boolean; paused: boolean
+      reason: BeatPauseReason; missing: string[]
+    }> = []
     for (const chain of BEAT_CHAINS) {
       const client = beatChainClient(chain)
-      if (!client) continue
+      if (!client) {
+        // The server's own chain is shown even without a client: hosts can't pay for BEATs until it's set up
+        if (chain === config.beats.chain) {
+          chains.push({
+            chain, contract: config.beats.contracts[chain] ?? null, minter: null, balanceWei: null, balanceError: false,
+            paused: true, reason: 'no_client', missing: beatChainMissing(chain),
+          })
+        }
+        continue
+      }
       let balanceWei: string | null = null
       let balanceError = false
       try {
@@ -40,7 +52,7 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
         console.error(`[beats] admin balance read on ${chain} failed:`, safeErr(err))
       }
       const { paused, reason } = beatPaused(chain)
-      chains.push({ chain, contract: config.beats.contracts[chain] ?? null, minter: client.minterAddress, balanceWei, balanceError, paused, reason })
+      chains.push({ chain, contract: config.beats.contracts[chain] ?? null, minter: client.minterAddress, balanceWei, balanceError, paused, reason, missing: [] })
     }
 
     const countRows = await db.select({ status: beatClaims.status, n: sql<number>`count(*)::int` }).from(beatClaims).groupBy(beatClaims.status)
@@ -65,7 +77,7 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
   app.post<{ Body: { beatId?: unknown } }>('/api/admin/beats/retry-failed', async (request, reply) => {
     const beatId = request.body?.beatId
     if (beatId !== undefined && (typeof beatId !== 'string' || !isUuid(beatId))) return reply.status(400).send({ error: 'bad_beat_id', message: 'Not a BEAT id.' })
-    return reply.send({ retried: await retryFailedClaims(beatId as string | undefined) })
+    return reply.send(await retryFailedClaims(beatId as string | undefined))
   })
 
   // An id_conflict pause is sticky: an admin lifts it once the clash has been looked into

@@ -12,6 +12,7 @@ import {
 import { sweepStudio } from '../src/studio/sweep.js'
 import type { StorageProvider } from '../src/storage/index.js'
 import { resetDb } from './helpers/db.js'
+import { BEATS_READY } from './helpers/beats-ready.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { fakeFly, fakeStripe } from './helpers/studio.js'
 
@@ -69,7 +70,7 @@ describe('BEAT payments (LIV-11)', () => {
       const b = bytes.get(url)
       return typeof b === 'function' ? b() : b ?? null
     })
-    setBeats({ enabled: true, chain: 'polygon', price: { baseCents: 500, includedMints: 100, extraMintCents: 2 } })
+    setBeats({ enabled: true, chain: 'polygon', ...BEATS_READY, price: { baseCents: 500, includedMints: 100, extraMintCents: 2 } })
     app = await testApp()
     host = await createUser({ wallet: randomWallet() })
     sceneA = (await createScene(host, 'A')).scene.id
@@ -167,6 +168,26 @@ describe('BEAT payments (LIV-11)', () => {
       expect(s.cancel_url).toMatch(new RegExp(`/beats\\?id=${b.id}&payment=cancelled$`))
       expect(s.line_items.reduce((n: number, l: any) => n + l.price_data.unit_amount * l.quantity, 0)).toBe(600)
       expect((await beatOf(b.id)).status).toBe('draft')
+    })
+
+    it('M4: checkout and a cap top-up refuse, taking nothing, while the server chain has no contract or minter key', async () => {
+      const b = await seed()
+      const paid = await seed({ status: 'paid', tokenId: 4, startsAt: new Date(Date.now() + 10 * H), endsAt: new Date(Date.now() + 11 * H) })
+      await giveCredit(host, 10_000)
+      for (const patch of [{ contracts: {} }, { minterKey: null }]) {
+        setBeats(patch)
+        for (const method of ['card', 'credit']) {
+          const res = await call('POST', `/api/beats/${b.id}/checkout`, host, { method })
+          expect([res.statusCode, res.json().error, res.json().message]).toEqual([503, 'not_configured', "BEATs aren't set up yet. Try again later."])
+          const top = await call('POST', `/api/beats/${paid.id}/cap`, host, { method, supplyCap: 200 })
+          expect([top.statusCode, top.json().error]).toEqual([503, 'not_configured'])
+        }
+        setBeats(BEATS_READY)
+      }
+      expect(stripe.calls.sessions).toHaveLength(0)
+      expect(await paymentsOf(b.id)).toHaveLength(0)
+      expect(await paymentsOf(paid.id)).toHaveLength(0)
+      expect(await balance(host)).toBe(10_000)
     })
 
     it('a bad method is bad_request; a paid BEAT is locked; a started one too_late', async () => {

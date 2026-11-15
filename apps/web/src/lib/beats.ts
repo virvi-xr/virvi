@@ -9,7 +9,9 @@ import { shortWallet } from './studio-people'
 export type { PublicBeat, BeatStatus, BeatClaimStatus }
 
 /** GET /api/beats/availability (answers even while BEATs are dark). */
-export interface BeatAvailability { enabled: boolean; chain: BeatChain; test: boolean; canCreate: boolean }
+/** `reason` is 'not_configured' when BEATs are switched on but the server's chain has no contract or minter key yet
+ * (they then read as not enabled, so nobody pays). */
+export interface BeatAvailability { enabled: boolean; chain: BeatChain; test: boolean; canCreate: boolean; reason?: 'not_configured' | null }
 /** GET /api/beats/:id/quote. */
 export interface BeatQuote { cents: number; lines: { label: string; cents: number }[]; refundableUnclaimed: false }
 /** POST /api/beats/:id/checkout and /cap: Stripe's page, or paid at once (credit, or a free test BEAT). */
