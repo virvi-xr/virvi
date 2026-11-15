@@ -1,5 +1,3 @@
-VirviBeatTest:testFuzz_MintTo_EveryoneGetsExactlyOne(uint256,uint256) (runs: 1000, μ: 4336488, ~: 4525680)
-VirviBeatTest:testFuzz_Transfer_NonTradeableAlwaysReverts(address,address) (runs: 1000, μ: 152348, ~: 152364)
 VirviBeatTest:test_Admin_CannotRenounceWithoutScheduledTwoStep() (gas: 51039)
 VirviBeatTest:test_Admin_HandoverIsTwoStepWithOneDayDelay() (gas: 219520)
 VirviBeatTest:test_Admin_MinterGrantAndRevokeAreInstant() (gas: 118392)

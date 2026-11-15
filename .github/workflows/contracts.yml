@@ -26,7 +26,8 @@ jobs:
           version: v1.9.0
       - run: forge build --sizes
       - run: forge test -vv
-      - run: forge snapshot --check
+      # Fuzz gas varies by platform even with a fixed seed, so only fixed tests are snapshotted
+      - run: forge snapshot --check --no-match-test "testFuzz_"
 
   slither:
     runs-on: ubuntu-latest

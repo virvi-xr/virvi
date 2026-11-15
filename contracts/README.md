@@ -200,14 +200,14 @@ The owner can skip this section.
 cd contracts
 forge build
 forge test -vv
-forge snapshot --check
+forge snapshot --check --no-match-test "testFuzz_"
 forge lint
 slither . --config-file slither.config.json
 ```
 
 - Solc 0.8.28, EVM `cancun`. Dependencies are committed under `lib/` (OpenZeppelin Contracts `v5.4.0`,
   only its `contracts/` source, license and readme; forge-std `v1.9.7`), so nothing needs installing.
-- `forge snapshot` rewrites `.gas-snapshot`; commit it when gas changes on purpose.
+- `forge snapshot --no-match-test "testFuzz_"` rewrites `.gas-snapshot`; commit it when gas changes on purpose. Fuzz tests are left out because their gas differs between machines.
 - CI (`.github/workflows/contracts.yml`) runs the same checks on every change under `contracts/`.
 
 **Interfaces.** ERC-1155 with metadata URI, ERC-165, AccessControl with `AccessControlDefaultAdminRules`
