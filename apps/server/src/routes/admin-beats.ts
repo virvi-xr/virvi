@@ -10,7 +10,7 @@ import { isUuid } from '../auth/scene-from.js'
 import { beatChainClient, beatChainMissing } from '../beats/chain.js'
 import { BeatError } from '../beats/errors.js'
 import {
-  beatBatchCostWei, beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
+  BEAT_GIVEN_UP, beatBatchCostWei, beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
 } from '../beats/job.js'
 
 const FAILED_LIST_MAX = 200
@@ -34,7 +34,8 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
       chain: BeatChain; contract: string | null; minter: string | null; balanceWei: string | null; balanceError: boolean; paused: boolean
       reason: BeatPauseReason; missing: string[]
       /** BEAT_MIN_GAS_POL in wei; what one full mint batch costs at the last signed fees (null until known); and, while
-       * paused for low gas with a readable balance, the suggested top-up: the minimum plus that batch, less the balance. */
+       * paused for low gas with a readable balance, the suggested top-up: the minimum plus that batch, less the balance
+       * (null when that isn't above 0). */
       minGasWei: string; batchCostWei: string | null; topUpWei: string | null
     }> = []
     const minGasWei = config.beats.minGasWei
@@ -59,11 +60,12 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
         console.error(`[beats] admin balance read on ${chain} failed:`, safeErr(err))
       }
       const { paused, reason } = beatPaused(chain)
-      const batchCost = beatBatchCostWei(chain)
+      const batchCost = await beatBatchCostWei(chain)
       let topUpWei: string | null = null
       if (reason === 'low_gas' && balanceWei !== null) {
+        // Never a top-up of 0: with nothing to suggest, the page shows the balance and the minimum only
         const need = minGasWei + (batchCost ?? 0n) - BigInt(balanceWei)
-        topUpWei = (need > 0n ? need : 0n).toString()
+        if (need > 0n) topUpWei = need.toString()
       }
       chains.push({
         chain, contract: config.beats.contracts[chain] ?? null, minter: client.minterAddress, balanceWei, balanceError, paused, reason, missing: [],
@@ -73,11 +75,16 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
 
     const countRows = await db.select({ status: beatClaims.status, n: sql<number>`count(*)::int` }).from(beatClaims).groupBy(beatClaims.status)
     const n = (s: string) => countRows.find((r) => r.status === s)?.n ?? 0
-    const counts = { claimed: n('claimed'), minting: n('minting'), failed: n('failed') }
+    // Given-up claims are failed for good: counted apart, so "failed" is what a retry could still send
+    const [gu] = await db.select({ n: sql<number>`count(*)::int` }).from(beatClaims)
+      .where(and(eq(beatClaims.status, 'failed'), eq(beatClaims.failReason, BEAT_GIVEN_UP)))
+    const givenUp = gu?.n ?? 0
+    const counts = { claimed: n('claimed'), minting: n('minting'), failed: n('failed') - givenUp, givenUp }
 
-    const failed = await db.select({ beatId: beatClaims.beatId, name: beats.name, wallet: beatClaims.wallet, failReason: beatClaims.failReason })
+    const failedRows = await db.select({ beatId: beatClaims.beatId, name: beats.name, wallet: beatClaims.wallet, failReason: beatClaims.failReason })
       .from(beatClaims).innerJoin(beats, eq(beats.id, beatClaims.beatId))
       .where(eq(beatClaims.status, 'failed')).orderBy(desc(beatClaims.createdAt)).limit(FAILED_LIST_MAX)
+    const failed = failedRows.map((f) => ({ ...f, retryable: f.failReason !== BEAT_GIVEN_UP }))
 
     const rows = await db.select().from(beatMintBatches).orderBy(desc(beatMintBatches.createdAt), desc(beatMintBatches.nonce)).limit(BATCH_LIST_MAX)
     const batches = rows.map((b) => {

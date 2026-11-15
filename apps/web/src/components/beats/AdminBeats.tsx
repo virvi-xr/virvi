@@ -60,6 +60,7 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
             <span>Claimed <strong className="tabular-nums text-white">{data.counts.claimed}</strong></span>
             <span>Minting <strong className="tabular-nums text-white">{data.counts.minting}</strong></span>
             <span>Failed <strong className="tabular-nums text-white">{data.counts.failed}</strong></span>
+            {data.counts.givenUp > 0 && <span>Given up <strong className="tabular-nums text-white">{data.counts.givenUp}</strong></span>}
           </p>
           <button type="button" className={btn} disabled={busy || data.counts.failed === 0} onClick={() => onRetry()}>Retry failed</button>
         </div>
@@ -76,8 +77,8 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
                   <tr key={`${f.beatId}-${f.wallet}`} className="border-t border-gray-800">
                     <td className="p-2">{f.name}</td>
                     <td className="p-2"><CopyWallet wallet={f.wallet} /></td>
-                    <td className="p-2 text-xs text-gray-400">{f.failReason ?? '—'}</td>
-                    <td className="p-2 text-right"><button type="button" className="text-xs text-blue-300 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onRetry(f.beatId)}>Retry this BEAT</button></td>
+                    <td className="p-2 text-xs text-gray-400">{f.retryable ? (f.failReason ?? '—') : 'Given up'}</td>
+                    <td className="p-2 text-right">{f.retryable && <button type="button" className="text-xs text-blue-300 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onRetry(f.beatId)}>Retry this BEAT</button>}</td>
                   </tr>
                 ))}
               </tbody>

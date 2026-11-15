@@ -25,8 +25,10 @@ export interface AdminBeatChain {
 
 export interface AdminBeatsOverview {
   chains: AdminBeatChain[]
-  counts: { claimed: number; minting: number; failed: number }
-  failed: Array<{ beatId: string; name: string; wallet: string; failReason: string | null }>
+  /** `failed` is what a retry could still send; given-up claims are counted apart. */
+  counts: { claimed: number; minting: number; failed: number; givenUp: number }
+  /** `retryable` false for a claim an admin gave up on (fail reason `given_up`). */
+  failed: Array<{ beatId: string; name: string; wallet: string; failReason: string | null; retryable: boolean }>
   batches: Array<{ id: string; chain: BeatChain; kind: string; tokenId: string; nonce: number; status: string; attempts: number; txUrl: string | null; createdAt: string }>
   /** Ended BEATs past their claim grace that claims failed for a retryable reason keep open on chain: "Stop retrying and close" applies. */
   held: Array<{ beatId: string; name: string; retryable: number }>
@@ -61,7 +63,8 @@ export function lowGasDetail(c: Pick<AdminBeatChain, 'paused' | 'reason' | 'bala
   if (!c.paused || c.reason !== 'low_gas') return null
   const balance = c.balanceError || c.balanceWei === null ? `${BALANCE_UNAVAILABLE}.` : `Balance ${formatPol4(c.balanceWei)}.`
   const parts = [balance, `Minimum ${formatPol4(c.minGasWei)}.`]
-  if (c.topUpWei !== null && !(c.balanceError || c.balanceWei === null)) {
+  // Never "Top up 0.0000 POL": with nothing to suggest, the balance and the minimum stand alone
+  if (c.topUpWei !== null && BigInt(c.topUpWei) > BigInt(0) && !(c.balanceError || c.balanceWei === null)) {
     const why = c.batchCostWei !== null ? `: the minimum plus one full ${BEAT_MAX_BATCH}-claim batch at current fees.` : ' to reach the minimum.'
     parts.push(`Top up ${formatPol4(c.topUpWei, 'up')}${why}`)
   }

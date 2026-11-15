@@ -7,8 +7,8 @@ import type { AdminBeatsOverview } from '@/lib/admin-beats'
 const MINTER = '0x1234567890abcdef1234567890abcdef12345678'
 const data = (over: Partial<AdminBeatsOverview> = {}): AdminBeatsOverview => ({
   chains: [{ chain: 'polygon-amoy', contract: null, minter: MINTER, balanceWei: '1500000000000000000', balanceError: false, paused: false, reason: null, missing: [], minGasWei: '1000000000000000000', batchCostWei: null, topUpWei: null }],
-  counts: { claimed: 4, minting: 2, failed: 1 },
-  failed: [{ beatId: 'b1', name: 'Launch party', wallet: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', failReason: 'reverted' }],
+  counts: { claimed: 4, minting: 2, failed: 1, givenUp: 0 },
+  failed: [{ beatId: 'b1', name: 'Launch party', wallet: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', failReason: 'reverted', retryable: true }],
   batches: [{ id: 't1', chain: 'polygon-amoy', kind: 'mint', tokenId: '7', nonce: 3, status: 'confirmed', attempts: 1, txUrl: 'https://amoy.polygonscan.com/tx/0xaa', createdAt: '2026-11-14T12:00:00Z' }],
   held: [],
   ...over,
@@ -56,5 +56,15 @@ describe('AdminBeatsView (LIV-11)', () => {
     expect(html).toContain('Stop retrying and close')
     expect(html).toContain('3 failed claims hold it open')
     expect(html).not.toContain('confirm(')
+  })
+  it('M5: a given-up claim reads as given up, with no "Retry this BEAT", and Retry failed is off when nothing is retryable', () => {
+    const html = render(data({
+      counts: { claimed: 0, minting: 0, failed: 0, givenUp: 1 },
+      failed: [{ beatId: 'b1', name: 'Launch party', wallet: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', failReason: 'given_up', retryable: false }],
+    }))
+    expect(html).toContain('Given up')
+    expect(html).not.toContain('Retry this BEAT')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Retry failed<\/button>/)
+    expect(render(data())).toContain('Retry this BEAT')
   })
 })

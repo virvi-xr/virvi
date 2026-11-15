@@ -90,8 +90,8 @@ describe('admin BEAT routes (LIV-11)', () => {
       balanceWei: parseEther('7').toString(), balanceError: false, paused: false, reason: null, missing: [],
       minGasWei: parseEther('1').toString(), batchCostWei: expect.any(String), topUpWei: null,
     }])
-    expect(json.counts).toEqual({ claimed: 0, minting: 1, failed: 1 })
-    expect(json.failed).toEqual([{ beatId: b.id, name: 'Beat 901', wallet: w1, failReason: 'receiver_rejected' }])
+    expect(json.counts).toEqual({ claimed: 0, minting: 1, failed: 1, givenUp: 0 })
+    expect(json.failed).toEqual([{ beatId: b.id, name: 'Beat 901', wallet: w1, failReason: 'receiver_rejected', retryable: true }])
     expect(json.batches).toHaveLength(1)
     const [batch] = await db.select().from(beatMintBatches)
     expect(json.batches[0]).toMatchObject({ id: batch.id, chain: 'polygon-amoy', kind: 'mint', tokenId: '901', nonce: batch.nonce, status: 'sent', attempts: batch.attempts })
@@ -256,6 +256,15 @@ describe('admin BEAT routes (LIV-11)', () => {
       expect(rows.map((r) => [r.id === other.id, r.status, r.failReason]).sort()).toEqual([[false, 'failed', 'given_up'], [true, 'claimed', null]])
     })
 
+    it('M5: given-up claims are listed as not retryable and are not counted as failed', async () => {
+      const b = await endedBeat(929, BEAT_CLAIM_GRACE_MS + MIN)
+      await failed(b.id, 'given_up')
+      await failed(b.id, 'reverted')
+      const json = (await call('GET', '/api/admin/beats')).json()
+      expect(json.counts).toMatchObject({ failed: 1, givenUp: 1 })
+      expect(json.failed.map((f: { failReason: string; retryable: boolean }) => [f.failReason, f.retryable]).sort()).toEqual([['given_up', false], ['reverted', true]])
+    })
+
     it('the overview lists the BEATs a give-up can close: ended past the grace, not closed, with retryable failed claims', async () => {
       const eligible = await endedBeat(925, BEAT_CLAIM_GRACE_MS + MIN)
       await failed(eligible.id, 'send_failed')
@@ -290,6 +299,51 @@ describe('admin BEAT routes (LIV-11)', () => {
         reason: 'low_gas', balanceWei: parseEther('0.25').toString(), minGasWei: parseEther('1').toString(),
         batchCostWei: perBatch.toString(), topUpWei: (parseEther('1') + perBatch - parseEther('0.25')).toString(),
       })
+    })
+
+    const GWEI = 1_000_000_000n
+    async function storedBatch(b: { id: string; tokenId: number | null }, nonce: number, call: any, maxFeePerGas: bigint, createdAt: Date) {
+      const signed = await fake.sign(call, nonce, { maxFeePerGas, maxPriorityFeePerGas: GWEI }, undefined)
+      await db.insert(beatMintBatches).values({
+        chain: 'polygon-amoy', kind: call.kind, beatId: b.id, tokenId: b.tokenId!, nonce, status: 'confirmed',
+        wallets: call.kind === 'mint' ? call.wallets : null, rawTx: signed.raw, txHash: signed.hash, txHashes: [signed.hash], createdAt,
+      })
+      return signed
+    }
+
+    it('I1: works the estimate out from the stored batches, so it survives a restart and a pause that never signs', async () => {
+      const b = await seedBeat(931)
+      const big = await storedBatch(b, 1, { kind: 'mint', tokenId: 931n, wallets: [wallet(), wallet(), wallet(), wallet()] }, 40n * GWEI, new Date(T0.getTime() - 3 * H))
+      await storedBatch(b, 2, { kind: 'mint', tokenId: 931n, wallets: [wallet()] }, 50n * GWEI, new Date(T0.getTime() - 2 * H))
+      // M2: the newest signing (here a reprice-sized fee on a close) sets the fee, the largest mint the gas
+      await storedBatch(b, 3, { kind: 'close', tokenId: 931n }, 90n * GWEI, new Date(T0.getTime() - H))
+      resetBeatJobState() // a restart: nothing in memory
+      fake.setBalance(parseEther('0.25'))
+      await runBeatTick(T0) // paused for low gas before anything is signed
+      const perBatch = ((big.gasLimit * BigInt(BEAT_MAX_BATCH) + 3n) / 4n) * 90n * GWEI
+      const c = (await call('GET', '/api/admin/beats')).json().chains[0]
+      expect(c).toMatchObject({ reason: 'low_gas', batchCostWei: perBatch.toString(), topUpWei: (parseEther('1') + perBatch - parseEther('0.25')).toString() })
+    })
+
+    it('M2: a reprice (the batch re-signed at higher fees) raises the estimate', async () => {
+      const b = await seedBeat(932)
+      const call2 = { kind: 'mint', tokenId: 932n, wallets: [wallet(), wallet()] }
+      const first = await storedBatch(b, 1, call2, 40n * GWEI, new Date(T0.getTime() - H))
+      const before = (await call('GET', '/api/admin/beats')).json().chains[0].batchCostWei
+      const resigned = await fake.sign(call2 as any, 1, { maxFeePerGas: 80n * GWEI, maxPriorityFeePerGas: GWEI }, first.gasLimit)
+      await db.update(beatMintBatches).set({ rawTx: resigned.raw, txHash: resigned.hash }).where(eq(beatMintBatches.nonce, 1))
+      const after = (await call('GET', '/api/admin/beats')).json().chains[0].batchCostWei
+      expect(BigInt(after)).toBe(BigInt(before) * 2n)
+    })
+
+    it('M1: never suggests a top-up of 0: with the balance above the minimum, the top-up is null', async () => {
+      const b = await seedBeat(933)
+      await db.insert(beatClaims).values({ beatId: b.id, wallet: wallet(), consentVersion: 1, status: 'claimed', claimedAt: T0 })
+      fake.setBalance(parseEther('1.5'))
+      fake.setFees({ maxFeePerGas: 100_000n * GWEI, maxPriorityFeePerGas: GWEI }) // the batch costs more than the balance
+      await runBeatTick(T0)
+      const c = (await call('GET', '/api/admin/beats')).json().chains[0]
+      expect(c).toMatchObject({ reason: 'low_gas', batchCostWei: null, topUpWei: null })
     })
 
     it('without a batch to go by, the top-up is the minimum minus the balance', async () => {

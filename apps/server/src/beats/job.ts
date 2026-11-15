@@ -49,11 +49,6 @@ const reportedCreateRevert = new Set<string>()
 /** Chains whose node refused a transaction this tick for insufficient funds, or whose balance can't pay for the next
  * batch: they stay paused for low gas even when the balance is above BEAT_MIN_GAS_POL. Cleared at each chain pass. */
 const shortOfFunds = new Set<BeatChain>()
-/** Per chain, what the job last learnt of a transaction's cost, for the admin's low-gas top-up: the max fee per gas it
- * last signed with (any kind), and the gas limit and size of the largest mint batch it signed. */
-const lastFee = new Map<BeatChain, bigint>()
-const mintGas = new Map<BeatChain, { gasLimit: bigint; wallets: number }>()
-
 export const beatJobTestHooks: {
   afterInsert?: (batchId: string) => Promise<void>
   /** Runs after a plan is signed and before its batch is recorded (tests interleave other writers here). */
@@ -68,8 +63,6 @@ export function resetBeatJobState(): void {
   reportedNotPaid.clear()
   reportedCreateRevert.clear()
   shortOfFunds.clear()
-  lastFee.clear()
-  mintGas.clear()
 }
 
 /** Whether a chain's minting is paused, and why. Set each tick; `id_conflict` stays until restart or clearBeatPause. */
@@ -83,23 +76,33 @@ export function clearBeatPause(chain: BeatChain): void {
   pauses.delete(chain)
 }
 
-/** Remembers a signed transaction's fees, and a mint's gas per wallet (the largest batch seen gives the best figure). */
-function noteCost(chain: BeatChain, kind: Batch['kind'], gasLimit: bigint, maxFeePerGas: bigint, wallets: number): void {
-  lastFee.set(chain, maxFeePerGas)
-  if (kind === 'mint' && wallets > 0 && wallets >= (mintGas.get(chain)?.wallets ?? 0)) mintGas.set(chain, { gasLimit, wallets })
-}
+/** How many of a chain's newest signed batches the top-up estimate looks at. */
+const COST_SAMPLE = 50
 
 /**
- * What one full BEAT_MAX_BATCH mint batch would cost at the fees the job last signed with: the largest mint it signed,
- * scaled up per wallet (an upper bound, since the batch's fixed overhead is scaled too). Null until the job has signed
- * a mint on this chain since it started.
+ * What one full BEAT_MAX_BATCH mint batch would cost, worked out from the signed batches stored in beat_mint_batches
+ * (so it holds across restarts, on every instance, and while a low-gas pause stops all signing): the gas limit of the
+ * largest of the chain's recent mint batches, scaled up per wallet (an upper bound, since its fixed overhead is scaled
+ * too), at the highest max fee per gas of that batch and the newest signing of any kind (a reprice re-signs in place).
+ * Null when no signed mint batch is stored (the retention scrub clears raw txs after 30 days).
  */
-export function beatBatchCostWei(chain: BeatChain): bigint | null {
-  const fee = lastFee.get(chain)
-  const gas = mintGas.get(chain)
-  if (fee === undefined || !gas) return null
-  const n = BigInt(gas.wallets)
-  return ((gas.gasLimit * BigInt(BEAT_MAX_BATCH) + n - 1n) / n) * fee
+export async function beatBatchCostWei(chain: BeatChain): Promise<bigint | null> {
+  const rows = await db.select({ kind: beatMintBatches.kind, rawTx: beatMintBatches.rawTx, wallets: beatMintBatches.wallets })
+    .from(beatMintBatches).where(and(eq(beatMintBatches.chain, chain), isNotNull(beatMintBatches.rawTx)))
+    .orderBy(sql`${beatMintBatches.createdAt} desc`, sql`${beatMintBatches.nonce} desc`).limit(COST_SAMPLE)
+  let mint: { gasLimit: bigint; fee: bigint; wallets: number } | null = null
+  let newestFee: bigint | null = null
+  for (const r of rows) {
+    const t = Transaction.from(r.rawTx!)
+    const fee = t.maxFeePerGas ?? 0n
+    newestFee ??= fee
+    const n = r.kind === 'mint' ? r.wallets?.length ?? 0 : 0
+    if (n > 0 && n > (mint?.wallets ?? 0)) mint = { gasLimit: t.gasLimit, fee, wallets: n }
+  }
+  if (!mint || newestFee === null) return null
+  const fee = mint.fee > newestFee ? mint.fee : newestFee
+  const n = BigInt(mint.wallets)
+  return ((mint.gasLimit * BigInt(BEAT_MAX_BATCH) + n - 1n) / n) * fee
 }
 
 const setPause = (chain: BeatChain, reason: BeatPauseReason) => {
@@ -302,8 +305,6 @@ async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, no
     if (noFunds(err)) {
       // Not the batch's fault: it stays `sending` with its nonce and claims, uncounted, and goes again once there's gas
       shortOf(b.chain)
-      const t = Transaction.from(raw)
-      noteCost(b.chain, b.kind, t.gasLimit, t.maxFeePerGas ?? 0n, b.wallets?.length ?? 0)
       await db.update(beatMintBatches).set({ lastError: code, nextAttemptAt: null }).where(eq(beatMintBatches.id, b.id))
       console.warn(`[beats] batch ${b.id} refused for insufficient funds; ${b.chain} paused for low gas`)
       return 'retry'
@@ -629,7 +630,6 @@ async function trySend(
     if (noFunds(err)) { shortOf(client.chain); return 'stop' }
     throw err
   }
-  noteCost(client.chain, plan.kind, signed.gasLimit, signed.fees.maxFeePerGas, plan.kind === 'mint' ? plan.call.wallets.length : 0)
   // Signing only fixes the fees; nothing has been recorded or sent, so stopping here costs nothing
   if (balance < signed.gasLimit * signed.fees.maxFeePerGas) {
     shortOf(client.chain)
