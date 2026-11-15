@@ -12,7 +12,7 @@ describe('dcl runtime', () => {
     // The HUD registers with a virtual canvas (scales on high-DPI screens) and textures its launcher from the icon
     expect(src).toContain('virtualWidth')
     expect(src).toContain('images/virvi/hud-v.png')
-    expect(DCL_RUNTIME_VERSION).toBe(14)
+    expect(DCL_RUNTIME_VERSION).toBe(15)
   })
 
   it('names Virvi items for analytics (v4)', async () => {
@@ -84,14 +84,21 @@ describe('dcl runtime', () => {
   })
 
   it('carries the raffle card and its live draw event (v14, @virvixr/dcl 2.15.0, LIV-55)', async () => {
-    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    const src = Buffer.from((await runtimeFiles(14)).get('bin/index.js')!).toString('utf8')
     expect(src).toContain('Enter raffle')
     expect(src).toContain('raffle_draw')
     expect(src).toContain('2.15.0')
   })
 
-  it('keeps v3 to v13 for deploys still waiting to be signed', async () => {
-    for (const v of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
+  it('carries the BEAT attendance card and claim (v15, @virvixr/dcl 2.16.0, LIV-11)', async () => {
+    const src = Buffer.from((await runtimeFiles()).get('bin/index.js')!).toString('utf8')
+    expect(src).toContain('Track my attendance')
+    expect(src).toContain('Claim your BEAT')
+    expect(src).toContain('2.16.0')
+  })
+
+  it('keeps v3 to v14 for deploys still waiting to be signed', async () => {
+    for (const v of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) expect((await runtimeFiles(v)).has('bin/index.js')).toBe(true)
   })
 
   it('speaks the Virvi protocol only', async () => {
