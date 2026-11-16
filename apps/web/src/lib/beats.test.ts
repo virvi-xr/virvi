@@ -22,7 +22,7 @@ function beat(over: Partial<PublicBeat> = {}): PublicBeat {
     startsAt: new Date(NOW.getTime() + HOUR).toISOString(), endsAt: new Date(NOW.getTime() + 3 * HOUR).toISOString(),
     minPresentSeconds: 300, supplyCap: 100, tradeable: false, status: 'draft', sceneIds: ['s1'],
     counts: { claimed: 0, minting: 0, minted: 0, failed: 0 }, frozen: false, test: false,
-    holdMints: false, mintsReleasedAt: null, mintsHeldUntil: null, scheduledEndsAt: null, heldClaims: 0, artStatus: 'pending',
+    holdMints: false, mintsReleasedAt: null, mintsHeldUntil: null, scheduledEndsAt: null, heldClaims: 0, artStatus: 'pending', retired: false,
     location: { type: 'scene', label: 'A', platform: null, url: null, venue: null, city: null, country: null, address: null, mapUrl: null }, ...over,
   }
 }
@@ -208,6 +208,8 @@ describe('actions', () => {
   })
   it('live: raise cap and end early', () => {
     expect(beatActions(beat({ status: 'live', startsAt: past }), NOW)).toEqual(['raise_cap', 'end_early'])
+    // On an earlier contract: nothing more is sent, so no paying for more (or changing the art); ending it is all
+    expect(beatActions(beat({ status: 'live', startsAt: past, retired: true, artStatus: 'failed', heldClaims: 2, holdMints: true, mintsHeldUntil: past }), NOW)).toEqual(['end_early'])
   })
   it('live past its end: end early only', () => {
     expect(beatActions(beat({ status: 'live', startsAt: past, endsAt: new Date(NOW.getTime() - 1000).toISOString() }), NOW)).toEqual(['end_early'])

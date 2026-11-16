@@ -99,6 +99,23 @@ describe('BEAT visitor routes (LIV-11)', () => {
       expect(Math.abs(claimUntil - (Date.now() + M))).toBeLessThan(5_000)
     })
 
+    it('a BEAT on an earlier contract is never current, and can\'t be tracked or claimed (Virvi would never send it)', async () => {
+      ;(config as any).beats = { ...config.beats, contracts: { polygon: '0x00000000000000000000000000000000000b3a75', 'polygon-amoy': null } }
+      const v = await visitor()
+      const b = await seed({ contractAddress: '0x0000000000000000000000000000000000000001', createdOnChainTx: '0xc' })
+      expect((await current(v)).json()).toEqual({ beat: null })
+      expect((await track(v, b)).statusCode).toBe(404)
+      // One already tracking when the contract was replaced can't claim either
+      await db.update(beats).set({ contractAddress: '0x00000000000000000000000000000000000b3a75' }).where(eq(beats.id, b.id))
+      await present(b, 600, v)
+      await db.update(beats).set({ contractAddress: '0x0000000000000000000000000000000000000001' }).where(eq(beats.id, b.id))
+      expect((await claim(v, b)).statusCode).toBe(404)
+      expect((await claimRow(b.id, v.user.id)).status).toBe('present')
+      // A BEAT not yet on chain (no contract recorded) still shows
+      const fresh = await seed({ contractAddress: null }, [sceneB])
+      expect((await current(v, sceneB)).json().beat).toMatchObject({ id: fresh.id })
+    })
+
     it('draft and cancelled BEATs are never current', async () => {
       const v = await visitor()
       await seed({ status: 'draft', tokenId: null, imageUrl: null })

@@ -363,13 +363,15 @@ export type BeatAction = 'pay' | 'edit' | 'change_image' | 'send' | 'cancel' | '
  * What the host can do now: pay a draft; edit before the start (a draft any time, nothing once frozen); after the start,
  * change only the image when the art couldn't be made; Send held claims; cancel a paid BEAT before the start, or a
  * draft at any time; raise the cap once paid and before the end; end early while live. `payable` false (the network
- * isn't set up) drops Pay and Raise cap.
+ * isn't set up) drops Pay and Raise cap. A retired BEAT can only be ended early.
  */
 export function beatActions(b: PublicBeat, now: Date, o: { payable?: boolean } = {}): BeatAction[] {
   const t = now.getTime()
   const beforeStart = new Date(b.startsAt).getTime() > t
   const beforeEnd = new Date(b.endsAt).getTime() > t
   const out: BeatAction[] = []
+  // On an earlier contract (BEAT_RETIRED_NOTE): Virvi sends nothing more, so only ending it is left
+  if (b.retired) return b.status === 'live' ? ['end_early'] : []
   if (b.status === 'draft' && beforeStart) out.push('pay')
   if (!b.frozen && (b.status === 'draft' || (b.status === 'paid' && beforeStart))) out.push('edit')
   else if (b.artStatus === 'failed' && (b.status === 'paid' || b.status === 'live' || b.status === 'ended')) out.push('change_image')

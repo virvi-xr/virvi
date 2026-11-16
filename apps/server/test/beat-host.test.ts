@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
+import { BEAT_RETIRED_NOTE } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { arDevices, beatClaims, beatMintBatches, beats, beatScenes, dclWorldDestinations, hyperfyPairings, hyperfyWorlds, mediaAssets, sceneCollaborators } from '../src/db/schema.js'
@@ -433,6 +434,19 @@ describe('BEAT host API (LIV-11)', () => {
   })
 
   describe('read and list', () => {
+    it('a BEAT on an earlier contract shows as retired, and its cap can\'t be raised (paid for, never sent)', async () => {
+      const old = '0x0000000000000000000000000000000000000001'
+      const retired = await seed({ status: 'live', tokenId: 1, imageUrl: 'https://cdn.example/f.png', frozenAt: new Date(), contractAddress: old, createdOnChainTx: '0xc' })
+      const current = await seed({ status: 'live', tokenId: 2, imageUrl: 'https://cdn.example/f.png', frozenAt: new Date(), contractAddress: BEATS_READY.contracts.polygon, createdOnChainTx: '0xc' })
+      const notYet = await seed({ status: 'draft' })
+      const byId = new Map((await call('GET', '/api/beats')).json().map((b: { id: string; retired: boolean }) => [b.id, b.retired]))
+      expect([byId.get(retired.id), byId.get(current.id), byId.get(notYet.id)]).toEqual([true, false, false])
+      expect((await call('GET', `/api/beats/${retired.id}`)).json().retired).toBe(true)
+      const res = await call('POST', `/api/beats/${retired.id}/cap`, host, { supplyCap: 200, method: 'card' })
+      expect([res.statusCode, res.json().error]).toEqual([409, 'retired'])
+      expect(res.json().message).toBe(BEAT_RETIRED_NOTE)
+    })
+
     it('counts claims by status, newest claimant first, with tx links', async () => {
       const id = (await create()).json().id
       const w = () => randomWallet()

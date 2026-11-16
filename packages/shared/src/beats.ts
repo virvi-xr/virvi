@@ -144,7 +144,16 @@ export interface PublicBeat {
    */
   artStatus: 'pending' | 'frozen' | 'failed'
   location: BeatLocation
+  /**
+   * On an earlier contract (the network's contract was replaced): kept as a record, but Virvi no longer sends, closes or
+   * reissues it, visitors can't claim it and its cap can't be raised.
+   */
+  retired: boolean
 }
+
+/** What the host sees on a retired BEAT, and the message when they try to change it. */
+export const BEAT_RETIRED_NOTE = "This BEAT is on an earlier version of Virvi's BEAT contract. It stays as a record, but visitors can't claim it now and nothing more is sent."
+
 
 /** The room's `beat_available` on join (for guests, who can't use REST): the scene's BEAT in its card window. */
 export interface AvailableBeat { name: string; test: boolean }

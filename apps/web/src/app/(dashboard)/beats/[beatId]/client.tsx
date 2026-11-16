@@ -4,7 +4,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useSearchParams } from 'next/navigation'
-import { BEAT_SUPPLY_CAP_MAX } from '@virvixr/shared'
+import { BEAT_RETIRED_NOTE, BEAT_SUPPLY_CAP_MAX } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import {
@@ -216,6 +216,7 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
       )}
       {beat.artStatus === 'failed' && beat.status !== 'draft' && beat.status !== 'cancelled' && <p role="alert" className={ALERT}>{ART_FAILED}</p>}
       {beat.artStatus === 'pending' && after && <p role="status" className="text-sm text-gray-400">{ART_PENDING}</p>}
+      {beat.retired && <p role="note" className="rounded-md border border-gray-700 bg-gray-950 px-4 py-2 text-sm text-gray-300">{BEAT_RETIRED_NOTE}</p>}
       <FrozenNote locked={beatLocked(beat)} />
 
       {mode.kind === 'edit' && (

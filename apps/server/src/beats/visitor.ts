@@ -10,6 +10,7 @@ import { beatClaims, beatNetworkClaims, beats, beatScenes, mediaAssets } from '.
 import { checkInDelta } from '../presence/attendance.js'
 import { ipKey } from '../errors/limits.js'
 import { BeatError } from './errors.js'
+import { beatRetired } from './contract.js'
 import { beatLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
 import { claimHeld } from './service.js'
@@ -67,7 +68,8 @@ const notFound = () => new BeatError(404, 'not_found', 'BEAT not found.')
 const notTracking = () => new BeatError(404, 'not_tracking', "You're not tracking this BEAT.")
 const claimUntil = (b: BeatRow) => new Date(b.endsAt.getTime() + BEAT_CLAIM_GRACE_MS)
 /** Test BEATs (Amoy) left over once the server runs on mainnet aren't shown to visitors. */
-const hidden = (b: BeatRow) => config.beats.chain === 'polygon' && b.chain === 'polygon-amoy'
+// Test BEATs on mainnet, and retired ones (on a replaced contract: Virvi would never send a claim), aren't shown or claimable
+const hidden = (b: BeatRow) => (config.beats.chain === 'polygon' && b.chain === 'polygon-amoy') || beatRetired(b)
 
 /** The BEAT, when it is paid, live or ended and on this scene; 404 otherwise. */
 async function beatOnScene(sceneId: string, beatId: string): Promise<BeatRow> {

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from 'drizzle-orm'
 import {
   BEAT_DESCRIPTION_MAX, BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX,
-  BEAT_CLAIM_GRACE_MS, BEAT_LOCATION_MAX, BEAT_LOCATION_TYPES, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX, beatTxUrl,
+  BEAT_CLAIM_GRACE_MS, BEAT_LOCATION_MAX, BEAT_LOCATION_TYPES, BEAT_RETIRED_NOTE, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX, beatTxUrl,
   type BeatChain, type BeatLocation, type BeatLocationType, type PublicBeat,
 } from '@virvixr/shared'
 import { config } from '../config.js'
@@ -13,6 +13,7 @@ import { BeatError } from './errors.js'
 import { beatChainMissing } from './chain.js'
 import { readImageSize } from './image.js'
 import { lockBeat } from './lock.js'
+import { beatRetired } from './contract.js'
 import { beatQuote, copyBeatImage, refuseBelowCardMinimum, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
 
 /**
@@ -144,6 +145,7 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
       artStatus: r.imageUrl ? 'frozen' as const : r.artFailedAt ? 'failed' as const : 'pending' as const,
       scheduledEndsAt: r.scheduledEndsAt?.toISOString() ?? null,
       location: locationOf(r),
+      retired: beatRetired(r),
     }
   })
 }
@@ -739,6 +741,8 @@ export async function checkoutBeat(c: BeatCaller, beatId: string, body: Body, no
 export async function raiseBeatCap(c: BeatCaller, beatId: string, body: Body, now = new Date()): Promise<BeatCheckoutResult> {
   const { row } = await loadManageable(c, beatId)
   requireChainReady()
+  // Paying for more on a BEAT Virvi will never send again (its contract was replaced) would be money for nothing
+  if (beatRetired(row)) throw new BeatError(409, 'retired', BEAT_RETIRED_NOTE)
   const method = parseMethod(body.method)
   return createCapTopup(row, await payerOf(c), parseCap(body.supplyCap), method, now)
 }
