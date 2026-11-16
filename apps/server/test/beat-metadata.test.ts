@@ -51,13 +51,18 @@ describe('BEAT public metadata (LIV-11)', () => {
     expect(dec.headers['cache-control']).toBe('public, max-age=300')
     expect(dec.json()).toEqual({
       name: 'Opening night',
-      description: 'Thanks for coming',
+      description: "Thanks for coming\n\nThis BEAT can't be sold or transferred. It stays in the wallet it was sent to.",
       image: 'https://cdn.example/beats/polygon-amoy/1-x.png',
       external_url: 'https://virvi.io/beats',
       attributes: [
         { trait_type: 'Starts', display_type: 'date', value: Date.parse('2026-12-01T20:00:00Z') / 1000 },
         { trait_type: 'Ends', display_type: 'date', value: Date.parse('2026-12-01T22:00:00Z') / 1000 },
         { trait_type: 'Tradeable', value: 'No' },
+        { trait_type: 'Transfers', value: 'Non-transferable (soulbound)' },
+        { trait_type: 'Location type', value: 'Virtual' },
+        { trait_type: 'Supply', display_type: 'number', value: 100 },
+        { trait_type: 'Minimum minutes', display_type: 'number', value: 5 },
+        { trait_type: 'Network', value: 'Polygon Amoy (test)' },
       ],
     })
     const hex = await meta('polygon-amoy', `${ONE_HEX}.json`)
@@ -65,6 +70,19 @@ describe('BEAT public metadata (LIV-11)', () => {
     expect(hex.body).toBe(dec.body)
     // CORS * even when a browser sends an Origin
     expect((await get('/api/beats/metadata/polygon-amoy/1.json', { origin: 'https://opensea.io' })).headers['access-control-allow-origin']).toBe('*')
+  })
+
+  it('standards M1, M2 and the location: the Where line and Location attributes; a tradeable BEAT has no soulbound note', async () => {
+    await seed({ tokenId: 30, tradeable: true, locationType: 'online', locationLabel: 'Online: Zoom', locationPlatform: 'Zoom', locationUrl: 'https://zoom.us/j/1' })
+    const online = (await meta('polygon-amoy', '30.json')).json()
+    expect(online.description).toBe('Thanks for coming\n\nWhere: Online: Zoom (https://zoom.us/j/1)')
+    expect(online.attributes).toEqual(expect.arrayContaining([
+      { trait_type: 'Location type', value: 'Virtual' }, { trait_type: 'Location', value: 'Online: Zoom' }, { trait_type: 'Transfers', value: 'Transferable' },
+    ]))
+    await seed({ tokenId: 31, description: '', locationType: 'in_person', locationLabel: 'The Hall, Lisbon, Portugal', locationVenue: 'The Hall', locationCity: 'Lisbon', locationCountry: 'Portugal' })
+    const hall = (await meta('polygon-amoy', '31.json')).json()
+    expect(hall.description).toBe("Where: The Hall, Lisbon, Portugal\n\nThis BEAT can't be sold or transferred. It stays in the wallet it was sent to.")
+    expect(hall.attributes).toEqual(expect.arrayContaining([{ trait_type: 'Location type', value: 'In person' }, { trait_type: 'Location', value: 'The Hall, Lisbon, Portugal' }]))
   })
 
   it('matches on the chain: the same id on the other chain is a different BEAT', async () => {
@@ -80,7 +98,7 @@ describe('BEAT public metadata (LIV-11)', () => {
     await seed({
       tokenId: 21, status: 'ended', endsAt: new Date('2026-12-01T21:00:00Z'), scheduledEndsAt: new Date('2026-12-01T22:00:00Z'),
     })
-    expect((await meta('polygon-amoy', '21.json')).json().attributes).toEqual([
+    expect((await meta('polygon-amoy', '21.json')).json().attributes.slice(0, 4)).toEqual([
       { trait_type: 'Starts', display_type: 'date', value: Date.parse('2026-12-01T20:00:00Z') / 1000 },
       { trait_type: 'Ends', display_type: 'date', value: Date.parse('2026-12-01T22:00:00Z') / 1000 },
       { trait_type: 'Ended early', display_type: 'date', value: Date.parse('2026-12-01T21:00:00Z') / 1000 },
@@ -147,8 +165,9 @@ describe('BEAT public metadata (LIV-11)', () => {
     expect(res.headers['access-control-allow-origin']).toBe('*')
     expect(res.headers['cache-control']).toBe('public, max-age=300')
     const body = res.json()
-    expect(body).toMatchObject({ name: 'Virvi BEAT', external_link: 'https://virvi.io' })
-    expect(body.description).toBe('BEATs are free tokens that show you were at a Virvi event.')
+    expect(body).toMatchObject({ name: 'Virvi BEAT', symbol: 'BEAT', external_link: 'https://virvi.io' })
+    expect(body.featured_image).toBe(body.image)
+    expect(body.description).toBe("BEATs are free attendance tokens from Virvi events. Each one shows that a wallet signed in from the event's scene and stayed connected for the minimum time. Hosts pay for them; visitors never pay or sign anything. Each token says whether it can be transferred.")
     expect(body.image).toMatch(/^https?:\/\/[^/]+\/.+\.(png|svg)$/)
     expect((await meta('ethereum', 'contract.json')).statusCode).toBe(404)
   })

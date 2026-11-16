@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { arDevices, beatClaims, beatMintBatches, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, sceneCollaborators } from '../src/db/schema.js'
+import { arDevices, beatClaims, beatMintBatches, beats, beatScenes, dclWorldDestinations, hyperfyPairings, hyperfyWorlds, mediaAssets, sceneCollaborators } from '../src/db/schema.js'
 import { issueArPass, issueHyperfyPass, issueScenePass, issueStudioPass } from '../src/auth/scene-pass.js'
 import { copyBeatImage, refundBeat } from '../src/beats/payments.js'
 import { BeatError, testHooks, updateBeat } from '../src/beats/service.js'
@@ -121,10 +121,40 @@ describe('BEAT host API (LIV-11)', () => {
 
     const code = async (over: Record<string, unknown>) => { const r = await create(over); return [r.statusCode, r.json().error] }
 
+    it('location: a scene BEAT by default, labelled from its scenes (World name or Genesis City coordinates)', async () => {
+      const res = await create()
+      expect(res.json().location).toEqual({ type: 'scene', label: 'A', platform: null, url: null, venue: null, city: null, country: null, address: null, mapUrl: null })
+      await db.insert(dclWorldDestinations).values({ sceneId: sceneA, ownerUserId: host.id, ownerWallet: host.wallet!, worldName: 'moon.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'virvi' })
+      await db.insert(dclWorldDestinations).values({ sceneId: sceneB, ownerUserId: host.id, ownerWallet: host.wallet!, kind: 'parcels', worldName: null, base: '10,-4', parcels: ['10,-4'], mode: 'virvi' })
+      const sorted = [sceneA, sceneB].sort()
+      const firstName = sorted[0] === sceneA ? 'A (moon.dcl.eth)' : 'B (Genesis City 10,-4)'
+      await db.delete(beats)
+      const two = await create({ sceneIds: [sceneA, sceneB] })
+      expect(two.json().location.label).toBe(`${firstName} and 1 more scene`)
+    })
+
+    it('location: online and in person, with http(s) URLs only and capped lengths', async () => {
+      const online = await create({ location: { type: 'online', platform: 'Zoom', url: 'https://zoom.us/j/1', venue: 'ignored' } })
+      expect(online.statusCode, online.body).toBe(201)
+      expect(online.json().location).toMatchObject({ type: 'online', label: 'Online: Zoom', platform: 'Zoom', url: 'https://zoom.us/j/1', venue: null })
+      const id = online.json().id
+      const inPerson = await call('PATCH', `/api/beats/${id}`, host, { location: { type: 'in_person', venue: 'The Hall', city: 'Lisbon', country: 'Portugal', mapUrl: 'https://maps.example/x' } })
+      expect(inPerson.statusCode, inPerson.body).toBe(200)
+      expect(inPerson.json().location).toMatchObject({ type: 'in_person', label: 'The Hall, Lisbon, Portugal', address: null, mapUrl: 'https://maps.example/x', platform: null })
+      const bad = async (location: unknown) => { const r = await call('PATCH', `/api/beats/${id}`, host, { location }); return [r.statusCode, r.json().error] }
+      expect(await bad({ type: 'online', platform: 'Zoom', url: 'javascript:alert(1)' })).toEqual([400, 'bad_location'])
+      expect(await bad({ type: 'online', platform: 'Zoom', url: 'ftp://x.example' })).toEqual([400, 'bad_location'])
+      expect(await bad({ type: 'online', url: 'https://x.example' })).toEqual([400, 'bad_location'])
+      expect(await bad({ type: 'in_person', venue: 'x'.repeat(101), city: 'C', country: 'P' })).toEqual([400, 'bad_location'])
+      expect(await bad({ type: 'in_person', venue: 'V', city: 'C' })).toEqual([400, 'bad_location'])
+      expect(await bad({ type: 'moon' })).toEqual([400, 'bad_location'])
+      expect(await bad('here')).toEqual([400, 'bad_location'])
+    })
+
     it('refuses each bad value with its own code at the boundary', async () => {
       expect(await code({ name: 'x'.repeat(61) })).toEqual([400, 'bad_name'])
       expect(await code({ name: '   ' })).toEqual([400, 'bad_name'])
-      expect(await code({ description: 'x'.repeat(501) })).toEqual([400, 'bad_name'])
+      expect(await code({ description: 'x'.repeat(501) })).toEqual([400, 'bad_description'])
       expect(await code({ supplyCap: 5001 })).toEqual([400, 'bad_cap'])
       expect(await code({ supplyCap: 0 })).toEqual([400, 'bad_cap'])
       expect(await code({ minPresentMinutes: 121 })).toEqual([400, 'bad_window'])
@@ -259,6 +289,9 @@ describe('BEAT host API (LIV-11)', () => {
       expect((await db.query.beats.findFirst({ where: eq(beats.id, b.id) }))!).toMatchObject({ imageMediaId: next.id, artFailedAt: null })
       expect((await call('PATCH', `/api/beats/${b.id}`, host, { name: 'Late rename' })).json().error).toBe('locked')
       expect((await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id, tradeable: true })).json().error).toBe('locked')
+      // The location locks at go-live too; sent unchanged with the whole form, it is fine
+      expect((await call('PATCH', `/api/beats/${b.id}`, host, { location: { type: 'online', platform: 'Zoom', url: 'https://zoom.us' } })).json().error).toBe('locked')
+      expect((await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id, location: { type: 'scene' } })).statusCode).toBe(200)
     })
 
     it('tradeable can change after payment until go-live (it goes on chain with the create at go-live)', async () => {

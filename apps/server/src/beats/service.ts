@@ -1,11 +1,12 @@
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from 'drizzle-orm'
 import {
   BEAT_DESCRIPTION_MAX, BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX,
-  BEAT_CLAIM_GRACE_MS, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX, beatTxUrl, type BeatChain, type PublicBeat,
+  BEAT_CLAIM_GRACE_MS, BEAT_LOCATION_MAX, BEAT_LOCATION_TYPES, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX, beatTxUrl,
+  type BeatChain, type BeatLocation, type BeatLocationType, type PublicBeat,
 } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
-import { beatClaims, beatMintBatches, beats, beatScenes, mediaAssets, orgMembers, scenes, users } from '../db/schema.js'
+import { beatClaims, beatMintBatches, beats, beatScenes, dclWorldDestinations, mediaAssets, orgMembers, scenes, users } from '../db/schema.js'
 import type { Actor } from '../auth/actor.js'
 import { getSceneAccess, hasScope } from '../auth/permissions.js'
 import { BeatError } from './errors.js'
@@ -142,8 +143,17 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
       heldClaims: holdActive(r, now) ? held.get(r.id) ?? 0 : 0,
       artStatus: r.imageUrl ? 'frozen' as const : r.artFailedAt ? 'failed' as const : 'pending' as const,
       scheduledEndsAt: r.scheduledEndsAt?.toISOString() ?? null,
+      location: locationOf(r),
     }
   })
+}
+
+/** The row's location as the API shows it. */
+export function locationOf(r: BeatRow): BeatLocation {
+  return {
+    type: r.locationType, label: r.locationLabel, platform: r.locationPlatform, url: r.locationUrl, venue: r.locationVenue,
+    city: r.locationCity, country: r.locationCountry, address: r.locationAddress, mapUrl: r.locationMapUrl,
+  }
 }
 
 const notFound = () => new BeatError(404, 'not_found', 'BEAT not found.')
@@ -246,7 +256,7 @@ function parseName(v: unknown): string {
 
 function parseDescription(v: unknown): string {
   if (v === undefined || v === null) return ''
-  if (typeof v !== 'string' || [...v.trim()].length > BEAT_DESCRIPTION_MAX) throw new BeatError(400, 'bad_name', `The description can be up to ${BEAT_DESCRIPTION_MAX} characters.`)
+  if (typeof v !== 'string' || [...v.trim()].length > BEAT_DESCRIPTION_MAX) throw new BeatError(400, 'bad_description', `The description can be up to ${BEAT_DESCRIPTION_MAX} characters.`)
   return v.trim()
 }
 
@@ -286,6 +296,83 @@ function parseHold(v: unknown): boolean {
   if (v === undefined) return false
   if (typeof v !== 'boolean') throw new BeatError(400, 'bad_request', 'Hold for review must be true or false.')
   return v
+}
+
+type LocationFields = Pick<typeof beats.$inferInsert, 'locationType' | 'locationPlatform' | 'locationUrl' | 'locationVenue' | 'locationCity' | 'locationCountry' | 'locationAddress' | 'locationMapUrl'>
+const badLocation = (m: string) => new BeatError(400, 'bad_location', m)
+
+/** A trimmed text of at most `max` characters; null when empty and not `required`. */
+function locationText(v: unknown, max: number, what: string, required: boolean): string | null {
+  if (v === undefined || v === null || (typeof v === 'string' && !v.trim())) {
+    if (required) throw badLocation(`Add the ${what}.`)
+    return null
+  }
+  if (typeof v !== 'string' || [...v.trim()].length > max) throw badLocation(`The ${what} can be up to ${max} characters.`)
+  return v.trim()
+}
+
+/** An http(s) URL of at most `max` characters; null when empty and not `required`. */
+function locationUrl(v: unknown, max: number, what: string, required: boolean): string | null {
+  const text = locationText(v, max, what, required)
+  if (text === null) return null
+  let u: URL
+  try { u = new URL(text) } catch { throw badLocation(`The ${what} must be a web address starting with https:// or http://.`) }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') throw badLocation(`The ${what} must be a web address starting with https:// or http://.`)
+  return u.toString()
+}
+
+/**
+ * `location`: `{ type: 'scene' }` (the default), `{ type: 'online', platform, url }` or `{ type: 'in_person', venue,
+ * city, country, address?, mapUrl? }`. Fields that don't belong to the type are dropped. URLs are http(s) only.
+ */
+function parseLocation(v: unknown): LocationFields {
+  if (v === undefined || v === null) return { locationType: 'scene', locationPlatform: null, locationUrl: null, locationVenue: null, locationCity: null, locationCountry: null, locationAddress: null, locationMapUrl: null }
+  if (typeof v !== 'object' || Array.isArray(v)) throw badLocation('Say where the event is.')
+  const o = v as Record<string, unknown>
+  if (typeof o.type !== 'string' || !(BEAT_LOCATION_TYPES as readonly string[]).includes(o.type)) throw badLocation('Say where the event is.')
+  const type = o.type as BeatLocationType
+  const none = { locationPlatform: null, locationUrl: null, locationVenue: null, locationCity: null, locationCountry: null, locationAddress: null, locationMapUrl: null }
+  if (type === 'scene') return { locationType: 'scene', ...none }
+  const M = BEAT_LOCATION_MAX
+  if (type === 'online') {
+    return {
+      ...none, locationType: 'online',
+      locationPlatform: locationText(o.platform, M.platform, 'platform name', true),
+      locationUrl: locationUrl(o.url, M.url, 'event link', true),
+    }
+  }
+  return {
+    ...none, locationType: 'in_person',
+    locationVenue: locationText(o.venue, M.venue, 'venue name', true),
+    locationCity: locationText(o.city, M.city, 'city or region', true),
+    locationCountry: locationText(o.country, M.country, 'country', true),
+    locationAddress: locationText(o.address, M.address, 'street address', false),
+    locationMapUrl: locationUrl(o.mapUrl, M.mapUrl, 'map link', false),
+  }
+}
+
+const LABEL_MAX = 140
+const cut = (t: string) => ([...t].length > LABEL_MAX ? `${[...t].slice(0, LABEL_MAX - 1).join('')}…` : t)
+
+/** A scene's place: its name, with its Decentraland World name or Genesis City coordinates when it has one. */
+async function scenePlace(q: Pick<typeof db, 'select'>, sceneId: string): Promise<string | null> {
+  const [sc] = await q.select({ name: scenes.name }).from(scenes).where(eq(scenes.id, sceneId))
+  if (!sc) return null
+  const [d] = await q.select({ kind: dclWorldDestinations.kind, worldName: dclWorldDestinations.worldName, base: dclWorldDestinations.base })
+    .from(dclWorldDestinations).where(eq(dclWorldDestinations.sceneId, sceneId)).orderBy(asc(dclWorldDestinations.createdAt)).limit(1)
+  if (!d) return sc.name
+  return d.kind === 'world' && d.worldName ? `${sc.name} (${d.worldName})` : `${sc.name} (Genesis City ${d.base})`
+}
+
+/** The short label the token shows for the location. A scene BEAT's comes from its scenes, read when it is saved. */
+async function locationLabel(q: Pick<typeof db, 'select'>, loc: LocationFields, sceneIds: string[]): Promise<string | null> {
+  if (loc.locationType === 'online') return cut(`Online: ${loc.locationPlatform}`)
+  if (loc.locationType === 'in_person') return cut([loc.locationVenue, loc.locationCity, loc.locationCountry].filter(Boolean).join(', '))
+  const first = [...sceneIds].sort()[0]
+  const place = first ? await scenePlace(q, first) : null
+  if (!place) return null
+  const more = sceneIds.length - 1
+  return cut(more > 0 ? `${place} and ${more} more ${more === 1 ? 'scene' : 'scenes'}` : place)
 }
 
 function parseSceneIds(v: unknown): string[] {
@@ -354,6 +441,7 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
   const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : BEAT_SUPPLY_CAP_DEFAULT
   const tradeable = parseTradeable(body.tradeable)
   const holdMints = parseHold(body.holdMints)
+  const location = parseLocation(body.location)
   const imageMediaId = await checkImage(c, body.imageMediaId)
 
   const row = await db.transaction(async (tx) => {
@@ -361,6 +449,7 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
     await checkOverlap(tx, sceneIds, startsAt, endsAt)
     const [created] = await tx.insert(beats).values({
       chain, ownerUserId: c.userId, name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: minutes * 60, supplyCap, tradeable, holdMints,
+      ...location, locationLabel: await locationLabel(tx, location, sceneIds),
     }).returning()
     await tx.insert(beatScenes).values(sceneIds.map((sceneId) => ({ beatId: created.id, sceneId })))
     return created
@@ -439,6 +528,11 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
       }
       const stored = (await tx.select({ sceneId: beatScenes.sceneId }).from(beatScenes).where(eq(beatScenes.beatId, row.id))).map((r) => r.sceneId).sort()
       same.sceneIds = () => !newScenes || JSON.stringify([...newScenes].sort()) === JSON.stringify(stored)
+      same.location = (v) => {
+        let loc: LocationFields
+        try { loc = parseLocation(v) } catch { return false }
+        return (Object.keys(loc) as (keyof LocationFields)[]).every((k) => (loc[k] ?? null) === (row[k] ?? null))
+      }
       const others = Object.keys(body).filter((k) => body[k] !== undefined && k !== 'imageMediaId' && !(same[k]?.(body[k]) ?? false))
       if (others.length) throw locked('This BEAT has started: only its image can still change, until it is on chain.')
       if (!newImage || newImage === row.imageMediaId) return row
@@ -457,6 +551,10 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
     const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : row.supplyCap
     const tradeable = has(body, 'tradeable') ? parseTradeable(body.tradeable) : row.tradeable
     const holdMints = has(body, 'holdMints') ? parseHold(body.holdMints) : row.holdMints
+    const location: LocationFields = has(body, 'location') ? parseLocation(body.location) : {
+      locationType: row.locationType, locationPlatform: row.locationPlatform, locationUrl: row.locationUrl, locationVenue: row.locationVenue,
+      locationCity: row.locationCity, locationCountry: row.locationCountry, locationAddress: row.locationAddress, locationMapUrl: row.locationMapUrl,
+    }
     if (paid && supplyCap !== row.supplyCap) throw locked('The supply is paid for. Add more supply instead.')
     const imageMediaId = newImage ?? row.imageMediaId
     // The BEAT's scenes as they are now, read after the lock (another edit may have moved them since loadManageable)
@@ -465,6 +563,7 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?
     await checkOverlap(tx, sceneIds, startsAt, endsAt, row.id)
     const [updated] = await tx.update(beats).set({
       name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, holdMints, updatedAt: t,
+      ...location, locationLabel: await locationLabel(tx, location, sceneIds),
       // A stale copy (of the old image) never stands for the new one; it is frozen again right after the commit
       ...(imageChanged ? { imageUrl: null, artFailedAt: null, artAttempts: 0, artNextAttemptAt: null } : {}),
     }).where(eq(beats.id, row.id)).returning()

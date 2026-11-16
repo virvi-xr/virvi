@@ -22,7 +22,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueItemState, BeatReissueFileStatus, SignInMethod } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueItemState, BeatReissueFileStatus, SignInMethod } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -2675,6 +2675,18 @@ export const beats = pgTable('beats', {
   artFailedAt: timestamp('art_failed_at', { withTimezone: true }),
   artAttempts: integer('art_attempts').notNull().default(0),
   artNextAttemptAt: timestamp('art_next_attempt_at', { withTimezone: true }),
+  // Where the event is (it locks at go-live with the rest of the metadata): 'scene' (the default; the label is made
+  // from the BEAT's scenes when it is saved), 'online' (a platform and its URL) or 'in_person' (a venue, city or region,
+  // country, and optionally a street address and a map URL). location_label is the short label the token shows.
+  locationType: text('location_type').$type<BeatLocationType>().notNull().default('scene'),
+  locationLabel: text('location_label'),
+  locationPlatform: text('location_platform'),
+  locationUrl: text('location_url'),
+  locationVenue: text('location_venue'),
+  locationCity: text('location_city'),
+  locationCountry: text('location_country'),
+  locationAddress: text('location_address'),
+  locationMapUrl: text('location_map_url'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

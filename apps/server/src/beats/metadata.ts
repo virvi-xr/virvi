@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { and, eq, inArray, isNotNull, or, sql } from 'drizzle-orm'
-import { BEAT_CHAINS, type BeatChain, type BeatStatus } from '@virvixr/shared'
+import { BEAT_CHAIN_INFO, BEAT_CHAINS, type BeatChain, type BeatStatus } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
 import { beats, mediaAssets } from '../db/schema.js'
@@ -19,7 +19,7 @@ const SHOWN: BeatStatus[] = ['live', 'ended']
 const MAX_ID = (1n << 63n) - 1n
 const DECIMAL = /^(0|[1-9][0-9]*)\.json$/
 const HEX = /^([0-9a-f]{64})\.json$/
-const COLLECTION_DESCRIPTION = 'BEATs are free tokens that show you were at a Virvi event.'
+const COLLECTION_DESCRIPTION = "BEATs are free attendance tokens from Virvi events. Each one shows that a wallet signed in from the event's scene and stayed connected for the minimum time. Hosts pay for them; visitors never pay or sign anything. Each token says whether it can be transferred."
 
 const base = (url: string) => url.replace(/\/+$/, '') + '/'
 /** A URL made absolute against the server (a local upload's public URL is a path). */
@@ -51,28 +51,58 @@ export function parseTokenFile(file: string): bigint | null {
 
 const unix = (d: Date) => Math.floor(d.getTime() / 1000)
 
+/** The plain line a non-tradeable BEAT's description ends with (standards M1): marketplaces show a Sell button anyway. */
+export const NOT_TRADEABLE_NOTE = "This BEAT can't be sold or transferred. It stays in the wallet it was sent to."
+/** Where every BEAT's token links to (standards M2): there is no public page per BEAT yet. */
+export const BEAT_EXTERNAL_URL = 'https://virvi.io/beats'
+
+type Row = typeof beats.$inferSelect
+
+/** The description's "Where" line: the location's label, with an online event's link. */
+function whereLine(b: Row): string | null {
+  if (!b.locationLabel) return null
+  if (b.locationType === 'online' && b.locationUrl) return `Where: ${b.locationLabel} (${b.locationUrl})`
+  return `Where: ${b.locationLabel}`
+}
+
 export async function tokenMetadata(chain: BeatChain, id: bigint) {
   const [b] = await db.select().from(beats)
     .where(and(eq(beats.chain, chain), sql`${beats.tokenId} = ${id.toString()}::bigint`, or(inArray(beats.status, SHOWN), isNotNull(beats.createdOnChainTx))))
   if (!b) return null
   const media = b.imageUrl || !b.imageMediaId ? null : await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, b.imageMediaId), columns: { publicUrl: true } })
+  const description = [b.description, whereLine(b), b.tradeable ? null : NOT_TRADEABLE_NOTE].filter((x): x is string => !!x).join('\n\n')
   return {
     name: b.name,
-    description: b.description,
+    description,
     image: beatImageUrl(b.imageUrl, media?.publicUrl ?? null),
-    external_url: 'https://virvi.io/beats',
+    external_url: BEAT_EXTERNAL_URL,
     attributes: [
       { trait_type: 'Starts', display_type: 'date', value: unix(b.startsAt) },
       // The scheduled end, also after the host ended it early (standards M7); the actual end is its own attribute
       { trait_type: 'Ends', display_type: 'date', value: unix(b.scheduledEndsAt ?? b.endsAt) },
       ...(b.scheduledEndsAt ? [{ trait_type: 'Ended early', display_type: 'date', value: unix(b.endsAt) }] : []),
       { trait_type: 'Tradeable', value: b.tradeable ? 'Yes' : 'No' },
+      // Searchable on marketplaces that have no soulbound display (standards M1)
+      { trait_type: 'Transfers', value: b.tradeable ? 'Transferable' : 'Non-transferable (soulbound)' },
+      { trait_type: 'Location type', value: b.locationType === 'in_person' ? 'In person' : 'Virtual' },
+      ...(b.locationLabel ? [{ trait_type: 'Location', value: b.locationLabel }] : []),
+      { trait_type: 'Supply', display_type: 'number', value: b.supplyCap },
+      { trait_type: 'Minimum minutes', display_type: 'number', value: Math.round(b.minPresentSeconds / 60) },
+      { trait_type: 'Network', value: BEAT_CHAIN_INFO[b.chain].label },
     ],
   }
 }
 
+/** ERC-7572 collection metadata (standards M3). No royalties: BEATs carry none, by ruling. */
 export function collectionMetadata() {
-  return { name: 'Virvi BEAT', description: COLLECTION_DESCRIPTION, image: virviLogoUrl(), external_link: 'https://virvi.io' }
+  return {
+    name: 'Virvi BEAT',
+    symbol: 'BEAT',
+    description: COLLECTION_DESCRIPTION,
+    image: virviLogoUrl(),
+    featured_image: virviLogoUrl(),
+    external_link: 'https://virvi.io',
+  }
 }
 
 export default async function beatMetadataRoutes(app: FastifyInstance) {

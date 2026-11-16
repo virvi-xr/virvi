@@ -500,6 +500,15 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_failed_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_attempts INTEGER NOT NULL DEFAULT 0\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_next_attempt_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'scene'\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_label TEXT\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_platform TEXT\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_url TEXT\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_venue TEXT\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_city TEXT\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_country TEXT\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_address TEXT\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_map_url TEXT\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS replaced_wallet TEXT\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS reissue_tx TEXT\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS reissued_at TIMESTAMPTZ\`;

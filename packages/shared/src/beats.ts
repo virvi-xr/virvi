@@ -80,6 +80,28 @@ export function beatTokenUrl(chain: BeatChain, contract: string, tokenId: string
   return `${BEAT_CHAIN_INFO[chain].explorer}/token/${contract}?a=${tokenId}`
 }
 
+/** Where a BEAT's event is: in its Virvi scenes (the default), online on another platform, or in person. */
+export const BEAT_LOCATION_TYPES = ['scene', 'online', 'in_person'] as const
+export type BeatLocationType = (typeof BEAT_LOCATION_TYPES)[number]
+/** Field limits for the location (characters). URLs must be http(s). */
+export const BEAT_LOCATION_MAX = { platform: 60, url: 500, venue: 100, city: 80, country: 60, address: 200, mapUrl: 500 } as const
+/**
+ * A BEAT's location. `label` is the short text the token shows (Location): for `scene` it is made from the BEAT's
+ * scenes (the scene's name with its World name or Genesis City coordinates) when it is saved. The other fields are null
+ * where they don't apply. It locks at go-live with the rest of the metadata. Claiming happens only in Virvi scenes.
+ */
+export interface BeatLocation {
+  type: BeatLocationType
+  label: string | null
+  platform: string | null
+  url: string | null
+  venue: string | null
+  city: string | null
+  country: string | null
+  address: string | null
+  mapUrl: string | null
+}
+
 export interface PublicBeat {
   id: string
   chain: BeatChain
@@ -113,6 +135,7 @@ export interface PublicBeat {
    * is on chain). The BEAT isn't put on chain, and nothing is minted, until it is `frozen`.
    */
   artStatus: 'pending' | 'frozen' | 'failed'
+  location: BeatLocation
 }
 
 /** The room's `beat_available` on join (for guests, who can't use REST): the scene's BEAT in its card window. */
