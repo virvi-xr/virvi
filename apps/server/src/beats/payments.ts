@@ -45,14 +45,14 @@ export interface BeatQuote { cents: number; lines: { label: string; cents: numbe
 /** The price of a draft at `cap`, or of raising a paid BEAT's cap to `cap`. A test BEAT (Amoy) is free. */
 export function beatQuote(row: BeatRow, cap: number): BeatQuote {
   const p = config.beats.price
-  if (isAmoy(row.chain)) return { cents: 0, lines: [{ label: 'Test BEAT on Polygon Amoy', cents: 0 }], refundableUnclaimed: false }
+  if (isAmoy(row.chain)) return { cents: 0, lines: [{ label: 'Test BEAT (free, practice network)', cents: 0 }], refundableUnclaimed: false }
   if (row.status !== 'draft') {
     const cents = beatTopupCents(row.supplyCap, cap, p)
-    return { cents, lines: [{ label: `Supply from ${row.supplyCap} to ${cap}`, cents }], refundableUnclaimed: false }
+    return { cents, lines: [{ label: `Raise from ${row.supplyCap} to ${cap} BEATs`, cents }], refundableUnclaimed: false }
   }
   const extra = Math.max(0, cap - p.includedMints)
-  const lines = [{ label: `Base price, up to ${p.includedMints} tokens`, cents: p.baseCents }]
-  if (extra > 0) lines.push({ label: `${extra} more tokens`, cents: p.extraMintCents * extra })
+  const lines = [{ label: `Up to ${p.includedMints} BEATs`, cents: p.baseCents }]
+  if (extra > 0) lines.push({ label: `${extra} more BEATs`, cents: p.extraMintCents * extra })
   return { cents: beatPriceCents(cap, p), lines, refundableUnclaimed: false }
 }
 
@@ -67,7 +67,7 @@ export function refuseBelowCardMinimum(row: BeatRow, quote: BeatQuote): void {
   const minExtraTokens = minSupply === null ? null : minSupply - row.supplyCap
   throw new BeatError(400, 'below_minimum', minExtraTokens === null
     ? `Card payments start at $${(BEAT_CARD_MIN_CENTS / 100).toFixed(2)}. Pay with credit instead.`
-    : `Card payments start at $${(BEAT_CARD_MIN_CENTS / 100).toFixed(2)}: add at least ${minExtraTokens} tokens, or pay with credit.`,
+    : `Card payments start at $${(BEAT_CARD_MIN_CENTS / 100).toFixed(2)}: add at least ${minExtraTokens} BEATs, or pay with credit.`,
   { minCents: BEAT_CARD_MIN_CENTS, minSupply, minExtraTokens })
 }
 

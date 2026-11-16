@@ -34,7 +34,7 @@ export function SceneBeats({ sceneId }: { sceneId: string }) {
       </div>
       <BeatsNotice a={availability} />
       {error && <div className="mb-3 rounded-md border border-red-700 bg-red-900/50 px-4 py-2 text-sm text-red-300">{error}</div>}
-      {beats && beats.length === 0 && <p className="text-sm text-gray-500">No BEATs in this scene yet.</p>}
+      {beats && beats.length === 0 && <p className="text-sm text-gray-400">No BEATs in this scene yet.</p>}
       <ul className="space-y-2">
         {beats?.map((b) => (
           <li key={b.id}>

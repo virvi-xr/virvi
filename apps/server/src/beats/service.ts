@@ -612,7 +612,8 @@ export async function cancelBeat(c: BeatCaller, beatId: string, now = new Date()
       if (row.status !== seen.status) throw new BeatError(409, 'conflict', 'This BEAT just changed. Reload and try again.')
       throw row.status === 'live' ? late() : new BeatError(409, 'locked', 'This BEAT is already over.')
     }
-    if (row.startsAt.getTime() <= now.getTime()) throw late()
+    // A draft (never paid) can be deleted at any time, even once its start has passed (plain-ux M13)
+    if (row.status === 'paid' && row.startsAt.getTime() <= now.getTime()) throw late()
     if (row.status === 'paid') await refundBeat(row.id, now)
     await testHooks.afterCancelRead?.(row.id)
     // Only from the status we read: a payment confirmation (no lock of ours) may have turned a draft paid since, and

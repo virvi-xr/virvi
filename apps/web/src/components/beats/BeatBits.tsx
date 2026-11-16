@@ -16,9 +16,9 @@ export function BeatBadges({ status, test }: { status: BeatStatus; test: boolean
   )
 }
 
-/** On a frozen BEAT's page: Edit is never offered then, so this says why. */
-export function FrozenNote({ frozen }: { frozen: boolean }) {
-  return frozen ? <p className="text-sm text-gray-400">{BEAT_FROZEN_NOTE}</p> : null
+/** On a BEAT that has started: Edit is never offered then, so this says why. */
+export function FrozenNote({ locked }: { locked: boolean }) {
+  return locked ? <p className="text-sm text-gray-400">{BEAT_FROZEN_NOTE}</p> : null
 }
 
 /** While the network isn't set up (`not_configured`): existing BEATs are shown, and this says why nothing can be paid. */

@@ -360,6 +360,12 @@ describe('BEAT host API (LIV-11)', () => {
       expect([c.statusCode, c.json().error]).toEqual([409, 'locked'])
     })
 
+    it('plain-ux M13: a draft whose start has passed can still be deleted (cancelled)', async () => {
+      const stale = await seed({ status: 'draft', startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) }, [sceneB])
+      const res = await call('POST', `/api/beats/${stale.id}/cancel`)
+      expect([res.statusCode, res.json().status]).toEqual([200, 'cancelled'])
+    })
+
     it('a paid BEAT cancel goes through the refund step', async () => {
       const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 7 })
       const res = await call('POST', `/api/beats/${b.id}/cancel`)

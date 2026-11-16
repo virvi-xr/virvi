@@ -5,6 +5,8 @@ import {
   beatHref, beatsNavVisible, blankBeat, claimantRow, claimantWallets, confirmBeatAction, fromLocalInput, newBeatHref, paymentNote, reviewModel,
   toLocalInput, type BeatAvailability, type BeatClaimant,
   BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
+  TRADEABLE_HINT, SUPPLY_HINT, PAID_SUPPLY_HINT, LOCATION_SCENE_ONLY, blankLocation, cancelledNote, claimantsHeading, locationBody, locationLine,
+  reviewSummary, beatLocked, COUNT_LABELS, CLAIM_STATUS_LABELS, claimantHeld,
 } from './beats'
 
 const NOW = new Date('2026-11-14T12:00:00Z')
@@ -20,7 +22,8 @@ function beat(over: Partial<PublicBeat> = {}): PublicBeat {
     startsAt: new Date(NOW.getTime() + HOUR).toISOString(), endsAt: new Date(NOW.getTime() + 3 * HOUR).toISOString(),
     minPresentSeconds: 300, supplyCap: 100, tradeable: false, status: 'draft', sceneIds: ['s1'],
     counts: { claimed: 0, minting: 0, minted: 0, failed: 0 }, frozen: false, test: false,
-    holdMints: false, mintsReleasedAt: null, mintsHeldUntil: null, scheduledEndsAt: null, heldClaims: 0, artStatus: 'pending', ...over,
+    holdMints: false, mintsReleasedAt: null, mintsHeldUntil: null, scheduledEndsAt: null, heldClaims: 0, artStatus: 'pending',
+    location: { type: 'scene', label: 'A', platform: null, url: null, venue: null, city: null, country: null, address: null, mapUrl: null }, ...over,
   }
 }
 
@@ -40,22 +43,24 @@ describe('nav', () => {
 })
 
 describe('review step', () => {
-  const quote = { cents: 600, lines: [{ label: 'Base price, up to 100 tokens', cents: 500 }, { label: '50 more tokens', cents: 100 }], refundableUnclaimed: false as const }
+  const quote = { cents: 600, lines: [{ label: 'Up to 100 BEATs', cents: 500 }, { label: '50 more BEATs', cents: 100 }], refundableUnclaimed: false as const }
   it('shows 600 cents as $6.00 for cap 150, with the lines and the no-refund sentence', () => {
     const r = reviewModel(quote, { test: false, creditCents: 0 })
     expect(r.total).toBe('$6.00')
-    expect(r.lines).toEqual([{ label: 'Base price, up to 100 tokens', amount: '$5.00' }, { label: '50 more tokens', amount: '$1.00' }])
+    expect(r.lines).toEqual([{ label: 'Up to 100 BEATs', amount: '$5.00' }, { label: '50 more BEATs', amount: '$1.00' }])
     expect(r.note).toBe("You pay for the cap up front. Unclaimed BEATs aren't refunded.")
     expect(BEAT_NO_REFUND).toBe(r.note)
   })
-  it('offers card, and credit only when the balance covers the total', () => {
+  it('offers card, and credit only when the balance covers the total (saying the credit when it is short)', () => {
     expect(reviewModel(quote, { test: false, creditCents: 599 }).buttons).toEqual([{ method: 'card', label: 'Pay with card' }])
+    expect(reviewModel(quote, { test: false, creditCents: 300 }).credit).toBe('Your Virvi credit: $3.00, not enough for this BEAT.')
+    expect(reviewModel(quote, { test: false, creditCents: 0 }).credit).toBeNull()
     expect(reviewModel(quote, { test: false, creditCents: 600 }).buttons).toEqual([
       { method: 'card', label: 'Pay with card' }, { method: 'credit', label: 'Use credit' },
     ])
   })
   it('on Amoy shows only "Create test BEAT"', () => {
-    const free = { cents: 0, lines: [{ label: 'Test BEAT on Polygon Amoy', cents: 0 }], refundableUnclaimed: false as const }
+    const free = { cents: 0, lines: [{ label: 'Test BEAT (free, practice network)', cents: 0 }], refundableUnclaimed: false as const }
     expect(reviewModel(free, { test: true, creditCents: 10_000 }).buttons).toEqual([{ method: 'test', label: 'Create test BEAT' }])
   })
 })
@@ -81,25 +86,55 @@ describe('form', () => {
     expect(beatFormError({ ...ok, supplyCap: 5001 })?.field).toBe('cap')
     expect(beatFormError({ ...ok, minPresentMinutes: 121 })?.field).toBe('minutes')
     expect(beatFormError({ ...ok, endsAt: ok.startsAt })?.field).toBe('window')
+    expect(beatFormError({ ...ok, minPresentMinutes: Number.NaN })?.field).toBe('minutes')
+  })
+  it('the location: online needs a platform and an https link; in person a venue, city and country', () => {
+    const ok = { ...blankBeat(NOW, 's1'), name: 'Launch', imageMediaId: 'm1', imageUrl: 'u' }
+    const online = { ...blankLocation(), type: 'online' as const, platform: 'Zoom', url: 'https://zoom.us/j/1' }
+    expect(beatFormError({ ...ok, location: online })).toBeNull()
+    expect(beatFormError({ ...ok, location: { ...online, url: 'javascript:alert(1)' } })).toEqual({ field: 'location', message: 'The event link must be a web address starting with https://.' })
+    expect(beatFormError({ ...ok, location: { ...online, platform: ' ' } })?.message).toBe('Add the platform name.')
+    const hall = { ...blankLocation(), type: 'in_person' as const, venue: 'Hall', city: 'Lisbon', country: 'Portugal' }
+    expect(beatFormError({ ...ok, location: hall })).toBeNull()
+    expect(beatFormError({ ...ok, location: { ...hall, country: '' } })?.message).toBe('Add the country.')
+    expect(beatFormError({ ...ok, location: { ...hall, mapUrl: 'ftp://x' } })?.field).toBe('location')
+    expect(locationBody({ ...hall, platform: 'stray', address: ' ' })).toEqual({ type: 'in_person', venue: 'Hall', city: 'Lisbon', country: 'Portugal' })
+    expect(locationBody({ ...online, venue: 'stray' })).toEqual({ type: 'online', platform: 'Zoom', url: 'https://zoom.us/j/1' })
+    expect(locationBody(blankLocation())).toEqual({ type: 'scene' })
+  })
+  it('the location as a line, and the claim-in-Virvi note', () => {
+    expect(locationLine(beat().location)).toBe('In Virvi: A')
+    expect(locationLine({ ...beat().location, type: 'online', platform: 'Zoom' })).toBe('Online, on Zoom')
+    expect(locationLine({ ...beat().location, type: 'in_person', venue: 'Hall', address: '1 Main St', city: 'Lisbon', country: 'Portugal' })).toBe('Hall, 1 Main St, Lisbon, Portugal')
+    expect(LOCATION_SCENE_ONLY).toBe('People claim this BEAT in your Virvi scene. Ways to claim in person or on other platforms are coming.')
+  })
+  it('plain-ux I4: says what is permanent, and the review sums it up', () => {
+    expect(TRADEABLE_HINT).toBe("Holders can send it to other wallets. You can't change this once the BEAT starts.")
+    expect(SUPPLY_HINT).toBe('The most BEATs that can be claimed. You pay for this many up front. You can raise it later, never lower it.')
+    expect(PAID_SUPPLY_HINT).toBe("The supply can't be changed after paying. To allow more BEATs, use Raise cap.")
+    expect(reviewSummary(beat({ supplyCap: 500, sceneIds: ['a', 'b', 'c'] }))).toMatch(/^Supply cap 500 · Tradeable: No · 3 scenes · Starts /)
+    expect(reviewSummary(beat({ holdMints: true }))).toMatch(/ · You check claims before they are sent$/)
   })
   it('sends the create body with ISO times', () => {
     const f = { ...blankBeat(NOW, 's1'), name: ' Launch ', imageMediaId: 'm1', imageUrl: 'u', startsAt: '2026-11-15T10:00', endsAt: '2026-11-15T12:00' }
     const b = beatBody(f)
-    expect(b).toMatchObject({ name: 'Launch', sceneIds: ['s1'], imageMediaId: 'm1', minPresentMinutes: 5, supplyCap: 100, tradeable: false })
+    expect(b).toMatchObject({ name: 'Launch', sceneIds: ['s1'], imageMediaId: 'm1', minPresentMinutes: 5, supplyCap: 100, tradeable: false, holdMints: false, location: { type: 'scene' } })
     expect(b.startsAt).toBe(new Date('2026-11-15T10:00').toISOString())
   })
-  it('an edit of a paid BEAT leaves out the supply and tradeable', () => {
-    const f = { ...blankBeat(NOW, 's1'), name: 'Launch', imageMediaId: 'm1', imageUrl: 'u' }
+  it('an edit of a paid BEAT leaves out the supply; Tradeable and hold still change until the start', () => {
+    const f = { ...blankBeat(NOW, 's1'), name: 'Launch', imageMediaId: 'm1', imageUrl: 'u', tradeable: true, holdMints: true }
     expect(beatEditBody(f, 'paid')).not.toHaveProperty('supplyCap')
-    expect(beatEditBody(f, 'paid')).not.toHaveProperty('tradeable')
+    expect(beatEditBody(f, 'paid')).toMatchObject({ tradeable: true, holdMints: true })
     expect(beatEditBody(f, 'draft')).toHaveProperty('supplyCap', 100)
   })
   it('round-trips local datetime inputs', () => {
     expect(fromLocalInput(toLocalInput('2026-11-15T10:30:00.000Z'))).toBe('2026-11-15T10:30:00.000Z')
   })
-  it('has the frozen and test copy', () => {
-    expect(BEAT_FROZEN_NOTE).toBe('Name, description and artwork are locked once the first BEAT is minted.')
-    expect(BEAT_TEST_BADGE).toBe('Test (Polygon Amoy)')
+  it('has the locked and test copy; the locked note shows once the BEAT has started', () => {
+    expect(BEAT_FROZEN_NOTE).toMatch(/^This BEAT has started, so its name, description, Tradeable setting, location and times are locked/)
+    expect(BEAT_TEST_BADGE).toBe('Test BEAT (practice network)')
+    expect(beatLocked(beat({ status: 'live' }))).toBe(true)
+    expect(beatLocked(beat({ status: 'paid' }))).toBe(false)
   })
 })
 
@@ -118,22 +153,43 @@ describe('server errors', () => {
   it('gives a plain message when the server sends none', () => {
     expect(beatFieldError(err('bad_image')).message).toBe('Pick a square image of at least 512 by 512 pixels from your library.')
   })
+  it('places the new codes: description, location, the card minimum and host review', () => {
+    expect(beatFieldError(err('bad_description')).field).toBe('description')
+    expect(beatFieldError(err('bad_location')).field).toBe('location')
+    expect(beatFieldError(err('below_minimum'))).toEqual({ field: 'pay', message: 'Card payments start at $0.50. Add more BEATs, or pay with credit.' })
+    for (const code of ['not_held', 'not_removable', 'not_live', 'not_configured']) expect(beatFieldError(err(code)).message).not.toBe('Something went wrong. Try again.')
+  })
   it('says something went wrong for an unknown code', () => {
     expect(beatFieldError(err('weird', 'Internal detail'))).toEqual({ field: 'form', message: 'Something went wrong. Try again.' })
-    expect(beatFieldError(new Error('Failed to fetch'))).toEqual({ field: 'form', message: 'Something went wrong. Try again.' })
+    expect(beatFieldError(new TypeError('Failed to fetch'))).toEqual({ field: 'form', message: "Couldn't reach Virvi. Check your connection and try again." })
   })
 })
 
 describe('claimants', () => {
   const list: BeatClaimant[] = [
-    { wallet: '0x1234567890abcdef1234567890abcdef12345678', displayName: '<b>Ana</b>', status: 'minted', claimedAt: null, mintedAt: null, txUrl: 'https://polygonscan.com/tx/0xaa' },
-    { wallet: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', displayName: null, status: 'minted', claimedAt: null, mintedAt: null, txUrl: null },
+    { id: 'c1', wallet: '0x1234567890abcdef1234567890abcdef12345678', displayName: '<b>Ana</b>', status: 'minted', claimedAt: null, mintedAt: null, txUrl: 'https://polygonscan.com/tx/0xaa', reissued: false, reissueTxUrl: null },
+    { id: 'c2', wallet: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', displayName: null, status: 'minted', claimedAt: null, mintedAt: null, txUrl: null, reissued: true, reissueTxUrl: null },
+    { id: 'c3', wallet: '0x9999999999999999999999999999999999999999', displayName: 'Cy', status: 'present', claimedAt: null, mintedAt: null, txUrl: null, reissued: false, reissueTxUrl: null },
   ]
-  it('copies every full wallet, one per line', () => {
+  it('plain-ux I3: copies only the wallets that claimed, one per line, and the heading counts both', () => {
     expect(claimantWallets(list)).toBe('0x1234567890abcdef1234567890abcdef12345678\n0xabcdefabcdefabcdefabcdefabcdefabcdefabcd')
+    expect(claimantsHeading(list)).toBe('Attendees (3): 2 claimed, 1 still attending')
+  })
+  it('M8: plain words for the counts and statuses', () => {
+    expect(COUNT_LABELS).toEqual({ claimed: 'Claimed (waiting to send)', minting: 'Sending', minted: 'Delivered', failed: 'Failed', cap: 'Cap' })
+    expect(CLAIM_STATUS_LABELS.minted).toBe('Delivered')
+    expect(CLAIM_STATUS_LABELS.removed).toBe('Removed by you')
+  })
+  it('a held claim is one claimed after the last Send while hold is on', () => {
+    const c = { status: 'claimed', claimedAt: '2026-11-14T12:00:00Z' }
+    expect(claimantHeld(c, { mintsHeldUntil: 'x', mintsReleasedAt: null })).toBe(true)
+    expect(claimantHeld(c, { mintsHeldUntil: 'x', mintsReleasedAt: '2026-11-14T13:00:00Z' })).toBe(false)
+    expect(claimantHeld(c, { mintsHeldUntil: 'x', mintsReleasedAt: '2026-11-14T11:00:00Z' })).toBe(true)
+    expect(claimantHeld(c, { mintsHeldUntil: null, mintsReleasedAt: null })).toBe(false)
   })
   it('shortens the wallet, keeps the name as typed and links the tx only when there is one', () => {
-    expect(claimantRow(list[0])).toEqual({ short: '0x1234…5678', wallet: list[0].wallet, name: '<b>Ana</b>', status: 'Minted', txUrl: 'https://polygonscan.com/tx/0xaa' })
+    expect(claimantRow(list[0])).toEqual({ short: '0x1234…5678', wallet: list[0].wallet, name: '<b>Ana</b>', status: 'Delivered', txUrl: 'https://polygonscan.com/tx/0xaa', held: false, reissued: false, reissueTxUrl: null })
+    expect(claimantRow(list[1]).reissued).toBe(true)
     expect(claimantRow(list[1]).txUrl).toBeNull()
     expect(claimantRow(list[1]).name).toBeNull()
   })
@@ -160,14 +216,23 @@ describe('actions', () => {
     expect(beatActions(beat({ status: 'ended', startsAt: past }), NOW)).toEqual([])
     expect(beatActions(beat({ status: 'cancelled' }), NOW)).toEqual([])
   })
-  it('a draft past its start: cancel is gone, edit stays to pick a new time', () => {
-    expect(beatActions(beat({ status: 'draft', startsAt: past }), NOW)).toEqual(['edit'])
+  it('plain-ux M13: a draft past its start keeps edit (to pick a new time) and cancel (delete)', () => {
+    expect(beatActions(beat({ status: 'draft', startsAt: past }), NOW)).toEqual(['edit', 'cancel'])
+  })
+  it('host review: Send while claims are held, once it has started', () => {
+    const held = { holdMints: true, mintsHeldUntil: new Date(NOW.getTime() + 30 * HOUR).toISOString(), heldClaims: 2 }
+    expect(beatActions(beat({ status: 'live', startsAt: past, ...held }), NOW)).toEqual(['send', 'raise_cap', 'end_early'])
+    expect(beatActions(beat({ status: 'live', startsAt: past, ...held, heldClaims: 0 }), NOW)).toEqual(['raise_cap', 'end_early'])
+    expect(confirmBeatAction('send', beat({ heldClaims: 2 }))).toBe("Send the 2 BEATs claimed so far? They go to the visitors' wallets and can't be taken back. Claims made after this wait for another Send.")
+  })
+  it('fix round I-3: failed art can be replaced after the start (Change image)', () => {
+    expect(beatActions(beat({ status: 'live', startsAt: past, artStatus: 'failed' }), NOW)).toEqual(['change_image', 'raise_cap', 'end_early'])
   })
   it('frozen: no edit', () => {
     expect(beatActions(beat({ status: 'paid', frozen: true }), NOW)).toEqual(['cancel', 'raise_cap'])
   })
   it('asks before cancel and end early only', () => {
-    expect(confirmBeatAction('cancel', beat({ status: 'draft' }))).toBe('Cancel this BEAT?')
+    expect(confirmBeatAction('cancel', beat({ status: 'draft' }))).toBe('Delete this draft?')
     expect(confirmBeatAction('end_early')).toMatch(/End this BEAT now\?/)
     expect(confirmBeatAction('edit')).toBeNull()
   })
@@ -176,12 +241,13 @@ describe('actions', () => {
 describe('Stripe return', () => {
   const started = NOW.getTime()
   it('says the payment was cancelled', () => {
-    expect(paymentNote('cancelled', beat(), null, started, NOW)).toEqual({ text: 'Payment cancelled.', settled: true })
+    expect(paymentNote('cancelled', beat(), null, started, NOW)).toEqual({ text: "Payment cancelled. You haven't been charged. Choose Pay to try again.", settled: true })
   })
   it('waits for the webhook while the BEAT is still a draft', () => {
     expect(paymentNote('p1', beat({ status: 'draft' }), null, started, NOW)).toEqual({ text: 'Payment received. Confirming it…', settled: false })
-    const late = new Date(started + 3 * 60_000)
-    expect(paymentNote('p1', beat({ status: 'draft' }), null, started, late)?.text).toMatch(/hasn’t confirmed/)
+    expect(paymentNote('p1', beat({ status: 'draft' }), null, started, new Date(started + 3 * 60_000))?.text).toBe('Payment received. Confirming it…')
+    const late = new Date(started + 6 * 60_000)
+    expect(paymentNote('p1', beat({ status: 'draft' }), null, started, late)?.text).toBe("Stripe hasn't confirmed your payment yet. This can take a few minutes. If it is still waiting after 10 minutes, contact support@virvi.io and quote this BEAT's name. Don't pay again.")
   })
   it('is settled once paid', () => {
     expect(paymentNote('p1', beat({ status: 'paid' }), null, started, NOW)).toEqual({ text: 'Payment received.', settled: true })
@@ -208,7 +274,13 @@ describe('fix round 1', () => {
     expect(BEAT_REFUND_NOTE).toBe("You'll get a full refund.")
     expect(confirmBeatAction('cancel', beat({ status: 'paid' }))).toBe("Cancel this BEAT? You'll get a full refund.")
     expect(confirmBeatAction('cancel', beat({ status: 'paid' }))).not.toMatch(/card/)
-    expect(confirmBeatAction('cancel', beat({ status: 'draft' }))).toBe('Cancel this BEAT?')
+    expect(confirmBeatAction('cancel', beat({ status: 'draft' }))).toBe('Delete this draft?')
+  })
+
+  it('M10: says where the refund goes after a cancel', () => {
+    expect(cancelledNote(beat(), true)).toBe('Cancelled. Your refund is on its way: to your card (it can take a few days), or straight back to your Virvi credit if you paid with credit.')
+    expect(cancelledNote(beat(), false)).toBe('Cancelled.')
+    expect(cancelledNote(beat({ test: true }), true)).toBe('Cancelled.')
   })
 
   it('encodes beat and scene ids in API paths', () => {
@@ -244,6 +316,7 @@ describe('fix round 1', () => {
     expect(fieldsOfPatch({ minPresentMinutes: 3 })).toEqual(['minutes', 'window'])
     expect(fieldsOfPatch({ sceneIds: [] })).toEqual(['scenes'])
     expect(fieldsOfPatch({ supplyCap: 3 })).toEqual(['cap'])
+    expect(fieldsOfPatch({ location: blankLocation() })).toEqual(['location'])
   })
 
   it("clears a field's server error once the host edits that field, and only that field", () => {

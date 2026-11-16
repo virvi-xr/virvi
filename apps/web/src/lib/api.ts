@@ -29,6 +29,7 @@ import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, Analytic
 import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
 import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
 import type { AdminBeatsOverview } from './admin-beats'
+import type { AdminReissueRequest, ProposedReissueFile, ReissueRequest, SafeBatchPreview } from './reissue'
 import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutResult, type BeatClaimant, type BeatQuote, type PublicBeat, type beatBody, type beatEditBody, type payBody } from './beats'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
@@ -465,16 +466,26 @@ function useRealApi() {
     getBeat: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId)),
     createBeat: (body: ReturnType<typeof beatBody>) =>
       apiFetch<PublicBeat>('/api/beats', { method: 'POST', userAction: true, body: JSON.stringify(body) }),
-    updateBeat: (beatId: string, body: ReturnType<typeof beatEditBody>) =>
+    updateBeat: (beatId: string, body: Partial<ReturnType<typeof beatEditBody>>) =>
       apiFetch<PublicBeat>(beatApiPath(beatId), { method: 'PATCH', userAction: true, body: JSON.stringify(body) }),
     getBeatClaimants: (beatId: string) => apiFetch<BeatClaimant[]>(beatApiPath(beatId, 'claimants')),
     cancelBeat: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'cancel'), { method: 'POST', userAction: true }),
     endBeatEarly: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'end-early'), { method: 'POST', userAction: true }),
-    getBeatQuote: (beatId: string, cap?: number) => apiFetch<BeatQuote>(`${beatApiPath(beatId, 'quote')}${cap === undefined ? '' : `?cap=${cap}`}`),
+    getBeatQuote: (beatId: string, cap?: number, method?: 'credit') =>
+      apiFetch<BeatQuote>(`${beatApiPath(beatId, 'quote')}?${new URLSearchParams({ ...(cap === undefined ? {} : { cap: String(cap) }), ...(method ? { method } : {}) })}`),
     checkoutBeat: (beatId: string, body: ReturnType<typeof payBody>) =>
       apiFetch<BeatCheckoutResult>(beatApiPath(beatId, 'checkout'), { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     raiseBeatCap: (beatId: string, supplyCap: number, body: ReturnType<typeof payBody>) =>
       apiFetch<BeatCheckoutResult>(beatApiPath(beatId, 'cap'), { method: 'POST', userAction: true, body: JSON.stringify({ ...body, supplyCap }) }),
+    releaseBeatMints: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId, 'release'), { method: 'POST', userAction: true, body: '{}' }),
+    removeBeatClaim: (beatId: string, claimId: string) =>
+      apiFetch<{ removed: true }>(beatApiPath(beatId, `claims/${encodeURIComponent(claimId)}`), { method: 'DELETE', userAction: true }),
+    // BEAT reissue (LIV-11): the person's own requests
+    listMyReissueRequests: () => apiFetch<ReissueRequest[]>('/api/beats/reissue-requests'),
+    createReissueRequest: (body: { oldWallet: string; newWallet: string; reason: string }) =>
+      apiFetch<ReissueRequest>('/api/beats/reissue-requests', { method: 'POST', userAction: true, body: JSON.stringify(body) }),
+    cancelReissueRequest: (id: string) =>
+      apiFetch<ReissueRequest>(`/api/beats/reissue-requests/${encodeURIComponent(id)}`, { method: 'DELETE', userAction: true }),
 
     // Scene roles (wallet-based)
     getSceneRoles: (sceneId: string) =>
@@ -861,6 +872,23 @@ function useRealApi() {
       apiFetch<{ givenUp: number }>(`/api/admin/beats/${encodeURIComponent(beatId)}/give-up`, { method: 'POST', userAction: true, body: '{}' }),
     clearAdminBeatPause: (chain: BeatChain) =>
       apiFetch<{ ok: boolean }>('/api/admin/beats/clear-pause', { method: 'POST', userAction: true, body: JSON.stringify({ chain }) }),
+    // BEAT reissue (LIV-11): the admin queue
+    listAdminReissueRequests: (status: string, offset = 0) =>
+      apiFetch<AdminReissueRequest[]>(`/api/admin/beats/reissue-requests?status=${encodeURIComponent(status)}&offset=${offset}`),
+    reviewAdminReissue: (id: string, decision: 'approve' | 'reject', body: { note?: string; wallets?: { wallet: string; action: 'keep' | 'unlink' }[] }) =>
+      apiFetch<AdminReissueRequest>(`/api/admin/beats/reissue-requests/${encodeURIComponent(id)}/${decision}`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
+    previewAdminReissue: (id: string, chain: BeatChain) =>
+      apiFetch<SafeBatchPreview>(`/api/admin/beats/reissue-requests/${encodeURIComponent(id)}/safe-batch?chain=${encodeURIComponent(chain)}`),
+    proposeAdminReissue: (id: string, chain: BeatChain) =>
+      apiFetch<{ files: ProposedReissueFile[] }>(`/api/admin/beats/reissue-requests/${encodeURIComponent(id)}/propose`, { method: 'POST', userAction: true, body: JSON.stringify({ chain }) }),
+    downloadAdminReissueFile: (id: string, fileId: string, fallbackName: string) =>
+      downloadBlob(`/api/admin/beats/reissue-requests/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`, fallbackName),
+    withdrawAdminReissue: (id: string, body: { fileId?: string; note?: string }) =>
+      apiFetch<AdminReissueRequest>(`/api/admin/beats/reissue-requests/${encodeURIComponent(id)}/withdraw`, { method: 'POST', userAction: true, body: JSON.stringify(body) }),
+    unlinkAdminReissueWallet: (id: string, wallet: string) =>
+      apiFetch<AdminReissueRequest>(`/api/admin/beats/reissue-requests/${encodeURIComponent(id)}/unlink-wallet`, { method: 'POST', userAction: true, body: JSON.stringify({ wallet }) }),
+    liftAdminWalletBlock: (wallet: string, note: string) =>
+      apiFetch<{ wallet: string; lifted: true }>('/api/admin/beats/wallet-blocks/lift', { method: 'POST', userAction: true, body: JSON.stringify({ wallet, note }) }),
     /** "Re-open for filing": forget a Linear issue closed without a fix, so the data can file it again. */
     reopenAdminErrorForFiling: (id: string) =>
       apiFetch<{ id: string; reopened: true }>(`/api/admin/errors/${id}`, { method: 'PATCH', body: JSON.stringify({ reopenForFiling: true }) }),

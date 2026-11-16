@@ -5,11 +5,11 @@ import { BeatsGateView, FrozenNote } from './BeatBits'
 import type { BeatAvailability } from '@/lib/beats'
 
 describe('FrozenNote', () => {
-  it('shows the locked sentence on a frozen BEAT', () => {
-    expect(renderToStaticMarkup(createElement(FrozenNote, { frozen: true }))).toContain('Name, description and artwork are locked once the first BEAT is minted.')
+  it('shows the locked sentence on a BEAT that has started', () => {
+    expect(renderToStaticMarkup(createElement(FrozenNote, { locked: true }))).toContain('This BEAT has started, so its name, description, Tradeable setting, location and times are locked')
   })
   it('shows nothing otherwise', () => {
-    expect(renderToStaticMarkup(createElement(FrozenNote, { frozen: false }))).toBe('')
+    expect(renderToStaticMarkup(createElement(FrozenNote, { locked: false }))).toBe('')
   })
 })
 

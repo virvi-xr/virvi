@@ -146,6 +146,7 @@ describe('BEAT payments (LIV-11)', () => {
       expect(q.refundableUnclaimed).toBe(false)
       expect(q.lines).toHaveLength(2)
       expect(q.lines.map((l: any) => l.cents)).toEqual([500, 100])
+      expect(q.lines.map((l: any) => l.label)).toEqual(['Up to 100 BEATs', '50 more BEATs'])
     })
 
     it("a bad cap is bad_cap, and someone else's BEAT is not found", async () => {

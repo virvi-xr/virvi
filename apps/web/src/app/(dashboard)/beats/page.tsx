@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { beatCounts, beatFieldError, beatHref, beatWindow, newBeatHref, type BeatAvailability, type PublicBeat } from '@/lib/beats'
+import { CREATE_CLOSED, beatCounts, beatFieldError, beatHref, beatWindow, newBeatHref, type BeatAvailability, type PublicBeat } from '@/lib/beats'
 import { countLabel } from '@/lib/format'
 import { EmptyState, PageHeader, Skeleton } from '@/components/ui'
 import { MedalIcon, PlusIcon } from '@/components/icons'
@@ -39,9 +39,13 @@ function BeatList({ availability }: { availability: BeatAvailability }) {
   const [beats, setBeats] = useState<PublicBeat[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const load = () => {
+    setError(null)
+    api.listBeats().then(setBeats).catch((err) => setError(beatFieldError(err).message))
+  }
   useEffect(() => {
     if (!token) return
-    api.listBeats().then(setBeats).catch((err) => { setError(beatFieldError(err).message); setBeats([]) })
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
@@ -50,10 +54,15 @@ function BeatList({ availability }: { availability: BeatAvailability }) {
     <>
       <PageHeader crumbs={['Workspace', 'BEATs']} title="BEATs" count={beats ? countLabel(beats.length) : undefined}
         subtitle="Attendance tokens for the people who come to your events." actions={newLink} />
-      {error && <div role="alert" className="mb-4 rounded-md border border-red-700 bg-red-900/50 px-4 py-2 text-sm text-red-300">{error}</div>}
-      {!beats ? <Skeleton /> : beats.length === 0 ? (
+      {error ? (
+        // A failed load is never shown as "No BEATs yet" (plain-ux I8)
+        <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-red-700 bg-red-900/50 px-4 py-2 text-sm text-red-300">
+          <span>{error}</span>
+          <button type="button" onClick={load} className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700">Try again</button>
+        </div>
+      ) : !beats ? <Skeleton /> : beats.length === 0 ? (
         <EmptyState icon={<MedalIcon size={28} />} title="No BEATs yet"
-          body="Visitors who stay long enough claim one, and it's sent to their wallet." action={newLink} />
+          body={availability.canCreate ? "Visitors who stay long enough claim one, and it's sent to their wallet." : CREATE_CLOSED} action={newLink} />
       ) : (
         <ul className="space-y-2">
           {beats.map((b) => {
