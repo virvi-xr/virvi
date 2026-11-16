@@ -29,9 +29,13 @@ export function isNetworkError(err: unknown): boolean {
  * `connected: false` means the scene room is down: a request with no answer, or a 401 (the 15 min pass ran out
  * while offline and is re-signed on reconnect), then reads as disconnected. A 403 is always the server's refusal.
  */
+export const WALLET_BLOCKED = 'This wallet can no longer use Virvi.'
+
 export function friendlyEditError(err: unknown, opts: { connected?: boolean } = {}): string {
   const status = httpStatusOf(err)
   const connected = opts.connected !== false
+  // LIV-11: a wallet blocked after a BEAT reissue (or by an admin) is refused everywhere
+  if (/"error"\s*:\s*"wallet_blocked"/.test(err instanceof Error ? err.message : String(err))) return WALLET_BLOCKED
   if (status === 403) return NO_PERMISSION
   if (status === 426) return REDEPLOY
   if (status === 401) return connected ? SIGNED_OUT : DISCONNECTED

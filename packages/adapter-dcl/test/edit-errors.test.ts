@@ -10,12 +10,19 @@ import {
   NOT_FOUND,
   SOMETHING_WRONG,
   REDEPLOY,
+  WALLET_BLOCKED,
 } from '../src/edit-errors.js'
 
 // @virvixr/client's error shape
 const http = (status: number, body = '{"error":"x"}') => new Error(`HTTP ${status}: ${body}`)
 
 describe('friendlyEditError', () => {
+  it('LIV-11: a blocked wallet is told it can no longer use Virvi', () => {
+    expect(friendlyEditError(http(403, '{"error":"wallet_blocked","message":"x"}'))).toBe(WALLET_BLOCKED)
+    expect(WALLET_BLOCKED).toBe('This wallet can no longer use Virvi.')
+    expect(friendlyEditError(http(403))).toBe(NO_PERMISSION)
+  })
+
   it('426 says the scene needs a redeploy (the HUD is older than the oldest allowed to edit)', () => {
     expect(friendlyEditError(http(426, '{"error":"redeploy_required"}'))).toBe('This scene needs a redeploy to edit')
     expect(friendlyEditError(http(426), { connected: false })).toBe(REDEPLOY)
