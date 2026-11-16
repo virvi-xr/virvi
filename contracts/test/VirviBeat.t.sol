@@ -810,6 +810,20 @@ contract VirviBeatTest is Test {
         script.deploy(admin, minter, BASE, 137);
     }
 
+    function test_DeployScript_BaseURIMustMatchTheChain() public {
+        Deploy script = new Deploy();
+        vm.chainId(137);
+        vm.expectRevert(abi.encodeWithSelector(Deploy.WrongBaseURI.selector, "/polygon/"));
+        script.deploy(admin, minter, BASE, 137);
+        VirviBeat onPolygon = script.deploy(admin, minter, "https://api.virvi.io/api/beats/metadata/polygon/", 137);
+        assertEq(onPolygon.uri(1), "https://api.virvi.io/api/beats/metadata/polygon/1.json");
+
+        vm.chainId(80002);
+        vm.expectRevert(abi.encodeWithSelector(Deploy.WrongBaseURI.selector, "/polygon-amoy/"));
+        script.deploy(admin, minter, "https://api.virvi.io/api/beats/metadata/polygon/", 80002);
+        script.deploy(admin, minter, BASE, 80002);
+    }
+
     function test_DeployScript_RevertsWhenAdminIsMinter() public {
         Deploy script = new Deploy();
         vm.expectRevert(Deploy.AdminIsMinter.selector);

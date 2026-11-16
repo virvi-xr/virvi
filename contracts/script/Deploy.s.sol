@@ -7,12 +7,15 @@ import {VirviBeat} from "../src/VirviBeat.sol";
 /// Deploys VirviBeat to whichever network `--rpc-url` points at. It reads four settings from the
 /// environment: BEAT_ADMIN (controls the settings), BEAT_MINTER (creates and sends BEATs), BEAT_BASE_URI
 /// (where names and images are loaded from, ending in "/") and EXPECTED_CHAIN_ID (80002 for Amoy, 137 for
-/// Polygon). It stops before sending anything if one is missing or wrong. The deployer wallet is chosen on
+/// Polygon). It stops before sending anything if one is missing or wrong, including a base URI for the wrong
+/// network: on Polygon (137) it must end in "/polygon/", on Amoy (80002) in "/polygon-amoy/" (token ids count from 1
+/// on each chain, so a copied Amoy URI would show the test tokens on mainnet). The deployer wallet is chosen on
 /// the command line (e.g. `--interactives 1`), never here, and gets no role.
 contract Deploy is Script {
     error WrongChain(uint256 expected, uint256 actual);
     error AdminIsMinter();
     error RoleCheckFailed();
+    error WrongBaseURI(string expectedSuffix);
 
     /// The wallet that sent the deploy transaction.
     address public broadcaster;
@@ -33,6 +36,8 @@ contract Deploy is Script {
     {
         if (block.chainid != expectedChainId) revert WrongChain(expectedChainId, block.chainid);
         if (admin == minter) revert AdminIsMinter();
+        string memory suffix = block.chainid == 137 ? "/polygon/" : block.chainid == 80002 ? "/polygon-amoy/" : "";
+        if (!_endsWith(baseURI, suffix)) revert WrongBaseURI(suffix);
 
         vm.startBroadcast();
         (, broadcaster,) = vm.readCallers();
@@ -51,5 +56,15 @@ contract Deploy is Script {
         console.log("Base URI", baseURI);
         console.log("Admin", admin);
         console.log("Minter", minter);
+    }
+
+    function _endsWith(string memory s, string memory suffix) internal pure returns (bool) {
+        bytes memory a = bytes(s);
+        bytes memory b = bytes(suffix);
+        if (b.length > a.length) return false;
+        for (uint256 i = 0; i < b.length; i++) {
+            if (a[a.length - b.length + i] != b[i]) return false;
+        }
+        return true;
     }
 }
