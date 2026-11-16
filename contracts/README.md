@@ -15,9 +15,9 @@ blockchain) that creates them, on Polygon.
   wallet where 2 of its 3 signers must approve each action). **Minter:** Virvi's server wallet that
   creates and sends BEATs.
 - **Reissuer:** a permission to give a wallet a fresh copy of a BEAT in place of another wallet's (see
-  below). It's meant for compromised wallets, but works on any wallet. Whoever holds the admin role holds
-  it too, and loses it on stepping down. The admin can also give it to other addresses, and those keep it
-  until the admin takes it back. The minter isn't given it at deploy.
+  below). It's meant for compromised wallets, but works on any wallet. An address gets it when it becomes
+  admin and loses it when it stops being admin. The admin can also drop it while staying admin, or give it
+  to other addresses, which keep it until the admin takes it back (forever, if the admin role was renounced). The minter isn't given it at deploy.
 
 **What it does:**
 - The minter creates a BEAT once, and decides then whether it can be traded. That choice can never change.
@@ -50,7 +50,7 @@ blockchain) that creates them, on Polygon.
   The contract doesn't know whether a wallet was really compromised. **A reissuer can do this to any
   wallet that was ever minted a BEAT**, sending the fresh copy to any wallet it chooses: it can freeze an
   innocent holder's tradeable copy so they can never sell it, and it can hand out extra copies of closed
-  BEATs, one per old wallet. That's why, on this shared contract, the reissuer role must stay on the admin
+  BEATs, with no upper limit (by chaining reissues from wallet to wallet). That's why, on this shared contract, the reissuer role must stay on the admin
   Safe and **never be given to a server or support hot key**.
 
   Limits:
@@ -86,7 +86,8 @@ blockchain) that creates them, on Polygon.
   for reissuers, at once (no wait). Only the admin role itself takes the 1-day handover.
 - **If the admin is handed to a new address,** the reissuer permission moves with it: the new admin gets
   it when it accepts, and the old admin loses it. If the admin role is renounced, the old admin loses it
-  too. Anyone else the admin gave the reissuer role to keeps it until the admin takes it back.
+  too. Anyone else the admin gave the reissuer role to keeps it until the admin takes it back, or forever if the admin role was renounced.
+- **When reissuing a mix of BEATs,** send the non-tradeable ones in one reissue and each tradeable one in its own. Otherwise a thief who still has the old key can move one tradeable copy out and make the whole reissue fail. Nothing gets duplicated, but you'd have to sign again.
 - There's no limit on how many BEATs Virvi can create or send, and Virvi can send a BEAT to any wallet
   without asking. You can burn one you don't want.
 - This contract has been checked with an automatic tool (Slither), which found nothing serious. That is

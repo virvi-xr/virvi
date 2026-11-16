@@ -14,7 +14,8 @@ import {IERC6454} from "./interfaces/IERC6454.sol";
 /// another wallet; only its holder can burn it. A closed BEAT can never be minted again, except by a reissue.
 /// @notice The admin (handed over only in two steps with a 1-day wait; on mainnet a Safe multisig) can add or
 /// remove minters and reissuers, including itself, and can change where names and images are looked up.
-/// Whoever holds the admin seat also holds the reissuer role, and loses it on leaving the seat.
+/// An address gets the reissuer role on becoming admin and loses it on leaving the seat; the admin can also
+/// drop it while staying admin.
 /// @notice A reissuer can pick any wallet that was ever minted a BEAT, compromised or not, and give a
 /// wallet of its choice that was never minted that BEAT a fresh copy, even after the BEAT is closed. That
 /// marks the copies still in the old wallet replaced: they can never move to another wallet again, and only
