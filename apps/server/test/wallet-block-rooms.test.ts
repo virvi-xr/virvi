@@ -3,6 +3,7 @@ import { Client } from 'colyseus.js'
 import { Wallet } from 'ethers'
 import { db } from '../src/db/connection.js'
 import { events, walletBlocks } from '../src/db/schema.js'
+import { setWalletBlockReaderForTests } from '../src/auth/wallet-blocks.js'
 import { resetDb } from './helpers/db.js'
 import { createUser, createScene, tokenFor } from './helpers/factories.js'
 import { startGameServer, joinScene } from './helpers/game-server.js'
@@ -53,6 +54,25 @@ describe('blocked wallets in game rooms', () => {
     const start = Date.now()
     while (left === null && Date.now() - start < 3000) await new Promise((r) => setTimeout(r, 20))
     expect(left).not.toBeNull()
+  })
+
+  it('M-9: a database error in the renewal check sends a "try again" error (auth_unavailable), keeps the client, and the next renewal is acked', async () => {
+    const { scene, pass } = await setup()
+    const c = await joinScene(gs.url, scene.id, pass())
+    await c.waitFor('scene_preset_update') // init
+    let left: number | null = null
+    c.room.onLeave((code) => { left = code })
+    setWalletBlockReaderForTests(() => Promise.reject(new Error('database down')))
+    try {
+      c.room.send('auth_renew', { sessionToken: pass() })
+      expect(await c.waitFor('virvi_error')).toEqual({ code: 'auth_unavailable', messageType: 'auth_renew' })
+    } finally {
+      setWalletBlockReaderForTests(null)
+    }
+    c.room.send('auth_renew', { sessionToken: pass() })
+    await c.waitFor('auth_renew_ack')
+    expect(left).toBeNull()
+    c.room.leave()
   })
 
   it('refuses a blocked wallet in the command center room (the studio room runs the same check)', async () => {

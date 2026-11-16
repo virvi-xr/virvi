@@ -130,6 +130,33 @@ export class Virvi {
   private static RENEW_RETRY_MS = 30_000
   /** Frame system checking the clock (platforms have no timers here); null when nothing is scheduled. */
   private renewSystem: ((dt: number) => void) | null = null
+  /** The room couldn't check a renewed pass (`auth_unavailable`, a database error): send it again after these waits,
+   * the last one repeating, until the room acks it (M-9). */
+  static ROOM_RENEW_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000]
+  private roomRenewSystem: ((dt: number) => void) | null = null
+  private roomRenewAttempts = 0
+
+  private retryRoomRenewal(): void {
+    const waits = Virvi.ROOM_RENEW_BACKOFF_MS
+    const due = Date.now() + waits[Math.min(this.roomRenewAttempts, waits.length - 1)]
+    this.roomRenewAttempts++
+    this.stopRoomRenewRetry()
+    const system = (_dt: number) => {
+      if (Date.now() < due) return
+      this.stopRoomRenewRetry()
+      const token = this.http?.auth.token
+      try {
+        if (token && this.colyseus.getRoom()) this.colyseus.send('auth_renew', { sessionToken: token })
+      } catch {}
+    }
+    this.roomRenewSystem = system
+    this.adapter.registerSystem(system)
+  }
+
+  private stopRoomRenewRetry(): void {
+    if (this.roomRenewSystem) this.adapter.unregisterSystem(this.roomRenewSystem)
+    this.roomRenewSystem = null
+  }
 
   private async signInWithPlatform(http: VirviHttpClient, config: VirviInitConfig, renew = false): Promise<void> {
     const [platformUser, sceneInfo, environment] = await Promise.all([
@@ -359,10 +386,19 @@ export class Virvi {
       const e = message as { code?: string; messageType?: string } | null
       // Errors carry no sk: a refused scene_preset_update fails every save still waiting
       if (e?.messageType === 'scene_preset_update') this.failSaves(e.code || 'server_error')
+      // M-9: the room couldn't check the renewed pass; it never lapses silently, so send it again with a backoff
+      if (e?.messageType === 'auth_renew' && e.code === 'auth_unavailable') this.retryRoomRenewal()
       this.events.emit('virvi_error', message)
     })
 
+    this.colyseus.onMessage('auth_renew_ack', () => {
+      this.roomRenewAttempts = 0
+      this.stopRoomRenewRetry()
+    })
+
     this.colyseus.onLeave((code: number) => {
+      this.stopRoomRenewRetry()
+      this.roomRenewAttempts = 0
       this.failSaves('not_connected')
       this.events.emit('connection_lost', { code })
     })
@@ -420,6 +456,7 @@ export class Virvi {
     this.analytics = null
     this.ads.stop()
     this.stopRenewal()
+    this.stopRoomRenewRetry()
     this.http.reauthenticate = null
     this.colyseus.leaveRoom()
     this.setState('idle')

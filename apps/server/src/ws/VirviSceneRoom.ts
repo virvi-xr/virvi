@@ -170,13 +170,24 @@ export class VirviSceneRoom extends Room {
     this.onMessage('auth_renew', async (client: Client, message: any) => {
       const claims = verifySessionToken(message?.sessionToken)
       const actor = client.auth as Actor
-      // A wallet blocked since the join (LIV-11 reissue): the connection ends at this renewal
-      if (await claimsWalletBlocked(claims)) {
+      let blocked: boolean
+      let revoked: boolean
+      try {
+        // A wallet blocked since the join (LIV-11 reissue): the connection ends at this renewal
+        blocked = await claimsWalletBlocked(claims)
+        revoked = !blocked && await VirviSceneRoom.linkedPassRevoked(claims)
+      } catch (err) {
+        // M-9: a database error is never a silent lapse: the client is told to try again, and retries with a backoff
+        // (core Virvi.ts); the pass it holds keeps working until it expires
+        console.error('[VirviSceneRoom] auth_renew check failed:', err instanceof Error ? err.message : err)
+        client.send('virvi_error', { code: 'auth_unavailable', messageType: 'auth_renew' })
+        return
+      }
+      if (blocked) {
         client.send('virvi_error', { code: 'wallet_blocked', messageType: 'auth_renew' })
         client.leave(4003)
         return
       }
-      const revoked = await VirviSceneRoom.linkedPassRevoked(claims)
       const ok =
         !revoked && claims?.kind === 'scene' && claims.sceneId === this.sceneId && !!actor?.userId && claims.id === actor.userId && this.passExpiry.has(client.sessionId)
       if (!ok) {
@@ -187,7 +198,10 @@ export class VirviSceneRoom extends Room {
       this.setLink(client.sessionId, claims)
       this.accessCache.delete(client.sessionId)
       // A renewal after the pass expired makes the visitor live again for BEAT check-ins (fix round N-3)
-      if (!this.beatLive.has(client.sessionId)) await this.markBeatLive(client, actor)
+      // (its own database error doesn't undo the renewal: the next refresh marks it live again)
+      if (!this.beatLive.has(client.sessionId)) {
+        await this.markBeatLive(client, actor).catch((err: unknown) => console.error('[VirviSceneRoom] BEAT live mark at renewal failed:', err instanceof Error ? err.message : err))
+      }
       client.send('auth_renew_ack', {})
     })
 

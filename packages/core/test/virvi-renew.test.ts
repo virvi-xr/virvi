@@ -126,6 +126,53 @@ describe('scene pass renewal', () => {
     await virvi.destroy()
   })
 
+  it('M-9: a renewal the room could not check (auth_unavailable) is sent again with a backoff until the room acks one', async () => {
+    vi.useFakeTimers()
+    const { adapter } = signedAdapter([pass(1)])
+    const virvi = new Virvi(adapter)
+    await virvi.authenticate(cfg)
+    const colyseus = (virvi as any).colyseus
+    const handlers = new Map<string, (m: unknown) => void>()
+    vi.spyOn(colyseus, 'onMessage').mockImplementation(((type: string, fn: (m: unknown) => void) => { handlers.set(type, fn) }) as any)
+    vi.spyOn(colyseus, 'onLeave').mockImplementation(() => {})
+    vi.spyOn(colyseus, 'getRoom').mockReturnValue({})
+    const send = vi.spyOn(colyseus, 'send').mockImplementation(() => {})
+    ;(virvi as any).registerMessageHandlers()
+    const unavailable = () => handlers.get('virvi_error')!({ code: 'auth_unavailable', messageType: 'auth_renew' })
+    const sent = () => send.mock.calls.filter((c) => c[0] === 'auth_renew').length
+
+    unavailable()
+    await later(adapter, 1_999)
+    expect(sent()).toBe(0)
+    await later(adapter, 1)
+    expect(send).toHaveBeenLastCalledWith('auth_renew', { sessionToken: 'pass1' })
+    expect(sent()).toBe(1)
+    // Still failing: each wait is longer (2 s, 5 s, 15 s, 30 s, then 60 s for good)
+    unavailable()
+    await later(adapter, 4_999)
+    expect(sent()).toBe(1)
+    await later(adapter, 1)
+    expect(sent()).toBe(2)
+    unavailable()
+    await later(adapter, 15_000)
+    expect(sent()).toBe(3)
+    // Acked: nothing more is sent, and the next failure starts over at 2 s
+    handlers.get('auth_renew_ack')!({})
+    await later(adapter, 60_000)
+    expect(sent()).toBe(3)
+    unavailable()
+    await later(adapter, 2_000)
+    expect(sent()).toBe(4)
+    // Another error (a refused pass) is not retried
+    handlers.get('virvi_error')!({ code: 'auth_renew_refused', messageType: 'auth_renew' })
+    await later(adapter, 60_000)
+    expect(sent()).toBe(4)
+    // A retry still waiting stops with the client
+    unavailable()
+    await virvi.destroy()
+    expect(adapter.systems.size).toBe(0)
+  })
+
   it('a renewal that lands mid-join is handed to the room once the join finishes', async () => {
     const { adapter } = signedAdapter([pass(1)])
     adapter.getPlatformUser = async () => ({ id: 'u', displayName: 'U', walletAddress: '0xa' })
