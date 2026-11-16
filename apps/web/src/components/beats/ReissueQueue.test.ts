@@ -45,6 +45,15 @@ describe('ReissueRequestCard', () => {
     expect(h).toContain('A withdrawn Safe file went through anyway')
     expect(h).toContain('Lift block')
   })
+  it("the admin's own request can't be reviewed by them: no Approve or Reject, and it says how to cancel it", () => {
+    const h = renderToStaticMarkup(createElement(ReissueRequestCard, { r: req(), a: { ...a, me: 'u' } }))
+    expect(h).toContain('This is your own request')
+    expect(h).toContain('Settings')
+    expect(h).not.toContain('>Approve<')
+    expect(h).not.toContain('>Reject<')
+    const approved = renderToStaticMarkup(createElement(ReissueRequestCard, { r: req({ status: 'approved', reviewWallets: [] }), a: { ...a, me: 'u' } }))
+    expect(approved).not.toContain('Reject (uses the note)')
+  })
   it('the Safe steps', () => {
     expect(renderToStaticMarkup(createElement(SafeSteps))).toContain('Get a second signer to approve it.')
   })

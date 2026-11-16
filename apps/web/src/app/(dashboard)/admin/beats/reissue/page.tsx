@@ -46,6 +46,7 @@ export default function AdminReissuePage() {
 
   const actions: ReissueActions = {
     busy,
+    me: user?.id,
     approve: (r, n, wallets) => { run(() => api.reviewAdminReissue(r.id, 'approve', { ...(n.trim() ? { note: n } : {}), wallets }), 'Approved. The old wallet is blocked.') },
     reject: (r, n) => { run(() => api.reviewAdminReissue(r.id, 'reject', { note: n }), 'Rejected.') },
     preview: (r, chain: BeatChain) => run(() => api.previewAdminReissue(r.id, chain)),

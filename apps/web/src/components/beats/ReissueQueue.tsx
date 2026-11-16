@@ -17,6 +17,8 @@ const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefin
 
 export interface ReissueActions {
   busy: boolean
+  /** The signed-in admin's account id: an admin can't review (approve or reject) their own request. */
+  me?: string
   approve: (r: AdminReissueRequest, note: string, wallets: { wallet: string; action: 'keep' | 'unlink' }[]) => void
   reject: (r: AdminReissueRequest, note: string) => void
   preview: (r: AdminReissueRequest, chain: BeatChain) => Promise<SafeBatchPreview | null>
@@ -50,10 +52,21 @@ function NoteBox({ id, label, value, onChange, required }: { id: string; label: 
   )
 }
 
+/** Whether this is the signed-in admin's own request, which another admin has to review. */
+const ownRequest = (r: AdminReissueRequest, a: ReissueActions) => !!a.me && r.account?.id === a.me
+
 function Review({ r, a }: { r: AdminReissueRequest; a: ReissueActions }) {
   const [note, setNote] = useState('')
   const [choice, setChoice] = useState<Record<string, 'keep' | 'unlink'>>({})
   const decided = r.reviewWallets.every((w) => choice[w.wallet])
+  if (ownRequest(r, a)) {
+    return (
+      <div className="space-y-1 border-t border-gray-800 pt-3">
+        <h4 className="text-sm font-semibold">Review</h4>
+        <p className="text-sm text-amber-200">This is your own request, so another admin has to approve or reject it. To drop it, cancel it in Settings, under Move BEATs, signed in with your email or your new wallet.</p>
+      </div>
+    )
+  }
   return (
     <div className="space-y-3 border-t border-gray-800 pt-3">
       <h4 className="text-sm font-semibold">Review</h4>
@@ -283,7 +296,7 @@ export function ReissueRequestCard({ r, a }: { r: AdminReissueRequest; a: Reissu
               onConfirm={() => a.withdraw(r, withdrawNote.trim() ? { note: withdrawNote } : {})}>
               Withdraw request
             </ConfirmAction>
-            {r.status === 'approved' && (
+            {r.status === 'approved' && !ownRequest(r, a) && (
               <ConfirmAction prompt="Reject this approved request? This lifts the old wallet's block." confirmLabel="Reject" disabled={a.busy || !withdrawNote.trim()} className={`${btn} ml-2`}
                 onConfirm={() => a.reject(r, withdrawNote)}>
                 Reject (uses the note)
