@@ -177,6 +177,8 @@ export class VirviSceneRoom extends Room {
       this.passExpiry.set(client.sessionId, ((claims as { exp?: number }).exp ?? 0) * 1000)
       this.setLink(client.sessionId, claims)
       this.accessCache.delete(client.sessionId)
+      // A renewal after the pass expired makes the visitor live again for BEAT check-ins (fix round N-3)
+      if (!this.beatLive.has(client.sessionId)) await this.markBeatLive(client, actor)
       client.send('auth_renew_ack', {})
     })
 

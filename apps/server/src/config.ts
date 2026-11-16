@@ -7,6 +7,7 @@
  *   cloud    — Hosted virvi.io SaaS, billing enabled
  */
 
+import { createHmac } from 'node:crypto'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { getAddress, parseEther } from 'ethers'
@@ -251,6 +252,10 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
     claimsPerIp: whole('BEAT_CLAIMS_PER_IP', 3),
     /** Scene passes for wallets never seen before, per network and hour (pass issuance at /api/auth/platform). */
     newWalletsPerIpHour: whole('BEAT_NEW_WALLETS_PER_IP_HOUR', 10),
+    /** Keys the per-network claim hashes with each BEAT's salt (fix round N-2): BEAT_NETWORK_HASH_SECRET, else a key
+     * derived from JWT_SECRET with a fixed label (never JWT_SECRET itself). Rotating it only resets the counts. */
+    networkHashSecret: e.BEAT_NETWORK_HASH_SECRET
+      || createHmac('sha256', e.JWT_SECRET || 'dev-secret-change-me').update('virvi-beat-network-hash').digest('hex'),
     /** The catalyst asked whether a wallet has a Decentraland profile (defaults to DCL_CATALYST_URL). */
     profileCatalystUrl: e.BEAT_PROFILE_CATALYST_URL || e.DCL_CATALYST_URL || 'https://peer.decentraland.org',
   }

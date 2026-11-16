@@ -41,9 +41,14 @@ const profileRequired = () => new BeatError(403, 'profile_required', 'Set up you
 
 const tooManyNewWallets = () => new BeatError(429, 'too_many_new_wallets', 'Too many new wallets have collected BEATs from your network. Try again later.')
 
-/** The network a claim came from, as an HMAC under the BEAT's own random salt (never the address, never a server-wide key). */
+/**
+ * The network a claim came from, as an HMAC keyed by the server secret (BEAT_NETWORK_HASH_SECRET) and the BEAT's own
+ * random salt together (fix round N-2): neither a database dump nor the secret alone reverses it, and the same network
+ * hashes differently on every BEAT. Rotating the secret only resets the counts.
+ */
 export function beatNetworkHash(salt: string, ip: string): string {
-  return createHmac('sha256', salt).update(ipKey(ip)).digest('hex').slice(0, 32)
+  const key = createHmac('sha256', config.beats.networkHashSecret).update(salt).digest()
+  return createHmac('sha256', key).update(ipKey(ip)).digest('hex').slice(0, 32)
 }
 
 /** Fix round I-5: a wallet Virvi saw for the first time recently costs its network one of BEAT_NEW_WALLETS_PER_IP_HOUR. */
@@ -257,7 +262,8 @@ export async function claimBeat(
       await tx.insert(beatNetworkClaims).values({ beatId: b.id, netHash, claims: 1 })
         .onConflictDoUpdate({ target: [beatNetworkClaims.beatId, beatNetworkClaims.netHash], set: { claims: sql`${beatNetworkClaims.claims} + 1` } })
     }
-    await tx.update(beatClaims).set({ status: 'claimed', claimedAt: now }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
+    // Stamped by the database's clock, as a host's Send is (fix round N-1)
+    await tx.update(beatClaims).set({ status: 'claimed', claimedAt: sql`clock_timestamp()` }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
   })
   return visitorView(seen.id, userId)
 }

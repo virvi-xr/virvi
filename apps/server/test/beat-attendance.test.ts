@@ -10,6 +10,9 @@ import { beatLiveSince, beatLiveTiming, clearBeatLive, markBeatLive } from '../s
 import { busKeyValue } from '../src/realtime/bus.js'
 import { platformCheck, resetBeatPlatformChecks, setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
 import { deleteMyBeatData } from '../src/beats/retention.js'
+import { beatNetworkHash, claimBeat } from '../src/beats/visitor.js'
+import { beatSettingsFrom } from '../src/config.js'
+import { createHmac } from 'node:crypto'
 import { resetNewWallets } from '../src/beats/new-wallet-limit.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
@@ -298,6 +301,71 @@ describe('BEAT attendance protections (LIV-11)', () => {
         Object.assign(beatLiveTiming, prevTiming)
         await gs.stop()
       }
+    })
+    it('N-3: renewing the pass after it expired makes the visitor live again', async () => {
+      await seed()
+      const prevTiming = { ...beatLiveTiming }
+      beatLiveTiming.refreshMs = 200
+      const gs = await startGameServer()
+      try {
+        const v = await visitor()
+        const short = issueScenePass(app, v.user as any, v.wallet, { sceneId: sceneA, locationId: null }, new Date(Date.now() + 1500), 'V').accessToken
+        const c = await joinScene(gs.url, sceneA, short)
+        await c.waitFor('beat_available')
+        await waitLive(v.user.id, 'set')
+        await waitLive(v.user.id, 'unset', 4000)
+        c.room.send('auth_renew', { sessionToken: v.pass })
+        await c.waitFor('auth_renew_ack')
+        await waitLive(v.user.id, 'set')
+        await c.room.leave()
+      } finally {
+        Object.assign(beatLiveTiming, prevTiming)
+        await gs.stop()
+      }
+    })
+  })
+
+  describe('fix round 2', () => {
+    it('N-1: claimed_at is stamped by the database clock, whatever clock the request carries', async () => {
+      const b = await seed()
+      const v = await visitor()
+      await track(v, b)
+      const stale = new Date(Date.now() - 10 * 60_000)
+      await claimBeat(sceneA, b.id, { userId: v.user.id }, stale)
+      const at = (await row(b.id, v.user.id)).claimedAt!
+      expect(Math.abs(at.getTime() - Date.now())).toBeLessThan(60_000)
+    })
+
+    it('N-2: the network hash is keyed by a server secret as well as the BEAT\'s salt: the salt alone doesn\'t reproduce it', async () => {
+      const prev = config.beats
+      try {
+        ;(config as any).beats = { ...config.beats, networkHashSecret: 'secret-a' }
+        const a = beatNetworkHash('salt', '198.51.100.7')
+        expect(beatNetworkHash('salt', '198.51.100.7')).toBe(a)
+        ;(config as any).beats = { ...config.beats, networkHashSecret: 'secret-b' }
+        expect(beatNetworkHash('salt', '198.51.100.7')).not.toBe(a)
+        const saltOnly = createHmac('sha256', 'salt').update('198.51.100.7').digest('hex').slice(0, 32)
+        expect(a).not.toBe(saltOnly)
+      } finally {
+        ;(config as any).beats = prev
+      }
+      // Unset, it falls back to a key derived from JWT_SECRET with a fixed label (never JWT_SECRET itself)
+      expect(beatSettingsFrom({ JWT_SECRET: 'j' }).networkHashSecret).toBe(createHmac('sha256', 'j').update('virvi-beat-network-hash').digest('hex'))
+      expect(beatSettingsFrom({ BEAT_NETWORK_HASH_SECRET: 'x'.repeat(32) }).networkHashSecret).toBe('x'.repeat(32))
+    })
+
+    it('the host\'s claimant list leaves out a removed tombstone whose user is gone', async () => {
+      const b = await seed({ holdMints: true })
+      const v = await visitor()
+      await track(v, b)
+      await claim(v, b)
+      const id = (await row(b.id, v.user.id)).id
+      const as = { authorization: `Bearer ${tokenFor(host)}` }
+      await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${id}`, headers: as })
+      const before = (await app.inject({ method: 'GET', url: `/api/beats/${b.id}/claimants`, headers: as })).json()
+      expect(before.map((c: { status: string }) => c.status)).toEqual(['removed'])
+      await deleteMyBeatData(v.user.id, new Date())
+      expect((await app.inject({ method: 'GET', url: `/api/beats/${b.id}/claimants`, headers: as })).json()).toEqual([])
     })
   })
 

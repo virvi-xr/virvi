@@ -212,7 +212,11 @@ export interface Claimant {
 export async function listClaimants(c: BeatCaller, beatId: string): Promise<Claimant[]> {
   const { row } = await loadVisible(c, beatId)
   // A claim its visitor asked to delete is gone to the host at once, though the job may still be settling it (privacy I2)
-  const claims = await db.select().from(beatClaims).where(and(eq(beatClaims.beatId, row.id), eq(beatClaims.deleteRequested, false)))
+  // A removed claim whose visitor deleted their data is a wallet-only tombstone kept to keep that wallet out: not shown
+  const claims = await db.select().from(beatClaims).where(and(
+    eq(beatClaims.beatId, row.id), eq(beatClaims.deleteRequested, false),
+    sql`not (${beatClaims.status} = 'removed' and ${beatClaims.userId} is null)`,
+  ))
     .orderBy(desc(beatClaims.createdAt))
   return claims.map((k) => ({
     id: k.id,
@@ -361,9 +365,11 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
 
 // ── Edit ─────────────────────────────────────────────────────────────────────
 
-/** The database's clock, read inside a transaction (fix round M-1): every lock-holder judges time by the same clock. */
+/** The database's clock, read inside a transaction (fix round M-1): every lock-holder judges time by the same clock, and
+ * claims are stamped by it too (claimed_at), so a Send's cut-off compares one clock with itself. */
 async function dbNow(tx: Pick<typeof db, 'execute'>): Promise<Date> {
-  const rows = await tx.execute<{ now: string }>(sql`select now()::text as now`) as unknown as { now: string }[]
+  // clock_timestamp(), not now(): the moment of the call, not the transaction's start (fix round N-1)
+  const rows = await tx.execute<{ now: string }>(sql`select clock_timestamp()::text as now`) as unknown as { now: string }[]
   return new Date(rows[0].now)
 }
 

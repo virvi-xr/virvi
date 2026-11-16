@@ -1,6 +1,8 @@
 BudgetTest:test_Budget_CheapHooksAtPlanTimeThatBurnAtMineTimeNeverRevertTheBatch() (gas: 12491647)
 BudgetTest:test_Budget_WalletsGainingBurningCodeAfterThePlanNeverRevertTheBatch() (gas: 51069730)
 BudgetTest:test_PerRecipientMatchesTheContract() (gas: 14004)
+FallbackTest:test_AllCodeFallback_WorstHooks() (gas: 23391425)
+FallbackTest:test_Mixed_FewPlain_WorstHooks() (gas: 38191535)
 VirviBeatTest:test_Admin_CannotRenounceWithoutScheduledTwoStep() (gas: 51061)
 VirviBeatTest:test_Admin_HandoverIsTwoStepWithOneDayDelay() (gas: 219453)
 VirviBeatTest:test_Admin_MinterGrantAndRevokeAreInstant() (gas: 118414)
