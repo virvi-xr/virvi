@@ -956,6 +956,8 @@ export async function watchReissues(client: BeatChainClient, now: Date): Promise
  * sign-in records), with an audit note for the admin, until it settles or is withdrawn; then it is deleted.
  */
 export async function deleteMyReissueRequests(exec: Exec, userId: string, now = new Date()): Promise<number> {
+  // A blocked wallet stays blocked (it was compromised, or an admin removed it), but no longer names the account
+  await exec.update(walletBlocks).set({ userId: null }).where(eq(walletBlocks.userId, userId))
   await exec.update(beatReissueRequests).set({
     userId: null, reason: null, reviewNote: null, filedVia: null, cancelledVia: null, dataDeletedAt: now, updatedAt: now,
     audit: pushAudit(audit(null, 'data_deleted', now, 'The person deleted their data during the reissue: only the wallets, BEAT ids and state are kept, until it is done or withdrawn.')),

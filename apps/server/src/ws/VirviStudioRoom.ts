@@ -16,6 +16,7 @@ import { db } from '../db/connection.js'
 import { studioDesigns } from '../db/schema.js'
 import { config } from '../config.js'
 import { verifySessionToken } from '../auth/tokens.js'
+import { claimsWalletBlocked } from '../auth/wallet-blocks.js'
 import { type Actor } from '../auth/actor.js'
 import { checkedActor } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
@@ -37,6 +38,7 @@ export class VirviStudioRoom extends Room {
 
   async onAuth(_client: Client, options: JoinOptions): Promise<Actor> {
     const claims = verifySessionToken(options?.sessionToken)
+    if (await claimsWalletBlocked(claims)) throw new Error('Unauthorized') // a blocked wallet (LIV-11 reissue)
     const actor = await checkedActor(claims)
     // Account sessions only: no anonymous visitors, no scene passes, no unverified wallets.
     if (!config.studioEnabled || claims?.kind !== 'account' || !actor.userId || !actor.verified) throw new Error('Unauthorized')

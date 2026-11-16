@@ -22,6 +22,11 @@ export async function isWalletBlocked(wallet: string | null | undefined, exec: P
   return !!row
 }
 
+/** Whether a token's wallet claim is blocked (rooms check this at join and at pass renewal; REST in authenticate). */
+export async function claimsWalletBlocked(c: { wallet?: string | null; verified?: boolean } | null | undefined): Promise<boolean> {
+  return !!c?.wallet && c.verified !== false && isWalletBlocked(c.wallet)
+}
+
 /** How a session signed in: its `am` claim, else a wallet claim means a wallet sign-in; with its wallet or email. */
 export function signInOf(u: { wallet?: string | null; email?: string | null; am?: SignInMethod } | null | undefined): LinkedBy {
   if (!u) return { method: 'unknown' }

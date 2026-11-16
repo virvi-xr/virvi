@@ -849,6 +849,8 @@ describe('BEAT reissue (LIV-11)', () => {
       await call('POST', '/api/beats/reissue-requests', other, { oldWallet: otherOld, newWallet: other.wallet, reason: 'stolen' })
 
       await deleteMyBeatData(me.id, now())
+      // A done reissue's block stays (the wallet is compromised), without the account
+      expect(await db.select().from(walletBlocks)).toEqual([expect.objectContaining({ wallet: oldW, userId: null })])
       expect((await db.select().from(beatReissueRequests)).map((r) => r.userId)).toEqual([other.id])
       expect(await db.select().from(beatReissueItems)).toEqual([])
       const [row] = await db.select().from(beatClaims).where(eq(beatClaims.id, c.id))
@@ -865,6 +867,8 @@ describe('BEAT reissue (LIV-11)', () => {
       expect(r).toMatchObject({ userId: null, reason: null, reviewNote: null, filedVia: null, oldWallet: oldW, newWallet: newW, status: 'proposed' })
       expect(r.dataDeletedAt).not.toBeNull()
       expect(r.audit.at(-1)).toMatchObject({ action: 'data_deleted', by: null })
+      // The old wallet stays blocked, but the block no longer names the account
+      expect(await db.select().from(walletBlocks)).toEqual([expect.objectContaining({ wallet: oldW, userId: null, requestId: id, reason: 'reissue' })])
       const [q] = await queue()
       expect(q).toMatchObject({ id, account: null, dataDeletedAt: expect.any(String), beats: [{ tokenId: String(tokenId), state: 'proposed' }] })
       // The person may file again (on another account wallet's claims, say): the kept record isn't theirs any more

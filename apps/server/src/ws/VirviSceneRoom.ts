@@ -22,6 +22,7 @@ import {
 import { dispatchPlatformCallbacks } from '../integrations/platform-hooks.js'
 import { config } from '../config.js'
 import { verifySessionToken, type SessionClaims } from '../auth/tokens.js'
+import { claimsWalletBlocked } from '../auth/wallet-blocks.js'
 import { pairingActive, pairingLive } from '../hyperfy/pairing.js'
 import { deviceActive, deviceLive } from '../ar/devices.js'
 import { ANONYMOUS, type Actor } from '../auth/actor.js'
@@ -133,6 +134,8 @@ export class VirviSceneRoom extends Room {
 
   async onAuth(_client: Client, options: JoinOptions): Promise<Actor> {
     const claims = verifySessionToken(options?.sessionToken)
+    // A blocked wallet's pass or session is refused outright (LIV-11 reissue)
+    if (await claimsWalletBlocked(claims)) throw new Error('wallet_blocked')
     // A scene pass acts as its user only in its own scene; anywhere else it's an anonymous visitor.
     // Compare against the room's own scene (set in onCreate from the creating client's options, which
     // runs before the first onAuth) — never a joining client's options.sceneId, which joinById can fake.
@@ -167,6 +170,12 @@ export class VirviSceneRoom extends Room {
     this.onMessage('auth_renew', async (client: Client, message: any) => {
       const claims = verifySessionToken(message?.sessionToken)
       const actor = client.auth as Actor
+      // A wallet blocked since the join (LIV-11 reissue): the connection ends at this renewal
+      if (await claimsWalletBlocked(claims)) {
+        client.send('virvi_error', { code: 'wallet_blocked', messageType: 'auth_renew' })
+        client.leave(4003)
+        return
+      }
       const revoked = await VirviSceneRoom.linkedPassRevoked(claims)
       const ok =
         !revoked && claims?.kind === 'scene' && claims.sceneId === this.sceneId && !!actor?.userId && claims.id === actor.userId && this.passExpiry.has(client.sessionId)
