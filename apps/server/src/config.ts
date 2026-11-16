@@ -11,7 +11,7 @@ import { createHmac } from 'node:crypto'
 import { resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { getAddress, parseEther } from 'ethers'
-import { BEAT_CHAINS, type BeatChain } from '@virvixr/shared'
+import { BEAT_CHAINS, BEAT_CLAIMS_PER_NETWORK_DEFAULT, type BeatChain } from '@virvixr/shared'
 import { resolveStorageProvider } from './storage/index.js'
 
 export type VirviMode = 'single' | 'scalable' | 'cloud'
@@ -287,7 +287,7 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
       polygon: commit('BEAT_CONTRACT_COMMIT_POLYGON'),
     } as Record<BeatChain, string | null>,
     /** At most this many claims per BEAT from one network (an IPv4 address, or an IPv6 /64). */
-    claimsPerIp: whole('BEAT_CLAIMS_PER_IP', 3),
+    claimsPerIp: whole('BEAT_CLAIMS_PER_IP', BEAT_CLAIMS_PER_NETWORK_DEFAULT),
     /** Scene passes for wallets never seen before, per network and hour (pass issuance at /api/auth/platform). */
     newWalletsPerIpHour: whole('BEAT_NEW_WALLETS_PER_IP_HOUR', 10),
     /** Keys the per-network claim hashes with each BEAT's salt (fix round N-2): BEAT_NETWORK_HASH_SECRET, else a key

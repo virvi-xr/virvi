@@ -52,3 +52,22 @@ describe('beat copy and links', () => {
     expect(beatTokenUrl('polygon-amoy', '0xC0', '7')).toBe('https://amoy.polygonscan.com/token/0xC0?a=7')
   })
 })
+
+describe('M-7: the per-network claim limit in the privacy and docs text', () => {
+  it("can't read the configured limit (the web page is a static export, the docs are Markdown), so says the default from one constant, which is the setting's default", async () => {
+    const { readFileSync } = await import('node:fs')
+    const { BEAT_CLAIMS_PER_NETWORK_DEFAULT, beatClaimsPerNetworkText } = await import('@virvixr/shared')
+    const { beatSettingsFrom } = await import('../src/config.js')
+    expect(beatSettingsFrom({}).claimsPerIp).toBe(BEAT_CLAIMS_PER_NETWORK_DEFAULT)
+    expect(beatClaimsPerNetworkText()).toBe(`a few claims per network (currently ${BEAT_CLAIMS_PER_NETWORK_DEFAULT})`)
+    const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
+    for (const p of ['../../docs/src/content/docs/privacy.md', '../../docs/src/content/docs/dashboard/beats.md']) {
+      const md = read(p)
+      expect(md, p).toContain(beatClaimsPerNetworkText())
+      expect(md, p).not.toMatch(/\b\d+ per network\b|at most \d+ claims/)
+    }
+    const page = read('../../web/src/app/privacy/page.tsx')
+    expect(page).toContain('{beatClaimsPerNetworkText()}')
+    expect(page).not.toMatch(/\b\d+ per network\b/)
+  })
+})

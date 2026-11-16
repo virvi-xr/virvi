@@ -25,6 +25,14 @@ export const BEAT_SUPPLY_CAP_MAX = 5000
 export const BEAT_MIN_PRESENT_DEFAULT_MINUTES = 5
 export const BEAT_MIN_PRESENT_MAX_MINUTES = 120
 export const BEAT_IMAGE_MIN_PX = 512
+/** The default most claims of one BEAT from one network (BEAT_CLAIMS_PER_IP's default; ops may raise it). */
+export const BEAT_CLAIMS_PER_NETWORK_DEFAULT = 3
+/**
+ * The privacy and docs wording of that limit. The web privacy page (a static export) and the docs (Markdown) can't
+ * read the server's setting, so they say "a few" with the default; apps/server/test/beats-shared.test.ts ties them.
+ */
+export const beatClaimsPerNetworkText = (n: number = BEAT_CLAIMS_PER_NETWORK_DEFAULT) => `a few claims per network (currently ${n})`
+
 /** The most wallets in one mint (the contract allows 200; 100 keeps the every-wallet-as-code gas budget near 19M). */
 export const BEAT_MAX_BATCH = 100
 export const BEAT_CLAIM_GRACE_MS = 24 * 3_600_000

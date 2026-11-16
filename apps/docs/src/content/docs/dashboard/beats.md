@@ -19,7 +19,7 @@ A BEAT shows that **a wallet that signed in from the scene and stayed connected 
 To make faking it harder, Virvi:
 - counts time only while the visitor's scene is connected to Virvi's live room for that scene, not just while their wallet checks in;
 - needs the wallet to have a Decentraland profile (an avatar);
-- allows at most 3 claims of each BEAT from one network (one internet address, or one block of addresses for IPv6);
+- allows only a few claims per network (currently 3) for each BEAT (a network is one internet address, or one block of addresses for IPv6);
 - allows at most 10 new wallets (ones Virvi first saw in the last day) per network per hour to track or claim BEATs;
 - lets you check claims before they are sent, and remove any you don't recognise (see [Checking claims before they are sent](#checking-claims-before-they-are-sent)).
 

@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { beatConsentText } from '@virvixr/shared'
+import { beatClaimsPerNetworkText, beatConsentText } from '@virvixr/shared'
 
 export const metadata: Metadata = {
   title: 'Privacy',
@@ -86,7 +86,7 @@ export default function PrivacyPage() {
         <blockquote className="my-3 border-l-2 border-gray-700 pl-4 text-gray-400">{beatConsentText('{name}')}</blockquote>
         <ul className="list-disc pl-5">
           <li>
-            <strong>What's stored:</strong> your wallet address, your display name, and how long you were present at the event (from a check-in every 30 seconds while you're in the scene; time only counts while the scene is connected to Virvi's live room). To check that your wallet has a Decentraland profile, Virvi asks Decentraland's public profile server about your wallet address when you track and when you claim; only whether a profile exists is kept, for up to a day. To limit claims to 3 per network, Virvi keeps a count per BEAT under a scrambled code (a keyed hash) of your network, never your internet address and not linked to your claim; the counts are deleted once the BEAT's claims are over.
+            <strong>What's stored:</strong> your wallet address, your display name, and how long you were present at the event (from a check-in every 30 seconds while you're in the scene; time only counts while the scene is connected to Virvi's live room). To check that your wallet has a Decentraland profile, Virvi asks Decentraland's public profile server about your wallet address when you track and when you claim; only whether a profile exists is kept, for up to a day. To allow only {beatClaimsPerNetworkText()}, Virvi keeps a count per BEAT under a scrambled code (a keyed hash) of your network, never your internet address and not linked to your claim; the counts are deleted once the BEAT's claims are over.
           </li>
           <li>
             <strong>Who sees it:</strong> the event's hosts (the BEAT's creator, and anyone who can run events in its scenes) see your display name, wallet and whether you claimed, even when the scene's wallet visibility for analytics is off, because you agreed to it for the BEAT. Virvi staff can also see them, to fix problems.
