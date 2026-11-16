@@ -6,7 +6,8 @@ import { db } from '../src/db/connection.js'
 import { beatClaims, beatNetworkClaims, beats, beatScenes, userAuthMethods } from '../src/db/schema.js'
 import { issueScenePass } from '../src/auth/scene-pass.js'
 import { recordJobFailure } from '../src/errors/record.js'
-import { beatLiveSince, clearBeatLive, markBeatLive } from '../src/beats/live.js'
+import { beatLiveSince, beatLiveTiming, clearBeatLive, markBeatLive } from '../src/beats/live.js'
+import { busKeyValue } from '../src/realtime/bus.js'
 import { platformCheck, resetBeatPlatformChecks, setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
 import { deleteMyBeatData } from '../src/beats/retention.js'
 import { resetNewWallets } from '../src/beats/new-wallet-limit.js'
@@ -201,32 +202,100 @@ describe('BEAT attendance protections (LIV-11)', () => {
       expect(s).toBeLessThanOrEqual(11)
     })
 
-    it('the scene room marks a signed-in scene-pass visitor live while connected, and clears it when they leave', async () => {
+    const waitLive = async (userId: string, want: 'set' | 'unset', ms = 3000) => {
+      const start = Date.now()
+      while (Date.now() - start < ms) {
+        const v = await beatLiveSince(sceneA, userId)
+        if ((v !== null) === (want === 'set')) return v
+        await new Promise((r) => setTimeout(r, 20))
+      }
+      throw new Error(`live mark never became ${want}`)
+    }
+    const liveKeys = () => Object.keys((busKeyValue() as unknown as { keys: Record<string, unknown> }).keys).filter((k) => k.startsWith('beat-live:'))
+
+    it('the scene room marks a signed-in scene-pass visitor live while connected, never a guest, and clears it when they leave', async () => {
+      await seed()
       const gs = await startGameServer()
       try {
         const v = await visitor()
         expect(await beatLiveSince(sceneA, v.user.id)).toBeNull()
         const c = await joinScene(gs.url, sceneA, v.pass)
         await c.waitFor('beat_available')
-        let since: number | null = null
-        for (let i = 0; i < 50 && since === null; i++) {
-          since = await beatLiveSince(sceneA, v.user.id)
-          if (since === null) await new Promise((r) => setTimeout(r, 20))
-        }
-        expect(since).not.toBeNull()
+        const since = await waitLive(v.user.id, 'set')
         expect(Math.abs(since! - Date.now())).toBeLessThan(10_000)
-        // A guest (no pass) is never live
         const guest = await joinScene(gs.url, sceneA)
         await guest.waitFor('beat_available')
+        await new Promise((r) => setTimeout(r, 100))
+        expect(liveKeys()).toEqual([`beat-live:${sceneA}:${v.user.id}`])
         await c.room.leave()
-        let gone: number | null = 1
-        for (let i = 0; i < 50 && gone !== null; i++) {
-          gone = await beatLiveSince(sceneA, v.user.id)
-          if (gone !== null) await new Promise((r) => setTimeout(r, 20))
-        }
-        expect(gone).toBeNull()
+        await waitLive(v.user.id, 'unset')
         await guest.room.leave()
       } finally {
+        await gs.stop()
+      }
+    })
+
+    it('M-9: a scene without a BEAT open writes no live mark', async () => {
+      const gs = await startGameServer()
+      try {
+        const v = await visitor()
+        const c = await joinScene(gs.url, sceneA, v.pass)
+        await c.waitFor('beat_available')
+        await new Promise((r) => setTimeout(r, 150))
+        expect(await beatLiveSince(sceneA, v.user.id)).toBeNull()
+        await c.room.leave()
+      } finally {
+        await gs.stop()
+      }
+    })
+
+    it('two connections of one user: one drops, the other keeps them live; the refresh outlives the TTL; without it the mark expires', async () => {
+      await seed()
+      const prevTiming = { ...beatLiveTiming }
+      beatLiveTiming.ttlS = 1
+      beatLiveTiming.refreshMs = 200
+      const gs = await startGameServer()
+      try {
+        const v = await visitor()
+        const a = await joinScene(gs.url, sceneA, v.pass)
+        await a.waitFor('beat_available')
+        const b = await joinScene(gs.url, sceneA, v.pass)
+        await b.waitFor('beat_available')
+        await waitLive(v.user.id, 'set')
+        await a.room.leave()
+        await new Promise((r) => setTimeout(r, 100))
+        expect(await beatLiveSince(sceneA, v.user.id)).not.toBeNull()
+        // Past the 1 s TTL: the refresh kept it
+        await new Promise((r) => setTimeout(r, 1500))
+        expect(await beatLiveSince(sceneA, v.user.id)).not.toBeNull()
+        await b.room.leave()
+        await waitLive(v.user.id, 'unset')
+        // A mark nobody refreshes expires with its TTL
+        await markBeatLive(sceneA, v.user.id, Date.now())
+        expect(await beatLiveSince(sceneA, v.user.id)).not.toBeNull()
+        await new Promise((r) => setTimeout(r, 1200))
+        expect(await beatLiveSince(sceneA, v.user.id)).toBeNull()
+      } finally {
+        Object.assign(beatLiveTiming, prevTiming)
+        await gs.stop()
+      }
+    })
+
+    it('M-9: a connection whose scene pass expired without a renewal stops being live at the next refresh', async () => {
+      await seed()
+      const prevTiming = { ...beatLiveTiming }
+      beatLiveTiming.refreshMs = 200
+      const gs = await startGameServer()
+      try {
+        const v = await visitor()
+        const short = issueScenePass(app, v.user as any, v.wallet, { sceneId: sceneA, locationId: null }, new Date(Date.now() + 1500), 'V').accessToken
+        const c = await joinScene(gs.url, sceneA, short)
+        await c.waitFor('beat_available')
+        await waitLive(v.user.id, 'set')
+        await waitLive(v.user.id, 'unset', 4000)
+        await c.room.leave().catch(() => {})
+      } finally {
+        Object.assign(beatLiveTiming, prevTiming)
         await gs.stop()
       }
     })

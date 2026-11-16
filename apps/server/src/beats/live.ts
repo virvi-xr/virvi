@@ -13,6 +13,8 @@ import { busKeyValue } from '../realtime/bus.js'
 
 export const BEAT_LIVE_TTL_S = 90
 export const BEAT_LIVE_REFRESH_MS = 30_000
+/** The TTL and refresh in use (tests shorten them; rooms read them when they're made). */
+export const beatLiveTiming = { ttlS: BEAT_LIVE_TTL_S, refreshMs: BEAT_LIVE_REFRESH_MS }
 
 const key = (sceneId: string, userId: string) => `beat-live:${sceneId}:${userId}`
 
@@ -22,8 +24,8 @@ const local = new Map<string, { since: number; until: number }>()
 /** The user holds a live room connection from this scene, open since `sinceMs`. */
 export async function markBeatLive(sceneId: string, userId: string, sinceMs: number): Promise<void> {
   const kv = busKeyValue()
-  if (kv) await kv.setex(key(sceneId, userId), String(sinceMs), BEAT_LIVE_TTL_S)
-  else local.set(key(sceneId, userId), { since: sinceMs, until: Date.now() + BEAT_LIVE_TTL_S * 1000 })
+  if (kv) await kv.setex(key(sceneId, userId), String(sinceMs), beatLiveTiming.ttlS)
+  else local.set(key(sceneId, userId), { since: sinceMs, until: Date.now() + beatLiveTiming.ttlS * 1000 })
 }
 
 /** The user's last connection from this scene closed. */

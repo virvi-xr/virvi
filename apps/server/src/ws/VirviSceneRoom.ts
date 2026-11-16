@@ -4,7 +4,7 @@ const { Room } = _require('colyseus') as any
 type Client = any
 import { activeRaffle, publicRaffle } from '../raffles/service.js'
 import { availableBeat } from '../beats/visitor.js'
-import { BEAT_LIVE_REFRESH_MS, clearBeatLive, markBeatLive } from '../beats/live.js'
+import { beatLiveTiming, clearBeatLive, markBeatLive } from '../beats/live.js'
 import { eq, and, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
@@ -81,6 +81,8 @@ export class VirviSceneRoom extends Room {
   private clientMeta: Map<string, ClientMeta> = new Map()
   /** Signed-in scene-pass connections, by session: they count as live presence for BEAT check-ins (beats/live.ts). */
   private beatLive: Map<string, { userId: string; since: number }> = new Map()
+  /** Whether the scene has a BEAT in its card window (paid or live): presence is only written while it does (M-9). */
+  private beatOpen = false
   private accessCache: Map<string, { access: SceneAccess; at: number }> = new Map()
   private lastAccess: Map<string, VenueAccessMessage> = new Map()
   private onVenueEventBound = (e: VenueEvent) => this.onVenueEvent(e)
@@ -159,7 +161,7 @@ export class VirviSceneRoom extends Room {
     if (this.sceneId) this.presence.subscribe(STREAMS_TOPIC, this.onStreamEventBound)
     // Players hold SHOWINGS_WINDOW_MS of showings: top them up well before they run out
     if (this.sceneId) this.clock.setInterval(() => void this.sendShowings(), SHOWINGS_REFRESH_MS)
-    if (this.sceneId) this.clock.setInterval(() => void this.refreshBeatLive(), BEAT_LIVE_REFRESH_MS)
+    if (this.sceneId) this.clock.setInterval(() => void this.refreshBeatLive(), beatLiveTiming.refreshMs)
 
     // ── Scene pass renewal: a fresh pass for the same user and this scene extends the session ──
     this.onMessage('auth_renew', async (client: Client, message: any) => {
@@ -430,6 +432,7 @@ export class VirviSceneRoom extends Room {
     if (!this.clientMeta.has(client.sessionId)) return // left while joining
     const entry = { userId: actor.userId, since: Date.now() }
     this.beatLive.set(client.sessionId, entry)
+    if (!this.beatOpen) return // tracked, but only written once the scene has a BEAT open (the refresh looks again)
     try {
       await markBeatLive(this.sceneId, entry.userId, entry.since)
     } catch (err) {
@@ -437,8 +440,23 @@ export class VirviSceneRoom extends Room {
     }
   }
 
-  /** Keeps each live user's mark from expiring, with the time their oldest open connection here opened. */
+  /**
+   * Keeps each live user's mark from expiring, with the time their oldest open connection here opened. Only while the
+   * scene has a BEAT open (M-9), and never for a connection whose scene pass expired without a renewal: it stops counting.
+   */
   private async refreshBeatLive() {
+    if (!config.beats.enabled || !this.beatLive.size) return
+    const now = Date.now()
+    for (const sessionId of [...this.beatLive.keys()]) {
+      const exp = this.passExpiry.get(sessionId)
+      if (!exp || exp <= now) this.dropBeatLive(sessionId)
+    }
+    try {
+      this.beatOpen = (await availableBeat(this.sceneId)) !== null
+    } catch {
+      return
+    }
+    if (!this.beatOpen) return
     const oldest = new Map<string, number>()
     for (const { userId, since } of this.beatLive.values()) oldest.set(userId, Math.min(since, oldest.get(userId) ?? since))
     for (const [userId, since] of oldest) {
@@ -467,7 +485,9 @@ export class VirviSceneRoom extends Room {
   private async sendBeatAvailable(client: Client) {
     if (!this.sceneId || !config.beats.enabled) return
     try {
-      client.send('beat_available', { beat: await availableBeat(this.sceneId) })
+      const beat = await availableBeat(this.sceneId)
+      this.beatOpen = beat !== null
+      client.send('beat_available', { beat })
     } catch (err) {
       console.error('[VirviSceneRoom] beat availability failed:', err)
     }
