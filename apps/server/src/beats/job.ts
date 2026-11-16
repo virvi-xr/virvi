@@ -635,10 +635,44 @@ async function unminedBatch(
 type Plan =
   | { kind: 'create'; beatId: string; call: BeatCall; codeCount: 0 }
   | { kind: 'close'; beatId: string; call: BeatCall; codeCount: 0 }
-  | { kind: 'mint'; beatId: string; call: BeatCall & { kind: 'mint' }; claimIds: string[]; codeCount: number; single: boolean }
+  | { kind: 'mint'; beatId: string; call: BeatCall & { kind: 'mint' }; claimIds: string[]; codeCount: number; single: boolean; code: boolean[] }
 
-/** The extra gas budgeted per recipient of a plan (every wallet as if it had code; attacker I1). */
-const recipients = (plan: Plan) => (plan.kind === 'mint' ? BigInt(plan.call.wallets.length) : 0n)
+/** A plain mint's gas per wallet when a plan has no plain wallet to measure it by (above the contract's ~52k). */
+const PLAIN_GAS_PER_WALLET = 60_000n
+const PLAIN_GAS_BASE = 80_000n
+
+/**
+ * The gas limit of a plan (attacker I1; fix round I-4): every wallet budgeted once, as a plain mint plus the receiver
+ * budget (RECEIVER_GAS × 64/63 + GUARD_RESERVE), so any wallet may have code by the time it mines and only ever skips
+ * itself. A plan with wallets that have code isn't budgeted by its own estimate, which already holds their hooks' gas:
+ * its plain wallets are estimated alone, and the code wallets counted at that per-wallet cost. 10% headroom on the
+ * plain part. A plain-subset estimate that reverts (the full one passed, so this is rare) is handled as the plan's own
+ * estimate revert (ruling 5: one wallet at a time).
+ */
+async function gasLimitOf(client: BeatChainClient, plan: Plan, estimate: bigint): Promise<bigint> {
+  if (plan.kind !== 'mint') return estimate * 110n / 100n
+  const n = BigInt(plan.call.wallets.length)
+  let plain = estimate
+  if (plan.codeCount > 0) {
+    const plainWallets = plan.call.wallets.filter((_, i) => !plan.code[i])
+    if (plainWallets.length) {
+      const est = await client.estimate({ kind: 'mint', tokenId: plan.call.tokenId, wallets: plainWallets })
+      plain = est + BigInt(plan.codeCount) * (est / BigInt(plainWallets.length))
+    } else {
+      plain = PLAIN_GAS_BASE + n * PLAIN_GAS_PER_WALLET
+    }
+  }
+  return plain * 110n / 100n + BEAT_GAS_PER_RECIPIENT * n
+}
+
+/** The plan cut to its first `k` wallets. */
+function shrink(plan: Plan & { kind: 'mint' }, k: number): Plan & { kind: 'mint' } {
+  const code = plan.code.slice(0, k)
+  return {
+    ...plan, claimIds: plan.claimIds.slice(0, k), code, codeCount: code.filter(Boolean).length, single: k === 1,
+    call: { ...plan.call, wallets: plan.call.wallets.slice(0, k) },
+  }
+}
 
 /** How many tries a tick makes at finding something that estimates; a failed estimate costs nothing on chain. */
 const PLANS_PER_TICK = 50
@@ -742,7 +776,8 @@ async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint
       const c = rows[0]
       flagged.delete(lc(c.wallet))
       return {
-        kind: 'mint', beatId, single: true, claimIds: [c.id], codeCount: (await client.codeAt(c.wallet)) ? 1 : 0,
+        ...(await (async () => { const has = await client.codeAt(c.wallet); return { codeCount: has ? 1 : 0, code: [has] } })()),
+        kind: 'mint', beatId, single: true, claimIds: [c.id],
         call: { kind: 'mint', tokenId, wallets: [c.wallet] },
       }
     }
@@ -755,8 +790,9 @@ async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint
     .orderBy(asc(beatClaims.claimedAt), asc(beatClaims.id)).limit(limit)
   if (!rows.length) return null
   const wallets = rows.map((c) => c.wallet)
+  const code = await codeFlags(client, wallets)
   return {
-    kind: 'mint', beatId, single: rows.length === 1, claimIds: rows.map((c) => c.id), codeCount: await countCode(client, wallets),
+    kind: 'mint', beatId, single: rows.length === 1, claimIds: rows.map((c) => c.id), codeCount: code.filter(Boolean).length, code,
     call: { kind: 'mint', tokenId, wallets },
   }
 }
@@ -767,20 +803,36 @@ async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint
  * is never recorded or sent: the chain pauses for low gas and its claims stay claimed.
  */
 async function trySend(
-  client: BeatChainClient, plan: Plan, skip: Set<string>, now: Date, r: BeatTickResult, balance: bigint,
+  client: BeatChainClient, planIn: Plan, skip: Set<string>, now: Date, r: BeatTickResult, balance: bigint,
 ): Promise<'stop' | 'next' | 'stale'> {
-  let estimate: bigint
-  try {
-    estimate = await client.estimate(plan.call)
-  } catch (err) {
-    if (noFunds(err)) { shortOf(client.chain); return 'stop' }
-    if (!(err instanceof BeatRevert)) throw err
-    return estimateReverted(client, plan, err.name, skip, now, r)
-  }
-  // 10% over the estimate, plus every recipient's receiver budget (attacker I1)
-  const gasLimit = estimate * 110n / 100n + BEAT_GAS_PER_RECIPIENT * recipients(plan)
+  let plan = planIn
   const fees = await cappedFees(client)
   if (!fees) { feesTooHigh(client.chain); return 'stop' }
+  let gasLimit: bigint
+  // Fix round I-4 (money M8): a mint the balance can't cover (gas limit × max fee) shrinks to the most wallets that fit
+  for (let round = 0; ; round++) {
+    let estimate: bigint
+    try {
+      estimate = await client.estimate(plan.call)
+      gasLimit = await gasLimitOf(client, plan, estimate)
+    } catch (err) {
+      if (noFunds(err)) { shortOf(client.chain); return 'stop' }
+      if (!(err instanceof BeatRevert)) throw err
+      return estimateReverted(client, plan, err.name, skip, now, r)
+    }
+    const cost = gasLimit * fees.maxFeePerGas
+    if (cost <= balance) break
+    if (plan.kind !== 'mint' || plan.call.wallets.length === 1 || round >= 4) {
+      shortOf(client.chain)
+      console.warn(`[beats] ${client.chain} minter can't pay for the next ${plan.kind} batch; paused for low gas`)
+      return 'stop'
+    }
+    // Roughly linear in the wallets: aim at 90% of the balance, and at least one fewer than now
+    const n = plan.call.wallets.length
+    const k = Math.max(1, Math.min(n - 1, Number((BigInt(n) * balance * 9n) / (cost * 10n))))
+    plan = shrink(plan, k)
+  }
+  if (plan !== planIn) console.warn(`[beats] ${client.chain}: the balance covers ${plan.kind === 'mint' ? plan.call.wallets.length : 0} wallets of the next batch; sending those`)
   const nonce = await nextNonce(client)
   let signed: BeatSigned
   try {
@@ -788,12 +840,6 @@ async function trySend(
   } catch (err) {
     if (noFunds(err)) { shortOf(client.chain); return 'stop' }
     throw err
-  }
-  // Signing only fixes the fees; nothing has been recorded or sent, so stopping here costs nothing
-  if (balance < signed.gasLimit * signed.fees.maxFeePerGas) {
-    shortOf(client.chain)
-    console.warn(`[beats] ${client.chain} minter can't pay for the next ${plan.kind} batch; paused for low gas`)
-    return 'stop'
   }
   await beatJobTestHooks.beforeInsert?.({ kind: plan.kind, beatId: plan.beatId })
   const batch = await insertBatch(client.chain, plan, signed, nonce, now)
@@ -823,12 +869,13 @@ async function ourCreate(beatId: string): Promise<Batch | null> {
 }
 const createdTxOf = (b: Batch) => (b.status === 'confirmed' ? b.txHash ?? b.txHashes.at(-1) : b.txHashes.at(-1) ?? b.txHash) ?? null
 
-/** How many of these wallets have code now (20 lookups at a time). */
-async function countCode(client: BeatChainClient, wallets: string[]): Promise<number> {
-  let n = 0
-  for (let i = 0; i < wallets.length; i += 20) n += (await Promise.all(wallets.slice(i, i + 20).map((w) => client.codeAt(w)))).filter(Boolean).length
-  return n
+/** Which of these wallets have code now (20 lookups at a time). */
+async function codeFlags(client: BeatChainClient, wallets: string[]): Promise<boolean[]> {
+  const out: boolean[] = []
+  for (let i = 0; i < wallets.length; i += 20) out.push(...await Promise.all(wallets.slice(i, i + 20).map((w) => client.codeAt(w))))
+  return out
 }
+const countCode = async (client: BeatChainClient, wallets: string[]) => (await codeFlags(client, wallets)).filter(Boolean).length
 
 async function estimateReverted(
   client: BeatChainClient, plan: Plan, name: string, skip: Set<string>, now: Date, r: BeatTickResult,

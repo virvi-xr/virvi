@@ -181,7 +181,11 @@ describe('BEAT minting job (LIV-11)', () => {
     await runBeatTick(T0)
     const tx = fake.mempool()[0]
     expect(mintWallets(tx)).toEqual([e1, c1, e2, c2].map(lc))
-    expect(tx.gasLimit).toBe(fake.gasFor(tx.call) * 110n / 100n + 4n * BEAT_GAS_PER_RECIPIENT)
+    // Fix round I-4: each wallet is budgeted once, as a plain mint (the plain subset's own estimate, per wallet) plus the
+    // receiver budget; the code wallets' hook gas isn't counted on top of that again
+    const plainEst = fake.gasFor({ kind: 'mint', tokenId: 1n, wallets: [e1, e2] })
+    expect(tx.gasLimit).toBe((plainEst + 2n * (plainEst / 2n)) * 110n / 100n + 4n * BEAT_GAS_PER_RECIPIENT)
+    expect(tx.gasLimit).toBeLessThan(fake.gasFor(tx.call) * 110n / 100n + 4n * BEAT_GAS_PER_RECIPIENT)
     expect((await batches())[0].codeCount).toBe(2)
     fake.mine(6)
     await runBeatTick(at(MIN))
@@ -1088,6 +1092,28 @@ describe('BEAT minting job (LIV-11)', () => {
       await db.update(beats).set({ mintsReleasedAt: at(MIN) }).where(eq(beats.id, b.id))
       await runBeatTick(at(2 * MIN))
       expect(mintWallets(fake.mempool()[0])).toEqual([lc(late.wallet)])
+    })
+
+    it('fix round I-4: a batch the balance can\'t cover shrinks to what fits; only when 1 wallet won\'t fit does the chain pause low_gas', async () => {
+      setBeats({ minGasWei: parseEther('0.001') })
+      const b = await seed({ created: true })
+      const ws = Array.from({ length: 10 }, wallet)
+      await claims(b.id, ws)
+      fake.setBalance(parseEther('0.06'))
+      await runBeatTick(T0)
+      const tx = fake.mempool()[0]
+      const n = mintWallets(tx).length
+      expect(n).toBeGreaterThan(1)
+      expect(n).toBeLessThan(10)
+      expect(tx.gasLimit * tx.fees.maxFeePerGas).toBeLessThanOrEqual(parseEther('0.06'))
+      expect(mintWallets(tx)).toEqual(ws.slice(0, n).map(lc))
+      expect(beatPaused('polygon-amoy').paused).toBe(false)
+      fake.mine(6)
+      fake.setBalance(parseEther('0.002'))
+      await runBeatTick(at(MIN))
+      expect(fake.mempool()).toHaveLength(0)
+      expect(beatPaused('polygon-amoy')).toEqual({ paused: true, reason: 'low_gas' })
+      expect(await statusCount(b.id)).toEqual({ minted: n, claimed: 10 - n })
     })
 
     it('money M3: a create that reverts with BeatExists after an earlier create of ours was replaced is taken as ours, not a conflict', async () => {
