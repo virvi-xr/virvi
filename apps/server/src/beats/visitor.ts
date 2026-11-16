@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 import {
-  BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION, beatTxUrl, cleanDisplayName,
+  BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION, BEAT_FINAL_FAIL_REASONS, beatTxUrl, cleanDisplayName,
   type AvailableBeat, type BeatClaimStatus, type BeatStatus, type VisitorBeat,
 } from '@virvixr/shared'
 import { config } from '../config.js'
@@ -12,6 +12,7 @@ import { ipKey } from '../errors/limits.js'
 import { BeatError } from './errors.js'
 import { beatLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
+import { claimHeld } from './service.js'
 import { platformCheck, type BeatPlatform } from './platform-checks.js'
 import { isNewWallet, takeNewWallet } from './new-wallet-limit.js'
 
@@ -112,7 +113,11 @@ async function toVisitor(b: BeatRow, claim: ClaimRow | null): Promise<VisitorBea
     soldOut: (await takenCount(db, b.id)) >= b.supplyCap,
     claimUntil: claimUntil(b).toISOString(),
     test: b.chain === 'polygon-amoy',
-    myClaim: claim ? { status: claim.status, secondsPresent: claim.secondsPresent ?? 0, txUrl: claim.mintTx ? beatTxUrl(b.chain, claim.mintTx) : null } : null,
+    myClaim: claim ? {
+      status: claim.status, secondsPresent: claim.secondsPresent ?? 0, txUrl: claim.mintTx ? beatTxUrl(b.chain, claim.mintTx) : null,
+      final: claim.status === 'failed' && (BEAT_FINAL_FAIL_REASONS as readonly string[]).includes(claim.failReason ?? ''),
+      heldUntil: claim.status === 'claimed' && claimHeld(b, claim.claimedAt, new Date()) ? claimUntil(b).toISOString() : null,
+    } : null,
   }
 }
 
@@ -165,8 +170,8 @@ export async function availableBeat(sceneId: string, now = new Date()): Promise<
  */
 export async function trackBeat(sceneId: string, beatId: string, c: VisitorCaller, consentVersion: unknown, now = new Date()): Promise<{ beat: VisitorBeat }> {
   const b = await beatOnScene(sceneId, beatId)
-  if (consentVersion !== BEAT_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', 'Agree to the BEAT terms to track your attendance.')
-  if (!c.wallet) throw new BeatError(403, 'no_wallet', 'Sign in with a wallet to collect BEATs.')
+  if (consentVersion !== BEAT_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', "This BEAT's terms have changed. Reload the scene and try again.")
+  if (!c.wallet) throw new BeatError(403, 'no_wallet', "Sign in to Decentraland with a wallet to earn this BEAT. Guests can't.")
   if (now.getTime() > b.endsAt.getTime()) throw new BeatError(409, 'too_late', 'This BEAT has ended.')
   if (now.getTime() < b.startsAt.getTime() - BEAT_CARD_LEAD_MS) throw new BeatError(409, 'too_early', "This BEAT hasn't opened yet.")
   // Checked before tracking starts too, so a wallet that can't claim learns it now rather than after its time
@@ -181,7 +186,7 @@ export async function trackBeat(sceneId: string, beatId: string, c: VisitorCalle
     }).onConflictDoNothing()
     const [mine] = await tx.select().from(beatClaims).where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.userId, c.userId))).for('update')
     // Being deleted, or the wallet's row belongs to no one now (its data was removed): not brought back
-    if (!mine || mine.deleteRequested) throw new BeatError(409, 'not_available', "You can't track this BEAT again.")
+    if (!mine || mine.deleteRequested) throw new BeatError(409, 'not_available', "You stopped tracking this BEAT, so you can't start again.")
     if (mine.status === 'present' && mine.consentVersion !== BEAT_CONSENT_VERSION) {
       await tx.update(beatClaims).set({ consentVersion: BEAT_CONSENT_VERSION, consentedAt: now }).where(eq(beatClaims.id, mine.id))
     }
@@ -241,7 +246,7 @@ export async function claimBeat(
     if (!claim) throw notTracking()
     if (claim.status !== 'present') return
     // Tracking opens before the start, so with a minimum of 0 the time alone would allow it
-    if (now.getTime() < b.startsAt.getTime()) throw new BeatError(409, 'not_yet', "This event hasn't started yet.")
+    if (now.getTime() < b.startsAt.getTime()) throw new BeatError(409, 'not_started', "This event hasn't started yet.")
     if (now.getTime() > claimUntil(b).getTime()) throw new BeatError(409, 'too_late', 'The time to claim this BEAT is over.')
     if ((claim.secondsPresent ?? 0) < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
     if ((await takenCount(tx, b.id)) >= b.supplyCap) throw new BeatError(409, 'all_claimed', 'All of these BEATs have been claimed.')

@@ -9,7 +9,7 @@
  */
 import type { Virvi } from '@virvixr/core'
 import { CHECKIN_INTERVAL_MS, type VisitorBeat } from '@virvixr/shared'
-import { beatError, beatKey, beatState, checkInWanted, GuestNotice, initialBeatUi, type BeatAction, type BeatUi, type CardBeat } from './card.js'
+import { beatError, beatKey, beatState, checkInWanted, GuestNotice, initialBeatUi, stopAllowed, type BeatAction, type BeatUi, type CardBeat } from './card.js'
 import { errorCodeOf } from '../raffle/card.js'
 import { mountBeatOverlay, setBeatCard, setBeatCardHandler } from './BeatOverlay.js'
 
@@ -156,7 +156,7 @@ export function startSceneBeats(
           true,
         )
       case 'stop':
-        if (state !== 'tracking' || ui.busy) return
+        if (!stopAllowed(b, now(), ui) || ui.busy) return
         setUi({ busy: true, note: null })
         return run(
           () => virvi.stopTrackingBeat(beatId),

@@ -107,14 +107,35 @@ describe('BEAT visitor routes (LIV-11)', () => {
       expect((await current(v, sceneB)).json()).toEqual({ beat: null })
     })
 
+    it('plain-ux I2: a failed claim says whether it will be retried (final)', async () => {
+      const b = await seed()
+      const v = await present(b, 600)
+      await setClaim(b.id, v.user.id, { status: 'failed', failReason: 'send_failed' })
+      expect((await current(v)).json().beat.myClaim).toMatchObject({ status: 'failed', final: false })
+      for (const reason of ['receiver_rejected', 'ERC1155InvalidReceiver', 'BeatClosedError', 'given_up']) {
+        await setClaim(b.id, v.user.id, { failReason: reason })
+        expect((await current(v)).json().beat.myClaim).toMatchObject({ status: 'failed', final: true })
+      }
+    })
+
+    it('host review: a held claim says when it goes out at the latest (heldUntil); once sent it is null', async () => {
+      const b = await seed({ holdMints: true })
+      const v = await present(b, 600)
+      expect((await claim(v, b)).statusCode).toBe(200)
+      const until = new Date(b.endsAt.getTime() + BEAT_CLAIM_GRACE_MS).toISOString()
+      expect((await current(v)).json().beat.myClaim).toMatchObject({ status: 'claimed', heldUntil: until })
+      await db.update(beats).set({ mintsReleasedAt: new Date(Date.now() + 1000) }).where(eq(beats.id, b.id))
+      expect((await current(v)).json().beat.myClaim).toMatchObject({ status: 'claimed', heldUntil: null })
+    })
+
     it('a reconnecting visitor gets their myClaim; a minted claim without its tx tolerates a null mint_tx', async () => {
       const b = await seed()
       const v = await visitor()
       expect((await track(v, b)).statusCode).toBe(200)
       const again = await current(v)
-      expect(again.json().beat.myClaim).toEqual({ status: 'present', secondsPresent: 0, txUrl: null })
+      expect(again.json().beat.myClaim).toEqual({ status: 'present', secondsPresent: 0, txUrl: null, final: false, heldUntil: null })
       await setClaim(b.id, v.user.id, { status: 'minted', mintTx: null, secondsPresent: 600 })
-      expect((await current(v)).json().beat.myClaim).toEqual({ status: 'minted', secondsPresent: 600, txUrl: null })
+      expect((await current(v)).json().beat.myClaim).toEqual({ status: 'minted', secondsPresent: 600, txUrl: null, final: false, heldUntil: null })
       await setClaim(b.id, v.user.id, { mintTx: '0x' + 'ab'.repeat(32) })
       expect((await current(v)).json().beat.myClaim.txUrl).toBe(`https://polygonscan.com/tx/0x${'ab'.repeat(32)}`)
       // Another visitor sees only their own (none)
@@ -132,9 +153,9 @@ describe('BEAT visitor routes (LIV-11)', () => {
       expect(await db.select().from(beatClaims)).toHaveLength(0)
     })
 
-    it('tracking with consent version 2 gets bad_consent', async () => {
+    it('tracking with an old consent version (1) gets bad_consent', async () => {
       const b = await seed()
-      const res = await track(await visitor(), b, sceneA, 2)
+      const res = await track(await visitor(), b, sceneA, 1)
       expect([res.statusCode, res.json().error]).toEqual([400, 'bad_consent'])
       expect(await db.select().from(beatClaims)).toHaveLength(0)
     })
@@ -146,7 +167,7 @@ describe('BEAT visitor routes (LIV-11)', () => {
       const v: Visitor = { user, wallet, pass: (sceneId) => issueScenePass(app, user as any, wallet, { sceneId, locationId: null }, undefined, 'Bad\u0007 Name\u001b').accessToken }
       const res = await track(v, b)
       expect(res.statusCode, res.body).toBe(200)
-      expect(res.json().beat.myClaim).toEqual({ status: 'present', secondsPresent: 0, txUrl: null })
+      expect(res.json().beat.myClaim).toEqual({ status: 'present', secondsPresent: 0, txUrl: null, final: false, heldUntil: null })
       const row = await claimRow(b.id, user.id)
       expect(row).toMatchObject({ wallet: wallet.toLowerCase(), displayName: 'Bad Name', consentVersion: BEAT_CONSENT_VERSION, status: 'present' })
       expect(Date.now() - row.consentedAt.getTime()).toBeLessThan(10_000)
@@ -233,7 +254,7 @@ describe('BEAT visitor routes (LIV-11)', () => {
       await setClaim(b.id, v.user.id, { secondsPresent: 300 })
       const ok = await claim(v, b)
       expect(ok.statusCode, ok.body).toBe(200)
-      expect(ok.json().beat.myClaim).toEqual({ status: 'claimed', secondsPresent: 300, txUrl: null })
+      expect(ok.json().beat.myClaim).toEqual({ status: 'claimed', secondsPresent: 300, txUrl: null, final: false, heldUntil: null })
       const row = await claimRow(b.id, v.user.id)
       expect(row.status).toBe('claimed')
       expect(Date.now() - row.claimedAt!.getTime()).toBeLessThan(10_000)
@@ -242,11 +263,11 @@ describe('BEAT visitor routes (LIV-11)', () => {
       expect([again.statusCode, again.json().beat.myClaim.status]).toEqual([200, 'claimed'])
     })
 
-    it('M1: no claim before the start, even with a minimum of 0 (not_yet); at the start it succeeds', async () => {
+    it('M1: no claim before the start, even with a minimum of 0 (not_started); at the start it succeeds', async () => {
       const b = await seed({ status: 'paid', startsAt: at(10 * M), endsAt: at(2 * H), minPresentSeconds: 0 })
       const v = await present(b, 0)
       const early = await claim(v, b)
-      expect([early.statusCode, early.json().error]).toEqual([409, 'not_yet'])
+      expect([early.statusCode, early.json().error]).toEqual([409, 'not_started'])
       expect(early.json().message).toBe("This event hasn't started yet.")
       expect((await claimRow(b.id, v.user.id)).status).toBe('present')
       await db.update(beats).set({ status: 'live', startsAt: at(-1000) }).where(eq(beats.id, b.id))

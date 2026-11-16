@@ -17,7 +17,7 @@ const beat = (over: Partial<VisitorBeat> = {}): VisitorBeat => ({
   id: 'b1', name: 'Launch', imageUrl: '', startsAt: '2026-11-14T10:00:00.000Z', endsAt: '2026-11-14T12:00:00.000Z',
   minPresentSeconds: 300, status: 'live', soldOut: false, claimUntil: '2026-11-15T12:00:00.000Z', test: false, myClaim: null, ...over,
 })
-const present = (secondsPresent: number) => ({ myClaim: { status: 'present' as const, secondsPresent, txUrl: null } })
+const present = (secondsPresent: number) => ({ myClaim: { status: 'present' as const, secondsPresent, txUrl: null, final: false, heldUntil: null } })
 const httpError = (status: number, code: string) => new Error(`HTTP ${status}: ${JSON.stringify({ error: code })}`)
 const flush = () => new Promise((r) => setTimeout(r, 0))
 const state = () => cardView(overlay.card!.beat, NOW, overlay.card!.ui).state
@@ -31,7 +31,7 @@ function setup(guest = false) {
     currentBeat: vi.fn(async () => ({ beat: beat() as VisitorBeat | null })),
     trackBeat: vi.fn(async () => ({ beat: beat(present(0)) })),
     beatCheckIn: vi.fn(async () => ({ beat: beat(present(30)) })),
-    claimBeat: vi.fn(async () => ({ beat: beat({ myClaim: { status: 'claimed', secondsPresent: 300, txUrl: null } }) })),
+    claimBeat: vi.fn(async () => ({ beat: beat({ myClaim: { status: 'claimed', secondsPresent: 300, txUrl: null, final: false, heldUntil: null } }) })),
     stopTrackingBeat: vi.fn(async () => {}),
   }
   const systems: ((dt: number) => void)[] = []
@@ -120,7 +120,7 @@ describe('startSceneBeats', () => {
     overlay.handler!('track')
     overlay.handler!('confirm')
     await flush()
-    expect(overlay.card!.ui.note).toBe('Connect a wallet to earn this BEAT.')
+    expect(overlay.card!.ui.note).toBe("Sign in to Decentraland with a wallet to earn this BEAT. Guests can't.")
     expect(state()).toBe('offer')
   })
 
@@ -135,10 +135,22 @@ describe('startSceneBeats', () => {
     expect(state()).toBe('offer')
   })
 
+  it('plain-ux I1: Stop tracking also works once claimable', async () => {
+    const t = setup()
+    t.virvi.currentBeat.mockResolvedValue({ beat: beat(present(600)) })
+    t.connect()
+    await flush()
+    expect(state()).toBe('claimable')
+    overlay.handler!('stop')
+    await flush()
+    expect(t.virvi.stopTrackingBeat).toHaveBeenCalledWith('b1')
+    expect(state()).toBe('offer')
+  })
+
   it('opens the tx on Polygonscan', async () => {
     const t = setup()
     const tx = 'https://polygonscan.com/tx/0xabc'
-    t.virvi.currentBeat.mockResolvedValue({ beat: beat({ myClaim: { status: 'minted', secondsPresent: 300, txUrl: tx } }) })
+    t.virvi.currentBeat.mockResolvedValue({ beat: beat({ myClaim: { status: 'minted', secondsPresent: 300, txUrl: tx, final: false, heldUntil: null } }) })
     t.connect()
     await flush()
     overlay.handler!('view_tx')
@@ -168,7 +180,7 @@ describe('startSceneBeats', () => {
     expect(state()).toBe('hidden')
     t.announce({ name: 'Launch', test: true })
     expect(state()).toBe('guest')
-    expect(cardView(overlay.card!.beat, NOW, overlay.card!.ui)).toMatchObject({ line: 'Connect a wallet to earn this BEAT', test: true })
+    expect(cardView(overlay.card!.beat, NOW, overlay.card!.ui)).toMatchObject({ line: "Sign in to Decentraland with a wallet to earn this BEAT. Guests can't.", test: true })
     overlay.handler!('dismiss')
     expect(state()).toBe('hidden')
     // The same BEAT again (a reconnect): no second notice
@@ -249,7 +261,7 @@ describe('startSceneBeats', () => {
   it('a throwing openUrl is caught', async () => {
     const t = setup()
     t.openUrl.mockImplementation(() => { throw new Error('no runtime') })
-    t.virvi.currentBeat.mockResolvedValue({ beat: beat({ myClaim: { status: 'minted', secondsPresent: 300, txUrl: 'https://polygonscan.com/tx/0x1' } }) })
+    t.virvi.currentBeat.mockResolvedValue({ beat: beat({ myClaim: { status: 'minted', secondsPresent: 300, txUrl: 'https://polygonscan.com/tx/0x1', final: false, heldUntil: null } }) })
     t.connect()
     await flush()
     expect(() => overlay.handler!('view_tx')).not.toThrow()

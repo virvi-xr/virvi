@@ -54,7 +54,10 @@ export function mountBeatOverlay(hud: { addOverlay(component: () => ReactEcs.JSX
 // ---------------------------------------------------------------------------
 
 const CARD_W = 320
-const BODY_H = 200
+/** Text sizes (plain-ux I12): the consent and lines at 13, notes and progress at 12, the tags at 11. */
+const BODY_FONT = 13
+const NOTE_FONT = 12
+const TAG_FONT = 11
 const press = (a: BeatAction) => () => { markHudPress(); ui.onAction?.(a) }
 const PRIMARY: BeatAction[] = ['track', 'confirm', 'claim']
 
@@ -65,7 +68,7 @@ function CardButton({ label, onPress, primary }: { label: string; onPress: () =>
       uiBackground={{ color: primary ? C.accent : C.btn }}
       onMouseDown={onPress}
     >
-      <Label value={label} fontSize={12} color={C.text} textWrap="nowrap" />
+      <Label value={label} fontSize={BODY_FONT} color={C.text} textWrap="nowrap" />
     </UiEntity>
   )
 }
@@ -89,34 +92,35 @@ export function BeatOverlay() {
       onMouseDown={markHudPress}
     >
       <UiEntity uiTransform={{ width: '100%', height: 14, flexDirection: 'row' }}>
-        <Label value="BEAT" fontSize={10} color={C.virvi} textAlign="top-left" uiTransform={{ height: 14 }} />
-        {v.test && <Label value="Test" fontSize={10} color={C.test} textAlign="top-left" uiTransform={{ height: 14, margin: { left: 8 } }} />}
+        <Label value="BEAT" fontSize={TAG_FONT} color={C.virvi} textAlign="top-left" uiTransform={{ height: 14 }} />
+        {v.test && <Label value="Test" fontSize={TAG_FONT} color={C.test} textAlign="top-left" uiTransform={{ height: 14, margin: { left: 8 } }} />}
       </UiEntity>
       <Label value={plainText(v.title)} fontSize={15} color={C.text} textAlign="top-left" textWrap="wrap" uiTransform={{ width: '100%', height: textHeight(v.title, 15, bodyWidth) }} />
       {v.body !== null && (
+        // The whole consent is shown at once, never in a scroll box: the agree button sits under all of it
         <UiEntity
-          uiTransform={{ width: '100%', height: BODY_H, overflow: 'scroll', margin: { top: 6 }, padding: 6, flexDirection: 'column' }}
+          uiTransform={{ width: '100%', margin: { top: 6 }, padding: 6, flexDirection: 'column' }}
           uiBackground={{ color: C.row }}
         >
-          <Label value={plainText(v.body)} fontSize={11} color={C.text} textAlign="top-left" textWrap="wrap"
-            uiTransform={{ width: bodyWidth - 12, height: textHeight(v.body, 11, bodyWidth - 12) }} />
+          <Label value={plainText(v.body)} fontSize={BODY_FONT} color={C.text} textAlign="top-left" textWrap="wrap"
+            uiTransform={{ width: bodyWidth - 12, height: textHeight(v.body, BODY_FONT, bodyWidth - 12) }} />
         </UiEntity>
       )}
       {v.line && (
-        <Label value={plainText(v.line)} fontSize={12} color={good ? C.success : C.text} textAlign="top-left" textWrap="wrap"
-          uiTransform={{ width: '100%', height: textHeight(v.line, 12, bodyWidth), margin: { top: 4 } }} />
+        <Label value={plainText(v.line)} fontSize={BODY_FONT} color={good ? C.success : C.text} textAlign="top-left" textWrap="wrap"
+          uiTransform={{ width: '100%', height: textHeight(v.line, BODY_FONT, bodyWidth), margin: { top: 4 } }} />
       )}
       {v.progress && (
         <UiEntity uiTransform={{ width: '100%', flexDirection: 'column', margin: { top: 6 } }}>
           <UiEntity uiTransform={{ width: '100%', height: 8 }} uiBackground={{ color: C.row }}>
             <UiEntity uiTransform={{ width: `${Math.round(v.progress.fraction * 100)}%`, height: '100%' }} uiBackground={{ color: C.accent }} />
           </UiEntity>
-          <Label value={v.progress.label} fontSize={11} color={C.textDim} textAlign="top-left" uiTransform={{ width: '100%', height: 18, margin: { top: 2 } }} />
+          <Label value={v.progress.label} fontSize={NOTE_FONT} color={C.textDim} textAlign="top-left" uiTransform={{ width: '100%', height: 18, margin: { top: 2 } }} />
         </UiEntity>
       )}
       {v.note && (
-        <Label value={v.note} fontSize={11} color={C.danger} textAlign="top-left" textWrap="wrap"
-          uiTransform={{ width: '100%', height: textHeight(v.note, 11, bodyWidth) }} />
+        <Label value={v.note} fontSize={NOTE_FONT} color={C.danger} textAlign="top-left" textWrap="wrap"
+          uiTransform={{ width: '100%', height: textHeight(v.note, NOTE_FONT, bodyWidth) }} />
       )}
       {v.actions.length > 0 && (
         <UiEntity uiTransform={{ width: '100%', flexDirection: 'row', flexWrap: 'wrap' }}>

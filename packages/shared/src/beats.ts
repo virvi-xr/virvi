@@ -12,7 +12,12 @@ export type BeatStatus = 'draft' | 'paid' | 'live' | 'ended' | 'cancelled'
 /** `removed`: a host took the claim out before it was sent (hold for review); it frees its supply and can't be claimed again. */
 export type BeatClaimStatus = 'present' | 'claimed' | 'minting' | 'minted' | 'failed' | 'removed'
 
-export const BEAT_CONSENT_VERSION = 1
+/**
+ * The consent text's version, stored with each claim. Bump it whenever beatConsentText changes: a test pins each
+ * version's text (apps/server/test/beats-shared.test.ts) and fails when the text changes without a bump.
+ * 2: adds the 30-second check-ins and the permanent public record on Polygon (privacy I1).
+ */
+export const BEAT_CONSENT_VERSION = 2
 export const BEAT_NAME_MAX = 60
 export const BEAT_DESCRIPTION_MAX = 500
 export const BEAT_SUPPLY_CAP_DEFAULT = 100
@@ -32,8 +37,15 @@ export const BEAT_REPRICE_AFTER_MS = 10 * 60_000
 export const BEAT_FEE_BUMP_PERCENT = 25
 
 export function beatConsentText(name: string): string {
-  return `To track your attendance for the ${name} BEAT, Virvi stores your wallet address and display name for this BEAT. The hosts of this event will see them, and your wallet is needed to send you the token. You can stop tracking at any time before you claim.`
+  return `To track your attendance for the ${name} BEAT, Virvi stores your wallet address, your display name and how long you're here. The scene checks in every 30 seconds while you're in it. The hosts of this event will see your name, wallet and time. If you claim, your wallet, this BEAT and the time it was sent are recorded on Polygon, a public blockchain: anyone can see that record, and nobody can delete it. You can stop tracking at any time before you claim, which deletes what was stored.`
 }
+
+/**
+ * Claim failure reasons that are final for that wallet: the wallet's receiver refused the token (`receiver_rejected`,
+ * `ERC1155InvalidReceiver`), the BEAT is already closed on chain (`BeatClosedError`), or an admin stopped retrying
+ * (`given_up`). Any other reason is retried.
+ */
+export const BEAT_FINAL_FAIL_REASONS = ['receiver_rejected', 'ERC1155InvalidReceiver', 'BeatClosedError', 'given_up'] as const
 
 export interface BeatPriceSettings { baseCents: number; includedMints: number; extraMintCents: number }
 
@@ -118,7 +130,12 @@ export interface VisitorBeat {
   claimUntil: string
   /** On Polygon Amoy, the test network: the card shows a "Test" label. */
   test: boolean
-  myClaim: { status: BeatClaimStatus; secondsPresent: number; txUrl: string | null } | null
+  /**
+   * `final`: a failed claim that will never be retried (BEAT_FINAL_FAIL_REASONS); false otherwise. A `removed` claim was
+   * taken out by the host before it was sent. `heldUntil`: a claimed claim the host is holding for review, and when it is
+   * sent at the latest (the end plus the claim grace) if they don't send it sooner; null otherwise.
+   */
+  myClaim: { status: BeatClaimStatus; secondsPresent: number; txUrl: string | null; final: boolean; heldUntil: string | null } | null
 }
 
 // ── Reissue (LIV-11): a BEAT sent again to a new wallet when the old one was compromised ────────────────────────────

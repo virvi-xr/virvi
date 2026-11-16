@@ -18,7 +18,7 @@ export function httpStatusOf(err: unknown): number | null {
 }
 
 /** A request that never got an answer: fetch rejects with a TypeError (or a runtime's network / timeout error). */
-function isNetworkError(err: unknown): boolean {
+export function isNetworkError(err: unknown): boolean {
   if (httpStatusOf(err) !== null) return false
   if (err instanceof TypeError) return true
   return /network|fetch|timed? ?out|offline|ECONN|socket/i.test(err instanceof Error ? err.message : String(err))

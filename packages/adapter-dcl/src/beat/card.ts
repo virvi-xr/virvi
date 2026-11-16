@@ -3,21 +3,23 @@
  * it is unit-tested; BeatOverlay.tsx draws it and beat/connect.ts feeds it.
  */
 import { beatConsentText, type AvailableBeat, type VisitorBeat } from '@virvixr/shared'
-import { httpStatusOf } from '../edit-errors.js'
+import { httpStatusOf, isNetworkError } from '../edit-errors.js'
 import { errorCodeOf } from '../raffle/card.js'
 
 export type BeatCardState =
   | 'hidden'
-  /** No wallet: the one-time "Connect a wallet" notice. */
+  /** No wallet: the one-time "Sign in with a wallet" notice. */
   | 'guest'
   | 'offer'
   | 'consent'
   | 'tracking'
   | 'claimable'
-  /** Claimed or minting. */
+  /** Claimed or minting (or held for the host's review). */
   | 'pending'
   | 'minted'
   | 'failed'
+  /** The host took the claim out before it was sent. */
+  | 'removed'
   | 'soldOut'
   /** Over, and I never reached the minimum. */
   | 'ended'
@@ -55,7 +57,11 @@ export interface BeatViewModel {
   note: string | null
 }
 
-export const GUEST_LINE = 'Connect a wallet to earn this BEAT'
+/** The one phrase for "you need a wallet" (the guest notice, the no_wallet error and the server's message). */
+export const GUEST_LINE = "Sign in to Decentraland with a wallet to earn this BEAT. Guests can't."
+export const WORKING_LINE = 'Working…'
+export const PRACTICE_LINE = 'This is a practice BEAT.'
+export const STORED_LINE = 'Your wallet and name are still saved for this BEAT. Stop tracking to delete them.'
 
 /** What the card can be given: the visitor's BEAT (HTTP), or for a guest the room's `beat_available` (name and test flag). */
 export type CardBeat = VisitorBeat | AvailableBeat
@@ -67,6 +73,18 @@ export const beatKey = (b: CardBeat | null): string | null => (b ? (isVisitorBea
 const minutes = (n: number) => `${n} ${n === 1 ? 'minute' : 'minutes'}`
 const minMinutes = (b: VisitorBeat) => Math.max(1, Math.ceil(b.minPresentSeconds / 60))
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** A time as `6:00 PM UTC`. In UTC, named, because the scene runtime's own time zone isn't the visitor's. */
+export function cardTime(iso: string): string {
+  const d = new Date(iso)
+  const h = d.getUTCHours()
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(d.getUTCMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'} UTC`
+}
+/** A date and time as `Nov 15, 6:00 PM UTC`. */
+export const cardDateTime = (iso: string) => `${MONTHS[new Date(iso).getUTCMonth()]} ${new Date(iso).getUTCDate()}, ${cardTime(iso)}`
+
+const CLOSING_SOON_MS = 2 * 3_600_000
+
 /** The BEAT's state for me at `now` (ms), before the consent view is layered on. */
 export function beatState(beat: CardBeat | null, now: number, ui: Pick<BeatUi, 'guest' | 'noticeDone'>): BeatCardState {
   if (!beat) return 'hidden'
@@ -76,12 +94,28 @@ export function beatState(beat: CardBeat | null, now: number, ui: Pick<BeatUi, '
   if (c?.status === 'minted') return 'minted'
   if (c?.status === 'claimed' || c?.status === 'minting') return 'pending'
   if (c?.status === 'failed') return 'failed'
+  if (c?.status === 'removed') return 'removed'
   // The server's claimUntil is ends_at + BEAT_CLAIM_GRACE_MS: claiming stays open that long for whoever reached the minimum
   const over = now > Date.parse(beat.endsAt) || beat.status === 'ended'
   if (beat.soldOut) return 'soldOut'
-  if (c && c.secondsPresent >= beat.minPresentSeconds) return now > Date.parse(beat.claimUntil) ? 'hidden' : 'claimable'
+  if (c && c.secondsPresent >= beat.minPresentSeconds && now >= Date.parse(beat.startsAt)) return now > Date.parse(beat.claimUntil) ? 'hidden' : 'claimable'
   if (over) return 'ended'
   return c ? 'tracking' : 'offer'
+}
+
+/** Stop tracking is offered whenever I'm tracking and haven't claimed: the consent promises it any time before a claim. */
+export function stopAllowed(beat: CardBeat | null, now: number, ui: Pick<BeatUi, 'guest' | 'noticeDone'>): boolean {
+  if (!beat || !isVisitorBeat(beat) || beat.myClaim?.status !== 'present') return false
+  return ['tracking', 'claimable', 'soldOut', 'ended'].includes(beatState(beat, now, ui))
+}
+
+/** The offer: how long to stay, and before the start when it starts (time only counts from then). */
+function offerLine(b: VisitorBeat, now: number): string {
+  const stay = b.minPresentSeconds === 0 ? 'Be there to earn the BEAT.' : `Stay for ${minutes(minMinutes(b))} to earn the BEAT.`
+  const parts = [stay]
+  if (now < Date.parse(b.startsAt)) parts.push(`It starts at ${cardTime(b.startsAt)}, and your time counts once it starts.`)
+  if (b.test) parts.push(PRACTICE_LINE)
+  return parts.join(' ')
 }
 
 export function cardView(beat: CardBeat | null, now: number, ui: BeatUi = initialBeatUi(false)): BeatViewModel {
@@ -93,32 +127,62 @@ export function cardView(beat: CardBeat | null, now: number, ui: BeatUi = initia
   if (!beat) return base
   if (state === 'guest') return { ...base, line: GUEST_LINE, actions: [{ id: 'dismiss', label: 'OK' }] }
   if (state === 'hidden' || !isVisitorBeat(beat)) return base
-  const name = beat.name
-  const idle = !ui.busy
+  const v = view(beat, state, now, base)
+  if (stopAllowed(beat, now, ui) && !v.actions.some((a) => a.id === 'stop')) v.actions.push({ id: 'stop', label: 'Stop tracking' })
+  // While an opt-in, stop or claim is on its way the buttons go, and the card says it's working rather than look frozen
+  if (ui.busy && v.actions.length) return { ...v, line: WORKING_LINE, actions: [] }
+  return v
+}
+
+function view(beat: VisitorBeat, state: BeatCardState, now: number, base: BeatViewModel): BeatViewModel {
+  const c = beat.myClaim
   switch (state) {
     case 'offer':
-      return { ...base, line: `Attend for ${minutes(minMinutes(beat))} to earn the ${name} BEAT`, actions: idle ? [{ id: 'track', label: 'Track my attendance' }] : [] }
+      return { ...base, line: offerLine(beat, now), actions: [{ id: 'track', label: 'Track my attendance' }] }
     case 'consent':
-      return { ...base, body: beatConsentText(name), actions: idle ? [{ id: 'confirm', label: 'Confirm' }, { id: 'cancel', label: 'Cancel' }] : [] }
+      return { ...base, body: beatConsentText(beat.name), actions: [{ id: 'confirm', label: 'I agree' }, { id: 'cancel', label: 'Cancel' }] }
     case 'tracking': {
-      const seconds = beat.myClaim?.secondsPresent ?? 0
+      const seconds = c?.secondsPresent ?? 0
       const progress = { fraction: Math.min(1, seconds / Math.max(1, beat.minPresentSeconds)), label: `${Math.floor(seconds / 60)} of ${minutes(minMinutes(beat))}` }
-      return { ...base, progress, actions: idle ? [{ id: 'stop', label: 'Stop tracking' }] : [] }
+      const line = now < Date.parse(beat.startsAt)
+        ? `This BEAT starts at ${cardTime(beat.startsAt)}. Your time counts once it starts.`
+        : 'Time counts while the event is running.'
+      return { ...base, line, progress, actions: [] }
     }
-    case 'claimable':
-      return { ...base, actions: idle ? [{ id: 'claim', label: 'Claim your BEAT' }] : [] }
+    case 'claimable': {
+      const closing = Date.parse(beat.claimUntil) - now < CLOSING_SOON_MS ? ` Claiming closes at ${cardTime(beat.claimUntil)}.` : ''
+      return {
+        ...base,
+        line: `You've been here long enough. Claim your BEAT before ${cardDateTime(beat.claimUntil)}. Claiming sends it to your wallet, and it's recorded publicly on Polygon.${closing}`,
+        actions: [{ id: 'claim', label: 'Claim your BEAT' }],
+      }
+    }
     case 'pending':
-      return { ...base, line: 'Sending your BEAT…' }
+      return {
+        ...base,
+        line: c?.heldUntil
+          ? `The host checks claims before they're sent. Your BEAT is sent once they do, by ${cardDateTime(c.heldUntil)} at the latest. You can leave the scene.`
+          : 'Sending your BEAT. This usually takes a few minutes, and you can leave the scene.',
+      }
     case 'minted': {
-      const txUrl = beat.myClaim?.txUrl ?? null
-      return { ...base, line: `Your ${name} BEAT is in your wallet`, txUrl, actions: txUrl ? [{ id: 'view_tx', label: 'View on Polygonscan' }] : [] }
+      const txUrl = c?.txUrl ?? null
+      return { ...base, line: `Your ${beat.name} BEAT is in your wallet`, txUrl, actions: txUrl ? [{ id: 'view_tx', label: 'See it on Polygonscan' }] : [] }
     }
     case 'failed':
-      return { ...base, line: "We couldn't send your BEAT yet. We'll retry." }
+      return {
+        ...base,
+        line: c?.final
+          ? "We couldn't send this BEAT to your wallet, and we've stopped trying. Please ask the event host for help."
+          : "We couldn't send your BEAT yet. We'll keep trying, so check back later.",
+      }
+    case 'removed':
+      return { ...base, line: "The event host removed your claim, so this BEAT won't be sent to you. Ask the host if you think this is a mistake." }
     case 'soldOut':
-      return { ...base, line: 'All claimed' }
+      return { ...base, line: c ? `All claimed. ${STORED_LINE}` : 'All claimed' }
     case 'ended':
-      return { ...base, line: 'This BEAT has ended.' }
+      return { ...base, line: c ? `This BEAT has ended. ${STORED_LINE}` : 'This BEAT has ended.' }
+    default:
+      return base
   }
 }
 
@@ -146,17 +210,24 @@ export class GuestNotice {
 }
 
 const BEAT_ERRORS: Record<string, string> = {
-  no_wallet: 'Connect a wallet to earn this BEAT.',
-  bad_consent: 'Agree to the terms to track your attendance.',
+  no_wallet: GUEST_LINE,
+  bad_consent: "This BEAT's terms have changed. Reload the scene and try again.",
   too_late: 'This BEAT has ended.',
   too_early: "This BEAT hasn't opened yet.",
+  not_started: "This event hasn't started yet. Claim once it starts.",
   not_yet: "You haven't been here long enough yet.",
   all_claimed: 'All of these BEATs have been claimed.',
   already_claimed: "You've already claimed this BEAT.",
   not_tracking: "You're not tracking this BEAT.",
-  not_available: "You can't track this BEAT again.",
+  not_available: "You stopped tracking this BEAT, so you can't start again.",
   scene_pass_required: 'BEATs can only be earned from inside the scene.',
+  profile_required: 'Set up your Decentraland profile (an avatar) first, then come back to collect this BEAT.',
+  too_many_from_network: 'This BEAT has already been claimed the most times allowed from your network.',
+  too_many_new_wallets: 'Too many new wallets have collected BEATs from your network. Try again later.',
+  wallet_blocked: 'This wallet can no longer use Virvi.',
 }
+
+export const NETWORK_LINE = "Couldn't reach Virvi. Check your connection and try again."
 
 /** Text for a failed opt-in, stop or claim (too_late on a claim means the grace has run out). */
 export function beatError(err: unknown, action: 'track' | 'stop' | 'claim' = 'track'): string {
@@ -164,5 +235,6 @@ export function beatError(err: unknown, action: 'track' | 'stop' | 'claim' = 'tr
   if (code === 'too_late' && action === 'claim') return 'The time to claim this BEAT is over.'
   if (code && BEAT_ERRORS[code]) return BEAT_ERRORS[code]
   if (httpStatusOf(err) === 429) return 'Too many tries. Wait a moment.'
+  if (isNetworkError(err)) return NETWORK_LINE
   return 'Something went wrong. Try again.'
 }

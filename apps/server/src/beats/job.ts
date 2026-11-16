@@ -1,6 +1,7 @@
 import { Transaction } from 'ethers'
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
 import {
+  BEAT_FINAL_FAIL_REASONS,
   BEAT_CHAINS, BEAT_CHAIN_INFO, BEAT_CLAIM_GRACE_MS, BEAT_FEE_BUMP_PERCENT, BEAT_JOB_EVERY_MS, BEAT_MAX_BATCH,
   BEAT_REPRICE_AFTER_MS, BEAT_SEND_MAX_ATTEMPTS, type BeatChain,
 } from '@virvixr/shared'
@@ -198,7 +199,7 @@ async function cappedFees(client: BeatChainClient): Promise<BeatFees | null> {
  * (send_failed, reverted, InsufficientGas, unknown, ...) can succeed on an admin's retry, so a BEAT with such a claim
  * isn't closed.
  */
-export const BEAT_FINAL_FAIL_REASONS = ['receiver_rejected', 'ERC1155InvalidReceiver', 'BeatClosedError', 'given_up'] as const
+export { BEAT_FINAL_FAIL_REASONS }
 /** The reason an admin's give-up writes; retryFailedClaims leaves these claims failed. */
 export const BEAT_GIVEN_UP = 'given_up'
 
