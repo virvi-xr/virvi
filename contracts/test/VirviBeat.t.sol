@@ -13,6 +13,7 @@ import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155
 import {VirviBeat} from "../src/VirviBeat.sol";
 import {IERC6454} from "../src/interfaces/IERC6454.sol";
 import {Deploy} from "../script/Deploy.s.sol";
+import {MockSafe} from "./mocks/MockSafe.sol";
 
 /// A contract that does not implement onERC1155Received, so it can't take a BEAT.
 contract NoReceiver {}
@@ -808,6 +809,7 @@ contract VirviBeatTest is Test {
         vm.expectEmit(true, true, true, true, address(beat));
         emit VirviBeat.Reissued(LOCKED, alice, bob);
         vm.expectEmit(true, true, true, true, address(beat));
+        // One id: OpenZeppelin's batch mint logs it as TransferSingle.
         emit IERC1155.TransferSingle(admin, address(0), bob, LOCKED, 1);
         _reissue(alice, bob, _ids(LOCKED));
 
@@ -1139,7 +1141,7 @@ contract VirviBeatTest is Test {
     function test_Reissue_Gas_1Id() public {
         uint256 used = _reissueGas(1);
         emit log_named_uint("reissue 1 id, gas", used);
-        assertLt(used, 120_000);
+        assertLt(used, 130_000);
     }
 
     function test_Reissue_Gas_10Ids() public {
@@ -1239,10 +1241,15 @@ contract VirviBeatTest is Test {
 
     function test_DeployScript_BaseURIMustMatchTheChain() public {
         Deploy script = new Deploy();
+        address[] memory owners = new address[](3);
+        owners[0] = address(0x5AFE1);
+        owners[1] = address(0x5AFE2);
+        owners[2] = address(0x5AFE3);
+        address safe = address(new MockSafe(2, owners));
         vm.chainId(137);
         vm.expectRevert(abi.encodeWithSelector(Deploy.WrongBaseURI.selector, "/polygon/"));
-        script.deploy(admin, minter, BASE, 137);
-        VirviBeat onPolygon = script.deploy(admin, minter, "https://api.virvi.io/api/beats/metadata/polygon/", 137);
+        script.deploy(safe, minter, BASE, 137);
+        VirviBeat onPolygon = script.deploy(safe, minter, "https://api.virvi.io/api/beats/metadata/polygon/", 137);
         assertEq(onPolygon.uri(1), "https://api.virvi.io/api/beats/metadata/polygon/1.json");
 
         vm.chainId(80002);

@@ -14,8 +14,10 @@ blockchain) that creates them, on Polygon.
 - **Admin:** the owner's wallet that controls the settings. On mainnet it's a **Safe multisig** (a shared
   wallet where 2 of its 3 signers must approve each action). **Minter:** Virvi's server wallet that
   creates and sends BEATs.
-- **Reissuer:** a permission to replace a BEAT in a compromised wallet (see below). Only the admin has it
-  unless the admin gives it to someone else. The minter never has it.
+- **Reissuer:** a permission to give a wallet a fresh copy of a BEAT in place of another wallet's (see
+  below). It's meant for compromised wallets, but works on any wallet. Whoever holds the admin role holds
+  it too, and loses it on stepping down. The admin can also give it to other addresses, and those keep it
+  until the admin takes it back. The minter isn't given it at deploy.
 
 **What it does:**
 - The minter creates a BEAT once, and decides then whether it can be traded. That choice can never change.
@@ -37,16 +39,31 @@ blockchain) that creates them, on Polygon.
   looks can change. Who owns it can't.
 - Add or remove minters, including making itself a minter. A minter added this way can create and send
   new BEATs.
-- **Reissue a BEAT to a new wallet.** When someone's wallet is compromised, Virvi support checks it's
-  really them, and then the reissuer (the admin) can:
-  - give their new wallet a fresh copy of a BEAT their old wallet was given, **even after the BEAT is
+- **Reissue a BEAT to a new wallet.** It's meant for this: someone's wallet is compromised, Virvi support
+  checks it's really them, and then the reissuer (the admin) can:
+  - give their new wallet a fresh copy of a BEAT their old wallet was minted, **even after the BEAT is
     closed**;
-  - which marks the old copy **replaced**: it can never move to another wallet again, even if the BEAT is
-    tradeable, so a thief can't sell it. Only its holder can still burn it.
+  - which marks the old wallet **replaced** for that BEAT: any copy of it in the old wallet, now or later,
+    can never move to another wallet again, even if the BEAT is tradeable. Only its holder can still burn
+    it.
 
-  It works only once for each old wallet and BEAT, and only to a wallet that was never given that BEAT.
-  The old copy itself isn't moved or burned: it stays in the old wallet, marked replaced. Anyone can look
-  this up with `replacedBy(id, oldWallet)`.
+  The contract doesn't know whether a wallet was really compromised. **A reissuer can do this to any
+  wallet that was ever minted a BEAT**, sending the fresh copy to any wallet it chooses: it can freeze an
+  innocent holder's tradeable copy so they can never sell it, and it can hand out extra copies of closed
+  BEATs, one per old wallet. That's why, on this shared contract, the reissuer role must stay on the admin
+  Safe and **never be given to a server or support hot key**.
+
+  Limits:
+  - It works only once for each old wallet and BEAT.
+  - It works only to a wallet that was never **minted** that BEAT. A wallet that bought a copy can still
+    get a reissued one and end up with two.
+  - For a **tradeable** BEAT, the old wallet must still hold a copy. If the copy was sold, sent away or
+    burned first (for example by a thief racing the reissue), the reissue fails, so there are never two
+    tradeable copies where there was one. A **non-tradeable** BEAT can't have moved, so it can be reissued
+    even if its holder burned it.
+
+  The old copy itself isn't moved or burned: it stays in the old wallet, marked replaced, and **wallets and
+  explorers still show it**. Anyone can look this up with `replacedBy(id, oldWallet)`.
 - Add or remove reissuers, including removing the permission from itself.
 - Hand the admin role to another wallet. This takes two steps: the admin starts the handover, and the new
   wallet accepts it **after a 1-day wait**. The admin can't simply give the role away or drop it by
@@ -54,19 +71,22 @@ blockchain) that creates them, on Polygon.
 
 **What nobody can do:**
 - Nobody, not the admin, a reissuer or the minter, can move, burn or take back a BEAT that's in someone's
-  wallet. A reissue gives out a new copy; it doesn't touch the old one except to stop it moving.
+  wallet. A reissue gives out a new copy; it doesn't touch the old one except to stop it moving to another
+  wallet.
 - There is no pause switch, no upgrade, and no way to delete the contract.
 - It can't be paid and can't pay anyone out. Sending POL to it fails.
 
 **Good to know:**
 - The admin is one address. On mainnet it's meant to be a Safe multisig, so no single key can act alone.
   Whoever controls it can do everything listed above. If it's lost for good, nobody can change the minter,
-  the reissuers or the web address again. Replacing a lost or compromised Safe signer happens inside the
-  Safe (its owners swap the signer there); the contract doesn't change.
+  the reissuers or the web address again, and any reissuer it had given the role to keeps it forever.
+  Replacing a lost or compromised Safe signer happens inside the Safe (its owners swap the signer there);
+  the contract doesn't change.
 - **If the minter's key leaks,** the admin can revoke the old minter and grant a new one, and do the same
   for reissuers, at once (no wait). Only the admin role itself takes the 1-day handover.
-- **If the admin is handed to a new address,** the reissuer permission doesn't move with it. The new admin
-  should grant itself `REISSUER_ROLE` and revoke it from the old admin.
+- **If the admin is handed to a new address,** the reissuer permission moves with it: the new admin gets
+  it when it accepts, and the old admin loses it. If the admin role is renounced, the old admin loses it
+  too. Anyone else the admin gave the reissuer role to keeps it until the admin takes it back.
 - There's no limit on how many BEATs Virvi can create or send, and Virvi can send a BEAT to any wallet
   without asking. You can burn one you don't want.
 - This contract has been checked with an automatic tool (Slither), which found nothing serious. That is
@@ -80,7 +100,7 @@ blockchain) that creates them, on Polygon.
    with `forge --version`.
 2. **A deployer wallet's private key** (the secret that controls a wallet; never share it). Use a fresh
    wallet that only holds POL for fees. It gets no permissions in the contract.
-3. **POL in the deployer wallet.** The deploy uses about 3.1 million gas, and the tool asks for about
+3. **POL in the deployer wallet.** The deploy uses about 3.2 million gas, and the tool asks for about
    30% extra up front to be safe. Have about 0.2 test POL on Amoy (free from a faucet), and about 1.5 POL
    on mainnet (the real cost is usually under 1 POL, depending on the gas price that day). What isn't
    spent stays in the wallet.
@@ -110,6 +130,9 @@ export BEAT_MINTER="PASTE_MINTER_ADDRESS_HERE"
   already for Amoy. **For mainnet, set it to the Safe multisig's address** (step 4). **Check every
   character.** A wrong admin address can't be fixed later. A Safe (or any contract) works as the admin;
   the deploy checks that it got the admin and reissuer permissions and the minter didn't.
+- On Amoy an ordinary wallet is allowed as the admin; the deploy prints a warning. On mainnet the deploy
+  stops unless the admin is a Safe on Polygon that needs at least 2 signers. It prints the Safe's
+  threshold and owners: check them in the dry run.
 - `BEAT_MINTER` must be a different wallet from the admin. The deploy stops if they're the same.
 
 These settings last until you close the Terminal window.
@@ -207,6 +230,10 @@ provider's URL works in its place, as long as it's for the same network.
   URL with `80002` and the `polygon-amoy` base, or the mainnet URL with `137` and the `polygon` base.
   Nothing was sent.
 - **`AdminIsMinter`:** `BEAT_ADMIN` and `BEAT_MINTER` are the same. Nothing was sent.
+- **`AdminNotAContract`, `AdminNotASafe` or `SafeThresholdTooLow` (mainnet only):** `BEAT_ADMIN` isn't a
+  Safe on Polygon mainnet, or the Safe needs fewer than 2 signers. Check you set `BEAT_ADMIN` to the Safe in
+  step 4, and that the Safe exists on Polygon (a Safe on another network has a different address or none
+  here). Nothing was sent.
 - **"environment variable ... not found":** a setting from step 1 or 2 is missing (perhaps the Terminal
   window was closed). Paste the `export` lines again. Nothing was sent.
 - **"transaction underpriced":** add `--priority-gas-price 30gwei` to the command and run it again.
@@ -256,16 +283,22 @@ reverts with `InsufficientGas` rather than skip a good receiver, so gas estimati
 cap. A one-recipient mint to a contract wallet needs a gas limit of about 145k.
 
 **Gas** (forge 1.9.0, measured in tests):
-- Deploy: about 3.07M gas.
+- Deploy: about 3.15M gas.
 - `mintTo` with 200 new plain wallets: about 10.5M gas. At 30 gwei that's about 0.3 POL; at 280 gwei, about
   3 POL. A batch skipping bad receivers costs at most `RECEIVER_GAS` for each of them.
 - `createBeat`: 60k to 81k. `closeBeat`: about 50k.
-- `reissue` to a plain wallet: about 114k for 1 id, 862k for 10, 4.18M for 50 (about 84k per extra id).
+- `reissue` to a plain wallet: about 119k for 1 id, 872k for 10, 4.22M for 50 and 16.5M for 200 (about
+  83k per extra id).
 
-**Reissue.** `reissue(from, to, ids)` needs `REISSUER_ROLE` (granted to the admin at deploy; its role
-admin is `DEFAULT_ADMIN_ROLE`). It checks and records every id first (`minted[id][to]`, `++mintedCount`,
-`replacedBy[id][from] = to`, `Reissued(id, from, to)`), then mints each with a checked `_mint`, so a
-recipient that rejects the token reverts the whole call. It ignores `closed`. `mintedCount` counts the
+**Reissue.** `reissue(from, to, ids)` needs `REISSUER_ROLE`. Its role admin is `DEFAULT_ADMIN_ROLE`, and
+`_grantRole`/`_revokeRole` tie it to the admin seat: granting `DEFAULT_ADMIN_ROLE` (at deploy or on
+`acceptDefaultAdminTransfer`) grants `REISSUER_ROLE` to the same account, and revoking or renouncing
+`DEFAULT_ADMIN_ROLE` revokes that account's `REISSUER_ROLE`. Other holders keep the role until the admin
+revokes it. For a tradeable id, `from` must still hold a copy, or it reverts with `NothingToReplace(id,
+from)`. It checks and records every id first (`minted[id][to]`, `++mintedCount`, `replacedBy[id][from] =
+to`, `Reissued(id, from, to)`), then mints them all to `to` in one checked `_mintBatch` (one transfer log:
+`TransferSingle` for one id, `TransferBatch` for more; one receiver hook), so a recipient that rejects the
+tokens reverts the whole call. It ignores `closed`. `mintedCount` counts the
 new wallet too, so it stays equal to the number of addresses with `minted` set; subtract `Reissued` events
 to count people. In `_update`, any move out of `from` of an id where `replacedBy[id][from] != 0` reverts
 with `ReplacedCopy` (burns pass), and `isTransferable` returns false for it.
