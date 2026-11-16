@@ -33,9 +33,10 @@ describe('beatSettingsFrom', () => {
     expect(b.minGasWei).toBe(5n * 10n ** 17n)
   })
   it('refuses a base price of 0, which would make paid BEATs free', () => {
-    expect(() => beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '0' })).toThrow('BEAT_PRICE_BASE_CENTS must be more than 0')
+    expect(() => beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '0' })).toThrow('BEAT_PRICE_BASE_CENTS must be at least 50')
+    expect(() => beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '49' })).toThrow('BEAT_PRICE_BASE_CENTS must be at least 50')
     expect(() => beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '-5' })).toThrow(/BEAT_PRICE_BASE_CENTS/)
-    expect(beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '1' }).price.baseCents).toBe(1)
+    expect(beatSettingsFrom({ BEAT_PRICE_BASE_CENTS: '50' }).price.baseCents).toBe(50)
   })
   it('refuses a bad chain', () => {
     expect(() => beatSettingsFrom({ BEAT_CHAIN: 'ethereum' })).toThrow(/BEAT_CHAIN/)

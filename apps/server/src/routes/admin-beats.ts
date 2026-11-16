@@ -117,7 +117,7 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
     try {
       return reply.send(await giveUpFailedClaims(id, new Date()))
     } catch (e) {
-      if (e instanceof BeatError) return reply.status(e.status).send({ error: e.code, message: e.message })
+      if (e instanceof BeatError) return reply.status(e.status).send({ ...e.details, error: e.code, message: e.message })
       throw e
     }
   })

@@ -41,6 +41,15 @@ export function beatPriceCents(cap: number, p: BeatPriceSettings): number {
   return p.baseCents + p.extraMintCents * Math.max(0, cap - p.includedMints)
 }
 
+/** Stripe's smallest card charge in USD cents. A card payment below it is refused (`below_minimum`); credit pays any amount. */
+export const BEAT_CARD_MIN_CENTS = 50
+
+/** The smallest supply above `fromCap` whose raise costs at least BEAT_CARD_MIN_CENTS (null when none up to `maxCap`). */
+export function beatMinCardTopupCap(fromCap: number, p: BeatPriceSettings, maxCap = BEAT_SUPPLY_CAP_MAX): number | null {
+  for (let cap = fromCap + 1; cap <= maxCap; cap++) if (beatTopupCents(fromCap, cap, p) >= BEAT_CARD_MIN_CENTS) return cap
+  return null
+}
+
 /** What raising the supply cap from `fromCap` to `toCap` costs on top of what was paid. */
 export function beatTopupCents(fromCap: number, toCap: number, p: BeatPriceSettings): number {
   return beatPriceCents(toCap, p) - beatPriceCents(fromCap, p)

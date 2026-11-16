@@ -12,7 +12,7 @@ import { BeatError } from './errors.js'
 import { beatChainMissing } from './chain.js'
 import { readImageSize } from './image.js'
 import { lockBeat } from './lock.js'
-import { beatQuote, copyBeatImage, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
+import { beatQuote, copyBeatImage, refuseBelowCardMinimum, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
 
 /**
  * BEATs (LIV-11), the host side: create, list, read, edit, claimants, cancel and end early. No Fastify here; the routes
@@ -450,8 +450,11 @@ export async function endBeatEarly(c: BeatCaller, beatId: string, now = new Date
 
 // ── Payments ─────────────────────────────────────────────────────────────────
 
-/** What a supply costs: a draft's at `cap` (its own supply when omitted), or a paid BEAT's raise to `cap`. */
-export async function quoteBeat(c: BeatCaller, beatId: string, capRaw: unknown): Promise<BeatQuote> {
+/**
+ * What a supply costs: a draft's at `cap` (its own supply when omitted), or a paid BEAT's raise to `cap`. Unless `method`
+ * is 'credit', a price a card can't pay (under Stripe's minimum) is refused as `below_minimum` with the smallest supply.
+ */
+export async function quoteBeat(c: BeatCaller, beatId: string, capRaw: unknown, methodRaw?: unknown): Promise<BeatQuote> {
   const { row } = await loadManageable(c, beatId)
   const cap = capRaw === undefined || capRaw === '' ? row.supplyCap : parseCap(typeof capRaw === 'string' && /^\d+$/.test(capRaw) ? Number(capRaw) : NaN)
   if (row.status === 'paid' || row.status === 'live') {
@@ -459,7 +462,10 @@ export async function quoteBeat(c: BeatCaller, beatId: string, capRaw: unknown):
   } else if (row.status !== 'draft') {
     throw new BeatError(409, 'locked', "This BEAT can't be changed any more.")
   }
-  return beatQuote(row, cap)
+  const method = methodRaw === undefined || methodRaw === '' ? 'card' : parseMethod(methodRaw)
+  const q = beatQuote(row, cap)
+  if (method === 'card') refuseBelowCardMinimum(row, q)
+  return q
 }
 
 function parseMethod(v: unknown): BeatPayMethod {

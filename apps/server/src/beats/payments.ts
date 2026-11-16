@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
-import { beatPriceCents, beatTopupCents, type BeatChain } from '@virvixr/shared'
+import { BEAT_CARD_MIN_CENTS, beatMinCardTopupCap, beatPriceCents, beatTopupCents, type BeatChain } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
 import { beatClaims, beatPayments, beats, mediaAssets } from '../db/schema.js'
@@ -56,6 +56,21 @@ export function beatQuote(row: BeatRow, cap: number): BeatQuote {
   return { cents: beatPriceCents(cap, p), lines, refundableUnclaimed: false }
 }
 
+/**
+ * Stripe refuses a card charge under BEAT_CARD_MIN_CENTS (money I2), so a card raise that would cost more than nothing but
+ * less than that is refused up front as `below_minimum`, with the smallest supply (and extra tokens) a card can pay for.
+ * Credit pays any amount, and a free raise (inside the included supply, or on Amoy) needs no card.
+ */
+export function refuseBelowCardMinimum(row: BeatRow, quote: BeatQuote): void {
+  if (quote.cents <= 0 || quote.cents >= BEAT_CARD_MIN_CENTS) return
+  const minSupply = row.status === 'draft' ? null : beatMinCardTopupCap(row.supplyCap, config.beats.price)
+  const minExtraTokens = minSupply === null ? null : minSupply - row.supplyCap
+  throw new BeatError(400, 'below_minimum', minExtraTokens === null
+    ? `Card payments start at $${(BEAT_CARD_MIN_CENTS / 100).toFixed(2)}. Pay with credit instead.`
+    : `Card payments start at $${(BEAT_CARD_MIN_CENTS / 100).toFixed(2)}: add at least ${minExtraTokens} tokens, or pay with credit.`,
+  { minCents: BEAT_CARD_MIN_CENTS, minSupply, minExtraTokens })
+}
+
 // ── Checkout ─────────────────────────────────────────────────────────────────
 
 export type BeatPayMethod = 'card' | 'credit'
@@ -72,6 +87,7 @@ export async function createBeatCheckout(row: BeatRow, payer: BeatPayer, method:
   }
   if (row.startsAt.getTime() <= now.getTime()) throw new BeatError(409, 'too_late', 'This BEAT has already started. Pick a new time first.')
   const q = beatQuote(row, row.supplyCap)
+  if (method === 'card') refuseBelowCardMinimum(row, q)
   return checkout(row, payer, method, { kind: 'create', capFrom: 0, capTo: row.supplyCap, quote: q }, now)
 }
 
@@ -82,6 +98,7 @@ export async function createCapTopup(row: BeatRow, payer: BeatPayer, supplyCap: 
   if (row.status === 'ended' || row.endsAt.getTime() <= now.getTime()) throw new BeatError(409, 'too_late', 'This BEAT is over.')
   if (supplyCap <= row.supplyCap) throw new BeatError(400, 'bad_cap', `The new supply must be more than ${row.supplyCap}.`)
   const q = beatQuote(row, supplyCap)
+  if (method === 'card') refuseBelowCardMinimum(row, q)
   return checkout(row, payer, method, { kind: 'topup', capFrom: row.supplyCap, capTo: supplyCap, quote: q }, now)
 }
 

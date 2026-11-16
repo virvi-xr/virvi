@@ -439,6 +439,24 @@ describe('BEAT payments (LIV-11)', () => {
       expect((await call('POST', `/api/beats/${draft.id}/cap`, host, { supplyCap: 200 })).json().error).toBe('locked')
     })
 
+    it('money I2: a card raise under 50 cents is below_minimum with the smallest supply; credit pays it; the quote says the same', async () => {
+      await giveCredit(host, 300)
+      const b = await seed({ status: 'live', tokenId: 13, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) })
+      const card = await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 110, method: 'card' })
+      expect(card.statusCode, card.body).toBe(400)
+      expect(card.json()).toMatchObject({ error: 'below_minimum', minCents: 50, minSupply: 125, minExtraTokens: 25 })
+      expect(stripe.calls.sessions).toHaveLength(0)
+      expect(await paymentsOf(b.id)).toHaveLength(0)
+      const q = await call('GET', `/api/beats/${b.id}/quote?cap=110`)
+      expect([q.statusCode, q.json().error, q.json().minSupply]).toEqual([400, 'below_minimum', 125])
+      const qc = await call('GET', `/api/beats/${b.id}/quote?cap=110&method=credit`)
+      expect([qc.statusCode, qc.json().cents]).toEqual([200, 20])
+      expect((await call('GET', `/api/beats/${b.id}/quote?cap=125`)).json().cents).toBe(50)
+      const credit = await call('POST', `/api/beats/${b.id}/cap`, host, { supplyCap: 110, method: 'credit' })
+      expect(credit.json()).toEqual({ paid: true })
+      expect((await beatOf(b.id)).supplyCap).toBe(110)
+    })
+
     it('a live BEAT can top up with credit at once', async () => {
       await giveCredit(host, 300)
       const b = await seed({ status: 'live', tokenId: 11, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) })

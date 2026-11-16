@@ -210,7 +210,8 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
     throw new Error('BEAT_MIN_GAS_POL must be a decimal amount of POL')
   }
   const baseCents = whole('BEAT_PRICE_BASE_CENTS', 500)
-  if (baseCents <= 0) throw new Error('BEAT_PRICE_BASE_CENTS must be more than 0')
+  // Stripe's card minimum (BEAT_CARD_MIN_CENTS): a base price under it could never be paid by card
+  if (baseCents < 50) throw new Error('BEAT_PRICE_BASE_CENTS must be at least 50 (Stripe\'s card minimum)')
   return {
     enabled: e.BEAT_ENABLED === 'true',
     chain,

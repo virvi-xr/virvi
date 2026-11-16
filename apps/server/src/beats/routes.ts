@@ -44,7 +44,7 @@ export default async function beatRoutes(app: FastifyInstance) {
   })
   const body = (request: FastifyRequest) => (request.body && typeof request.body === 'object' ? request.body : {}) as Record<string, unknown>
   const fail = (reply: FastifyReply, e: unknown) => {
-    if (e instanceof BeatError) return reply.status(e.status).send({ error: e.code, message: e.message })
+    if (e instanceof BeatError) return reply.status(e.status).send({ ...e.details, error: e.code, message: e.message })
     throw e
   }
 
@@ -101,9 +101,9 @@ export default async function beatRoutes(app: FastifyInstance) {
   })
 
   // Payments: host-only, so no scene pass (403 scene_pass_not_allowed)
-  app.get<{ Params: { beatId: string }; Querystring: { cap?: string } }>('/api/beats/:beatId/quote', async (request, reply) => {
+  app.get<{ Params: { beatId: string }; Querystring: { cap?: string; method?: string } }>('/api/beats/:beatId/quote', async (request, reply) => {
     try {
-      return reply.send(await quoteBeat(await caller(request), request.params.beatId, request.query.cap))
+      return reply.send(await quoteBeat(await caller(request), request.params.beatId, request.query.cap, request.query.method))
     } catch (e) {
       return fail(reply, e)
     }
