@@ -32,7 +32,7 @@ function fallbackBlocks(label: string): string[] {
 }
 
 const SCHEMA = 'fallback_beats'
-const TABLES = ['beats', 'beat_scenes', 'beat_claims', 'beat_payments', 'beat_mint_batches']
+const TABLES = ['beats', 'beat_scenes', 'beat_claims', 'beat_payments', 'beat_mint_batches', 'beat_network_claims']
 const SEQUENCES = ['beat_token_id_polygon_amoy_seq', 'beat_token_id_polygon_seq']
 
 type Col = { column_name: string; data_type: string; udt_name: string; is_nullable: string; column_default: string | null }

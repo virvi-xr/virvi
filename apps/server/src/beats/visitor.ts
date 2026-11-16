@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 import {
   BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION, beatTxUrl, cleanDisplayName,
@@ -6,13 +6,14 @@ import {
 } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
-import { beatClaims, beats, beatScenes, mediaAssets } from '../db/schema.js'
+import { beatClaims, beatNetworkClaims, beats, beatScenes, mediaAssets } from '../db/schema.js'
 import { checkInDelta } from '../presence/attendance.js'
 import { ipKey } from '../errors/limits.js'
 import { BeatError } from './errors.js'
 import { beatLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
 import { platformCheck, type BeatPlatform } from './platform-checks.js'
+import { isNewWallet, takeNewWallet } from './new-wallet-limit.js'
 
 /**
  * BEATs (LIV-11), the visitor side: the scene's current BEAT, opting in, check-ins, claiming and stopping. No Fastify
@@ -38,9 +39,17 @@ export interface VisitorCaller {
 
 const profileRequired = () => new BeatError(403, 'profile_required', 'Set up your Decentraland profile (an avatar) first, then come back to collect this BEAT.')
 
-/** The network a claim came from, as a keyed hash salted with the BEAT's id: never the address itself. */
-export function beatNetworkHash(beatId: string, ip: string): string {
-  return createHmac('sha256', config.jwtSecret).update(`beat-network:${beatId}:${ipKey(ip)}`).digest('hex').slice(0, 32)
+const tooManyNewWallets = () => new BeatError(429, 'too_many_new_wallets', 'Too many new wallets have collected BEATs from your network. Try again later.')
+
+/** The network a claim came from, as an HMAC under the BEAT's own random salt (never the address, never a server-wide key). */
+export function beatNetworkHash(salt: string, ip: string): string {
+  return createHmac('sha256', salt).update(ipKey(ip)).digest('hex').slice(0, 32)
+}
+
+/** Fix round I-5: a wallet Virvi saw for the first time recently costs its network one of BEAT_NEW_WALLETS_PER_IP_HOUR. */
+async function checkNewWallet(ip: string | null | undefined, wallet: string, now: Date): Promise<void> {
+  if (!ip) return
+  if ((await isNewWallet(wallet, now)) && !takeNewWallet(ip, wallet, now.getTime())) throw tooManyNewWallets()
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -157,6 +166,7 @@ export async function trackBeat(sceneId: string, beatId: string, c: VisitorCalle
   if (now.getTime() < b.startsAt.getTime() - BEAT_CARD_LEAD_MS) throw new BeatError(409, 'too_early', "This BEAT hasn't opened yet.")
   // Checked before tracking starts too, so a wallet that can't claim learns it now rather than after its time
   if (!(await platformCheck(c.platform ?? 'decentraland', c.wallet, now))) throw profileRequired()
+  await checkNewWallet(c.ip, c.wallet, now)
   const wallet = c.wallet.toLowerCase()
   const displayName = cleanDisplayName(c.signInName, wallet)
   await db.transaction(async (tx) => {
@@ -215,8 +225,10 @@ export async function claimBeat(
   const userId = c.userId
   const seen = await beatOnScene(sceneId, beatId)
   const pre = await myClaimRow(db, seen.id, userId)
-  if (pre?.status === 'present' && !(await platformCheck(c.platform ?? 'decentraland', pre.wallet, now))) throw profileRequired()
-  const network = c.ip ? beatNetworkHash(seen.id, c.ip) : null
+  if (pre?.status === 'present') {
+    if (!(await platformCheck(c.platform ?? 'decentraland', pre.wallet, now))) throw profileRequired()
+    await checkNewWallet(c.ip, pre.wallet, now)
+  }
   await db.transaction(async (tx) => {
     const [b] = await tx.select().from(beats).where(eq(beats.id, seen.id)).for('update')
     if (!b || !VISIBLE.includes(b.status)) throw notFound()
@@ -228,15 +240,24 @@ export async function claimBeat(
     if (now.getTime() > claimUntil(b).getTime()) throw new BeatError(409, 'too_late', 'The time to claim this BEAT is over.')
     if ((claim.secondsPresent ?? 0) < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
     if ((await takenCount(tx, b.id)) >= b.supplyCap) throw new BeatError(409, 'all_claimed', 'All of these BEATs have been claimed.')
-    if (network) {
-      // Every claim made from the network counts, a removed one too (a host's removal doesn't hand it more)
-      const [n] = await tx.select({ n: sql<number>`count(*)::int` }).from(beatClaims)
-        .where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.ipHash, network), sql`${beatClaims.status} <> 'present'`))
-      if ((n?.n ?? 0) >= config.beats.claimsPerIp) {
+    if (c.ip) {
+      // Counted per network in beat_network_claims, apart from the claims (fix round I-2): a delete of a claim's data or
+      // a host's removal never hands the network a claim back. The salt is the BEAT's own, made on first use
+      let salt = b.networkSalt
+      if (!salt) {
+        salt = randomBytes(32).toString('hex')
+        await tx.update(beats).set({ networkSalt: salt }).where(eq(beats.id, b.id))
+      }
+      const netHash = beatNetworkHash(salt, c.ip)
+      const [n] = await tx.select({ claims: beatNetworkClaims.claims }).from(beatNetworkClaims)
+        .where(and(eq(beatNetworkClaims.beatId, b.id), eq(beatNetworkClaims.netHash, netHash))).for('update')
+      if ((n?.claims ?? 0) >= config.beats.claimsPerIp) {
         throw new BeatError(429, 'too_many_from_network', 'This BEAT has already been claimed too many times from your network.')
       }
+      await tx.insert(beatNetworkClaims).values({ beatId: b.id, netHash, claims: 1 })
+        .onConflictDoUpdate({ target: [beatNetworkClaims.beatId, beatNetworkClaims.netHash], set: { claims: sql`${beatNetworkClaims.claims} + 1` } })
     }
-    await tx.update(beatClaims).set({ status: 'claimed', claimedAt: now, ipHash: network }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
+    await tx.update(beatClaims).set({ status: 'claimed', claimedAt: now }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
   })
   return visitorView(seen.id, userId)
 }

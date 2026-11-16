@@ -5,7 +5,7 @@ import { Wallet, parseEther } from 'ethers'
 import { BEAT_RETENTION_DAYS } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beatMintBatches, beatPayments, beats, beatScenes, raffleDraws, raffleEntries, raffles, userAuthMethods, users } from '../src/db/schema.js'
+import { beatClaims, beatMintBatches, beatNetworkClaims, beatPayments, beats, beatScenes, raffleDraws, raffleEntries, raffles, userAuthMethods, users } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
 import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
@@ -339,16 +339,21 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       expect(await byId(recentPresent.id)).toBeUndefined()
     })
 
-    it('removes removed claims and every claim\'s network hash 30 days after the end; a recent BEAT keeps them', async () => {
+    it('removes removed claims 30 days after the end; a BEAT\'s network counts and salt go once its claims are over', async () => {
       const old = await seedBeat({ endsAt: at(-30 * DAY) })
-      const recent = await seedBeat({ endsAt: at(-DAY) })
-      const removed = await claim(old.id, me, 'removed', { ipHash: 'h1' })
-      const minted = await claim(old.id, other, 'minted', { ipHash: 'h2', mintedAt: at(-31 * DAY) })
-      const keep = await claim(recent.id, me, 'claimed', { ipHash: 'h3' })
-      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0, networks: 1 })
+      const graceOver = await seedBeat({ endsAt: at(-25 * H) })
+      const open = await seedBeat({ endsAt: at(-23 * H) })
+      const removed = await claim(old.id, me, 'removed')
+      for (const b of [old, graceOver, open]) {
+        await db.update(beats).set({ networkSalt: 'salt' }).where(eq(beats.id, b.id))
+        await db.insert(beatNetworkClaims).values({ beatId: b.id, netHash: 'h', claims: 2 })
+      }
+      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0, networks: 2 })
       expect(await byId(removed.id)).toBeUndefined()
-      expect(await byId(minted.id)).toMatchObject({ ipHash: null, status: 'minted' })
-      expect(await byId(keep.id)).toMatchObject({ ipHash: 'h3' })
+      const counts = await db.select().from(beatNetworkClaims)
+      expect(counts.map((c) => c.beatId)).toEqual([open.id])
+      const salts = Object.fromEntries((await db.select().from(beats)).map((b) => [b.id, b.networkSalt]))
+      expect([salts[old.id], salts[graceOver.id], salts[open.id]]).toEqual([null, null, 'salt'])
     })
 
     it('nulls batch wallets and raw txs 30 days after settling (confirmed, or failed by sent time), keeps hashes; open batches 30 days after they were made', async () => {

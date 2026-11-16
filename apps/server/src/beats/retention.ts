@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, lte, or, sql } from 'drizzle-orm'
-import { BEAT_RETENTION_DAYS } from '@virvixr/shared'
+import { BEAT_CLAIM_GRACE_MS, BEAT_RETENTION_DAYS } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { beatClaims, beatMintBatches, beats } from '../db/schema.js'
+import { beatClaims, beatMintBatches, beatNetworkClaims, beats } from '../db/schema.js'
 import type { Exec } from '../studio/quota.js'
 
 /**
@@ -21,7 +21,7 @@ const DAY_MS = 86_400_000
  * and claim times. On chain only the wallet remains, so the row keeps the wallet, its status and the mint.
  */
 export const UNLINKED_CLAIM = {
-  userId: null, displayName: null, secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null, ipHash: null,
+  userId: null, displayName: null, secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null,
 } as const
 
 /** One transaction (or the caller's, so account deletion can include it). Only this user's claims are touched. */
@@ -34,20 +34,25 @@ export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec):
     const deleted = await tx.delete(beatClaims)
       .where(and(mine, inArray(beatClaims.status, ['present', 'claimed', 'failed'])))
       .returning({ id: beatClaims.id })
+    // A claim a host removed stays as a wallet-only tombstone, so the wallet can't track and claim that BEAT again (I-2)
+    const tombstones = await tx.update(beatClaims).set(UNLINKED_CLAIM)
+      .where(and(mine, eq(beatClaims.status, 'removed')))
+      .returning({ id: beatClaims.id })
     const pending = await tx.update(beatClaims).set({ deleteRequested: true })
       .where(and(mine, eq(beatClaims.status, 'minting')))
       .returning({ id: beatClaims.id })
     const unlinked = await tx.update(beatClaims).set(UNLINKED_CLAIM)
       .where(and(mine, eq(beatClaims.status, 'minted')))
       .returning({ id: beatClaims.id })
-    return { deleted: deleted.length, unlinked: unlinked.length, pending: pending.length }
+    return { deleted: deleted.length, unlinked: unlinked.length + tombstones.length, pending: pending.length }
   }
   return exec ? run(exec) : db.transaction(run)
 }
 
 /**
  * The daily sweep, at BEAT_RETENTION_DAYS:
- * - `present` and `removed` claims of BEATs that ended that long ago go, and every claim of theirs loses its network hash;
+ * - `present` and `removed` claims of BEATs that ended that long ago go;
+ * - a BEAT's per-network claim counts and their salt go once its claims are over (grace passed, closed or cancelled);
  * - the wallets and signed raw txs of batches settled that long ago go (their hashes stay). A batch's settle time is
  *   confirmed_at, else sent_at, else created_at: a failed batch has no confirmed_at. A batch still open (`sending` or
  *   `sent`) that long after it was made goes too (privacy M3): reconcile settles it by receipt or nonce without them, it
@@ -59,9 +64,13 @@ export async function scrubBeats(now: Date): Promise<{ present: number; batches:
   const present = await db.delete(beatClaims)
     .where(and(inArray(beatClaims.status, ['present', 'removed']), inArray(beatClaims.beatId, ended)))
     .returning({ id: beatClaims.id })
-  const networks = await db.update(beatClaims).set({ ipHash: null })
-    .where(and(isNotNull(beatClaims.ipHash), inArray(beatClaims.beatId, ended)))
-    .returning({ id: beatClaims.id })
+  // The network counts and their salt go once nobody can claim any more: the claim grace is over, or the BEAT is
+  // closed on chain or cancelled
+  const over = db.select({ id: beats.id }).from(beats).where(or(
+    lte(beats.endsAt, new Date(now.getTime() - BEAT_CLAIM_GRACE_MS)), isNotNull(beats.closedOnChainAt), eq(beats.status, 'cancelled'),
+  ))
+  const networks = await db.delete(beatNetworkClaims).where(inArray(beatNetworkClaims.beatId, over)).returning({ id: beatNetworkClaims.beatId })
+  await db.update(beats).set({ networkSalt: null }).where(and(isNotNull(beats.networkSalt), inArray(beats.id, over)))
   // raw_tx goes with the wallets: a mint's calldata is mintTo(id, wallets), and for a batch that never mined those wallets
   // aren't public. last_error holds codes only, and claims' fail_reason a revert name, so nothing else keeps a wallet
   // postgres-js rejects a Date bound inside a raw sql template, so the cutoff goes as an ISO literal

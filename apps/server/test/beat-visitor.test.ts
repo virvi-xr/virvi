@@ -24,7 +24,7 @@ describe('BEAT visitor routes (LIV-11)', () => {
 
   beforeEach(async () => {
     await resetDb()
-    ;(config as any).beats = { ...config.beats, enabled: true, chain: 'polygon', claimsPerIp: 1000 }
+    ;(config as any).beats = { ...config.beats, enabled: true, chain: 'polygon', claimsPerIp: 1000, newWalletsPerIpHour: 1000 }
     setBeatPlatformCheckForTests('decentraland', async () => true)
     app = await testApp()
     host = await createUser({ wallet: randomWallet() })

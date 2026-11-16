@@ -3,12 +3,13 @@ import { and, eq } from 'drizzle-orm'
 import { BEAT_CONSENT_VERSION } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beats, beatScenes } from '../src/db/schema.js'
+import { beatClaims, beatNetworkClaims, beats, beatScenes, userAuthMethods } from '../src/db/schema.js'
 import { issueScenePass } from '../src/auth/scene-pass.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { beatLiveSince, clearBeatLive, markBeatLive } from '../src/beats/live.js'
 import { platformCheck, resetBeatPlatformChecks, setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
 import { deleteMyBeatData } from '../src/beats/retention.js'
+import { resetNewWallets } from '../src/beats/new-wallet-limit.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 import { joinScene, startGameServer } from './helpers/game-server.js'
@@ -34,7 +35,7 @@ describe('BEAT attendance protections (LIV-11)', () => {
   beforeEach(async () => {
     await resetDb()
     vi.mocked(recordJobFailure).mockClear()
-    ;(config as any).beats = { ...config.beats, enabled: true, chain: 'polygon', claimsPerIp: 3 }
+    ;(config as any).beats = { ...config.beats, enabled: true, chain: 'polygon', claimsPerIp: 3, newWalletsPerIpHour: 1000 }
     setBeatPlatformCheckForTests('decentraland', async () => true)
     app = await testApp()
     host = await createUser({ wallet: randomWallet() })
@@ -81,14 +82,65 @@ describe('BEAT attendance protections (LIV-11)', () => {
       expect([fourth.statusCode, fourth.json().error]).toEqual([429, 'too_many_from_network'])
       expect((await row(b.id, vs[3].user.id)).status).toBe('present')
       expect((await claim(vs[4], b, '198.51.100.8')).statusCode).toBe(200)
-      const stored = await row(b.id, vs[0].user.id)
-      expect(stored.ipHash).toMatch(/^[0-9a-f]{32}$/)
-      expect(JSON.stringify(await db.select().from(beatClaims))).not.toContain('198.51.100')
+      // Counted apart from the claims, as a hash under the BEAT's own random salt; the address is stored nowhere
+      const counts = await db.select().from(beatNetworkClaims).where(eq(beatNetworkClaims.beatId, b.id))
+      expect(counts.map((c) => c.claims).sort()).toEqual([1, 3])
+      expect(counts.every((c) => /^[0-9a-f]{32}$/.test(c.netHash))).toBe(true)
+      const salt = (await db.query.beats.findFirst({ where: eq(beats.id, b.id) }))!.networkSalt
+      expect(salt).toMatch(/^[0-9a-f]{64}$/)
+      const all = JSON.stringify([await db.select().from(beatClaims), await db.select().from(beatNetworkClaims), await db.select().from(beats)])
+      expect(all).not.toContain('198.51.100')
       // Salted per BEAT: the same network hashes differently on another BEAT
       const b2 = await seed()
       await track(vs[0], b2)
       await claim(vs[0], b2)
-      expect((await row(b2.id, vs[0].user.id)).ipHash).not.toBe(stored.ipHash)
+      const [c2] = await db.select().from(beatNetworkClaims).where(eq(beatNetworkClaims.beatId, b2.id))
+      expect(counts.map((c) => c.netHash)).not.toContain(c2.netHash)
+    })
+
+    it('fix round I-2: deleting claims\' data, minted or not, never hands the network a claim back', async () => {
+      const b = await seed()
+      const vs = await Promise.all([1, 2, 3, 4].map(() => visitor()))
+      for (const v of vs) await track(v, b)
+      for (const v of vs.slice(0, 3)) expect((await claim(v, b)).statusCode).toBe(200)
+      await db.update(beatClaims).set({ status: 'minted', mintedAt: new Date() }).where(eq(beatClaims.userId, vs[0].user.id))
+      await deleteMyBeatData(vs[0].user.id, new Date())
+      await deleteMyBeatData(vs[1].user.id, new Date())
+      expect((await claim(vs[3], b)).json().error).toBe('too_many_from_network')
+    })
+
+    it('fix round I-2: a claim the host removed still counts for its network, and its wallet stays out after a delete', async () => {
+      ;(config as any).beats = { ...config.beats, claimsPerIp: 1 }
+      const b = await seed({ holdMints: true })
+      const [x, y] = [await visitor(), await visitor()]
+      await track(x, b)
+      await track(y, b)
+      expect((await claim(x, b)).statusCode).toBe(200)
+      const xId = (await row(b.id, x.user.id)).id
+      const rm = await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${xId}`, headers: { authorization: `Bearer ${tokenFor(host)}` } })
+      expect(rm.statusCode, rm.body).toBe(200)
+      expect((await claim(y, b)).json().error).toBe('too_many_from_network')
+      // The removed visitor deletes their data: a wallet-only tombstone stays, so they can't come back
+      await deleteMyBeatData(x.user.id, new Date())
+      const [tomb] = await db.select().from(beatClaims).where(eq(beatClaims.id, xId))
+      expect(tomb).toMatchObject({ status: 'removed', userId: null, displayName: null, wallet: x.wallet.toLowerCase() })
+      expect((await track(x, b)).json().error).toBe('not_available')
+    })
+
+    it('fix round I-5: a network brings at most BEAT_NEW_WALLETS_PER_IP_HOUR new wallets to BEATs; an older wallet is not counted', async () => {
+      ;(config as any).beats = { ...config.beats, newWalletsPerIpHour: 2 }
+      resetNewWallets()
+      const b = await seed()
+      const vs = await Promise.all([1, 2, 3].map(() => visitor()))
+      expect((await track(vs[0], b)).statusCode).toBe(200)
+      expect((await track(vs[0], b)).statusCode).toBe(200) // the same wallet again: counted once
+      expect((await track(vs[1], b)).statusCode).toBe(200)
+      const third = await track(vs[2], b)
+      expect([third.statusCode, third.json().error]).toEqual([429, 'too_many_new_wallets'])
+      // A wallet Virvi has known for over a day isn't new
+      await db.update(userAuthMethods).set({ createdAt: new Date(Date.now() - 25 * H) }).where(eq(userAuthMethods.userId, vs[2].user.id))
+      expect((await track(vs[2], b)).statusCode).toBe(200)
+      resetNewWallets()
     })
 
     it('an IPv6 address counts by its /64', async () => {
@@ -101,7 +153,7 @@ describe('BEAT attendance protections (LIV-11)', () => {
       expect((await claim(z, b, '2001:db8:1:3::1')).statusCode).toBe(200)
     })
 
-    it('delete-my-data removes the hash with the claim (a minted claim keeps only its wallet)', async () => {
+    it('delete-my-data on a minted claim keeps only its wallet', async () => {
       const b = await seed()
       const v = await visitor()
       await track(v, b)
@@ -109,7 +161,7 @@ describe('BEAT attendance protections (LIV-11)', () => {
       await db.update(beatClaims).set({ status: 'minted', mintedAt: new Date() }).where(eq(beatClaims.userId, v.user.id))
       await deleteMyBeatData(v.user.id, new Date())
       const [left] = await db.select().from(beatClaims).where(eq(beatClaims.beatId, b.id))
-      expect(left).toMatchObject({ userId: null, ipHash: null, wallet: v.wallet.toLowerCase() })
+      expect(left).toMatchObject({ userId: null, displayName: null, wallet: v.wallet.toLowerCase() })
     })
   })
 

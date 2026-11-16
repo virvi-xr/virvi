@@ -2654,6 +2654,8 @@ export const beats = pgTable('beats', {
   maxBatch: integer('max_batch'),
   // The end the host scheduled, kept when they end it early (ends_at then becomes the actual end)
   scheduledEndsAt: timestamp('scheduled_ends_at', { withTimezone: true }),
+  // A random per-BEAT salt for the claim networks' hashes (beat_network_claims); nulled with them once claims are over
+  networkSalt: text('network_salt'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -2667,6 +2669,17 @@ export const beatScenes = pgTable('beat_scenes', {
 }, (t) => ({
   pk: primaryKey({ columns: [t.beatId, t.sceneId] }),
   sceneIdx: index('beat_scenes_scene_idx').on(t.sceneId),
+}))
+
+// Claims per network per BEAT (the anti-sybil limit, BEAT_CLAIMS_PER_IP): a salted hash of the network (an IPv4 address
+// or an IPv6 /64, never the address) and how many claims came from it. Not linked to any claim or person, so deleting a
+// claim's data or a host's removal never hands the network its claims back. Deleted once the BEAT's claims are over.
+export const beatNetworkClaims = pgTable('beat_network_claims', {
+  beatId: uuid('beat_id').notNull().references(() => beats.id, { onDelete: 'cascade' }),
+  netHash: text('net_hash').notNull(),
+  claims: integer('claims').notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.beatId, t.netHash] }),
 }))
 
 // A card or credit payment for a BEAT's supply: the first purchase ('create') or a later cap raise ('topup')
@@ -2734,8 +2747,6 @@ export const beatClaims = pgTable('beat_claims', {
   failReason: text('fail_reason'),
   claimedAt: timestamp('claimed_at', { withTimezone: true }),
   mintedAt: timestamp('minted_at', { withTimezone: true }),
-  // A keyed hash of the claimer's network (an IPv4 address, or an IPv6 /64), salted per BEAT; never the address itself
-  ipHash: text('ip_hash'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   walletUq: uniqueIndex('beat_claims_beat_wallet_uq').on(t.beatId, t.wallet),

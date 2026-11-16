@@ -173,7 +173,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     if (!inScene(request, sceneId)) return sceneOnly(reply)
     const { wallet, verified, displayName } = request.user
     try {
-      const caller = { userId: request.user.id, wallet: wallet && verified === true ? wallet : null, signInName: displayName ?? null, platform: platformOf(request) }
+      const caller = { userId: request.user.id, wallet: wallet && verified === true ? wallet : null, signInName: displayName ?? null, platform: platformOf(request), ip: request.ip }
       return reply.send(await trackBeat(sceneId, beatId, caller, body(request).consentVersion))
     } catch (e) {
       return fail(reply, e)

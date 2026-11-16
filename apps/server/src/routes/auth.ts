@@ -26,7 +26,6 @@ import { convertTrial, finishOAuth, isTrialGone, mergeTrial, movedHeadsetsField,
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
-import { takeNewWalletPass } from '../auth/new-wallet-limit.js'
 
 interface RegisterBody {
   email: string
@@ -303,15 +302,6 @@ export default async function authRoutes(app: FastifyInstance) {
 
       let dbUser
       if (verifiedWallet) {
-        // A wallet never seen before costs its network one of BEAT_NEW_WALLETS_PER_IP_HOUR (anti-sybil, LIV-11)
-        if (config.beats.enabled) {
-          const known = await db.query.userAuthMethods.findFirst({
-            where: and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, verifiedWallet)), columns: { id: true },
-          })
-          if (!known && !takeNewWalletPass(request.ip)) {
-            return reply.status(429).send({ error: 'too_many_new_wallets', message: 'Too many new wallets signed in from your network. Try again later.' })
-          }
-        }
         dbUser = await resolveVerifiedWalletUser(verifiedWallet, displayName, 'visitor')
       } else {
         const authMethod = await db.query.userAuthMethods.findFirst({

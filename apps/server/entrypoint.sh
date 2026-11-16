@@ -488,7 +488,6 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS beat_claims_beat_wallet_uq ON beat_claims (beat_id, wallet)\`;
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS beat_claims_beat_user_uq ON beat_claims (beat_id, user_id) WHERE user_id is not null\`;
         await sql\`CREATE INDEX IF NOT EXISTS beat_claims_beat_status_idx ON beat_claims (beat_id, status)\`;
-        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS ip_hash TEXT\`;
         await sql\`ALTER TABLE beat_claims ALTER COLUMN consented_at DROP NOT NULL\`;
         await sql\`ALTER TABLE beat_claims ALTER COLUMN seconds_present DROP NOT NULL\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS hold_mints BOOLEAN NOT NULL DEFAULT false\`;
@@ -496,6 +495,8 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS max_batch INTEGER\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS scheduled_ends_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE beat_mint_batches ADD COLUMN IF NOT EXISTS code_count INTEGER\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS network_salt TEXT\`;
+        await sql\`CREATE TABLE IF NOT EXISTS beat_network_claims (beat_id UUID NOT NULL CONSTRAINT beat_network_claims_beat_id_beats_id_fk REFERENCES beats(id) ON DELETE CASCADE, net_hash TEXT NOT NULL, claims INTEGER NOT NULL DEFAULT 0, CONSTRAINT beat_network_claims_beat_id_net_hash_pk PRIMARY KEY (beat_id, net_hash))\`;
         console.log('[virvi-server] BEAT tables ensured');
       } catch(e) { console.log('[virvi-server] BEAT tables:', e.message); }
       // model enum value

@@ -4,7 +4,6 @@ import { db } from '../src/db/connection.js'
 import { users, userAuthMethods } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { verifySessionToken } from '../src/auth/tokens.js'
-import { resetNewWalletPasses } from '../src/auth/new-wallet-limit.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor } from './helpers/factories.js'
 
@@ -42,23 +41,18 @@ describe('POST /api/auth/platform', () => {
     await app.close()
   })
 
-  it('LIV-11: with BEATs on, a network gets BEAT_NEW_WALLETS_PER_IP_HOUR passes for never-seen wallets; known wallets are not counted', async () => {
+  it('fix round I-5: with BEATs on, sign-in is never refused for new wallets on a shared network', async () => {
     const prevBeats = config.beats
     ;(config as any).beats = { ...config.beats, enabled: true, newWalletsPerIpHour: 1 }
-    resetNewWalletPasses()
     try {
-      const signIn = (wallet: string, remoteAddress: string) => app.inject({
-        method: 'POST', url: '/api/auth/platform', remoteAddress, headers: { 'x-identity-auth-chain-0': `valid:${wallet}` }, payload: { user: { displayName: 'X' } },
-      })
-      expect((await signIn(WALLET, '203.0.113.5')).statusCode).toBe(200)
-      const second = await signIn(VICTIM, '203.0.113.5')
-      expect([second.statusCode, second.json().error]).toEqual([429, 'too_many_new_wallets'])
-      expect(await db.query.userAuthMethods.findFirst({ where: eq(userAuthMethods.identifier, VICTIM) })).toBeUndefined()
-      expect((await signIn(WALLET, '203.0.113.5')).statusCode).toBe(200) // known now: not counted
-      expect((await signIn(VICTIM, '203.0.113.6')).statusCode).toBe(200) // another network
+      for (const w of [WALLET, VICTIM, '0x00000000000000000000000000000000000000cc']) {
+        const res = await app.inject({
+          method: 'POST', url: '/api/auth/platform', remoteAddress: '203.0.113.5', headers: { 'x-identity-auth-chain-0': `valid:${w}` }, payload: { user: { displayName: 'X' } },
+        })
+        expect(res.statusCode, w).toBe(200)
+      }
     } finally {
       ;(config as any).beats = prevBeats
-      resetNewWalletPasses()
     }
   })
 
