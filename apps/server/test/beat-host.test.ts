@@ -212,20 +212,21 @@ describe('BEAT host API (LIV-11)', () => {
       expect([b.statusCode, b.json().error]).toEqual([409, 'locked'])
     })
 
-    it('a failed image copy leaves the new media URL showing, and the same edit tries the copy again', async () => {
+    it('an image change on a paid BEAT clears any stale copy and copies nothing: the frozen copy is made at go-live', async () => {
       const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 20 })
       const next = await media(host, 700, 700)
-      const unreadable = () => Promise.reject(new BeatError(502, 'bad_image', "This BEAT's image can't be read."))
-      vi.mocked(copyBeatImage).mockImplementationOnce(unreadable).mockImplementationOnce(unreadable)
-      const first = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
-      expect([first.statusCode, first.json().error]).toEqual([502, 'bad_image'])
-      expect(copyBeatImage).toHaveBeenCalledTimes(1)
+      const res = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
+      expect(res.statusCode, res.body).toBe(200)
+      expect(copyBeatImage).not.toHaveBeenCalled()
       const row = await db.query.beats.findFirst({ where: eq(beats.id, b.id) })
       expect([row!.imageMediaId, row!.imageUrl]).toEqual([next.id, null])
       expect((await call('GET', `/api/beats/${b.id}`)).json().imageUrl).toBe(next.publicUrl)
-      const retry = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
-      expect(retry.statusCode).toBe(502)
-      expect(copyBeatImage).toHaveBeenCalledTimes(2)
+    })
+
+    it('tradeable can change after payment until go-live (it goes on chain with the create at go-live)', async () => {
+      const b = await seed({ status: 'paid', tokenId: 22 })
+      const res = await call('PATCH', `/api/beats/${b.id}`, host, { tradeable: true })
+      expect([res.statusCode, res.json().tradeable]).toEqual([200, true])
     })
 
     it('a paid BEAT edit that keeps the image does not copy it again', async () => {

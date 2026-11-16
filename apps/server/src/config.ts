@@ -227,6 +227,12 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
       extraMintCents: whole('BEAT_PRICE_EXTRA_MINT_CENTS', 2),
     },
     minGasWei,
+    /** At most this many claims per BEAT from one network (an IPv4 address, or an IPv6 /64). */
+    claimsPerIp: whole('BEAT_CLAIMS_PER_IP', 3),
+    /** Scene passes for wallets never seen before, per network and hour (pass issuance at /api/auth/platform). */
+    newWalletsPerIpHour: whole('BEAT_NEW_WALLETS_PER_IP_HOUR', 10),
+    /** The catalyst asked whether a wallet has a Decentraland profile (defaults to DCL_CATALYST_URL). */
+    profileCatalystUrl: e.BEAT_PROFILE_CATALYST_URL || e.DCL_CATALYST_URL || 'https://peer.decentraland.org',
   }
 }
 

@@ -5,6 +5,8 @@ import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { beatClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets } from '../src/db/schema.js'
 import { issueHyperfyPass, issueScenePass, sceneClaims } from '../src/auth/scene-pass.js'
+import { markBeatLive } from '../src/beats/live.js'
+import { setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
 import { resetDb } from './helpers/db.js'
 import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -22,7 +24,8 @@ describe('BEAT visitor routes (LIV-11)', () => {
 
   beforeEach(async () => {
     await resetDb()
-    ;(config as any).beats = { ...config.beats, enabled: true, chain: 'polygon' }
+    ;(config as any).beats = { ...config.beats, enabled: true, chain: 'polygon', claimsPerIp: 1000 }
+    setBeatPlatformCheckForTests('decentraland', async () => true)
     app = await testApp()
     host = await createUser({ wallet: randomWallet() })
     sceneA = (await createScene(host, 'A')).scene.id
@@ -32,6 +35,7 @@ describe('BEAT visitor routes (LIV-11)', () => {
   })
   afterEach(async () => {
     ;(config as any).beats = prev
+    setBeatPlatformCheckForTests('decentraland', undefined)
     await app.close()
   })
 
@@ -51,6 +55,9 @@ describe('BEAT visitor routes (LIV-11)', () => {
   async function visitor(name: string | null = 'Visitor'): Promise<Visitor> {
     const wallet = randomWallet()
     const user = await createUser({ wallet })
+    // In the scene's room since long ago (live presence, beat-attendance.test.ts covers it)
+    await markBeatLive(sceneA, user.id, 1)
+    await markBeatLive(sceneB, user.id, 1)
     return { user, wallet, pass: (sceneId) => issueScenePass(app, user as any, wallet, { sceneId, locationId: null }, undefined, name ?? undefined).accessToken }
   }
   const go = (method: string, url: string, token: string, payload?: unknown) =>

@@ -2647,6 +2647,13 @@ export const beats = pgTable('beats', {
   createdOnChainAt: timestamp('created_on_chain_at', { withTimezone: true }),
   closedOnChainAt: timestamp('closed_on_chain_at', { withTimezone: true }),
   paymentId: uuid('payment_id').references((): AnyPgColumn => beatPayments.id, { onDelete: 'set null' }),
+  // Host review: nothing is minted until the host sends (mints_released_at) or the claim grace after ends_at runs out
+  holdMints: boolean('hold_mints').notNull().default(false),
+  mintsReleasedAt: timestamp('mints_released_at', { withTimezone: true }),
+  // The most wallets the job puts in this BEAT's next mint (halved after a revert, grows back); null is BEAT_MAX_BATCH
+  maxBatch: integer('max_batch'),
+  // The end the host scheduled, kept when they end it early (ends_at then becomes the actual end)
+  scheduledEndsAt: timestamp('scheduled_ends_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -2694,6 +2701,8 @@ export const beatMintBatches = pgTable('beat_mint_batches', {
   rawTx: text('raw_tx'),
   txHashes: text('tx_hashes').array().notNull().default(sql`'{}'::text[]`), // every hash signed for this nonce, newest last
   status: text('status').$type<'sending' | 'sent' | 'confirmed' | 'failed'>().notNull().default('sending'),
+  // A mint's wallets that had code when it was planned (a revert with more now is explained by them)
+  codeCount: integer('code_count'),
   attempts: integer('attempts').notNull().default(0),
   lastError: text('last_error'),
   sentAt: timestamp('sent_at', { withTimezone: true }),

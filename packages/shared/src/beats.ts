@@ -84,6 +84,14 @@ export interface PublicBeat {
   counts: { claimed: number; minting: number; minted: number; failed: number }
   frozen: boolean
   test: boolean
+  /** Host review: claims wait for the host's Send (POST /api/beats/:id/release) or until `mintsHeldUntil`. */
+  holdMints: boolean
+  /** When the host pressed Send, or null. */
+  mintsReleasedAt: string | null
+  /** While claims are held: when they go out anyway (ends_at + the claim grace); null when nothing is held. */
+  mintsHeldUntil: string | null
+  /** The end the host scheduled, when they ended it early (endsAt is then the actual end); else null. */
+  scheduledEndsAt: string | null
 }
 
 /** The room's `beat_available` on join (for guests, who can't use REST): the scene's BEAT in its card window. */

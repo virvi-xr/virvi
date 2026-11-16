@@ -6,7 +6,7 @@ import { isAdminRequest } from '../auth/admin.js'
 import { boundScene, fromParam } from '../auth/scene-from.js'
 import {
   BeatError, beatAvailability, cancelBeat, checkoutBeat, createBeat, endBeatEarly, getBeat, listBeats, listClaimants, listSceneBeats, mayRunBeatsIn,
-  quoteBeat, raiseBeatCap, sceneExists, updateBeat, type BeatCaller,
+  quoteBeat, raiseBeatCap, releaseBeatMints, removeBeatClaim, sceneExists, updateBeat, type BeatCaller,
 } from './service.js'
 import { checkInBeat, claimBeat, currentBeat, stopTrackingBeat, trackBeat } from './visitor.js'
 import beatMetadataRoutes, { BEAT_METADATA_ROUTE } from './metadata.js'
@@ -100,6 +100,23 @@ export default async function beatRoutes(app: FastifyInstance) {
     }
   })
 
+  // Host review: send held claims, or remove one before they go
+  app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/release', async (request, reply) => {
+    try {
+      return reply.send(await releaseBeatMints(await caller(request), request.params.beatId))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  app.delete<{ Params: { beatId: string; claimId: string } }>('/api/beats/:beatId/claims/:claimId', async (request, reply) => {
+    try {
+      return reply.send(await removeBeatClaim(await caller(request), request.params.beatId, request.params.claimId))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
   // Payments: host-only, so no scene pass (403 scene_pass_not_allowed)
   app.get<{ Params: { beatId: string }; Querystring: { cap?: string; method?: string } }>('/api/beats/:beatId/quote', async (request, reply) => {
     try {
@@ -139,6 +156,8 @@ export default async function beatRoutes(app: FastifyInstance) {
   const inScene = (request: FastifyRequest, sceneId: string) => request.user.kind === 'scene' && request.user.sceneId === sceneId
   const sceneOnly = (reply: FastifyReply) => reply.status(403).send({ error: 'scene_pass_required', message: 'Do this from inside the scene.' })
   type VisitorReq = FastifyRequest<{ Params: { sceneId: string; beatId: string } }>
+  /** The pass's platform: a scene pass is Decentraland's unless it says it came another way (Hyperfy's `via`). */
+  const platformOf = (request: FastifyRequest) => ((request.user as { via?: string }).via ?? 'decentraland')
 
   app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/beat/current', sceneScoped, async (request, reply) => {
     if (!(await sceneExists(request.params.sceneId))) return reply.status(404).send({ error: 'not_found', message: 'Scene not found.' })
@@ -154,7 +173,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     if (!inScene(request, sceneId)) return sceneOnly(reply)
     const { wallet, verified, displayName } = request.user
     try {
-      const caller = { userId: request.user.id, wallet: wallet && verified === true ? wallet : null, signInName: displayName ?? null }
+      const caller = { userId: request.user.id, wallet: wallet && verified === true ? wallet : null, signInName: displayName ?? null, platform: platformOf(request) }
       return reply.send(await trackBeat(sceneId, beatId, caller, body(request).consentVersion))
     } catch (e) {
       return fail(reply, e)
@@ -175,7 +194,7 @@ export default async function beatRoutes(app: FastifyInstance) {
     const { sceneId, beatId } = request.params
     if (!inScene(request, sceneId)) return sceneOnly(reply)
     try {
-      return reply.send(await claimBeat(sceneId, beatId, request.user.id))
+      return reply.send(await claimBeat(sceneId, beatId, { userId: request.user.id, platform: platformOf(request), ip: request.ip }))
     } catch (e) {
       return fail(reply, e)
     }

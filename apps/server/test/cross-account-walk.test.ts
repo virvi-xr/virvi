@@ -229,6 +229,8 @@ const CASES: Case[] = [
   { route: 'GET /api/beats/:beatId/quote', url: (f) => `/api/beats/${f.beat.id}/quote?cap=150` },
   { route: 'POST /api/beats/:beatId/checkout', url: (f) => `/api/beats/${f.beat.id}/checkout`, body: () => ({ method: 'credit' }) },
   { route: 'POST /api/beats/:beatId/cap', url: (f) => `/api/beats/${f.beat.id}/cap`, body: () => ({ supplyCap: 200 }) },
+  { route: 'POST /api/beats/:beatId/release', url: (f) => `/api/beats/${f.beat.id}/release` },
+  { route: 'DELETE /api/beats/:beatId/claims/:claimId', url: (f) => `/api/beats/${f.beat.id}/claims/00000000-0000-4000-8000-000000000001` },
   { route: 'GET /api/scenes/:sceneId/beats', url: (f) => `/api/scenes/${f.scene.id}/beats` },
   { route: 'POST /api/beats', url: () => '/api/beats', body: (f) => ({ name: 'pwned', description: '', imageMediaId: f.media.id, startsAt: new Date(Date.now() + 72 * H).toISOString(), endsAt: new Date(Date.now() + 74 * H).toISOString(), minPresentMinutes: 5, supplyCap: 10, tradeable: false, sceneIds: [f.scene.id] }) },
   // BEAT visitors: A's account token is no scene pass (403), and stopping finds no claim of A's (404)

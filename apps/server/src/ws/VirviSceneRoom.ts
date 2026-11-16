@@ -4,6 +4,7 @@ const { Room } = _require('colyseus') as any
 type Client = any
 import { activeRaffle, publicRaffle } from '../raffles/service.js'
 import { availableBeat } from '../beats/visitor.js'
+import { BEAT_LIVE_REFRESH_MS, clearBeatLive, markBeatLive } from '../beats/live.js'
 import { eq, and, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import {
@@ -78,6 +79,8 @@ export class VirviSceneRoom extends Room {
 
   private sceneId: string = ''
   private clientMeta: Map<string, ClientMeta> = new Map()
+  /** Signed-in scene-pass connections, by session: they count as live presence for BEAT check-ins (beats/live.ts). */
+  private beatLive: Map<string, { userId: string; since: number }> = new Map()
   private accessCache: Map<string, { access: SceneAccess; at: number }> = new Map()
   private lastAccess: Map<string, VenueAccessMessage> = new Map()
   private onVenueEventBound = (e: VenueEvent) => this.onVenueEvent(e)
@@ -156,6 +159,7 @@ export class VirviSceneRoom extends Room {
     if (this.sceneId) this.presence.subscribe(STREAMS_TOPIC, this.onStreamEventBound)
     // Players hold SHOWINGS_WINDOW_MS of showings: top them up well before they run out
     if (this.sceneId) this.clock.setInterval(() => void this.sendShowings(), SHOWINGS_REFRESH_MS)
+    if (this.sceneId) this.clock.setInterval(() => void this.refreshBeatLive(), BEAT_LIVE_REFRESH_MS)
 
     // ── Scene pass renewal: a fresh pass for the same user and this scene extends the session ──
     this.onMessage('auth_renew', async (client: Client, message: any) => {
@@ -417,6 +421,46 @@ export class VirviSceneRoom extends Room {
     await this.sendVenueAccess(client)
     await this.sendCurrentRaffle(client)
     await this.sendBeatAvailable(client)
+    await this.markBeatLive(client, actor)
+  }
+
+  /** A signed-in visitor on a scene pass for this scene counts as live in the scene for BEAT check-ins from now on. */
+  private async markBeatLive(client: Client, actor: Actor) {
+    if (!this.sceneId || !config.beats.enabled || !actor?.userId || !this.passExpiry.has(client.sessionId)) return
+    if (!this.clientMeta.has(client.sessionId)) return // left while joining
+    const entry = { userId: actor.userId, since: Date.now() }
+    this.beatLive.set(client.sessionId, entry)
+    try {
+      await markBeatLive(this.sceneId, entry.userId, entry.since)
+    } catch (err) {
+      console.error('[VirviSceneRoom] BEAT live mark failed:', err)
+    }
+  }
+
+  /** Keeps each live user's mark from expiring, with the time their oldest open connection here opened. */
+  private async refreshBeatLive() {
+    const oldest = new Map<string, number>()
+    for (const { userId, since } of this.beatLive.values()) oldest.set(userId, Math.min(since, oldest.get(userId) ?? since))
+    for (const [userId, since] of oldest) {
+      try {
+        await markBeatLive(this.sceneId, userId, since)
+      } catch (err) {
+        console.error('[VirviSceneRoom] BEAT live refresh failed:', err)
+      }
+    }
+  }
+
+  /** The session closed: its user stops being live here once none of their connections in this room is left. */
+  private dropBeatLive(sessionId: string) {
+    const entry = this.beatLive.get(sessionId)
+    if (!entry) return
+    this.beatLive.delete(sessionId)
+    const others = [...this.beatLive.values()].filter((e) => e.userId === entry.userId)
+    if (others.length) {
+      void markBeatLive(this.sceneId, entry.userId, Math.min(...others.map((e) => e.since))).catch(() => {})
+      return
+    }
+    void clearBeatLive(this.sceneId, entry.userId).catch((err) => console.error('[VirviSceneRoom] BEAT live clear failed:', err))
   }
 
   /** Guests can't use REST: tell them on join whether the scene has a BEAT (name and test flag only) to connect a wallet for. */
@@ -457,6 +501,7 @@ export class VirviSceneRoom extends Room {
     }
     this.issuedHoldKeys.delete(roomKey(client.sessionId))
 
+    this.dropBeatLive(client.sessionId)
     this.clientMeta.delete(client.sessionId)
     this.passExpiry.delete(client.sessionId)
     this.linkedPass.delete(client.sessionId)

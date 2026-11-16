@@ -1,0 +1,278 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { and, eq } from 'drizzle-orm'
+import { BEAT_CONSENT_VERSION } from '@virvixr/shared'
+import { config } from '../src/config.js'
+import { db } from '../src/db/connection.js'
+import { beatClaims, beats, beatScenes } from '../src/db/schema.js'
+import { issueScenePass } from '../src/auth/scene-pass.js'
+import { recordJobFailure } from '../src/errors/record.js'
+import { beatLiveSince, clearBeatLive, markBeatLive } from '../src/beats/live.js'
+import { platformCheck, resetBeatPlatformChecks, setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
+import { deleteMyBeatData } from '../src/beats/retention.js'
+import { resetDb } from './helpers/db.js'
+import { createScene, createUser, randomWallet, testApp, tokenFor, type TestUser } from './helpers/factories.js'
+import { joinScene, startGameServer } from './helpers/game-server.js'
+
+vi.mock('../src/errors/record.js', async (orig) => ({
+  ...(await orig<typeof import('../src/errors/record.js')>()),
+  recordJobFailure: vi.fn(),
+}))
+
+const H = 3_600_000
+const at = (ms: number) => new Date(Date.now() + ms)
+
+/**
+ * Fake attendance (LIV-11, attacker Critical 1): the per-network claim limit, live room presence, the per-platform
+ * wallet check (Decentraland: a deployed profile) and host review before minting.
+ */
+describe('BEAT attendance protections (LIV-11)', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  let host: TestUser
+  let sceneA: string
+  const prev = config.beats
+
+  beforeEach(async () => {
+    await resetDb()
+    vi.mocked(recordJobFailure).mockClear()
+    ;(config as any).beats = { ...config.beats, enabled: true, chain: 'polygon', claimsPerIp: 3 }
+    setBeatPlatformCheckForTests('decentraland', async () => true)
+    app = await testApp()
+    host = await createUser({ wallet: randomWallet() })
+    sceneA = (await createScene(host, 'A')).scene.id
+  })
+  afterEach(async () => {
+    ;(config as any).beats = prev
+    setBeatPlatformCheckForTests('decentraland', undefined)
+    resetBeatPlatformChecks()
+    vi.unstubAllGlobals()
+    await app.close()
+  })
+
+  let tokenSeq = 7000
+  async function seed(over: Partial<typeof beats.$inferInsert> = {}) {
+    const [b] = await db.insert(beats).values({
+      chain: 'polygon', ownerUserId: host.id, name: 'Night', description: '', imageUrl: 'https://cdn.example/f.webp',
+      tokenId: tokenSeq++, status: 'live', minPresentSeconds: 0, supplyCap: 100, startsAt: at(-H), endsAt: at(H), ...over,
+    }).returning()
+    await db.insert(beatScenes).values({ beatId: b.id, sceneId: sceneA })
+    return b
+  }
+  async function visitor() {
+    const wallet = randomWallet()
+    const user = await createUser({ wallet })
+    return { user, wallet, pass: issueScenePass(app, user as any, wallet, { sceneId: sceneA, locationId: null }, undefined, 'V').accessToken }
+  }
+  type V = Awaited<ReturnType<typeof visitor>>
+  const go = (method: string, url: string, token: string, payload?: unknown, remoteAddress = '198.51.100.7') =>
+    app.inject({ method: method as any, url, remoteAddress, headers: { authorization: `Bearer ${token}` }, payload: payload as any })
+  const path = (b: { id: string }, p: string) => `/api/scenes/${sceneA}/beat/${b.id}/${p}`
+  const track = (v: V, b: { id: string }) => go('POST', path(b, 'track'), v.pass, { consentVersion: BEAT_CONSENT_VERSION })
+  const claim = (v: V, b: { id: string }, ip?: string) => go('POST', path(b, 'claim'), v.pass, undefined, ip)
+  const row = async (beatId: string, userId: string) =>
+    (await db.select().from(beatClaims).where(and(eq(beatClaims.beatId, beatId), eq(beatClaims.userId, userId))))[0]
+
+  describe('per-network claim limit', () => {
+    it('three claims per BEAT from one network, then too_many_from_network; another network is fine; only a hash is stored', async () => {
+      const b = await seed()
+      const vs = await Promise.all([1, 2, 3, 4, 5].map(() => visitor()))
+      for (const v of vs) expect((await track(v, b)).statusCode).toBe(200)
+      for (const v of vs.slice(0, 3)) expect((await claim(v, b)).statusCode).toBe(200)
+      const fourth = await claim(vs[3], b)
+      expect([fourth.statusCode, fourth.json().error]).toEqual([429, 'too_many_from_network'])
+      expect((await row(b.id, vs[3].user.id)).status).toBe('present')
+      expect((await claim(vs[4], b, '198.51.100.8')).statusCode).toBe(200)
+      const stored = await row(b.id, vs[0].user.id)
+      expect(stored.ipHash).toMatch(/^[0-9a-f]{32}$/)
+      expect(JSON.stringify(await db.select().from(beatClaims))).not.toContain('198.51.100')
+      // Salted per BEAT: the same network hashes differently on another BEAT
+      const b2 = await seed()
+      await track(vs[0], b2)
+      await claim(vs[0], b2)
+      expect((await row(b2.id, vs[0].user.id)).ipHash).not.toBe(stored.ipHash)
+    })
+
+    it('an IPv6 address counts by its /64', async () => {
+      ;(config as any).beats = { ...config.beats, claimsPerIp: 1 }
+      const b = await seed()
+      const [x, y, z] = [await visitor(), await visitor(), await visitor()]
+      for (const v of [x, y, z]) await track(v, b)
+      expect((await claim(x, b, '2001:db8:1:2::1')).statusCode).toBe(200)
+      expect((await claim(y, b, '2001:db8:1:2:ffff::9')).json().error).toBe('too_many_from_network')
+      expect((await claim(z, b, '2001:db8:1:3::1')).statusCode).toBe(200)
+    })
+
+    it('delete-my-data removes the hash with the claim (a minted claim keeps only its wallet)', async () => {
+      const b = await seed()
+      const v = await visitor()
+      await track(v, b)
+      await claim(v, b)
+      await db.update(beatClaims).set({ status: 'minted', mintedAt: new Date() }).where(eq(beatClaims.userId, v.user.id))
+      await deleteMyBeatData(v.user.id, new Date())
+      const [left] = await db.select().from(beatClaims).where(eq(beatClaims.beatId, b.id))
+      expect(left).toMatchObject({ userId: null, ipHash: null, wallet: v.wallet.toLowerCase() })
+    })
+  })
+
+  describe('live room presence', () => {
+    it('a check-in with no live connection is accepted and credits nothing; with one it credits; once it drops it stops', async () => {
+      const b = await seed()
+      const v = await visitor()
+      await track(v, b)
+      const set = (lastSeenAt: Date) => db.update(beatClaims).set({ lastSeenAt }).where(eq(beatClaims.userId, v.user.id))
+      await set(new Date(Date.now() - 30_000))
+      const none = await go('POST', path(b, 'checkin'), v.pass)
+      expect(none.statusCode, none.body).toBe(200)
+      expect((await row(b.id, v.user.id)).secondsPresent).toBe(0)
+
+      await markBeatLive(sceneA, v.user.id, Date.now() - 10 * 60_000)
+      await set(new Date(Date.now() - 30_000))
+      await go('POST', path(b, 'checkin'), v.pass)
+      const credited = (await row(b.id, v.user.id)).secondsPresent!
+      expect(credited).toBeGreaterThanOrEqual(29)
+      expect(credited).toBeLessThanOrEqual(31)
+
+      await clearBeatLive(sceneA, v.user.id)
+      await set(new Date(Date.now() - 30_000))
+      await go('POST', path(b, 'checkin'), v.pass)
+      expect((await row(b.id, v.user.id)).secondsPresent).toBe(credited)
+    })
+
+    it('only the time since the connection opened counts', async () => {
+      const b = await seed()
+      const v = await visitor()
+      await track(v, b)
+      await db.update(beatClaims).set({ lastSeenAt: new Date(Date.now() - 30_000) }).where(eq(beatClaims.userId, v.user.id))
+      await markBeatLive(sceneA, v.user.id, Date.now() - 10_000)
+      await go('POST', path(b, 'checkin'), v.pass)
+      const s = (await row(b.id, v.user.id)).secondsPresent!
+      expect(s).toBeGreaterThanOrEqual(9)
+      expect(s).toBeLessThanOrEqual(11)
+    })
+
+    it('the scene room marks a signed-in scene-pass visitor live while connected, and clears it when they leave', async () => {
+      const gs = await startGameServer()
+      try {
+        const v = await visitor()
+        expect(await beatLiveSince(sceneA, v.user.id)).toBeNull()
+        const c = await joinScene(gs.url, sceneA, v.pass)
+        await c.waitFor('beat_available')
+        let since: number | null = null
+        for (let i = 0; i < 50 && since === null; i++) {
+          since = await beatLiveSince(sceneA, v.user.id)
+          if (since === null) await new Promise((r) => setTimeout(r, 20))
+        }
+        expect(since).not.toBeNull()
+        expect(Math.abs(since! - Date.now())).toBeLessThan(10_000)
+        // A guest (no pass) is never live
+        const guest = await joinScene(gs.url, sceneA)
+        await guest.waitFor('beat_available')
+        await c.room.leave()
+        let gone: number | null = 1
+        for (let i = 0; i < 50 && gone !== null; i++) {
+          gone = await beatLiveSince(sceneA, v.user.id)
+          if (gone !== null) await new Promise((r) => setTimeout(r, 20))
+        }
+        expect(gone).toBeNull()
+        await guest.room.leave()
+      } finally {
+        await gs.stop()
+      }
+    })
+  })
+
+  describe('per-platform wallet check (Decentraland profile)', () => {
+    it('a wallet without a deployed profile gets profile_required at tracking and at claiming', async () => {
+      const b = await seed()
+      const v = await visitor()
+      setBeatPlatformCheckForTests('decentraland', async () => false)
+      const t = await track(v, b)
+      expect([t.statusCode, t.json().error]).toEqual([403, 'profile_required'])
+      setBeatPlatformCheckForTests('decentraland', async () => true)
+      expect((await track(v, b)).statusCode).toBe(200)
+      setBeatPlatformCheckForTests('decentraland', async () => false)
+      const c = await claim(v, b)
+      expect([c.statusCode, c.json().error]).toEqual([403, 'profile_required'])
+      expect((await row(b.id, v.user.id)).status).toBe('present')
+    })
+
+    it('the Decentraland check reads the catalyst (mocked fetch): profile passes, none fails, cached per wallet', async () => {
+      setBeatPlatformCheckForTests('decentraland', undefined)
+      const calls: string[] = []
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        calls.push(String(url))
+        if (String(url).endsWith('/0x00000000000000000000000000000000000000aa')) return new Response(JSON.stringify({ avatars: [{ name: 'A' }] }), { status: 200 })
+        if (String(url).endsWith('/0x00000000000000000000000000000000000000bb')) return new Response(JSON.stringify({ avatars: [] }), { status: 200 })
+        return new Response('not found', { status: 404 })
+      }))
+      const now = new Date()
+      expect(await platformCheck('decentraland', '0x00000000000000000000000000000000000000AA', now)).toBe(true)
+      expect(await platformCheck('decentraland', '0x00000000000000000000000000000000000000bb', now)).toBe(false)
+      expect(await platformCheck('decentraland', '0x00000000000000000000000000000000000000cc', now)).toBe(false)
+      expect(calls[0]).toBe(`${config.beats.profileCatalystUrl}/lambdas/profiles/0x00000000000000000000000000000000000000aa`)
+      expect(await platformCheck('decentraland', '0x00000000000000000000000000000000000000aa', new Date(now.getTime() + 23 * H))).toBe(true)
+      expect(calls).toHaveLength(3)
+      expect(await platformCheck('decentraland', '0x00000000000000000000000000000000000000aa', new Date(now.getTime() + 25 * H))).toBe(true)
+      expect(calls).toHaveLength(4)
+      // A platform with no check passes
+      expect(await platformCheck('hyperfy', '0x00000000000000000000000000000000000000cc', now)).toBe(true)
+    })
+
+    it('fails open when the catalyst is down, reporting it at most once an hour', async () => {
+      setBeatPlatformCheckForTests('decentraland', undefined)
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('down', { status: 503 })))
+      const now = new Date()
+      expect(await platformCheck('decentraland', randomWallet(), now)).toBe(true)
+      expect(await platformCheck('decentraland', randomWallet(), new Date(now.getTime() + 30 * 60_000))).toBe(true)
+      expect(vi.mocked(recordJobFailure)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(recordJobFailure).mock.calls[0][0]).toBe('beat_profile_check')
+      await platformCheck('decentraland', randomWallet(), new Date(now.getTime() + 61 * 60_000))
+      expect(vi.mocked(recordJobFailure)).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('host review before minting', () => {
+    const as = (u: TestUser) => ({ authorization: `Bearer ${tokenFor(u)}` })
+    it('holdMints is set on create; the host removes a claimed claim (its supply frees) and then sends; after that nothing can be removed', async () => {
+      const b = await seed({ holdMints: true, supplyCap: 1 })
+      const [x, y] = [await visitor(), await visitor()]
+      await track(x, b)
+      await track(y, b)
+      expect((await claim(x, b)).statusCode).toBe(200)
+      expect((await claim(y, b, '198.51.100.9')).json().error).toBe('all_claimed')
+      const got = (await app.inject({ method: 'GET', url: `/api/beats/${b.id}`, headers: as(host) })).json()
+      expect(got).toMatchObject({ holdMints: true, mintsReleasedAt: null })
+      expect(new Date(got.mintsHeldUntil).getTime()).toBe(b.endsAt.getTime() + 24 * H)
+      const list = (await app.inject({ method: 'GET', url: `/api/beats/${b.id}/claimants`, headers: as(host) })).json()
+      const xClaim = list.find((c: { status: string }) => c.status === 'claimed')
+      const rm = await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${xClaim.id}`, headers: as(host) })
+      expect(rm.statusCode, rm.body).toBe(200)
+      expect((await row(b.id, x.user.id)).status).toBe('removed')
+      // The freed slot: y can claim now; x can't claim again
+      expect((await claim(y, b, '198.51.100.9')).statusCode).toBe(200)
+      expect((await row(b.id, y.user.id)).status).toBe('claimed')
+      await claim(x, b)
+      expect((await row(b.id, x.user.id)).status).toBe('removed')
+      // Only claimed claims; a stranger can't
+      const stranger = await createUser()
+      expect((await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${xClaim.id}`, headers: as(stranger) })).statusCode).toBe(404)
+      expect((await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${xClaim.id}`, headers: as(host) })).json().error).toBe('not_removable')
+      const send = await app.inject({ method: 'POST', url: `/api/beats/${b.id}/release`, headers: as(host) })
+      expect(send.statusCode, send.body).toBe(200)
+      expect(send.json()).toMatchObject({ mintsHeldUntil: null })
+      expect(send.json().mintsReleasedAt).toBeTruthy()
+      const yId = (await row(b.id, y.user.id)).id
+      expect((await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${yId}`, headers: as(host) })).json().error).toBe('not_held')
+      expect((await app.inject({ method: 'POST', url: `/api/beats/${b.id}/release`, headers: as(host) })).json().error).toBe('not_held')
+    })
+
+    it('holdMints is off by default, set on create and editable until go-live', async () => {
+      const off = await seed({ status: 'draft', tokenId: null, startsAt: at(2 * H), endsAt: at(3 * H) })
+      const ed = await app.inject({ method: 'PATCH', url: `/api/beats/${off.id}`, headers: as(host), payload: { holdMints: true } })
+      expect(ed.statusCode, ed.body).toBe(200)
+      expect(ed.json().holdMints).toBe(true)
+      const live = await seed()
+      expect((await app.inject({ method: 'PATCH', url: `/api/beats/${live.id}`, headers: as(host), payload: { holdMints: true } })).json().error).toBe('locked')
+      expect((await app.inject({ method: 'PATCH', url: `/api/beats/${off.id}`, headers: as(host), payload: { holdMints: 'yes' } })).json().error).toBe('bad_request')
+    })
+  })
+})

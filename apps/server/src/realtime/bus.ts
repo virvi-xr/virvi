@@ -146,3 +146,15 @@ export async function publishOnBus(topic: string, data: unknown): Promise<void> 
     console.error(`[bus] ${topic.split(':')[0]} publish failed:`, err)
   }
 }
+
+/** The key-value side of the same Colyseus presence (Redis across servers, in memory on one), or null before initBus. */
+export interface BusKeyValue {
+  setex(key: string, value: string, seconds: number): unknown
+  get(key: string): unknown
+  del(key: string): unknown
+}
+
+export function busKeyValue(): BusKeyValue | null {
+  const p = presence as unknown as Partial<BusKeyValue> | null
+  return p && typeof p.setex === 'function' && typeof p.get === 'function' && typeof p.del === 'function' ? (p as BusKeyValue) : null
+}

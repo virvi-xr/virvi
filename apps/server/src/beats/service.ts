@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from 'drizzle-orm'
 import {
   BEAT_DESCRIPTION_MAX, BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX,
-  BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX, beatTxUrl, type BeatChain, type PublicBeat,
+  BEAT_CLAIM_GRACE_MS, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX, beatTxUrl, type BeatChain, type PublicBeat,
 } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
@@ -128,6 +128,10 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
       counts,
       frozen: r.frozenAt !== null,
       test: isAmoy(r.chain),
+      holdMints: r.holdMints,
+      mintsReleasedAt: r.mintsReleasedAt?.toISOString() ?? null,
+      mintsHeldUntil: r.holdMints && !r.mintsReleasedAt ? new Date(r.endsAt.getTime() + BEAT_CLAIM_GRACE_MS).toISOString() : null,
+      scheduledEndsAt: r.scheduledEndsAt?.toISOString() ?? null,
     }
   })
 }
@@ -185,6 +189,8 @@ export async function listSceneBeats(c: BeatCaller, sceneId: string): Promise<Pu
 }
 
 export interface Claimant {
+  /** The claim's id, for removing it while mints are held (DELETE /api/beats/:id/claims/:claimId). */
+  id: string
   wallet: string
   displayName: string | null
   status: string
@@ -199,6 +205,7 @@ export async function listClaimants(c: BeatCaller, beatId: string): Promise<Clai
   const claims = await db.select().from(beatClaims).where(and(eq(beatClaims.beatId, row.id), eq(beatClaims.deleteRequested, false)))
     .orderBy(desc(beatClaims.createdAt))
   return claims.map((k) => ({
+    id: k.id,
     wallet: k.wallet,
     displayName: k.displayName,
     status: k.status,
@@ -253,6 +260,12 @@ function parseCap(v: unknown): number {
 function parseTradeable(v: unknown): boolean {
   if (v === undefined) return false
   if (typeof v !== 'boolean') throw new BeatError(400, 'bad_request', 'Tradeable must be true or false.')
+  return v
+}
+
+function parseHold(v: unknown): boolean {
+  if (v === undefined) return false
+  if (typeof v !== 'boolean') throw new BeatError(400, 'bad_request', 'Hold for review must be true or false.')
   return v
 }
 
@@ -321,13 +334,14 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
   const minutes = has(body, 'minPresentMinutes') ? parseMinutes(body.minPresentMinutes) : BEAT_MIN_PRESENT_DEFAULT_MINUTES
   const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : BEAT_SUPPLY_CAP_DEFAULT
   const tradeable = parseTradeable(body.tradeable)
+  const holdMints = parseHold(body.holdMints)
   const imageMediaId = await checkImage(c, body.imageMediaId)
 
   const row = await db.transaction(async (tx) => {
     await lockScenes(tx, sceneIds)
     await checkOverlap(tx, sceneIds, startsAt, endsAt)
     const [created] = await tx.insert(beats).values({
-      chain, ownerUserId: c.userId, name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: minutes * 60, supplyCap, tradeable,
+      chain, ownerUserId: c.userId, name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: minutes * 60, supplyCap, tradeable, holdMints,
     }).returning()
     await tx.insert(beatScenes).values(sceneIds.map((sceneId) => ({ beatId: created.id, sceneId })))
     return created
@@ -338,8 +352,10 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
 // ── Edit ─────────────────────────────────────────────────────────────────────
 
 /**
- * Before payment anything changes. After payment and before the start, with nothing frozen, the name, description,
- * image, window, scenes and minimum time change; the cap and tradeable can't (a cap raise is a top-up). Otherwise locked.
+ * Before payment anything changes. After payment and before the start (go-live), with nothing frozen, the name,
+ * description, image, tradeable, hold for review, window, scenes and minimum time change; the cap can't (a cap raise is a
+ * top-up). From go-live everything is locked (409 `locked`): that is when the BEAT goes on chain with its tradeable flag
+ * and the art is frozen (standards I1, I2).
  */
 export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now = new Date()): Promise<PublicBeat> {
   const { row: seen } = await loadManageable(c, beatId)
@@ -367,17 +383,17 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now 
     const minutes = has(body, 'minPresentMinutes') ? parseMinutes(body.minPresentMinutes) : row.minPresentSeconds / 60
     const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : row.supplyCap
     const tradeable = has(body, 'tradeable') ? parseTradeable(body.tradeable) : row.tradeable
+    const holdMints = has(body, 'holdMints') ? parseHold(body.holdMints) : row.holdMints
     if (paid && supplyCap !== row.supplyCap) throw locked('The supply is paid for. Add more supply instead.')
-    if (paid && tradeable !== row.tradeable) throw locked("Whether it can be traded can't change after payment.")
     const imageMediaId = newImage ?? row.imageMediaId
     // The BEAT's scenes as they are now, read after the lock (another edit may have moved them since loadManageable)
     const sceneIds = newScenes ?? (await tx.select({ sceneId: beatScenes.sceneId }).from(beatScenes).where(eq(beatScenes.beatId, row.id))).map((r) => r.sceneId)
     await lockScenes(tx, sceneIds)
     await checkOverlap(tx, sceneIds, startsAt, endsAt, row.id)
     const [updated] = await tx.update(beats).set({
-      name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, updatedAt: now,
-      // A new image on a paid BEAT: the frozen copy is stale until copyBeatImage redoes it; the live media URL shows meanwhile
-      ...(paid && imageChanged ? { imageUrl: null } : {}),
+      name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, holdMints, updatedAt: now,
+      // The frozen copy is made at go-live; a stale one (from before this change) never stands for the new image
+      ...(imageChanged ? { imageUrl: null } : {}),
     }).where(eq(beats.id, row.id)).returning()
     if (newScenes) {
       await tx.delete(beatScenes).where(eq(beatScenes.beatId, row.id))
@@ -385,9 +401,6 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now 
     }
     return updated
   })
-  // A paid BEAT without its frozen copy (this edit changed the image, or an earlier copy failed) gets it redone, so a retry
-  // of the same edit tries again. The edit itself is committed either way.
-  if (result.status === 'paid' && result.imageUrl === null) await copyBeatImage(result.id)
   return getBeatRow(result.id)
 }
 
@@ -439,13 +452,55 @@ export async function cancelBeat(c: BeatCaller, beatId: string, now = new Date()
   return getBeatRow(beatId)
 }
 
-/** Ends a live BEAT now. */
+/** Ends a live BEAT now. ends_at becomes now; the scheduled end is kept for the token metadata (standards M7). */
 export async function endBeatEarly(c: BeatCaller, beatId: string, now = new Date()): Promise<PublicBeat> {
   const { row } = await loadManageable(c, beatId)
-  const [ended] = await db.update(beats).set({ status: 'ended', endsAt: now, updatedAt: now })
+  const [ended] = await db.update(beats).set({ status: 'ended', endsAt: now, scheduledEndsAt: sql`coalesce(${beats.scheduledEndsAt}, ${beats.endsAt})`, updatedAt: now })
     .where(and(eq(beats.id, row.id), eq(beats.status, 'live'))).returning({ id: beats.id })
   if (!ended) throw new BeatError(409, 'not_live', "This BEAT isn't running right now.")
   return getBeatRow(row.id)
+}
+
+// ── Host review (hold mints) ─────────────────────────────────────────────────
+
+/** True while the BEAT's claims wait for the host: held, not sent, and the claim grace after its end not run out. */
+export function mintsHeld(r: Pick<BeatRow, 'holdMints' | 'mintsReleasedAt' | 'endsAt'>, now: Date): boolean {
+  return r.holdMints && !r.mintsReleasedAt && r.endsAt.getTime() + BEAT_CLAIM_GRACE_MS > now.getTime()
+}
+
+/** The host's Send: a held BEAT's claims go to the minting job now. 409 `not_held` when nothing is held; `not_live` before it starts. */
+export async function releaseBeatMints(c: BeatCaller, beatId: string, now = new Date()): Promise<PublicBeat> {
+  await loadManageable(c, beatId)
+  await db.transaction(async (tx) => {
+    await lockBeat(tx, beatId)
+    const [row] = await tx.select().from(beats).where(eq(beats.id, beatId))
+    if (!row) throw notFound()
+    if (row.status !== 'live' && row.status !== 'ended') throw new BeatError(409, 'not_live', "This BEAT hasn't started, so there's nothing to send yet.")
+    if (!mintsHeld(row, now)) throw new BeatError(409, 'not_held', "This BEAT's claims aren't being held.")
+    await tx.update(beats).set({ mintsReleasedAt: now, updatedAt: now }).where(eq(beats.id, beatId))
+  })
+  return getBeatRow(beatId)
+}
+
+/**
+ * The host takes a claim out while the BEAT's mints are held: it becomes `removed` (never minted, can't be claimed again
+ * by that visitor) and frees its supply. Only a `claimed` claim, under the BEAT's lock. 409 `not_held` once mints are
+ * sent (or were never held), `not_removable` for a claim in any other state; 404 for a claim not on this BEAT.
+ */
+export async function removeBeatClaim(c: BeatCaller, beatId: string, claimId: string, now = new Date()): Promise<{ removed: true }> {
+  await loadManageable(c, beatId)
+  if (!UUID.test(claimId)) throw new BeatError(404, 'not_found', 'Claim not found.')
+  await db.transaction(async (tx) => {
+    await lockBeat(tx, beatId)
+    const [row] = await tx.select().from(beats).where(eq(beats.id, beatId)).for('update')
+    if (!row) throw notFound()
+    if (!mintsHeld(row, now)) throw new BeatError(409, 'not_held', "This BEAT's claims are already being sent, so they can't be removed.")
+    const [claim] = await tx.select().from(beatClaims).where(and(eq(beatClaims.id, claimId), eq(beatClaims.beatId, beatId), eq(beatClaims.deleteRequested, false)))
+    if (!claim) throw new BeatError(404, 'not_found', 'Claim not found.')
+    if (claim.status !== 'claimed') throw new BeatError(409, 'not_removable', 'Only a claim that is waiting to be sent can be removed.')
+    await tx.update(beatClaims).set({ status: 'removed' }).where(and(eq(beatClaims.id, claimId), eq(beatClaims.status, 'claimed')))
+  })
+  return { removed: true }
 }
 
 // ── Payments ─────────────────────────────────────────────────────────────────

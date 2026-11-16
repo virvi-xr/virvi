@@ -347,7 +347,7 @@ async function revertTopup(tx: Pick<typeof db, 'select' | 'update'>, beatId: str
   const [row] = await tx.select({ cap: beats.supplyCap }).from(beats).where(eq(beats.id, beatId)).for('update')
   if (!row || raise <= 0) return null
   const [c] = await tx.select({ n: sql<number>`count(*)::int` }).from(beatClaims)
-    .where(and(eq(beatClaims.beatId, beatId), sql`${beatClaims.status} <> 'present'`))
+    .where(and(eq(beatClaims.beatId, beatId), sql`${beatClaims.status} not in ('present', 'removed')`))
   const claims = c?.n ?? 0
   const cap = Math.max(claims, row.cap - raise)
   await tx.update(beats).set({ supplyCap: cap, updatedAt: now }).where(eq(beats.id, beatId))

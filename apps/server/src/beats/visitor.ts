@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto'
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 import {
   BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION, beatTxUrl, cleanDisplayName,
@@ -7,8 +8,11 @@ import { config } from '../config.js'
 import { db } from '../db/connection.js'
 import { beatClaims, beats, beatScenes, mediaAssets } from '../db/schema.js'
 import { checkInDelta } from '../presence/attendance.js'
+import { ipKey } from '../errors/limits.js'
 import { BeatError } from './errors.js'
+import { beatLiveSince } from './live.js'
 import { beatImageUrl } from './metadata.js'
+import { platformCheck, type BeatPlatform } from './platform-checks.js'
 
 /**
  * BEATs (LIV-11), the visitor side: the scene's current BEAT, opting in, check-ins, claiming and stopping. No Fastify
@@ -26,6 +30,17 @@ export interface VisitorCaller {
   wallet: string | null
   /** The Decentraland sign-in name the pass came with. */
   signInName: string | null
+  /** The platform the pass is from: its own wallet check applies (platform-checks.ts). */
+  platform?: BeatPlatform
+  /** The client's address (request.ip, which respects TRUST_PROXY_HOPS), for the per-network claim limit. */
+  ip?: string | null
+}
+
+const profileRequired = () => new BeatError(403, 'profile_required', 'Set up your Decentraland profile (an avatar) first, then come back to collect this BEAT.')
+
+/** The network a claim came from, as a keyed hash salted with the BEAT's id: never the address itself. */
+export function beatNetworkHash(beatId: string, ip: string): string {
+  return createHmac('sha256', config.jwtSecret).update(`beat-network:${beatId}:${ipKey(ip)}`).digest('hex').slice(0, 32)
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -140,6 +155,8 @@ export async function trackBeat(sceneId: string, beatId: string, c: VisitorCalle
   if (!c.wallet) throw new BeatError(403, 'no_wallet', 'Sign in with a wallet to collect BEATs.')
   if (now.getTime() > b.endsAt.getTime()) throw new BeatError(409, 'too_late', 'This BEAT has ended.')
   if (now.getTime() < b.startsAt.getTime() - BEAT_CARD_LEAD_MS) throw new BeatError(409, 'too_early', "This BEAT hasn't opened yet.")
+  // Checked before tracking starts too, so a wallet that can't claim learns it now rather than after its time
+  if (!(await platformCheck(c.platform ?? 'decentraland', c.wallet, now))) throw profileRequired()
   const wallet = c.wallet.toLowerCase()
   const displayName = cleanDisplayName(c.signInName, wallet)
   await db.transaction(async (tx) => {
@@ -165,29 +182,41 @@ function inWindowSeconds(b: BeatRow, now: Date, addSeconds: number): number {
 }
 
 /**
- * A check-in: the time since the last (checkInDelta, capped) counts, but only the part inside [starts_at, ends_at]. A
- * check-in too soon after the last (another scene of the same BEAT, say) changes nothing and returns the claim as it is.
+ * A check-in: the time since the last (checkInDelta, capped) counts, but only the part inside [starts_at, ends_at], and
+ * only while the user held a live room connection from this scene (live.ts): the part since that connection opened. With
+ * none the check-in is accepted (its time moves on) and credits nothing. A check-in too soon after the last (another
+ * scene of the same BEAT, say) changes nothing and returns the claim as it is.
  */
 export async function checkInBeat(sceneId: string, beatId: string, userId: string, now = new Date()): Promise<{ beat: VisitorBeat }> {
   const b = await beatOnScene(sceneId, beatId)
+  const liveSince = await beatLiveSince(sceneId, userId)
   await db.transaction(async (tx) => {
     const claim = await myClaimRow(tx, b.id, userId, true)
     if (!claim) throw notTracking()
     if (claim.status !== 'present') return
     const { accepted, addSeconds } = checkInDelta(claim.lastSeenAt, now)
     if (!accepted) return
-    const add = inWindowSeconds(b, now, addSeconds)
+    const live = liveSince === null ? 0 : Math.max(0, Math.min(addSeconds, Math.floor((now.getTime() - liveSince) / 1000)))
+    const add = inWindowSeconds(b, now, live)
     await tx.update(beatClaims).set({ lastSeenAt: now, secondsPresent: sql`${beatClaims.secondsPresent} + ${add}` }).where(eq(beatClaims.id, claim.id))
   })
   return visitorView(b.id, userId)
 }
 
 /**
- * Claim: a present claim with enough time, from the start until the grace runs out, while the supply lasts. Under the BEAT row's lock,
- * so concurrent claims count the supply one at a time. A claim already further along is returned as it is.
+ * Claim: a present claim with enough time, from the start until the grace runs out, while the supply lasts and the
+ * claimer's network has claimed fewer than BEAT_CLAIMS_PER_IP of this BEAT. Under the BEAT row's lock, so concurrent
+ * claims count the supply and the network one at a time. The platform's wallet check (platform-checks.ts) runs first.
+ * A claim already further along is returned as it is.
  */
-export async function claimBeat(sceneId: string, beatId: string, userId: string, now = new Date()): Promise<{ beat: VisitorBeat }> {
+export async function claimBeat(
+  sceneId: string, beatId: string, c: Pick<VisitorCaller, 'userId' | 'platform' | 'ip'>, now = new Date(),
+): Promise<{ beat: VisitorBeat }> {
+  const userId = c.userId
   const seen = await beatOnScene(sceneId, beatId)
+  const pre = await myClaimRow(db, seen.id, userId)
+  if (pre?.status === 'present' && !(await platformCheck(c.platform ?? 'decentraland', pre.wallet, now))) throw profileRequired()
+  const network = c.ip ? beatNetworkHash(seen.id, c.ip) : null
   await db.transaction(async (tx) => {
     const [b] = await tx.select().from(beats).where(eq(beats.id, seen.id)).for('update')
     if (!b || !VISIBLE.includes(b.status)) throw notFound()
@@ -199,7 +228,15 @@ export async function claimBeat(sceneId: string, beatId: string, userId: string,
     if (now.getTime() > claimUntil(b).getTime()) throw new BeatError(409, 'too_late', 'The time to claim this BEAT is over.')
     if ((claim.secondsPresent ?? 0) < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
     if ((await takenCount(tx, b.id)) >= b.supplyCap) throw new BeatError(409, 'all_claimed', 'All of these BEATs have been claimed.')
-    await tx.update(beatClaims).set({ status: 'claimed', claimedAt: now }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
+    if (network) {
+      // Every claim made from the network counts, a removed one too (a host's removal doesn't hand it more)
+      const [n] = await tx.select({ n: sql<number>`count(*)::int` }).from(beatClaims)
+        .where(and(eq(beatClaims.beatId, b.id), eq(beatClaims.ipHash, network), sql`${beatClaims.status} <> 'present'`))
+      if ((n?.n ?? 0) >= config.beats.claimsPerIp) {
+        throw new BeatError(429, 'too_many_from_network', 'This BEAT has already been claimed too many times from your network.')
+      }
+    }
+    await tx.update(beatClaims).set({ status: 'claimed', claimedAt: now, ipHash: network }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
   })
   return visitorView(seen.id, userId)
 }

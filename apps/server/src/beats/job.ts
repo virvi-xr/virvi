@@ -516,6 +516,10 @@ async function sendNext(client: BeatChainClient, now: Date, r: BeatTickResult, b
   }
 }
 
+/** Host review: a held BEAT's claims wait until the host sends them or its claim grace runs out (service.mintsHeld). */
+const notHeld = (now: Date) => sql`not (${beats.holdMints} and ${beats.mintsReleasedAt} is null
+  and ${beats.endsAt} > ${new Date(now.getTime() - BEAT_CLAIM_GRACE_MS).toISOString()}::timestamptz)`
+
 /** The claims that keep a BEAT from being closed: pending ones, and failed ones an admin's retry could still mint. */
 const holdsClose = sql`exists (select 1 from beat_claims c where c.beat_id = ${beats.id} and (c.status in ('claimed', 'minting')
   or (c.status = 'failed' and coalesce(c.fail_reason, '') not in (${sql.join(BEAT_FINAL_FAIL_REASONS.map((x) => sql`${x}`), sql`, `)}))))`
@@ -551,7 +555,7 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
     .innerJoin(beats, eq(beats.id, beatClaims.beatId))
     .where(and(
       eq(beats.chain, chain), inArray(beats.status, ['live', 'ended']), isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt),
-      eq(beatClaims.status, 'claimed'), notSkipped(beats.id),
+      eq(beatClaims.status, 'claimed'), notSkipped(beats.id), notHeld(now),
     )).orderBy(asc(beatClaims.claimedAt), asc(beatClaims.id)).limit(1)
   if (oldest) return mintPlan(client, oldest.beatId, BigInt(oldest.tokenId!))
 
