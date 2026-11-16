@@ -14,7 +14,7 @@ import { deleteMyBeatData, scrubBeats } from '../src/beats/retention.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createScene, createUser, tokenFor, type TestUser } from './helpers/factories.js'
-import { fakeBeatChain, type FakeBeatChain } from './helpers/fake-beat-chain.js'
+import { fakeBeatChain, type FakeBeatChain, FAKE_BEAT_CONTRACT } from './helpers/fake-beat-chain.js'
 
 vi.mock('../src/errors/record.js', async (orig) => ({
   ...(await orig<typeof import('../src/errors/record.js')>()),
@@ -60,7 +60,7 @@ describe('BEAT privacy and retention (LIV-11)', () => {
     const [b] = await db.insert(beats).values({
       chain: 'polygon-amoy', ownerUserId: host.id, name: 'Seed', description: '', tokenId, imageUrl: 'https://cdn.virvi.test/frozen.webp',
       startsAt: at(-H), endsAt: o.endsAt ?? at(H), status: 'live',
-      ...(o.created ? { createdOnChainTx: '0xcreated', createdOnChainAt: at(-2 * H) } : {}),
+      ...(o.created ? { createdOnChainTx: '0xcreated', createdOnChainAt: at(-2 * H), contractAddress: FAKE_BEAT_CONTRACT } : {}),
     }).returning()
     const [p] = await db.insert(beatPayments).values({
       beatId: b.id, userId: host.id, kind: 'create', capFrom: 0, capTo: 100, method: 'test', amountCents: 0, status: 'paid', paidAt: at(-3 * H),

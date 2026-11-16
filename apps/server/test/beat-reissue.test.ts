@@ -22,7 +22,7 @@ import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
-import { fakeBeatChain, type FakeBeatChain } from './helpers/fake-beat-chain.js'
+import { fakeBeatChain, type FakeBeatChain, FAKE_BEAT_CONTRACT } from './helpers/fake-beat-chain.js'
 
 vi.mock('../src/errors/record.js', async (orig) => ({
   ...(await orig<typeof import('../src/errors/record.js')>()),
@@ -112,7 +112,7 @@ describe('BEAT reissue (LIV-11)', () => {
     const [b] = await db.insert(beats).values({
       chain, ownerUserId: admin.id, name: o.name ?? `Beat ${tokenId}`, description: '', tokenId, imageUrl: 'https://cdn.virvi.test/f.webp', tradeable: o.tradeable ?? false,
       startsAt: new Date(t - 3 * H), endsAt: o.open ? new Date(t + H) : new Date(t - 2 * H), status: o.open ? 'live' : 'ended',
-      createdOnChainTx: '0xc', createdOnChainAt: new Date(t - 3 * H),
+      createdOnChainTx: '0xc', createdOnChainAt: new Date(t - 3 * H), contractAddress: FAKE_BEAT_CONTRACT,
     }).returning()
     const [p] = await db.insert(beatPayments).values({ beatId: b.id, userId: admin.id, kind: 'create', capFrom: 0, capTo: 100, method: 'test', amountCents: 0, status: 'paid', paidAt: new Date() }).returning()
     await db.update(beats).set({ paymentId: p.id }).where(eq(beats.id, b.id))
@@ -1095,6 +1095,62 @@ describe('BEAT reissue (LIV-11)', () => {
       expect(await scrubBeats(later)).toMatchObject({ reissueRequests: 1 })
       expect((await db.select().from(beatReissueRequests)).map((r) => r.id)).toEqual([open])
       expect(await scrubBeats(new Date(Date.now() + (BEAT_RETENTION_DAYS + 9) * DAY))).toMatchObject({ reissueRequests: 0 })
+    })
+  })
+
+  describe('final pre-mainnet fixes', () => {
+    it('I-2: a BEAT the old wallet was never minted on chain is blocked NotMintedTo', async () => {
+      const ok = await minted({ name: 'Ok' })
+      const ghost = await minted({ name: 'Ghost' })
+      fake.createdBeat(BigInt(ghost.tokenId), { minted: [] })
+      await ask()
+      const by = Object.fromEntries((await queue())[0].beats.map((b: any) => [b.name, b]))
+      expect(by.Ok).toMatchObject({ blockers: [], eligible: true, chainState: { oldMinted: true } })
+      expect(by.Ghost).toMatchObject({ blockers: ['NotMintedTo'], eligible: false, chainState: { oldMinted: false } })
+      expect(ok.claim.id).toBeTruthy()
+    })
+
+    it('I-2: a retired BEAT (on a replaced contract) is shown Unavailable with no chain read, and the rest of the request still finishes', async () => {
+      const a = await minted({ name: 'Current' })
+      const old = await minted({ name: 'Retired' })
+      await db.update(beats).set({ contractAddress: '0x00000000000000000000000000000000000c0de1' }).where(eq(beats.id, old.beat.id))
+      const id = await approved()
+      const by = Object.fromEntries((await queue())[0].beats.map((b: any) => [b.name, b]))
+      expect(by.Retired).toMatchObject({ blockers: ['Unavailable'], eligible: false, chainState: null })
+      const files = await proposedFiles(id)
+      expect(files.map((f) => f.tokenIds)).toEqual([[String(a.tokenId)]])
+      runFiles(fake, files)
+      fake.mine(6)
+      await runBeatTick(now())
+      expect((await request(id)).status).toBe('done')
+      expect((await claim(a.claim.id)).wallet).toBe(newW)
+      expect((await claim(old.claim.id)).wallet).toBe(oldW)
+    })
+
+    it('M-3: claims on a chain no longer configured show as Unavailable on this chain, and the request is done for the rest', async () => {
+      setChain('polygon')
+      const amoy = await minted({ chain: 'polygon-amoy', name: 'Test' })
+      const main = await minted({ chain: 'polygon', name: 'Main' })
+      const id = await approved()
+      const by = Object.fromEntries((await queue())[0].beats.map((b: any) => [b.name, b]))
+      expect(by.Test).toMatchObject({ chain: 'polygon-amoy', blockers: ['Unavailable'], eligible: false })
+      runFiles(fake, await proposedFiles(id, 'polygon'))
+      fake.mine(30)
+      await runBeatTick(now())
+      expect((await request(id)).status).toBe('done')
+      expect((await claim(main.claim.id)).wallet).toBe(newW)
+      expect((await claim(amoy.claim.id)).wallet).toBe(oldW)
+    })
+
+    it('M-3: the reissue watcher runs on a chain whose minter has lost its role (it only reads)', async () => {
+      const a = await minted()
+      const id = await approved()
+      runFiles(fake, await proposedFiles(id))
+      fake.setMinterRole(false)
+      fake.mine(6)
+      await runBeatTick(now())
+      expect((await request(id)).status).toBe('done')
+      expect((await claim(a.claim.id)).wallet).toBe(newW)
     })
   })
 })

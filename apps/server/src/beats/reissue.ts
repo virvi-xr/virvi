@@ -14,6 +14,7 @@ import {
   afterCredentialsRevoked, blockWallet, isWalletBlocked, liftBlock, revokeAccountCredentials, unblockForRequest, unlinkWallet, type RevokedCredentials,
 } from '../auth/wallet-blocks.js'
 import { recordJobFailure } from '../errors/record.js'
+import { onBeatContract } from './contract.js'
 import { beatChainClient, type BeatChainClient } from './chain.js'
 import { BeatError } from './errors.js'
 
@@ -227,8 +228,9 @@ export interface ReissueCheck {
   chain: BeatChain
   tokenId: string
   tradeable: boolean
-  /** The live read: balanceOf(old, id), replacedBy(id, old) and minted(id, new); null when the chain couldn't be read. */
-  chainState: { oldBalance: string; replacedBy: string | null; newMinted: boolean } | null
+  /** The live read: balanceOf(old, id), replacedBy(id, old), minted(id, new) and minted(id, old); null when the chain
+   * couldn't be read, or the BEAT isn't on the chain's configured contract (Unavailable). */
+  chainState: { oldBalance: string; replacedBy: string | null; newMinted: boolean; oldMinted: boolean } | null
   blockers: BeatReissueBlocker[]
   eligible: boolean
   /** Already replaced by the new wallet on chain (a file landed, the watcher hasn't confirmed it yet). */
@@ -251,18 +253,25 @@ async function checkClaims(rows: ClaimRow[], r: Pick<Req, 'oldWallet' | 'newWall
     const tokenId = BigInt(beat.tokenId!)
     const blockers: BeatReissueBlocker[] = []
     let chainState: ReissueCheck['chainState'] = null
-    const client = beatChainClient(beat.chain)
+    // I-2 and M-3: only a BEAT on its chain's configured contract can be reissued (the chain has none now, or the BEAT
+    // is retired on a replaced contract): Unavailable, and the rest of the request can still finish
+    const available = onBeatContract(beat)
+    const client = available ? beatChainClient(beat.chain) : null
     if (client) {
       try {
-        const [oldBalance, replacedBy, newMinted] = await Promise.all([
+        const [oldBalance, replacedBy, newMinted, oldMinted] = await Promise.all([
           client.balanceOf(r.oldWallet, tokenId), client.replacedBy(tokenId, r.oldWallet), client.isMinted(tokenId, r.newWallet),
+          client.isMinted(tokenId, r.oldWallet),
         ])
-        chainState = { oldBalance: oldBalance.toString(), replacedBy, newMinted }
+        chainState = { oldBalance: oldBalance.toString(), replacedBy, newMinted, oldMinted }
       } catch (err) {
         console.error(`[beats] reissue chain read on ${beat.chain} failed (BEAT ${beat.id}): ${(err as Error).name}`)
       }
     }
-    if (!chainState) blockers.push('ChainUnavailable')
+    if (!available) blockers.push('Unavailable')
+    else if (!chainState) blockers.push('ChainUnavailable')
+    // The contract would revert NotMintedTo (also an id it doesn't know): the database and the chain disagree
+    if (chainState && !chainState.oldMinted) blockers.push('NotMintedTo')
     // Until the BEAT ends, the old wallet could open a new claim on it and be "minted" again (the contract skips it)
     if (beat.status !== 'cancelled' && beat.endsAt.getTime() > now.getTime()) blockers.push('BeatOpen')
     if (chainState?.replacedBy) blockers.push('AlreadyReplaced')
@@ -746,7 +755,9 @@ async function settle(tx: Exec, r: Req, now: Date): Promise<'done' | 'open'> {
     .where(eq(beatReissueItems.requestId, r.id))
   if (!items.length || items.some((i) => i.state === 'proposed' || i.state === 'clash')) return 'open'
   const covered = new Set(items.map((i) => i.claimId))
-  const left = await claimsOnWallet(tx, r.userId, r.oldWallet)
+  // A claim whose BEAT is Unavailable (its chain has no contract now, or it's retired) can't be reissued, so it doesn't
+  // hold the rest of the request open (M-3)
+  const left = (await claimsOnWallet(tx, r.userId, r.oldWallet)).filter((c) => onBeatContract(c.beat))
   if (left.some((c) => !covered.has(c.claim.id))) return 'open'
   if (!items.some((i) => i.state === 'reissued')) {
     if (r.status === 'proposed') {

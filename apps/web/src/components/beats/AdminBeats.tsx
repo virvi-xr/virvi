@@ -77,7 +77,7 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
                   <tr key={`${f.beatId}-${f.wallet}`} className="border-t border-gray-800">
                     <td className="p-2">{f.name}</td>
                     <td className="p-2"><CopyWallet wallet={f.wallet} /></td>
-                    <td className="p-2 text-xs text-gray-300" title={f.failReason ?? undefined}>{failReasonLabel(f.failReason, f.retryable)}</td>
+                    <td className="p-2 text-xs text-gray-300" title={f.failReason ?? undefined}>{failReasonLabel(f.failReason, f.retryable, f.retired)}</td>
                     <td className="p-2 text-right">{f.retryable && <button type="button" className="text-xs text-blue-300 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onRetry(f.beatId)}>Retry all failed for this BEAT</button>}</td>
                   </tr>
                 ))}

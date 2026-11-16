@@ -191,9 +191,13 @@ export type BeatReissueFileStatus = 'proposed' | 'done' | 'voided'
  * - ClaimOnNewWallet: another claim on this BEAT already uses the new wallet;
  * - BeatOpen: the BEAT is still running (reissue once it has ended);
  * - ChainUnavailable: the chain couldn't be read (no client, or the RPC failed);
+ * - Unavailable: the BEAT isn't on the chain's configured contract (the chain has none now, or its contract was
+ *   replaced and this BEAT is retired), so Virvi can't reissue it; the rest of the request can still finish;
+ * - NotMintedTo: the contract never sent this BEAT to the old wallet (minted(id, old) is false);
  * - Withdrawn: an admin withdrew the file it was in.
  */
-export type BeatReissueBlocker = 'NothingToReplace' | 'AlreadyReplaced' | 'AlreadyMinted' | 'ClaimOnNewWallet' | 'BeatOpen' | 'ChainUnavailable' | 'Withdrawn'
+export type BeatReissueBlocker = 'NothingToReplace' | 'AlreadyReplaced' | 'AlreadyMinted' | 'ClaimOnNewWallet' | 'BeatOpen' | 'ChainUnavailable'
+  | 'Unavailable' | 'NotMintedTo' | 'Withdrawn'
 /**
  * Red flags the admin queue raises on a request:
  * - new_wallet_recent: the new wallet was linked less than 7 days before the request was filed;

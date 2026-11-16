@@ -43,6 +43,8 @@ export const BEAT_MIN_PRIORITY_FEE_WEI = 30_000_000_000n
 export interface BeatChainClient {
   readonly chain: BeatChain
   readonly minterAddress: string
+  /** The contract this client reads and sends to (checksummed). */
+  readonly contract: string
   /** The minter's POL balance. */
   balanceWei(): Promise<bigint>
   nonce(tag: 'latest' | 'pending'): Promise<number>
@@ -198,6 +200,8 @@ class RpcBeatChain implements BeatChainClient {
     this.#wallet = new Wallet(minterKey)
     this.minterAddress = this.#wallet.address
   }
+
+  get contract() { return this.#contract }
 
   async #rpc<T>(op: string, fn: () => Promise<T>): Promise<T> {
     try {

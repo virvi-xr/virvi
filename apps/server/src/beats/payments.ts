@@ -10,6 +10,7 @@ import { addCredit, creditBalance, takeCredit } from '../studio/credit.js'
 import { BeatError } from './errors.js'
 import { frozenImage, readImageBytes } from './image.js'
 import { lockBeat } from './lock.js'
+import { notRetiredSql } from './contract.js'
 
 /**
  * BEAT payments (LIV-11): the first purchase of a BEAT's supply ('create') and later cap raises ('topup'), by card
@@ -432,7 +433,8 @@ export async function sweepBeatPayments(now: Date): Promise<{ expired: number; c
   )).returning({ id: beatPayments.id })
   const missing = await db.select({ id: beats.id }).from(beats).where(and(
     inArray(beats.status, ['paid', 'live', 'ended']), isNull(beats.imageUrl), isNotNull(beats.tokenId), isNull(beats.closedOnChainAt),
-    isNull(beats.artFailedAt), or(isNull(beats.artNextAttemptAt), lte(beats.artNextAttemptAt, now)),
+    // A retired BEAT (on a replaced contract, I-2) is never created, so its art is never retried or alerted on
+    notRetiredSql(), isNull(beats.artFailedAt), or(isNull(beats.artNextAttemptAt), lte(beats.artNextAttemptAt, now)),
   ))
   let copied = 0
   const copyFailed: string[] = []

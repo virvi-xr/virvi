@@ -10,7 +10,7 @@ import { beatPaused, resetBeatJobState, retryFailedClaims, runBeatTick } from '.
 import { recordJobFailure } from '../src/errors/record.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
-import { fakeBeatChain, type FakeBeatChain } from './helpers/fake-beat-chain.js'
+import { fakeBeatChain, type FakeBeatChain, FAKE_BEAT_CONTRACT } from './helpers/fake-beat-chain.js'
 
 vi.mock('../src/errors/record.js', async (orig) => ({
   ...(await orig<typeof import('../src/errors/record.js')>()),
@@ -52,7 +52,7 @@ describe('admin BEAT routes (LIV-11)', () => {
   async function seedBeat(tokenId: number) {
     const [b] = await db.insert(beats).values({
       chain: 'polygon-amoy', ownerUserId: admin.id, name: `Beat ${tokenId}`, description: '', tokenId, imageUrl: 'https://cdn.virvi.test/f.webp',
-      startsAt: new Date(T0.getTime() - H), endsAt: new Date(T0.getTime() + H), status: 'live', createdOnChainTx: '0xc', createdOnChainAt: T0,
+      startsAt: new Date(T0.getTime() - H), endsAt: new Date(T0.getTime() + H), status: 'live', createdOnChainTx: '0xc', createdOnChainAt: T0, contractAddress: FAKE_BEAT_CONTRACT,
     }).returning()
     const [p] = await db.insert(beatPayments).values({ beatId: b.id, userId: admin.id, kind: 'create', capFrom: 0, capTo: 100, method: 'test', amountCents: 0, status: 'paid', paidAt: T0 }).returning()
     await db.update(beats).set({ paymentId: p.id }).where(eq(beats.id, b.id))
@@ -91,7 +91,7 @@ describe('admin BEAT routes (LIV-11)', () => {
       minGasWei: parseEther('1').toString(), batchCostWei: expect.any(String), topUpWei: null,
     }])
     expect(json.counts).toEqual({ claimed: 0, minting: 1, failed: 1, givenUp: 0 })
-    expect(json.failed).toEqual([{ beatId: b.id, name: 'Beat 901', wallet: w1, failReason: 'receiver_rejected', retryable: true }])
+    expect(json.failed).toEqual([{ beatId: b.id, name: 'Beat 901', wallet: w1, failReason: 'receiver_rejected', retired: false, retryable: true }])
     expect(json.batches).toHaveLength(1)
     const [batch] = await db.select().from(beatMintBatches)
     expect(json.batches[0]).toMatchObject({ id: batch.id, chain: 'polygon-amoy', kind: 'mint', tokenId: '901', nonce: batch.nonce, status: 'sent', attempts: batch.attempts })

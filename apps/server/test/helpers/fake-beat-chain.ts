@@ -94,6 +94,8 @@ export type FakeMinedTx = FakeTx & { blockNumber: number; ok: boolean; reason: s
 export type FakeBeatChainOptions = {
   chain?: BeatChain
   minterKey?: string
+  /** The contract address (default FAKE_BEAT_CONTRACT); a second contract on the same chain is another fake. */
+  contract?: string
   /** Default 10 POL. */
   balanceWei?: bigint
   /** The base fee mined txs pay (default 30 gwei). */
@@ -103,7 +105,8 @@ export type FakeBeatChainOptions = {
   rejectingWallets?: string[]
 }
 
-const CONTRACT = getAddress('0x00000000000000000000000000000000000b3a75')
+/** The fake chain's default contract, as BEATS_READY configures. */
+export const FAKE_BEAT_CONTRACT = getAddress('0x00000000000000000000000000000000000b3a75')
 const GWEI = 1_000_000_000n
 const lc = (a: string) => a.toLowerCase()
 
@@ -120,6 +123,7 @@ function decodeCall(data: string): BeatCall {
 
 export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
   const chain = opts.chain ?? 'polygon-amoy'
+  const CONTRACT = getAddress(opts.contract ?? FAKE_BEAT_CONTRACT)
   const wallet = opts.minterKey ? new Wallet(opts.minterKey) : Wallet.createRandom()
   let block = 100
   let balance = opts.balanceWei ?? 10n * 10n ** 18n

@@ -70,7 +70,7 @@ describe('BEAT minting job (LIV-11)', () => {
     const [b] = await db.insert(beats).values({
       chain: o.chain ?? 'polygon-amoy', ownerUserId: hostId, name: 'Seed', description: '', tokenId, imageUrl: 'https://cdn.virvi.test/frozen.webp',
       startsAt: o.startsAt ?? at(-H), endsAt: o.endsAt ?? at(H), status: o.status ?? 'live',
-      ...(o.created ? { createdOnChainTx: '0xcreated', createdOnChainAt: at(-2 * H) } : {}),
+      ...(o.created ? { createdOnChainTx: '0xcreated', createdOnChainAt: at(-2 * H), contractAddress: (o.chainFake ?? fake).contract } : {}),
     }).returning()
     const [p] = await db.insert(beatPayments).values({
       beatId: b.id, userId: hostId, kind: 'create', capFrom: 0, capTo: 100, method: 'test', amountCents: 0,
@@ -1136,6 +1136,51 @@ describe('BEAT minting job (LIV-11)', () => {
       await runBeatTick(at(MIN))
       expect(beatPaused('polygon-amoy').paused).toBe(false)
       expect((await beatOf(b.id)).createdOnChainTx).toBe('0xours')
+    })
+  })
+
+  describe('final pre-mainnet fixes: BEATs bound to a contract (I-2)', () => {
+    const NEW_CONTRACT = '0x00000000000000000000000000000000000c0de2'
+
+    it('a BEAT records the contract its create was planned for', async () => {
+      const b = await seed({ status: 'paid', startsAt: T0, endsAt: at(3 * H) })
+      expect((await beatOf(b.id)).contractAddress).toBeNull()
+      await runBeatTick(T0)
+      expect(fake.mempool()[0].call.kind).toBe('create')
+      expect((await beatOf(b.id)).contractAddress).toBe(fake.contract)
+    })
+
+    it('switching the configured contract leaves the old BEATs alone (no create, mint, close, art or retry), with no alerts; new BEATs go on the new one', async () => {
+      // On the old contract: one live with a claim waiting, one ended past its grace (a close is due) with a retryable
+      // failure, and one ended without its art copy; plus one planned for the old contract but never created
+      const live = await seed({ created: true })
+      await claims(live.id, [wallet()])
+      const ended = await seed({ status: 'ended', startsAt: at(-30 * H), endsAt: new Date(T0.getTime() - BEAT_CLAIM_GRACE_MS - H), created: true })
+      await claims(ended.id, [wallet()], { status: 'failed', failReason: 'reverted:x' })
+      const noArt = await seed({ status: 'ended', startsAt: at(-30 * H), endsAt: at(-H), created: true })
+      await db.update(beats).set({ imageUrl: null }).where(eq(beats.id, noArt.id))
+      const planned = await seed({ status: 'live' })
+      await db.update(beats).set({ contractAddress: fake.contract }).where(eq(beats.id, planned.id))
+
+      const next = fakeBeatChain({ chain: 'polygon-amoy', contract: NEW_CONTRACT })
+      setBeatChainClientForTests('polygon-amoy', next)
+      const fresh = await seed({ status: 'live', chainFake: next })
+      vi.mocked(recordJobFailure).mockClear()
+      for (let i = 1; i <= 4; i++) {
+        await runBeatTick(at(i * MIN))
+        next.mine(6)
+      }
+      // Only the new BEAT went out, on the new contract
+      expect(next.minedTxs().map((t) => t.call)).toEqual([{ kind: 'create', tokenId: BigInt(fresh.tokenId!), tradeable: false }])
+      expect((await beatOf(fresh.id)).contractAddress).toBe(next.contract)
+      expect(recordJobFailure).not.toHaveBeenCalled()
+      expect(await statusCount(live.id)).toEqual({ claimed: 1 })
+      expect(await statusCount(ended.id)).toEqual({ failed: 1 })
+      expect((await beatOf(ended.id)).closedOnChainAt).toBeNull()
+      expect((await beatOf(noArt.id)).artFailedAt).toBeNull()
+      expect((await beatOf(planned.id)).createdOnChainTx).toBeNull()
+      expect(await retryFailedClaims(ended.id)).toEqual({ retried: 0, skippedClosed: 1 })
+      expect(await statusCount(ended.id)).toEqual({ failed: 1 })
     })
   })
 })

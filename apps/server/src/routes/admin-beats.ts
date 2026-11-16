@@ -8,6 +8,7 @@ import { authenticate } from '../middleware/auth.js'
 import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { beatChainClient, beatChainMissing, beatMinGasWei } from '../beats/chain.js'
+import { beatRetired, notRetiredSql } from '../beats/contract.js'
 import { BeatError } from '../beats/errors.js'
 import {
   adminListReissueRequests, adminLiftBlock, getSafeBatchFile, previewSafeBatch, proposeSafeBatch, reviewReissueRequest, unlinkAccountWallet, withdrawReissue,
@@ -84,10 +85,16 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
     const givenUp = gu?.n ?? 0
     const counts = { claimed: n('claimed'), minting: n('minting'), failed: n('failed') - givenUp, givenUp }
 
-    const failedRows = await db.select({ beatId: beatClaims.beatId, name: beats.name, wallet: beatClaims.wallet, failReason: beatClaims.failReason })
+    const failedRows = await db.select({
+      beatId: beatClaims.beatId, name: beats.name, wallet: beatClaims.wallet, failReason: beatClaims.failReason, chain: beats.chain, contractAddress: beats.contractAddress,
+    })
       .from(beatClaims).innerJoin(beats, eq(beats.id, beatClaims.beatId))
       .where(eq(beatClaims.status, 'failed')).orderBy(desc(beatClaims.createdAt)).limit(FAILED_LIST_MAX)
-    const failed = failedRows.map((f) => ({ ...f, retryable: f.failReason !== BEAT_GIVEN_UP }))
+    // A retired BEAT's claims (on a replaced contract, I-2) are shown, read-only: never retried
+    const failed = failedRows.map(({ chain: _c, contractAddress: _a, ...f }) => {
+      const retired = beatRetired({ chain: _c, contractAddress: _a })
+      return { ...f, retired, retryable: f.failReason !== BEAT_GIVEN_UP && !retired }
+    })
 
     const rows = await db.select().from(beatMintBatches).orderBy(desc(beatMintBatches.createdAt), desc(beatMintBatches.nonce)).limit(BATCH_LIST_MAX)
     const batches = rows.map((b) => {
@@ -102,6 +109,7 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
       .from(beatClaims).innerJoin(beats, eq(beats.id, beatClaims.beatId))
       .where(and(
         eq(beats.status, 'ended'), lte(beats.endsAt, new Date(Date.now() - BEAT_CLAIM_GRACE_MS)), isNull(beats.closedOnChainAt), retryableFailed,
+        notRetiredSql(),
       ))
       .groupBy(beats.id, beats.name, beats.endsAt).orderBy(beats.endsAt)
     return reply.send({ chains, counts, failed, batches, held })

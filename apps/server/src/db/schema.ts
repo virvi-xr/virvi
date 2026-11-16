@@ -2660,6 +2660,9 @@ export const beats = pgTable('beats', {
   createdOnChainTx: text('created_on_chain_tx'),
   createdOnChainAt: timestamp('created_on_chain_at', { withTimezone: true }),
   closedOnChainAt: timestamp('closed_on_chain_at', { withTimezone: true }),
+  // The contract the BEAT is (or will be) created on: set when its create is planned, from the chain's configured
+  // contract. Once the chain's contract changes, a BEAT on another contract is retired: shown, never acted on
+  contractAddress: text('contract_address'),
   paymentId: uuid('payment_id').references((): AnyPgColumn => beatPayments.id, { onDelete: 'set null' }),
   // Host review: nothing is minted until the host sends (mints_released_at) or the claim grace after ends_at runs out
   holdMints: boolean('hold_mints').notNull().default(false),

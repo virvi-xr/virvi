@@ -27,8 +27,9 @@ export interface AdminBeatsOverview {
   chains: AdminBeatChain[]
   /** `failed` is what a retry could still send; given-up claims are counted apart. */
   counts: { claimed: number; minting: number; failed: number; givenUp: number }
-  /** `retryable` false for a claim an admin gave up on (fail reason `given_up`). */
-  failed: Array<{ beatId: string; name: string; wallet: string; failReason: string | null; retryable: boolean }>
+  /** `retryable` false for a claim an admin gave up on (fail reason `given_up`), or of a `retired` BEAT (on a replaced
+   * contract: shown, never retried). */
+  failed: Array<{ beatId: string; name: string; wallet: string; failReason: string | null; retired?: boolean; retryable: boolean }>
   batches: Array<{ id: string; chain: BeatChain; kind: string; tokenId: string; nonce: number; status: string; attempts: number; txUrl: string | null; createdAt: string }>
   /** Ended BEATs past their claim grace that claims failed for a retryable reason keep open on chain: "Stop retrying and close" applies. */
   held: Array<{ beatId: string; name: string; retryable: number }>
@@ -96,7 +97,8 @@ export function pauseMessage(c: Pick<AdminBeatChain, 'paused' | 'reason'> & { mi
 export const clearPausePrompt = (label: string) => `Clear the pause on ${label}? Minting starts again. Only do this once a developer has checked.`
 
 /** A failed claim's reason in plain words; the raw code stays for a developer (plain-ux I11). */
-export function failReasonLabel(reason: string | null, retryable: boolean): string {
+export function failReasonLabel(reason: string | null, retryable: boolean, retired = false): string {
+  if (retired) return 'On an earlier contract (Virvi no longer sends it)'
   if (!retryable || reason === 'given_up') return 'You stopped retrying'
   if (reason === 'receiver_rejected' || reason === 'ERC1155InvalidReceiver') return "The visitor's wallet can't accept BEATs"
   if (reason === 'BeatClosedError') return 'The BEAT was already closed'

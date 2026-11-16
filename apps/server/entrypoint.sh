@@ -509,6 +509,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_country TEXT\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_address TEXT\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS location_map_url TEXT\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS contract_address TEXT\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS replaced_wallet TEXT\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS reissue_tx TEXT\`;
         await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS reissued_at TIMESTAMPTZ\`;
@@ -525,6 +526,13 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE INDEX IF NOT EXISTS account_wallet_events_user_idx ON account_wallet_events (user_id, at)\`;
         console.log('[virvi-server] BEAT tables ensured');
       } catch(e) { console.log('[virvi-server] BEAT tables:', e.message); }
+      // BEAT contract backfill (LIV-11 I-2): BEATs created on chain before beats.contract_address existed are on the first
+      // Amoy contract. Only rows still without one are touched (a create records its contract when it is planned), so
+      // this is harmless on every boot
+      try {
+        await sql\`UPDATE beats SET contract_address = '0x444676bb1C156d2606c629925B55031482352428' WHERE chain = 'polygon-amoy' AND created_on_chain_tx IS NOT NULL AND contract_address IS NULL\`;
+        console.log('[virvi-server] BEAT contract backfill ensured');
+      } catch(e) { console.log('[virvi-server] BEAT contract backfill:', e.message); }
       // Wallet-link provenance (LIV-11 reissue); existing links read as linked by an unknown session
       try {
         await sql\`ALTER TABLE user_auth_methods ADD COLUMN IF NOT EXISTS linked_at TIMESTAMPTZ\`;

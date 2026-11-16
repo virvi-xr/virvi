@@ -96,6 +96,7 @@ describe('admin BEATs helpers (LIV-11)', () => {
     expect(failReasonLabel('BeatClosedError', true)).toBe('The BEAT was already closed')
     expect(failReasonLabel('given_up', false)).toBe('You stopped retrying')
     expect(failReasonLabel('reverted:x', true)).toBe('Network error (will retry)')
+    expect(failReasonLabel('reverted:x', false, true)).toBe('On an earlier contract (Virvi no longer sends it)')
   })
   it('plain-ux I10: admin errors are plain, with the code kept apart', () => {
     expect(adminError(Object.assign(new Error('x'), { status: 502, body: { error: 'boom' } }))).toEqual({ message: 'Something went wrong. Try again, or ask a developer to check the server logs.', code: 'boom' })

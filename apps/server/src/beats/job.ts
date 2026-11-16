@@ -15,6 +15,7 @@ import {
   BeatRevert, BeatRpcError, beatChainClient, beatInterface, beatMaxFeeWei, beatMinGasWei,
   type BeatCall, type BeatChainClient, type BeatFees, type BeatLog, type BeatSigned,
 } from './chain.js'
+import { beatContractOf, beatRetired, creatableOnContractSql, onContractSql } from './contract.js'
 import { BeatError } from './errors.js'
 import { lockBeat } from './lock.js'
 import { sweepBeatPayments } from './payments.js'
@@ -323,13 +324,12 @@ async function tick(now: Date): Promise<BeatTickResult> {
   return r
 }
 
-/** What is wrong with the chain's set-up (money C1), or null: the RPC's chain id, code at the contract, the minter's role. */
-async function setupProblem(client: BeatChainClient): Promise<string | null> {
+/** What is wrong with the chain's set-up for reading (money C1), or null: the RPC's chain id, code at the contract. */
+async function readProblem(client: BeatChainClient): Promise<string | null> {
   const want = BEAT_CHAIN_INFO[client.chain].chainId
   const got = await client.chainId()
   if (got !== want) return `the RPC answers for chain ${got}, not ${want}`
   if (!(await client.contractHasCode())) return 'the contract address has no code on this chain'
-  if (!(await client.minterHasRole())) return `the minter ${client.minterAddress} doesn't hold MINTER_ROLE`
   return null
 }
 
@@ -338,24 +338,26 @@ async function runChain(client: BeatChainClient, now: Date, r: BeatTickResult): 
   if (pauses.get(chain) === 'no_client') pauses.delete(chain)
   shortOfFunds.delete(chain)
   tooDear.delete(chain)
-  // Before anything is reconciled or sent: a wrong RPC, address or role would "confirm" calls that minted nothing
-  const problem = await setupProblem(client)
-  if (problem) {
+  const misconfigured = (problem: string) => {
     setPause(chain, 'misconfigured')
     if (!reportedMisconfigured.has(chain)) {
       reportedMisconfigured.add(chain)
       fail('beat_setup', `BEAT ${chain} is misconfigured: ${problem}. Minting is paused.`, null)
     }
-    return
   }
-  reportedMisconfigured.delete(chain)
-  if (pauses.get(chain) === 'misconfigured') pauses.delete(chain)
-  // Reissues the admin Safe sent (reissue.ts): independent of minting, so neither a pause nor low gas holds it up
+  // Before anything is read, reconciled or sent: a wrong RPC or address would "confirm" calls that did nothing
+  const problem = await readProblem(client)
+  if (problem) return misconfigured(problem)
+  // Reissues the admin Safe sent (reissue.ts): independent of minting, so neither a pause, low gas nor a minter without
+  // its role holds it up (M-3: after the mainnet switch the Amoy minter has no role, and Amoy reissues still finish)
   try {
     await watchReissues(client, now)
   } catch (err) {
     console.error(`[beats] ${chain} reissue watch failed:`, safeErr(err))
   }
+  if (!(await client.minterHasRole())) return misconfigured(`the minter ${client.minterAddress} doesn't hold MINTER_ROLE`)
+  reportedMisconfigured.delete(chain)
+  if (pauses.get(chain) === 'misconfigured') pauses.delete(chain)
   const [open] = await db.select().from(beatMintBatches)
     .where(and(eq(beatMintBatches.chain, chain), inArray(beatMintBatches.status, ['sending', 'sent'])))
     .orderBy(asc(beatMintBatches.nonce)).limit(1)
@@ -726,7 +728,7 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
   const [create] = await db.select({ id: beats.id, tokenId: beats.tokenId, tradeable: beats.tradeable }).from(beats)
     .innerJoin(beatPayments, eq(beatPayments.id, beats.paymentId))
     .where(and(
-      eq(beats.chain, chain), isNull(beats.createdOnChainTx), isNotNull(beats.tokenId), isNotNull(beats.imageUrl),
+      eq(beats.chain, chain), isNull(beats.createdOnChainTx), isNotNull(beats.tokenId), isNotNull(beats.imageUrl), creatableOnContractSql(chain),
       or(
         eq(beats.status, 'live'),
         and(eq(beats.status, 'ended'), or(
@@ -743,7 +745,7 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
     .innerJoin(beats, eq(beats.id, beatClaims.beatId))
     .where(and(
       eq(beats.chain, chain), inArray(beats.status, ['live', 'ended']), isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt),
-      eq(beatClaims.status, 'claimed'), notSkipped(beats.id), notHeld(now), isNotNull(beats.imageUrl),
+      onContractSql(chain), eq(beatClaims.status, 'claimed'), notSkipped(beats.id), notHeld(now), isNotNull(beats.imageUrl),
     ))
     .groupBy(beats.id, beats.tokenId, beats.maxBatch)
     .orderBy(sql`${lastMint} asc nulls first`, sql`min(${beatClaims.claimedAt}) asc`, asc(beats.id)).limit(1)
@@ -752,7 +754,7 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
   const [close] = await db.select({ id: beats.id, tokenId: beats.tokenId }).from(beats)
     .where(and(
       eq(beats.chain, chain), eq(beats.status, 'ended'), lte(beats.endsAt, new Date(now.getTime() - BEAT_CLAIM_GRACE_MS)),
-      isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt), notSkipped(beats.id), sql`not ${holdsClose}`,
+      isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt), onContractSql(chain), notSkipped(beats.id), sql`not ${holdsClose}`,
     )).orderBy(asc(beats.endsAt)).limit(1)
   if (close) return { kind: 'close', beatId: close.id, codeCount: 0, call: { kind: 'close', tokenId: BigInt(close.tokenId!) } }
 
@@ -760,7 +762,7 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
   const [cancelled] = await db.select({ id: beats.id, tokenId: beats.tokenId }).from(beats)
     .where(and(
       eq(beats.chain, chain), eq(beats.status, 'cancelled'), isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt),
-      isNotNull(beats.tokenId), notSkipped(beats.id),
+      isNotNull(beats.tokenId), onContractSql(chain), notSkipped(beats.id),
     )).orderBy(asc(beats.updatedAt)).limit(1)
   if (cancelled) return { kind: 'close', beatId: cancelled.id, codeCount: 0, call: { kind: 'close', tokenId: BigInt(cancelled.tokenId!) } }
   return null
@@ -956,10 +958,15 @@ async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, non
     if (plan.kind === 'create') {
       await lockBeat(tx, plan.beatId)
       // Under the lock, as an image edit: the art the plan saw may have been replaced since
-      const [row] = await tx.select({ status: beats.status, created: beats.createdOnChainTx, pay: beatPayments.status, art: beats.imageUrl }).from(beats)
-        .leftJoin(beatPayments, eq(beatPayments.id, beats.paymentId)).where(eq(beats.id, plan.beatId))
+      const [row] = await tx.select({
+        status: beats.status, created: beats.createdOnChainTx, pay: beatPayments.status, art: beats.imageUrl, contract: beats.contractAddress,
+      }).from(beats).leftJoin(beatPayments, eq(beatPayments.id, beats.paymentId)).where(eq(beats.id, plan.beatId))
       // An ended BEAT may still be created (its claims wait on it); the plan checked it still has claims or grace left
       if (!row || !(row.status === 'live' || row.status === 'ended') || row.created || row.pay !== 'paid' || !row.art) return null
+      // I-2: the BEAT is bound to the contract its create is planned for (a BEAT planned for another one is retired)
+      const contract = beatContractOf(chain)
+      if (!contract || (row.contract && lc(row.contract) !== lc(contract))) return null
+      if (!row.contract) await tx.update(beats).set({ contractAddress: contract }).where(eq(beats.id, plan.beatId))
     }
     if (plan.kind === 'close') {
       // Under the BEAT's lock, as retryFailedClaims: a retry that landed after the plan was read holds the close
@@ -1006,7 +1013,9 @@ export async function retryFailedClaims(beatId?: string): Promise<{ retried: num
     // these claims are back to claimed first (and the close's insert sees them and waits)
     await db.transaction(async (tx) => {
       await lockBeat(tx, id)
-      const [shut] = await tx.select({ id: beats.id }).from(beats).where(and(eq(beats.id, id), or(
+      // A retired BEAT (on a replaced contract, I-2) is never retried: like a closed one, its claims stay failed
+      const [b] = await tx.select({ chain: beats.chain, contractAddress: beats.contractAddress }).from(beats).where(eq(beats.id, id))
+      const [shut] = b && beatRetired(b) ? [{ id }] : await tx.select({ id: beats.id }).from(beats).where(and(eq(beats.id, id), or(
         isNotNull(beats.closedOnChainAt),
         sql`exists (select 1 from beat_mint_batches m where m.beat_id = ${beats.id} and m.kind = 'close' and m.status in ('sending', 'sent'))`,
       )))
@@ -1030,8 +1039,9 @@ export async function retryFailedClaims(beatId?: string): Promise<{ retried: num
 export async function giveUpFailedClaims(beatId: string, now: Date): Promise<{ givenUp: number }> {
   return db.transaction(async (tx) => {
     await lockBeat(tx, beatId)
-    const [row] = await tx.select({ status: beats.status, endsAt: beats.endsAt }).from(beats).where(eq(beats.id, beatId))
+    const [row] = await tx.select({ status: beats.status, endsAt: beats.endsAt, chain: beats.chain, contractAddress: beats.contractAddress }).from(beats).where(eq(beats.id, beatId))
     if (!row) throw new BeatError(404, 'not_found', 'BEAT not found.')
+    if (beatRetired(row)) throw new BeatError(409, 'retired', "This BEAT is on an earlier contract, so Virvi no longer sends or closes it.")
     if (row.status !== 'ended' || row.endsAt.getTime() + BEAT_CLAIM_GRACE_MS > now.getTime()) {
       throw new BeatError(409, 'too_early', 'Only a BEAT that ended and is past its claim grace can be closed this way.')
     }

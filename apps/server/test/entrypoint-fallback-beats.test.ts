@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { sql } from 'drizzle-orm'
+import { inArray, sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
+import { beats } from '../src/db/schema.js'
 
 /**
  * The BEAT part of entrypoint.sh's schema fallback (LIV-11): run in a scratch schema, it makes the five BEAT
@@ -76,6 +77,30 @@ describe('entrypoint schema fallback: BEATs', () => {
       for (const t of TABLES) expect(await indexes(SCHEMA, t), t).toEqual(await indexes('public', t))
     } finally {
       await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
+    }
+  })
+
+  it('I-2: backfills the first Amoy contract on Amoy BEATs already created on chain, and nothing else', async () => {
+    const [stmt] = fallbackBlocks('BEAT contract backfill')
+    const row = (o: Record<string, unknown>) => ({
+      name: 'x', description: '', startsAt: new Date(), endsAt: new Date(), status: 'ended' as const, chain: 'polygon-amoy' as const, ...o,
+    })
+    const [created, notYet, mainnet, other] = await db.insert(beats).values([
+      row({ tokenId: 9101, createdOnChainTx: '0xc' }),
+      row({ tokenId: 9102 }),
+      row({ tokenId: 9103, chain: 'polygon', createdOnChainTx: '0xc' }),
+      row({ tokenId: 9104, createdOnChainTx: '0xc', contractAddress: '0x00000000000000000000000000000000000c0de2' }),
+    ]).returning()
+    try {
+      await db.execute(sql.raw(stmt))
+      await db.execute(sql.raw(stmt))
+      const got = Object.fromEntries((await db.select().from(beats)).map((b) => [b.id, b.contractAddress]))
+      expect(got[created.id]).toBe('0x444676bb1C156d2606c629925B55031482352428')
+      expect(got[notYet.id]).toBeNull()
+      expect(got[mainnet.id]).toBeNull()
+      expect(got[other.id]).toBe('0x00000000000000000000000000000000000c0de2')
+    } finally {
+      await db.delete(beats).where(inArray(beats.id, [created.id, notYet.id, mainnet.id, other.id]))
     }
   })
 })

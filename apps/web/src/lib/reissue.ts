@@ -183,6 +183,8 @@ export const BLOCKER_LABELS: Record<BeatReissueBlocker, string> = {
   ClaimOnNewWallet: 'Another claim on this BEAT already uses the new wallet',
   BeatOpen: 'Wait until it ends',
   ChainUnavailable: "Couldn't read Polygon. Try again",
+  Unavailable: 'Unavailable on this chain',
+  NotMintedTo: 'The old wallet was never sent this BEAT on chain',
   Withdrawn: 'Its file was withdrawn',
 }
 export const blockerLabel = (b: string) => BLOCKER_LABELS[b as BeatReissueBlocker] ?? b

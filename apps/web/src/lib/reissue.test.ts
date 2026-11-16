@@ -32,7 +32,7 @@ describe('reissue: the person', () => {
 describe('reissue: the admin queue', () => {
   it('has a plain line for every flag and blocker', () => {
     expect(Object.keys(FLAG_LABELS).sort()).toEqual(['clash', 'earlier_reissue', 'follow_up_reissue', 'new_wallet_linked_by_old_wallet', 'new_wallet_recent', 'recent_cancel'])
-    expect(Object.keys(BLOCKER_LABELS)).toHaveLength(7)
+    expect(Object.keys(BLOCKER_LABELS)).toHaveLength(9)
   })
   it('gives the Safe steps in order, and the withdraw warning', () => {
     expect(SAFE_STEPS.join(' → ')).toBe('Open your Safe (app.safe.global) on the right network. → Go to Apps, then Transaction Builder. → Drag in this file. → Press Simulate, and check it succeeds. → Press Create batch. → Get a second signer to approve it. → Execute it.')
