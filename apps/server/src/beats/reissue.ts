@@ -10,7 +10,9 @@ import {
   accountWalletEvents, beatClaims, beatReissueFiles, beatReissueItems, beatReissueRequests, beats, userAuthMethods, users, walletBlocks,
   type LinkedBy, type ReissueAudit,
 } from '../db/schema.js'
-import { blockWallet, isWalletBlocked, liftBlock, revokeAccountCredentials, unblockForRequest, unlinkWallet } from '../auth/wallet-blocks.js'
+import {
+  afterCredentialsRevoked, blockWallet, isWalletBlocked, liftBlock, revokeAccountCredentials, unblockForRequest, unlinkWallet, type RevokedCredentials,
+} from '../auth/wallet-blocks.js'
 import { recordJobFailure } from '../errors/record.js'
 import { beatChainClient, type BeatChainClient } from './chain.js'
 import { BeatError } from './errors.js'
@@ -526,7 +528,6 @@ function parseWalletDecisions(v: unknown): Map<string, 'keep' | 'unlink'> {
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
-const listed = (names: string[]) => (names.length ? ` (${names.join(', ')})` : '')
 
 /**
  * Approves a pending request, or rejects a pending or approved one. A rejection needs a note (the person sees it); an
@@ -552,6 +553,7 @@ export async function reviewReissueRequest(
       throw new BeatError(409, 'wallets_unreviewed', 'Keep or unlink each of these wallets first.', { wallets: missing })
     }
   }
+  let revoked: RevokedCredentials | null = null
   const r = await db.transaction(async (tx) => {
     const [row] = await tx.update(beatReissueRequests)
       .set({
@@ -579,15 +581,19 @@ export async function reviewReissueRequest(
       await tx.update(beatReissueRequests).set({ audit: pushAudit(audit(adminId, 'reviewed_wallets', now, note)) }).where(eq(beatReissueRequests.id, row.id))
     }
     await blockWallet(tx, row.oldWallet, { userId: row.userId, requestId: row.id, reason: 'reissue', byUserId: adminId, now })
+    if (row.userId) {
+      // In this transaction (P3): if revoking fails, nothing is approved or blocked
+      const gone = await revokeAccountCredentials(tx, row.userId)
+      revoked = gone
+      const devices = [...gone.pairings.map((p) => `${p.world} (Hyperfy pairing)`), ...gone.devices.map((d) => `${d.name} (AR headset)`)]
+      const note = `Removed ${plural(gone.apiKeys.length, 'API key')} and ${plural(devices.length, 'paired device')}; the old wallet's sessions are refused.`
+        + (gone.apiKeys.length ? ` API keys: ${gone.apiKeys.join(', ')}.` : '') + (devices.length ? ` Devices: ${devices.join(', ')}.` : '')
+      await tx.update(beatReissueRequests).set({ audit: pushAudit(audit(adminId, 'revoked_credentials', now, note)) }).where(eq(beatReissueRequests.id, row.id))
+    }
     return row
   })
   if (!r) throw new BeatError(409, 'not_pending', decision === 'approve' ? 'Only a pending request can be approved.' : 'Only a pending or approved request can be rejected.')
-  if (decision === 'approve' && r.userId) {
-    const gone = await revokeAccountCredentials(r.userId)
-    const note = `Signed out everywhere; removed ${plural(gone.apiKeys.length, 'API key')}${listed(gone.apiKeys)}, `
-      + `${plural(gone.pairings.length, 'Hyperfy pairing')}${listed(gone.pairings)} and ${plural(gone.devices.length, 'AR headset')}${listed(gone.devices)}.`
-    await db.update(beatReissueRequests).set({ audit: pushAudit(audit(adminId, 'revoked_credentials', now, note)) }).where(eq(beatReissueRequests.id, r.id))
-  }
+  if (revoked) await afterCredentialsRevoked(revoked)
   return toAdmin(await loadRequest(id), now)
 }
 
@@ -596,6 +602,10 @@ export async function reviewReissueRequest(
 export async function adminLiftBlock(adminId: string, body: Record<string, unknown>, now = new Date()): Promise<{ wallet: string; lifted: true }> {
   const wallet = parseWallet(body.wallet)
   const note = parseNote(body.note, true)!
+  // P4: an open request's old wallet stays blocked until that request is withdrawn or rejected
+  const [open] = await db.select({ id: beatReissueRequests.id }).from(beatReissueRequests)
+    .where(and(eq(beatReissueRequests.oldWallet, wallet), inArray(beatReissueRequests.status, ['approved', 'proposed']))).limit(1)
+  if (open) throw new BeatError(409, 'request_open', 'This is the old wallet of an open reissue request; withdraw or reject it first.', { requestId: open.id })
   const lifted = await db.transaction(async (tx) => {
     const gone = await liftBlock(tx, wallet, { byUserId: adminId, note, now })
     if (gone?.requestId) {
@@ -894,9 +904,9 @@ async function anyLanded(r: Req, items: Item[]): Promise<boolean> {
  * are voided, so the watcher ignores them, and its BEATs not yet reissued are withdrawn (one file: skipped, `Withdrawn`).
  * A withdrawn request is closed and the person may file again; the old wallet's block is lifted unless something of it
  * was already reissued (then the old wallet is unlinked and stays blocked). The admin must also discard the pending Safe
- * transaction. A request whose data was deleted goes once withdrawn.
+ * transaction. A request whose data was deleted keeps its minimal record for VOIDED_WATCH_MS, then the scrub deletes it.
  */
-export async function withdrawReissue(adminId: string, id: string, body: Record<string, unknown>, now = new Date()): Promise<AdminReissueRequest | { deleted: true }> {
+export async function withdrawReissue(adminId: string, id: string, body: Record<string, unknown>, now = new Date()): Promise<AdminReissueRequest> {
   const note = parseNote(body.note, false)
   const r = await loadRequest(id)
   if (r.status !== 'approved' && r.status !== 'proposed') throw new BeatError(409, 'not_withdrawable', 'Only an approved or proposed request can be withdrawn.')
@@ -912,7 +922,6 @@ export async function withdrawReissue(adminId: string, id: string, body: Record<
     eq(beatReissueItems.requestId, r.id), eq(beatReissueItems.state, 'proposed'), ...(file ? [eq(beatReissueItems.fileId, file.id)] : []),
   ))
   if (await anyLanded(r, proposed)) throw new BeatError(409, 'already_landed', 'Some of these BEATs were already reissued on chain; wait for the watcher.')
-  let deleted = false
   await db.transaction(async (tx) => {
     if (file) {
       await tx.update(beatReissueFiles).set({ status: 'voided', voidedAt: now }).where(eq(beatReissueFiles.id, file.id))
@@ -933,12 +942,8 @@ export async function withdrawReissue(adminId: string, id: string, body: Record<
       .where(eq(beatReissueRequests.id, r.id))
     if (reissued) await unlinkWallet(tx, r.userId, r.oldWallet, { byUserId: adminId, requestId: r.id, note: 'reissue withdrawn after a partial reissue', now })
     else await unblockForRequest(tx, r.oldWallet, r.id, { userId: r.userId, byUserId: adminId, now })
-    if (r.dataDeletedAt) {
-      await tx.delete(beatReissueRequests).where(eq(beatReissueRequests.id, r.id))
-      deleted = true
-    }
+    // A request whose data was deleted keeps its minimal record for the voided-file watch (P5); the scrub deletes it
   })
-  if (deleted) return { deleted: true }
   return toAdmin(await loadRequest(id), now)
 }
 
@@ -1093,11 +1098,16 @@ export async function deleteMyReissueRequests(exec: Exec, userId: string, now = 
 }
 
 /** The 30-day scrub: requests closed (rejected, cancelled, done, withdrawn) that long ago go. Open ones are kept. */
-export async function scrubReissueRequests(cutoff: Date): Promise<number> {
+export async function scrubReissueRequests(cutoff: Date, now = new Date(cutoff.getTime() + 30 * DAY_MS)): Promise<number> {
   const closedAt = sql`coalesce(${beatReissueRequests.doneAt}, ${beatReissueRequests.cancelledAt}, ${beatReissueRequests.withdrawnAt}, ${beatReissueRequests.reviewedAt}, ${beatReissueRequests.updatedAt})`
   const rows = await db.delete(beatReissueRequests).where(and(
     inArray(beatReissueRequests.status, ['rejected', 'cancelled', 'done', 'withdrawn']),
     sql`${closedAt} <= ${cutoff.toISOString()}::timestamptz`,
   )).returning({ id: beatReissueRequests.id })
-  return rows.length
+  // A withdrawn request whose data was deleted is only watched for VOIDED_WATCH_MS (P5)
+  const watched = await db.delete(beatReissueRequests).where(and(
+    eq(beatReissueRequests.status, 'withdrawn'), isNotNull(beatReissueRequests.dataDeletedAt),
+    sql`${beatReissueRequests.withdrawnAt} <= ${new Date(now.getTime() - VOIDED_WATCH_MS).toISOString()}::timestamptz`,
+  )).returning({ id: beatReissueRequests.id })
+  return rows.length + watched.length
 }

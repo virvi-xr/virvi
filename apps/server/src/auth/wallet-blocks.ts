@@ -2,8 +2,8 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { SignInMethod } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { accountWalletEvents, apiKeys, arDevices, hyperfyPairings, hyperfyWorlds, userAuthMethods, walletBlocks, type LinkedBy } from '../db/schema.js'
-import { revokePairing } from '../hyperfy/pairing.js'
-import { revokeDevice } from '../ar/devices.js'
+import { forgetPairings } from '../hyperfy/pairing.js'
+import { devicesRevoked } from '../ar/devices.js'
 
 /**
  * Wallet blocks and provenance (LIV-11, reissue fix round 1).
@@ -105,23 +105,52 @@ export async function unlinkWallet(
   return gone.length > 0
 }
 
+export type RevokedCredentials = { apiKeys: string[]; pairings: Array<{ id: string; world: string }>; devices: Array<{ id: string; name: string }> }
+
 /**
- * Revokes everything on the account that can act without a fresh sign-in (fix round 2, N1): every API key, Hyperfy
- * pairing and AR headset. Simpler and safer than working out which ones the compromised wallet's sessions made; the
- * person sets them up again. Returns what went, for the request's history.
+ * Revokes everything on the account that can act without a fresh sign-in (N1): every API key, Hyperfy pairing and AR
+ * headset, in the caller's transaction (P3: approval fails if this fails). Simpler and safer than working out which ones
+ * the compromised wallet's sessions made; the person sets them up again. Call `afterCredentialsRevoked` once the
+ * transaction has committed, to clear the pairing and headset caches.
  */
-export async function revokeAccountCredentials(userId: string): Promise<{ apiKeys: string[]; pairings: string[]; devices: string[] }> {
-  const keys = await db.delete(apiKeys).where(eq(apiKeys.userId, userId)).returning({ name: apiKeys.name })
-  const pairings = await db.select({ id: hyperfyPairings.id, world: hyperfyWorlds.name }).from(hyperfyPairings)
+async function revokeCredentials(exec: Exec, userId: string): Promise<RevokedCredentials> {
+  const keys = await exec.delete(apiKeys).where(eq(apiKeys.userId, userId)).returning({ name: apiKeys.name })
+  const open = ['approved', 'claimed']
+  const pairings = await exec.select({ id: hyperfyPairings.id, world: hyperfyWorlds.name }).from(hyperfyPairings)
     .innerJoin(hyperfyWorlds, eq(hyperfyWorlds.id, hyperfyPairings.worldId))
-    .where(and(eq(hyperfyPairings.userId, userId), inArray(hyperfyPairings.status, ['approved', 'claimed'])))
-  const gonePairings: string[] = []
-  for (const p of pairings) if (await revokePairing(p.id, userId)) gonePairings.push(p.world)
-  const devices = await db.select({ id: arDevices.id, name: arDevices.deviceName }).from(arDevices)
-    .where(and(eq(arDevices.userId, userId), inArray(arDevices.status, ['approved', 'claimed'])))
-  const goneDevices: string[] = []
-  for (const d of devices) if (await revokeDevice(d.id, userId)) goneDevices.push(d.name ?? 'unnamed headset')
-  return { apiKeys: keys.map((k) => k.name), pairings: gonePairings, devices: goneDevices }
+    .where(and(eq(hyperfyPairings.userId, userId), inArray(hyperfyPairings.status, open)))
+  if (pairings.length) await exec.update(hyperfyPairings).set({ status: 'revoked', codeHash: null }).where(inArray(hyperfyPairings.id, pairings.map((p) => p.id)))
+  const devices = await exec.select({ id: arDevices.id, name: arDevices.deviceName }).from(arDevices)
+    .where(and(eq(arDevices.userId, userId), inArray(arDevices.status, open)))
+  if (devices.length) await exec.update(arDevices).set({ status: 'revoked', codeHash: null }).where(inArray(arDevices.id, devices.map((d) => d.id)))
+  return { apiKeys: keys.map((k) => k.name), pairings, devices: devices.map((d) => ({ id: d.id, name: d.name ?? 'unnamed headset' })) }
+}
+let credentialRevoker = revokeCredentials
+
+export function revokeAccountCredentials(exec: Exec, userId: string): Promise<RevokedCredentials> {
+  return credentialRevoker(exec, userId)
+}
+
+/** Tests replace the revocation (say, with one that fails); null restores it. */
+export function setCredentialRevokerForTests(fn: ((exec: Exec, userId: string) => Promise<RevokedCredentials>) | null): void {
+  credentialRevoker = fn ?? revokeCredentials
+}
+
+export async function afterCredentialsRevoked(r: RevokedCredentials): Promise<void> {
+  forgetPairings(r.pairings.map((p) => p.id))
+  await devicesRevoked(r.devices.map((d) => d.id))
+}
+
+/**
+ * Every wallet the account has ever had (P1): its verified wallets, the blocked ones that name it, and those in its
+ * wallet history (unlinked or blocked). Read it before anything clears links, as delete-my-data does.
+ */
+export async function walletsEverOf(userId: string): Promise<string[]> {
+  const linked = await db.select({ w: userAuthMethods.identifier }).from(userAuthMethods)
+    .where(and(eq(userAuthMethods.userId, userId), eq(userAuthMethods.type, 'wallet')))
+  const blocked = await db.select({ w: walletBlocks.wallet }).from(walletBlocks).where(eq(walletBlocks.userId, userId))
+  const events = await db.select({ w: accountWalletEvents.wallet }).from(accountWalletEvents).where(eq(accountWalletEvents.userId, userId))
+  return [...new Set([...linked, ...blocked, ...events].map((r) => r.w.toLowerCase()))].filter((w) => /^0x[0-9a-f]{40}$/.test(w))
 }
 
 /** An admin lifts a block (fix round 2, N8), with a note; logged on the account it names. Null when it isn't blocked. */

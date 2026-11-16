@@ -169,6 +169,12 @@ export async function revokePairing(pairingId: string, userId: string): Promise<
   return rows.length > 0
 }
 
+/** After pairings were revoked in a transaction that has committed: drops their live answers on this process. */
+export function forgetPairings(ids: string[]): void {
+  revokeGeneration++
+  for (const id of ids) liveCache.delete(id)
+}
+
 export async function listPairings(userId: string, now = new Date()): Promise<HyperfyPairingSummary[]> {
   const rows = await db
     .select({ p: hyperfyPairings, worldName: hyperfyWorlds.name, sceneId: hyperfyWorlds.sceneId, sceneName: scenes.name })

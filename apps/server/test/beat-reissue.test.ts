@@ -11,6 +11,10 @@ import {
 import { verifiedWalletsOf } from '../src/analytics/claims.js'
 import { resolveVerifiedWalletUser } from '../src/auth/wallet-users.js'
 import { createScene } from './helpers/factories.js'
+import { analyticsSessions } from '../src/db/schema.js'
+import { visitorHash } from '../src/analytics/hash.js'
+import { createAnalyticsScene, insertSession } from './helpers/analytics.js'
+import { VOIDED_WATCH_MS } from '../src/beats/reissue.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
 import { deleteMyBeatData, scrubBeats } from '../src/beats/retention.js'
@@ -515,9 +519,9 @@ describe('BEAT reissue (LIV-11)', () => {
       expect((await db.select().from(arDevices).where(eq(arDevices.id, device.id)))[0].status).toBe('revoked')
       const entry = res.json().audit.find((a: any) => a.action === 'revoked_credentials')
       expect(entry).toMatchObject({ by: admin.id })
-      expect(entry.note).toContain('1 API key (Thief key)')
-      expect(entry.note).toContain('1 Hyperfy pairing')
-      expect(entry.note).toContain('1 AR headset (Quest)')
+      expect(entry.note).toMatch(/^Removed 1 API key and 2 paired devices; the old wallet's sessions are refused\./)
+      expect(entry.note).toContain('Thief key')
+      expect(entry.note).toContain('Quest')
     })
 
     it('N2: resolveVerifiedWalletUser refuses a blocked wallet, so no path signs it up or in again', async () => {
@@ -607,6 +611,11 @@ describe('BEAT reissue (LIV-11)', () => {
     it('N8: an admin lifts a block with a note, and it is logged on the account and the request', async () => {
       await minted()
       const id = await approved()
+      // Done, so the request is closed and its old wallet's block can be lifted (P4)
+      runFiles(fake, await proposedFiles(id))
+      fake.mine(6)
+      await runBeatTick(now())
+      expect((await request(id)).status).toBe('done')
       let res = await call('POST', '/api/admin/beats/wallet-blocks/lift', admin, { wallet: oldW })
       expect([res.statusCode, res.json().error]).toEqual([400, 'bad_note'])
       res = await call('POST', '/api/admin/beats/wallet-blocks/lift', admin, { wallet: wallet(), note: 'x' })
@@ -618,6 +627,60 @@ describe('BEAT reissue (LIV-11)', () => {
       const events = await db.select().from(accountWalletEvents).where(eq(accountWalletEvents.userId, me.id))
       expect(events.at(-1)).toMatchObject({ event: 'unblocked', wallet: oldW, byUserId: admin.id, note: 'Wrong wallet, confirmed on a call.' })
       expect((await request(id)).audit.at(-1)).toMatchObject({ action: 'lifted_block', by: admin.id })
+    })
+  })
+
+  describe('fix round 3', () => {
+    it('P1: delete-my-data reaches visitor analytics under a blocked old wallet, before and after it is unlinked', async () => {
+      await db.insert(userAuthMethods).values({ userId: me.id, type: 'wallet', identifier: oldW, metadata: { verified: true } })
+      const backdoor = wallet()
+      await linkVerifiedWallet(me.id, backdoor, { method: 'wallet', wallet: oldW })
+      await minted()
+      const id = (await ask()).json().id
+      await call('POST', `/api/admin/beats/reissue-requests/${id}/approve`, admin, { wallets: [{ wallet: backdoor, action: 'unlink' }] })
+      const sc = await createAnalyticsScene()
+      for (const w of [oldW, backdoor, newW]) await insertSession(sc.id, { visitorHash: visitorHash(sc.salt, w) })
+      await insertSession(sc.id, { visitorHash: 'someone-else' })
+      const res = await app.inject({ method: 'POST', url: '/api/analytics/me/delete', headers: { authorization: `Bearer ${tokenFor(me)}` } })
+      expect(res.statusCode).toBe(200)
+      expect(res.json().deleted.sessions).toBe(3)
+      expect((await db.select().from(analyticsSessions)).map((x) => x.visitorHash)).toEqual(['someone-else'])
+    })
+
+    it('P2: verifiedWalletsOf orders by when each wallet was linked to the account', async () => {
+      const absorbed = wallet()
+      await db.insert(userAuthMethods).values({ userId: me.id, type: 'wallet', identifier: absorbed, metadata: { verified: true }, createdAt: new Date(Date.now() - 90 * DAY), linkedAt: new Date(Date.now() + H) })
+      const older = wallet()
+      await db.insert(userAuthMethods).values({ userId: me.id, type: 'wallet', identifier: older, metadata: { verified: true }, createdAt: new Date(Date.now() - 10 * DAY) })
+      expect(await verifiedWalletsOf(me.id)).toEqual([older, newW, absorbed])
+    })
+
+    it('P3: approval fails, and nothing is approved or blocked, when revoking the credentials fails', async () => {
+      await minted()
+      const id = (await ask()).json().id
+      await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(me, { wallet: null, am: 'email' })}` }, payload: { name: 'k' } })
+      const blocks = await import('../src/auth/wallet-blocks.js')
+      blocks.setCredentialRevokerForTests(async () => { throw new Error('boom') })
+      try {
+        const res = await call('POST', `/api/admin/beats/reissue-requests/${id}/approve`, admin, {})
+        expect(res.statusCode).toBe(500)
+      } finally {
+        blocks.setCredentialRevokerForTests(null)
+      }
+      expect((await request(id)).status).toBe('pending')
+      expect(await db.select().from(walletBlocks)).toEqual([])
+      expect(await db.select().from(apiKeys).where(eq(apiKeys.userId, me.id))).toHaveLength(1)
+    })
+
+    it("P4: the block on an open request's old wallet can't be lifted until it is withdrawn or rejected", async () => {
+      await minted()
+      const id = await approved()
+      let res = await call('POST', '/api/admin/beats/wallet-blocks/lift', admin, { wallet: oldW, note: 'x' })
+      expect([res.statusCode, res.json().error]).toEqual([409, 'request_open'])
+      await proposedFiles(id)
+      res = await call('POST', '/api/admin/beats/wallet-blocks/lift', admin, { wallet: oldW, note: 'x' })
+      expect([res.statusCode, res.json().error]).toEqual([409, 'request_open'])
+      expect((await db.select().from(walletBlocks)).map((b) => b.wallet)).toEqual([oldW])
     })
   })
 
@@ -1015,7 +1078,11 @@ describe('BEAT reissue (LIV-11)', () => {
       const res = await propose(id)
       expect([res.statusCode, res.json().error]).toEqual([409, 'data_deleted'])
       const w = await call('POST', `/api/admin/beats/reissue-requests/${id}/withdraw`, admin, {})
-      expect(w.json()).toEqual({ deleted: true })
+      expect(w.json()).toMatchObject({ id, status: 'withdrawn', account: null })
+      // P5: the minimal record stays for the 7-day watch, then the scrub deletes it
+      expect((await request(id))).toMatchObject({ status: 'withdrawn', userId: null, reason: null })
+      expect(await scrubBeats(new Date(Date.now() + VOIDED_WATCH_MS - H))).toMatchObject({ reissueRequests: 0 })
+      expect(await scrubBeats(new Date(Date.now() + VOIDED_WATCH_MS + H))).toMatchObject({ reissueRequests: 1 })
       expect(await db.select().from(beatReissueRequests)).toEqual([])
     })
 

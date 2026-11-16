@@ -22,6 +22,7 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getAnalyticsAccess } from '../analytics/access.js'
 import { verifiedWalletsOf } from '../analytics/claims.js'
+import { walletsEverOf } from '../auth/wallet-blocks.js'
 import { boundScene, fromAnalyticsLocation, isScenePass } from '../auth/scene-from.js'
 import { visitorHash } from '../analytics/hash.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
@@ -361,7 +362,9 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
   app.post('/api/analytics/me/delete', async (request, reply) => {
     const actor = actorFromClaims(request.user)
     if (!actor.userId || !actor.verified) return reply.status(403).send({ error: 'Forbidden' })
-    const wallets = new Set(await verifiedWalletsOf(actor.userId))
+    // Every wallet the account has ever had, blocked and unlinked ones too (LIV-11 reissue, P1), read before
+    // deleteMyBeatData below clears the blocks' link to the account
+    const wallets = new Set([...(await verifiedWalletsOf(actor.userId)), ...(await walletsEverOf(actor.userId))])
     if (actor.wallet) wallets.add(actor.wallet)
     if (!wallets.size) return reply.status(400).send({ error: 'Sign in with your wallet to delete your visitor data' })
     const limit = deleteLimiter.take(`del:${actor.userId}`, 1, DELETE_LIMIT.capacity, DELETE_LIMIT.refillPerSec)

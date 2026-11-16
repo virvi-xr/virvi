@@ -89,6 +89,6 @@ export async function scrubBeats(now: Date): Promise<{ present: number; batches:
     ))
     .returning({ id: beatMintBatches.id })
   // Reissue requests closed (rejected, cancelled or done) that long ago; open ones stay
-  const reissueRequests = await scrubReissueRequests(cutoff)
+  const reissueRequests = await scrubReissueRequests(cutoff, now)
   return { present: present.length, batches: batches.length, networks: networks.length, reissueRequests }
 }

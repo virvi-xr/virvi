@@ -14,7 +14,7 @@ export async function verifiedWalletsOf(userId: string): Promise<string[]> {
       eq(userAuthMethods.userId, userId), eq(userAuthMethods.type, 'wallet'), sql`${userAuthMethods.metadata}->>'verified' = 'true'`,
       sql`not exists (select 1 from wallet_blocks b where b.wallet = ${userAuthMethods.identifier})`,
     ),
-    orderBy: [asc(userAuthMethods.createdAt), asc(userAuthMethods.id)],
+    orderBy: [asc(sql`coalesce(${userAuthMethods.linkedAt}, ${userAuthMethods.createdAt})`), asc(userAuthMethods.id)],
   })
   return rows.map((r) => r.identifier).filter((id) => /^0x[0-9a-f]{40}$/.test(id))
 }

@@ -334,6 +334,12 @@ export async function revokeDevice(id: string, userId: string): Promise<boolean>
   return rows.length > 0
 }
 
+/** After headsets were revoked in a transaction that has committed: drops their live answers and runs the ended hooks. */
+export async function devicesRevoked(ids: string[]): Promise<void> {
+  for (const id of ids) forget(id)
+  for (const id of ids) await runDeviceEndedHooks(id)
+}
+
 /** Is this a personal headset? Room scans and the routes marked `ar: 'personal'` need one; a shared one is refused. */
 export async function devicePersonal(deviceId: string | undefined): Promise<boolean> {
   if (!deviceId || !isUuid(deviceId)) return false
