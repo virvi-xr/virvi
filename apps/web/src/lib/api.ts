@@ -373,7 +373,7 @@ function useRealApi() {
   // every render, which would refetch in a loop
   return useMemo(() => ({
     // Linked wallets
-    getWallets: () => apiFetch<{ wallets: { address: string; linkedAt: string }[] }>('/api/auth/wallets'),
+    getWallets: () => apiFetch<{ wallets: { address: string; linkedAt: string; blocked?: boolean }[] }>('/api/auth/wallets'),
     linkWallet: (proof: { address: string; nonce: string; signature: string }) =>
       apiFetch<{ linked: boolean }>('/api/auth/wallet/verify', { method: 'POST', body: JSON.stringify(proof) }),
 

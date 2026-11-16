@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth'
 import { useBeatAvailability } from '@/lib/use-beats'
 import { Badge, ConfirmAction, Skeleton } from '@/components/ui'
 import {
-  APPROVED_NOTE, BEAT_REISSUE_REASON_MAX, MOVE_INTRO, MOVE_TITLE, MOVE_WHAT_HAPPENS, REISSUE_STATUS_LABELS, chainLabel, isOpen, itemStateLabel, moveError, moveFormError,
+  APPROVED_NOTE, BEAT_REISSUE_REASON_MAX, MOVE_INTRO, MOVE_TITLE, MOVE_WHAT_HAPPENS, REISSUE_STATUS_LABELS, WALLET_BLOCKED_LABEL, chainLabel, isOpen, itemStateLabel, moveError, moveFormError,
   type ReissueRequest,
 } from '@/lib/reissue'
 
@@ -23,7 +23,7 @@ function MoveBeatsCard() {
   const { token } = useAuth()
   const api = useApi()
   const [requests, setRequests] = useState<ReissueRequest[] | null>(null)
-  const [wallets, setWallets] = useState<string[]>([])
+  const [wallets, setWallets] = useState<Array<{ address: string; blocked: boolean }>>([])
   const [loadError, setLoadError] = useState(false)
   const [form, setForm] = useState({ oldWallet: '', newWallet: '', reason: '' })
   const [error, setError] = useState<string | null>(null)
@@ -33,7 +33,7 @@ function MoveBeatsCard() {
     try {
       const [r, w] = await Promise.all([api.listMyReissueRequests(), api.getWallets()])
       setRequests(r)
-      setWallets(w.wallets.map((x) => x.address.toLowerCase()))
+      setWallets(w.wallets.map((x) => ({ address: x.address.toLowerCase(), blocked: !!x.blocked })))
       setLoadError(false)
     } catch { setLoadError(true) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,9 +85,11 @@ function MoveBeatsCard() {
                 <label htmlFor="move-new" className="block text-xs text-gray-400">New wallet (already linked above)</label>
                 <select id="move-new" className={`${INPUT} font-mono`} value={form.newWallet} onChange={(e) => setForm({ ...form, newWallet: e.target.value })}>
                   <option value="">Pick a linked wallet</option>
-                  {wallets.filter((w) => w !== form.oldWallet.trim().toLowerCase()).map((w) => <option key={w} value={w}>{w}</option>)}
+                  {wallets.filter((w) => w.address !== form.oldWallet.trim().toLowerCase()).map((w) => (
+                    <option key={w.address} value={w.address} disabled={w.blocked}>{w.blocked ? `${w.address} (${WALLET_BLOCKED_LABEL})` : w.address}</option>
+                  ))}
                 </select>
-                {wallets.length < 2 && <p className="mt-1 text-xs text-gray-400">Link your new wallet under Linked Wallets first.</p>}
+                {wallets.filter((w) => !w.blocked).length < 2 && <p className="mt-1 text-xs text-gray-400">Link your new wallet under Linked Wallets first.</p>}
               </div>
               <div>
                 <label htmlFor="move-reason" className="block text-xs text-gray-400">What happened to the old wallet?</label>

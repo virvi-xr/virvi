@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getBrowserWallet, signWalletChallenge, useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
-import { Skeleton } from '@/components/ui'
+import { Badge, Skeleton } from '@/components/ui'
+import { WALLET_BLOCKED_LABEL } from '@/lib/reissue'
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
@@ -10,7 +11,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 export function LinkedWallets() {
   const { token } = useAuth()
   const api = useApi()
-  const [wallets, setWallets] = useState<{ address: string; linkedAt: string }[]>([])
+  const [wallets, setWallets] = useState<{ address: string; linkedAt: string; blocked?: boolean }[]>([])
   const [loading, setLoading] = useState(true)
   const [linking, setLinking] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -65,7 +66,10 @@ export function LinkedWallets() {
           {wallets.map(w => (
             <li key={w.address} className="flex items-center justify-between rounded-md bg-gray-800 px-4 py-2 text-sm">
               <span className="font-mono text-gray-200" title={w.address}>{short(w.address)}</span>
-              <span className="text-xs text-gray-500">linked {new Date(w.linkedAt).toLocaleDateString()}</span>
+              <span className="flex items-center gap-2 text-xs text-gray-500">
+                {w.blocked && <Badge tone="danger">{WALLET_BLOCKED_LABEL}</Badge>}
+                linked {new Date(w.linkedAt).toLocaleDateString()}
+              </span>
             </li>
           ))}
         </ul>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  APPROVED_NOTE, BLOCKER_LABELS, FLAG_LABELS, SAFE_STEPS, WITHDRAW_WARNING, adminReissueError, linkedByLabel, moveError, moveFormError, revocationNote,
+  APPROVED_NOTE, BLOCKER_LABELS, WALLET_BLOCKED_LABEL, FLAG_LABELS, SAFE_STEPS, WITHDRAW_WARNING, adminReissueError, linkedByLabel, moveError, moveFormError, revocationNote,
 } from './reissue'
 
 const W1 = '0x1111111111111111111111111111111111111111'
@@ -33,6 +33,7 @@ describe('reissue: the admin queue', () => {
   it('has a plain line for every flag and blocker', () => {
     expect(Object.keys(FLAG_LABELS).sort()).toEqual(['clash', 'earlier_reissue', 'follow_up_reissue', 'new_wallet_linked_by_old_wallet', 'new_wallet_recent', 'recent_cancel'])
     expect(Object.keys(BLOCKER_LABELS)).toHaveLength(9)
+    expect(WALLET_BLOCKED_LABEL).toBe("Blocked: can't sign in")
   })
   it('gives the Safe steps in order, and the withdraw warning', () => {
     expect(SAFE_STEPS.join(' → ')).toBe('Open your Safe (app.safe.global) on the right network. → Go to Apps, then Transaction Builder. → Drag in this file. → Press Simulate, and check it succeeds. → Press Create batch. → Get a second signer to approve it. → Execute it.')

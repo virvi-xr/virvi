@@ -176,6 +176,9 @@ export const FLAG_LABELS: Record<BeatReissueFlag, string> = {
   clash: 'A BEAT was moved on chain but its claim could not move (another claim holds the new wallet)',
 }
 
+/** How Settings (Linked Wallets, Move my BEATs) marks a linked wallet that is blocked (M-8). */
+export const WALLET_BLOCKED_LABEL = "Blocked: can't sign in"
+
 export const BLOCKER_LABELS: Record<BeatReissueBlocker, string> = {
   NothingToReplace: 'The old wallet no longer holds this tradeable BEAT',
   AlreadyReplaced: 'Already replaced on chain',

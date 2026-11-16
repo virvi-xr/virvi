@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'node:crypto'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { getAddress, verifyMessage } from 'ethers'
 import { db } from '../db/connection.js'
-import { userAuthMethods, walletChallenges } from '../db/schema.js'
+import { userAuthMethods, walletBlocks, walletChallenges } from '../db/schema.js'
 import { config } from '../config.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { authenticate } from '../middleware/auth.js'
@@ -134,14 +134,23 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
     return reply.send(issueWalletSession(app, user, recovered))
   })
 
-  /** Verified wallets linked to the signed-in user (legacy unverified records are not shown). */
+  /**
+   * Verified wallets linked to the signed-in user (legacy unverified records are not shown). `blocked` marks one that
+   * can no longer sign in (a reissue's old wallet stays linked until the reissue is done; M-8), and `linkedAt` is when
+   * it was linked to this account (linked_at, else when its record was made, for links from before it was kept).
+   */
   app.get('/api/auth/wallets', { preHandler: authenticate }, async (request) => {
     const methods = await db.query.userAuthMethods.findMany({
       where: and(eq(userAuthMethods.userId, request.user.id), eq(userAuthMethods.type, 'wallet')),
     })
-    const wallets = methods
-      .filter((m) => (m.metadata as { verified?: unknown } | null)?.verified === true)
-      .map((m) => ({ address: m.identifier, linkedAt: m.createdAt.toISOString() }))
+    const verified = methods.filter((m) => (m.metadata as { verified?: unknown } | null)?.verified === true)
+    const blocks = verified.length
+      ? await db.select({ wallet: walletBlocks.wallet }).from(walletBlocks).where(inArray(walletBlocks.wallet, verified.map((m) => m.identifier.toLowerCase())))
+      : []
+    const blocked = new Set(blocks.map((b) => b.wallet))
+    const wallets = verified.map((m) => ({
+      address: m.identifier, linkedAt: (m.linkedAt ?? m.createdAt).toISOString(), blocked: blocked.has(m.identifier.toLowerCase()),
+    }))
     return { wallets }
   })
 }

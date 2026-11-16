@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { Wallet } from 'ethers'
 import { db } from '../src/db/connection.js'
-import { userAuthMethods } from '../src/db/schema.js'
+import { userAuthMethods, walletBlocks } from '../src/db/schema.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor } from './helpers/factories.js'
 
@@ -35,7 +35,24 @@ describe('GET /api/auth/wallets', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/auth/wallets', headers: { authorization: `Bearer ${tokenFor(me)}` } })
     expect(res.statusCode).toBe(200)
-    expect(res.json().wallets).toEqual([{ address: w.address.toLowerCase(), linkedAt: expect.any(String) }])
+    expect(res.json().wallets).toEqual([{ address: w.address.toLowerCase(), linkedAt: expect.any(String), blocked: false }])
+  })
+
+  it('M-8: marks a blocked wallet, and gives when it was linked (linked_at, else when its record was made)', async () => {
+    const me = await createUser()
+    const blocked = '0x' + '2'.repeat(40)
+    const absorbed = '0x' + '3'.repeat(40)
+    const linkedAt = new Date('2026-11-01T10:00:00Z')
+    await db.insert(userAuthMethods).values([
+      { userId: me.id, type: 'wallet', identifier: blocked, metadata: { verified: true }, createdAt: new Date('2026-10-01T10:00:00Z') },
+      { userId: me.id, type: 'wallet', identifier: absorbed, metadata: { verified: true }, createdAt: new Date('2026-09-01T10:00:00Z'), linkedAt },
+    ])
+    await db.insert(walletBlocks).values({ wallet: blocked, userId: me.id, reason: 'reissue' })
+    const res = await app.inject({ method: 'GET', url: '/api/auth/wallets', headers: { authorization: `Bearer ${tokenFor(me, { wallet: null })}` } })
+    expect(res.statusCode).toBe(200)
+    const by = Object.fromEntries(res.json().wallets.map((x: any) => [x.address, x]))
+    expect(by[blocked]).toEqual({ address: blocked, linkedAt: '2026-10-01T10:00:00.000Z', blocked: true })
+    expect(by[absorbed]).toEqual({ address: absorbed, linkedAt: linkedAt.toISOString(), blocked: false })
   })
 
   it('requires a signed-in user', async () => {
