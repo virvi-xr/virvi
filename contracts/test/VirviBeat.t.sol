@@ -162,6 +162,15 @@ contract VirviBeatTest is Test {
         assertFalse(beat.hasRole(minterRole, deployer));
     }
 
+    function test_Deploy_ReissuerGoesToAdminOnly() public view {
+        bytes32 reissuerRole = beat.REISSUER_ROLE();
+        assertEq(reissuerRole, keccak256("REISSUER_ROLE"));
+        assertTrue(beat.hasRole(reissuerRole, admin));
+        assertFalse(beat.hasRole(reissuerRole, minter), "the minter must never hold reissuer");
+        assertFalse(beat.hasRole(reissuerRole, deployer));
+        assertEq(beat.getRoleAdmin(reissuerRole), beat.DEFAULT_ADMIN_ROLE());
+    }
+
     function test_Deploy_RevertsOnZeroAdmin() public {
         vm.expectRevert(VirviBeat.ZeroAddress.selector);
         new VirviBeat(address(0), minter, BASE);
@@ -776,6 +785,412 @@ contract VirviBeatTest is Test {
         assertEq(beat.balanceOf(holder, LOCKED), 1);
     }
 
+    // ---------------------------------------------------------------- reissue
+
+    function _ids(uint256 a) internal pure returns (uint256[] memory l) {
+        l = new uint256[](1);
+        l[0] = a;
+    }
+
+    function _ids(uint256 a, uint256 b) internal pure returns (uint256[] memory l) {
+        l = new uint256[](2);
+        l[0] = a;
+        l[1] = b;
+    }
+
+    function _reissue(address from, address to, uint256[] memory ids) internal {
+        vm.prank(admin);
+        beat.reissue(from, to, ids);
+    }
+
+    function test_Reissue_MintsToFreshWalletEmitsAndRecords() public {
+        _mintOne(LOCKED, alice);
+        vm.expectEmit(true, true, true, true, address(beat));
+        emit VirviBeat.Reissued(LOCKED, alice, bob);
+        vm.expectEmit(true, true, true, true, address(beat));
+        emit IERC1155.TransferSingle(admin, address(0), bob, LOCKED, 1);
+        _reissue(alice, bob, _ids(LOCKED));
+
+        assertEq(beat.balanceOf(bob, LOCKED), 1);
+        assertEq(beat.balanceOf(alice, LOCKED), 1, "the old copy stays where it is");
+        assertTrue(beat.minted(LOCKED, bob));
+        assertEq(beat.replacedBy(LOCKED, alice), bob);
+        assertEq(beat.replacedBy(LOCKED, bob), address(0));
+        assertEq(beat.mintedCount(LOCKED), 2, "mintedCount counts every address ever minted");
+    }
+
+    function test_Reissue_WorksOnClosedBeat() public {
+        _mintOne(LOCKED, alice);
+        vm.prank(minter);
+        beat.closeBeat(LOCKED);
+        _reissue(alice, bob, _ids(LOCKED));
+        assertEq(beat.balanceOf(bob, LOCKED), 1);
+        assertTrue(beat.closed(LOCKED));
+
+        // Closed still means no new mints for anyone else.
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.BeatClosedError.selector, LOCKED));
+        vm.prank(minter);
+        beat.mintTo(LOCKED, _list(stranger));
+    }
+
+    function test_Reissue_SeveralIdsInOneCall() public {
+        _mintOne(LOCKED, alice);
+        _mintOne(OPEN, alice);
+        vm.expectEmit(true, true, true, true, address(beat));
+        emit VirviBeat.Reissued(LOCKED, alice, bob);
+        vm.expectEmit(true, true, true, true, address(beat));
+        emit VirviBeat.Reissued(OPEN, alice, bob);
+        _reissue(alice, bob, _ids(LOCKED, OPEN));
+        assertEq(beat.balanceOf(bob, LOCKED), 1);
+        assertEq(beat.balanceOf(bob, OPEN), 1);
+        assertEq(beat.replacedBy(OPEN, alice), bob);
+    }
+
+    function test_Reissue_ToSafeStyleWallet() public {
+        address safe = address(new SafeProxy(address(new SafeSingleton(address(new SafeFallbackHandler())))));
+        _mintOne(LOCKED, alice);
+        _reissue(alice, safe, _ids(LOCKED));
+        assertEq(beat.balanceOf(safe, LOCKED), 1);
+    }
+
+    function test_Reissue_RecipientThatRejectsRevertsWholeCall() public {
+        address rejecter = address(new NoReceiver());
+        _mintOne(LOCKED, alice);
+        vm.expectRevert(abi.encodeWithSelector(IERC1155Errors.ERC1155InvalidReceiver.selector, rejecter));
+        _reissue(alice, rejecter, _ids(LOCKED));
+        assertEq(beat.replacedBy(LOCKED, alice), address(0));
+        assertFalse(beat.minted(LOCKED, rejecter));
+    }
+
+    function test_Reissue_CallerWithoutRoleReverts() public {
+        _mintOne(LOCKED, alice);
+        bytes32 reissuerRole = beat.REISSUER_ROLE();
+
+        vm.expectRevert(_unauthorized(minter, reissuerRole));
+        vm.prank(minter);
+        beat.reissue(alice, bob, _ids(LOCKED));
+
+        vm.expectRevert(_unauthorized(stranger, reissuerRole));
+        vm.prank(stranger);
+        beat.reissue(alice, bob, _ids(LOCKED));
+
+        // The holder can't do it for themselves either.
+        vm.expectRevert(_unauthorized(alice, reissuerRole));
+        vm.prank(alice);
+        beat.reissue(alice, bob, _ids(LOCKED));
+
+        vm.prank(admin);
+        beat.revokeRole(reissuerRole, admin);
+        vm.expectRevert(_unauthorized(admin, reissuerRole));
+        vm.prank(admin);
+        beat.reissue(alice, bob, _ids(LOCKED));
+
+        assertEq(beat.balanceOf(bob, LOCKED), 0);
+        assertEq(beat.replacedBy(LOCKED, alice), address(0));
+    }
+
+    function test_Reissue_AdminRenouncedRoleCanBeRegranted() public {
+        bytes32 reissuerRole = beat.REISSUER_ROLE();
+        vm.startPrank(admin);
+        beat.renounceRole(reissuerRole, admin);
+        assertFalse(beat.hasRole(reissuerRole, admin));
+        beat.grantRole(reissuerRole, admin);
+        vm.stopPrank();
+        assertTrue(beat.hasRole(reissuerRole, admin));
+    }
+
+    function test_Reissue_AdminCanGrantAndRevokeReissuer() public {
+        bytes32 reissuerRole = beat.REISSUER_ROLE();
+        address support = makeAddr("support");
+        _mintOne(LOCKED, alice);
+        _mintOne(OPEN, alice);
+
+        vm.prank(admin);
+        beat.grantRole(reissuerRole, support);
+        vm.prank(support);
+        beat.reissue(alice, bob, _ids(LOCKED));
+        assertEq(beat.balanceOf(bob, LOCKED), 1);
+
+        vm.prank(admin);
+        beat.revokeRole(reissuerRole, support);
+        vm.expectRevert(_unauthorized(support, reissuerRole));
+        vm.prank(support);
+        beat.reissue(alice, bob, _ids(OPEN));
+    }
+
+    function test_Reissue_OnlyAdminCanGrantReissuer() public {
+        bytes32 reissuerRole = beat.REISSUER_ROLE();
+        vm.expectRevert(_unauthorized(minter, beat.DEFAULT_ADMIN_ROLE()));
+        vm.prank(minter);
+        beat.grantRole(reissuerRole, minter);
+        assertFalse(beat.hasRole(reissuerRole, minter));
+    }
+
+    function test_Reissue_ContractAdminCanReissue() public {
+        address safe = address(new SafeProxy(address(new SafeSingleton(address(new SafeFallbackHandler())))));
+        VirviBeat b = new VirviBeat(safe, minter, BASE);
+        vm.startPrank(minter);
+        b.createBeat(LOCKED, false);
+        b.mintTo(LOCKED, _list(alice));
+        vm.stopPrank();
+        assertTrue(b.hasRole(b.REISSUER_ROLE(), safe));
+        vm.prank(safe);
+        b.reissue(alice, bob, _ids(LOCKED));
+        assertEq(b.balanceOf(bob, LOCKED), 1);
+    }
+
+    function test_Reissue_UnknownBeatReverts() public {
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.UnknownBeat.selector, 999));
+        _reissue(alice, bob, _ids(999));
+    }
+
+    function test_Reissue_NotMintedToFromReverts() public {
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.NotMintedTo.selector, LOCKED, alice));
+        _reissue(alice, bob, _ids(LOCKED));
+    }
+
+    function test_Reissue_TradeableReceivedByTransferIsNotMintedTo() public {
+        _mintOne(OPEN, alice);
+        vm.prank(alice);
+        beat.safeTransferFrom(alice, stranger, OPEN, 1, "");
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.NotMintedTo.selector, OPEN, stranger));
+        _reissue(stranger, bob, _ids(OPEN));
+    }
+
+    function test_Reissue_ToAlreadyMintedReverts() public {
+        _mintOne(LOCKED, alice);
+        _mintOne(LOCKED, bob);
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.AlreadyMinted.selector, LOCKED, bob));
+        _reissue(alice, bob, _ids(LOCKED));
+    }
+
+    function test_Reissue_SecondReissueFromSameWalletReverts() public {
+        address carol = makeAddr("carol");
+        _mintOne(LOCKED, alice);
+        _reissue(alice, bob, _ids(LOCKED));
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.AlreadyReplaced.selector, LOCKED, alice));
+        _reissue(alice, carol, _ids(LOCKED));
+        assertEq(beat.balanceOf(carol, LOCKED), 0);
+    }
+
+    function test_Reissue_ChainOldToNewToNewer() public {
+        address carol = makeAddr("carol");
+        _mintOne(LOCKED, alice);
+        _reissue(alice, bob, _ids(LOCKED));
+        _reissue(bob, carol, _ids(LOCKED));
+        assertEq(beat.replacedBy(LOCKED, alice), bob);
+        assertEq(beat.replacedBy(LOCKED, bob), carol);
+        assertEq(beat.replacedBy(LOCKED, carol), address(0));
+        assertEq(beat.balanceOf(carol, LOCKED), 1);
+        assertEq(beat.mintedCount(LOCKED), 3);
+
+        // Back to the first wallet is never possible: it was minted already.
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.AlreadyMinted.selector, LOCKED, alice));
+        _reissue(carol, alice, _ids(LOCKED));
+    }
+
+    function test_Reissue_SameFromAndToReverts() public {
+        _mintOne(LOCKED, alice);
+        vm.expectRevert(VirviBeat.SameFromAndTo.selector);
+        _reissue(alice, alice, _ids(LOCKED));
+    }
+
+    function test_Reissue_ZeroAddressesRevert() public {
+        _mintOne(LOCKED, alice);
+        vm.expectRevert(VirviBeat.ZeroAddress.selector);
+        _reissue(alice, address(0), _ids(LOCKED));
+        vm.expectRevert(VirviBeat.ZeroAddress.selector);
+        _reissue(address(0), bob, _ids(LOCKED));
+    }
+
+    function test_Reissue_BatchLimits() public {
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.BatchTooLarge.selector, 0));
+        _reissue(alice, bob, new uint256[](0));
+
+        uint256[] memory ids = new uint256[](201);
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.BatchTooLarge.selector, 201));
+        _reissue(alice, bob, ids);
+    }
+
+    function test_Reissue_IsAllOrNothing() public {
+        _mintOne(LOCKED, alice);
+        _mintOne(OPEN, alice);
+        _mintOne(OPEN, bob);
+        // The first id is fine, the second is not: nothing happens.
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.AlreadyMinted.selector, OPEN, bob));
+        _reissue(alice, bob, _ids(LOCKED, OPEN));
+        assertEq(beat.balanceOf(bob, LOCKED), 0);
+        assertFalse(beat.minted(LOCKED, bob));
+        assertEq(beat.replacedBy(LOCKED, alice), address(0));
+        assertEq(beat.mintedCount(LOCKED), 1);
+
+        // A repeated id in one call fails on the repeat, and rolls back the first.
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.AlreadyReplaced.selector, LOCKED, alice));
+        _reissue(alice, makeAddr("carol"), _ids(LOCKED, LOCKED));
+        assertEq(beat.replacedBy(LOCKED, alice), address(0));
+    }
+
+    function test_Reissue_ReplacedTradeableCopyCannotMove() public {
+        _mintOne(OPEN, alice);
+        vm.prank(alice);
+        beat.setApprovalForAll(stranger, true);
+        _reissue(alice, bob, _ids(OPEN));
+
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.ReplacedCopy.selector, OPEN, alice));
+        vm.prank(alice);
+        beat.safeTransferFrom(alice, stranger, OPEN, 1, "");
+
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.ReplacedCopy.selector, OPEN, alice));
+        vm.prank(stranger);
+        beat.safeTransferFrom(alice, stranger, OPEN, 1, "");
+
+        uint256[] memory values = new uint256[](1);
+        values[0] = 1;
+        vm.expectRevert(abi.encodeWithSelector(VirviBeat.ReplacedCopy.selector, OPEN, alice));
+        vm.prank(stranger);
+        beat.safeBatchTransferFrom(alice, stranger, _ids(OPEN), values, "");
+
+        assertEq(beat.balanceOf(alice, OPEN), 1);
+
+        // The holder can still burn it.
+        vm.prank(alice);
+        beat.burn(alice, OPEN, 1);
+        assertEq(beat.balanceOf(alice, OPEN), 0);
+    }
+
+    function test_Reissue_ReplacedCopyCanBeBurnedInBatch() public {
+        _mintOne(OPEN, alice);
+        _mintOne(LOCKED, alice);
+        _reissue(alice, bob, _ids(OPEN, LOCKED));
+        uint256[] memory values = new uint256[](2);
+        values[0] = 1;
+        values[1] = 1;
+        vm.prank(alice);
+        beat.burnBatch(alice, _ids(OPEN, LOCKED), values);
+        assertEq(beat.balanceOf(alice, OPEN), 0);
+        assertEq(beat.balanceOf(alice, LOCKED), 0);
+    }
+
+    function test_Reissue_NewCopyAndOtherCopiesOfTradeableStillTransfer() public {
+        address carol = makeAddr("carol");
+        _mintOne(OPEN, alice);
+        _mintOne(OPEN, carol);
+        _reissue(alice, bob, _ids(OPEN));
+
+        vm.prank(bob);
+        beat.safeTransferFrom(bob, stranger, OPEN, 1, "");
+        assertEq(beat.balanceOf(stranger, OPEN), 1);
+
+        vm.prank(carol);
+        beat.safeTransferFrom(carol, stranger, OPEN, 1, "");
+        assertEq(beat.balanceOf(stranger, OPEN), 2);
+    }
+
+    function test_Reissue_ReplacingOneIdLeavesOtherIdsOfSameWalletMovable() public {
+        uint256 other = 3;
+        vm.prank(minter);
+        beat.createBeat(other, true);
+        _mintOne(OPEN, alice);
+        _mintOne(other, alice);
+        _reissue(alice, bob, _ids(OPEN));
+        vm.prank(alice);
+        beat.safeTransferFrom(alice, stranger, other, 1, "");
+        assertEq(beat.balanceOf(stranger, other), 1);
+    }
+
+    function test_Reissue_IsTransferableReflectsReplacement() public {
+        _mintOne(OPEN, alice);
+        assertTrue(beat.isTransferable(OPEN, alice, stranger));
+        _reissue(alice, bob, _ids(OPEN));
+        assertFalse(beat.isTransferable(OPEN, alice, stranger), "replaced copy");
+        assertTrue(beat.isTransferable(OPEN, alice, address(0)), "burn still allowed");
+        assertTrue(beat.isTransferable(OPEN, bob, stranger), "the new copy");
+        assertFalse(beat.isTransferable(LOCKED, bob, stranger), "non-tradeable is unchanged");
+    }
+
+    function test_Reissue_SupportsInterfaceUnchanged() public view {
+        // Same set as test_SupportsInterface: reissue adds no interface.
+        assertTrue(beat.supportsInterface(type(IERC1155).interfaceId));
+        assertTrue(beat.supportsInterface(type(IAccessControl).interfaceId));
+        assertTrue(beat.supportsInterface(0x91a6262f));
+        assertTrue(beat.supportsInterface(0x49064906));
+        assertFalse(beat.supportsInterface(0xffffffff));
+    }
+
+    /// Creates `n` BEATs (ids 100..), mints each to alice, then measures reissuing all of them to bob.
+    function _reissueGas(uint256 n) internal returns (uint256 used) {
+        uint256[] memory ids = new uint256[](n);
+        vm.startPrank(minter);
+        for (uint256 i = 0; i < n; i++) {
+            ids[i] = 100 + i;
+            beat.createBeat(ids[i], i % 2 == 0);
+            beat.mintTo(ids[i], _list(alice));
+        }
+        vm.stopPrank();
+        vm.prank(admin);
+        uint256 before = gasleft();
+        beat.reissue(alice, bob, ids);
+        used = before - gasleft();
+        for (uint256 i = 0; i < n; i++) {
+            assertEq(beat.balanceOf(bob, ids[i]), 1);
+        }
+    }
+
+    function test_Reissue_Gas_1Id() public {
+        uint256 used = _reissueGas(1);
+        emit log_named_uint("reissue 1 id, gas", used);
+        assertLt(used, 120_000);
+    }
+
+    function test_Reissue_Gas_10Ids() public {
+        uint256 used = _reissueGas(10);
+        emit log_named_uint("reissue 10 ids, gas", used);
+        assertLt(used, 1_000_000);
+    }
+
+    function test_Reissue_Gas_50Ids() public {
+        uint256 used = _reissueGas(50);
+        emit log_named_uint("reissue 50 ids, gas", used);
+        assertLt(used, 5_000_000);
+    }
+
+    /// A random sequence of mints and reissues over a small pool of wallets on a non-tradeable BEAT
+    /// (so balances only change by minting): no wallet ever holds two, `minted` matches the balance, and
+    /// `mintedCount` matches the number of wallets ever minted.
+    function testFuzz_Reissue_NeverMintsTwiceToOneAddress(uint256 seed, uint8 steps) public {
+        uint256 n = _bound(steps, 1, 60);
+        address[] memory pool = new address[](8);
+        for (uint256 i = 0; i < 8; i++) {
+            pool[i] = address(uint160(0x20000 + i));
+        }
+        for (uint256 s = 0; s < n; s++) {
+            uint256 r = uint256(keccak256(abi.encode(seed, s)));
+            address a = pool[r % 8];
+            address b = pool[(r >> 8) % 8];
+            if ((r >> 16) % 3 == 0) {
+                vm.prank(minter);
+                try beat.mintTo(LOCKED, _list(a)) {} catch {} // reverts once closed
+            } else {
+                vm.prank(admin);
+                try beat.reissue(a, b, _ids(LOCKED)) {} catch {}
+            }
+            if ((r >> 24) % 17 == 0) {
+                vm.prank(admin);
+                try beat.closeBeat(LOCKED) {} catch {}
+            }
+        }
+        uint256 count;
+        for (uint256 i = 0; i < 8; i++) {
+            uint256 bal = beat.balanceOf(pool[i], LOCKED);
+            assertLe(bal, 1, "one address minted twice");
+            assertEq(bal == 1, beat.minted(LOCKED, pool[i]));
+            if (beat.minted(LOCKED, pool[i])) count++;
+            address next = beat.replacedBy(LOCKED, pool[i]);
+            if (next != address(0)) assertTrue(beat.minted(LOCKED, next));
+        }
+        assertEq(beat.mintedCount(LOCKED), count);
+    }
+
     // ----------------------------------------------------------------- script
 
     /// The only test that sets environment variables (they are process-wide, and tests run in parallel).
@@ -801,7 +1216,19 @@ contract VirviBeatTest is Test {
         assertTrue(deployed.hasRole(deployed.MINTER_ROLE(), minter));
         assertFalse(deployed.hasRole(deployed.DEFAULT_ADMIN_ROLE(), broadcaster));
         assertFalse(deployed.hasRole(deployed.MINTER_ROLE(), broadcaster));
+        assertTrue(deployed.hasRole(deployed.REISSUER_ROLE(), admin));
+        assertFalse(deployed.hasRole(deployed.REISSUER_ROLE(), minter));
+        assertFalse(deployed.hasRole(deployed.REISSUER_ROLE(), broadcaster));
         assertEq(deployed.uri(1), string.concat(BASE, "1.json"));
+    }
+
+    function test_DeployScript_AdminCanBeAContract() public {
+        address safe = address(new SafeProxy(address(new SafeSingleton(address(new SafeFallbackHandler())))));
+        Deploy script = new Deploy();
+        VirviBeat deployed = script.deploy(safe, minter, BASE, block.chainid);
+        assertEq(deployed.owner(), safe);
+        assertTrue(deployed.hasRole(deployed.REISSUER_ROLE(), safe));
+        assertFalse(deployed.hasRole(deployed.REISSUER_ROLE(), minter));
     }
 
     function test_DeployScript_RevertsOnWrongChain() public {

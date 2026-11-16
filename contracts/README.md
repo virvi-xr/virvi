@@ -11,8 +11,11 @@ blockchain) that creates them, on Polygon.
 - **Mint:** create a token and put it in a wallet. **Burn:** destroy it for good. This can't be undone.
 - **Polygon** is the blockchain. **POL** is its coin, used to pay fees (called **gas**). **Amoy** is
   Polygon's practice network, with free test POL. **Mainnet** is the real network.
-- **Admin:** the owner's wallet that controls the settings. **Minter:** Virvi's server wallet that
+- **Admin:** the owner's wallet that controls the settings. On mainnet it's a **Safe multisig** (a shared
+  wallet where 2 of its 3 signers must approve each action). **Minter:** Virvi's server wallet that
   creates and sends BEATs.
+- **Reissuer:** a permission to replace a BEAT in a compromised wallet (see below). Only the admin has it
+  unless the admin gives it to someone else. The minter never has it.
 
 **What it does:**
 - The minter creates a BEAT once, and decides then whether it can be traded. That choice can never change.
@@ -23,8 +26,8 @@ blockchain) that creates them, on Polygon.
 - A BEAT that isn't tradeable can't be moved to another wallet by anyone.
 - **Only the holder can burn their own BEAT.** Nobody else can, not even a wallet or site the holder
   approved.
-- A BEAT can be **closed** by the minter or the admin. A closed BEAT can never be minted again. BEATs
-  already in wallets stay where they are.
+- A BEAT can be **closed** by the minter or the admin. A closed BEAT can never be minted again, except by
+  a reissue (below). BEATs already in wallets stay where they are.
 - If a wallet in a list can't accept the token (some smart-contract wallets), it's skipped and the rest
   of the list still gets theirs. Virvi can send to that wallet again later.
 
@@ -34,18 +37,36 @@ blockchain) that creates them, on Polygon.
   looks can change. Who owns it can't.
 - Add or remove minters, including making itself a minter. A minter added this way can create and send
   new BEATs.
+- **Reissue a BEAT to a new wallet.** When someone's wallet is compromised, Virvi support checks it's
+  really them, and then the reissuer (the admin) can:
+  - give their new wallet a fresh copy of a BEAT their old wallet was given, **even after the BEAT is
+    closed**;
+  - which marks the old copy **replaced**: it can never move to another wallet again, even if the BEAT is
+    tradeable, so a thief can't sell it. Only its holder can still burn it.
+
+  It works only once for each old wallet and BEAT, and only to a wallet that was never given that BEAT.
+  The old copy itself isn't moved or burned: it stays in the old wallet, marked replaced. Anyone can look
+  this up with `replacedBy(id, oldWallet)`.
+- Add or remove reissuers, including removing the permission from itself.
 - Hand the admin role to another wallet. This takes two steps: the admin starts the handover, and the new
   wallet accepts it **after a 1-day wait**. The admin can't simply give the role away or drop it by
   accident.
 
 **What nobody can do:**
-- Nobody, not the admin and not the minter, can move, burn or take back a BEAT that's in someone's wallet.
+- Nobody, not the admin, a reissuer or the minter, can move, burn or take back a BEAT that's in someone's
+  wallet. A reissue gives out a new copy; it doesn't touch the old one except to stop it moving.
 - There is no pause switch, no upgrade, and no way to delete the contract.
 - It can't be paid and can't pay anyone out. Sending POL to it fails.
 
 **Good to know:**
-- The admin is a single wallet. Whoever holds its key can do everything listed above. If that key is lost,
-  nobody can change the minter or the web address again.
+- The admin is one address. On mainnet it's meant to be a Safe multisig, so no single key can act alone.
+  Whoever controls it can do everything listed above. If it's lost for good, nobody can change the minter,
+  the reissuers or the web address again. Replacing a lost or compromised Safe signer happens inside the
+  Safe (its owners swap the signer there); the contract doesn't change.
+- **If the minter's key leaks,** the admin can revoke the old minter and grant a new one, and do the same
+  for reissuers, at once (no wait). Only the admin role itself takes the 1-day handover.
+- **If the admin is handed to a new address,** the reissuer permission doesn't move with it. The new admin
+  should grant itself `REISSUER_ROLE` and revoke it from the old admin.
 - There's no limit on how many BEATs Virvi can create or send, and Virvi can send a BEAT to any wallet
   without asking. You can burn one you don't want.
 - This contract has been checked with an automatic tool (Slither), which found nothing serious. That is
@@ -59,7 +80,7 @@ blockchain) that creates them, on Polygon.
    with `forge --version`.
 2. **A deployer wallet's private key** (the secret that controls a wallet; never share it). Use a fresh
    wallet that only holds POL for fees. It gets no permissions in the contract.
-3. **POL in the deployer wallet.** The deploy uses about 2.8 million gas, and the tool asks for about
+3. **POL in the deployer wallet.** The deploy uses about 3.1 million gas, and the tool asks for about
    30% extra up front to be safe. Have about 0.2 test POL on Amoy (free from a faucet), and about 1.5 POL
    on mainnet (the real cost is usually under 1 POL, depending on the gas price that day). What isn't
    spent stays in the wallet.
@@ -85,8 +106,10 @@ export BEAT_ADMIN="0x7BC6B7cd586BeF73136e2fb9bdF2eA56D2809220"
 export BEAT_MINTER="PASTE_MINTER_ADDRESS_HERE"
 ```
 
-- `BEAT_ADMIN` is the wallet that will control the contract's settings. It's filled in already. **Check
-  every character.** A wrong admin address can't be fixed later.
+- `BEAT_ADMIN` is the wallet that will control the contract's settings and do reissues. It's filled in
+  already for Amoy. **For mainnet, set it to the Safe multisig's address** (step 4). **Check every
+  character.** A wrong admin address can't be fixed later. A Safe (or any contract) works as the admin;
+  the deploy checks that it got the admin and reissuer permissions and the minter didn't.
 - `BEAT_MINTER` must be a different wallet from the admin. The deploy stops if they're the same.
 
 These settings last until you close the Terminal window.
@@ -149,7 +172,11 @@ Then open `https://amoy.polygonscan.com/address/` followed by the contract addre
 
 Only after Amoy has worked end to end. **Mainnet can't be undone and costs real POL.**
 
+Replace `PASTE_SAFE_ADDRESS_HERE` with the Safe multisig's Polygon address (it must be a Safe on Polygon
+mainnet, chain 137):
+
 ```
+export BEAT_ADMIN="PASTE_SAFE_ADDRESS_HERE"
 export BEAT_BASE_URI="https://api.virvi.io/api/beats/metadata/polygon/"
 export EXPECTED_CHAIN_ID=137
 ```
@@ -229,10 +256,19 @@ reverts with `InsufficientGas` rather than skip a good receiver, so gas estimati
 cap. A one-recipient mint to a contract wallet needs a gas limit of about 145k.
 
 **Gas** (forge 1.9.0, measured in tests):
-- Deploy: about 2.76M gas.
+- Deploy: about 3.07M gas.
 - `mintTo` with 200 new plain wallets: about 10.5M gas. At 30 gwei that's about 0.3 POL; at 280 gwei, about
   3 POL. A batch skipping bad receivers costs at most `RECEIVER_GAS` for each of them.
 - `createBeat`: 60k to 81k. `closeBeat`: about 50k.
+- `reissue` to a plain wallet: about 114k for 1 id, 862k for 10, 4.18M for 50 (about 84k per extra id).
+
+**Reissue.** `reissue(from, to, ids)` needs `REISSUER_ROLE` (granted to the admin at deploy; its role
+admin is `DEFAULT_ADMIN_ROLE`). It checks and records every id first (`minted[id][to]`, `++mintedCount`,
+`replacedBy[id][from] = to`, `Reissued(id, from, to)`), then mints each with a checked `_mint`, so a
+recipient that rejects the token reverts the whole call. It ignores `closed`. `mintedCount` counts the
+new wallet too, so it stays equal to the number of addresses with `minted` set; subtract `Reissued` events
+to count people. In `_update`, any move out of `from` of an id where `replacedBy[id][from] != 0` reverts
+with `ReplacedCopy` (burns pass), and `isTransferable` returns false for it.
 
 ## Slither
 
@@ -247,7 +283,8 @@ Last run: 28 contracts, 102 detectors, **1 low finding, accepted**:
   batch (that isolation is the point of the call).
 
 `forge lint` notes silenced inline, each with a reason in the code: `require-revert-in-loop` in `_update`
-(any locked id must fail the whole transfer) and on the `InsufficientGas` check in `mintTo` (a starved
+(any locked or replaced id must fail the whole transfer) and in `reissue` (any bad id must fail the whole
+reissue) and on the `InsufficientGas` check in `mintTo` (a starved
 guarded mint must fail the whole call), `calls-loop` (as above), and `reentrancy-events` on the
 `URI` emit in `createBeat` (it calls this contract's own `uri` view, not an external contract) and on
 `MintSkipped` (it reports the outcome of the guarded call, so it must come after it).

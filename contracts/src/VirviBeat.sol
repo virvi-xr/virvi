@@ -11,15 +11,22 @@ import {IERC6454} from "./interfaces/IERC6454.sol";
 /// @title VirviBeat
 /// @notice Free attendance tokens (BEATs) for Virvi events. Each BEAT is a token number (id). The minter
 /// sends a given BEAT to a wallet at most once, ever. A BEAT created as non-tradeable can't be moved to
-/// another wallet; only its holder can burn it. A closed BEAT can never be minted again.
-/// @notice The admin (one wallet, handed over only in two steps with a 1-day wait) can add or remove
-/// minters, including itself, and can change where names and images are looked up. Nobody can move, burn
-/// or take back a BEAT already in someone's wallet.
+/// another wallet; only its holder can burn it. A closed BEAT can never be minted again, except by a reissue.
+/// @notice The admin (handed over only in two steps with a 1-day wait; on mainnet a Safe multisig) can add or
+/// remove minters and reissuers, including itself, and can change where names and images are looked up. The
+/// reissuer role (the admin, unless it grants it to others) can give a wallet a fresh copy of a BEAT another
+/// wallet was minted, even after the BEAT is closed, and that marks the old copy replaced: it can never move
+/// again, and only its holder can still burn it. Nobody, including the admin, can move, burn or take back a
+/// BEAT already in someone's wallet.
 contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, IERC6454 {
     /// @notice The role allowed to create, mint and close BEATs.
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    /// @notice The most addresses one `mintTo` call accepts.
+    /// @notice The role allowed to reissue BEATs to a new wallet (see `reissue`). Granted to the admin at
+    /// deploy, never to the minter. Only the admin can grant or revoke it.
+    bytes32 public constant REISSUER_ROLE = keccak256("REISSUER_ROLE");
+
+    /// @notice The most addresses one `mintTo` call accepts, and the most ids one `reissue` call accepts.
     uint256 public constant MAX_BATCH = 200;
 
     /// @notice Gas given to each mint to a recipient that has code, including its receiver hook.
@@ -52,8 +59,15 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
     /// @notice Whether an address has ever been minted this BEAT. Stays true after a burn or transfer.
     mapping(uint256 id => mapping(address account => bool)) public minted;
 
-    /// @notice How many addresses have been minted this BEAT.
+    /// @notice How many addresses have ever been minted this BEAT, by `mintTo` or by `reissue`. A reissue
+    /// counts its new wallet too, so this always equals the number of addresses with `minted` true. To count
+    /// people rather than wallets, subtract the number of `Reissued` events for the id.
     mapping(uint256 id => uint256) public mintedCount;
+
+    /// @notice The wallet that got a fresh copy of this BEAT in place of `account`'s, or 0x0 if none. Once
+    /// set it never changes, and a copy held by `account` can never move again (its holder can still burn
+    /// it).
+    mapping(uint256 id => mapping(address account => address)) public replacedBy;
 
     error ZeroAddress();
     error SameAdminAndMinter();
@@ -67,17 +81,24 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
     error OnlyHolderCanBurn();
     error OnlySelf();
     error InsufficientGas();
+    error SameFromAndTo();
+    error NotMintedTo(uint256 id, address from);
+    error AlreadyReplaced(uint256 id, address from);
+    error AlreadyMinted(uint256 id, address to);
+    error ReplacedCopy(uint256 id, address from);
 
     event BeatCreated(uint256 indexed id, bool tradeable);
     event BeatClosed(uint256 indexed id);
     event MintSkipped(uint256 indexed id, address indexed to);
+    event Reissued(uint256 indexed id, address indexed from, address indexed to);
     event BaseURISet(string baseURI);
     /// @dev ERC-7572.
     event ContractURIUpdated();
     /// @dev ERC-4906.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    /// @param admin Gets DEFAULT_ADMIN_ROLE (and is `owner()`). The deployer gets no role.
+    /// @param admin Gets DEFAULT_ADMIN_ROLE (and is `owner()`) and REISSUER_ROLE. May be a contract, such as
+    /// a Safe. The deployer gets no role.
     /// @param minter Gets MINTER_ROLE. Must differ from `admin`.
     /// @param baseURI Metadata base, ending in "/"; `uri(id)` is `{baseURI}{id}.json`.
     constructor(address admin, address minter, string memory baseURI)
@@ -88,6 +109,7 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
         if (minter == admin) revert SameAdminAndMinter();
         _checkBase(baseURI);
         _grantRole(MINTER_ROLE, minter);
+        _grantRole(REISSUER_ROLE, admin);
     }
 
     // ------------------------------------------------------------- minter
@@ -180,6 +202,47 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
         emit BatchMetadataUpdate(1, type(uint256).max);
     }
 
+    // ----------------------------------------------------------- reissuer
+
+    /// @notice Reissuer only (the admin, unless it granted the role to others). For a wallet that was
+    /// compromised: gives `to` a fresh copy of each BEAT in `ids` that was minted to `from`, even if the BEAT
+    /// is closed, and marks `from`'s copy replaced. A replaced copy can never move again; only its holder can
+    /// still burn it. Nobody, the reissuer included, can move or burn the old copy itself.
+    /// @dev All or nothing: any bad id reverts the whole call. For each id, the BEAT must exist, `from` must
+    /// have been minted it, `from` must not have been replaced for it already, and `to` must never have been
+    /// minted it. A chain (old to new, then new to newer) works. The new wallet counts toward `mintedCount`.
+    /// Every check and record is made for all ids before the first mint, then each id is minted with a
+    /// normal checked `_mint`: if `to` can't take the token, the whole call reverts.
+    /// @param from The wallet being replaced. Must differ from `to`; neither may be 0x0.
+    /// @param to The new wallet.
+    /// @param ids Between 1 and MAX_BATCH BEAT ids.
+    function reissue(address from, address to, uint256[] calldata ids) external onlyRole(REISSUER_ROLE) {
+        if (from == address(0) || to == address(0)) revert ZeroAddress();
+        if (from == to) revert SameFromAndTo();
+        uint256 n = ids.length;
+        if (n == 0 || n > MAX_BATCH) revert BatchTooLarge(n);
+
+        for (uint256 i = 0; i < n; ++i) {
+            uint256 id = ids[i];
+            // All or nothing is the point: one bad id fails the whole reissue.
+            // forge-lint: disable-next-line(require-revert-in-loop)
+            if (!exists[id]) revert UnknownBeat(id);
+            // forge-lint: disable-next-line(require-revert-in-loop)
+            if (!minted[id][from]) revert NotMintedTo(id, from);
+            // forge-lint: disable-next-line(require-revert-in-loop)
+            if (replacedBy[id][from] != address(0)) revert AlreadyReplaced(id, from);
+            // forge-lint: disable-next-line(require-revert-in-loop)
+            if (minted[id][to]) revert AlreadyMinted(id, to);
+            replacedBy[id][from] = to;
+            minted[id][to] = true;
+            ++mintedCount[id];
+            emit Reissued(id, from, to);
+        }
+        for (uint256 i = 0; i < n; ++i) {
+            _mint(to, ids[i], 1, "");
+        }
+    }
+
     // ------------------------------------------------------------- holder
 
     /// @notice Burns your own BEATs. Only the holder can burn; approved operators can't.
@@ -207,9 +270,10 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
         return string.concat(super.uri(0), "contract.json");
     }
 
-    /// @notice ERC-6454. False only for a move between two wallets of a non-tradeable (or unknown) id.
+    /// @notice ERC-6454. False only for a move between two wallets of a non-tradeable (or unknown) id, or of
+    /// a copy held by a wallet that was replaced for that id (see `reissue`).
     function isTransferable(uint256 id, address from, address to) external view returns (bool) {
-        return from == address(0) || to == address(0) || tradeable[id];
+        return from == address(0) || to == address(0) || (tradeable[id] && replacedBy[id][from] == address(0));
     }
 
     function supportsInterface(bytes4 interfaceId)
@@ -232,14 +296,18 @@ contract VirviBeat is ERC1155, ERC1155Burnable, AccessControlDefaultAdminRules, 
         _mint(account, id, 1, "");
     }
 
-    /// @dev Runs on every mint, move and burn. Moving a non-tradeable BEAT between two wallets always
-    /// fails. Minting (`from == 0`) and burning (`to == 0`) always pass.
+    /// @dev Runs on every mint, move and burn, whoever the operator. Moving a non-tradeable BEAT between two
+    /// wallets always fails, and so does moving any copy out of a wallet that was replaced for that id.
+    /// Minting (`from == 0`) and burning (`to == 0`) always pass.
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values) internal override {
         if (from != address(0) && to != address(0)) {
             for (uint256 i = 0; i < ids.length; ++i) {
+                uint256 id = ids[i];
                 // Reverting on the first locked id is the point: no transfer may include one.
                 // forge-lint: disable-next-line(require-revert-in-loop)
-                if (!tradeable[ids[i]]) revert NotTradeable(ids[i]);
+                if (replacedBy[id][from] != address(0)) revert ReplacedCopy(id, from);
+                // forge-lint: disable-next-line(require-revert-in-loop)
+                if (!tradeable[id]) revert NotTradeable(id);
             }
         }
         super._update(from, to, ids, values);
