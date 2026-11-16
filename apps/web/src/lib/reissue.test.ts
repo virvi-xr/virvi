@@ -51,6 +51,7 @@ describe('reissue: the admin queue', () => {
     expect(adminReissueError(err('wallets_unreviewed'))).toEqual({ message: 'Choose keep or unlink for every wallet listed under "Wallets to decide on".', code: 'wallets_unreviewed' })
     expect(adminReissueError(err('already_landed')).message).toMatch(/can no longer be withdrawn/)
     expect(adminReissueError(err('request_open')).message).toBe('This wallet is the old wallet of an open request. Withdraw or reject the request first.')
+    expect(adminReissueError(err('own_request')).message).toBe("You can't review your own request. Ask another admin.")
     expect(adminReissueError(new Error('x')).message).toBe('Something went wrong. Try again, or ask a developer to check the server logs.')
   })
 })

@@ -554,6 +554,8 @@ export async function reviewReissueRequest(
   const reviewNote = parseNote(body.note, decision === 'reject')
   const decisions = decision === 'approve' ? parseWalletDecisions(body.wallets) : new Map<string, 'keep' | 'unlink'>()
   const r0 = await loadRequest(id)
+  // M-6: a leaked admin wallet is the case reissue exists for, so no admin reviews their own request
+  if (r0.userId === adminId) throw new BeatError(403, 'own_request', "You can't review your own request. Ask another admin.")
   let review: ReviewWallet[] = []
   if (decision === 'approve' && r0.status === 'pending') {
     await recheck(r0)

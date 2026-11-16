@@ -250,6 +250,7 @@ const ADMIN_ERRORS: Record<string, string> = {
   request_open: 'This wallet is the old wallet of an open request. Withdraw or reject the request first.',
   bad_status: 'Unknown filter.',
   bad_offset: 'Unknown page.',
+  own_request: "You can't review your own request. Ask another admin.",
 }
 /** An admin failure as plain text, with the code kept for a developer (plain-ux I10). */
 export function adminReissueError(err: unknown): { message: string; code: string | null } {

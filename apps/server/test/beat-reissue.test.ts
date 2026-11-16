@@ -1168,6 +1168,23 @@ describe('BEAT reissue (LIV-11)', () => {
       expect((await claim(c.id)).userId).toBeNull()
     })
 
+    it("M-6: an admin can't approve or reject their own request (own_request); another admin can", async () => {
+      const adminOld = wallet()
+      await minted({ holder: admin, w: adminOld })
+      const adminNew = wallet()
+      await linkVerifiedWallet(admin.id, adminNew, { method: 'email', how: 'link' } as any)
+      const filed = await call('POST', '/api/beats/reissue-requests', admin, { oldWallet: adminOld, newWallet: adminNew, reason: 'Leaked.' }, { wallet: null, am: 'email' })
+      expect(filed.statusCode, filed.body).toBe(201)
+      const id = filed.json().id
+      for (const d of ['approve', 'reject']) {
+        const res = await call('POST', `/api/admin/beats/reissue-requests/${id}/${d}`, admin, { note: 'Mine.' })
+        expect([res.statusCode, res.json().error], d).toEqual([403, 'own_request'])
+      }
+      expect((await request(id)).status).toBe('pending')
+      const second = await createUser({ role: 'admin', name: 'Second' })
+      expect((await call('POST', `/api/admin/beats/reissue-requests/${id}/approve`, second, { note: 'Checked.' })).statusCode).toBe(200)
+    })
+
     it('M-3: the reissue watcher runs on a chain whose minter has lost its role (it only reads)', async () => {
       const a = await minted()
       const id = await approved()
