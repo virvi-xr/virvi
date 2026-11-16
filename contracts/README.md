@@ -128,7 +128,7 @@ export BEAT_MINTER="PASTE_MINTER_ADDRESS_HERE"
 ```
 
 - `BEAT_ADMIN` is the wallet that will control the contract's settings and do reissues. It's filled in
-  already for Amoy. **For mainnet, set it to the Safe multisig's address** (step 4). **Check every
+  already for Amoy. **For mainnet, set it to the Safe multisig's address** (step 4, part 5). **Check every
   character.** A wrong admin address can't be fixed later. A Safe (or any contract) works as the admin;
   the deploy checks that it got the admin and reissuer permissions and the minter didn't.
 - On Amoy an ordinary wallet is allowed as the admin; the deploy prints a warning. On mainnet the deploy
@@ -192,33 +192,135 @@ The Etherscan key ends up in your Terminal history. That's fine: it isn't a wall
 Then open `https://amoy.polygonscan.com/address/` followed by the contract address, and check that the
 "Contract" tab shows a green tick.
 
-### Step 4: Polygon mainnet
+### Step 4: Polygon mainnet (the owner's runbook)
 
-Only after Amoy has worked end to end. **Mainnet can't be undone and costs real POL.**
+Only after Amoy has worked end to end. **Mainnet can't be undone and costs real POL.** Do these steps in
+order, and don't skip one. Claude can walk you through any of them.
 
-Replace `PASTE_SAFE_ADDRESS_HERE` with the Safe multisig's Polygon address (it must be a Safe on Polygon
-mainnet, chain 137):
+> **Safety first.**
+> - **Send POL only on the Polygon network, never on Ethereum.** In your wallet or exchange the network
+>   must say "Polygon" (sometimes "Polygon PoS" or "MATIC"). POL sent on Ethereum to these addresses is
+>   lost or stuck.
+> - **Never paste a private key into a chat, an email or a file.** Only into Terminal when it asks.
+> - **Check every character of every address** before you press Enter. A wrong admin can't be fixed.
 
-```
-export BEAT_ADMIN="PASTE_SAFE_ADDRESS_HERE"
-export BEAT_BASE_URI="https://api.virvi.io/api/beats/metadata/polygon/"
-export EXPECTED_CHAIN_ID=137
-```
+**What it costs** (fees read on 2026-11-15: about 280 gwei, with POL at about $0.08; fees and the price
+move every day):
+- The deploy: about 3 million gas, usually under 1 POL. Have about 1.5 POL in the deployer.
+- Putting a BEAT on chain: about 0.02 POL. Closing it: about 0.01 POL.
+- Sending a BEAT: about 0.015 POL each in a full batch, about 0.025 POL when they trickle in one at a time.
+- A fully claimed BEAT of 100: about 1.5 POL in all (about $0.12). Hosts pay $5 for it.
+- The minter must hold more than it spends: a full batch of 100 sets aside about 10 to 20 POL before it's
+  sent, and minting pauses whenever the balance drops under 10 POL (`BEAT_MIN_GAS_POL`). Batches shrink to
+  fit the balance, so a smaller top-up still lets minting carry on.
 
-Dry run first (spends nothing):
+1. **Create the Safe.** In [app.safe.global](https://app.safe.global), create a Safe on **Polygon** with
+   these three signers, and a threshold of **2** (any 2 of the 3 must approve):
+   - `0x7BC6B7cd586BeF73136e2fb9bdF2eA56D2809220`
+   - `0x01d871870CbBddE934526E17637c0cfEf0b3b38B`
+   - `0x2319A029D05e52043f077c0684e3C0BF6d1c3dbB`
 
-```
-cd contracts && forge script script/Deploy.s.sol --rpc-url https://polygon-bor-rpc.publicnode.com --interactives 1
-```
+   Write down the Safe's address. Check the network shows Polygon, not Ethereum.
+2. **Practise once.** Before anything depends on the Safe:
+   - send a harmless transaction from it (for example 0 POL to one of the signers) and get two signers
+     to approve and execute it;
+   - open **Apps → Transaction Builder**, import any small file (Virvi's reissue page makes one), press
+     **Simulate**, and check it would succeed. You don't need to send it.
+3. **Make the mainnet minter wallet.** Create a **new** wallet for the server's minter. **Never reuse the
+   Amoy minter.** Keep its private key safe: it goes into the server settings in step 9 and nowhere else.
+   Fund it with **at least 10 POL** (20 is better, see the costs above):
+   - **To buy POL:** on an exchange (Coinbase, Kraken, Binance and others), buy POL, then withdraw it to
+     the minter's address and pick **Polygon** as the network.
+   - **If you already have POL or ETH on Ethereum:** bridge it at
+     [portal.polygon.technology](https://portal.polygon.technology) to Polygon first, then send it.
+   - **Never pick Ethereum as the network** when you send.
+4. **Fund a deployer.** A fresh wallet with about **1.5 POL** on Polygon, sent the same way. It gets no
+   permissions in the contract; what it doesn't spend stays in it.
+5. **Set the deploy settings.** In a new Terminal window (settings from earlier windows are gone), paste
+   these, after replacing the two placeholders. Keep the quotes:
 
-Then the real deploy, which also publishes the code on Polygonscan in the same step (it uses the
-`ETHERSCAN_API_KEY` you set in step 3):
+   ```
+   export BEAT_ADMIN="PASTE_SAFE_ADDRESS_HERE"
+   export BEAT_MINTER="PASTE_NEW_MAINNET_MINTER_ADDRESS_HERE"
+   export BEAT_BASE_URI="https://api.virvi.io/api/beats/metadata/polygon/"
+   export EXPECTED_CHAIN_ID=137
+   unset BEAT_ADDRESS
+   ```
 
-```
-cd contracts && forge script script/Deploy.s.sol --rpc-url https://polygon-bor-rpc.publicnode.com --broadcast --interactives 1 --verify
-```
+   `BEAT_ADMIN` is the Safe from step 1, `BEAT_MINTER` the new minter from step 3. `unset BEAT_ADDRESS`
+   clears the Amoy contract's address so nothing below can use it by mistake.
+6. **Dry run** (spends nothing):
 
-Check it at `https://polygonscan.com/address/` followed by the contract address.
+   ```
+   cd contracts && forge script script/Deploy.s.sol --rpc-url https://polygon-bor-rpc.publicnode.com --interactives 1
+   ```
+
+   It prints the Safe's owners and threshold. **Check they are the three signers from step 1 and a
+   threshold of 2.** If not, stop.
+7. **Deploy for real:**
+
+   ```
+   cd contracts && forge script script/Deploy.s.sol --rpc-url https://polygon-bor-rpc.publicnode.com --broadcast --interactives 1
+   ```
+
+   Save the contract address it prints (`VirviBeat deployed at 0x...`) and the commit it was deployed
+   from, which this prints:
+
+   ```
+   git rev-parse HEAD
+   ```
+8. **Publish the code** on Polygonscan and Sourcify. Set the **new** contract's address (never the Amoy
+   one) and your Etherscan key:
+
+   ```
+   export BEAT_ADDRESS="PASTE_MAINNET_CONTRACT_ADDRESS_HERE"
+   export ETHERSCAN_API_KEY="PASTE_ETHERSCAN_KEY_HERE"
+   ```
+
+   ```
+   cd contracts && forge verify-contract "$BEAT_ADDRESS" src/VirviBeat.sol:VirviBeat --chain 137 --constructor-args $(cast abi-encode "constructor(address,address,string)" "$BEAT_ADMIN" "$BEAT_MINTER" "$BEAT_BASE_URI") --watch
+   forge verify-contract "$BEAT_ADDRESS" src/VirviBeat.sol:VirviBeat --chain 137 --verifier sourcify
+   ```
+
+   (The first line moves into `contracts`; the second runs there. If you're already inside `contracts`,
+   leave out the `cd contracts && `.) Then open
+   `https://polygonscan.com/address/` followed by the address, and check the "Contract" tab shows a green
+   tick.
+9. **Tell the server.** Claude gives you the exact `! railway variables` lines to paste, filled in. They
+   set these on the production server (`virvi-server`):
+   - `BEAT_CHAIN=polygon`: BEATs move to mainnet. From then on any host can create and pay for BEATs,
+     and Amoy BEATs become admin-only.
+   - `BEAT_CONTRACT_POLYGON`: the contract address from step 7.
+   - `BEAT_CONTRACT_COMMIT_POLYGON`: the commit from step 7 (the Transparency page links to the code at
+     it).
+   - `BEAT_MINTER_KEY`: the new minter's private key from step 3. **It replaces the Amoy minter's key, so
+     Amoy minting stops.** Finish or close any Amoy test BEATs first.
+   - `BEAT_MIN_GAS_POL` (optional): when minting pauses for low POL. Leave it unset for the default, 10.
+   - `BEAT_NETWORK_HASH_SECRET`: a new random secret of at least 32 characters (`openssl rand -hex 32`
+     makes one). It keys the per-network claim counts.
+
+   Also worth setting: `POLYGON_RPC_URL` to a paid Polygon RPC (Alchemy, QuickNode or Infura), because
+   the free default limits how often it can be used; choose one without a low transaction fee cap. Keep
+   `BEAT_CONTRACT_POLYGON_AMOY` set.
+10. **Redeploy** the server. Then open `/admin/beats`: the Polygon card should show the new minter, its
+    balance and **Minting**, with nothing missing and no pause.
+11. **Test one BEAT end to end** before telling anyone:
+    - create a BEAT with a small supply that starts soon, and pay with a real card (check it in Stripe);
+    - claim it from your own wallet in the scene;
+    - check it shows **Delivered**, and that the transaction and the token show on Polygonscan and in
+      your wallet;
+    - open `https://api.virvi.io/api/beats/metadata/polygon/1.json` and check it shows your BEAT.
+12. **Keep the hardware wallet and the paper backup offline.** The Safe's signer keys are what control the
+    contract. Store the hardware wallet and its paper recovery words apart, somewhere safe and offline.
+    Never type the recovery words into a computer or a phone.
+
+**Every day afterwards:** look at `/admin/beats` for the minter's balance and any pause, and top up the
+minter (on Polygon) before it nears 10 POL.
+
+**Reissues on mainnet** go through the Safe: Virvi's reissue page makes one Transaction Builder file per
+Safe transaction. A request with both kinds of BEAT gets separate files, the non-tradeable ones together
+and each tradeable one on its own; the page does this for you. Send the non-tradeable file first, and if a
+tradeable file fails, reject its Safe transaction before sending the next.
 
 The `--rpc-url` is the address of a server that lets the tool talk to the network. Any Polygon RPC
 provider's URL works in its place, as long as it's for the same network.
@@ -231,15 +333,18 @@ provider's URL works in its place, as long as it's for the same network.
   URL with `80002` and the `polygon-amoy` base, or the mainnet URL with `137` and the `polygon` base.
   Nothing was sent.
 - **`AdminIsMinter`:** `BEAT_ADMIN` and `BEAT_MINTER` are the same. Nothing was sent.
+- **`WrongBaseURI`:** `BEAT_BASE_URI` doesn't end in `/polygon/` on mainnet (or `/polygon-amoy/` on Amoy).
+  Paste the `export BEAT_BASE_URI=...` line for that network again. Nothing was sent.
 - **`AdminNotAContract`, `AdminNotASafe` or `SafeThresholdTooLow` (mainnet only):** `BEAT_ADMIN` isn't a
   Safe on Polygon mainnet, or the Safe needs fewer than 2 signers. Check you set `BEAT_ADMIN` to the Safe in
-  step 4, and that the Safe exists on Polygon (a Safe on another network has a different address or none
+  step 4, part 5, and that the Safe exists on Polygon (a Safe on another network has a different address or none
   here). Nothing was sent.
 - **"environment variable ... not found":** a setting from step 1 or 2 is missing (perhaps the Terminal
   window was closed). Paste the `export` lines again. Nothing was sent.
 - **"transaction underpriced":** add `--priority-gas-price 30gwei` to the command and run it again.
-- **The deploy worked but publishing the code failed:** **don't deploy again.** Run the step 3 command
-  (with `--chain 137` for mainnet).
+- **The deploy worked but publishing the code failed:** **don't deploy again.** On Amoy, run the step 3
+  command again. On mainnet, set `BEAT_ADDRESS` to the **mainnet** contract address, then run the
+  commands in step 4, part 8.
 - **It timed out or says "rate limited":** wait a few minutes. Before running it again, check on
   Polygonscan that no contract was created from the deployer wallet, so you don't deploy twice.
 - **A typo in the admin address can't be fixed.** If it happens, deploy a new contract with the right one

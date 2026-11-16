@@ -149,8 +149,18 @@ The in-world parts ship as `@virvixr/dcl` 2.16.0 and runtime v15.
 
 ## Owner decisions (2026-11-14)
 
-1. **Admin wallet:** `0x7BC6B7cd586BeF73136e2fb9bdF2eA56D2809220`, separate from the minter.
+1. **Admin:** separate from the minter. **Updated 2026-11-15:** on Polygon mainnet the admin is a **Safe multisig, 2 of 3**, with the signers `0x7BC6B7cd586BeF73136e2fb9bdF2eA56D2809220`, `0x01d871870CbBddE934526E17637c0cfEf0b3b38B` and `0x2319A029D05e52043f077c0684e3C0BF6d1c3dbB` (the deploy refuses anything else on chain 137). On Amoy the admin stays the ordinary wallet `0x7BC6B7cd586BeF73136e2fb9bdF2eA56D2809220` (an EOA). The admin also holds the reissuer role. The mainnet runbook is `contracts/README.md`, step 4.
 2. **Unclaimed mints:** not refunded in phase 1.
+
+## Later decisions (2026-11-15)
+
+These came after the design above and win where they differ.
+
+3. **Reissue.** A person whose wallet was lost or stolen can ask (Settings, "Move my BEATs to a new wallet") for their BEATs to be sent again to a new, linked wallet. A Virvi admin reviews it, with red flags and the account's wallet history. Approval blocks the old wallet from Virvi and removes the account's API keys and paired devices; the admin prepares Safe Transaction Builder files (one Safe transaction each, non-tradeable BEATs together and each tradeable one alone), the Safe's signers send them, and the server moves the claims once they land at depth. A BEAT can only be reissued after it ends. Built in `apps/server/src/beats/reissue.ts` and the contract's `reissue`.
+4. **Anti-bot protections.** A BEAT proves only that a wallet signed in from the scene and stayed connected for the minimum time. To make faking it harder: time counts only while the scene holds a live Virvi room connection; a Decentraland wallet needs a profile; at most `BEAT_CLAIMS_PER_IP` (3) claims of each BEAT per network, counted under a keyed per-BEAT hash; at most `BEAT_NEW_WALLETS_PER_IP_HOUR` (10) new wallets per network per hour; and an optional host review ("Check claims before they are sent") with Send and Remove, where held claims go out anyway at the end plus 24 hours.
+5. **Location.** Each BEAT has a location that locks at go-live with the rest of the metadata: `scene` (the default, labelled from its scenes: the scene's name with its World name or Genesis City coordinates), `online` (a platform and its URL) or `in_person` (a venue, city or region, country, and optionally a street address and a map URL). URLs are http(s) only and every field is capped. The token gets `Location type` (Virtual or In person) and `Location` attributes and a "Where:" line in its description. Claiming still happens only in Virvi scenes.
+6. **Consent version 2.** The consent text now names the 30-second check-ins and the permanent public record on Polygon (wallet, BEAT and time). A test ties the version to the text.
+7. **Go-live.** The BEAT goes on chain, and its name, description, Tradeable, location and times lock, at its start (not at payment or first mint). The art is copied at payment and again on each image change; after the start only the image can change, and only until the BEAT is on chain.
 
 ## Left to the builder
 
