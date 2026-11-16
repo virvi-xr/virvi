@@ -27,6 +27,7 @@ import { convertTrial, finishOAuth, isTrialGone, mergeTrial, movedHeadsetsField,
 import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
+import { deletionRefused } from '../beats/reissue.js'
 
 interface RegisterBody {
   email: string
@@ -750,7 +751,11 @@ export default async function authRoutes(app: FastifyInstance) {
     '/api/auth/account',
     { preHandler: [authenticate] },
     async (request, reply) => {
-      const { password } = request.body
+      // I-3: not from an API key, nor a session signed in with an open reissue request's old wallet (the thief may hold it)
+      const refused = await deletionRefused(request.user)
+      if (refused) return reply.status(refused.status).send({ error: refused.code, message: refused.message })
+
+      const { password } = request.body ?? {}
 
       if (!password) {
         return reply.status(400).send({ error: 'Password is required to delete account' })

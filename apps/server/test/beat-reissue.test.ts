@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { Wallet, getAddress, id as keccakText, parseEther } from 'ethers'
+import bcrypt from 'bcryptjs'
 import { BEAT_RETENTION_DAYS, type BeatChain } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
@@ -1140,6 +1141,31 @@ describe('BEAT reissue (LIV-11)', () => {
       expect((await request(id)).status).toBe('done')
       expect((await claim(main.claim.id)).wallet).toBe(newW)
       expect((await claim(amoy.claim.id)).wallet).toBe(oldW)
+    })
+
+    it("I-3: delete-my-data and account deletion are refused from a session signed in with an open request's old wallet, and from an API key", async () => {
+      await db.insert(userAuthMethods).values({ userId: me.id, type: 'email', identifier: me.email!, credentialHash: await bcrypt.hash('pw-1234', 4) })
+      const { claim: c } = await minted()
+      const id = (await ask()).json().id
+      // Mallory holds the old wallet's key and signs in with it while the request is pending
+      const thief = { wallet: oldW, am: 'wallet' }
+      const del = await call('POST', '/api/analytics/me/delete', me, undefined, thief)
+      expect([del.statusCode, del.json().error]).toEqual([403, 'not_allowed_here'])
+      expect(del.json().message).toBe("You can't do this while signed in this way. Sign in another way, with your new wallet or your email, and try again.")
+      const acct = await call('DELETE', '/api/auth/account', me, { password: 'pw-1234' }, thief)
+      expect([acct.statusCode, acct.json().error]).toEqual([403, 'not_allowed_here'])
+      const key = (await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(me)}` }, payload: { name: 'k' } })).json().key
+      for (const [method, url, payload] of [['POST', '/api/analytics/me/delete', undefined], ['DELETE', '/api/auth/account', { password: 'pw-1234' }]] as const) {
+        const res = await app.inject({ method, url, payload: payload as any, headers: { authorization: `Bearer ${key}` } })
+        expect([res.statusCode, res.json().error], url).toEqual([403, 'not_allowed_here'])
+      }
+      // Nothing was deleted: the claim keeps its account, the request is still there
+      expect((await claim(c.id)).userId).toBe(me.id)
+      expect((await request(id)).status).toBe('pending')
+      // Any other session of the account may
+      const ok = await call('POST', '/api/analytics/me/delete', me)
+      expect(ok.statusCode, ok.body).toBe(200)
+      expect((await claim(c.id)).userId).toBeNull()
     })
 
     it('M-3: the reissue watcher runs on a chain whose minter has lost its role (it only reads)', async () => {

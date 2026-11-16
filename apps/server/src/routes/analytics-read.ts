@@ -29,6 +29,7 @@ import { TokenBucketLimiter } from '../analytics/limiter.js'
 import { mergeLegacyEntityTargets, resolveEmoteLabels } from '../analytics/labels.js'
 import { heatmap3dFor } from '../analytics/jobs.js'
 import { sceneLayout } from '../analytics/layout.js'
+import { deletionRefused } from '../beats/reissue.js'
 
 const DAY = 86_400_000
 const HOUR = 3_600_000
@@ -362,6 +363,9 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
   app.post('/api/analytics/me/delete', async (request, reply) => {
     const actor = actorFromClaims(request.user)
     if (!actor.userId || !actor.verified) return reply.status(403).send({ error: 'Forbidden' })
+    // I-3: not from an API key, nor a session signed in with an open reissue request's old wallet (the thief may hold it)
+    const refused = await deletionRefused(request.user)
+    if (refused) return reply.status(refused.status).send({ error: refused.code, message: refused.message })
     // Every wallet the account has ever had, blocked and unlinked ones too (LIV-11 reissue, P1), read before
     // deleteMyBeatData below clears the blocks' link to the account
     const wallets = new Set([...(await verifiedWalletsOf(actor.userId)), ...(await walletsEverOf(actor.userId))])

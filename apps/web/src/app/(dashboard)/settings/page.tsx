@@ -272,7 +272,8 @@ export default function SettingsPage() {
       await api.deleteAccount(deletePassword)
       signOut()
     } catch (err: any) {
-      setDeleteError(err.message)
+      // not_allowed_here (a session signed in with an open reissue's old wallet) carries its own plain message
+      setDeleteError(err.body?.message ?? err.message)
       setDeleteLoading(false)
     }
   }

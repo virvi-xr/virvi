@@ -3,6 +3,7 @@ import { getAddress, id as keccakText, isAddress } from 'ethers'
 import {
   BEAT_CHAINS, BEAT_CHAIN_INFO, BEAT_REISSUE_MAX_BATCH, BEAT_REISSUE_NOTE_MAX, BEAT_REISSUE_OPEN, BEAT_REISSUE_REASON_MAX, beatTxUrl,
   type BeatChain, type BeatReissueBlocker, type BeatReissueFileStatus, type BeatReissueFlag, type BeatReissueItemState, type BeatReissueStatus,
+  type SignInMethod,
 } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
@@ -11,7 +12,7 @@ import {
   type LinkedBy, type ReissueAudit,
 } from '../db/schema.js'
 import {
-  afterCredentialsRevoked, blockWallet, isWalletBlocked, liftBlock, revokeAccountCredentials, unblockForRequest, unlinkWallet, type RevokedCredentials,
+  afterCredentialsRevoked, blockWallet, isWalletBlocked, liftBlock, revokeAccountCredentials, signInOf, unblockForRequest, unlinkWallet, type RevokedCredentials,
 } from '../auth/wallet-blocks.js'
 import { recordJobFailure } from '../errors/record.js'
 import { onBeatContract } from './contract.js'
@@ -1092,6 +1093,25 @@ export async function watchReissues(client: BeatChainClient, now: Date): Promise
 }
 
 // ── Privacy ──────────────────────────────────────────────────────────────────
+
+export const NOT_ALLOWED_HERE_MESSAGE = "You can't do this while signed in this way. Sign in another way, with your new wallet or your email, and try again."
+
+/**
+ * Final fixes I-3: delete-my-data and account deletion are refused (403 `not_allowed_here`) from an API key, and from a
+ * session signed in with the old wallet of the account's open (pending, approved or proposed) reissue request: whoever
+ * holds that wallet's key may be the thief, and deleting would unlink the person's BEATs and drop their request. The
+ * window before a request is filed is the owner's decision (progress.md).
+ */
+export async function deletionRefused(u: { id: string; viaApiKey?: boolean; wallet?: string | null; email?: string | null; am?: SignInMethod }): Promise<BeatError | null> {
+  const refuse = () => new BeatError(403, 'not_allowed_here', NOT_ALLOWED_HERE_MESSAGE)
+  if (u.viaApiKey) return refuse()
+  const signIn = signInOf(u)
+  if (signIn.method !== 'wallet' || !signIn.wallet) return null
+  const [open] = await db.select({ id: beatReissueRequests.id }).from(beatReissueRequests).where(and(
+    eq(beatReissueRequests.userId, u.id), eq(beatReissueRequests.oldWallet, signIn.wallet), inArray(beatReissueRequests.status, [...BEAT_REISSUE_OPEN]),
+  )).limit(1)
+  return open ? refuse() : null
+}
 
 /**
  * Delete-my-data: the account's reissue requests go, except one that is approved or proposed (a Safe transaction may be

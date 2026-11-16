@@ -149,7 +149,7 @@ The contract has been checked with an automatic tool, but no independent auditor
 
 ## A lost or stolen wallet
 
-A visitor whose wallet was lost or stolen can ask Virvi to move their BEATs to a new wallet, in **Settings**, under **Move my BEATs to a new wallet**. They must sign in with their new wallet or their email (not the old wallet), the new wallet must already be linked to their account, and a BEAT can only be moved after its event has ended. A person at Virvi checks every request. Approving blocks the old wallet from Virvi and removes the account's API keys and paired devices. The move is recorded on Polygon in public.
+A visitor whose wallet was lost or stolen can ask Virvi to move their BEATs to a new wallet, in **Settings**, under **Move my BEATs to a new wallet**. They must sign in with their new wallet or their email (not the old wallet), the new wallet must already be linked to their account, and a BEAT can only be moved after its event has ended. A person at Virvi checks every request. Approving blocks the old wallet from Virvi and removes the account's API keys and paired devices. The move is recorded on Polygon in public. While a request is open, deleting their data or their account is refused from a session signed in with the old wallet, or from an API key: "You can't do this while signed in this way. Sign in another way, with your new wallet or your email, and try again."
 
 ## Deleting data
 
