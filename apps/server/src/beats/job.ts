@@ -57,8 +57,7 @@ const singles = new Map<string, Set<string>>()
 const reportedNotPaid = new Set<string>()
 /** BEATs whose create estimate reverted (other than BeatExists), already reported once. */
 const reportedCreateRevert = new Set<string>()
-/** Live BEATs whose art copy failed, already reported once. */
-const reportedCopyFailed = new Set<string>()
+
 /** Chains whose node refused a transaction this tick for insufficient funds, or whose balance can't pay for the next
  * batch: they stay paused for low gas even when the balance is above BEAT_MIN_GAS_POL. Cleared at each chain pass. */
 const shortOfFunds = new Set<BeatChain>()
@@ -92,7 +91,6 @@ export function resetBeatJobState(): void {
   reportedJobErrors.clear()
   reportedNotPaid.clear()
   reportedCreateRevert.clear()
-  reportedCopyFailed.clear()
   shortOfFunds.clear()
 }
 
@@ -280,14 +278,9 @@ async function tick(now: Date): Promise<BeatTickResult> {
   } catch (err) {
     console.error('[beats] status pass failed:', safeErr(err))
   }
-  // After the status pass, so a BEAT that just went live has its art frozen in the same tick, before its create
+  // Retries art copies still missing (copyBeatImage reports its own failures, with a backoff)
   try {
-    const { copyFailed } = await sweepBeatPayments(now)
-    for (const id of copyFailed) {
-      if (reportedCopyFailed.has(id)) continue
-      reportedCopyFailed.add(id)
-      fail('beat_art', `BEAT ${id} is live but its art couldn't be frozen; it isn't put on chain until it is (retried every tick)`, id)
-    }
+    await sweepBeatPayments(now)
   } catch (err) {
     console.error('[beats] payment sweep failed:', safeErr(err))
   }
@@ -664,9 +657,11 @@ async function sendNext(client: BeatChainClient, now: Date, r: BeatTickResult, b
   }
 }
 
-/** Host review: a held BEAT's claims wait until the host sends them or its claim grace runs out (service.mintsHeld). */
-const notHeld = (now: Date) => sql`not (${beats.holdMints} and ${beats.mintsReleasedAt} is null
-  and ${beats.endsAt} > ${new Date(now.getTime() - BEAT_CLAIM_GRACE_MS).toISOString()}::timestamptz)`
+/** Host review (service.claimHeld): a held BEAT's claim waits until a Send made after it was claimed, or until the
+ * claim grace runs out. A Send covers only the claims made up to it (fix round M-4). */
+const notHeld = (now: Date) => sql`not (${beats.holdMints}
+  and ${beats.endsAt} > ${new Date(now.getTime() - BEAT_CLAIM_GRACE_MS).toISOString()}::timestamptz
+  and (${beats.mintsReleasedAt} is null or ${beatClaims.claimedAt} > ${beats.mintsReleasedAt}))`
 
 /** The claims that keep a BEAT from being closed: pending ones, and failed ones an admin's retry could still mint. */
 const holdsClose = sql`exists (select 1 from beat_claims c where c.beat_id = ${beats.id} and (c.status in ('claimed', 'minting')
@@ -710,7 +705,7 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
     ))
     .groupBy(beats.id, beats.tokenId, beats.maxBatch)
     .orderBy(sql`${lastMint} asc nulls first`, sql`min(${beatClaims.claimedAt}) asc`, asc(beats.id)).limit(1)
-  if (next) return mintPlan(client, next.beatId, BigInt(next.tokenId!), next.maxBatch)
+  if (next) return mintPlan(client, next.beatId, BigInt(next.tokenId!), next.maxBatch, now)
 
   const [close] = await db.select({ id: beats.id, tokenId: beats.tokenId }).from(beats)
     .where(and(
@@ -735,11 +730,13 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
  * itself. The plan counts the wallets with code now, so a later revert can tell whether more gained code. Wallets
  * flagged by ruling 5 (their batch's estimate reverted) go first, one at a time.
  */
-async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint, maxBatch: number | null): Promise<Plan | null> {
+async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint, maxBatch: number | null, now: Date): Promise<Plan | null> {
+  const ready = and(eq(beatClaims.beatId, beatId), eq(beatClaims.status, 'claimed'), notHeld(now))
   const flagged = singles.get(beatId)
   if (flagged?.size) {
     const rows = await db.select({ id: beatClaims.id, wallet: beatClaims.wallet }).from(beatClaims)
-      .where(and(eq(beatClaims.beatId, beatId), eq(beatClaims.status, 'claimed'), inArray(sql`lower(${beatClaims.wallet})`, [...flagged])))
+      .innerJoin(beats, eq(beats.id, beatClaims.beatId))
+      .where(and(ready, inArray(sql`lower(${beatClaims.wallet})`, [...flagged])))
       .orderBy(asc(beatClaims.claimedAt), asc(beatClaims.id)).limit(1)
     if (rows.length) {
       const c = rows[0]
@@ -753,7 +750,8 @@ async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint
   }
   const limit = Math.max(1, Math.min(BEAT_MAX_BATCH, maxBatch ?? BEAT_MAX_BATCH))
   const rows = await db.select({ id: beatClaims.id, wallet: beatClaims.wallet }).from(beatClaims)
-    .where(and(eq(beatClaims.beatId, beatId), eq(beatClaims.status, 'claimed')))
+    .innerJoin(beats, eq(beats.id, beatClaims.beatId))
+    .where(ready)
     .orderBy(asc(beatClaims.claimedAt), asc(beatClaims.id)).limit(limit)
   if (!rows.length) return null
   const wallets = rows.map((c) => c.wallet)
@@ -902,10 +900,11 @@ async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, non
   return db.transaction(async (tx) => {
     if (plan.kind === 'create') {
       await lockBeat(tx, plan.beatId)
-      const [row] = await tx.select({ status: beats.status, created: beats.createdOnChainTx, pay: beatPayments.status }).from(beats)
+      // Under the lock, as an image edit: the art the plan saw may have been replaced since
+      const [row] = await tx.select({ status: beats.status, created: beats.createdOnChainTx, pay: beatPayments.status, art: beats.imageUrl }).from(beats)
         .leftJoin(beatPayments, eq(beatPayments.id, beats.paymentId)).where(eq(beats.id, plan.beatId))
       // An ended BEAT may still be created (its claims wait on it); the plan checked it still has claims or grace left
-      if (!row || !(row.status === 'live' || row.status === 'ended') || row.created || row.pay !== 'paid') return null
+      if (!row || !(row.status === 'live' || row.status === 'ended') || row.created || row.pay !== 'paid' || !row.art) return null
     }
     if (plan.kind === 'close') {
       // Under the BEAT's lock, as retryFailedClaims: a retry that landed after the plan was read holds the close

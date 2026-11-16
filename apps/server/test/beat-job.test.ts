@@ -1075,6 +1075,21 @@ describe('BEAT minting job (LIV-11)', () => {
       expect(fake.mempool()).toHaveLength(1)
     })
 
+    it('fix round M-4: after Send, only the claims made up to it go out; later ones wait for another Send or the grace', async () => {
+      const b = await seed({ created: true })
+      await db.update(beats).set({ holdMints: true, mintsReleasedAt: at(-30 * MIN) }).where(eq(beats.id, b.id))
+      const [early] = await claims(b.id, [wallet()], { claimedAt: at(-H) })
+      const [late] = await claims(b.id, [wallet()], { claimedAt: at(-10 * MIN) })
+      await runBeatTick(T0)
+      expect(mintWallets(fake.mempool()[0])).toEqual([lc(early.wallet)])
+      fake.mine(6)
+      await runBeatTick(at(MIN))
+      expect(fake.mempool()).toHaveLength(0)
+      await db.update(beats).set({ mintsReleasedAt: at(MIN) }).where(eq(beats.id, b.id))
+      await runBeatTick(at(2 * MIN))
+      expect(mintWallets(fake.mempool()[0])).toEqual([lc(late.wallet)])
+    })
+
     it('money M3: a create that reverts with BeatExists after an earlier create of ours was replaced is taken as ours, not a conflict', async () => {
       const b = await seed({ status: 'live' })
       // Nonce 0 was used on chain by "our" create, whose receipt the job never saw

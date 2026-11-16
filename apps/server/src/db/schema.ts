@@ -2656,6 +2656,11 @@ export const beats = pgTable('beats', {
   scheduledEndsAt: timestamp('scheduled_ends_at', { withTimezone: true }),
   // A random per-BEAT salt for the claim networks' hashes (beat_network_claims); nulled with them once claims are over
   networkSalt: text('network_salt'),
+  // The frozen art copy: when it failed for good (no image, or one that can't be made into art; the host picks
+  // another), and the retries of a copy that failed for a passing reason (backoff)
+  artFailedAt: timestamp('art_failed_at', { withTimezone: true }),
+  artAttempts: integer('art_attempts').notNull().default(0),
+  artNextAttemptAt: timestamp('art_next_attempt_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

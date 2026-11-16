@@ -93,6 +93,14 @@ export interface PublicBeat {
   mintsHeldUntil: string | null
   /** The end the host scheduled, when they ended it early (endsAt is then the actual end); else null. */
   scheduledEndsAt: string | null
+  /** Held claims waiting for the host's Send (claimed after the last Send, or all while none was pressed). */
+  heldClaims: number
+  /**
+   * The frozen token art: `frozen` (copied), `pending` (not yet: before payment, or a copy being retried) or `failed`
+   * (it can't be made: the image is gone or isn't usable; the host picks another, which stays possible until the BEAT
+   * is on chain). The BEAT isn't put on chain, and nothing is minted, until it is `frozen`.
+   */
+  artStatus: 'pending' | 'frozen' | 'failed'
 }
 
 /** The room's `beat_available` on join (for guests, who can't use REST): the scene's BEAT in its card window. */

@@ -5,14 +5,14 @@ import {
 } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
-import { beatClaims, beats, beatScenes, mediaAssets, orgMembers, scenes, users } from '../db/schema.js'
+import { beatClaims, beatMintBatches, beats, beatScenes, mediaAssets, orgMembers, scenes, users } from '../db/schema.js'
 import type { Actor } from '../auth/actor.js'
 import { getSceneAccess, hasScope } from '../auth/permissions.js'
 import { BeatError } from './errors.js'
 import { beatChainMissing } from './chain.js'
 import { readImageSize } from './image.js'
 import { lockBeat } from './lock.js'
-import { beatQuote, refuseBelowCardMinimum, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
+import { beatQuote, copyBeatImage, refuseBelowCardMinimum, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
 
 /**
  * BEATs (LIV-11), the host side: create, list, read, edit, claimants, cancel and end early. No Fastify here; the routes
@@ -108,6 +108,14 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
     ? await db.select({ id: mediaAssets.id, url: mediaAssets.publicUrl }).from(mediaAssets).where(inArray(mediaAssets.id, mediaIds))
     : []
   const urlOf = new Map(media.map((m) => [m.id, m.url]))
+  // Claims waiting for a Send, per BEAT (fix round M-4)
+  const now = new Date()
+  const heldRows = await db.select({ beatId: beatClaims.beatId, n: sql<number>`count(*)::int` }).from(beatClaims)
+    .innerJoin(beats, eq(beats.id, beatClaims.beatId))
+    .where(and(inArray(beatClaims.beatId, ids), eq(beatClaims.status, 'claimed'), eq(beats.holdMints, true),
+      sql`(${beats.mintsReleasedAt} is null or ${beatClaims.claimedAt} > ${beats.mintsReleasedAt})`))
+    .groupBy(beatClaims.beatId)
+  const held = new Map(heldRows.map((h) => [h.beatId, h.n]))
   return rows.map((r) => {
     const counts = { claimed: 0, minting: 0, minted: 0, failed: 0 }
     for (const c of countRows) if (c.beatId === r.id && c.status in counts) counts[c.status as keyof typeof counts] = c.n
@@ -130,7 +138,9 @@ async function toPublic(rows: BeatRow[]): Promise<PublicBeat[]> {
       test: isAmoy(r.chain),
       holdMints: r.holdMints,
       mintsReleasedAt: r.mintsReleasedAt?.toISOString() ?? null,
-      mintsHeldUntil: r.holdMints && !r.mintsReleasedAt ? new Date(r.endsAt.getTime() + BEAT_CLAIM_GRACE_MS).toISOString() : null,
+      mintsHeldUntil: holdActive(r, now) ? new Date(r.endsAt.getTime() + BEAT_CLAIM_GRACE_MS).toISOString() : null,
+      heldClaims: holdActive(r, now) ? held.get(r.id) ?? 0 : 0,
+      artStatus: r.imageUrl ? 'frozen' as const : r.artFailedAt ? 'failed' as const : 'pending' as const,
       scheduledEndsAt: r.scheduledEndsAt?.toISOString() ?? null,
     }
   })
@@ -351,17 +361,47 @@ export async function createBeat(c: BeatCaller, body: Body, now = new Date()): P
 
 // ── Edit ─────────────────────────────────────────────────────────────────────
 
+/** The database's clock, read inside a transaction (fix round M-1): every lock-holder judges time by the same clock. */
+async function dbNow(tx: Pick<typeof db, 'execute'>): Promise<Date> {
+  const rows = await tx.execute<{ now: string }>(sql`select now()::text as now`) as unknown as { now: string }[]
+  return new Date(rows[0].now)
+}
+
+/** True once a create of the BEAT went to the chain, or may have: a batch sending, sent, confirmed or replaced. */
+async function createOnChain(tx: Pick<typeof db, 'select'>, row: BeatRow): Promise<boolean> {
+  if (row.createdOnChainTx) return true
+  const [b] = await tx.select({ id: beatMintBatches.id }).from(beatMintBatches).where(and(
+    eq(beatMintBatches.beatId, row.id), eq(beatMintBatches.kind, 'create'),
+    sql`(${beatMintBatches.status} in ('sending', 'sent', 'confirmed') or (${beatMintBatches.status} = 'failed' and ${beatMintBatches.lastError} = 'replaced'))`,
+  )).limit(1)
+  return !!b
+}
+
+/** What an edit may change: 'all' (a draft), 'paid' (paid, before go-live: all but the cap), 'image' (started but not on
+ * chain yet: only the art, to fix one that failed) or 'none'. Judged on the locked row by the database's clock. */
+type EditScope = 'all' | 'paid' | 'image' | 'none'
+async function editScope(tx: Pick<typeof db, 'select'>, row: BeatRow, now: Date): Promise<EditScope> {
+  if (row.status === 'draft') return 'all'
+  if (row.status === 'cancelled' || (await createOnChain(tx, row))) return 'none'
+  const started = row.startsAt.getTime() <= now.getTime() || row.status === 'live' || row.status === 'ended'
+  if (row.status === 'paid' && !started && row.frozenAt === null) return 'paid'
+  if (started && row.frozenAt === null) return 'image'
+  return 'none'
+}
+
 /**
- * Before payment anything changes. After payment and before the start (go-live), with nothing frozen, the name,
- * description, image, tradeable, hold for review, window, scenes and minimum time change; the cap can't (a cap raise is a
- * top-up). From go-live everything is locked (409 `locked`): that is when the BEAT goes on chain with its tradeable flag
- * and the art is frozen (standards I1, I2).
+ * Before payment anything changes. After payment and before the start (go-live), the name, description, image,
+ * tradeable, hold for review, window, scenes and minimum time change; the cap can't (a cap raise is a top-up). From
+ * go-live everything is locked (409 `locked`), since the BEAT then goes on chain with its tradeable flag: except the
+ * image, while the BEAT isn't on chain yet, so a host can replace art that couldn't be frozen (fix round I-3). Once a
+ * create batch exists, or the BEAT is on chain (the old flow created it at payment), nothing changes (M-1, M-2). All
+ * of this is judged under the BEAT's lock, by the database's clock. A new image is frozen at once after the commit.
  */
-export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now = new Date()): Promise<PublicBeat> {
+export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now?: Date): Promise<PublicBeat> {
   const { row: seen } = await loadManageable(c, beatId)
   const locked = (m = "This BEAT can't be changed any more.") => new BeatError(409, 'locked', m)
-  const editable = (r: BeatRow) => r.status === 'draft' || (r.status === 'paid' && r.startsAt.getTime() > now.getTime() && r.frozenAt === null)
-  if (!editable(seen)) throw locked()
+  if (seen.status === 'cancelled') throw locked()
+  void now
 
   const newScenes = has(body, 'sceneIds') ? parseSceneIds(body.sceneIds) : null
   if (newScenes) await requireRunAll(c, newScenes)
@@ -373,13 +413,35 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now 
   const result = await db.transaction(async (tx) => {
     await lockBeat(tx, beatId)
     const [row] = await tx.select().from(beats).where(eq(beats.id, beatId)).for('update')
-    if (!row || !editable(row)) throw locked()
-    const paid = row.status === 'paid'
+    if (!row) throw notFound()
+    const t = await dbNow(tx)
+    const scope = await editScope(tx, row, t)
+    if (scope === 'none') throw locked()
+    if (scope === 'image') {
+      // A form sent whole is fine: only a field whose value differs counts as a change
+      const iso = (d: Date) => d.toISOString()
+      const same: Record<string, (v: unknown) => boolean> = {
+        name: (v) => v === row.name, description: (v) => (v ?? '') === row.description, tradeable: (v) => v === row.tradeable,
+        holdMints: (v) => v === row.holdMints, supplyCap: (v) => v === row.supplyCap, minPresentMinutes: (v) => v === row.minPresentSeconds / 60,
+        startsAt: (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v)) && iso(new Date(v)) === iso(row.startsAt),
+        endsAt: (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v)) && iso(new Date(v)) === iso(row.endsAt),
+      }
+      const stored = (await tx.select({ sceneId: beatScenes.sceneId }).from(beatScenes).where(eq(beatScenes.beatId, row.id))).map((r) => r.sceneId).sort()
+      same.sceneIds = () => !newScenes || JSON.stringify([...newScenes].sort()) === JSON.stringify(stored)
+      const others = Object.keys(body).filter((k) => body[k] !== undefined && k !== 'imageMediaId' && !(same[k]?.(body[k]) ?? false))
+      if (others.length) throw locked('This BEAT has started: only its image can still change, until it is on chain.')
+      if (!newImage || newImage === row.imageMediaId) return row
+      const [updated] = await tx.update(beats).set({
+        imageMediaId: newImage, imageUrl: null, artFailedAt: null, artAttempts: 0, artNextAttemptAt: null, updatedAt: t,
+      }).where(eq(beats.id, row.id)).returning()
+      return updated
+    }
+    const paid = scope === 'paid'
     const name = has(body, 'name') ? parseName(body.name) : row.name
     const description = has(body, 'description') ? parseDescription(body.description) : row.description
     const startsAt = has(body, 'startsAt') ? parseDate(body.startsAt) : row.startsAt
     const endsAt = has(body, 'endsAt') ? parseDate(body.endsAt) : row.endsAt
-    checkWindow(startsAt, endsAt, now)
+    checkWindow(startsAt, endsAt, t)
     const minutes = has(body, 'minPresentMinutes') ? parseMinutes(body.minPresentMinutes) : row.minPresentSeconds / 60
     const supplyCap = has(body, 'supplyCap') ? parseCap(body.supplyCap) : row.supplyCap
     const tradeable = has(body, 'tradeable') ? parseTradeable(body.tradeable) : row.tradeable
@@ -391,9 +453,9 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now 
     await lockScenes(tx, sceneIds)
     await checkOverlap(tx, sceneIds, startsAt, endsAt, row.id)
     const [updated] = await tx.update(beats).set({
-      name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, holdMints, updatedAt: now,
-      // The frozen copy is made at go-live; a stale one (from before this change) never stands for the new image
-      ...(imageChanged ? { imageUrl: null } : {}),
+      name, description, imageMediaId, startsAt, endsAt, minPresentSeconds: Math.round(minutes * 60), supplyCap, tradeable, holdMints, updatedAt: t,
+      // A stale copy (of the old image) never stands for the new one; it is frozen again right after the commit
+      ...(imageChanged ? { imageUrl: null, artFailedAt: null, artAttempts: 0, artNextAttemptAt: null } : {}),
     }).where(eq(beats.id, row.id)).returning()
     if (newScenes) {
       await tx.delete(beatScenes).where(eq(beatScenes.beatId, row.id))
@@ -401,6 +463,10 @@ export async function updateBeat(c: BeatCaller, beatId: string, body: Body, now 
     }
     return updated
   })
+  // A paid (or started) BEAT freezes its new art now (fix round I-3); copyBeatImage records a failure for the host to see
+  if (imageChanged && result.status !== 'draft' && result.tokenId !== null && result.imageUrl === null) {
+    await copyBeatImage(result.id).catch(() => {})
+  }
   return getBeatRow(result.id)
 }
 
@@ -463,42 +529,59 @@ export async function endBeatEarly(c: BeatCaller, beatId: string, now = new Date
 
 // ── Host review (hold mints) ─────────────────────────────────────────────────
 
-/** True while the BEAT's claims wait for the host: held, not sent, and the claim grace after its end not run out. */
-export function mintsHeld(r: Pick<BeatRow, 'holdMints' | 'mintsReleasedAt' | 'endsAt'>, now: Date): boolean {
-  return r.holdMints && !r.mintsReleasedAt && r.endsAt.getTime() + BEAT_CLAIM_GRACE_MS > now.getTime()
+/** True while the BEAT holds claims for the host's review: hold is on and the claim grace after its end hasn't run out. */
+export function holdActive(r: Pick<BeatRow, 'holdMints' | 'endsAt'>, now: Date): boolean {
+  return r.holdMints && r.endsAt.getTime() + BEAT_CLAIM_GRACE_MS > now.getTime()
 }
 
-/** The host's Send: a held BEAT's claims go to the minting job now. 409 `not_held` when nothing is held; `not_live` before it starts. */
-export async function releaseBeatMints(c: BeatCaller, beatId: string, now = new Date()): Promise<PublicBeat> {
+/** True while this claim waits for a Send (fix round M-4): hold is active and it was claimed after the last Send (or no
+ * Send yet). A Send covers only the claims made up to it. */
+export function claimHeld(r: Pick<BeatRow, 'holdMints' | 'endsAt' | 'mintsReleasedAt'>, claimedAt: Date | null, now: Date): boolean {
+  if (!holdActive(r, now)) return false
+  return !r.mintsReleasedAt || !claimedAt || claimedAt.getTime() > r.mintsReleasedAt.getTime()
+}
+
+/**
+ * The host's Send: the claims made so far go to the minting job; any made later wait for another Send (or the end of the
+ * claim grace). Judged under the BEAT's lock, by the database's clock. 409 `not_live` before the start, `not_held`
+ * when hold is off or its grace is over.
+ */
+export async function releaseBeatMints(c: BeatCaller, beatId: string): Promise<PublicBeat> {
   await loadManageable(c, beatId)
   await db.transaction(async (tx) => {
     await lockBeat(tx, beatId)
-    const [row] = await tx.select().from(beats).where(eq(beats.id, beatId))
+    const [row] = await tx.select().from(beats).where(eq(beats.id, beatId)).for('update')
     if (!row) throw notFound()
+    const t = await dbNow(tx)
     if (row.status !== 'live' && row.status !== 'ended') throw new BeatError(409, 'not_live', "This BEAT hasn't started, so there's nothing to send yet.")
-    if (!mintsHeld(row, now)) throw new BeatError(409, 'not_held', "This BEAT's claims aren't being held.")
-    await tx.update(beats).set({ mintsReleasedAt: now, updatedAt: now }).where(eq(beats.id, beatId))
+    if (!holdActive(row, t)) throw new BeatError(409, 'not_held', "This BEAT's claims aren't being held.")
+    await tx.update(beats).set({ mintsReleasedAt: t, updatedAt: t }).where(eq(beats.id, beatId))
   })
   return getBeatRow(beatId)
 }
 
 /**
- * The host takes a claim out while the BEAT's mints are held: it becomes `removed` (never minted, can't be claimed again
- * by that visitor) and frees its supply. Only a `claimed` claim, under the BEAT's lock. 409 `not_held` once mints are
- * sent (or were never held), `not_removable` for a claim in any other state; 404 for a claim not on this BEAT.
+ * The host takes a held claim out before it is sent: it becomes `removed` (never minted, can't be claimed again by that
+ * wallet) and frees its supply. Only a `claimed` claim still waiting for a Send, under the BEAT's lock, by the
+ * database's clock. 404 for a claim not on this BEAT; 409 `not_held` for one already sent (or hold off or over),
+ * `not_removable` for one in any other state, or that the job took meanwhile.
  */
-export async function removeBeatClaim(c: BeatCaller, beatId: string, claimId: string, now = new Date()): Promise<{ removed: true }> {
+export async function removeBeatClaim(c: BeatCaller, beatId: string, claimId: string): Promise<{ removed: true }> {
   await loadManageable(c, beatId)
   if (!UUID.test(claimId)) throw new BeatError(404, 'not_found', 'Claim not found.')
   await db.transaction(async (tx) => {
     await lockBeat(tx, beatId)
     const [row] = await tx.select().from(beats).where(eq(beats.id, beatId)).for('update')
     if (!row) throw notFound()
-    if (!mintsHeld(row, now)) throw new BeatError(409, 'not_held', "This BEAT's claims are already being sent, so they can't be removed.")
+    const t = await dbNow(tx)
     const [claim] = await tx.select().from(beatClaims).where(and(eq(beatClaims.id, claimId), eq(beatClaims.beatId, beatId), eq(beatClaims.deleteRequested, false)))
     if (!claim) throw new BeatError(404, 'not_found', 'Claim not found.')
-    if (claim.status !== 'claimed') throw new BeatError(409, 'not_removable', 'Only a claim that is waiting to be sent can be removed.')
-    await tx.update(beatClaims).set({ status: 'removed' }).where(and(eq(beatClaims.id, claimId), eq(beatClaims.status, 'claimed')))
+    if (!claimHeld(row, claim.claimedAt, t)) throw new BeatError(409, 'not_held', "This claim is already being sent, so it can't be removed.")
+    const notRemovable = () => new BeatError(409, 'not_removable', 'Only a claim that is waiting to be sent can be removed.')
+    if (claim.status !== 'claimed') throw notRemovable()
+    const done = await tx.update(beatClaims).set({ status: 'removed' })
+      .where(and(eq(beatClaims.id, claimId), eq(beatClaims.status, 'claimed'))).returning({ id: beatClaims.id })
+    if (!done.length) throw notRemovable()
   })
   return { removed: true }
 }

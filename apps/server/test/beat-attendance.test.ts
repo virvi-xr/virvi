@@ -310,11 +310,45 @@ describe('BEAT attendance protections (LIV-11)', () => {
       expect((await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${xClaim.id}`, headers: as(host) })).json().error).toBe('not_removable')
       const send = await app.inject({ method: 'POST', url: `/api/beats/${b.id}/release`, headers: as(host) })
       expect(send.statusCode, send.body).toBe(200)
-      expect(send.json()).toMatchObject({ mintsHeldUntil: null })
+      expect(send.json()).toMatchObject({ heldClaims: 0 }) // M-4: still held for claims made later, so mintsHeldUntil stays set
       expect(send.json().mintsReleasedAt).toBeTruthy()
+      // y was claimed before the Send, so it's released and can't be removed any more
       const yId = (await row(b.id, y.user.id)).id
       expect((await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${yId}`, headers: as(host) })).json().error).toBe('not_held')
-      expect((await app.inject({ method: 'POST', url: `/api/beats/${b.id}/release`, headers: as(host) })).json().error).toBe('not_held')
+    })
+
+    it('fix round M-4: a claim made after Send waits for another Send; the host may still remove it; Send again releases it', async () => {
+      const b = await seed({ holdMints: true })
+      const [x, y] = [await visitor(), await visitor()]
+      await track(x, b)
+      await track(y, b)
+      await claim(x, b)
+      const first = await app.inject({ method: 'POST', url: `/api/beats/${b.id}/release`, headers: as(host) })
+      expect(first.json()).toMatchObject({ heldClaims: 0 })
+      await new Promise((r) => setTimeout(r, 20))
+      await claim(y, b)
+      const got = (await app.inject({ method: 'GET', url: `/api/beats/${b.id}`, headers: as(host) })).json()
+      expect(got.heldClaims).toBe(1)
+      expect(got.mintsHeldUntil).not.toBeNull()
+      const yId = (await row(b.id, y.user.id)).id
+      const xId = (await row(b.id, x.user.id)).id
+      expect((await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${xId}`, headers: as(host) })).json().error).toBe('not_held')
+      const again = await app.inject({ method: 'POST', url: `/api/beats/${b.id}/release`, headers: as(host) })
+      expect([again.statusCode, again.json().heldClaims]).toEqual([200, 0])
+      expect((await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${yId}`, headers: as(host) })).json().error).toBe('not_held')
+    })
+
+    it('fix round M-1: removing a claim the job took meanwhile says not_removable, not removed', async () => {
+      const b = await seed({ holdMints: true })
+      const x = await visitor()
+      await track(x, b)
+      await claim(x, b)
+      const xId = (await row(b.id, x.user.id)).id
+      await db.update(beatClaims).set({ status: 'minting' }).where(eq(beatClaims.id, xId))
+      const rm = await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/${xId}`, headers: as(host) })
+      expect([rm.statusCode, rm.json().error]).toEqual([409, 'not_removable'])
+      const missing = await app.inject({ method: 'DELETE', url: `/api/beats/${b.id}/claims/00000000-0000-4000-8000-000000000009`, headers: as(host) })
+      expect(missing.statusCode).toBe(404)
     })
 
     it('holdMints is off by default, set on create and editable until go-live', async () => {

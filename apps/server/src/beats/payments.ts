@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import { BEAT_CARD_MIN_CENTS, beatMinCardTopupCap, beatPriceCents, beatTopupCents, type BeatChain } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
@@ -86,6 +86,8 @@ export async function createBeatCheckout(row: BeatRow, payer: BeatPayer, method:
     throw new BeatError(409, 'locked', row.status === 'cancelled' ? 'This BEAT is cancelled.' : 'This BEAT is already paid for.')
   }
   if (row.startsAt.getTime() <= now.getTime()) throw new BeatError(409, 'too_late', 'This BEAT has already started. Pick a new time first.')
+  // Its art is frozen once paid: an image deleted from the library since it was picked can't be (fix round I-3)
+  if (!row.imageMediaId) throw new BeatError(400, 'bad_image', "This BEAT's image is gone. Pick an image first.")
   const q = beatQuote(row, row.supplyCap)
   if (method === 'card') refuseBelowCardMinimum(row, q)
   return checkout(row, payer, method, { kind: 'create', capFrom: 0, capTo: row.supplyCap, quote: q }, now)
@@ -209,7 +211,8 @@ function strayReason(pay: PaymentRow, beat: BeatRow | undefined, now: Date): str
 /**
  * Applies a payment once, under the BEAT's lock (`beat:<id>`, shared with edit and cancel) and the payment's row lock.
  * A create takes the chain's next token id (once per BEAT), sets the BEAT paid at the cap that was paid for, and leaves
- * it for the minting job (status paid, no created_on_chain_tx; it goes on chain at go-live). A top-up sets the
+ * it for the minting job (status paid, no created_on_chain_tx; it goes on chain at go-live); the art is frozen after
+ * the commit. A top-up sets the
  * cap. Credit is taken in the same transaction and must cover the whole amount. A card payment Stripe confirms after it
  * expired here is still granted (the money was taken). One that can't be applied (the BEAT was cancelled, paid by another
  * checkout, or its cap moved) is refunded in full; if that refund fails it throws, so Stripe sends the webhook again.
@@ -255,7 +258,11 @@ export async function grantBeatPayment(paymentId: string, paymentIntent: string 
       .where(and(eq(beatPayments.id, out.pay.id), inArray(beatPayments.status, ['pending', 'expired'])))
     return 'granted'
   }
-  // The art is frozen at go-live, not here: it can still change until then (standards I1)
+  if (out.create) {
+    // Frozen now, so a problem shows while the host can still pick another image (fix round I-3); copyBeatImage records
+    // the outcome, and the sweep retries a passing failure
+    await copyBeatImage(out.pay.beatId).catch(() => {})
+  }
   return 'granted'
 }
 
@@ -358,52 +365,80 @@ async function revertTopup(tx: Pick<typeof db, 'select' | 'update'>, beatId: str
 /** The frozen copy never changes (its key names the image), so wallets and the CDN may keep it for good. */
 export const BEAT_FROZEN_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
+/** A copy that failed for a passing reason is retried after 2, 4, 8 ... minutes, at most an hour apart. */
+const artBackoffMs = (attempts: number) => Math.min(2 ** attempts, 60) * 60_000
+
 /**
- * Freezes the BEAT's art at go-live (standards I1, I3): the image, scaled to at most 1024 × 1024 WebP (frozenImage), is
- * stored at `beats/{chain}/{tokenId}-{imageMediaId}.webp` with an immutable Cache-Control, and its URL recorded. The
- * copy is not a media row, so deleting the original leaves it. The key names the image, so a slow copy of an older
- * image writes its own file and never overwrites the current one; image_url is written only if the BEAT still has the
- * image that was copied. The job creates the BEAT on chain, and mints, only once this has succeeded. Returns the URL.
+ * Freezes the BEAT's art (standards I1, I3): at payment, again whenever the image changes before the BEAT is on chain,
+ * and by the sweep for a copy still missing. The image, scaled to at most 1024 × 1024 WebP (frozenImage), is stored at
+ * `beats/{chain}/{tokenId}-{imageMediaId}.webp` with an immutable Cache-Control, and its URL recorded. The copy is not a
+ * media row, so deleting the original leaves it. The key names the image, so a slow copy of an older image writes its
+ * own file and never overwrites the current one; the outcome is written only if the BEAT still has the image copied.
+ * The job creates the BEAT on chain, and mints, only once it has a copy.
+ *
+ * The outcome is recorded on the BEAT (fix round I-3): a failure that will never pass (no image, or one that can't be
+ * made into art: BeatError 400) sets art_failed_at and alerts once; the host sees `artStatus: 'failed'` and picks
+ * another image. Any other failure (the file couldn't be fetched, storage) is retried with a backoff. Returns the URL.
  */
-export async function copyBeatImage(beatId: string): Promise<string> {
+export async function copyBeatImage(beatId: string, now = new Date()): Promise<string> {
   const [row] = await db.select().from(beats).where(eq(beats.id, beatId))
   if (!row) throw new BeatError(404, 'not_found', 'BEAT not found.')
   if (row.tokenId === null) throw new BeatError(409, 'locked', 'This BEAT has no token id yet.')
-  if (!row.imageMediaId) {
-    if (row.imageUrl) return row.imageUrl
-    throw new BeatError(400, 'bad_image', 'This BEAT has no image.')
-  }
+  if (!row.imageMediaId && row.imageUrl) return row.imageUrl
   const mediaId = row.imageMediaId
-  const [m] = await db.select().from(mediaAssets).where(eq(mediaAssets.id, mediaId))
-  if (!m?.publicUrl || !EXT[m.contentType]) throw new BeatError(400, 'bad_image', "This BEAT's image can't be read.")
-  const data = await readImageBytes(m.publicUrl)
-  if (!data) throw new BeatError(502, 'bad_image', "This BEAT's image can't be read.")
-  const art = await frozenImage(data)
-  if (!art) throw new BeatError(400, 'bad_image', "This BEAT's image can't be made into its token art.")
-  const url = await storage().upload(`beats/${row.chain}/${row.tokenId}-${mediaId}.webp`, art, 'image/webp', { cacheControl: BEAT_FROZEN_CACHE_CONTROL })
-  await db.update(beats).set({ imageUrl: url }).where(and(eq(beats.id, beatId), eq(beats.imageMediaId, mediaId)))
-  return url
+  try {
+    if (!mediaId) throw new BeatError(400, 'bad_image', 'This BEAT has no image.')
+    const [m] = await db.select().from(mediaAssets).where(eq(mediaAssets.id, mediaId))
+    if (!m?.publicUrl || !EXT[m.contentType]) throw new BeatError(400, 'bad_image', "This BEAT's image can't be read.")
+    const data = await readImageBytes(m.publicUrl)
+    if (!data) throw new BeatError(502, 'bad_image', "This BEAT's image can't be read.")
+    const art = await frozenImage(data)
+    if (!art) throw new BeatError(400, 'bad_image', "This BEAT's image can't be made into its token art.")
+    const url = await storage().upload(`beats/${row.chain}/${row.tokenId}-${mediaId}.webp`, art, 'image/webp', { cacheControl: BEAT_FROZEN_CACHE_CONTROL })
+    await db.update(beats).set({ imageUrl: url, artFailedAt: null, artAttempts: 0, artNextAttemptAt: null })
+      .where(and(eq(beats.id, beatId), eq(beats.imageMediaId, mediaId)))
+    return url
+  } catch (err) {
+    const permanent = err instanceof BeatError && err.status === 400
+    const same = mediaId ? eq(beats.imageMediaId, mediaId) : isNull(beats.imageMediaId)
+    if (permanent) {
+      const [marked] = await db.update(beats).set({ artFailedAt: now, artNextAttemptAt: null })
+        .where(and(eq(beats.id, beatId), same, isNull(beats.artFailedAt), isNull(beats.imageUrl))).returning({ id: beats.id })
+      if (marked) {
+        const msg = `BEAT ${beatId}: its art can't be frozen (${err.message}); it can't go on chain until the host picks another image`
+        console.error(`[beats] ${msg}`)
+        recordJobFailure('beat_art', new Error(msg), { owner: beatId })
+      }
+    } else {
+      const attempts = row.artAttempts + 1
+      await db.update(beats).set({ artAttempts: attempts, artNextAttemptAt: new Date(now.getTime() + artBackoffMs(attempts)) })
+        .where(and(eq(beats.id, beatId), same))
+      if (attempts === 5) recordJobFailure('beat_art', new Error(`BEAT ${beatId}: its art copy failed ${attempts} times; still retrying`), { owner: beatId })
+    }
+    throw err
+  }
 }
 
 // ── Sweep ────────────────────────────────────────────────────────────────────
 
 /**
- * Expires pending payments left past their checkout's life, and freezes the art of BEATs that went live (or ended)
- * without their frozen copy (the job's go-live copy failed). Run from the studio sweep and every minting tick. Returns
- * the BEATs whose copy failed, for the job to report once.
+ * Expires pending payments left past their checkout's life, and retries the art of paid, live or ended BEATs still
+ * missing their frozen copy, when their backoff allows (not one that failed for good: that waits for a new image).
+ * Run from the studio sweep and every minting tick. Returns the BEATs whose copy failed this time.
  */
 export async function sweepBeatPayments(now: Date): Promise<{ expired: number; copied: number; copyFailed: string[] }> {
   const expired = await db.update(beatPayments).set({ status: 'expired' }).where(and(
     eq(beatPayments.status, 'pending'), lt(beatPayments.createdAt, new Date(now.getTime() - BEAT_PAYMENT_EXPIRY_MS)),
   )).returning({ id: beatPayments.id })
   const missing = await db.select({ id: beats.id }).from(beats).where(and(
-    or(eq(beats.status, 'live'), eq(beats.status, 'ended')), isNull(beats.imageUrl), isNotNull(beats.tokenId), isNull(beats.closedOnChainAt),
+    inArray(beats.status, ['paid', 'live', 'ended']), isNull(beats.imageUrl), isNotNull(beats.tokenId), isNull(beats.closedOnChainAt),
+    isNull(beats.artFailedAt), or(isNull(beats.artNextAttemptAt), lte(beats.artNextAttemptAt, now)),
   ))
   let copied = 0
   const copyFailed: string[] = []
   for (const { id } of missing) {
     try {
-      await copyBeatImage(id)
+      await copyBeatImage(id, now)
       copied++
     } catch (err) {
       copyFailed.push(id)

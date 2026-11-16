@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { arDevices, beatClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, sceneCollaborators } from '../src/db/schema.js'
+import { arDevices, beatClaims, beatMintBatches, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, sceneCollaborators } from '../src/db/schema.js'
 import { issueArPass, issueHyperfyPass, issueScenePass, issueStudioPass } from '../src/auth/scene-pass.js'
 import { copyBeatImage, refundBeat } from '../src/beats/payments.js'
-import { BeatError, testHooks } from '../src/beats/service.js'
+import { BeatError, testHooks, updateBeat } from '../src/beats/service.js'
 import { setImageSizeReader } from '../src/beats/image.js'
 import { resetDb } from './helpers/db.js'
 import { BEATS_READY } from './helpers/beats-ready.js'
@@ -219,15 +219,46 @@ describe('BEAT host API (LIV-11)', () => {
       expect(off.json()).toMatchObject({ holdMints: false, mintsHeldUntil: null, mintsReleasedAt: null, scheduledEndsAt: null })
     })
 
-    it('an image change on a paid BEAT clears any stale copy and copies nothing: the frozen copy is made at go-live', async () => {
+    it('fix round I-3: an image change on a paid BEAT clears the stale copy and freezes the new one at once; the edit stands if the copy fails', async () => {
       const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 20 })
       const next = await media(host, 700, 700)
+      vi.mocked(copyBeatImage).mockImplementationOnce(() => Promise.reject(new BeatError(502, 'bad_image', "This BEAT's image can't be read.")))
       const res = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
       expect(res.statusCode, res.body).toBe(200)
-      expect(copyBeatImage).not.toHaveBeenCalled()
+      expect(copyBeatImage).toHaveBeenCalledTimes(1)
       const row = await db.query.beats.findFirst({ where: eq(beats.id, b.id) })
       expect([row!.imageMediaId, row!.imageUrl]).toEqual([next.id, null])
-      expect((await call('GET', `/api/beats/${b.id}`)).json().imageUrl).toBe(next.publicUrl)
+      expect(res.json()).toMatchObject({ imageUrl: next.publicUrl, artStatus: 'pending' })
+    })
+
+    it('fix round M-2: a BEAT already created on chain (the old flow) is locked, Tradeable included, even before its start', async () => {
+      const b = await seed({ status: 'paid', tokenId: 23, createdOnChainTx: '0xold' })
+      for (const body of [{ tradeable: true }, { name: 'New' }, { imageMediaId: (await media(host, 700, 700)).id }]) {
+        const res = await call('PATCH', `/api/beats/${b.id}`, host, body)
+        expect([res.statusCode, res.json().error], JSON.stringify(body)).toEqual([409, 'locked'])
+      }
+    })
+
+    it('fix round M-1: once a create batch exists for the BEAT it is locked', async () => {
+      const b = await seed({ status: 'paid', tokenId: 24 })
+      await db.insert(beatMintBatches).values({ chain: 'polygon', kind: 'create', beatId: b.id, tokenId: 24, nonce: 77, txHashes: [], status: 'sending' })
+      expect((await call('PATCH', `/api/beats/${b.id}`, host, { tradeable: true })).json().error).toBe('locked')
+    })
+
+    it('fix round M-1: editability is judged by the database clock after the lock, not the request\'s', async () => {
+      const b = await seed({ status: 'paid', tokenId: 25, startsAt: new Date(Date.now() - 1000), endsAt: new Date(Date.now() + H) })
+      const stale = new Date(Date.now() - 60_000)
+      await expect(updateBeat({ userId: host.id, actor: {} as any, admin: true }, b.id, { tradeable: true }, stale)).rejects.toMatchObject({ code: 'locked' })
+    })
+
+    it('fix round I-3: after the start, a BEAT not yet on chain lets the host change only its image (to fix failed art)', async () => {
+      const b = await seed({ status: 'live', tokenId: 26, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H), artFailedAt: new Date() })
+      const next = await media(host, 700, 700)
+      const ok = await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id })
+      expect(ok.statusCode, ok.body).toBe(200)
+      expect((await db.query.beats.findFirst({ where: eq(beats.id, b.id) }))!).toMatchObject({ imageMediaId: next.id, artFailedAt: null })
+      expect((await call('PATCH', `/api/beats/${b.id}`, host, { name: 'Late rename' })).json().error).toBe('locked')
+      expect((await call('PATCH', `/api/beats/${b.id}`, host, { imageMediaId: next.id, tradeable: true })).json().error).toBe('locked')
     })
 
     it('tradeable can change after payment until go-live (it goes on chain with the create at go-live)', async () => {

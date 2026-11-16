@@ -497,6 +497,9 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE beat_mint_batches ADD COLUMN IF NOT EXISTS code_count INTEGER\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS network_salt TEXT\`;
         await sql\`CREATE TABLE IF NOT EXISTS beat_network_claims (beat_id UUID NOT NULL CONSTRAINT beat_network_claims_beat_id_beats_id_fk REFERENCES beats(id) ON DELETE CASCADE, net_hash TEXT NOT NULL, claims INTEGER NOT NULL DEFAULT 0, CONSTRAINT beat_network_claims_beat_id_net_hash_pk PRIMARY KEY (beat_id, net_hash))\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_failed_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_attempts INTEGER NOT NULL DEFAULT 0\`;
+        await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_next_attempt_at TIMESTAMPTZ\`;
         console.log('[virvi-server] BEAT tables ensured');
       } catch(e) { console.log('[virvi-server] BEAT tables:', e.message); }
       // model enum value
