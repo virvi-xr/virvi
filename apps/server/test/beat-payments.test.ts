@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest'
 import Stripe from 'stripe'
+import sharp from 'sharp'
 import { and, eq, sql } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
@@ -31,9 +32,11 @@ const as = (u: TestUser) => ({ authorization: `Bearer ${tokenFor(u)}` })
 /** Storage in memory: key → bytes, with the public URL a CDN would give. */
 function memoryStorage() {
   const files = new Map<string, Buffer>()
-  const s: StorageProvider & { files: Map<string, Buffer> } = {
+  const cache = new Map<string, string | undefined>()
+  const s: StorageProvider & { files: Map<string, Buffer>; cache: Map<string, string | undefined> } = {
     files,
-    async upload(key, data) { files.set(key, data); return s.getPublicUrl(key) },
+    cache,
+    async upload(key, data, _type, opts) { files.set(key, data); cache.set(key, opts?.cacheControl); return s.getPublicUrl(key) },
     async delete(key) { files.delete(key) },
     getPublicUrl: (key) => `https://cdn.virvi.test/${key}`,
   }
@@ -91,9 +94,11 @@ describe('BEAT payments (LIV-11)', () => {
     await app.close()
   })
 
+  /** A real square image (1200 px unless given), a random colour, so each media item's art differs. */
+  const png = (px = 1200) => sharp({ create: { width: px, height: px, channels: 3, background: { r: Math.floor(Math.random() * 255), g: 9, b: 9 } } }).png().toBuffer()
   async function media(owner: TestUser, contentType = 'image/png') {
     const url = `https://cdn.example/${Math.random().toString(36).slice(2)}.png`
-    bytes.set(url, Buffer.from(`art-${url}`))
+    bytes.set(url, await png())
     const [m] = await db.insert(mediaAssets).values({ ownerId: owner.id, filename: 'b.png', contentType, sizeBytes: 1, storageKey: 'k', publicUrl: url }).returning()
     return m
   }
@@ -327,25 +332,50 @@ describe('BEAT payments (LIV-11)', () => {
     })
   })
 
-  describe('frozen image copy', () => {
-    it('copies the image on payment; deleting the media row leaves the copy', async () => {
+  describe('frozen image copy (standards I1, I3)', () => {
+    const live = (id: string) => db.update(beats).set({ status: 'live', startsAt: new Date(Date.now() - H) }).where(eq(beats.id, id))
+
+    it('payment copies nothing; once live, the sweep freezes the art as WebP within 1024 px with an immutable cache; deleting the media leaves it', async () => {
       const b = await seed()
       await payByCard(b.id)
-      const key = `beats/polygon/1-${image.id}.png`
-      expect(storage.files.get(key)?.toString()).toBe(`art-${image.publicUrl}`)
+      expect(storage.files.size).toBe(0)
+      expect((await beatOf(b.id)).imageUrl).toBeNull()
+      // Paid but not live: not yet
+      expect((await sweepBeatPayments(new Date())).copied).toBe(0)
+      await live(b.id)
+      expect(await sweepBeatPayments(new Date())).toMatchObject({ copied: 1, copyFailed: [] })
+      const key = `beats/polygon/1-${image.id}.webp`
+      const meta = await sharp(storage.files.get(key)!).metadata()
+      expect([meta.format, meta.width, meta.height]).toEqual(['webp', 1024, 1024])
+      expect(storage.cache.get(key)).toBe('public, max-age=31536000, immutable')
       expect((await beatOf(b.id)).imageUrl).toBe(`https://cdn.virvi.test/${key}`)
+      await db.update(beats).set({ imageMediaId: null }).where(eq(beats.id, b.id))
       await db.delete(mediaAssets).where(eq(mediaAssets.id, image.id))
-      const res = await call('GET', `/api/beats/${b.id}`)
-      expect(res.json().imageUrl).toBe(`https://cdn.virvi.test/${key}`)
-      expect(storage.files.has(key)).toBe(true)
+      expect((await call('GET', `/api/beats/${b.id}`)).json().imageUrl).toBe(`https://cdn.virvi.test/${key}`)
+    })
+
+    it('a small image is not enlarged', async () => {
+      const b = await seed({ status: 'live', tokenId: 3, startsAt: new Date(Date.now() - H) })
+      bytes.set(image.publicUrl!, await png(600))
+      await copyBeatImage(b.id)
+      const meta = await sharp(storage.files.get(`beats/polygon/3-${image.id}.webp`)!).metadata()
+      expect(meta.width).toBe(600)
+    })
+
+    it('a file that is no image is bad_image, and the sweep reports it', async () => {
+      const b = await seed({ status: 'live', tokenId: 6, startsAt: new Date(Date.now() - H) })
+      bytes.set(image.publicUrl!, Buffer.from('not an image'))
+      await expect(copyBeatImage(b.id)).rejects.toMatchObject({ code: 'bad_image' })
+      expect((await sweepBeatPayments(new Date())).copyFailed).toEqual([b.id])
     })
 
     it('does not write image_url when the image changed while it copied', async () => {
-      const b = await seed({ status: 'paid', tokenId: 4 })
+      const b = await seed({ status: 'live', tokenId: 4 })
       const other = await media(host, 'image/webp')
+      const oldArt = await png()
       bytes.set(image.publicUrl!, async () => {
         await db.update(beats).set({ imageMediaId: other.id }).where(eq(beats.id, b.id))
-        return Buffer.from('old art')
+        return oldArt
       })
       await copyBeatImage(b.id)
       expect((await beatOf(b.id)).imageUrl).toBeNull()
@@ -354,35 +384,45 @@ describe('BEAT payments (LIV-11)', () => {
       expect((await beatOf(b.id)).imageUrl).toBe(url)
     })
 
-    it('an older copy of the same type finishing last never replaces the new artwork', async () => {
-      const b = await seed({ status: 'paid', tokenId: 5 })
+    it('an older copy finishing last never replaces the new artwork', async () => {
+      const b = await seed({ status: 'live', tokenId: 5 })
       const next = await media(host, 'image/png')
       let release!: () => void
       const gate = new Promise<void>((r) => { release = r })
       let started!: () => void
       const reading = new Promise<void>((r) => { started = r })
-      bytes.set(image.publicUrl!, async () => { started(); await gate; return Buffer.from('old art') })
-      bytes.set(next.publicUrl!, Buffer.from('new art'))
-      const slow = copyBeatImage(b.id) // reads the old image, then waits
+      const oldArt = await png()
+      bytes.set(image.publicUrl!, async () => { started(); await gate; return oldArt })
+      const slow = copyBeatImage(b.id)
       await reading
       await db.update(beats).set({ imageMediaId: next.id }).where(eq(beats.id, b.id))
       const fast = await copyBeatImage(b.id)
       release()
       await slow
-      const key = `beats/polygon/5-${next.id}.png`
+      const key = `beats/polygon/5-${next.id}.webp`
       expect(fast).toBe(`https://cdn.virvi.test/${key}`)
       expect((await beatOf(b.id)).imageUrl).toBe(`https://cdn.virvi.test/${key}`)
-      expect(storage.files.get(key)?.toString()).toBe('new art')
     })
 
-    it('a copy that failed at payment is retried by the sweep', async () => {
+    it('a copy that failed is retried by the sweep', async () => {
       const b = await seed()
-      bytes.delete(image.publicUrl!)
       await payByCard(b.id)
-      expect((await beatOf(b.id))).toMatchObject({ status: 'paid', imageUrl: null })
-      bytes.set(image.publicUrl!, Buffer.from('art'))
+      await live(b.id)
+      bytes.delete(image.publicUrl!)
+      expect((await sweepBeatPayments(new Date())).copyFailed).toEqual([b.id])
+      bytes.set(image.publicUrl!, await png())
       await sweepBeatPayments(new Date())
-      expect((await beatOf(b.id)).imageUrl).toBe(`https://cdn.virvi.test/beats/polygon/1-${image.id}.png`)
+      expect((await beatOf(b.id)).imageUrl).toBe(`https://cdn.virvi.test/beats/polygon/1-${image.id}.webp`)
+    })
+
+    it('a media item that is a paid or live BEAT\'s art can\'t be deleted (in_use_by_beat); a draft\'s can', async () => {
+      const b = await seed()
+      await payByCard(b.id)
+      const del = await call('DELETE', `/api/media/${image.id}`)
+      expect([del.statusCode, del.json().error, del.json().beatId]).toEqual([409, 'in_use_by_beat', b.id])
+      const spare = await media(host)
+      await seed({ imageMediaId: spare.id, startsAt: new Date(Date.now() + 20 * H), endsAt: new Date(Date.now() + 21 * H) })
+      expect((await call('DELETE', `/api/media/${spare.id}`)).statusCode).toBe(204)
     })
   })
 

@@ -48,14 +48,15 @@ describe('transparency', () => {
     const saved = config.beats.contracts
     afterEach(() => { config.beats.contracts = saved })
 
-    it('links each contract to its explorer page and the contract source at the running commit', () => {
-      expect(beatContracts({ 'polygon-amoy': AMOY }, 'a'.repeat(40))).toEqual([{
+    it('standards I5: links the contract source at the commit it was deployed from, else the contracts folder on main, claiming no commit', () => {
+      expect(beatContracts({ 'polygon-amoy': AMOY }, { 'polygon-amoy': '6637054d' })).toEqual([{
         chain: 'polygon-amoy',
         address: AMOY,
         explorerUrl: `https://amoy.polygonscan.com/address/${AMOY}`,
-        sourceUrl: `https://github.com/virvi-xr/virvi/blob/${'a'.repeat(40)}/contracts/src/VirviBeat.sol`,
+        deployedCommit: '6637054d',
+        sourceUrl: 'https://github.com/virvi-xr/virvi/blob/6637054d/contracts/src/VirviBeat.sol',
       }])
-      expect(beatContracts({ 'polygon-amoy': AMOY }, null)[0].sourceUrl).toBe('https://github.com/virvi-xr/virvi/blob/main/contracts/src/VirviBeat.sol')
+      expect(beatContracts({ 'polygon-amoy': AMOY })[0]).toMatchObject({ deployedCommit: null, sourceUrl: 'https://github.com/virvi-xr/virvi/tree/main/contracts' })
     })
 
     it('GET /api/transparency lists no contracts when none is set', async () => {
@@ -73,7 +74,8 @@ describe('transparency', () => {
         const { contracts } = (await app.inject({ method: 'GET', url: '/api/transparency' })).json()
         expect(contracts).toHaveLength(1)
         expect(contracts[0]).toMatchObject({ chain: 'polygon-amoy', address: AMOY, explorerUrl: `https://amoy.polygonscan.com/address/${AMOY}` })
-        expect(contracts[0].sourceUrl).toMatch(/^https:\/\/github\.com\/virvi-xr\/virvi\/blob\/[^/]+\/contracts\/src\/VirviBeat\.sol$/)
+        // Not the running server's commit: no BEAT_CONTRACT_COMMIT_POLYGON_AMOY in tests, so the folder on main
+        expect(contracts[0]).toMatchObject({ deployedCommit: null, sourceUrl: 'https://github.com/virvi-xr/virvi/tree/main/contracts' })
       } finally { await app.close() }
     })
   })

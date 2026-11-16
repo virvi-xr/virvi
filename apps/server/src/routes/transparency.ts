@@ -10,7 +10,7 @@ import { beatContracts, currentReleaseInfo } from '../transparency.js'
  */
 export default async function transparencyRoutes(app: FastifyInstance) {
   const release = currentReleaseInfo(config)
-  const info = { ...release, contracts: beatContracts(config.beats.contracts, release.commit) }
+  const info = { ...release, contracts: beatContracts(config.beats.contracts, config.beats.contractCommits) }
   app.get('/api/transparency', async (_request, reply) => reply.header('cache-control', 'public, max-age=300').send(info))
 
   let securityTxt: Buffer | null = null

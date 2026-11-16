@@ -33,7 +33,7 @@ describe('BEAT public metadata (LIV-11)', () => {
   async function seed(over: Partial<typeof beats.$inferInsert> = {}) {
     const [b] = await db.insert(beats).values({
       chain: 'polygon-amoy', ownerUserId: host.id, name: 'Opening night', description: 'Thanks for coming', imageMediaId: imageId,
-      imageUrl: 'https://cdn.example/beats/polygon-amoy/1-x.png', tokenId: 1, status: 'paid', tradeable: false,
+      imageUrl: 'https://cdn.example/beats/polygon-amoy/1-x.png', tokenId: 1, status: 'live', tradeable: false,
       startsAt: new Date('2026-12-01T20:00:00Z'), endsAt: new Date('2026-12-01T22:00:00Z'), ...over,
     }).returning()
     await db.insert(beatScenes).values({ beatId: b.id, sceneId })
@@ -74,9 +74,35 @@ describe('BEAT public metadata (LIV-11)', () => {
     expect((await meta('polygon-amoy', '1.json')).json().name).toBe('Opening night')
   })
 
-  it('unknown, draft and cancelled ids get 404', async () => {
+  it('standards M5, M7: a cancelled BEAT already on chain keeps its metadata; an early end keeps the scheduled Ends and adds Ended early', async () => {
+    await seed({ tokenId: 20, status: 'cancelled', createdOnChainTx: '0xc' })
+    expect((await meta('polygon-amoy', '20.json')).statusCode).toBe(200)
+    await seed({
+      tokenId: 21, status: 'ended', endsAt: new Date('2026-12-01T21:00:00Z'), scheduledEndsAt: new Date('2026-12-01T22:00:00Z'),
+    })
+    expect((await meta('polygon-amoy', '21.json')).json().attributes).toEqual([
+      { trait_type: 'Starts', display_type: 'date', value: Date.parse('2026-12-01T20:00:00Z') / 1000 },
+      { trait_type: 'Ends', display_type: 'date', value: Date.parse('2026-12-01T22:00:00Z') / 1000 },
+      { trait_type: 'Ended early', display_type: 'date', value: Date.parse('2026-12-01T21:00:00Z') / 1000 },
+      { trait_type: 'Tradeable', value: 'No' },
+    ])
+  })
+
+  it('end early records the scheduled end', async () => {
+    const b = await seed({ tokenId: 22, startsAt: new Date(Date.now() - H), endsAt: new Date(Date.now() + H) })
+    const res = await app.inject({ method: 'POST', url: `/api/beats/${b.id}/end-early`, headers: { authorization: `Bearer ${tokenFor(host)}` } })
+    expect(res.statusCode, res.body).toBe(200)
+    const row = (await db.query.beats.findFirst({ where: eq(beats.id, b.id) }))!
+    expect(row.scheduledEndsAt).toEqual(b.endsAt)
+    expect(row.endsAt.getTime()).toBeLessThan(b.endsAt.getTime())
+    expect(res.json().scheduledEndsAt).toBe(b.endsAt.toISOString())
+  })
+
+  it('unknown, draft, paid (not yet live, so not on chain) and cancelled ids get 404', async () => {
     await seed({ tokenId: 2, status: 'draft' })
     await seed({ tokenId: 3, status: 'cancelled' })
+    await seed({ tokenId: 10, status: 'paid' })
+    expect((await meta('polygon-amoy', '10.json')).statusCode).toBe(404)
     await seed({ tokenId: 4, status: 'live' })
     await seed({ tokenId: 5, status: 'ended' })
     expect((await meta('polygon-amoy', '1.json')).statusCode).toBe(404)

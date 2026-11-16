@@ -45,3 +45,26 @@ export const readImageBytes: ImageBytesReader = (url) => bytesReader(url)
 export function setImageBytesReader(r: ImageBytesReader | null): void {
   bytesReader = r ?? fetchBytes
 }
+
+/** The frozen copy's limits (standards I3): at most 1024 × 1024, WebP at quality 85, at most 2 MB. */
+export const BEAT_FROZEN_MAX_PX = 1024
+export const BEAT_FROZEN_QUALITY = 85
+export const BEAT_FROZEN_MAX_BYTES = 2 * 1024 * 1024
+
+/**
+ * The host's image as the token's permanent art: scaled down to fit BEAT_FROZEN_MAX_PX (never up), as WebP. When the
+ * result is over BEAT_FROZEN_MAX_BYTES it tries lower qualities; null when it still doesn't fit or isn't an image.
+ */
+export async function frozenImage(data: Buffer): Promise<Buffer | null> {
+  for (const quality of [BEAT_FROZEN_QUALITY, 70, 55]) {
+    try {
+      const out = await sharp(data, { failOn: 'error' }).rotate()
+        .resize(BEAT_FROZEN_MAX_PX, BEAT_FROZEN_MAX_PX, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality }).toBuffer()
+      if (out.length <= BEAT_FROZEN_MAX_BYTES) return out
+    } catch {
+      return null
+    }
+  }
+  return null
+}

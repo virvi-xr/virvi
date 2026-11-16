@@ -58,7 +58,7 @@ describe('BEAT privacy and retention (LIV-11)', () => {
   async function seedBeat(o: { endsAt?: Date; created?: boolean } = {}) {
     const tokenId = nextToken++
     const [b] = await db.insert(beats).values({
-      chain: 'polygon-amoy', ownerUserId: host.id, name: 'Seed', description: '', tokenId,
+      chain: 'polygon-amoy', ownerUserId: host.id, name: 'Seed', description: '', tokenId, imageUrl: 'https://cdn.virvi.test/frozen.webp',
       startsAt: at(-H), endsAt: o.endsAt ?? at(H), status: 'live',
       ...(o.created ? { createdOnChainTx: '0xcreated', createdOnChainAt: at(-2 * H) } : {}),
     }).returning()

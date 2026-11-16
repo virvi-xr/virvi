@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, or, sql } from 'drizzle-orm'
 import { BEAT_CHAINS, type BeatChain, type BeatStatus } from '@virvixr/shared'
 import { config } from '../config.js'
 import { db } from '../db/connection.js'
@@ -13,7 +13,9 @@ import { beats, mediaAssets } from '../db/schema.js'
  */
 
 export const BEAT_METADATA_ROUTE = '/api/beats/metadata/:chain/:file'
-const SHOWN: BeatStatus[] = ['paid', 'live', 'ended']
+/** Served from go-live (when the BEAT goes on chain with locked metadata) and after; any BEAT already on chain is served
+ * whatever its status, so live tokens keep their metadata after an admin cancel (standards M5). */
+const SHOWN: BeatStatus[] = ['live', 'ended']
 const MAX_ID = (1n << 63n) - 1n
 const DECIMAL = /^(0|[1-9][0-9]*)\.json$/
 const HEX = /^([0-9a-f]{64})\.json$/
@@ -51,7 +53,7 @@ const unix = (d: Date) => Math.floor(d.getTime() / 1000)
 
 export async function tokenMetadata(chain: BeatChain, id: bigint) {
   const [b] = await db.select().from(beats)
-    .where(and(eq(beats.chain, chain), sql`${beats.tokenId} = ${id.toString()}::bigint`, inArray(beats.status, SHOWN)))
+    .where(and(eq(beats.chain, chain), sql`${beats.tokenId} = ${id.toString()}::bigint`, or(inArray(beats.status, SHOWN), isNotNull(beats.createdOnChainTx))))
   if (!b) return null
   const media = b.imageUrl || !b.imageMediaId ? null : await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, b.imageMediaId), columns: { publicUrl: true } })
   return {
@@ -61,7 +63,9 @@ export async function tokenMetadata(chain: BeatChain, id: bigint) {
     external_url: 'https://virvi.io/beats',
     attributes: [
       { trait_type: 'Starts', display_type: 'date', value: unix(b.startsAt) },
-      { trait_type: 'Ends', display_type: 'date', value: unix(b.endsAt) },
+      // The scheduled end, also after the host ended it early (standards M7); the actual end is its own attribute
+      { trait_type: 'Ends', display_type: 'date', value: unix(b.scheduledEndsAt ?? b.endsAt) },
+      ...(b.scheduledEndsAt ? [{ trait_type: 'Ended early', display_type: 'date', value: unix(b.endsAt) }] : []),
       { trait_type: 'Tradeable', value: b.tradeable ? 'Yes' : 'No' },
     ],
   }

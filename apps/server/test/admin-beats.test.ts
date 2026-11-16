@@ -51,7 +51,7 @@ describe('admin BEAT routes (LIV-11)', () => {
 
   async function seedBeat(tokenId: number) {
     const [b] = await db.insert(beats).values({
-      chain: 'polygon-amoy', ownerUserId: admin.id, name: `Beat ${tokenId}`, description: '', tokenId,
+      chain: 'polygon-amoy', ownerUserId: admin.id, name: `Beat ${tokenId}`, description: '', tokenId, imageUrl: 'https://cdn.virvi.test/f.webp',
       startsAt: new Date(T0.getTime() - H), endsAt: new Date(T0.getTime() + H), status: 'live', createdOnChainTx: '0xc', createdOnChainAt: T0,
     }).returning()
     const [p] = await db.insert(beatPayments).values({ beatId: b.id, userId: admin.id, kind: 'create', capFrom: 0, capTo: 100, method: 'test', amountCents: 0, status: 'paid', paidAt: T0 }).returning()
@@ -175,8 +175,8 @@ describe('admin BEAT routes (LIV-11)', () => {
 
   it('clear-pause lifts an id_conflict pause and rejects an unknown chain', async () => {
     const [b] = await db.insert(beats).values({
-      chain: 'polygon-amoy', ownerUserId: admin.id, name: 'Clash', description: '', tokenId: 906,
-      startsAt: new Date(T0.getTime() + H), endsAt: new Date(T0.getTime() + 2 * H), status: 'paid',
+      chain: 'polygon-amoy', ownerUserId: admin.id, name: 'Clash', description: '', tokenId: 906, imageUrl: 'https://cdn.virvi.test/f.webp',
+      startsAt: new Date(T0.getTime() - H), endsAt: new Date(T0.getTime() + 2 * H), status: 'live',
     }).returning()
     const [p] = await db.insert(beatPayments).values({ beatId: b.id, userId: admin.id, kind: 'create', capFrom: 0, capTo: 100, method: 'test', amountCents: 0, status: 'paid', paidAt: T0 }).returning()
     await db.update(beats).set({ paymentId: p.id }).where(eq(beats.id, b.id))

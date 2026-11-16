@@ -68,7 +68,7 @@ describe('BEAT minting job (LIV-11)', () => {
   } = {}) {
     const tokenId = nextToken++
     const [b] = await db.insert(beats).values({
-      chain: o.chain ?? 'polygon-amoy', ownerUserId: hostId, name: 'Seed', description: '', tokenId,
+      chain: o.chain ?? 'polygon-amoy', ownerUserId: hostId, name: 'Seed', description: '', tokenId, imageUrl: 'https://cdn.virvi.test/frozen.webp',
       startsAt: o.startsAt ?? at(-H), endsAt: o.endsAt ?? at(H), status: o.status ?? 'live',
       ...(o.created ? { createdOnChainTx: '0xcreated', createdOnChainAt: at(-2 * H) } : {}),
     }).returning()
@@ -99,9 +99,14 @@ describe('BEAT minting job (LIV-11)', () => {
   }
   const mintWallets = (tx: { call: { kind: string } }) => (tx.call as unknown as { wallets: string[] }).wallets.map(lc)
 
-  it('a paid BEAT gets one create; after 5 confirmations on Amoy it is created, and no second create is sent', async () => {
-    const b = await seed({ status: 'paid', startsAt: at(2 * H), endsAt: at(3 * H) })
+  it('standards I2: a paid BEAT goes on chain only at go-live; then one create, created after 5 confirmations on Amoy, and no second', async () => {
+    const early = await seed({ status: 'paid', startsAt: at(2 * H), endsAt: at(3 * H) })
+    expect((await runBeatTick(T0)).sent).toBe(0)
+    expect(fake.mempool()).toHaveLength(0)
+    await db.delete(beats).where(eq(beats.id, early.id))
+    const b = await seed({ status: 'paid', startsAt: T0, endsAt: at(3 * H) })
     const r1 = await runBeatTick(T0)
+    expect((await beatOf(b.id)).status).toBe('live')
     expect(r1.sent).toBe(1)
     expect(fake.mempool()).toHaveLength(1)
     expect(fake.mempool()[0].call).toEqual({ kind: 'create', tokenId: BigInt(b.tokenId!), tradeable: false })
@@ -420,7 +425,7 @@ describe('BEAT minting job (LIV-11)', () => {
   })
 
   it('BeatExists on create pauses the chain with id_conflict until an admin clears it', async () => {
-    const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(2 * H) })
+    const b = await seed({ status: 'live', startsAt: at(-H), endsAt: at(2 * H) })
     fake.createdBeat(BigInt(b.tokenId!)) // someone else's
     const r = await runBeatTick(T0)
     expect(r.sent).toBe(0)
@@ -582,7 +587,7 @@ describe('BEAT minting job (LIV-11)', () => {
   })
 
   it('BeatExists after a confirmed create of ours records the hash that mined, not the newest one signed', async () => {
-    const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(2 * H) })
+    const b = await seed({ status: 'live', startsAt: at(-H), endsAt: at(2 * H) })
     const mined = '0x' + 'a'.repeat(64)
     const newer = '0x' + 'b'.repeat(64)
     await db.insert(beatMintBatches).values({
@@ -596,7 +601,7 @@ describe('BEAT minting job (LIV-11)', () => {
   })
 
   it('BeatExists after an earlier unsent create of ours is still an id_conflict', async () => {
-    const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(10 * H) })
+    const b = await seed({ status: 'live', startsAt: at(-H), endsAt: at(10 * H) })
     fake.failBroadcast('INVALID_ARGUMENT', 5)
     await runBeatTick(T0)
     for (let i = 1; i <= 3; i++) await runBeatTick(at(i * H))
@@ -616,7 +621,7 @@ describe('BEAT minting job (LIV-11)', () => {
   })
 
   it('a create whose estimate keeps reverting is reported once, not every tick', async () => {
-    const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(2 * H) })
+    const b = await seed({ status: 'live', startsAt: at(-H), endsAt: at(2 * H) })
     fake.revertNext('AccessControlUnauthorizedAccount', { kind: 'create', times: 3 })
     for (let i = 0; i < 3; i++) await runBeatTick(at(i * MIN))
     expect(fake.mempool()).toHaveLength(0)
@@ -1018,6 +1023,26 @@ describe('BEAT minting job (LIV-11)', () => {
       await runBeatTick(at(BEAT_CLAIM_GRACE_MS - 2 * H + MIN))
       expect(fake.mempool()).toHaveLength(1)
       expect(fake.mempool()[0].call.tokenId).toBe(BigInt(late.tokenId!))
+    })
+
+    it('standards I1: a live BEAT whose art isn\'t frozen is neither created nor minted, and is reported once', async () => {
+      const b = await seed({ status: 'live' })
+      await db.update(beats).set({ imageUrl: null }).where(eq(beats.id, b.id))
+      await claims(b.id, [wallet()])
+      await runBeatTick(T0)
+      await runBeatTick(at(MIN))
+      expect(fake.mempool()).toHaveLength(0)
+      const reports = vi.mocked(recordJobFailure).mock.calls.filter((c) => c[0] === 'beat_art')
+      expect(reports).toHaveLength(1)
+      // On chain already but its art lost: still no mint
+      const c = await seed({ created: true })
+      await db.update(beats).set({ imageUrl: null }).where(eq(beats.id, c.id))
+      await claims(c.id, [wallet()])
+      await runBeatTick(at(2 * MIN))
+      expect(fake.mempool()).toHaveLength(0)
+      await db.update(beats).set({ imageUrl: 'https://cdn.virvi.test/frozen.webp' }).where(inArray(beats.id, [b.id, c.id]))
+      await runBeatTick(at(3 * MIN))
+      expect(fake.mempool()).toHaveLength(1)
     })
 
     it('money M3: a create that reverts with BeatExists after an earlier create of ours was replaced is taken as ours, not a conflict', async () => {

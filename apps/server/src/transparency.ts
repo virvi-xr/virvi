@@ -20,14 +20,22 @@ function readJson(path: string): Record<string, unknown> | null {
   try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return null }
 }
 
-/** The BEAT contracts (LIV-11), each with its explorer page and its source in the repo at the running commit. */
-export function beatContracts(contracts: Partial<Record<BeatChain, string>>, commit: string | null) {
-  return BEAT_CHAINS.filter((chain) => contracts[chain]).map((chain) => ({
-    chain,
-    address: contracts[chain]!,
-    explorerUrl: beatAddressUrl(chain, contracts[chain]!),
-    sourceUrl: `${REPO_URL}/blob/${commit ?? 'main'}/contracts/src/VirviBeat.sol`,
-  }))
+/**
+ * The BEAT contracts (LIV-11), each with its explorer page and its source (standards I5): the contract file at the commit
+ * it was deployed from (BEAT_CONTRACT_COMMIT_POLYGON[_AMOY]), never the running server's commit, which may have a newer
+ * contract file. Without that setting it links the contracts folder on main and claims no commit (`deployedCommit` null).
+ */
+export function beatContracts(contracts: Partial<Record<BeatChain, string>>, deployedFrom: Partial<Record<BeatChain, string | null>> = {}) {
+  return BEAT_CHAINS.filter((chain) => contracts[chain]).map((chain) => {
+    const commit = deployedFrom[chain] ?? null
+    return {
+      chain,
+      address: contracts[chain]!,
+      explorerUrl: beatAddressUrl(chain, contracts[chain]!),
+      deployedCommit: commit,
+      sourceUrl: commit ? `${REPO_URL}/blob/${commit}/contracts/src/VirviBeat.sol` : `${REPO_URL}/tree/main/contracts`,
+    }
+  })
 }
 
 export function releaseInfo(opts: { buildInfoPath: string; dashboardDir: string; release: string }) {

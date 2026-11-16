@@ -12,7 +12,7 @@ import { BeatError } from './errors.js'
 import { beatChainMissing } from './chain.js'
 import { readImageSize } from './image.js'
 import { lockBeat } from './lock.js'
-import { beatQuote, copyBeatImage, refuseBelowCardMinimum, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
+import { beatQuote, refuseBelowCardMinimum, createBeatCheckout, createCapTopup, refundBeat, type BeatCheckoutResult, type BeatPayMethod, type BeatQuote } from './payments.js'
 
 /**
  * BEATs (LIV-11), the host side: create, list, read, edit, claimants, cancel and end early. No Fastify here; the routes

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray, isNull, or } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { mediaAssets } from '../db/schema.js'
+import { beats, mediaAssets } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
 import { createStorage } from '../storage/index.js'
 import { storeMedia, StoreMediaError, USE_ASSET_LIBRARY } from '../media/store.js'
@@ -59,6 +59,14 @@ export default async function mediaRoutes(app: FastifyInstance) {
       if (!asset) return reply.status(404).send({ error: 'Asset not found' })
       if (asset.ownerId !== request.user.id && request.user.role !== 'admin') {
         return reply.status(403).send({ error: 'Forbidden' })
+      }
+      // A paid or live BEAT's art (standards I1), or an ended one's not yet frozen: deleting it would orphan the token art
+      const [usedBy] = await db.select({ id: beats.id }).from(beats).where(and(
+        eq(beats.imageMediaId, assetId),
+        or(inArray(beats.status, ['paid', 'live']), and(eq(beats.status, 'ended'), isNull(beats.imageUrl))),
+      )).limit(1)
+      if (usedBy) {
+        return reply.status(409).send({ error: 'in_use_by_beat', message: 'This image is the art of a paid or running BEAT, so it can\'t be deleted.', beatId: usedBy.id })
       }
 
       if (asset.storageKey) await storage.delete(asset.storageKey)

@@ -1,8 +1,13 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+export interface UploadOptions {
+  /** The object's Cache-Control (S3/R2 store it and serve it, so the CDN caches by it). Local disk ignores it. */
+  cacheControl?: string
+}
+
 export interface StorageProvider {
-  upload(key: string, data: Buffer, contentType: string): Promise<string>
+  upload(key: string, data: Buffer, contentType: string, opts?: UploadOptions): Promise<string>
   delete(key: string): Promise<void>
   getPublicUrl(key: string): string
 }
@@ -84,7 +89,7 @@ class S3Storage implements StorageProvider {
     return this.client
   }
 
-  async upload(key: string, data: Buffer, contentType: string): Promise<string> {
+  async upload(key: string, data: Buffer, contentType: string, opts: UploadOptions = {}): Promise<string> {
     const client = await this.getClient()
     const { PutObjectCommand } = await import('@aws-sdk/client-s3')
     await client.send(new PutObjectCommand({
@@ -92,6 +97,7 @@ class S3Storage implements StorageProvider {
       Key: key,
       Body: data,
       ContentType: contentType,
+      ...(opts.cacheControl ? { CacheControl: opts.cacheControl } : {}),
     }))
     return this.getPublicUrl(key)
   }
