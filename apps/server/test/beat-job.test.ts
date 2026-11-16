@@ -348,6 +348,22 @@ describe('BEAT minting job (LIV-11)', () => {
     expect(await statusCount(b.id)).toEqual({ minted: 3 })
   })
 
+  it('fix round I-1: a deterministic refusal (UNKNOWN_ERROR from the node, say its tx fee cap) goes the failed-send way: backoff, give-up, one alert', async () => {
+    const b = await seed({ created: true })
+    await claims(b.id, [wallet(), wallet()])
+    // Refused on every broadcast, as a geth node with --rpc.txfeecap refuses a big batch
+    fake.failBroadcast('UNKNOWN_ERROR', 40, false)
+    await runBeatTick(T0)
+    for (let i = 1; i <= 12; i++) await runBeatTick(at(i * H))
+    const failures = vi.mocked(recordJobFailure).mock.calls.filter((c) => String(c[0]).startsWith('beat_mint'))
+    expect(failures).toHaveLength(1)
+    expect(String((failures[0][1] as Error).message)).toContain('UNKNOWN_ERROR')
+    expect(String((failures[0][1] as Error).message)).toContain('not sent after')
+    // Never stuck in `sending` behind a refusal: the claims are re-planned, and nothing is marked failed
+    expect(await statusCount(b.id)).not.toHaveProperty('failed')
+    expect(beatPaused('polygon-amoy').paused).toBe(false)
+  })
+
   it('money I3: a batch never broadcast because the RPC is down is not failed; it waits and goes once the RPC is back', async () => {
     const b = await seed({ created: true })
     await claims(b.id, [wallet(), wallet()])
@@ -550,7 +566,9 @@ describe('BEAT minting job (LIV-11)', () => {
     expect(rows.filter((c) => ws.includes(c.wallet)).map((c) => c.status)).toEqual(['minted', 'minted'])
     // The next batch takes the next nonce
     expect(settled[1].nonce).toBe(first.nonce + 1)
-    expect(recordJobFailure).toHaveBeenCalledTimes(1)
+    // One report for the batch; a broadcast that found the RPC unreachable 10 passes running also reports rpc_down
+    expect(vi.mocked(recordJobFailure).mock.calls.filter((c) => c[0] === 'beat_mint')).toHaveLength(1)
+    expect(vi.mocked(recordJobFailure).mock.calls.filter((c) => c[0] !== 'beat_mint' && c[0] !== 'beat_rpc')).toHaveLength(0)
   })
 
   it('a successful broadcast after failures resets attempts', async () => {
@@ -991,6 +1009,18 @@ describe('BEAT minting job (LIV-11)', () => {
       fake.setDown(false)
       await runBeatTick(at(10 * MIN))
       expect(beatPaused('polygon-amoy').paused).toBe(false)
+    })
+
+    it('fix round M-6: a pass that fails for a reason other than the RPC never counts toward rpc_down, and is reported once as beat_job', async () => {
+      setBeats({ rpcFailsBeforePause: 2 })
+      await seed({ created: true })
+      const real = fake.balanceWei
+      fake.balanceWei = async () => { throw new Error('a bug, not the RPC') }
+      for (let i = 0; i < 5; i++) await runBeatTick(at(i * MIN))
+      fake.balanceWei = real
+      expect(beatPaused('polygon-amoy').reason).not.toBe('rpc_down')
+      const calls = vi.mocked(recordJobFailure).mock.calls.map((c) => c[0])
+      expect(calls).toEqual(['beat_job'])
     })
 
     it('the low-gas floor defaults per chain: 0.1 POL on Amoy', async () => {

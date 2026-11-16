@@ -87,7 +87,9 @@ export class BeatRevert extends Error {
 /** An RPC call failed for a reason other than a revert. `code` is the ethers error code (NONCE_EXPIRED,
  * REPLACEMENT_UNDERPRICED, INSUFFICIENT_FUNDS, NETWORK_ERROR, ...) or 'UNKNOWN_ERROR'. */
 export class BeatRpcError extends Error {
-  constructor(readonly op: string, readonly code: string) {
+  /** `down`: the RPC couldn't be reached or answered with no JSON-RPC error (a transport failure: network, timeout,
+   * HTTP 5xx/429), as opposed to the node refusing the request. Set by broadcast; false elsewhere. */
+  constructor(readonly op: string, readonly code: string, readonly down = false) {
     super(`BEAT RPC ${op} failed (${code})`)
     this.name = 'BeatRpcError'
   }
@@ -145,6 +147,22 @@ export function revertName(data: string | null): string {
 function rpcMessage(err: any): string {
   const parts = [err?.info?.error?.message, err?.error?.message, err?.shortMessage]
   return parts.filter((p) => typeof p === 'string').join(' | ')
+}
+
+/** Node messages that are always a refusal of this transaction, never an outage. */
+const REFUSAL = /fee cap|txfeecap|exceeds the configured cap|underpriced|nonce too low|nonce too high|exceeds block gas limit|intrinsic gas|less than block base fee|insufficient funds|invalid sender|already known|gas limit reached/i
+
+/**
+ * Whether a broadcast failure is the RPC being down (fix round I-1): NETWORK_ERROR or TIMEOUT, or SERVER_ERROR /
+ * UNKNOWN_ERROR with no JSON-RPC error in it (an HTTP 5xx or 429, or no answer). A JSON-RPC `error` object, or a message
+ * that is a known refusal, means the node answered and refused: never "down", whatever ethers' code says.
+ */
+export function broadcastDown(err: any): boolean {
+  if (REFUSAL.test(rpcMessage(err))) return false
+  const body = [err?.error, err?.info?.error].some((e) => e && typeof e === 'object' && ('code' in e || 'message' in e))
+  if (body) return false
+  const code = codeOf(err)
+  return code === 'NETWORK_ERROR' || code === 'TIMEOUT' || code === 'SERVER_ERROR' || code === 'UNKNOWN_ERROR'
 }
 
 /** The ethers code, with any refusal for lack of funds as INSUFFICIENT_FUNDS: ethers maps the usual node message to it,
@@ -240,7 +258,7 @@ class RpcBeatChain implements BeatChainClient {
         const found = await this.#rpc('broadcast', () => this.#provider.getTransaction(hash))
         if (found && found.hash.toLowerCase() === hash.toLowerCase()) return
       }
-      throw new BeatRpcError('broadcast', code)
+      throw new BeatRpcError('broadcast', code, broadcastDown(err))
     }
   }
 

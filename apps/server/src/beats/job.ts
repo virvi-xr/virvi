@@ -68,6 +68,12 @@ const tooDear = new Set<BeatChain>()
 const reportedMisconfigured = new Set<BeatChain>()
 /** Consecutive chain passes that failed on the RPC, per chain. */
 const rpcFails = new Map<BeatChain, number>()
+/** Chains whose broadcast found the RPC unreachable this pass (counts toward rpc_down). */
+const rpcTrouble = new Set<BeatChain>()
+/** `<chain>:<code>` broadcast refusals already reported, until a broadcast on that chain is accepted. */
+const reportedRefusals = new Set<string>()
+/** Chains whose pass failed for a reason other than the RPC, already reported. */
+const reportedJobErrors = new Set<BeatChain>()
 export const beatJobTestHooks: {
   afterInsert?: (batchId: string) => Promise<void>
   /** Runs after a plan is signed and before its batch is recorded (tests interleave other writers here). */
@@ -81,6 +87,9 @@ export function resetBeatJobState(): void {
   tooDear.clear()
   reportedMisconfigured.clear()
   rpcFails.clear()
+  rpcTrouble.clear()
+  reportedRefusals.clear()
+  reportedJobErrors.clear()
   reportedNotPaid.clear()
   reportedCreateRevert.clear()
   reportedCopyFailed.clear()
@@ -286,19 +295,32 @@ async function tick(now: Date): Promise<BeatTickResult> {
     const client = beatChainClient(chain)
     if (!client) setPause(chain, 'no_client')
     else {
+      rpcTrouble.delete(chain)
+      let rpcErr: unknown = null
       try {
         await runChain(client, now, r)
-        rpcFails.delete(chain)
-        if (pauses.get(chain) === 'rpc_down') pauses.delete(chain)
+        reportedJobErrors.delete(chain)
+        if (rpcTrouble.has(chain)) rpcErr = new BeatRpcError('broadcast', 'NETWORK_ERROR', true)
       } catch (err) {
         console.error(`[beats] ${chain} pass failed:`, safeErr(err))
+        // M-6: only the RPC's failures count toward rpc_down; anything else (the database, a bug) is reported as is
+        if (err instanceof BeatRpcError) rpcErr = err
+        else if (!reportedJobErrors.has(chain)) {
+          reportedJobErrors.add(chain)
+          fail('beat_job', `BEAT ${chain} pass failed: ${safeErr(err)}`, null)
+        }
+      }
+      if (rpcErr) {
         // Money I3: an RPC that keeps failing pauses the chain once, with a job failure, rather than stalling silently
         const n = (rpcFails.get(chain) ?? 0) + 1
         rpcFails.set(chain, n)
         if (n >= config.beats.rpcFailsBeforePause && pauses.get(chain) !== 'rpc_down') {
           setPause(chain, 'rpc_down')
-          if (pauses.get(chain) === 'rpc_down') fail('beat_rpc', `BEAT ${chain} RPC failed ${n} passes in a row (${safeErr(err)}); minting is paused`, null)
+          if (pauses.get(chain) === 'rpc_down') fail('beat_rpc', `BEAT ${chain} RPC failed ${n} passes in a row (${safeErr(rpcErr)}); minting is paused`, null)
         }
+      } else {
+        rpcFails.delete(chain)
+        if (pauses.get(chain) === 'rpc_down') pauses.delete(chain)
       }
     }
     if (beatPaused(chain).paused) r.paused.push(chain)
@@ -375,8 +397,6 @@ async function reconcile(client: BeatChainClient, b: Batch, now: Date, r: BeatTi
   return false
 }
 
-/** Codes meaning the RPC couldn't be reached or answered badly, not that it refused the transaction. */
-const RPC_DOWN_CODES = new Set(['NETWORK_ERROR', 'SERVER_ERROR', 'TIMEOUT', 'UNKNOWN_ERROR', 'MISSING_RESPONSE', 'BAD_DATA'])
 
 /**
  * Broadcasts a batch's raw tx and marks it sent. NONCE_EXPIRED (the nonce is used: the next tick reconciles it) and
@@ -390,6 +410,9 @@ async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, no
     await client.broadcast(raw)
   } catch (err) {
     code = rpcCode(err)
+    const down = err instanceof BeatRpcError && err.down
+    // An unreachable RPC counts toward rpc_down like a failed read (the pass itself goes on)
+    if (down) rpcTrouble.add(b.chain)
     if (noFunds(err)) {
       // Not the batch's fault: it stays `sending` with its nonce and claims, uncounted, and goes again once there's gas
       shortOf(b.chain)
@@ -404,16 +427,22 @@ async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, no
       // Money I3: a batch never broadcast because the RPC is down isn't failed; it keeps waiting on the capped backoff
       // (the rpc_down pause reports the outage). A refusal for any other reason gives it up, its claims back to
       // `claimed`: the tx never left, so they simply go in a later batch
-      if (attempts >= BEAT_SEND_MAX_ATTEMPTS && neverSent && !RPC_DOWN_CODES.has(code)) {
+      if (attempts >= BEAT_SEND_MAX_ATTEMPTS && neverSent && !down) {
         await db.update(beatMintBatches).set({ attempts }).where(eq(beatMintBatches.id, b.id))
         // Unsent: the next transaction takes its nonce again
         await unminedBatch(client, b, now, r, { lastError: `unsent:${code}`, unminted: 'claimed' })
-        fail(`beat_${b.kind}`, `BEAT ${b.kind} batch ${b.id} (BEAT ${b.beatId}) not sent after ${attempts} attempts (${code})`, b.beatId)
+        // A refusal that repeats (the same batch re-planned and refused again) is reported once, until a broadcast works
+        const key = `${b.chain}:${code}`
+        if (!reportedRefusals.has(key)) {
+          reportedRefusals.add(key)
+          fail(`beat_${b.kind}`, `BEAT ${b.kind} batch ${b.id} (BEAT ${b.beatId}) not sent after ${attempts} attempts: the node refused it (${code}). Its claims are planned again; check the RPC (a tx fee cap, say).`, b.beatId)
+        } else console.warn(`[beats] batch ${b.id} refused again (${code}); already reported`)
         return 'gave_up'
       }
-      // A batch that was broadcast before may still be pending somewhere, so it stays open and keeps its nonce: it's
-      // reported once at the max, keeps being rebroadcast (backoff capped), and settles by a receipt or the nonce check
-      if (attempts === BEAT_SEND_MAX_ATTEMPTS) {
+      // A batch never sent while the RPC is down waits (rpc_down reports the outage). One that was broadcast before may
+      // still be pending somewhere, so it stays open and keeps its nonce: it's reported once at the max, keeps being
+      // rebroadcast (backoff capped), and settles by a receipt or the nonce check
+      if (attempts === BEAT_SEND_MAX_ATTEMPTS && !neverSent) {
         fail(`beat_${b.kind}`, `BEAT ${b.kind} batch ${b.id} (BEAT ${b.beatId}) not rebroadcast after ${attempts} attempts (${code}); it stays open at nonce ${b.nonce}`, b.beatId)
       }
       const wait = 2 ** Math.min(attempts, BEAT_SEND_MAX_ATTEMPTS) * 60_000
@@ -424,7 +453,8 @@ async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, no
       return 'retry'
     }
   }
-  // Accepted: a fresh failure budget for any later rebroadcast or reprice
+  // Accepted: a fresh failure budget for any later rebroadcast or reprice, and refusals may be reported again
+  for (const k of reportedRefusals) if (k.startsWith(`${b.chain}:`)) reportedRefusals.delete(k)
   await db.update(beatMintBatches).set({ status: 'sent', sentAt: now, attempts: 0, nextAttemptAt: null, ...(code ? { lastError: code } : {}) })
     .where(eq(beatMintBatches.id, b.id))
   return 'sent'

@@ -131,6 +131,31 @@ describe('the RPC client against a stub provider', () => {
     expect(err.message).not.toContain('deadbeef')
   })
 
+  it('fix round I-1: a broadcast error is "down" only for transport failures; a JSON-RPC refusal never is', async () => {
+    const signer = beatChainClientOn('polygon-amoy', stubProvider().p, CONTRACT, key)
+    const s = await signer.sign({ kind: 'close', tokenId: 1n }, 0, { maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }, 50_000n)
+    const fail = async (e: unknown) => beatChainClientOn('polygon-amoy', stubProvider({ broadcastTransaction: async () => { throw e } }).p, CONTRACT, key)
+      .broadcast(s.raw).catch((x) => x as BeatRpcError)
+    const bare = (code: string, extra: Record<string, unknown> = {}) => Object.assign(new Error('x'), { code, ...extra })
+    // Transport: no JSON-RPC error body
+    expect((await fail(bare('NETWORK_ERROR'))).down).toBe(true)
+    expect((await fail(bare('TIMEOUT'))).down).toBe(true)
+    expect((await fail(bare('SERVER_ERROR', { info: { responseStatus: '503 Service Unavailable' } }))).down).toBe(true)
+    // Refusals: the node answered with an error
+    const refused = [
+      rpcError('UNKNOWN_ERROR', 'tx fee (10.07 ether) exceeds the configured cap (1.00 ether)'),
+      rpcError('UNKNOWN_ERROR', 'transaction underpriced'),
+      rpcError('UNKNOWN_ERROR', 'exceeds block gas limit'),
+      rpcError('UNKNOWN_ERROR', 'max fee per gas less than block base fee'),
+      rpcError('SERVER_ERROR', 'intrinsic gas too low'),
+      bare('UNKNOWN_ERROR', { error: { code: -32000, message: 'some refusal' } }),
+    ]
+    for (const e of refused) {
+      const got = await fail(e)
+      expect([got.code, got.down], (e as Error).message).toEqual([(e as { code: string }).code, false])
+    }
+  })
+
   it('reports a broadcast refused for lack of funds as INSUFFICIENT_FUNDS, by ethers code or by the node message', async () => {
     const signer = beatChainClientOn('polygon-amoy', stubProvider().p, CONTRACT, key)
     const s = await signer.sign({ kind: 'close', tokenId: 1n }, 0, { maxFeePerGas: 50n * GWEI, maxPriorityFeePerGas: 30n * GWEI }, 60_000n)

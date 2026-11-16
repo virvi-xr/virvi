@@ -44,8 +44,9 @@ export interface FakeBeatChain extends BeatChainClient {
   drop(hash?: string): void
   /** The next `n` broadcasts resolve but their txs never reach the mempool. */
   dropNext(n?: number): void
-  /** The next `n` broadcasts throw BeatRpcError with this code (default 'NETWORK_ERROR'), and don't reach the mempool. */
-  failBroadcast(code?: string, n?: number): void
+  /** The next `n` broadcasts throw BeatRpcError with this code (default 'NETWORK_ERROR'), and don't reach the mempool.
+   * `down` (the RPC unreachable, not refusing) defaults to true for NETWORK_ERROR, TIMEOUT and SERVER_ERROR. */
+  failBroadcast(code?: string, n?: number, down?: boolean): void
   /** The next `times` (default 1) estimates and mined txs of this kind (or any kind) revert with `name`. */
   revertNext(name: string, opts?: { kind?: BeatCall['kind']; times?: number }): void
   /** Every mint that includes this wallet reverts with `name` (estimate and mined) until cleared with null. */
@@ -127,7 +128,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
   const scripted: { name: string; kind?: BeatCall['kind']; times: number }[] = []
   const walletReverts = new Map<string, string>()
   let dropCount = 0
-  let failures: string[] = []
+  let failures: { code: string; down: boolean }[] = []
 
   for (const w of opts.codeWallets ?? []) code.add(lc(w))
   for (const w of opts.rejectingWallets ?? []) { code.add(lc(w)); rejecting.add(lc(w)) }
@@ -246,7 +247,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
 
     async broadcast(raw) {
       up('broadcast')
-      if (failures.length) throw new BeatRpcError('broadcast', failures.shift()!)
+      if (failures.length) { const f = failures.shift()!; throw new BeatRpcError('broadcast', f.code, f.down) }
       const t = Transaction.from(raw)
       const hash = t.hash!
       if (mined.has(hash) || [...pool.values()].some((p) => p.hash === hash)) return
@@ -280,7 +281,9 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
       for (const [n, tx] of pool) if (!hash || tx.hash === hash) pool.delete(n)
     },
     dropNext(n = 1) { dropCount += n },
-    failBroadcast(c = 'NETWORK_ERROR', n = 1) { failures = [...failures, ...Array(n).fill(c)] },
+    failBroadcast(c = 'NETWORK_ERROR', n = 1, down = ['NETWORK_ERROR', 'TIMEOUT', 'SERVER_ERROR'].includes(c)) {
+      failures = [...failures, ...Array.from({ length: n }, () => ({ code: c, down }))]
+    },
     revertNext(name, o = {}) { scripted.push({ name, kind: o.kind, times: o.times ?? 1 }) },
     revertForWallet(w, name) { if (name) walletReverts.set(lc(w), name); else walletReverts.delete(lc(w)) },
     setCode(w, has = true) { if (has) code.add(lc(w)); else { code.delete(lc(w)); rejecting.delete(lc(w)) } },
