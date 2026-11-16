@@ -45,6 +45,41 @@ describe('beatSettingsFrom', () => {
     expect(() => beatSettingsFrom({ BEAT_CONTRACT_COMMIT_POLYGON: 'main' })).toThrow('BEAT_CONTRACT_COMMIT_POLYGON')
   })
 
+  it('M-1: per-chain gas floors and fee ceilings win over the global ones, which still apply to a chain without its own', async () => {
+    const { beatMinGasWei, beatMaxFeeWei } = await import('../src/beats/chain.js')
+    const { config } = await import('../src/config.js')
+    const b = beatSettingsFrom({
+      BEAT_MIN_GAS_POL: '1', BEAT_MAX_FEE_GWEI: '400',
+      BEAT_MIN_GAS_POL_POLYGON: '20', BEAT_MIN_GAS_POL_POLYGON_AMOY: '0.2', BEAT_MAX_FEE_GWEI_POLYGON: '1500', BEAT_MAX_FEE_GWEI_POLYGON_AMOY: '250',
+    })
+    expect(b.minGasWeiByChain).toEqual({ polygon: 20n * 10n ** 18n, 'polygon-amoy': 2n * 10n ** 17n })
+    expect(b.maxFeeGweiByChain).toEqual({ polygon: 1500, 'polygon-amoy': 250 })
+    const prev = config.beats
+    try {
+      ;(config as any).beats = { ...prev, ...b }
+      expect(beatMinGasWei('polygon')).toBe(20n * 10n ** 18n)
+      expect(beatMinGasWei('polygon-amoy')).toBe(2n * 10n ** 17n)
+      expect(beatMaxFeeWei('polygon')).toBe(1500n * 10n ** 9n)
+      expect(beatMaxFeeWei('polygon-amoy')).toBe(250n * 10n ** 9n)
+      ;(config as any).beats = { ...prev, ...beatSettingsFrom({ BEAT_MIN_GAS_POL: '1', BEAT_MAX_FEE_GWEI: '400', BEAT_MIN_GAS_POL_POLYGON_AMOY: '0.2' }) }
+      expect(beatMinGasWei('polygon')).toBe(10n ** 18n)
+      expect(beatMinGasWei('polygon-amoy')).toBe(2n * 10n ** 17n)
+      expect(beatMaxFeeWei('polygon')).toBe(400n * 10n ** 9n)
+    } finally {
+      ;(config as any).beats = prev
+    }
+    expect(() => beatSettingsFrom({ BEAT_MIN_GAS_POL_POLYGON: 'lots' })).toThrow('BEAT_MIN_GAS_POL_POLYGON')
+    expect(() => beatSettingsFrom({ BEAT_MAX_FEE_GWEI_POLYGON_AMOY: '0' })).toThrow('BEAT_MAX_FEE_GWEI_POLYGON_AMOY')
+  })
+
+  it("M-2: a Safe address pasted from the Safe app with its chain prefix (matic:, pol:) is read without it", () => {
+    const safe = getAddress(ADDR)
+    expect(beatSettingsFrom({ BEAT_ADMIN_SAFE_POLYGON: `matic:${safe}`, BEAT_ADMIN_SAFE_POLYGON_AMOY: `pol:${safe}` }).adminSafes)
+      .toEqual({ polygon: safe, 'polygon-amoy': safe })
+    expect(beatSettingsFrom({ BEAT_ADMIN_SAFE_POLYGON: ` ${safe} ` }).adminSafes.polygon).toBe(safe)
+    expect(() => beatSettingsFrom({ BEAT_ADMIN_SAFE_POLYGON: 'matic:0x01D871870cbbdde934526e17637c0cfef0b3b38b' })).toThrow('BEAT_ADMIN_SAFE_POLYGON')
+  })
+
   it('reads settings', () => {
     const key = Wallet.createRandom().privateKey
     const b = beatSettingsFrom({

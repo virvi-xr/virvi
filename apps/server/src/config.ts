@@ -202,7 +202,8 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
   // a file prepared for another Safe
   const adminSafes: Partial<Record<BeatChain, string>> = {}
   for (const [name, c] of [['BEAT_ADMIN_SAFE_POLYGON_AMOY', 'polygon-amoy'], ['BEAT_ADMIN_SAFE_POLYGON', 'polygon']] as const) {
-    const raw = e[name]
+    // M-2: the Safe app copies an address with its chain's short name in front (matic:0x…, pol:0x…); that part goes
+    const raw = e[name]?.trim().replace(/^[a-z][a-z0-9-]*:/i, '')
     if (raw === undefined || raw === '') continue
     try {
       adminSafes[c] = getAddress(raw)
@@ -226,6 +227,25 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
   // The fee ceiling (null: each chain's default, 1000 gwei on Polygon and 300 on Amoy): nothing is signed above it
   const maxFeeGwei = e.BEAT_MAX_FEE_GWEI ? whole('BEAT_MAX_FEE_GWEI', 0) : null
   if (maxFeeGwei !== null && maxFeeGwei <= 0) throw new Error('BEAT_MAX_FEE_GWEI must be more than 0')
+  // M-1: per-chain floors and ceilings (BEAT_MIN_GAS_POL_POLYGON[_AMOY], BEAT_MAX_FEE_GWEI_POLYGON[_AMOY]) win over the
+  // global ones above, which are kept for compatibility but apply to both chains
+  const minGasWeiByChain: Partial<Record<BeatChain, bigint>> = {}
+  const maxFeeGweiByChain: Partial<Record<BeatChain, number>> = {}
+  for (const [suffix, c] of [['POLYGON_AMOY', 'polygon-amoy'], ['POLYGON', 'polygon']] as const) {
+    const gas = e[`BEAT_MIN_GAS_POL_${suffix}`]
+    if (gas) {
+      try {
+        minGasWeiByChain[c] = parseEther(gas)
+      } catch {
+        throw new Error(`BEAT_MIN_GAS_POL_${suffix} must be a decimal amount of POL`)
+      }
+    }
+    if (e[`BEAT_MAX_FEE_GWEI_${suffix}`]) {
+      const fee = whole(`BEAT_MAX_FEE_GWEI_${suffix}`, 0)
+      if (fee <= 0) throw new Error(`BEAT_MAX_FEE_GWEI_${suffix} must be more than 0`)
+      maxFeeGweiByChain[c] = fee
+    }
+  }
   const rpcFailsBeforePause = whole('BEAT_RPC_FAILS_BEFORE_PAUSE', 10)
   if (rpcFailsBeforePause < 1) throw new Error('BEAT_RPC_FAILS_BEFORE_PAUSE must be at least 1')
   const commit = (name: string) => {
@@ -253,8 +273,12 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
       includedMints: whole('BEAT_INCLUDED_MINTS', 100),
       extraMintCents: whole('BEAT_PRICE_EXTRA_MINT_CENTS', 2),
     },
+    /** BEAT_MIN_GAS_POL and BEAT_MAX_FEE_GWEI: both chains, unless a chain has its own below (null: the chain's default). */
     minGasWei,
     maxFeeGwei,
+    /** BEAT_MIN_GAS_POL_POLYGON[_AMOY] and BEAT_MAX_FEE_GWEI_POLYGON[_AMOY]: each chain's own, over the global ones. */
+    minGasWeiByChain,
+    maxFeeGweiByChain,
     /** After this many chain passes in a row fail on the RPC, the chain pauses `rpc_down` and a job failure is recorded. */
     rpcFailsBeforePause,
     /** The commit each chain's contract was deployed from, for the Transparency page (null: not claimed). */

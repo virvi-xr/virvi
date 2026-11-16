@@ -27,10 +27,14 @@ export type BeatFeeData = BeatFees & { baseFeePerGas: bigint | null }
 const GWEI = 1_000_000_000n
 const MIN_GAS_DEFAULT: Record<BeatChain, bigint> = { polygon: parseEther('10'), 'polygon-amoy': parseEther('0.1') }
 const MAX_FEE_GWEI_DEFAULT: Record<BeatChain, number> = { polygon: 1000, 'polygon-amoy': 300 }
-/** The minter's POL floor below which the chain pauses for low gas: BEAT_MIN_GAS_POL, else 10 POL on Polygon and 0.1 on Amoy. */
-export const beatMinGasWei = (chain: BeatChain): bigint => config.beats.minGasWei ?? MIN_GAS_DEFAULT[chain]
-/** The fee ceiling (max fee per gas) nothing is signed above: BEAT_MAX_FEE_GWEI, else 1000 gwei on Polygon and 300 on Amoy. */
-export const beatMaxFeeWei = (chain: BeatChain): bigint => BigInt(config.beats.maxFeeGwei ?? MAX_FEE_GWEI_DEFAULT[chain]) * GWEI
+/** The minter's POL floor below which the chain pauses for low gas: the chain's BEAT_MIN_GAS_POL_<CHAIN>, else
+ * BEAT_MIN_GAS_POL, else 10 POL on Polygon and 0.1 on Amoy. */
+export const beatMinGasWei = (chain: BeatChain): bigint =>
+  config.beats.minGasWeiByChain?.[chain] ?? config.beats.minGasWei ?? MIN_GAS_DEFAULT[chain]
+/** The fee ceiling (max fee per gas) nothing is signed above: the chain's BEAT_MAX_FEE_GWEI_<CHAIN>, else
+ * BEAT_MAX_FEE_GWEI, else 1000 gwei on Polygon and 300 on Amoy. */
+export const beatMaxFeeWei = (chain: BeatChain): bigint =>
+  BigInt(config.beats.maxFeeGweiByChain?.[chain] ?? config.beats.maxFeeGwei ?? MAX_FEE_GWEI_DEFAULT[chain]) * GWEI
 
 export const BEAT_MINTER_ROLE = keccakText('MINTER_ROLE')
 export type BeatLog = { address: string; topics: readonly string[]; data: string }
