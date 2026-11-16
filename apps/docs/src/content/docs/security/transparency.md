@@ -33,7 +33,7 @@ It prints PASS, or the files that differ.
 
 ## Smart contracts
 
-[BEATs](/docs/dashboard/beats/) are made by one public contract on each network. `GET /api/transparency` lists each one as `contracts`: its network, its address, its page on Polygonscan (`explorerUrl`) and its source in the repo at the running commit (`sourceUrl`). The source published on Polygonscan should match that file.
+[BEATs](/docs/dashboard/beats/) are made by one public contract on each network. `GET /api/transparency` lists each one as `contracts`: its network, its address, its page on Polygonscan (`explorerUrl`), the commit it was deployed from (`deployedCommit`, or null when it isn't recorded) and its source (`sourceUrl`): the contract file at that commit, or the repo's `contracts` folder when the commit isn't recorded. The source verified on Polygonscan and Sourcify should match that file.
 
 ## Checking it with an AI agent
 
