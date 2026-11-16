@@ -299,7 +299,8 @@ move every day):
    - `BEAT_NETWORK_HASH_SECRET`: a new random secret of at least 32 characters (`openssl rand -hex 32`
      makes one). It keys the per-network claim counts.
 
-   Also worth setting: `POLYGON_RPC_URL` to a paid Polygon RPC (Alchemy, QuickNode or Infura), because
+   Also worth setting: `BEAT_MAX_FEE_GWEI` (optional; the default ceiling, 1000 gwei on Polygon, pauses
+   minting while fees are higher), and `POLYGON_RPC_URL` to a paid Polygon RPC (Alchemy, QuickNode or Infura), because
    the free default limits how often it can be used; choose one without a low transaction fee cap. Keep
    `BEAT_CONTRACT_POLYGON_AMOY` set.
 10. **Redeploy** the server. Then open `/admin/beats`: the Polygon card should show the new minter, its

@@ -5,7 +5,8 @@ import type { BeatChain } from '@virvixr/shared'
 export const REPO_URL = 'https://github.com/virvi-xr/virvi'
 
 /** A BEAT contract (LIV-11): its explorer page, and its source in the repo at the running commit. */
-export type ContractInfo = { chain: BeatChain; address: string; explorerUrl: string; sourceUrl: string }
+/** `deployedCommit`: the commit the contract was deployed from (null when not recorded; `sourceUrl` is then the contracts folder). */
+export type ContractInfo = { chain: BeatChain; address: string; explorerUrl: string; sourceUrl: string; deployedCommit?: string | null }
 
 export type ReleaseInfo = {
   repo: string

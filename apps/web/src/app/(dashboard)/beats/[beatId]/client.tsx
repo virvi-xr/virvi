@@ -116,8 +116,14 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
     return () => { stopped = true }
   }, [waiting, payment, beatId])
 
-  // Back to the page: focus returns to the BEAT's title (plain-ux I13)
-  useEffect(() => { if (mode.kind === 'view' && beat) titleRef.current?.focus() }, [mode.kind]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Focus follows the mode (plain-ux I13): the edit form's heading when it opens, the BEAT's title when back on the page
+  const editHeading = useRef<HTMLHeadingElement>(null)
+  const firstMode = useRef(true)
+  useEffect(() => {
+    if (firstMode.current) { firstMode.current = false; return }
+    if (mode.kind === 'edit') editHeading.current?.focus()
+    else if (mode.kind === 'view') titleRef.current?.focus()
+  }, [mode.kind])
 
   if (missing) {
     return (
@@ -213,7 +219,10 @@ function BeatDetail({ availability }: { availability: BeatAvailability }) {
       <FrozenNote locked={beatLocked(beat)} />
 
       {mode.kind === 'edit' && (
-        <BeatForm initial={beatToInput(beat)} editing={beat} error={formError} busy={busy} submitLabel="Save changes" busyLabel="Saving…" onSubmit={saveEdit} onCancel={back} />
+        <>
+          <h2 ref={editHeading} tabIndex={-1} className="text-sm font-medium text-gray-300 outline-none">Edit BEAT</h2>
+          <BeatForm initial={beatToInput(beat)} editing={beat} error={formError} busy={busy} submitLabel="Save changes" busyLabel="Saving…" onSubmit={saveEdit} onCancel={back} />
+        </>
       )}
       {mode.kind === 'image' && <ChangeImage beat={beat} onSaved={(b) => { setBeat(b); setMode({ kind: 'view' }) }} onBack={back} />}
       {mode.kind === 'pay' && <BeatReview beatId={beat.id} test={beat.test || availability.test} summary={reviewSummary(beat)} onPaid={back} onBack={back} />}
