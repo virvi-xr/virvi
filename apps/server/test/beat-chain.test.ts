@@ -1,3 +1,4 @@
+import { BEAT_GAS_PER_RECIPIENT } from '../src/beats/abi.js'
 import { describe, it, expect, afterEach } from 'vitest'
 import { inspect } from 'node:util'
 import { Wallet, ZeroAddress, getAddress, keccak256 } from 'ethers'
@@ -76,6 +77,12 @@ function stubProvider(over: Record<string, (...a: any[]) => any> = {}) {
   return { p, calls }
 }
 const rpcError = (code: string, message: string) => Object.assign(new Error(message), { code, info: { error: { message } } })
+
+describe('the gas budget (contracts/test/Budget.t.sol proves it on the real contract)', () => {
+  it('BEAT_GAS_PER_RECIPIENT is RECEIVER_GAS * 64/63 + GUARD_RESERVE, the PER the forge test pins', () => {
+    expect(BEAT_GAS_PER_RECIPIENT).toBe(131_904n)
+  })
+})
 
 describe('the RPC client against a stub provider', () => {
   const key = Wallet.createRandom().privateKey
