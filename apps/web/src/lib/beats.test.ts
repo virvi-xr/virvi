@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_SUPPLY_CAP_DEFAULT, type PublicBeat } from '@virvixr/shared'
 import {
-  BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, BEAT_NO_REFUND, BEAT_TEST_BADGE, BEATS_UNAVAILABLE, beatActions, beatBody, beatEditBody, beatFieldError, beatFormError,
+  BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, BEAT_NO_REFUND, BEAT_TEST_BADGE, BEATS_UNAVAILABLE, beatActions, beatWindow, formatWhen, beatBody, beatEditBody, beatFieldError, beatFormError,
   beatHref, beatsNavVisible, blankBeat, claimantRow, claimantWallets, confirmBeatAction, fromLocalInput, newBeatHref, paymentNote, reviewModel,
   toLocalInput, type BeatAvailability, type BeatClaimant,
   BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
@@ -343,5 +343,21 @@ describe('an unconfigured network (not_configured)', () => {
     expect(beatActions(beat({ status: 'draft' }), NOW, { payable: false })).toEqual(['edit', 'cancel'])
     expect(beatActions(beat({ status: 'live', startsAt: past }), NOW, { payable: false })).toEqual(['end_early'])
     expect(beatActions(beat({ status: 'paid' }), NOW, { payable: true })).toEqual(['edit', 'cancel', 'raise_cap'])
+  })
+})
+
+describe('formatWhen and beatWindow', () => {
+  // dateStyle/timeStyle can't be combined with timeZoneName: browsers throw "Invalid option", which crashed every BEAT list
+  it('names the time zone without throwing', () => {
+    const iso = '2026-11-16T18:30:00.000Z'
+    const zone = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' }).formatToParts(new Date(iso)).find((p) => p.type === 'timeZoneName')!.value
+    expect(formatWhen(iso, true)).toContain(zone)
+    expect(formatWhen(iso, true)).toContain('2026')
+    expect(formatWhen(iso)).not.toContain(zone)
+  })
+  it('shows the window with the zone once, at the end', () => {
+    const w = beatWindow({ startsAt: '2026-11-16T18:00:00.000Z', endsAt: '2026-11-16T20:00:00.000Z' })
+    expect(w).toContain(' – ')
+    expect(w.split(' – ')[1]).toMatch(/[A-Z]{2,}|GMT|UTC/)
   })
 })

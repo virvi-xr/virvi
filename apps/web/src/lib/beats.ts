@@ -414,7 +414,10 @@ export const COUNTS_NOTE = "Failed claims are retried automatically. A wallet th
 
 /** A time with the date, in the browser's time zone. */
 export function formatWhen(iso: string, withZone = false): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', ...(withZone ? { timeZoneName: 'short' } : {}) })
+  // dateStyle/timeStyle can't be combined with timeZoneName (browsers throw "Invalid option"), so the zone uses the field options
+  return new Date(iso).toLocaleString(undefined, withZone
+    ? { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }
+    : { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 /** The window as one line, in the browser's time zone, named once at the end. */
