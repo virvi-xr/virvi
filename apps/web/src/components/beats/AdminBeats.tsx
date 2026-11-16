@@ -2,7 +2,7 @@
 import { BEAT_CHAIN_INFO, beatAddressUrl, type BeatChain } from '@virvixr/shared'
 import { CopyWallet } from '@/components/CopyWallet'
 import { Badge, ConfirmAction, tableHeadBand } from '@/components/ui'
-import { balanceLabel, lowGasDetail, pauseMessage, type AdminBeatChain, type AdminBeatsOverview } from '@/lib/admin-beats'
+import { BATCHES_NOTE, GIVEN_UP_NOTE, balanceLabel, clearPausePrompt, failReasonLabel, giveUpPrompt, lowGasDetail, pauseMessage, type AdminBeatChain, type AdminBeatsOverview } from '@/lib/admin-beats'
 
 const link = 'text-blue-400 hover:underline'
 const btn = 'rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500 disabled:opacity-50'
@@ -34,7 +34,7 @@ function ChainCard({ c, busy, onClearPause }: { c: AdminBeatChain; busy: boolean
           <p role="status" className="text-amber-300">{pause}</p>
           {lowGas && <p className="w-full tabular-nums text-gray-300">{lowGas}</p>}
           {c.reason === 'id_conflict' && (
-            <ConfirmAction prompt={`Clear the pause on ${label(c.chain)}? Minting starts again.`} confirmLabel="Clear pause" onConfirm={() => onClearPause(c.chain)} disabled={busy} className={btn}>
+            <ConfirmAction prompt={clearPausePrompt(label(c.chain))} confirmLabel="Clear pause" onConfirm={() => onClearPause(c.chain)} disabled={busy} className={btn}>
               Clear pause
             </ConfirmAction>
           )}
@@ -60,9 +60,9 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
             <span>Claimed <strong className="tabular-nums text-white">{data.counts.claimed}</strong></span>
             <span>Minting <strong className="tabular-nums text-white">{data.counts.minting}</strong></span>
             <span>Failed <strong className="tabular-nums text-white">{data.counts.failed}</strong></span>
-            {data.counts.givenUp > 0 && <span>Given up <strong className="tabular-nums text-white">{data.counts.givenUp}</strong></span>}
+            {data.counts.givenUp > 0 && <span>Given up <strong className="tabular-nums text-white">{data.counts.givenUp}</strong> <span className="text-xs text-gray-400">{GIVEN_UP_NOTE}</span></span>}
           </p>
-          <button type="button" className={btn} disabled={busy || data.counts.failed === 0} onClick={() => onRetry()}>Retry failed</button>
+          <button type="button" className={btn} disabled={busy || data.counts.failed === 0} title={data.counts.failed === 0 ? 'No failed claims' : undefined} onClick={() => onRetry()}>Retry failed</button>
         </div>
       </section>
 
@@ -71,14 +71,14 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
         {data.failed.length === 0 ? <p className="p-3 text-sm text-gray-400">No failed claims.</p> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className={tableHeadBand}><tr><th className="p-2">BEAT</th><th className="p-2">Wallet</th><th className="p-2">Reason</th><th className="p-2" /></tr></thead>
+              <thead className={tableHeadBand}><tr><th className="p-2">BEAT</th><th className="p-2">Wallet</th><th className="p-2">Reason</th><th className="p-2"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {data.failed.map((f) => (
                   <tr key={`${f.beatId}-${f.wallet}`} className="border-t border-gray-800">
                     <td className="p-2">{f.name}</td>
                     <td className="p-2"><CopyWallet wallet={f.wallet} /></td>
-                    <td className="p-2 text-xs text-gray-400">{f.retryable ? (f.failReason ?? '—') : 'Given up'}</td>
-                    <td className="p-2 text-right">{f.retryable && <button type="button" className="text-xs text-blue-300 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onRetry(f.beatId)}>Retry this BEAT</button>}</td>
+                    <td className="p-2 text-xs text-gray-300" title={f.failReason ?? undefined}>{failReasonLabel(f.failReason, f.retryable)}</td>
+                    <td className="p-2 text-right">{f.retryable && <button type="button" className="text-xs text-blue-300 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onRetry(f.beatId)}>Retry all failed for this BEAT</button>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -94,7 +94,7 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
             {data.held.map((h) => (
               <li key={h.beatId} className="flex flex-wrap items-center justify-between gap-3 p-3">
                 <span>{h.name} <span className="text-xs text-gray-400">{h.retryable} failed {h.retryable === 1 ? 'claim holds' : 'claims hold'} it open</span></span>
-                <ConfirmAction prompt={`Stop retrying ${h.name}'s failed claims and close it on chain? They won't be minted.`} confirmLabel="Stop and close"
+                <ConfirmAction prompt={giveUpPrompt(h.name)} confirmLabel="Stop and close"
                   onConfirm={() => onGiveUp(h.beatId)} disabled={busy} className={btn}>
                   Stop retrying and close
                 </ConfirmAction>
@@ -105,7 +105,10 @@ export function AdminBeatsView({ data, busy, onRetry, onClearPause, onGiveUp }: 
       )}
 
       <section className="rounded-lg border border-gray-800">
-        <h2 className="border-b border-gray-800 px-3 py-2 text-sm font-semibold">Recent transactions</h2>
+        <div className="border-b border-gray-800 px-3 py-2">
+          <h2 className="text-sm font-semibold">Recent transactions</h2>
+          <p className="text-xs text-gray-400">{BATCHES_NOTE}</p>
+        </div>
         {data.batches.length === 0 ? <p className="p-3 text-sm text-gray-400">No transactions yet.</p> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

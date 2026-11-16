@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BEATS_OFF, balanceLabel, clearPause, formatPol, formatPol4, giveUp, loadAdminBeats, lowGasDetail, pauseMessage, retryFailed, type AdminBeatChain } from './admin-beats'
+import { BEATS_OFF, adminError, failReasonLabel, balanceLabel, clearPause, formatPol, formatPol4, giveUp, loadAdminBeats, lowGasDetail, pauseMessage, retryFailed, type AdminBeatChain } from './admin-beats'
 
 const chain = (over: Partial<AdminBeatChain> = {}): AdminBeatChain => ({
   chain: 'polygon-amoy', contract: null, minter: '0x1234567890abcdef1234567890abcdef12345678',
@@ -22,8 +22,10 @@ describe('admin BEATs helpers (LIV-11)', () => {
   })
   it('names each pause plainly', () => {
     expect(pauseMessage(chain())).toBeNull()
-    expect(pauseMessage(chain({ paused: true, reason: 'low_gas' }))).toBe('Minting paused: top up the minter')
-    expect(pauseMessage(chain({ paused: true, reason: 'id_conflict' }))).toBe('Minting paused: a BEAT id already exists on chain. Check before clearing.')
+    expect(pauseMessage(chain({ paused: true, reason: 'low_gas' }))).toBe('Minting is paused because the minter wallet is low on POL (the coin used for fees). Send POL on the Polygon network to the Minter address above (use the copy button). Minting restarts by itself once the balance is enough.')
+    expect(pauseMessage(chain({ paused: true, reason: 'id_conflict' }))).toMatch(/^Minting is stopped on purpose\. .*Don't clear this yourself: ask a developer to check first\./)
+    for (const reason of ['misconfigured', 'high_fees', 'rpc_down'] as const) expect(pauseMessage(chain({ paused: true, reason }))).toMatch(/^Minting is paused because /)
+    expect(pauseMessage(chain({ paused: true, reason: 'high_fees' }))).toMatch(/restarts by itself when fees come down\.$/)
   })
   it('reads "BEATs are off" from the 404 the dark routes give', async () => {
     const api = { getAdminBeats: vi.fn().mockRejectedValue(Object.assign(new Error('not_found'), { status: 404 })) }
@@ -50,8 +52,10 @@ describe('admin BEATs helpers (LIV-11)', () => {
   })
   it('says what a chain that is not set up is missing', () => {
     const off = chain({ minter: null, balanceWei: null, paused: true, reason: 'no_client', missing: ['BEAT_CONTRACT_POLYGON', 'BEAT_MINTER_KEY'] })
-    expect(pauseMessage(off)).toBe("Not set up: set BEAT_CONTRACT_POLYGON and BEAT_MINTER_KEY. Hosts can't pay for BEATs until then.")
-    expect(pauseMessage({ ...off, missing: ['BEAT_MINTER_KEY'] })).toBe("Not set up: set BEAT_MINTER_KEY. Hosts can't pay for BEATs until then.")
+    expect(pauseMessage(off)).toBe("The minter wallet isn't set up yet (a developer needs to add it to the server settings). Hosts can't pay for BEATs until then. Missing: BEAT_CONTRACT_POLYGON and BEAT_MINTER_KEY.")
+    expect(pauseMessage({ ...off, missing: ['BEAT_MINTER_KEY'] })).toMatch(/Missing: BEAT_MINTER_KEY\.$/)
+    // The badge and the reason agree even when the chain isn't paused
+    expect(pauseMessage({ ...off, paused: false, reason: null })).toMatch(/^The minter wallet isn't set up yet/)
   })
   it('Clear pause calls the API for that chain', async () => {
     const api = { clearAdminBeatPause: vi.fn().mockResolvedValue({ ok: true }) }
@@ -84,5 +88,17 @@ describe('admin BEATs helpers (LIV-11)', () => {
     expect(lowGasDetail({ ...low, balanceWei: '1500000000000000000', topUpWei: '0' })).toBe('Balance 1.5000 POL. Minimum 1.0000 POL.')
     // An unreadable balance: no top-up figure
     expect(lowGasDetail({ ...low, balanceWei: null, balanceError: true })).toBe('Balance unavailable. Minimum 1.0000 POL.')
+  })
+  it('plain-ux I11: failed-claim reasons in plain words', () => {
+    expect(failReasonLabel('receiver_rejected', false)).toBe('You stopped retrying')
+    expect(failReasonLabel('receiver_rejected', true)).toBe("The visitor's wallet can't accept BEATs")
+    expect(failReasonLabel('ERC1155InvalidReceiver', true)).toBe("The visitor's wallet can't accept BEATs")
+    expect(failReasonLabel('BeatClosedError', true)).toBe('The BEAT was already closed')
+    expect(failReasonLabel('given_up', false)).toBe('You stopped retrying')
+    expect(failReasonLabel('reverted:x', true)).toBe('Network error (will retry)')
+  })
+  it('plain-ux I10: admin errors are plain, with the code kept apart', () => {
+    expect(adminError(Object.assign(new Error('x'), { status: 502, body: { error: 'boom' } }))).toEqual({ message: 'Something went wrong. Try again, or ask a developer to check the server logs.', code: 'boom' })
+    expect(adminError(Object.assign(new Error('x'), { status: 502, body: {} })).code).toBe('HTTP 502')
   })
 })

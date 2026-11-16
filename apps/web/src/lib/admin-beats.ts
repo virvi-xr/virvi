@@ -1,7 +1,7 @@
 /** The admin BEATs page's data (GET /api/admin/beats, apps/server/src/routes/admin-beats.ts) and its pure helpers (LIV-11). */
 import { BEAT_MAX_BATCH, type BeatChain } from '@virvixr/shared'
 
-export type BeatPauseReason = 'low_gas' | 'no_client' | 'id_conflict' | null
+export type BeatPauseReason = 'low_gas' | 'no_client' | 'id_conflict' | 'misconfigured' | 'high_fees' | 'rpc_down' | null
 
 export interface AdminBeatChain {
   chain: BeatChain
@@ -76,14 +76,42 @@ export function balanceLabel(c: Pick<AdminBeatChain, 'balanceWei' | 'balanceErro
   return c.balanceError || c.balanceWei === null ? BALANCE_UNAVAILABLE : formatPol(c.balanceWei)
 }
 
-/** Why minting is paused on a chain, plainly, or null while it runs. */
+export const PAUSE_MESSAGES: Record<Exclude<BeatPauseReason, null>, string> = {
+  low_gas: 'Minting is paused because the minter wallet is low on POL (the coin used for fees). Send POL on the Polygon network to the Minter address above (use the copy button). Minting restarts by itself once the balance is enough.',
+  id_conflict: "Minting is stopped on purpose. Virvi and the contract disagree about which BEAT numbers are taken. Don't clear this yourself: ask a developer to check first. Clearing it restarts minting.",
+  no_client: "The minter wallet isn't set up yet (a developer needs to add it to the server settings). Hosts can't pay for BEATs until then.",
+  misconfigured: "Minting is paused because the server's settings don't match the contract: the network, the contract address or the minter's permission is wrong. Ask a developer to check the BEAT settings. Minting restarts by itself once they're right.",
+  high_fees: 'Minting is paused because Polygon fees are unusually high right now. Nothing needs doing: minting restarts by itself when fees come down.',
+  rpc_down: "Minting is paused because Virvi can't reach Polygon (the network connection, or RPC, keeps failing). It restarts by itself when the connection works again. If it lasts more than an hour, ask a developer to check the RPC setting.",
+}
+
+/** Why minting is paused on a chain, plainly, or null while it runs. A chain that isn't set up says so even unpaused. */
 export function pauseMessage(c: Pick<AdminBeatChain, 'paused' | 'reason'> & { missing?: string[] }): string | null {
+  if (c.missing?.length) return `${PAUSE_MESSAGES.no_client} Missing: ${c.missing.join(' and ')}.`
   if (!c.paused) return null
-  if (c.missing?.length) return `Not set up: set ${c.missing.join(' and ')}. Hosts can't pay for BEATs until then.`
-  if (c.reason === 'low_gas') return 'Minting paused: top up the minter'
-  if (c.reason === 'id_conflict') return 'Minting paused: a BEAT id already exists on chain. Check before clearing.'
-  if (c.reason === 'no_client') return "Minting paused: the minter isn't set up"
-  return 'Minting paused'
+  return c.reason ? PAUSE_MESSAGES[c.reason] : 'Minting is paused.'
+}
+
+/** The Clear pause question (only for an id clash). */
+export const clearPausePrompt = (label: string) => `Clear the pause on ${label}? Minting starts again. Only do this once a developer has checked.`
+
+/** A failed claim's reason in plain words; the raw code stays for a developer (plain-ux I11). */
+export function failReasonLabel(reason: string | null, retryable: boolean): string {
+  if (!retryable || reason === 'given_up') return 'You stopped retrying'
+  if (reason === 'receiver_rejected' || reason === 'ERC1155InvalidReceiver') return "The visitor's wallet can't accept BEATs"
+  if (reason === 'BeatClosedError') return 'The BEAT was already closed'
+  return 'Network error (will retry)'
+}
+
+export const BATCHES_NOTE = 'Each row is one transaction Virvi sent to Polygon. Failed or stuck rows retry automatically.'
+export const GIVEN_UP_NOTE = '(stopped retrying on purpose)'
+export const giveUpPrompt = (name: string) => `Stop retrying ${name}'s failed claims and close this BEAT? Those visitors will never receive their BEAT. This can't be undone.`
+
+/** An admin call's failure as plain text, keeping the code for a developer (plain-ux I10). */
+export function adminError(err: unknown): { message: string; code: string | null } {
+  const e = err as { status?: number; body?: { error?: string; message?: string } } | null
+  const code = e?.body?.error ?? null
+  return { message: 'Something went wrong. Try again, or ask a developer to check the server logs.', code: code ?? (e?.status ? `HTTP ${e.status}` : null) }
 }
 
 /** The overview, or 'off' when BEATs are off (the admin routes answer 404 while BEAT_ENABLED is off). */

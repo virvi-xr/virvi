@@ -5,6 +5,7 @@ import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState } from 'react'
 import { LinkedWallets } from './LinkedWallets'
+import { MoveBeats } from './MoveBeats'
 import { LinkedHyperfySessions } from './LinkedHyperfySessions'
 import { PairedHeadsets } from './PairedHeadsets'
 import { Badge, PageHeader, PlatformBadge, Skeleton, tableHeadBand } from '@/components/ui'
@@ -314,6 +315,8 @@ export default function SettingsPage() {
           </div>
 
           <LinkedWallets />
+
+          <MoveBeats />
 
           <ErrorPromptSetting />
 

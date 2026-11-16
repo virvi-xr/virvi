@@ -28,20 +28,20 @@ describe('AdminBeatsView (LIV-11)', () => {
   })
   it('shows the low-gas pause', () => {
     const html = render(data({ chains: [{ ...data().chains[0], paused: true, reason: 'low_gas', balanceWei: '250000000000000000', batchCostWei: '400000000000000000', topUpWei: '1150000000000000000' }] }))
-    expect(html).toContain('Minting paused: top up the minter')
+    expect(html).toContain('Minting is paused because the minter wallet is low on POL')
     expect(html).toContain('Balance 0.2500 POL. Minimum 1.0000 POL. Top up 1.1500 POL: the minimum plus one full 100-claim batch at current fees.')
     expect(html).not.toContain('Clear pause')
   })
   it('shows an id clash with a Clear pause button', () => {
     const html = render(data({ chains: [{ ...data().chains[0], paused: true, reason: 'id_conflict' }] }))
-    expect(html).toContain('Minting paused: a BEAT id already exists on chain. Check before clearing.')
+    expect(html).toContain('Minting is stopped on purpose.')
     expect(html).toContain('Clear pause')
   })
   it('shows a chain that is not set up, with what it is missing, instead of hiding it', () => {
     const html = render(data({ chains: [{ chain: 'polygon', contract: null, minter: null, balanceWei: null, balanceError: false, paused: true, reason: 'no_client', missing: ['BEAT_CONTRACT_POLYGON', 'BEAT_MINTER_KEY'], minGasWei: '1000000000000000000', batchCostWei: null, topUpWei: null }] }))
     expect(html).toContain('Polygon')
     expect(html).toContain('Not set up')
-    expect(html).toContain("Not set up: set BEAT_CONTRACT_POLYGON and BEAT_MINTER_KEY. Hosts can&#x27;t pay for BEATs until then.")
+    expect(html).toContain('Missing: BEAT_CONTRACT_POLYGON and BEAT_MINTER_KEY.')
     expect(html).not.toContain('Polygonscan</a></dd>')
     expect(html).not.toContain('Balance unavailable')
   })
@@ -62,9 +62,9 @@ describe('AdminBeatsView (LIV-11)', () => {
       counts: { claimed: 0, minting: 0, failed: 0, givenUp: 1 },
       failed: [{ beatId: 'b1', name: 'Launch party', wallet: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd', failReason: 'given_up', retryable: false }],
     }))
-    expect(html).toContain('Given up')
-    expect(html).not.toContain('Retry this BEAT')
+    expect(html).toContain('You stopped retrying')
+    expect(html).not.toContain('Retry all failed for this BEAT')
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Retry failed<\/button>/)
-    expect(render(data())).toContain('Retry this BEAT')
+    expect(render(data())).toContain('Retry all failed for this BEAT')
   })
 })
