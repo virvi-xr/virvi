@@ -204,6 +204,50 @@ The Etherscan key ends up in your Terminal history. That's fine: it isn't a wall
 Then open `https://amoy.polygonscan.com/address/` followed by the contract address, and check that the
 "Contract" tab shows a green tick.
 
+**Tell the server (Amoy).** Claude gives you the exact `! railway variables` lines. They set
+`BEAT_CONTRACT_POLYGON_AMOY` to the contract address, and `BEAT_CONTRACT_COMMIT_POLYGON_AMOY` to the commit
+it was deployed from (the Transparency page links to the code at it), which this prints:
+
+```
+git rev-parse HEAD
+```
+
+**Replacing a contract on the same network.** A server uses one contract per network. Each BEAT records
+the contract it was created on, so when `BEAT_CONTRACT_POLYGON_AMOY` changes, BEATs on the old contract
+are retired: their pages and token details stay up, but Virvi never sends, closes or retries them again,
+and no alert is raised for them. A retired BEAT can't be reissued either: the reissue page shows it as
+"Unavailable on this chain". Token numbers carry on from where they were, so the first BEAT on the new
+contract isn't number 1. That's fine.
+
+### Rehearsing a reissue on Amoy (plain-wallet admin)
+
+The Safe app has no Amoy, so on Amoy the admin is a plain wallet (`0x7BC6…9220`), and you send the reissue
+yourself instead of through Transaction Builder. You need a request that has been approved, with at least
+one BEAT whose event has ended.
+
+1. In `/admin/beats/reissue`, open the request and press **Prepare Safe files** under **Polygon Amoy**. Press
+   **Download** for each file. Each file has one transaction: open it in a text editor and find
+   `contractInputsValues`. It holds `from`, `to` and `ids`.
+2. In Terminal, paste these, after replacing each placeholder with the value from the file. Keep the quotes.
+   The ids keep their square brackets, for example `"[3,4]"`:
+
+   ```
+   export BEAT_ADDRESS="PASTE_AMOY_CONTRACT_ADDRESS_HERE"
+   export REISSUE_FROM="PASTE_FROM_WALLET_FROM_THE_FILE_HERE"
+   export REISSUE_TO="PASTE_TO_WALLET_FROM_THE_FILE_HERE"
+   export REISSUE_IDS="PASTE_IDS_FROM_THE_FILE_HERE"
+   ```
+3. Send it from the admin wallet. Terminal asks for the admin wallet's **private key** (nothing shows as you
+   paste):
+
+   ```
+   cast send "$BEAT_ADDRESS" "reissue(address,address,uint256[])" "$REISSUE_FROM" "$REISSUE_TO" "$REISSUE_IDS" --rpc-url https://polygon-amoy-bor-rpc.publicnode.com --interactive
+   ```
+
+   With more than one file, do steps 2 and 3 for each, in order: the non-tradeable file first.
+4. Wait a minute or two, then reload the request in `/admin/beats/reissue`. Each file shows **Done**, the
+   request shows **Done**, and the person's BEATs list the new wallet.
+
 ### Step 4: Polygon mainnet (the owner's runbook)
 
 Only after Amoy has worked end to end. **Mainnet can't be undone and costs real POL.** Do these steps in
@@ -223,7 +267,7 @@ move every day):
 - Sending a BEAT: about 0.015 POL each in a full batch, about 0.025 POL when they trickle in one at a time.
 - A fully claimed BEAT of 100: about 1.5 POL in all (about $0.12). Hosts pay $5 for it.
 - The minter must hold more than it spends: a full batch of 100 sets aside about 10 to 20 POL before it's
-  sent, and minting pauses whenever the balance drops under 10 POL (`BEAT_MIN_GAS_POL`). Batches shrink to
+  sent, and minting pauses whenever the balance drops under 10 POL (`BEAT_MIN_GAS_POL_POLYGON`). Batches shrink to
   fit the balance, so a smaller top-up still lets minting carry on.
 
 1. **Create the Safe.** In [app.safe.global](https://app.safe.global), create a Safe on **Polygon** with
@@ -240,7 +284,8 @@ move every day):
      **Simulate**, and check it would succeed. You don't need to send it.
 3. **Make the mainnet minter wallet.** Create a **new** wallet for the server's minter. **Never reuse the
    Amoy minter.** Keep its private key safe: it goes into the server settings in step 9 and nowhere else.
-   Fund it with **at least 10 POL** (20 is better, see the costs above):
+   Fund it with **at least 20 POL**. Minting pauses whenever the balance drops under 10 POL, so with only
+   10 the test BEAT in step 11 would pause minting before its claim is sent (see the costs above):
    - **To buy POL:** on an exchange (Coinbase, Kraken, Binance and others), buy POL, then withdraw it to
      the minter's address and pick **Polygon** as the network.
    - **If you already have POL or ETH on Ethereum:** bridge it at
@@ -307,14 +352,25 @@ move every day):
      it).
    - `BEAT_MINTER_KEY`: the new minter's private key from step 3. **It replaces the Amoy minter's key, so
      Amoy minting stops.** Finish or close any Amoy test BEATs first.
-   - `BEAT_MIN_GAS_POL` (optional): when minting pauses for low POL. Leave it unset for the default, 10.
+   - `BEAT_ADMIN_SAFE_POLYGON`: the Safe's address from step 1. The reissue files name it, so Transaction
+     Builder can warn when a file was made for another Safe. Paste only the `0x…` part: the Safe app copies
+     it with `matic:` in front (Virvi ignores that prefix, but the address alone is clearer).
+   - `BEAT_MIN_GAS_POL_POLYGON` (optional): when minting pauses for low POL on Polygon. Leave it unset for
+     the default, 10.
    - `BEAT_NETWORK_HASH_SECRET`: a new random secret of at least 32 characters (`openssl rand -hex 32`
      makes one). It keys the per-network claim counts.
 
-   Also worth setting: `BEAT_MAX_FEE_GWEI` (optional; the default ceiling, 1000 gwei on Polygon, pauses
-   minting while fees are higher), and `POLYGON_RPC_URL` to a paid Polygon RPC (Alchemy, QuickNode or Infura), because
-   the free default limits how often it can be used; choose one without a low transaction fee cap. Keep
-   `BEAT_CONTRACT_POLYGON_AMOY` set.
+   **Don't set `BEAT_MIN_GAS_POL` or `BEAT_MAX_FEE_GWEI`** (without a network at the end), and if Amoy
+   testing left either set on `virvi-server`, remove it: each applies to both networks, so an Amoy floor of
+   0.1 or 1 POL would also apply on Polygon. Use the per-network ones instead (`..._POLYGON` and
+   `..._POLYGON_AMOY`), which win over them.
+
+   Also worth setting: `BEAT_MAX_FEE_GWEI_POLYGON` (optional; the default ceiling, 1000 gwei on Polygon,
+   pauses minting while fees are higher), and `POLYGON_RPC_URL` to a paid Polygon RPC (Alchemy, QuickNode or
+   Infura), because the free default limits how often it can be used; choose one without a low transaction
+   fee cap. Keep `BEAT_CONTRACT_POLYGON_AMOY` set: Amoy reissues still finish, and Amoy BEATs stay readable.
+   After the redeploy, expect one "BEAT polygon-amoy is misconfigured" alert (the new minter has no role on
+   the Amoy contract, so Amoy minting stays paused). Dismiss it.
 10. **Redeploy** the server. Then open `/admin/beats`: the Polygon card should show the new minter, its
     balance and **Minting**, with nothing missing and no pause.
 11. **Test one BEAT end to end** before telling anyone:
