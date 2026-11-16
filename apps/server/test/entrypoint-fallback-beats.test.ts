@@ -61,7 +61,7 @@ async function runFallback(statements: string[]) {
 
 describe('entrypoint schema fallback: BEATs', () => {
   it('creates the BEAT tables, sequences and indexes exactly as schema.ts does, and runs again harmlessly', async () => {
-    const statements = fallbackBlocks('BEATs')
+    const statements = [...fallbackBlocks('Wallet blocks'), ...fallbackBlocks('BEATs')]
     await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
     await db.execute(sql.raw(`CREATE SCHEMA ${SCHEMA}`))
     try {
@@ -75,6 +75,20 @@ describe('entrypoint schema fallback: BEATs', () => {
       expect(await sequences(SCHEMA)).toEqual(await sequences('public'))
       await runFallback(statements)
       for (const t of TABLES) expect(await indexes(SCHEMA, t), t).toEqual(await indexes('public', t))
+    } finally {
+      await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
+    }
+  })
+
+  it('M-4: wallet_blocks and account_wallet_events (auth reads them) are made in their own block, outside the BEAT one, so a failing BEAT block leaves them', async () => {
+    for (const s of fallbackBlocks('BEATs')) expect(s).not.toMatch(/CREATE TABLE IF NOT EXISTS (wallet_blocks|account_wallet_events)/)
+    const script = fallbackScript()
+    expect(script.indexOf('// Wallet blocks')).toBeLessThan(script.indexOf('// BEATs'))
+    await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
+    await db.execute(sql.raw(`CREATE SCHEMA ${SCHEMA}`))
+    try {
+      await runFallback(fallbackBlocks('Wallet blocks'))
+      for (const t of ['wallet_blocks', 'account_wallet_events']) expect(await columns(SCHEMA, t), t).toEqual(await columns('public', t))
     } finally {
       await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
     }
