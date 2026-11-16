@@ -4,6 +4,7 @@ import { db } from '../db/connection.js'
 import { analyticsScenes } from '../db/schema.js'
 import { DirectoryUnavailableError } from '../analytics/dcl-directory.js'
 import { hasDclAuthHeaders, verifyDclSignedFetch } from '../middleware/dcl-auth.js'
+import { isWalletBlocked } from '../auth/wallet-blocks.js'
 import { TokenBucketLimiter, checkRequesterLimits } from '../analytics/limiter.js'
 import { controls } from '../analytics/claims.js'
 
@@ -34,6 +35,8 @@ export async function analyticsClaimSignedRoutes(app: FastifyInstance) {
     } catch {
       return reply.send(no)
     }
+    // A blocked wallet (LIV-11 reissue) is eligible for nothing
+    if (await isWalletBlocked(wallet)) return reply.send(no)
     const limit = checkRequesterLimits(signedLimiter, { requesterKey: `w:${wallet}`, verified: true, eventCount: 1 })
     if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
     const scene = await db.query.analyticsScenes.findFirst({ where: eq(analyticsScenes.locationKey, key) })

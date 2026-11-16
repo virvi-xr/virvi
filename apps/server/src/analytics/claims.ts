@@ -1,12 +1,20 @@
-import { and, eq, lt, sql } from 'drizzle-orm'
+import { and, asc, eq, lt, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { userAuthMethods, walletChallenges } from '../db/schema.js'
 import { getDclDirectory, type DclDirectory } from './dcl-directory.js'
 import type { AnalyticsSceneRow } from './registry.js'
 
+/**
+ * The account's verified wallets, oldest link first. A blocked wallet (LIV-11 reissue: a compromised wallet from its
+ * approval on, or one an admin unlinked) is left out at once, so no pass, host check or MANA refund uses it.
+ */
 export async function verifiedWalletsOf(userId: string): Promise<string[]> {
   const rows = await db.query.userAuthMethods.findMany({
-    where: and(eq(userAuthMethods.userId, userId), eq(userAuthMethods.type, 'wallet'), sql`${userAuthMethods.metadata}->>'verified' = 'true'`),
+    where: and(
+      eq(userAuthMethods.userId, userId), eq(userAuthMethods.type, 'wallet'), sql`${userAuthMethods.metadata}->>'verified' = 'true'`,
+      sql`not exists (select 1 from wallet_blocks b where b.wallet = ${userAuthMethods.identifier})`,
+    ),
+    orderBy: [asc(userAuthMethods.createdAt), asc(userAuthMethods.id)],
   })
   return rows.map((r) => r.identifier).filter((id) => /^0x[0-9a-f]{40}$/.test(id))
 }

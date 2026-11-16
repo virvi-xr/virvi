@@ -146,8 +146,15 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
       return reply.status(401).send({ error: 'Unauthorized', message: 'Session expired — sign in again' })
     }
     // A blocked wallet's sessions end at once (LIV-11 reissue: the compromised wallet, or one an admin unlinked)
-    if (decoded.wallet && decoded.verified !== false && (await isWalletBlocked(decoded.wallet))) {
-      return reply.status(401).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to Virvi.' })
+    if (decoded.wallet && decoded.verified !== false) {
+      let blocked: boolean
+      try {
+        blocked = await isWalletBlocked(decoded.wallet)
+      } catch {
+        // Fails closed, but as a retry: a database blip must not sign every wallet session out
+        return reply.status(503).send({ error: 'auth_unavailable', message: 'Try again in a moment.' })
+      }
+      if (blocked) return reply.status(401).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to Virvi.' })
     }
     // A token claiming admin is checked against the database, so a demotion counts at once for every check that reads
     // request.user.role (src/auth/admin.ts sessionRole); any other claim is used as it is, with no read

@@ -10,7 +10,7 @@ import { isUuid } from '../auth/scene-from.js'
 import { beatChainClient, beatChainMissing, beatMinGasWei } from '../beats/chain.js'
 import { BeatError } from '../beats/errors.js'
 import {
-  adminListReissueRequests, getSafeBatchFile, previewSafeBatch, proposeSafeBatch, reviewReissueRequest, unlinkAccountWallet, withdrawReissue,
+  adminListReissueRequests, adminLiftBlock, getSafeBatchFile, previewSafeBatch, proposeSafeBatch, reviewReissueRequest, unlinkAccountWallet, withdrawReissue,
 } from '../beats/reissue.js'
 import {
   BEAT_GIVEN_UP, beatBatchCostWei, beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
@@ -146,7 +146,7 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
 
   for (const decision of ['approve', 'reject'] as const) {
     app.post<{ Params: { id: string } }>(`/api/admin/beats/reissue-requests/:id/${decision}`, async (request, reply) =>
-      attempt(reply, () => reviewReissueRequest(request.user.id, request.params.id, decision, body(request).note)))
+      attempt(reply, () => reviewReissueRequest(request.user.id, request.params.id, decision, body(request))))
   }
 
   // Read-only: the files proposing would make now (a live read), and those already proposed
@@ -174,6 +174,9 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
   // Takes a (backdoor) wallet off the request's account and blocks it
   app.post<{ Params: { id: string } }>('/api/admin/beats/reissue-requests/:id/unlink-wallet', async (request, reply) =>
     attempt(reply, () => unlinkAccountWallet(request.user.id, request.params.id, body(request).wallet)))
+
+  // Lifts a wallet's block (a reissue's, or an admin unlink's), with a note; logged on the account and the request
+  app.post('/api/admin/beats/wallet-blocks/lift', async (request, reply) => attempt(reply, () => adminLiftBlock(request.user.id, body(request))))
 
   // An id_conflict pause is sticky: an admin lifts it once the clash has been looked into
   app.post<{ Body: { chain?: unknown } }>('/api/admin/beats/clear-pause', async (request, reply) => {

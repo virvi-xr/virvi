@@ -5,6 +5,7 @@ import { db } from '../db/connection.js'
 import { analyticsScenes, assetLibraryItems, mediaAssets, sceneElements, scenes } from '../db/schema.js'
 import { isSceneDeleted } from '../scenes/live.js'
 import { hasDclAuthHeaders, verifyDclSignedFetch } from '../middleware/dcl-auth.js'
+import { WalletBlockedError, isWalletBlocked } from '../auth/wallet-blocks.js'
 import { resolveAnalyticsScene } from '../analytics/registry.js'
 import { DirectoryUnavailableError } from '../analytics/dcl-directory.js'
 import { controls, verifiedWalletsOf } from '../analytics/claims.js'
@@ -63,6 +64,7 @@ export default async function setupRoutes(app: FastifyInstance) {
   app.post<{ Body: { scene?: unknown } }>('/api/setup/status', async (request, reply) => {
     const ref = validateSceneRef(request.body?.scene)
     const wallet = await signer(request)
+    if (wallet && (await isWalletBlocked(wallet))) return reply.status(403).send({ error: 'wallet_blocked' })
     if (!ref || !wallet || previewBlocked(ref)) return reply.send({ state: 'none' })
     if (!checkRequesterLimits(limiter, { requesterKey: `w:${wallet}`, verified: true, eventCount: 1 }).ok) {
       return reply.status(429).send({ error: 'rate_limited' })
@@ -92,6 +94,7 @@ export default async function setupRoutes(app: FastifyInstance) {
   app.post<{ Body: { scene?: unknown } }>('/api/setup', async (request, reply) => {
     const wallet = await signer(request)
     if (!wallet) return reply.status(401).send({ error: 'signed_request_required' })
+    if (await isWalletBlocked(wallet)) return reply.status(403).send({ error: 'wallet_blocked' })
     const ref = validateSceneRef(request.body?.scene)
     if (!ref) return reply.status(400).send({ error: 'scene is required' })
     if (previewBlocked(ref)) return reply.status(403).send({ error: 'not_eligible' })
@@ -113,6 +116,7 @@ export default async function setupRoutes(app: FastifyInstance) {
       return reply.send({ sceneId: created.virviSceneId })
     } catch (err) {
       if (err instanceof DirectoryUnavailableError) return reply.status(503).send({ error: 'upstream_unavailable', retryAfter: 30 })
+      if (err instanceof WalletBlockedError) return reply.status(403).send({ error: 'wallet_blocked' })
       if (err instanceof SetupError) {
         const active = scene ? await getActiveSetup(scene.id) : null
         return reply.status(err.status).send({ error: err.code, host: active ? await hostShort(active.virviSceneId) : undefined })

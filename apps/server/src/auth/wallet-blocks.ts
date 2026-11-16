@@ -1,7 +1,9 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { SignInMethod } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { accountWalletEvents, userAuthMethods, walletBlocks, type LinkedBy } from '../db/schema.js'
+import { accountWalletEvents, apiKeys, arDevices, hyperfyPairings, hyperfyWorlds, userAuthMethods, walletBlocks, type LinkedBy } from '../db/schema.js'
+import { revokePairing } from '../hyperfy/pairing.js'
+import { revokeDevice } from '../ar/devices.js'
 
 /**
  * Wallet blocks and provenance (LIV-11, reissue fix round 1).
@@ -16,10 +18,31 @@ import { accountWalletEvents, userAuthMethods, walletBlocks, type LinkedBy } fro
 
 type Exec = Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>
 
+/** A refusal for a blocked wallet, from any path that would sign it in or up (resolveVerifiedWalletUser). */
+export class WalletBlockedError extends Error {
+  readonly code = 'wallet_blocked'
+  readonly status = 403
+  constructor() {
+    super('This wallet can no longer sign in to Virvi.')
+    this.name = 'WalletBlockedError'
+  }
+}
+
+async function readBlock(wallet: string, exec: Pick<typeof db, 'select'>): Promise<boolean> {
+  const [row] = await exec.select({ wallet: walletBlocks.wallet }).from(walletBlocks).where(eq(walletBlocks.wallet, wallet)).limit(1)
+  return !!row
+}
+let blockReader = readBlock
+
+/** Whether a wallet is blocked. A database failure throws (callers answer 503, never "not blocked"). */
 export async function isWalletBlocked(wallet: string | null | undefined, exec: Pick<typeof db, 'select'> = db): Promise<boolean> {
   if (!wallet) return false
-  const [row] = await exec.select({ wallet: walletBlocks.wallet }).from(walletBlocks).where(eq(walletBlocks.wallet, wallet.toLowerCase())).limit(1)
-  return !!row
+  return blockReader(wallet.toLowerCase(), exec)
+}
+
+/** Tests replace the database read (say, with one that fails); null restores it. */
+export function setWalletBlockReaderForTests(read: ((wallet: string, exec: Pick<typeof db, 'select'>) => Promise<boolean>) | null): void {
+  blockReader = read ?? readBlock
 }
 
 /** Whether a token's wallet claim is blocked (rooms check this at join and at pass renewal; REST in authenticate). */
@@ -80,4 +103,34 @@ export async function unlinkWallet(
     })
   }
   return gone.length > 0
+}
+
+/**
+ * Revokes everything on the account that can act without a fresh sign-in (fix round 2, N1): every API key, Hyperfy
+ * pairing and AR headset. Simpler and safer than working out which ones the compromised wallet's sessions made; the
+ * person sets them up again. Returns what went, for the request's history.
+ */
+export async function revokeAccountCredentials(userId: string): Promise<{ apiKeys: string[]; pairings: string[]; devices: string[] }> {
+  const keys = await db.delete(apiKeys).where(eq(apiKeys.userId, userId)).returning({ name: apiKeys.name })
+  const pairings = await db.select({ id: hyperfyPairings.id, world: hyperfyWorlds.name }).from(hyperfyPairings)
+    .innerJoin(hyperfyWorlds, eq(hyperfyWorlds.id, hyperfyPairings.worldId))
+    .where(and(eq(hyperfyPairings.userId, userId), inArray(hyperfyPairings.status, ['approved', 'claimed'])))
+  const gonePairings: string[] = []
+  for (const p of pairings) if (await revokePairing(p.id, userId)) gonePairings.push(p.world)
+  const devices = await db.select({ id: arDevices.id, name: arDevices.deviceName }).from(arDevices)
+    .where(and(eq(arDevices.userId, userId), inArray(arDevices.status, ['approved', 'claimed'])))
+  const goneDevices: string[] = []
+  for (const d of devices) if (await revokeDevice(d.id, userId)) goneDevices.push(d.name ?? 'unnamed headset')
+  return { apiKeys: keys.map((k) => k.name), pairings: gonePairings, devices: goneDevices }
+}
+
+/** An admin lifts a block (fix round 2, N8), with a note; logged on the account it names. Null when it isn't blocked. */
+export async function liftBlock(exec: Exec, wallet: string, o: { byUserId: string; note: string; now: Date }): Promise<{ userId: string | null; requestId: string | null } | null> {
+  const w = wallet.toLowerCase()
+  const [gone] = await exec.delete(walletBlocks).where(eq(walletBlocks.wallet, w)).returning()
+  if (!gone) return null
+  if (gone.userId) {
+    await exec.insert(accountWalletEvents).values({ userId: gone.userId, wallet: w, event: 'unblocked', byUserId: o.byUserId, requestId: gone.requestId, note: o.note, at: o.now })
+  }
+  return { userId: gone.userId, requestId: gone.requestId }
 }

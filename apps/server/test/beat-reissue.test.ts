@@ -5,8 +5,12 @@ import { BEAT_RETENTION_DAYS, type BeatChain } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import {
-  accountWalletEvents, beatClaims, beatPayments, beatReissueFiles, beatReissueItems, beatReissueRequests, beats, userAuthMethods, walletBlocks,
+  accountWalletEvents, apiKeys, arDevices, beatClaims, beatPayments, beatReissueFiles, beatReissueItems, beatReissueRequests, beats, hyperfyPairings, hyperfyWorlds,
+  userAuthMethods, walletBlocks,
 } from '../src/db/schema.js'
+import { verifiedWalletsOf } from '../src/analytics/claims.js'
+import { resolveVerifiedWalletUser } from '../src/auth/wallet-users.js'
+import { createScene } from './helpers/factories.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
 import { deleteMyBeatData, scrubBeats } from '../src/beats/retention.js'
@@ -236,20 +240,17 @@ describe('BEAT reissue (LIV-11)', () => {
       expect([res.statusCode, res.json().error]).toEqual([409, 'not_pending'])
     })
 
-    it('lets only a session signed in the same way as the filer cancel, and records the cancel', async () => {
+    it('refuses a cancel only from a session signed in with the old wallet; any other session of the account may, and it is recorded', async () => {
       await minted()
       const id = (await ask()).json().id // filed with the new wallet's session
-      for (const claims of [{ wallet: null, am: 'email' }, { wallet: oldW }, { wallet: wallet() }]) {
-        const res = await call('DELETE', `/api/beats/reissue-requests/${id}`, me, undefined, claims)
-        expect([res.statusCode, res.json().error], JSON.stringify(claims)).toEqual([403, 'cancel_not_allowed'])
-      }
-      expect((await call('DELETE', `/api/beats/reissue-requests/${id}`)).statusCode).toBe(200)
-      expect((await request(id))).toMatchObject({ status: 'cancelled', cancelledVia: { method: 'wallet', wallet: newW } })
-
-      // Filed by email: cancelled by the same email session only
+      const res = await call('DELETE', `/api/beats/reissue-requests/${id}`, me, undefined, { wallet: oldW })
+      expect([res.statusCode, res.json().error]).toEqual([403, 'cancel_not_allowed'])
+      // An email session (or an older token with no sign-in method) of the account may
+      expect((await call('DELETE', `/api/beats/reissue-requests/${id}`, me, undefined, { wallet: null })).statusCode).toBe(200)
+      expect((await request(id))).toMatchObject({ status: 'cancelled', cancelledVia: { method: 'unknown' } })
+      // Filed by email: a wallet session (not the old one) may cancel too
       const byEmail = (await ask({}, me, { wallet: null, am: 'email' })).json().id
-      expect((await call('DELETE', `/api/beats/reissue-requests/${byEmail}`)).json().error).toBe('cancel_not_allowed')
-      expect((await call('DELETE', `/api/beats/reissue-requests/${byEmail}`, me, undefined, { wallet: null, am: 'email' })).statusCode).toBe(200)
+      expect((await call('DELETE', `/api/beats/reissue-requests/${byEmail}`)).statusCode).toBe(200)
     })
 
     it('takes only a normal web sign-in session: no API key, pass, trial or signed-out caller', async () => {
@@ -408,6 +409,7 @@ describe('BEAT reissue (LIV-11)', () => {
         ['GET', `/api/admin/beats/reissue-requests/${id}/files/00000000-0000-4000-8000-000000000001`],
         ['POST', `/api/admin/beats/reissue-requests/${id}/withdraw`, {}],
         ['POST', `/api/admin/beats/reissue-requests/${id}/unlink-wallet`, { wallet: newW }],
+        ['POST', '/api/admin/beats/wallet-blocks/lift', { wallet: oldW, note: 'x' }],
       ]
       for (const [m, url, body] of routes) {
         expect((await call(m, url, me, body)).statusCode, `${m} ${url} account`).toBe(403)
@@ -492,6 +494,133 @@ describe('BEAT reissue (LIV-11)', () => {
     })
   })
 
+  describe('fix round 2', () => {
+    it('N1: approval revokes every API key, Hyperfy pairing and AR headset on the account, and records it', async () => {
+      await minted()
+      const id = (await ask()).json().id
+      const key = (await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(me, { wallet: null, am: 'email' })}` }, payload: { name: 'Thief key' } })).json().key
+      expect((await app.inject({ method: 'GET', url: '/api/scenes', headers: { authorization: `Bearer ${key}` } })).statusCode).toBe(200)
+      const { scene } = await createScene(me, 'S')
+      const [world] = await db.insert(hyperfyWorlds).values({ sceneId: scene.id, ownerId: me.id, name: 'W', keyHash: `h${Date.now()}`, keyPrefix: 'p' }).returning()
+      const [pairing] = await db.insert(hyperfyPairings).values({ worldId: world.id, userId: me.id, secretHash: 's', status: 'claimed', codeExpiresAt: new Date(), expiresAt: new Date(Date.now() + DAY) }).returning()
+      const [device] = await db.insert(arDevices).values({ userId: me.id, secretHash: 's', deviceName: 'Quest', kind: 'personal', status: 'claimed', codeExpiresAt: new Date(), expiresAt: new Date(Date.now() + DAY) }).returning()
+      const otherKey = (await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(other)}` }, payload: { name: 'theirs' } })).json().key
+
+      const res = await call('POST', `/api/admin/beats/reissue-requests/${id}/approve`, admin, {})
+      expect(res.statusCode).toBe(200)
+      expect(await db.select().from(apiKeys).where(eq(apiKeys.userId, me.id))).toEqual([])
+      expect((await app.inject({ method: 'GET', url: '/api/scenes', headers: { authorization: `Bearer ${key}` } })).statusCode).toBe(401)
+      expect((await app.inject({ method: 'GET', url: '/api/scenes', headers: { authorization: `Bearer ${otherKey}` } })).statusCode).toBe(200)
+      expect((await db.select().from(hyperfyPairings).where(eq(hyperfyPairings.id, pairing.id)))[0].status).toBe('revoked')
+      expect((await db.select().from(arDevices).where(eq(arDevices.id, device.id)))[0].status).toBe('revoked')
+      const entry = res.json().audit.find((a: any) => a.action === 'revoked_credentials')
+      expect(entry).toMatchObject({ by: admin.id })
+      expect(entry.note).toContain('1 API key (Thief key)')
+      expect(entry.note).toContain('1 Hyperfy pairing')
+      expect(entry.note).toContain('1 AR headset (Quest)')
+    })
+
+    it('N2: resolveVerifiedWalletUser refuses a blocked wallet, so no path signs it up or in again', async () => {
+      await db.insert(walletBlocks).values({ wallet: oldW, reason: 'reissue' })
+      await expect(resolveVerifiedWalletUser(oldW, 'x', 'account')).rejects.toMatchObject({ code: 'wallet_blocked' })
+      await expect(resolveVerifiedWalletUser(oldW, 'x', 'visitor')).rejects.toMatchObject({ code: 'wallet_blocked' })
+    })
+
+    it('N3: a blocked wallet leaves verifiedWalletsOf from the moment it is blocked', async () => {
+      await db.insert(userAuthMethods).values({ userId: me.id, type: 'wallet', identifier: oldW, metadata: { verified: true } })
+      await minted()
+      expect((await verifiedWalletsOf(me.id)).sort()).toEqual([newW, oldW].sort())
+      await approved()
+      expect(await verifiedWalletsOf(me.id)).toEqual([newW])
+    })
+
+    it('N4: a database error in the block check is 503, not a sign-out, in authenticate and refresh', async () => {
+      const { setWalletBlockReaderForTests } = await import('../src/auth/wallet-blocks.js')
+      setWalletBlockReaderForTests(async () => { throw new Error('db down') })
+      try {
+        const res = await call('GET', '/api/beats/reissue-requests')
+        expect([res.statusCode, res.json().error]).toEqual([503, 'auth_unavailable'])
+        const r = await refresh(me, newW)
+        expect([r.statusCode, r.json().error]).toEqual([503, 'auth_unavailable'])
+      } finally {
+        setWalletBlockReaderForTests(null)
+      }
+    })
+
+    it('N6: a voided file that lands anyway is recorded, alerted once, and its claims move', async () => {
+      const { claim: c } = await minted()
+      const id = await approved()
+      const files = await proposedFiles(id)
+      expect((await call('POST', `/api/admin/beats/reissue-requests/${id}/withdraw`, admin, {})).statusCode).toBe(200)
+      runFile(fake, files[0].file)
+      fake.mine(6)
+      await runBeatTick(now())
+      await runBeatTick(now())
+      expect((await claim(c.id))).toMatchObject({ wallet: newW, replacedWallet: oldW })
+      const r = await request(id)
+      expect(r.status).toBe('withdrawn')
+      expect(r.audit.map((a) => a.action)).toContain('voided_file_landed')
+      expect(vi.mocked(recordJobFailure).mock.calls.filter(([job]) => job === 'beat_reissue')).toHaveLength(1)
+      const [item] = await db.select().from(beatReissueItems).where(eq(beatReissueItems.requestId, id))
+      expect(item.state).toBe('reissued')
+    })
+
+    it('N7: approval needs a keep or unlink for each other wallet linked by an old-wallet session or with no known history in 30 days', async () => {
+      await minted()
+      const t1 = wallet()
+      const t2 = wallet()
+      const recentUnknown = wallet()
+      const oldUnknown = wallet()
+      const byEmail = wallet()
+      await linkVerifiedWallet(me.id, t1, { method: 'wallet', wallet: oldW })
+      await linkVerifiedWallet(me.id, t2, { method: 'wallet', wallet: t1 }) // a chain: the old wallet's link linked t2
+      await db.insert(userAuthMethods).values({ userId: me.id, type: 'wallet', identifier: recentUnknown, metadata: { verified: true } })
+      await db.insert(userAuthMethods).values({ userId: me.id, type: 'wallet', identifier: oldUnknown, metadata: { verified: true }, createdAt: new Date(Date.now() - 60 * DAY) })
+      await linkVerifiedWallet(me.id, byEmail, { method: 'email', email: 'me@test.dev' })
+      const id = (await ask()).json().id
+
+      const [q] = await queue()
+      expect(q.reviewWallets.map((w: any) => [w.wallet, w.why]).sort()).toEqual([
+        [recentUnknown, 'no_history_recent'], [t1, 'linked_by_old_wallet'], [t2, 'linked_by_old_wallet'],
+      ].sort())
+
+      let res = await call('POST', `/api/admin/beats/reissue-requests/${id}/approve`, admin, {})
+      expect([res.statusCode, res.json().error]).toEqual([409, 'wallets_unreviewed'])
+      expect(res.json().wallets.map((w: any) => w.wallet).sort()).toEqual([recentUnknown, t1, t2].sort())
+      res = await call('POST', `/api/admin/beats/reissue-requests/${id}/approve`, admin, { wallets: [{ wallet: t1, action: 'unlink' }, { wallet: t2, action: 'unlink' }] })
+      expect([res.statusCode, res.json().error]).toEqual([409, 'wallets_unreviewed'])
+      res = await call('POST', `/api/admin/beats/reissue-requests/${id}/approve`, admin, { wallets: [{ wallet: t1, action: 'nope' }, { wallet: t2, action: 'unlink' }, { wallet: recentUnknown, action: 'keep' }] })
+      expect([res.statusCode, res.json().error]).toEqual([400, 'bad_wallets'])
+      expect((await request(id)).status).toBe('pending')
+
+      res = await call('POST', `/api/admin/beats/reissue-requests/${id}/approve`, admin, { wallets: [{ wallet: t1, action: 'unlink' }, { wallet: t2, action: 'unlink' }, { wallet: recentUnknown, action: 'keep' }] })
+      expect(res.statusCode).toBe(200)
+      expect((await verifiedWalletsOf(me.id)).sort()).toEqual([byEmail, newW, oldUnknown, recentUnknown].sort())
+      expect((await db.select().from(walletBlocks)).map((b) => b.wallet).sort()).toEqual([oldW, t1, t2].sort())
+      const review = res.json().audit.find((a: any) => a.action === 'reviewed_wallets')
+      expect(review.note).toContain(`kept ${recentUnknown}`)
+      expect(review.note).toContain(`unlinked ${t1}`)
+      // The chain also raises the flag for a new wallet the old wallet's link linked
+      expect(q.flags).not.toContain('new_wallet_linked_by_old_wallet')
+    })
+
+    it('N8: an admin lifts a block with a note, and it is logged on the account and the request', async () => {
+      await minted()
+      const id = await approved()
+      let res = await call('POST', '/api/admin/beats/wallet-blocks/lift', admin, { wallet: oldW })
+      expect([res.statusCode, res.json().error]).toEqual([400, 'bad_note'])
+      res = await call('POST', '/api/admin/beats/wallet-blocks/lift', admin, { wallet: wallet(), note: 'x' })
+      expect([res.statusCode, res.json().error]).toEqual([404, 'not_blocked'])
+      expect((await call('POST', '/api/admin/beats/wallet-blocks/lift', me, { wallet: oldW, note: 'x' })).statusCode).toBe(403)
+      res = await call('POST', '/api/admin/beats/wallet-blocks/lift', admin, { wallet: oldW, note: 'Wrong wallet, confirmed on a call.' })
+      expect(res.statusCode).toBe(200)
+      expect(await db.select().from(walletBlocks)).toEqual([])
+      const events = await db.select().from(accountWalletEvents).where(eq(accountWalletEvents.userId, me.id))
+      expect(events.at(-1)).toMatchObject({ event: 'unblocked', wallet: oldW, byUserId: admin.id, note: 'Wrong wallet, confirmed on a call.' })
+      expect((await request(id)).audit.at(-1)).toMatchObject({ action: 'lifted_block', by: admin.id })
+    })
+  })
+
   describe('the Safe transaction files', () => {
     const method = {
       inputs: [
@@ -539,7 +668,7 @@ describe('BEAT reissue (LIV-11)', () => {
 
       const r = await request(id)
       expect(r.status).toBe('proposed')
-      expect(r.audit.map((x) => x.action)).toEqual(['approved', 'proposed'])
+      expect(r.audit.map((x) => x.action)).toEqual(['approved', 'revoked_credentials', 'proposed'])
       const items = await db.select().from(beatReissueItems).where(eq(beatReissueItems.requestId, id))
       const byToken = Object.fromEntries(items.map((i) => [i.tokenId, i]))
       expect([a, b, t1, t2, gone].map((x) => [byToken[x.tokenId].state, byToken[x.tokenId].fileId, byToken[x.tokenId].blockers])).toEqual([
@@ -781,7 +910,7 @@ describe('BEAT reissue (LIV-11)', () => {
   })
 
   describe('withdrawing', () => {
-    it('an admin withdraws a proposed request that has not landed: files voided, the block lifted, the person may file again, the watcher ignores it', async () => {
+    it('an admin withdraws a proposed request that has not landed: files voided, the block lifted, the person may file again', async () => {
       const { claim: c, tokenId } = await minted()
       const id = await approved()
       const files = await proposedFiles(id)
@@ -793,12 +922,10 @@ describe('BEAT reissue (LIV-11)', () => {
       const [item] = await db.select().from(beatReissueItems).where(eq(beatReissueItems.requestId, id))
       expect(item.state).toBe('withdrawn')
       expect((await ask()).statusCode).toBe(201)
-
-      // The Safe sends the voided file anyway: the watcher ignores it
-      runFile(fake, files[0].file)
-      fake.mine(6)
+      // Until it lands (see N6), the claim stays where it was
       await runBeatTick(now())
       expect((await claim(c.id)).wallet).toBe(oldW)
+      expect(files).toHaveLength(1)
       expect(tokenId).toBeGreaterThan(0)
     })
 

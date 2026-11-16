@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNotNull, ne, or, sql } from 'drizzle-orm'
 import { getAddress, id as keccakText, isAddress } from 'ethers'
 import {
   BEAT_CHAINS, BEAT_CHAIN_INFO, BEAT_REISSUE_MAX_BATCH, BEAT_REISSUE_NOTE_MAX, BEAT_REISSUE_OPEN, BEAT_REISSUE_REASON_MAX, beatTxUrl,
@@ -10,7 +10,7 @@ import {
   accountWalletEvents, beatClaims, beatReissueFiles, beatReissueItems, beatReissueRequests, beats, userAuthMethods, users, walletBlocks,
   type LinkedBy, type ReissueAudit,
 } from '../db/schema.js'
-import { blockWallet, isWalletBlocked, sameSignIn, unblockForRequest, unlinkWallet } from '../auth/wallet-blocks.js'
+import { blockWallet, isWalletBlocked, liftBlock, revokeAccountCredentials, unblockForRequest, unlinkWallet } from '../auth/wallet-blocks.js'
 import { recordJobFailure } from '../errors/record.js'
 import { beatChainClient, type BeatChainClient } from './chain.js'
 import { BeatError } from './errors.js'
@@ -199,16 +199,16 @@ export async function listMyReissueRequests(userId: string): Promise<PublicReiss
 }
 
 /**
- * Withdraws the account's own pending request. Only a session signed in the same way as the one that filed it (the
- * same wallet, or the same email) may: else `cancel_not_allowed`. Someone else's request, or none, is 404.
+ * Withdraws the account's own pending request, from any session of the account except one signed in with the old
+ * wallet (`cancel_not_allowed`: the thief holds that key). Someone else's request, or none, is 404.
  */
 export async function cancelMyReissueRequest(c: ReissueCaller, id: string, now = new Date()): Promise<PublicReissueRequest> {
   if (!UUID.test(id)) throw notFound()
   const [r] = await db.select().from(beatReissueRequests).where(and(eq(beatReissueRequests.id, id), eq(beatReissueRequests.userId, c.userId)))
   if (!r) throw notFound()
   if (r.status !== 'pending') throw new BeatError(409, 'not_pending', 'Only a pending request can be cancelled.')
-  if (!sameSignIn(r.filedVia, c.signIn)) {
-    throw new BeatError(403, 'cancel_not_allowed', 'Sign in the way you did when you asked (the same wallet or email) to cancel this.')
+  if (c.signIn.method === 'wallet' && c.signIn.wallet === r.oldWallet) {
+    throw new BeatError(403, 'cancel_not_allowed', 'Sign in with your new wallet, or with your email, to cancel this.')
   }
   const [done] = await db.update(beatReissueRequests).set({ status: 'cancelled', cancelledAt: now, cancelledVia: c.signIn, updatedAt: now })
     .where(and(eq(beatReissueRequests.id, id), eq(beatReissueRequests.status, 'pending'))).returning()
@@ -337,6 +337,8 @@ export interface AdminReissueRequest extends Omit<PublicReissueRequest, 'beats'>
   walletEvents: AdminWalletEvent[]
   /** The account's other reissue requests, newest first. */
   history: AdminRequestHistory[]
+  /** Other wallets the reviewer must keep or unlink at approval (fix round 2, N7). */
+  reviewWallets: ReviewWallet[]
   files: AdminReissueFile[]
   beats: AdminReissueBeat[]
 }
@@ -353,9 +355,45 @@ function fileView(r: Req, f: FileRow): AdminReissueFile {
   }
 }
 
+/** A wallet the reviewer must decide on at approval: linked (directly or along a chain) by a session signed in with the
+ * old wallet, or linked with no known history in the last 30 days. */
+export interface ReviewWallet { wallet: string; linkedAt: string; linkedBy: LinkedBy; why: 'linked_by_old_wallet' | 'no_history_recent' }
+
+type MethodRow = typeof userAuthMethods.$inferSelect
+
+/** The wallets linked, directly or along a chain of links, by sessions signed in with the old wallet (it included). */
+function linkedFromOld(methods: MethodRow[], oldWallet: string): Set<string> {
+  const reached = new Set([oldWallet])
+  for (let grew = true; grew;) {
+    grew = false
+    for (const m of methods) {
+      if (m.type !== 'wallet' || reached.has(m.identifier)) continue
+      if (m.linkedBy?.method === 'wallet' && m.linkedBy.wallet && reached.has(m.linkedBy.wallet)) { reached.add(m.identifier); grew = true }
+    }
+  }
+  return reached
+}
+
+function reviewWalletsOf(r: Req, methods: MethodRow[], now: Date): ReviewWallet[] {
+  const fromOld = linkedFromOld(methods, r.oldWallet)
+  const out: ReviewWallet[] = []
+  for (const m of methods) {
+    if (m.type !== 'wallet' || m.identifier === r.oldWallet || m.identifier === r.newWallet) continue
+    const linkedAt = m.linkedAt ?? m.createdAt
+    const why = fromOld.has(m.identifier) ? 'linked_by_old_wallet' as const
+      : m.linkedBy?.method === 'unknown' && now.getTime() - linkedAt.getTime() < REISSUE_RECENT_MS ? 'no_history_recent' as const : null
+    if (why) out.push({ wallet: m.identifier, linkedAt: linkedAt.toISOString(), linkedBy: m.linkedBy, why })
+  }
+  return out
+}
+
+async function accountMethods(userId: string | null): Promise<MethodRow[]> {
+  return userId ? db.select().from(userAuthMethods).where(eq(userAuthMethods.userId, userId)) : []
+}
+
 async function provenance(r: Req, now: Date) {
   if (!r.userId) {
-    return { account: null, otherSignIns: { email: false, password: false, oauth: false }, wallets: [], walletEvents: [], history: [], flags: [] as BeatReissueFlag[] }
+    return { account: null, otherSignIns: { email: false, password: false, oauth: false }, wallets: [], walletEvents: [], history: [], reviewWallets: [] as ReviewWallet[], flags: [] as BeatReissueFlag[] }
   }
   const [account] = await db.select({ id: users.id, displayName: users.displayName, email: users.email }).from(users).where(eq(users.id, r.userId))
   const methods = await db.select().from(userAuthMethods).where(eq(userAuthMethods.userId, r.userId))
@@ -385,7 +423,8 @@ async function provenance(r: Req, now: Date) {
   const flags: BeatReissueFlag[] = []
   const newLink = methods.find((m) => m.type === 'wallet' && m.identifier === r.newWallet)
   if (newLink && r.createdAt.getTime() - (newLink.linkedAt ?? newLink.createdAt).getTime() < REISSUE_NEW_WALLET_RECENT_MS) flags.push('new_wallet_recent')
-  if (newLink?.linkedBy?.method === 'wallet' && newLink.linkedBy.wallet === r.oldWallet) flags.push('new_wallet_linked_by_old_wallet')
+  // Along a chain too: the old wallet's session linked T1, whose session linked the new wallet
+  if (newLink && linkedFromOld(methods, r.oldWallet).has(r.newWallet)) flags.push('new_wallet_linked_by_old_wallet')
   if (others.some((o) => o.cancelledAt && now.getTime() - o.cancelledAt.getTime() < REISSUE_RECENT_MS)) flags.push('recent_cancel')
   if (others.some((o) => o.status === 'done')) flags.push('earlier_reissue')
   const followUp = await db.select({ id: beatReissueRequests.id }).from(beatReissueRequests).where(and(
@@ -397,7 +436,7 @@ async function provenance(r: Req, now: Date) {
     account: account ?? null,
     otherSignIns: { email: !!account?.email, password: methods.some((m) => m.type === 'email'), oauth: methods.some((m) => m.type === 'oauth') },
     wallets, walletEvents: events.map((e) => ({ wallet: e.wallet, event: e.event, at: e.at.toISOString(), byUserId: e.byUserId, requestId: e.requestId, note: e.note })),
-    history, flags,
+    history, flags, reviewWallets: isOpen(r.status) ? reviewWalletsOf(r, methods, now) : [],
   }
 }
 
@@ -473,17 +512,46 @@ async function recheck(r: Req): Promise<void> {
   }
 }
 
+/** The reviewer's decisions on the review wallets: `[{ wallet, action: 'keep' | 'unlink' }]`. */
+function parseWalletDecisions(v: unknown): Map<string, 'keep' | 'unlink'> {
+  const out = new Map<string, 'keep' | 'unlink'>()
+  if (v === undefined || v === null) return out
+  const bad = () => new BeatError(400, 'bad_wallets', "Give each wallet as { wallet, action: 'keep' | 'unlink' }.")
+  if (!Array.isArray(v)) throw bad()
+  for (const d of v) {
+    if (!d || typeof d !== 'object' || typeof d.wallet !== 'string' || !isAddress(d.wallet) || (d.action !== 'keep' && d.action !== 'unlink')) throw bad()
+    out.set(lc(d.wallet), d.action)
+  }
+  return out
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+const listed = (names: string[]) => (names.length ? ` (${names.join(', ')})` : '')
+
 /**
  * Approves a pending request, or rejects a pending or approved one. A rejection needs a note (the person sees it); an
- * approval's is optional. Approval re-checks the request, then blocks the old wallet: it can't sign in or be linked,
- * and its sessions end. A rejection after approval lifts that block.
+ * approval's is optional.
+ *
+ * Approval re-checks the request and needs a keep or unlink for each review wallet (N7: `wallets_unreviewed` lists
+ * them). It then unlinks (and blocks) those marked unlink, blocks the old wallet (no sign-in, no link, its sessions
+ * end), and revokes every API key, Hyperfy pairing and AR headset on the account (N1); the person sets them up again.
+ * All of it goes in the request's history. A rejection after approval lifts the old wallet's block.
  */
 export async function reviewReissueRequest(
-  adminId: string, id: string, decision: 'approve' | 'reject', note: unknown, now = new Date(),
+  adminId: string, id: string, decision: 'approve' | 'reject', body: Record<string, unknown>, now = new Date(),
 ): Promise<AdminReissueRequest> {
-  const reviewNote = parseNote(note, decision === 'reject')
+  const reviewNote = parseNote(body.note, decision === 'reject')
+  const decisions = decision === 'approve' ? parseWalletDecisions(body.wallets) : new Map<string, 'keep' | 'unlink'>()
   const r0 = await loadRequest(id)
-  if (decision === 'approve' && r0.status === 'pending') await recheck(r0)
+  let review: ReviewWallet[] = []
+  if (decision === 'approve' && r0.status === 'pending') {
+    await recheck(r0)
+    review = reviewWalletsOf(r0, await accountMethods(r0.userId), now)
+    const missing = review.filter((w) => !decisions.has(w.wallet))
+    if (missing.length) {
+      throw new BeatError(409, 'wallets_unreviewed', 'Keep or unlink each of these wallets first.', { wallets: missing })
+    }
+  }
   const r = await db.transaction(async (tx) => {
     const [row] = await tx.update(beatReissueRequests)
       .set({
@@ -493,15 +561,51 @@ export async function reviewReissueRequest(
       // A rejection may also undo an approval before files were proposed; nothing is reviewed again once proposed
       .where(and(eq(beatReissueRequests.id, id), inArray(beatReissueRequests.status, decision === 'approve' ? ['pending'] : ['pending', 'approved']))).returning()
     if (!row) return null
-    if (decision === 'approve') {
-      await blockWallet(tx, row.oldWallet, { userId: row.userId, requestId: row.id, reason: 'reissue', byUserId: adminId, now })
-    } else {
+    if (decision === 'reject') {
       await unblockForRequest(tx, row.oldWallet, row.id, { userId: row.userId, byUserId: adminId, now })
+      return row
     }
+    if (review.length) {
+      const kept: string[] = []
+      const unlinked: string[] = []
+      for (const w of review) {
+        if (decisions.get(w.wallet) === 'unlink') {
+          await unlinkWallet(tx, row.userId, w.wallet, { byUserId: adminId, requestId: row.id, note: `unlinked at approval (${w.why})`, now })
+          await blockWallet(tx, w.wallet, { userId: row.userId, requestId: row.id, reason: 'unlinked_by_admin', byUserId: adminId, now })
+          unlinked.push(w.wallet)
+        } else kept.push(w.wallet)
+      }
+      const note = [kept.length ? `kept ${kept.join(', ')}` : '', unlinked.length ? `unlinked ${unlinked.join(', ')}` : ''].filter(Boolean).join('; ')
+      await tx.update(beatReissueRequests).set({ audit: pushAudit(audit(adminId, 'reviewed_wallets', now, note)) }).where(eq(beatReissueRequests.id, row.id))
+    }
+    await blockWallet(tx, row.oldWallet, { userId: row.userId, requestId: row.id, reason: 'reissue', byUserId: adminId, now })
     return row
   })
   if (!r) throw new BeatError(409, 'not_pending', decision === 'approve' ? 'Only a pending request can be approved.' : 'Only a pending or approved request can be rejected.')
-  return toAdmin(r, now)
+  if (decision === 'approve' && r.userId) {
+    const gone = await revokeAccountCredentials(r.userId)
+    const note = `Signed out everywhere; removed ${plural(gone.apiKeys.length, 'API key')}${listed(gone.apiKeys)}, `
+      + `${plural(gone.pairings.length, 'Hyperfy pairing')}${listed(gone.pairings)} and ${plural(gone.devices.length, 'AR headset')}${listed(gone.devices)}.`
+    await db.update(beatReissueRequests).set({ audit: pushAudit(audit(adminId, 'revoked_credentials', now, note)) }).where(eq(beatReissueRequests.id, r.id))
+  }
+  return toAdmin(await loadRequest(id), now)
+}
+
+/** An admin lifts a wallet's block (N8), from the queue or the account, with a note: logged on the account and on
+ * the request that made it. */
+export async function adminLiftBlock(adminId: string, body: Record<string, unknown>, now = new Date()): Promise<{ wallet: string; lifted: true }> {
+  const wallet = parseWallet(body.wallet)
+  const note = parseNote(body.note, true)!
+  const lifted = await db.transaction(async (tx) => {
+    const gone = await liftBlock(tx, wallet, { byUserId: adminId, note, now })
+    if (gone?.requestId) {
+      await tx.update(beatReissueRequests).set({ audit: pushAudit(audit(adminId, 'lifted_block', now, `${wallet}: ${note}`)), updatedAt: now })
+        .where(eq(beatReissueRequests.id, gone.requestId))
+    }
+    return gone
+  })
+  if (!lifted) throw new BeatError(404, 'not_blocked', 'That wallet is not blocked.')
+  return { wallet, lifted: true }
 }
 
 /**
@@ -812,7 +916,8 @@ export async function withdrawReissue(adminId: string, id: string, body: Record<
   await db.transaction(async (tx) => {
     if (file) {
       await tx.update(beatReissueFiles).set({ status: 'voided', voidedAt: now }).where(eq(beatReissueFiles.id, file.id))
-      await tx.update(beatReissueItems).set({ state: 'skipped', blockers: ['Withdrawn'], fileId: null, callIndex: null })
+      // The item keeps its (voided) file: if the Safe sends it anyway, the watcher sees it land (N6)
+      await tx.update(beatReissueItems).set({ state: 'skipped', blockers: ['Withdrawn'], callIndex: null })
         .where(and(eq(beatReissueItems.fileId, file.id), eq(beatReissueItems.state, 'proposed')))
       await tx.update(beatReissueRequests).set({ updatedAt: now, audit: pushAudit(audit(adminId, 'withdrew_file', now, [`${file.chain} file ${file.callIndex + 1}`, note].filter(Boolean).join(': '))) })
         .where(eq(beatReissueRequests.id, r.id))
@@ -820,7 +925,7 @@ export async function withdrawReissue(adminId: string, id: string, body: Record<
       return
     }
     await tx.update(beatReissueFiles).set({ status: 'voided', voidedAt: now }).where(and(eq(beatReissueFiles.requestId, r.id), eq(beatReissueFiles.status, 'proposed')))
-    await tx.update(beatReissueItems).set({ state: 'withdrawn', fileId: null, callIndex: null })
+    await tx.update(beatReissueItems).set({ state: 'withdrawn', callIndex: null })
       .where(and(eq(beatReissueItems.requestId, r.id), inArray(beatReissueItems.state, ['proposed', 'skipped'])))
     const [reissued] = await tx.select({ id: beatReissueItems.id }).from(beatReissueItems)
       .where(and(eq(beatReissueItems.requestId, r.id), eq(beatReissueItems.state, 'reissued'))).limit(1)
@@ -841,6 +946,8 @@ export async function withdrawReissue(adminId: string, id: string, body: Record<
 
 /** Blocks per Reissued log query, and the most queries per request per tick (newest first; the hash is a nicety). */
 const LOG_CHUNK = 2_000
+/** How long a withdrawn (voided) file is still watched, in case the Safe sends it anyway. */
+export const VOIDED_WATCH_MS = 7 * DAY_MS
 const LOG_CHUNKS_MAX = 10
 
 /** The Reissued logs' tx hash per token id, searched newest first from `head` down to `from`. */
@@ -880,10 +987,19 @@ export async function watchReissues(client: BeatChainClient, now: Date): Promise
       eq(beatReissueItems.chain, chain), eq(beatReissueItems.state, 'proposed'), eq(beatReissueRequests.status, 'proposed'),
       or(sql`${beatReissueItems.fileId} is null`, ne(beatReissueFiles.status, 'voided')),
     ))
-  if (!open.length) return { reissued: 0, done: 0 }
+  // Items of a file voided in the last VOIDED_WATCH_MS (withdrawn): the Safe may send it anyway (N6)
+  const voided = await db.select({ item: beatReissueItems, req: beatReissueRequests }).from(beatReissueItems)
+    .innerJoin(beatReissueRequests, eq(beatReissueRequests.id, beatReissueItems.requestId))
+    .innerJoin(beatReissueFiles, eq(beatReissueFiles.id, beatReissueItems.fileId))
+    .where(and(
+      eq(beatReissueItems.chain, chain), inArray(beatReissueItems.state, ['withdrawn', 'skipped']), eq(beatReissueFiles.status, 'voided'),
+      gte(beatReissueFiles.voidedAt, new Date(now.getTime() - VOIDED_WATCH_MS)),
+    ))
+  if (!open.length && !voided.length) return { reissued: 0, done: 0 }
   const head = (await client.latestBlock()) - BEAT_CHAIN_INFO[chain].confirmations
   const byReq = new Map<string, { req: Req; items: Item[] }>()
-  for (const { item, req } of open) {
+  const fromVoided = new Set(voided.map(({ item }) => item.id))
+  for (const { item, req } of [...open, ...voided]) {
     const g = byReq.get(req.id) ?? { req, items: [] }
     g.items.push(item)
     byReq.set(req.id, g)
@@ -905,8 +1021,10 @@ export async function watchReissues(client: BeatChainClient, now: Date): Promise
       items.forEach((it, i) => {
         const to = reads[i]
         if (!to) return
-        ;(lc(to) === req.newWallet ? landed : elsewhere).push(it)
+        if (lc(to) === req.newWallet) landed.push(it)
+        else if (!fromVoided.has(it.id)) elsewhere.push(it)
       })
+      const landedVoided = landed.filter((it) => fromVoided.has(it.id))
       if (!landed.length && !elsewhere.length) continue
       const from = Math.min(...landed.map((i) => i.proposedBlock ?? 0))
       const hashes = landed.length ? await findHashes(client, req, new Set(landed.map((i) => String(i.tokenId))), from, head) : new Map<string, string>()
@@ -935,8 +1053,17 @@ export async function watchReissues(client: BeatChainClient, now: Date): Promise
         for (const it of elsewhere) {
           await tx.update(beatReissueItems).set({ state: 'skipped', blockers: ['AlreadyReplaced'], fileId: null, callIndex: null }).where(eq(beatReissueItems.id, it.id))
         }
+        if (landedVoided.length) {
+          await tx.update(beatReissueRequests).set({
+            updatedAt: now,
+            audit: pushAudit(audit(null, 'voided_file_landed', now, `BEAT ${landedVoided.map((i) => i.tokenId).join(', ')} reissued on chain from a withdrawn file; the claims were moved.`)),
+          }).where(eq(beatReissueRequests.id, req.id))
+        }
         if ((await settle(tx, req, now)) === 'done') done++
       })
+      if (landedVoided.length) {
+        recordJobFailure('beat_reissue', `BEAT reissue request ${req.id}: a withdrawn Safe file was executed anyway; ${landedVoided.length} BEAT(s) reissued on chain and their claims moved (${chain}).`)
+      }
       if (clashes.length) {
         recordJobFailure('beat_reissue', `BEAT reissue request ${req.id}: ${clashes.length} BEAT(s) reissued on chain, but another claim holds the new wallet; the claim was not moved (${chain}).`)
       }

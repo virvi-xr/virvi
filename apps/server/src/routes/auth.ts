@@ -191,7 +191,13 @@ export default async function authRoutes(app: FastifyInstance) {
       // reissue blocks the old wallet; an admin unlink blocks and removes one)
       if (decoded.kind === 'account' && decoded.wallet) {
         const w = decoded.wallet.toLowerCase()
-        if (await isWalletBlocked(w)) return reply.status(401).send({ error: 'wallet_blocked' })
+        let blocked: boolean
+        try {
+          blocked = await isWalletBlocked(w)
+        } catch {
+          return reply.status(503).send({ error: 'auth_unavailable' })
+        }
+        if (blocked) return reply.status(401).send({ error: 'wallet_blocked' })
         const method = await db.query.userAuthMethods.findFirst({
           where: and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, w), eq(userAuthMethods.userId, user.id)),
           columns: { id: true },
