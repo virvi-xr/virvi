@@ -488,6 +488,9 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS beat_claims_beat_wallet_uq ON beat_claims (beat_id, wallet)\`;
         await sql\`CREATE UNIQUE INDEX IF NOT EXISTS beat_claims_beat_user_uq ON beat_claims (beat_id, user_id) WHERE user_id is not null\`;
         await sql\`CREATE INDEX IF NOT EXISTS beat_claims_beat_status_idx ON beat_claims (beat_id, status)\`;
+        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS ip_hash TEXT\`;
+        await sql\`ALTER TABLE beat_claims ALTER COLUMN consented_at DROP NOT NULL\`;
+        await sql\`ALTER TABLE beat_claims ALTER COLUMN seconds_present DROP NOT NULL\`;
         console.log('[virvi-server] BEAT tables ensured');
       } catch(e) { console.log('[virvi-server] BEAT tables:', e.message); }
       // model enum value

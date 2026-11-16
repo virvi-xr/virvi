@@ -195,7 +195,9 @@ export interface Claimant {
 
 export async function listClaimants(c: BeatCaller, beatId: string): Promise<Claimant[]> {
   const { row } = await loadVisible(c, beatId)
-  const claims = await db.select().from(beatClaims).where(eq(beatClaims.beatId, row.id)).orderBy(desc(beatClaims.createdAt))
+  // A claim its visitor asked to delete is gone to the host at once, though the job may still be settling it (privacy I2)
+  const claims = await db.select().from(beatClaims).where(and(eq(beatClaims.beatId, row.id), eq(beatClaims.deleteRequested, false)))
+    .orderBy(desc(beatClaims.createdAt))
   return claims.map((k) => ({
     wallet: k.wallet,
     displayName: k.displayName,
@@ -431,6 +433,8 @@ export async function cancelBeat(c: BeatCaller, beatId: string, now = new Date()
       const [now2] = await tx.select({ status: beats.status }).from(beats).where(eq(beats.id, beatId))
       if (now2?.status !== 'cancelled') throw new BeatError(409, 'conflict', 'This BEAT just changed. Reload and try again.')
     }
+    // Nobody can claim a cancelled BEAT, so what tracking stored goes with it (privacy I4)
+    await tx.delete(beatClaims).where(and(eq(beatClaims.beatId, beatId), eq(beatClaims.status, 'present')))
   })
   return getBeatRow(beatId)
 }

@@ -49,6 +49,15 @@ async function beatOnScene(sceneId: string, beatId: string): Promise<BeatRow> {
   return hit.b
 }
 
+/** True when the BEAT is on this scene and cancelled. */
+async function cancelledOnScene(sceneId: string, beatId: string): Promise<boolean> {
+  if (!UUID.test(sceneId) || !UUID.test(beatId)) return false
+  const [hit] = await db.select({ status: beats.status }).from(beats)
+    .innerJoin(beatScenes, and(eq(beatScenes.beatId, beats.id), eq(beatScenes.sceneId, sceneId)))
+    .where(eq(beats.id, beatId))
+  return hit?.status === 'cancelled'
+}
+
 /** The user's claim on the BEAT (one that isn't being deleted), locked when inside a transaction that asks for it. */
 async function myClaimRow(q: Pick<Tx, 'select'>, beatId: string, userId: string, lock = false): Promise<ClaimRow | null> {
   const base = q.select().from(beatClaims).where(and(eq(beatClaims.beatId, beatId), eq(beatClaims.userId, userId), eq(beatClaims.deleteRequested, false)))
@@ -74,7 +83,7 @@ async function toVisitor(b: BeatRow, claim: ClaimRow | null): Promise<VisitorBea
     soldOut: (await takenCount(db, b.id)) >= b.supplyCap,
     claimUntil: claimUntil(b).toISOString(),
     test: b.chain === 'polygon-amoy',
-    myClaim: claim ? { status: claim.status, secondsPresent: claim.secondsPresent, txUrl: claim.mintTx ? beatTxUrl(b.chain, claim.mintTx) : null } : null,
+    myClaim: claim ? { status: claim.status, secondsPresent: claim.secondsPresent ?? 0, txUrl: claim.mintTx ? beatTxUrl(b.chain, claim.mintTx) : null } : null,
   }
 }
 
@@ -188,15 +197,22 @@ export async function claimBeat(sceneId: string, beatId: string, userId: string,
     // Tracking opens before the start, so with a minimum of 0 the time alone would allow it
     if (now.getTime() < b.startsAt.getTime()) throw new BeatError(409, 'not_yet', "This event hasn't started yet.")
     if (now.getTime() > claimUntil(b).getTime()) throw new BeatError(409, 'too_late', 'The time to claim this BEAT is over.')
-    if (claim.secondsPresent < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
+    if ((claim.secondsPresent ?? 0) < b.minPresentSeconds) throw new BeatError(409, 'not_yet', "You haven't been here long enough yet.")
     if ((await takenCount(tx, b.id)) >= b.supplyCap) throw new BeatError(409, 'all_claimed', 'All of these BEATs have been claimed.')
     await tx.update(beatClaims).set({ status: 'claimed', claimedAt: now }).where(and(eq(beatClaims.id, claim.id), eq(beatClaims.status, 'present')))
   })
   return visitorView(seen.id, userId)
 }
 
-/** Stop tracking: deletes a present claim. Once claimed it stays (`already_claimed`). */
+/**
+ * Stop tracking: deletes a present claim. Once claimed it stays (`already_claimed`). On a cancelled BEAT it always
+ * succeeds: cancelling deleted every present claim already (privacy I4).
+ */
 export async function stopTrackingBeat(sceneId: string, beatId: string, userId: string): Promise<void> {
+  if (await cancelledOnScene(sceneId, beatId)) {
+    await db.delete(beatClaims).where(and(eq(beatClaims.beatId, beatId), eq(beatClaims.userId, userId), eq(beatClaims.status, 'present')))
+    return
+  }
   const b = await beatOnScene(sceneId, beatId)
   const claim = await myClaimRow(db, b.id, userId)
   if (!claim) throw notTracking()

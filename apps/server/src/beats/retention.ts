@@ -16,6 +16,14 @@ import type { Exec } from '../studio/quota.js'
 
 const DAY_MS = 86_400_000
 
+/**
+ * What unlinking a minted claim clears (privacy M1): its account, its display name, its time present and the consent
+ * and claim times. On chain only the wallet remains, so the row keeps the wallet, its status and the mint.
+ */
+export const UNLINKED_CLAIM = {
+  userId: null, displayName: null, secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null, ipHash: null,
+} as const
+
 /** One transaction (or the caller's, so account deletion can include it). Only this user's claims are touched. */
 export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec): Promise<{ deleted: number; unlinked: number; pending: number }> {
   const run = async (tx: Exec) => {
@@ -29,7 +37,7 @@ export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec):
     const pending = await tx.update(beatClaims).set({ deleteRequested: true })
       .where(and(mine, eq(beatClaims.status, 'minting')))
       .returning({ id: beatClaims.id })
-    const unlinked = await tx.update(beatClaims).set({ userId: null, displayName: null })
+    const unlinked = await tx.update(beatClaims).set(UNLINKED_CLAIM)
       .where(and(mine, eq(beatClaims.status, 'minted')))
       .returning({ id: beatClaims.id })
     return { deleted: deleted.length, unlinked: unlinked.length, pending: pending.length }
@@ -37,24 +45,35 @@ export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec):
   return exec ? run(exec) : db.transaction(run)
 }
 
-/** The daily sweep: `present` claims of BEATs that ended BEAT_RETENTION_DAYS ago go, and so do the wallets and signed raw
- * txs of batches settled that long ago (their hashes stay). A batch's settle time is confirmed_at, else sent_at, else created_at: a
- * failed batch has no confirmed_at. */
-export async function scrubBeats(now: Date): Promise<{ present: number; batches: number }> {
+/**
+ * The daily sweep, at BEAT_RETENTION_DAYS:
+ * - `present` and `removed` claims of BEATs that ended that long ago go, and every claim of theirs loses its network hash;
+ * - the wallets and signed raw txs of batches settled that long ago go (their hashes stay). A batch's settle time is
+ *   confirmed_at, else sent_at, else created_at: a failed batch has no confirmed_at. A batch still open (`sending` or
+ *   `sent`) that long after it was made goes too (privacy M3): reconcile settles it by receipt or nonce without them, it
+ *   only can't rebroadcast or reprice it, and after 30 days neither matters.
+ */
+export async function scrubBeats(now: Date): Promise<{ present: number; batches: number; networks: number }> {
   const cutoff = new Date(now.getTime() - BEAT_RETENTION_DAYS * DAY_MS)
   const ended = db.select({ id: beats.id }).from(beats).where(lte(beats.endsAt, cutoff))
   const present = await db.delete(beatClaims)
-    .where(and(eq(beatClaims.status, 'present'), inArray(beatClaims.beatId, ended)))
+    .where(and(inArray(beatClaims.status, ['present', 'removed']), inArray(beatClaims.beatId, ended)))
+    .returning({ id: beatClaims.id })
+  const networks = await db.update(beatClaims).set({ ipHash: null })
+    .where(and(isNotNull(beatClaims.ipHash), inArray(beatClaims.beatId, ended)))
     .returning({ id: beatClaims.id })
   // raw_tx goes with the wallets: a mint's calldata is mintTo(id, wallets), and for a batch that never mined those wallets
   // aren't public. last_error holds codes only, and claims' fail_reason a revert name, so nothing else keeps a wallet
+  // postgres-js rejects a Date bound inside a raw sql template, so the cutoff goes as an ISO literal
+  const old = (col: unknown) => sql`${col} <= ${cutoff.toISOString()}::timestamptz`
   const batches = await db.update(beatMintBatches).set({ wallets: null, rawTx: null })
     .where(and(
       or(isNotNull(beatMintBatches.wallets), isNotNull(beatMintBatches.rawTx)),
-      inArray(beatMintBatches.status, ['confirmed', 'failed']),
-      // postgres-js rejects a Date bound inside a raw sql template, so it goes as an ISO literal
-      sql`coalesce(${beatMintBatches.confirmedAt}, ${beatMintBatches.sentAt}, ${beatMintBatches.createdAt}) <= ${cutoff.toISOString()}::timestamptz`,
+      or(
+        and(inArray(beatMintBatches.status, ['confirmed', 'failed']), old(sql`coalesce(${beatMintBatches.confirmedAt}, ${beatMintBatches.sentAt}, ${beatMintBatches.createdAt})`)),
+        and(inArray(beatMintBatches.status, ['sending', 'sent']), old(beatMintBatches.createdAt)),
+      ),
     ))
     .returning({ id: beatMintBatches.id })
-  return { present: present.length, batches: batches.length }
+  return { present: present.length, batches: batches.length, networks: networks.length }
 }

@@ -5,10 +5,11 @@ import { Wallet, parseEther } from 'ethers'
 import { BEAT_RETENTION_DAYS } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beatMintBatches, beatPayments, beats, raffleDraws, raffleEntries, raffles, userAuthMethods, users } from '../src/db/schema.js'
+import { beatClaims, beatMintBatches, beatPayments, beats, beatScenes, raffleDraws, raffleEntries, raffles, userAuthMethods, users } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
 import { resetBeatJobState, runBeatTick } from '../src/beats/job.js'
 import { linkVerifiedWallet } from '../src/auth/wallet-users.js'
+import { issueScenePass } from '../src/auth/scene-pass.js'
 import { deleteMyBeatData, scrubBeats } from '../src/beats/retention.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { resetDb } from './helpers/db.js'
@@ -95,7 +96,10 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       const res = await deleteMyBeatData(me.id, T0)
       expect(res).toEqual({ deleted: 3, unlinked: 1, pending: 1 })
       for (const s of ['present', 'claimed', 'failed']) expect(await byId(mine[s].id), s).toBeUndefined()
-      expect(await byId(mine.minted.id)).toMatchObject({ userId: null, displayName: null, wallet: me.wallet, status: 'minted' })
+      // M1: only the wallet stays (it is on chain); time present and the consent and claim times go with the link
+      expect(await byId(mine.minted.id)).toMatchObject({
+        userId: null, displayName: null, wallet: me.wallet, status: 'minted', secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null,
+      })
       expect(await byId(mine.minting.id)).toMatchObject({ userId: me.id, deleteRequested: true, status: 'minting' })
       for (const st of Object.keys(theirs)) {
         expect(await byId(theirs[st].id), `other user's ${st} claim`).toMatchObject({ status: st, userId: other.id, displayName: `Other ${st}`, deleteRequested: false })
@@ -203,11 +207,58 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       expect(await linkVerifiedWallet(account.id, w)).toBe('linked')
       expect(await db.select().from(users).where(eq(users.id, shell.id))).toHaveLength(0)
       expect(await byId(moved.id)).toMatchObject({ userId: account.id, displayName: 'Shell name' })
-      expect(await byId(dup.id)).toMatchObject({ userId: null })
+      // I3: the visitor's own claim on the shared BEAT isn't left behind with no user: not minted, so it's deleted
+      expect(await byId(dup.id)).toBeUndefined()
       expect(await byId(keep.id)).toMatchObject({ userId: account.id, displayName: 'Account name' })
       // and the account's delete-my-data now reaches the moved claim
       expect(await deleteMyBeatData(account.id, T0)).toMatchObject({ deleted: 2 })
       expect(await byId(moved.id)).toBeUndefined()
+    })
+  })
+
+  it('I3: absorbing, a minted visitor claim on a BEAT the account also claimed is unlinked; a minting one is flagged', async () => {
+    const w = wallet()
+    const shell = await createUser({ role: 'viewer', email: null, wallet: w, name: 'Shell' })
+    const account = await createUser({ role: 'creator' })
+    const b1 = await seedBeat()
+    const b2 = await seedBeat()
+    const minted = await claim(b1.id, shell, 'minted', { displayName: 'Shell minted', mintedAt: at(-H), secondsPresent: 900, lastSeenAt: at(-H) })
+    const minting = await claim(b2.id, shell, 'minting', { displayName: 'Shell minting' })
+    await claim(b1.id, account, 'claimed', { wallet: wallet() })
+    await claim(b2.id, account, 'claimed', { wallet: wallet() })
+    expect(await linkVerifiedWallet(account.id, w)).toBe('linked')
+    expect(await byId(minted.id)).toMatchObject({
+      userId: null, displayName: null, wallet: w, status: 'minted', secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null,
+    })
+    expect(await byId(minting.id)).toMatchObject({ status: 'minting', deleteRequested: true })
+  })
+
+  describe('host and cancel views (I2, I4)', () => {
+    it('I2: the host\'s claimant list leaves out claims their visitor asked to delete', async () => {
+      const b = await seedBeat()
+      await claim(b.id, me, 'minting', { deleteRequested: true, displayName: 'Gone' })
+      await claim(b.id, other, 'claimed', { displayName: 'Still here' })
+      const res = await app.inject({ method: 'GET', url: `/api/beats/${b.id}/claimants`, headers: { authorization: `Bearer ${tokenFor(host)}` } })
+      expect(res.statusCode, res.body).toBe(200)
+      expect(res.json().map((c: { displayName: string }) => c.displayName)).toEqual(['Still here'])
+    })
+
+    it('I4: cancelling deletes the tracked (present) claims, and Stop on the cancelled BEAT answers ok', async () => {
+      const scene = (await createScene(host, 'Cancel')).scene.id
+      const [b] = await db.insert(beats).values({
+        chain: 'polygon-amoy', ownerUserId: host.id, name: 'Soon', description: '', startsAt: new Date(Date.now() + 20 * MIN),
+        endsAt: new Date(Date.now() + 2 * H), status: 'draft',
+      }).returning()
+      await db.insert(beatScenes).values({ beatId: b.id, sceneId: scene })
+      const mine = await claim(b.id, me, 'present')
+      const theirs = await claim(b.id, other, 'present')
+      const res = await app.inject({ method: 'POST', url: `/api/beats/${b.id}/cancel`, headers: { authorization: `Bearer ${tokenFor(host)}` } })
+      expect(res.statusCode, res.body).toBe(200)
+      expect(await byId(mine.id)).toBeUndefined()
+      expect(await byId(theirs.id)).toBeUndefined()
+      const pass = issueScenePass(app, me as any, me.wallet!, { sceneId: scene, locationId: null }).accessToken
+      const stop = await app.inject({ method: 'DELETE', url: `/api/scenes/${scene}/beat/${b.id}/track`, headers: { authorization: `Bearer ${pass}` } })
+      expect(stop.statusCode, stop.body).toBe(204)
     })
   })
 
@@ -280,15 +331,27 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       const oldPresent = await claim(old.id, me, 'present')
       const oldClaimed = await claim(old.id, other, 'claimed')
       const recentPresent = await claim(recent.id, me, 'present')
-      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0 })
+      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0, networks: 0 })
       expect(await byId(oldPresent.id)).toBeUndefined()
       expect(await byId(oldClaimed.id)).toBeDefined()
       expect(await byId(recentPresent.id)).toBeDefined()
-      expect((await scrubBeats(at(H)))).toEqual({ present: 1, batches: 0 })
+      expect((await scrubBeats(at(H)))).toEqual({ present: 1, batches: 0, networks: 0 })
       expect(await byId(recentPresent.id)).toBeUndefined()
     })
 
-    it('nulls batch wallets and raw txs 30 days after settling (confirmed, or failed by sent time), keeps hashes and open batches', async () => {
+    it('removes removed claims and every claim\'s network hash 30 days after the end; a recent BEAT keeps them', async () => {
+      const old = await seedBeat({ endsAt: at(-30 * DAY) })
+      const recent = await seedBeat({ endsAt: at(-DAY) })
+      const removed = await claim(old.id, me, 'removed', { ipHash: 'h1' })
+      const minted = await claim(old.id, other, 'minted', { ipHash: 'h2', mintedAt: at(-31 * DAY) })
+      const keep = await claim(recent.id, me, 'claimed', { ipHash: 'h3' })
+      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0, networks: 1 })
+      expect(await byId(removed.id)).toBeUndefined()
+      expect(await byId(minted.id)).toMatchObject({ ipHash: null, status: 'minted' })
+      expect(await byId(keep.id)).toMatchObject({ ipHash: 'h3' })
+    })
+
+    it('nulls batch wallets and raw txs 30 days after settling (confirmed, or failed by sent time), keeps hashes; open batches 30 days after they were made', async () => {
       const b = await seedBeat()
       const mk = (nonce: number, status: 'confirmed' | 'failed' | 'sent', when: Date, extra: Partial<typeof beatMintBatches.$inferInsert> = {}) =>
         db.insert(beatMintBatches).values({
@@ -299,18 +362,20 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       const confNew = await mk(2, 'confirmed', at(-31 * DAY), { confirmedAt: at(-(30 * DAY - H)) })
       const failOld = await mk(3, 'failed', at(-31 * DAY), { sentAt: at(-30 * DAY) })
       const open = await mk(4, 'sent', at(-40 * DAY), { sentAt: at(-40 * DAY) })
+      const openNew = await mk(6, 'sending', at(-(30 * DAY - H)))
       // Scrubbed of its wallets before raw txs were scrubbed too: its raw tx (calldata = every wallet) still goes
       const halfDone = await mk(5, 'failed', at(-50 * DAY), { wallets: null, lastError: 'unsent:NETWORK_ERROR' })
-      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 3 })
+      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 4, networks: 0 })
       const row = async (id: string) => (await db.select().from(beatMintBatches).where(eq(beatMintBatches.id, id)))[0]
       expect(await row(confOld.id)).toMatchObject({ wallets: null, rawTx: null, txHash: '0xabc', txHashes: ['0xabc'] })
       expect(await row(failOld.id)).toMatchObject({ wallets: null, rawTx: null })
       expect(await row(halfDone.id)).toMatchObject({ wallets: null, rawTx: null, txHashes: ['0xabc'], lastError: 'unsent:NETWORK_ERROR' })
       expect(await row(confNew.id)).toMatchObject({ rawTx: '0x02f8raw' })
       expect((await row(confNew.id)).wallets).toHaveLength(1)
-      expect(await row(open.id)).toMatchObject({ rawTx: '0x02f8raw' })
-      expect((await row(open.id)).wallets).toHaveLength(1)
-      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 0 })
+      // M3: open 40 days, so its wallets go too (reconcile settles it by receipt or nonce without them)
+      expect(await row(open.id)).toMatchObject({ rawTx: null, wallets: null, status: 'sent', txHashes: ['0xabc'] })
+      expect(await row(openNew.id)).toMatchObject({ rawTx: '0x02f8raw' })
+      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 0, networks: 0 })
     })
   })
 })

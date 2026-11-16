@@ -14,6 +14,7 @@ import { BeatRevert, BeatRpcError, beatChainClient, beatInterface, type BeatCall
 import { BeatError } from './errors.js'
 import { lockBeat } from './lock.js'
 import { sweepBeatPayments } from './payments.js'
+import { UNLINKED_CLAIM } from './retention.js'
 
 /**
  * The BEAT minting job (LIV-11): every BEAT_JOB_EVERY_MS, on one instance (session advisory lock 'beat-minter', so no
@@ -174,7 +175,7 @@ function fail(job: string, message: string, owner: string | null): void {
  * public on chain). Run whenever a batch settles. */
 async function settleDeletes(tx: Pick<typeof db, 'update' | 'delete'>, batchId: string): Promise<void> {
   await tx.delete(beatClaims).where(and(eq(beatClaims.batchId, batchId), eq(beatClaims.deleteRequested, true), sql`${beatClaims.status} <> 'minted'`))
-  await tx.update(beatClaims).set({ userId: null, displayName: null })
+  await tx.update(beatClaims).set(UNLINKED_CLAIM)
     .where(and(eq(beatClaims.batchId, batchId), eq(beatClaims.deleteRequested, true), eq(beatClaims.status, 'minted')))
 }
 
@@ -280,9 +281,11 @@ async function reconcile(client: BeatChainClient, b: Batch, now: Date, r: BeatTi
     await unminedBatch(client, b, now, r, { lastError: 'replaced', unminted: 'claimed' })
     return true
   }
+  // The retention scrub cleared the raw tx of a batch open for 30 days: it can only settle by a receipt or its nonce
+  if (!b.rawTx) return false
   if (b.status === 'sending') {
     if (b.nextAttemptAt && b.nextAttemptAt > now) return false
-    return (await broadcastBatch(client, b, b.rawTx!, now, r)) === 'gave_up'
+    return (await broadcastBatch(client, b, b.rawTx, now, r)) === 'gave_up'
   }
   if (b.sentAt && now.getTime() - b.sentAt.getTime() >= BEAT_REPRICE_AFTER_MS) {
     return (await reprice(client, b, now, r)) === 'gave_up'
@@ -420,7 +423,7 @@ async function revertedBatch(client: BeatChainClient, b: Batch, now: Date, r: Be
   if (b.kind === 'mint') {
     let reason = 'reverted'
     try {
-      await client.estimate(decodeCall(Transaction.from(b.rawTx!).data))
+      if (b.rawTx) await client.estimate(decodeCall(Transaction.from(b.rawTx).data))
     } catch (err) {
       if (err instanceof BeatRevert) reason = err.name
     }

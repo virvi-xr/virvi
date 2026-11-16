@@ -2714,8 +2714,9 @@ export const beatClaims = pgTable('beat_claims', {
   wallet: text('wallet').notNull(),
   displayName: text('display_name'),
   consentVersion: integer('consent_version').notNull(),
-  consentedAt: timestamp('consented_at', { withTimezone: true }).notNull().defaultNow(),
-  secondsPresent: integer('seconds_present').notNull().default(0),
+  // consented_at, seconds_present, last_seen_at and claimed_at are nulled when a minted claim is unlinked (privacy M1)
+  consentedAt: timestamp('consented_at', { withTimezone: true }).defaultNow(),
+  secondsPresent: integer('seconds_present').default(0),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   status: text('status').$type<BeatClaimStatus>().notNull().default('present'),
   deleteRequested: boolean('delete_requested').notNull().default(false),
@@ -2724,6 +2725,8 @@ export const beatClaims = pgTable('beat_claims', {
   failReason: text('fail_reason'),
   claimedAt: timestamp('claimed_at', { withTimezone: true }),
   mintedAt: timestamp('minted_at', { withTimezone: true }),
+  // A keyed hash of the claimer's network (an IPv4 address, or an IPv6 /64), salted per BEAT; never the address itself
+  ipHash: text('ip_hash'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   walletUq: uniqueIndex('beat_claims_beat_wallet_uq').on(t.beatId, t.wallet),

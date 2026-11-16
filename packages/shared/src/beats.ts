@@ -9,7 +9,8 @@ export const BEAT_CHAIN_INFO: Record<BeatChain, { chainId: number; confirmations
 }
 
 export type BeatStatus = 'draft' | 'paid' | 'live' | 'ended' | 'cancelled'
-export type BeatClaimStatus = 'present' | 'claimed' | 'minting' | 'minted' | 'failed'
+/** `removed`: a host took the claim out before it was sent (hold for review); it frees its supply and can't be claimed again. */
+export type BeatClaimStatus = 'present' | 'claimed' | 'minting' | 'minted' | 'failed' | 'removed'
 
 export const BEAT_CONSENT_VERSION = 1
 export const BEAT_NAME_MAX = 60

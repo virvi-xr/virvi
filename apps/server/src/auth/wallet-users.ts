@@ -1,7 +1,8 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, notInArray, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { accessGrants, assetLibraryItems, mediaAssets, raffleEntries, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
+import { accessGrants, assetLibraryItems, beatClaims, mediaAssets, raffleEntries, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
 import { moveStudioData } from '../studio/merge.js'
+import { UNLINKED_CLAIM } from '../beats/retention.js'
 import { claimWalletInvites } from '../studio/invites.js'
 import { initialRoleForNewUser } from './roles.js'
 
@@ -48,7 +49,13 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string) 
     await tx.update(accessGrants).set({ userId }).where(eq(accessGrants.userId, shellId))
     await tx.update(sceneRoles).set({ userId }).where(eq(sceneRoles.userId, shellId))
     await moveStudioData(tx, shellId, userId, new Date())
-    // BEAT claims follow the account, except on a BEAT it already claimed (the unique index; the FK then nulls that one's user_id)
+    // BEAT claims follow the account, except on a BEAT it already claimed (one claim per user and BEAT). The visitor's
+    // claim there is forgotten as delete-my-data would (privacy I3): deleted unless it is minting (flagged; the job
+    // settles it) or minted (unlinked: only the wallet stays, as on chain). Else it would be left with no user to delete it
+    const conflict = sql`${beatClaims.userId} = ${shellId}::uuid and exists (select 1 from beat_claims o where o.beat_id = ${beatClaims.beatId} and o.user_id = ${userId}::uuid)`
+    await tx.update(beatClaims).set(UNLINKED_CLAIM).where(and(conflict, eq(beatClaims.status, 'minted')))
+    await tx.update(beatClaims).set({ deleteRequested: true }).where(and(conflict, eq(beatClaims.status, 'minting')))
+    await tx.delete(beatClaims).where(and(conflict, notInArray(beatClaims.status, ['minted', 'minting'])))
     await tx.execute(sql`update beat_claims c set user_id = ${userId}::uuid where c.user_id = ${shellId}::uuid
       and not exists (select 1 from beat_claims o where o.beat_id = c.beat_id and o.user_id = ${userId}::uuid)`)
     // Raffle entries too (else the visitor's deletion would cascade them away). Where both entered the same raffle (one
