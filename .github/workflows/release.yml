@@ -104,3 +104,28 @@ jobs:
         with:
           name: release-manifest
           path: release-manifest.json
+
+  # Release notes on Discord for every push to main (scripts/release-notes.mjs): the date, the release as /transparency
+  # names it, and the push's commits. The webhook is the DISCORD_RELEASE_WEBHOOK secret; without it this does nothing.
+  notes:
+    needs: image
+    if: ${{ always() && github.event_name == 'push' && needs.image.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Post release notes
+        env:
+          DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          BEFORE: ${{ github.event.before }}
+          RESULT: ${{ needs.image.result }}
+        run: node scripts/release-notes.mjs --before "$BEFORE" --after "$GITHUB_SHA" --result "$RESULT"
