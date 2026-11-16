@@ -8,9 +8,13 @@ import { devicesRevoked } from '../ar/devices.js'
 /**
  * Wallet blocks and provenance (LIV-11, reissue fix round 1).
  *
- * A blocked wallet can't sign in to Virvi (dashboard or in-world), can't be linked to an account, and every session
- * carrying it stops working: `authenticate` refuses its access tokens and `/api/auth/refresh` its refresh tokens. A
- * reissue's old wallet is blocked at approval; an admin unlinking a wallet from an account blocks it too.
+ * A block is on BEATs everywhere, and on the account it was taken from (the owner's call, 2026-11-16: not on Virvi as a
+ * whole). A blocked wallet can never track or claim a BEAT, or be a reissue's new wallet, on any account
+ * (`isWalletBlocked`). On the account that blocked it (`walletBlockedOn`), every session carrying it stops working:
+ * `authenticate` refuses its access tokens, `/api/auth/refresh` its refresh tokens, the rooms their passes; and it can't
+ * sign in to that account or be linked to it again. Once it is off that account (a reissue unlinks it when done, an
+ * admin unlink at once), signing in with it makes a new, separate account. A reissue's old wallet is blocked at
+ * approval; an admin unlinking a wallet from an account blocks it too.
  *
  * Sessions are stateless JWTs (there is no session table), so revoking means refusing the wallet claim wherever a token
  * is checked; access tokens carrying it end at once, refresh tokens at their next use.
@@ -23,7 +27,7 @@ export class WalletBlockedError extends Error {
   readonly code = 'wallet_blocked'
   readonly status = 403
   constructor() {
-    super('This wallet can no longer sign in to Virvi.')
+    super('This wallet can no longer sign in to this account.')
     this.name = 'WalletBlockedError'
   }
 }
@@ -34,20 +38,44 @@ async function readBlock(wallet: string, exec: Pick<typeof db, 'select'>): Promi
 }
 let blockReader = readBlock
 
-/** Whether a wallet is blocked. A database failure throws (callers answer 503, never "not blocked"). */
+/** Whether a wallet is blocked (from BEATs, on every account). A database failure throws (callers answer 503, never "not blocked"). */
 export async function isWalletBlocked(wallet: string | null | undefined, exec: Pick<typeof db, 'select'> = db): Promise<boolean> {
   if (!wallet) return false
   return blockReader(wallet.toLowerCase(), exec)
 }
 
-/** Tests replace the database read (say, with one that fails); null restores it. */
-export function setWalletBlockReaderForTests(read: ((wallet: string, exec: Pick<typeof db, 'select'>) => Promise<boolean>) | null): void {
-  blockReader = read ?? readBlock
+async function readBlockOn(wallet: string, userId: string, exec: Pick<typeof db, 'select'>): Promise<boolean> {
+  const [row] = await exec.select({ wallet: walletBlocks.wallet }).from(walletBlocks)
+    .where(and(eq(walletBlocks.wallet, wallet), eq(walletBlocks.userId, userId))).limit(1)
+  return !!row
+}
+let blockOnReader = readBlockOn
+
+/** Whether a wallet is blocked on this account (the one it was taken from): its sessions there end. Throws on a database failure. */
+export async function walletBlockedOn(wallet: string | null | undefined, userId: string | null | undefined, exec: Pick<typeof db, 'select'> = db): Promise<boolean> {
+  if (!wallet || !userId) return false
+  return blockOnReader(wallet.toLowerCase(), userId, exec)
 }
 
-/** Whether a token's wallet claim is blocked (rooms check this at join and at pass renewal; REST in authenticate). */
-export async function claimsWalletBlocked(c: { wallet?: string | null; verified?: boolean } | null | undefined): Promise<boolean> {
-  return !!c?.wallet && c.verified !== false && isWalletBlocked(c.wallet)
+/** Whether a wallet is still linked to an account that blocked it: it can't sign in (to that account) by any path. */
+export async function walletSignInBlocked(wallet: string | null | undefined, exec: Pick<typeof db, 'select'> = db): Promise<boolean> {
+  if (!wallet) return false
+  const w = wallet.toLowerCase()
+  const links = await exec.select({ userId: userAuthMethods.userId }).from(userAuthMethods)
+    .where(and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, w)))
+  for (const l of links) if (await walletBlockedOn(w, l.userId, exec)) return true
+  return false
+}
+
+/** Tests replace the database reads (say, with ones that fail); null restores them. */
+export function setWalletBlockReaderForTests(read: ((wallet: string, exec: Pick<typeof db, 'select'>) => Promise<boolean>) | null): void {
+  blockReader = read ?? readBlock
+  blockOnReader = read ? (wallet, _userId, exec) => read(wallet, exec) : readBlockOn
+}
+
+/** Whether a token's wallet claim is blocked on the token's account (rooms check this at join and at pass renewal; REST in authenticate). */
+export async function claimsWalletBlocked(c: { id?: string | null; wallet?: string | null; verified?: boolean } | null | undefined): Promise<boolean> {
+  return !!c?.wallet && c.verified !== false && walletBlockedOn(c.wallet, c.id)
 }
 
 /** How a session signed in: its `am` claim, else a wallet claim means a wallet sign-in; with its wallet or email. */

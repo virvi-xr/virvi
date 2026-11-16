@@ -482,7 +482,7 @@ function useRealApi() {
       apiFetch<{ removed: true }>(beatApiPath(beatId, `claims/${encodeURIComponent(claimId)}`), { method: 'DELETE', userAction: true }),
     // BEAT reissue (LIV-11): the person's own requests
     listMyReissueRequests: () => apiFetch<ReissueRequest[]>('/api/beats/reissue-requests'),
-    createReissueRequest: (body: { oldWallet: string; newWallet: string; reason: string }) =>
+    createReissueRequest: (body: { oldWallet: string; newWallet: string; loss: 'lost' | 'stolen'; reason: string }) =>
       apiFetch<ReissueRequest>('/api/beats/reissue-requests', { method: 'POST', userAction: true, body: JSON.stringify(body) }),
     cancelReissueRequest: (id: string) =>
       apiFetch<ReissueRequest>(`/api/beats/reissue-requests/${encodeURIComponent(id)}`, { method: 'DELETE', userAction: true }),

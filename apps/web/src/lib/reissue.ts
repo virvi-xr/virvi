@@ -4,12 +4,16 @@
  * The server is apps/server/src/beats/reissue.ts.
  */
 import {
-  BEAT_CHAIN_INFO, BEAT_REISSUE_NOTE_MAX, BEAT_REISSUE_OPEN, BEAT_REISSUE_REASON_MAX,
-  type BeatChain, type BeatReissueBlocker, type BeatReissueFileStatus, type BeatReissueFlag, type BeatReissueItemState, type BeatReissueStatus, type SignInMethod,
+  BEAT_CHAIN_INFO, BEAT_REISSUE_LOSSES, BEAT_REISSUE_NOTE_MAX, BEAT_REISSUE_OPEN, BEAT_REISSUE_REASON_MAX,
+  type BeatChain, type BeatReissueLoss, type BeatReissueBlocker, type BeatReissueFileStatus, type BeatReissueFlag, type BeatReissueItemState, type BeatReissueStatus, type SignInMethod,
 } from '@virvixr/shared'
 import { shortWallet } from './studio-people'
 
-export { BEAT_REISSUE_NOTE_MAX, BEAT_REISSUE_REASON_MAX }
+export { BEAT_REISSUE_LOSSES, BEAT_REISSUE_NOTE_MAX, BEAT_REISSUE_REASON_MAX }
+export type { BeatReissueLoss }
+/** How the old wallet was lost, as the form and the queue show it. */
+export const LOSS_LABELS: Record<BeatReissueLoss, string> = { lost: 'Lost', stolen: 'Stolen' }
+export const lossLabel = (l: BeatReissueLoss | null) => (l ? LOSS_LABELS[l] : 'Not asked')
 
 // ── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -28,6 +32,7 @@ export interface ReissueRequest {
   id: string
   oldWallet: string
   newWallet: string
+  loss: BeatReissueLoss | null
   reason: string | null
   status: BeatReissueStatus
   reviewNote: string | null
@@ -104,13 +109,13 @@ export const MOVE_INTRO = [
   'A BEAT can only be moved after its event has ended. A tradeable BEAT that is no longer in the old wallet (sold, sent on or burned) can\'t be moved.',
 ]
 export const MOVE_WHAT_HAPPENS = [
-  "When Virvi approves, the old wallet is blocked from Virvi: it can't sign in, and its sessions are refused. Virvi also removes your API keys and paired devices, so you'll set them up again.",
+  "When Virvi approves, the old wallet is blocked from your account and from BEATs: it can't sign in to your account, its sessions there are refused, and it can never collect a BEAT again. Once the move is done it's removed from your account. Virvi also removes your API keys and paired devices, so you'll set them up again.",
   'Moving a BEAT is recorded on Polygon, a public blockchain: anyone can see that the old wallet was replaced by the new one for that BEAT, and it can\'t be deleted. The old copy stays in the old wallet, frozen: it can never be moved.',
   "The hosts of the event see the new wallet in their list, marked as reissued.",
   'Virvi keeps your request (both wallets, your reason and how you were signed in) until 30 days after it closes, or until you delete your data.',
 ]
 /** Shown to the person once a request is approved (fix round 3). */
-export const APPROVED_NOTE = 'We removed your API keys and paired devices, and your old wallet can no longer sign in. Set your keys and devices up again.'
+export const APPROVED_NOTE = "We removed your API keys and paired devices, and your old wallet can no longer sign in to your account or collect BEATs. Set your keys and devices up again."
 
 export const REISSUE_STATUS_LABELS: Record<BeatReissueStatus, string> = {
   pending: 'Waiting for review',
@@ -134,11 +139,12 @@ export const itemStateLabel = (s: BeatReissueItemState | null) => (s ? ITEM_STAT
 export const isOpen = (r: Pick<ReissueRequest, 'status'>) => BEAT_REISSUE_OPEN.includes(r.status)
 
 /** The person's form: what is wrong, or null. */
-export function moveFormError(f: { oldWallet: string; newWallet: string; reason: string }): string | null {
+export function moveFormError(f: { oldWallet: string; newWallet: string; loss: BeatReissueLoss | ''; reason: string }): string | null {
   const addr = /^0x[0-9a-fA-F]{40}$/
   if (!addr.test(f.oldWallet.trim())) return 'Give the old wallet as a 0x address.'
   if (!addr.test(f.newWallet.trim())) return 'Pick the new wallet.'
   if (f.oldWallet.trim().toLowerCase() === f.newWallet.trim().toLowerCase()) return 'The old and new wallets must be different.'
+  if (!f.loss) return 'Say whether the old wallet was lost or stolen.'
   if (!f.reason.trim()) return 'Say what happened to the old wallet.'
   if ([...f.reason.trim()].length > BEAT_REISSUE_REASON_MAX) return `The reason can be up to ${BEAT_REISSUE_REASON_MAX} characters.`
   return null
@@ -147,6 +153,7 @@ export function moveFormError(f: { oldWallet: string; newWallet: string; reason:
 const PERSON_ERRORS: Record<string, string> = {
   bad_wallet: 'Give both wallets as 0x addresses.',
   same_wallet: 'The old and new wallets must be different.',
+  bad_loss: 'Say whether the old wallet was lost or stolen.',
   bad_reason: `Say what happened to the old wallet, in up to ${BEAT_REISSUE_REASON_MAX} characters.`,
   wallet_not_linked: 'The new wallet must be linked to your account and verified. Link it under Linked Wallets first.',
   no_beats_on_wallet: 'We found no BEATs sent to that wallet on your account.',
@@ -155,8 +162,8 @@ const PERSON_ERRORS: Record<string, string> = {
   cancel_not_allowed: 'Sign in with your new wallet, or with your email, to cancel this.',
   not_pending: 'This request is already being handled, so it can no longer be cancelled.',
   account_required: 'Sign in to your Virvi account on the web to do this.',
-  wallet_blocked: 'This wallet can no longer sign in to Virvi.',
-  wallet_unlinked: 'This wallet can no longer sign in to Virvi.',
+  wallet_blocked: 'This wallet can no longer sign in to this account.',
+  wallet_unlinked: 'This wallet is no longer linked to this account.',
 }
 export function moveError(err: unknown): string {
   const code = (err as { body?: { error?: string } } | null)?.body?.error ?? (err as Error | null)?.message ?? ''
@@ -177,7 +184,7 @@ export const FLAG_LABELS: Record<BeatReissueFlag, string> = {
 }
 
 /** How Settings (Linked Wallets, Move my BEATs) marks a linked wallet that is blocked (M-8). */
-export const WALLET_BLOCKED_LABEL = "Blocked: can't sign in"
+export const WALLET_BLOCKED_LABEL = 'Blocked: no sign-in here, no BEATs'
 
 export const BLOCKER_LABELS: Record<BeatReissueBlocker, string> = {
   NothingToReplace: 'The old wallet no longer holds this tradeable BEAT',
@@ -205,8 +212,8 @@ export function linkedByLabel(l: LinkedBy | null): string {
   return `${how}, ${who}`
 }
 
-export const APPROVE_WARNING = "Approving blocks the old wallet from Virvi everywhere: it can't sign in, and its sessions are refused. It also removes every API key and paired device on the account."
-export const UNLINK_WARNING = 'Remove this wallet from the account and block it from Virvi?'
+export const APPROVE_WARNING = "Approving blocks the old wallet from this account and from BEATs: it can't sign in to the account, its sessions there are refused, and it can never collect a BEAT again (it can still make a new, separate Virvi account). It also removes every API key and paired device on the account."
+export const UNLINK_WARNING = 'Remove this wallet from the account, and block it from this account and from BEATs?'
 export const WITHDRAW_WARNING = 'Also discard (reject) the pending Safe transaction for this request, or it can still go through.'
 /** The steps for the Safe's signers, in order. */
 export const SAFE_STEPS = [

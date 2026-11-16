@@ -11,6 +11,7 @@ import {
 } from '../src/db/schema.js'
 import { verifiedWalletsOf } from '../src/analytics/claims.js'
 import { resolveVerifiedWalletUser } from '../src/auth/wallet-users.js'
+import { isWalletBlocked } from '../src/auth/wallet-blocks.js'
 import { createScene } from './helpers/factories.js'
 import { analyticsSessions } from '../src/db/schema.js'
 import { visitorHash } from '../src/analytics/hash.js'
@@ -127,7 +128,7 @@ describe('BEAT reissue (LIV-11)', () => {
   }
 
   const ask = (body: Record<string, unknown> = {}, u: TestUser = me, claims: Record<string, unknown> = {}) =>
-    call('POST', '/api/beats/reissue-requests', u, { oldWallet: oldW, newWallet: newW, reason: 'My wallet was drained.', ...body }, claims)
+    call('POST', '/api/beats/reissue-requests', u, { oldWallet: oldW, newWallet: newW, loss: 'stolen', reason: 'My wallet was drained.', ...body }, claims)
 
   async function approved() {
     const res = await ask()
@@ -162,6 +163,8 @@ describe('BEAT reissue (LIV-11)', () => {
         [{ newWallet: 42 }, 400, 'bad_wallet'],
         [{ oldWallet: newW }, 400, 'same_wallet'],
         [{ oldWallet: newW.toUpperCase().replace('0X', '0x') }, 400, 'same_wallet'],
+        [{ loss: undefined }, 400, 'bad_loss'],
+        [{ loss: 'misplaced' }, 400, 'bad_loss'],
         [{ reason: '' }, 400, 'bad_reason'],
         [{ reason: '   ' }, 400, 'bad_reason'],
         [{ reason: 'x'.repeat(1001) }, 400, 'bad_reason'],
@@ -230,11 +233,11 @@ describe('BEAT reissue (LIV-11)', () => {
       const mine = (await ask()).json()
       const otherOld = wallet()
       await minted({ holder: other, w: otherOld })
-      const theirs = (await call('POST', '/api/beats/reissue-requests', other, { oldWallet: otherOld, newWallet: other.wallet, reason: 'stolen' })).json()
+      const theirs = (await call('POST', '/api/beats/reissue-requests', other, { oldWallet: otherOld, newWallet: other.wallet, loss: 'lost', reason: 'Lost my seed phrase' })).json()
 
       const list = (await call('GET', '/api/beats/reissue-requests')).json()
       expect(list.map((r: any) => r.id)).toEqual([mine.id])
-      expect(list[0]).toMatchObject({ status: 'pending', reason: 'My wallet was drained.', beats: [{ chain: 'polygon-amoy', state: null }] })
+      expect(list[0]).toMatchObject({ status: 'pending', loss: 'stolen', reason: 'My wallet was drained.', beats: [{ chain: 'polygon-amoy', state: null }] })
 
       expect((await call('DELETE', `/api/beats/reissue-requests/${theirs.id}`)).statusCode).toBe(404)
       expect((await call('DELETE', '/api/beats/reissue-requests/not-a-uuid')).statusCode).toBe(404)
@@ -288,7 +291,7 @@ describe('BEAT reissue (LIV-11)', () => {
 
       const [r] = await queue()
       expect(r).toMatchObject({
-        id, status: 'pending', oldWallet: oldW, newWallet: newW, reason: 'My wallet was drained.',
+        id, status: 'pending', oldWallet: oldW, newWallet: newW, loss: 'stolen', reason: 'My wallet was drained.',
         account: { id: me.id, displayName: 'Me', email: 'me@test.dev' }, reviewer: null, filedVia: { method: 'wallet', wallet: newW },
         otherSignIns: { email: true, password: false, oauth: false }, files: [], history: [],
       })
@@ -525,10 +528,15 @@ describe('BEAT reissue (LIV-11)', () => {
       expect(entry.note).toContain('Quest')
     })
 
-    it('N2: resolveVerifiedWalletUser refuses a blocked wallet, so no path signs it up or in again', async () => {
-      await db.insert(walletBlocks).values({ wallet: oldW, reason: 'reissue' })
+    it('N2: resolveVerifiedWalletUser refuses a blocked wallet still on the account that blocked it; once unlinked it signs up as a new account', async () => {
+      await db.insert(userAuthMethods).values({ userId: me.id, type: 'wallet', identifier: oldW, metadata: { verified: true } })
+      await db.insert(walletBlocks).values({ wallet: oldW, userId: me.id, reason: 'reissue' })
       await expect(resolveVerifiedWalletUser(oldW, 'x', 'account')).rejects.toMatchObject({ code: 'wallet_blocked' })
       await expect(resolveVerifiedWalletUser(oldW, 'x', 'visitor')).rejects.toMatchObject({ code: 'wallet_blocked' })
+      await db.delete(userAuthMethods).where(and(eq(userAuthMethods.userId, me.id), eq(userAuthMethods.identifier, oldW)))
+      const fresh = await resolveVerifiedWalletUser(oldW, 'x', 'account')
+      expect(fresh.id).not.toBe(me.id)
+      expect(await isWalletBlocked(oldW)).toBe(true)
     })
 
     it('N3: a blocked wallet leaves verifiedWalletsOf from the moment it is blocked', async () => {
@@ -1037,7 +1045,7 @@ describe('BEAT reissue (LIV-11)', () => {
       await runBeatTick(now())
       const otherOld = wallet()
       await minted({ holder: other, w: otherOld })
-      await call('POST', '/api/beats/reissue-requests', other, { oldWallet: otherOld, newWallet: other.wallet, reason: 'stolen' })
+      await call('POST', '/api/beats/reissue-requests', other, { oldWallet: otherOld, newWallet: other.wallet, loss: 'stolen', reason: 'stolen' })
 
       await deleteMyBeatData(me.id, now())
       // A done reissue's block stays (the wallet is compromised), without the account
@@ -1173,7 +1181,7 @@ describe('BEAT reissue (LIV-11)', () => {
       await minted({ holder: admin, w: adminOld })
       const adminNew = wallet()
       await linkVerifiedWallet(admin.id, adminNew, { method: 'email', how: 'link' } as any)
-      const filed = await call('POST', '/api/beats/reissue-requests', admin, { oldWallet: adminOld, newWallet: adminNew, reason: 'Leaked.' }, { wallet: null, am: 'email' })
+      const filed = await call('POST', '/api/beats/reissue-requests', admin, { oldWallet: adminOld, newWallet: adminNew, loss: 'stolen', reason: 'Leaked.' }, { wallet: null, am: 'email' })
       expect(filed.statusCode, filed.body).toBe(201)
       const id = filed.json().id
       for (const d of ['approve', 'reject']) {

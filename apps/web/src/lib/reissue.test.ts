@@ -9,22 +9,23 @@ const err = (code: string) => Object.assign(new Error(code), { status: 400, body
 
 describe('reissue: the person', () => {
   it('checks the form before sending', () => {
-    expect(moveFormError({ oldWallet: W1, newWallet: W2, reason: 'Phished' })).toBeNull()
-    expect(moveFormError({ oldWallet: 'nope', newWallet: W2, reason: 'x' })).toBe('Give the old wallet as a 0x address.')
-    expect(moveFormError({ oldWallet: W1, newWallet: '', reason: 'x' })).toBe('Pick the new wallet.')
-    expect(moveFormError({ oldWallet: W1, newWallet: W1.toUpperCase().replace('0X', '0x'), reason: 'x' })).toBe('The old and new wallets must be different.')
-    expect(moveFormError({ oldWallet: W1, newWallet: W2, reason: ' ' })).toBe('Say what happened to the old wallet.')
+    expect(moveFormError({ oldWallet: W1, newWallet: W2, loss: 'lost', reason: 'Phished' })).toBeNull()
+    expect(moveFormError({ oldWallet: 'nope', newWallet: W2, loss: 'lost', reason: 'x' })).toBe('Give the old wallet as a 0x address.')
+    expect(moveFormError({ oldWallet: W1, newWallet: '', loss: 'lost', reason: 'x' })).toBe('Pick the new wallet.')
+    expect(moveFormError({ oldWallet: W1, newWallet: W1.toUpperCase().replace('0X', '0x'), loss: 'lost', reason: 'x' })).toBe('The old and new wallets must be different.')
+    expect(moveFormError({ oldWallet: W1, newWallet: W2, loss: 'stolen', reason: ' ' })).toBe('Say what happened to the old wallet.')
+    expect(moveFormError({ oldWallet: W1, newWallet: W2, loss: '', reason: 'Phished' })).toBe('Say whether the old wallet was lost or stolen.')
   })
   it('says what to do for each refusal', () => {
     expect(moveError(err('signed_in_with_old_wallet'))).toBe('Sign in with your new wallet, or with your email, to ask for this.')
     expect(moveError(err('cancel_not_allowed'))).toBe('Sign in with your new wallet, or with your email, to cancel this.')
-    expect(moveError(err('wallet_blocked'))).toBe('This wallet can no longer sign in to Virvi.')
+    expect(moveError(err('wallet_blocked'))).toBe('This wallet can no longer sign in to this account.')
     for (const c of ['bad_wallet', 'same_wallet', 'bad_reason', 'wallet_not_linked', 'no_beats_on_wallet', 'request_open', 'not_pending', 'account_required']) {
       expect(moveError(err(c))).not.toBe('Something went wrong. Try again.')
     }
   })
   it('tells the person what approval removed, without promising a sign-out everywhere', () => {
-    expect(APPROVED_NOTE).toBe('We removed your API keys and paired devices, and your old wallet can no longer sign in. Set your keys and devices up again.')
+    expect(APPROVED_NOTE).toBe('We removed your API keys and paired devices, and your old wallet can no longer sign in to your account or collect BEATs. Set your keys and devices up again.')
     expect(APPROVED_NOTE).not.toMatch(/signed (you )?out everywhere/i)
   })
 })
@@ -33,7 +34,7 @@ describe('reissue: the admin queue', () => {
   it('has a plain line for every flag and blocker', () => {
     expect(Object.keys(FLAG_LABELS).sort()).toEqual(['clash', 'earlier_reissue', 'follow_up_reissue', 'new_wallet_linked_by_old_wallet', 'new_wallet_recent', 'recent_cancel'])
     expect(Object.keys(BLOCKER_LABELS)).toHaveLength(9)
-    expect(WALLET_BLOCKED_LABEL).toBe("Blocked: can't sign in")
+    expect(WALLET_BLOCKED_LABEL).toBe('Blocked: no sign-in here, no BEATs')
   })
   it('gives the Safe steps in order, and the withdraw warning', () => {
     expect(SAFE_STEPS.join(' → ')).toBe('Open your Safe (app.safe.global) on the right network. → Go to Apps, then Transaction Builder. → Drag in this file. → Press Simulate, and check it succeeds. → Press Create batch. → Get a second signer to approve it. → Execute it.')

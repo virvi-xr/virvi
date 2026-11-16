@@ -227,6 +227,9 @@ export type BeatReissueBlocker = 'NothingToReplace' | 'AlreadyReplaced' | 'Alrea
 export type BeatReissueFlag = 'new_wallet_recent' | 'new_wallet_linked_by_old_wallet' | 'recent_cancel' | 'earlier_reissue' | 'follow_up_reissue' | 'clash'
 /** How a session signed in (the `am` token claim); `unknown` for tokens issued before it was recorded. */
 export type SignInMethod = 'wallet' | 'email' | 'oauth' | 'unknown'
+/** What the person says happened to the old wallet. For the reviewer only: both end in the same block (BEATs and the account). */
+export const BEAT_REISSUE_LOSSES = ['lost', 'stolen'] as const
+export type BeatReissueLoss = (typeof BEAT_REISSUE_LOSSES)[number]
 export const BEAT_REISSUE_REASON_MAX = 1000
 export const BEAT_REISSUE_NOTE_MAX = 1000
 /** The most ids in one `reissue` call (VirviBeat.MAX_BATCH). */

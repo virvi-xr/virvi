@@ -11,7 +11,7 @@ import { linkWalletGrants } from '../auth/permissions.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
 import { convertTrial, isTrialGone, mergeTrial, movedHeadsetsField, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { linkVerifiedWallet, resolveVerifiedWalletUser } from '../auth/wallet-users.js'
-import { isWalletBlocked, signInOf } from '../auth/wallet-blocks.js'
+import { signInOf, walletBlockedOn, walletSignInBlocked } from '../auth/wallet-blocks.js'
 import type { SignInMethod } from '@virvixr/shared'
 import { claimWalletInvites } from '../studio/invites.js'
 import { issueWalletSession } from '../auth/sessions.js'
@@ -100,8 +100,9 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: 'Invalid signature' })
     }
     if (recovered !== challenge.address) return reply.status(401).send({ error: 'Invalid signature' })
-    // A blocked wallet (a reissue's compromised wallet, or one an admin unlinked) neither signs in nor links (LIV-11)
-    if (await isWalletBlocked(recovered)) return reply.status(403).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to Virvi.' })
+    // A blocked wallet (a reissue's compromised wallet, or one an admin unlinked) still on the account that blocked it
+    // doesn't sign in (LIV-11); once off it, it signs up as a new account
+    if (await walletSignInBlocked(recovered)) return reply.status(403).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to this account.' })
 
     const trialId = await trialFromBearer(app, request)
     const fromTrial = trialId ? await signInFromTrial(trialId, recovered, request.body?.fromAction) : null
@@ -121,8 +122,10 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
       }
       const actor = actorFromClaims(bearer)
       if (bearer!.kind !== 'account' || bearer!.refresh || !actor.userId || !actor.verified) return reply.status(401).send({ error: 'Invalid token' })
-      // The linking session's own wallet must not be blocked either (its access token would be refused elsewhere)
-      if (bearer!.wallet && (await isWalletBlocked(bearer!.wallet))) return reply.status(401).send({ error: 'wallet_blocked' })
+      // The linking session's own wallet must not be blocked on this account (its access token would be refused elsewhere),
+      // and a wallet blocked on this account is never linked back to it
+      if (bearer!.wallet && (await walletBlockedOn(bearer!.wallet, actor.userId))) return reply.status(401).send({ error: 'wallet_blocked' })
+      if (await walletBlockedOn(recovered, actor.userId)) return reply.status(403).send({ error: 'wallet_blocked', message: 'This wallet was blocked on this account.' })
       const result = await linkVerifiedWallet(actor.userId, recovered, { ...signInOf(bearer), how: 'link' })
       if (result === 'conflict') return reply.status(409).send({ error: 'That wallet is linked to another account' })
       await linkWalletGrants(actor.userId, recovered)

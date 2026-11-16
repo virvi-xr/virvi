@@ -14,7 +14,7 @@ import { sendPasswordResetEmail } from '../services/email.js'
 import { initialRoleForNewUser } from '../auth/roles.js'
 import { linkWalletGrants } from '../auth/permissions.js'
 import { resolveVerifiedWalletUser } from '../auth/wallet-users.js'
-import { isWalletBlocked } from '../auth/wallet-blocks.js'
+import { walletBlockedOn, walletSignInBlocked } from '../auth/wallet-blocks.js'
 import { verifyDclSceneRequest, hasDclAuthHeaders } from '../middleware/dcl-auth.js'
 import { bindSceneRequest, type SceneBinding } from '../auth/scene-binding.js'
 import type { SessionClaims } from '../auth/tokens.js'
@@ -188,13 +188,13 @@ export default async function authRoutes(app: FastifyInstance) {
         return reply.status(401).send({ error: 'User not found' })
       }
 
-      // A wallet session lives only while its wallet is unblocked and still on this account (LIV-11 reissue: an approved
+      // A wallet session lives only while its wallet is unblocked on this account and still on it (LIV-11 reissue: an approved
       // reissue blocks the old wallet; an admin unlink blocks and removes one)
       if (decoded.kind === 'account' && decoded.wallet) {
         const w = decoded.wallet.toLowerCase()
         let blocked: boolean
         try {
-          blocked = await isWalletBlocked(w)
+          blocked = await walletBlockedOn(w, user.id)
         } catch {
           return reply.status(503).send({ error: 'auth_unavailable' })
         }
@@ -322,8 +322,9 @@ export default async function authRoutes(app: FastifyInstance) {
         `preview:${platformUser?.id || platformUser?.walletAddress || crypto.randomUUID()}`
 
       let dbUser
-      if (verifiedWallet && (await isWalletBlocked(verifiedWallet))) {
-        return reply.status(403).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to Virvi.' })
+      // Still on the account that blocked it (LIV-11): no sign-in. Once off it, it signs up as a new account
+      if (verifiedWallet && (await walletSignInBlocked(verifiedWallet))) {
+        return reply.status(403).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to this account.' })
       }
       if (verifiedWallet) {
         dbUser = await resolveVerifiedWalletUser(verifiedWallet, displayName, 'visitor')

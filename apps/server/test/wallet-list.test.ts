@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { Wallet } from 'ethers'
+import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { userAuthMethods, walletBlocks } from '../src/db/schema.js'
 import { resetDb } from './helpers/db.js'
@@ -53,6 +54,38 @@ describe('GET /api/auth/wallets', () => {
     const by = Object.fromEntries(res.json().wallets.map((x: any) => [x.address, x]))
     expect(by[blocked]).toEqual({ address: blocked, linkedAt: '2026-10-01T10:00:00.000Z', blocked: true })
     expect(by[absorbed]).toEqual({ address: absorbed, linkedAt: linkedAt.toISOString(), blocked: false })
+  })
+
+  it('LIV-11: a blocked wallet still on its account neither signs in nor refreshes there; once unlinked it signs up as a new account, never links back, and its new account is not refused', async () => {
+    const me = await createUser()
+    const w = Wallet.createRandom()
+    const addr = w.address.toLowerCase()
+    expect((await link(w, tokenFor(me))).json()).toMatchObject({ linked: true })
+    await db.insert(walletBlocks).values({ wallet: addr, userId: me.id, reason: 'reissue' })
+
+    const signIn = async (bearer?: string) => {
+      const ch = await app.inject({ method: 'POST', url: '/api/auth/wallet/challenge', payload: { address: w.address } })
+      const { nonce, message } = ch.json()
+      return app.inject({ method: 'POST', url: '/api/auth/wallet/verify', payload: { address: w.address, nonce, signature: await w.signMessage(message) }, headers: bearer ? { authorization: `Bearer ${bearer}` } : {} })
+    }
+    const refuse = await signIn()
+    expect([refuse.statusCode, refuse.json().error]).toEqual([403, 'wallet_blocked'])
+    const old = await app.inject({ method: 'GET', url: '/api/auth/wallets', headers: { authorization: `Bearer ${tokenFor(me, { wallet: addr })}` } })
+    expect([old.statusCode, old.json().error]).toEqual([401, 'wallet_blocked'])
+
+    // Unlinked (a reissue done, or an admin unlink): a new, separate account
+    await db.delete(userAuthMethods).where(eq(userAuthMethods.identifier, addr))
+    const fresh = await signIn()
+    expect(fresh.statusCode, fresh.body).toBe(200)
+    expect(fresh.json().user.id).not.toBe(me.id)
+    const mine = await app.inject({ method: 'GET', url: '/api/auth/wallets', headers: { authorization: `Bearer ${fresh.json().accessToken}` } })
+    expect(mine.statusCode).toBe(200)
+    expect(mine.json().wallets).toEqual([{ address: addr, linkedAt: expect.any(String), blocked: true }])
+    // The old account's sessions carrying it stay refused, and it can't be linked back there
+    expect((await app.inject({ method: 'GET', url: '/api/auth/wallets', headers: { authorization: `Bearer ${tokenFor(me, { wallet: addr })}` } })).statusCode).toBe(401)
+    await db.delete(userAuthMethods).where(eq(userAuthMethods.identifier, addr))
+    const back = await link(w, tokenFor(me, { wallet: null }))
+    expect([back.statusCode, back.json().error]).toEqual([403, 'wallet_blocked'])
   })
 
   it('requires a signed-in user', async () => {

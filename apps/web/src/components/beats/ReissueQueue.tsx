@@ -7,7 +7,7 @@ import { CopyWallet } from '@/components/CopyWallet'
 import { Badge, ConfirmAction, tableHeadBand } from '@/components/ui'
 import {
   APPROVE_WARNING, FLAG_LABELS, REISSUE_STATUS_LABELS, REVIEW_WHY, SAFE_ORDER_NOTE, SAFE_STATE_NOTE, SAFE_STEPS, UNLINK_WARNING, WITHDRAW_WARNING,
-  blockerLabel, chainLabel, itemStateLabel, linkedByLabel, requestChains, revocationNote,
+  blockerLabel, chainLabel, itemStateLabel, linkedByLabel, lossLabel, requestChains, revocationNote,
   type AdminReissueFile, type AdminReissueRequest, type ProposedReissueFile, type SafeBatchPreview,
 } from '@/lib/reissue'
 
@@ -240,6 +240,7 @@ export function ReissueRequestCard({ r, a }: { r: AdminReissueRequest; a: Reissu
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
         <dt className="text-gray-400">Old wallet</dt><dd><CopyWallet wallet={r.oldWallet} /></dd>
         <dt className="text-gray-400">New wallet</dt><dd><CopyWallet wallet={r.newWallet} /></dd>
+        <dt className="text-gray-400">Lost or stolen</dt><dd>{lossLabel(r.loss)}</dd>
         <dt className="text-gray-400">Reason</dt><dd className="whitespace-pre-wrap">{r.reason ?? '(deleted)'}</dd>
         {r.reviewNote && <><dt className="text-gray-400">Note</dt><dd className="whitespace-pre-wrap">{r.reviewNote}</dd></>}
         <dt className="text-gray-400">Other sign-ins</dt>

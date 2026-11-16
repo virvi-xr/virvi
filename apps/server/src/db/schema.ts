@@ -22,7 +22,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueItemState, BeatReissueFileStatus, SignInMethod } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, SignInMethod } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -2803,6 +2803,8 @@ export const beatReissueRequests = pgTable('beat_reissue_requests', {
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
   oldWallet: text('old_wallet').notNull(), // lower-case
   newWallet: text('new_wallet').notNull(), // lower-case
+  // lost or stolen, as the person said; null on requests from before it was asked
+  loss: text('loss').$type<BeatReissueLoss>(),
   reason: text('reason'),
   status: text('status').$type<BeatReissueStatus>().notNull().default('pending'),
   // The sessions that filed and cancelled it: { method, wallet, email }

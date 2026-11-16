@@ -5,7 +5,7 @@ import { moveStudioData } from '../studio/merge.js'
 import { UNLINKED_CLAIM } from '../beats/retention.js'
 import { claimWalletInvites } from '../studio/invites.js'
 import { initialRoleForNewUser } from './roles.js'
-import { WalletBlockedError, isWalletBlocked } from './wallet-blocks.js'
+import { WalletBlockedError, walletSignInBlocked } from './wallet-blocks.js'
 
 const isVerified = (m: { metadata: unknown }) => (m.metadata as { verified?: unknown } | null)?.verified === true
 
@@ -23,8 +23,9 @@ async function findWalletMethod(wallet: string) {
  */
 export async function resolveVerifiedWalletUser(wallet: string, displayName: string, as: 'visitor' | 'account') {
   const w = wallet.toLowerCase()
-  // A blocked wallet (LIV-11 reissue) is never signed in or up again, whichever path asks (signed fetch, setup, ...)
-  if (await isWalletBlocked(w)) throw new WalletBlockedError()
+  // A wallet still on the account that blocked it (LIV-11 reissue) never signs in to it, whichever path asks (signed
+  // fetch, setup, ...); once off it, it signs up as a new account (it still can't earn BEATs)
+  if (await walletSignInBlocked(w)) throw new WalletBlockedError()
   const existing = await findWalletMethod(w)
   if (existing && isVerified(existing)) {
     // updated_at marks the wallet the account last signed in with (the wall of fame names that one)

@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import { BEAT_CARD_LEAD_MS, BEAT_CLAIM_GRACE_MS, BEAT_CONSENT_VERSION } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { beatClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets } from '../src/db/schema.js'
+import { beatClaims, beats, beatScenes, hyperfyPairings, hyperfyWorlds, mediaAssets, walletBlocks } from '../src/db/schema.js'
 import { issueHyperfyPass, issueScenePass, sceneClaims } from '../src/auth/scene-pass.js'
 import { markBeatLive } from '../src/beats/live.js'
 import { setBeatPlatformCheckForTests } from '../src/beats/platform-checks.js'
@@ -161,6 +161,18 @@ describe('BEAT visitor routes (LIV-11)', () => {
   })
 
   describe('track and check-in', () => {
+    it('a blocked wallet (a reissue\'s old wallet) can neither start tracking nor claim, on its old account or a new one', async () => {
+      const b = await seed()
+      const v = await present(b, 600)
+      // On the account it was taken from: no session at all
+      await db.insert(walletBlocks).values({ wallet: v.wallet.toLowerCase(), userId: v.user.id, reason: 'reissue' })
+      for (const res of [await track(v, b), await claim(v, b)]) expect([res.statusCode, res.json().error]).toEqual([401, 'wallet_blocked'])
+      expect((await claimRow(b.id, v.user.id)).status).toBe('present')
+      // Signed up again as a separate account (the block is on BEATs everywhere, not on Virvi): no BEATs either
+      await db.update(walletBlocks).set({ userId: host.id })
+      for (const res of [await track(v, b), await claim(v, b)]) expect([res.statusCode, res.json().error]).toEqual([403, 'beats_blocked'])
+      expect((await claimRow(b.id, v.user.id)).status).toBe('present')
+    })
     it('tracking without a wallet gets no_wallet', async () => {
       const b = await seed()
       const u = await createUser()

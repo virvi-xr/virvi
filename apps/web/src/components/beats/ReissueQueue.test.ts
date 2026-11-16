@@ -11,7 +11,7 @@ const a: ReissueActions = {
   busy: false, approve: noop, reject: noop, preview: async () => null, propose: async () => null, download: noop, saveFile: noop, withdraw: noop, unlink: noop, liftBlock: noop,
 }
 const req = (over: Partial<AdminReissueRequest> = {}): AdminReissueRequest => ({
-  id: 'r1', oldWallet: OLD, newWallet: NEW, reason: 'Phished', status: 'pending', reviewNote: null, createdAt: '2026-11-15T10:00:00Z', reviewedAt: null,
+  id: 'r1', oldWallet: OLD, newWallet: NEW, loss: 'stolen', reason: 'Phished', status: 'pending', reviewNote: null, createdAt: '2026-11-15T10:00:00Z', reviewedAt: null,
   proposedAt: null, doneAt: null, cancelledAt: null, withdrawnAt: null, account: { id: 'u', displayName: 'Ana', email: 'ana@example.com' }, reviewer: null,
   filedVia: { method: 'email', email: 'ana@example.com' }, cancelledVia: null, dataDeletedAt: null, audit: [], flags: ['new_wallet_recent'],
   otherSignIns: { email: true, password: false, oauth: false },
@@ -30,7 +30,8 @@ describe('ReissueRequestCard', () => {
     expect(h).toContain('Wait until it ends')
     expect(h).toContain('Wallets to decide on')
     expect(h).toContain('Unlink and block')
-    expect(h).toContain('Approving blocks the old wallet from Virvi everywhere')
+    expect(h).toContain('Approving blocks the old wallet from this account and from BEATs')
+    expect(h).toContain('Lost or stolen</dt><dd>Stolen')
   })
   it('an approved request offers the Safe files and Withdraw, with the Safe warning', () => {
     const h = html(req({ status: 'approved', reviewWallets: [], audit: [{ at: 'x', by: null, action: 'revoked_credentials', note: "Removed 1 API key and 0 paired devices; the old wallet's sessions are refused." }] }))

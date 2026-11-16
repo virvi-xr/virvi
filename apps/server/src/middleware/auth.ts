@@ -11,7 +11,7 @@ import { dclHudNeedsRedeploy } from '../auth/hud-protocol.js'
 import { noteDclHud } from '../scenes/hud-version.js'
 import { config } from '../config.js'
 import { sessionRole } from '../auth/admin.js'
-import { isWalletBlocked } from '../auth/wallet-blocks.js'
+import { walletBlockedOn } from '../auth/wallet-blocks.js'
 import { HUD_VERSION_HEADER, REDEPLOY_REQUIRED } from '@virvixr/shared'
 
 const TRIAL_TOUCH_MS = 10 * 60_000
@@ -145,16 +145,17 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     if (decoded.kind !== 'account' && decoded.kind !== 'scene') {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Session expired — sign in again' })
     }
-    // A blocked wallet's sessions end at once (LIV-11 reissue: the compromised wallet, or one an admin unlinked)
+    // A blocked wallet's sessions on the account it was taken from end at once (LIV-11 reissue: the compromised
+    // wallet, or one an admin unlinked); a separate account it signed up later is not affected
     if (decoded.wallet && decoded.verified !== false) {
       let blocked: boolean
       try {
-        blocked = await isWalletBlocked(decoded.wallet)
+        blocked = await walletBlockedOn(decoded.wallet, decoded.id)
       } catch {
         // Fails closed, but as a retry: a database blip must not sign every wallet session out
         return reply.status(503).send({ error: 'auth_unavailable', message: 'Try again in a moment.' })
       }
-      if (blocked) return reply.status(401).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to Virvi.' })
+      if (blocked) return reply.status(401).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to this account.' })
     }
     // A token claiming admin is checked against the database, so a demotion counts at once for every check that reads
     // request.user.role (src/auth/admin.ts sessionRole); any other claim is used as it is, with no read

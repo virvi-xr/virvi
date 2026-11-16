@@ -1,8 +1,8 @@
 import { and, desc, eq, gte, inArray, isNotNull, ne, or, sql } from 'drizzle-orm'
 import { getAddress, id as keccakText, isAddress } from 'ethers'
 import {
-  BEAT_CHAINS, BEAT_CHAIN_INFO, BEAT_REISSUE_MAX_BATCH, BEAT_REISSUE_NOTE_MAX, BEAT_REISSUE_OPEN, BEAT_REISSUE_REASON_MAX, beatTxUrl,
-  type BeatChain, type BeatReissueBlocker, type BeatReissueFileStatus, type BeatReissueFlag, type BeatReissueItemState, type BeatReissueStatus,
+  BEAT_CHAINS, BEAT_CHAIN_INFO, BEAT_REISSUE_MAX_BATCH, BEAT_REISSUE_NOTE_MAX, BEAT_REISSUE_LOSSES, BEAT_REISSUE_OPEN, BEAT_REISSUE_REASON_MAX, beatTxUrl,
+  type BeatChain, type BeatReissueBlocker, type BeatReissueFileStatus, type BeatReissueFlag, type BeatReissueItemState, type BeatReissueLoss, type BeatReissueStatus,
   type SignInMethod,
 } from '@virvixr/shared'
 import { config } from '../config.js'
@@ -90,6 +90,8 @@ export interface PublicReissueRequest {
   id: string
   oldWallet: string
   newWallet: string
+  /** lost or stolen, as the person said; null on requests from before it was asked. */
+  loss: BeatReissueLoss | null
   reason: string | null
   status: BeatReissueStatus
   /** The reviewer's note (shown to the person). */
@@ -154,7 +156,7 @@ async function beatsOf(r: Req): Promise<ReissueBeat[]> {
 
 async function toPublic(r: Req): Promise<PublicReissueRequest> {
   return {
-    id: r.id, oldWallet: r.oldWallet, newWallet: r.newWallet, reason: r.reason, status: r.status, reviewNote: r.reviewNote,
+    id: r.id, oldWallet: r.oldWallet, newWallet: r.newWallet, loss: r.loss, reason: r.reason, status: r.status, reviewNote: r.reviewNote,
     createdAt: r.createdAt.toISOString(), reviewedAt: iso(r.reviewedAt), proposedAt: iso(r.proposedAt), doneAt: iso(r.doneAt),
     cancelledAt: iso(r.cancelledAt), withdrawnAt: iso(r.withdrawnAt), beats: await beatsOf(r),
   }
@@ -171,6 +173,8 @@ export async function createReissueRequest(c: ReissueCaller, body: Record<string
   const oldWallet = parseWallet(body.oldWallet)
   const newWallet = parseWallet(body.newWallet)
   if (oldWallet === newWallet) throw new BeatError(400, 'same_wallet', 'The new wallet must differ from the old one.')
+  const loss = BEAT_REISSUE_LOSSES.find((l) => l === body.loss)
+  if (!loss) throw new BeatError(400, 'bad_loss', 'Say whether the old wallet was lost or stolen.')
   const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
   if (!reason || [...reason].length > BEAT_REISSUE_REASON_MAX) {
     throw new BeatError(400, 'bad_reason', `Tell us what happened, in 1 to ${BEAT_REISSUE_REASON_MAX} characters.`)
@@ -188,7 +192,7 @@ export async function createReissueRequest(c: ReissueCaller, body: Record<string
     .where(and(eq(beatReissueRequests.userId, c.userId), inArray(beatReissueRequests.status, [...BEAT_REISSUE_OPEN])))
   if (open.length) throw requestOpen()
   try {
-    const [r] = await db.insert(beatReissueRequests).values({ userId: c.userId, oldWallet, newWallet, reason, filedVia: c.signIn, createdAt: now, updatedAt: now }).returning()
+    const [r] = await db.insert(beatReissueRequests).values({ userId: c.userId, oldWallet, newWallet, loss, reason, filedVia: c.signIn, createdAt: now, updatedAt: now }).returning()
     return toPublic(r)
   } catch (err) {
     // Two at once: the open-request index refuses the second

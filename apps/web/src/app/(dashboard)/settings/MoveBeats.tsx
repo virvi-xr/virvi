@@ -7,8 +7,8 @@ import { useAuth } from '@/lib/auth'
 import { useBeatAvailability } from '@/lib/use-beats'
 import { Badge, ConfirmAction, Skeleton } from '@/components/ui'
 import {
-  APPROVED_NOTE, BEAT_REISSUE_REASON_MAX, MOVE_INTRO, MOVE_TITLE, MOVE_WHAT_HAPPENS, REISSUE_STATUS_LABELS, WALLET_BLOCKED_LABEL, chainLabel, isOpen, itemStateLabel, moveError, moveFormError,
-  type ReissueRequest,
+  APPROVED_NOTE, BEAT_REISSUE_LOSSES, BEAT_REISSUE_REASON_MAX, LOSS_LABELS, MOVE_INTRO, MOVE_TITLE, MOVE_WHAT_HAPPENS, REISSUE_STATUS_LABELS, WALLET_BLOCKED_LABEL, chainLabel, isOpen, itemStateLabel, lossLabel, moveError, moveFormError,
+  type BeatReissueLoss, type ReissueRequest,
 } from '@/lib/reissue'
 
 const INPUT = 'mt-1 w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400'
@@ -25,7 +25,7 @@ function MoveBeatsCard() {
   const [requests, setRequests] = useState<ReissueRequest[] | null>(null)
   const [wallets, setWallets] = useState<Array<{ address: string; blocked: boolean }>>([])
   const [loadError, setLoadError] = useState(false)
-  const [form, setForm] = useState({ oldWallet: '', newWallet: '', reason: '' })
+  const [form, setForm] = useState<{ oldWallet: string; newWallet: string; loss: BeatReissueLoss | ''; reason: string }>({ oldWallet: '', newWallet: '', loss: '', reason: '' })
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -47,8 +47,8 @@ function MoveBeatsCard() {
     if (why) { setError(why); return }
     setBusy(true); setError(null)
     try {
-      await api.createReissueRequest({ oldWallet: form.oldWallet.trim(), newWallet: form.newWallet.trim(), reason: form.reason.trim() })
-      setForm({ oldWallet: '', newWallet: '', reason: '' })
+      await api.createReissueRequest({ oldWallet: form.oldWallet.trim(), newWallet: form.newWallet.trim(), loss: form.loss as BeatReissueLoss, reason: form.reason.trim() })
+      setForm({ oldWallet: '', newWallet: '', loss: '', reason: '' })
       await load()
     } catch (err) { setError(moveError(err)) }
     setBusy(false)
@@ -91,6 +91,18 @@ function MoveBeatsCard() {
                 </select>
                 {wallets.filter((w) => !w.blocked).length < 2 && <p className="mt-1 text-xs text-gray-400">Link your new wallet under Linked Wallets first.</p>}
               </div>
+              <fieldset>
+                <legend className="block text-xs text-gray-400">Was the old wallet lost or stolen?</legend>
+                <div className="mt-1 flex gap-4 text-sm">
+                  {BEAT_REISSUE_LOSSES.map((l) => (
+                    <label key={l} className="inline-flex items-center gap-1.5">
+                      <input type="radio" name="move-loss" value={l} checked={form.loss === l} onChange={() => setForm({ ...form, loss: l })} />
+                      {LOSS_LABELS[l]}
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-gray-400">Either way, the old wallet is blocked from your account and from BEATs once Virvi approves.</p>
+              </fieldset>
               <div>
                 <label htmlFor="move-reason" className="block text-xs text-gray-400">What happened to the old wallet?</label>
                 <textarea id="move-reason" rows={3} maxLength={BEAT_REISSUE_REASON_MAX} className={INPUT} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
@@ -103,7 +115,7 @@ function MoveBeatsCard() {
               {requests.map((r) => (
                 <li key={r.id} className="rounded-md border border-gray-800 p-3 text-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-mono text-xs text-gray-300">{r.oldWallet} → {r.newWallet}</span>
+                    <span className="font-mono text-xs text-gray-300">{r.oldWallet} → {r.newWallet}{r.loss ? <span className="ml-2 font-sans text-gray-400">({lossLabel(r.loss)})</span> : null}</span>
                     <Badge tone={r.status === 'done' ? 'success' : r.status === 'rejected' || r.status === 'withdrawn' || r.status === 'cancelled' ? 'neutral' : 'info'}>{REISSUE_STATUS_LABELS[r.status]}</Badge>
                   </div>
                   <p className="mt-1 text-xs text-gray-400">

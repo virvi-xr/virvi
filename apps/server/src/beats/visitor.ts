@@ -16,6 +16,7 @@ import { beatImageUrl } from './metadata.js'
 import { claimHeld } from './service.js'
 import { platformCheck, type BeatPlatform } from './platform-checks.js'
 import { isNewWallet, takeNewWallet } from './new-wallet-limit.js'
+import { isWalletBlocked } from '../auth/wallet-blocks.js'
 
 /**
  * BEATs (LIV-11), the visitor side: the scene's current BEAT, opting in, check-ins, claiming and stopping. No Fastify
@@ -39,6 +40,8 @@ export interface VisitorCaller {
   ip?: string | null
 }
 
+/** A wallet blocked by a reissue or an admin unlink (LIV-11) never earns another BEAT, on any account. */
+const beatsBlocked = () => new BeatError(403, 'beats_blocked', "This wallet can't collect BEATs any more.")
 const profileRequired = () => new BeatError(403, 'profile_required', 'Set up your Decentraland profile (an avatar) first, then come back to collect this BEAT.')
 
 const tooManyNewWallets = () => new BeatError(429, 'too_many_new_wallets', 'Too many new wallets have collected BEATs from your network. Try again later.')
@@ -179,6 +182,7 @@ export async function trackBeat(sceneId: string, beatId: string, c: VisitorCalle
   // Checked before tracking starts too, so a wallet that can't claim learns it now rather than after its time
   if (!(await platformCheck(c.platform ?? 'decentraland', c.wallet, now))) throw profileRequired()
   await checkNewWallet(c.ip, c.wallet, now)
+  if (await isWalletBlocked(c.wallet)) throw beatsBlocked()
   const wallet = c.wallet.toLowerCase()
   const displayName = cleanDisplayName(c.signInName, wallet)
   await db.transaction(async (tx) => {
@@ -240,6 +244,7 @@ export async function claimBeat(
   if (pre?.status === 'present') {
     if (!(await platformCheck(c.platform ?? 'decentraland', pre.wallet, now))) throw profileRequired()
     await checkNewWallet(c.ip, pre.wallet, now)
+    if (await isWalletBlocked(pre.wallet)) throw beatsBlocked()
   }
   await db.transaction(async (tx) => {
     const [b] = await tx.select().from(beats).where(eq(beats.id, seen.id)).for('update')
