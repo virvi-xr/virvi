@@ -74,7 +74,10 @@ export default function MediaPage() {
       await api.deleteMedia(assetId)
       setAssets(prev => prev.filter(a => a.id !== assetId))
     } catch (err: any) {
-      setError('Delete failed: ' + (err.message || 'Unknown error'))
+      // LIV-11: the art of a BEAT that is paid or running can't be deleted
+      setError(err?.body?.error === 'in_use_by_beat'
+        ? "This image is the artwork of a BEAT that is paid for or running, so it can't be deleted until that BEAT has ended."
+        : 'Delete failed: ' + (err.message || 'Unknown error'))
     }
   }
 

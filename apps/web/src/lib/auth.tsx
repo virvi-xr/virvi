@@ -68,6 +68,8 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const code = (await res.json()).error
     if (code === 'trial_expired') return 'Your trial session ran out. Reload the page and try again.'
+    // LIV-11: a wallet blocked after a BEAT reissue (or by an admin) can't sign in or be linked
+    if (code === 'wallet_blocked' || code === 'wallet_unlinked') return 'This wallet can no longer sign in to Virvi.'
     return code || fallback
   } catch {
     return fallback
