@@ -54,7 +54,7 @@ describe('uninstallVirvi', () => {
   })
 
   it('takes out a dependency an earlier Virvi installed, at any range Virvi has used', async () => {
-    for (const old of ['^2.5.0', '^2.6.0', '^2.7.0', '^2.8.0']) {
+    for (const old of ['^2.5.0', '^2.6.0', '^2.7.0', '^2.8.0', '^2.13.0', '^2.14.0', '^2.15.0', '^2.16.0']) {
       const installed = (await installVirvi(folder({ 'package.json': pkg({ left: '1.0.0' }), 'src/index.ts': MAIN }))).files
       // As an older Virvi left it: the same edits, its own range
       const p = JSON.parse(strFromU8(installed.get('package.json')!))
