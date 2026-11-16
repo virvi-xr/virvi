@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { Wallet, parseEther } from 'ethers'
 import { BEAT_CLAIM_GRACE_MS, type BeatChain } from '@virvixr/shared'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
 import { beatClaims, beatMintBatches, beatPayments, beats } from '../src/db/schema.js'
 import { setBeatChainClientForTests } from '../src/beats/chain.js'
-import { BEAT_RECEIVER_GAS } from '../src/beats/abi.js'
+import { BEAT_GAS_PER_RECIPIENT } from '../src/beats/abi.js'
 import { recordJobFailure } from '../src/errors/record.js'
 import { sweepBeatPayments } from '../src/beats/payments.js'
 import {
@@ -126,28 +126,30 @@ describe('BEAT minting job (LIV-11)', () => {
     expect((await batches()).map((x) => [x.kind, x.status])).toEqual([['create', 'confirmed']])
   })
 
-  it('250 claims go out as 200 then 50, never two open at once, and all end minted', async () => {
+  it('250 claims go out as 100, 100 then 50 (BEAT_MAX_BATCH), never two open at once, and all end minted', async () => {
     const b = await seed({ created: true })
     const ws = Array.from({ length: 250 }, wallet)
     await claims(b.id, ws)
     await runBeatTick(T0)
     expect(fake.mempool()).toHaveLength(1)
-    expect(mintWallets(fake.mempool()[0])).toEqual(ws.slice(0, 200).map(lc))
-    expect(await statusCount(b.id)).toEqual({ minting: 200, claimed: 50 })
+    expect(mintWallets(fake.mempool()[0])).toEqual(ws.slice(0, 100).map(lc))
+    expect(await statusCount(b.id)).toEqual({ minting: 100, claimed: 150 })
     await runBeatTick(at(MIN))
     expect(fake.mempool()).toHaveLength(1)
     fake.mine(6)
     await runBeatTick(at(2 * MIN))
-    expect(fake.mempool()).toHaveLength(1)
+    expect(mintWallets(fake.mempool()[0])).toEqual(ws.slice(100, 200).map(lc))
+    fake.mine(6)
+    await runBeatTick(at(3 * MIN))
     expect(mintWallets(fake.mempool()[0])).toEqual(ws.slice(200).map(lc))
     expect(await statusCount(b.id)).toEqual({ minted: 200, minting: 50 })
     fake.mine(6)
-    await runBeatTick(at(3 * MIN))
+    await runBeatTick(at(4 * MIN))
     expect(await statusCount(b.id)).toEqual({ minted: 250 })
     expect(fake.mintedCount(BigInt(b.tokenId!))).toBe(250)
     const done = await claimsOf(b.id)
     expect(done.every((c) => c.mintTx && c.mintedAt)).toBe(true)
-    expect((await batches()).map((x) => [x.nonce, x.status, x.wallets?.length])).toEqual([[0, 'confirmed', 200], [1, 'confirmed', 50]])
+    expect((await batches()).map((x) => [x.nonce, x.status, x.wallets?.length])).toEqual([[0, 'confirmed', 100], [1, 'confirmed', 100], [2, 'confirmed', 50]])
   })
 
   it('on Polygon a receipt with 29 confirmations does not confirm; 30 does', async () => {
@@ -165,29 +167,49 @@ describe('BEAT minting job (LIV-11)', () => {
     expect(await statusCount(b.id)).toEqual({ minted: 1 })
   })
 
-  it('Review Focus 1: EOAs go first, then each contract wallet alone; a reverting one fails only its claim', async () => {
+  it('attacker I2: wallets with code go in the same batch as the rest, every recipient budgeted as if it had code', async () => {
     const b = await seed({ created: true })
-    const [e1, e2, c1, e3, c2] = [wallet(), wallet(), wallet(), wallet(), wallet()]
+    const [e1, c1, e2, c2] = [wallet(), wallet(), wallet(), wallet()]
     fake.setCode(c1)
     fake.setCode(c2)
-    fake.revertForWallet(c1, 'ERC1155InvalidReceiver')
-    await claims(b.id, [e1, e2, c1, e3, c2])
+    await claims(b.id, [e1, c1, e2, c2])
     await runBeatTick(T0)
-    expect(fake.mempool()).toHaveLength(1)
-    expect(mintWallets(fake.mempool()[0])).toEqual([e1, e2, e3].map(lc))
+    const tx = fake.mempool()[0]
+    expect(mintWallets(tx)).toEqual([e1, c1, e2, c2].map(lc))
+    expect(tx.gasLimit).toBe(fake.gasFor(tx.call) * 110n / 100n + 4n * BEAT_GAS_PER_RECIPIENT)
+    expect((await batches())[0].codeCount).toBe(2)
     fake.mine(6)
     await runBeatTick(at(MIN))
-    // c1 reverted at estimate and failed; c2 went out alone with room for its receiver
-    const tx = fake.mempool()[0]
-    expect(mintWallets(tx)).toEqual([lc(c2)])
-    const est = fake.gasFor(tx.call)
-    expect(tx.gasLimit).toBe((est + BEAT_RECEIVER_GAS) * 110n / 100n)
+    expect(await statusCount(b.id)).toEqual({ minted: 4 })
+  })
+
+  it('attacker I1: wallets that gain code after the estimate are covered by the budget and the batch still mints', async () => {
+    const b = await seed({ created: true })
+    const ws = Array.from({ length: 100 }, wallet)
+    await claims(b.id, ws)
+    await runBeatTick(T0)
+    // A front-run delegates 40 of them before the batch is mined
+    for (const w of ws.slice(0, 40)) fake.setCode(w)
     fake.mine(6)
-    await runBeatTick(at(2 * MIN))
+    await runBeatTick(at(MIN))
+    expect(await statusCount(b.id)).toEqual({ minted: 100 })
+    expect(fake.minedTxs().every((t) => t.ok)).toBe(true)
+  })
+
+  it('a reverting wallet is found one at a time (ruling 5) and fails only its own claim', async () => {
+    const b = await seed({ created: true })
+    const [e1, c1, e2] = [wallet(), wallet(), wallet()]
+    fake.setCode(c1)
+    fake.revertForWallet(c1, 'ERC1155InvalidReceiver')
+    await claims(b.id, [e1, c1, e2])
+    for (let i = 0; i < 4; i++) {
+      await runBeatTick(at(i * MIN))
+      fake.mine(6)
+    }
+    await runBeatTick(at(5 * MIN))
     const byWallet = Object.fromEntries((await claimsOf(b.id)).map((c) => [lc(c.wallet), c]))
-    expect(byWallet[lc(c1)].status).toBe('failed')
-    expect(byWallet[lc(c1)].failReason).toBe('ERC1155InvalidReceiver')
-    for (const w of [e1, e2, e3, c2]) expect(byWallet[lc(w)].status).toBe('minted')
+    expect(byWallet[lc(c1)]).toMatchObject({ status: 'failed', failReason: 'ERC1155InvalidReceiver' })
+    for (const w of [e1, e2]) expect(byWallet[lc(w)].status).toBe('minted')
   })
 
   describe('Review Focus 2: crash recovery', () => {
@@ -285,46 +307,56 @@ describe('BEAT minting job (LIV-11)', () => {
     expect(beatPaused('polygon')).toEqual({ paused: true, reason: 'no_client' })
   })
 
-  it('5 broadcast failures fail the claims and record a job failure; retryFailedClaims puts them back and they mint', async () => {
+  it('money I3: 5 broadcast refusals give the unsent batch up with a job failure; its claims go back to claimed and mint', async () => {
     const b = await seed({ created: true })
     const ws = [wallet(), wallet(), wallet()]
     await claims(b.id, ws)
-    fake.failBroadcast('NETWORK_ERROR', 5)
+    fake.failBroadcast('INVALID_ARGUMENT', 5)
     await runBeatTick(T0)
     let [row] = await batches()
     expect(row.status).toBe('sending')
     expect(row.attempts).toBe(1)
     expect(row.nextAttemptAt).toEqual(at(2 * MIN))
-    // Not before its backoff
     await runBeatTick(at(MIN))
     expect((await batches())[0].attempts).toBe(1)
     for (let i = 1; i <= 3; i++) {
       await runBeatTick(at(i * H))
       ;[row] = await batches()
       expect(row.attempts).toBe(i + 1)
-      expect(row.nextAttemptAt).toEqual(new Date(at(i * H).getTime() + 2 ** (i + 1) * MIN))
     }
     expect(recordJobFailure).not.toHaveBeenCalled()
     await runBeatTick(at(4 * H))
-    ;[row] = await batches()
-    expect(row.status).toBe('failed')
-    expect(await statusCount(b.id)).toEqual({ failed: 3 })
+    // The given-up batch's nonce was never used: the re-planned batch took its place (and its nonce)
+    const all = await batches()
+    expect(all).toHaveLength(1)
+    expect(all[0]).toMatchObject({ status: 'sent', nonce: 0 })
     expect(recordJobFailure).toHaveBeenCalledTimes(1)
     const [job, err] = vi.mocked(recordJobFailure).mock.calls[0]
     expect(job).toMatch(/^beat/)
     for (const w of ws) expect(String((err as Error).message).toLowerCase()).not.toContain(lc(w).slice(2))
-    expect(fake.mempool()).toHaveLength(0)
-
-    expect(await retryFailedClaims(b.id)).toEqual({ retried: 3, skippedClosed: 0 })
-    const back = await claimsOf(b.id)
-    expect(back.every((c) => c.status === 'claimed' && c.failReason === null)).toBe(true)
-    await runBeatTick(at(5 * H))
-    // The failed batch never used its nonce, so the new one takes it again
+    // Never failed: the same tick re-plans them at the same nonce
+    expect(await statusCount(b.id)).toEqual({ minting: 3 })
     expect(fake.mempool()).toHaveLength(1)
     expect(fake.mempool()[0].nonce).toBe(0)
     fake.mine(6)
-    await runBeatTick(at(5 * H + MIN))
+    await runBeatTick(at(4 * H + MIN))
     expect(await statusCount(b.id)).toEqual({ minted: 3 })
+  })
+
+  it('money I3: a batch never broadcast because the RPC is down is not failed; it waits and goes once the RPC is back', async () => {
+    const b = await seed({ created: true })
+    await claims(b.id, [wallet(), wallet()])
+    fake.failBroadcast('NETWORK_ERROR', 8)
+    await runBeatTick(T0)
+    for (let i = 1; i <= 7; i++) await runBeatTick(at(i * H))
+    const [row] = await batches()
+    expect(row.status).toBe('sending')
+    expect(await statusCount(b.id)).toEqual({ minting: 2 })
+    await runBeatTick(at(8 * H))
+    expect((await batches())[0].status).toBe('sent')
+    fake.mine(6)
+    await runBeatTick(at(8 * H + MIN))
+    expect(await statusCount(b.id)).toEqual({ minted: 2 })
   })
 
   it('statuses: paid → live at starts_at, live → ended at ends_at', async () => {
@@ -377,16 +409,14 @@ describe('BEAT minting job (LIV-11)', () => {
     fake.rejectReceiver(r1)
     await claims(b.id, [e1, r1])
     await runBeatTick(T0)
+    expect(mintWallets(fake.mempool()[0])).toEqual([lc(e1), lc(r1)])
     fake.mine(6)
     await runBeatTick(at(MIN))
-    expect(mintWallets(fake.mempool()[0])).toEqual([lc(r1)])
-    fake.mine(6)
-    await runBeatTick(at(2 * MIN))
     const byWallet = Object.fromEntries((await claimsOf(b.id)).map((c) => [lc(c.wallet), c]))
     expect(byWallet[lc(e1)].status).toBe('minted')
     expect(byWallet[lc(r1)].status).toBe('failed')
     expect(byWallet[lc(r1)].failReason).toBe('receiver_rejected')
-    expect((await batches()).map((x) => x.status)).toEqual(['confirmed', 'confirmed'])
+    expect((await batches()).map((x) => x.status)).toEqual(['confirmed'])
   })
 
   it('BeatExists on create pauses the chain with id_conflict until an admin clears it', async () => {
@@ -455,18 +485,12 @@ describe('BEAT minting job (LIV-11)', () => {
     const [ce] = await claims(b.id, [e1], { userId: visitor.id })
     const [cr] = await claims(b.id, [r1], { claimedAt: at(-H) })
     await runBeatTick(T0)
-    await db.update(beatClaims).set({ deleteRequested: true }).where(eq(beatClaims.id, ce.id))
+    await db.update(beatClaims).set({ deleteRequested: true }).where(inArray(beatClaims.id, [ce.id, cr.id]))
     fake.mine(6)
     await runBeatTick(at(MIN))
     const [kept] = await db.select().from(beatClaims).where(eq(beatClaims.id, ce.id))
-    expect(kept.status).toBe('minted')
-    expect(kept.userId).toBeNull()
-    expect(kept.displayName).toBeNull()
-    expect(kept.wallet).toBe(e1)
-    // The rejecting receiver is now minting alone; it asks to be deleted, then fails
-    await db.update(beatClaims).set({ deleteRequested: true }).where(and(eq(beatClaims.id, cr.id), eq(beatClaims.status, 'minting')))
-    fake.mine(6)
-    await runBeatTick(at(2 * MIN))
+    expect(kept).toMatchObject({ status: 'minted', userId: null, displayName: null, wallet: e1, secondsPresent: null })
+    // The rejecting receiver was skipped (failed) and asked to be deleted: gone
     expect(await db.select().from(beatClaims).where(eq(beatClaims.id, cr.id))).toHaveLength(0)
   })
 
@@ -573,7 +597,7 @@ describe('BEAT minting job (LIV-11)', () => {
 
   it('BeatExists after an earlier unsent create of ours is still an id_conflict', async () => {
     const b = await seed({ status: 'paid', startsAt: at(H), endsAt: at(10 * H) })
-    fake.failBroadcast('NETWORK_ERROR', 5)
+    fake.failBroadcast('INVALID_ARGUMENT', 5)
     await runBeatTick(T0)
     for (let i = 1; i <= 3; i++) await runBeatTick(at(i * H))
     // Meanwhile someone else's create of that id lands
@@ -823,5 +847,199 @@ describe('BEAT minting job (LIV-11)', () => {
     vi.mocked(sweepBeatPayments).mockRejectedValueOnce(new Error('sweep down'))
     await runBeatTick(at(MIN))
     expect(await statusCount(b.id)).toEqual({ minted: 1, minting: 1 })
+  })
+
+  describe('mainnet fixes (money C1, I1, I3; attacker I1, I2; host review)', () => {
+    it('ruling 4 in the DB: an unexplained revert halves the BEAT\'s batch size; successes grow it back', async () => {
+      const b = await seed({ created: true })
+      const ws = Array.from({ length: 8 }, wallet)
+      await claims(b.id, ws)
+      await runBeatTick(T0)
+      fake.revertNext('unknown', { kind: 'mint' })
+      fake.mine(6)
+      await runBeatTick(at(MIN))
+      expect((await beatOf(b.id)).maxBatch).toBe(4)
+      // It survives a restart (the in-memory state is gone)
+      resetBeatJobState()
+      fake.mine(6)
+      await runBeatTick(at(2 * MIN))
+      expect((await beatOf(b.id)).maxBatch).toBe(8)
+      expect(mintWallets(fake.mempool()[0])).toHaveLength(4)
+      fake.mine(6)
+      await runBeatTick(at(3 * MIN))
+      expect((await beatOf(b.id)).maxBatch).toBe(16)
+      expect(await statusCount(b.id)).toEqual({ minted: 8 })
+      // Doubling past BEAT_MAX_BATCH goes back to the default (null)
+      await db.update(beats).set({ maxBatch: 60 }).where(eq(beats.id, b.id))
+      await claims(b.id, [wallet()])
+      await runBeatTick(at(4 * MIN))
+      fake.mine(6)
+      await runBeatTick(at(5 * MIN))
+      expect((await beatOf(b.id)).maxBatch).toBeNull()
+    })
+
+    it('a revert explained by wallets that gained code since the plan keeps the batch size', async () => {
+      const b = await seed({ created: true })
+      const ws = Array.from({ length: 6 }, wallet)
+      await claims(b.id, ws)
+      await runBeatTick(T0)
+      fake.setCode(ws[0])
+      fake.revertNext('InsufficientGas', { kind: 'mint' })
+      fake.mine(6)
+      await runBeatTick(at(MIN))
+      const [first] = await batches()
+      expect(first).toMatchObject({ status: 'failed', lastError: 'reverted:code_changed', codeCount: 0 })
+      expect((await beatOf(b.id)).maxBatch).toBeNull()
+      expect(mintWallets(fake.mempool()[0])).toHaveLength(6)
+    })
+
+    it('attacker I2: mints go round-robin across BEATs, so one BEAT\'s backlog can\'t starve another', async () => {
+      const big = await seed({ created: true })
+      const small = await seed({ created: true })
+      await claims(big.id, Array.from({ length: 250 }, wallet))
+      // The small BEAT's claim is newer than all of the big one's
+      await claims(small.id, [wallet()], { claimedAt: T0 })
+      await runBeatTick(T0)
+      expect(fake.mempool()[0].call.tokenId).toBe(BigInt(big.tokenId!))
+      fake.mine(6)
+      await runBeatTick(at(MIN))
+      expect(fake.mempool()[0].call.tokenId).toBe(BigInt(small.tokenId!))
+      fake.mine(6)
+      await runBeatTick(at(2 * MIN))
+      expect(fake.mempool()[0].call.tokenId).toBe(BigInt(big.tokenId!))
+    })
+
+    it('money C1: a wrong chain id, a contract without code or a minter without the role pauses misconfigured, reported once, and marks nothing minted', async () => {
+      const b = await seed({ created: true })
+      let t = 0
+      const tick = () => runBeatTick(at(++t * MIN))
+      for (const [break_, fix] of [
+        [() => fake.setChainId(137), () => fake.setChainId(80002)],
+        [() => fake.setContractCode(false), () => fake.setContractCode(true)],
+        [() => fake.setMinterRole(false), () => fake.setMinterRole(true)],
+      ] as const) {
+        await claims(b.id, [wallet()])
+        await tick()
+        const minted = (await statusCount(b.id)).minted ?? 0
+        vi.mocked(recordJobFailure).mockClear()
+        break_()
+        fake.mine(6)
+        await tick()
+        await tick()
+        expect(beatPaused('polygon-amoy')).toEqual({ paused: true, reason: 'misconfigured' })
+        expect((await statusCount(b.id)).minted ?? 0).toBe(minted)
+        expect(recordJobFailure).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(recordJobFailure).mock.calls[0][0]).toBe('beat_setup')
+        fix()
+        await tick()
+        expect(beatPaused('polygon-amoy').paused).toBe(false)
+        expect((await statusCount(b.id)).minted).toBe(minted + 1)
+      }
+    })
+
+    it('money I1: nothing is signed while base fee + tip is above the ceiling (high_fees); under it the fees are capped', async () => {
+      setBeats({ maxFeeGwei: 100 })
+      const b = await seed({ created: true })
+      await claims(b.id, [wallet()])
+      fake.setBaseFee(90n * GWEI)
+      fake.setFees({ maxFeePerGas: 210n * GWEI, maxPriorityFeePerGas: 30n * GWEI })
+      await runBeatTick(T0)
+      expect(fake.mempool()).toHaveLength(0)
+      expect(await batches()).toHaveLength(0)
+      expect(beatPaused('polygon-amoy')).toEqual({ paused: true, reason: 'high_fees' })
+      fake.setBaseFee(50n * GWEI)
+      await runBeatTick(at(MIN))
+      expect(beatPaused('polygon-amoy').paused).toBe(false)
+      expect(fake.mempool()[0].fees).toEqual({ maxFeePerGas: 100n * GWEI, maxPriorityFeePerGas: 30n * GWEI })
+    })
+
+    it('money I1: a reprice never goes above the ceiling; at the ceiling it keeps waiting on the tx it sent', async () => {
+      setBeats({ maxFeeGwei: 100 })
+      const b = await seed({ created: true })
+      await claims(b.id, [wallet()])
+      fake.setBaseFee(20n * GWEI)
+      fake.setFees({ maxFeePerGas: 70n * GWEI, maxPriorityFeePerGas: 30n * GWEI })
+      await runBeatTick(T0)
+      for (let i = 1; i <= 6; i++) await runBeatTick(at(i * 11 * MIN))
+      const [row] = await batches()
+      const fees = fake.mempool().map((t) => t.fees.maxFeePerGas)
+      expect(fees.every((f) => f <= 100n * GWEI)).toBe(true)
+      const signedFees = row.txHashes.length
+      expect(signedFees).toBeGreaterThan(1)
+      expect(signedFees).toBeLessThan(7)
+      fake.mine(6)
+      await runBeatTick(at(80 * MIN))
+      expect(await statusCount(b.id)).toEqual({ minted: 1 })
+    })
+
+    it('money I3: after BEAT_RPC_FAILS_BEFORE_PAUSE failed passes in a row the chain pauses rpc_down once, and recovers', async () => {
+      setBeats({ rpcFailsBeforePause: 3 })
+      await seed({ created: true })
+      fake.setDown(true)
+      for (let i = 0; i < 2; i++) await runBeatTick(at(i * MIN))
+      expect(beatPaused('polygon-amoy').paused).toBe(false)
+      expect(recordJobFailure).not.toHaveBeenCalled()
+      for (let i = 2; i < 6; i++) await runBeatTick(at(i * MIN))
+      expect(beatPaused('polygon-amoy')).toEqual({ paused: true, reason: 'rpc_down' })
+      expect(recordJobFailure).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(recordJobFailure).mock.calls[0][0]).toBe('beat_rpc')
+      fake.setDown(false)
+      await runBeatTick(at(10 * MIN))
+      expect(beatPaused('polygon-amoy').paused).toBe(false)
+    })
+
+    it('the low-gas floor defaults per chain: 0.1 POL on Amoy', async () => {
+      setBeats({ minGasWei: null })
+      await seed({ created: true })
+      fake.setBalance(parseEther('0.09'))
+      await runBeatTick(T0)
+      expect(beatPaused('polygon-amoy')).toEqual({ paused: true, reason: 'low_gas' })
+      fake.setBalance(parseEther('0.11'))
+      await runBeatTick(at(MIN))
+      expect(beatPaused('polygon-amoy').paused).toBe(false)
+    })
+
+    it('host review: a held BEAT\'s claims wait for Send, or for the end of its claim grace', async () => {
+      const b = await seed({ created: true })
+      await db.update(beats).set({ holdMints: true }).where(eq(beats.id, b.id))
+      await claims(b.id, [wallet()])
+      await runBeatTick(T0)
+      expect(fake.mempool()).toHaveLength(0)
+      await db.update(beats).set({ mintsReleasedAt: T0 }).where(eq(beats.id, b.id))
+      await runBeatTick(at(MIN))
+      expect(fake.mempool()).toHaveLength(1)
+
+      const late = await seed({ created: true, startsAt: at(-30 * H), endsAt: at(-2 * H) })
+      await db.update(beats).set({ holdMints: true }).where(eq(beats.id, late.id))
+      await claims(late.id, [wallet()])
+      fake.mine(6)
+      await runBeatTick(at(2 * MIN))
+      expect(fake.mempool()).toHaveLength(0) // the first BEAT's done; the late one is still held
+      await runBeatTick(at(BEAT_CLAIM_GRACE_MS - 2 * H + MIN))
+      expect(fake.mempool()).toHaveLength(1)
+      expect(fake.mempool()[0].call.tokenId).toBe(BigInt(late.tokenId!))
+    })
+
+    it('money M3: a create that reverts with BeatExists after an earlier create of ours was replaced is taken as ours, not a conflict', async () => {
+      const b = await seed({ status: 'live' })
+      // Nonce 0 was used on chain by "our" create, whose receipt the job never saw
+      const used = await fake.sign({ kind: 'create', tokenId: 999_999n, tradeable: false }, 0)
+      await fake.broadcast(used.raw)
+      fake.mine(1)
+      await db.insert(beatMintBatches).values({
+        chain: 'polygon-amoy', kind: 'create', beatId: b.id, tokenId: b.tokenId!, nonce: 0, txHash: '0xours', txHashes: ['0xours'],
+        status: 'failed', lastError: 'replaced', createdAt: at(-H),
+      })
+      fake.createdBeat(BigInt(b.tokenId!))
+      // A lagging node let the second create's estimate pass; it mined and reverted with BeatExists
+      const real = fake.estimate
+      fake.estimate = async (call) => (call.kind === 'create' ? 60_000n : real(call))
+      await runBeatTick(T0)
+      fake.estimate = real
+      fake.mine(6)
+      await runBeatTick(at(MIN))
+      expect(beatPaused('polygon-amoy').paused).toBe(false)
+      expect((await beatOf(b.id)).createdOnChainTx).toBe('0xours')
+    })
   })
 })

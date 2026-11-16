@@ -9,8 +9,11 @@ import { db } from '../db/connection.js'
 import { beatClaims, beatMintBatches, beatPayments, beats } from '../db/schema.js'
 import { withLock } from '../errors/jobs.js'
 import { recordJobFailure } from '../errors/record.js'
-import { BEAT_RECEIVER_GAS } from './abi.js'
-import { BeatRevert, BeatRpcError, beatChainClient, beatInterface, type BeatCall, type BeatChainClient, type BeatLog, type BeatSigned } from './chain.js'
+import { BEAT_GAS_PER_RECIPIENT } from './abi.js'
+import {
+  BeatRevert, BeatRpcError, beatChainClient, beatInterface, beatMaxFeeWei, beatMinGasWei,
+  type BeatCall, type BeatChainClient, type BeatFees, type BeatLog, type BeatSigned,
+} from './chain.js'
 import { BeatError } from './errors.js'
 import { lockBeat } from './lock.js'
 import { sweepBeatPayments } from './payments.js'
@@ -30,17 +33,24 @@ import { UNLINKED_CLAIM } from './retention.js'
  */
 
 type Batch = typeof beatMintBatches.$inferSelect
-export type BeatPauseReason = 'low_gas' | 'no_client' | 'id_conflict' | null
+/**
+ * Why a chain's minting is paused:
+ * - low_gas: the minter's POL is under the floor (beatMinGasWei) or can't pay for the next batch;
+ * - no_client: no contract or minter key for the chain;
+ * - id_conflict: a token id we create already exists on chain and isn't ours (stays until an admin clears it);
+ * - misconfigured: the RPC is another chain, the contract address has no code, or the minter lacks MINTER_ROLE
+ *   (checked every tick before anything is reconciled or sent, so nothing is ever marked minted against it);
+ * - high_fees: the network's fees are above the ceiling (beatMaxFeeWei), so nothing is signed until they fall;
+ * - rpc_down: BEAT_RPC_FAILS_BEFORE_PAUSE chain passes in a row failed on the RPC.
+ */
+export type BeatPauseReason = 'low_gas' | 'no_client' | 'id_conflict' | 'misconfigured' | 'high_fees' | 'rpc_down' | null
 /** sent: new transactions broadcast; confirmed: batches confirmed; failed: batches and claims that became failed;
- * paused: the chains paused after the tick (no client, low gas or an id conflict). */
+ * paused: the chains paused after the tick (any BeatPauseReason). */
 export type BeatTickResult = { sent: number; confirmed: number; failed: number; paused: BeatChain[] }
 
 // ── In-memory state (reset on restart) ───────────────────────────────────────
 
 const pauses = new Map<BeatChain, BeatPauseReason>()
-/** Ruling 4: after a mint batch reverts on chain (InsufficientGas, or any revert), the BEAT's next batches take at most
- * half of that batch's size, down to 1. Kept until restart. */
-const maxBatch = new Map<string, number>()
 /** Ruling 5: wallets (lower case) of a batch whose estimate reverted, to be sent one at a time. Per BEAT. */
 const singles = new Map<string, Set<string>>()
 /** BEATs already reported as unable to go live (their create payment isn't paid), so it's reported once. */
@@ -50,6 +60,12 @@ const reportedCreateRevert = new Set<string>()
 /** Chains whose node refused a transaction this tick for insufficient funds, or whose balance can't pay for the next
  * batch: they stay paused for low gas even when the balance is above BEAT_MIN_GAS_POL. Cleared at each chain pass. */
 const shortOfFunds = new Set<BeatChain>()
+/** Chains whose fees were above the ceiling this tick. Cleared at each chain pass. */
+const tooDear = new Set<BeatChain>()
+/** Chains already reported as misconfigured (reported again only after a pass finds them fine). */
+const reportedMisconfigured = new Set<BeatChain>()
+/** Consecutive chain passes that failed on the RPC, per chain. */
+const rpcFails = new Map<BeatChain, number>()
 export const beatJobTestHooks: {
   afterInsert?: (batchId: string) => Promise<void>
   /** Runs after a plan is signed and before its batch is recorded (tests interleave other writers here). */
@@ -59,8 +75,10 @@ export const beatJobTestHooks: {
 /** Tests: forget the in-memory pauses, batch caps and single-wallet flags. */
 export function resetBeatJobState(): void {
   pauses.clear()
-  maxBatch.clear()
   singles.clear()
+  tooDear.clear()
+  reportedMisconfigured.clear()
+  rpcFails.clear()
   reportedNotPaid.clear()
   reportedCreateRevert.clear()
   shortOfFunds.clear()
@@ -137,6 +155,29 @@ const noFunds = (err: unknown) => rpcCode(err) === 'INSUFFICIENT_FUNDS'
 function shortOf(chain: BeatChain): void {
   shortOfFunds.add(chain)
   setPause(chain, 'low_gas')
+}
+
+/** Pauses the chain for high fees: nothing is signed this tick; the next one looks again. */
+function feesTooHigh(chain: BeatChain): void {
+  if (!tooDear.has(chain)) console.warn(`[beats] ${chain} fees are above the ceiling; waiting`)
+  tooDear.add(chain)
+  setPause(chain, 'high_fees')
+}
+
+const minBig = (a: bigint, b: bigint) => (a < b ? a : b)
+const maxBig = (a: bigint, b: bigint) => (a > b ? a : b)
+
+/**
+ * The fees to sign a new transaction with: the node's (with the client's tip floor and 2 × base fee + tip headroom),
+ * capped at the ceiling. Null when even the base fee plus the tip is above the ceiling: a tx signed at the cap couldn't
+ * be included, so the chain waits (money I1).
+ */
+async function cappedFees(client: BeatChainClient): Promise<BeatFees | null> {
+  const cap = beatMaxFeeWei(client.chain)
+  const f = await client.feeData()
+  const floor = f.baseFeePerGas !== null ? f.baseFeePerGas + f.maxPriorityFeePerGas : f.maxFeePerGas
+  if (floor > cap) return null
+  return { maxFeePerGas: minBig(f.maxFeePerGas, cap), maxPriorityFeePerGas: minBig(f.maxPriorityFeePerGas, cap) }
 }
 
 /**
@@ -238,8 +279,17 @@ async function tick(now: Date): Promise<BeatTickResult> {
     else {
       try {
         await runChain(client, now, r)
+        rpcFails.delete(chain)
+        if (pauses.get(chain) === 'rpc_down') pauses.delete(chain)
       } catch (err) {
         console.error(`[beats] ${chain} pass failed:`, safeErr(err))
+        // Money I3: an RPC that keeps failing pauses the chain once, with a job failure, rather than stalling silently
+        const n = (rpcFails.get(chain) ?? 0) + 1
+        rpcFails.set(chain, n)
+        if (n >= config.beats.rpcFailsBeforePause && pauses.get(chain) !== 'rpc_down') {
+          setPause(chain, 'rpc_down')
+          if (pauses.get(chain) === 'rpc_down') fail('beat_rpc', `BEAT ${chain} RPC failed ${n} passes in a row (${safeErr(err)}); minting is paused`, null)
+        }
       }
     }
     if (beatPaused(chain).paused) r.paused.push(chain)
@@ -247,17 +297,40 @@ async function tick(now: Date): Promise<BeatTickResult> {
   return r
 }
 
+/** What is wrong with the chain's set-up (money C1), or null: the RPC's chain id, code at the contract, the minter's role. */
+async function setupProblem(client: BeatChainClient): Promise<string | null> {
+  const want = BEAT_CHAIN_INFO[client.chain].chainId
+  const got = await client.chainId()
+  if (got !== want) return `the RPC answers for chain ${got}, not ${want}`
+  if (!(await client.contractHasCode())) return 'the contract address has no code on this chain'
+  if (!(await client.minterHasRole())) return `the minter ${client.minterAddress} doesn't hold MINTER_ROLE`
+  return null
+}
+
 async function runChain(client: BeatChainClient, now: Date, r: BeatTickResult): Promise<void> {
   const chain = client.chain
   if (pauses.get(chain) === 'no_client') pauses.delete(chain)
   shortOfFunds.delete(chain)
+  tooDear.delete(chain)
+  // Before anything is reconciled or sent: a wrong RPC, address or role would "confirm" calls that minted nothing
+  const problem = await setupProblem(client)
+  if (problem) {
+    setPause(chain, 'misconfigured')
+    if (!reportedMisconfigured.has(chain)) {
+      reportedMisconfigured.add(chain)
+      fail('beat_setup', `BEAT ${chain} is misconfigured: ${problem}. Minting is paused.`, null)
+    }
+    return
+  }
+  reportedMisconfigured.delete(chain)
+  if (pauses.get(chain) === 'misconfigured') pauses.delete(chain)
   const [open] = await db.select().from(beatMintBatches)
     .where(and(eq(beatMintBatches.chain, chain), inArray(beatMintBatches.status, ['sending', 'sent'])))
     .orderBy(asc(beatMintBatches.nonce)).limit(1)
   const settled = open ? await reconcile(client, open, now, r) : true
   const balance = await client.balanceWei()
-  const low = shortOfFunds.has(chain) || balance < config.beats.minGasWei
-  setPause(chain, low ? 'low_gas' : null)
+  const low = shortOfFunds.has(chain) || balance < beatMinGasWei(chain)
+  setPause(chain, low ? 'low_gas' : tooDear.has(chain) ? 'high_fees' : null)
   if (!settled || low || pauses.get(chain) === 'id_conflict') return
   await sendNext(client, now, r, balance)
 }
@@ -293,6 +366,9 @@ async function reconcile(client: BeatChainClient, b: Batch, now: Date, r: BeatTi
   return false
 }
 
+/** Codes meaning the RPC couldn't be reached or answered badly, not that it refused the transaction. */
+const RPC_DOWN_CODES = new Set(['NETWORK_ERROR', 'SERVER_ERROR', 'TIMEOUT', 'UNKNOWN_ERROR', 'MISSING_RESPONSE', 'BAD_DATA'])
+
 /**
  * Broadcasts a batch's raw tx and marks it sent. NONCE_EXPIRED (the nonce is used: the next tick reconciles it) and
  * REPLACEMENT_UNDERPRICED (an earlier signing of this nonce is still pending) count as sent. INSUFFICIENT_FUNDS pauses
@@ -316,10 +392,13 @@ async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, no
       const attempts = b.attempts + 1
       // Never accepted by any broadcast: no node has it, and reconcile checked its nonce isn't used
       const neverSent = b.sentAt === null && b.txHashes.length <= 1
-      if (attempts >= BEAT_SEND_MAX_ATTEMPTS && neverSent) {
+      // Money I3: a batch never broadcast because the RPC is down isn't failed; it keeps waiting on the capped backoff
+      // (the rpc_down pause reports the outage). A refusal for any other reason gives it up, its claims back to
+      // `claimed`: the tx never left, so they simply go in a later batch
+      if (attempts >= BEAT_SEND_MAX_ATTEMPTS && neverSent && !RPC_DOWN_CODES.has(code)) {
         await db.update(beatMintBatches).set({ attempts }).where(eq(beatMintBatches.id, b.id))
         // Unsent: the next transaction takes its nonce again
-        await unminedBatch(client, b, now, r, { lastError: `unsent:${code}`, unminted: 'failed' })
+        await unminedBatch(client, b, now, r, { lastError: `unsent:${code}`, unminted: 'claimed' })
         fail(`beat_${b.kind}`, `BEAT ${b.kind} batch ${b.id} (BEAT ${b.beatId}) not sent after ${attempts} attempts (${code})`, b.beatId)
         return 'gave_up'
       }
@@ -342,18 +421,25 @@ async function broadcastBatch(client: BeatChainClient, b: Batch, raw: string, no
   return 'sent'
 }
 
-/** Re-signs the same nonce with fees raised by BEAT_FEE_BUMP_PERCENT (and at least the node's), keeping the gas limit. */
+/**
+ * Re-signs the same nonce with fees raised by BEAT_FEE_BUMP_PERCENT (and at least the node's), keeping the gas limit,
+ * never above the fee ceiling (money I1). When the network's base fee plus tip is above the ceiling it waits (high_fees);
+ * when the ceiling leaves no room for a valid replacement (10% over the old fees) it keeps waiting on the one it sent.
+ */
 async function reprice(client: BeatChainClient, b: Batch, now: Date, r: BeatTickResult): Promise<'sent' | 'retry' | 'gave_up'> {
   const old = Transaction.from(b.rawTx!)
   const call = decodeCall(old.data)
   const bump = (x: bigint) => (x * BigInt(100 + BEAT_FEE_BUMP_PERCENT) + 99n) / 100n
-  const max = (a: bigint, c: bigint) => (a > c ? a : c)
-  const node = await client.sign(call, b.nonce, undefined, old.gasLimit)
-  const tip = max(bump(old.maxPriorityFeePerGas ?? 0n), node.fees.maxPriorityFeePerGas)
-  const maxFee = max(max(bump(old.maxFeePerGas ?? 0n), node.fees.maxFeePerGas), tip)
-  const signed: BeatSigned = tip === node.fees.maxPriorityFeePerGas && maxFee === node.fees.maxFeePerGas
-    ? node
-    : await client.sign(call, b.nonce, { maxFeePerGas: maxFee, maxPriorityFeePerGas: tip }, old.gasLimit)
+  const node = await cappedFees(client)
+  if (!node) { feesTooHigh(b.chain); return 'retry' }
+  const cap = beatMaxFeeWei(b.chain)
+  const oldTip = old.maxPriorityFeePerGas ?? 0n
+  const oldMax = old.maxFeePerGas ?? 0n
+  const tip = minBig(maxBig(bump(oldTip), node.maxPriorityFeePerGas), cap)
+  const maxFee = minBig(maxBig(maxBig(bump(oldMax), node.maxFeePerGas), tip), cap)
+  // A node takes a replacement only at 10% over both old fees
+  if (maxFee * 10n < oldMax * 11n || tip * 10n < oldTip * 11n) return 'retry'
+  const signed: BeatSigned = await client.sign(call, b.nonce, { maxFeePerGas: maxFee, maxPriorityFeePerGas: tip }, old.gasLimit)
   // Recorded before the broadcast, so a crash after it never loses the hash
   const [next] = await db.update(beatMintBatches).set({
     rawTx: signed.raw, txHash: signed.hash, txHashes: sql`array_append(${beatMintBatches.txHashes}, ${signed.hash})`,
@@ -389,6 +475,9 @@ async function confirmBatch(client: BeatChainClient, b: Batch, hash: string, log
       await tx.update(beatClaims).set({ status: 'minted', mintTx: hash, mintedAt: now, failReason: null }).where(inArray(beatClaims.id, ok))
       await freeze(tx, b.beatId, now)
     }
+    // A mint went through: a batch size halved after a revert grows back (doubling, up to BEAT_MAX_BATCH)
+    await tx.update(beats).set({ maxBatch: sql`case when ${beats.maxBatch} * 2 >= ${BEAT_MAX_BATCH} then null else ${beats.maxBatch} * 2 end` })
+      .where(and(eq(beats.id, b.beatId), isNotNull(beats.maxBatch)))
     await settleDeletes(tx, b.id)
     minted = ok.length
     skipped = skip.length
@@ -409,14 +498,23 @@ async function confirmBatch(client: BeatChainClient, b: Batch, hash: string, log
 async function revertedBatch(client: BeatChainClient, b: Batch, now: Date, r: BeatTickResult): Promise<void> {
   const wallets = b.wallets ?? []
   if (b.kind === 'mint' && b.beatId && wallets.length > 1) {
+    const beatId = b.beatId
+    // Attacker I1: wallets that gained code since the plan explain a revert; then the size stays and the next plan (whose
+    // estimate counts their code) takes them. Only an unexplained revert halves the BEAT's batch size (kept in the DB)
+    const codeNow = await countCode(client, wallets)
+    const explained = b.codeCount !== null && codeNow > b.codeCount
     const half = Math.max(1, Math.floor(wallets.length / 2))
-    maxBatch.set(b.beatId, Math.min(half, maxBatch.get(b.beatId) ?? BEAT_MAX_BATCH))
     await db.transaction(async (tx) => {
-      await tx.update(beatMintBatches).set({ status: 'failed', lastError: 'reverted' }).where(eq(beatMintBatches.id, b.id))
+      await tx.update(beatMintBatches).set({ status: 'failed', lastError: explained ? 'reverted:code_changed' : 'reverted' }).where(eq(beatMintBatches.id, b.id))
       await tx.update(beatClaims).set({ status: 'claimed' }).where(and(eq(beatClaims.batchId, b.id), eq(beatClaims.status, 'minting')))
+      if (!explained) {
+        await tx.update(beats).set({ maxBatch: sql`least(coalesce(${beats.maxBatch}, ${BEAT_MAX_BATCH}), ${half})` }).where(eq(beats.id, beatId))
+      }
       await settleDeletes(tx, b.id)
     })
-    console.warn(`[beats] batch ${b.id} (BEAT ${b.beatId}) reverted; ${wallets.length} claims retry in batches of ${half}`)
+    console.warn(explained
+      ? `[beats] batch ${b.id} (BEAT ${beatId}) reverted; ${codeNow - (b.codeCount ?? 0)} wallets gained code since the plan, so ${wallets.length} claims retry at the same size`
+      : `[beats] batch ${b.id} (BEAT ${beatId}) reverted; ${wallets.length} claims retry in batches of ${half}`)
     r.failed++
     return
   }
@@ -439,6 +537,14 @@ async function revertedBatch(client: BeatChainClient, b: Batch, now: Date, r: Be
   await db.update(beatMintBatches).set({ status: 'failed', lastError: 'reverted' }).where(eq(beatMintBatches.id, b.id))
   r.failed++
   if (b.kind === 'create' && (await client.exists(BigInt(b.tokenId)))) {
+    // Money M3: an earlier create of ours (its receipt lost on a lagging node) explains BeatExists; only anyone else's
+    // is a conflict
+    const mine = b.beatId ? await ourCreate(b.beatId) : null
+    if (mine) {
+      await db.update(beats).set({ createdOnChainTx: createdTxOf(mine), createdOnChainAt: now }).where(eq(beats.id, b.beatId!))
+      console.warn(`[beats] BEAT ${b.beatId} create reverted, but it already exists on chain from batch ${mine.id}`)
+      return
+    }
     pauses.set(b.chain, 'id_conflict')
     fail('beat_create', `BEAT ${b.beatId} create reverted: token id ${b.tokenId} on ${b.chain} already exists. Minting is paused.`, b.beatId)
     return
@@ -499,6 +605,9 @@ type Plan =
   | { kind: 'close'; beatId: string; call: BeatCall; codeCount: 0 }
   | { kind: 'mint'; beatId: string; call: BeatCall & { kind: 'mint' }; claimIds: string[]; codeCount: number; single: boolean }
 
+/** The extra gas budgeted per recipient of a plan (every wallet as if it had code; attacker I1). */
+const recipients = (plan: Plan) => (plan.kind === 'mint' ? BigInt(plan.call.wallets.length) : 0n)
+
 /** How many tries a tick makes at finding something that estimates; a failed estimate costs nothing on chain. */
 const PLANS_PER_TICK = 50
 /** How many plans found stale at insert (a claim locked by delete-my-data, say) a tick re-plans before it ends. */
@@ -528,7 +637,8 @@ const holdsClose = sql`exists (select 1 from beat_claims c where c.beat_id = ${b
  * Priority:
  * (a) a create for the oldest BEAT not yet on chain that is paid or live, or ended with claims still to mint or still
  *     inside its claim grace (one that ended before its create could go out, say while the minter was out of gas);
- * (b) a mint for the BEAT with the oldest claimed claim;
+ * (b) a mint, round-robin across BEATs (attacker I2): the BEAT with claimed claims whose last mint went out longest ago (or
+ *     never), then by its oldest claim, so one BEAT's backlog can't hold up the others;
  * (c) a close for an ended BEAT past its grace with no claim pending or retryable (BEAT_FINAL_FAIL_REASONS);
  * (d) a close for a cancelled BEAT that exists on chain, so nothing can be minted into it.
  */
@@ -551,13 +661,16 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
     )).orderBy(asc(beats.createdAt)).limit(1)
   if (create) return { kind: 'create', beatId: create.id, codeCount: 0, call: { kind: 'create', tokenId: BigInt(create.tokenId!), tradeable: create.tradeable } }
 
-  const [oldest] = await db.select({ beatId: beatClaims.beatId, tokenId: beats.tokenId }).from(beatClaims)
+  const lastMint = sql`(select max(m.created_at) from beat_mint_batches m where m.beat_id = ${beats.id} and m.kind = 'mint')`
+  const [next] = await db.select({ beatId: beats.id, tokenId: beats.tokenId, maxBatch: beats.maxBatch }).from(beatClaims)
     .innerJoin(beats, eq(beats.id, beatClaims.beatId))
     .where(and(
       eq(beats.chain, chain), inArray(beats.status, ['live', 'ended']), isNotNull(beats.createdOnChainTx), isNull(beats.closedOnChainAt),
       eq(beatClaims.status, 'claimed'), notSkipped(beats.id), notHeld(now),
-    )).orderBy(asc(beatClaims.claimedAt), asc(beatClaims.id)).limit(1)
-  if (oldest) return mintPlan(client, oldest.beatId, BigInt(oldest.tokenId!))
+    ))
+    .groupBy(beats.id, beats.tokenId, beats.maxBatch)
+    .orderBy(sql`${lastMint} asc nulls first`, sql`min(${beatClaims.claimedAt}) asc`, asc(beats.id)).limit(1)
+  if (next) return mintPlan(client, next.beatId, BigInt(next.tokenId!), next.maxBatch)
 
   const [close] = await db.select({ id: beats.id, tokenId: beats.tokenId }).from(beats)
     .where(and(
@@ -577,11 +690,12 @@ async function nextPlan(client: BeatChainClient, skip: Set<string>, now: Date): 
 }
 
 /**
- * Up to 200 claimed claims (or the BEAT's ruling-4 cap) in claim order. Wallets flagged by ruling 5 go first, one at a
- * time. Otherwise the plain wallets (no code) go together, and only when there are none does the first wallet with code
- * go, alone (Review Focus 1: a receiver hook can't take a batch down with it).
+ * Up to BEAT_MAX_BATCH claimed claims (or the BEAT's stored max_batch after a revert) in claim order, wallets with code
+ * and without together (attacker I2): every recipient is budgeted as if it had code, so a receiver hook can only skip
+ * itself. The plan counts the wallets with code now, so a later revert can tell whether more gained code. Wallets
+ * flagged by ruling 5 (their batch's estimate reverted) go first, one at a time.
  */
-async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint): Promise<Plan | null> {
+async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint, maxBatch: number | null): Promise<Plan | null> {
   const flagged = singles.get(beatId)
   if (flagged?.size) {
     const rows = await db.select({ id: beatClaims.id, wallet: beatClaims.wallet }).from(beatClaims)
@@ -597,18 +711,15 @@ async function mintPlan(client: BeatChainClient, beatId: string, tokenId: bigint
     }
     singles.delete(beatId)
   }
-  const limit = Math.min(BEAT_MAX_BATCH, maxBatch.get(beatId) ?? BEAT_MAX_BATCH)
+  const limit = Math.max(1, Math.min(BEAT_MAX_BATCH, maxBatch ?? BEAT_MAX_BATCH))
   const rows = await db.select({ id: beatClaims.id, wallet: beatClaims.wallet }).from(beatClaims)
     .where(and(eq(beatClaims.beatId, beatId), eq(beatClaims.status, 'claimed')))
     .orderBy(asc(beatClaims.claimedAt), asc(beatClaims.id)).limit(limit)
   if (!rows.length) return null
-  const code: boolean[] = []
-  for (let i = 0; i < rows.length; i += 20) code.push(...await Promise.all(rows.slice(i, i + 20).map((c) => client.codeAt(c.wallet))))
-  const plain = rows.filter((_, i) => !code[i])
-  const pick = plain.length ? plain : [rows[0]]
+  const wallets = rows.map((c) => c.wallet)
   return {
-    kind: 'mint', beatId, single: pick.length === 1, claimIds: pick.map((c) => c.id), codeCount: plain.length ? 0 : 1,
-    call: { kind: 'mint', tokenId, wallets: pick.map((c) => c.wallet) },
+    kind: 'mint', beatId, single: rows.length === 1, claimIds: rows.map((c) => c.id), codeCount: await countCode(client, wallets),
+    call: { kind: 'mint', tokenId, wallets },
   }
 }
 
@@ -628,11 +739,14 @@ async function trySend(
     if (!(err instanceof BeatRevert)) throw err
     return estimateReverted(client, plan, err.name, skip, now, r)
   }
-  const gasLimit = (estimate + BEAT_RECEIVER_GAS * BigInt(plan.codeCount)) * 110n / 100n
+  // 10% over the estimate, plus every recipient's receiver budget (attacker I1)
+  const gasLimit = estimate * 110n / 100n + BEAT_GAS_PER_RECIPIENT * recipients(plan)
+  const fees = await cappedFees(client)
+  if (!fees) { feesTooHigh(client.chain); return 'stop' }
   const nonce = await nextNonce(client)
   let signed: BeatSigned
   try {
-    signed = await client.sign(plan.call, nonce, undefined, gasLimit)
+    signed = await client.sign(plan.call, nonce, fees, gasLimit)
   } catch (err) {
     if (noFunds(err)) { shortOf(client.chain); return 'stop' }
     throw err
@@ -659,6 +773,25 @@ async function trySend(
   return 'stop'
 }
 
+/** An earlier create batch of ours for this BEAT whose nonce could have carried it: confirmed, sent, or replaced (never
+ * unsent or reverted on chain). */
+async function ourCreate(beatId: string): Promise<Batch | null> {
+  const [mine] = await db.select().from(beatMintBatches)
+    .where(and(
+      eq(beatMintBatches.beatId, beatId), eq(beatMintBatches.kind, 'create'),
+      sql`(${beatMintBatches.status} in ('confirmed', 'sent') or (${beatMintBatches.status} = 'failed' and ${beatMintBatches.lastError} = 'replaced'))`,
+    )).orderBy(asc(beatMintBatches.createdAt)).limit(1)
+  return mine ?? null
+}
+const createdTxOf = (b: Batch) => (b.status === 'confirmed' ? b.txHash ?? b.txHashes.at(-1) : b.txHashes.at(-1) ?? b.txHash) ?? null
+
+/** How many of these wallets have code now (20 lookups at a time). */
+async function countCode(client: BeatChainClient, wallets: string[]): Promise<number> {
+  let n = 0
+  for (let i = 0; i < wallets.length; i += 20) n += (await Promise.all(wallets.slice(i, i + 20).map((w) => client.codeAt(w)))).filter(Boolean).length
+  return n
+}
+
 async function estimateReverted(
   client: BeatChainClient, plan: Plan, name: string, skip: Set<string>, now: Date, r: BeatTickResult,
 ): Promise<'stop' | 'next'> {
@@ -667,13 +800,9 @@ async function estimateReverted(
       // Ours when an earlier create of ours for this BEAT went out (its receipt was lost); anyone else's is a conflict
       // Only a batch whose nonce could have carried our create counts: confirmed, sent, or replaced (never unsent or
       // reverted on chain)
-      const [mine] = await db.select().from(beatMintBatches)
-        .where(and(
-          eq(beatMintBatches.beatId, plan.beatId), eq(beatMintBatches.kind, 'create'),
-          sql`(${beatMintBatches.status} in ('confirmed', 'sent') or (${beatMintBatches.status} = 'failed' and ${beatMintBatches.lastError} = 'replaced'))`,
-        )).orderBy(asc(beatMintBatches.createdAt)).limit(1)
+      const mine = await ourCreate(plan.beatId)
       if (mine) {
-        await db.update(beats).set({ createdOnChainTx: mine.status === 'confirmed' ? mine.txHash ?? mine.txHashes.at(-1) : mine.txHashes.at(-1) ?? mine.txHash, createdOnChainAt: now }).where(eq(beats.id, plan.beatId))
+        await db.update(beats).set({ createdOnChainTx: createdTxOf(mine), createdOnChainAt: now }).where(eq(beats.id, plan.beatId))
         console.warn(`[beats] BEAT ${plan.beatId} already exists on chain from batch ${mine.id}`)
         return 'next'
       }
@@ -753,7 +882,7 @@ async function insertBatch(chain: BeatChain, plan: Plan, signed: BeatSigned, non
     await tx.delete(beatMintBatches).where(and(eq(beatMintBatches.chain, chain), eq(beatMintBatches.nonce, nonce), eq(beatMintBatches.status, 'failed')))
     const [batch] = await tx.insert(beatMintBatches).values({
       chain, kind: plan.kind, beatId: plan.beatId, tokenId: Number(plan.call.tokenId),
-      wallets: plan.kind === 'mint' ? plan.call.wallets : null,
+      wallets: plan.kind === 'mint' ? plan.call.wallets : null, codeCount: plan.kind === 'mint' ? plan.codeCount : null,
       nonce, txHash: signed.hash, rawTx: signed.raw, txHashes: [signed.hash], status: 'sending', createdAt: now,
     }).returning()
     if (plan.kind === 'mint') {

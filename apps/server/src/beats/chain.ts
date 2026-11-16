@@ -1,4 +1,4 @@
-import { Interface, JsonRpcProvider, Network, Wallet, getAddress, keccak256 } from 'ethers'
+import { Interface, JsonRpcProvider, Network, Wallet, getAddress, id as keccakText, keccak256, parseEther } from 'ethers'
 import type { BeatChain } from '@virvixr/shared'
 import { BEAT_CHAIN_INFO } from '@virvixr/shared'
 import { config } from '../config.js'
@@ -21,6 +21,18 @@ export type BeatCall =
   | { kind: 'close'; tokenId: bigint }
 
 export type BeatFees = { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
+/** The node's fees as sign() would use them, with the latest base fee (null when the node gives none). */
+export type BeatFeeData = BeatFees & { baseFeePerGas: bigint | null }
+
+const GWEI = 1_000_000_000n
+const MIN_GAS_DEFAULT: Record<BeatChain, bigint> = { polygon: parseEther('10'), 'polygon-amoy': parseEther('0.1') }
+const MAX_FEE_GWEI_DEFAULT: Record<BeatChain, number> = { polygon: 1000, 'polygon-amoy': 300 }
+/** The minter's POL floor below which the chain pauses for low gas: BEAT_MIN_GAS_POL, else 10 POL on Polygon and 0.1 on Amoy. */
+export const beatMinGasWei = (chain: BeatChain): bigint => config.beats.minGasWei ?? MIN_GAS_DEFAULT[chain]
+/** The fee ceiling (max fee per gas) nothing is signed above: BEAT_MAX_FEE_GWEI, else 1000 gwei on Polygon and 300 on Amoy. */
+export const beatMaxFeeWei = (chain: BeatChain): bigint => BigInt(config.beats.maxFeeGwei ?? MAX_FEE_GWEI_DEFAULT[chain]) * GWEI
+
+export const BEAT_MINTER_ROLE = keccakText('MINTER_ROLE')
 export type BeatLog = { address: string; topics: readonly string[]; data: string }
 export type BeatReceipt = { ok: boolean; blockNumber: number; logs: BeatLog[] }
 export type BeatSigned = { raw: string; hash: string; fees: BeatFees; gasLimit: bigint }
@@ -54,6 +66,14 @@ export interface BeatChainClient {
   exists(tokenId: bigint): Promise<boolean>
   /** The wallets of this contract's `MintSkipped` logs among a receipt's logs (checksummed). */
   skippedIn(logs: BeatLog[]): string[]
+  /** The node's fees and base fee (what sign() uses when given no fees). */
+  feeData(): Promise<BeatFeeData>
+  /** The chain id the RPC answers with (eth_chainId). */
+  chainId(): Promise<number>
+  /** True when the configured contract address has code on this chain. */
+  contractHasCode(): Promise<boolean>
+  /** True when the minter holds MINTER_ROLE on the contract. */
+  minterHasRole(): Promise<boolean>
 }
 
 /** A call reverted. `name` is the contract's custom error name ('UnknownBeat', 'InsufficientGas', ...) or 'unknown'. */
@@ -169,6 +189,10 @@ class RpcBeatChain implements BeatChainClient {
   async isMinted(tokenId: bigint, wallet: string) { return Boolean(await this.#view('minted', [tokenId, wallet])) }
   async exists(tokenId: bigint) { return Boolean(await this.#view('exists', [tokenId])) }
   skippedIn(logs: BeatLog[]) { return skippedIn(this.#contract, logs) }
+  async chainId() { return Number(await this.#rpc('chain_id', () => this.#provider.send('eth_chainId', []))) }
+  async contractHasCode() { return (await this.#rpc('code', () => this.#provider.getCode(this.#contract))) !== '0x' }
+  async minterHasRole() { return Boolean(await this.#view('hasRole', [BEAT_MINTER_ROLE, this.minterAddress])) }
+  feeData() { return this.#feeData() }
 
   async estimate(call: BeatCall): Promise<bigint> {
     const data = encodeBeatCall(call)
@@ -182,7 +206,8 @@ class RpcBeatChain implements BeatChainClient {
 
   async sign(call: BeatCall, nonce: number, fees?: BeatFees, gasLimit?: bigint): Promise<BeatSigned> {
     const data = encodeBeatCall(call)
-    const f = fees ?? await this.#feeData()
+    const d = fees ?? await this.#feeData()
+    const f: BeatFees = { maxFeePerGas: d.maxFeePerGas, maxPriorityFeePerGas: d.maxPriorityFeePerGas }
     const gas = gasLimit ?? await this.estimate(call)
     const raw = await this.#rpc('sign', () => this.#wallet.signTransaction({
       type: 2, chainId: BigInt(BEAT_CHAIN_INFO[this.chain].chainId), to: this.#contract, data,
@@ -193,7 +218,7 @@ class RpcBeatChain implements BeatChainClient {
 
   /** The node's fees (eth_maxPriorityFeePerGas and the latest base fee, through ethers' getFeeData), with the tip
    * raised to the floor and maxFee to at least 2 × base fee + tip. */
-  async #feeData(): Promise<BeatFees> {
+  async #feeData(): Promise<BeatFeeData> {
     const [d, block] = await this.#rpc('fees', () => Promise.all([this.#provider.getFeeData(), this.#provider.getBlock('latest')]))
     const nodeTip = d.maxPriorityFeePerGas ?? d.gasPrice ?? 0n
     const tip = nodeTip > BEAT_MIN_PRIORITY_FEE_WEI ? nodeTip : BEAT_MIN_PRIORITY_FEE_WEI
@@ -201,7 +226,7 @@ class RpcBeatChain implements BeatChainClient {
     const floor = base != null ? 2n * base + tip : tip
     const nodeMax = d.maxFeePerGas ?? d.gasPrice ?? 0n
     if (base == null && nodeMax === 0n && nodeTip === 0n) throw new BeatRpcError('fees', 'MISSING_FEE_DATA')
-    return { maxFeePerGas: nodeMax > floor ? nodeMax : floor, maxPriorityFeePerGas: tip }
+    return { maxFeePerGas: nodeMax > floor ? nodeMax : floor, maxPriorityFeePerGas: tip, baseFeePerGas: base ?? null }
   }
 
   async broadcast(raw: string): Promise<void> {

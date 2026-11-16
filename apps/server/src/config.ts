@@ -203,11 +203,23 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
     if (!/^\d+$/.test(raw)) throw new Error(`${name} must be a whole number`)
     return Number(raw)
   }
-  let minGasWei: bigint
+  // Null when unset: each chain's default then applies (beatMinGasWei in beats/job.ts: 10 POL on Polygon, 0.1 on Amoy)
+  let minGasWei: bigint | null = null
   try {
-    minGasWei = parseEther(e.BEAT_MIN_GAS_POL || '1')
+    if (e.BEAT_MIN_GAS_POL) minGasWei = parseEther(e.BEAT_MIN_GAS_POL)
   } catch {
     throw new Error('BEAT_MIN_GAS_POL must be a decimal amount of POL')
+  }
+  // The fee ceiling (null: each chain's default, 1000 gwei on Polygon and 300 on Amoy): nothing is signed above it
+  const maxFeeGwei = e.BEAT_MAX_FEE_GWEI ? whole('BEAT_MAX_FEE_GWEI', 0) : null
+  if (maxFeeGwei !== null && maxFeeGwei <= 0) throw new Error('BEAT_MAX_FEE_GWEI must be more than 0')
+  const rpcFailsBeforePause = whole('BEAT_RPC_FAILS_BEFORE_PAUSE', 10)
+  if (rpcFailsBeforePause < 1) throw new Error('BEAT_RPC_FAILS_BEFORE_PAUSE must be at least 1')
+  const commit = (name: string) => {
+    const raw = e[name]
+    if (raw === undefined || raw === '') return null
+    if (!/^[0-9a-f]{7,40}$/.test(raw)) throw new Error(`${name} must be a git commit hash (lower-case hex)`)
+    return raw
   }
   const baseCents = whole('BEAT_PRICE_BASE_CENTS', 500)
   // Stripe's card minimum (BEAT_CARD_MIN_CENTS): a base price under it could never be paid by card
@@ -227,6 +239,14 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
       extraMintCents: whole('BEAT_PRICE_EXTRA_MINT_CENTS', 2),
     },
     minGasWei,
+    maxFeeGwei,
+    /** After this many chain passes in a row fail on the RPC, the chain pauses `rpc_down` and a job failure is recorded. */
+    rpcFailsBeforePause,
+    /** The commit each chain's contract was deployed from, for the Transparency page (null: not claimed). */
+    contractCommits: {
+      'polygon-amoy': commit('BEAT_CONTRACT_COMMIT_POLYGON_AMOY'),
+      polygon: commit('BEAT_CONTRACT_COMMIT_POLYGON'),
+    } as Record<BeatChain, string | null>,
     /** At most this many claims per BEAT from one network (an IPv4 address, or an IPv6 /64). */
     claimsPerIp: whole('BEAT_CLAIMS_PER_IP', 3),
     /** Scene passes for wallets never seen before, per network and hour (pass issuance at /api/auth/platform). */

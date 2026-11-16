@@ -67,6 +67,14 @@ export interface FakeBeatChain extends BeatChainClient {
   /** While down, every RPC method throws BeatRpcError NETWORK_ERROR. */
   setDown(down: boolean): void
   gasFor(call: BeatCall): bigint
+  /** The chain id the "RPC" answers (default the chain's own). */
+  setChainId(id: number): void
+  /** Whether the contract address has code (default true). */
+  setContractCode(has: boolean): void
+  /** Whether the minter holds MINTER_ROLE (default true). */
+  setMinterRole(has: boolean): void
+  /** The base fee feeData reports and mined txs pay. */
+  setBaseFee(wei: bigint): void
 }
 
 export type FakeTx = { hash: string; raw: string; nonce: number; call: BeatCall; fees: BeatFees; gasLimit: bigint }
@@ -105,7 +113,10 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
   let block = 100
   let balance = opts.balanceWei ?? 10n * 10n ** 18n
   let fees: BeatFees = opts.fees ?? { maxFeePerGas: 60n * GWEI, maxPriorityFeePerGas: 30n * GWEI }
-  const baseFee = opts.baseFeeWei ?? 30n * GWEI
+  let baseFee = opts.baseFeeWei ?? 30n * GWEI
+  let chainIdNow = BEAT_CHAIN_INFO[chain].chainId
+  let contractCode = true
+  let minterRole = true
   let down = false
   let minedNonce = 0
   const beats = new Map<string, { tradeable: boolean; closed: boolean; minted: Set<string> }>()
@@ -210,6 +221,10 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
     async isMinted(tokenId, w) { up('minted'); return beats.get(tokenId.toString())?.minted.has(lc(w)) ?? false },
     async exists(tokenId) { up('exists'); return beats.has(tokenId.toString()) },
     skippedIn(logs) { return skippedIn(CONTRACT, logs) },
+    async feeData() { up('fees'); return { ...fees, baseFeePerGas: baseFee } },
+    async chainId() { up('chain_id'); return chainIdNow },
+    async contractHasCode() { up('code'); return contractCode },
+    async minterHasRole() { up('hasRole'); return minterRole },
 
     async estimate(call) {
       up('estimate')
@@ -219,7 +234,8 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
     },
 
     async sign(call, nonce, f, gasLimit): Promise<BeatSigned> {
-      const use = f ?? (up('fees'), fees)
+      const raw0 = f ?? (up('fees'), fees)
+      const use = { maxFeePerGas: raw0.maxFeePerGas, maxPriorityFeePerGas: raw0.maxPriorityFeePerGas }
       const gas = gasLimit ?? await fake.estimate(call)
       const raw = await wallet.signTransaction({
         type: 2, chainId: BigInt(BEAT_CHAIN_INFO[chain].chainId), to: CONTRACT, data: encodeBeatCall(call), nonce,
@@ -280,6 +296,10 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
     setFees(f) { fees = f },
     setDown(d) { down = d },
     gasFor,
+    setChainId(id) { chainIdNow = id },
+    setContractCode(has) { contractCode = has },
+    setMinterRole(has) { minterRole = has },
+    setBaseFee(wei) { baseFee = wei },
   }
   return fake
 }

@@ -95,3 +95,13 @@ export const VIRVI_BEAT_ABI = [
 /** The gas the contract hands each recipient with code for its receiver hook (VirviBeat.RECEIVER_GAS in
  * contracts/src/VirviBeat.sol). The minting job adds it per such recipient on top of the node's estimate. */
 export const BEAT_RECEIVER_GAS = 120_000n
+
+/** The gas the contract keeps back beyond each guarded call (VirviBeat.GUARD_RESERVE). */
+export const BEAT_GUARD_RESERVE = 10_000n
+
+/**
+ * The gas budgeted per recipient on top of the node's estimate (attacker I1): every wallet as if it had code, so a wallet
+ * that gains code (an EIP-7702 delegation) between the estimate and the mine can only skip itself, never revert the batch.
+ * The contract checks `gasleft() >= RECEIVER_GAS * 64 / 63 + GUARD_RESERVE` before each guarded call. Only gas used is paid.
+ */
+export const BEAT_GAS_PER_RECIPIENT = (BEAT_RECEIVER_GAS * 64n) / 63n + BEAT_GUARD_RESERVE

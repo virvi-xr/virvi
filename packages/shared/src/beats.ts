@@ -20,7 +20,8 @@ export const BEAT_SUPPLY_CAP_MAX = 5000
 export const BEAT_MIN_PRESENT_DEFAULT_MINUTES = 5
 export const BEAT_MIN_PRESENT_MAX_MINUTES = 120
 export const BEAT_IMAGE_MIN_PX = 512
-export const BEAT_MAX_BATCH = 200
+/** The most wallets in one mint (the contract allows 200; 100 keeps the every-wallet-as-code gas budget near 19M). */
+export const BEAT_MAX_BATCH = 100
 export const BEAT_CLAIM_GRACE_MS = 24 * 3_600_000
 /** The card shows, and opt-in is allowed, this long before `starts_at`. Time only counts inside the window. */
 export const BEAT_CARD_LEAD_MS = 30 * 60_000

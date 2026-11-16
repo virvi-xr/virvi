@@ -340,6 +340,7 @@ describe('admin BEAT routes (LIV-11)', () => {
       const b = await seedBeat(933)
       await db.insert(beatClaims).values({ beatId: b.id, wallet: wallet(), consentVersion: 1, status: 'claimed', claimedAt: T0 })
       fake.setBalance(parseEther('1.5'))
+      ;(config as any).beats = { ...config.beats, maxFeeGwei: 1_000_000 } // a ceiling above these fees
       fake.setFees({ maxFeePerGas: 100_000n * GWEI, maxPriorityFeePerGas: GWEI }) // the batch costs more than the balance
       await runBeatTick(T0)
       const c = (await call('GET', '/api/admin/beats')).json().chains[0]

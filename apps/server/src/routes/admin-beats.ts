@@ -7,7 +7,7 @@ import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
-import { beatChainClient, beatChainMissing } from '../beats/chain.js'
+import { beatChainClient, beatChainMissing, beatMinGasWei } from '../beats/chain.js'
 import { BeatError } from '../beats/errors.js'
 import {
   BEAT_GIVEN_UP, beatBatchCostWei, beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
@@ -38,8 +38,8 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
        * (null when that isn't above 0). */
       minGasWei: string; batchCostWei: string | null; topUpWei: string | null
     }> = []
-    const minGasWei = config.beats.minGasWei
     for (const chain of BEAT_CHAINS) {
+      const minGasWei = beatMinGasWei(chain)
       const client = beatChainClient(chain)
       if (!client) {
         // The server's own chain is shown even without a client: hosts can't pay for BEATs until it's set up

@@ -72,6 +72,19 @@ describe.skipIf(!ready)('BEAT chain client on anvil', () => {
     throw new Error('no receipt')
   }
 
+  it('money C1: reads the chain id, the contract\'s code and the minter\'s role; another address has no code or role', async () => {
+    expect(await client.chainId()).toBe(80002)
+    expect(await client.contractHasCode()).toBe(true)
+    expect(await client.minterHasRole()).toBe(true)
+    const f = await client.feeData()
+    expect(f.baseFeePerGas).not.toBeNull()
+    expect(f.maxFeePerGas).toBeGreaterThanOrEqual(f.maxPriorityFeePerGas)
+    const empty = createBeatChainClient({ chain: 'polygon-amoy', rpcUrl: (provider as any)._getConnection().url, contract: '0x000000000000000000000000000000000000dEaD', minterKey: MINTER_KEY })
+    expect(await empty.contractHasCode()).toBe(false)
+    const stranger = createBeatChainClient({ chain: 'polygon-amoy', rpcUrl: (provider as any)._getConnection().url, contract, minterKey: ADMIN_KEY })
+    expect(await stranger.minterHasRole()).toBe(false)
+  })
+
   it('creates a BEAT and mints it to three wallets', async () => {
     expect(await client.exists(1n)).toBe(false)
     const created = await send({ kind: 'create', tokenId: 1n, tradeable: false })

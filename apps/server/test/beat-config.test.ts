@@ -14,9 +14,37 @@ describe('beatSettingsFrom', () => {
     expect(b.rpc['polygon-amoy']).toBe('https://polygon-amoy-bor-rpc.publicnode.com')
     expect(b.rpc.polygon).toBe('https://polygon-bor-rpc.publicnode.com')
     expect(b.price).toEqual({ baseCents: 500, includedMints: 100, extraMintCents: 2 })
-    expect(b.minGasWei).toBe(10n ** 18n)
+    // Per-chain defaults apply (beatMinGasWei, beatMaxFeeWei)
+    expect(b.minGasWei).toBeNull()
+    expect(b.maxFeeGwei).toBeNull()
+    expect(b.rpcFailsBeforePause).toBe(10)
+    expect(b.claimsPerIp).toBe(3)
+    expect(b.newWalletsPerIpHour).toBe(10)
+    expect(b.contractCommits).toEqual({ 'polygon-amoy': null, polygon: null })
     expect(b).not.toHaveProperty('metadataBase')
   })
+  it('per-chain gas floor and fee ceiling defaults, and their settings', async () => {
+    const { beatMinGasWei, beatMaxFeeWei } = await import('../src/beats/chain.js')
+    const { config } = await import('../src/config.js')
+    const prev = config.beats
+    try {
+      ;(config as any).beats = { ...prev, minGasWei: null, maxFeeGwei: null }
+      expect(beatMinGasWei('polygon')).toBe(10n * 10n ** 18n)
+      expect(beatMinGasWei('polygon-amoy')).toBe(10n ** 17n)
+      expect(beatMaxFeeWei('polygon')).toBe(1000n * 10n ** 9n)
+      expect(beatMaxFeeWei('polygon-amoy')).toBe(300n * 10n ** 9n)
+      ;(config as any).beats = { ...prev, minGasWei: 5n, maxFeeGwei: 7 }
+      expect(beatMinGasWei('polygon')).toBe(5n)
+      expect(beatMaxFeeWei('polygon-amoy')).toBe(7n * 10n ** 9n)
+    } finally {
+      ;(config as any).beats = prev
+    }
+    expect(beatSettingsFrom({ BEAT_MAX_FEE_GWEI: '1500', BEAT_RPC_FAILS_BEFORE_PAUSE: '4' })).toMatchObject({ maxFeeGwei: 1500, rpcFailsBeforePause: 4 })
+    expect(() => beatSettingsFrom({ BEAT_MAX_FEE_GWEI: '0' })).toThrow('BEAT_MAX_FEE_GWEI')
+    expect(beatSettingsFrom({ BEAT_CONTRACT_COMMIT_POLYGON_AMOY: '6637054d' }).contractCommits['polygon-amoy']).toBe('6637054d')
+    expect(() => beatSettingsFrom({ BEAT_CONTRACT_COMMIT_POLYGON: 'main' })).toThrow('BEAT_CONTRACT_COMMIT_POLYGON')
+  })
+
   it('reads settings', () => {
     const key = Wallet.createRandom().privateKey
     const b = beatSettingsFrom({
