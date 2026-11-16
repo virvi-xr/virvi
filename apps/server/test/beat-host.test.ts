@@ -212,6 +212,13 @@ describe('BEAT host API (LIV-11)', () => {
       expect([b.statusCode, b.json().error]).toEqual([409, 'locked'])
     })
 
+    it('holdMints is stored from create (off by default)', async () => {
+      const on = await create({ holdMints: true })
+      expect([on.statusCode, on.json().holdMints, on.json().mintsHeldUntil === null]).toEqual([201, true, false])
+      const off = await create({ startsAt: iso(30 * H), endsAt: iso(31 * H) })
+      expect(off.json()).toMatchObject({ holdMints: false, mintsHeldUntil: null, mintsReleasedAt: null, scheduledEndsAt: null })
+    })
+
     it('an image change on a paid BEAT clears any stale copy and copies nothing: the frozen copy is made at go-live', async () => {
       const b = await seed({ status: 'paid', imageUrl: 'https://cdn.example/frozen.png', tokenId: 20 })
       const next = await media(host, 700, 700)

@@ -29,7 +29,7 @@ describe('AdminBeatsView (LIV-11)', () => {
   it('shows the low-gas pause', () => {
     const html = render(data({ chains: [{ ...data().chains[0], paused: true, reason: 'low_gas', balanceWei: '250000000000000000', batchCostWei: '400000000000000000', topUpWei: '1150000000000000000' }] }))
     expect(html).toContain('Minting paused: top up the minter')
-    expect(html).toContain('Balance 0.2500 POL. Minimum 1.0000 POL. Top up 1.1500 POL: the minimum plus one full 200-claim batch at current fees.')
+    expect(html).toContain('Balance 0.2500 POL. Minimum 1.0000 POL. Top up 1.1500 POL: the minimum plus one full 100-claim batch at current fees.')
     expect(html).not.toContain('Clear pause')
   })
   it('shows an id clash with a Clear pause button', () => {

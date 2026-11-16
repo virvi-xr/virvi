@@ -77,7 +77,7 @@ describe('admin BEATs helpers (LIV-11)', () => {
     expect(lowGasDetail(chain())).toBeNull()
     const low = chain({ paused: true, reason: 'low_gas', balanceWei: '250000000000000000' })
     expect(lowGasDetail({ ...low, batchCostWei: '400000000000000000', topUpWei: '1150000000000000001' })).toBe(
-      'Balance 0.2500 POL. Minimum 1.0000 POL. Top up 1.1501 POL: the minimum plus one full 200-claim batch at current fees.')
+      'Balance 0.2500 POL. Minimum 1.0000 POL. Top up 1.1501 POL: the minimum plus one full 100-claim batch at current fees.')
     expect(lowGasDetail({ ...low, topUpWei: '750000000000000000' })).toBe('Balance 0.2500 POL. Minimum 1.0000 POL. Top up 0.7500 POL to reach the minimum.')
     // M1: never "Top up 0.0000 POL": no suggestion, just the balance and minimum
     expect(lowGasDetail({ ...low, balanceWei: '1500000000000000000', topUpWei: null })).toBe('Balance 1.5000 POL. Minimum 1.0000 POL.')

@@ -39,7 +39,7 @@ export const GENERIC_ERROR = 'Something went wrong. Try again.'
 
 export const STATUS_LABELS: Record<BeatStatus, string> = { draft: 'Draft', paid: 'Paid', live: 'Live', ended: 'Ended', cancelled: 'Cancelled' }
 export const CLAIM_STATUS_LABELS: Record<BeatClaimStatus, string> = {
-  present: 'Attending', claimed: 'Claimed', minting: 'Minting', minted: 'Minted', failed: 'Failed',
+  present: 'Attending', claimed: 'Claimed', minting: 'Minting', minted: 'Minted', failed: 'Failed', removed: 'Removed',
 }
 
 // ── Links ────────────────────────────────────────────────────────────────────
