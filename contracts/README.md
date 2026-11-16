@@ -241,8 +241,11 @@ one BEAT whose event has ended.
    paste):
 
    ```
-   cast send "$BEAT_ADDRESS" "reissue(address,address,uint256[])" "$REISSUE_FROM" "$REISSUE_TO" "$REISSUE_IDS" --rpc-url https://polygon-amoy-bor-rpc.publicnode.com --interactive
+   cast send "$BEAT_ADDRESS" "reissue(address,address,uint256[])" "$REISSUE_FROM" "$REISSUE_TO" "$REISSUE_IDS" --rpc-url https://polygon-amoy-bor-rpc.publicnode.com --priority-gas-price 30gwei --interactive
    ```
+
+   Keep `--priority-gas-price 30gwei`. Polygon refuses a tip under 25 gwei, and without it the tool can
+   guess 1 wei and fail with "gas tip cap 1, minimum needed 25000000000". Nothing is spent when that happens.
 
    With more than one file, do steps 2 and 3 for each, in order: the non-tradeable file first.
 4. Wait a minute or two, then reload the request in `/admin/beats/reissue`. Each file shows **Done**, the
