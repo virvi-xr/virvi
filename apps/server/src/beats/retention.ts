@@ -45,8 +45,8 @@ export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec):
     const unlinked = await tx.update(beatClaims).set(UNLINKED_CLAIM)
       .where(and(mine, eq(beatClaims.status, 'minted')))
       .returning({ id: beatClaims.id })
-    // Reissue requests (their wallets and reason) go, whatever their state
-    await deleteMyReissueRequests(tx, userId)
+    // Reissue requests go; one approved or proposed keeps only its wallets, ids and state until it settles (reissue.ts)
+    await deleteMyReissueRequests(tx, userId, _now)
     return { deleted: deleted.length, unlinked: unlinked.length + tombstones.length, pending: pending.length }
   }
   return exec ? run(exec) : db.transaction(run)

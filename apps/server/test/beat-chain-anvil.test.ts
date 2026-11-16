@@ -158,17 +158,21 @@ describe.skipIf(!ready)('BEAT chain client on anvil', () => {
     // The admin (anvil's account 0 here; the Safe on mainnet) runs each transaction of the file, encoded from its
     // contractMethod and contractInputsValues as Transaction Builder does
     const calls = planReissueCalls([{ tokenId: '2', tradeable: false }, { tokenId: '3', tradeable: false }, { tokenId: '4', tradeable: true }])
-    expect(calls).toEqual([['2', '3'], ['4']])
-    const file = buildSafeBatchFile({ id: '00000000-0000-4000-8000-00000000000a', oldWallet: old.toLowerCase(), newWallet: fresh.toLowerCase() }, 'polygon-amoy', contract, calls, new Date())
-    expect(file.chainId).toBe('80002')
+    expect(calls).toEqual([{ kind: 'plain', tokenIds: ['2', '3'] }, { kind: 'tradeable', tokenIds: ['4'] }])
+    const r = { id: '00000000-0000-4000-8000-00000000000a', oldWallet: old.toLowerCase(), newWallet: fresh.toLowerCase() }
     const hashes: string[] = []
-    for (const t of file.transactions) {
+    for (const [i, call] of calls.entries()) {
+      // One file per Safe transaction, each with one transaction
+      const file = buildSafeBatchFile(r, 'polygon-amoy', contract, call, i, calls.length, new Date())
+      expect(file.chainId).toBe('80002')
+      expect(file.transactions).toHaveLength(1)
+      const t = file.transactions[0]
       const v = t.contractInputsValues
       const data = beatInterface.encodeFunctionData(t.contractMethod.name, [v.from, v.to, v.ids.slice(1, -1).split(',')])
       const tx = await admin.sendTransaction({ to: t.to, data })
-      const r = (await tx.wait())!
-      expect(r.status).toBe(1)
-      hashes.push(r.hash)
+      const rc = (await tx.wait())!
+      expect(rc.status).toBe(1)
+      hashes.push(rc.hash)
     }
     const after = await client.latestBlock()
     for (const id of [2n, 3n, 4n]) {

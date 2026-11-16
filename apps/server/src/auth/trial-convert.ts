@@ -137,12 +137,12 @@ export async function finishOAuth(app: FastifyInstance, identity: OAuthIdentity)
     where: and(eq(userAuthMethods.type, 'oauth'), eq(userAuthMethods.identifier, identity.identifier)),
     with: { user: true },
   })
-  if (existing) return issueAccountSession(app, existing.user)
+  if (existing) return issueAccountSession(app, existing.user, 'oauth')
 
   const email = identity.email?.toLowerCase() || null
   // Auto-promote the first user to admin in single/scalable mode
   const role = await initialRoleForNewUser()
   const [newUser] = await db.insert(users).values({ displayName: identity.displayName, email, role }).returning()
   await db.insert(userAuthMethods).values({ userId: newUser.id, type: 'oauth', identifier: identity.identifier, metadata: identity.metadata })
-  return issueAccountSession(app, newUser)
+  return issueAccountSession(app, newUser, 'oauth')
 }

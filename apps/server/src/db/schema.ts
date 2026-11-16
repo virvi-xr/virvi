@@ -22,7 +22,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueItemState } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueItemState, BeatReissueFileStatus, SignInMethod } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -175,9 +175,23 @@ export const userAuthMethods = pgTable('user_auth_methods', {
   identifier: text('identifier').notNull(),
   credentialHash: text('credential_hash'),
   metadata: jsonb('metadata'),
+  // When and by which session this method was linked to the account (LIV-11 reissue provenance). linked_at null means
+  // created_at (a row from before this was recorded, or a first sign-in); linked_by is `{ method: 'unknown' }` for those
+  linkedAt: timestamp('linked_at', { withTimezone: true }),
+  linkedBy: jsonb('linked_by').$type<LinkedBy>().notNull().default(sql`'{"method":"unknown"}'::jsonb`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+/** How a wallet came onto an account: the sign-in method of the session that did it, with its wallet or email. */
+export type LinkedBy = {
+  method: SignInMethod
+  /** sign_up: the account was made by signing in with it; link: an account session linked it; visitor: moved from an
+   * in-world visitor account; trial: a trial converted with it. */
+  how?: 'sign_up' | 'link' | 'visitor' | 'trial'
+  wallet?: string | null
+  email?: string | null
+}
 
 export const userAuthMethodsRelations = relations(userAuthMethods, ({ one }) => ({
   user: one(users, {
@@ -2769,17 +2783,26 @@ export const beatClaims = pgTable('beat_claims', {
 // minting job's tick watches the chain and marks it done. One open request (pending, approved, proposed) per account.
 export const beatReissueRequests = pgTable('beat_reissue_requests', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  // Null once the person deleted their data while it was approved or proposed: only the wallets, ids and state stay,
+  // until it settles or is withdrawn, then it is deleted
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
   oldWallet: text('old_wallet').notNull(), // lower-case
   newWallet: text('new_wallet').notNull(), // lower-case
-  reason: text('reason').notNull(),
+  reason: text('reason'),
   status: text('status').$type<BeatReissueStatus>().notNull().default('pending'),
+  // The sessions that filed and cancelled it: { method, wallet, email }
+  filedVia: jsonb('filed_via').$type<LinkedBy>(),
+  cancelledVia: jsonb('cancelled_via').$type<LinkedBy>(),
   reviewerUserId: uuid('reviewer_user_id').references(() => users.id, { onDelete: 'set null' }),
   reviewNote: text('review_note'),
+  // Admin actions and system notes, oldest first: { at, by, action, note? }
+  audit: jsonb('audit').$type<ReissueAudit[]>().notNull().default(sql`'[]'::jsonb`),
   reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
   proposedAt: timestamp('proposed_at', { withTimezone: true }),
   doneAt: timestamp('done_at', { withTimezone: true }),
   cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+  dataDeletedAt: timestamp('data_deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -2787,11 +2810,34 @@ export const beatReissueRequests = pgTable('beat_reissue_requests', {
   statusIdx: index('beat_reissue_requests_status_idx').on(t.status, t.createdAt),
 }))
 
-// One BEAT of a reissue request, written when an admin prepares the Safe batch for its chain: `proposed` (in the batch,
-// in call `call_index`), `skipped` (left out, with its blockers) or `reissued` (seen on chain at the confirmation depth).
+export type ReissueAudit = { at: string; by: string | null; action: string; note?: string }
+
+// One Safe Transaction Builder file of a request: one Safe transaction, one `reissue` call (all the non-tradeable ids,
+// up to MAX_BATCH, or one tradeable id), so one failing call can't take the others with it. `file` is the exact JSON.
+export const beatReissueFiles = pgTable('beat_reissue_files', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  requestId: uuid('request_id').notNull().references(() => beatReissueRequests.id, { onDelete: 'cascade' }),
+  chain: text('chain').$type<BeatChain>().notNull(),
+  callIndex: integer('call_index').notNull(),
+  kind: text('kind').$type<'plain' | 'tradeable'>().notNull(),
+  tokenIds: text('token_ids').array().notNull(),
+  status: text('status').$type<BeatReissueFileStatus>().notNull().default('proposed'),
+  file: jsonb('file').notNull(),
+  checksum: text('checksum').notNull(),
+  proposedAt: timestamp('proposed_at', { withTimezone: true }).notNull(),
+  proposedBlock: bigint('proposed_block', { mode: 'number' }),
+  doneAt: timestamp('done_at', { withTimezone: true }),
+  voidedAt: timestamp('voided_at', { withTimezone: true }),
+}, (t) => ({
+  requestIdx: index('beat_reissue_files_request_idx').on(t.requestId, t.chain),
+}))
+
+// One BEAT of a reissue request, written when an admin proposes its chain: `proposed` (in file `file_id`), `skipped`
+// (left out, with its blockers), `reissued` (seen on chain at the confirmation depth), `clash` or `withdrawn`.
 export const beatReissueItems = pgTable('beat_reissue_items', {
   id: uuid('id').primaryKey().defaultRandom(),
   requestId: uuid('request_id').notNull().references(() => beatReissueRequests.id, { onDelete: 'cascade' }),
+  fileId: uuid('file_id').references(() => beatReissueFiles.id, { onDelete: 'set null' }),
   claimId: uuid('claim_id').references(() => beatClaims.id, { onDelete: 'set null' }),
   beatId: uuid('beat_id').references(() => beats.id, { onDelete: 'set null' }),
   chain: text('chain').$type<BeatChain>().notNull(),
@@ -2801,11 +2847,39 @@ export const beatReissueItems = pgTable('beat_reissue_items', {
   blockers: text('blockers').array().notNull().default(sql`'{}'::text[]`),
   callIndex: integer('call_index'),
   proposedAt: timestamp('proposed_at', { withTimezone: true }),
-  // The chain's latest block when the batch was prepared: the Reissued log is looked for after it
+  // The chain's latest block when the file was proposed: the Reissued log is looked for after it
   proposedBlock: bigint('proposed_block', { mode: 'number' }),
   txHash: text('tx_hash'),
   reissuedAt: timestamp('reissued_at', { withTimezone: true }),
 }, (t) => ({
   requestTokenUq: uniqueIndex('beat_reissue_items_request_token_uq').on(t.requestId, t.chain, t.tokenId),
   stateIdx: index('beat_reissue_items_chain_state_idx').on(t.chain, t.state),
+}))
+
+// Wallets that may not sign in to Virvi, be linked, or keep a session (LIV-11): a reissue's old wallet from approval
+// (kept after it is done; lifted on rejection or withdrawal), or a wallet an admin unlinked from an account.
+export const walletBlocks = pgTable('wallet_blocks', {
+  wallet: text('wallet').primaryKey(), // lower-case
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  requestId: uuid('request_id').references(() => beatReissueRequests.id, { onDelete: 'set null' }),
+  reason: text('reason').$type<'reissue' | 'unlinked_by_admin'>().notNull(),
+  byUserId: uuid('by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+// A wallet's history on an account beyond its current link (user_auth_methods): unlinked, blocked, unblocked, with the
+// link it had. Shown to admins reviewing a reissue.
+export const accountWalletEvents = pgTable('account_wallet_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  wallet: text('wallet').notNull(),
+  event: text('event').$type<'unlinked' | 'blocked' | 'unblocked'>().notNull(),
+  linkedAt: timestamp('linked_at', { withTimezone: true }),
+  linkedBy: jsonb('linked_by').$type<LinkedBy>(),
+  byUserId: uuid('by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  requestId: uuid('request_id').references(() => beatReissueRequests.id, { onDelete: 'set null' }),
+  note: text('note'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  userIdx: index('account_wallet_events_user_idx').on(t.userId, t.at),
 }))

@@ -126,16 +126,23 @@ export interface VisitorBeat {
 /**
  * A reissue request's state:
  * - `pending`: the person asked; an admin hasn't reviewed it;
- * - `approved` / `rejected`: reviewed (with an optional note, shown to the person);
- * - `proposed`: an admin prepared the Safe transaction batch; waiting for the Safe's signers and the chain;
- * - `done`: every proposed BEAT was reissued on chain (confirmed);
- * - `cancelled`: the person withdrew it while it was pending.
+ * - `approved` / `rejected`: reviewed (with an optional note, shown to the person). Approval blocks the old wallet from
+ *   signing in to Virvi (and ends its sessions); a rejection lifts that block again;
+ * - `proposed`: an admin prepared the Safe transaction files; waiting for the Safe's signers and the chain;
+ * - `done`: every proposed BEAT was reissued on chain (confirmed); the old wallet is unlinked and stays blocked;
+ * - `cancelled`: the person withdrew it while it was pending;
+ * - `withdrawn`: an admin voided it (approved or proposed, before its files landed); the person may file again.
  */
-export type BeatReissueStatus = 'pending' | 'approved' | 'rejected' | 'proposed' | 'done' | 'cancelled'
+export type BeatReissueStatus = 'pending' | 'approved' | 'rejected' | 'proposed' | 'done' | 'cancelled' | 'withdrawn'
 /** The states in which an account has an open request (it may have only one). */
 export const BEAT_REISSUE_OPEN: readonly BeatReissueStatus[] = ['pending', 'approved', 'proposed']
-/** One BEAT of a request: in the last prepared batch, left out of it (with its blockers), or reissued on chain. */
-export type BeatReissueItemState = 'proposed' | 'skipped' | 'reissued'
+/**
+ * One BEAT of a request: in a proposed file, left out (with its blockers), reissued on chain, reissued on chain but
+ * its claim couldn't move because another claim holds the new wallet (`clash`, an admin alert), or withdrawn.
+ */
+export type BeatReissueItemState = 'proposed' | 'skipped' | 'reissued' | 'clash' | 'withdrawn'
+/** One Safe Transaction Builder file (one Safe transaction): proposed, done (all its ids reissued) or voided. */
+export type BeatReissueFileStatus = 'proposed' | 'done' | 'voided'
 /**
  * Why a BEAT can't be reissued now:
  * - NothingToReplace: tradeable, and the old wallet no longer holds a copy (the contract would revert);
@@ -143,9 +150,22 @@ export type BeatReissueItemState = 'proposed' | 'skipped' | 'reissued'
  * - AlreadyMinted: the new wallet was already minted this BEAT;
  * - ClaimOnNewWallet: another claim on this BEAT already uses the new wallet;
  * - BeatOpen: the BEAT is still running (reissue once it has ended);
- * - ChainUnavailable: the chain couldn't be read (no client, or the RPC failed).
+ * - ChainUnavailable: the chain couldn't be read (no client, or the RPC failed);
+ * - Withdrawn: an admin withdrew the file it was in.
  */
-export type BeatReissueBlocker = 'NothingToReplace' | 'AlreadyReplaced' | 'AlreadyMinted' | 'ClaimOnNewWallet' | 'BeatOpen' | 'ChainUnavailable'
+export type BeatReissueBlocker = 'NothingToReplace' | 'AlreadyReplaced' | 'AlreadyMinted' | 'ClaimOnNewWallet' | 'BeatOpen' | 'ChainUnavailable' | 'Withdrawn'
+/**
+ * Red flags the admin queue raises on a request:
+ * - new_wallet_recent: the new wallet was linked less than 7 days before the request was filed;
+ * - new_wallet_linked_by_old_wallet: the new wallet was linked by a session signed in with the old wallet;
+ * - recent_cancel: another request of the account was cancelled in the last 30 days;
+ * - earlier_reissue: the account already had a reissue done;
+ * - follow_up_reissue: the old wallet is the new wallet of a reissue done in the last 30 days;
+ * - clash: a BEAT was reissued on chain but its claim couldn't move (another claim holds the new wallet).
+ */
+export type BeatReissueFlag = 'new_wallet_recent' | 'new_wallet_linked_by_old_wallet' | 'recent_cancel' | 'earlier_reissue' | 'follow_up_reissue' | 'clash'
+/** How a session signed in (the `am` token claim); `unknown` for tokens issued before it was recorded. */
+export type SignInMethod = 'wallet' | 'email' | 'oauth' | 'unknown'
 export const BEAT_REISSUE_REASON_MAX = 1000
 export const BEAT_REISSUE_NOTE_MAX = 1000
 /** The most ids in one `reissue` call (VirviBeat.MAX_BATCH). */

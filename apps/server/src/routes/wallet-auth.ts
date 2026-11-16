@@ -11,6 +11,8 @@ import { linkWalletGrants } from '../auth/permissions.js'
 import { recordTrialEvent, cleanAction } from '../auth/trial-events.js'
 import { convertTrial, isTrialGone, mergeTrial, movedHeadsetsField, refuseExpiredTrial, trialFromBearer } from '../auth/trial-convert.js'
 import { linkVerifiedWallet, resolveVerifiedWalletUser } from '../auth/wallet-users.js'
+import { isWalletBlocked, signInOf } from '../auth/wallet-blocks.js'
+import type { SignInMethod } from '@virvixr/shared'
 import { claimWalletInvites } from '../studio/invites.js'
 import { issueWalletSession } from '../auth/sessions.js'
 import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
@@ -45,7 +47,7 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
       ? await resolveVerifiedWalletUser(recovered, `${recovered.slice(0, 6)}…${recovered.slice(-4)}`, 'account')
       : await db.transaction(async (tx) => {
           const converted = await convertTrial(trialId, { displayName: `${recovered.slice(0, 6)}…${recovered.slice(-4)}` }, tx)
-          await tx.insert(userAuthMethods).values({ userId: trialId, type: 'wallet', identifier: recovered, metadata: { verified: true } })
+          await tx.insert(userAuthMethods).values({ userId: trialId, type: 'wallet', identifier: recovered, metadata: { verified: true }, linkedBy: { method: 'wallet', how: 'trial', wallet: recovered } })
           return converted
         }).catch((e) => { if (isTrialGone(e)) return null; throw e })
     if (!user) return null
@@ -98,6 +100,8 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
       return reply.status(401).send({ error: 'Invalid signature' })
     }
     if (recovered !== challenge.address) return reply.status(401).send({ error: 'Invalid signature' })
+    // A blocked wallet (a reissue's compromised wallet, or one an admin unlinked) neither signs in nor links (LIV-11)
+    if (await isWalletBlocked(recovered)) return reply.status(403).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to Virvi.' })
 
     const trialId = await trialFromBearer(app, request)
     const fromTrial = trialId ? await signInFromTrial(trialId, recovered, request.body?.fromAction) : null
@@ -108,15 +112,18 @@ export default async function walletAuthRoutes(app: FastifyInstance) {
     // A trial bearer that lost a concurrent conversion is ignored too: this is then a plain wallet sign-in.
     const bearerKind = auth?.startsWith('Bearer ') ? (app.jwt.decode<{ kind?: string }>(auth.slice(7)) as { kind?: string } | null)?.kind : undefined
     if (!trialId && auth?.startsWith('Bearer ') && bearerKind !== 'scene') {
-      let bearer: { id: string; refresh?: boolean; guest?: boolean; verified?: boolean; kind?: 'account' | 'scene' } | null = null
+      type Bearer = { id: string; refresh?: boolean; guest?: boolean; verified?: boolean; kind?: 'account' | 'scene'; wallet?: string | null; email?: string | null; am?: SignInMethod }
+      let bearer: Bearer | null = null
       try {
-        bearer = app.jwt.verify<{ id: string; refresh?: boolean; guest?: boolean; verified?: boolean; kind?: 'account' | 'scene' }>(auth.slice(7))
+        bearer = app.jwt.verify<Bearer>(auth.slice(7))
       } catch {
         return reply.status(401).send({ error: 'Invalid token' })
       }
       const actor = actorFromClaims(bearer)
       if (bearer!.kind !== 'account' || bearer!.refresh || !actor.userId || !actor.verified) return reply.status(401).send({ error: 'Invalid token' })
-      const result = await linkVerifiedWallet(actor.userId, recovered)
+      // The linking session's own wallet must not be blocked either (its access token would be refused elsewhere)
+      if (bearer!.wallet && (await isWalletBlocked(bearer!.wallet))) return reply.status(401).send({ error: 'wallet_blocked' })
+      const result = await linkVerifiedWallet(actor.userId, recovered, { ...signInOf(bearer), how: 'link' })
       if (result === 'conflict') return reply.status(409).send({ error: 'That wallet is linked to another account' })
       await linkWalletGrants(actor.userId, recovered)
       return reply.send({ linked: true })

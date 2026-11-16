@@ -10,7 +10,8 @@ import {
 } from './service.js'
 import { checkInBeat, claimBeat, currentBeat, stopTrackingBeat, trackBeat } from './visitor.js'
 import beatMetadataRoutes, { BEAT_METADATA_ROUTE } from './metadata.js'
-import { cancelMyReissueRequest, createReissueRequest, listMyReissueRequests } from './reissue.js'
+import { cancelMyReissueRequest, createReissueRequest, listMyReissueRequests, type ReissueCaller } from './reissue.js'
+import { signInOf } from '../auth/wallet-blocks.js'
 
 /**
  * BEAT host routes (LIV-11). Dark unless BEAT_ENABLED: every route but availability answers 404.
@@ -143,32 +144,37 @@ export default async function beatRoutes(app: FastifyInstance) {
     }
   })
 
-  // Reissue requests (reissue.ts): the signed-in account's own, for BEATs on a compromised wallet. No scene pass.
-  const accountOnly = (request: FastifyRequest, reply: FastifyReply) => {
-    if (request.user.kind !== 'account') {
-      reply.status(403).send({ error: 'account_required', message: 'Sign in to your Virvi account to do this.' })
-      return false
+  // Reissue requests (reissue.ts): the signed-in account's own, for BEATs on a compromised wallet. Only a normal web
+  // sign-in session (M6): never a scene, Studio, AR or Hyperfy pass, a trial or an API key, as for errors.ts reports
+  const reissueCaller = (request: FastifyRequest, reply: FastifyReply): ReissueCaller | null => {
+    const u = request.user
+    if (u.kind !== 'account' || u.via || u.trial || u.viaApiKey || u.guest) {
+      reply.status(403).send({ error: 'account_required', message: 'Sign in to your Virvi account on the web to do this.' })
+      return null
     }
-    return true
+    return { userId: u.id, signIn: signInOf(u) }
   }
   app.get('/api/beats/reissue-requests', async (request, reply) => {
-    if (!accountOnly(request, reply)) return reply
-    return reply.send(await listMyReissueRequests(request.user.id))
+    const c = reissueCaller(request, reply)
+    if (!c) return reply
+    return reply.send(await listMyReissueRequests(c.userId))
   })
 
   app.post('/api/beats/reissue-requests', async (request, reply) => {
-    if (!accountOnly(request, reply)) return reply
+    const c = reissueCaller(request, reply)
+    if (!c) return reply
     try {
-      return reply.status(201).send(await createReissueRequest(request.user.id, body(request)))
+      return reply.status(201).send(await createReissueRequest(c, body(request)))
     } catch (e) {
       return fail(reply, e)
     }
   })
 
   app.delete<{ Params: { id: string } }>('/api/beats/reissue-requests/:id', async (request, reply) => {
-    if (!accountOnly(request, reply)) return reply
+    const c = reissueCaller(request, reply)
+    if (!c) return reply
     try {
-      return reply.send(await cancelMyReissueRequest(request.user.id, request.params.id))
+      return reply.send(await cancelMyReissueRequest(c, request.params.id))
     } catch (e) {
       return fail(reply, e)
     }

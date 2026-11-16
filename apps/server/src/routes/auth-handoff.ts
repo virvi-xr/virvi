@@ -9,6 +9,7 @@ import { authenticate } from '../middleware/auth.js'
 import { boundScene, isScenePass, isStudioPass } from '../auth/scene-from.js'
 import { linkWalletGrants } from '../auth/permissions.js'
 import { issueWalletSession } from '../auth/sessions.js'
+import { isWalletBlocked } from '../auth/wallet-blocks.js'
 import { issueScenePass } from '../auth/scene-pass.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
 
@@ -84,6 +85,8 @@ export default async function authHandoffRoutes(app: FastifyInstance) {
 
     const user = await db.query.users.findFirst({ where: eq(users.id, claimed.userId) })
     if (!user) return reply.status(410).send(EXPIRED)
+    // A wallet blocked since the code was made (LIV-11 reissue) gets no session
+    if (claimed.wallet && (await isWalletBlocked(claimed.wallet))) return reply.status(403).send({ error: 'wallet_blocked' })
     // A pass-minted code carries the same pass (same scene, same location) — never an account session.
     if (claimed.kind === 'scene') {
       if (!claimed.passExpiresAt || claimed.passExpiresAt.getTime() <= Date.now()) return reply.status(410).send(EXPIRED)

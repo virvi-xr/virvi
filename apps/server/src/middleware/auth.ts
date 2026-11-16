@@ -11,6 +11,7 @@ import { dclHudNeedsRedeploy } from '../auth/hud-protocol.js'
 import { noteDclHud } from '../scenes/hud-version.js'
 import { config } from '../config.js'
 import { sessionRole } from '../auth/admin.js'
+import { isWalletBlocked } from '../auth/wallet-blocks.js'
 import { HUD_VERSION_HEADER, REDEPLOY_REQUIRED } from '@virvixr/shared'
 
 const TRIAL_TOUCH_MS = 10 * 60_000
@@ -35,6 +36,8 @@ export interface AuthUser {
   deviceId?: string
   /** On a Decentraland scene pass: the name the visitor signed in with. */
   displayName?: string
+  /** How an account session signed in (LIV-11): wallet, email (password) or oauth; absent on older tokens. */
+  am?: 'wallet' | 'email' | 'oauth' | 'unknown'
 }
 
 declare module 'fastify' {
@@ -45,7 +48,7 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: { id: string; email: string | null; role: string; orgId?: string | null; wallet?: string | null; verified?: boolean; guest?: boolean; refresh?: boolean; kind?: 'account' | 'scene' | 'trial'; sceneId?: string | null; locationId?: string | null; via?: 'hyperfy' | 'ar' | 'studio'; pairingId?: string; worldId?: string; deviceId?: string }
+    payload: { id: string; email: string | null; role: string; orgId?: string | null; wallet?: string | null; verified?: boolean; guest?: boolean; refresh?: boolean; kind?: 'account' | 'scene' | 'trial'; sceneId?: string | null; locationId?: string | null; via?: 'hyperfy' | 'ar' | 'studio'; pairingId?: string; worldId?: string; deviceId?: string; am?: 'wallet' | 'email' | 'oauth' | 'unknown' }
     user: AuthUser
   }
 }
@@ -141,6 +144,10 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     }
     if (decoded.kind !== 'account' && decoded.kind !== 'scene') {
       return reply.status(401).send({ error: 'Unauthorized', message: 'Session expired — sign in again' })
+    }
+    // A blocked wallet's sessions end at once (LIV-11 reissue: the compromised wallet, or one an admin unlinked)
+    if (decoded.wallet && decoded.verified !== false && (await isWalletBlocked(decoded.wallet))) {
+      return reply.status(401).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to Virvi.' })
     }
     // A token claiming admin is checked against the database, so a demotion counts at once for every check that reads
     // request.user.role (src/auth/admin.ts sessionRole); any other claim is used as it is, with no read

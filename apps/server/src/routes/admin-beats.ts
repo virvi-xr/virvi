@@ -9,7 +9,9 @@ import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { beatChainClient, beatChainMissing, beatMinGasWei } from '../beats/chain.js'
 import { BeatError } from '../beats/errors.js'
-import { adminListReissueRequests, prepareSafeBatch, reviewReissueRequest } from '../beats/reissue.js'
+import {
+  adminListReissueRequests, getSafeBatchFile, previewSafeBatch, proposeSafeBatch, reviewReissueRequest, unlinkAccountWallet, withdrawReissue,
+} from '../beats/reissue.js'
 import {
   BEAT_GIVEN_UP, beatBatchCostWei, beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
 } from '../beats/job.js'
@@ -123,44 +125,55 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
     }
   })
 
-  // ── Reissue requests (beats/reissue.ts). Review and preparing the Safe batch are separate steps, so a support role can
+  // ── Reissue requests (beats/reissue.ts). Review and proposing the Safe files are separate steps, so a support role can
   // take the first later. The server never signs or sends a reissue: the admin Safe does.
   const fail = (reply: FastifyReply, e: unknown) => {
     if (e instanceof BeatError) return reply.status(e.status).send({ ...e.details, error: e.code, message: e.message })
     throw e
   }
 
-  app.get<{ Querystring: { status?: string } }>('/api/admin/beats/reissue-requests', async (request, reply) => {
+  const body = (request: { body?: unknown }) => (request.body && typeof request.body === 'object' ? request.body : {}) as Record<string, unknown>
+  const attempt = async (reply: FastifyReply, fn: () => Promise<unknown>) => {
     try {
-      return reply.send(await adminListReissueRequests(request.query.status))
+      return reply.send(await fn())
     } catch (e) {
       return fail(reply, e)
     }
-  })
-
-  for (const decision of ['approve', 'reject'] as const) {
-    app.post<{ Params: { id: string }; Body: { note?: unknown } }>(`/api/admin/beats/reissue-requests/:id/${decision}`, async (request, reply) => {
-      try {
-        return reply.send(await reviewReissueRequest(request.user.id, request.params.id, decision, request.body?.note))
-      } catch (e) {
-        return fail(reply, e)
-      }
-    })
   }
 
-  // The Safe Transaction Builder batch for one chain; marks the request proposed
-  app.get<{ Params: { id: string }; Querystring: { chain?: string } }>('/api/admin/beats/reissue-requests/:id/safe-batch', async (request, reply) => {
+  app.get<{ Querystring: { status?: string; offset?: string } }>('/api/admin/beats/reissue-requests', async (request, reply) =>
+    attempt(reply, () => adminListReissueRequests(request.query.status, request.query.offset)))
+
+  for (const decision of ['approve', 'reject'] as const) {
+    app.post<{ Params: { id: string } }>(`/api/admin/beats/reissue-requests/:id/${decision}`, async (request, reply) =>
+      attempt(reply, () => reviewReissueRequest(request.user.id, request.params.id, decision, body(request).note)))
+  }
+
+  // Read-only: the files proposing would make now (a live read), and those already proposed
+  app.get<{ Params: { id: string }; Querystring: { chain?: string } }>('/api/admin/beats/reissue-requests/:id/safe-batch', async (request, reply) =>
+    attempt(reply, () => previewSafeBatch(request.params.id, request.query.chain)))
+
+  // Records the files (one Safe transaction each) and marks the request proposed
+  app.post<{ Params: { id: string } }>('/api/admin/beats/reissue-requests/:id/propose', async (request, reply) =>
+    attempt(reply, () => proposeSafeBatch(request.user.id, request.params.id, body(request).chain)))
+
+  // One proposed file, exactly as recorded, as a download
+  app.get<{ Params: { id: string; fileId: string } }>('/api/admin/beats/reissue-requests/:id/files/:fileId', async (request, reply) => {
     try {
-      const file = await prepareSafeBatch(request.params.id, request.query.chain)
-      return reply
-        .header('content-disposition', `attachment; filename="virvi-beat-reissue-${request.params.id.slice(0, 8)}-${request.query.chain}.json"`)
-        .header('cache-control', 'no-store')
-        .type('application/json')
-        .send(file)
+      const { filename, file } = await getSafeBatchFile(request.params.id, request.params.fileId)
+      return reply.header('content-disposition', `attachment; filename="${filename}"`).header('cache-control', 'no-store').type('application/json').send(file)
     } catch (e) {
       return fail(reply, e)
     }
   })
+
+  // Voids a request (or one of its files) that hasn't landed; the Safe's pending transaction must be discarded too
+  app.post<{ Params: { id: string } }>('/api/admin/beats/reissue-requests/:id/withdraw', async (request, reply) =>
+    attempt(reply, () => withdrawReissue(request.user.id, request.params.id, body(request))))
+
+  // Takes a (backdoor) wallet off the request's account and blocks it
+  app.post<{ Params: { id: string } }>('/api/admin/beats/reissue-requests/:id/unlink-wallet', async (request, reply) =>
+    attempt(reply, () => unlinkAccountWallet(request.user.id, request.params.id, body(request).wallet)))
 
   // An id_conflict pause is sticky: an admin lifts it once the clash has been looked into
   app.post<{ Body: { chain?: unknown } }>('/api/admin/beats/clear-pause', async (request, reply) => {

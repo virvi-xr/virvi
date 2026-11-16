@@ -21,6 +21,8 @@ export interface SessionClaims {
   deviceId?: string
   /** On a Decentraland scene pass: the name the visitor signed in with (raffle entries copy it, LIV-55). */
   displayName?: string
+  /** How an account session signed in (LIV-11 reissue provenance); absent on older tokens. */
+  am?: 'wallet' | 'email' | 'oauth' | 'unknown'
 }
 
 const verifier = createVerifier({ key: config.jwtSecret })

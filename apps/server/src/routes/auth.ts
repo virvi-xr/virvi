@@ -14,6 +14,7 @@ import { sendPasswordResetEmail } from '../services/email.js'
 import { initialRoleForNewUser } from '../auth/roles.js'
 import { linkWalletGrants } from '../auth/permissions.js'
 import { resolveVerifiedWalletUser } from '../auth/wallet-users.js'
+import { isWalletBlocked } from '../auth/wallet-blocks.js'
 import { verifyDclSceneRequest, hasDclAuthHeaders } from '../middleware/dcl-auth.js'
 import { bindSceneRequest, type SceneBinding } from '../auth/scene-binding.js'
 import type { SessionClaims } from '../auth/tokens.js'
@@ -164,7 +165,7 @@ export default async function authRoutes(app: FastifyInstance) {
     const token = authHeader.slice(7)
 
     try {
-      const decoded = app.jwt.verify<{ id: string; email: string | null; role: string; wallet?: string | null; verified?: boolean; refresh?: boolean; kind?: 'account' | 'scene' | 'trial'; sceneId?: string | null; locationId?: string | null }>(token)
+      const decoded = app.jwt.verify<{ id: string; email: string | null; role: string; wallet?: string | null; verified?: boolean; refresh?: boolean; kind?: 'account' | 'scene' | 'trial'; sceneId?: string | null; locationId?: string | null; am?: 'wallet' | 'email' | 'oauth' | 'unknown' }>(token)
 
       if (!decoded.refresh) {
         return reply.status(401).send({ error: 'Not a refresh token' })
@@ -184,6 +185,18 @@ export default async function authRoutes(app: FastifyInstance) {
 
       if (!user) {
         return reply.status(401).send({ error: 'User not found' })
+      }
+
+      // A wallet session lives only while its wallet is unblocked and still on this account (LIV-11 reissue: an approved
+      // reissue blocks the old wallet; an admin unlink blocks and removes one)
+      if (decoded.kind === 'account' && decoded.wallet) {
+        const w = decoded.wallet.toLowerCase()
+        if (await isWalletBlocked(w)) return reply.status(401).send({ error: 'wallet_blocked' })
+        const method = await db.query.userAuthMethods.findFirst({
+          where: and(eq(userAuthMethods.type, 'wallet'), eq(userAuthMethods.identifier, w), eq(userAuthMethods.userId, user.id)),
+          columns: { id: true },
+        })
+        if (!method) return reply.status(401).send({ error: 'wallet_unlinked' })
       }
 
       if (decoded.kind === 'trial') {
@@ -210,6 +223,7 @@ export default async function authRoutes(app: FastifyInstance) {
               wallet: decoded.wallet ?? null,
               verified: true,
               kind: 'account' as const,
+              ...(decoded.am ? { am: decoded.am } : {}),
             }
       const accessToken = app.jwt.sign(claims, { expiresIn: config.jwtAccessExpiry })
 
@@ -301,6 +315,9 @@ export default async function authRoutes(app: FastifyInstance) {
         `preview:${platformUser?.id || platformUser?.walletAddress || crypto.randomUUID()}`
 
       let dbUser
+      if (verifiedWallet && (await isWalletBlocked(verifiedWallet))) {
+        return reply.status(403).send({ error: 'wallet_blocked', message: 'This wallet can no longer sign in to Virvi.' })
+      }
       if (verifiedWallet) {
         dbUser = await resolveVerifiedWalletUser(verifiedWallet, displayName, 'visitor')
       } else {

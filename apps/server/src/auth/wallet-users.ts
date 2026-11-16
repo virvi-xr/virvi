@@ -1,6 +1,6 @@
 import { and, eq, notInArray, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { accessGrants, assetLibraryItems, beatClaims, mediaAssets, raffleEntries, sceneRoles, scenes, userAuthMethods, users } from '../db/schema.js'
+import { accessGrants, assetLibraryItems, beatClaims, mediaAssets, raffleEntries, sceneRoles, scenes, userAuthMethods, users, type LinkedBy } from '../db/schema.js'
 import { moveStudioData } from '../studio/merge.js'
 import { UNLINKED_CLAIM } from '../beats/retention.js'
 import { claimWalletInvites } from '../studio/invites.js'
@@ -34,7 +34,7 @@ export async function resolveVerifiedWalletUser(wallet: string, displayName: str
   const initial = await initialRoleForNewUser()
   const role = as === 'visitor' && initial === 'creator' ? 'viewer' : initial
   const [user] = await db.insert(users).values({ displayName, email: null, role }).returning()
-  await db.insert(userAuthMethods).values({ userId: user.id, type: 'wallet', identifier: w, metadata: { verified: true } })
+  await db.insert(userAuthMethods).values({ userId: user.id, type: 'wallet', identifier: w, metadata: { verified: true }, linkedBy: { method: 'wallet', how: 'sign_up', wallet: w } })
   await claimWalletInvites(user.id, w)
   return user
 }
@@ -43,9 +43,10 @@ export async function resolveVerifiedWalletUser(wallet: string, displayName: str
 const isVisitorShell = (u: { role: string; email: string | null }) => u.role === 'viewer' && u.email === null
 
 /** Move a visitor account's wallet, grants, roles, BEAT claims and raffle entries to `userId`; drop the visitor account if it owns nothing. */
-async function absorbVisitor(shellId: string, userId: string, methodId: string) {
+async function absorbVisitor(shellId: string, userId: string, methodId: string, linkedBy: LinkedBy) {
   await db.transaction(async (tx) => {
-    await tx.update(userAuthMethods).set({ userId }).where(eq(userAuthMethods.id, methodId))
+    // Linked to this account now, by this session (reissue provenance)
+    await tx.update(userAuthMethods).set({ userId, linkedAt: new Date(), linkedBy: { ...linkedBy, how: 'visitor' } }).where(eq(userAuthMethods.id, methodId))
     await tx.update(accessGrants).set({ userId }).where(eq(accessGrants.userId, shellId))
     await tx.update(sceneRoles).set({ userId }).where(eq(sceneRoles.userId, shellId))
     await moveStudioData(tx, shellId, userId, new Date())
@@ -75,18 +76,21 @@ async function absorbVisitor(shellId: string, userId: string, methodId: string) 
   })
 }
 
-/** Attach a proven wallet to an existing (e.g. email) user; design invites waiting on it become theirs. */
-export async function linkVerifiedWallet(userId: string, wallet: string): Promise<'linked' | 'already' | 'conflict'> {
+/**
+ * Attach a proven wallet to an existing (e.g. email) user; design invites waiting on it become theirs. `linkedBy` is the
+ * linking session's sign-in (reissue provenance, LIV-11), recorded with the time.
+ */
+export async function linkVerifiedWallet(userId: string, wallet: string, linkedBy: LinkedBy = { method: 'unknown', how: 'link' }): Promise<'linked' | 'already' | 'conflict'> {
   const w = wallet.toLowerCase()
   const existing = await findWalletMethod(w)
   if (existing && existing.userId === userId && isVerified(existing)) return 'already'
   if (existing && isVerified(existing) && existing.userId !== userId) {
     if (!isVisitorShell(existing.user)) return 'conflict'
-    await absorbVisitor(existing.userId, userId, existing.id)
+    await absorbVisitor(existing.userId, userId, existing.id, linkedBy)
     await claimWalletInvites(userId, w)
     return 'linked'
   }
-  await db.insert(userAuthMethods).values({ userId, type: 'wallet', identifier: w, metadata: { verified: true } })
+  await db.insert(userAuthMethods).values({ userId, type: 'wallet', identifier: w, metadata: { verified: true }, linkedAt: new Date(), linkedBy: { ...linkedBy, how: 'link' } })
   await claimWalletInvites(userId, w)
   return 'linked'
 }

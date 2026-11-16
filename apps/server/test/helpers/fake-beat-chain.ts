@@ -84,6 +84,8 @@ export interface FakeBeatChain extends BeatChainClient {
    * NothingToReplace). Returns the tx hash, or the revert name.
    */
   reissue(from: string, to: string, ids: bigint[]): { hash: string } | { reason: string }
+  /** Every replacedBy read of this id throws BeatRpcError (null clears it). */
+  failReplacedBy(tokenId: bigint | null): void
 }
 
 export type FakeTx = { hash: string; raw: string; nonce: number; call: BeatCall; fees: BeatFees; gasLimit: bigint }
@@ -139,6 +141,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
   const replaced = new Map<string, { to: string; block: number }>() // `${id}:${from}`
   const reissueLogs: Array<{ tokenId: bigint; from: string; to: string; txHash: string; blockNumber: number }> = []
   const bkey = (id: bigint, w: string) => `${id}:${lc(w)}`
+  const failingReads = new Set<string>()
   let dropCount = 0
   let failures: { code: string; down: boolean }[] = []
 
@@ -241,6 +244,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
     async balanceOf(w, tokenId) { up('balanceOf'); return balances.get(bkey(tokenId, w)) ?? 0n },
     async replacedBy(tokenId, w, tag) {
       up('replacedBy')
+      if (failingReads.has(tokenId.toString())) throw new BeatRpcError('replacedBy', 'SERVER_ERROR')
       const r = replaced.get(bkey(tokenId, w))
       return r && r.block <= (tag ?? block) ? getAddress(r.to) : null
     },
@@ -316,6 +320,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
       for (const w of o.minted ?? []) balances.set(bkey(tokenId, w), 1n)
     },
     moveOut(tokenId, w) { balances.set(bkey(tokenId, w), 0n) },
+    failReplacedBy(tokenId) { if (tokenId === null) failingReads.clear(); else failingReads.add(tokenId.toString()) },
     reissue(from, to, ids) {
       const f = lc(from)
       const t = lc(to)
