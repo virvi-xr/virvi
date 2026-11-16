@@ -1,9 +1,9 @@
-import { Transaction, Wallet, ZeroAddress, getAddress, keccak256 } from 'ethers'
+import { Transaction, Wallet, ZeroAddress, getAddress, hexlify, keccak256, randomBytes } from 'ethers'
 import type { BeatChain } from '@virvixr/shared'
 import { BEAT_CHAIN_INFO } from '@virvixr/shared'
 import {
   BeatRevert, BeatRpcError, beatInterface, encodeBeatCall, skippedIn,
-  type BeatCall, type BeatChainClient, type BeatFees, type BeatLog, type BeatReceipt, type BeatSigned,
+  type BeatCall, type BeatChainClient, type BeatFees, type BeatLog, type BeatReceipt, type BeatReissuedLog, type BeatSigned,
 } from '../../src/beats/chain.js'
 
 /**
@@ -76,6 +76,14 @@ export interface FakeBeatChain extends BeatChainClient {
   setMinterRole(has: boolean): void
   /** The base fee feeData reports and mined txs pay. */
   setBaseFee(wei: bigint): void
+  /** The holder moved, sold or burned its copy: its balance of the BEAT becomes 0 (it stays `minted`). */
+  moveOut(tokenId: bigint, wallet: string): void
+  /**
+   * The admin Safe runs `reissue(from, to, ids)`, mined in a new block with the contract's rules, all or nothing
+   * (ZeroAddress, SameFromAndTo, BatchTooLarge, UnknownBeat, NotMintedTo, AlreadyReplaced, AlreadyMinted,
+   * NothingToReplace). Returns the tx hash, or the revert name.
+   */
+  reissue(from: string, to: string, ids: bigint[]): { hash: string } | { reason: string }
 }
 
 export type FakeTx = { hash: string; raw: string; nonce: number; call: BeatCall; fees: BeatFees; gasLimit: bigint }
@@ -127,6 +135,10 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
   const mined = new Map<string, FakeMinedTx>()
   const scripted: { name: string; kind?: BeatCall['kind']; times: number }[] = []
   const walletReverts = new Map<string, string>()
+  const balances = new Map<string, bigint>() // `${id}:${wallet}`
+  const replaced = new Map<string, { to: string; block: number }>() // `${id}:${from}`
+  const reissueLogs: Array<{ tokenId: bigint; from: string; to: string; txHash: string; blockNumber: number }> = []
+  const bkey = (id: bigint, w: string) => `${id}:${lc(w)}`
   let dropCount = 0
   let failures: { code: string; down: boolean }[] = []
 
@@ -184,7 +196,7 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
       }
       minting.add(a)
     }
-    if (apply) for (const a of minting) beat.minted.add(a)
+    if (apply) for (const a of minting) { beat.minted.add(a); balances.set(bkey(call.tokenId, a), (balances.get(bkey(call.tokenId, a)) ?? 0n) + 1n) }
     return { logs }
   }
 
@@ -226,6 +238,17 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
     async chainId() { up('chain_id'); return chainIdNow },
     async contractHasCode() { up('code'); return contractCode },
     async minterHasRole() { up('hasRole'); return minterRole },
+    async balanceOf(w, tokenId) { up('balanceOf'); return balances.get(bkey(tokenId, w)) ?? 0n },
+    async replacedBy(tokenId, w, tag) {
+      up('replacedBy')
+      const r = replaced.get(bkey(tokenId, w))
+      return r && r.block <= (tag ?? block) ? getAddress(r.to) : null
+    },
+    async reissuedLogs(from, to, fromBlock, toBlock): Promise<BeatReissuedLog[]> {
+      up('logs')
+      return reissueLogs.filter((l) => l.from === lc(from) && l.to === lc(to) && l.blockNumber >= fromBlock && l.blockNumber <= toBlock)
+        .map((l) => ({ tokenId: l.tokenId, txHash: l.txHash, blockNumber: l.blockNumber }))
+    },
 
     async estimate(call) {
       up('estimate')
@@ -290,6 +313,35 @@ export function fakeBeatChain(opts: FakeBeatChainOptions = {}): FakeBeatChain {
     rejectReceiver(w, on = true) { if (on) { code.add(lc(w)); rejecting.add(lc(w)) } else rejecting.delete(lc(w)) },
     createdBeat(tokenId, o = {}) {
       beats.set(tokenId.toString(), { tradeable: o.tradeable ?? false, closed: o.closed ?? false, minted: new Set((o.minted ?? []).map(lc)) })
+      for (const w of o.minted ?? []) balances.set(bkey(tokenId, w), 1n)
+    },
+    moveOut(tokenId, w) { balances.set(bkey(tokenId, w), 0n) },
+    reissue(from, to, ids) {
+      const f = lc(from)
+      const t = lc(to)
+      if (f === lc(ZeroAddress) || t === lc(ZeroAddress)) return { reason: 'ZeroAddress' }
+      if (f === t) return { reason: 'SameFromAndTo' }
+      if (ids.length === 0 || ids.length > 200) return { reason: 'BatchTooLarge' }
+      const seen = new Set<string>()
+      for (const id of ids) {
+        const beat = beats.get(id.toString())
+        if (!beat) return { reason: 'UnknownBeat' }
+        if (!beat.minted.has(f)) return { reason: 'NotMintedTo' }
+        if (replaced.has(bkey(id, f)) || seen.has(id.toString())) return { reason: 'AlreadyReplaced' }
+        if (beat.minted.has(t)) return { reason: 'AlreadyMinted' }
+        if (beat.tradeable && (balances.get(bkey(id, f)) ?? 0n) === 0n) return { reason: 'NothingToReplace' }
+        seen.add(id.toString())
+      }
+      block++
+      const hash = hexlify(randomBytes(32))
+      for (const id of ids) {
+        const beat = beats.get(id.toString())!
+        replaced.set(bkey(id, f), { to: t, block })
+        beat.minted.add(t)
+        balances.set(bkey(id, t), (balances.get(bkey(id, t)) ?? 0n) + 1n)
+        reissueLogs.push({ tokenId: id, from: f, to: t, txHash: hash, blockNumber: block })
+      }
+      return { hash }
     },
     isClosed(tokenId) { return beats.get(tokenId.toString())?.closed ?? false },
     isTradeable(tokenId) { return beats.get(tokenId.toString())?.tradeable ?? false },

@@ -1,4 +1,4 @@
-import { Interface, JsonRpcProvider, Network, Wallet, getAddress, id as keccakText, keccak256, parseEther } from 'ethers'
+import { Interface, JsonRpcProvider, Network, Wallet, ZeroAddress, getAddress, id as keccakText, keccak256, parseEther, zeroPadValue } from 'ethers'
 import type { BeatChain } from '@virvixr/shared'
 import { BEAT_CHAIN_INFO } from '@virvixr/shared'
 import { config } from '../config.js'
@@ -74,7 +74,21 @@ export interface BeatChainClient {
   contractHasCode(): Promise<boolean>
   /** True when the minter holds MINTER_ROLE on the contract. */
   minterHasRole(): Promise<boolean>
+  /** How many copies of a BEAT a wallet holds (balanceOf). */
+  balanceOf(wallet: string, tokenId: bigint): Promise<bigint>
+  /** The wallet that got a fresh copy in place of `wallet`'s (replacedBy), checksummed, or null when none. At block
+   * `blockTag` when given (the reissue watcher reads at the confirmation depth), else at the latest block. */
+  replacedBy(tokenId: bigint, wallet: string, blockTag?: number): Promise<string | null>
+  /** This contract's `Reissued(id, from, to)` logs for one old and new wallet in [fromBlock, toBlock]. */
+  reissuedLogs(from: string, to: string, fromBlock: number, toBlock: number): Promise<BeatReissuedLog[]>
 }
+
+/** A `Reissued` log: the BEAT id, and the transaction and block it is in. */
+export type BeatReissuedLog = { tokenId: bigint; txHash: string; blockNumber: number }
+
+export const BEAT_REISSUED_TOPIC = beatInterface.getEvent('Reissued')!.topicHash
+/** An address as a 32-byte log topic. */
+export const addressTopic = (a: string) => zeroPadValue(getAddress(a), 32).toLowerCase()
 
 /** A call reverted. `name` is the contract's custom error name ('UnknownBeat', 'InsufficientGas', ...) or 'unknown'. */
 export class BeatRevert extends Error {
@@ -194,9 +208,9 @@ class RpcBeatChain implements BeatChainClient {
     }
   }
 
-  async #view(fn: string, args: unknown[]): Promise<any> {
+  async #view(fn: string, args: unknown[], blockTag?: number): Promise<any> {
     const data = safely('encode', () => beatInterface.encodeFunctionData(fn, args))
-    const out = await this.#rpc(fn, () => this.#provider.call({ to: this.#contract, data }))
+    const out = await this.#rpc(fn, () => this.#provider.call({ to: this.#contract, data, ...(blockTag === undefined ? {} : { blockTag }) }))
     return safely('decode', () => beatInterface.decodeFunctionResult(fn, out)[0])
   }
 
@@ -211,6 +225,17 @@ class RpcBeatChain implements BeatChainClient {
   async contractHasCode() { return (await this.#rpc('code', () => this.#provider.getCode(this.#contract))) !== '0x' }
   async minterHasRole() { return Boolean(await this.#view('hasRole', [BEAT_MINTER_ROLE, this.minterAddress])) }
   feeData() { return this.#feeData() }
+  async balanceOf(wallet: string, tokenId: bigint) { return BigInt(await this.#view('balanceOf', [wallet, tokenId])) }
+  async replacedBy(tokenId: bigint, wallet: string, blockTag?: number) {
+    const a = String(await this.#view('replacedBy', [tokenId, wallet], blockTag))
+    return a === ZeroAddress ? null : getAddress(a)
+  }
+
+  async reissuedLogs(from: string, to: string, fromBlock: number, toBlock: number): Promise<BeatReissuedLog[]> {
+    const topics = safely('encode', () => [BEAT_REISSUED_TOPIC, null, addressTopic(from), addressTopic(to)])
+    const logs = await this.#rpc('logs', () => this.#provider.getLogs({ address: this.#contract, topics, fromBlock, toBlock }))
+    return logs.filter((l) => l.topics.length === 4).map((l) => ({ tokenId: BigInt(l.topics[1]), txHash: l.transactionHash, blockNumber: l.blockNumber }))
+  }
 
   async estimate(call: BeatCall): Promise<bigint> {
     const data = encodeBeatCall(call)

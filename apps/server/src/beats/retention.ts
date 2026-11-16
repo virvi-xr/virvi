@@ -3,6 +3,7 @@ import { BEAT_CLAIM_GRACE_MS, BEAT_RETENTION_DAYS } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { beatClaims, beatMintBatches, beatNetworkClaims, beats } from '../db/schema.js'
 import type { Exec } from '../studio/quota.js'
+import { deleteMyReissueRequests, scrubReissueRequests } from './reissue.js'
 
 /**
  * BEAT privacy and retention (LIV-11). Nothing here logs wallets or display names.
@@ -17,11 +18,11 @@ import type { Exec } from '../studio/quota.js'
 const DAY_MS = 86_400_000
 
 /**
- * What unlinking a minted claim clears (privacy M1): its account, its display name, its time present and the consent
- * and claim times. On chain only the wallet remains, so the row keeps the wallet, its status and the mint.
+ * What unlinking a minted claim clears (privacy M1): its account, its display name, its time present, the consent
+ * and claim times, and a reissued claim's old wallet (reissue_tx and reissued_at stay, as on chain). On chain only the wallet remains, so the row keeps the wallet, its status and the mint.
  */
 export const UNLINKED_CLAIM = {
-  userId: null, displayName: null, secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null,
+  userId: null, displayName: null, secondsPresent: null, lastSeenAt: null, consentedAt: null, claimedAt: null, replacedWallet: null,
 } as const
 
 /** One transaction (or the caller's, so account deletion can include it). Only this user's claims are touched. */
@@ -44,6 +45,8 @@ export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec):
     const unlinked = await tx.update(beatClaims).set(UNLINKED_CLAIM)
       .where(and(mine, eq(beatClaims.status, 'minted')))
       .returning({ id: beatClaims.id })
+    // Reissue requests (their wallets and reason) go, whatever their state
+    await deleteMyReissueRequests(tx, userId)
     return { deleted: deleted.length, unlinked: unlinked.length + tombstones.length, pending: pending.length }
   }
   return exec ? run(exec) : db.transaction(run)
@@ -56,9 +59,10 @@ export async function deleteMyBeatData(userId: string, _now: Date, exec?: Exec):
  * - the wallets and signed raw txs of batches settled that long ago go (their hashes stay). A batch's settle time is
  *   confirmed_at, else sent_at, else created_at: a failed batch has no confirmed_at. A batch still open (`sending` or
  *   `sent`) that long after it was made goes too (privacy M3): reconcile settles it by receipt or nonce without them, it
- *   only can't rebroadcast or reprice it, and after 30 days neither matters.
+ *   only can't rebroadcast or reprice it, and after 30 days neither matters;
+ * - reissue requests closed (rejected, cancelled or done) that long ago go; open ones stay.
  */
-export async function scrubBeats(now: Date): Promise<{ present: number; batches: number; networks: number }> {
+export async function scrubBeats(now: Date): Promise<{ present: number; batches: number; networks: number; reissueRequests: number }> {
   const cutoff = new Date(now.getTime() - BEAT_RETENTION_DAYS * DAY_MS)
   const ended = db.select({ id: beats.id }).from(beats).where(lte(beats.endsAt, cutoff))
   const present = await db.delete(beatClaims)
@@ -84,5 +88,7 @@ export async function scrubBeats(now: Date): Promise<{ present: number; batches:
       ),
     ))
     .returning({ id: beatMintBatches.id })
-  return { present: present.length, batches: batches.length, networks: networks.length }
+  // Reissue requests closed (rejected, cancelled or done) that long ago; open ones stay
+  const reissueRequests = await scrubReissueRequests(cutoff)
+  return { present: present.length, batches: batches.length, networks: networks.length, reissueRequests }
 }

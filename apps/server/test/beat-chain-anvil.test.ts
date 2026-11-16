@@ -6,7 +6,8 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ContractFactory, Interface, JsonRpcProvider, Network, NonceManager, Wallet } from 'ethers'
 import { VIRVI_BEAT_ABI } from '../src/beats/abi.js'
-import { BeatRevert, createBeatChainClient, type BeatChainClient } from '../src/beats/chain.js'
+import { BeatRevert, beatInterface, createBeatChainClient, type BeatChainClient } from '../src/beats/chain.js'
+import { buildSafeBatchFile, planReissueCalls } from '../src/beats/reissue.js'
 
 /** The real contract on a local anvil chain (LIV-11). Skipped when anvil isn't installed or the contract isn't built
  * (`cd contracts && forge build`). */
@@ -140,6 +141,48 @@ describe.skipIf(!ready)('BEAT chain client on anvil', () => {
     expect((await send({ kind: 'close', tokenId: 1n })).receipt.ok).toBe(true)
     await expect(client.estimate({ kind: 'mint', tokenId: 1n, wallets: [Wallet.createRandom().address] }))
       .rejects.toMatchObject({ name: 'BeatClosedError' })
+  })
+
+  it('reads balanceOf, replacedBy (at a block too) and the Reissued logs, for calls run from a Safe batch file', async () => {
+    const old = Wallet.createRandom().address
+    const fresh = Wallet.createRandom().address
+    for (const [id, tradeable] of [[2n, false], [3n, false], [4n, true]] as const) {
+      expect((await send({ kind: 'create', tokenId: id, tradeable })).receipt.ok).toBe(true)
+      expect((await send({ kind: 'mint', tokenId: id, wallets: [old] })).receipt.ok).toBe(true)
+    }
+    expect(await client.balanceOf(old, 4n)).toBe(1n)
+    expect(await client.balanceOf(fresh, 4n)).toBe(0n)
+    expect(await client.replacedBy(2n, old)).toBeNull()
+    const before = await client.latestBlock()
+
+    // The admin (anvil's account 0 here; the Safe on mainnet) runs each transaction of the file, encoded from its
+    // contractMethod and contractInputsValues as Transaction Builder does
+    const calls = planReissueCalls([{ tokenId: '2', tradeable: false }, { tokenId: '3', tradeable: false }, { tokenId: '4', tradeable: true }])
+    expect(calls).toEqual([['2', '3'], ['4']])
+    const file = buildSafeBatchFile({ id: '00000000-0000-4000-8000-00000000000a', oldWallet: old.toLowerCase(), newWallet: fresh.toLowerCase() }, 'polygon-amoy', contract, calls, new Date())
+    expect(file.chainId).toBe('80002')
+    const hashes: string[] = []
+    for (const t of file.transactions) {
+      const v = t.contractInputsValues
+      const data = beatInterface.encodeFunctionData(t.contractMethod.name, [v.from, v.to, v.ids.slice(1, -1).split(',')])
+      const tx = await admin.sendTransaction({ to: t.to, data })
+      const r = (await tx.wait())!
+      expect(r.status).toBe(1)
+      hashes.push(r.hash)
+    }
+    const after = await client.latestBlock()
+    for (const id of [2n, 3n, 4n]) {
+      expect(await client.replacedBy(id, old)).toBe(fresh)
+      expect(await client.isMinted(id, fresh)).toBe(true)
+    }
+    // At the block before the reissue, nothing was replaced (the watcher reads at the confirmation depth this way)
+    expect(await client.replacedBy(2n, old, before)).toBeNull()
+    const logs = await client.reissuedLogs(old, fresh, before + 1, after)
+    expect(logs.map((l) => [l.tokenId, l.txHash])).toEqual([[2n, hashes[0]], [3n, hashes[0]], [4n, hashes[1]]])
+    expect(await client.reissuedLogs(old, Wallet.createRandom().address, before + 1, after)).toEqual([])
+    // A second reissue of the same old wallet reverts AlreadyReplaced (decoded with the ABI's new errors)
+    await expect(admin.sendTransaction({ to: contract, data: beatInterface.encodeFunctionData('reissue', [old, Wallet.createRandom().address, [2n]]) }))
+      .rejects.toThrow()
   })
 
   it("has ABI fragments that are a subset of the artifact's", () => {

@@ -24,6 +24,9 @@ export interface BeatClaimant {
   claimedAt: string | null
   mintedAt: string | null
   txUrl: string | null
+  /** Sent again to `wallet` in place of a compromised wallet (the server always sends these; the UI is part B). */
+  reissued?: boolean
+  reissueTxUrl?: string | null
 }
 
 // ── Copy ─────────────────────────────────────────────────────────────────────

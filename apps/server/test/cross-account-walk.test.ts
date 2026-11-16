@@ -11,6 +11,7 @@ import {
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
   studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
+  beatReissueRequests, beatReissueItems,
 } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
@@ -177,6 +178,13 @@ async function fixtures() {
   }).returning()
   await db.insert(beatScenes).values({ beatId: beat.id, sceneId: scene.id })
   await db.insert(beatClaims).values({ beatId: beat.id, userId: collaborator.id, wallet: randomWallet(), displayName: 'B claimant', consentVersion: 1 })
+  // B's reissue request (approved, so a batch could be prepared), with one prepared BEAT
+  const bOld = randomWallet()
+  const [bClaim] = await db.insert(beatClaims).values({ beatId: beat.id, userId: b.id, wallet: bOld, consentVersion: 1, status: 'minted' }).returning()
+  const [reissueRequest] = await db.insert(beatReissueRequests).values({
+    userId: b.id, oldWallet: bOld, newWallet: b.wallet!, reason: 'B wallet drained', status: 'approved', reviewedAt: new Date(),
+  }).returning()
+  await db.insert(beatReissueItems).values({ requestId: reissueRequest.id, claimId: bClaim.id, beatId: beat.id, chain: 'polygon', tokenId: 1, tradeable: false, state: 'skipped', blockers: ['BeatOpen'] })
   const [raffle] = await db.insert(raffles).values({
     sceneId: scene.id, createdBy: b.id, name: 'B raffle', prize: 'B prize', winnersCount: 1, mode: 'one_per_person', status: 'open',
     hostTermsAcceptedAt: new Date(), openedAt: new Date(),
@@ -191,7 +199,7 @@ async function fixtures() {
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
-    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, aScene, aEvent, deletedScene, removal,
+    asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, reissueRequest, aScene, aEvent, deletedScene, removal,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -501,6 +509,10 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/returned', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/returned`, body: () => ({ returnTxHash: '0x' + 'cd'.repeat(32) }) },
   { route: 'GET /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}` },
   { route: 'POST /api/admin/beats/:id/give-up', url: (f) => `/api/admin/beats/${f.beat.id}/give-up`, body: () => ({}) },
+  { route: 'POST /api/admin/beats/reissue-requests/:id/approve', url: (f) => `/api/admin/beats/reissue-requests/${f.reissueRequest.id}/approve`, body: () => ({}) },
+  { route: 'POST /api/admin/beats/reissue-requests/:id/reject', url: (f) => `/api/admin/beats/reissue-requests/${f.reissueRequest.id}/reject`, body: () => ({ note: 'pwned' }) },
+  { route: 'GET /api/admin/beats/reissue-requests/:id/safe-batch', url: (f) => `/api/admin/beats/reissue-requests/${f.reissueRequest.id}/safe-batch?chain=polygon` },
+  { route: 'DELETE /api/beats/reissue-requests/:id', url: (f) => `/api/beats/reissue-requests/${f.reissueRequest.id}` },
   { route: 'PATCH /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}`, body: () => ({ resolved: true }) },
   { route: 'GET /api/admin/errors/reports/:reportId/screenshot', url: () => `/api/admin/errors/reports/${AD_ID}/screenshot` },
   { route: 'GET /api/ad-spaces/:elementId', url: (f) => `/api/ad-spaces/${f.adSpace.id}` },
@@ -553,6 +565,7 @@ const TABLES = [
   studioDesigns, studioPieces, studioRevisions, studioJobs, studioMessages, studioRenders, studioUsageDays,
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
   studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
+  beatReissueRequests, beatReissueItems,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))

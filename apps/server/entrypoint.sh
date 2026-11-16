@@ -470,7 +470,7 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`CREATE INDEX IF NOT EXISTS raffle_draws_raffle_idx ON raffle_draws (raffle_id)\`;
         console.log('[virvi-server] raffle tables ensured');
       } catch(e) { console.log('[virvi-server] raffle tables:', e.message); }
-      // BEATs (LIV-11); matches beats, beatScenes, beatPayments, beatMintBatches and beatClaims and the token id sequences in src/db/schema.ts
+      // BEATs (LIV-11); matches beats, beatScenes, beatPayments, beatMintBatches, beatClaims, beatNetworkClaims, beatReissueRequests and beatReissueItems and the token id sequences in src/db/schema.ts
       try {
         await sql\`CREATE SEQUENCE IF NOT EXISTS beat_token_id_polygon_amoy_seq START WITH 1\`;
         await sql\`CREATE SEQUENCE IF NOT EXISTS beat_token_id_polygon_seq START WITH 1\`;
@@ -500,6 +500,15 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_failed_at TIMESTAMPTZ\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_attempts INTEGER NOT NULL DEFAULT 0\`;
         await sql\`ALTER TABLE beats ADD COLUMN IF NOT EXISTS art_next_attempt_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS replaced_wallet TEXT\`;
+        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS reissue_tx TEXT\`;
+        await sql\`ALTER TABLE beat_claims ADD COLUMN IF NOT EXISTS reissued_at TIMESTAMPTZ\`;
+        await sql\`CREATE TABLE IF NOT EXISTS beat_reissue_requests (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT beat_reissue_requests_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, old_wallet TEXT NOT NULL, new_wallet TEXT NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', reviewer_user_id UUID CONSTRAINT beat_reissue_requests_reviewer_user_id_users_id_fk REFERENCES users(id) ON DELETE SET NULL, review_note TEXT, reviewed_at TIMESTAMPTZ, proposed_at TIMESTAMPTZ, done_at TIMESTAMPTZ, cancelled_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS beat_reissue_requests_open_uq ON beat_reissue_requests (user_id) WHERE status in ('pending', 'approved', 'proposed')\`;
+        await sql\`CREATE INDEX IF NOT EXISTS beat_reissue_requests_status_idx ON beat_reissue_requests (status, created_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS beat_reissue_items (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), request_id UUID NOT NULL CONSTRAINT beat_reissue_items_request_id_beat_reissue_requests_id_fk REFERENCES beat_reissue_requests(id) ON DELETE CASCADE, claim_id UUID CONSTRAINT beat_reissue_items_claim_id_beat_claims_id_fk REFERENCES beat_claims(id) ON DELETE SET NULL, beat_id UUID CONSTRAINT beat_reissue_items_beat_id_beats_id_fk REFERENCES beats(id) ON DELETE SET NULL, chain TEXT NOT NULL, token_id BIGINT NOT NULL, tradeable BOOLEAN NOT NULL, state TEXT NOT NULL, blockers TEXT[] NOT NULL DEFAULT '{}'::text[], call_index INTEGER, proposed_at TIMESTAMPTZ, proposed_block BIGINT, tx_hash TEXT, reissued_at TIMESTAMPTZ)\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS beat_reissue_items_request_token_uq ON beat_reissue_items (request_id, chain, token_id)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS beat_reissue_items_chain_state_idx ON beat_reissue_items (chain, state)\`;
         console.log('[virvi-server] BEAT tables ensured');
       } catch(e) { console.log('[virvi-server] BEAT tables:', e.message); }
       // model enum value

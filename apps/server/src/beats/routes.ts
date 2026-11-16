@@ -10,6 +10,7 @@ import {
 } from './service.js'
 import { checkInBeat, claimBeat, currentBeat, stopTrackingBeat, trackBeat } from './visitor.js'
 import beatMetadataRoutes, { BEAT_METADATA_ROUTE } from './metadata.js'
+import { cancelMyReissueRequest, createReissueRequest, listMyReissueRequests } from './reissue.js'
 
 /**
  * BEAT host routes (LIV-11). Dark unless BEAT_ENABLED: every route but availability answers 404.
@@ -137,6 +138,37 @@ export default async function beatRoutes(app: FastifyInstance) {
   app.post<{ Params: { beatId: string } }>('/api/beats/:beatId/cap', async (request, reply) => {
     try {
       return reply.send(await raiseBeatCap(await caller(request), request.params.beatId, body(request)))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  // Reissue requests (reissue.ts): the signed-in account's own, for BEATs on a compromised wallet. No scene pass.
+  const accountOnly = (request: FastifyRequest, reply: FastifyReply) => {
+    if (request.user.kind !== 'account') {
+      reply.status(403).send({ error: 'account_required', message: 'Sign in to your Virvi account to do this.' })
+      return false
+    }
+    return true
+  }
+  app.get('/api/beats/reissue-requests', async (request, reply) => {
+    if (!accountOnly(request, reply)) return reply
+    return reply.send(await listMyReissueRequests(request.user.id))
+  })
+
+  app.post('/api/beats/reissue-requests', async (request, reply) => {
+    if (!accountOnly(request, reply)) return reply
+    try {
+      return reply.status(201).send(await createReissueRequest(request.user.id, body(request)))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  app.delete<{ Params: { id: string } }>('/api/beats/reissue-requests/:id', async (request, reply) => {
+    if (!accountOnly(request, reply)) return reply
+    try {
+      return reply.send(await cancelMyReissueRequest(request.user.id, request.params.id))
     } catch (e) {
       return fail(reply, e)
     }

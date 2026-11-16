@@ -331,11 +331,11 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       const oldPresent = await claim(old.id, me, 'present')
       const oldClaimed = await claim(old.id, other, 'claimed')
       const recentPresent = await claim(recent.id, me, 'present')
-      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0, networks: 0 })
+      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0, networks: 0, reissueRequests: 0 })
       expect(await byId(oldPresent.id)).toBeUndefined()
       expect(await byId(oldClaimed.id)).toBeDefined()
       expect(await byId(recentPresent.id)).toBeDefined()
-      expect((await scrubBeats(at(H)))).toEqual({ present: 1, batches: 0, networks: 0 })
+      expect((await scrubBeats(at(H)))).toEqual({ present: 1, batches: 0, networks: 0, reissueRequests: 0 })
       expect(await byId(recentPresent.id)).toBeUndefined()
     })
 
@@ -348,7 +348,7 @@ describe('BEAT privacy and retention (LIV-11)', () => {
         await db.update(beats).set({ networkSalt: 'salt' }).where(eq(beats.id, b.id))
         await db.insert(beatNetworkClaims).values({ beatId: b.id, netHash: 'h', claims: 2 })
       }
-      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0, networks: 2 })
+      expect(await scrubBeats(T0)).toEqual({ present: 1, batches: 0, networks: 2, reissueRequests: 0 })
       expect(await byId(removed.id)).toBeUndefined()
       const counts = await db.select().from(beatNetworkClaims)
       expect(counts.map((c) => c.beatId)).toEqual([open.id])
@@ -370,7 +370,7 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       const openNew = await mk(6, 'sending', at(-(30 * DAY - H)))
       // Scrubbed of its wallets before raw txs were scrubbed too: its raw tx (calldata = every wallet) still goes
       const halfDone = await mk(5, 'failed', at(-50 * DAY), { wallets: null, lastError: 'unsent:NETWORK_ERROR' })
-      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 4, networks: 0 })
+      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 4, networks: 0, reissueRequests: 0 })
       const row = async (id: string) => (await db.select().from(beatMintBatches).where(eq(beatMintBatches.id, id)))[0]
       expect(await row(confOld.id)).toMatchObject({ wallets: null, rawTx: null, txHash: '0xabc', txHashes: ['0xabc'] })
       expect(await row(failOld.id)).toMatchObject({ wallets: null, rawTx: null })
@@ -380,7 +380,7 @@ describe('BEAT privacy and retention (LIV-11)', () => {
       // M3: open 40 days, so its wallets go too (reconcile settles it by receipt or nonce without them)
       expect(await row(open.id)).toMatchObject({ rawTx: null, wallets: null, status: 'sent', txHashes: ['0xabc'] })
       expect(await row(openNew.id)).toMatchObject({ rawTx: '0x02f8raw' })
-      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 0, networks: 0 })
+      expect(await scrubBeats(T0)).toEqual({ present: 0, batches: 0, networks: 0, reissueRequests: 0 })
     })
   })
 })

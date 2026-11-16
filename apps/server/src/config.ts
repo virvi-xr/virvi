@@ -198,6 +198,18 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
       throw new Error(`${name} must be a valid, correctly checksummed address`)
     }
   }
+  // The admin Safe per chain (optional): named in the reissue batch file's meta, so Safe's Transaction Builder can tell
+  // a file prepared for another Safe
+  const adminSafes: Partial<Record<BeatChain, string>> = {}
+  for (const [name, c] of [['BEAT_ADMIN_SAFE_POLYGON_AMOY', 'polygon-amoy'], ['BEAT_ADMIN_SAFE_POLYGON', 'polygon']] as const) {
+    const raw = e[name]
+    if (raw === undefined || raw === '') continue
+    try {
+      adminSafes[c] = getAddress(raw)
+    } catch {
+      throw new Error(`${name} must be a valid, correctly checksummed address`)
+    }
+  }
   const whole = (name: string, def: number) => {
     const raw = e[name]
     if (raw === undefined || raw === '') return def
@@ -229,6 +241,8 @@ export function beatSettingsFrom(e: Record<string, string | undefined>) {
     enabled: e.BEAT_ENABLED === 'true',
     chain,
     contracts,
+    /** The admin Safe on each chain (BEAT_ADMIN_SAFE_POLYGON[_AMOY]), for the reissue batch's meta; optional. */
+    adminSafes,
     minterKey: validDeployKey(e.BEAT_MINTER_KEY, 'BEAT_MINTER_KEY'),
     rpc: {
       'polygon-amoy': e.POLYGON_AMOY_RPC_URL || 'https://polygon-amoy-bor-rpc.publicnode.com',

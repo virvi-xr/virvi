@@ -120,3 +120,33 @@ export interface VisitorBeat {
   test: boolean
   myClaim: { status: BeatClaimStatus; secondsPresent: number; txUrl: string | null } | null
 }
+
+// ── Reissue (LIV-11): a BEAT sent again to a new wallet when the old one was compromised ────────────────────────────
+
+/**
+ * A reissue request's state:
+ * - `pending`: the person asked; an admin hasn't reviewed it;
+ * - `approved` / `rejected`: reviewed (with an optional note, shown to the person);
+ * - `proposed`: an admin prepared the Safe transaction batch; waiting for the Safe's signers and the chain;
+ * - `done`: every proposed BEAT was reissued on chain (confirmed);
+ * - `cancelled`: the person withdrew it while it was pending.
+ */
+export type BeatReissueStatus = 'pending' | 'approved' | 'rejected' | 'proposed' | 'done' | 'cancelled'
+/** The states in which an account has an open request (it may have only one). */
+export const BEAT_REISSUE_OPEN: readonly BeatReissueStatus[] = ['pending', 'approved', 'proposed']
+/** One BEAT of a request: in the last prepared batch, left out of it (with its blockers), or reissued on chain. */
+export type BeatReissueItemState = 'proposed' | 'skipped' | 'reissued'
+/**
+ * Why a BEAT can't be reissued now:
+ * - NothingToReplace: tradeable, and the old wallet no longer holds a copy (the contract would revert);
+ * - AlreadyReplaced: the old wallet was already replaced for this BEAT;
+ * - AlreadyMinted: the new wallet was already minted this BEAT;
+ * - ClaimOnNewWallet: another claim on this BEAT already uses the new wallet;
+ * - BeatOpen: the BEAT is still running (reissue once it has ended);
+ * - ChainUnavailable: the chain couldn't be read (no client, or the RPC failed).
+ */
+export type BeatReissueBlocker = 'NothingToReplace' | 'AlreadyReplaced' | 'AlreadyMinted' | 'ClaimOnNewWallet' | 'BeatOpen' | 'ChainUnavailable'
+export const BEAT_REISSUE_REASON_MAX = 1000
+export const BEAT_REISSUE_NOTE_MAX = 1000
+/** The most ids in one `reissue` call (VirviBeat.MAX_BATCH). */
+export const BEAT_REISSUE_MAX_BATCH = 200

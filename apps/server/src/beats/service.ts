@@ -207,6 +207,9 @@ export interface Claimant {
   claimedAt: string | null
   mintedAt: string | null
   txUrl: string | null
+  /** Sent again to `wallet` in place of a compromised wallet (reissue.ts). */
+  reissued: boolean
+  reissueTxUrl: string | null
 }
 
 export async function listClaimants(c: BeatCaller, beatId: string): Promise<Claimant[]> {
@@ -226,6 +229,8 @@ export async function listClaimants(c: BeatCaller, beatId: string): Promise<Clai
     claimedAt: k.claimedAt?.toISOString() ?? null,
     mintedAt: k.mintedAt?.toISOString() ?? null,
     txUrl: k.mintTx ? beatTxUrl(row.chain, k.mintTx) : null,
+    reissued: k.reissuedAt !== null,
+    reissueTxUrl: k.reissueTx ? beatTxUrl(row.chain, k.reissueTx) : null,
   }))
 }
 

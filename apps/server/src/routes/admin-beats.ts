@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 import { and, desc, eq, isNull, lte, sql } from 'drizzle-orm'
 import { BEAT_CHAINS, BEAT_CLAIM_GRACE_MS, beatTxUrl, type BeatChain } from '@virvixr/shared'
 import { db } from '../db/connection.js'
@@ -9,6 +9,7 @@ import { requireAdmin } from '../auth/admin.js'
 import { isUuid } from '../auth/scene-from.js'
 import { beatChainClient, beatChainMissing, beatMinGasWei } from '../beats/chain.js'
 import { BeatError } from '../beats/errors.js'
+import { adminListReissueRequests, prepareSafeBatch, reviewReissueRequest } from '../beats/reissue.js'
 import {
   BEAT_GIVEN_UP, beatBatchCostWei, beatPaused, type BeatPauseReason, clearBeatPause, giveUpFailedClaims, retryableFailed, retryFailedClaims, safeErr,
 } from '../beats/job.js'
@@ -119,6 +120,45 @@ export default async function adminBeatRoutes(app: FastifyInstance) {
     } catch (e) {
       if (e instanceof BeatError) return reply.status(e.status).send({ ...e.details, error: e.code, message: e.message })
       throw e
+    }
+  })
+
+  // ── Reissue requests (beats/reissue.ts). Review and preparing the Safe batch are separate steps, so a support role can
+  // take the first later. The server never signs or sends a reissue: the admin Safe does.
+  const fail = (reply: FastifyReply, e: unknown) => {
+    if (e instanceof BeatError) return reply.status(e.status).send({ ...e.details, error: e.code, message: e.message })
+    throw e
+  }
+
+  app.get<{ Querystring: { status?: string } }>('/api/admin/beats/reissue-requests', async (request, reply) => {
+    try {
+      return reply.send(await adminListReissueRequests(request.query.status))
+    } catch (e) {
+      return fail(reply, e)
+    }
+  })
+
+  for (const decision of ['approve', 'reject'] as const) {
+    app.post<{ Params: { id: string }; Body: { note?: unknown } }>(`/api/admin/beats/reissue-requests/:id/${decision}`, async (request, reply) => {
+      try {
+        return reply.send(await reviewReissueRequest(request.user.id, request.params.id, decision, request.body?.note))
+      } catch (e) {
+        return fail(reply, e)
+      }
+    })
+  }
+
+  // The Safe Transaction Builder batch for one chain; marks the request proposed
+  app.get<{ Params: { id: string }; Querystring: { chain?: string } }>('/api/admin/beats/reissue-requests/:id/safe-batch', async (request, reply) => {
+    try {
+      const file = await prepareSafeBatch(request.params.id, request.query.chain)
+      return reply
+        .header('content-disposition', `attachment; filename="virvi-beat-reissue-${request.params.id.slice(0, 8)}-${request.query.chain}.json"`)
+        .header('cache-control', 'no-store')
+        .type('application/json')
+        .send(file)
+    } catch (e) {
+      return fail(reply, e)
     }
   })
 

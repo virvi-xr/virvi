@@ -18,6 +18,7 @@ import { BeatError } from './errors.js'
 import { lockBeat } from './lock.js'
 import { sweepBeatPayments } from './payments.js'
 import { UNLINKED_CLAIM } from './retention.js'
+import { watchReissues } from './reissue.js'
 
 /**
  * The BEAT minting job (LIV-11): every BEAT_JOB_EVERY_MS, on one instance (session advisory lock 'beat-minter', so no
@@ -348,6 +349,12 @@ async function runChain(client: BeatChainClient, now: Date, r: BeatTickResult): 
   }
   reportedMisconfigured.delete(chain)
   if (pauses.get(chain) === 'misconfigured') pauses.delete(chain)
+  // Reissues the admin Safe sent (reissue.ts): independent of minting, so neither a pause nor low gas holds it up
+  try {
+    await watchReissues(client, now)
+  } catch (err) {
+    console.error(`[beats] ${chain} reissue watch failed:`, safeErr(err))
+  }
   const [open] = await db.select().from(beatMintBatches)
     .where(and(eq(beatMintBatches.chain, chain), inArray(beatMintBatches.status, ['sending', 'sent'])))
     .orderBy(asc(beatMintBatches.nonce)).limit(1)

@@ -22,7 +22,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatStatus, BeatClaimStatus } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueItemState } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -2752,9 +2752,60 @@ export const beatClaims = pgTable('beat_claims', {
   failReason: text('fail_reason'),
   claimedAt: timestamp('claimed_at', { withTimezone: true }),
   mintedAt: timestamp('minted_at', { withTimezone: true }),
+  // A reissue (beat_reissue_requests): `wallet` is then the new wallet and replaced_wallet the old one (nulled with the
+  // other personal fields when the claim is unlinked); reissue_tx and reissued_at stay, as on chain
+  replacedWallet: text('replaced_wallet'),
+  reissueTx: text('reissue_tx'),
+  reissuedAt: timestamp('reissued_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   walletUq: uniqueIndex('beat_claims_beat_wallet_uq').on(t.beatId, t.wallet),
   userUq: uniqueIndex('beat_claims_beat_user_uq').on(t.beatId, t.userId).where(sql`${t.userId} is not null`),
   statusIdx: index('beat_claims_beat_status_idx').on(t.beatId, t.status),
+}))
+
+// A person's request to have their BEATs reissued from a compromised wallet to a new one (LIV-11). An admin reviews it
+// (approve or reject), then prepares a Safe Transaction Builder batch for the contract's admin-only `reissue`; the
+// minting job's tick watches the chain and marks it done. One open request (pending, approved, proposed) per account.
+export const beatReissueRequests = pgTable('beat_reissue_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  oldWallet: text('old_wallet').notNull(), // lower-case
+  newWallet: text('new_wallet').notNull(), // lower-case
+  reason: text('reason').notNull(),
+  status: text('status').$type<BeatReissueStatus>().notNull().default('pending'),
+  reviewerUserId: uuid('reviewer_user_id').references(() => users.id, { onDelete: 'set null' }),
+  reviewNote: text('review_note'),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  proposedAt: timestamp('proposed_at', { withTimezone: true }),
+  doneAt: timestamp('done_at', { withTimezone: true }),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  openUq: uniqueIndex('beat_reissue_requests_open_uq').on(t.userId).where(sql`${t.status} in ('pending', 'approved', 'proposed')`),
+  statusIdx: index('beat_reissue_requests_status_idx').on(t.status, t.createdAt),
+}))
+
+// One BEAT of a reissue request, written when an admin prepares the Safe batch for its chain: `proposed` (in the batch,
+// in call `call_index`), `skipped` (left out, with its blockers) or `reissued` (seen on chain at the confirmation depth).
+export const beatReissueItems = pgTable('beat_reissue_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  requestId: uuid('request_id').notNull().references(() => beatReissueRequests.id, { onDelete: 'cascade' }),
+  claimId: uuid('claim_id').references(() => beatClaims.id, { onDelete: 'set null' }),
+  beatId: uuid('beat_id').references(() => beats.id, { onDelete: 'set null' }),
+  chain: text('chain').$type<BeatChain>().notNull(),
+  tokenId: bigint('token_id', { mode: 'number' }).notNull(),
+  tradeable: boolean('tradeable').notNull(),
+  state: text('state').$type<BeatReissueItemState>().notNull(),
+  blockers: text('blockers').array().notNull().default(sql`'{}'::text[]`),
+  callIndex: integer('call_index'),
+  proposedAt: timestamp('proposed_at', { withTimezone: true }),
+  // The chain's latest block when the batch was prepared: the Reissued log is looked for after it
+  proposedBlock: bigint('proposed_block', { mode: 'number' }),
+  txHash: text('tx_hash'),
+  reissuedAt: timestamp('reissued_at', { withTimezone: true }),
+}, (t) => ({
+  requestTokenUq: uniqueIndex('beat_reissue_items_request_token_uq').on(t.requestId, t.chain, t.tokenId),
+  stateIdx: index('beat_reissue_items_chain_state_idx').on(t.chain, t.state),
 }))
