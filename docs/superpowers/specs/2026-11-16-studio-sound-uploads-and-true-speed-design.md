@@ -22,7 +22,11 @@ ships at most one `.ogg`/`.mp3` in `out/emote/`; the previews already play it.
 **Design.**
 - **Server:** a third upload kind, `audio`, sniffed from the bytes: MP3 (ID3 tag or MPEG frame sync), OGG (`OggS`),
   WAV (`RIFF…WAVE`) and M4A/AAC (`ftyp` box), stored as uploaded (no server-side transcoding). Limit 15 MB an audio file
-  *(my call: room for a raw WAV recording; the agent re-encodes it to fit the item)*. Counts toward the 12 per design.
+  (chosen by the owner: room for a raw WAV recording, which the agent re-encodes). Counts toward the 12 per design.
+- **The 3 MB emote allowance.** Decentraland caps an emote item at 3 MB (GLB + sound + thumbnail). The upload is raw
+  material and may be bigger; what ships must not be. The agent's emote checker already FAILs GLB + sound over 3 MB, and
+  the server now also refuses a prompt result whose emote GLB + sound in `pieces/emote/` totals more than 3 MB (from the
+  stored objects' sizes), so an oversized emote can never become a revision.
   `cleanName` falls back to `sound.<ext>`. `studio_uploads.kind` comment becomes `image | model | audio`; no migration
   (it's a text column).
 - **Website:** the Uploads control accepts `.mp3,.ogg,.wav,.m4a`; an audio upload shows a sound icon and a small play
