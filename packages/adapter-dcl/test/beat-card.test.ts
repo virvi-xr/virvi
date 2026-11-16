@@ -157,7 +157,7 @@ describe('beatError', () => {
     expect(new Set(lines).size).toBe(lines.length)
     for (const l of lines) expect(l).not.toBe('Something went wrong. Try again.')
     expect(beatError(httpError(403, 'no_wallet'))).toBe("Sign in to Decentraland with a wallet to earn this BEAT. Guests can't.")
-    expect(beatError(httpError(400, 'bad_consent'))).toBe("This BEAT's terms have changed. Reload the scene and try again.")
+    expect(beatError(httpError(400, 'bad_consent'))).toBe('This scene needs an update before you can claim. Ask the host to update it.')
     expect(beatError(httpError(409, 'not_available'))).toBe("You stopped tracking this BEAT, so you can't start again.")
     expect(beatError(httpError(409, 'not_started'), 'claim')).toBe("This event hasn't started yet. Claim once it starts.")
     expect(beatError(httpError(409, 'too_late'), 'claim')).toBe('The time to claim this BEAT is over.')

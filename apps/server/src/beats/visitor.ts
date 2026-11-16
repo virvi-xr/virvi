@@ -170,7 +170,7 @@ export async function availableBeat(sceneId: string, now = new Date()): Promise<
  */
 export async function trackBeat(sceneId: string, beatId: string, c: VisitorCaller, consentVersion: unknown, now = new Date()): Promise<{ beat: VisitorBeat }> {
   const b = await beatOnScene(sceneId, beatId)
-  if (consentVersion !== BEAT_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', "This BEAT's terms have changed. Reload the scene and try again.")
+  if (consentVersion !== BEAT_CONSENT_VERSION) throw new BeatError(400, 'bad_consent', 'This scene needs an update before visitors can claim BEATs. Ask the host to update it.')
   if (!c.wallet) throw new BeatError(403, 'no_wallet', "Sign in to Decentraland with a wallet to earn this BEAT. Guests can't.")
   if (now.getTime() > b.endsAt.getTime()) throw new BeatError(409, 'too_late', 'This BEAT has ended.')
   if (now.getTime() < b.startsAt.getTime() - BEAT_CARD_LEAD_MS) throw new BeatError(409, 'too_early', "This BEAT hasn't opened yet.")

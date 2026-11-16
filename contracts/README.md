@@ -118,6 +118,18 @@ blockchain) that creates them, on Polygon.
 Open Terminal in the project's top folder (the one that contains the `contracts` folder). Each command
 below starts with `cd contracts` for that reason. If you're already inside `contracts`, run `cd ..` first.
 
+### Release order for the consent change (`@virvixr/dcl` 2.17.0)
+
+This version changes the text visitors agree to before tracking a BEAT (consent version 2), and the server
+refuses tracking from scenes that still show the old text. Release it in this order:
+
+1. Publish `@virvixr/dcl` 2.17.0 to npm. Until it's published, importing a scene that installs Virvi fails,
+   because the importer asks for `^2.17.0`.
+2. Deploy the server.
+3. Redeploy every scene that runs BEATs (including the Amoy test scene) on 2.17.0. Until a scene is
+   redeployed, its visitors can't track: an old scene says "This BEAT's terms have changed. Reload the scene
+   and try again.", and reloading doesn't help.
+
 ### Step 1: fill in the settings
 
 Paste these lines, after replacing `PASTE_MINTER_ADDRESS_HERE` with the minter address. Keep the quotes.

@@ -157,6 +157,8 @@ describe('BEAT visitor routes (LIV-11)', () => {
       const b = await seed()
       const res = await track(await visitor(), b, sceneA, 1)
       expect([res.statusCode, res.json().error]).toEqual([400, 'bad_consent'])
+      // An old scene sends v1: the reply says the scene needs updating, not "reload" (which changes nothing)
+      expect(res.json().message).toBe('This scene needs an update before visitors can claim BEATs. Ask the host to update it.')
       expect(await db.select().from(beatClaims)).toHaveLength(0)
     })
 

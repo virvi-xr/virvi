@@ -101,6 +101,8 @@ When a visitor presses **Track my attendance**, before anything is stored, they 
 
 `{name}` is your BEAT's name. Nothing is stored for visitors who don't agree.
 
+**Your scene needs `@virvixr/dcl` 2.17.0 or later** to track BEATs, because it shows the text above. In a scene built with an older version, every **Track my attendance** is refused: visitors see "This BEAT's terms have changed. Reload the scene and try again." (newer scenes say "This scene needs an update before you can claim. Ask the host to update it."). Reloading doesn't help. Update the package and redeploy the scene before your BEAT's card appears. Scenes Virvi deploys for you get the new version when they're redeployed.
+
 Time only counts while the event runs ("Time counts while the event is running."), and time in all of the BEAT's scenes adds up. Once a visitor reaches the minimum, the card says "You've been here long enough. Claim your BEAT before {date and time}." and offers **Claim your BEAT** until 24 hours after the event ends. **Stop tracking** stays on the card until they claim, including when the BEAT is sold out or over; then the card also says "Your wallet and name are still saved for this BEAT. Stop tracking to delete them."
 
 After a claim the card says one of:

@@ -211,7 +211,7 @@ export class GuestNotice {
 
 const BEAT_ERRORS: Record<string, string> = {
   no_wallet: GUEST_LINE,
-  bad_consent: "This BEAT's terms have changed. Reload the scene and try again.",
+  bad_consent: 'This scene needs an update before you can claim. Ask the host to update it.',
   too_late: 'This BEAT has ended.',
   too_early: "This BEAT hasn't opened yet.",
   not_started: "This event hasn't started yet. Claim once it starts.",
