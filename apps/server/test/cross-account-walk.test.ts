@@ -559,6 +559,7 @@ const NOT_CROSS_ACCOUNT: Record<string, string> = {
   'POST /api/imports/build/:id/failed': "the one-build token is the auth and reaches only its own import; another import's token is 401 (import-build.test.ts)",
   'GET /api/scenes/:sceneId/beat/current': "any signed-in caller may read a scene's current BEAT: the visitor-safe VisitorBeat (no names or wallets) and only the caller's own claim (beat-visitor.test.ts)",
   'GET /api/beats/metadata/:chain/:file': 'public by design: token metadata for wallets and marketplaces, nothing but what the token shows on chain; draft and cancelled BEATs are 404 (beat-metadata.test.ts)',
+  'GET /api/wallets/:address/beats': 'public by design: the BEATs a wallet holds, as anyone can read on chain (LIV-185), for virvi.io/w/<wallet>',
   'GET /api/scenes/:sceneId/raffle/current': "any signed-in caller may read a scene's running raffle: the visitor-safe PublicRaffle (no names or wallets) and only the caller's own entry (raffles-visitor.test.ts)",
 }
 
