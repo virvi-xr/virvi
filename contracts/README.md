@@ -102,8 +102,8 @@ blockchain) that creates them, on Polygon.
 2. **A deployer wallet's private key** (the secret that controls a wallet; never share it). Use a fresh
    wallet that only holds POL for fees. It gets no permissions in the contract.
 3. **POL in the deployer wallet.** The deploy uses about 3.2 million gas, and the tool asks for about
-   30% extra up front to be safe. Have about 0.2 test POL on Amoy (free from a faucet), and about 1.5 POL
-   on mainnet (the real cost is usually under 1 POL, depending on the gas price that day). What isn't
+   30% extra up front to be safe. Have about 0.2 test POL on Amoy (free from a faucet), and about 3 POL
+   on mainnet (the real cost is usually about 1 POL, depending on the gas price that day). What isn't
    spent stays in the wallet.
 4. **The minter address**: Virvi's server wallet.
 
@@ -188,7 +188,7 @@ keep your own copy.
 ### Step 3: publish the code on Polygonscan (Amoy)
 
 Publishing ("verifying") lets anyone read the code behind the address. It costs nothing. Paste these
-lines, after replacing the two placeholders:
+lines, after replacing the minter placeholder:
 
 ```
 export BEAT_ADDRESS="PASTE_DEPLOYED_ADDRESS_HERE"
@@ -265,7 +265,9 @@ order, and don't skip one. Claude can walk you through any of them.
 
 **What it costs** (fees read on 2026-11-15: about 280 gwei, with POL at about $0.08; fees and the price
 move every day):
-- The deploy: about 3 million gas, usually under 1 POL. Have about 1.5 POL in the deployer.
+- The deploy: about 3 million gas, usually about 1 POL. Have about **3 POL** in the deployer: before it
+  sends, the tool checks the wallet could pay the worst case (the gas estimate plus 30%, at twice the
+  current fee), which a dry run on 2026-11-16 put at 2.55 POL. What isn't spent stays in the wallet.
 - Putting a BEAT on chain: about 0.02 POL. Closing it: about 0.01 POL.
 - Sending a BEAT: about 0.015 POL each in a full batch, about 0.025 POL when they trickle in one at a time.
 - A fully claimed BEAT of 100: about 1.5 POL in all (about $0.12). Hosts pay $5 for it.
@@ -280,6 +282,16 @@ move every day):
    - `0x2319A029D05e52043f077c0684e3C0BF6d1c3dbB`
 
    Write down the Safe's address. Check the network shows Polygon, not Ethereum.
+
+   **Done 2026-11-16:** Virvi's Safe is `0xd119BDeA989C2816b412D8ECd7368f2C9C7F45b6` (Safe 1.5.0, the three
+   signers above, 2 of 3), checked on chain. An earlier Safe, `0xE68F1D75CCDE681030A82626833a98C6B388312A`,
+   has the Amoy minter (a server key) as a signer: **never use it or send anything to it.**
+
+   If the Safe app's **Activate** button fails before any wallet pops up, a signer can activate the Safe
+   from Terminal instead, at the same address. The app keeps the Safe's settings in the browser (its
+   `SAFE_v2__undeployedSafes` storage); `cast send` the Safe proxy factory's
+   `createProxyWithNonce(singleton, setup(...), saltNonce)` with exactly those settings, and check first
+   with `cast call` that it returns the Safe's address. Claude can build the line.
 2. **Practise once.** Before anything depends on the Safe:
    - send a harmless transaction from it (for example 0 POL to one of the signers) and get two signers
      to approve and execute it;
@@ -294,25 +306,25 @@ move every day):
    - **If you already have POL or ETH on Ethereum:** bridge it at
      [portal.polygon.technology](https://portal.polygon.technology) to Polygon first, then send it.
    - **Never pick Ethereum as the network** when you send.
-4. **Fund a deployer.** A fresh wallet with about **1.5 POL** on Polygon, sent the same way. It gets no
+4. **Fund a deployer.** A fresh wallet with about **3 POL** on Polygon, sent the same way. It gets no
    permissions in the contract; what it doesn't spend stays in it.
 5. **Set the deploy settings.** In a new Terminal window (settings from earlier windows are gone), paste
-   these, after replacing the two placeholders. Keep the quotes:
+   these, after replacing the minter placeholder. Keep the quotes:
 
    ```
-   export BEAT_ADMIN="PASTE_SAFE_ADDRESS_HERE"
+   export BEAT_ADMIN="0xd119BDeA989C2816b412D8ECd7368f2C9C7F45b6"
    export BEAT_MINTER="PASTE_NEW_MAINNET_MINTER_ADDRESS_HERE"
    export BEAT_BASE_URI="https://api.virvi.io/api/beats/metadata/polygon/"
    export EXPECTED_CHAIN_ID=137
    unset BEAT_ADDRESS
    ```
 
-   `BEAT_ADMIN` is the Safe from step 1, `BEAT_MINTER` the new minter from step 3. `unset BEAT_ADDRESS`
+   `BEAT_ADMIN` is the Safe from step 1 (filled in), `BEAT_MINTER` the new minter from step 3. `unset BEAT_ADDRESS`
    clears the Amoy contract's address so nothing below can use it by mistake.
 6. **Dry run** (spends nothing):
 
    ```
-   cd contracts && forge script script/Deploy.s.sol --rpc-url https://polygon-bor-rpc.publicnode.com --interactives 1
+   cd contracts && forge script script/Deploy.s.sol --rpc-url https://polygon.drpc.org --interactives 1
    ```
 
    It prints the Safe's owners and threshold. **Check they are the three signers from step 1 and a
@@ -320,7 +332,7 @@ move every day):
 7. **Deploy for real:**
 
    ```
-   cd contracts && forge script script/Deploy.s.sol --rpc-url https://polygon-bor-rpc.publicnode.com --broadcast --interactives 1
+   cd contracts && forge script script/Deploy.s.sol --rpc-url https://polygon.drpc.org --broadcast --priority-gas-price 30gwei --interactives 1
    ```
 
    Save the contract address it prints (`VirviBeat deployed at 0x...`) and the commit it was deployed
@@ -395,7 +407,11 @@ and each tradeable one on its own; the page does this for you. Send the non-trad
 tradeable file fails, reject its Safe transaction before sending the next.
 
 The `--rpc-url` is the address of a server that lets the tool talk to the network. Any Polygon RPC
-provider's URL works in its place, as long as it's for the same network.
+provider's URL works in its place, as long as it's for the same network. On mainnet, publicnode sends a
+transaction but then refuses to look up its receipt ("Archive requests require a personal token"), so the
+tool reports an error for a transaction that went through: use `https://polygon.drpc.org` (or a paid RPC),
+and before retrying anything, check on Polygonscan whether the first attempt landed.
+`https://polygon-rpc.com` no longer answers without a key.
 
 ### If something goes wrong
 
