@@ -236,3 +236,15 @@ def test_read_regular_caps_the_size(tmp_path):
     assert read_regular(big) == b'x' * 1000 and read_regular(big, max_bytes=1000) == b'x' * 1000
     with pytest.raises(UnsafeFile, match='too large'):
         read_regular(big, max_bytes=999)
+
+
+def test_glbs_outside_ignores_scratch_copies(tmp_path):
+    """Working copies the agent keeps in scratch/ (references, experiments) aren't a misplaced export."""
+    import time
+    from studio_worker.pieces import glbs_outside
+    since = time.time() - 1
+    for rel in ('scratch/reference/cap_male.glb', 'models/cap.glb', 'out/hat/cap.glb'):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b'glTF')
+    assert [g.relative_to(tmp_path).as_posix() for g in glbs_outside(tmp_path, since)] == ['models/cap.glb']

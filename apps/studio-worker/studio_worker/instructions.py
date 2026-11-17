@@ -5,7 +5,8 @@ LAYOUT = """Write each piece to its own folder, out/<category>/ (for example out
 - its GLBs: <name>_male.glb and <name>_female.glb, or one <name>.glb for an emote or a piece that fits both body shapes;
 - piece.json: {"name": str, "description": str, "category": str, "hides": [str], "replaces": [str], "tags": [str],
   "changeKind": "new" | "fix" | "design"%s}.
-Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is."""
+Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is.
+Keep working copies, references and experiments in scratch/: it's never delivered."""
 
 
 # Grok runs the preview but, left to itself, judges the fit from its text output without opening a single view
@@ -27,7 +28,8 @@ piece (<name> in lowercase letters and underscores, e.g. out/furniture_round_tab
   on an upper floor its floor height y, so the check can tell the walker got there) and layout.json (where its furniture stands:
   {"furniture": [{"category": "furniture_<name>", "x": m, "z": m, "yaw": degrees}]});
 - for anything people sit on, <glb name>.sittables.json, its dcl-sittables seats.
-Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is."""
+Nothing else goes in out/. To change a piece, export over its files; leave a piece you didn't change as it is.
+Keep working copies, references and experiments in scratch/: it's never delivered."""
 
 
 def no_workspace(kind: str) -> str:

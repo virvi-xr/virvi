@@ -200,11 +200,15 @@ def _glbs_under(root: Path) -> list[Path]:
     return sorted(found)
 
 
+# Where the agent keeps working copies, references and experiments: never delivered, and never a misplaced export
+SCRATCH = 'scratch'
+
+
 def glbs_outside(design: Path, since: float) -> list[Path]:
-    """GLBs written since `since` anywhere in the design but out/: an export to the wrong place."""
+    """GLBs written since `since` anywhere in the design but out/ and scratch/: an export to the wrong place."""
     design = Path(design)
     return [g for g in _glbs_under(design)
-            if 'out' != g.relative_to(design).parts[0] and g.lstat().st_mtime >= since]
+            if g.relative_to(design).parts[0] not in ('out', SCRATCH) and g.lstat().st_mtime >= since]
 
 
 def glbs_exported(design: Path, since: float) -> list[Path]:
