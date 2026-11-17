@@ -38,6 +38,28 @@ const held = async (wallet: string, tokenId = 7) => (await db.select().from(beat
 describe('BEAT holdings index (LIV-185)', () => {
   beforeEach(async () => { await resetDb(); await seed() })
 
+  it('a provider that refuses wide log ranges gets smaller ones, down to 10 blocks, and still indexes', async () => {
+    const r = new FakeReader()
+    r.latest = 100 + 30 + 40
+    r.all = [tr(ZeroAddress, A, 105)]
+    const plain = r.transfers.bind(r)
+    r.transfers = async (c, from, to) => {
+      if (to - from + 1 > 10) throw new Error('Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range.')
+      return plain(c, from, to)
+    }
+    await indexBeatHoldings('polygon', r)
+    expect(await held(A)).toEqual(['1'])
+    expect(r.calls.every((c) => c.toBlock - c.fromBlock < 10)).toBe(true)
+  })
+
+  it('an error that is not about the range is not retried with smaller ranges', async () => {
+    const r = new FakeReader()
+    let n = 0
+    r.transfers = async () => { n++; throw new Error('server unreachable') }
+    await expect(indexBeatHoldings('polygon', r)).rejects.toThrow('server unreachable')
+    expect(n).toBe(1)
+  })
+
   it('a mint then a transfer leaves the buyer with 1 and the seller with no row', async () => {
     const r = new FakeReader()
     r.all = [tr(ZeroAddress, A, 105), tr(A, B, 110)]

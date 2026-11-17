@@ -1,4 +1,5 @@
 import { JsonRpcProvider, Network, Transaction } from 'ethers'
+import { logSafe } from '../errors/log-safe.js'
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
 import {
   BEAT_FINAL_FAIL_REASONS,
@@ -150,6 +151,10 @@ const lc = (s: string) => s.toLowerCase()
 
 /** A loggable error message. Drizzle's "Failed query" messages list the parameters (wallets), so those log the cause. */
 export function safeErr(err: unknown): string {
+  return logSafe(safeErrText(err))
+}
+
+function safeErrText(err: unknown): string {
   if (err instanceof BeatRpcError || err instanceof BeatRevert) return err.message
   if (err instanceof Error) {
     if (/^Failed query/.test(err.message)) {

@@ -26,6 +26,10 @@ export interface BeatLogReader {
 }
 
 export const INDEX_CHUNK_BLOCKS = 2000
+/** Smaller ranges to fall back to when a provider refuses a log range (Alchemy's free plan allows 10 blocks). */
+const SMALLER_CHUNKS = [500, 100, 10]
+/** A provider's refusal of the requested block range, as opposed to any other failure. */
+const RANGE_REFUSED = /block range|range (is )?too (large|wide|big)|eth_getLogs requests with up to|query returned more than|limit exceeded/i
 const MAX_CHUNKS_PER_RUN = 20
 
 const SINGLE_TOPIC = beatInterface.getEvent('TransferSingle')!.topicHash
@@ -134,10 +138,23 @@ export async function indexBeatHoldings(chain: BeatChain, reader: BeatLogReader)
       last = block - 1
     }
     indexed++
+    // The range that last worked in this run, so a capped provider is asked for 2000 blocks once per run, not per chunk
+    let size = INDEX_CHUNK_BLOCKS
     for (let chunk = 0; chunk < MAX_CHUNKS_PER_RUN; chunk++) {
-      const toBlock = Math.min(last + INDEX_CHUNK_BLOCKS, safeHead)
+      let toBlock = Math.min(last + size, safeHead)
       if (toBlock <= last) break
-      const transfers = await reader.transfers(contract, last + 1, toBlock)
+      let transfers: BeatEvent[]
+      for (;;) {
+        try {
+          transfers = await reader.transfers(contract, last + 1, toBlock)
+          break
+        } catch (err) {
+          const smaller = SMALLER_CHUNKS.find((n) => n < size)
+          if (!smaller || !RANGE_REFUSED.test(err instanceof Error ? err.message : String(err))) throw err
+          size = smaller
+          toBlock = Math.min(last + size, safeHead)
+        }
+      }
       // The cursor row is the lock: a run that finds it moved since it read it (another instance applied this chunk) stops.
       const moved = await db.transaction(async (tx) => {
         await tx.insert(beatIndexCursors).values({ chain, contract, lastBlock: last }).onConflictDoNothing()

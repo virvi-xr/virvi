@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
+import { logSafe } from '../errors/log-safe.js'
 import { db } from '../db/connection.js'
 import { studioDesigns, studioEntitlements, studioJobs, studioPayments } from '../db/schema.js'
 import { destroyWorker, ensureWorker, type MachineDeps } from './machines.js'
@@ -83,7 +84,7 @@ export async function sweepStudio(now: Date, deps: Partial<MachineDeps> = {}): P
   }
 
   // MANA: transfers first, so one mined in time settles even if its quote is expired just after
-  await watchManaTransfers(now).catch((err) => console.error('[studio-sweep] MANA watcher failed:', err instanceof Error ? err.message : err))
+  await watchManaTransfers(now).catch((err) => console.error('[studio-sweep] MANA watcher failed:', logSafe(err instanceof Error ? err.message : String(err))))
   const lapsed = await db.select({ id: studioPayments.id }).from(studioPayments).where(and(
     eq(studioPayments.method, 'mana'), eq(studioPayments.status, 'pending'), isNull(studioPayments.manaTxHash),
     lt(studioPayments.expiresAt, new Date(now.getTime() - config.studioMana.graceMs)),
