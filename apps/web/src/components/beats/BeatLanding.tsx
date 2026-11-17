@@ -37,9 +37,9 @@ export function BeatLanding() {
 
       <section className="mx-auto max-w-5xl px-4 pb-20 sm:px-6">
         <ol className="grid gap-10 sm:grid-cols-3 sm:gap-8">
-          <Step n="1" title="Show up">Go to the event signed in with your wallet, and choose Track my attendance on the BEAT card.</Step>
-          <Step n="2" title="Claim it">Stay as long as the card asks, then choose Claim your BEAT. It’s free: Virvi pays the network fee.</Step>
-          <Step n="3" title="Keep it">It lands in your wallet on Polygon, with the event’s name, place and time. Most BEATs can’t be sold.</Step>
+          <Step n="1" title="Show up">Be there, wherever the event happens: a virtual world, an AR space or a room full of people. Bring your wallet.</Step>
+          <Step n="2" title="Claim it">Check in the way the host asks, and the BEAT is yours. It’s free: Virvi pays the network fee.</Step>
+          <Step n="3" title="Keep it">It lands in your wallet on Polygon, with the event’s art, name, place and time. Most BEATs can’t be sold.</Step>
         </ol>
         <p className="mt-10"><a href="/beat/how-it-works/" className="text-[var(--bw-cyan)] underline-offset-4 hover:underline">How BEATs stay on chain, private and recoverable</a></p>
       </section>
