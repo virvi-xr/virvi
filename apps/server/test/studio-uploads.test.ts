@@ -20,7 +20,9 @@ const WEBP = await pixels.clone().webp().toBuffer()
 const GLB = Buffer.concat([Buffer.from('glTF'), Buffer.from([2, 0, 0, 0]), Buffer.alloc(64, 4)])
 // Sounds: judged by their headers, stored as they are
 const MP3_ID3 = Buffer.concat([Buffer.from('ID3'), Buffer.from([4, 0, 0, 0, 0, 0, 0]), Buffer.alloc(64, 1)])
-const MP3_SYNC = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x44]), Buffer.alloc(64, 1)])
+// MPEG-1 Layer III, 128 kbit/s, 44.1 kHz: a frame is 417 bytes, and the next frame's header follows it
+const FRAME = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x44]), Buffer.alloc(413, 1)])
+const MP3_SYNC = Buffer.concat([FRAME, FRAME, FRAME])
 const OGG = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(64, 1)])
 const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.from([36, 0, 0, 0]), Buffer.from('WAVEfmt '), Buffer.alloc(64, 1)])
 const M4A = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftypM4A '), Buffer.alloc(64, 1)])
@@ -180,7 +182,10 @@ describe('studio uploads', () => {
   it('refuses files that only look like audio by name', async () => {
     const u = await createUser()
     const d = await createDesign(u)
-    for (const [name, body] of [['notes.mp3', Buffer.from('hello')], ['clip.mp4', M4A]] as const) {
+    // Notepad's "Unicode" text starts FF FE, which looks like an MPEG frame's sync bits; so does random data
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('hello, this is just a text file '.repeat(20), 'utf16le')])
+    const lone = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x44]), Buffer.alloc(600, 7)])
+    for (const [name, body] of [['notes.mp3', Buffer.from('hello')], ['clip.mp4', M4A], ['notes2.mp3', utf16], ['noise.mp3', lone]] as const) {
       const res = await upload(u, d.id, name, body)
       expect(res.statusCode, name).toBe(400)
       expect(res.json().code).toBe('unsupported_file')

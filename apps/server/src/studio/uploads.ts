@@ -45,12 +45,34 @@ function sound(b: Buffer, name: string): Prepared | null {
   const a = (contentType: string, e: string) => ({ kind: 'audio' as const, contentType, ext: e, body: b })
   if (b.length < 12) return null
   if (b.toString('latin1', 0, 3) === 'ID3') return a('audio/mpeg', 'mp3')
-  // An MPEG audio frame: 11 sync bits, then a layer that isn't the reserved 00 (which is ADTS AAC's)
-  if (b[0] === 0xff && (b[1] & 0xe0) === 0xe0 && (b[1] & 0x06) !== 0) return a('audio/mpeg', 'mp3')
+  if (isMp3Frames(b)) return a('audio/mpeg', 'mp3')
   if (b.toString('latin1', 0, 4) === 'OggS') return a('audio/ogg', 'ogg')
   if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WAVE') return a('audio/wav', 'wav')
   if (b.toString('latin1', 4, 8) === 'ftyp' && ext(name) === 'm4a') return a('audio/mp4', 'm4a')
   return null
+}
+
+// Layer III bit rates (kbit/s) by bitrate index, and sample rates (Hz) by index, for MPEG-1; MPEG-2 and 2.5 differ
+const L3_KBPS = { 1: [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320], 2: [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160] }
+const RATES = [44100, 48000, 32000]
+
+/** An MPEG Layer III frame header at `at`: its length in bytes, or 0 when it isn't one. */
+function l3Frame(b: Buffer, at: number): number {
+  if (at + 4 > b.length || b[at] !== 0xff || (b[at + 1] & 0xe0) !== 0xe0) return 0
+  const version = (b[at + 1] >> 3) & 3 // 3 MPEG-1, 2 MPEG-2, 0 MPEG-2.5, 1 reserved
+  const layer = (b[at + 1] >> 1) & 3 // 1 is Layer III
+  const bitrate = b[at + 2] >> 4
+  const rate = (b[at + 2] >> 2) & 3
+  if (version === 1 || layer !== 1 || bitrate === 0 || bitrate === 15 || rate === 3) return 0
+  const mpeg1 = version === 3
+  const hz = RATES[rate] / (mpeg1 ? 1 : version === 2 ? 2 : 4)
+  return Math.floor(((mpeg1 ? 144 : 72) * L3_KBPS[mpeg1 ? 1 : 2][bitrate] * 1000) / hz) + ((b[at + 2] >> 1) & 1)
+}
+
+/** An MP3 without an ID3 tag: a valid frame header, and another where the first frame ends (text or noise that merely starts FF Ex doesn't). */
+function isMp3Frames(b: Buffer): boolean {
+  const first = l3Frame(b, 0)
+  return first > 0 && l3Frame(b, first) > 0
 }
 
 const LIMIT: Record<Kind, number> = { image: UPLOAD_LIMITS.imageBytes, model: UPLOAD_LIMITS.modelBytes, audio: UPLOAD_LIMITS.audioBytes }
