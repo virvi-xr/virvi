@@ -287,7 +287,10 @@ move every day):
    signers above, 2 of 3), checked on chain. An earlier Safe, `0xE68F1D75CCDE681030A82626833a98C6B388312A`,
    has the Amoy minter (a server key) as a signer: **never use it or send anything to it.**
 
-   If the Safe app's **Activate** button fails before any wallet pops up, a signer can activate the Safe
+   If the Safe app's **Activate** or **Sign** fails with "Could not submit the transaction" before any
+   wallet pops up, the wallet's own Polygon RPC is usually broken (on 2026-11-16 MetaMask's saved one
+   answered "Unauthorized"). In MetaMask: networks, Polygon, ⋮, Edit, add `https://polygon.drpc.org` as
+   the RPC URL and select it, then reload the Safe app. Otherwise a signer can activate the Safe
    from Terminal instead, at the same address. The app keeps the Safe's settings in the browser (its
    `SAFE_v2__undeployedSafes` storage); `cast send` the Safe proxy factory's
    `createProxyWithNonce(singleton, setup(...), saltNonce)` with exactly those settings, and check first
