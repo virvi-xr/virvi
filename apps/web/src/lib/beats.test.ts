@@ -8,7 +8,7 @@ import { beatsExplainerFor,
   BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
   TRADEABLE_HINT, SUPPLY_HINT, PAID_SUPPLY_HINT, LOCATION_SCENE_ONLY, blankLocation, cancelledNote, claimantsHeading, locationBody, locationLine,
   reviewSummary, beatLocked, COUNT_LABELS, CLAIM_STATUS_LABELS, claimantHeld,
-  filterCollected, shortWallet, walletPageHref, type CollectedFilter,
+  filterCollected, shortWallet, walletPageHref, walletFromPath, type CollectedFilter,
 } from './beats'
 
 const NOW = new Date('2026-11-14T12:00:00Z')
@@ -412,5 +412,20 @@ describe('collected BEATs (LIV-185)', () => {
     expect(shortWallet(W1)).toBe('0x5290…9EE7')
     expect(walletPageHref(W1.toLowerCase())).toBe(`/w/${W1}`)
     expect(walletPageHref(W2)).toBe(`/w/${W2}`)
+  })
+})
+
+describe('walletFromPath', () => {
+  const W1 = '0x52908400098527886E0F7030069857D2E4169EE7'
+  it('returns the checksummed address, with or without a trailing slash and in any case', () => {
+    expect(walletFromPath(`/w/${W1}`)).toBe(W1)
+    expect(walletFromPath(`/w/${W1}/`)).toBe(W1)
+    expect(walletFromPath(`/w/${W1.toLowerCase()}`)).toBe(W1)
+  })
+  it('is null for anything that is not an address', () => {
+    expect(walletFromPath('/w/_')).toBeNull()
+    expect(walletFromPath('/w/0x123')).toBeNull()
+    expect(walletFromPath('/w/')).toBeNull()
+    expect(walletFromPath('/beats')).toBeNull()
   })
 })

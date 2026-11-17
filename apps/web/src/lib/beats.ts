@@ -546,6 +546,12 @@ function checksummed(address: string): string {
   return '0x' + Array.from(lower, (c, i) => (parseInt(hash[i], 16) >= 8 ? c.toUpperCase() : c)).join('')
 }
 
+/** The checksummed address from `/w/<address>` (trailing slash fine), or null when it isn't a wallet address. */
+export function walletFromPath(pathname: string): string | null {
+  const m = /^\/w\/(0x[0-9a-fA-F]{40})\/?$/.exec(pathname)
+  return m ? checksummed(m[1]) : null
+}
+
 /** The public page for a wallet's BEATs. */
 export const walletPageHref = (address: string) => `/w/${checksummed(address)}`
 

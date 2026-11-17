@@ -201,6 +201,21 @@ describe('companion uploads', () => {
     }
   })
 
+  it('serves the public wallet page for /w/:address when the dashboard is present', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'virvi-dash-'))
+    writeFileSync(join(dir, 'index.html'), 'HOME')
+    mkdirSync(join(dir, 'w', '_'), { recursive: true })
+    writeFileSync(join(dir, 'w', '_', 'index.html'), 'WALLET')
+    ;(config as any).dashboardDir = dir
+    await app.close()
+    app = await testApp()
+    for (const url of ['/w/0x52908400098527886E0F7030069857D2E4169EE7', '/w/0x52908400098527886E0F7030069857D2E4169EE7/']) {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode).toBe(200)
+      expect(res.body).toContain('WALLET')
+    }
+  })
+
   it('serves the pairing approval page for /pair/:code, leaving the API routes alone', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'virvi-dash-'))
     writeFileSync(join(dir, 'index.html'), 'HOME')

@@ -417,6 +417,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     // Companion upload links (/u/<code>): the static export has one page for every code, at u/_/
     app.get('/u/:code', (_request, reply) => reply.sendFile('u/_/index.html'))
     app.get('/u/:code/', (_request, reply) => reply.sendFile('u/_/index.html'))
+    // A wallet's public BEATs page (/w/<address>, LIV-185): one exported page for every address, at w/_/
+    app.get('/w/:address', (_request, reply) => reply.sendFile('w/_/index.html'))
+    app.get('/w/:address/', (_request, reply) => reply.sendFile('w/_/index.html'))
     // Design Studio pages (/studio/<designId>): one exported page for every design, at studio/_/
     // '/studio/' itself also matches here with an empty id (the designs list), and so does the list's RSC payload,
     // /studio/index.txt, which the client router fetches, and /studio/index.html. /studio/checkout/ is its own page.
