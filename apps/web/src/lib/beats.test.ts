@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_SUPPLY_CAP_DEFAULT, type PublicBeat } from '@virvixr/shared'
-import {
+import { beatsExplainerFor,
   BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, BEAT_NO_REFUND, BEAT_TEST_BADGE, BEATS_UNAVAILABLE, beatActions, beatWindow, formatWhen, beatBody, beatEditBody, beatFieldError, beatFormError,
   beatHref, beatsNavVisible, blankBeat, claimantRow, claimantWallets, confirmBeatAction, fromLocalInput, newBeatHref, paymentNote, reviewModel,
   toLocalInput, type BeatAvailability, type BeatClaimant,
@@ -361,5 +361,15 @@ describe('formatWhen and beatWindow', () => {
     const w = beatWindow({ startsAt: '2026-11-16T18:00:00.000Z', endsAt: '2026-11-16T20:00:00.000Z' })
     expect(w).toContain(' – ')
     expect(w.split(' – ')[1]).toMatch(/[A-Z]{2,}|GMT|UTC/)
+  })
+})
+
+describe('beatsExplainerFor (the public /beats page for signed-out visitors)', () => {
+  it('is the bare BEATs page only: not a BEAT, the create page or anything else', () => {
+    expect(beatsExplainerFor('/beats', '')).toBe(true)
+    expect(beatsExplainerFor('/beats/', '?utm_source=polygonscan')).toBe(true)
+    expect(beatsExplainerFor('/beats', '?id=853288e3-7390-451b-afa0-e3bdcf1c31cd')).toBe(false)
+    expect(beatsExplainerFor('/beats/new', '')).toBe(false)
+    expect(beatsExplainerFor('/scenes', '')).toBe(false)
   })
 })

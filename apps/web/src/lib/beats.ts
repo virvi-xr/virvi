@@ -508,3 +508,12 @@ export async function pollPayment(o: {
     if (o.settled(b)) return
   }
 }
+
+/**
+ * Whether a signed-out visitor at this address gets the public BEATs explainer rather than sign-in: the bare /beats
+ * page only (each token's external_url and the explorer listings link there). A BEAT (`?id=`) or /beats/new still
+ * asks for sign-in.
+ */
+export function beatsExplainerFor(pathname: string, search: string): boolean {
+  return pathname.replace(/\/+$/, '') === '/beats' && !new URLSearchParams(search).get('id')
+}
