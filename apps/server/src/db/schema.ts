@@ -1540,7 +1540,7 @@ export const adEvents = pgTable(
     sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
     level: text('level').notNull(),
     day: date('day', { mode: 'string' }).notNull(),
-    viewerKey: text('viewer_key').notNull(), // 'w:<wallet>' or 'u:<sessionId>'
+    viewerKey: text('viewer_key').notNull(), // 'h:<keyed hash of scene and wallet>' (ads/viewer.ts), 'u:<sessionId>', or 'w:<wallet>' from before LIV-167
     verified: boolean('verified').notNull(),
     house: boolean('house').notNull(),
     dwellMs: integer('dwell_ms'),

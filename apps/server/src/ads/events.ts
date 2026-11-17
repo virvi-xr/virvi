@@ -3,6 +3,7 @@ import { db } from '../db/connection.js'
 import { adEvents, sceneElements, scenes } from '../db/schema.js'
 import type { AdEvent } from '@virvixr/shared'
 import { selectAdsForElements } from './select.js'
+import { adViewerKey } from './viewer.js'
 
 // dwell_ms is an int column
 const MAX_DWELL_MS = 2_147_483_647
@@ -47,7 +48,8 @@ export async function recordAdEvents(
   const spaces = await selectAdsForElements(sceneId, [...new Set(kept.map((e) => e.elementId))], now, { ignoreBooking: true })
 
   const verified = !!viewer.wallet && !viewer.isGuest
-  const viewerKey = verified ? `w:${viewer.wallet!.toLowerCase()}` : `u:${viewer.sessionId}`
+  // A wallet is stored only as a keyed hash (LIV-167), like visitor analytics; a guest by its session
+  const viewerKey = verified ? adViewerKey(sceneId, viewer.wallet!) : `u:${viewer.sessionId}`
   const day = now.toISOString().slice(0, 10)
   const rows: (typeof adEvents.$inferInsert)[] = []
   for (const e of kept) {

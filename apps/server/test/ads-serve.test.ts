@@ -3,8 +3,9 @@ import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 import { ads, adCreatives, adPlacements, adEvents, locationSetups } from '../src/db/schema.js'
 import { recordAdEvents } from '../src/ads/events.js'
+import { adViewerKey } from '../src/ads/viewer.js'
 import { resetDb } from './helpers/db.js'
-import { testApp, createUser, createScene, createElement } from './helpers/factories.js'
+import { testApp, createUser, createScene, createElement, tokenFor } from './helpers/factories.js'
 import { createAnalyticsScene } from './helpers/analytics.js'
 import { createSetup } from './helpers/setups.js'
 import { signedSceneHeaders, SCENE_META } from './helpers/dcl-sign.js'
@@ -119,7 +120,9 @@ describe('/api/ads/serve and /api/ads/events', () => {
     expect(again.res.json()).toEqual({ accepted: 0 })
     const rows = await db.select().from(adEvents)
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ viewerKey: `w:${first.wallet}`, verified: true })
+    // LIV-167: the wallet is kept only as a keyed hash, never in the clear
+    expect(rows[0]).toMatchObject({ viewerKey: adViewerKey(rows[0].sceneId, first.wallet), verified: true })
+    expect(rows[0].viewerKey).not.toContain(first.wallet.toLowerCase().slice(2))
   })
 
   it('a signed request with no bound scene is 404 scene_not_found', async () => {
@@ -162,7 +165,7 @@ describe('/api/ads/serve and /api/ads/events', () => {
     const rows = await db.select().from(adEvents)
     expect(rows.map((r) => [r.adId, r.elementId, r.level]).sort()).toEqual([[onA.ad.id, a.id, 'scene'], [onA.ad.id, a.id, 'screen']].sort())
     const today = new Date().toISOString().slice(0, 10)
-    expect(rows.every((r) => r.viewerKey === `w:${first.wallet}` && r.verified === true && r.house === false && r.day === today)).toBe(true)
+    expect(rows.every((r) => r.viewerKey === adViewerKey(r.sceneId, first.wallet) && r.verified === true && r.house === false && r.day === today)).toBe(true)
   })
 
   it('the same ad on two spaces counts once per wallet on each space', async () => {
@@ -184,6 +187,20 @@ describe('/api/ads/serve and /api/ads/events', () => {
     expect(res.json()).toEqual({ accepted: 2 })
     const rows = await db.select().from(adEvents)
     expect(rows.map((r) => r.elementId).sort()).toEqual([a.id, b.id].sort())
+  })
+
+  it('delete-my-data removes the wallet\'s ad views, hashed and from before hashing (LIV-167)', async () => {
+    const { scene, preset } = await boundScene()
+    const el = await createElement(preset.id, { type: 'ad_space', properties: { shape: '1:1', formats: 'both' } })
+    const house = await mkAd('house')
+    const W = '0x00000000000000000000000000000000000000e7'
+    const me = await createUser({ wallet: W })
+    await recordAdEvents(scene.id, { wallet: W, isGuest: false, sessionId: 's1' }, [{ adId: house.ad.id, elementId: el.id, level: 'screen', t: 1 }], NOW)
+    await recordAdEvents(scene.id, { wallet: '0x00000000000000000000000000000000000000e8', isGuest: false, sessionId: 's2' }, [{ adId: house.ad.id, elementId: el.id, level: 'screen', t: 1 }], NOW)
+    await db.insert(adEvents).values({ adId: house.ad.id, elementId: el.id, sceneId: scene.id, level: 'look', day: '2026-10-01', viewerKey: `w:${W}`, verified: true, house: true, occurredAt: NOW })
+    const res = await app.inject({ method: 'POST', url: '/api/analytics/me/delete', headers: { authorization: `Bearer ${tokenFor(me)}` } })
+    expect(res.json().deleted.adViews).toBe(2)
+    expect(await db.select().from(adEvents)).toHaveLength(1)  // someone else's stays
   })
 
   it('guest and unsigned-wallet viewers are stored as unverified with a session key', async () => {
@@ -211,6 +228,6 @@ describe('/api/ads/serve and /api/ads/events', () => {
     expect(n).toBe(2)
     const rows = await db.select().from(adEvents)
     expect(Object.fromEntries(rows.map((r) => [r.level, r.dwellMs]))).toEqual({ look: 1500, screen: null })
-    expect(rows.every((r) => r.viewerKey === `w:${viewer.wallet}` && r.verified)).toBe(true)
+    expect(rows.every((r) => r.viewerKey === adViewerKey(scene.id, viewer.wallet) && r.verified)).toBe(true)
   })
 })

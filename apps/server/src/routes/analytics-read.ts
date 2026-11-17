@@ -4,6 +4,7 @@ import { db } from '../db/connection.js'
 import { deleteMyBeatData } from '../beats/retention.js'
 import { liveScene } from '../scenes/live.js'
 import {
+  adEvents,
   analyticsCopresenceDaily,
   analyticsEvents,
   analyticsHeatmapDaily,
@@ -25,6 +26,7 @@ import { verifiedWalletsOf } from '../analytics/claims.js'
 import { walletsEverOf } from '../auth/wallet-blocks.js'
 import { boundScene, fromAnalyticsLocation, isScenePass } from '../auth/scene-from.js'
 import { visitorHash } from '../analytics/hash.js'
+import { adViewerKeysFor } from '../ads/viewer.js'
 import { TokenBucketLimiter } from '../analytics/limiter.js'
 import { mergeLegacyEntityTargets, resolveEmoteLabels } from '../analytics/labels.js'
 import { heatmap3dFor } from '../analytics/jobs.js'
@@ -373,7 +375,7 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
     if (!wallets.size) return reply.status(400).send({ error: 'Sign in with your wallet to delete your visitor data' })
     const limit = deleteLimiter.take(`del:${actor.userId}`, 1, DELETE_LIMIT.capacity, DELETE_LIMIT.refillPerSec)
     if (!limit.ok) return reply.status(429).send({ error: 'rate_limited', retryAfter: Math.ceil(limit.retryAfterMs / 1000) })
-    const deleted = { sessions: 0, events: 0, positions: 0, copresence: 0, raffleEntries: 0, beatClaims: 0 }
+    const deleted = { sessions: 0, events: 0, positions: 0, copresence: 0, raffleEntries: 0, beatClaims: 0, adViews: 0 }
     const all = await db.select({ id: analyticsScenes.id, salt: analyticsScenes.salt }).from(analyticsScenes)
     for (const scene of all) {
       const hashes = [...wallets].map((w) => visitorHash(scene.salt, w))
@@ -402,6 +404,12 @@ export default async function analyticsReadRoutes(app: FastifyInstance) {
       deleted.events += counts.events
       deleted.positions += counts.positions
       deleted.copresence += counts.copresence
+    }
+    // Ad views (LIV-167): the wallets' hashed keys in every scene that has ad rows, and any raw-wallet rows from before
+    const adScenes = (await db.selectDistinct({ id: adEvents.sceneId }).from(adEvents)).map((r) => r.id)
+    const adKeys = adViewerKeysFor(adScenes, [...wallets])
+    for (let i = 0; i < adKeys.length; i += 500) {
+      deleted.adViews += (await db.delete(adEvents).where(inArray(adEvents.viewerKey, adKeys.slice(i, i + 500))).returning({ id: adEvents.id })).length
     }
     // Raffle entries go by account; draws keep only entry ids, so earlier draws still replay
     deleted.raffleEntries = (await db.delete(raffleEntries).where(eq(raffleEntries.userId, actor.userId)).returning({ id: raffleEntries.id })).length
