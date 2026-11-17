@@ -48,7 +48,12 @@ export function BeatLanding() {
         <div className="flex flex-col items-start gap-5 border-t border-[var(--bw-grid)] pt-10 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="bw-display text-2xl font-bold">Hosting an event?</h2>
-            <p className="mt-2 max-w-md text-[var(--bw-dim)]">Give everyone who comes a BEAT. You set the image, the time and how long they stay; they never pay.</p>
+            <p className="mt-3 max-w-lg text-lg text-[var(--bw-chrome)]">Give every guest something to keep.</p>
+            <p className="mt-2 max-w-lg text-[var(--bw-dim)]">
+              Choose a piece of art for your event, and everyone who shows up takes it home. It stays in their wallet
+              long after the lights go down: the night they met their people, the show they almost missed, the room
+              they’ll still talk about years from now. It’s free for your guests, always.
+            </p>
           </div>
           <a href={signinPath('/beats/new')} className="shrink-0 rounded-full bg-[var(--bw-pink)] px-6 py-3 text-sm font-semibold text-[var(--bw-night)] hover:brightness-110">
             Create a BEAT
