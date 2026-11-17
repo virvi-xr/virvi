@@ -1983,6 +1983,8 @@ export const studioRenders = pgTable('studio_renders', {
   viewKey: text('view_key').notNull(), // <mode>-<bodyShape>-<outfit>[-<emote>], as the contract names render folders
   jobId: uuid('job_id').notNull(), // frames are stored under this job's files
   frames: integer('frames').notNull().default(0),
+  // The rate the frames play at, for a view that has its own (an emote's On avatar); null plays at the page's 12
+  fps: doublePrecision('fps'),
   status: text('status').notNull(), // queued | ready | failed
   // An Inspect view showing its ring while the full sphere renders: the job whose frames will replace it
   pendingJobId: uuid('pending_job_id'),

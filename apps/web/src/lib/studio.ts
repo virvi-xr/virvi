@@ -62,6 +62,7 @@ export type Checker = { pass: boolean; failures: number; warnings: number; trian
 
 export type StudioView = {
   status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string
+  fps?: number | null // the rate it plays at, for a view with its own (an emote's On avatar); absent or null: 12
   pending?: boolean // an Inspect view whose whole sphere is still rendering behind its ring
 }
 
@@ -662,7 +663,7 @@ export function frameAt(start: number, dx: number, width: number, frames: number
 }
 
 export type StageState =
-  | { kind: 'frames'; urls: string[]; renderedAt: string }
+  | { kind: 'frames'; urls: string[]; renderedAt: string; fps: number | null }
   | { kind: 'rendering' }
   | { kind: 'empty'; text: string }
 
@@ -670,7 +671,7 @@ export type StageState =
 export function stageState(piece: StudioPiece | undefined, key: string, pending: Set<string>): StageState {
   if (!piece) return { kind: 'empty', text: 'The agent hasn’t built anything yet. Describe what you want on the left.' }
   const view = piece.renders[key]
-  if (view?.status === 'ready' && view.urls.length > 0) return { kind: 'frames', urls: view.urls, renderedAt: view.renderedAt }
+  if (view?.status === 'ready' && view.urls.length > 0) return { kind: 'frames', urls: view.urls, renderedAt: view.renderedAt, fps: view.fps ?? null }
   if (pending.has(key) || view?.status === 'queued') return { kind: 'rendering' }
   if (view) return { kind: 'empty', text: 'That view didn’t render. Pick it again to retry.' }
   return { kind: 'empty', text: 'This view hasn’t been rendered yet.' }

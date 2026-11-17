@@ -183,7 +183,7 @@ export default function Preview({ designId, detail, category, onSelect, onChange
         ) : (<>
         <div className="relative mx-auto aspect-square w-full max-w-[560px] bg-gray-950">
           {spin.kind === 'frames' ? (
-            <SpinStage view={`${piece!.category}/${key}`} urls={spin.urls} loop={kind === 'emote' || !!view.emote}
+            <SpinStage view={`${piece!.category}/${key}`} urls={spin.urls} loop={kind === 'emote' || !!view.emote} fps={spin.fps ?? undefined}
               label={`${piece!.name}, ${view.bodyShape}${view.emote ? `, ${view.emote}` : ''}`} />
           ) : spin.kind === 'rendering' ? (
             <p className="absolute inset-0 flex items-center justify-center text-sm text-gray-400" aria-live="polite">Rendering this view…</p>

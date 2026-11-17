@@ -39,6 +39,7 @@ export type ContractPiece = {
   checker?: { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } | null
   files?: string[]
   renders?: Record<string, number>
+  fps?: Record<string, number> // the rate a view plays at, when it has its own (an emote's On avatar)
   finalize?: Record<string, unknown> | null // a finalize job's check summary for the piece
 }
 
@@ -90,6 +91,12 @@ export function parseResult(body: unknown): { ok: true; result: ContractResult }
       if (typeof piece.renders !== 'object' || Array.isArray(piece.renders)) return { ok: false, reason: 'renders is not a map' }
       for (const [k, v] of Object.entries(piece.renders)) {
         if (!VIEW_KEY.test(k) || !Number.isInteger(v) || (v as number) < 0 || (v as number) > 999) return { ok: false, reason: 'a render is malformed' }
+      }
+    }
+    if (piece.fps != null) {
+      if (typeof piece.fps !== 'object' || Array.isArray(piece.fps)) return { ok: false, reason: 'a render\'s fps is malformed' }
+      for (const [k, v] of Object.entries(piece.fps)) {
+        if (!VIEW_KEY.test(k) || typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > 60) return { ok: false, reason: 'a render\'s fps is malformed' }
       }
     }
     if (piece.meta != null && (typeof piece.meta !== 'object' || Array.isArray(piece.meta))) return { ok: false, reason: 'meta is not an object' }
@@ -235,7 +242,7 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         const views = Object.entries(p.renders ?? {}).filter(([, frames]) => frames > 0)
         if (views.length) {
           await tx.insert(studioRenders)
-            .values(views.map(([viewKey, frames]) => ({ revisionId: rev.id, viewKey, jobId: job.id, frames, status: 'ready' })))
+            .values(views.map(([viewKey, frames]) => ({ revisionId: rev.id, viewKey, jobId: job.id, frames, fps: p.fps?.[viewKey] ?? null, status: 'ready' })))
             .onConflictDoNothing()
         }
         // The prompt rendered Inspect's ring; the rest of the sphere follows in the background
@@ -277,15 +284,17 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
         .innerJoin(studioPieces, eq(studioPieces.id, studioRevisions.pieceId))
         .where(or(eq(studioRenders.jobId, job.id), eq(studioRenders.pendingJobId, job.id)))
       for (const row of rows) {
-        const frames = result.pieces.find((p) => p.category === row.category)?.renders?.[row.viewKey] ?? 0
+        const piece = result.pieces.find((p) => p.category === row.category)
+        const frames = piece?.renders?.[row.viewKey] ?? 0
+        const fps = piece?.fps?.[row.viewKey] ?? null
         const ready = result.outcome !== 'error' && frames > 0
         if (row.jobId !== job.id) {
           // The full Inspect sphere: its frames replace the ring's, and a failure leaves the ring as it is
-          await tx.update(studioRenders).set(ready ? { jobId: job.id, frames, status: 'ready', pendingJobId: null } : { pendingJobId: null })
+          await tx.update(studioRenders).set(ready ? { jobId: job.id, frames, fps, status: 'ready', pendingJobId: null } : { pendingJobId: null })
             .where(eq(studioRenders.id, row.id))
           continue
         }
-        await tx.update(studioRenders).set({ status: ready ? 'ready' : 'failed', frames: ready ? frames : 0 })
+        await tx.update(studioRenders).set({ status: ready ? 'ready' : 'failed', frames: ready ? frames : 0, fps: ready ? fps : null })
           .where(eq(studioRenders.id, row.id))
       }
       const selection = (job.payload as { render?: { categories?: string[] } }).render?.categories

@@ -302,7 +302,13 @@ describe('stageState', () => {
   })
   it('shows a ready view’s frames', () => {
     const p = piece({ renders: { [key]: { status: 'ready', frames: 2, urls: ['a', 'b'], renderedAt: NOW.toISOString() } } })
-    expect(stageState(p, key, new Set())).toEqual({ kind: 'frames', urls: ['a', 'b'], renderedAt: NOW.toISOString() })
+    expect(stageState(p, key, new Set())).toEqual({ kind: 'frames', urls: ['a', 'b'], renderedAt: NOW.toISOString(), fps: null })
+  })
+  it('carries a view’s fps, null for an old one', () => {
+    const at = NOW.toISOString()
+    const p = piece({ renders: { 'emote-male-default': { status: 'ready', frames: 2, fps: 12, urls: ['a', 'b'], renderedAt: at }, [key]: { status: 'ready', frames: 2, fps: null, urls: ['a', 'b'], renderedAt: at } } })
+    expect(stageState(p, 'emote-male-default', new Set())).toMatchObject({ kind: 'frames', fps: 12 })
+    expect(stageState(p, key, new Set())).toMatchObject({ kind: 'frames', fps: null })
   })
   it('offers a retry for a view that failed', () => {
     const p = piece({ renders: { [key]: { status: 'failed', frames: 0, urls: [], renderedAt: NOW.toISOString() } } })
