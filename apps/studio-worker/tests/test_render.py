@@ -87,9 +87,11 @@ def test_emote_frames_step_through_length(tmp_path, stub):
     names = [c['method'] for c in calls if c['namespace'] == 'emote']
     i = names.index('pause')  # getLength is also read earlier, to see that the emote loaded
     assert names[i + 1] == 'getLength'
+    # a 3 s emote, once through at 12 a second whatever `frames` says, played back at that rate (On avatar's real speed)
     goes = [c['params'][0] for c in calls if c['method'] == 'goTo']
-    assert goes == pytest.approx([i * 0.3 for i in range(10)])
-    assert len(r['frames']) == 10
+    assert goes == pytest.approx([i * 3.0 / 36 for i in range(36)])
+    assert len(r['frames']) == 36
+    assert r['fps'] == pytest.approx(12.0)
 
 
 def test_studio_preview_takes_relative_paths(tmp_path, stub, monkeypatch):

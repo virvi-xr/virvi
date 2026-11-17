@@ -18,6 +18,14 @@ const PNG = await pixels.clone().png().toBuffer()
 const JPEG = await pixels.clone().jpeg().toBuffer()
 const WEBP = await pixels.clone().webp().toBuffer()
 const GLB = Buffer.concat([Buffer.from('glTF'), Buffer.from([2, 0, 0, 0]), Buffer.alloc(64, 4)])
+// Sounds: judged by their headers, stored as they are
+const MP3_ID3 = Buffer.concat([Buffer.from('ID3'), Buffer.from([4, 0, 0, 0, 0, 0, 0]), Buffer.alloc(64, 1)])
+// MPEG-1 Layer III, 128 kbit/s, 44.1 kHz: a frame is 417 bytes, and the next frame's header follows it
+const FRAME = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x44]), Buffer.alloc(413, 1)])
+const MP3_SYNC = Buffer.concat([FRAME, FRAME, FRAME])
+const OGG = Buffer.concat([Buffer.from('OggS'), Buffer.alloc(64, 1)])
+const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.from([36, 0, 0, 0]), Buffer.from('WAVEfmt '), Buffer.alloc(64, 1)])
+const M4A = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftypM4A '), Buffer.alloc(64, 1)])
 
 describe('studio uploads', () => {
   let app: Awaited<ReturnType<typeof testApp>>
@@ -156,6 +164,51 @@ describe('studio uploads', () => {
     expect((await upload(u, d.id, 'logo.png', PNG)).json().name).toBe('logo.png')
   })
 
+  it('takes the sound formats, judged by their contents', async () => {
+    const u = await createUser()
+    const d = await createDesign(u)
+    const cases: [string, Buffer, string, string][] = [
+      ['fart.mp3', MP3_ID3, 'audio/mpeg', 'fart.mp3'], ['pop.mp3', MP3_SYNC, 'audio/mpeg', 'pop.mp3'],
+      ['a.ogg', OGG, 'audio/ogg', 'a.ogg'], ['b.wav', WAV, 'audio/wav', 'b.wav'], ['c.m4a', M4A, 'audio/mp4', 'c.m4a'],
+    ]
+    for (const [name, body, contentType, stored] of cases) {
+      const res = await upload(u, d.id, name, body)
+      expect(res.statusCode, name).toBe(201)
+      expect(res.json()).toMatchObject({ name: stored, kind: 'audio', contentType, size: body.length })
+      expect((await store.get(uploadKey(d.id, res.json().id)))!.body).toEqual(body)
+    }
+  })
+
+  it('refuses files that only look like audio by name', async () => {
+    const u = await createUser()
+    const d = await createDesign(u)
+    // Notepad's "Unicode" text starts FF FE, which looks like an MPEG frame's sync bits; so does random data
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('hello, this is just a text file '.repeat(20), 'utf16le')])
+    const lone = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x44]), Buffer.alloc(600, 7)])
+    for (const [name, body] of [['notes.mp3', Buffer.from('hello')], ['clip.mp4', M4A], ['notes2.mp3', utf16], ['noise.mp3', lone]] as const) {
+      const res = await upload(u, d.id, name, body)
+      expect(res.statusCode, name).toBe(400)
+      expect(res.json().code).toBe('unsupported_file')
+    }
+  })
+
+  it('takes sounds up to 15 MB', async () => {
+    const u = await createUser()
+    const d = await createDesign(u)
+    expect(UPLOAD_LIMITS.audioBytes).toBe(15 * 1024 * 1024)
+    const memo = (size: number) => Buffer.concat([WAV, Buffer.alloc(size - WAV.length)])
+    expect((await upload(u, d.id, 'memo.wav', memo(UPLOAD_LIMITS.audioBytes - 1024))).statusCode).toBe(201)
+    const over = await upload(u, d.id, 'memo2.wav', memo(UPLOAD_LIMITS.audioBytes + 1))
+    expect(over.statusCode).toBe(413)
+    expect(over.json().code).toBe('file_too_large')
+  })
+
+  it('names a nameless sound', async () => {
+    const u = await createUser()
+    const d = await createDesign(u)
+    expect((await upload(u, d.id, '.ogg', OGG)).json().name).toBe('sound.ogg')
+  })
+
   it('judges a file by its bytes, not its name', async () => {
     const u = await createUser()
     const d = await createDesign(u)
@@ -217,11 +270,13 @@ describe('studio uploads', () => {
     const d = await createDesign(u)
     const logo = (await upload(u, d.id, 'logo.png', PNG)).json()
     await upload(u, d.id, 'base.glb', GLB)
+    await upload(u, d.id, 'fart.mp3', MP3_ID3)
     const jobId = (await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/prompts`, headers: as(u), payload: { text: 'a tee with my logo on the chest' } })).json().jobId
     const [job] = await db.select().from(studioJobs).where(eq(studioJobs.id, jobId))
     expect((job.payload as any).uploads).toEqual([
       { path: `uploads/${logo.id}/logo.png`, name: 'logo.png', kind: 'image' },
       { path: expect.stringMatching(/^uploads\/[0-9a-f-]{36}\/base\.glb$/), name: 'base.glb', kind: 'model' },
+      { path: expect.stringMatching(/^uploads\/[0-9a-f-]{36}\/fart\.mp3$/), name: 'fart.mp3', kind: 'audio' },
     ])
 
     const [design] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, d.id))

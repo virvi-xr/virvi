@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { frameAt } from '@/lib/studio'
 
-const LOOP_FPS = 12 // an on-avatar emote spin; an emote view plays at the rate it was rendered
+const LOOP_FPS = 12 // a view rendered without its own rate; an emote view plays at the rate it was rendered
 
 /** Loads every frame before resolving, so a new view never replaces the old one half-drawn. */
 function preload(urls: string[]): Promise<void> {

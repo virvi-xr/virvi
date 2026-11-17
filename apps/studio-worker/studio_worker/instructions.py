@@ -98,7 +98,8 @@ def closing(kind: str, selected_slots: list[str] | None, agent: str | None = Non
     elif kind == 'emote':
         what = ('Build one Decentraland emote. Its folder is out/emote/. Pose with the skill\'s emotelib: the legs with '
                 '`leg` IK and the arms with `reach`, never raw rotations on the leg bones. When the request asks for '
-                'sound, make it yourself (original audio, never a sample you found: ffmpeg can synthesise and mix it) '
+                'sound, use the sound the user uploaded if they asked for it; otherwise make it yourself (original '
+                'audio, never a sample you found: ffmpeg can synthesise and mix it) '
                 'and put exactly one .ogg or .mp3 in out/emote/ beside the GLB, as long as the animation and timed to '
                 'it; it ships with the emote and plays in the studio\'s preview. Keep drafts and .wav files out of '
                 'out/emote/. With no sound asked for, add none.')
@@ -157,7 +158,7 @@ def uploads_text(uploads: list[dict]) -> str:
     """What the agent is told about the files the user uploaded (fetched into uploads/ before it runs)."""
     if not uploads:
         return ''
-    kinds = {'image': 'image', 'model': '3D model'}
+    kinds = {'image': 'image', 'model': '3D model', 'audio': 'sound'}
     listed = '\n'.join(f"- uploads/{u['name']} ({kinds.get(u['kind'], u['kind'])})" for u in uploads)
     return f"""
 
@@ -168,5 +169,9 @@ at, or go on the model itself as a texture or a decal: a logo printed on a shirt
 with UVs on an image texture in the material, keep its proportions and keep the texture within Decentraland's
 limits. A 3D model can be a reference for shape and scale, or a starting mesh when the user asks for that; refit
 anything you reuse to the avatar and the checker. Bring one into Blender with its importer: glTF for .glb and .vrm,
-FBX, OBJ or STL; a .blend file is opened, or appended from. Leave the files in uploads/ as they are: copy what you need into
+FBX, OBJ or STL; a .blend file is opened, or appended from. A sound is the user's own recording or track, so you may
+use it. When they ask for it as the emote's sound, cut it to the part they mean, trim or pad it to the animation's
+length with short fades, time it to the moves, and encode it with ffmpeg as the one .ogg or .mp3 in out/emote/, small
+enough that the GLB and the sound stay within 3 MB together. It can also be a reference to time the moves to: ffmpeg
+can find where its loud parts are. Only an emote has a sound: on anything else, say so in your reply. Leave the files in uploads/ as they are: copy what you need into
 the piece's folder."""
