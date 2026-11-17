@@ -1,3 +1,4 @@
+import re
 import io
 import sys
 from pathlib import Path
@@ -863,3 +864,17 @@ def test_an_emote_prompt_reports_its_views_fps(api, tmp_path, skills):
     [piece] = result['pieces']
     assert piece['fps'] == {'emote-male-default': 12.0}
     assert piece['renders']['emote-male-default'] == 36
+
+
+def test_an_emote_over_the_allowance_is_not_uploaded_and_stays_changed(api, tmp_path, skills, monkeypatch):
+    monkeypatch.setattr(jobs, 'EMOTE_ALLOWANCE_BYTES', 100)  # the fixture's emote is bigger than this
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote.jsonl')
+    assert result['outcome'] == 'error'
+    assert re.fullmatch(r"the emote and its sound came to \d+\.\d MB, over Decentraland's 3 MB limit for an emote",
+                        result['error']), result['error']
+    assert not [f for f in api.files if '/pieces/emote/' in f]
+    [piece] = result['pieces']
+    assert piece['changed'] is True and piece['files'] == []
+    # not recorded as current: the next prompt sees it as changed and checks it again
+    again = run(api, tmp_path, emote_job(), 'claude_builds_emote.jsonl')
+    assert again['outcome'] == 'error' and again['pieces'][0]['changed'] is True

@@ -46,6 +46,9 @@ LOOK_AGAIN = ('You changed a piece without looking at it. Run `studio-preview ou
               'where it sits on the head or body, clipping. Then reply to the user again in a few plain sentences.')
 # Sent once to an emote run whose exported legs pass through each other (emote_legs); the reply goes to the user
 LEGS_AGAIN_START = 'The legs in the emote you exported pass through each other'
+MB = 1024 * 1024
+# Decentraland's cap on an emote item, its model and sound together (check_emote.py's "GLB + audio"; Virvi checks it too)
+EMOTE_ALLOWANCE_BYTES = 3 * MB
 LEGS_PROGRESS = 'Fixing the legs: they pass through each other in the emote.'
 
 
@@ -184,6 +187,8 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
             if elsewhere:
                 error = 'GLBs exported outside out/<category>/: ' + ', '.join(
                     g.relative_to(design).as_posix() for g in elsewhere)
+        if not error and not proposal:
+            error = next((e for e in map(_emote_too_big, changed) if e), None)
         renders, fps, render_errors, uploaded = {}, {}, [], set()
         if changed and not proposal and not error:
             _phase(client, job_id, 'rendering')
@@ -432,6 +437,18 @@ def view_key(view: dict) -> str:
         return f"orbit-{view['bodyShape']}"
     return '-'.join([view['mode'], view['bodyShape'], view['outfit']] + ([view['emote']] if view.get('emote') else [])
                     + ([view['angle']] if view['mode'] == 'play' else []))
+
+
+def _emote_too_big(piece: Piece) -> str | None:
+    """Why a changed emote can't ship: its biggest GLB and its sound over the allowance. Never uploaded, it stays
+    changed, so the next prompt checks it again."""
+    if piece.category != 'emote':
+        return None
+    sound = sum(e.stat().st_size for e in piece.extras if e.suffix.lower() in SOUND_TYPES)
+    total = max((g.stat().st_size for g in piece.glbs), default=0) + sound
+    if total <= EMOTE_ALLOWANCE_BYTES:
+        return None
+    return f"the emote and its sound came to {total / MB:.1f} MB, over Decentraland's 3 MB limit for an emote"
 
 
 def _render_and_upload(client, job_id, piece: Piece, view, render_fn) -> tuple[dict, dict, str | None]:
