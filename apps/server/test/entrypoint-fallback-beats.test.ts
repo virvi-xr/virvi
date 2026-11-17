@@ -33,7 +33,7 @@ function fallbackBlocks(label: string): string[] {
 }
 
 const SCHEMA = 'fallback_beats'
-const TABLES = ['beats', 'beat_scenes', 'beat_claims', 'beat_payments', 'beat_mint_batches', 'beat_network_claims', 'beat_reissue_requests', 'beat_reissue_files', 'beat_reissue_items', 'wallet_blocks', 'account_wallet_events']
+const TABLES = ['beats', 'beat_scenes', 'beat_claims', 'beat_payments', 'beat_mint_batches', 'beat_network_claims', 'beat_reissue_requests', 'beat_reissue_files', 'beat_reissue_items', 'wallet_blocks', 'account_wallet_events', 'beat_holdings', 'beat_index_cursors']
 const SEQUENCES = ['beat_token_id_polygon_amoy_seq', 'beat_token_id_polygon_seq']
 
 type Col = { column_name: string; data_type: string; udt_name: string; is_nullable: string; column_default: string | null }
@@ -116,5 +116,11 @@ describe('entrypoint schema fallback: BEATs', () => {
     } finally {
       await db.delete(beats).where(inArray(beats.id, [created.id, notYet.id, mainnet.id, other.id]))
     }
+  })
+
+  it('LIV-185: the BEAT block makes the holdings index tables', async () => {
+    const sqlText = fallbackBlocks('BEATs').join('\n')
+    expect(sqlText).toContain('CREATE TABLE IF NOT EXISTS beat_holdings')
+    expect(sqlText).toContain('CREATE TABLE IF NOT EXISTS beat_index_cursors')
   })
 })

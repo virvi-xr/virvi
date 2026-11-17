@@ -1,4 +1,4 @@
-import { Transaction } from 'ethers'
+import { JsonRpcProvider, Network, Transaction } from 'ethers'
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
 import {
   BEAT_FINAL_FAIL_REASONS,
@@ -17,6 +17,7 @@ import {
 } from './chain.js'
 import { beatContractOf, beatRetired, creatableOnContractSql, onContractSql } from './contract.js'
 import { BeatError } from './errors.js'
+import { indexBeatHoldings, rpcLogReader } from './holdings.js'
 import { lockBeat } from './lock.js'
 import { sweepBeatPayments } from './payments.js'
 import { UNLINKED_CLAIM } from './retention.js'
@@ -1052,6 +1053,19 @@ export async function giveUpFailedClaims(beatId: string, now: Date): Promise<{ g
   })
 }
 
+let holdingsProvider: { chain: BeatChain; url: string; provider: JsonRpcProvider } | null = null
+/** Brings the holdings index up to date for the configured chain (same RPC as beatChainClient); nothing without an RPC URL. */
+async function runHoldingsIndex(): Promise<void> {
+  const chain = config.beats.chain
+  const url = config.beats.rpc[chain]
+  if (!config.beats.enabled || !url) return
+  if (!holdingsProvider || holdingsProvider.chain !== chain || holdingsProvider.url !== url) {
+    const network = new Network(chain, BEAT_CHAIN_INFO[chain].chainId)
+    holdingsProvider = { chain, url, provider: new JsonRpcProvider(url, network, { staticNetwork: network, cacheTimeout: -1 }) }
+  }
+  await indexBeatHoldings(chain, rpcLogReader(holdingsProvider.provider))
+}
+
 /** Runs the tick every BEAT_JOB_EVERY_MS (the first 30 s after boot). Returns a stopper. */
 export function startBeatJobs(): () => void {
   let running = false
@@ -1062,6 +1076,11 @@ export function startBeatJobs(): () => void {
       await runBeatTick(new Date())
     } catch (err) {
       console.error('[beats] minting tick failed:', safeErr(err))
+    }
+    try {
+      await runHoldingsIndex()
+    } catch (err) {
+      console.error('[beats] holdings index failed:', safeErr(err))
     } finally {
       running = false
     }

@@ -18,6 +18,7 @@ import {
   date,
   doublePrecision,
   bigint,
+  numeric,
   pgSequence,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
@@ -2791,6 +2792,30 @@ export const beatClaims = pgTable('beat_claims', {
   walletUq: uniqueIndex('beat_claims_beat_wallet_uq').on(t.beatId, t.wallet),
   userUq: uniqueIndex('beat_claims_beat_user_uq').on(t.beatId, t.userId).where(sql`${t.userId} is not null`),
   statusIdx: index('beat_claims_beat_status_idx').on(t.beatId, t.status),
+}))
+
+// Who holds each BEAT, built from the contract's ERC-1155 transfer logs (LIV-185). Wallet and contract are lower case;
+// a balance of 0 is not stored.
+export const beatHoldings = pgTable('beat_holdings', {
+  chain: text('chain').$type<BeatChain>().notNull(),
+  contract: text('contract').notNull(),
+  tokenId: bigint('token_id', { mode: 'bigint' }).notNull(),
+  wallet: text('wallet').notNull(),
+  balance: numeric('balance').notNull(),
+  updatedBlock: bigint('updated_block', { mode: 'number' }).notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.chain, t.contract, t.tokenId, t.wallet] }),
+  walletIdx: index('beat_holdings_chain_wallet_idx').on(t.chain, t.wallet),
+}))
+
+// The last block of a contract whose transfers are in beat_holdings
+export const beatIndexCursors = pgTable('beat_index_cursors', {
+  chain: text('chain').$type<BeatChain>().notNull(),
+  contract: text('contract').notNull(),
+  lastBlock: bigint('last_block', { mode: 'number' }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.chain, t.contract] }),
 }))
 
 // A person's request to have their BEATs reissued from a compromised wallet to a new one (LIV-11). An admin reviews it
