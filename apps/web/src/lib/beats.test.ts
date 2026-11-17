@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { CollectedBeat } from '@virvixr/shared'
 import { BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_SUPPLY_CAP_DEFAULT, type PublicBeat } from '@virvixr/shared'
-import { beatsExplainerFor,
+import { walletLookupHref, beatsExplainerFor,
   BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, BEAT_NO_REFUND, BEAT_TEST_BADGE, BEATS_UNAVAILABLE, beatActions, beatWindow, formatWhen, beatBody, beatEditBody, beatFieldError, beatFormError,
   beatHref, beatsNavVisible, blankBeat, claimantRow, claimantWallets, confirmBeatAction, fromLocalInput, newBeatHref, paymentNote, reviewModel,
   toLocalInput, type BeatAvailability, type BeatClaimant,
@@ -427,5 +427,15 @@ describe('walletFromPath', () => {
     expect(walletFromPath('/w/0x123')).toBeNull()
     expect(walletFromPath('/w/')).toBeNull()
     expect(walletFromPath('/beats')).toBeNull()
+  })
+})
+
+describe('walletLookupHref (the BEAT page\'s wallet lookup)', () => {
+  it('takes a pasted address, trimmed and any case, to its checksummed wallet page', () => {
+    expect(walletLookupHref('  0xc2877b05cfe462e585fe3de8046f7528998af6f1 ')).toBe('/w/0xc2877b05CFe462E585fE3DE8046F7528998aF6F1')
+    expect(walletLookupHref('0xC2877B05CFE462E585FE3DE8046F7528998AF6F1')).toBe('/w/0xc2877b05CFe462E585fE3DE8046F7528998aF6F1')
+  })
+  it('is null for anything that is not a wallet address', () => {
+    for (const bad of ['', '0x', 'vitalik.eth', '0xc2877b05cfe462e585fe3de8046f7528998af6f', '0xzz877b05cfe462e585fe3de8046f7528998af6f1']) expect(walletLookupHref(bad)).toBeNull()
   })
 })

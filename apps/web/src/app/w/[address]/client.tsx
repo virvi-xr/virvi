@@ -5,9 +5,10 @@ import { beatAddressUrl, type BeatChain } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { filterCollected, shortWallet, walletFromPath, type WalletBeats } from '@/lib/beats'
 import { BeatMedal } from '@/components/beats/BeatMedal'
+import { beatDisplay } from '@/lib/beat-fonts'
 
-const FIELD = 'rounded-md border border-gray-700 bg-gray-900 px-2 py-1.5 text-sm text-gray-200'
-const link = 'text-blue-400 hover:underline'
+const FIELD = 'rounded-full border border-[var(--bw-grid)] bg-[rgb(18_12_43/0.7)] px-3 py-1.5 text-sm text-[var(--bw-chrome)] [color-scheme:dark]'
+const link = 'text-[var(--bw-cyan)] underline-offset-4 hover:underline'
 
 type State = { kind: 'loading' } | { kind: 'invalid' } | { kind: 'error' } | { kind: 'ready'; data: WalletBeats }
 
@@ -50,55 +51,78 @@ export default function WalletBeatsClient() {
     navigator.clipboard?.writeText(data.wallet).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {})
   }
 
+  const earned = data ? data.beats.filter((b) => b.earned).length : 0
   return (
-    <div className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
-      <div className="mx-auto max-w-2xl text-gray-300">
-        <a href="/" className="text-sm text-gray-400 hover:text-white">← Back to Virvi</a>
-        {state.kind === 'loading' && <p className="mt-8 text-gray-500" role="status">Loading…</p>}
+    <div className={`beat-world ${beatDisplay.variable} min-h-screen overflow-x-hidden`}>
+      <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-5 sm:px-6">
+        <a href="/w/" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">Check another wallet</a>
+        <a href="/beats" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">What are BEATs?</a>
+      </header>
+      <main className="mx-auto max-w-5xl px-4 pb-28 sm:px-6">
+        {state.kind === 'loading' && <p className="mt-16 text-center text-[var(--bw-dim)]" role="status">Loading…</p>}
         {state.kind === 'invalid' && (
-          <div className="mt-8"><p>That isn’t a wallet address.</p><a href="/beats" className={link}>What are BEATs?</a></div>
+          <Notice title="That isn’t a wallet address.">
+            <a href="/w/" className={link}>Check a wallet</a>
+          </Notice>
         )}
         {state.kind === 'error' && (
-          <div className="mt-8" role="alert">
-            <p className="text-amber-300">Couldn’t load this wallet’s BEATs. Try again.</p>
-            <button type="button" onClick={() => setAttempt((n) => n + 1)} className="mt-3 rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700">Try again</button>
-          </div>
+          <Notice title="Couldn’t load this wallet’s BEATs." alert>
+            <button type="button" onClick={() => setAttempt((n) => n + 1)} className="rounded-full bg-[var(--bw-cyan)] px-5 py-2 text-sm font-semibold text-[var(--bw-night)] hover:brightness-110">Try again</button>
+          </Notice>
         )}
         {data && (
           <>
-            <h1 className="mt-6 text-3xl font-semibold tracking-tight text-white">BEATs held by <span className="font-mono" title={data.wallet}>{shortWallet(data.wallet)}</span></h1>
-            <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-              <button type="button" onClick={copy} className={link}>{copied ? 'Copied' : 'Copy address'}</button>
-              <a href={beatAddressUrl(chain, data.wallet)} target="_blank" rel="noopener noreferrer" className={link}>View on Polygonscan</a>
-            </p>
+            <section className="pb-10 pt-10 text-center sm:pt-16">
+              <p className="text-sm text-[var(--bw-dim)]">BEATs held by</p>
+              <h1 className="bw-display bw-glitch mt-3 break-all text-[clamp(1.9rem,6.5vw,4.2rem)] font-black leading-none tracking-tight" title={data.wallet}>
+                {shortWallet(data.wallet)}
+              </h1>
+              <p className="mt-6 text-lg text-[var(--bw-chrome)]">
+                {data.beats.length === 0 ? 'No BEATs yet.' : `${data.beats.length} ${data.beats.length === 1 ? 'BEAT' : 'BEATs'}, ${earned} earned by being there.`}
+              </p>
+              <p className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm">
+                <button type="button" onClick={copy} className={link}>{copied ? 'Copied' : 'Copy address'}</button>
+                <a href={beatAddressUrl(chain, data.wallet)} target="_blank" rel="noopener noreferrer" className={link}>View on Polygonscan</a>
+              </p>
+            </section>
             {data.beats.length === 0 ? (
-              <div className="mt-8"><p>This wallet doesn’t hold any BEATs yet.</p><a href="/beats" className={link}>What are BEATs?</a></div>
+              <Notice title="This wallet doesn’t hold any BEATs yet.">
+                <a href="/beats" className={link}>How to earn one</a>
+              </Notice>
             ) : (
-              <>
-                <p className="mt-4 text-gray-400">{data.beats.length} {data.beats.length === 1 ? 'BEAT' : 'BEATs'} · {data.beats.filter((b) => b.earned).length} earned</p>
-                <div className="mb-4 mt-6 flex flex-wrap items-end gap-x-4 gap-y-3">
-                  <label className="flex flex-col gap-1 text-xs text-gray-400">From
+              <section className="bw-floor">
+                <div className="mb-8 flex flex-wrap items-end justify-center gap-x-4 gap-y-3">
+                  <label className="flex flex-col gap-1 text-xs text-[var(--bw-dim)]">From
                     <input type="date" className={FIELD} value={from ?? ''} onChange={(e) => setFrom(e.target.value || null)} />
                   </label>
-                  <label className="flex flex-col gap-1 text-xs text-gray-400">To
+                  <label className="flex flex-col gap-1 text-xs text-[var(--bw-dim)]">To
                     <input type="date" className={FIELD} value={to ?? ''} onChange={(e) => setTo(e.target.value || null)} />
                   </label>
-                  <label className="flex items-center gap-2 pb-2 text-sm text-gray-300">
-                    <input type="checkbox" checked={earnedOnly} onChange={(e) => setEarnedOnly(e.target.checked)} /> Earned only
+                  <label className="flex items-center gap-2 pb-2 text-sm text-[var(--bw-chrome)]">
+                    <input type="checkbox" className="accent-[var(--bw-cyan)]" checked={earnedOnly} onChange={(e) => setEarnedOnly(e.target.checked)} /> Earned only
                   </label>
                 </div>
                 {shown.length === 0 ? (
-                  <p className="text-sm text-gray-400">No BEATs match these filters.</p>
+                  <p className="text-center text-sm text-[var(--bw-dim)]">No BEATs match these filters.</p>
                 ) : (
-                  <ul className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] items-start gap-3">
-                    {shown.map((b) => <BeatMedal key={`${b.wallet}-${b.contract}-${b.tokenId}`} beat={b} showWallet={false} />)}
+                  <ul className="flex flex-wrap items-start justify-center gap-x-4 gap-y-8 [&>li]:w-44">
+                    {shown.map((b) => <BeatMedal key={`${b.wallet}-${b.contract}-${b.tokenId}`} beat={b} showWallet={false} look="neon" />)}
                   </ul>
                 )}
-              </>
+              </section>
             )}
           </>
         )}
-      </div>
+      </main>
+    </div>
+  )
+}
+
+function Notice({ title, alert, children }: { title: string; alert?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="mx-auto mt-16 max-w-md text-center" role={alert ? 'alert' : undefined}>
+      <p className="bw-display text-xl font-bold">{title}</p>
+      <div className="mt-5">{children}</div>
     </div>
   )
 }

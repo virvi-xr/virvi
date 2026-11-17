@@ -557,3 +557,9 @@ export const walletPageHref = (address: string) => `/w/${checksummed(address)}`
 
 /** "Jan 5, 2026" in UTC, so a medal shows the same day to everyone. */
 export const medalDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+
+/** The wallet page for an address typed or pasted into the BEAT lookup (trimmed, any case), or null if it isn't one. */
+export function walletLookupHref(input: string): string | null {
+  const a = input.trim()
+  return /^0x[0-9a-fA-F]{40}$/.test(a) ? walletPageHref(a) : null
+}

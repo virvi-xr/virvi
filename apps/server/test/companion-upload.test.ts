@@ -216,6 +216,21 @@ describe('companion uploads', () => {
     }
   })
 
+  it('/w/ itself is the BEAT lookup page, and its RSC payload is served, not the wallet page', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'virvi-dash-'))
+    writeFileSync(join(dir, 'index.html'), 'HOME')
+    mkdirSync(join(dir, 'w', '_'), { recursive: true })
+    writeFileSync(join(dir, 'w', 'index.html'), 'LOOKUP')
+    writeFileSync(join(dir, 'w', 'index.txt'), 'LOOKUP-RSC')
+    writeFileSync(join(dir, 'w', '_', 'index.html'), 'WALLET')
+    ;(config as any).dashboardDir = dir
+    await app.close()
+    app = await testApp()
+    expect((await app.inject({ method: 'GET', url: '/w/' })).body).toBe('LOOKUP')
+    expect((await app.inject({ method: 'GET', url: '/w/index.html' })).body).toBe('LOOKUP')
+    expect((await app.inject({ method: 'GET', url: '/w/index.txt' })).body).toBe('LOOKUP-RSC')
+  })
+
   it('serves the pairing approval page for /pair/:code, leaving the API routes alone', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'virvi-dash-'))
     writeFileSync(join(dir, 'index.html'), 'HOME')
