@@ -246,6 +246,9 @@ answers it 400.
   shown to the user. `costUsd` on any checked prompt includes the check's cost.
 - `changeKind`, from the agent: `"new"`, `"fix"` (a fix to a published piece) or `"design"` (a design change).
 - `checker.pass` false means the skills checker found a FAIL. The piece is still reported.
+- **An emote over 3 MB is refused.** Virvi adds up the emote's biggest GLB and its sound as uploaded; over 3 MB
+  (Decentraland's item cap), the result becomes an `error` without the emote piece, the prompt isn't counted, and the
+  note gives the size. The agent's checker FAILs the same thing, so this only catches what slipped past it.
 - An emote's checker report ends with the studio's own leg check: a `WARN` (counted in `checker.warnings`, never a
   FAIL) when its thighs or shins pass through each other. A prompt whose emote export has crossing legs sends the agent
   back once, in the same session and with half the prompt's limits (time, turns, cost ceiling), to fix them;
