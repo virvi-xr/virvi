@@ -1934,7 +1934,7 @@ export const studioUploads = pgTable('studio_uploads', {
   id: uuid('id').primaryKey().defaultRandom(),
   designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
   name: text('name').notNull(), // cleaned, unique within the design; the agent sees it as uploads/<name>
-  kind: text('kind').notNull(), // image | model
+  kind: text('kind').notNull(), // image | model | audio
   contentType: text('content_type').notNull(),
   size: integer('size').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
