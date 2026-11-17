@@ -542,6 +542,9 @@ export async function assembleRedeploy(input: {
   ownThumbnail?: string | null
   /** The scene's placed copies (placementsInScene): `virvi/placements.json`, rewritten when the deploy goes ahead. */
   placements?: Placement[]
+  /** LIV-135 part 1: a placements file that differs from the live one is itself a change to deploy (the daily drift
+   *  redeploy, redeploy-sweep.ts). Without it a placements-only difference is no change, as the LIV-134 ruling says. */
+  placementsDrift?: boolean
 }): Promise<Assembled> {
   const { live } = input
   const have = new Set(live.content.map((c) => c.file.toLowerCase()))
@@ -585,14 +588,16 @@ export async function assembleRedeploy(input: {
   existing = kept
   const before = metadata
   metadata = withThumbnail(metadata, deployedThumbnail(input.models, new Set([...existing.map((c) => c.file), ...got.keys()].map((f) => f.toLowerCase()))), own)
-  const changed = got.size > 0 || upgrade || renamed || droppedThumbnail || metadata !== before
   // A scene that deploys gets its placements rewritten (kept by hash when the same); see the LIV-134 ruling. An adopted
   // scene too (LIV-135 part 3): the file sits beside the owner's, and nothing else of theirs changes for it.
+  const prior = existing.find((c) => isPlacementsFile(c.file))
+  const others = existing.filter((c) => !isPlacementsFile(c.file))
+  const bytes = placementsFile(input.placements ?? [], [...others.map((c) => c.file), ...newFiles.keys()])
+  const same = bytes ? !!prior && prior.file === PLACEMENTS_FILE && prior.hash === (await dclHash(bytes)) : !prior
+  const changed = got.size > 0 || upgrade || renamed || droppedThumbnail || metadata !== before || (!!input.placementsDrift && !same)
   if (changed) {
-    const prior = existing.find((c) => isPlacementsFile(c.file))
-    existing = existing.filter((c) => !isPlacementsFile(c.file))
-    const bytes = placementsFile(input.placements ?? [], [...existing.map((c) => c.file), ...newFiles.keys()])
-    if (bytes && prior && prior.file === PLACEMENTS_FILE && prior.hash === (await dclHash(bytes))) existing.push(prior)
+    existing = others
+    if (bytes && same) existing.push(prior!)
     else if (bytes) newFiles.set(PLACEMENTS_FILE, bytes)
   }
   return finish({

@@ -138,6 +138,21 @@ describe('assembleRedeploy and the placements', () => {
     expect(r.deployedFiles).not.toContain(PLACEMENTS_FILE)
   })
 
+  it('with placementsDrift, a placements-only difference is a change, and only the snapshot is new (LIV-135 part 1)', async () => {
+    const stale = { file: PLACEMENTS_FILE, hash: await dclHash(enc('{"v":1,"models":[]}')) }
+    const r = await assembleRedeploy({ live: await live([stale]), adopted: false, models: [need('a')], timestamp: 1, fetch: fetcher(), placements: [at('i1', 'a')], placementsDrift: true })
+    expect(r.changed).toBe(true)
+    expect([...newPaths(r)].filter((f) => f !== 'scene.json')).toEqual([PLACEMENTS_FILE])
+    expect(placementsOf(r)).toEqual([at('i1', 'a')])
+  })
+
+  it('with placementsDrift, the same snapshot is still no change', async () => {
+    const first = await assembleFresh({ metadata: metadata(), models: [need('a')], timestamp: 1, fetch: fetcher(), placements: [at('i1', 'a')] })
+    const ref = entityContent(first).find((c) => c.file === PLACEMENTS_FILE)!
+    const r = await assembleRedeploy({ live: await live([ref]), adopted: false, models: [need('a')], timestamp: 1, fetch: fetcher(), placements: [at('i1', 'a')], placementsDrift: true })
+    expect(r.changed).toBe(false)
+  })
+
   it('any deploy that goes ahead rewrites them from the current scene, new models included', async () => {
     const stale = { file: PLACEMENTS_FILE, hash: await dclHash(enc('{"v":1,"models":[]}')) }
     const r = await assembleRedeploy({

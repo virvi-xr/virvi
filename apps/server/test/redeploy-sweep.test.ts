@@ -4,7 +4,8 @@ import { Wallet } from 'ethers'
 import { eq } from 'drizzle-orm'
 import { config } from '../src/config.js'
 import { db } from '../src/db/connection.js'
-import { assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElements, scenes } from '../src/db/schema.js'
+import { assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElementInstances, sceneElements, scenes } from '../src/db/schema.js'
+import { PLACEMENTS_FILE, decodePlacements } from '@virvixr/shared'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
 import { BATCH_WINDOW_MS, RETRY_BACKOFF_MS, startDclRedeploySweep, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
@@ -467,6 +468,49 @@ describe('stale deployment reconcile (start of each sweep)', () => {
 })
 
 describe('startDclRedeploySweep', () => {
+  describe('the map snapshot drifts (LIV-135 part 1)', () => {
+    const DAY = 24 * 60 * 60_000
+    const later = (ms: number) => new Date(Date.now() + ms)
+    const placementsIn = (i: number) => {
+      const d = fake.deployed[i]
+      const e = JSON.parse(dec(d.files.get(d.entityId)!)) as { content: Array<{ file: string; hash: string }> }
+      const ref = e.content.find((c) => c.file === PLACEMENTS_FILE)
+      return ref ? decodePlacements(dec(d.files.get(ref.hash) ?? enc(''))) : null
+    }
+    const move = async (presetId: string) => {
+      const [el] = await db.select().from(sceneElements).where(eq(sceneElements.presetId, presetId))
+      await db.update(sceneElementInstances).set({ position: { x: 5, y: 0, z: 7 } }).where(eq(sceneElementInstances.elementId, el.id))
+    }
+
+    it('a moved model redeploys the snapshot once its last deploy is a day old, and only once', async () => {
+      const { preset } = await deployedOnce()
+      expect(placementsIn(0)?.[0].position).toEqual({ x: 1, y: 1, z: 1 })
+      await move(preset.id)
+      await sweepAndSettle(later(DAY / 2))
+      expect(fake.deployed).toHaveLength(1)  // not yet: at most once a day
+      await sweepAndSettle(later(DAY + 60_000))
+      expect(fake.deployed).toHaveLength(2)
+      expect(placementsIn(1)?.[0].position).toEqual({ x: 5, y: 0, z: 7 })
+      goLive()
+      await sweepAndSettle(later(2 * DAY + 120_000))
+      expect(fake.deployed).toHaveLength(2)  // the snapshot is current again
+    })
+
+    it('nothing moved: no redeploy', async () => {
+      await deployedOnce()
+      await sweepAndSettle(later(DAY + 60_000))
+      expect(fake.deployed).toHaveLength(1)
+    })
+
+    it('a sign destination is never redeployed for it', async () => {
+      const { preset, dest } = await deployedOnce()
+      await db.update(dclWorldDestinations).set({ mode: 'sign', grantedAt: null }).where(eq(dclWorldDestinations.id, dest.id))
+      await move(preset.id)
+      await sweepAndSettle(later(DAY + 60_000))
+      expect(fake.deployed).toHaveLength(1)
+    })
+  })
+
   it('does nothing at 0 and returns a stopper otherwise', () => {
     startDclRedeploySweep(0)()
     startDclRedeploySweep(60_000)()

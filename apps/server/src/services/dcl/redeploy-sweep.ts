@@ -9,11 +9,18 @@
  *
  * Only a destination that has been deployed (or adopted) is redeployed here: a first deploy is always
  * started by the owner, after the wizard showed them what it replaces.
+ *
+ * LIV-135 part 1: moves, removals and preset switches add no model, so they never make a destination pending, and the
+ * deployed `virvi/placements.json` (what Decentraland's map and distant view build from) goes stale. In mode A, once a
+ * day at most (counted from the last deploy), a destination whose placements differ from the snapshot its last Virvi
+ * deploy put live is redeployed for them alone. Mode B destinations are left as they are (their owner signs).
  */
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
 import { dclWorldDestinations, sceneDeployments } from '../../db/schema.js'
-import { frameEntitiesInScene, modelsInScene, pendingModels, type Assembled } from './assemble.js'
+import { PLACEMENTS_FILE } from '@virvixr/shared'
+import { frameEntitiesInScene, isPlacementsFile, modelsInScene, pendingModels, placementsFile, placementsInScene, type Assembled } from './assemble.js'
+import { dclHash, type ContentRef } from './entity.js'
 import {
   DeployerError, liveBaseFor, reconcileStaleDeployments, refusedLine, REFUSED_PREFIX, sceneLimitProblem, startVirviDeploy,
   type Destination, type DeployOptions,
@@ -28,6 +35,54 @@ export const BATCH_WINDOW_MS = 60_000
 export const RETRY_BACKOFF_MS = 5 * 60_000
 /** This many failed deploys in a row stop the automatic redeploys until someone looks. */
 export const MAX_FAILED_IN_A_ROW = 3
+/** A placements-only redeploy (LIV-135 part 1) happens at most this often, counted from the last deploy. */
+export const DRIFT_REDEPLOY_MS = 24 * 60 * 60_000
+
+/**
+ * Whether the scene's placed copies differ from the `virvi/placements.json` its last Virvi deploy put live, once that
+ * deploy is a day old. False when the live entity isn't the one Virvi last deployed (that is changed-outside's to say)
+ * or the deploy kept no content list.
+ */
+export async function placementsDrifted(dest: { id: string; sceneId: string; lastEntityId: string | null }, now: Date): Promise<boolean> {
+  if (!dest.lastEntityId) return false
+  const last = await db.query.sceneDeployments.findFirst({
+    where: and(eq(sceneDeployments.destinationId, dest.id), eq(sceneDeployments.status, 'deployed')),
+    orderBy: [desc(sceneDeployments.deployedAt)],
+    columns: { deployedAt: true, catalystEntityId: true, assetBundle: true },
+  })
+  if (!last?.deployedAt || last.catalystEntityId !== dest.lastEntityId) return false
+  if (now.getTime() - last.deployedAt.getTime() < DRIFT_REDEPLOY_MS) return false
+  const content = (last.assetBundle as { content?: ContentRef[] } | null)?.content
+  if (!Array.isArray(content)) return false
+  const prior = content.find((c) => isPlacementsFile(c.file))
+  const bytes = placementsFile(await placementsInScene(dest.sceneId), content.filter((c) => !isPlacementsFile(c.file)).map((c) => c.file))
+  if (!bytes) return !!prior
+  return !prior || prior.file !== PLACEMENTS_FILE || prior.hash !== (await dclHash(bytes))
+}
+
+/**
+ * Whether the sweep may start a deploy for the destination now: none is running, the last one didn't just fail, and
+ * it hasn't failed MAX_FAILED_IN_A_ROW times (which holds it at needs_review until someone looks).
+ */
+async function mayStart(dest: Destination, now: Date): Promise<boolean> {
+  const busy = await db.query.sceneDeployments.findFirst({
+    where: and(eq(sceneDeployments.destinationId, dest.id), inArray(sceneDeployments.status, ['building', 'deploying'])),
+    columns: { id: true },
+  })
+  if (busy) return false
+  const recent = await db
+    .select({ status: sceneDeployments.status, errorMessage: sceneDeployments.errorMessage, createdAt: sceneDeployments.createdAt })
+    .from(sceneDeployments)
+    // A deploy that had nothing new to send (a Redeploy now with no changes) isn't a failure.
+    .where(and(eq(sceneDeployments.destinationId, dest.id), sql`coalesce(${sceneDeployments.assetBundle}->>'noop', '') <> 'true'`))
+    .orderBy(desc(sceneDeployments.createdAt))
+    .limit(MAX_FAILED_IN_A_ROW)
+  if (recent.length === MAX_FAILED_IN_A_ROW && recent.every((r) => r.status === 'failed')) {
+    await setStatus(dest.id, 'needs_review', `Virvi couldn't update your World ${MAX_FAILED_IN_A_ROW} times in a row (${recent[0].errorMessage ?? 'no reason given'}). Check it on the deploy page and press Redeploy now.`)
+    return false
+  }
+  return !(recent[0]?.status === 'failed' && now.getTime() - recent[0].createdAt.getTime() < RETRY_BACKOFF_MS)
+}
 
 async function setStatus(id: string, status: Destination['status'], statusDetail: string | null) {
   await db.update(dclWorldDestinations).set({ status, statusDetail, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, id))
@@ -61,6 +116,17 @@ export async function sweepRedeploys(now: Date = new Date(), opts: DeployOptions
           await db.update(dclWorldDestinations)
             .set({ pendingSince: null, ...(clear ? { status: 'ok' as const, statusDetail: null } : {}), updatedAt: new Date() })
             .where(eq(dclWorldDestinations.id, dest.id))
+          if (clear) dest.status = 'ok'
+        }
+        // LIV-135 part 1: nothing to add, but the map snapshot may be stale
+        if (dest.mode === 'virvi' && dest.grantedAt && dest.status === 'ok' && await placementsDrifted(dest, now) && await mayStart(dest, now)) {
+          try {
+            await liveBaseFor(dest)
+            await startVirviDeploy(dest.id, null, { ...opts, placementsDrift: true })
+            started++
+          } catch (err) {
+            if (!(err instanceof DeployerError)) throw err
+          }
         }
         continue
       }
@@ -94,24 +160,7 @@ export async function sweepRedeploys(now: Date = new Date(), opts: DeployOptions
       if (dest.mode !== 'virvi' || !dest.grantedAt || !['ok', 'unreachable', 'over_budget'].includes(dest.status)) continue
       if (!dest.lastEntityId && !dest.adopted) continue // first deploys are owner-started
       if (now.getTime() - since.getTime() < BATCH_WINDOW_MS) continue
-      const busy = await db.query.sceneDeployments.findFirst({
-        where: and(eq(sceneDeployments.destinationId, dest.id), inArray(sceneDeployments.status, ['building', 'deploying'])),
-        columns: { id: true },
-      })
-      if (busy) continue
-
-      const recent = await db
-        .select({ status: sceneDeployments.status, errorMessage: sceneDeployments.errorMessage, createdAt: sceneDeployments.createdAt })
-        .from(sceneDeployments)
-        // A deploy that had nothing new to send (a Redeploy now with no changes) isn't a failure.
-        .where(and(eq(sceneDeployments.destinationId, dest.id), sql`coalesce(${sceneDeployments.assetBundle}->>'noop', '') <> 'true'`))
-        .orderBy(desc(sceneDeployments.createdAt))
-        .limit(MAX_FAILED_IN_A_ROW)
-      if (recent.length === MAX_FAILED_IN_A_ROW && recent.every((r) => r.status === 'failed')) {
-        await setStatus(dest.id, 'needs_review', `Virvi couldn't update your World ${MAX_FAILED_IN_A_ROW} times in a row (${recent[0].errorMessage ?? 'no reason given'}). Check it on the deploy page and press Redeploy now.`)
-        continue
-      }
-      if (recent[0]?.status === 'failed' && now.getTime() - recent[0].createdAt.getTime() < RETRY_BACKOFF_MS) continue
+      if (!(await mayStart(dest, now))) continue
 
       try {
         await liveBaseFor(dest) // sets needs_review / unreachable itself and throws

@@ -141,6 +141,8 @@ export class DeployerError extends Error {
 export interface DeployOptions {
   /** Model downloader; tests inject one. */
   fetch?: ModelFetcher
+  /** LIV-135 part 1: the placements snapshot drifted from the live one, so it alone is a change (the daily sweep). */
+  placementsDrift?: boolean
 }
 
 /** How to recreate one new file of a prepared deployment. */
@@ -409,7 +411,7 @@ export function defaultSpawn(parcels: string[]) {
   return { x: (width * DCL_PARCEL_M) / 2, y: 0, z: 1 }
 }
 
-async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFetcher): Promise<{ assembled: Assembled; baseEntityId: string | null; storedPrefix?: string }> {
+async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFetcher, placementsDrift = false): Promise<{ assembled: Assembled; baseEntityId: string | null; storedPrefix?: string }> {
   if (dest.pendingImportId) {
     // An import replaces whatever is live (deployed outside Virvi too); the live entity is still what it builds on
     const prefix = await pendingImportPrefix(dest)
@@ -448,7 +450,7 @@ async function assembleFor(dest: Destination, timestamp: number, fetch?: ModelFe
     await db.update(dclWorldDestinations).set({ adopted: false, updatedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
   }
   const ownThumbnail = await ownThumbnailFile(dest.id)
-  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name, ownThumbnail, placements }), baseEntityId: live.id }
+  return { assembled: await assembleRedeploy({ live, adopted, models, timestamp, fetch, title: scene?.name, ownThumbnail, placements, placementsDrift }), baseEntityId: live.id }
 }
 
 /** Every file in the entity, path and hash, read from the entity file itself. */
@@ -724,7 +726,7 @@ async function runVirviDeploy(
   let signing = false
   try {
     const started = Date.now()
-    const packed = await assembleFor(dest, started, opts.fetch)
+    const packed = await assembleFor(dest, started, opts.fetch, opts.placementsDrift)
     if (!packed.assembled.changed) {
       const err = await nothingToDeploy(dest, packed.assembled)
       await markFailed(deploymentId, err, undefined, { assetBundle: noopBundle(packed) })
