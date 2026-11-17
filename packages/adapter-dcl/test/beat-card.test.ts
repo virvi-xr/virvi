@@ -119,11 +119,23 @@ describe('BEAT card', () => {
   })
 
   it('plain-ux I1: ended: a visitor who never reached the minimum can still stop tracking', () => {
-    expect(cardView(beat(), AFTER, ui())).toMatchObject({ state: 'ended', line: 'This BEAT has ended.', actions: [] })
+    // Someone who never tracked it sees no card after the end (LIV-184)
+    expect(cardView(beat(), AFTER, ui())).toMatchObject({ state: 'hidden', visible: false })
     const v = cardView(beat(claim('present', 120)), AFTER, ui())
     expect(v).toMatchObject({ state: 'ended', line: `This BEAT has ended. ${STORED}` })
     expect(actions(v)).toEqual(['stop:Stop tracking'])
-    expect(cardView(beat({ status: 'ended' }), DURING, ui()).state).toBe('ended')
+    expect(cardView(beat({ status: 'ended', ...claim('present', 120) }), DURING, ui()).state).toBe('ended')
+    expect(cardView(beat({ status: 'ended' }), DURING, ui()).state).toBe('hidden')
+  })
+
+  it('LIV-184: after the end a visitor with no claim sees no card, even when sold out; before the end All claimed stays', () => {
+    expect(cardView(beat({ soldOut: true, status: 'ended' }), AFTER, ui())).toMatchObject({ state: 'hidden', visible: false })
+    expect(cardView(beat({ soldOut: true }), AFTER, ui())).toMatchObject({ state: 'hidden', visible: false })
+    expect(cardView(beat(), AFTER, ui())).toMatchObject({ state: 'hidden', visible: false })
+    expect(cardView(beat({ soldOut: true }), DURING, ui()).state).toBe('soldOut')
+    // A visitor who took part still sees it after the end
+    expect(cardView(beat({ soldOut: true, status: 'ended', ...claim('minted') }), AFTER, ui()).state).toBe('minted')
+    expect(cardView(beat({ status: 'ended', ...claim('present', 300) }), AFTER, ui()).state).toBe('claimable')
   })
 
   it('a test BEAT shows the Test label', () => {

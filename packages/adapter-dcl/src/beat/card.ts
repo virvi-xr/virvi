@@ -97,6 +97,8 @@ export function beatState(beat: CardBeat | null, now: number, ui: Pick<BeatUi, '
   if (c?.status === 'removed') return 'removed'
   // The server's claimUntil is ends_at + BEAT_CLAIM_GRACE_MS: claiming stays open that long for whoever reached the minimum
   const over = now > Date.parse(beat.endsAt) || beat.status === 'ended'
+  // After the end the card is only for visitors who took part (LIV-184): "All claimed" or "ended" tells anyone else nothing
+  if (over && !c) return 'hidden'
   if (beat.soldOut) return 'soldOut'
   if (c && c.secondsPresent >= beat.minPresentSeconds && now >= Date.parse(beat.startsAt)) return now > Date.parse(beat.claimUntil) ? 'hidden' : 'claimable'
   if (over) return 'ended'

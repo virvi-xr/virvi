@@ -81,6 +81,17 @@ describe('BEAT visitor routes (LIV-11)', () => {
   }
 
   describe('current', () => {
+    it('LIV-184: after the end a BEAT shows only to visitors with a claim; others get the next BEAT or nothing', async () => {
+      const done = await seed({ status: 'ended', supplyCap: 1, startsAt: at(-3 * H), endsAt: at(-H) })
+      const taker = await visitor()
+      await db.insert(beatClaims).values({ beatId: done.id, userId: taker.user.id, wallet: taker.wallet, displayName: 'T', consentVersion: 1, secondsPresent: 600, status: 'minted' })
+      const passer = await visitor()
+      expect((await current(passer)).json()).toEqual({ beat: null })
+      expect((await current(taker)).json().beat).toMatchObject({ id: done.id, soldOut: true, myClaim: { status: 'minted' } })
+      const next = await seed({ status: 'paid', startsAt: at(10 * M), endsAt: at(2 * H) })
+      expect((await current(passer)).json().beat).toMatchObject({ id: next.id, soldOut: false, myClaim: null })
+    })
+
     it('is null before the lead time and after the grace, and appears 30 minutes before the start', async () => {
       const v = await visitor()
       const early = await seed({ status: 'paid', startsAt: at(BEAT_CARD_LEAD_MS + 2 * M), endsAt: at(3 * H) })
@@ -94,6 +105,8 @@ describe('BEAT visitor routes (LIV-11)', () => {
       const late = await seed({ status: 'ended', startsAt: at(-30 * H), endsAt: at(-BEAT_CLAIM_GRACE_MS - M) }, [sceneB])
       expect((await current(v, sceneB)).json()).toEqual({ beat: null })
       await db.update(beats).set({ endsAt: at(-BEAT_CLAIM_GRACE_MS + M) }).where(eq(beats.id, late.id))
+      // After the end it shows only to visitors with a claim (LIV-184): this one opted in during the event
+      await db.insert(beatClaims).values({ beatId: late.id, userId: v.user.id, wallet: v.wallet, displayName: 'V', consentVersion: 1, secondsPresent: 600 })
       expect((await current(v, sceneB)).json().beat).toMatchObject({ id: late.id, status: 'ended' })
       const claimUntil = new Date((await current(v, sceneB)).json().beat.claimUntil).getTime()
       expect(Math.abs(claimUntil - (Date.now() + M))).toBeLessThan(5_000)

@@ -138,6 +138,11 @@ async function visitorView(beatId: string, userId: string): Promise<{ beat: Visi
  * latest start.
  */
 async function sceneBeat(sceneId: string, now: Date, statuses: BeatStatus[], afterEndMs: number): Promise<BeatRow | null> {
+  return (await sceneBeats(sceneId, now, statuses, afterEndMs))[0] ?? null
+}
+
+/** Every BEAT `sceneBeat` could pick, best first. */
+async function sceneBeats(sceneId: string, now: Date, statuses: BeatStatus[], afterEndMs: number): Promise<BeatRow[]> {
   const t = now.toISOString()
   const rows = await db.select({ b: beats }).from(beats)
     .innerJoin(beatScenes, eq(beatScenes.beatId, beats.id))
@@ -148,15 +153,22 @@ async function sceneBeat(sceneId: string, now: Date, statuses: BeatStatus[], aft
       gte(beats.endsAt, new Date(now.getTime() - afterEndMs)),
     ))
     .orderBy(sql`(${beats.startsAt} <= ${t}::timestamptz and ${beats.endsAt} >= ${t}::timestamptz) desc`, desc(beats.startsAt))
-  return rows.map((r) => r.b).find((r) => !hidden(r)) ?? null
+  return rows.map((r) => r.b).filter((r) => !hidden(r))
 }
 
-/** The scene's BEAT for the card: paid, live or ended, from the lead time until the claim grace after its end. */
+/**
+ * The scene's BEAT for the card: paid, live or ended, from the lead time until the claim grace after its end. After
+ * its end a BEAT is shown only to visitors with a claim on it (LIV-184); anyone else gets the scene's next BEAT, if any.
+ */
 export async function currentBeat(sceneId: string, userId: string, now = new Date()): Promise<{ beat: VisitorBeat | null }> {
   if (!UUID.test(sceneId)) throw notFound()
-  const b = await sceneBeat(sceneId, now, VISIBLE, BEAT_CLAIM_GRACE_MS)
-  if (!b) return { beat: null }
-  return { beat: await toVisitor(b, await myClaimRow(db, b.id, userId)) }
+  for (const b of await sceneBeats(sceneId, now, VISIBLE, BEAT_CLAIM_GRACE_MS)) {
+    const claim = await myClaimRow(db, b.id, userId)
+    const over = now.getTime() > b.endsAt.getTime() || b.status === 'ended'
+    if (over && !claim) continue
+    return { beat: await toVisitor(b, claim) }
+  }
+  return { beat: null }
 }
 
 /**
