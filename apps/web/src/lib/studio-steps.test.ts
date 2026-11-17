@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, stageFor, uploadHint, dialogTotal, giftNote, checkedEmotes, lineNote } from './studio'
+import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, stageFor, uploadHint, dialogTotal, giftNote, checkedEmotes, lineNote, showsEmoteCheck } from './studio'
 
 const NOW = new Date('2026-11-01T12:00:00Z')
 const detail = (over: Partial<StudioDetail> = {}): StudioDetail => ({
@@ -53,7 +53,20 @@ describe('inspect frames', () => {
 describe('steps and emote checks', () => {
   it('an emote design has no inspect step', () => {
     expect(stepsFor('wearable')).toEqual(['design', 'inspect', 'avatar', 'emotes', 'finalize'])
-    expect(stepsFor('emote')).toEqual(['design', 'avatar', 'emotes', 'finalize'])
+    expect(stepsFor('emote')).toEqual(['design', 'avatar', 'finalize'])
+  })
+
+  it('an emote design checks its emote on On avatar, with no Emotes step (LIV-182)', () => {
+    expect(showsEmoteCheck('avatar', 'emote')).toBe(true)
+    expect(showsEmoteCheck('design', 'emote')).toBe(false)  // the agent's own render, shown the moment a job ends
+    expect(showsEmoteCheck('finalize', 'emote')).toBe(false)
+    // a checklist row's link into the old Emotes step lands on On avatar
+    expect(shownStep('emotes', 'emote', ['emote'])).toBe('avatar')
+    // wearables keep theirs, and their Design and On avatar steps stay the piece spin
+    expect(showsEmoteCheck('emotes', 'wearable')).toBe(true)
+    expect(showsEmoteCheck('avatar', 'wearable')).toBe(false)
+    expect(showsEmoteCheck('design', 'wearable')).toBe(false)
+    expect(showsEmoteCheck('design', 'scene')).toBe(false)
   })
 
   it('the checklist is every emote on both bodies', () => {
@@ -108,7 +121,7 @@ describe('scene designs', () => {
     expect(stepsFor('scene', ['building', 'furniture_chair'])).toEqual(['design', 'inspect', 'tour', 'scale', 'finalize'])
     expect(stepsFor('scene', [])).toEqual(['design', 'inspect', 'finalize'])
     expect(stepsFor('wearable', ['hat'])).toEqual(['design', 'inspect', 'avatar', 'emotes', 'finalize'])
-    expect(stepsFor('emote', ['emote'])).toEqual(['design', 'avatar', 'emotes', 'finalize'])
+    expect(stepsFor('emote', ['emote'])).toEqual(['design', 'avatar', 'finalize'])
     expect(STEP_LABELS.tour).toBe('Walk-through')
     expect(STEP_LABELS.scale).toBe('Scale')
   })
@@ -160,7 +173,7 @@ describe('the step a design opens on', () => {
   })
   it('leaves a viewer every step but Finalize: emotes and the walk-through play what is rendered (LIV-159)', () => {
     expect(stepsFor('wearable', ['hat'], true)).toEqual(['design', 'inspect', 'avatar', 'emotes'])
-    expect(stepsFor('emote', ['emote'], true)).toEqual(['design', 'avatar', 'emotes'])
+    expect(stepsFor('emote', ['emote'], true)).toEqual(['design', 'avatar'])
     expect(stepsFor('scene', ['building', 'furniture_chair'], true)).toEqual(['design', 'inspect', 'tour', 'scale'])
     expect(shownStep('finalize', 'wearable', ['hat'], true)).toBe('avatar')
     expect(shownStep('tour', 'scene', ['building'], true)).toBe('tour')

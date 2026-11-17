@@ -551,7 +551,8 @@ export const STEP_LABELS: Record<Step, string> = {
 }
 
 /**
- * An emote design has nothing to inspect without the avatar. A scene design has no avatar or emotes: a building gets
+ * An emote design has nothing to inspect without the avatar, and no separate Emotes step: its emote, sound and
+ * clipping checks are on the avatar step (LIV-182). A scene design has no avatar or emotes: a building gets
  * its walk-through and furniture its scale view, once the design has one. `viewOnly` (a viewer, LIV-159): no
  * Finalize, which is work; the other steps show what is rendered.
  */
@@ -562,8 +563,16 @@ export function stepsFor(kind: string, categories: string[] = [], viewOnly = fal
     const furniture = categories.some((c) => c.startsWith('furniture_'))
     return STEPS.filter((s) => shown(s) && (s === 'design' || s === 'inspect' || s === 'finalize' || (s === 'tour' && building) || (s === 'scale' && furniture)))
   }
-  return STEPS.filter((s) => shown(s) && s !== 'tour' && s !== 'scale' && (kind !== 'emote' || s !== 'inspect'))
+  return STEPS.filter((s) => shown(s) && s !== 'tour' && s !== 'scale' && (kind !== 'emote' || (s !== 'inspect' && s !== 'emotes')))
 }
+
+/**
+ * Whether a step shows the emote check (the emote with every piece worn, its sound, both bodies and outfits, Looks fine
+ * and I see clipping): a wearable's Emotes step, and an emote design's On avatar step (LIV-182). An emote design's
+ * Design step stays the agent's own render, which is there the moment a job ends; the check renders the set (~40 s).
+ */
+export const showsEmoteCheck = (step: Step, kind: string): boolean =>
+  step === 'emotes' || (kind === 'emote' && step === 'avatar')
 
 /** The step a design opens on: On avatar, or Inspect for a scene design (it has no avatar). */
 export const defaultStep = (kind: string): Step => kind === 'scene' ? 'inspect' : 'avatar'

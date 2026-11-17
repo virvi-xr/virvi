@@ -13,7 +13,7 @@ import { NONE_TICKED, STATE_BADGE, WORN_NOTE, emoteName, type EmoteTarget } from
 
 /**
  * Every emote on both body shapes and whether the person has looked: a nudge, never a gate. Opening it renders the
- * ones that aren't yet, and each row opens that emote in the Emotes step. With only some pieces ticked (`worn`), it
+ * ones that aren't yet, and each row opens that emote in the Emotes step (an emote design's: On avatar). With only some pieces ticked (`worn`), it
  * is about those pieces and the finalized ones worn together; 'loading' while that selection's views are fetched,
  * 'none' with nothing ticked.
  */

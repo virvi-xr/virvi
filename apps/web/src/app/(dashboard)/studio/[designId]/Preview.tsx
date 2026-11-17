@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { Badge, type Tone } from '@/components/ui'
 import {
-  ORBIT_FRAMES, categoryLabel, inspectNote, orbitKeyFor, pieceLabel, pieceTabStatus, refusalMessage, relativeTime, shownStep, stageFor, stageState, stepsFor,
+  ORBIT_FRAMES, categoryLabel, inspectNote, orbitKeyFor, pieceLabel, pieceTabStatus, refusalMessage, relativeTime, showsEmoteCheck, shownStep, stageFor, stageState, stepsFor,
   triangleWarning, viewButtonRendering, viewKey, wornDetail,
   type RenderView, type Step, type StudioDetail, type StudioPiece, type WornState,
 } from '@/lib/studio'
@@ -36,7 +36,7 @@ type Props = {
   emoteTarget: EmoteTarget | null
   /** What the Finalize step shows: the emote checklist. */
   finalizeStep: React.ReactNode
-  /** Finalize's selection, when only some pieces are ticked: the Emotes step shows that selection worn. */
+  /** Finalize's selection, when only some pieces are ticked: the emote checks show that selection worn. */
   worn?: WornState
   /** A viewer (LIV-159): what is rendered, never a render asked for, and no Finalize step. */
   viewOnly?: boolean
@@ -139,7 +139,8 @@ export default function Preview({ designId, detail, category, onSelect, onChange
           </div>
         )}
 
-        {step === 'emotes' ? (
+        {showsEmoteCheck(step, kind) ? (
+          // An emote design's On avatar is its emote check (LIV-182): sound, both bodies, outfits, Looks fine and clipping
           worn === 'loading' || worn === 'none' ? (
             // Never the whole set while a selection waits: a check would land on the wrong pieces
             <p className="p-8 text-center text-sm text-gray-400" aria-live="polite">{worn === 'none' ? NONE_TICKED : 'Loading the emotes for the pieces you ticked…'}</p>
