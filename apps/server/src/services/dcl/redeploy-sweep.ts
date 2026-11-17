@@ -12,8 +12,10 @@
  *
  * LIV-135 part 1: moves, removals and preset switches add no model, so they never make a destination pending, and the
  * deployed `virvi/placements.json` (what Decentraland's map and distant view build from) goes stale. In mode A, once a
- * day at most (counted from the last deploy), a destination whose placements differ from the snapshot its last Virvi
- * deploy put live is redeployed for them alone. Mode B destinations are left as they are (their owner signs).
+ * day at most (counted from the last deploy), a Genesis City destination whose placements differ from the snapshot its
+ * last Virvi deploy put live is redeployed for them alone. Mode B destinations are left as they are (their owner signs).
+ * Worlds never are: a World has no satellite map (unity-explorer #10485) and no neighbours to be seen from afar, so the
+ * snapshot only ever matters on Genesis City parcels.
  */
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../../db/connection.js'
@@ -119,7 +121,8 @@ export async function sweepRedeploys(now: Date = new Date(), opts: DeployOptions
           if (clear) dest.status = 'ok'
         }
         // LIV-135 part 1: nothing to add, but the map snapshot may be stale
-        if (dest.mode === 'virvi' && dest.grantedAt && dest.status === 'ok' && await placementsDrifted(dest, now) && await mayStart(dest, now)) {
+        if (dest.kind === 'parcels' && dest.mode === 'virvi' && dest.grantedAt && dest.status === 'ok'
+          && await placementsDrifted(dest, now) && await mayStart(dest, now)) {
           try {
             await liveBaseFor(dest)
             await startVirviDeploy(dest.id, null, { ...opts, placementsDrift: true })

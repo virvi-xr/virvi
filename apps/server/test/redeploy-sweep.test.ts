@@ -8,7 +8,7 @@ import { assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElement
 import { PLACEMENTS_FILE, decodePlacements } from '@virvixr/shared'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
-import { BATCH_WINDOW_MS, RETRY_BACKOFF_MS, startDclRedeploySweep, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
+import { BATCH_WINDOW_MS, RETRY_BACKOFF_MS, placementsDrifted, startDclRedeploySweep, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
 import { DEPLOY_WINDOW_MS, prepareSignedDeploy, sceneTriangleWarning, startVirviDeploy, whenSettled } from '../src/services/dcl/world-deployer.js'
 import { modelsInScene } from '../src/services/dcl/assemble.js'
 import { DCL_RUNTIME_VERSION } from '../src/services/dcl/runtime.js'
@@ -482,22 +482,26 @@ describe('startDclRedeploySweep', () => {
       await db.update(sceneElementInstances).set({ position: { x: 5, y: 0, z: 7 } }).where(eq(sceneElementInstances.elementId, el.id))
     }
 
-    it('a moved model redeploys the snapshot once its last deploy is a day old, and only once', async () => {
-      const { preset } = await deployedOnce()
+    it('a moved model is drift once the last deploy is a day old; a redeploy that carries it is current again', async () => {
+      const { preset, dest } = await deployedOnce()
       expect(placementsIn(0)?.[0].position).toEqual({ x: 1, y: 1, z: 1 })
+      const row = async () => destRow(dest.id)
+      expect(await placementsDrifted(await row(), later(DAY + 60_000))).toBe(false)  // nothing moved
       await move(preset.id)
-      await sweepAndSettle(later(DAY / 2))
-      expect(fake.deployed).toHaveLength(1)  // not yet: at most once a day
-      await sweepAndSettle(later(DAY + 60_000))
+      expect(await placementsDrifted(await row(), later(DAY / 2))).toBe(false)  // at most once a day
+      expect(await placementsDrifted(await row(), later(DAY + 60_000))).toBe(true)
+      // The drift redeploy (what the sweep starts for a Genesis City destination) carries the moved copy
+      await startVirviDeploy(dest.id, null, { fetch: fetcher, placementsDrift: true })
+      await Promise.all((await deps()).map((d) => whenSettled(d.id)))
       expect(fake.deployed).toHaveLength(2)
       expect(placementsIn(1)?.[0].position).toEqual({ x: 5, y: 0, z: 7 })
       goLive()
-      await sweepAndSettle(later(2 * DAY + 120_000))
-      expect(fake.deployed).toHaveLength(2)  // the snapshot is current again
+      expect(await placementsDrifted(await row(), later(2 * DAY + 120_000))).toBe(false)
     })
 
-    it('nothing moved: no redeploy', async () => {
-      await deployedOnce()
+    it('a World is never redeployed for it: Worlds have no satellite map or distant view', async () => {
+      const { preset } = await deployedOnce()
+      await move(preset.id)
       await sweepAndSettle(later(DAY + 60_000))
       expect(fake.deployed).toHaveLength(1)
     })
