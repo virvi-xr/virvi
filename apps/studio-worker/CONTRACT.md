@@ -67,7 +67,8 @@ workspace as an opaque blob, privately.
 
 Render frames are the only files the browser ever receives. A `viewKey` is `<mode>-<bodyShape>-<outfit>`, plus
 `-<emote>` when the view plays a base emote: `spin-male-default`, `spin-female-outfit-2-dance`,
-`emote-male-default`. Two modes differ:
+`emote-male-default`. An `emote-…` view (an emote design's On avatar) steps the emote once through at 12 frames a
+second, the camera still, at most 72 frames (a longer emote's `fps` is lower), and reports its `fps`. Two modes differ:
 
 - `orbit-<bodyShape>` (Inspect): the item alone, no avatar, from every angle. Frame `r * 24 + c` is column `c` (15°
   steps round from the front) of row `r`, the rows being camera elevations 90°, 60°, 120°, 30° and 150° (90° is eye
@@ -108,8 +109,9 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   turn), `costCeilingUsd` 3.0. Claude and Grok are stopped once their running cost passes the ceiling; Codex reports
   usage only at the end of a turn, so time alone caps it. Codex has no turn limit.
 - `uploads`, on a prompt job: the files the owner uploaded for the design, `[{"path": "uploads/<id>/<name>", "name":
-  str, "kind": "image" | "model"}]` (empty when there are none). Images are PNG, JPEG or WebP (Virvi turns other
-  formats into PNG); models are GLB, VRM, FBX, OBJ, STL or .blend. The worker reads each through `inputs` into the
+  str, "kind": "image" | "model" | "audio"}]` (empty when there are none). Images are PNG, JPEG or WebP (Virvi turns
+  other formats into PNG); models are GLB, VRM, FBX, OBJ, STL or .blend; sounds are MP3, OGG, WAV or M4A as uploaded
+  (up to 15 MB: the agent re-encodes one it ships with an emote). The worker reads each through `inputs` into the
   workspace's `uploads/<name>` before the agent runs, replacing what was there, and the prompt names them. The folder
   is never saved with the workspace.
 - `check`, on a prompt job: true when `prompt` is the user's own words. The worker then runs the scope check (Claude
@@ -246,6 +248,9 @@ answers it 400.
   shown to the user. `costUsd` on any checked prompt includes the check's cost.
 - `changeKind`, from the agent: `"new"`, `"fix"` (a fix to a published piece) or `"design"` (a design change).
 - `checker.pass` false means the skills checker found a FAIL. The piece is still reported.
+- **An emote over 3 MB is refused.** Virvi adds up the emote's biggest GLB and its sound as uploaded; over 3 MB
+  (Decentraland's item cap), the result becomes an `error` without the emote piece, the prompt isn't counted, and the
+  note gives the size. The agent's checker FAILs the same thing, so this only catches what slipped past it.
 - An emote's checker report ends with the studio's own leg check: a `WARN` (counted in `checker.warnings`, never a
   FAIL) when its thighs or shins pass through each other. A prompt whose emote export has crossing legs sends the agent
   back once, in the same session and with half the prompt's limits (time, turns, cost ceiling), to fix them;
@@ -255,7 +260,8 @@ answers it 400.
   render job.
 - **The workspace is saved before the result is posted.** If the save fails, the outcome is `error` and `pieces` is
   empty: nothing claims the revision is saved.
-- On a render job, `pieces` holds `{"category", "renders": {viewKey: frames}}` for each requested category. On a
+- On a render job, `pieces` holds `{"category", "renders": {viewKey: frames}}` for each requested category, plus
+  `"fps": {viewKey: fps}` for a view that plays at its own rate (an `emote-…` view; a prompt's pieces carry it too). On a
   set render job `pieces` is empty and `set` is `{"viewKey", "frames", "fps"}` (absent unless the outcome is `ok`).
 - `worn`: on a set render or clipping fix whose job named `categories`, those categories, sorted: the worker
   confirms it wore only them. Virvi doesn't keep a selection's view without it (an older worker wears every piece).

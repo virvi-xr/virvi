@@ -1935,7 +1935,7 @@ export const studioUploads = pgTable('studio_uploads', {
   id: uuid('id').primaryKey().defaultRandom(),
   designId: uuid('design_id').notNull().references(() => studioDesigns.id, { onDelete: 'cascade' }),
   name: text('name').notNull(), // cleaned, unique within the design; the agent sees it as uploads/<name>
-  kind: text('kind').notNull(), // image | model
+  kind: text('kind').notNull(), // image | model | audio
   contentType: text('content_type').notNull(),
   size: integer('size').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -1984,6 +1984,8 @@ export const studioRenders = pgTable('studio_renders', {
   viewKey: text('view_key').notNull(), // <mode>-<bodyShape>-<outfit>[-<emote>], as the contract names render folders
   jobId: uuid('job_id').notNull(), // frames are stored under this job's files
   frames: integer('frames').notNull().default(0),
+  // The rate the frames play at, for a view that has its own (an emote's On avatar); null plays at the page's 12
+  fps: doublePrecision('fps'),
   status: text('status').notNull(), // queued | ready | failed
   // An Inspect view showing its ring while the full sphere renders: the job whose frames will replace it
   pendingJobId: uuid('pending_job_id'),

@@ -7,6 +7,7 @@ import { memoryStudioStore, setStudioStore, jobFileKey } from '../src/studio/sto
 import { signPieceSound, signRenderFrame, frameUrlExpiry } from '../src/studio/render-urls.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { promptStatus } from '../src/studio/quota.js'
+import { parseResult } from '../src/studio/results.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
 import { addRevision, fakeFly, okResult, issueWorker } from './helpers/studio.js'
@@ -488,6 +489,51 @@ describe('studio preview steps', () => {
       const jobs = await renderJobs(design.id)
       expect(jobs.find((j) => j.id === oldFull.id)!.status).toBe('failed')
       expect(jobs.filter((j) => j.status === 'queued' && j.background)).toHaveLength(1)
+    })
+  })
+
+  describe('on avatar speed', () => {
+    /** An emote design whose prompt built the emote with its On avatar view, reporting `fps` when given. */
+    async function emoteWithView(u: TestUser, fps?: Record<string, number>) {
+      const d = (await create(u, { kind: 'emote', agent: 'claude' })).json()
+      const jobId = (await prompt(u, d.id, { text: 'a squat' })).json().jobId
+      const r = okResult(jobId) as any
+      r.pieces = [{
+        category: 'emote', changed: true, changeKind: 'new', meta: { name: 'Squat' }, checker: { pass: true, failures: 0, warnings: 0 },
+        files: ['pieces/emote/squat.glb', 'pieces/emote/piece.json', 'checks/emote.txt'],
+        renders: { 'emote-male-default': 24 }, ...(fps ? { fps } : {}),
+      }]
+      await finish(jobId, r)
+      return d
+    }
+
+    it('a prompt\'s fps is kept and shown with the view; an old view has none', async () => {
+      const u = await createUser()
+      const d = await emoteWithView(u, { 'emote-male-default': 12 })
+      expect((await detail(u, d.id)).pieces[0].renders['emote-male-default']).toMatchObject({ frames: 24, fps: 12 })
+      const other = await createUser()
+      const old = await emoteWithView(other)
+      expect((await detail(other, old.id)).pieces[0].renders['emote-male-default'].fps).toBeNull()
+    })
+
+    it('a render job\'s fps is kept with its view', async () => {
+      const u = await createUser()
+      const d = await emoteWithView(u)
+      const res = await app.inject({ method: 'POST', url: `${S}/designs/${d.id}/renders`, headers: as(u), payload: { category: 'emote', bodyShape: 'female', outfit: 'default', emote: null } })
+      expect(res.statusCode).toBeLessThan(300)
+      const [job] = await renderJobs(d.id)
+      await finish(job.id, renderResult(job.id, [{ category: 'emote', renders: { 'emote-female-default': 30 }, fps: { 'emote-female-default': 10 } }]))
+      expect((await detail(u, d.id)).pieces[0].renders['emote-female-default']).toMatchObject({ status: 'ready', frames: 30, fps: 10 })
+    })
+
+    it('a malformed fps is refused', () => {
+      const piece = (fps: unknown) => okResult('00000000-0000-4000-8000-000000000000', {
+        pieces: [{ category: 'emote', renders: { 'emote-male-default': 24 }, fps }],
+      })
+      for (const bad of [{ 'emote-male-default': -1 }, { 'emote-male-default': 'x' }, { 'emote-male-default': 61 }, { 'Bad Key': 12 }, [12]]) {
+        expect(parseResult(piece(bad))).toEqual({ ok: false, reason: 'a render\'s fps is malformed' })
+      }
+      expect(parseResult(piece({ 'emote-male-default': 4.5 })).ok).toBe(true)
     })
   })
 })

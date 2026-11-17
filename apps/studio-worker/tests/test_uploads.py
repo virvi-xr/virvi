@@ -7,13 +7,14 @@ import pytest
 import fake_api
 from studio_worker import jobs
 from studio_worker.api import Api
-from studio_worker.instructions import uploads_text
+from studio_worker.instructions import closing, uploads_text
 from studio_worker.workspace import pack
 
 TOKEN = 'tok-uploads'
 PNG = b'\x89PNG\r\n\x1a\n' + b'\x01' * 32
 GLB = b'glTF\x02\x00\x00\x00' + b'\x02' * 32
 LOGO = {'path': 'uploads/11111111-1111-4111-8111-111111111111/logo.png', 'name': 'logo.png', 'kind': 'image'}
+FART = {'path': 'uploads/33333333-3333-4333-8333-333333333333/fart.mp3', 'name': 'fart.mp3', 'kind': 'audio'}
 BASE = {'path': 'uploads/22222222-2222-4222-8222-222222222222/base.glb', 'name': 'base.glb', 'kind': 'model'}
 
 
@@ -87,3 +88,16 @@ def test_the_names_the_server_stores_are_the_names_the_worker_takes():
     # apps/server/test/studio-uploads.test.ts "cleans names": the server's output must pass the worker's rule
     for name in ['DSC0042.jpg', 'logo.final.png', 'My-Logo-final-2.png', 'base-cap.glb', 'image-2.png', 'a_b.c-d.png']:
         assert jobs.UPLOAD_NAME.fullmatch(name) and '..' not in name, name
+
+
+def test_a_sound_is_listed_and_what_it_can_be_for():
+    text = uploads_text([FART])
+    assert '- uploads/fart.mp3 (sound)' in text
+    assert "the user's own" in text and 'within 3 MB' in text and 'time the moves to' in text
+    assert 'Only an emote has a sound' in text
+
+
+def test_the_emote_brief_prefers_an_uploaded_sound():
+    text = closing('emote', None)
+    assert 'use the sound the user uploaded' in text
+    assert 'never a sample you found' in text

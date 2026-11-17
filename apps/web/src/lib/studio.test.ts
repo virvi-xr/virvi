@@ -4,7 +4,7 @@ import {
   type FinalizedRevision, type Quote, type QuoteLine, type StudioDetail, type StudioPiece, type StudioEvent, type StudioProposal,
 } from './studio'
 import { emoteSoundOf } from './studio'
-import { formatBytesShort, uploadProblem } from './studio'
+import { formatBytesShort, uploadHint, uploadProblem, UPLOAD_ACCEPT } from './studio'
 import { HELD_REPORT_COPY, PAUSED_NOTE, flagSummary, reportCopy, type AdminStudioFlag } from './studio'
 import { giftCodeStatus, latestRenderUrl, trialCtx, trialNudge } from './studio'
 import { adminActionMessage, readUnrecordedRefunds, writeUnrecordedRefund, adminManaMessage, adminManaRows, type AdminManaTransfer } from './studio'
@@ -302,7 +302,13 @@ describe('stageState', () => {
   })
   it('shows a ready view’s frames', () => {
     const p = piece({ renders: { [key]: { status: 'ready', frames: 2, urls: ['a', 'b'], renderedAt: NOW.toISOString() } } })
-    expect(stageState(p, key, new Set())).toEqual({ kind: 'frames', urls: ['a', 'b'], renderedAt: NOW.toISOString() })
+    expect(stageState(p, key, new Set())).toEqual({ kind: 'frames', urls: ['a', 'b'], renderedAt: NOW.toISOString(), fps: null })
+  })
+  it('carries a view’s fps, null for an old one', () => {
+    const at = NOW.toISOString()
+    const p = piece({ renders: { 'emote-male-default': { status: 'ready', frames: 2, fps: 12, urls: ['a', 'b'], renderedAt: at }, [key]: { status: 'ready', frames: 2, fps: null, urls: ['a', 'b'], renderedAt: at } } })
+    expect(stageState(p, 'emote-male-default', new Set())).toMatchObject({ kind: 'frames', fps: 12 })
+    expect(stageState(p, key, new Set())).toMatchObject({ kind: 'frames', fps: null })
   })
   it('offers a retry for a view that failed', () => {
     const p = piece({ renders: { [key]: { status: 'failed', frames: 0, urls: [], renderedAt: NOW.toISOString() } } })
@@ -529,10 +535,10 @@ describe('reloadsOn', () => {
 describe('uploads', () => {
   it('explains a refused file plainly', () => {
     expect(refusalMessage({ status: 400, body: { code: 'unsupported_file' } }, NOW).text).toBe(
-      'That file type can’t be used. Upload an image (PNG, JPEG, WebP, GIF, TIFF, AVIF or SVG) or a 3D file (GLB, VRM, FBX, OBJ, STL or .blend).')
-    expect(refusalMessage({ status: 413, body: { code: 'file_too_large' } }, NOW).text).toBe('That file is too big: images can be up to 20 MB, 3D files up to 25 MB.')
+      'That file type can’t be used. Upload an image (PNG, JPEG, WebP, GIF, TIFF, AVIF or SVG), a 3D file (GLB, VRM, FBX, OBJ, STL or .blend) or a sound (MP3, OGG, WAV or M4A).')
+    expect(refusalMessage({ status: 413, body: { code: 'file_too_large' } }, NOW).text).toBe('That file is too big: images can be up to 20 MB, 3D files up to 25 MB, sounds up to 15 MB.')
     // the server's own body-size refusal carries no code
-    expect(refusalMessage({ status: 413, body: {} }, NOW).text).toBe('That file is too big: images can be up to 20 MB, 3D files up to 25 MB.')
+    expect(refusalMessage({ status: 413, body: {} }, NOW).text).toBe('That file is too big: images can be up to 20 MB, 3D files up to 25 MB, sounds up to 15 MB.')
     expect(refusalMessage({ status: 409, body: { code: 'too_many_uploads' } }, NOW).text).toBe('A design holds up to 12 files. Remove one to add another.')
     expect(refusalMessage({ status: 413, body: { code: 'image_too_large' } }, NOW).text).toBe('That image has more pixels than the studio can use (64 megapixels at most). Save a smaller copy and try again.')
   })
@@ -544,6 +550,19 @@ describe('uploads', () => {
     expect(uploadProblem({ name: 'huge.png', size: 21 * 1024 * 1024 })).toMatch(/^That file is too big/)
     expect(uploadProblem({ name: 'scene.glb', size: 24 * 1024 * 1024 })).toBeNull()
     expect(uploadProblem({ name: 'scene.glb', size: 26 * 1024 * 1024 })).toMatch(/^That file is too big/)
+  })
+
+  it('takes sounds up to 15 MB', () => {
+    for (const e of ['.mp3', '.ogg', '.wav', '.m4a']) expect(UPLOAD_ACCEPT.split(',')).toContain(e)
+    expect(uploadProblem({ name: 'fart.mp3', size: 15 * 1024 * 1024 })).toBeNull()
+    expect(uploadProblem({ name: 'fart.wav', size: 15 * 1024 * 1024 + 1 })).toMatch(/^That file is too big/)
+    expect(uploadProblem({ name: 'a.flac', size: 10 })).toBe('That file type can’t be used. Upload an image (PNG, JPEG, WebP, GIF, TIFF, AVIF or SVG), a 3D file (GLB, VRM, FBX, OBJ, STL or .blend) or a sound (MP3, OGG, WAV or M4A).')
+  })
+
+  it('the upload hint mentions sounds, with an emote example on an emote', () => {
+    expect(uploadHint('emote')).toBe('Images, 3D files or sounds for the agent. Say what each is for, like “use whoosh.mp3 as the sound”.')
+    expect(uploadHint('wearable')).toBe('Images, 3D files or sounds for the agent. Say what each is for, like “put logo.png on the chest”.')
+    expect(uploadHint('scene')).toBe('Images, 3D files or sounds for the agent. Say what each is for, like “put sign.png over the door”.')
   })
 
   it('formats sizes', () => {

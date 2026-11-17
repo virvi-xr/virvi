@@ -62,6 +62,7 @@ export type Checker = { pass: boolean; failures: number; warnings: number; trian
 
 export type StudioView = {
   status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string
+  fps?: number | null // the rate it plays at, for a view with its own (an emote's On avatar); absent or null: 12
   pending?: boolean // an Inspect view whose whole sphere is still rendering behind its ring
 }
 
@@ -155,7 +156,7 @@ export type StudioDetail = {
 }
 
 /** A file the owner gave the agent (the server's `publicUpload`). */
-export type StudioUpload = { id: string; name: string; kind: 'image' | 'model'; contentType: string; size: number; createdAt: string }
+export type StudioUpload = { id: string; name: string; kind: 'image' | 'model' | 'audio'; contentType: string; size: number; createdAt: string }
 
 export type QuoteLine = {
   category: string
@@ -273,8 +274,8 @@ export type Refusal = { text: string; action?: 'topup' | 'settings' | 'fix' }
 
 const TX_MISMATCH = "That payment didn't match this order. Contact support and we'll sort it out."
 
-const UNSUPPORTED_FILE = 'That file type can’t be used. Upload an image (PNG, JPEG, WebP, GIF, TIFF, AVIF or SVG) or a 3D file (GLB, VRM, FBX, OBJ, STL or .blend).'
-const FILE_TOO_LARGE = 'That file is too big: images can be up to 20 MB, 3D files up to 25 MB.'
+const UNSUPPORTED_FILE = 'That file type can’t be used. Upload an image (PNG, JPEG, WebP, GIF, TIFF, AVIF or SVG), a 3D file (GLB, VRM, FBX, OBJ, STL or .blend) or a sound (MP3, OGG, WAV or M4A).'
+const FILE_TOO_LARGE = 'That file is too big: images can be up to 20 MB, 3D files up to 25 MB, sounds up to 15 MB.'
 
 /** A refused request in the page's words, keyed by the server's `code`. */
 export function refusalMessage(
@@ -572,7 +573,7 @@ export const shownStep = (step: Step, kind: string, categories: string[], viewOn
   stepsFor(kind, categories, viewOnly).includes(step) ? step : defaultStep(kind)
 /** The attach button's hint, with an example that fits the kind of design. */
 export const uploadHint = (kind: string) =>
-  `Images or 3D files for the agent. Say what each is for, like “put ${kind === 'scene' ? 'sign.png over the door' : 'logo.png on the chest'}”.`
+  `Images, 3D files or sounds for the agent. Say what each is for, like “${kind === 'scene' ? 'put sign.png over the door' : kind === 'emote' ? 'use whoosh.mp3 as the sound' : 'put logo.png on the chest'}”.`
 
 /** The stage a step shows: a scene piece's Design step turns it as Inspect does, since a building has no scale view. */
 export const stageFor = (step: Step, kind: string): Step => kind === 'scene' && step === 'design' ? 'inspect' : step
@@ -662,7 +663,7 @@ export function frameAt(start: number, dx: number, width: number, frames: number
 }
 
 export type StageState =
-  | { kind: 'frames'; urls: string[]; renderedAt: string }
+  | { kind: 'frames'; urls: string[]; renderedAt: string; fps: number | null }
   | { kind: 'rendering' }
   | { kind: 'empty'; text: string }
 
@@ -670,7 +671,7 @@ export type StageState =
 export function stageState(piece: StudioPiece | undefined, key: string, pending: Set<string>): StageState {
   if (!piece) return { kind: 'empty', text: 'The agent hasn’t built anything yet. Describe what you want on the left.' }
   const view = piece.renders[key]
-  if (view?.status === 'ready' && view.urls.length > 0) return { kind: 'frames', urls: view.urls, renderedAt: view.renderedAt }
+  if (view?.status === 'ready' && view.urls.length > 0) return { kind: 'frames', urls: view.urls, renderedAt: view.renderedAt, fps: view.fps ?? null }
   if (pending.has(key) || view?.status === 'queued') return { kind: 'rendering' }
   if (view) return { kind: 'empty', text: 'That view didn’t render. Pick it again to retry.' }
   return { kind: 'empty', text: 'This view hasn’t been rendered yet.' }
@@ -919,17 +920,18 @@ export function viewButtonRendering<K extends keyof RenderView>(
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'tif', 'tiff', 'avif', 'svg']
 const MODEL_EXTS = ['glb', 'vrm', 'fbx', 'obj', 'stl', 'blend']
+const AUDIO_EXTS = ['mp3', 'ogg', 'wav', 'm4a']
 const MB = 1024 * 1024
 
 /** The file picker's accept list. */
-export const UPLOAD_ACCEPT = [...IMAGE_EXTS, ...MODEL_EXTS].map((e) => `.${e}`).join(',')
+export const UPLOAD_ACCEPT = [...IMAGE_EXTS, ...MODEL_EXTS, ...AUDIO_EXTS].map((e) => `.${e}`).join(',')
 
 /** What's wrong with a file before it's sent, by its name and size (the server checks its contents). */
 export function uploadProblem(file: { name: string; size: number }): string | null {
   const ext = /\.([A-Za-z0-9]+)$/.exec(file.name)?.[1]?.toLowerCase() ?? ''
-  const image = IMAGE_EXTS.includes(ext)
-  if (!image && !MODEL_EXTS.includes(ext)) return UNSUPPORTED_FILE
-  if (file.size > (image ? 20 : 25) * MB) return FILE_TOO_LARGE
+  const limit = IMAGE_EXTS.includes(ext) ? 20 : MODEL_EXTS.includes(ext) ? 25 : AUDIO_EXTS.includes(ext) ? 15 : 0
+  if (!limit) return UNSUPPORTED_FILE
+  if (file.size > limit * MB) return FILE_TOO_LARGE
   return null
 }
 

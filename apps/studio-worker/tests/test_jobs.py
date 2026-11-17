@@ -1,3 +1,4 @@
+import re
 import io
 import sys
 from pathlib import Path
@@ -42,7 +43,7 @@ def fake_render(calls):
             else:
                 paths.append(out / f'{i:03d}.webp')
                 Image.new('RGB', (8, 8), (i, 0, 0)).save(paths[-1], 'WEBP')
-        fps = {'walk': 24.0, 'tour': 24.0, 'play': 12.0}.get(mode)
+        fps = {'walk': 24.0, 'tour': 24.0, 'play': 12.0, 'emote': 12.0}.get(mode)
         return {'ok': True, 'frames': paths, 'error': None, 'bootSec': 1.0, **({'fps': fps} if fps else {})}
     return render
 
@@ -825,3 +826,55 @@ def test_the_agent_points_to_the_help_button_for_what_it_cannot_answer():
         text = ' '.join(closing(kind, None).split())
         assert 'press Help at the top of the conversation' in text
         assert 'Virvi support will reply there' in text
+
+
+def test_a_render_job_reports_each_views_fps(api, tmp_path):
+    design = tmp_path / 'design'
+    emote = design / 'out/emote'
+    emote.mkdir(parents=True)
+    (emote / 'wave.glb').write_bytes((FIXTURES / 'wave.glb').read_bytes())
+    (emote / 'piece.json').write_text('{"name": "Wave", "category": "emote"}')
+    job = {'jobId': 'job-e', 'type': 'render', 'kind': 'emote', 'agent': None, 'model': None, 'prompt': None,
+           'selectedSlots': None, 'limits': None,
+           'render': {'categories': ['emote'], 'bodyShape': 'male', 'outfit': 'default', 'emote': None}}
+    result = jobs.run_job(job, client(api), design, render_fn=fake_render([]),
+                          command=fake_command('hang_with_child.jsonl'), as_user=None)
+    assert result['outcome'] == 'ok', result
+    assert result['pieces'] == [{'category': 'emote', 'renders': {'emote-male-default': 36}, 'fps': {'emote-male-default': 12.0}}]
+
+
+def test_a_view_without_fps_reports_none(api, tmp_path):
+    design = tmp_path / 'design'
+    hat = design / 'out/hat'
+    hat.mkdir(parents=True)
+    for g in (FIXTURES / 'cap').glob('*.glb'):
+        (hat / g.name).write_bytes(g.read_bytes())
+    (hat / 'piece.json').write_text('{"name": "Neon Cap", "category": "hat"}')
+    job = {'jobId': 'job-r', 'type': 'render', 'kind': 'wearable', 'agent': None, 'model': None, 'prompt': None,
+           'selectedSlots': None, 'limits': None,
+           'render': {'categories': ['hat'], 'bodyShape': 'male', 'outfit': 'default', 'emote': None}}
+    result = jobs.run_job(job, client(api), design, render_fn=fake_render([]),
+                          command=fake_command('hang_with_child.jsonl'), as_user=None)
+    assert result['pieces'] == [{'category': 'hat', 'renders': {'spin-male-default': 36}}]
+
+
+def test_an_emote_prompt_reports_its_views_fps(api, tmp_path, skills):
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote.jsonl')
+    assert result['outcome'] == 'ok', result
+    [piece] = result['pieces']
+    assert piece['fps'] == {'emote-male-default': 12.0}
+    assert piece['renders']['emote-male-default'] == 36
+
+
+def test_an_emote_over_the_allowance_is_not_uploaded_and_stays_changed(api, tmp_path, skills, monkeypatch):
+    monkeypatch.setattr(jobs, 'EMOTE_ALLOWANCE_BYTES', 100)  # the fixture's emote is bigger than this
+    result = run(api, tmp_path, emote_job(), 'claude_builds_emote.jsonl')
+    assert result['outcome'] == 'error'
+    assert re.fullmatch(r"the emote and its sound came to \d+\.\d MB, over Decentraland's 3 MB limit for an emote",
+                        result['error']), result['error']
+    assert not [f for f in api.files if '/pieces/emote/' in f]
+    [piece] = result['pieces']
+    assert piece['changed'] is True and piece['files'] == []
+    # not recorded as current: the next prompt sees it as changed and checks it again
+    again = run(api, tmp_path, emote_job(), 'claude_builds_emote.jsonl')
+    assert again['outcome'] == 'error' and again['pieces'][0]['changed'] is True

@@ -119,8 +119,8 @@ describe('scene designs', () => {
     expect(stageFor('design', 'emote')).toBe('design')
   })
   it('the attach hint gives an example for the kind of design', () => {
-    expect(uploadHint('wearable')).toBe('Images or 3D files for the agent. Say what each is for, like “put logo.png on the chest”.')
-    expect(uploadHint('scene')).toBe('Images or 3D files for the agent. Say what each is for, like “put sign.png over the door”.')
+    expect(uploadHint('wearable')).toBe('Images, 3D files or sounds for the agent. Say what each is for, like “put logo.png on the chest”.')
+    expect(uploadHint('scene')).toBe('Images, 3D files or sounds for the agent. Say what each is for, like “put sign.png over the door”.')
   })
   it('scene pieces are named for people, and their views keyed as the server keys them', () => {
     expect(pieceLabel('building')).toBe('Building')

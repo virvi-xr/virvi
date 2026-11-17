@@ -7,6 +7,7 @@ import { config } from '../config.js'
 import { hashWorkerToken } from '../studio/machines.js'
 import { checkFilePath, getStudioStore, jobFileKey, uploadKey, workspaceKey } from '../studio/store.js'
 import { applyResult, parseResult } from '../studio/results.js'
+import { enforceEmoteAllowance } from '../studio/emote-size.js'
 import { publishStudio } from '../studio/events.js'
 import { recordBoot, recordStep, takenTimings } from '../studio/timings.js'
 
@@ -179,7 +180,8 @@ export default async function studioWorkerRoutes(app: FastifyInstance) {
     scope.post('/api/studio/worker/jobs/:jobId/result', opts, async (request, reply) => {
       const parsed = parseResult(request.body)
       if (!parsed.ok) return reply.status(400).send({ error: 'bad_result', reason: parsed.reason })
-      await applyResult(request.studioJob!.id, parsed.result, new Date())
+      const result = await enforceEmoteAllowance(request.studioJob!, parsed.result)
+      await applyResult(request.studioJob!.id, result, new Date())
       return reply.status(204).send()
     })
   })

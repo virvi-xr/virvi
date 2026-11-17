@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useApi } from '@/lib/api'
-import { CubeIcon, PaperclipIcon, XSmallIcon } from '@/components/icons'
+import { CubeIcon, PaperclipIcon, PauseIcon, SpeakerIcon, XSmallIcon } from '@/components/icons'
 import { accountRequired } from '@/lib/trial'
 import { formatBytesShort, refusalMessage, uploadHint, uploadProblem, UPLOAD_ACCEPT, type StudioUpload } from '@/lib/studio'
 
@@ -10,7 +10,7 @@ type Props = { designId: string; kind: string; uploads: StudioUpload[]; disabled
   onAttach?: () => void }
 
 /**
- * The files the agent can use (a logo for a shirt, a reference photo, a base mesh): attach, see, remove. Every prompt
+ * The files the agent can use (a logo for a shirt, a reference photo, a base mesh, an emote's sound): attach, see, remove. Every prompt
  * gets all of them; the message says what to do with each. `readOnly` (Virvi support): see them, nothing else.
  */
 export default function Uploads({ designId, kind, uploads, disabled, dropped, onChanged, readOnly = false, onAttach }: Props) {
@@ -92,8 +92,47 @@ export default function Uploads({ designId, kind, uploads, disabled, dropped, on
   )
 }
 
-/** An image's thumbnail, read through the authenticated route; a 3D file shows a cube. */
+/** An image's thumbnail, read through the authenticated route; a sound is a play button; a 3D file shows a cube. */
 function Thumb({ designId, upload }: { designId: string; upload: StudioUpload }) {
+  if (upload.kind === 'audio') return <SoundButton designId={designId} upload={upload} />
+  return <Picture designId={designId} upload={upload} />
+}
+
+/** Plays a sound upload, fetched through the authenticated route on the first press. */
+function SoundButton({ designId, upload }: { designId: string; upload: StudioUpload }) {
+  const api = useApi()
+  const audio = useRef<HTMLAudioElement | null>(null)
+  const objectUrl = useRef<string | null>(null)
+  const [playing, setPlaying] = useState(false)
+  useEffect(() => () => {
+    audio.current?.pause()
+    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
+  }, [])
+  const toggle = async () => {
+    if (playing) { audio.current?.pause(); return }
+    try {
+      if (!audio.current) {
+        objectUrl.current = URL.createObjectURL(await api.getStudioUploadBlob(designId, upload.id))
+        const a = new Audio(objectUrl.current)
+        a.onplay = () => setPlaying(true)
+        a.onpause = a.onended = () => setPlaying(false)
+        audio.current = a
+      }
+      audio.current.currentTime = 0
+      await audio.current.play()
+    } catch {
+      setPlaying(false)
+    }
+  }
+  return (
+    <button type="button" onClick={toggle} aria-label={`${playing ? 'Pause' : 'Play'} ${upload.name}`}
+      className="flex h-7 w-7 items-center justify-center rounded bg-gray-800 text-gray-300 hover:text-white">
+      {playing ? <PauseIcon size={16} /> : <SpeakerIcon size={16} />}
+    </button>
+  )
+}
+
+function Picture({ designId, upload }: { designId: string; upload: StudioUpload }) {
   const api = useApi()
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
