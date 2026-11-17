@@ -50,6 +50,7 @@ export function HowBeatsWork() {
               <a href="https://github.com/virvi-xr/virvi" className={link}>GitHub</a>.</li>
             <li>No single key controls it. The admin is a Safe multisig, <span className="break-all font-mono text-sm">{SAFE}</span>, that needs two of three signers. Virvi’s server holds only a minter key, which can create, send and close BEATs, and nothing else: it can’t move anyone’s tokens or change the contract.</li>
             <li>The <a href="/transparency/" className={link}>transparency page</a> shows the live contract, the commit it was deployed from, and the signed build Virvi runs, so anyone can check it against the code.</li>
+            <li><strong>More chains, planned.</strong> BEATs live on Polygon today. Solana and other chains are planned, so attendees can choose where their BEAT is minted. Each attendee will still get one BEAT per event, on the chain they choose.</li>
           </ul>
         </Section>
 
