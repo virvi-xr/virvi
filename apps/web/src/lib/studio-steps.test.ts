@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, stageFor, uploadHint, dialogTotal, giftNote, checkedEmotes, lineNote, showsEmoteCheck } from './studio'
+import { EMOTES, emoteChecklist, inspectNote, emoteLabel, emoteState, orbitDrag, orbitFrame, orbitKey, refusalMessage, setViewKey, stepsFor, type StudioDetail, STEP_LABELS, pieceLabel, orbitKeyFor, viewKey, triangleWarning, KIND_CHOICES, kindLabel, finalizeStrip, defaultStep, shownStep, stageFor, uploadHint, dialogTotal, giftNote, checkedEmotes, lineNote, showsEmoteCheck, fixableCheck } from './studio'
 
 const NOW = new Date('2026-11-01T12:00:00Z')
 const detail = (over: Partial<StudioDetail> = {}): StudioDetail => ({
@@ -208,5 +208,14 @@ describe('Virvi admins finalize free', () => {
     expect(lineNote(line({ admin: true }))).toBe('free (Virvi admin)')
     expect(lineNote(line({ gift: true }))).toBe('free (gift code)')
     expect(finalizeStrip(quote([line({ admin: true })]), 'wearable').button).toBe('Finalize · free (Virvi admin)')
+  })
+})
+
+describe('the free checker fix', () => {
+  it('is offered only for a check with a FAIL in it', () => {
+    expect(fixableCheck({ pass: false, failures: 2, warnings: 0 })).toBe(true)
+    expect(fixableCheck({ pass: false, failures: 0, warnings: 0 })).toBe(false)  // the checker broke: nothing to fix
+    expect(fixableCheck({ pass: true, failures: 0, warnings: 1 })).toBe(false)
+    expect(fixableCheck(null)).toBe(false)
   })
 })

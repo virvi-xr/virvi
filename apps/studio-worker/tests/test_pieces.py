@@ -2,10 +2,11 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 
 from conftest import FIXTURES
 from studio_worker.instructions import closing
-from studio_worker.pieces import check, collect, glbs_by_shape, new_hashes
+from studio_worker.pieces import check, collect, glbs_by_shape, new_hashes, read_switch
 
 HAT = {'name': 'Neon Cap', 'description': 'A cap with a glowing visor', 'category': 'hat', 'hides': [],
        'replaces': [], 'tags': ['cyberpunk'], 'changeKind': 'new'}
@@ -248,3 +249,58 @@ def test_glbs_outside_ignores_scratch_copies(tmp_path):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(b'glTF')
     assert [g.relative_to(tmp_path).as_posix() for g in glbs_outside(tmp_path, since)] == ['models/cap.glb']
+
+
+def test_a_wearable_design_never_takes_an_emote_piece(tmp_path):
+    # LIV-183: an emote built inside a wearable design was checked with the wearable checker and could never pass
+    lay_out(tmp_path, 'emote', [FIXTURES / 'wave.glb'], {**HAT, 'category': 'emote', 'loop': False})
+    pieces, _, error = collect(tmp_path, 'wearable', {}, run_checker=False)
+    assert pieces == [] and 'an emote can\'t go in a wearable design' in error
+
+
+def test_an_emote_design_never_takes_a_wearable_piece(tmp_path):
+    cap(tmp_path)
+    pieces, _, error = collect(tmp_path, 'emote', {}, run_checker=False)
+    assert pieces == [] and 'an emote goes in out/emote/' in error
+
+
+def test_the_emote_checker_hears_the_sound(tmp_path, skills, monkeypatch):
+    d = lay_out(tmp_path, 'emote', [FIXTURES / 'wave.glb'], {**HAT, 'category': 'emote', 'loop': False})
+    (d / 'fart.ogg').write_bytes(OGG)
+    seen = []
+    real = subprocess.run
+
+    def spy(cmd, *a, **kw):
+        seen.append(cmd)
+        return real(cmd, *a, **kw)
+    monkeypatch.setattr(subprocess, 'run', spy)
+    collect(tmp_path, 'emote', {})
+    cmd = next(c for c in seen if 'check_emote.py' in ' '.join(map(str, c)))
+    assert cmd[cmd.index('--audio') + 1].endswith('fart.ogg')
+
+
+def test_read_switch(tmp_path):
+    (tmp_path / 'out').mkdir()
+    assert read_switch(tmp_path, 'wearable') is None
+    (tmp_path / 'out' / 'switch.json').write_text('{"kind": "emote"}')
+    assert read_switch(tmp_path, 'wearable') == 'emote'
+    assert read_switch(tmp_path, 'emote') is None  # already one
+    assert read_switch(tmp_path, 'scene') is None  # scene designs never switch
+    (tmp_path / 'out' / 'switch.json').write_text('{"kind": "scene"}')
+    assert read_switch(tmp_path, 'wearable') is None
+    (tmp_path / 'out' / 'switch.json').write_text('nope')
+    assert read_switch(tmp_path, 'wearable') is None
+
+
+def test_closing_says_how_to_switch_kinds():
+    empty = ' '.join(closing('wearable', None).split())
+    assert 'out/switch.json' in empty and '{"kind": "emote"}' in empty
+    built = ' '.join(closing('wearable', None, has_pieces=True).split())
+    assert 'out/switch.json' not in built and 'start a new emote design' in built
+    assert '{"kind": "wearable"}' in ' '.join(closing('emote', None).split())
+    assert 'switch' not in closing('scene', None).lower()
+
+
+def test_closing_keeps_an_emotes_sound_on_edits():
+    text = ' '.join(closing('emote', None).split())
+    assert 'keep its sound' in text and 'With no sound asked for on a new emote, add none.' in text

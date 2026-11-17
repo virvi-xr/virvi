@@ -7,7 +7,7 @@ import { openSignUp } from '@/lib/trial'
 import { PrimaryButton } from '@/components/ui'
 import {
   agentLabel, canSend, takeUnsent, categoryLabel, checkoutHref, composerState, formatCents, latestRenderUrl, trialCtx, trialNudge, initialTicks, progressFor, refusalMessage, slotSelection,
-  type Quote, type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage,
+  type Quote, type Refusal, type StudioDetail, type StudioEvent, type StudioMessage, type StudioProposal, type StudioUsage, fixableCheck,
 } from '@/lib/studio'
 import { canRate, canTryAgain, revisionUnder } from '@/lib/studio-ratings'
 import Rating from './Rating'
@@ -92,7 +92,7 @@ export default function Conversation({ designId, detail, usage, events, onChange
   const seen = useRef<{ id: string; at: number } | null>(null)
   if (active && seen.current?.id !== active.id) seen.current = { id: active.id, at: Date.now() }
   const waitSince = (active?.createdAt && Date.parse(active.createdAt)) || (seen.current?.at ?? Date.now())
-  const failing = detail.pieces.filter((p) => p.revision?.checker?.pass === false)
+  const failing = detail.pieces.filter((p) => fixableCheck(p.revision?.checker))
   const lastMessage = lastConversational(detail.messages)
   const openProposal = lastMessage?.role === 'agent' && lastMessage.proposal?.slots?.length && !active ? lastMessage : null
   const kind = detail.design.kind

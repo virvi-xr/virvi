@@ -246,6 +246,10 @@ answers it 400.
 - `scope`: `{"by": "check" | "agent", "category": "coding" | "writing" | "research" | "chat" | "other", "note": str}`
   on `off_topic` and `declined`, null otherwise. `note` (at most 120 characters) is for the owner's log only, never
   shown to the user. `costUsd` on any checked prompt includes the check's cost.
+- `switchKind` (LIV-183): `"wearable"` or `"emote"`, set only on a `no_change` prompt in an empty wearable or emote
+  design, when the person asked for the other kind and the agent wrote `out/switch.json` instead of building. Virvi
+  switches the design's kind if that is still safe and runs the same request again as the new kind. A wearable design
+  never holds an `emote` piece, and an emote design holds only `emote`: either is a wrong layout (`error`).
 - `changeKind`, from the agent: `"new"`, `"fix"` (a fix to a published piece) or `"design"` (a design change).
 - `checker.pass` false means the skills checker found a FAIL. The piece is still reported.
 - **An emote over 3 MB is refused.** Virvi adds up the emote's biggest GLB and its sound as uploaded; over 3 MB

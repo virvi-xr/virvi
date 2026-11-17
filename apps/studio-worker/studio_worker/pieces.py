@@ -62,6 +62,9 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
             if kind == 'emote' and d.name != 'emote':
                 problems.append(f'an emote goes in out/emote/, not {rel}/')
                 continue
+            if kind == 'wearable' and d.name == 'emote':  # LIV-183: never an emote piece in a wearable design
+                problems.append('an emote can\'t go in a wearable design')
+                continue
             if not isinstance(meta, dict) or meta.get('category', d.name) != d.name:
                 problems.append(f'{rel}/piece.json says category {meta.get("category") if isinstance(meta, dict) else meta!r}')
                 continue
@@ -107,6 +110,19 @@ def collect(design: Path, kind: str, hashes: dict, run_checker: bool = True, sta
     for p in pieces if run_checker else []:
         p.checker = scene.check(p, pieces) if kind == 'scene' else check(p, kind)
     return pieces, proposal, None
+
+
+def read_switch(design: Path, kind: str) -> str | None:
+    """The kind the agent asked the design to become (out/switch.json, LIV-183): 'wearable' or 'emote', and never the
+    design's own kind or a scene. None when there's no valid request."""
+    path = Path(design) / 'out' / 'switch.json'
+    if kind not in ('wearable', 'emote') or not os.path.lexists(path):
+        return None
+    try:
+        to = json.loads(read_regular(path)).get('kind')
+    except (UnsafeFile, json.JSONDecodeError, AttributeError, UnicodeDecodeError):
+        return None
+    return to if to in ('wearable', 'emote') and to != kind else None
 
 
 def read_declined(design: Path) -> str | None:
@@ -223,6 +239,8 @@ def check(piece: Piece, kind: str) -> dict:
     if kind == 'emote':
         cmd = ['python3', str(scripts / 'creating-dcl-emotes/scripts/check_emote.py'), *map(str, piece.glbs)]
         cmd += ['--loop'] if piece.meta.get('loop') in (True, 'yes') else []
+        sound = next((e for e in piece.extras if e.suffix.lower() in SOUND_SUFFIXES), None)
+        cmd += ['--audio', str(sound)] if sound else []  # the agent is told to check with it: the studio does too
     else:
         cmd = ['python3', str(scripts / 'creating-dcl-wearables/scripts/check_wearable.py'), *map(str, piece.glbs),
                '--category', piece.category]

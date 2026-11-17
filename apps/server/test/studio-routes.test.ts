@@ -10,7 +10,7 @@ vi.mock('sharp', async (importOriginal) => {
 import { db } from '../src/db/connection.js'
 import { studioDesigns, studioJobs, studioMessages, studioPieces, studioPromptCredits, studioRenders, studioRevisions } from '../src/db/schema.js'
 import { config } from '../src/config.js'
-import { memoryStudioStore, setStudioStore, jobFileKey } from '../src/studio/store.js'
+import { getStudioStore, memoryStudioStore, setStudioStore, jobFileKey } from '../src/studio/store.js'
 import { setMachineDeps } from '../src/studio/machines.js'
 import { promptStatus } from '../src/studio/quota.js'
 import { addCredit } from '../src/studio/credit.js'
@@ -287,6 +287,35 @@ describe('studio dashboard routes', () => {
     expect(job.counted).toBe(false)
     expect(job.payload).toMatchObject({ prompt: 'Fix every FAIL the checker reported for: hat. Change nothing else.', selectedSlots: null })
     expect((await promptStatus(u.id, new Date())).used).toBe(used)
+  })
+
+  it('a fix prompt hands the agent the checker\'s FAIL lines (LIV-182)', async () => {
+    const u = await createUser()
+    const d = (await create(u)).json()
+    const first = (await prompt(u, d.id)).json().jobId
+    const r = okResult(first)
+    r.pieces[0].checker = { pass: false, failures: 1, warnings: 1 }
+    await finish(first, r)
+    await getStudioStore().put(jobFileKey(d.id, first, 'checks/hat.txt'),
+      Buffer.from('Checks:\n  PASS  triangles  1200\n  WARN  textures  2\n  FAIL  hides  hat must hide hair\n'), 'text/plain')
+    const res = await prompt(u, d.id, { fixChecks: true })
+    const [job] = await db.select().from(studioJobs).where(eq(studioJobs.id, res.json().jobId))
+    const sent = (job.payload as { prompt: string }).prompt
+    expect(sent).toContain('Fix every FAIL the checker reported for: hat.')
+    expect(sent).toContain('FAIL  hides  hat must hide hair')
+    expect(sent).not.toContain('WARN')
+    const shown = (await db.select().from(studioMessages).where(eq(studioMessages.designId, d.id))).filter((m) => m.role === 'user').at(-1)
+    expect(shown?.text).toBe('Fix every FAIL the checker reported for: hat. Change nothing else.')  // the person sees the short words
+  })
+
+  it('a failed check with no FAIL in it has nothing to fix', async () => {
+    const u = await createUser()
+    const d = (await create(u)).json()
+    const first = (await prompt(u, d.id)).json().jobId
+    const r = okResult(first)
+    r.pieces[0].checker = { pass: false, failures: 0, warnings: 0 }
+    await finish(first, r)
+    expect((await prompt(u, d.id, { fixChecks: true })).json().code).toBe('nothing_to_fix')
   })
 
   it('a fix prompt with nothing failing is 409', async () => {

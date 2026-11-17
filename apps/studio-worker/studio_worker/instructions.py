@@ -32,9 +32,30 @@ Nothing else goes in out/. To change a piece, export over its files; leave a pie
 Keep working copies, references and experiments in scratch/: it's never delivered."""
 
 
+# The kinds a design can switch between when the person asks for the other (LIV-183); scene designs never switch
+SWITCHABLE = ('wearable', 'emote')
+
+
+def switch_text(kind: str, has_pieces: bool) -> str:
+    """What to do when the person asks for the other kind than this design makes: an emote in a wearable design, or
+    wearables in an emote design. Never build the wrong kind of piece."""
+    if kind not in SWITCHABLE:
+        return ''
+    other = 'emote' if kind == 'wearable' else 'wearable'
+    asked = 'an emote (an animation)' if other == 'emote' else 'wearables (something the avatar wears)'
+    if has_pieces:
+        return (f'\nThis is a {kind} design. If the user asks for {asked} instead, build nothing: tell them, in plain '
+                f'words, that this design already has its {kind} and to start a new {other} design for that.')
+    return (f'\nThis is a {kind} design. If the user asks for {asked} instead, don\'t build it here and don\'t refuse: '
+            f'write out/switch.json as {{"kind": "{other}"}}, build nothing, and reply in one plain sentence that the '
+            f'design becomes an {other} design and you\'ll build it next. The studio switches the design and runs their '
+            f'request again.')
+
+
 def no_workspace(kind: str) -> str:
     """The user only reads the reply: the workspace, its files and the tools that made them are never theirs to see."""
-    files = 'out/..., proposal.json, declined.json' if kind == 'wearable' else 'out/..., declined.json'
+    files = 'out/..., proposal.json, declined.json, switch.json' if kind == 'wearable' else \
+        'out/..., declined.json, switch.json' if kind == 'emote' else 'out/..., declined.json'
     return ('The user never sees your workspace, so your reply never mentions file names, folders, paths, commands, '
             f'scripts, tools or skills ({files}, uploads/..., studio-preview, the checker scripts, Blender, the skills '
             'by name). Say it in the user\'s terms instead: "I\'ve put together a few options", "the hat", "your '
@@ -86,7 +107,7 @@ def pricing_text(kind: str, pricing: str | None) -> str:
 
 
 def closing(kind: str, selected_slots: list[str] | None, agent: str | None = None, lessons: list | None = None,
-            pricing: str | None = None) -> str:
+            pricing: str | None = None, has_pieces: bool = False) -> str:
     scope = 'Decentraland wearables and emotes'
     if kind == 'scene':
         scope = 'buildings, furniture and decor for Decentraland scenes'
@@ -104,7 +125,9 @@ def closing(kind: str, selected_slots: list[str] | None, agent: str | None = Non
                 'audio, never a sample you found: ffmpeg can synthesise and mix it) '
                 'and put exactly one .ogg or .mp3 in out/emote/ beside the GLB, as long as the animation and timed to '
                 'it; it ships with the emote and plays in the studio\'s preview. Keep drafts and .wav files out of '
-                'out/emote/. With no sound asked for, add none.')
+                'out/emote/. With no sound asked for on a new emote, add none. When changing an emote that has a sound, '
+                'keep its sound, retimed to the new animation if the timing changed, unless the user asks to change or '
+                'remove it.')
         layout = LAYOUT % ', "loop": true | false'
         look = ('Before you finish, run `studio-preview out/emote` and open the images it prints: check the hands, '
                 'limbs and props through the animation and fix any clipping you see.')
@@ -141,7 +164,7 @@ runs headless only: `blender -b`. {what}
 {layout}
 Blender is for building only: never render in Blender (no thumbnails, turntables or test renders). `studio-preview` is how you look at your work.
 {look}
-{check}{shaping}{lessons_text(lessons)}{pricing_text(kind, pricing)}
+{check}{shaping}{switch_text(kind, has_pieces)}{lessons_text(lessons)}{pricing_text(kind, pricing)}
 When you're done, reply to the user in a few plain sentences: what you made or changed, and anything you need from them.
 {no_workspace(kind)}
 You build and discuss {scope}, and nothing else. Questions about prices, paying, what a finalized

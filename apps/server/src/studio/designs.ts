@@ -10,7 +10,7 @@ import { failJobs } from './results.js'
 import { publishStudio } from './events.js'
 import { openHelp, resolveHelp } from './help.js'
 import { signPieceSound, signRenderFrame, frameUrlExpiry } from './render-urls.js'
-import { soundFile } from './store.js'
+import { getStudioStore, jobFileKey, soundFile } from './store.js'
 import { finalizedRevisions } from './payments.js'
 import { creditBalance } from './credit.js'
 import type { Exec } from './quota.js'
@@ -62,6 +62,41 @@ export const ownerWords = (text: string) => text.replace(TYPED_PREFIX, '').trim(
 export const START_FAILED = 'The studio machine could not start.'
 export const fixChecksText = (categories: string[]) =>
   `Fix every FAIL the checker reported for: ${categories.join(', ')}. Change nothing else.`
+
+/** A piece's last check failed with at least one FAIL to fix (an older result without a count still counts). */
+export const isFixable = (checker: unknown): boolean => {
+  const c = checker as { pass?: boolean; failures?: number } | null
+  return c?.pass === false && (c.failures == null || c.failures > 0)
+}
+
+/** The FAIL lines of a checker report, at most this many characters of them, for the agent's fix prompt. */
+const FAIL_LINES_MAX = 3000
+export function failLines(report: string): string[] {
+  const lines: string[] = []
+  let used = 0
+  for (const line of report.split('\n')) {
+    if (!/^\s+FAIL\b/.test(line)) continue
+    if (used + line.length > FAIL_LINES_MAX) break
+    lines.push(line.trim())
+    used += line.length
+  }
+  return lines
+}
+
+/**
+ * The fix prompt the agent gets: the person's words, then each piece's FAIL lines from its last checker report, so it
+ * fixes what the studio's check found rather than rerunning a check of its own that may pass (LIV-182 finding).
+ */
+export async function fixChecksPrompt(designId: string, failing: { category: string; jobId: string }[]): Promise<string> {
+  const parts: string[] = []
+  for (const f of failing) {
+    const got = await getStudioStore().get(jobFileKey(designId, f.jobId, `checks/${f.category}.txt`)).catch(() => null)
+    const lines = got ? failLines(got.body.toString('utf8')) : []
+    if (lines.length) parts.push(`The studio's checker report for ${f.category}:\n${lines.join('\n')}`)
+  }
+  const text = fixChecksText(failing.map((f) => f.category))
+  return parts.length ? `${text}\n\n${parts.join('\n\n')}` : text
+}
 
 /** `categories`: the pieces worn in the view the person saw, when it was Finalize's selection (sets.ts wornRevisions). */
 export type FixClipping = { emote: string; bodyShape: View['bodyShape']; outfit: View['outfit']; categories?: string[] }
@@ -395,15 +430,18 @@ export async function queuePrompt(
         }
       }
       let fixText: string | null = null
+      let fixPrompt: string | null = null
       if (input.fixChecks) {
         // Fixing what the checker failed is the agent's job, so it doesn't use the allowance
-        const failing = await tx.select({ category: studioPieces.category, checker: studioRevisions.checker }).from(studioPieces)
+        const latest = await tx.select({ category: studioPieces.category, checker: studioRevisions.checker, jobId: studioRevisions.jobId }).from(studioPieces)
           .innerJoin(studioRevisions, eq(studioRevisions.id, studioPieces.latestRevisionId))
           .where(eq(studioPieces.designId, d.id))
           .orderBy(asc(studioPieces.category))
-        const categories = failing.filter((p) => (p.checker as { pass?: boolean } | null)?.pass === false).map((p) => p.category)
-        if (!categories.length) throw new Refused({ status: 409, body: { error: 'nothing_to_fix', code: 'nothing_to_fix' } })
-        fixText = fixChecksText(categories)
+        // A failed check with no FAIL in it (the checker itself broke) has nothing for the agent to fix
+        const failing = latest.filter((p) => isFixable(p.checker))
+        if (!failing.length) throw new Refused({ status: 409, body: { error: 'nothing_to_fix', code: 'nothing_to_fix' } })
+        fixText = fixChecksText(failing.map((p) => p.category))
+        fixPrompt = await fixChecksPrompt(d.id, failing)
       }
       if (input.feedbackFor) {
         // One sender's try-agains one at a time, so the daily count holds across their designs
@@ -440,7 +478,7 @@ export async function queuePrompt(
       // On a shared design a member's own words carry their name
       const ownWords = !input.continue && !fix && !fixText
       const named = !support && senderName && await memberCount(d.id, tx) > 0 ? `${senderName}: ` : ''
-      const prompt = fix ? clippingInstruction(d.kind, fix) : !ownWords ? text : support ? `${SUPPORT_PREFIX}${ownerWords(text)}` : `${named}${ownerWords(text)}`
+      const prompt = fix ? clippingInstruction(d.kind, fix) : fixPrompt ?? (!ownWords ? text : support ? `${SUPPORT_PREFIX}${ownerWords(text)}` : `${named}${ownerWords(text)}`)
       const notes = (await notesForAgent(d.id, tx)).map((n) => `${NOTE_PREFIX}${n}\n\n`).join('')
       const lessons = await liveLessons(d.kind, tx)
       const [job] = await tx.insert(studioJobs).values({

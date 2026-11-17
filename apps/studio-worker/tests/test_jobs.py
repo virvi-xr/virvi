@@ -878,3 +878,23 @@ def test_an_emote_over_the_allowance_is_not_uploaded_and_stays_changed(api, tmp_
     # not recorded as current: the next prompt sees it as changed and checks it again
     again = run(api, tmp_path, emote_job(), 'claude_builds_emote.jsonl')
     assert again['outcome'] == 'error' and again['pieces'][0]['changed'] is True
+
+
+def test_an_empty_wearable_design_asks_to_become_an_emote(api, tmp_path):
+    # LIV-183: the agent writes out/switch.json, builds nothing, and Virvi switches the design and asks again
+    result = run(api, tmp_path, prompt_job(selectedSlots=None, prompt='make me a fart emote'), 'claude_switches_to_emote.jsonl')
+    assert result['outcome'] == 'no_change' and result['switchKind'] == 'emote' and result['pieces'] == []
+    assert 'emote design' in result['reply']
+
+
+def test_a_design_with_pieces_never_switches(api, tmp_path, skills):
+    run(api, tmp_path, prompt_job(), 'claude_builds_hat.jsonl')
+    result = run(api, tmp_path, prompt_job(jobId='job-2', selectedSlots=None, prompt='make me an emote'), 'claude_switches_to_emote.jsonl')
+    assert 'switchKind' not in result
+
+
+def test_an_old_switch_request_is_not_read_again(api, tmp_path):
+    (tmp_path / 'out').mkdir()
+    (tmp_path / 'out' / 'switch.json').write_text('{"kind": "emote"}')
+    result = run(api, tmp_path, prompt_job(selectedSlots=None, prompt='hm'), 'claude_stream.jsonl')
+    assert 'switchKind' not in result

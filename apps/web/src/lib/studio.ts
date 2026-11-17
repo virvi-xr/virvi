@@ -60,6 +60,9 @@ export type StudioMember = { userId: string; displayName: string | null; role: D
 /** `triangles`: a scene piece over its recommended triangle count (a warning, never a block). */
 export type Checker = { pass: boolean; failures: number; warnings: number; triangles?: { count: number; limit: number } | null } | null
 
+/** A check the free fix can act on: it failed with at least one FAIL (a check that broke without one has nothing to fix). */
+export const fixableCheck = (c: Checker | undefined): boolean => c?.pass === false && (c.failures == null || c.failures > 0)
+
 export type StudioView = {
   status: 'queued' | 'ready' | 'failed' | string; frames: number; urls: string[]; renderedAt: string
   fps?: number | null // the rate it plays at, for a view with its own (an emote's On avatar); absent or null: 12

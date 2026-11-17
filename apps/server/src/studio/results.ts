@@ -4,13 +4,14 @@ import { studioDesigns, studioEntitlements, studioJobs, studioMessages, studioPi
 import { checkFilePath, jobFileKey } from './store.js'
 import { jobDay, recordCost, refundPrompt, utcDay, type Exec, type PromptSource } from './quota.js'
 import { publishStudio } from './events.js'
-import { ORBIT_FRAMES, orbitKeyFor, queueFullOrbit, revisionsKey, type FixClipping, type View } from './designs.js'
+import { ORBIT_FRAMES, orbitKeyFor, queueFullOrbit, revisionsKey, startWorker, type FixClipping, type View } from './designs.js'
 import { hasBuilding, requestSetRender, TOUR_VIEW } from './sets.js'
 import { addToLibrary } from './library.js'
 import { DECLINED_NOTE, SCOPE_CATEGORIES, logScopeEvent, maybeFlag, offTopicIsFree, offTopicNote } from './scope.js'
 import { recordJobFailure } from '../errors/record.js'
 import { finishTimings } from './timings.js'
 import { notifyPackageReady } from '../notifications/notifications.js'
+import { cantSwitchText, isSwitchableKind, switchAndRequeue, switchBlock } from './switch-kind.js'
 
 /** A worker's Result, as apps/studio-worker/CONTRACT.md defines it (only the fields Virvi reads are typed). */
 export type ContractResult = {
@@ -29,6 +30,7 @@ export type ContractResult = {
   scope?: { by: 'check' | 'agent'; category: string; note: string } | null // on off_topic and declined
   set?: { viewKey: string; frames: number; fps: number } | null // a set render job's emote view
   worn?: string[] // the categories a selection's set render or clipping fix wore (CONTRACT.md); absent from older workers
+  switchKind?: 'wearable' | 'emote' // LIV-183: the agent asked for the design to become the other kind instead of building
 }
 
 export type ContractPiece = {
@@ -64,6 +66,9 @@ export function parseResult(body: unknown): { ok: true; result: ContractResult }
       || typeof sc.category !== 'string' || !SCOPE_CATEGORIES.includes(sc.category) || typeof sc.note !== 'string') {
       return { ok: false, reason: 'scope is malformed' }
     }
+  }
+  if (r.switchKind != null && (!isSwitchableKind(r.switchKind) || r.outcome !== 'no_change')) {
+    return { ok: false, reason: 'switchKind is malformed' }
   }
   if (r.worn != null && (!Array.isArray(r.worn) || r.worn.length > 200 || !r.worn.every((c) => typeof c === 'string' && CATEGORY.test(c)))) {
     return { ok: false, reason: 'worn is malformed' }
@@ -201,6 +206,7 @@ export async function settleDesign(designId: string, exec: Exec = db): Promise<v
 export async function applyResult(jobId: string, result: ContractResult, now: Date): Promise<'applied' | 'already'> {
   const status = result.outcome === 'error' ? 'failed' : 'done'
   let payer = null as string | null // set in the transaction
+  let switchedJobId: string | null = null // LIV-183: the same request again, as the design's new kind
   const job = await db.transaction(async (tx) => {
     const [job] = await tx.update(studioJobs)
       .set({ status, result, finishedAt: now })
@@ -257,6 +263,14 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
       if (refunded) await refundPrompt(payer!, day, job.countedFrom as PromptSource | null, tx)
       const note = systemNote(result, refunded)
       if (note) await tx.insert(studioMessages).values({ designId: job.designId, role: 'system', text: note, jobId: job.id })
+      if (result.switchKind && design) {
+        // LIV-183: the person asked for the other kind of design. Switch it when nothing of the old kind is in it
+        const block = await switchBlock(job, design.kind, result.switchKind, tx)
+        if (!block) switchedJobId = await switchAndRequeue(job, design.kind, result.switchKind, tx, now)
+        else if (block === 'has_pieces') {
+          await tx.insert(studioMessages).values({ designId: job.designId, role: 'system', text: cantSwitchText(design.kind, result.switchKind), jobId: job.id })
+        }
+      }
       if ((result.outcome === 'off_topic' || result.outcome === 'declined') && result.scope && design && payer && !job.byAdminId) {
         await logScopeEvent(tx, {
           userId: payer, designId: design.id, jobId: job.id, by: result.scope.by, category: result.scope.category,
@@ -309,6 +323,10 @@ export async function applyResult(jobId: string, result: ContractResult, now: Da
     return job
   })
   if (!job) return 'already'
+  if (switchedJobId) {
+    await publishStudio(job.designId, { type: 'job', jobId: switchedJobId, status: 'queued' })
+    await startWorker(job.designId, switchedJobId, now)
+  }
   const fix = (job.payload as { fixClipping?: FixClipping }).fixClipping
   if (job.type === 'prompt' && fix && result.outcome === 'ok' && !confirmsSelection(fix.categories, result.worn)) {
     // An older worker fixed it looking at every piece: re-rendering would keep that under the selection's key

@@ -29,7 +29,7 @@ from .api import Api, ApiError
 from .config import AGENT_USER, DESIGN, skills_sha
 from .finalize import Tools, finalize_job
 from .instructions import closing, uploads_text
-from .pieces import Piece, UnsafeFile, collect, glbs_by_shape, glbs_exported, glbs_outside, new_hashes, read_declined, read_regular
+from .pieces import Piece, UnsafeFile, collect, glbs_by_shape, glbs_exported, glbs_outside, new_hashes, read_declined, read_regular, read_switch
 from .workspace import load_state, pack, prompt_with_context, save_state, state_dir, unpack
 
 SOUND_TYPES = {'.mp3': 'audio/mpeg', '.ogg': 'audio/ogg'}
@@ -129,7 +129,7 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
         if fix.get('categories') is not None:  # confirms the frames wore only the selection
             result['worn'] = sorted(fix['categories'])
     saved = copy.deepcopy(state)
-    for answered in ('proposal.json', 'declined.json'):  # an earlier prompt's; don't read it as this one's
+    for answered in ('proposal.json', 'declined.json', 'switch.json'):  # an earlier prompt's; don't read it as this one's
         if os.path.lexists(design / 'out' / answered):
             os.unlink(design / 'out' / answered)
     totals = state.totals.get(agent)
@@ -137,7 +137,7 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
     uploads = fetch_uploads(job, client, design)
     words = job['prompt'] + (_clipping_text(design, kind, agent, fix) if fix else '')
     prompt = prompt_with_context(state, agent, words) + uploads_text(uploads) + \
-        closing(kind, job.get('selectedSlots'), agent, job.get('lessons'), job.get('pricing'))
+        closing(kind, job.get('selectedSlots'), agent, job.get('lessons'), job.get('pricing'), has_pieces=bool(state.hashes))
     limits = {**DEFAULT_LIMITS, **{k: v for k, v in (job.get('limits') or {}).items() if v is not None}}
 
     _phase(client, job_id, 'building')
@@ -181,7 +181,9 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
         pieces, proposal, error = collect(design, kind, state.hashes, stage=Path(stage)) \
             if run.outcome == 'ok' else ([], None, None)
         changed = [p for p in pieces if p.changed]
-        declined = read_declined(design) if run.outcome == 'ok' and not changed and not proposal else None
+        # LIV-183: the agent asked for the other kind of design and built nothing; Virvi switches it and asks again
+        switch = read_switch(design, kind) if run.outcome == 'ok' and not changed and not proposal and not state.hashes else None
+        declined = read_declined(design) if run.outcome == 'ok' and not changed and not proposal and not switch else None
         if run.outcome == 'ok' and not error and not changed and not proposal:
             elsewhere = glbs_outside(design, started)
             if elsewhere:
@@ -239,6 +241,8 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
         result.update(outcome=run.outcome, error=run.error)
     elif error:
         result.update(outcome='error', error=error)
+    elif switch:
+        result.update(outcome='no_change', switchKind=switch)
     elif declined is not None:  # the agent stopped on a request that isn't design work
         result.update(outcome='declined', scope={'by': 'agent', 'category': 'other', 'note': declined})
     elif proposal:
