@@ -8,7 +8,7 @@ The **Command Center** (in the dashboard's sidebar) shows the scenes linked to o
 ## Use it
 
 1. Create an event under **Events** and link scenes to it.
-2. Open **Command Center** and pick the event.
+2. Open **Command Center**. If one of your events is live, it opens on that one; otherwise pick the event.
 3. Each linked scene shows as a card with its name, thumbnail, platform and whether its latest deployment is live.
 4. Under **Broadcast to All Worlds**, choose a tab and send:
    - **Send Message:** text, colour and font size (`{ type: 'show_message', text, color, fontSize }`).
@@ -17,6 +17,13 @@ The **Command Center** (in the dashboard's sidebar) shows the scenes linked to o
 5. The **Activity Feed** lists what you sent this session.
 
 Only the event's owner (or an instance admin) can open an event here.
+
+## Which event it opens
+
+- **A live event.** If one of your events is live, the Command Center opens on it. If several are live, it opens the one that started first. The dropdown marks live events with **(live now)**.
+- **Events with no end time** count as live for their first 24 hours.
+- **A link to one event.** `/command-center?event=<event ID>` opens that event, whether or not it's live.
+- **Your choice stays.** The Command Center only picks for you when the page opens. Once you choose an event yourself, it never switches, even if another event goes live.
 
 ## Where broadcasts go
 

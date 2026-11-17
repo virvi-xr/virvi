@@ -3,8 +3,10 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useCommandCenterRoom, CommandCenterStatus } from '@/lib/colyseus'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
 import { Badge, PageHeader, PlatformBadge, Skeleton, type Tone } from '@/components/ui'
+import { initialEventId, isOngoing } from '@/lib/command-center'
 
 export default function CommandCenterPage() {
   return (
@@ -41,6 +43,8 @@ function getEventStatus(event: any): { label: string; tone: Tone } {
 function CommandCenterContent() {
   const { token } = useAuth()
   const api = useApi()
+  const linkedEventId = useSearchParams().get('event')
+  const autoPicked = useRef(false)
 
   const [events, setEvents] = useState<any[]>([])
   const [selectedEventId, setSelectedEventId] = useState<string>('')
@@ -74,7 +78,15 @@ function CommandCenterContent() {
   useEffect(() => {
     if (!token) return
     api.getEvents()
-      .then((data) => { setEvents(data.events); setLoading(false) })
+      .then((data) => {
+        setEvents(data.events)
+        // Open once, on load: the linked event, else the live one. A host's own pick is never overridden later.
+        if (!autoPicked.current) {
+          autoPicked.current = true
+          setSelectedEventId(initialEventId(data.events, linkedEventId))
+        }
+        setLoading(false)
+      })
       .catch(() => setLoading(false))
   }, [token])
 
@@ -138,7 +150,7 @@ function CommandCenterContent() {
             <option value="">Select an event...</option>
             {events.map((evt) => (
               <option key={evt.id} value={evt.id}>
-                {evt.name}
+                {isOngoing(evt) ? `${evt.name} (live now)` : evt.name}
               </option>
             ))}
           </select>
