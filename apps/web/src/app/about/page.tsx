@@ -19,7 +19,7 @@ export default function AboutPage() {
         <p className="mt-4">
           Virvi runs scenes and events in virtual worlds from one dashboard: screens and live video, ads, Design Studio for
           wearables and emotes, and <a href="/beat/" className={link}>BEATs</a>, the attendance tokens people earn by showing up.
-          It’s made by Livication LLC, and its code is public on{' '}
+          Virvi is a product of Livication LLC, and its code is public on{' '}
           <a href="https://github.com/virvi-xr/virvi" className={link}>GitHub</a>.
         </p>
 
