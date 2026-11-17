@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { CollectedBeat } from '@virvixr/shared'
 import { BEAT_IMAGE_MIN_PX, BEAT_MIN_PRESENT_DEFAULT_MINUTES, BEAT_SUPPLY_CAP_DEFAULT, type PublicBeat } from '@virvixr/shared'
 import { beatsExplainerFor,
   BEAT_FROZEN_NOTE, BEAT_IMAGE_HINT, BEAT_NO_REFUND, BEAT_TEST_BADGE, BEATS_UNAVAILABLE, beatActions, beatWindow, formatWhen, beatBody, beatEditBody, beatFieldError, beatFormError,
@@ -7,6 +8,7 @@ import { beatsExplainerFor,
   BEAT_REFUND_NOTE, beatApiPath, fieldsOfPatch, pollPayment, sceneBeatsPath, shownFieldError, BEATS_NETWORK_UNAVAILABLE, beatsPayable,
   TRADEABLE_HINT, SUPPLY_HINT, PAID_SUPPLY_HINT, LOCATION_SCENE_ONLY, blankLocation, cancelledNote, claimantsHeading, locationBody, locationLine,
   reviewSummary, beatLocked, COUNT_LABELS, CLAIM_STATUS_LABELS, claimantHeld,
+  filterCollected, shortWallet, walletPageHref, type CollectedFilter,
 } from './beats'
 
 const NOW = new Date('2026-11-14T12:00:00Z')
@@ -371,5 +373,44 @@ describe('beatsExplainerFor (the public /beats page for signed-out visitors)', (
     expect(beatsExplainerFor('/beats', '?id=853288e3-7390-451b-afa0-e3bdcf1c31cd')).toBe(false)
     expect(beatsExplainerFor('/beats/new', '')).toBe(false)
     expect(beatsExplainerFor('/scenes', '')).toBe(false)
+  })
+})
+
+describe('collected BEATs (LIV-185)', () => {
+  const W1 = '0x52908400098527886E0F7030069857D2E4169EE7'
+  const W2 = '0x8617E340B3D01FA5F11F306F4090FD50E238070D'
+  const mk = (over: Partial<CollectedBeat> = {}): CollectedBeat => ({
+    tokenId: '1', contract: '0xc', chain: 'polygon', kind: 'basic', wallet: W1, quantity: 1, earned: true, name: 'A', imageUrl: null,
+    place: null, startsAt: '2026-11-10T12:00:00Z', endsAt: '2026-11-10T14:00:00Z', tradeable: false, tokenUrl: 'u', mintTxUrl: null, claimedAt: null, ...over,
+  })
+  const none: CollectedFilter = { wallet: 'all', from: null, to: null, kind: 'all', earnedOnly: false }
+  const items = [
+    mk({ tokenId: '1', startsAt: '2026-11-10T00:00:00Z' }),
+    mk({ tokenId: '2', wallet: W2, earned: false, startsAt: '2026-11-12T23:59:59Z' }),
+    mk({ tokenId: '3', startsAt: '2026-11-15T10:00:00Z' }),
+  ]
+  const ids = (f: Partial<CollectedFilter>) => filterCollected(items, { ...none, ...f }).map((b) => b.tokenId)
+
+  it('no filter keeps everything, and does not mutate', () => {
+    expect(ids({})).toEqual(['1', '2', '3'])
+  })
+  it('filters by wallet', () => { expect(ids({ wallet: W2 })).toEqual(['2']) })
+  it('filters by earned only', () => { expect(ids({ earnedOnly: true })).toEqual(['1', '3']) })
+  it('filters by kind; custom returns none today', () => {
+    expect(ids({ kind: 'basic' })).toEqual(['1', '2', '3'])
+    expect(ids({ kind: 'custom' })).toEqual([])
+  })
+  it('date ends are inclusive, in UTC', () => {
+    expect(ids({ from: '2026-11-10', to: '2026-11-12' })).toEqual(['1', '2'])
+    expect(ids({ from: '2026-11-13' })).toEqual(['3'])
+    expect(ids({ to: '2026-11-10' })).toEqual(['1'])
+  })
+  it('combines filters', () => {
+    expect(ids({ wallet: W1, from: '2026-11-11', earnedOnly: true })).toEqual(['3'])
+  })
+  it('shortWallet and walletPageHref', () => {
+    expect(shortWallet(W1)).toBe('0x5290…9EE7')
+    expect(walletPageHref(W1.toLowerCase())).toBe(`/w/${W1}`)
+    expect(walletPageHref(W2)).toBe(`/w/${W2}`)
   })
 })

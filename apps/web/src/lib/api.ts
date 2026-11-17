@@ -30,7 +30,7 @@ import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type Kin
 import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
 import type { AdminBeatsOverview } from './admin-beats'
 import type { AdminReissueRequest, ProposedReissueFile, ReissueRequest, SafeBatchPreview } from './reissue'
-import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutResult, type BeatClaimant, type BeatQuote, type PublicBeat, type beatBody, type beatEditBody, type payBody } from './beats'
+import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutResult, type BeatClaimant, type BeatCollection, type BeatQuote, type PublicBeat, type WalletBeats, type beatBody, type beatEditBody, type payBody } from './beats'
 
 // ── New Scene Wizard and Decentraland Worlds ────────────────────────────────
 
@@ -462,6 +462,8 @@ function useRealApi() {
     // BEATs (LIV-11): availability answers even while BEATs are dark; everything else 404s then
     getBeatAvailability: () => apiFetch<BeatAvailability>('/api/beats/availability'),
     listBeats: () => apiFetch<PublicBeat[]>('/api/beats'),
+    getBeatCollection: () => apiFetch<BeatCollection>('/api/beats/collection'),
+    getWalletBeats: (address: string) => apiFetch<WalletBeats>(`/api/wallets/${encodeURIComponent(address)}/beats`),
     listSceneBeats: (sceneId: string) => apiFetch<PublicBeat[]>(sceneBeatsPath(sceneId)),
     getBeat: (beatId: string) => apiFetch<PublicBeat>(beatApiPath(beatId)),
     createBeat: (body: ReturnType<typeof beatBody>) =>

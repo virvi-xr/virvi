@@ -2,11 +2,14 @@
 import {
   BEAT_CARD_MIN_CENTS, BEAT_CLAIM_GRACE_MS, BEAT_DESCRIPTION_MAX, BEAT_IMAGE_MIN_PX, BEAT_LOCATION_MAX, BEAT_MIN_PRESENT_DEFAULT_MINUTES,
   BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_DEFAULT, BEAT_SUPPLY_CAP_MAX,
-  type BeatChain, type BeatClaimStatus, type BeatLocation, type BeatLocationType, type BeatStatus, type PublicBeat,
+  type BeatChain, type BeatClaimStatus, type BeatKind, type BeatCollection, type CollectedBeat, type WalletBeats, type BeatLocation, type BeatLocationType, type BeatStatus, type PublicBeat,
 } from '@virvixr/shared'
+import { keccak_256 } from '@noble/hashes/sha3'
 import { formatCredit } from './studio'
 import { shortWallet } from './studio-people'
 
+export { shortWallet }
+export type { BeatKind, BeatCollection, CollectedBeat, WalletBeats }
 export type { PublicBeat, BeatStatus, BeatClaimStatus, BeatLocation, BeatLocationType }
 
 /** GET /api/beats/availability (answers even while BEATs are dark). `reason` is 'not_configured' when BEATs are
@@ -517,3 +520,34 @@ export async function pollPayment(o: {
 export function beatsExplainerFor(pathname: string, search: string): boolean {
   return pathname.replace(/\/+$/, '') === '/beats' && !new URLSearchParams(search).get('id')
 }
+
+// ---- The collection (LIV-185) ----
+
+/** The Collected tab's filters. `from`/`to` are YYYY-MM-DD, inclusive, compared on `startsAt` in UTC. */
+export type CollectedFilter = { wallet: string | 'all'; from: string | null; to: string | null; kind: BeatKind | 'all'; earnedOnly: boolean }
+
+export function filterCollected(items: CollectedBeat[], f: CollectedFilter): CollectedBeat[] {
+  return items.filter((b) => {
+    if (f.wallet !== 'all' && b.wallet.toLowerCase() !== f.wallet.toLowerCase()) return false
+    if (f.kind !== 'all' && b.kind !== f.kind) return false
+    if (f.earnedOnly && !b.earned) return false
+    const day = b.startsAt.slice(0, 10)
+    if (f.from && day < f.from) return false
+    if (f.to && day > f.to) return false
+    return true
+  })
+}
+
+/** EIP-55 checksum of a 0x address (anything else comes back unchanged). */
+function checksummed(address: string): string {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return address
+  const lower = address.slice(2).toLowerCase()
+  const hash = Array.from(keccak_256(new TextEncoder().encode(lower)), (b) => b.toString(16).padStart(2, '0')).join('')
+  return '0x' + Array.from(lower, (c, i) => (parseInt(hash[i], 16) >= 8 ? c.toUpperCase() : c)).join('')
+}
+
+/** The public page for a wallet's BEATs. */
+export const walletPageHref = (address: string) => `/w/${checksummed(address)}`
+
+/** "Jan 5, 2026" in UTC, so a medal shows the same day to everyone. */
+export const medalDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })

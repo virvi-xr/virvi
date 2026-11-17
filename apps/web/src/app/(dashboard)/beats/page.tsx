@@ -2,7 +2,7 @@
 // BEATs (LIV-11): the host's BEATs, newest first. `?id=` opens one, as `/scenes?id=` opens a scene.
 import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { CREATE_CLOSED, beatCounts, beatFieldError, beatHref, beatWindow, newBeatHref, type BeatAvailability, type PublicBeat } from '@/lib/beats'
@@ -10,6 +10,7 @@ import { countLabel } from '@/lib/format'
 import { EmptyState, PageHeader, Skeleton } from '@/components/ui'
 import { MedalIcon, PlusIcon } from '@/components/icons'
 import { BeatBadges, BeatsGate } from '@/components/beats/BeatBits'
+import { CollectedBeats } from '@/components/beats/CollectedBeats'
 import BeatDetailPage from './[beatId]/client'
 
 /** PrimaryButton's look, on a link to the create page. */
@@ -25,10 +26,30 @@ export default function BeatsPage() {
 
 function BeatsContent() {
   const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
   if (searchParams.get('id')) return <BeatDetailPage />
+  // Collected is the default; the tab lives in the URL (?tab=hosting) so it survives a reload
+  const tab = searchParams.get('tab') === 'hosting' ? 'hosting' : 'collected'
+  const pick = (t: 'collected' | 'hosting') => router.replace(t === 'hosting' ? `${pathname}?tab=hosting` : pathname)
   return (
     <div className="mx-auto max-w-7xl">
-      <BeatsGate>{(a) => <BeatList availability={a} />}</BeatsGate>
+      <div className="mb-4 inline-flex rounded-md border border-gray-800 p-0.5 text-sm" role="tablist" aria-label="BEATs">
+        {([['Collected', 'collected'], ['Hosting', 'hosting']] as const).map(([label, value]) => (
+          <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => pick(value)}
+            className={`rounded px-3 py-1.5 ${tab === value ? 'bg-white/[0.06] text-white' : 'text-gray-400 hover:text-white'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === 'collected' ? (
+        <>
+          <PageHeader crumbs={['Workspace', 'BEATs']} title="Collected" subtitle="The BEATs your wallets hold." />
+          <CollectedBeats />
+        </>
+      ) : (
+        <BeatsGate>{(a) => <BeatList availability={a} />}</BeatsGate>
+      )}
     </div>
   )
 }
