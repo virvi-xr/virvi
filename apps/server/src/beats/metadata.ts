@@ -58,11 +58,17 @@ export const BEAT_EXTERNAL_URL = 'https://virvi.io/beats'
 
 type Row = typeof beats.$inferSelect
 
-/** The description's "Where" line: the location's label, with an online event's link. */
-function whereLine(b: Row): string | null {
+/** Where the event is, as the description's "Where" line says it: the location's label, with an online event's link. */
+export function beatPlace(b: Pick<Row, 'locationLabel' | 'locationType' | 'locationUrl'>): string | null {
   if (!b.locationLabel) return null
-  if (b.locationType === 'online' && b.locationUrl) return `Where: ${b.locationLabel} (${b.locationUrl})`
-  return `Where: ${b.locationLabel}`
+  if (b.locationType === 'online' && b.locationUrl) return `${b.locationLabel} (${b.locationUrl})`
+  return b.locationLabel
+}
+
+/** The description's "Where" line. */
+function whereLine(b: Row): string | null {
+  const place = beatPlace(b)
+  return place ? `Where: ${place}` : null
 }
 
 export async function tokenMetadata(chain: BeatChain, id: bigint) {

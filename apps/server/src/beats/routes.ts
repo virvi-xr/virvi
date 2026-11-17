@@ -9,6 +9,7 @@ import {
   quoteBeat, raiseBeatCap, releaseBeatMints, removeBeatClaim, sceneExists, updateBeat, type BeatCaller,
 } from './service.js'
 import { checkInBeat, claimBeat, currentBeat, stopTrackingBeat, trackBeat } from './visitor.js'
+import walletBeatsRoutes, { WALLET_BEATS_ROUTE, collectionFor, walletsOf } from './collection.js'
 import beatMetadataRoutes, { BEAT_METADATA_ROUTE } from './metadata.js'
 import { cancelMyReissueRequest, createReissueRequest, listMyReissueRequests, type ReissueCaller } from './reissue.js'
 import { signInOf } from '../auth/wallet-blocks.js'
@@ -30,8 +31,10 @@ export default async function beatRoutes(app: FastifyInstance) {
   })
   // The token metadata is public: the one route here that reads no bearer (still dark unless BEAT_ENABLED)
   await app.register(beatMetadataRoutes)
+  // The public page of one wallet's BEATs (LIV-185): no bearer, and outside /api/beats, so it checks BEAT_ENABLED itself
+  await app.register(walletBeatsRoutes)
   app.addHook('preHandler', async (request, reply) => {
-    if (request.routeOptions.url === BEAT_METADATA_ROUTE) return
+    if (request.routeOptions.url === BEAT_METADATA_ROUTE || request.routeOptions.url === WALLET_BEATS_ROUTE) return
     await authenticate(request, reply)
   })
 
@@ -178,6 +181,14 @@ export default async function beatRoutes(app: FastifyInstance) {
     } catch (e) {
       return fail(reply, e)
     }
+  })
+
+  // The account's collection (LIV-185): the BEATs its linked wallets hold. A normal sign-in only, as for reissue requests
+  app.get('/api/beats/collection', async (request, reply) => {
+    const c = reissueCaller(request, reply)
+    if (!c) return reply
+    const wallets = await walletsOf(c.userId)
+    return reply.send({ wallets, beats: await collectionFor(wallets, { includeClaimTimes: true }) })
   })
 
   app.get<{ Params: { sceneId: string } }>('/api/scenes/:sceneId/beats', sceneScoped, async (request, reply) => {

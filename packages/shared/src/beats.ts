@@ -234,3 +234,34 @@ export const BEAT_REISSUE_REASON_MAX = 1000
 export const BEAT_REISSUE_NOTE_MAX = 1000
 /** The most ids in one `reissue` call (VirviBeat.MAX_BATCH). */
 export const BEAT_REISSUE_MAX_BATCH = 200
+
+export type BeatKind = 'basic' | 'custom'
+
+/** One BEAT a wallet holds, for the collection page (LIV-185). */
+export interface CollectedBeat {
+  tokenId: string
+  contract: string
+  chain: BeatChain
+  kind: BeatKind
+  /** The checksummed holder. */
+  wallet: string
+  quantity: number
+  /** Minted to this wallet by a Virvi claim (or reissued to it); otherwise it was bought or sent. */
+  earned: boolean
+  name: string
+  imageUrl: string | null
+  place: string | null
+  startsAt: string
+  endsAt: string
+  tradeable: boolean
+  tokenUrl: string
+  /** Only when earned. */
+  mintTxUrl: string | null
+  /** Only when earned and the claim isn't unlinked; never on the public endpoint. */
+  claimedAt: string | null
+}
+
+/** The signed-in collection: the account's linked wallets and the BEATs they hold. */
+export interface BeatCollection { wallets: string[]; beats: CollectedBeat[] }
+/** The public page for one wallet. */
+export interface WalletBeats { wallet: string; beats: CollectedBeat[] }
