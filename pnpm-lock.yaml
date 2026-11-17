@@ -147,8 +147,8 @@ importers:
         specifier: ^0.33.0
         version: 0.33.5
       stripe:
-        specifier: ^17.0.0
-        version: 17.7.0
+        specifier: ^23.1.0
+        version: 23.1.0(@types/node@22.19.15)
       undici:
         specifier: 6.21.3
         version: 6.21.3
@@ -5751,9 +5751,14 @@ packages:
   strip-literal@3.1.0:
     resolution: {integrity: sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==}
 
-  stripe@17.7.0:
-    resolution: {integrity: sha512-aT2BU9KkizY9SATf14WhhYVv2uOapBWX0OFWF4xvcj1mPaNotlSc2CsxpS4DS46ZueSppmCF5BX1sNYBtwBvfw==}
-    engines: {node: '>=12.*'}
+  stripe@23.1.0:
+    resolution: {integrity: sha512-fVUfMSfTPoukfoV//MUKAx2+YxyKmYaYtnAL9VkfnHfaPNQylFdWZMD+zgUFerI8rjbaiER8Vzj2XEUQ2AhAsQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@types/node': '>=20'
+    peerDependenciesMeta:
+      '@types/node':
+        optional: true
 
   strnum@2.2.2:
     resolution: {integrity: sha512-DnR90I+jtXNSTXWdwrEy9FakW7UX+qUZg28gj5fk2vxxl7uS/3bpI4fjFYVmdK9etptYBPNkpahuQnEwhwECqA==}
@@ -13056,10 +13061,9 @@ snapshots:
     dependencies:
       js-tokens: 9.0.1
 
-  stripe@17.7.0:
-    dependencies:
+  stripe@23.1.0(@types/node@22.19.15):
+    optionalDependencies:
       '@types/node': 22.19.15
-      qs: 6.15.0
 
   strnum@2.2.2: {}
 

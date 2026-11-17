@@ -22,6 +22,13 @@ export function setStripe(client: any): void {
   _override = client
 }
 
+/**
+ * The Stripe API version every request and the webhook destination use: the stripe package's own (it pins one per
+ * release). The webhook destination's "API version" in the Stripe dashboard must be this one, or events arrive in
+ * other shapes.
+ */
+export const STRIPE_API_VERSION = '2026-10-28.endive'
+
 export async function getStripe(): Promise<any> {
   if (_override) return _override
   if (!config.stripeSecretKey) {
@@ -29,7 +36,7 @@ export async function getStripe(): Promise<any> {
   }
   if (!_stripe) {
     const { default: Stripe } = await import('stripe')
-    _stripe = new Stripe(config.stripeSecretKey, { apiVersion: '2024-12-18.acacia' as any })
+    _stripe = new Stripe(config.stripeSecretKey, { apiVersion: STRIPE_API_VERSION })
   }
   return _stripe
 }
@@ -367,16 +374,14 @@ export async function handleWebhookEvent(event: any): Promise<void> {
     }
 
     case 'invoice.payment_failed': {
-      const invoice = event.data.object
-      await markPaymentFailed(invoice.subscription)
+      const subId = invoiceSubscription(event.data.object)
+      if (subId) await markPaymentFailed(subId)
       break
     }
 
     case 'invoice.paid': {
-      const invoice = event.data.object
-      if (invoice.subscription) {
-        await markPaymentSucceeded(invoice.subscription)
-      }
+      const subId = invoiceSubscription(event.data.object)
+      if (subId) await markPaymentSucceeded(subId)
       break
     }
   }
@@ -386,6 +391,20 @@ export async function handleWebhookEvent(event: any): Promise<void> {
 // Internal subscription lifecycle
 // ---------------------------------------------------------------------------
 
+/** The subscription an invoice bills, or null for one that isn't a subscription's (since 2025-03-31.basil it's under parent). */
+function invoiceSubscription(invoice: any): string | null {
+  const sub = invoice?.parent?.subscription_details?.subscription
+  return typeof sub === 'string' ? sub : sub?.id ?? null
+}
+
+/** A subscription's plan and billing period, from its first item (since 2025-03-31.basil the period is per item). */
+function planOf(stripeSub: any): { priceId: string; tier: SubscriptionTier; currentPeriodStart: Date | null; currentPeriodEnd: Date | null } {
+  const item = stripeSub.items?.data?.[0]
+  const priceId = item?.price?.id || ''
+  const at = (s: unknown) => (typeof s === 'number' ? new Date(s * 1000) : null)
+  return { priceId, tier: tierFromPriceId(priceId), currentPeriodStart: at(item?.current_period_start), currentPeriodEnd: at(item?.current_period_end) }
+}
+
 async function activateSubscription(
   userId: string,
   stripeSubscriptionId: string,
@@ -393,19 +412,18 @@ async function activateSubscription(
 ): Promise<void> {
   const stripe = await getStripe()
   const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId)
-  const priceId = stripeSub.items.data[0]?.price?.id || ''
-  const tier = tierFromPriceId(priceId)
+  const plan = planOf(stripeSub)
 
   await db
     .update(subscriptions)
     .set({
       stripeSubscriptionId,
       stripeCustomerId,
-      stripePriceId: priceId,
-      tier,
+      stripePriceId: plan.priceId,
+      tier: plan.tier,
       status: 'active',
-      currentPeriodStart: new Date(stripeSub.current_period_start * 1000),
-      currentPeriodEnd: new Date(stripeSub.current_period_end * 1000),
+      currentPeriodStart: plan.currentPeriodStart,
+      currentPeriodEnd: plan.currentPeriodEnd,
       cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
       updatedAt: new Date(),
     })
@@ -413,17 +431,16 @@ async function activateSubscription(
 }
 
 async function updateSubscription(stripeSub: any): Promise<void> {
-  const priceId = stripeSub.items.data[0]?.price?.id || ''
-  const tier = tierFromPriceId(priceId)
+  const plan = planOf(stripeSub)
 
   await db
     .update(subscriptions)
     .set({
-      stripePriceId: priceId,
-      tier,
+      stripePriceId: plan.priceId,
+      tier: plan.tier,
       status: stripeSub.status,
-      currentPeriodStart: new Date(stripeSub.current_period_start * 1000),
-      currentPeriodEnd: new Date(stripeSub.current_period_end * 1000),
+      currentPeriodStart: plan.currentPeriodStart,
+      currentPeriodEnd: plan.currentPeriodEnd,
       cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
       updatedAt: new Date(),
     })

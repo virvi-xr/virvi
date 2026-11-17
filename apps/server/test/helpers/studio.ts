@@ -213,7 +213,7 @@ export function fakeStripe() {
     },
     subscriptions: {
       async retrieve(id: string) {
-        return { id, items: { data: [{ price: { id: 'price_creator' } }] }, current_period_start: 1, current_period_end: 2, cancel_at_period_end: false }
+        return { id, items: { data: [{ price: { id: 'price_creator' }, current_period_start: 1, current_period_end: 2 }] }, cancel_at_period_end: false }
       },
     },
   }
