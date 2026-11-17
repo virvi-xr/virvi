@@ -55,14 +55,14 @@ export default function WalletBeatsClient() {
   return (
     <div className={`beat-world ${beatDisplay.variable} min-h-screen overflow-x-hidden`}>
       <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-5 sm:px-6">
-        <a href="/w/" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">Check another wallet</a>
-        <a href="/beats" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">What are BEATs?</a>
+        <a href="/beat/" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">Check another wallet</a>
+        <a href="/beat/" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">What are BEATs?</a>
       </header>
       <main className="mx-auto max-w-5xl px-4 pb-28 sm:px-6">
         {state.kind === 'loading' && <p className="mt-16 text-center text-[var(--bw-dim)]" role="status">Loading…</p>}
         {state.kind === 'invalid' && (
           <Notice title="That isn’t a wallet address.">
-            <a href="/w/" className={link}>Check a wallet</a>
+            <a href="/beat/" className={link}>Check a wallet</a>
           </Notice>
         )}
         {state.kind === 'error' && (
@@ -87,7 +87,7 @@ export default function WalletBeatsClient() {
             </section>
             {data.beats.length === 0 ? (
               <Notice title="This wallet doesn’t hold any BEATs yet.">
-                <a href="/beats" className={link}>How to earn one</a>
+                <a href="/beat/" className={link}>How to earn one</a>
               </Notice>
             ) : (
               <section className="bw-floor">

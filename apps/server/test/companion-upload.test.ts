@@ -216,6 +216,21 @@ describe('companion uploads', () => {
     }
   })
 
+  it('/beat and /beat/ serve the BEAT landing page (every token links to /beat, without the slash)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'virvi-dash-'))
+    writeFileSync(join(dir, 'index.html'), 'HOME')
+    mkdirSync(join(dir, 'beat'), { recursive: true })
+    writeFileSync(join(dir, 'beat', 'index.html'), 'BEAT-LANDING')
+    ;(config as any).dashboardDir = dir
+    await app.close()
+    app = await testApp()
+    for (const url of ['/beat', '/beat/']) {
+      const res = await app.inject({ method: 'GET', url })
+      expect(res.statusCode, url).toBe(200)
+      expect(res.body, url).toBe('BEAT-LANDING')
+    }
+  })
+
   it('/w/ itself is the BEAT lookup page, and its RSC payload is served, not the wallet page', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'virvi-dash-'))
     writeFileSync(join(dir, 'index.html'), 'HOME')

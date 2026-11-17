@@ -53,7 +53,7 @@ describe('BEAT public metadata (LIV-11)', () => {
       name: 'Opening night',
       description: "Thanks for coming\n\nThis BEAT can't be sold or transferred. It stays in the wallet it was sent to.",
       image: 'https://cdn.example/beats/polygon-amoy/1-x.png',
-      external_url: 'https://virvi.io/beats',
+      external_url: 'https://virvi.io/beat',
       attributes: [
         { trait_type: 'Starts', display_type: 'date', value: Date.parse('2026-12-01T20:00:00Z') / 1000 },
         { trait_type: 'Ends', display_type: 'date', value: Date.parse('2026-12-01T22:00:00Z') / 1000 },

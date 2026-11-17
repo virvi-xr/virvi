@@ -10,7 +10,7 @@ import { isInvitePath } from '@/lib/studio-people'
 import { useStudioAvailable } from '@/lib/use-studio'
 import { useBeatAvailability } from '@/lib/use-beats'
 import { beatsExplainerFor, beatsNavVisible } from '@/lib/beats'
-import { BeatsExplainer } from '@/components/beats/BeatsExplainer'
+import { GoToBeat } from '@/components/beats/GoToBeat'
 import Link from 'next/link'
 import { BrandMark } from '@/components/BrandMark'
 import { NotificationBell } from '@/components/NotificationBell'
@@ -85,7 +85,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (!loading && !user) {
-      // The bare /beats page explains BEATs to anyone signed out (tokens and explorer listings link there)
+      // The bare /beats page sends anyone signed out to the BEAT landing page (/beat) instead of sign-in
       if (beatsExplainerFor(window.location.pathname, window.location.search)) return
       const here = window.location.pathname + window.location.search
       // A design's invite link is often someone's first visit: it opens on sign-up (sign in is beside it)
@@ -133,7 +133,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [passSceneId])
 
   if (loading) return <div className="flex h-screen items-center justify-center"><p>Loading...</p></div>
-  if (!user) return typeof window !== 'undefined' && beatsExplainerFor(window.location.pathname, window.location.search) ? <BeatsExplainer /> : null
+  if (!user) return typeof window !== 'undefined' && beatsExplainerFor(window.location.pathname, window.location.search) ? <GoToBeat /> : null
 
   const here = typeof window === 'undefined' ? pathname : window.location.pathname + window.location.search
   const locked = trial && !trialAllows(pathname)

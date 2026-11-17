@@ -1,12 +1,6 @@
-import type { Metadata } from 'next'
-import { BeatsExplainer } from '@/components/beats/BeatsExplainer'
+import { GoToBeat } from '@/components/beats/GoToBeat'
 
-export const metadata: Metadata = {
-  title: 'BEATs',
-  description: 'Proof you were there: BEATs are attendance tokens for events in virtual worlds. Check any wallet’s BEATs.',
-}
-
-/** /w: the BEAT page with its wallet lookup, for anyone, signed in or not. */
-export default function BeatLookupPage() {
-  return <BeatsExplainer />
+/** /w/ on its own has no wallet: the lookup lives on the BEAT landing page. */
+export default function WalletIndexPage() {
+  return <GoToBeat />
 }

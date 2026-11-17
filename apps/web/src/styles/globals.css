@@ -162,3 +162,4 @@
 @media (prefers-reduced-motion: reduce) {
   .bw-ring, .bw-glitch { animation: none; }
 }
+.bw-medal-lg { width: min(26rem, 72vw); }

@@ -54,7 +54,7 @@ const unix = (d: Date) => Math.floor(d.getTime() / 1000)
 /** The plain line a non-tradeable BEAT's description ends with (standards M1): marketplaces show a Sell button anyway. */
 export const NOT_TRADEABLE_NOTE = "This BEAT can't be sold or transferred. It stays in the wallet it was sent to."
 /** Where every BEAT's token links to (standards M2): there is no public page per BEAT yet. */
-export const BEAT_EXTERNAL_URL = 'https://virvi.io/beats'
+export const BEAT_EXTERNAL_URL = 'https://virvi.io/beat'
 
 type Row = typeof beats.$inferSelect
 
