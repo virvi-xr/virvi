@@ -13,7 +13,7 @@ export function BeatLanding() {
   return (
     <div className={`beat-world ${beatDisplay.variable} min-h-screen overflow-x-hidden`}>
       <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5 sm:px-6">
-        <a href="/" className="bw-display text-sm font-bold tracking-wide text-[var(--bw-chrome)]">Virvi</a>
+        <a href="/" className="shrink-0"><img src="/virvi-logo-light.svg" alt="Virvi" className="h-7 w-auto" /></a>
         <a href={signinPath('/beats')} className={quiet}>Sign in</a>
       </header>
 
@@ -30,14 +30,14 @@ export function BeatLanding() {
           Proof you<br />were there.
         </h1>
         <p className="mt-6 max-w-lg text-lg leading-relaxed text-[var(--bw-dim)]">
-          BEATs are tokens you earn by showing up to events in virtual worlds like Decentraland.
+          BEATs are tokens you earn by showing up. Any event can have one, and each records where you were and when.
         </p>
         <WalletLookup />
       </section>
 
       <section className="mx-auto max-w-5xl px-4 pb-20 sm:px-6">
         <ol className="grid gap-10 sm:grid-cols-3 sm:gap-8">
-          <Step n="1" title="Show up">Go to the event in Decentraland, signed in with your wallet, and choose Track my attendance on the BEAT card.</Step>
+          <Step n="1" title="Show up">Go to the event signed in with your wallet, and choose Track my attendance on the BEAT card.</Step>
           <Step n="2" title="Claim it">Stay as long as the card asks, then choose Claim your BEAT. It’s free: Virvi pays the network fee.</Step>
           <Step n="3" title="Keep it">It lands in your wallet on Polygon, with the event’s name, place and time. Most BEATs can’t be sold.</Step>
         </ol>

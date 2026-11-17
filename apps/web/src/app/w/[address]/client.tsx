@@ -55,7 +55,7 @@ export default function WalletBeatsClient() {
   return (
     <div className={`beat-world ${beatDisplay.variable} min-h-screen overflow-x-hidden`}>
       <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-5 sm:px-6">
-        <a href="/beat/" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">Check another wallet</a>
+        <span className="flex items-center gap-5"><a href="/beat/" className="shrink-0"><img src="/virvi-logo-light.svg" alt="Virvi BEATs" className="h-6 w-auto" /></a><a href="/beat/" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">Check another wallet</a></span>
         <a href="/beat/" className="text-sm text-[var(--bw-dim)] hover:text-[var(--bw-chrome)]">What are BEATs?</a>
       </header>
       <main className="mx-auto max-w-5xl px-4 pb-28 sm:px-6">

@@ -3,7 +3,7 @@ import { BeatLanding } from '@/components/beats/BeatLanding'
 
 export const metadata: Metadata = {
   title: 'BEATs: proof you were there',
-  description: 'BEATs are tokens you earn by showing up to events in virtual worlds. Paste your wallet to see yours.',
+  description: 'BEATs are tokens you earn by showing up to an event. Paste your wallet to see yours.',
 }
 
 /** virvi.io/beat: the BEAT landing page, for anyone, signed in or not. */
