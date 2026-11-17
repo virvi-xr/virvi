@@ -45,7 +45,7 @@ function BeatsContent() {
       {tab === 'collected' ? (
         <>
           <PageHeader crumbs={['Workspace', 'BEATs']} title="Collected" subtitle="The BEATs your wallets hold." />
-          <CollectedBeats />
+          <BeatsGate>{() => <CollectedBeats />}</BeatsGate>
         </>
       ) : (
         <BeatsGate>{(a) => <BeatList availability={a} />}</BeatsGate>

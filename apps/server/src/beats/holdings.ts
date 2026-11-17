@@ -1,5 +1,5 @@
 import { ZeroAddress, type JsonRpcProvider } from 'ethers'
-import { and, asc, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import { BEAT_CHAIN_INFO, type BeatChain } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { beatHoldings, beatIndexCursors, beats } from '../db/schema.js'
@@ -97,8 +97,8 @@ export async function applyTransfers(chain: BeatChain, transfers: BeatEvent[]): 
 
 /**
  * Brings beat_holdings up to the chain's head minus its confirmations, for every contract that has a BEAT created on
- * chain. A contract's first run starts at the block of its earliest create transaction (skipped this round when that
- * block can't be found, never read from block 0). Each chunk and its cursor move are one transaction.
+ * chain. A contract's first run starts at the earliest block among its BEATs' create transactions (hashes that don't
+ * resolve are ignored; skipped this round when none resolve, never read from block 0). Each chunk and its cursor move are one transaction.
  */
 export async function indexBeatHoldings(chain: BeatChain, reader: BeatLogReader): Promise<{ contracts: number; transfers: number; toBlock: number | null }> {
   const contractExpr = sql<string>`lower(${beats.contractAddress})`
@@ -118,10 +118,18 @@ export async function indexBeatHoldings(chain: BeatChain, reader: BeatLogReader)
     if (cursor) {
       last = cursor.lastBlock
     } else {
-      const [first] = await db.select({ tx: beats.createdOnChainTx }).from(beats)
+      // The on-chain create happens at payment, not at draft, so every BEAT's create block counts: start at the earliest.
+      const creates = await db.select({ id: beats.id, tx: beats.createdOnChainTx }).from(beats)
         .where(and(eq(beats.chain, chain), isNotNull(beats.tokenId), isNotNull(beats.createdOnChainTx), sql`lower(${beats.contractAddress}) = ${contract}`))
-        .orderBy(asc(beats.createdAt)).limit(1)
-      const block = first?.tx ? await reader.txBlock(first.tx) : null
+      let block: number | null = null
+      for (const c of creates) {
+        const b = c.tx ? await reader.txBlock(c.tx) : null
+        if (b === null) {
+          console.warn(`[beats] ${chain} create tx for BEAT ${c.id} not found; ignoring it for the start block`)
+          continue
+        }
+        block = block === null ? b : Math.min(block, b)
+      }
       if (block === null) continue
       last = block - 1
     }

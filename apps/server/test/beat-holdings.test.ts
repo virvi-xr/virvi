@@ -17,7 +17,8 @@ class FakeReader implements BeatLogReader {
   all: BeatEvent[] = []
   calls: { contract: string; fromBlock: number; toBlock: number }[] = []
   async latestBlock() { return this.latest }
-  async txBlock() { return this.createBlock }
+  txBlocks: Record<string, number | null> = {}
+  async txBlock(hash: string) { return hash in this.txBlocks ? this.txBlocks[hash] : this.createBlock }
   async transfers(contract: string, fromBlock: number, toBlock: number): Promise<BeatEvent[]> {
     this.calls.push({ contract, fromBlock, toBlock })
     return this.all.filter((t) => t.blockNumber >= fromBlock && t.blockNumber <= toBlock)
@@ -100,6 +101,29 @@ describe('BEAT holdings index (LIV-185)', () => {
     expect(r.calls).toHaveLength(0)
     expect(out.toBlock).toBeNull()
     expect(await db.select().from(beatIndexCursors)).toHaveLength(0)
+  })
+
+  it('starts at the earliest create block even when the earlier-drafted BEAT was created on chain later', async () => {
+    await resetDb()
+    await seed({ tokenId: 7, createdOnChainTx: '0xlate', createdAt: new Date(Date.now() - 86_400_000) })
+    await seed({ tokenId: 8, createdOnChainTx: '0xearly', createdAt: new Date() })
+    const r = new FakeReader()
+    r.txBlocks = { '0xlate': 150, '0xearly': 100 }
+    r.all = [tr(ZeroAddress, A, 120, 8n)]
+    await indexBeatHoldings('polygon', r)
+    expect(r.calls[0].fromBlock).toBe(100)
+    expect(await held(A, 8)).toEqual(['1'])
+  })
+
+  it('an unresolvable create hash beside a resolvable one does not skip the contract', async () => {
+    await resetDb()
+    await seed({ tokenId: 7, createdOnChainTx: '0xgone' })
+    await seed({ tokenId: 8, createdOnChainTx: '0xok' })
+    const r = new FakeReader()
+    r.txBlocks = { '0xgone': null, '0xok': 100 }
+    r.all = [tr(ZeroAddress, A, 105, 8n)]
+    await indexBeatHoldings('polygon', r)
+    expect(await held(A, 8)).toEqual(['1'])
   })
 
   it('rpcLogReader decodes a TransferBatch into one transfer per id', async () => {

@@ -158,7 +158,7 @@ describe('BEAT collection (LIV-185)', () => {
     expect(Object.keys(empty.json()).sort()).toEqual(Object.keys(body).sort())
   })
 
-  it('the public response is cacheable and rate limited', async () => {
+  it('the public response is cacheable', async () => {
     const res = await pub(getAddress(randomWallet()))
     expect(res.headers['cache-control']).toBe('public, max-age=60')
   })

@@ -41,7 +41,7 @@ export default function WalletBeatsClient() {
 
   const data = state.kind === 'ready' ? state.data : null
   const shown = useMemo(
-    () => (data ? filterCollected(data.beats, { wallet: 'all', from, to, kind: 'all', earnedOnly }).sort((a, b) => b.startsAt.localeCompare(a.startsAt)) : []),
+    () => (data ? filterCollected(data.beats, { wallet: 'all', from, to, kind: 'all', earnedOnly }) : []),
     [data, from, to, earnedOnly],
   )
 

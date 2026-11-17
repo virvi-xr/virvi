@@ -40,7 +40,7 @@ export function CollectedBeats() {
   }
   if (!data) return <Skeleton />
   if (data.wallets.length === 0) {
-    return <EmptyState icon={<MedalIcon size={28} />} title="No wallet yet" body="Sign in with a wallet to collect BEATs" />
+    return <EmptyState icon={<MedalIcon size={28} />} title="No wallet yet" body="Sign in with a wallet to collect BEATs." />
   }
   if (data.beats.length === 0) {
     return <EmptyState icon={<MedalIcon size={28} />} title="Nothing collected" body="No BEATs yet. Go to an event with a BEAT and claim it." />
@@ -55,8 +55,8 @@ export function CollectedBeats() {
             {data.wallets.map((w) => <option key={w} value={w}>{shortWallet(w)}</option>)}
           </select>
         </label>
-        {filter.wallet !== 'all' && (
-          <Link href={walletPageHref(filter.wallet)} className="pb-2 text-sm text-accent hover:underline">Share</Link>
+        {(filter.wallet !== 'all' || data.wallets.length === 1) && (
+          <Link href={walletPageHref(filter.wallet !== 'all' ? filter.wallet : data.wallets[0])} className="pb-2 text-sm text-accent hover:underline">Share</Link>
         )}
         <label className="flex flex-col gap-1 text-xs text-gray-400">From
           <input type="date" className={FIELD} value={filter.from ?? ''} onChange={(e) => set({ from: e.target.value || null })} />
@@ -77,7 +77,7 @@ export function CollectedBeats() {
         <p className="text-sm text-gray-400">No BEATs match these filters.</p>
       ) : (
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] items-start gap-3">
-          {shown.map((b) => <BeatMedal key={`${b.wallet}-${b.contract}-${b.tokenId}`} beat={b} showWallet={data.wallets.length > 1} />)}
+          {shown.map((b) => <BeatMedal key={`${b.wallet}-${b.contract}-${b.tokenId}`} beat={b} showWallet />)}
         </ul>
       )}
     </>
