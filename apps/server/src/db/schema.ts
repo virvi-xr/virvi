@@ -2802,6 +2802,8 @@ export const beatHoldings = pgTable('beat_holdings', {
   tokenId: bigint('token_id', { mode: 'bigint' }).notNull(),
   wallet: text('wallet').notNull(),
   balance: numeric('balance').notNull(),
+  // Set when this wallet's BEAT was reissued to another wallet (the contract keeps the old balance): the new wallet, lower case
+  replacedBy: text('replaced_by'),
   updatedBlock: bigint('updated_block', { mode: 'number' }).notNull(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.chain, t.contract, t.tokenId, t.wallet] }),

@@ -3,7 +3,7 @@ import { and, asc, eq, isNotNull, sql } from 'drizzle-orm'
 import { BEAT_CHAIN_INFO, type BeatChain } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { beatHoldings, beatIndexCursors, beats } from '../db/schema.js'
-import { beatInterface } from './chain.js'
+import { BEAT_REISSUED_TOPIC, beatInterface } from './chain.js'
 
 /**
  * Who holds each BEAT (LIV-185): beat_holdings is built from the BEAT contract's ERC-1155 transfer logs, read in
@@ -13,9 +13,14 @@ import { beatInterface } from './chain.js'
 
 export type BeatTransfer = { contract: string; tokenId: bigint; from: string; to: string; value: bigint; blockNumber: number }
 
+/** A `Reissued` log: the contract keeps the old wallet's balance, so the old wallet's row is marked as replaced. */
+export type BeatReissue = { kind: 'reissue'; contract: string; tokenId: bigint; from: string; to: string; blockNumber: number }
+export type BeatEvent = BeatTransfer | BeatReissue
+
 export interface BeatLogReader {
   latestBlock(): Promise<number>
-  transfers(contract: string, fromBlock: number, toBlock: number): Promise<BeatTransfer[]>
+  /** Transfers and reissues, in block and log order. */
+  transfers(contract: string, fromBlock: number, toBlock: number): Promise<BeatEvent[]>
   /** The block a transaction is in, or null when it isn't found. */
   txBlock(hash: string): Promise<number | null>
 }
@@ -33,13 +38,15 @@ export function rpcLogReader(provider: JsonRpcProvider): BeatLogReader {
       return (await provider.getTransactionReceipt(hash))?.blockNumber ?? null
     },
     async transfers(contract, fromBlock, toBlock) {
-      const logs = await provider.getLogs({ address: contract, fromBlock, toBlock, topics: [[SINGLE_TOPIC, BATCH_TOPIC]] })
-      const out: BeatTransfer[] = []
+      const logs = await provider.getLogs({ address: contract, fromBlock, toBlock, topics: [[SINGLE_TOPIC, BATCH_TOPIC, BEAT_REISSUED_TOPIC]] })
+      const out: BeatEvent[] = []
       for (const log of logs) {
         const parsed = beatInterface.parseLog({ topics: [...log.topics], data: log.data })
         if (!parsed) continue
         const base = { contract: log.address.toLowerCase(), from: String(parsed.args.from), to: String(parsed.args.to), blockNumber: log.blockNumber }
-        if (parsed.name === 'TransferSingle') {
+        if (parsed.name === 'Reissued') {
+          out.push({ ...base, kind: 'reissue', tokenId: BigInt(parsed.args.id) })
+        } else if (parsed.name === 'TransferSingle') {
           out.push({ ...base, tokenId: BigInt(parsed.args.id), value: BigInt(parsed.args.value) })
         } else if (parsed.name === 'TransferBatch') {
           const ids = parsed.args.ids as bigint[]
@@ -54,8 +61,13 @@ export function rpcLogReader(provider: JsonRpcProvider): BeatLogReader {
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
-async function applyIn(tx: Tx, chain: BeatChain, transfers: BeatTransfer[]): Promise<void> {
+async function applyIn(tx: Tx, chain: BeatChain, transfers: BeatEvent[]): Promise<void> {
   for (const t of transfers) {
+    if ('kind' in t) {
+      await tx.update(beatHoldings).set({ replacedBy: t.to.toLowerCase() })
+        .where(and(eq(beatHoldings.chain, chain), eq(beatHoldings.contract, t.contract.toLowerCase()), eq(beatHoldings.tokenId, t.tokenId), eq(beatHoldings.wallet, t.from.toLowerCase())))
+      continue
+    }
     if (t.value <= 0n) continue
     const contract = t.contract.toLowerCase()
     const from = t.from.toLowerCase()
@@ -79,7 +91,7 @@ async function applyIn(tx: Tx, chain: BeatChain, transfers: BeatTransfer[]): Pro
 }
 
 /** Applies transfers in order, in one transaction. */
-export async function applyTransfers(chain: BeatChain, transfers: BeatTransfer[]): Promise<void> {
+export async function applyTransfers(chain: BeatChain, transfers: BeatEvent[]): Promise<void> {
   await db.transaction((tx) => applyIn(tx, chain, transfers))
 }
 
@@ -118,11 +130,18 @@ export async function indexBeatHoldings(chain: BeatChain, reader: BeatLogReader)
       const toBlock = Math.min(last + INDEX_CHUNK_BLOCKS, safeHead)
       if (toBlock <= last) break
       const transfers = await reader.transfers(contract, last + 1, toBlock)
-      await db.transaction(async (tx) => {
+      // The cursor row is the lock: a run that finds it moved since it read it (another instance applied this chunk) stops.
+      const moved = await db.transaction(async (tx) => {
+        await tx.insert(beatIndexCursors).values({ chain, contract, lastBlock: last }).onConflictDoNothing()
+        const [row] = await tx.select().from(beatIndexCursors)
+          .where(and(eq(beatIndexCursors.chain, chain), eq(beatIndexCursors.contract, contract))).for('update')
+        if (row.lastBlock !== last) return true
         await applyIn(tx, chain, transfers)
-        await tx.insert(beatIndexCursors).values({ chain, contract, lastBlock: toBlock })
-          .onConflictDoUpdate({ target: [beatIndexCursors.chain, beatIndexCursors.contract], set: { lastBlock: toBlock, updatedAt: sql`now()` } })
+        await tx.update(beatIndexCursors).set({ lastBlock: toBlock, updatedAt: sql`now()` })
+          .where(and(eq(beatIndexCursors.chain, chain), eq(beatIndexCursors.contract, contract)))
+        return false
       })
+      if (moved) break
       total += transfers.length
       last = toBlock
       lastTo = lastTo === null ? toBlock : Math.max(lastTo, toBlock)

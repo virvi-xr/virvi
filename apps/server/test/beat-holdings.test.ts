@@ -4,7 +4,7 @@ import { ZeroAddress, getAddress, type JsonRpcProvider } from 'ethers'
 import { beatInterface } from '../src/beats/chain.js'
 import { db } from '../src/db/connection.js'
 import { beatHoldings, beatIndexCursors, beats } from '../src/db/schema.js'
-import { INDEX_CHUNK_BLOCKS, indexBeatHoldings, rpcLogReader, type BeatLogReader, type BeatTransfer } from '../src/beats/holdings.js'
+import { INDEX_CHUNK_BLOCKS, indexBeatHoldings, rpcLogReader, type BeatLogReader, type BeatEvent, type BeatTransfer } from '../src/beats/holdings.js'
 import { resetDb } from './helpers/db.js'
 
 const CONTRACT = '0x00000000000000000000000000000000000c0de1'
@@ -14,11 +14,11 @@ const B = '0x00000000000000000000000000000000000000bb'
 class FakeReader implements BeatLogReader {
   latest = 200
   createBlock: number | null = 100
-  all: BeatTransfer[] = []
+  all: BeatEvent[] = []
   calls: { contract: string; fromBlock: number; toBlock: number }[] = []
   async latestBlock() { return this.latest }
   async txBlock() { return this.createBlock }
-  async transfers(contract: string, fromBlock: number, toBlock: number) {
+  async transfers(contract: string, fromBlock: number, toBlock: number): Promise<BeatEvent[]> {
     this.calls.push({ contract, fromBlock, toBlock })
     return this.all.filter((t) => t.blockNumber >= fromBlock && t.blockNumber <= toBlock)
   }
@@ -110,5 +110,26 @@ describe('BEAT holdings index (LIV-185)', () => {
       { contract: CONTRACT, tokenId: 7n, from: ZeroAddress, to: getAddress(B), value: 1n, blockNumber: 120 },
       { contract: CONTRACT, tokenId: 8n, from: ZeroAddress, to: getAddress(B), value: 2n, blockNumber: 120 },
     ])
+  })
+
+  it('a reissue marks the old wallet row as replaced and the new wallet holds 1', async () => {
+    const r = new FakeReader()
+    r.all = [tr(ZeroAddress, A, 105), { kind: 'reissue', contract: CONTRACT, tokenId: 7n, from: A, to: B, blockNumber: 120 }, tr(ZeroAddress, B, 120)]
+    await indexBeatHoldings('polygon', r)
+    const [a] = await db.select().from(beatHoldings).where(eq(beatHoldings.wallet, A))
+    expect(a.replacedBy).toBe(B)
+    expect(a.balance).toBe('1')
+    const [b] = await db.select().from(beatHoldings).where(eq(beatHoldings.wallet, B))
+    expect(b.balance).toBe('1')
+    expect(b.replacedBy).toBeNull()
+  })
+
+  it('two overlapping runs apply each chunk exactly once', async () => {
+    const r = new FakeReader()
+    r.all = [tr(ZeroAddress, A, 105)]
+    await Promise.all([indexBeatHoldings('polygon', r), indexBeatHoldings('polygon', r)])
+    expect(await held(A)).toEqual(['1'])
+    const [cur] = await db.select().from(beatIndexCursors)
+    expect(cur.lastBlock).toBe(170)
   })
 })
