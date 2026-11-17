@@ -184,13 +184,13 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
             if elsewhere:
                 error = 'GLBs exported outside out/<category>/: ' + ', '.join(
                     g.relative_to(design).as_posix() for g in elsewhere)
-        renders, render_errors, uploaded = {}, [], set()
+        renders, fps, render_errors, uploaded = {}, {}, [], set()
         if changed and not proposal and not error:
             _phase(client, job_id, 'rendering')
             for p in changed:
-                counts, problem = {}, None
+                counts, rates, problem = {}, {}, None
                 for view in _prompt_views(kind, p):
-                    count, problem = _render_and_upload(client, job_id, p, view, render_fn)
+                    count, rate, problem = _render_and_upload(client, job_id, p, view, render_fn)
                     if problem and view['mode'] in ('orbit', 'scene-orbit'):
                         # Inspect is extra: the piece still saves, and Inspect asks for its ring when opened
                         print(f'[worker] {p.category}: Inspect ring not rendered: {problem[-300:]}', file=sys.stderr)
@@ -199,11 +199,13 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
                     if problem:
                         break
                     counts.update(count)
+                    rates.update(rate)
                 if problem:  # not uploaded and not recorded: the next prompt sees it as changed and tries again
                     render_errors.append(f'{p.category}: {problem}')
                     continue
                 _upload_piece(client, job_id, p)
                 renders[p.category] = counts
+                fps[p.category] = rates
                 uploaded.add(p.category)
 
         _phase(client, job_id, 'saving')
@@ -226,7 +228,8 @@ def _prompt_job(job, client, design, render_fn, command, as_user, result, checke
             return
 
         result['proposal'] = proposal
-        result['pieces'] = [_piece_result(p, renders.get(p.category), p.category in uploaded) for p in pieces]
+        result['pieces'] = [_piece_result(p, renders.get(p.category), p.category in uploaded, fps.get(p.category))
+                            for p in pieces]
     if run.outcome != 'ok':
         result.update(outcome=run.outcome, error=run.error)
     elif error:
@@ -353,8 +356,8 @@ def _render_job(job, client, design, render_fn, result):
         _phase(client, job['jobId'], 'rendering')
         problems = []
         for category in spec['categories']:
-            count, problem = _render_and_upload(client, job['jobId'], wanted[category], view, render_fn)
-            result['pieces'].append({'category': category, 'renders': count})
+            count, rate, problem = _render_and_upload(client, job['jobId'], wanted[category], view, render_fn)
+            result['pieces'].append({'category': category, 'renders': count, **({'fps': rate} if rate else {})})
             if problem:
                 problems.append(f'{category}: {problem}')
     result.update(outcome='error' if problems else 'ok', error='; '.join(problems) or None)
@@ -431,8 +434,8 @@ def view_key(view: dict) -> str:
                     + ([view['angle']] if view['mode'] == 'play' else []))
 
 
-def _render_and_upload(client, job_id, piece: Piece, view, render_fn) -> tuple[dict, str | None]:
-    """Renders one piece's view and uploads its frames: ({view key: frames}, error)."""
+def _render_and_upload(client, job_id, piece: Piece, view, render_fn) -> tuple[dict, dict, str | None]:
+    """Renders one piece's view and uploads its frames: ({view key: frames}, {view key: fps} when it has one, error)."""
     key = view_key(view)
     with tempfile.TemporaryDirectory() as tmp:
         r = render_fn([{'category': piece.category, 'glbs': glbs_by_shape(piece), 'meta': piece.meta}], view,
@@ -445,13 +448,13 @@ def _render_and_upload(client, job_id, piece: Piece, view, render_fn) -> tuple[d
                 try:
                     client.put_file(job_id, path, Path(blank['path']).read_bytes(), 'image/png')
                 except ApiError as e:  # a clue for later, never worth failing the prompt over
-                    return {key: 0}, f"{r['error']} (frame {blank['index']}, not kept: {e})"
-                return {key: 0}, f"{r['error']} (frame {blank['index']}, kept as {path})"
-            return {key: 0}, r['error']
+                    return {key: 0}, {}, f"{r['error']} (frame {blank['index']}, not kept: {e})"
+                return {key: 0}, {}, f"{r['error']} (frame {blank['index']}, kept as {path})"
+            return {key: 0}, {}, r['error']
         for i, frame in enumerate(r['frames']):
             client.put_file(job_id, f'renders/{piece.category}/{key}/{i:03d}{frame.suffix}', frame.read_bytes(),
                             mimetypes.guess_type(frame.name)[0] or 'image/webp')
-    return {key: len(r['frames'])}, None
+    return {key: len(r['frames'])}, ({key: r['fps']} if r.get('fps') else {}), None
 
 
 def _upload_piece(client, job_id, piece: Piece) -> None:
@@ -464,12 +467,12 @@ def _upload_piece(client, job_id, piece: Piece) -> None:
     client.put_file(job_id, f'checks/{piece.category}.txt', piece.checker.get('report', '').encode(), 'text/plain')
 
 
-def _piece_result(p: Piece, renders: dict | None, uploaded: bool) -> dict:
+def _piece_result(p: Piece, renders: dict | None, uploaded: bool, fps: dict | None = None) -> dict:
     files = [f'pieces/{p.category}/{f.name}' for f in p.glbs + p.extras] + [f'pieces/{p.category}/piece.json',
                                                                             f'checks/{p.category}.txt']
     return {'category': p.category, 'changed': p.changed, 'changeKind': p.meta.get('changeKind'), 'meta': p.meta,
             'checker': {k: p.checker.get(k) for k in ('pass', 'failures', 'warnings', 'triangles')},
-            'files': files if uploaded else [], 'renders': renders or {}}
+            'files': files if uploaded else [], 'renders': renders or {}, **({'fps': fps} if fps else {})}
 
 
 def _phase(client, job_id, phase):

@@ -67,7 +67,8 @@ workspace as an opaque blob, privately.
 
 Render frames are the only files the browser ever receives. A `viewKey` is `<mode>-<bodyShape>-<outfit>`, plus
 `-<emote>` when the view plays a base emote: `spin-male-default`, `spin-female-outfit-2-dance`,
-`emote-male-default`. Two modes differ:
+`emote-male-default`. An `emote-…` view (an emote design's On avatar) steps the emote once through at 12 frames a
+second, the camera still, at most 72 frames (a longer emote's `fps` is lower), and reports its `fps`. Two modes differ:
 
 - `orbit-<bodyShape>` (Inspect): the item alone, no avatar, from every angle. Frame `r * 24 + c` is column `c` (15°
   steps round from the front) of row `r`, the rows being camera elevations 90°, 60°, 120°, 30° and 150° (90° is eye
@@ -259,7 +260,8 @@ answers it 400.
   render job.
 - **The workspace is saved before the result is posted.** If the save fails, the outcome is `error` and `pieces` is
   empty: nothing claims the revision is saved.
-- On a render job, `pieces` holds `{"category", "renders": {viewKey: frames}}` for each requested category. On a
+- On a render job, `pieces` holds `{"category", "renders": {viewKey: frames}}` for each requested category, plus
+  `"fps": {viewKey: fps}` for a view that plays at its own rate (an `emote-…` view; a prompt's pieces carry it too). On a
   set render job `pieces` is empty and `set` is `{"viewKey", "frames", "fps"}` (absent unless the outcome is `ok`).
 - `worn`: on a set render or clipping fix whose job named `categories`, those categories, sorted: the worker
   confirms it wore only them. Virvi doesn't keep a selection's view without it (an older worker wears every piece).

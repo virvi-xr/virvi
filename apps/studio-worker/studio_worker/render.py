@@ -89,9 +89,10 @@ def render(pieces: list[dict], view: dict, out: Path, frames: int = 36, size: in
     A thumbnail is one 256 px square PNG on a transparent background (an emote paused halfway). An orbit is the item
     alone from every angle (`ring` keeps the eye-level 24); a walk-around steps the emote through its timeline while
     the camera turns once (`sample`: keep that many evenly spaced frames, as PNGs); a play view steps the emote through
-    once with the camera still, turned to its angle. They ignore `frames`.
+    once with the camera still, turned to its angle; an emote view does the same from the front (12 frames a second, at
+    most 72). They ignore `frames`.
     Returns {'ok', 'frames': [Path], 'error': None|'timeout'|'item_not_loaded'|'blank'|str, 'bootSec'}, plus
-    'fps' for a walk-around or a play view, and on 'blank' `blankFrame`: {'index', 'path'}, that frame as a PNG beside `out`."""
+    'fps' for a walk-around, a play view or an emote view, and on 'blank' `blankFrame`: {'index', 'path'}, that frame as a PNG beside `out`."""
     if view.get('mode') in SCENE_MODES:
         from . import scene_render
         return scene_render.render(pieces, view, out, frames, size, watchdog_sec)
@@ -231,8 +232,9 @@ def _run(spec: dict) -> dict:
         fps, names = None, None
         if mode == 'emote':
             page.evaluate("__studio.call('emote', 'pause')")
-            length = page.evaluate("__studio.call('emote', 'getLength')") or 0
-            steps = [('emote', 'goTo', [i * length / frames]) for i in range(frames)]
+            # once through at its own rate, the camera still: On avatar plays it back at `fps`, so at its real speed
+            times, fps = play_schedule(page.evaluate("__studio.call('emote', 'getLength')") or 0)
+            steps = [('emote', 'goTo', [t]) for t in times]
         elif mode == 'orbit':
             steps = [('scene', 'changeCameraPosition', [m]) if m else None for m in orbit_steps(bool(view.get('ring')))]
         elif mode == 'walk':
