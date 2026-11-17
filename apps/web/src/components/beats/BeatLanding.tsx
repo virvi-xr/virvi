@@ -41,6 +41,7 @@ export function BeatLanding() {
           <Step n="2" title="Claim it">Stay as long as the card asks, then choose Claim your BEAT. It’s free: Virvi pays the network fee.</Step>
           <Step n="3" title="Keep it">It lands in your wallet on Polygon, with the event’s name, place and time. Most BEATs can’t be sold.</Step>
         </ol>
+        <p className="mt-10"><a href="/beat/how-it-works/" className="text-[var(--bw-cyan)] underline-offset-4 hover:underline">How BEATs stay on chain, private and recoverable</a></p>
       </section>
 
       <section className="mx-auto max-w-5xl px-4 pb-24 sm:px-6">
@@ -57,6 +58,7 @@ export function BeatLanding() {
 
       <footer className="mx-auto flex max-w-5xl flex-wrap gap-x-6 gap-y-2 px-4 pb-10 sm:px-6">
         <span className="mr-auto text-sm text-[var(--bw-dim)]">Virvi is a Livication product · © {new Date().getFullYear()} Livication LLC</span>
+        <a href="/beat/how-it-works/" className={quiet}>How BEATs work</a>
         <a href="/about/" className={quiet}>About Virvi</a>
         <a href="https://discord.gg/cMAK5YCtSk" className={quiet}>Discord</a>
         <a href="/transparency/" className={quiet}>Check the contract</a>
