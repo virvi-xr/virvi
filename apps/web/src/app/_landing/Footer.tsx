@@ -5,7 +5,7 @@ export function Footer({ onAdvertise }: { onAdvertise: () => void }) {
   return (
     <footer className="border-t border-gray-800">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-6 text-sm text-gray-500 sm:px-6">
-        <span className="mr-auto text-gray-400">Virvi is a Livication product · © {new Date().getFullYear()} Livication LLC</span>
+        <span className="mr-auto text-gray-400">© {new Date().getFullYear()} Livication LLC</span>
         {docs && <a href={docs} className="hover:text-white">Docs</a>}
         <button type="button" onClick={onAdvertise} className="hover:text-white">Advertise</button>
         {discord && <a href={discord} className="hover:text-white">Discord</a>}

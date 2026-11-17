@@ -57,7 +57,7 @@ export function BeatLanding() {
       </section>
 
       <footer className="mx-auto flex max-w-5xl flex-wrap gap-x-6 gap-y-2 px-4 pb-10 sm:px-6">
-        <span className="mr-auto text-sm text-[var(--bw-dim)]">Virvi is a Livication product · © {new Date().getFullYear()} Livication LLC</span>
+        <span className="mr-auto text-sm text-[var(--bw-dim)]">© {new Date().getFullYear()} Livication LLC</span>
         <a href="/beat/how-it-works/" className={quiet}>How BEATs work</a>
         <a href="/about/" className={quiet}>About Virvi</a>
         <a href="https://discord.gg/cMAK5YCtSk" className={quiet}>Discord</a>
