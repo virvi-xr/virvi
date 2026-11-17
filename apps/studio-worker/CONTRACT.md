@@ -108,8 +108,9 @@ Render frames are the only files the browser ever receives. A `viewKey` is `<mod
   turn), `costCeilingUsd` 3.0. Claude and Grok are stopped once their running cost passes the ceiling; Codex reports
   usage only at the end of a turn, so time alone caps it. Codex has no turn limit.
 - `uploads`, on a prompt job: the files the owner uploaded for the design, `[{"path": "uploads/<id>/<name>", "name":
-  str, "kind": "image" | "model"}]` (empty when there are none). Images are PNG, JPEG or WebP (Virvi turns other
-  formats into PNG); models are GLB, VRM, FBX, OBJ, STL or .blend. The worker reads each through `inputs` into the
+  str, "kind": "image" | "model" | "audio"}]` (empty when there are none). Images are PNG, JPEG or WebP (Virvi turns
+  other formats into PNG); models are GLB, VRM, FBX, OBJ, STL or .blend; sounds are MP3, OGG, WAV or M4A as uploaded
+  (up to 15 MB: the agent re-encodes one it ships with an emote). The worker reads each through `inputs` into the
   workspace's `uploads/<name>` before the agent runs, replacing what was there, and the prompt names them. The folder
   is never saved with the workspace.
 - `check`, on a prompt job: true when `prompt` is the user's own words. The worker then runs the scope check (Claude
