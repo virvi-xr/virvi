@@ -100,6 +100,8 @@ export interface OAuthIdentity {
   type: 'oauth'
   identifier: string
   email: string | null
+  /** The provider says it confirmed the email (Google `email_verified`, Discord `verified`): trusted as verified (LIV-161). */
+  emailVerified?: boolean
   displayName: string
   metadata: object
 }
@@ -142,7 +144,7 @@ export async function finishOAuth(app: FastifyInstance, identity: OAuthIdentity)
   const email = identity.email?.toLowerCase() || null
   // Auto-promote the first user to admin in single/scalable mode
   const role = await initialRoleForNewUser()
-  const [newUser] = await db.insert(users).values({ displayName: identity.displayName, email, role }).returning()
+  const [newUser] = await db.insert(users).values({ displayName: identity.displayName, email, emailVerifiedAt: email && identity.emailVerified ? new Date() : null, role }).returning()
   await db.insert(userAuthMethods).values({ userId: newUser.id, type: 'oauth', identifier: identity.identifier, metadata: identity.metadata })
   return issueAccountSession(app, newUser, 'oauth')
 }

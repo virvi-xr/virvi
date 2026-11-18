@@ -970,9 +970,13 @@ export default async function sceneRoutes(app: FastifyInstance) {
       }
 
       // Look up user by email
-      const targetUser = await db.query.users.findFirst({ where: eq(users.email, email) })
+      const targetUser = await db.query.users.findFirst({ where: sql`lower(trim(${users.email})) = ${String(email).trim().toLowerCase()}` })
       if (!targetUser) {
         return reply.status(404).send({ error: 'User not found with that email' })
+      }
+      // Only a confirmed email is trusted to be that person's (LIV-161): anyone could have typed it into a sign-up
+      if (!targetUser.emailVerifiedAt) {
+        return reply.status(409).send({ error: 'email_not_verified', message: "That account hasn't confirmed its email yet. Ask them to confirm it from their Settings, then add them again." })
       }
 
       // Cannot add the owner as a collaborator

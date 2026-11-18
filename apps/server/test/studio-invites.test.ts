@@ -97,6 +97,16 @@ describe('design invites and people', () => {
     expect((await act(cora, `/invites/${inv.id}/accept`)).statusCode).toBe(404)
   })
 
+  it('an account whose email isn’t confirmed isn’t matched: the invite waits for its link (LIV-161)', async () => {
+    const d = await createDesign(owner, { name: 'Neon cap' })
+    const sly = await createUser({ name: 'Sly', email: 'cora@test.dev', emailVerified: false })
+    const inv = (await invite(owner, d.id, { email: 'cora@test.dev' })).json().invite
+    expect(await myInvites(sly)).toEqual([])
+    expect((await act(sly, `/invites/${inv.id}/accept`)).statusCode).toBe(404)
+    // The link still works for whoever holds it, as for someone without an account
+    expect((await act(sly, `/invite-links/${await tokenOf(inv.id)}/accept`)).statusCode).toBe(200)
+  })
+
   it('invite email is trimmed and case-insensitive; duplicate is 409', async () => {
     const d = await createDesign(owner)
     const cora = await createUser({ email: 'Cora@Test.dev' })

@@ -138,6 +138,8 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   displayName: text('display_name').notNull(),
   email: text('email'),
+  /** When `email` was confirmed by a link sent to it, or by a provider that verifies it (LIV-161); null when unconfirmed. */
+  emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   role: userRoleEnum('role').notNull().default('creator'),
   activeOrgId: uuid('active_org_id'), // current org context (FK added via migration to avoid circular)
   isTrial: boolean('is_trial').notNull().default(false), // signed-out visitor's Design Studio trial; cleared on conversion
@@ -1224,6 +1226,20 @@ export const arReports = pgTable('ar_reports', {
 }, (t) => ({
   statusIdx: index('ar_reports_status_idx').on(t.status, t.createdAt),
 }))
+
+// ── Email verification (LIV-161) ────────────────────────────────────────────
+
+/** A link sent to confirm an email address. Only the token's SHA-256 is stored; single use, 24 hours. */
+export const emailVerificationTokens = pgTable('email_verification_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** The address the link was sent to: it verifies only while it is still the account's email. */
+  email: text('email').notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ byUser: index('email_verification_tokens_user_idx').on(t.userId, t.createdAt) }))
 
 // ── Password Reset Tokens ───────────────────────────────────────────────────
 

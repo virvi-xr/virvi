@@ -28,6 +28,7 @@ import { hostedWorldsBlockingDelete } from '../hyperfy/hosting.js'
 import { deleteImportFiles, importsGoingWith } from '../services/import/imports.js'
 import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
 import { deletionRefused } from '../beats/reissue.js'
+import { markVerifiedByReset, sendVerification } from '../auth/email-verification.js'
 
 interface RegisterBody {
   email: string
@@ -44,6 +45,8 @@ interface LoginBody {
 
 /** An OAuth `state` from the web app: an opaque random per-tab value, echoed back to /auth/callback. */
 const OAUTH_STATE = /^[A-Za-z0-9_-]{16,64}$/
+
+const hashResetToken = (t: string) => crypto.createHash('sha256').update(t).digest('hex')
 
 export default async function authRoutes(app: FastifyInstance) {
   // ── GET /api/auth/providers — which OAuth providers are configured ──────
@@ -105,6 +108,8 @@ export default async function authRoutes(app: FastifyInstance) {
       })
     }
 
+    // LIV-161: the account works now; a link confirms the address. Not waited for: a slow mail server never holds sign-up
+    void sendVerification(user.id, email.toLowerCase()).catch((err) => request.log.error(err, 'verification link failed'))
     return reply.status(201).send(issueAccountSession(app, user))
   })
 
@@ -455,6 +460,7 @@ export default async function authRoutes(app: FastifyInstance) {
             type: 'oauth',
             identifier,
             email,
+            emailVerified: payload.email_verified === true,
             displayName,
             metadata: { provider: 'google', googleUserId, email, name: payload.name, picture: payload.picture },
           },
@@ -548,6 +554,7 @@ export default async function authRoutes(app: FastifyInstance) {
           id: string
           username: string
           email: string | null
+          verified?: boolean
           avatar: string | null
         }
 
@@ -562,6 +569,7 @@ export default async function authRoutes(app: FastifyInstance) {
             type: 'oauth',
             identifier,
             email,
+            emailVerified: discordUser.verified === true,
             displayName,
             metadata: { provider: 'discord', discordUserId, email, username: discordUser.username, avatar: discordUser.avatar },
           },
@@ -677,9 +685,10 @@ export default async function authRoutes(app: FastifyInstance) {
       const token = crypto.randomBytes(32).toString('hex')
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
 
+      // Only the token's hash is stored: a database read never yields a working reset link
       await db.insert(passwordResetTokens).values({
         userId: authMethod.userId,
-        token,
+        token: hashResetToken(token),
         expiresAt,
       })
 
@@ -708,7 +717,7 @@ export default async function authRoutes(app: FastifyInstance) {
       }
 
       const resetToken = await db.query.passwordResetTokens.findFirst({
-        where: eq(passwordResetTokens.token, token),
+        where: eq(passwordResetTokens.token, hashResetToken(token)),
       })
 
       if (!resetToken) {
@@ -741,6 +750,12 @@ export default async function authRoutes(app: FastifyInstance) {
         .update(passwordResetTokens)
         .set({ usedAt: new Date() })
         .where(eq(passwordResetTokens.id, resetToken.id))
+
+      // The link was mailed to the sign-in email, so opening it proves that address (LIV-161)
+      const method = await db.query.userAuthMethods.findFirst({
+        where: and(eq(userAuthMethods.userId, resetToken.userId), eq(userAuthMethods.type, 'email')),
+      })
+      if (method) await markVerifiedByReset(resetToken.userId, method.identifier)
 
       return reply.send({ success: true })
     },

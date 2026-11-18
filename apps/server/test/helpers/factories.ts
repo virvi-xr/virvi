@@ -23,7 +23,7 @@ export function randomWallet() {
 }
 
 export async function createUser(
-  opts: { role?: 'admin' | 'creator' | 'viewer'; email?: string | null; wallet?: string | null; name?: string } = {},
+  opts: { role?: 'admin' | 'creator' | 'viewer'; email?: string | null; wallet?: string | null; name?: string; emailVerified?: boolean } = {},
 ): Promise<TestUser> {
   const [user] = await db
     .insert(users)
@@ -31,6 +31,8 @@ export async function createUser(
       displayName: opts.name ?? 'Test User',
       email: opts.email === undefined ? `u${Date.now()}${Math.random()}@test.dev` : opts.email,
       role: opts.role ?? 'creator',
+      // Confirmed unless a test says otherwise (LIV-161): most tests aren't about verification
+      emailVerifiedAt: opts.emailVerified === false ? null : new Date(),
     })
     .returning()
   const wallet = opts.wallet ? opts.wallet.toLowerCase() : null

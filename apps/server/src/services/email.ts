@@ -57,3 +57,13 @@ export async function sendOrgInviteEmail(to: string, orgName: string, inviterNam
   `)
 }
 
+
+/** Confirms an account's email address (LIV-161). */
+export async function sendVerifyEmail(to: string, link: string) {
+  return sendEmail(to, 'Confirm your email for Virvi', `
+    <h2>Confirm your email</h2>
+    <p>Open the link below to confirm this is your email address for your Virvi account. The link works once and expires in 24 hours.</p>
+    <p><a href="${escapeHtml(link)}" style="background:#3b82f6;color:white;padding:10px 20px;border-radius:8px;text-decoration:none;display:inline-block">Confirm my email</a></p>
+    <p style="color:#666;font-size:12px">If you didn't make a Virvi account, you can ignore this email.</p>
+  `)
+}

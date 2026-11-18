@@ -1,4 +1,5 @@
 'use client'
+import type { EmailStatus } from './email-verification'
 import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useAuth } from './auth'
 import { API_URL } from './config'
@@ -622,6 +623,9 @@ function useRealApi() {
       apiFetch<{ user: any }>('/api/auth/profile', { method: 'PUT', userAction: true, body: JSON.stringify({ displayName }) }),
     changePassword: (currentPassword: string, newPassword: string) =>
       apiFetch<{ success: boolean }>('/api/auth/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
+    // Email verification (LIV-161)
+    getEmailStatus: () => apiFetch<EmailStatus>('/api/auth/email'),
+    resendEmailVerification: () => apiFetch<EmailStatus>('/api/auth/email/resend', { method: 'POST', userAction: true }),
     deleteAccount: (password: string) =>
       apiFetch('/api/auth/account', { method: 'DELETE', body: JSON.stringify({ password }) }),
 

@@ -11,6 +11,7 @@ export const PUBLIC_EXACT = [
   'GET /api/auth/providers', // static list of enabled sign-in providers
   'POST /api/auth/forgot-password', // email only
   'POST /api/auth/reset-password', // reset token in body
+  'POST /api/auth/verify-email', // the emailed link's token in body (LIV-161)
   'POST /api/auth/wallet/challenge', // nonce for an address; no bearer
   'POST /api/auth/handoff/exchange', // single-use code in body
   'POST /api/setup', // DCL signed fetch (location setup)

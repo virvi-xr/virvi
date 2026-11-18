@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { and, asc, count, eq, gt, gte, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, count, eq, gt, gte, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioDesignInvites, studioDesignMembers, studioDesigns, userAuthMethods, users } from '../db/schema.js'
 import { config } from '../config.js'
@@ -109,7 +109,10 @@ async function matchTarget(target: InviteTarget, ownerId: string): Promise<{ id:
   const [owner] = await db.select({ email: users.email }).from(users).where(eq(users.id, ownerId))
   if (owner?.email && owner.email.trim().toLowerCase() === target.email) throw new InviteError(400, 'self')
   const [match] = await db.select({ id: users.id }).from(users)
-    .where(and(sql`lower(trim(${users.email})) = ${target.email}`, eq(users.isTrial, false))).orderBy(asc(users.createdAt)).limit(1)
+    // Only a confirmed email is matched (LIV-161): anyone could have typed this address into a sign-up. An unconfirmed
+    // account claims the invite through its link, as someone without an account does.
+    .where(and(sql`lower(trim(${users.email})) = ${target.email}`, eq(users.isTrial, false), isNotNull(users.emailVerifiedAt)))
+    .orderBy(asc(users.createdAt)).limit(1)
   return match
 }
 

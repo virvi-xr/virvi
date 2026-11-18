@@ -5,6 +5,7 @@ import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState } from 'react'
 import { LinkedWallets } from './LinkedWallets'
+import { EmailVerification } from './EmailVerification'
 import { MoveBeats } from './MoveBeats'
 import { LinkedHyperfySessions } from './LinkedHyperfySessions'
 import { PairedHeadsets } from './PairedHeadsets'
@@ -314,6 +315,8 @@ export default function SettingsPage() {
               </button>
             </form>
           </div>
+
+          <EmailVerification />
 
           <LinkedWallets />
 
