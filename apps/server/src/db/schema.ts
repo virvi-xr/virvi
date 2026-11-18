@@ -1552,6 +1552,40 @@ export const adEvents = pgTable(
   }),
 )
 
+/**
+ * Daily summaries of ad_events (LIV-190), kept forever: anonymous counts, no viewer keys. ads/summaries.ts writes each
+ * closed day once; ads/report.ts reads them for summarized days, so the raw rows of those days may be deleted.
+ * Per space: the rows that day (what "By space" counts) and the paid look times behind the average.
+ */
+export const adDailySpace = pgTable(
+  'ad_daily_space',
+  {
+    adId: uuid('ad_id').notNull().references(() => ads.id, { onDelete: 'cascade' }),
+    elementId: uuid('element_id').notNull(),
+    sceneId: uuid('scene_id').notNull().references(() => scenes.id, { onDelete: 'cascade' }),
+    day: date('day', { mode: 'string' }).notNull(),
+    level: text('level').notNull(),
+    verified: boolean('verified').notNull(),
+    views: integer('views').notNull(),
+    lookMsSum: bigint('look_ms_sum', { mode: 'number' }).notNull().default(0),
+    lookCount: integer('look_count').notNull().default(0),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.adId, t.elementId, t.day, t.level, t.verified] }) }),
+)
+
+/** Per ad per day: unique viewers across all its spaces (what the totals and "By day" count). */
+export const adDailyViewers = pgTable(
+  'ad_daily_viewers',
+  {
+    adId: uuid('ad_id').notNull().references(() => ads.id, { onDelete: 'cascade' }),
+    day: date('day', { mode: 'string' }).notNull(),
+    level: text('level').notNull(),
+    verified: boolean('verified').notNull(),
+    viewers: integer('viewers').notNull(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.adId, t.day, t.level, t.verified] }) }),
+)
+
 /** Append-only log of review decisions; `ads` holds the current state. */
 export const adReviews = pgTable(
   'ad_reviews',

@@ -1,6 +1,7 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, gt, lte, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { adEvents, scenes } from '../db/schema.js'
+import { adDailySpace, adDailyViewers, adEvents, scenes } from '../db/schema.js'
+import { adSummariesThrough } from './summaries.js'
 import type { AdLevel, AdReport, LevelCounts } from '@virvixr/shared'
 
 const LEVELS: AdLevel[] = ['scene', 'screen', 'look', 'click']
@@ -18,30 +19,60 @@ function add(c: LevelCounts, level: string, verified: boolean, n: number) {
 /**
  * Per-ad numbers. Events are one per wallet (or guest session) per space per level per day: each space counts
  * its own rows, while totals and days count each viewer once per level per day across spaces.
+ * Days up to the summaries' watermark come from the daily summaries (LIV-190), later days from the raw rows, so the
+ * numbers are the same before and after a day is summarized and after its raw rows are gone.
  */
 export async function adReport(adId: string): Promise<AdReport> {
-  const spaceRows = await db
-    .select({
-      elementId: adEvents.elementId,
-      sceneName: scenes.name,
-      level: adEvents.level,
-      verified: adEvents.verified,
-      n: sql<number>`count(*)::int`,
-    })
-    .from(adEvents)
-    .innerJoin(scenes, eq(scenes.id, adEvents.sceneId))
-    .where(eq(adEvents.adId, adId))
-    .groupBy(adEvents.elementId, scenes.name, adEvents.level, adEvents.verified)
-  const dayRows = await db
-    .select({
-      day: adEvents.day,
-      level: adEvents.level,
-      verified: adEvents.verified,
-      n: sql<number>`count(distinct ${adEvents.viewerKey})::int`,
-    })
-    .from(adEvents)
-    .where(eq(adEvents.adId, adId))
-    .groupBy(adEvents.day, adEvents.level, adEvents.verified)
+  const through = (await adSummariesThrough()) ?? '0001-01-01'
+  const rawDays = and(eq(adEvents.adId, adId), gt(adEvents.day, through))
+  const sumDays = and(eq(adDailySpace.adId, adId), lte(adDailySpace.day, through))
+  const spaceRows = [
+    ...(await db
+      .select({
+        elementId: adEvents.elementId,
+        sceneName: scenes.name,
+        level: adEvents.level,
+        verified: adEvents.verified,
+        n: sql<number>`count(*)::int`,
+      })
+      .from(adEvents)
+      .innerJoin(scenes, eq(scenes.id, adEvents.sceneId))
+      .where(rawDays)
+      .groupBy(adEvents.elementId, scenes.name, adEvents.level, adEvents.verified)),
+    ...(await db
+      .select({
+        elementId: adDailySpace.elementId,
+        sceneName: scenes.name,
+        level: adDailySpace.level,
+        verified: adDailySpace.verified,
+        n: sql<number>`sum(${adDailySpace.views})::int`,
+      })
+      .from(adDailySpace)
+      .innerJoin(scenes, eq(scenes.id, adDailySpace.sceneId))
+      .where(sumDays)
+      .groupBy(adDailySpace.elementId, scenes.name, adDailySpace.level, adDailySpace.verified)),
+  ]
+  const dayRows = [
+    ...(await db
+      .select({
+        day: adDailyViewers.day,
+        level: adDailyViewers.level,
+        verified: adDailyViewers.verified,
+        n: adDailyViewers.viewers,
+      })
+      .from(adDailyViewers)
+      .where(and(eq(adDailyViewers.adId, adId), lte(adDailyViewers.day, through)))),
+    ...(await db
+      .select({
+        day: adEvents.day,
+        level: adEvents.level,
+        verified: adEvents.verified,
+        n: sql<number>`count(distinct ${adEvents.viewerKey})::int`,
+      })
+      .from(adEvents)
+      .where(rawDays)
+      .groupBy(adEvents.day, adEvents.level, adEvents.verified)),
+  ]
 
   const totals = emptyCounts()
   const byDay = new Map<string, LevelCounts>()
@@ -57,15 +88,23 @@ export async function adReport(adId: string): Promise<AdReport> {
   }
 
   // Only paid (verified) looks make the average
-  const [look] = await db
-    .select({ avg: sql<string | null>`avg(${adEvents.dwellMs})` })
+  const [rawLook] = await db
+    .select({ sum: sql<string | null>`sum(${adEvents.dwellMs})`, n: sql<number>`count(${adEvents.dwellMs})::int` })
     .from(adEvents)
-    .where(and(eq(adEvents.adId, adId), eq(adEvents.level, 'look'), eq(adEvents.verified, true)))
+    .where(and(rawDays, eq(adEvents.level, 'look'), eq(adEvents.verified, true)))
+  const [sumLook] = await db
+    .select({ sum: sql<string | null>`sum(${adDailySpace.lookMsSum})`, n: sql<number>`coalesce(sum(${adDailySpace.lookCount}), 0)::int` })
+    .from(adDailySpace)
+    .where(sumDays)
+  const lookMs = Number(rawLook?.sum ?? 0) + Number(sumLook?.sum ?? 0)
+  const looks = (rawLook?.n ?? 0) + (sumLook?.n ?? 0)
 
   return {
     totals,
     byDay: [...byDay].sort(([a], [b]) => a.localeCompare(b)).map(([day, c]) => ({ day, ...c })),
-    bySpace: [...bySpace].map(([elementId, v]) => ({ elementId, sceneName: v.sceneName, ...v.counts })),
-    avgLookMs: look?.avg == null ? null : Math.round(Number(look.avg)),
+    bySpace: [...bySpace]
+      .sort(([a, x], [b, y]) => x.sceneName.localeCompare(y.sceneName) || a.localeCompare(b))
+      .map(([elementId, v]) => ({ elementId, sceneName: v.sceneName, ...v.counts })),
+    avgLookMs: looks === 0 ? null : Math.round(lookMs / looks),
   }
 }
