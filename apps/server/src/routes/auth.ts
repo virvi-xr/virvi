@@ -113,7 +113,10 @@ export default async function authRoutes(app: FastifyInstance) {
     }
 
     // The sign-up form's Terms box sends the version it showed; anything else leaves the account to be asked on first visit
-    if (request.body.acceptTerms === TERMS_VERSION) await acceptTerms(user.id, TERMS_VERSION, 'sign-up')
+    if (request.body.acceptTerms === TERMS_VERSION) {
+      // Never fails the sign-up: an account whose agreement wasn't recorded is just asked on its first visit
+      await acceptTerms(user.id, TERMS_VERSION, 'sign-up').catch((err) => request.log.error(err, 'terms agreement not recorded'))
+    }
 
     // LIV-161: the account works now; a link confirms the address. Not waited for: a slow mail server never holds sign-up
     void sendVerification(user.id, email.toLowerCase()).catch((err) => request.log.error(err, 'verification link failed'))

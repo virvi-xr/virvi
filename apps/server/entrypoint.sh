@@ -82,6 +82,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] wallet blocks ensured');
       } catch(e) { console.log('[virvi-server] wallet blocks:', e.message); }
 
+      // Terms of Service agreements; matches termsAcceptances in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS terms_acceptances (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT terms_acceptances_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, version TEXT NOT NULL, via TEXT NOT NULL, accepted_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE UNIQUE INDEX IF NOT EXISTS terms_acceptances_user_version_idx ON terms_acceptances (user_id, version)\`;
+        console.log('[virvi-server] terms_acceptances table ensured');
+      } catch(e) { console.log('[virvi-server] terms_acceptances:', e.message); }
+
       // Per-scene media library; matches sceneLibrary in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS scene_library (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scene_id UUID NOT NULL REFERENCES scenes(id) ON DELETE CASCADE, media_asset_id UUID REFERENCES media_assets(id) ON DELETE CASCADE, asset_item_id UUID REFERENCES asset_library_items(id) ON DELETE CASCADE, added_by UUID REFERENCES users(id) ON DELETE SET NULL, booking_id UUID REFERENCES bookings(id) ON DELETE CASCADE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT scene_library_one_item CHECK ((media_asset_id IS NULL) <> (asset_item_id IS NULL)))\`;
