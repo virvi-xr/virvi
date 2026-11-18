@@ -4,6 +4,7 @@ import { BEAT_CHAIN_INFO, type BeatChain } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { beatHoldings, beatIndexCursors, beats } from '../db/schema.js'
 import { BEAT_REISSUED_TOPIC, beatInterface } from './chain.js'
+import { isRangeRefused, smallerRange } from '../services/log-ranges.js'
 
 /**
  * Who holds each BEAT (LIV-185): beat_holdings is built from the BEAT contract's ERC-1155 transfer logs, read in
@@ -26,11 +27,7 @@ export interface BeatLogReader {
 }
 
 export const INDEX_CHUNK_BLOCKS = 2000
-/** Smaller ranges to fall back to when a provider refuses a log range (Alchemy's free plan allows 10 blocks). */
-const SMALLER_CHUNKS = [500, 100, 10]
-/** A provider's refusal of the requested block range, as opposed to any other failure. */
-const RANGE_REFUSED = /block range|range (is )?too (large|wide|big)|eth_getLogs requests with up to|query returned more than|limit exceeded/i
-const MAX_CHUNKS_PER_RUN = 20
+export const MAX_CHUNKS_PER_RUN = 20
 
 const SINGLE_TOPIC = beatInterface.getEvent('TransferSingle')!.topicHash
 const BATCH_TOPIC = beatInterface.getEvent('TransferBatch')!.topicHash
@@ -113,64 +110,86 @@ export async function indexBeatHoldings(chain: BeatChain, reader: BeatLogReader)
 
   const safeHead = (await reader.latestBlock()) - BEAT_CHAIN_INFO[chain].confirmations
   let indexed = 0
+  let failed = 0
+  let lastErr: unknown = null
   let total = 0
   let lastTo: number | null = null
 
   for (const contract of contracts) {
-    const [cursor] = await db.select().from(beatIndexCursors).where(and(eq(beatIndexCursors.chain, chain), eq(beatIndexCursors.contract, contract)))
-    let last: number
-    if (cursor) {
-      last = cursor.lastBlock
-    } else {
-      // The on-chain create happens at payment, not at draft, so every BEAT's create block counts: start at the earliest.
-      const creates = await db.select({ id: beats.id, tx: beats.createdOnChainTx }).from(beats)
-        .where(and(eq(beats.chain, chain), isNotNull(beats.tokenId), isNotNull(beats.createdOnChainTx), sql`lower(${beats.contractAddress}) = ${contract}`))
-      let block: number | null = null
-      for (const c of creates) {
-        const b = c.tx ? await reader.txBlock(c.tx) : null
-        if (b === null) {
-          console.warn(`[beats] ${chain} create tx for BEAT ${c.id} not found; ignoring it for the start block`)
-          continue
-        }
-        block = block === null ? b : Math.min(block, b)
-      }
-      if (block === null) continue
-      last = block - 1
-    }
-    indexed++
-    // The range that last worked in this run, so a capped provider is asked for 2000 blocks once per run, not per chunk
-    let size = INDEX_CHUNK_BLOCKS
-    for (let chunk = 0; chunk < MAX_CHUNKS_PER_RUN; chunk++) {
-      let toBlock = Math.min(last + size, safeHead)
-      if (toBlock <= last) break
-      let transfers: BeatEvent[]
-      for (;;) {
-        try {
-          transfers = await reader.transfers(contract, last + 1, toBlock)
-          break
-        } catch (err) {
-          const smaller = SMALLER_CHUNKS.find((n) => n < size)
-          if (!smaller || !RANGE_REFUSED.test(err instanceof Error ? err.message : String(err))) throw err
-          size = smaller
-          toBlock = Math.min(last + size, safeHead)
-        }
-      }
-      // The cursor row is the lock: a run that finds it moved since it read it (another instance applied this chunk) stops.
-      const moved = await db.transaction(async (tx) => {
-        await tx.insert(beatIndexCursors).values({ chain, contract, lastBlock: last }).onConflictDoNothing()
-        const [row] = await tx.select().from(beatIndexCursors)
-          .where(and(eq(beatIndexCursors.chain, chain), eq(beatIndexCursors.contract, contract))).for('update')
-        if (row.lastBlock !== last) return true
-        await applyIn(tx, chain, transfers)
-        await tx.update(beatIndexCursors).set({ lastBlock: toBlock, updatedAt: sql`now()` })
-          .where(and(eq(beatIndexCursors.chain, chain), eq(beatIndexCursors.contract, contract)))
-        return false
-      })
-      if (moved) break
-      total += transfers.length
-      last = toBlock
-      lastTo = lastTo === null ? toBlock : Math.max(lastTo, toBlock)
+    // One contract's failure (a bad create tx, an RPC error on its logs) is logged and leaves the others to run
+    try {
+      const r = await indexContract(chain, reader, contract, safeHead)
+      if (!r) continue
+      indexed++
+      total += r.transfers
+      if (r.toBlock !== null) lastTo = lastTo === null ? r.toBlock : Math.max(lastTo, r.toBlock)
+    } catch (err) {
+      failed++
+      lastErr = err
+      console.error(`[beats] ${chain} holdings index failed for ${contract}:`, err instanceof Error ? err.message : err)
     }
   }
+  // Every contract failing is an outage, not one bad contract: the sweep should see it, with the real error
+  if (failed > 0 && failed === contracts.length) throw lastErr
   return { contracts: indexed, transfers: total, toBlock: lastTo }
+}
+
+/** One contract's catch-up; null when it has no resolvable start block yet. */
+async function indexContract(chain: BeatChain, reader: BeatLogReader, contract: string, safeHead: number): Promise<{ transfers: number; toBlock: number | null } | null> {
+  let total = 0
+  let lastTo: number | null = null
+  const [cursor] = await db.select().from(beatIndexCursors).where(and(eq(beatIndexCursors.chain, chain), eq(beatIndexCursors.contract, contract)))
+  let last: number
+  if (cursor) {
+    last = cursor.lastBlock
+  } else {
+    // The on-chain create happens at payment, not at draft, so every BEAT's create block counts: start at the earliest.
+    const creates = await db.select({ id: beats.id, tx: beats.createdOnChainTx }).from(beats)
+      .where(and(eq(beats.chain, chain), isNotNull(beats.tokenId), isNotNull(beats.createdOnChainTx), sql`lower(${beats.contractAddress}) = ${contract}`))
+    let block: number | null = null
+    for (const c of creates) {
+      const b = c.tx ? await reader.txBlock(c.tx) : null
+      if (b === null) {
+        console.warn(`[beats] ${chain} create tx for BEAT ${c.id} not found; ignoring it for the start block`)
+        continue
+      }
+      block = block === null ? b : Math.min(block, b)
+    }
+    if (block === null) return null
+    last = block - 1
+  }
+  // The range that last worked in this run, so a capped provider is asked for 2000 blocks once per run, not per chunk
+  let size = INDEX_CHUNK_BLOCKS
+  for (let chunk = 0; chunk < MAX_CHUNKS_PER_RUN; chunk++) {
+    let toBlock = Math.min(last + size, safeHead)
+    if (toBlock <= last) break
+    let transfers: BeatEvent[]
+    for (;;) {
+      try {
+        transfers = await reader.transfers(contract, last + 1, toBlock)
+        break
+      } catch (err) {
+        const smaller = smallerRange(size)
+        if (smaller === null || !isRangeRefused(err)) throw err
+        size = smaller
+        toBlock = Math.min(last + size, safeHead)
+      }
+    }
+    // The cursor row is the lock: a run that finds it moved since it read it (another instance applied this chunk) stops.
+    const moved = await db.transaction(async (tx) => {
+      await tx.insert(beatIndexCursors).values({ chain, contract, lastBlock: last }).onConflictDoNothing()
+      const [row] = await tx.select().from(beatIndexCursors)
+        .where(and(eq(beatIndexCursors.chain, chain), eq(beatIndexCursors.contract, contract))).for('update')
+      if (row.lastBlock !== last) return true
+      await applyIn(tx, chain, transfers)
+      await tx.update(beatIndexCursors).set({ lastBlock: toBlock, updatedAt: sql`now()` })
+        .where(and(eq(beatIndexCursors.chain, chain), eq(beatIndexCursors.contract, contract)))
+      return false
+    })
+    if (moved) break
+    total += transfers.length
+    last = toBlock
+    lastTo = toBlock
+  }
+  return { transfers: total, toBlock: lastTo }
 }

@@ -34,22 +34,33 @@ function BeatsContent() {
   const pick = (t: 'collected' | 'hosting') => router.replace(t === 'hosting' ? `${pathname}?tab=hosting` : pathname)
   return (
     <div className="mx-auto max-w-7xl">
-      <div className="mb-4 inline-flex rounded-md border border-gray-800 p-0.5 text-sm" role="tablist" aria-label="BEATs">
+      {/* Tabs per the ARIA pattern: the selected tab is the one in the tab order; arrow keys move between them */}
+      <div className="mb-4 inline-flex rounded-md border border-gray-800 p-0.5 text-sm" role="tablist" aria-label="BEATs"
+        onKeyDown={(e) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
+          e.preventDefault()
+          const next = e.key === 'Home' ? 'collected' : e.key === 'End' ? 'hosting' : tab === 'collected' ? 'hosting' : 'collected'
+          pick(next)
+          document.getElementById(`beats-tab-${next}`)?.focus()
+        }}>
         {([['Collected', 'collected'], ['Hosting', 'hosting']] as const).map(([label, value]) => (
-          <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => pick(value)}
+          <button key={value} id={`beats-tab-${value}`} type="button" role="tab" aria-selected={tab === value} aria-controls={`beats-panel-${value}`}
+            tabIndex={tab === value ? 0 : -1} onClick={() => pick(value)}
             className={`rounded px-3 py-1.5 ${tab === value ? 'bg-white/[0.06] text-white' : 'text-gray-400 hover:text-white'}`}>
             {label}
           </button>
         ))}
       </div>
-      {tab === 'collected' ? (
-        <>
-          <PageHeader crumbs={['Workspace', 'BEATs']} title="Collected" subtitle="The BEATs your wallets hold." />
-          <BeatsGate>{() => <CollectedBeats />}</BeatsGate>
-        </>
-      ) : (
-        <BeatsGate>{(a) => <BeatList availability={a} />}</BeatsGate>
-      )}
+      <div id={`beats-panel-${tab}`} role="tabpanel" aria-labelledby={`beats-tab-${tab}`}>
+        {tab === 'collected' ? (
+          <>
+            <PageHeader crumbs={['Workspace', 'BEATs']} title="Collected" subtitle="The BEATs your wallets hold." />
+            <BeatsGate>{() => <CollectedBeats />}</BeatsGate>
+          </>
+        ) : (
+          <BeatsGate>{(a) => <BeatList availability={a} />}</BeatsGate>
+        )}
+      </div>
     </div>
   )
 }

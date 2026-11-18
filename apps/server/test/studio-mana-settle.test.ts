@@ -328,6 +328,23 @@ describe('settling MANA payments', () => {
     expect(scan.lastBlock).toBe(stopped + 5000)
   })
 
+  it('a provider that caps log ranges gets smaller chunks; the cursor moves only as far as was read (LIV-185 follow-up)', async () => {
+    const plain = chain.transfersTo.bind(chain)
+    chain.transfersTo = async (token: string, to: string, a: number, b: number) => {
+      if (b - a + 1 > 10) { chain.calls.transfersTo.push({ fromBlock: a, toBlock: b }); throw new Error('Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range.') }
+      return plain(token, to, a, b)
+    }
+    await watchManaTransfers(T)
+    const [scan] = await db.select().from(studioManaScan)
+    const first = chain.latest - 2000
+    // 100 chunks of 10 blocks this run, not the whole 1970
+    expect(scan.lastBlock).toBe(first + 999)
+    const ok = chain.calls.transfersTo.filter((c) => c.toBlock - c.fromBlock < 10)
+    expect(ok).toHaveLength(100)
+    await watchManaTransfers(T)
+    expect((await db.select().from(studioManaScan))[0].lastBlock).toBe(first + 1970)
+  })
+
   it('the sweep logs a watcher failure and carries on', async () => {
     chain.failScan = true
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { ZeroAddress, getAddress, type JsonRpcProvider } from 'ethers'
 import { beatInterface } from '../src/beats/chain.js'
@@ -177,5 +177,47 @@ describe('BEAT holdings index (LIV-185)', () => {
     expect(await held(A)).toEqual(['1'])
     const [cur] = await db.select().from(beatIndexCursors)
     expect(cur.lastBlock).toBe(170)
+  })
+
+  it('one run reads at most 20 chunks; the next run carries on from there', async () => {
+    const r = new FakeReader()
+    r.latest = 100 + 30 + 25 * INDEX_CHUNK_BLOCKS
+    await indexBeatHoldings('polygon', r)
+    expect(r.calls).toHaveLength(20)
+    const [cur] = await db.select().from(beatIndexCursors)
+    expect(cur.lastBlock).toBe(99 + 20 * INDEX_CHUNK_BLOCKS)
+    await indexBeatHoldings('polygon', r)
+    expect(r.calls[20].fromBlock).toBe(100 + 20 * INDEX_CHUNK_BLOCKS)
+  })
+
+  it('a contract that fails is logged and the others still index; every contract failing throws', async () => {
+    const OTHER = '0x00000000000000000000000000000000000c0de2'
+    await seed({ contractAddress: OTHER, tokenId: 8 })
+    const r = new FakeReader()
+    r.all = [{ ...tr(ZeroAddress, A, 105, 8n), contract: OTHER }]
+    const plain = r.transfers.bind(r)
+    r.transfers = async (c, from, to) => {
+      if (c === CONTRACT) throw new Error('bad contract')
+      return plain(c, from, to)
+    }
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(await indexBeatHoldings('polygon', r)).toMatchObject({ contracts: 1 })
+      expect(await held(A, 8)).toEqual(['1'])
+      expect(err).toHaveBeenCalledWith(expect.stringContaining(CONTRACT), 'bad contract')
+      r.latest += 50
+      r.transfers = async () => { throw new Error('rpc down') }
+      await expect(indexBeatHoldings('polygon', r)).rejects.toThrow('rpc down')
+    } finally {
+      err.mockRestore()
+    }
+  })
+
+  it("only this chain's contracts are read: an Amoy BEAT's contract is never asked for on Polygon", async () => {
+    const AMOY = '0x00000000000000000000000000000000000a0001'
+    await seed({ chain: 'polygon-amoy', contractAddress: AMOY, tokenId: 9 })
+    const r = new FakeReader()
+    await indexBeatHoldings('polygon', r)
+    expect(new Set(r.calls.map((c) => c.contract))).toEqual(new Set([CONTRACT]))
   })
 })

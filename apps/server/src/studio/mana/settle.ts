@@ -6,6 +6,7 @@ import { takeCredit } from '../credit.js'
 import { expireOpen, expirePaymentIn, grantPayment, PaymentError } from '../payments.js'
 import { reallocateLines } from '../pricing.js'
 import { getPolygon, parseTransfers, type ManaTransfer, type PolygonReader } from './polygon.js'
+import { readLogRanges } from '../../services/log-ranges.js'
 
 /**
  * Settling MANA payments. A payment is matched to a Transfer of exactly its quoted wei amount to the recipient on the
@@ -210,7 +211,7 @@ async function paymentFor(t: ManaTransfer, minedAt: Date): Promise<Payment | nul
 
 /**
  * Scans the recipient's MANA transfers with 30 confirmations, from where the last scan stopped (2000 blocks back on
- * the first run), at most 5000 blocks a call. Each transfer is recorded once: matched (and its payment granted) or
+ * the first run), at most 5000 blocks a call, in smaller chunks when the RPC provider caps log ranges. Each transfer is recorded once: matched (and its payment granted) or
  * unmatched, for the owner to look at. A transfer whose payment fails to settle is logged and recorded unmatched with
  * a note (its claim let go), so the scan carries on. Throws on a chain or database error otherwise; the sweep logs it,
  * and the next run picks up from the same block, skipping transfers already recorded.
@@ -223,9 +224,11 @@ export async function watchManaTransfers(now: Date, reader?: PolygonReader): Pro
   const latest = await chain.latestBlock()
   const [scan] = await db.select().from(studioManaScan).where(eq(studioManaScan.id, SCAN_ID))
   const fromBlock = scan ? scan.lastBlock + 1 : Math.max(latest - FIRST_SCAN_BLOCKS, 0)
-  const toBlock = Math.min(latest - confirmations, fromBlock + MAX_SCAN_BLOCKS - 1)
+  const end = Math.min(latest - confirmations, fromBlock + MAX_SCAN_BLOCKS - 1)
+  if (end < fromBlock) return out
+  // A provider that caps eth_getLogs ranges gets smaller chunks (LIV-185 follow-up); the cursor moves only as far as was read
+  const { items: transfers, lastBlock: toBlock } = await readLogRanges(fromBlock, end, MAX_SCAN_BLOCKS, (a, b) => chain.transfersTo(token, recipient, a, b))
   if (toBlock < fromBlock) return out
-  const transfers = await chain.transfersTo(token, recipient, fromBlock, toBlock)
   const times = new Map<number, Date>()
   for (const raw of transfers) {
     if (!sameAddress(raw.to, recipient) || !raw.txHash) continue

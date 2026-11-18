@@ -439,3 +439,14 @@ describe('walletLookupHref (the BEAT page\'s wallet lookup)', () => {
     for (const bad of ['', '0x', 'vitalik.eth', '0xc2877b05cfe462e585fe3de8046f7528998af6f', '0xzz877b05cfe462e585fe3de8046f7528998af6f1']) expect(walletLookupHref(bad)).toBeNull()
   })
 })
+
+describe('datesBackwards (LIV-185 follow-up)', () => {
+  it('is true only when both dates are set and From is after To', async () => {
+    const { datesBackwards } = await import('./beats')
+    expect(datesBackwards('2026-11-18', '2026-11-01')).toBe(true)
+    expect(datesBackwards('2026-11-01', '2026-11-18')).toBe(false)
+    expect(datesBackwards('2026-11-18', '2026-11-18')).toBe(false)
+    expect(datesBackwards('2026-11-18', null)).toBe(false)
+    expect(datesBackwards(null, '2026-11-01')).toBe(false)
+  })
+})

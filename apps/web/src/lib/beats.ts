@@ -525,6 +525,11 @@ export function beatsExplainerFor(pathname: string, search: string): boolean {
 /** The Collected tab's filters. `from`/`to` are YYYY-MM-DD, inclusive, compared on `startsAt` in UTC. */
 export type CollectedFilter = { wallet: string | 'all'; from: string | null; to: string | null; kind: BeatKind | 'all'; earnedOnly: boolean }
 
+/** From is a later day than To: no BEAT can match, so the filter bar says so and offers to swap them. */
+export function datesBackwards(from: string | null, to: string | null): boolean {
+  return !!from && !!to && from > to
+}
+
 export function filterCollected(items: CollectedBeat[], f: CollectedFilter): CollectedBeat[] {
   return items.filter((b) => {
     if (f.wallet !== 'all' && b.wallet.toLowerCase() !== f.wallet.toLowerCase()) return false

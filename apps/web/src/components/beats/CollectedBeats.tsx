@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { beatFieldError, filterCollected, shortWallet, walletPageHref, type BeatCollection, type BeatKind, type CollectedFilter } from '@/lib/beats'
+import { beatFieldError, datesBackwards, filterCollected, shortWallet, walletPageHref, type BeatCollection, type BeatKind, type CollectedFilter } from '@/lib/beats'
 import { EmptyState, Skeleton } from '@/components/ui'
 import { MedalIcon } from '@/components/icons'
 import { BeatMedal } from './BeatMedal'
@@ -73,6 +73,12 @@ export function CollectedBeats() {
           <input type="checkbox" checked={filter.earnedOnly} onChange={(e) => set({ earnedOnly: e.target.checked })} /> Earned only
         </label>
       </div>
+      {datesBackwards(filter.from, filter.to) && (
+        <p className="mb-3 text-sm text-amber-300" role="status">
+          From is after To, so nothing can match.{' '}
+          <button type="button" className="underline underline-offset-2 hover:text-white" onClick={() => set({ from: filter.to, to: filter.from })}>Swap the dates</button>
+        </p>
+      )}
       {shown.length === 0 ? (
         <p className="text-sm text-gray-400">No BEATs match these filters.</p>
       ) : (

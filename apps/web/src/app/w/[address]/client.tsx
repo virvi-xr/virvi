@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { beatAddressUrl, type BeatChain } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
-import { filterCollected, shortWallet, walletFromPath, type WalletBeats } from '@/lib/beats'
+import { datesBackwards, filterCollected, shortWallet, walletFromPath, type WalletBeats } from '@/lib/beats'
 import { BeatMedal } from '@/components/beats/BeatMedal'
 import { beatDisplay } from '@/lib/beat-fonts'
 
@@ -102,6 +102,12 @@ export default function WalletBeatsClient() {
                     <input type="checkbox" className="accent-[var(--bw-cyan)]" checked={earnedOnly} onChange={(e) => setEarnedOnly(e.target.checked)} /> Earned only
                   </label>
                 </div>
+                {datesBackwards(from, to) && (
+                  <p className="mb-4 text-center text-sm text-[var(--bw-chrome)]" role="status">
+                    From is after To, so nothing can match.{' '}
+                    <button type="button" className={link} onClick={() => { setFrom(to); setTo(from) }}>Swap the dates</button>
+                  </p>
+                )}
                 {shown.length === 0 ? (
                   <p className="text-center text-sm text-[var(--bw-dim)]">No BEATs match these filters.</p>
                 ) : (

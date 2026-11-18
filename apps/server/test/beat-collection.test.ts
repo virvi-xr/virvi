@@ -167,4 +167,5 @@ describe('BEAT collection (LIV-185)', () => {
     ;(config as any).beats = { ...config.beats, enabled: false }
     expect((await pub(getAddress(randomWallet()))).statusCode).toBe(404)
   })
+
 })
