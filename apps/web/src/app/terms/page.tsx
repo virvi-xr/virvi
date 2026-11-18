@@ -64,11 +64,11 @@ export default function TermsPage() {
         <h2>10. Limitation of liability</h2>
         <p>To the extent the law allows, Virvi is not liable for indirect or consequential losses. Its total liability to you is limited to the greater of what you paid Virvi in the 12 months before the claim and $100.</p>
         <h2>11. Disputes and governing law</h2>
-        <p>These Terms are governed by the laws of [State], USA. Disputes go to the courts of [County, State], unless your lawyer adds arbitration here. Nothing here takes away rights that consumer law where you live gives you.</p>
+        <p>These Terms are governed by the laws of the State of Florida, USA. Disputes go to the state and federal courts for Brevard County, Florida. Nothing here takes away rights that consumer law where you live gives you.</p>
         <h2>12. Changes</h2>
         <p>We may update these Terms. We&apos;ll post the new version with its date and tell you about important changes beforehand. If you keep using Virvi after a change takes effect, you accept the new Terms.</p>
         <h2>13. Contact</h2>
-        <p><a href="mailto:support@virvi.io" className={link}>support@virvi.io</a> · [mailing address]</p>
+        <p><a href="mailto:support@virvi.io" className={link}>support@virvi.io</a> · Livication LLC, 255 East Drive, Suite L, Melbourne, FL 32904, USA</p>
       </article>
     </div>
   )

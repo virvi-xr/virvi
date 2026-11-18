@@ -168,8 +168,8 @@ limited to the greater of what you paid Virvi in the 12 months before the claim 
 
 ## 11. Disputes and governing law
 
-These Terms are governed by the laws of [State], USA. Disputes go to the courts of [County, State], unless your lawyer
-adds arbitration here. Nothing here takes away rights that consumer law where you live gives you.
+These Terms are governed by the laws of the State of Florida, USA. Disputes go to the state and federal courts for Brevard County,
+Florida. Nothing here takes away rights that consumer law where you live gives you.
 
 ## 12. Changes
 
@@ -178,4 +178,4 @@ keep using Virvi after a change takes effect, you accept the new Terms.
 
 ## 13. Contact
 
-[support@virvi.io](mailto:support@virvi.io) · [mailing address]
+[support@virvi.io](mailto:support@virvi.io) · Livication LLC, 255 East Drive, Suite L, Melbourne, FL 32904, USA
