@@ -50,3 +50,33 @@ export async function summarizeAdDays(now = new Date()): Promise<{ through: stri
     return { through: target }
   })
 }
+
+/** How long raw ad views are kept (LIV-167, owner decision 2026-11-18). Summaries are kept forever. */
+export const AD_VIEW_RETENTION_MONTHS = 13
+
+/** The first UTC day still kept on `now`: the same calendar day, 13 months back. */
+export function adRetentionCutoff(now: Date): string {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - AD_VIEW_RETENTION_MONTHS, 1))
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
+  d.setUTCDate(Math.min(now.getUTCDate(), lastDay))
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Delete raw ad views older than the retention period (LIV-167), only for days already in the summaries, so reports
+ * never lose a number. Runs after summarizeAdDays in the daily jobs; batched so a long backlog doesn't hold locks.
+ */
+export async function purgeOldAdViews(now = new Date()): Promise<{ deleted: number }> {
+  const through = await adSummariesThrough()
+  if (!through) return { deleted: 0 }
+  const cutoff = adRetentionCutoff(now)
+  let deleted = 0
+  for (;;) {
+    const rows = (await db.execute(sql`
+      delete from ad_events where id in (
+        select id from ad_events where day < ${cutoff}::date and day <= ${through}::date limit 10000
+      ) returning 1 as x`)) as unknown as unknown[]
+    deleted += rows.length
+    if (rows.length < 10000) return { deleted }
+  }
+}

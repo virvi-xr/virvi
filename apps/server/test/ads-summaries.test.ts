@@ -5,7 +5,7 @@ import { ads, adEvents, adDailySpace, adDailyViewers } from '../src/db/schema.js
 import { resetDb } from './helpers/db.js'
 import { createUser, createScene, createElement } from './helpers/factories.js'
 import { adReport } from '../src/ads/report.js'
-import { summarizeAdDays, adSummariesThrough } from '../src/ads/summaries.js'
+import { summarizeAdDays, adSummariesThrough, purgeOldAdViews, adRetentionCutoff } from '../src/ads/summaries.js'
 
 describe('ad view summaries (LIV-190)', () => {
   let ad: { id: string }
@@ -79,5 +79,30 @@ describe('ad view summaries (LIV-190)', () => {
     await summarizeAdDays(new Date('2026-10-21T03:00:00Z'))
     const cols = [...Object.keys((await db.select().from(adDailySpace))[0]), ...Object.keys((await db.select().from(adDailyViewers))[0])]
     expect(cols.some((c) => /viewer_?key|wallet/i.test(c))).toBe(false)
+  })
+
+  it('the retention cutoff is the same day 13 months back, clamped to short months', () => {
+    expect(adRetentionCutoff(new Date('2027-11-21T03:00:00Z'))).toBe('2026-10-21')
+    expect(adRetentionCutoff(new Date('2027-03-31T03:00:00Z'))).toBe('2026-02-28')
+  })
+
+  it('the purge deletes raw views older than 13 months, only for summarized days, and reports keep every number', async () => {
+    // Nothing summarized yet: nothing goes, however old
+    expect(await purgeOldAdViews(new Date('2028-01-01T03:00:00Z'))).toEqual({ deleted: 0 })
+    expect(await db.select().from(adEvents)).toHaveLength(13)
+
+    await summarizeAdDays(new Date('2026-10-21T03:00:00Z')) // through 2026-10-19; the 20th stays raw
+    const before = await adReport(ad.id)
+    // 13 months after the 20th: the 18th and 19th are past the cutoff and summarized, the 20th is not summarized
+    expect(await purgeOldAdViews(new Date('2027-11-21T03:00:00Z'))).toEqual({ deleted: 11 })
+    const left = await db.select({ day: adEvents.day }).from(adEvents)
+    expect(new Set(left.map((r) => r.day))).toEqual(new Set(['2026-10-20']))
+    expect(await adReport(ad.id)).toEqual(before)
+  })
+
+  it('a day inside the 13 months is kept even when summarized', async () => {
+    await summarizeAdDays(new Date('2026-10-25T03:00:00Z'))
+    expect(await purgeOldAdViews(new Date('2027-11-19T03:00:00Z'))).toEqual({ deleted: 4 }) // only the 18th
+    expect(await db.select().from(adEvents)).toHaveLength(9)
   })
 })

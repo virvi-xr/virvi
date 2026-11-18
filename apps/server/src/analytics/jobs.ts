@@ -22,7 +22,7 @@ import { purgeAuthHandoffCodes } from '../routes/auth-handoff.js'
 import { expireStaleUploads } from '../library/scene-library.js'
 import { scrubEndedRaffles } from '../raffles/sweeps.js'
 import { scrubBeats } from '../beats/retention.js'
-import { summarizeAdDays } from '../ads/summaries.js'
+import { purgeOldAdViews, summarizeAdDays } from '../ads/summaries.js'
 
 const HOUR = 3_600_000
 const DAY = 86_400_000
@@ -377,6 +377,7 @@ registerDailyJob('stale-upload-expire', (now) => expireStaleUploads(now))
 registerDailyJob('raffle-retention', (now) => scrubEndedRaffles(now))
 registerDailyJob('beat-retention', (now) => scrubBeats(now))
 registerDailyJob('ad-summaries', (now) => summarizeAdDays(now))
+registerDailyJob('ad-retention', (now) => purgeOldAdViews(now))
 
 export function startAnalyticsJobs(): () => void {
   if (!config.analyticsJobsEnabled) return () => {}

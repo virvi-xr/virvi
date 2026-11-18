@@ -41,10 +41,18 @@ export default function PrivacyPage() {
           scenes, and 7 days for local previews. Aggregated statistics (counts, heatmaps) are kept longer and contain no identities.
         </p>
 
+        <h2>Ads in scenes</h2>
+        <p>
+          When a scene shows ads, Virvi records when an ad space is in view, looked at or clicked, once per ad space per day. A record holds a
+          keyed hash of the scene and your wallet, or a guest session id, never your wallet address. Records made before 17 November 2026 hold the
+          wallet address itself. Ad records are kept for 13 months. Daily totals with no identities in them are kept longer, for advertisers&apos;
+          reports.
+        </p>
+
         <h2>Deleting your data</h2>
         <p>
           Call <code className="rounded bg-gray-800 px-1.5 py-0.5 text-sm">POST /api/analytics/me/delete</code> with your session token. A
-          dashboard control for this is coming. This removes your sessions, events and positions from every scene, your raffle entries, and your
+          dashboard control for this is coming. This removes your sessions, events and positions from every scene, your ad records, your raffle entries, and your
           BEAT data (see BEATs below for tokens already sent).
           To ask for your data to be deleted, or for help, email{' '}
           <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a>.
