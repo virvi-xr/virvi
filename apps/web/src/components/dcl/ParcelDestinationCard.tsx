@@ -27,6 +27,7 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
   const api = useApi()
   const [dest, setDest] = useState(destination)
   const [signers, setSigners] = useState<string[] | null | undefined>(undefined)
+  const [mapStale, setMapStale] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState<null | 'rebase' | 'mode'>(null)
@@ -38,7 +39,7 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
 
   const load = () =>
     api.getDclDestination(dest.id)
-      .then((d) => { setDest(d.destination); setSigners(d.signers) })
+      .then((d) => { setDest(d.destination); setSigners(d.signers); setMapStale(!!d.mapOutOfDate) })
       .catch((err) => setError(signErrorMessage(err, { ...dest, kind: 'parcels' })))
   useEffect(() => { load() }, [dest.id])
 
@@ -103,6 +104,12 @@ export function ParcelDestinationCard({ destination, history, onChanged }: {
           </div>
         )}
         <MapDataLine destination={dest} />
+        {mapStale && (
+          <p className="mt-1.5 text-yellow-200">
+            Map out of date: you&apos;ve moved, added or removed models since the last deploy. Redeploy now to show the new layout on the
+            map and from neighbouring parcels.
+          </p>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

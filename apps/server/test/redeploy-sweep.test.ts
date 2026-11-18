@@ -8,7 +8,7 @@ import { assetLibraryItems, dclWorldDestinations, sceneDeployments, sceneElement
 import { PLACEMENTS_FILE, decodePlacements } from '@virvixr/shared'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
 import { setWorldsClient, WorldsError, type LiveEntity } from '../src/services/dcl/worlds-client.js'
-import { BATCH_WINDOW_MS, RETRY_BACKOFF_MS, placementsDrifted, startDclRedeploySweep, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
+import { BATCH_WINDOW_MS, RETRY_BACKOFF_MS, mapOutOfDate, placementsDrifted, startDclRedeploySweep, sweepRedeploys } from '../src/services/dcl/redeploy-sweep.js'
 import { DEPLOY_WINDOW_MS, prepareSignedDeploy, sceneTriangleWarning, startVirviDeploy, whenSettled } from '../src/services/dcl/world-deployer.js'
 import { modelsInScene } from '../src/services/dcl/assemble.js'
 import { DCL_RUNTIME_VERSION } from '../src/services/dcl/runtime.js'
@@ -497,6 +497,25 @@ describe('startDclRedeploySweep', () => {
       expect(placementsIn(1)?.[0].position).toEqual({ x: 5, y: 0, z: 7 })
       goLive()
       expect(await placementsDrifted(await row(), later(2 * DAY + 120_000))).toBe(false)
+    })
+
+    it("mode B: parcels the owner signs for show 'map out of date' at once, and their Publish counts the move (LIV-135)", async () => {
+      const { preset, dest, user } = await deployedOnce()
+      // The helper reads kind, mode and the grant; the deploy machinery underneath is the same for both kinds
+      await db.update(dclWorldDestinations).set({ kind: 'parcels', mode: 'sign', grantedAt: null }).where(eq(dclWorldDestinations.id, dest.id))
+      expect(await mapOutOfDate(await destRow(dest.id))).toBe(false) // nothing moved
+      await move(preset.id)
+      expect(await mapOutOfDate(await destRow(dest.id))).toBe(true) // no day's wait: the owner decides when to publish
+      // Virvi deploying for them (an operator): the sweep handles it, so no prompt
+      await db.update(dclWorldDestinations).set({ mode: 'virvi', grantedAt: new Date() }).where(eq(dclWorldDestinations.id, dest.id))
+      expect(await mapOutOfDate(await destRow(dest.id))).toBe(false)
+      // A World never shows it
+      await db.update(dclWorldDestinations).set({ kind: 'world', mode: 'sign', grantedAt: null }).where(eq(dclWorldDestinations.id, dest.id))
+      expect(await mapOutOfDate(await destRow(dest.id))).toBe(false)
+      // A signed Publish: a move alone is nothing to deploy without the drift flag, and a deploy with it
+      await expect(prepareSignedDeploy(dest.id, user.id, { fetch: fetcher })).rejects.toMatchObject({ code: 'nothing_to_deploy' })
+      const { payload } = await prepareSignedDeploy(dest.id, user.id, { fetch: fetcher, placementsDrift: true })
+      expect(payload).toMatch(/^ba/)
     })
 
     it('a World is never redeployed for it: Worlds have no satellite map or distant view', async () => {

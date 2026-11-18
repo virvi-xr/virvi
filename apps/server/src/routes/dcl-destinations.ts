@@ -84,6 +84,7 @@ import {
 import { deploymentForCaller, publicDeployment } from './deploy.js'
 import { ImportError } from '../services/import/scene-zip.js'
 import { worldOf } from '../services/dcl/world-of.js'
+import { mapOutOfDate } from '../services/dcl/redeploy-sweep.js'
 import { DisconnectBusyError, disconnectDestination } from '../services/dcl/disconnect.js'
 import { mayManageDeletion } from '../scenes/deleted.js'
 import { parcelControl, type ParcelControl } from '../services/dcl/parcel-control.js'
@@ -575,6 +576,7 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
       destination: dest, kind: dest.kind, parcels: dest.parcels, signers: await signersOf(request.user.id, dest),
       pending: await pendingModels(dest), refused, lastDeployment: last ? publicDeployment(last) : null,
       warning: sceneTriangleWarning(dest, await modelsInScene(dest.sceneId)),
+      mapOutOfDate: await mapOutOfDate(dest),
     })
   }))
 
@@ -716,11 +718,14 @@ export default async function dclDestinationRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/api/dcl/destinations/:id/deploy', async (request, reply) => handle(reply, async () => {
     const dest = await destinationFor(request, request.params.id, 'full')
     await requireOwner(request.user.id, dest)
+    // On Genesis City parcels a moved, added or removed model is worth a deploy by itself: it updates the map and the
+    // distant view (LIV-135). A World has neither, so there it isn't.
+    const opts = { placementsDrift: dest.kind === 'parcels' }
     if (dest.mode === 'virvi') {
-      const deployment = await startVirviDeploy(dest.id, request.user.id)
+      const deployment = await startVirviDeploy(dest.id, request.user.id, opts)
       return reply.status(202).send({ deployment: publicDeployment(deployment) })
     }
-    const { deployment, payload, expiresAt } = await prepareSignedDeploy(dest.id, request.user.id)
+    const { deployment, payload, expiresAt } = await prepareSignedDeploy(dest.id, request.user.id, opts)
     return reply.send({ deployment: publicDeployment(deployment), payload, expiresAt })
   }))
 

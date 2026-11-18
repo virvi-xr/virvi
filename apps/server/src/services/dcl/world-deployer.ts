@@ -795,7 +795,7 @@ export async function prepareSignedDeploy(
   const dest = await loadDestination(destinationId)
   await assertFits(dest)
   const started = Date.now()
-  const packed = await assembleFor(dest, started, opts.fetch)
+  const packed = await assembleFor(dest, started, opts.fetch, opts.placementsDrift)
   if (!packed.assembled.changed) {
     const err = await nothingToDeploy(dest, packed.assembled)
     // Record what was refused so the sweep keeps the destination held on it (mode A's row does the same).

@@ -45,7 +45,7 @@ export const DRIFT_REDEPLOY_MS = 24 * 60 * 60_000
  * deploy is a day old. False when the live entity isn't the one Virvi last deployed (that is changed-outside's to say)
  * or the deploy kept no content list.
  */
-export async function placementsDrifted(dest: { id: string; sceneId: string; lastEntityId: string | null }, now: Date): Promise<boolean> {
+export async function placementsDrifted(dest: { id: string; sceneId: string; lastEntityId: string | null }, now: Date, minAgeMs = DRIFT_REDEPLOY_MS): Promise<boolean> {
   if (!dest.lastEntityId) return false
   const last = await db.query.sceneDeployments.findFirst({
     where: and(eq(sceneDeployments.destinationId, dest.id), eq(sceneDeployments.status, 'deployed')),
@@ -53,13 +53,25 @@ export async function placementsDrifted(dest: { id: string; sceneId: string; las
     columns: { deployedAt: true, catalystEntityId: true, assetBundle: true },
   })
   if (!last?.deployedAt || last.catalystEntityId !== dest.lastEntityId) return false
-  if (now.getTime() - last.deployedAt.getTime() < DRIFT_REDEPLOY_MS) return false
+  if (now.getTime() - last.deployedAt.getTime() < minAgeMs) return false
   const content = (last.assetBundle as { content?: ContentRef[] } | null)?.content
   if (!Array.isArray(content)) return false
   const prior = content.find((c) => isPlacementsFile(c.file))
   const bytes = placementsFile(await placementsInScene(dest.sceneId), content.filter((c) => !isPlacementsFile(c.file)).map((c) => c.file))
   if (!bytes) return !!prior
   return !prior || prior.file !== PLACEMENTS_FILE || prior.hash !== (await dclHash(bytes))
+}
+
+/**
+ * "Map out of date" (LIV-135 mode B): a Genesis City parcels destination the sweep doesn't redeploy by itself (the owner
+ * signs each deploy, or Virvi isn't an operator) whose layout changed since the last deploy, so the map and distant view
+ * show the old one until the owner publishes. Worlds have neither, so they never are.
+ */
+export async function mapOutOfDate(
+  dest: { id: string; sceneId: string; kind: string; mode: string; grantedAt: Date | null; lastEntityId: string | null }, now = new Date(),
+): Promise<boolean> {
+  if (dest.kind !== 'parcels' || (dest.mode === 'virvi' && dest.grantedAt)) return false
+  return placementsDrifted(dest, now, 0)
 }
 
 /**

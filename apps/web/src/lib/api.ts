@@ -724,6 +724,8 @@ function useRealApi() {
     getDclDestination: (id: string) =>
       apiFetch<{
         destination: DclDestination; kind: 'world' | 'parcels'; parcels: string[]
+        /** Genesis City parcels Virvi doesn't redeploy by itself whose layout changed since the last deploy (LIV-135). */
+        mapOutOfDate?: boolean
         /** Wallets that may sign this destination's deploys; null when Decentraland couldn't be reached. */
         signers: string[] | null
         pending: DclPendingModel[]; refused: Array<{ name: string; reason: string }>; lastDeployment: DclDeployment | null; warning?: string | null
