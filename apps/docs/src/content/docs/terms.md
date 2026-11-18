@@ -5,7 +5,7 @@ description: The rules for using Virvi, its content policy, and who owns what yo
 
 <!-- Keep in step with apps/web/src/app/terms/page.tsx (both are generated from the same text). -->
 
-Last updated: [date]
+Last updated: 18 November 2026
 
 These Terms are an agreement between you and Livication LLC, which runs Virvi ("Virvi", "we", "us"). They cover the Virvi
 website, dashboard, Design Studio, Virvi worlds and Cities, events, Drops, AR, the in-world HUD, our APIs and SDKs, and
@@ -63,8 +63,8 @@ When you deploy to Decentraland, Hyperfy or any other platform, its own terms an
 
 We may remove or block content, limit features, or suspend or close accounts that break these rules, and we may report
 illegal content to the authorities. To report content, email [support@virvi.io](mailto:support@virvi.io). To appeal a decision about your content or
-account, email the same address within 30 days; a person will review it. Copyright notices go to [DMCA agent's name and
-address, once registered with the US Copyright Office].
+account, email the same address within 30 days; a person will review it. Copyright notices go to
+[support@virvi.io](mailto:support@virvi.io).
 
 ## 3. The Design Studio: who owns what
 

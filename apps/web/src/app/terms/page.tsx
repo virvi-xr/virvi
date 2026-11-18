@@ -14,7 +14,7 @@ export default function TermsPage() {
       <article className="mx-auto max-w-2xl text-gray-300 [&_h2]:mb-3 [&_h2]:mt-10 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-white [&_h3]:mb-2 [&_h3]:mt-6 [&_h3]:font-semibold [&_h3]:text-white [&_li]:mt-2 [&_ol_ul]:mt-1 [&_p]:mt-3 [&_p]:leading-relaxed [&_ul_ul]:mt-1">
         <a href="/" className="text-sm text-gray-400 hover:text-white">← Back to Virvi</a>
         <h1 className="mt-6 text-3xl font-semibold tracking-tight text-white">Terms of Service</h1>
-        <p>Last updated: [date]</p>
+        <p>Last updated: 18 November 2026</p>
         <p>These Terms are an agreement between you and Livication LLC, which runs Virvi (&quot;Virvi&quot;, &quot;we&quot;, &quot;us&quot;). They cover the Virvi website, dashboard, Design Studio, Virvi worlds and Cities, events, Drops, AR, the in-world HUD, our APIs and SDKs, and anything else we offer under the Virvi name (together, the &quot;Services&quot;). By using the Services you accept these Terms and our <a href="/privacy/" className={link}>Privacy Policy</a>. If you don&apos;t accept them, don&apos;t use the Services.</p>
         <h2>1. Who can use Virvi</h2>
         <ul className="list-disc pl-5"><li>You must be at least 18 years old, or the age of majority where you live if that is higher.</li><li>If you use Virvi for a company or other organisation, you confirm that you can accept these Terms on its behalf.</li><li>You are responsible for your account, your wallet, and everything done with them. Keep your keys and sign-in details safe. We can&apos;t recover a wallet or reverse a blockchain transaction.</li></ul>
@@ -31,7 +31,7 @@ export default function TermsPage() {
         <h3>2.5 Other platforms</h3>
         <p>When you deploy to Decentraland, Hyperfy or any other platform, its own terms and content policy also apply.</p>
         <h3>2.6 Enforcement</h3>
-        <p>We may remove or block content, limit features, or suspend or close accounts that break these rules, and we may report illegal content to the authorities. To report content, email <a href="mailto:support@virvi.io" className={link}>support@virvi.io</a>. To appeal a decision about your content or account, email the same address within 30 days; a person will review it. Copyright notices go to [DMCA agent&apos;s name and address, once registered with the US Copyright Office].</p>
+        <p>We may remove or block content, limit features, or suspend or close accounts that break these rules, and we may report illegal content to the authorities. To report content, email <a href="mailto:support@virvi.io" className={link}>support@virvi.io</a>. To appeal a decision about your content or account, email the same address within 30 days; a person will review it. Copyright notices go to <a href="mailto:support@virvi.io" className={link}>support@virvi.io</a>.</p>
         <h2>3. The Design Studio: who owns what</h2>
         <h3>3.1 Definitions</h3>
         <ul className="list-disc pl-5"><li><strong>Your Inputs:</strong> your prompts and the files you upload (for example images, 3D models and sounds).</li><li><strong>Output:</strong> what the Design Studio&apos;s agent makes for you: models, textures, animations, sounds, previews, renders and packages, with every revision of each piece.</li><li><strong>Paid For:</strong> a piece&apos;s revision is Paid For when you finalize it and the payment completes (by card, credit, MANA, or a free finalize or waiver we give you).</li></ul>

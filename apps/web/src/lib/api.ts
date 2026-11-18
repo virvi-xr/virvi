@@ -30,6 +30,7 @@ import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, Analytic
 import { ratingsQuery, type AdminLesson, type AdminRating, type Digest, type KindDefaults, type LessonsList, type ratingBody, type ReviewFilters, type StudioRevision } from './studio-ratings'
 import type { HostRaffle, RaffleDetail, RaffleSnapshotRow, RaffleWinner, drawBody, editBody, raffleBody } from './raffles'
 import type { AdminBeatsOverview } from './admin-beats'
+import type { TermsStatus } from './terms'
 import type { AdminReissueRequest, ProposedReissueFile, ReissueRequest, SafeBatchPreview } from './reissue'
 import { beatApiPath, sceneBeatsPath, type BeatAvailability, type BeatCheckoutResult, type BeatClaimant, type BeatCollection, type BeatQuote, type PublicBeat, type WalletBeats, type beatBody, type beatEditBody, type payBody } from './beats'
 
@@ -626,6 +627,10 @@ function useRealApi() {
     // Email verification (LIV-161)
     getEmailStatus: () => apiFetch<EmailStatus>('/api/auth/email'),
     resendEmailVerification: () => apiFetch<EmailStatus>('/api/auth/email/resend', { method: 'POST', userAction: true }),
+    // Terms of Service agreement
+    getTermsStatus: () => apiFetch<TermsStatus>('/api/auth/terms'),
+    acceptTerms: (version: string) =>
+      apiFetch<TermsStatus>('/api/auth/terms', { method: 'POST', body: JSON.stringify({ version }), userAction: true }),
     deleteAccount: (password: string) =>
       apiFetch('/api/auth/account', { method: 'DELETE', body: JSON.stringify({ password }) }),
 

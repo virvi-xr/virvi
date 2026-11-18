@@ -14,6 +14,9 @@ When a scene uses Virvi, the scene sends anonymous usage events to Virvi while y
 ## Retention
 Raw events are kept for the scene owner's plan (7–365 days, unlimited on the top tier and self-hosted installs), 30 days for unclaimed scenes, and 7 days for local previews. Aggregated statistics (counts, heatmaps) are kept longer and contain no identities.
 
+## Terms of Service agreements
+When you agree to the Terms of Service, Virvi records which version you agreed to, when, and whether you agreed when signing up or later. The record is kept while your account exists and is deleted with it.
+
 ## Deleting your data
 Call `POST /api/analytics/me/delete` with your session token. A dashboard control for this is coming. This removes your sessions, events and positions from every scene, your raffle entries, and your BEAT data (see BEATs below for tokens already sent).
 

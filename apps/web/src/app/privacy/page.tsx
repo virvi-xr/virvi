@@ -49,6 +49,11 @@ export default function PrivacyPage() {
           reports.
         </p>
 
+        <h2>Terms of Service agreements</h2>
+        <p>
+          When you agree to the Terms of Service, Virvi records which version you agreed to, when, and whether you agreed when signing up or later. The record is kept while your account exists and is deleted with it.
+        </p>
+
         <h2>Deleting your data</h2>
         <p>
           Call <code className="rounded bg-gray-800 px-1.5 py-0.5 text-sm">POST /api/analytics/me/delete</code> with your session token. A

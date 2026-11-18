@@ -1241,6 +1241,18 @@ export const emailVerificationTokens = pgTable('email_verification_tokens', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ byUser: index('email_verification_tokens_user_idx').on(t.userId, t.createdAt) }))
 
+// ── Terms of Service agreements ─────────────────────────────────────────────
+
+/** One row per account per Terms version it agreed to (TERMS_VERSION in @virvixr/shared); older rows are its history. */
+export const termsAcceptances = pgTable('terms_acceptances', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  version: text('version').notNull(),
+  /** 'sign-up' (the box on the sign-up form) | 'prompt' (the agree screen) */
+  via: text('via').notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ oneEach: uniqueIndex('terms_acceptances_user_version_idx').on(t.userId, t.version) }))
+
 // ── Password Reset Tokens ───────────────────────────────────────────────────
 
 export const passwordResetTokens = pgTable('password_reset_tokens', {

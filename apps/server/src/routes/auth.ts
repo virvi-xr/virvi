@@ -29,12 +29,16 @@ import { deleteImportFiles, importsGoingWith } from '../services/import/imports.
 import { CREDENTIAL_RATE_LIMIT } from '../auth/credential-rate-limit.js'
 import { deletionRefused } from '../beats/reissue.js'
 import { markVerifiedByReset, sendVerification } from '../auth/email-verification.js'
+import { acceptTerms } from '../auth/terms.js'
+import { TERMS_VERSION } from '@virvixr/shared'
 
 interface RegisterBody {
   email: string
   password: string
   displayName: string
   fromAction?: string
+  /** The Terms version the sign-up form showed, when its box was ticked */
+  acceptTerms?: unknown
 }
 
 interface LoginBody {
@@ -107,6 +111,9 @@ export default async function authRoutes(app: FastifyInstance) {
         credentialHash: passwordHash,
       })
     }
+
+    // The sign-up form's Terms box sends the version it showed; anything else leaves the account to be asked on first visit
+    if (request.body.acceptTerms === TERMS_VERSION) await acceptTerms(user.id, TERMS_VERSION, 'sign-up')
 
     // LIV-161: the account works now; a link confirms the address. Not waited for: a slow mail server never holds sign-up
     void sendVerification(user.id, email.toLowerCase()).catch((err) => request.log.error(err, 'verification link failed'))

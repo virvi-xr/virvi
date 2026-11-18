@@ -113,7 +113,7 @@ export default function TryStudioPage() {
           {needsCheck && <Turnstile onToken={setBotToken} handle={turnstile} />}
           {error && <p className="text-sm text-amber-300" role="alert">{error}</p>}
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-gray-500">Your work is kept for 14 days. Create an account any time to save it.</p>
+            <p className="text-xs text-gray-500">Your work is kept for 14 days. Create an account any time to save it. By starting, you agree to the <a href="/terms/" target="_blank" rel="noopener" className="underline hover:text-white">Terms of Service</a>.</p>
             <PrimaryButton type="submit" disabled={busy || loading || !text.trim() || (needsCheck && botToken === null)}>
               {busy ? 'Starting…' : 'Start'}
             </PrimaryButton>

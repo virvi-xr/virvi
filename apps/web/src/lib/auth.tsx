@@ -25,7 +25,8 @@ interface AuthState {
   scenePass: ScenePass | null
   /** Sign in / create an account / sign in with a wallet. From a trial the trial bearer goes along, so the trial's designs move into the account; `fromAction` is the blocked action. Each returns the new access token. */
   login: (email: string, password: string, fromAction?: string) => Promise<string>
-  register: (email: string, password: string, displayName: string, fromAction?: string) => Promise<string>
+  /** `acceptedTerms`: the Terms version the form's box was ticked for (the account is asked on first visit otherwise) */
+  register: (email: string, password: string, displayName: string, fromAction?: string, acceptedTerms?: string) => Promise<string>
   loginWithWallet: (fromAction?: string) => Promise<string>
   /** Starts a trial session (a signed-out visitor trying Virvi); `entry` is the page it started from. */
   startTrial: (turnstileToken: string, entry?: TrialEntry) => Promise<void>
@@ -181,8 +182,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return adopt(await res.json(), carried)
   }
 
-  const register = async (email: string, password: string, displayName: string, fromAction?: string) => {
-    const { res, carried } = await post('/api/auth/register', { email, password, displayName, ...(fromAction ? { fromAction } : {}) })
+  const register = async (email: string, password: string, displayName: string, fromAction?: string, acceptedTerms?: string) => {
+    const { res, carried } = await post('/api/auth/register', { email, password, displayName, ...(fromAction ? { fromAction } : {}), ...(acceptedTerms ? { acceptTerms: acceptedTerms } : {}) })
     if (!res.ok) throw new Error(await errorMessage(res, 'Registration failed'))
     return adopt(await res.json(), carried)
   }

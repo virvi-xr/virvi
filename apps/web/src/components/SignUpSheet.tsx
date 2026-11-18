@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { getBrowserWallet, useAuth } from '@/lib/auth'
 import { API_URL } from '@/lib/config'
 import { blockedCopy, signUpButtons, dismissSignUp, resolveSignUp, signUpAutoDismiss, subscribeSignUp, SIGN_IN_UNLOCKS, type SignUpRequest } from '@/lib/trial'
+import { TERMS_VERSION } from '@virvixr/shared'
+import { TermsCheckbox } from '@/components/TermsCheckbox'
 
 const BUTTON_STYLE = {
   wallet: 'bg-orange-500 text-white hover:bg-orange-600',
@@ -28,6 +30,7 @@ export function SignUpSheet() {
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [agreed, setAgreed] = useState(false)
   const [providers, setProviders] = useState<{ google: boolean; discord: boolean }>({ google: false, discord: false })
   const [hasWallet, setHasWallet] = useState(false)
   // Set synchronously around the sheet's own sign-up/sign-in: the new user can land (and this re-render) before it resolves
@@ -75,7 +78,7 @@ export function SignUpSheet() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
-    run(() => (tab === 'create' ? register(email, password, displayName, req.action) : login(email, password, req.action)))
+    run(() => (tab === 'create' ? register(email, password, displayName, req.action, TERMS_VERSION) : login(email, password, req.action)))
   }
 
   // Google and Discord leave the page: come back to this page, which says "You're signed in" (the blocked action is not replayed)
@@ -115,8 +118,9 @@ export function SignUpSheet() {
           {tab === 'create' && <input aria-label="Display name" placeholder="Display name" className={input} value={displayName} onChange={e => setDisplayName(e.target.value)} required />}
           <input type="email" aria-label="Email" placeholder="Email" className={input} value={email} onChange={e => setEmail(e.target.value)} required />
           <input type="password" aria-label="Password" placeholder="Password" className={input} value={password} onChange={e => setPassword(e.target.value)} required />
+          {tab === 'create' && <TermsCheckbox checked={agreed} onChange={setAgreed} />}
           {error && <p className="text-sm text-red-400">{error}</p>}
-          <button type="submit" disabled={busy} className="w-full rounded-lg bg-blue-600 py-2 font-medium hover:bg-blue-700 disabled:opacity-50">
+          <button type="submit" disabled={busy || (tab === 'create' && !agreed)} className="w-full rounded-lg bg-blue-600 py-2 font-medium hover:bg-blue-700 disabled:opacity-50">
             {busy ? '...' : tab === 'create' ? 'Create account' : 'Sign in'}
           </button>
         </form>

@@ -10,6 +10,7 @@ import { isDocsPath, registerDocsSite, sendDocsNotFound } from './http/docs-site
 import { registerJwt } from './middleware/auth.js'
 import authRoutes from './routes/auth.js'
 import emailVerificationRoutes from './routes/email-verification.js'
+import termsRoutes from './routes/terms.js'
 import walletAuthRoutes from './routes/wallet-auth.js'
 import trialRoutes from './routes/trial.js'
 import authHandoffRoutes from './routes/auth-handoff.js'
@@ -220,6 +221,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     withRawJson(scope)
     await scope.register(authRoutes)
     await scope.register(emailVerificationRoutes)
+    await scope.register(termsRoutes)
     await scope.register(walletAuthRoutes)
     await scope.register(trialRoutes)
     await scope.register(authHandoffRoutes)
