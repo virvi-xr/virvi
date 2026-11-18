@@ -304,3 +304,13 @@ def test_closing_says_how_to_switch_kinds():
 def test_closing_keeps_an_emotes_sound_on_edits():
     text = ' '.join(closing('emote', None).split())
     assert 'keep its sound' in text and 'With no sound asked for on a new emote, add none.' in text
+
+
+def test_every_kind_refuses_sexually_explicit_content():
+    # The Terms of Service (§2.2) say the Design Studio never makes sexually explicit content
+    for kind in ('wearable', 'emote', 'scene'):
+        text = closing(kind, None)
+        assert 'sexually explicit' in text
+        assert 'nudity' in text
+        rule = text[text.index('sexually explicit') - 200:text.index('sexually explicit') + 300]
+        assert 'out/declined.json' in rule
