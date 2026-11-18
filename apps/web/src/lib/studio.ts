@@ -268,6 +268,11 @@ export function formatCents(cents: number): string {
 }
 
 /** Time left until `resetsAt`: `3 h 20 min`, or `20 min` under an hour. */
+/** "1 December", in UTC: the day a monthly limit comes back. */
+function monthDay(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' })
+}
+
 export function untilReset(resetsAt: string, now: Date): string {
   const mins = Math.max(0, Math.round((new Date(resetsAt).getTime() - now.getTime()) / 60_000))
   return mins < 60 ? `${mins} min` : `${Math.floor(mins / 60)} h ${mins % 60} min`
@@ -298,6 +303,11 @@ export function refusalMessage(
       }
     case 'cost_ceiling':
       return { text: 'The studio needs a rest for today. Come back tomorrow.' }
+    case 'month_ceiling':
+      return {
+        text: `You’ve used this month’s Studio time on your plan.${b.resetsAt ? ` It comes back on ${monthDay(b.resetsAt)}.` : ''} Prompt packs still work.`,
+        action: 'topup',
+      }
     case 'busy':
       return { text: 'The agent is still working on your last message.' }
     case 'viewer':

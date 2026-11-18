@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, gte, lt, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { studioPromptCredits, studioUsageDays, studioTrialSpendDays, users } from '../db/schema.js'
 import { config } from '../config.js'
@@ -21,6 +21,10 @@ export const utcDay = (now: Date) => now.toISOString().slice(0, 10)
 
 function nextUtcMidnight(now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString()
+}
+
+function nextUtcMonth(now: Date): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString()
 }
 
 /** Trials keep their usage on this sentinel day, so their allowance is a total, not per day. */
@@ -47,10 +51,32 @@ export async function usageDay(userId: string, now: Date): Promise<string> {
 
 async function limitsFor(userId: string, exec: Exec = db) {
   if (await isTrialUser(userId, exec)) {
-    return { trial: true, plan: 'trial', allowance: config.trialPrompts, ceiling: config.trialCostCeilingUsd }
+    // A trial's usage is one total on TRIAL_DAY, capped by its own ceiling and the shared trial budget
+    return { trial: true, plan: 'trial', allowance: config.trialPrompts, ceiling: config.trialCostCeilingUsd, monthCeiling: Infinity }
   }
   const sub = await getSubscription(userId)
-  return { trial: false, plan: sub.tier as string, allowance: sub.limits.studioPromptsPerDay, ceiling: sub.limits.studioDailyCostCeilingUsd }
+  return {
+    trial: false,
+    plan: sub.tier as string,
+    allowance: sub.limits.studioPromptsPerDay,
+    ceiling: sub.limits.studioDailyCostCeilingUsd,
+    monthCeiling: sub.limits.studioMonthlyCostCeilingUsd,
+  }
+}
+
+/** What a user's Studio use has cost this UTC calendar month. */
+async function monthCost(userId: string, now: Date, exec: Exec = db): Promise<number> {
+  const first = utcDay(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)))
+  const next = nextUtcMonth(now).slice(0, 10)
+  const [row] = await exec.select({ cost: sql<number>`coalesce(sum(${studioUsageDays.costUsd}), 0)` }).from(studioUsageDays)
+    .where(and(eq(studioUsageDays.userId, userId), gte(studioUsageDays.day, first), lt(studioUsageDays.day, next)))
+  return Number(row?.cost ?? 0)
+}
+
+/** True when this month's included Studio use is spent; trials never are (their usage isn't kept by month). */
+async function overMonth(userId: string, now: Date, trial: boolean, monthCeiling: number, exec: Exec = db): Promise<boolean> {
+  if (trial || !Number.isFinite(monthCeiling)) return false
+  return (await monthCost(userId, now, exec)) >= monthCeiling
 }
 
 async function usage(userId: string, day: string, exec: Exec = db) {
@@ -72,8 +98,9 @@ async function giftedBalance(userId: string, exec: Exec = db): Promise<number> {
 }
 
 export async function promptStatus(userId: string, now: Date) {
-  const { trial, plan, allowance, ceiling } = await limitsFor(userId)
+  const { trial, plan, allowance, ceiling, monthCeiling } = await limitsFor(userId)
   const { prompts, costUsd } = await usage(userId, trial ? TRIAL_DAY : utcDay(now))
+  const monthSpent = await overMonth(userId, now, trial, monthCeiling)
   // Gifts and credits never apply to a trial
   const credits = trial ? 0 : await creditBalance(userId)
   const gifted = trial ? 0 : await giftedBalance(userId)
@@ -84,9 +111,12 @@ export async function promptStatus(userId: string, now: Date) {
     used: prompts,
     credits,
     gifted,
-    left: Math.max(0, allowance - prompts) + credits + gifted,
+    // Past the monthly ceiling the day's allowance is gone; gifted and bought prompts still run
+    left: (monthSpent ? 0 : Math.max(0, allowance - prompts)) + credits + gifted,
     resetsAt: trial ? null : nextUtcMidnight(now),
     overCostCeiling: costUsd >= ceiling && gifted === 0,
+    overMonthCeiling: monthSpent,
+    monthResetsAt: trial ? null : nextUtcMonth(now),
   }
 }
 
@@ -96,23 +126,27 @@ export async function promptStatus(userId: string, now: Date) {
  * reservation, counted or not, is refused once today's spend reaches the cost ceiling, unless the user has gifted
  * prompts: past the ceiling an uncounted reservation (otherwise free) also takes one gifted prompt, so gifts cannot
  * fund unlimited runs; the job records `from: 'gift'` and the prompt is given back if the job errors. `gifts: false`
- * (a free try-again, LIV-142) never takes a gift: past the ceiling it is refused.
+ * (a free try-again, LIV-142) never takes a gift: past the ceiling it is refused. Past the plan's monthly cost ceiling
+ * the allowance and free runs stop for the rest of the UTC month (`month_ceiling`); gifted prompts, then bought ones,
+ * still run, each also under the daily ceiling as above.
  */
 export async function reservePrompt(
   userId: string,
   now: Date,
   opts: { counted: boolean; gifts?: boolean },
   exec: Exec = db,
-): Promise<{ ok: true; day: string; from: PromptSource | null } | { ok: false; reason: 'allowance' | 'cost_ceiling' | 'trial_busy' }> {
-  const { trial, allowance, ceiling } = await limitsFor(userId, exec)
+): Promise<{ ok: true; day: string; from: PromptSource | null } | { ok: false; reason: 'allowance' | 'cost_ceiling' | 'month_ceiling' | 'trial_busy' }> {
+  const { trial, allowance, ceiling, monthCeiling } = await limitsFor(userId, exec)
   const day = trial ? TRIAL_DAY : utcDay(now)
   if (trial) {
     // All trials together are capped per UTC day; accounts are never stopped by it
     const [spend] = await exec.select().from(studioTrialSpendDays).where(eq(studioTrialSpendDays.day, utcDay(now)))
     if ((spend?.costUsd ?? 0) >= config.trialDailyBudgetUsd) return { ok: false, reason: 'trial_busy' }
   }
+  // Past the monthly ceiling the plan's included use stops: no allowance and no free runs, only gifted and bought prompts
+  const monthSpent = await overMonth(userId, now, trial, monthCeiling, exec)
   const inc = opts.counted ? 1 : 0
-  const rows = await exec.execute(sql`
+  const rows = monthSpent ? [] : await exec.execute(sql`
     INSERT INTO studio_usage_days (user_id, day, prompts, cost_usd)
     SELECT ${userId}, ${day}, ${inc}, 0 WHERE ${inc} <= ${allowance} AND 0 < ${ceiling}
     ON CONFLICT (user_id, day) DO UPDATE SET prompts = studio_usage_days.prompts + EXCLUDED.prompts
@@ -122,7 +156,7 @@ export async function reservePrompt(
   if ((rows as unknown as unknown[]).length) return { ok: true, day, from: opts.counted ? 'allowance' : null }
   const { costUsd } = await usage(userId, day, exec)
   if (trial) return { ok: false, reason: costUsd >= ceiling ? 'cost_ceiling' : 'allowance' }
-  if (opts.counted || (costUsd >= ceiling && opts.gifts !== false)) {
+  if (opts.counted || ((costUsd >= ceiling || monthSpent) && opts.gifts !== false)) {
     const gift = await exec.execute(sql`
       UPDATE studio_prompt_credits SET gifted = gifted - 1, updated_at = now()
       WHERE user_id = ${userId} AND gifted > 0
@@ -130,12 +164,14 @@ export async function reservePrompt(
     if ((gift as unknown as unknown[]).length) return { ok: true, day, from: 'gift' }
   }
   if (costUsd >= ceiling) return { ok: false, reason: 'cost_ceiling' }
+  // A run that is free under the plan (uncounted) never takes a bought prompt
+  if (monthSpent && !opts.counted) return { ok: false, reason: 'month_ceiling' }
   const credit = await exec.execute(sql`
     UPDATE studio_prompt_credits SET balance = balance - 1, updated_at = now()
     WHERE user_id = ${userId} AND balance > 0
     RETURNING balance`)
   if ((credit as unknown as unknown[]).length) return { ok: true, day, from: 'credit' }
-  return { ok: false, reason: 'allowance' }
+  return { ok: false, reason: monthSpent ? 'month_ceiling' : 'allowance' }
 }
 
 /**

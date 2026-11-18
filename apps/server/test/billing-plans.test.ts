@@ -53,6 +53,8 @@ describe('plans and checkout', () => {
     // No price set: can't be bought
     expect(plans.studio).toMatchObject({ available: false, price: null })
     expect(plans.studio.limits.deploymentsPerMonth).toBeNull()
+    // The Studio cost ceilings never reach a page
+    for (const p of Object.values(plans) as any[]) expect(Object.keys(p.limits ?? {})).not.toEqual(expect.arrayContaining([expect.stringMatching(/CostCeiling/)]))
     // Read once, then kept
     await app.inject({ method: 'GET', url: '/api/billing/plans', headers: await as() })
     expect(retrieved).toEqual(['price_real_creator', 'price_real_pro'])

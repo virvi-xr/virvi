@@ -65,6 +65,8 @@ export interface TierLimits {
   // Design Studio: prompts a day, the hidden daily spend that stops prompts, and designs open (not archived) at once
   studioPromptsPerDay: number
   studioDailyCostCeilingUsd: number
+  /** Hidden: the most a plan's included Studio use may cost us in a UTC calendar month. Gifted and bought prompts still run past it. */
+  studioMonthlyCostCeilingUsd: number
   studioOpenDesigns: number
 }
 
@@ -85,6 +87,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     customDomain: false,
     studioPromptsPerDay: 3,
     studioDailyCostCeilingUsd: 6,
+    studioMonthlyCostCeilingUsd: 10,
     studioOpenDesigns: 1,
   },
   creator: {
@@ -103,6 +106,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     customDomain: false,
     studioPromptsPerDay: 15,
     studioDailyCostCeilingUsd: 30,
+    studioMonthlyCostCeilingUsd: 15,
     studioOpenDesigns: Infinity,
   },
   pro: {
@@ -121,6 +125,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     customDomain: true,
     studioPromptsPerDay: 40,
     studioDailyCostCeilingUsd: 75,
+    studioMonthlyCostCeilingUsd: 40,
     studioOpenDesigns: Infinity,
   },
   studio: {
@@ -139,6 +144,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     customDomain: true,
     studioPromptsPerDay: 100,
     studioDailyCostCeilingUsd: 200,
+    studioMonthlyCostCeilingUsd: 120,
     studioOpenDesigns: Infinity,
   },
   enterprise: {
@@ -157,6 +163,7 @@ export const TIER_LIMITS: Record<SubscriptionTier, TierLimits> = {
     customDomain: true,
     studioPromptsPerDay: 300,
     studioDailyCostCeilingUsd: 600,
+    studioMonthlyCostCeilingUsd: 1000,
     studioOpenDesigns: Infinity,
   },
 }
@@ -213,8 +220,14 @@ export async function planPrices(now = Date.now()): Promise<Record<PaidTier, Pla
 export function clearPlanPrices() { priceCache = null }
 
 /** A plan's limits as JSON can carry them: unlimited is null (JSON has no Infinity). */
-export function limitsForJson(limits: TierLimits): Record<keyof TierLimits, number | boolean | null> {
-  return Object.fromEntries(Object.entries(limits).map(([k, v]) => [k, v === Infinity ? null : v])) as Record<keyof TierLimits, number | boolean | null>
+/** The Studio cost ceilings are ours to know: they never go to a page. */
+const HIDDEN_LIMITS = new Set<keyof TierLimits>(['studioDailyCostCeilingUsd', 'studioMonthlyCostCeilingUsd'])
+export type PublicTierLimits = Record<Exclude<keyof TierLimits, 'studioDailyCostCeilingUsd' | 'studioMonthlyCostCeilingUsd'>, number | boolean | null>
+
+export function limitsForJson(limits: TierLimits): PublicTierLimits {
+  return Object.fromEntries(Object.entries(limits)
+    .filter(([k]) => !HIDDEN_LIMITS.has(k as keyof TierLimits))
+    .map(([k, v]) => [k, v === Infinity ? null : v])) as PublicTierLimits
 }
 
 // ---------------------------------------------------------------------------

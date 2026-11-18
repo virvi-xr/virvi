@@ -55,6 +55,12 @@ describe('refusalMessage', () => {
     expect(m.text).not.toMatch(/\d/)
     expect(m.action).toBeUndefined()
   })
+  it('says when this month’s Studio time comes back, without the ceiling’s amount, and offers a top-up', () => {
+    expect(r('month_ceiling', { resetsAt: '2026-12-01T00:00:00.000Z' }, 429)).toEqual({
+      text: 'You’ve used this month’s Studio time on your plan. It comes back on 1 December. Prompt packs still work.',
+      action: 'topup',
+    })
+  })
   it('says the agent is busy', () => {
     expect(r('busy').text).toBe('The agent is still working on your last message.')
   })

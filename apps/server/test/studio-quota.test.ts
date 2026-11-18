@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { db } from '../src/db/connection.js'
-import { subscriptions, studioPromptCredits, studioFinalizeCredits, studioPayments } from '../src/db/schema.js'
+import { users, subscriptions, studioPromptCredits, studioFinalizeCredits, studioPayments } from '../src/db/schema.js'
 import { eq } from 'drizzle-orm'
 import { utcDay, promptStatus, reservePrompt, refundPrompt, recordCost } from '../src/studio/quota.js'
 import { resetDb } from './helpers/db.js'
@@ -239,5 +239,61 @@ describe('studio quota', () => {
     await applyResult(free.id, okResult(free.id, { outcome: 'error', error: 'boom', pieces: [], costUsd: 0 }) as any, NOW)
     expect(await gifted(u.id)).toBe(1)
     expect(await credits(u.id)).toBe(0)
+  })
+
+  describe('monthly cost ceiling', () => {
+    // Creator: $15 a month; spread over earlier days so no single day reaches its $30 daily ceiling
+    const creator = async () => {
+      const u = await createUser()
+      await db.insert(subscriptions).values({ userId: u.id, tier: 'creator' })
+      return u
+    }
+
+    it('stops the allowance and free runs once the month has cost the ceiling', async () => {
+      const u = await creator()
+      await recordCost(u.id, '2026-10-03', 8)
+      await recordCost(u.id, '2026-10-20', 7)
+      expect(await reservePrompt(u.id, NOW, { counted: true })).toEqual({ ok: false, reason: 'month_ceiling' })
+      expect(await reservePrompt(u.id, NOW, { counted: false })).toEqual({ ok: false, reason: 'month_ceiling' })
+      expect(await promptStatus(u.id, NOW)).toMatchObject({
+        used: 0, left: 0, overCostCeiling: false, overMonthCeiling: true, monthResetsAt: '2026-11-01T00:00:00.000Z',
+      })
+    })
+
+    it('under the ceiling, and in a new month, prompts run as usual', async () => {
+      const u = await creator()
+      await recordCost(u.id, '2026-10-03', 14.5)
+      await recordCost(u.id, '2026-09-30', 100) // last month never counts
+      expect(await reservePrompt(u.id, NOW, { counted: true })).toEqual({ ok: true, day: '2026-10-25', from: 'allowance' })
+      await recordCost(u.id, '2026-10-25', 1)
+      expect(await reservePrompt(u.id, NOW, { counted: true })).toEqual({ ok: false, reason: 'month_ceiling' })
+      expect(await reservePrompt(u.id, new Date('2026-11-01T00:00:01Z'), { counted: true })).toEqual({ ok: true, day: '2026-11-01', from: 'allowance' })
+    })
+
+    it('gifted prompts, then bought ones, still run past it; a free run takes a gift but never a bought prompt', async () => {
+      const u = await creator()
+      await db.insert(studioPromptCredits).values({ userId: u.id, balance: 2, gifted: 1 })
+      await recordCost(u.id, '2026-10-03', 15)
+      expect(await reservePrompt(u.id, NOW, { counted: false })).toEqual({ ok: true, day: '2026-10-25', from: 'gift' })
+      expect(await reservePrompt(u.id, NOW, { counted: false })).toEqual({ ok: false, reason: 'month_ceiling' })
+      expect(await reservePrompt(u.id, NOW, { counted: false, gifts: false })).toEqual({ ok: false, reason: 'month_ceiling' })
+      expect(await credits(u.id)).toBe(2)
+      expect(await reservePrompt(u.id, NOW, { counted: true })).toEqual({ ok: true, day: '2026-10-25', from: 'credit' })
+      expect(await promptStatus(u.id, NOW)).toMatchObject({ used: 0, credits: 1, gifted: 0, left: 1, overMonthCeiling: true })
+    })
+
+    it('bought prompts past it are still stopped by the daily ceiling', async () => {
+      const u = await creator()
+      await db.insert(studioPromptCredits).values({ userId: u.id, balance: 2 })
+      await recordCost(u.id, '2026-10-25', 30)
+      expect(await reservePrompt(u.id, NOW, { counted: true })).toEqual({ ok: false, reason: 'cost_ceiling' })
+      expect(await credits(u.id)).toBe(2)
+    })
+
+    it('a trial is never stopped by it', async () => {
+      const u = await createUser()
+      await db.update(users).set({ isTrial: true }).where(eq(users.id, u.id))
+      expect((await promptStatus(u.id, NOW))).toMatchObject({ trial: true, overMonthCeiling: false, monthResetsAt: null })
+    })
   })
 })

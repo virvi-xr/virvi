@@ -461,7 +461,7 @@ export async function queuePrompt(
         if (r.reason === 'trial_busy') {
           throw new Refused({ status: 429, body: { error: 'trial_busy', message: 'Free tries are busy right now — create an account to keep going.' } })
         }
-        throw new Refused({ status: 429, body: { error: r.reason, code: r.reason, resetsAt: s.resetsAt } })
+        throw new Refused({ status: 429, body: { error: r.reason, code: r.reason, resetsAt: r.reason === 'month_ceiling' ? s.monthResetsAt : s.resetsAt } })
       }
       trialPrompt = r.day === TRIAL_DAY
       // Asked before this prompt's own message goes in: an idea is used up by the design's first prompt only

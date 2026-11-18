@@ -83,6 +83,8 @@ describe('design studio schema', () => {
     expect(TIER_LIMITS.pro).toMatchObject({ studioPromptsPerDay: 40, studioDailyCostCeilingUsd: 75 })
     expect(TIER_LIMITS.studio).toMatchObject({ studioPromptsPerDay: 100, studioDailyCostCeilingUsd: 200 })
     expect(TIER_LIMITS.enterprise).toMatchObject({ studioPromptsPerDay: 300, studioDailyCostCeilingUsd: 600 })
+    expect([TIER_LIMITS.free, TIER_LIMITS.creator, TIER_LIMITS.pro, TIER_LIMITS.studio, TIER_LIMITS.enterprise].map((l) => l.studioMonthlyCostCeilingUsd))
+      .toEqual([10, 15, 40, 120, 1000])
   })
 
   it('payment tables hold one entitlement per revision and one report per entitlement', async () => {

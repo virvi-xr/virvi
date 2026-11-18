@@ -114,7 +114,7 @@ export default async function billingRoutes(app: FastifyInstance) {
       }
 
       const sub = await getSubscription(request.user.id)
-      return reply.send(sub)
+      return reply.send({ ...sub, limits: limitsForJson(sub.limits) })
     },
   )
 
@@ -155,7 +155,7 @@ export default async function billingRoutes(app: FastifyInstance) {
           storageBytes,
           streamMinutes,
         },
-        limits: sub.limits,
+        limits: limitsForJson(sub.limits),
       })
     },
   )
