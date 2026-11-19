@@ -7,6 +7,7 @@ import { rangeQuery, type RangeKey, type RangeQuery } from '@/lib/analytics/rang
 import { formatDuration, visitorLabel } from '@/lib/analytics/labels'
 import { isNoAccess } from '@/lib/analytics/view'
 import { loadLayout } from '@/lib/analytics/layout-fetch'
+import { csvFileName, timeseriesCsv } from '@/lib/analytics/csv'
 import { StatCard } from '@/components/analytics/StatCard'
 import { TimeSeriesChart } from '@/components/analytics/TimeSeriesChart'
 import { BarList } from '@/components/analytics/BarList'
@@ -237,12 +238,23 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
         state={series.status}
         onRetry={retrySeries}
         action={
-          <Toggle
-            label="Series"
-            value={chartSeries}
-            onChange={setChartSeries}
-            options={[['uniqueVisitors', 'Visitors'], ['sessions', 'Sessions'], ['peakConcurrency', 'Peak at once']]}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Toggle
+              label="Series"
+              value={chartSeries}
+              onChange={setChartSeries}
+              options={[['uniqueVisitors', 'Visitors'], ['sessions', 'Sessions'], ['peakConcurrency', 'Peak at once']]}
+            />
+            {series.data && series.data.points.length > 0 && (
+              <button
+                type="button"
+                onClick={() => downloadCsv(timeseriesCsv(series.data!.points, series.data!.q.bucket), csvFileName(title, series.data!.q.from, series.data!.q.to))}
+                className="rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:border-gray-500 hover:text-white"
+              >
+                Download CSV
+              </button>
+            )}
+          </div>
         }
       >
         {series.data && (
@@ -448,4 +460,14 @@ function WalletSetting({ apiRef, id, initial, onSaved }: {
       {failed && <p className="mt-2 text-sm text-red-400" role="alert">Couldn&apos;t save the setting — try again</p>}
     </Section>
   )
+}
+
+/** Saves text as a .csv in the browser's downloads. */
+function downloadCsv(text: string, name: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
