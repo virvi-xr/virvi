@@ -5,6 +5,7 @@ import { API_URL } from '@/lib/config'
 import { blockedCopy, signUpButtons, dismissSignUp, resolveSignUp, signUpAutoDismiss, subscribeSignUp, SIGN_IN_UNLOCKS, type SignUpRequest } from '@/lib/trial'
 import { TERMS_VERSION } from '@virvixr/shared'
 import { TermsCheckbox } from '@/components/TermsCheckbox'
+import { useDialog } from '@/lib/use-dialog'
 
 const BUTTON_STYLE = {
   wallet: 'bg-orange-500 text-white hover:bg-orange-600',
@@ -44,12 +45,7 @@ export function SignUpSheet() {
     setHasWallet(getBrowserWallet() !== null)
     fetch(`${API_URL}/api/auth/providers`).then(r => r.json()).then(setProviders).catch(() => {})
   }, [req])
-  useEffect(() => {
-    if (!req) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') dismissSignUp() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [req])
+  const dialog = useDialog(!!req && !!user?.trial, dismissSignUp)
 
   // The session stopped being a trial while a sign-up was pending: let the waiting call give up instead of hanging
   const isTrial = !!user?.trial
@@ -100,7 +96,7 @@ export function SignUpSheet() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center" onClick={dismissSignUp}>
-      <div role="dialog" aria-modal="true" aria-label="Create a free account" className="w-full max-w-md rounded-xl bg-gray-900 p-6" onClick={e => e.stopPropagation()}>
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Create a free account" className="w-full max-w-md rounded-xl bg-gray-900 p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-4">
           <h2 className="text-lg font-semibold">{titleWithEmphasis(copy.title, copy.emphasis)}</h2>
           <button type="button" onClick={dismissSignUp} aria-label="Close" className="text-gray-400 hover:text-white">✕</button>

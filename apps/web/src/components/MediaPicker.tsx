@@ -8,6 +8,7 @@ import { ASSET_LIBRARY, MEDIA_LIBRARY, asPickerModel, modelPickerQuery } from '@
 import { SearchField, Skeleton } from '@/components/ui'
 import { askSceneSignUp } from '@/components/TrialLock'
 import { sceneTabLocked, TRIAL_LOCK_LABELS } from '@/lib/trial-scene'
+import { useDialog } from '@/lib/use-dialog'
 
 const useTrial = () => !!useAuth().user?.trial
 
@@ -35,6 +36,7 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const dialog = useDialog(true, onClose)
   // Picking a model lists your 3D Models (LIV-132); everything else lists Images & Video
   const modelsOnly = !!accept && accept.split(',').every(t => ['.glb', 'model/gltf-binary'].includes(t.trim().toLowerCase()))
 
@@ -101,15 +103,15 @@ function LibraryPicker({ api, accept, onSelect, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="w-full max-w-2xl max-h-[80vh] rounded-lg border border-gray-700 bg-gray-900 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="media-picker-title" className="w-full max-w-2xl max-h-[80vh] rounded-lg border border-gray-700 bg-gray-900 shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-          <h3 className="font-semibold">{modelsOnly ? `Your ${ASSET_LIBRARY.name}` : MEDIA_LIBRARY.name}</h3>
+          <h3 id="media-picker-title" className="font-semibold">{modelsOnly ? `Your ${ASSET_LIBRARY.name}` : MEDIA_LIBRARY.name}</h3>
           <div className="flex items-center gap-2">
             {!modelsOnly && <label className={`rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
               {uploading ? 'Uploading...' : 'Upload New'}
               <input ref={fileRef} type="file" accept={accept} onChange={handleUpload} className="hidden" />
             </label>}
-            <button onClick={onClose} className="text-gray-400 hover:text-white text-lg px-2">&times;</button>
+            <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-white text-lg px-2">&times;</button>
           </div>
         </div>
         {uploadError && <p className="px-4 pt-3 text-xs text-red-400">{uploadError}</p>}

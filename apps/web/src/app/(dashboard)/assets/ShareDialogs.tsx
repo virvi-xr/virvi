@@ -1,20 +1,17 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { CREDIT_MAX, SHARE_LICENSES, shareLicense } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { REPORT_REASONS, shareErrorMessage } from '@/lib/asset-sharing'
+import { useDialog } from '@/lib/use-dialog'
 
 const fieldClass = 'w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm outline-none focus:border-blue-400'
 
 function Shell({ titleId, title, busy, onClose, children }: { titleId: string; title: string; busy: boolean; onClose: () => void; children: React.ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [busy, onClose])
+  const dialog = useDialog(true, onClose, !busy)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
-      <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
         <div className="mb-4 flex items-start justify-between gap-4">
           <h2 id={titleId} className="text-lg font-semibold">{title}</h2>
           <button type="button" onClick={onClose} disabled={busy} aria-label="Close" className="text-gray-500 hover:text-white">✕</button>

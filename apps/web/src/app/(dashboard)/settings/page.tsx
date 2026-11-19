@@ -4,6 +4,7 @@ import { ErrorPromptSetting } from './ErrorPromptSetting'
 import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState } from 'react'
+import { useDialog } from '@/lib/use-dialog'
 import { LinkedWallets } from './LinkedWallets'
 import { EmailVerification } from './EmailVerification'
 import { MoveBeats } from './MoveBeats'
@@ -279,6 +280,9 @@ export default function SettingsPage() {
     }
   }
 
+  const closeDelete = () => { setShowDeleteModal(false); setDeletePassword(''); setDeleteError(null) }
+  const deleteDialog = useDialog(showDeleteModal, closeDelete, !deleteLoading)
+
   if (loading) return <Skeleton />
 
   return (
@@ -392,8 +396,8 @@ export default function SettingsPage() {
       {/* Delete Account Modal */}
       {showDeleteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 shadow-xl">
-            <h3 className="text-lg font-semibold text-white mb-2">Delete Account</h3>
+          <div ref={deleteDialog} role="dialog" aria-modal="true" aria-labelledby="delete-account-title" className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-6 shadow-xl">
+            <h3 id="delete-account-title" className="text-lg font-semibold text-white mb-2">Delete Account</h3>
             <p className="text-sm text-gray-400 mb-4">
               This action is irreversible. Enter your password to confirm.
             </p>
@@ -411,7 +415,7 @@ export default function SettingsPage() {
             />
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => { setShowDeleteModal(false); setDeletePassword(''); setDeleteError(null) }}
+                onClick={closeDelete}
                 className="rounded-md bg-gray-800 px-4 py-2 text-sm font-medium hover:bg-gray-700 transition-colors"
               >
                 Cancel

@@ -10,6 +10,7 @@ import {
 } from '@/lib/studio'
 import { supportFinalizeLabel, supportOwnerName } from '@/lib/studio-support'
 import { NONE_TICKED, STATE_BADGE, WORN_NOTE, emoteName, type EmoteTarget } from './EmotesStep'
+import { useDialog } from '@/lib/use-dialog'
 
 /**
  * Every emote on both body shapes and whether the person has looked: a nudge, never a gate. Opening it renders the
@@ -123,11 +124,7 @@ function FinalizeDialog({ designId, kind, quote, selected, onSelected, onClose, 
       .catch((err) => { if (gate.current.isLatest(id)) setQuoteError(refusalMessage(err as never, new Date()).text) })
   }, [designId, chosenKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !paying) onClose() }
-    document.addEventListener('keydown', esc)
-    return () => document.removeEventListener('keydown', esc)
-  }, [onClose, paying])
+  const dialog = useDialog(true, onClose, !paying)
 
   // Everything ticked is the quote the page already has; a selection's comes back from the server
   const shown = chosen === null ? quote : picked?.key === chosenKey ? picked.quote : null
@@ -176,7 +173,7 @@ function FinalizeDialog({ designId, kind, quote, selected, onSelected, onClose, 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !paying) onClose() }}>
-      <div role="dialog" aria-modal="true" aria-labelledby="finalize-title" className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="finalize-title" className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
         <h2 id="finalize-title" className="text-lg font-semibold">Finalize</h2>
         <p className="mt-1 text-sm text-gray-400">
           {support

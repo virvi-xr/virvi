@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { TERMS_VERSION } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { termsGate, type TermsStatus } from '@/lib/terms'
+import { useDialog } from '@/lib/use-dialog'
 
 /**
  * Covers the dashboard until the account agrees to the Terms of Service in force: on first visit for accounts that
@@ -15,6 +16,8 @@ export function TermsGate({ onSignOut }: { onSignOut: () => void }) {
   const [error, setError] = useState('')
   useEffect(() => { api.getTermsStatus().then(setStatus, () => {}) }, [api])
   const gate = termsGate(status)
+  // No Escape: the Terms must be answered (agree, or sign out)
+  const dialog = useDialog(!!gate, undefined, false)
   if (!gate) return null
 
   const agree = async () => {
@@ -34,7 +37,7 @@ export function TermsGate({ onSignOut }: { onSignOut: () => void }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
-      <div role="dialog" aria-modal="true" aria-labelledby="terms-gate-title" className="w-full max-w-md rounded-xl bg-gray-900 p-6">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="terms-gate-title" className="w-full max-w-md rounded-xl bg-gray-900 p-6">
         <h2 id="terms-gate-title" className="text-lg font-semibold text-white">{gate.title}</h2>
         <p className="mt-2 text-sm text-gray-400">{gate.body}</p>
         <a href="/terms/" target="_blank" rel="noopener" className="mt-3 inline-block text-sm text-blue-400 hover:underline">

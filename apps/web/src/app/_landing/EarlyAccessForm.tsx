@@ -1,7 +1,8 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { submitAdvertiserLead } from '@/lib/advertiser-leads'
 import { siteLinks } from '@/lib/site'
+import { useDialog } from '@/lib/use-dialog'
 
 const EMPTY = { email: '', name: '', company: '', website: '', message: '', nickname: '' }
 
@@ -13,16 +14,9 @@ export function EarlyAccessForm({ open, onClose }: { open: boolean; onClose: () 
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
-  const emailRef = useRef<HTMLInputElement>(null)
   const { privacy } = siteLinks()
 
-  useEffect(() => {
-    if (!open) return
-    emailRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  const dialog = useDialog(open, onClose)
 
   if (!open) return null
 
@@ -48,6 +42,7 @@ export function EarlyAccessForm({ open, onClose }: { open: boolean; onClose: () 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby="early-access-title"
@@ -68,7 +63,7 @@ export function EarlyAccessForm({ open, onClose }: { open: boolean; onClose: () 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label htmlFor="ea-email" className="mb-1 block text-sm text-gray-400">Email</label>
-                <input id="ea-email" ref={emailRef} type="email" required value={form.email} onChange={set('email')} className={inputClass} />
+                <input id="ea-email" data-autofocus type="email" required value={form.email} onChange={set('email')} className={inputClass} />
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>

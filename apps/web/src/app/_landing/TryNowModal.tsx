@@ -1,24 +1,17 @@
 'use client'
-import { useEffect, useRef } from 'react'
 import { TRY_NOTE, TRY_OPTIONS } from '@/lib/try-options'
+import { useDialog } from '@/lib/use-dialog'
 
 /** "Try now" from the header: pick the Design Studio or the scene builder, both open without an account. */
 export function TryNowModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const firstRef = useRef<HTMLAnchorElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    firstRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  const dialog = useDialog(open, onClose)
 
   if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby="try-now-title"
@@ -32,7 +25,7 @@ export function TryNowModal({ open, onClose }: { open: boolean; onClose: () => v
           {TRY_OPTIONS.map((o, i) => (
             <a
               key={o.key}
-              ref={i === 0 ? firstRef : undefined}
+              data-autofocus={i === 0 ? true : undefined}
               href={o.href}
               className="group flex flex-col rounded-lg border border-gray-700 bg-gray-950 p-5 hover:border-blue-500 hover:bg-gray-900 focus-visible:border-blue-400 focus-visible:outline-none"
             >

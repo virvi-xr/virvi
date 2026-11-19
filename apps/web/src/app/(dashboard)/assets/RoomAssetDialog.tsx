@@ -7,6 +7,7 @@ import { wizardErrorMessage } from '@/lib/wizard/run'
 import { defaultSpawn } from '@/lib/wizard/state'
 import { RoomSetOptionsFields } from '@/components/room-set/RoomSetOptionsFields'
 import { useRoomScanPreview } from '@/components/wizard/useRoomSetPreview'
+import { useDialog } from '@/lib/use-dialog'
 
 const Preview3D = dynamic(() => import('@/components/wizard/Preview3D'), {
   ssr: false,
@@ -34,11 +35,7 @@ export function RoomAssetDialog({ onCreated, onClose }: { onCreated: (asset: any
     }, () => setScans('error'))
   }, [])
 
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !saving) onClose() }
-    document.addEventListener('keydown', esc)
-    return () => document.removeEventListener('keydown', esc)
-  }, [onClose, saving])
+  const dialog = useDialog(true, onClose, !saving)
 
   const scan = Array.isArray(scans) ? scans.find((s) => s.id === scanId) ?? null : null
   const preview = useRoomScanPreview(scan?.plot ? scan.id : null, options)
@@ -66,7 +63,7 @@ export function RoomAssetDialog({ onCreated, onClose }: { onCreated: (asset: any
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !saving) onClose() }}>
-      <div role="dialog" aria-modal="true" aria-labelledby="room-asset-title" className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="room-asset-title" className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 id="room-asset-title" className="text-lg font-semibold">Make a model from a room scan</h2>

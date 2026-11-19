@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { trapTab } from './lib/use-dialog'
 
 /**
  * Accessibility checks over the source (LIV-42): every form field has a name a screen reader can say, and the theme's
@@ -93,5 +94,32 @@ describe('accessibility (LIV-42)', () => {
   it('reduced motion is respected', () => {
     const css = readFileSync(join(SRC, 'styles/globals.css'), 'utf8')
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/)
+  })
+
+  it('every modal (a full-screen overlay) is a named dialog that handles the keyboard', () => {
+    const wrong = tsxFiles(SRC).flatMap((f) => {
+      const src = withoutComments(readFileSync(f, 'utf8'))
+      if (!/className="fixed inset-0\b/.test(src)) return []
+      const problems = [
+        !/role="dialog"/.test(src) && 'no role="dialog"',
+        !/aria-modal="true"/.test(src) && 'no aria-modal',
+        !/aria-label(ledby)?=/.test(src) && 'no name',
+        // Escape to close, Tab kept inside, focus moved in and given back: see lib/use-dialog.ts
+        !/useDialog\(/.test(src) && 'no useDialog',
+      ].filter(Boolean)
+      return problems.length ? [`${relative(SRC, f)}: ${problems.join(', ')}`] : []
+    })
+    expect(wrong).toEqual([])
+  })
+
+  it('Tab wraps around inside a dialog, and pulls focus back in from outside', () => {
+    const [a, b, c] = ['a', 'b', 'c']
+    expect(trapTab([a, b, c], c, false)).toBe(a)
+    expect(trapTab([a, b, c], a, true)).toBe(c)
+    expect(trapTab([a, b, c], a, false)).toBeNull() // the browser moves to b
+    expect(trapTab([a, b, c], b, true)).toBeNull()
+    expect(trapTab([a, b, c], 'outside', false)).toBe(a)
+    expect(trapTab([a, b, c], 'outside', true)).toBe(c)
+    expect(trapTab([], a, false)).toBeNull()
   })
 })

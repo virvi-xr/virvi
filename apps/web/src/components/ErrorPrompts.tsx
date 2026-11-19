@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth'
 import { useApi } from '@/lib/api'
 import { reporter, type PromptEvent } from '@/lib/errors/reporter'
 import { ReportForm } from './ReportForm'
+import { useDialog } from '@/lib/use-dialog'
 
 const ASK_MS = 20_000
 const KNOWN_MS = 10_000
@@ -20,6 +21,7 @@ export function ErrorPrompts() {
   const [toast, setToast] = useState<PromptEvent | null>(null)
   const [form, setForm] = useState<{ lastError: ClientErrorEvent | null } | null>(null)
   const [optedOut, setOptedOut] = useState(false)
+  const reportDialog = useDialog(!!form, () => setForm(null))
 
   useEffect(() => reporter.onPrompt((p) => { setOptedOut(false); setToast(p) }), [])
   useEffect(() => reporter.onOpenReport((lastError) => { setToast(null); setForm({ lastError }) }), [])
@@ -60,7 +62,7 @@ export function ErrorPrompts() {
       )}
       {form && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 sm:items-center" onClick={(e) => { if (e.target === e.currentTarget) setForm(null) }}>
-          <div role="dialog" aria-modal="true" aria-labelledby="report-title" className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
+          <div ref={reportDialog} role="dialog" aria-modal="true" aria-labelledby="report-title" className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
             <div className="mb-3 flex items-start justify-between gap-3">
               <h2 id="report-title" className="text-base font-semibold text-white">Report a bug</h2>
               <button type="button" onClick={() => setForm(null)} aria-label="Close" className="rounded p-1 text-gray-500 hover:text-white">✕</button>

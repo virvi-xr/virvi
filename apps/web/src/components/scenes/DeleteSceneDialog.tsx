@@ -10,6 +10,7 @@ import {
   checkboxNote, chosenIds, seenEntities, deleteIntro, eventLine, expectedSigner, initialChecks, nameMatches, removalStatusText, signRemoval, unfinished,
   upcomingWarning, type DeletePlan, type DeleteResult, type Removal,
 } from '@/lib/scene-delete'
+import { useDialog } from '@/lib/use-dialog'
 
 const fieldClass = 'w-full rounded-md border border-gray-800 bg-gray-950 px-3 py-2 text-sm outline-none focus:border-red-400'
 const smallButton = 'rounded-md bg-gray-800 px-3 py-1.5 text-xs hover:bg-gray-700 disabled:opacity-50'
@@ -91,11 +92,7 @@ export function DeleteSceneDialog({ sceneId, onClose, onDeleted }: { sceneId: st
       (err) => setPlan((err as { status?: number }).status === 403 ? 'forbidden' : 'error'))
   }, [sceneId])
 
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy && !result) onClose() }
-    document.addEventListener('keydown', esc)
-    return () => document.removeEventListener('keydown', esc)
-  }, [onClose, busy, result])
+  const dialog = useDialog(true, onClose, !busy && !result)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -117,7 +114,7 @@ export function DeleteSceneDialog({ sceneId, onClose, onDeleted }: { sceneId: st
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy && !result) onClose() }}>
-      <div role="dialog" aria-modal="true" aria-labelledby="delete-scene-title" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="delete-scene-title" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg border border-gray-800 bg-gray-900 p-5">
         <div className="flex items-start justify-between gap-3">
           <h2 id="delete-scene-title" className="text-lg font-semibold">{result ? `Deleted ${result.scene.name}` : ready ? `Delete ${ready.scene.name}?` : 'Delete scene'}</h2>
           {!result && <button type="button" onClick={onClose} disabled={busy} aria-label="Close" className="px-2 text-lg text-gray-400 hover:text-white">&times;</button>}
