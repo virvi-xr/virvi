@@ -59,7 +59,7 @@ async function fixtures() {
     ownerId: b.id, name: 'B stream', status: 'ready', streamKey: 'b-key', playbackId: 'b-pb', sceneId: scene.id,
     rtmpUrl: 'rtmp://ingest.virvi.io/live/b-key', hlsPlaylistUrl: 'https://live.virvi.io/streams/b-pb/playlist.m3u8',
   }).returning()
-  const [event] = await db.insert(events).values({ ownerId: b.id, name: 'B event' }).returning()
+  const [event] = await db.insert(events).values({ ownerId: b.id, name: 'B event', startTime: new Date(Date.now() - 2 * 3600_000), endTime: new Date(Date.now() - 3600_000) }).returning()
   const [giveaway] = await db.insert(giveaways).values({ ownerId: b.id, name: 'B giveaway' }).returning()
   const [item] = await db.insert(giveawayItems).values({ giveawayId: giveaway.id, name: 'B item' }).returning()
   await db.insert(eventSceneLinks).values({ eventId: event.id, sceneId: scene.id })
