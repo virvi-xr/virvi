@@ -29,7 +29,7 @@ import { streamForSource, streamOptionLabel, type SceneStream } from '@/lib/stre
 import { EditableSceneTitle, UseNameEverywhere, connectedNamesDiffer, hasConnected, useConnected } from './SceneName'
 import { useParams, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { hudBehindNote, type DclHudStatus } from '@/lib/hud-version'
+import { hudBehindNote, hudRedeployHere, type DclHudStatus } from '@/lib/hud-version'
 import { Badge, PageHeader, Skeleton, type Tone } from '@/components/ui'
 import { LockIcon } from '@/components/icons'
 import { LockedButton, LockedSection, askSceneSignUp } from '@/components/TrialLock'
@@ -1730,7 +1730,7 @@ export default function SceneEditorPage() {
       {hudBehindNote(scene.dclHud) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100" role="status">
           <p>{hudBehindNote(scene.dclHud)}</p>
-          <Link href={`/deploy?scene=${sceneId}`} className="shrink-0 rounded-md bg-amber-500/20 px-3 py-1.5 font-medium text-amber-50 hover:bg-amber-500/30">Redeploy</Link>
+          {hudRedeployHere(scene.dclHud) && <Link href={`/deploy?scene=${sceneId}`} className="shrink-0 rounded-md bg-amber-500/20 px-3 py-1.5 font-medium text-amber-50 hover:bg-amber-500/30">Redeploy</Link>}
         </div>
       )}
 

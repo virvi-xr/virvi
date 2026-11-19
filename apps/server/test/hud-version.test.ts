@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { DCL_HUD_VERSION, HUD_VERSION_HEADER, compareHudVersions } from '@virvixr/shared'
 import { resetDb } from './helpers/db.js'
+import { db } from '../src/db/connection.js'
+import { sceneDeployments } from '../src/db/schema.js'
+import { eq } from 'drizzle-orm'
 import { testApp, createUser, createScene, tokenFor } from './helpers/factories.js'
 import { clearHudVersionThrottle, dclHudStatus, noteDclHud } from '../src/scenes/hud-version.js'
 
@@ -44,6 +47,22 @@ describe('which Decentraland HUD release a scene runs (LIV-33)', () => {
     expect(dclHudStatus({ dclHudVersion: '2.14.0', dclHudSeenAt: seen }, '2.15.1')!.behind).toBe(true)
     expect(dclHudStatus({ dclHudVersion: '2.15.1', dclHudSeenAt: seen }, '2.15.1')!.behind).toBe(false)
     expect(dclHudStatus({ dclHudVersion: null, dclHudSeenAt: null })).toBeNull()
+  })
+
+  it('says whether Virvi deploys the scene, so the page offers Redeploy only where it helps (LIV-13)', async () => {
+    const owner = await createUser()
+    const { scene } = await createScene(owner)
+    await hudCall(owner, scene.id, '2.14.0')
+    await flush()
+    // Deployed from the creator's own project: Virvi has nothing to redeploy
+    expect((await detail(owner, scene.id)).dclHud).toMatchObject({ virviDeploys: false })
+    const [d] = await db.insert(sceneDeployments).values({ sceneId: scene.id, platform: 'decentraland', status: 'deployed', deploymentType: 'world', target: {} }).returning()
+    expect((await detail(owner, scene.id)).dclHud).toMatchObject({ virviDeploys: true })
+    // Taken down, or a Hyperfy deployment: not a Decentraland deployment Virvi can replace
+    await db.update(sceneDeployments).set({ removedAt: new Date() }).where(eq(sceneDeployments.id, d.id))
+    await db.insert(sceneDeployments).values({ sceneId: scene.id, platform: 'hyperfy', status: 'deployed', deploymentType: 'instance', target: {} })
+    await db.insert(sceneDeployments).values({ sceneId: scene.id, platform: 'decentraland', status: 'failed', deploymentType: 'world', target: {} })
+    expect((await detail(owner, scene.id)).dclHud).toMatchObject({ virviDeploys: false })
   })
 
   it('the newest release seen wins, so an old copy still running during a redeploy can\'t flip it back', async () => {

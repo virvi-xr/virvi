@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { compareHudVersions, DCL_HUD_VERSION, parseHudVersion } from '@virvixr/shared'
 import { db } from '../db/connection.js'
-import { scenes } from '../db/schema.js'
+import { sceneDeployments, scenes } from '../db/schema.js'
 
 /**
  * LIV-33: which Decentraland HUD release each scene runs, from the x-virvi-hud-version its HUD sends with every
@@ -37,14 +37,25 @@ export function clearHudVersionThrottle() { written.clear() }
 export const FIRST_VERSIONED_HUD = '2.14.0'
 
 /**
- * What the dashboard shows: the scene's HUD release, the latest, and whether it is behind. Null: no HUD seen yet.
+ * What the dashboard shows: the scene's HUD release, the latest, whether it is behind, and whether Virvi deploys it
+ * (LIV-13: a Redeploy button helps only then; a scene its creator deploys from their own project needs its
+ * @virvixr/dcl updated there). Null: no HUD seen yet.
  * A HUD that sent no version is behind only once the latest release sends one: before that, redeploying wouldn't
  * change anything.
  */
-export function dclHudStatus(s: { dclHudVersion: string | null; dclHudSeenAt: Date | null }, latest: string = DCL_HUD_VERSION) {
+export function dclHudStatus(s: { dclHudVersion: string | null; dclHudSeenAt: Date | null }, latest: string = DCL_HUD_VERSION, virviDeploys = true) {
   if (!s.dclHudSeenAt) return null
   const behind = s.dclHudVersion
     ? compareHudVersions(s.dclHudVersion, latest) < 0
     : compareHudVersions(latest, FIRST_VERSIONED_HUD) >= 0
-  return { version: s.dclHudVersion, latest, seenAt: s.dclHudSeenAt, behind }
+  return { version: s.dclHudVersion, latest, seenAt: s.dclHudSeenAt, behind, virviDeploys }
+}
+
+/** Whether Virvi has a live Decentraland deployment of the scene (a World, or parcels), which its Redeploy can replace. */
+export async function virviDeploysDcl(sceneId: string): Promise<boolean> {
+  const [row] = await db.select({ id: sceneDeployments.id }).from(sceneDeployments).where(and(
+    eq(sceneDeployments.sceneId, sceneId), eq(sceneDeployments.platform, 'decentraland'),
+    eq(sceneDeployments.status, 'deployed'), isNull(sceneDeployments.removedAt),
+  )).limit(1)
+  return !!row
 }
