@@ -367,6 +367,7 @@ const CASES: Case[] = [
   // events and command center
   { route: 'GET /api/scenes/:sceneId/events', url: (f) => `/api/scenes/${f.scene.id}/events` },
   { route: 'GET /api/events/:eventId', url: (f) => `/api/events/${f.event.id}` },
+  { route: 'GET /api/events/:eventId/attendance', url: (f) => `/api/events/${f.event.id}/attendance` },
   { route: 'PUT /api/events/:eventId', url: (f) => `/api/events/${f.event.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'DELETE /api/events/:eventId', url: (f) => `/api/events/${f.event.id}` },
   { route: 'POST /api/events/:eventId/link-scene', url: (f) => `/api/events/${f.event.id}/link-scene`, body: (f) => ({ sceneId: f.aScene.id }) },

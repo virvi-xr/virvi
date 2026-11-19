@@ -23,7 +23,7 @@ import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, S
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
 import type { FirstReplyStats } from './studio-wait'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
-import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, OwnerAdSpaceReport, AdminAdvertiserLead, AdReport, AdShape, BeatChain, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
+import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, OwnerAdSpaceReport, EventAttendanceReport, AdminAdvertiserLead, AdReport, AdShape, BeatChain, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
@@ -1044,6 +1044,7 @@ function useRealApi() {
 
     // Events
     getEvents: () => apiFetch<{ events: any[] }>('/api/events'),
+    getEventAttendance: (id: string) => apiFetch<EventAttendanceReport>(`/api/events/${encodeURIComponent(id)}/attendance`),
     getEvent: (id: string) => apiFetch<{ event: any; presetSchedules?: import('./event-presets').EventPresetSchedule[]; scenePresets?: import('./event-presets').ScenePresetOption[]; showings?: import('./event-presets').EventShowing[] }>(`/api/events/${id}`),
     createEvent: (data: { name: string; description?: string; startTime?: string; endTime?: string; timezone?: string }) =>
       apiFetch<{ event: any }>('/api/events', { method: 'POST', userAction: true, body: JSON.stringify(data) }),

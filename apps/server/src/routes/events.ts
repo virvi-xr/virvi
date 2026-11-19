@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify'
-import { eq, and, inArray } from 'drizzle-orm'
+import { eq, and, inArray, gte, lt, isNull, or, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { events, eventSceneLinks, eventGiveawayLinks, giveaways, scenePresets } from '../db/schema.js'
+import { analyticsScenes, analyticsSessions, events, eventSceneLinks, eventGiveawayLinks, giveaways, locationSetups, scenePresets, scenes } from '../db/schema.js'
+import { eventAttendance, type AttendanceSession } from '../analytics/event-attendance.js'
 import { dropEventSchedules, eventPresetSchedules, syncEventSchedules } from '../scenes/preset-schedules.js'
 import { eventShowings, releaseEventShowings, syncEventShowings } from '../scenes/showings.js'
 import { authenticate } from '../middleware/auth.js'
-import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
+import { getSceneAccess, hasScope, isFullAccess } from '../auth/permissions.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { isUuid } from '../auth/scene-from.js'
 
@@ -96,6 +97,73 @@ export default async function eventRoutes(app: FastifyInstance) {
       return reply.send({ event, presetSchedules: await eventPresetSchedules(eventId), scenePresets: scenePresetRows, showings: await eventShowings(eventId) })
     },
   )
+
+  // ── GET /api/events/:eventId/attendance — who came during the event (LIV-38) ──
+
+  app.get<{ Params: { eventId: string } }>('/api/events/:eventId/attendance', async (request, reply) => {
+    const { eventId } = request.params
+    if (!isUuid(eventId)) return reply.status(404).send({ error: 'Event not found' })
+    const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
+    if (!event) return reply.status(404).send({ error: 'Event not found' })
+    if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+      return reply.status(403).send({ error: 'Forbidden' })
+    }
+    if (!event.startTime || !event.endTime) {
+      return reply.status(400).send({ error: 'Set a start and end time on the event to see who came.' })
+    }
+    const from = event.startTime
+    const now = new Date()
+    const to = event.endTime < now ? event.endTime : now
+    if (to <= from) return reply.send(eventAttendance(from, from, [], 0))
+
+    // Only scenes whose analytics the caller can read, and only the setup tenures of those scenes (as the analytics pages do)
+    const actor = actorFromClaims(request.user)
+    const linked = await db
+      .select({ id: scenes.id })
+      .from(eventSceneLinks)
+      .innerJoin(scenes, eq(scenes.id, eventSceneLinks.sceneId))
+      .where(and(eq(eventSceneLinks.eventId, eventId), isNull(scenes.deletedAt)))
+    const readable: string[] = []
+    for (const { id } of linked) if (hasScope(await getSceneAccess(actor, id), 'analytics.view')) readable.push(id)
+    const tenures = readable.length
+      ? await db
+          .select({ setup: locationSetups, title: analyticsScenes.title, worldName: analyticsScenes.worldName, locationKey: analyticsScenes.locationKey })
+          .from(locationSetups)
+          .innerJoin(analyticsScenes, eq(analyticsScenes.id, locationSetups.analyticsSceneId))
+          .where(and(inArray(locationSetups.virviSceneId, readable), lt(locationSetups.startedAt, to), or(isNull(locationSetups.endedAt), gte(locationSetups.endedAt, from))))
+      : []
+
+    const sessions: AttendanceSession[] = []
+    for (const t of tenures) {
+      const until = t.setup.endedAt && t.setup.endedAt < to ? t.setup.endedAt : to
+      const rows = await db
+        .select()
+        .from(analyticsSessions)
+        .where(and(
+          eq(analyticsSessions.sceneId, t.setup.analyticsSceneId),
+          gte(analyticsSessions.startedAt, t.setup.startedAt),
+          lt(analyticsSessions.startedAt, until),
+          sql`coalesce(${analyticsSessions.endedAt}, ${analyticsSessions.lastSeenAt}) >= ${from.toISOString()}::timestamptz`,
+        ))
+        .limit(50_000)
+      const location = t.title || t.worldName || t.locationKey
+      for (const r of rows) {
+        const end = r.endedAt ?? r.lastSeenAt
+        sessions.push({
+          location,
+          visitorKey: r.visitorHash,
+          visitorId: r.visitorHash.slice(0, 16),
+          displayName: r.displayName,
+          wallet: r.wallet,
+          verified: r.verified,
+          isGuest: r.isGuest,
+          startedAt: r.startedAt,
+          endAt: end < until ? end : until,
+        })
+      }
+    }
+    return reply.send(eventAttendance(from, to, sessions, new Set(tenures.map((t) => t.setup.analyticsSceneId)).size))
+  })
 
   // ── PUT /api/events/:eventId — update event ──────────────────────────────
 

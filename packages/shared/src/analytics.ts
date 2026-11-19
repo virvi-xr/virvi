@@ -221,3 +221,30 @@ export function checkBatch(input: unknown, nowMs: number): BatchCheck {
     },
   }
 }
+
+/** One visitor at an event (LIV-38): time inside the event window, across their sessions at one location. */
+export interface EventAttendee {
+  /** Short pseudonymous id, stable per location (the same one the sessions list shows). */
+  visitorId: string
+  /** Where they were: the location's title or key. */
+  location: string
+  displayName: string | null
+  /** Only when the location shows wallets and the visitor allowed it. */
+  wallet: string | null
+  verified: boolean
+  isGuest: boolean
+  firstSeenAt: string
+  secondsPresent: number
+}
+
+/** GET /api/events/:eventId/attendance: who was in the event's scenes between its start and end. */
+export interface EventAttendanceReport {
+  from: string
+  to: string
+  /** Locations counted: those of the event's scenes the caller can read analytics for. */
+  locations: number
+  totals: { visitors: number; verifiedVisitors: number; peakConcurrent: number; avgSecondsPresent: number }
+  attendees: EventAttendee[]
+  /** True when the list was cut at the row cap; the totals still count everyone. */
+  truncated: boolean
+}

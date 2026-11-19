@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
+import EventAttendance from '@/components/EventAttendance'
 import { ArrowUpRightIcon, CalendarIcon, ChevronDownIcon, PlusIcon } from '@/components/icons'
 import { Badge, EmptyState, InlineDescription, PageHeader, PrimaryButton, RowMenu, SearchField, SelectField, Skeleton, type Tone } from '@/components/ui'
 import { countLabel, plural } from '@/lib/format'
@@ -518,6 +519,8 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
           </div>
         )}
       </div>
+
+      <EventAttendance event={event} api={api} />
 
       {/* Linked giveaways */}
       <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">

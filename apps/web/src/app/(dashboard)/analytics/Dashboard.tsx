@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import { downloadText } from '@/lib/download'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useApi } from '@/lib/api'
 import type { AnalyticsLocation, AnalyticsSession, AnalyticsSummary, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from '@/lib/analytics/types'
@@ -248,7 +249,7 @@ export function Dashboard({ location, showAllLink, onWalletVisibility }: {
             {series.data && series.data.points.length > 0 && (
               <button
                 type="button"
-                onClick={() => downloadCsv(timeseriesCsv(series.data!.points, series.data!.q.bucket), csvFileName(title, series.data!.q.from, series.data!.q.to))}
+                onClick={() => downloadText(timeseriesCsv(series.data!.points, series.data!.q.bucket), csvFileName(title, series.data!.q.from, series.data!.q.to))}
                 className="rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:border-gray-500 hover:text-white"
               >
                 Download CSV
@@ -463,11 +464,3 @@ function WalletSetting({ apiRef, id, initial, onSaved }: {
 }
 
 /** Saves text as a .csv in the browser's downloads. */
-function downloadCsv(text: string, name: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
-}

@@ -94,6 +94,8 @@ Virvi measures ads at four levels: in the scene, on screen, looked at, and click
 - Players who haven't moved for a minute stop counting.
 - Guests and unverified players are recorded as a separate, unpaid number.
 
+Each ad space's panel on the scene page shows **What this space delivered**: per ad, over the last 7, 30 or 90 days, how often it was in the scene, on screen, looked at and clicked, with the click rate. Ads Virvi runs itself carry a **Virvi** tag. Only people with full access to the scene see it.
+
 ## House ads and partner ads
 
 - **Partner ads** run only on the spaces an admin places them on.
