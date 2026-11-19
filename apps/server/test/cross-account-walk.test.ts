@@ -523,6 +523,7 @@ const CASES: Case[] = [
   { route: 'PATCH /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}`, body: () => ({ resolved: true }) },
   { route: 'GET /api/admin/errors/reports/:reportId/screenshot', url: () => `/api/admin/errors/reports/${AD_ID}/screenshot` },
   { route: 'GET /api/ad-spaces/:elementId', url: (f) => `/api/ad-spaces/${f.adSpace.id}` },
+  { route: 'GET /api/ad-spaces/:elementId/report', url: (f) => `/api/ad-spaces/${f.adSpace.id}/report` },
   { route: 'PUT /api/ad-spaces/:elementId/content', url: (f) => `/api/ad-spaces/${f.adSpace.id}/content`, body: () => ({ content: 'all' }) },
   { route: 'PUT /api/ad-spaces/:elementId/approvals/:adId', url: (f) => `/api/ad-spaces/${f.adSpace.id}/approvals/${AD_ID}`, body: () => ({ decision: 'approved' }) },
 ]

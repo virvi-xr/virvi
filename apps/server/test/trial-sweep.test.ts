@@ -233,6 +233,8 @@ describe('trial expiry and funnel', () => {
 
   it('carries fromAction through the OAuth hand-over into signed_up', async () => {
     const t = await makeTrial(0)
+    // Active now, not at the fixed NOW: the hand-over (trialFromHeldToken) refuses a trial idle past expiry by the real clock
+    await db.update(users).set({ trialLastActiveAt: new Date() }).where(eq(users.id, t.id))
     const s = await finishOAuth(app, { type: 'oauth', identifier: 'google:funnel1', email: 'g@test.dev', displayName: 'G', metadata: {} })
     const res = await app.inject({ method: 'POST', url: '/api/auth/trial/adopt', headers: { authorization: `Bearer ${s.accessToken}` }, payload: { trialToken: issueTrialSession(app, { id: t.id, displayName: t.displayName, role: 'creator', trialLastActiveAt: new Date() }).refreshToken, fromAction: 'more_prompts' } })
     expect(res.statusCode).toBe(200)
