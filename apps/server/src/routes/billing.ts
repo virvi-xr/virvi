@@ -50,6 +50,12 @@ export default async function billingRoutes(app: FastifyInstance) {
       if (typeof tier !== 'string' || !(PAID_TIERS as readonly string[]).includes(tier)) {
         return reply.status(400).send({ error: `tier must be ${PAID_TIERS.join(', ')}` })
       }
+      // A second checkout would start a second subscription, billed alongside the first: plan changes go through the
+      // Stripe portal, which swaps the plan on the one subscription
+      const current = await getSubscription(request.user.id)
+      if (current.tier !== 'free' && 'stripeSubscriptionId' in current && current.stripeSubscriptionId && current.status !== 'canceled') {
+        return reply.status(409).send({ error: 'You already have a plan. Use Manage subscription to switch plans.', code: 'already_subscribed' })
+      }
       const priceId = priceIdFor(tier as PaidTier)
       if (!priceId) {
         return reply.status(503).send({ error: 'This plan can’t be bought yet. Please try again later.', code: 'plan_unavailable' })

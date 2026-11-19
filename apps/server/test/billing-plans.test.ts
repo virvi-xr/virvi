@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { config } from '../src/config.js'
 import { clearPlanPrices, setStripe } from '../src/integrations/stripe.js'
 import { resetDb } from './helpers/db.js'
+import { db } from '../src/db/connection.js'
+import { subscriptions } from '../src/db/schema.js'
+import { eq } from 'drizzle-orm'
 import { testApp, createUser, tokenFor } from './helpers/factories.js'
 
 describe('plans and checkout', () => {
@@ -66,6 +69,19 @@ describe('plans and checkout', () => {
     expect(sessions[0].line_items).toEqual([{ price: 'price_real_creator', quantity: 1 }])
     expect(sessions[0].success_url).toMatch(/\/settings\?billing=success$/)
     expect(sessions[0].cancel_url).toMatch(/\/settings\?billing=canceled$/)
+  })
+
+  it('someone already paying for a plan is sent to Manage subscription instead of a second checkout', async () => {
+    const u = await createUser()
+    const headers = { authorization: `Bearer ${tokenFor(u)}` }
+    await db.insert(subscriptions).values({ userId: u.id, tier: 'creator', status: 'active', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1' })
+    const res = await app.inject({ method: 'POST', url: '/api/billing/checkout', headers, payload: { tier: 'pro' } })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ code: 'already_subscribed', error: 'You already have a plan. Use Manage subscription to switch plans.' })
+    expect(sessions).toHaveLength(0)
+    // Once that subscription is canceled, buying a plan is a new checkout again
+    await db.update(subscriptions).set({ status: 'canceled' }).where(eq(subscriptions.userId, u.id))
+    expect((await app.inject({ method: 'POST', url: '/api/billing/checkout', headers, payload: { tier: 'pro' } })).statusCode).toBe(200)
   })
 
   it('a plan with no price set is refused readably; a made-up plan or a price id is refused', async () => {

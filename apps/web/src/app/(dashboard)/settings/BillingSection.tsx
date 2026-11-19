@@ -126,8 +126,10 @@ export function BillingSection() {
                         {enterprise ? (
                           <a href="mailto:sales@virvi.io?subject=Enterprise%20plan" className="inline-block rounded-md border border-gray-700 px-4 py-2 text-sm font-medium text-gray-200 hover:border-gray-600">Contact sales</a>
                         ) : p.available ? (
-                          <PrimaryButton type="button" disabled={busy === p.tier} onClick={() => run(p.tier, () => api.createCheckout(p.tier as 'creator' | 'pro' | 'studio'))}>
-                            {busy === p.tier ? 'Redirecting…' : `Upgrade to ${tierName(p.tier)}`}
+                          // On a paid plan already: the switch happens in the Stripe portal, on the same subscription
+                          <PrimaryButton type="button" disabled={busy === p.tier}
+                            onClick={() => run(p.tier, () => (tier === 'free' ? api.createCheckout(p.tier as 'creator' | 'pro' | 'studio') : api.getPortalUrl()))}>
+                            {busy === p.tier ? 'Redirecting…' : tier === 'free' ? `Upgrade to ${tierName(p.tier)}` : `Switch to ${tierName(p.tier)}`}
                           </PrimaryButton>
                         ) : (
                           <p className="text-xs text-gray-500">Not available to buy yet.</p>
