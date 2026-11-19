@@ -9,6 +9,7 @@ export function Nav({ onAdvertise, onTry }: { onAdvertise: () => void; onTry: ()
         <a href="/" className="shrink-0"><img src="/virvi-logo-light.svg" alt="Virvi" className="h-7 w-auto" /></a>
         <div className="hidden flex-1 items-center gap-6 text-sm text-gray-400 md:flex">
           <a href="#features" className="hover:text-white">Features</a>
+          <a href="/beat/" className="hover:text-white">BEATs</a>
           <button type="button" onClick={onAdvertise} className="hover:text-white">Advertise</button>
           {docs && <a href={docs} className="hover:text-white">Docs</a>}
         </div>

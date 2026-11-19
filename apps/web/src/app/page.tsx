@@ -4,6 +4,7 @@ import { landingRoute } from '@/lib/landing-route'
 import { ADVERTISE_PAGE } from '@/lib/site'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useEffect, useState } from 'react'
+import { BeatBand } from './_landing/BeatBand'
 import { Closing } from './_landing/Closing'
 import { Doors } from './_landing/Doors'
 import { EarlyAccessForm } from './_landing/EarlyAccessForm'
@@ -43,6 +44,7 @@ function Landing() {
         <Doors onAdvertise={onAdvertise} />
         <Features />
         <EarnBand />
+        <BeatBand />
         <Measurement onAdvertise={onAdvertise} />
         <Closing onTry={openTry} />
       </main>
