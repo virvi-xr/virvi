@@ -1,8 +1,8 @@
-import { and, eq, gt, lte, sql } from 'drizzle-orm'
+import { and, eq, gt, gte, inArray, lte, sql } from 'drizzle-orm'
 import { db } from '../db/connection.js'
-import { adDailySpace, adDailyViewers, adEvents, scenes } from '../db/schema.js'
+import { adDailySpace, adDailyViewers, adEvents, ads, scenes } from '../db/schema.js'
 import { adSummariesThrough } from './summaries.js'
-import type { AdLevel, AdReport, LevelCounts } from '@virvixr/shared'
+import type { AdLevel, AdReport, LevelCounts, OwnerAdSpaceReport } from '@virvixr/shared'
 
 const LEVELS: AdLevel[] = ['scene', 'screen', 'look', 'click']
 
@@ -106,5 +106,45 @@ export async function adReport(adId: string): Promise<AdReport> {
       .sort(([a, x], [b, y]) => x.sceneName.localeCompare(y.sceneName) || a.localeCompare(b))
       .map(([elementId, v]) => ({ elementId, sceneName: v.sceneName, ...v.counts })),
     avgLookMs: looks === 0 ? null : Math.round(lookMs / looks),
+  }
+}
+
+/**
+ * LIV-38: what an ad space delivered since `from` (a UTC date), per ad, for its scene's owner. `elementIds` is the
+ * space and its booking copies, which show the same ads. Summarized days and raw days are read as in adReport.
+ */
+export async function adSpaceReport(elementIds: string[], from: string, days: number): Promise<OwnerAdSpaceReport> {
+  const through = (await adSummariesThrough()) ?? '0001-01-01'
+  const rows = [
+    ...(await db
+      .select({ adId: adEvents.adId, level: adEvents.level, verified: adEvents.verified, n: sql<number>`count(*)::int` })
+      .from(adEvents)
+      .where(and(inArray(adEvents.elementId, elementIds), gt(adEvents.day, through), gte(adEvents.day, from)))
+      .groupBy(adEvents.adId, adEvents.level, adEvents.verified)),
+    ...(await db
+      .select({ adId: adDailySpace.adId, level: adDailySpace.level, verified: adDailySpace.verified, n: sql<number>`sum(${adDailySpace.views})::int` })
+      .from(adDailySpace)
+      .where(and(inArray(adDailySpace.elementId, elementIds), lte(adDailySpace.day, through), gte(adDailySpace.day, from)))
+      .groupBy(adDailySpace.adId, adDailySpace.level, adDailySpace.verified)),
+  ]
+  const totals = emptyCounts()
+  const byAd = new Map<string, LevelCounts>()
+  for (const r of rows) {
+    add(totals, r.level, r.verified, r.n)
+    if (!byAd.has(r.adId)) byAd.set(r.adId, emptyCounts())
+    add(byAd.get(r.adId)!, r.level, r.verified, r.n)
+  }
+  const names = byAd.size
+    ? await db.select({ id: ads.id, name: ads.name, kind: ads.kind }).from(ads).where(inArray(ads.id, [...byAd.keys()]))
+    : []
+  const info = new Map(names.map((a) => [a.id, a]))
+  return {
+    days,
+    from,
+    totals,
+    ads: [...byAd]
+      .filter(([id]) => info.has(id))
+      .map(([adId, c]) => ({ adId, name: info.get(adId)!.name, house: info.get(adId)!.kind === 'house', ...c }))
+      .sort((a, b) => b.screen + b.unverified.screen - (a.screen + a.unverified.screen) || a.name.localeCompare(b.name)),
   }
 }

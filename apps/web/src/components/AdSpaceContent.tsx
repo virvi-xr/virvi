@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import type { AdContent, OwnerAdSpace } from '@virvixr/shared'
 import type { useApi } from '@/lib/api'
 import { contentLabel, candidateBadges, adSpaceErrorText } from '@/lib/ads'
+import AdSpaceDelivery from './AdSpaceDelivery'
 
 const CONTENT_OPTIONS: AdContent[] = ['family', 'all', 'approve']
 
@@ -98,6 +99,7 @@ export default function AdSpaceContent({ elementId, refreshKey, api }: { element
           </div>
         )
       )}
+      {space && <AdSpaceDelivery elementId={elementId} api={api} />}
     </div>
   )
 }

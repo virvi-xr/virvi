@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_VENUE_RULES, VENUE_ROLE_SCOPES } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
-import { ads, adCreatives, adPlacements, adSpaceApprovals, adSpaceSettings, accessGrants, bookings, sceneCollaborators, sceneRoles, sceneElements, scenePresets, venues } from '../src/db/schema.js'
+import { ads, adCreatives, adEvents, adPlacements, adSpaceApprovals, adSpaceSettings, accessGrants, bookings, sceneCollaborators, sceneRoles, sceneElements, scenePresets, venues } from '../src/db/schema.js'
 import { selectAdsForElements } from '../src/ads/select.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, tokenFor, createUser, createScene, createElement, randomWallet, type TestUser } from './helpers/factories.js'
@@ -211,5 +211,40 @@ describe('owner ad space API', () => {
   it('requires authentication', async () => {
     const { el } = await seed()
     expect((await app.inject({ method: 'GET', url: `/api/ad-spaces/${el.id}` })).statusCode).toBe(401)
+  })
+
+  it('the owner sees what the space delivered per ad, its booking copies included (LIV-38)', async () => {
+    const { owner, scene, el } = await seed()
+    const house = await mkAd('house', undefined, { name: 'Virvi house' })
+    const paid = await mkAd('partner', undefined, { name: 'Sponsor' })
+    const [bp] = await db.insert(scenePresets).values({ sceneId: scene.id, name: 'Booking' }).returning()
+    const [clone] = await db.insert(sceneElements).values({ presetId: bp.id, type: 'ad_space', name: 'Clone', properties: { shape: '1:1', formats: 'both' }, clonedFromId: el.id }).returning()
+    const other = await createElement((await db.select().from(scenePresets).where(eq(scenePresets.sceneId, scene.id)))[0].id, { type: 'ad_space', properties: { shape: '1:1', formats: 'both' } })
+    const day = (ago: number) => new Date(Date.now() - ago * 86_400_000).toISOString().slice(0, 10)
+    const ev = (adId: string, elementId: string, level: string, viewer: string, verified = true, ago = 0) =>
+      ({ adId, elementId, sceneId: scene.id, level, day: day(ago), viewerKey: viewer, verified, house: adId === house.ad.id, occurredAt: new Date() })
+    await db.insert(adEvents).values([
+      ev(paid.ad.id, el.id, 'screen', 'h:1'), ev(paid.ad.id, el.id, 'screen', 'h:2'), ev(paid.ad.id, clone.id, 'screen', 'h:3'),
+      ev(paid.ad.id, el.id, 'click', 'h:1'), ev(paid.ad.id, el.id, 'screen', 'u:guest', false),
+      ev(house.ad.id, el.id, 'scene', 'h:1'),
+      ev(paid.ad.id, other.id, 'screen', 'h:9'), // another space
+      ev(paid.ad.id, el.id, 'screen', 'h:old', true, 40), // outside 30 days
+      ev(paid.ad.id, el.id, 'screen', 'h:week', true, 10), // inside 30 days, outside 7
+    ])
+    const res = await call(owner, 'GET', `/api/ad-spaces/${clone.id}/report`)
+    expect(res.statusCode).toBe(200)
+    const r = res.json().report
+    expect(r).toMatchObject({ days: 30, from: day(29) })
+    expect(r.ads.map((a: any) => [a.name, a.house, a.screen, a.click, a.unverified.screen, a.scene])).toEqual([
+      ['Sponsor', false, 4, 1, 1, 0],
+      ['Virvi house', true, 0, 0, 0, 1],
+    ])
+    expect(r.totals).toMatchObject({ screen: 4, click: 1, scene: 1 })
+    expect((await call(owner, 'GET', `/api/ad-spaces/${el.id}/report?days=7`)).json().report.ads[0].screen).toBe(3)
+    // Only full access: an editor and a stranger see nothing
+    const editor = await createUser()
+    await db.insert(sceneCollaborators).values({ sceneId: scene.id, userId: editor.id, role: 'editor' })
+    expect((await call(editor, 'GET', `/api/ad-spaces/${el.id}/report`)).statusCode).toBe(403)
+    expect((await call(await createUser(), 'GET', `/api/ad-spaces/${el.id}/report`)).statusCode).toBe(403)
   })
 })

@@ -148,6 +148,17 @@ export interface AdReport {
   avgLookMs: number | null
 }
 
+/**
+ * LIV-38: what one ad space delivered, for its scene's owner: per ad, the views at each level over the last `days`
+ * days (UTC, today included). Views are one per wallet (or guest) per level per day, as in the admin report.
+ */
+export interface OwnerAdSpaceReport {
+  days: number
+  from: string
+  ads: ({ adId: string; name: string; house: boolean } & LevelCounts)[]
+  totals: LevelCounts
+}
+
 /** Body of the public early-access form. `nickname` is a honeypot: real visitors never fill it. */
 export interface AdvertiserLeadInput {
   email: string

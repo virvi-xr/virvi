@@ -23,7 +23,7 @@ import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, S
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
 import type { FirstReplyStats } from './studio-wait'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
-import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, AdminAdvertiserLead, AdReport, AdShape, BeatChain, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
+import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, OwnerAdSpaceReport, AdminAdvertiserLead, AdReport, AdShape, BeatChain, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
@@ -980,6 +980,8 @@ function useRealApi() {
     reviewAdminAd: (id: string, body: { decision: 'approved'; audience: AdAudience } | { decision: 'rejected'; reason: string }) =>
       apiFetch<{ ad: AdminAd }>(`/api/admin/ads/${id}/review`, { method: 'POST', body: JSON.stringify(body) }),
     getAdSpace: (elementId: string) => apiFetch<{ space: OwnerAdSpace }>(`/api/ad-spaces/${encodeURIComponent(elementId)}`),
+    getAdSpaceReport: (elementId: string, days: 7 | 30 | 90) =>
+      apiFetch<{ report: OwnerAdSpaceReport }>(`/api/ad-spaces/${encodeURIComponent(elementId)}/report?days=${days}`),
     setAdSpaceContent: (elementId: string, content: AdContent) =>
       apiFetch<{ space: OwnerAdSpace }>(`/api/ad-spaces/${encodeURIComponent(elementId)}/content`, { method: 'PUT', body: JSON.stringify({ content }) }),
     decideAdSpaceAd: (elementId: string, adId: string, decision: 'approved' | 'declined') =>

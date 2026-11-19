@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, or } from 'drizzle-orm'
 import { AD_CONTENT_DEFAULT } from '@virvixr/shared'
 import type { AdContent, OwnerAdSpace, OwnerAdCandidate } from '@virvixr/shared'
 import { db } from '../db/connection.js'
@@ -8,6 +8,7 @@ import { authenticate } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
 import { spaceFor } from '../ads/select.js'
+import { adSpaceReport } from '../ads/report.js'
 import type { Space } from '../ads/select.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -79,6 +80,18 @@ export default async function adSpacesRoutes(app: FastifyInstance) {
     const r = await resolve(request, request.params.elementId)
     if ('error' in r) return fail(reply, r)
     return { space: await build(r.originalId, r.space) }
+  })
+
+  // LIV-38: what the space delivered, per ad, over the last 7, 30 or 90 days (30 by default)
+  app.get<{ Params: { elementId: string }; Querystring: { days?: string } }>('/api/ad-spaces/:elementId/report', async (request, reply) => {
+    const r = await resolve(request, request.params.elementId)
+    if ('error' in r) return fail(reply, r)
+    const days = [7, 30, 90].includes(Number(request.query.days)) ? Number(request.query.days) : 30
+    const from = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10)
+    // The space and its booking copies, which serve the same ads under their own ids
+    const ids = (await db.select({ id: sceneElements.id }).from(sceneElements)
+      .where(or(eq(sceneElements.id, r.originalId), eq(sceneElements.clonedFromId, r.originalId)))).map((e) => e.id)
+    return { report: await adSpaceReport(ids, from, days) }
   })
 
   app.put<{ Params: { elementId: string }; Body: { content?: unknown } }>('/api/ad-spaces/:elementId/content', async (request, reply) => {

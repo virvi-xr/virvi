@@ -20,6 +20,11 @@ export function isHttpsUrl(s: string): boolean {
   }
 }
 
+/** All the views at every level from guests without a verified wallet: shown on their own, since campaigns don't count them. */
+export function guestViews(c: LevelCounts): number {
+  return c.unverified.scene + c.unverified.screen + c.unverified.look + c.unverified.click
+}
+
 /** Verified clicks over verified on-screen views, e.g. '1.3%'. */
 export function clickRate(c: LevelCounts): string {
   if (c.screen === 0) return '—'

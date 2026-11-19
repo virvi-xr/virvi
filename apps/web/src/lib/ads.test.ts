@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { LevelCounts } from '@virvixr/shared'
 import { VideoSourceType } from '@virvixr/shared'
-import { shapeLabel, isHttpsUrl, clickRate, offImageLabel, adModeHint, contentLabel, reviewBadge, isAdsMode, candidateBadges, adSpaceErrorText, adSpaceRefreshKey } from './ads'
+import { shapeLabel, isHttpsUrl, clickRate, offImageLabel, adModeHint, contentLabel, reviewBadge, isAdsMode, candidateBadges, adSpaceErrorText, adSpaceRefreshKey, guestViews } from './ads'
 
 const zero = { scene: 0, screen: 0, look: 0, click: 0 }
 const counts = (screen: number, click: number): LevelCounts => ({ ...zero, screen, click, unverified: { ...zero } })
@@ -110,5 +110,12 @@ describe('adSpaceRefreshKey', () => {
     expect(adSpaceRefreshKey({ adShape: '1:1', offType: 4 })).not.toBe(adSpaceRefreshKey({ adShape: '2:5', offType: 4 }))
     expect(adSpaceRefreshKey({ adShape: '1:1', offType: 4 })).not.toBe(adSpaceRefreshKey({ adShape: '1:1', offType: 5 }))
     expect(adSpaceRefreshKey({ shape: '1:1', formats: 'both' })).toBe(adSpaceRefreshKey({ shape: '1:1', formats: 'both' }))
+  })
+})
+
+describe('guestViews (LIV-38)', () => {
+  it('adds up the unverified views at every level, and ignores verified ones', () => {
+    expect(guestViews({ scene: 9, screen: 9, look: 9, click: 9, unverified: { scene: 1, screen: 2, look: 3, click: 4 } })).toBe(10)
+    expect(guestViews({ scene: 1, screen: 1, look: 0, click: 0, unverified: { scene: 0, screen: 0, look: 0, click: 0 } })).toBe(0)
   })
 })
