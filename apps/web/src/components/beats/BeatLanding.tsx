@@ -16,6 +16,7 @@ export function BeatLanding() {
         <a href="/" className="shrink-0"><img src="/virvi-logo-light.svg" alt="Virvi" className="h-7 w-auto" /></a>
         <a href={signinPath('/beats')} className={quiet}>Sign in</a>
       </header>
+      <main>
 
       <section className="relative mx-auto flex min-h-[calc(100svh-4.5rem)] max-w-6xl flex-col items-center justify-center px-4 pb-16 text-center sm:px-6">
         <div className="bw-medal bw-medal-lg" aria-hidden="true">
@@ -61,6 +62,7 @@ export function BeatLanding() {
         </div>
       </section>
 
+      </main>
       <footer className="mx-auto flex max-w-5xl flex-wrap gap-x-6 gap-y-2 px-4 pb-10 sm:px-6">
         <span className="mr-auto text-sm text-[var(--bw-dim)]">© {new Date().getFullYear()} Livication LLC</span>
         <a href="/beat/how-it-works/" className={quiet}>How BEATs work</a>

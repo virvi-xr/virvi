@@ -2,7 +2,7 @@
 
 /** The sign-up forms' required "I agree to the Terms" box. The links open in a new tab so the form keeps what was typed. */
 export function TermsCheckbox({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
-  const link = 'text-blue-400 hover:underline'
+  const link = 'text-blue-400 underline underline-offset-2 hover:text-blue-300'
   return (
     <label className="flex items-start gap-2 text-sm text-gray-400">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} required

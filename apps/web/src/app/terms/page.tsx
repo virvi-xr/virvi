@@ -5,12 +5,12 @@ export const metadata: Metadata = {
   description: 'The rules for using Virvi, its content policy, and who owns what you make in the Design Studio.',
 }
 
-const link = 'text-blue-400 hover:underline'
+const link = 'text-blue-400 underline underline-offset-2 hover:text-blue-300'
 
 // Keep in step with apps/docs/src/content/docs/terms.md (both are generated from the same text)
 export default function TermsPage() {
   return (
-    <div className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
+    <main className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
       <article className="mx-auto max-w-2xl text-gray-300 [&_h2]:mb-3 [&_h2]:mt-10 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-white [&_h3]:mb-2 [&_h3]:mt-6 [&_h3]:font-semibold [&_h3]:text-white [&_li]:mt-2 [&_ol_ul]:mt-1 [&_p]:mt-3 [&_p]:leading-relaxed [&_ul_ul]:mt-1">
         <a href="/" className="text-sm text-gray-400 hover:text-white">← Back to Virvi</a>
         <h1 className="mt-6 text-3xl font-semibold tracking-tight text-white">Terms of Service</h1>
@@ -70,6 +70,6 @@ export default function TermsPage() {
         <h2>13. Contact</h2>
         <p><a href="mailto:support@virvi.io" className={link}>support@virvi.io</a> · Livication LLC, 255 East Drive, Suite L, Melbourne, FL 32904, USA</p>
       </article>
-    </div>
+    </main>
   )
 }

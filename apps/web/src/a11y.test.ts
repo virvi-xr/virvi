@@ -123,3 +123,21 @@ describe('accessibility (LIV-42)', () => {
     expect(trapTab([], a, false)).toBeNull()
   })
 })
+
+describe('public pages have a main landmark', () => {
+  // Pages outside the dashboard (whose layout has its own <main>), or the component each one renders. Redirect-only and
+  // hand-off pages are left out. An axe scan of the built site found these missing (LIV-42).
+  const PAGES = [
+    'app/page.tsx', 'app/about/page.tsx', 'app/privacy/page.tsx', 'app/terms/page.tsx', 'app/transparency/page.tsx',
+    'app/signin/page.tsx', 'app/auth/reset-password/page.tsx', 'app/credits/page.tsx',
+    'components/beats/BeatLanding.tsx', 'components/beats/HowBeatsWork.tsx', 'app/w/[address]/client.tsx',
+  ]
+  it.each(PAGES)('%s', (p) => {
+    expect(readFileSync(join(SRC, p), 'utf8')).toMatch(/<main[\s>]/)
+  })
+
+  it('inline links are underlined, not told apart by color alone', () => {
+    const offenders = tsxFiles(SRC).filter((f) => /text-blue-400 hover:underline/.test(readFileSync(f, 'utf8'))).map((f) => relative(SRC, f))
+    expect(offenders).toEqual([])
+  })
+})

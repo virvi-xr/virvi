@@ -1,7 +1,7 @@
 import { BEAT_CHAIN_INFO } from '@virvixr/shared'
 import type { ContractInfo } from '@/lib/transparency'
 
-const link = 'text-blue-400 hover:underline'
+const link = 'text-blue-400 underline underline-offset-2 hover:text-blue-300'
 
 /** The smart contracts Virvi uses (BEATs, LIV-11): each with its page on Polygonscan and its source in the repo. */
 export function Contracts({ contracts }: { contracts: ContractInfo[] }) {

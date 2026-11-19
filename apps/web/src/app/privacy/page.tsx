@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 // Keep in step with apps/docs/src/content/docs/privacy.md
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
+    <main className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
       <article className="mx-auto max-w-2xl text-gray-300 [&_h2]:mb-3 [&_h2]:mt-10 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-white [&_li]:mt-2 [&_p]:leading-relaxed">
         <a href="/" className="text-sm text-gray-400 hover:text-white">← Back to Virvi</a>
         <h1 className="mt-6 text-3xl font-semibold tracking-tight text-white">Privacy and visitor data</h1>
@@ -60,7 +60,7 @@ export default function PrivacyPage() {
           dashboard control for this is coming. This removes your sessions, events and positions from every scene, your ad records, your raffle entries, and your
           BEAT data (see BEATs below for tokens already sent).
           To ask for your data to be deleted, or for help, email{' '}
-          <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a>.
+          <a href="mailto:support@virvi.io" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">support@virvi.io</a>.
         </p>
 
         <h2>Raffles</h2>
@@ -150,7 +150,7 @@ export default function PrivacyPage() {
           Visit events follow the same retention as the rest of Virvi analytics, above. They carry no identity, so there is nothing to look up
           or delete for a single visitor. A builder can revoke a paired headset on virvi.io, which stops it from editing. To ask for your data to be
           deleted, or for help, email{' '}
-          <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a>.
+          <a href="mailto:support@virvi.io" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">support@virvi.io</a>.
         </p>
 
         <h2>Error reporting</h2>
@@ -180,7 +180,7 @@ export default function PrivacyPage() {
             you press Submit, and nothing is sent before that. A report you send (what you wrote, that preview and a screenshot if you add one)
             is linked to your account if you're signed in, so we can follow up. Reports are kept for 400 days, and screenshots for 30
             days. Ask us at{' '}
-            <a href="mailto:support@virvi.io" className="text-blue-400 hover:underline">support@virvi.io</a> to have one deleted sooner.
+            <a href="mailto:support@virvi.io" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">support@virvi.io</a> to have one deleted sooner.
           </li>
           <li>
             <strong>Asking only when it helps:</strong> to ask you at most once a day, and to say &ldquo;we know about this&rdquo; only once
@@ -203,9 +203,9 @@ export default function PrivacyPage() {
           enter, and the time you sent the form. It's used only to contact you about advertising on Virvi. If you send the form again with the same
           email, the new answers replace the old ones (fields you leave blank keep what you sent before). Your IP address is used briefly to
           limit repeated submissions and is not stored. To be removed from the list, email{' '}
-          <a href="mailto:sales@virvi.io" className="text-blue-400 hover:underline">sales@virvi.io</a>.
+          <a href="mailto:sales@virvi.io" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">sales@virvi.io</a>.
         </p>
       </article>
-    </div>
+    </main>
   )
 }

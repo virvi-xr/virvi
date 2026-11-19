@@ -5,14 +5,14 @@ export const metadata: Metadata = {
   description: 'Who makes Virvi: Livication LLC, founded by Steven A. Williams.',
 }
 
-const link = 'text-blue-400 hover:underline'
+const link = 'text-blue-400 underline underline-offset-2 hover:text-blue-300'
 const DISCORD = 'https://discord.gg/cMAK5YCtSk'
 
 // The company and the people behind Virvi. Token listings (Polygonscan) ask for the team to be shown with links to
 // their professional profiles; keep this factual and in step with the founder's own sites.
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
+    <main className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
       <article className="mx-auto max-w-2xl text-gray-300 [&_h2]:mb-3 [&_h2]:mt-10 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-white [&_p]:leading-relaxed">
         <a href="/" className="text-sm text-gray-400 hover:text-white">← Back to Virvi</a>
         <h1 className="mt-6 text-3xl font-semibold tracking-tight text-white">About Virvi</h1>
@@ -46,6 +46,6 @@ export default function AboutPage() {
           <a href="/transparency/" className={link}>transparency page</a>.
         </p>
       </article>
-    </div>
+    </main>
   )
 }

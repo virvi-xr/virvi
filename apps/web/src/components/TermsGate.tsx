@@ -40,7 +40,7 @@ export function TermsGate({ onSignOut }: { onSignOut: () => void }) {
       <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="terms-gate-title" className="w-full max-w-md rounded-xl bg-gray-900 p-6">
         <h2 id="terms-gate-title" className="text-lg font-semibold text-white">{gate.title}</h2>
         <p className="mt-2 text-sm text-gray-400">{gate.body}</p>
-        <a href="/terms/" target="_blank" rel="noopener" className="mt-3 inline-block text-sm text-blue-400 hover:underline">
+        <a href="/terms/" target="_blank" rel="noopener" className="mt-3 inline-block text-sm text-blue-400 underline underline-offset-2 hover:text-blue-300">
           Read the Terms of Service
         </a>
         {error && <p className="mt-3 text-sm text-red-400" role="alert">{error}</p>}

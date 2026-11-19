@@ -17,6 +17,7 @@ export function HowBeatsWork() {
         <a href="/beat/" className={quiet}>Check a wallet</a>
       </header>
 
+      <main>
       <article className="mx-auto max-w-3xl px-4 pb-24 pt-10 sm:px-6 [&_p]:leading-relaxed [&_p]:text-[var(--bw-dim)] [&_li]:leading-relaxed [&_li]:text-[var(--bw-dim)] [&_strong]:text-[var(--bw-chrome)]">
         <h1 className="bw-display text-[clamp(2.2rem,7vw,4.2rem)] font-black leading-[0.95] tracking-tight">How BEATs work</h1>
         <p className="mt-6 text-lg">
@@ -89,6 +90,7 @@ export function HowBeatsWork() {
           <a href="mailto:support@virvi.io" className={link}>support@virvi.io</a>
         </p>
       </article>
+      </main>
     </div>
   )
 }

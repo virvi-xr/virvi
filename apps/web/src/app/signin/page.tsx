@@ -88,7 +88,7 @@ function SignIn() {
   if (user && !user.trial && !scenePass) return null
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-4">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-4">
       <a href="/" className="w-full max-w-md text-sm text-gray-400 hover:text-white">← Back to Virvi</a>
       <div className="w-full max-w-md rounded-xl bg-gray-900 p-8">
         <h1 className="mb-2"><BrandMark textClass="text-2xl font-bold" /></h1>
@@ -151,13 +151,13 @@ function SignIn() {
 
         <p className="mt-4 text-center text-sm text-gray-500">
           {mode === 'login' ? (
-            <>No account? <button onClick={() => setMode('register')} className="text-blue-400 hover:underline">Register</button></>
+            <>No account? <button onClick={() => setMode('register')} className="text-blue-400 underline underline-offset-2 hover:text-blue-300">Register</button></>
           ) : (
-            <>Have an account? <button onClick={() => setMode('login')} className="text-blue-400 hover:underline">Sign in</button></>
+            <>Have an account? <button onClick={() => setMode('login')} className="text-blue-400 underline underline-offset-2 hover:text-blue-300">Sign in</button></>
           )}
         </p>
       </div>
-    </div>
+    </main>
   )
 }
 

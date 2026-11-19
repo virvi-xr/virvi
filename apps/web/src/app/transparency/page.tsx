@@ -6,7 +6,7 @@ import { Contracts } from './Contracts'
 
 // Keep in step with apps/docs/src/content/docs/security/transparency.md
 const code = 'rounded bg-gray-800 px-1.5 py-0.5 text-sm'
-const link = 'text-blue-400 hover:underline'
+const link = 'text-blue-400 underline underline-offset-2 hover:text-blue-300'
 
 function Running({ info, error }: { info: ReleaseInfo | null; error: boolean }) {
   if (error) return <p className="text-amber-300" role="alert">The server didn’t answer just now. Try again, or ask it directly at <code className={code}>{API_URL}/api/transparency</code>.</p>
@@ -53,7 +53,7 @@ export default function TransparencyPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
+    <main className="min-h-screen bg-gray-950 px-4 py-12 sm:px-6">
       <article className="mx-auto max-w-2xl text-gray-300 [&_h2]:mb-3 [&_h2]:mt-10 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-white [&_li]:mt-2 [&_p]:leading-relaxed">
         <a href="/" className="text-sm text-gray-400 hover:text-white">← Back to Virvi</a>
         <h1 className="mt-6 text-3xl font-semibold tracking-tight text-white">Transparency and safety</h1>
@@ -117,6 +117,6 @@ export default function TransparencyPage() {
           to fix it. Our <a href="/.well-known/security.txt" className={link}>security.txt</a> has the details.
         </p>
       </article>
-    </div>
+    </main>
   )
 }

@@ -13,20 +13,21 @@ function ResetPasswordForm() {
 
   if (!token) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <main className="flex min-h-screen items-center justify-center">
         <div className="w-full max-w-md rounded-xl bg-gray-900 p-8 text-center">
+          <h1 className="mb-4 text-xl font-semibold text-white">Reset your password</h1>
           <p className="mb-4 text-red-400">Invalid or missing reset token.</p>
-          <a href="/signin/" className="text-blue-400 hover:underline">Back to login</a>
+          <a href="/signin/" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">Back to login</a>
         </div>
-      </div>
+      </main>
     )
   }
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <main className="flex min-h-screen items-center justify-center">
         <div className="w-full max-w-md rounded-xl bg-gray-900 p-8 text-center">
-          <h2 className="mb-4 text-xl font-semibold text-white">Password reset successful</h2>
+          <h1 className="mb-4 text-xl font-semibold text-white">Password reset successful</h1>
           <p className="mb-6 text-gray-400">Your password has been updated. You can now log in with your new password.</p>
           <a
             href="/signin/"
@@ -35,7 +36,7 @@ function ResetPasswordForm() {
             Go to login
           </a>
         </div>
-      </div>
+      </main>
     )
   }
 
@@ -76,9 +77,9 @@ function ResetPasswordForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <main className="flex min-h-screen items-center justify-center">
       <div className="w-full max-w-md rounded-xl bg-gray-900 p-8">
-        <h2 className="mb-6 text-center text-xl font-semibold text-white">Reset your password</h2>
+        <h1 className="mb-6 text-center text-xl font-semibold text-white">Reset your password</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="password" className="mb-1 block text-sm text-gray-400">
@@ -118,7 +119,7 @@ function ResetPasswordForm() {
           </button>
         </form>
       </div>
-    </div>
+    </main>
   )
 }
 
@@ -126,9 +127,9 @@ export default function ResetPasswordPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center">
+        <main className="flex min-h-screen items-center justify-center">
           <p className="text-gray-400">Loading...</p>
-        </div>
+        </main>
       }
     >
       <ResetPasswordForm />

@@ -29,7 +29,7 @@ export default function CreditsPage() {
             <h2 className="text-lg font-semibold">{p.name}</h2>
             <span className="text-xs text-gray-500">{p.modelCount} models · {licenseLabel(p.license)}</span>
           </div>
-          <a href={p.sourceUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-400 hover:underline break-all">{p.sourceUrl}</a>
+          <a href={p.sourceUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-400 underline underline-offset-2 hover:text-blue-300 break-all">{p.sourceUrl}</a>
           {p.attribution.length > 120 ? (
             <pre className="whitespace-pre-wrap rounded-lg bg-gray-950 p-3 text-xs text-gray-400">{p.attribution}</pre>
           ) : (

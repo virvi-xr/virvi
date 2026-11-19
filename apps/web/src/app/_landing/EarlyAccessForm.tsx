@@ -96,7 +96,7 @@ export function EarlyAccessForm({ open, onClose }: { open: boolean; onClose: () 
               />
               <p className="text-xs text-gray-500">
                 We'll only use this to contact you about advertising on Virvi.
-                {privacy && <> <a href={privacy} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Privacy</a></>}
+                {privacy && <> <a href={privacy} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">Privacy</a></>}
               </p>
               {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
               <button type="submit" disabled={submitting} className="clip-corner w-full bg-accent py-3 font-semibold text-accent-ink hover:bg-accent-hover disabled:opacity-50">

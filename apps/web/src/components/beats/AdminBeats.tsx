@@ -4,7 +4,7 @@ import { CopyWallet } from '@/components/CopyWallet'
 import { Badge, ConfirmAction, tableHeadBand } from '@/components/ui'
 import { BATCHES_NOTE, GIVEN_UP_NOTE, balanceLabel, clearPausePrompt, failReasonLabel, giveUpPrompt, lowGasDetail, pauseMessage, type AdminBeatChain, type AdminBeatsOverview } from '@/lib/admin-beats'
 
-const link = 'text-blue-400 hover:underline'
+const link = 'text-blue-400 underline underline-offset-2 hover:text-blue-300'
 const btn = 'rounded-md border border-gray-700 px-3 py-1.5 text-xs hover:border-gray-500 disabled:opacity-50'
 const label = (chain: BeatChain) => BEAT_CHAIN_INFO[chain]?.label ?? chain
 
