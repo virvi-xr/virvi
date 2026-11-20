@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin } from './copy'
+import { budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin, approveRefused, isExpiredCode } from './copy'
 
 describe('budgetLine', () => {
   it('shows what is left when not warning', () => {
@@ -9,7 +9,7 @@ describe('budgetLine', () => {
     expect(budgetLine({ percentLeft: 15, warn: true, resetsAt: '2026-12-03T00:00:00Z' })).toEqual({ text: "You've used 85% of this month's assistant budget", upgrade: false })
   })
   it('says when it comes back at zero, with an upgrade link', () => {
-    expect(budgetLine({ percentLeft: 0, warn: true, resetsAt: '2026-12-03T12:00:00Z' })).toEqual({ text: "You've used this month's assistant budget. It comes back on 3 Dec.", upgrade: true })
+    expect(budgetLine({ percentLeft: 0, warn: true, resetsAt: '2026-12-03T00:00:00Z' })).toEqual({ text: "You've used this month's assistant budget. It comes back on 3 Dec.", upgrade: true })
   })
   it('shows nothing with no cap', () => {
     expect(budgetLine({ percentLeft: 100, warn: false, resetsAt: null })).toBeNull()
@@ -36,5 +36,19 @@ describe('tokenExpiresWithin', () => {
     expect(tokenExpiresWithin(jwt(now / 1000 + 30), 60_000, now)).toBe(true)
     expect(tokenExpiresWithin(jwt(now / 1000 + 600), 60_000, now)).toBe(false)
     expect(tokenExpiresWithin('garbage', 60_000, now)).toBe(true)
+  })
+})
+
+describe('approveRefused', () => {
+  it('is a refusal only when it errored before any step ran', () => {
+    expect(approveRefused({ error: 'expired', ran: false })).toBe(true)
+    expect(approveRefused({ error: 'boom', ran: true })).toBe(false)
+    expect(approveRefused({ error: null, ran: false })).toBe(false)
+  })
+  it('knows the expired codes', () => {
+    expect(isExpiredCode('expired')).toBe(true)
+    expect(isExpiredCode('http_410')).toBe(true)
+    expect(isExpiredCode('invalid_token')).toBe(false)
+    expect(isExpiredCode(null)).toBe(false)
   })
 })

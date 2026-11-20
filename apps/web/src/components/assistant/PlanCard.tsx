@@ -1,17 +1,20 @@
 'use client'
 import { useEffect, useState } from 'react'
 import type { AssistantActionView, AssistantPlanView } from '@virvixr/shared'
-import { ActionRow } from './ActionRow'
+import { ActionRow, refusalMessage } from './ActionRow'
 import { planButtonLabel } from './copy'
 
-export type PlanPhase = 'pending' | 'approved' | 'cancelled'
+/** `refused`: the approve call was turned away before any step ran (the plan card shows why). */
+export type PlanPhase = 'pending' | 'approved' | 'cancelled' | 'refused'
 
 /** The plan the assistant proposes: numbered steps, then "Do these n changes" / Cancel; after approval, the steps' statuses and "Undo all". */
-export function PlanCard({ plan, steps, phase, busy, error, onApprove, onCancel, onUndoStep, onUndoAll }: {
+export function PlanCard({ plan, steps, phase, expired: refusedExpired, busy, error, onApprove, onCancel, onUndoStep, onUndoAll }: {
   plan: AssistantPlanView
   /** The steps with their latest status (from `action` events), in plan order */
   steps: AssistantActionView[]
   phase: PlanPhase
+  /** For `refused`: the server said the plan expired */
+  expired?: boolean
   busy: boolean
   error: string | null
   onApprove: () => void
@@ -32,7 +35,7 @@ export function PlanCard({ plan, steps, phase, busy, error, onApprove, onCancel,
     return () => clearTimeout(t)
   }, [phase, expiresAt])
 
-  const expired = phase === 'pending' && now >= expiresAt
+  const expired = (phase === 'pending' && now >= expiresAt) || (phase === 'refused' && !!refusedExpired)
   const canUndoAll = phase === 'approved' && !busy && steps.some((s) => s.status === 'done')
 
   const undoAll = async () => {
@@ -41,8 +44,7 @@ export function PlanCard({ plan, steps, phase, busy, error, onApprove, onCancel,
     try {
       await onUndoAll()
     } catch (err) {
-      const e = err as { body?: { message?: string }; message?: string }
-      setUndoError(e?.body?.message || e?.message || 'Something went wrong.')
+      setUndoError(refusalMessage(err))
     } finally {
       setUndoing(false)
     }
@@ -57,6 +59,11 @@ export function PlanCard({ plan, steps, phase, busy, error, onApprove, onCancel,
         <p className="mt-3 text-sm text-yellow-300" role="status">This plan expired. Ask again to get a fresh one.</p>
       ) : phase === 'cancelled' ? (
         <p className="mt-3 text-sm text-gray-400" role="status">Plan cancelled.</p>
+      ) : phase === 'refused' ? (
+        <div className="mt-3">
+          <button type="button" onClick={onCancel} disabled={busy}
+            className="rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:text-white disabled:opacity-50">Cancel</button>
+        </div>
       ) : phase === 'pending' ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" onClick={onApprove} disabled={busy}

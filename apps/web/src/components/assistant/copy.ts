@@ -4,7 +4,7 @@ import type { AssistantBudget } from '@virvixr/shared'
 export function budgetLine(b: AssistantBudget | null): { text: string; upgrade: boolean } | null {
   if (!b) return null
   if (b.percentLeft === 0) {
-    const on = b.resetsAt ? ` It comes back on ${new Date(b.resetsAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}.` : ''
+    const on = b.resetsAt ? ` It comes back on ${new Date(b.resetsAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}.` : ''
     return { text: `You've used this month's assistant budget.${on}`, upgrade: true }
   }
   if (b.warn) return { text: `You've used ${100 - b.percentLeft}% of this month's assistant budget`, upgrade: false }
@@ -33,3 +33,11 @@ export function tokenExpiresWithin(token: string, ms: number, now = Date.now()):
     return true
   }
 }
+
+/** Whether an approve run ended refused: an error and no step that got as far as running. */
+export function approveRefused(run: { error: string | null; ran: boolean }): boolean {
+  return run.error !== null && !run.ran
+}
+
+/** The error code the server uses for an expired plan (410), as streamAssistant reports it. */
+export const isExpiredCode = (code: string | null): boolean => code === 'expired' || code === 'http_410'

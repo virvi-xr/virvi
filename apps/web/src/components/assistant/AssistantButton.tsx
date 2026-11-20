@@ -1,21 +1,25 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AssistantAccess } from '@virvixr/shared'
 import { useApi } from '@/lib/api'
 import { SparkleIcon } from '@/components/icons'
 
 /** The assistant's status for the signed-in account (`hidden` until it loads, and when it is off for them). */
-export function useAssistantAccess(enabled: boolean): AssistantAccess {
+export function useAssistantAccess(enabled: boolean): { access: AssistantAccess; refresh: () => void } {
   const api = useApi()
   const [access, setAccess] = useState<AssistantAccess>({ state: 'hidden' })
-  useEffect(() => {
+  const live = useRef(true)
+  useEffect(() => { live.current = true; return () => { live.current = false } }, [])
+  const refresh = useCallback(() => {
     if (!enabled) { setAccess({ state: 'hidden' }); return }
-    let live = true
-    api.getAssistantStatus().then((a) => { if (live) setAccess(a) }).catch(() => { if (live) setAccess({ state: 'hidden' }) })
-    return () => { live = false }
+    api.getAssistantStatus().then((a) => { if (live.current) setAccess(a) }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled])
-  return access
+  useEffect(() => {
+    if (!enabled) { setAccess({ state: 'hidden' }); return }
+    refresh()
+  }, [enabled, refresh])
+  return { access, refresh }
 }
 
 const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)

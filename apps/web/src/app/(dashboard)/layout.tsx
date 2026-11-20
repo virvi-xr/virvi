@@ -73,7 +73,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // but locked. It calls no account-only route from here (no scene title, org or notification fetches), and the studio probe
   // is on a route trials may use.
   const trial = !!user?.trial
-  const assistantAccess = useAssistantAccess(!!user && !trial && !scenePass)
+  const { access: assistantAccess, refresh: refreshAssistant } = useAssistantAccess(!!user && !trial && !scenePass)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const toggleAssistant = useCallback(() => setAssistantOpen((v) => !v), [])
   useAssistantShortcut(assistantAccess.state !== 'hidden', toggleAssistant)
@@ -228,7 +228,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </div>
       </aside>
-      <AssistantPanel access={assistantAccess} open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+      <AssistantPanel access={assistantAccess} open={assistantOpen} onClose={() => setAssistantOpen(false)} onRefresh={refreshAssistant} />
       <main className="min-w-0 flex-1 px-4 py-5 md:px-10 md:py-8">
         {scenePass && (
           <div className="mb-4 rounded-md border border-gray-800 bg-gray-900 px-4 py-2 text-sm text-gray-300">

@@ -11,12 +11,12 @@ import { reduce, type PanelState } from '@/lib/assistant/state'
 import { streamAssistant } from '@/lib/assistant/sse'
 import { ActionRow, refusalMessage } from './ActionRow'
 import { PlanCard, type PlanPhase } from './PlanCard'
-import { budgetLine, lockedCopy, tokenExpiresWithin } from './copy'
+import { approveRefused, budgetLine, isExpiredCode, lockedCopy, tokenExpiresWithin } from './copy'
 
 const EMPTY: PanelState = { messages: [], streaming: false, plan: null, budget: null, error: null }
 
 /** The assistant's slide-over: 420px from `md` up, full screen below. Rendered once, by the dashboard layout. */
-export function AssistantPanel({ access, open, onClose }: { access: AssistantAccess; open: boolean; onClose: () => void }) {
+export function AssistantPanel({ access, open, onClose, onRefresh }: { access: AssistantAccess; open: boolean; onClose: () => void; onRefresh?: () => void }) {
   const api = useApi()
   const router = useRouter()
   const { token, renew } = useAuth()
@@ -27,6 +27,9 @@ export function AssistantPanel({ access, open, onClose }: { access: AssistantAcc
   const [showList, setShowList] = useState(false)
   const [phase, setPhase] = useState<PlanPhase>('pending')
   const [draft, setDraft] = useState('')
+  const [refusedExpired, setRefusedExpired] = useState(false)
+  const sending = useRef(false)
+  const composer = useRef<HTMLTextAreaElement>(null)
   const abort = useRef<AbortController | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const loadedFirst = useRef(false)
@@ -35,6 +38,9 @@ export function AssistantPanel({ access, open, onClose }: { access: AssistantAcc
 
   const budget = state.budget ?? (access.state === 'ok' ? access.budget : null)
   const locked = access.state === 'locked'
+
+  // An upgrade (or a spent budget) shows up without a reload
+  useEffect(() => { if (open) onRefresh?.() }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open on the latest conversation the first time the panel opens
   useEffect(() => {
@@ -95,7 +101,8 @@ export function AssistantPanel({ access, open, onClose }: { access: AssistantAcc
   const announce = (sceneId: string | null) => window.dispatchEvent(new CustomEvent('virvi:assistant-changed', { detail: { sceneId } }))
 
   /** Runs one streaming call: renews a token about to expire, feeds events to the reducer, always ends with streaming off. */
-  const run = async (url: string, body: (page: ReturnType<typeof pageContext>) => unknown, before?: () => void) => {
+  const run = async (url: string, body: (page: ReturnType<typeof pageContext>) => unknown, before?: () => void): Promise<{ error: string | null; ran: boolean }> => {
+    const outcome = { error: null as string | null, ran: false }
     const page = pageContext(window.location.pathname, window.location.search)
     before?.()
     const controller = new AbortController()
@@ -103,6 +110,8 @@ export function AssistantPanel({ access, open, onClose }: { access: AssistantAcc
     setState((s) => ({ ...s, streaming: true, error: null }))
     const onEvent = (e: AssistantStreamEvent) => {
       setState((s) => reduce(s, e))
+      if (e.type === 'error') outcome.error = e.code
+      if (e.type === 'action' && ['running', 'done', 'failed'].includes(e.action.status)) outcome.ran = true
       if (e.type === 'action' && (e.action.status === 'done' || e.action.status === 'undone')) announce(page.sceneId ?? null)
     }
     try {
@@ -111,15 +120,19 @@ export function AssistantPanel({ access, open, onClose }: { access: AssistantAcc
       if (!t) throw new Error('Sign in again to use the assistant.')
       await streamAssistant(url, body(page), t, onEvent, controller.signal)
     } catch (err) {
-      if ((err as Error)?.name !== 'AbortError') setState((s) => ({ ...s, error: refusalMessage(err) }))
+      if ((err as Error)?.name !== 'AbortError') { outcome.error = (err as { name?: string })?.name ?? 'error'; setState((s) => ({ ...s, error: refusalMessage(err) })) }
     } finally {
       setState((s) => ({ ...s, streaming: false }))
+      // A finished reply hands the keyboard back
+      setTimeout(() => composer.current?.focus(), 0)
     }
+    return outcome
   }
 
   const send = async () => {
     const text = draft.trim()
-    if (!text || state.streaming) return
+    if (!text || state.streaming || sending.current) return
+    sending.current = true
     setDraft('')
     let id = conversationId
     if (!id) {
@@ -129,6 +142,7 @@ export function AssistantPanel({ access, open, onClose }: { access: AssistantAcc
       } catch (err) {
         setDraft(text)
         setState((s) => ({ ...s, error: refusalMessage(err) }))
+        sending.current = false
         return
       }
     }
@@ -140,13 +154,19 @@ export function AssistantPanel({ access, open, onClose }: { access: AssistantAcc
         messages: [...s.messages, { id: `local-user-${Date.now()}`, role: 'user', text, actions: [], links: [], createdAt: new Date().toISOString() }],
       }))
     })
+    sending.current = false
     api.listAssistantConversations().then(setConversations).catch(() => {})
   }
 
   const stop = () => abort.current?.abort()
 
   const approve = async (plan: AssistantPlanView) => {
-    await run(`/api/assistant/plans/${encodeURIComponent(plan.planId)}/approve`, (page) => ({ token: plan.token, page }), () => setPhase('approved'))
+    setRefusedExpired(false)
+    const r = await run(`/api/assistant/plans/${encodeURIComponent(plan.planId)}/approve`, (page) => ({ token: plan.token, page }), () => setPhase('approved'))
+    if (approveRefused(r)) {
+      setRefusedExpired(isExpiredCode(r.error))
+      setPhase('refused')
+    }
   }
 
   const cancelPlan = async (plan: AssistantPlanView) => {
@@ -265,13 +285,13 @@ export function AssistantPanel({ access, open, onClose }: { access: AssistantAcc
             })}
             {state.streaming && <p className="text-xs text-gray-500" role="status">Working…</p>}
             {state.plan && (
-              <PlanCard plan={state.plan} steps={planSteps} phase={phase} busy={state.streaming} error={null}
+              <PlanCard plan={state.plan} steps={planSteps} phase={phase} expired={refusedExpired} busy={state.streaming} error={phase === 'refused' && !refusedExpired ? state.error : null}
                 onApprove={() => approve(state.plan!)} onCancel={() => cancelPlan(state.plan!)} onUndoStep={undoOne} onUndoAll={() => undoPlan(state.plan!)} />
             )}
-            {state.error && <p className="text-sm text-red-300" role="alert">{state.error}</p>}
+            {state.error && !(phase === 'refused' && state.plan) && <p className="text-sm text-red-300" role="alert">{state.error}</p>}
           </div>
           <div className="border-t border-gray-800 p-3">
-            <textarea data-autofocus value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onComposerKey} disabled={state.streaming} rows={2}
+            <textarea ref={composer} data-autofocus value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onComposerKey} disabled={state.streaming} rows={2}
               aria-label="Message the assistant" placeholder="Ask or tell me what to change…"
               className="w-full resize-none rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-500 focus:border-gray-500 focus:outline-none disabled:opacity-60" />
             <div className="mt-2 flex items-center justify-between gap-2">
