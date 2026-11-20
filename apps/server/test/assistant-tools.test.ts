@@ -214,6 +214,18 @@ describe('assistant tools, run as the owner', () => {
     expect(await runTool(ctx, 'add_to_library', { sceneId, mediaAssetId: m.id })).toMatchObject({ ok: true, undo: null })
   })
 
+  it("someone else's email in a route's refusal reaches the model as [email]", async () => {
+    const fake = (statusCode: number, body: string) => ({ ...ctx, app: { inject: async () => ({ statusCode, body }) } as unknown as FastifyInstance })
+    const r = await runTool(fake(409, JSON.stringify({ error: 'taken', message: 'bob@other.example already has this' })), 'get_scene', { sceneId })
+    expect(r).toMatchObject({ ok: false, status: 409, error: '[email] already has this' })
+    // A body that isn't JSON is passed on as text, redacted too
+    const r2 = await runTool(fake(500, 'upstream failed for carol@other.example'), 'list_scenes', {})
+    expect(r2).toMatchObject({ ok: false, status: 500, error: 'upstream failed for [email]' })
+    // The caller's own email stays
+    const r3 = await runTool(fake(400, JSON.stringify({ message: `${owner.email} is not verified` })), 'list_scenes', {})
+    expect(r3).toMatchObject({ ok: false, error: `${owner.email} is not verified` })
+  })
+
   it('toolsForModel gives JSON schemas', () => {
     const t = toolsForModel().find((x) => x.name === 'update_scene')!
     expect(t.input_schema).toMatchObject({ type: 'object', properties: { sceneId: { type: 'string' } }, required: ['sceneId'] })

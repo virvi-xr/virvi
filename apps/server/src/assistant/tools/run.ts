@@ -2,46 +2,14 @@ import { z } from 'zod'
 import { config } from '../../config.js'
 import { redact } from '../redact.js'
 import { TOOLS } from './index.js'
+import { inject, routeError } from './http.js'
 import { ToolError, type Call, type ToolCtx } from './types.js'
+
+export { inject, routeError }
 
 export type ToolResult =
   | { ok: true; status: number; summary: unknown; undo: Call | null; after: unknown; orgName: string | null; label: string }
   | { ok: false; status: number; error: string; label: string }
-
-/**
- * Runs one route in-process as the caller: their own bearer token, and their own address, so the route's
- * authorization decides and the rate limit counts them (app.inject would otherwise come from 127.0.0.1, one bucket
- * for everyone). A call without a body sends no content-type: Fastify refuses an empty body labelled JSON.
- */
-export async function inject(ctx: ToolCtx, call: Call): Promise<{ status: number; json: unknown }> {
-  const headers: Record<string, string> = {}
-  if (ctx.request.headers.authorization) headers.authorization = ctx.request.headers.authorization
-  if (call.body !== undefined) headers['content-type'] = 'application/json'
-  const res = await ctx.app.inject({
-    method: call.method,
-    url: call.url,
-    payload: call.body === undefined ? undefined : JSON.stringify(call.body),
-    headers,
-    remoteAddress: ctx.request.ip,
-  })
-  let json: unknown = null
-  if (res.body) {
-    try {
-      json = JSON.parse(res.body)
-    } catch {
-      json = { message: res.body.slice(0, 200) }
-    }
-  }
-  return { status: res.statusCode, json }
-}
-
-/** The route's own words for a refusal: its message, else its error code. */
-export function routeError(status: number, json: unknown): string {
-  const o = (json ?? {}) as { message?: unknown; error?: unknown }
-  if (typeof o.message === 'string' && o.message) return o.message
-  if (typeof o.error === 'string' && o.error) return o.error
-  return `The request failed (${status}).`
-}
 
 function enabled(name: string) {
   const def = Object.hasOwn(TOOLS, name) ? TOOLS[name] : undefined
@@ -49,13 +17,15 @@ function enabled(name: string) {
 }
 
 export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Promise<ToolResult> {
+  // Error text reaches the model too: a route may echo input or name someone else
+  const safe = (text: string) => redact(text, ctx.self) as string
   const def = enabled(name)
   if (!def) return { ok: false, status: 404, error: 'unknown_tool', label: name }
 
   const parsed = def.input.safeParse(rawArgs ?? {})
   if (!parsed.success) {
     const error = parsed.error.issues.map((i) => (i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ')
-    return { ok: false, status: 400, error, label: name }
+    return { ok: false, status: 400, error: safe(error), label: name }
   }
   const args = parsed.data
   const label = def.label(args)
@@ -74,7 +44,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
     let status = 200
     for (const call of calls) {
       const res = await inject(ctx, call)
-      if (res.status >= 400) return { ok: false, status: res.status, error: routeError(res.status, res.json), label }
+      if (res.status >= 400) return { ok: false, status: res.status, error: safe(routeError(res.status, res.json)), label }
       status = res.status
       results.push(res.json)
     }
@@ -91,7 +61,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
       label,
     }
   } catch (err) {
-    if (err instanceof ToolError) return { ok: false, status: err.status, error: err.message, label }
+    if (err instanceof ToolError) return { ok: false, status: err.status, error: safe(err.message), label }
     throw err
   }
 }
