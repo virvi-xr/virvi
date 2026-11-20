@@ -214,6 +214,7 @@ type Case = { route: string; url: (f: F) => string; body?: (f: F) => Record<stri
 const CASES: Case[] = [
   // scenes
   { route: 'GET /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}` },
+  { route: 'GET /api/scenes/:sceneId/errors', url: (f) => `/api/scenes/${f.scene.id}/errors` },
   { route: 'PUT /api/scenes/:sceneId', url: (f) => `/api/scenes/${f.scene.id}`, body: () => ({ name: 'pwned' }) },
   { route: 'PUT /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail`, body: () => ({ fileData: 'AAAA' }) },
   { route: 'DELETE /api/scenes/:sceneId/thumbnail', url: (f) => `/api/scenes/${f.scene.id}/thumbnail` },
