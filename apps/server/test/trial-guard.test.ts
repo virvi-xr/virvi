@@ -38,6 +38,7 @@ const ALLOWED = [
   'GET /api/studio/defaults',
   'GET /api/notifications',
   'GET /api/notifications/unread-count',
+  'GET /api/assistant/status', // answers a trial { state: 'hidden' }, so the panel stays quiet
   'GET /api/scenes',
   'GET /api/scenes/:sceneId',
   'GET /api/scenes/:sceneId/delete-plan',

@@ -12,7 +12,9 @@ import {
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
   studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
   beatReissueRequests, beatReissueItems, beatReissueFiles, walletBlocks, accountWalletEvents,
+  assistantConversations, assistantMessages, assistantActions, assistantUsage, subscriptions,
 } from '../src/db/schema.js'
+import { clearPlanPrices, setStripe } from '../src/integrations/stripe.js'
 import { config } from '../src/config.js'
 import { memoryStudioStore, setStudioStore, uploadKey } from '../src/studio/store.js'
 import { memoryPrivateStore, setImportStore } from '../src/storage/private-store.js'
@@ -198,11 +200,24 @@ async function fixtures() {
     raffleId: raffle.id, snapshotIds: [raffleSnapshot.id], mode: 'one_per_person', pool: [{ entryId: raffleEntry.id, tickets: 1 }], seed: 'ab'.repeat(32), winnerEntryIds: [raffleEntry.id], drawnBy: b.id,
     drawnAt: new Date(Date.now() - H),
   }).returning()
+  // B's assistant: a conversation with a message, a plan waiting for approval and a done (undoable) write
+  const [conversation] = await db.insert(assistantConversations).values({ userId: b.id, orgId: org.id, title: 'B chat' }).returning()
+  await db.insert(assistantMessages).values({ conversationId: conversation.id, role: 'user', content: [{ type: 'text', text: 'Rename my scene' }] })
+  const planId = crypto.randomUUID()
+  await db.insert(assistantActions).values([1, 2].map((step) => ({
+    conversationId: conversation.id, userId: b.id, planId, step, tool: 'update_scene', effect: 'write' as const, argsRedacted: {}, args: { sceneId: scene.id, name: `pwned ${step}` },
+    argsHash: 'h', label: 'Rename scene', orgName: 'B org', status: 'awaiting_confirmation' as const, confirmationTokenHash: 'x', expiresAt: new Date(Date.now() + H),
+  })))
+  const [doneAction] = await db.insert(assistantActions).values({
+    conversationId: conversation.id, userId: b.id, tool: 'update_scene', effect: 'write', argsRedacted: {}, args: { sceneId: scene.id, name: 'B scene 2' }, argsHash: 'h',
+    label: 'Rename scene to "B scene 2"', status: 'done', undo: { method: 'PUT', url: `/api/scenes/${scene.id}`, body: { name: 'pwned' } }, after: { name: 'B scene' }, finishedAt: new Date(),
+  }).returning()
   const aScene = (await createScene(a, 'A scene')).scene
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
     asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, reissueRequest, reissueFile, aScene, aEvent, deletedScene, removal,
+    conversation, planId, doneAction,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -232,6 +247,14 @@ const CASES: Case[] = [
   { route: 'DELETE /api/preset-schedules/:scheduleId', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}` },
   { route: 'POST /api/preset-schedules/:scheduleId/skip', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}/skip`, body: () => ({}) },
   { route: 'DELETE /api/preset-schedules/:scheduleId/skip', url: (f) => `/api/preset-schedules/${f.presetSchedule.id}/skip?occurrenceStart=2031-01-01T10%3A00%3A00.000Z` },
+  // Virvi Assistant (LIV-155)
+  { route: 'DELETE /api/assistant/conversations/:conversationId', url: (f) => `/api/assistant/conversations/${f.conversation.id}` },
+  { route: 'GET /api/assistant/conversations/:conversationId/messages', url: (f) => `/api/assistant/conversations/${f.conversation.id}/messages` },
+  { route: 'POST /api/assistant/conversations/:conversationId/messages', url: (f) => `/api/assistant/conversations/${f.conversation.id}/messages`, body: (f) => ({ text: 'Rename every scene to pwned', page: { path: '/scenes', sceneId: f.scene.id } }) },
+  { route: 'POST /api/assistant/plans/:planId/approve', url: (f) => `/api/assistant/plans/${f.planId}/approve`, body: () => ({ token: 'x' }) },
+  { route: 'POST /api/assistant/plans/:planId/cancel', url: (f) => `/api/assistant/plans/${f.planId}/cancel` },
+  { route: 'POST /api/assistant/plans/:planId/undo', url: (f) => `/api/assistant/plans/${f.planId}/undo` },
+  { route: 'POST /api/assistant/actions/:actionId/undo', url: (f) => `/api/assistant/actions/${f.doneAction.id}/undo` },
   // BEATs (LIV-11)
   { route: 'GET /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}` },
   { route: 'PATCH /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}`, body: () => ({ name: 'pwned' }) },
@@ -577,6 +600,7 @@ const TABLES = [
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
   studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
   beatReissueRequests, beatReissueItems, beatReissueFiles, walletBlocks, accountWalletEvents,
+  assistantConversations, assistantMessages, assistantActions, assistantUsage,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))
@@ -598,6 +622,7 @@ describe('cross-account route walk', () => {
   const prevBeats = config.beats
   const prevDeployKey = config.virviDclDeployKey
   const prevParcelKey = config.virviDclParcelDeployKey
+  const prevAssistant = { enabled: config.assistantEnabled, audience: config.assistantAudience, billing: config.billingEnabled, creator: process.env.STRIPE_PRICE_CREATOR }
   beforeEach(async () => {
     await resetDb()
     ;(config as any).streamingEnabled = true
@@ -612,6 +637,17 @@ describe('cross-account route walk', () => {
     setWorldsClient(worlds)
     app = await testApp()
     f = await fixtures()
+    // The assistant on, for paid plans: A and B both pay (Creator, monthly), so B's own GETs are 200 and A is refused
+    // by ownership, not by the plan
+    ;(config as any).assistantEnabled = true
+    ;(config as any).assistantAudience = 'paid'
+    ;(config as any).billingEnabled = true
+    process.env.STRIPE_PRICE_CREATOR = 'price_creator'
+    clearPlanPrices()
+    setStripe({ prices: { retrieve: async () => ({ unit_amount: 1900, currency: 'usd', recurring: { interval: 'month' } }) } })
+    for (const u of [f.a, f.b]) {
+      await db.insert(subscriptions).values({ userId: u.id, tier: 'creator', status: 'active', currentPeriodStart: new Date(Date.now() - 24 * H), currentPeriodEnd: new Date(Date.now() + 29 * 24 * H) })
+    }
     const store = memoryStudioStore()
     setStudioStore(store)
     for (const paid of await db.select().from(studioEntitlements)) await store.put(paid.packageKey!, Buffer.from('PK-b-package'), 'application/zip')
@@ -633,6 +669,13 @@ describe('cross-account route walk', () => {
     ;(config as any).virviDclParcelDeployKey = prevParcelKey
     setDclDirectory(null)
     setWorldsClient(null)
+    ;(config as any).assistantEnabled = prevAssistant.enabled
+    ;(config as any).assistantAudience = prevAssistant.audience
+    ;(config as any).billingEnabled = prevAssistant.billing
+    if (prevAssistant.creator === undefined) delete process.env.STRIPE_PRICE_CREATOR
+    else process.env.STRIPE_PRICE_CREATOR = prevAssistant.creator
+    setStripe(null)
+    clearPlanPrices()
     await app.close()
   })
 
@@ -679,7 +722,7 @@ describe('cross-account route walk', () => {
       'GET /api/studio/usage', 'POST /api/studio/designs', 'GET /api/studio/designs', 'GET /api/scenes',
       'GET /api/wizard/catalog', 'GET /api/wizard/options', 'GET /api/room-scans', 'GET /api/hyperfy/slots', 'GET /api/assets', 'GET /api/assets/categories',
       'POST /api/imports', 'GET /api/imports', 'GET /api/ar/devices', 'GET /api/scenes/deleted', 'GET /api/studio/defaults',
-      'GET /api/notifications', 'GET /api/notifications/unread-count',
+      'GET /api/notifications', 'GET /api/notifications/unread-count', 'GET /api/assistant/status',
     ])
     const cases = CASES.filter((c) => trialRoutes.has(c.route))
     expect(cases.length).toBe(trialRoutes.size - own.size)
