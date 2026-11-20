@@ -74,7 +74,7 @@ Not in the catalogue (never): reading or creating API keys, changing passwords o
 | Effect | Behaviour |
 |---|---|
 | `read` | Runs without asking. |
-| `write` (reversible, private) | Shown in the plan; runs after the user approves the plan once ("Do these 4 changes"). Undo offered. |
+| `write` (reversible, private) | A single change runs straight away with Undo (owner, 2026-11-19). Two or more are shown as a plan and run after the user approves it once ("Do these 4 changes"). Undo offered on each. |
 | `public` (visitors or other people see it: deploys, publishing, messages, invites) | Its own confirmation card with the exact diff/preview, every time. |
 | `paid` (spends credits/money or starts checkout) | Its own card with the price from the server's quote route; the payment itself happens in the normal checkout UI. |
 | `destructive` (deletes, unlinks, removes from a platform) | Its own card naming exactly what goes, whether it can be restored (e.g. scene soft-delete 30 days), and requiring the user to press Confirm; never batched. |
@@ -137,7 +137,13 @@ Confirmations are bound to the exact tool + arguments the server will run (a sig
 - Actions ship on day one, behind confirmation: the public launch waits for phase 2.
 - Works across all of the user's organizations; every action and confirmation names its organization.
 
-## Calls made without the owner (check these)
+## Owner decisions (2026-11-19, LIV-155)
+
+- A single reversible private change runs without asking and offers Undo; only multi-step jobs show a plan to approve.
+- Phase 1 launches to admin accounts only, then opens to paid plans with one setting (`ASSISTANT_AUDIENCE`: `admins` | `paid`).
+- The three calls below are confirmed.
+
+## Calls made without the owner (confirmed 2026-11-19)
 
 - The assistant acts only through existing routes, as the user (no service-level shortcuts).
 - Never-tools list (API keys, auth, billing, account/org deletion, purges, admin).
