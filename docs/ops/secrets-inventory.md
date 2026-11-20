@@ -14,7 +14,7 @@ Where the value lives today is the column to change: when LIV-191 is done, 1Pass
 | `BEAT_NETWORK_HASH_SECRET` | Railway: virvi-server | BEAT network claims | Links hashed BEAT data back to people |
 | `STRIPE_SECRET_KEY` | Railway: virvi-server; local `.env` (test key) | payments | Charges, refunds, customer data |
 | `STRIPE_WEBHOOK_SECRET` | Railway: virvi-server | Stripe webhook | Fake payment events |
-| `ANTHROPIC_API_KEY` | Railway: virvi-server; Fly: vlm-studio-worker, vlm-studio-spike; local worker `.env` | server (prompt help, lessons), studio worker | Spend on our account |
+| `ANTHROPIC_API_KEY` | Railway: virvi-server; Fly: vlm-studio-worker, vlm-studio-spike; local worker `.env` | server (prompt help, lessons, assistant), studio worker | Spend on our account |
 | `OPENAI_API_KEY` | Fly: vlm-studio-worker, vlm-studio-spike; local worker `.env` | studio worker (Codex) | Spend on our account |
 | `XAI_API_KEY` | Fly: vlm-studio-worker | studio worker (Grok) | Spend on our account |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (R2) | Railway: virvi-server; local `~/.config/vlm/prod-storage.env`, `r2-worlds.env` | media, studio, imports, Hyperfy assets | Read, replace or delete every stored file |

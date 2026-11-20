@@ -152,6 +152,20 @@ The Design Studio runs only in cloud mode. These settings shape its "Improve my 
 | `STUDIO_PROMPT_HELP_MODEL` | `claude-haiku-5-5` | The Claude model that rewrites drafts. |
 | `STUDIO_PROMPT_HELP_PER_DAY` | `30` | Rewrites each account (trials too) may ask for per UTC day. They don't use prompts. `0` turns the button off. A value that isn't a whole number stops the server from starting. |
 
+## Assistant
+
+The [assistant](/docs/dashboard/assistant/) is a chat panel on the dashboard. It needs `ANTHROPIC_API_KEY` on the server. Self-hosted installs (billing off) have no monthly budget cap.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ASSISTANT_ENABLED` | `true` | `false` turns the assistant off. Any other value than `true` or `false` stops the server from starting. |
+| `ASSISTANT_AUDIENCE` | `admins` | Who gets it: `admins` or `paid` (every paid account). Any other value stops the server from starting. |
+| `ASSISTANT_MODEL` | `claude-sonnet-5-5` | The Claude model that answers. |
+| `ASSISTANT_DISABLED_TOOLS` | none | Comma-separated tool names to switch off, for example `create_showing,add_to_library`. |
+| `ASSISTANT_TOOL_CALLS_PER_MESSAGE` | `12` | Most tool calls the assistant may make for one message. |
+| `ASSISTANT_MESSAGES_PER_MINUTE` | `10` | Messages each account may send per minute. |
+| `ASSISTANT_ADMIN_BUDGET_USD` | `20` | Monthly model-cost budget for an admin account, in US dollars. Applies only when billing is on. |
+
 ## Streaming
 
 These connect the server to the [streaming media server](/docs/self-hosting/docker-compose/#live-streaming).

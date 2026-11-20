@@ -197,6 +197,16 @@ export default function PrivacyPage() {
           </li>
         </ul>
 
+        <h2>Assistant</h2>
+        <p>
+          The Virvi Assistant on the dashboard keeps your conversations with it until you delete them. To write its replies, what you type and the
+          dashboard information it looks up for you (such as your scenes and their settings) are processed by Anthropic. When the assistant
+          changes something for you, we keep a record of the change so you can undo it. That record stays after you delete the conversation, without
+          the message text. See the{' '}
+          <a href="/docs/dashboard/assistant/" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">assistant guide</a>{' '}
+          for what it can do.
+        </p>
+
         <h2>Advertiser early access</h2>
         <p>
           When you ask for advertising early access on virvi.io, Virvi stores the email address, name, company or project, website and message you
