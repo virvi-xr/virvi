@@ -62,17 +62,30 @@ async function spentIn(userId: string, window: AssistantWindow): Promise<number>
   return Number(row?.total ?? 0)
 }
 
-async function capped(userId: string, budgetUsd: number, window: AssistantWindow): Promise<AssistantAccessResult> {
-  const spentUsd = await spentIn(userId, window)
+function cappedAt(budgetUsd: number, spentUsd: number, window: AssistantWindow): AssistantAccessResult {
   return {
     state: 'ok',
     budget: {
-      percentLeft: Math.max(0, Math.floor(100 * (1 - spentUsd / budgetUsd))),
+      // A zero budget has nothing left (and no 0/0)
+      percentLeft: budgetUsd > 0 ? Math.max(0, Math.floor(100 * (1 - spentUsd / budgetUsd))) : 0,
       warn: spentUsd >= WARN_AT * budgetUsd,
       resetsAt: window.end.toISOString(),
     },
     budgetUsd, spentUsd, window,
   }
+}
+
+async function capped(userId: string, budgetUsd: number, window: AssistantWindow): Promise<AssistantAccessResult> {
+  return cappedAt(budgetUsd, await spentIn(userId, window), window)
+}
+
+/**
+ * The same access with what was spent read again: every model call checks against this, so it counts what the
+ * turn's earlier calls cost and what other turns have reserved meanwhile. Uncapped access comes back as it was.
+ */
+export async function refreshSpend(userId: string, access: AssistantAccessResult): Promise<AssistantAccessResult> {
+  if (access.state !== 'ok' || access.budgetUsd === undefined || !access.window) return access
+  return capped(userId, access.budgetUsd, access.window)
 }
 
 export async function assistantAccess(user: AuthUser, now: Date = new Date()): Promise<AssistantAccessResult> {
@@ -101,6 +114,19 @@ export function affordable(access: AssistantAccessResult, estimateUsd: number): 
   if (access.state !== 'ok') return false
   if (access.budgetUsd === undefined) return true
   return (access.spentUsd ?? 0) + estimateUsd <= access.budgetUsd
+}
+
+/**
+ * Books a model call's worst-case cost before it is sent, so a call that is aborted or fails still counts, and a turn
+ * running alongside sees it. `newMessage` is true for the first call of a user message. Settle it once the call returns.
+ */
+export async function reserveAssistantSpend(userId: string, now: Date, usd: number, newMessage: boolean): Promise<void> {
+  await recordAssistantUsage(userId, now, { input_tokens: 0, output_tokens: 0 }, usd, newMessage)
+}
+
+/** Replaces a reservation with what the call really cost: its tokens, and the cost difference (either way). */
+export async function settleAssistantSpend(userId: string, reservedAt: Date, usage: CallUsage, costUsd: number, reservedUsd: number): Promise<void> {
+  await recordAssistantUsage(userId, reservedAt, usage, costUsd - reservedUsd, false)
 }
 
 /** Adds one model call to the user's UTC-day row. `newMessage` is true for the first call of a user message. */

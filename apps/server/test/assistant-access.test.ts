@@ -5,7 +5,7 @@ import { subscriptions } from '../src/db/schema.js'
 import { clearPlanPrices, setStripe } from '../src/integrations/stripe.js'
 import { resetDb } from './helpers/db.js'
 import { createUser } from './helpers/factories.js'
-import { affordable, assistantAccess, budgetWindow, monthlyBudgetUsd, recordAssistantUsage } from '../src/assistant/access.js'
+import { affordable, assistantAccess, budgetWindow, monthlyBudgetUsd, recordAssistantUsage, refreshSpend, reserveAssistantSpend, settleAssistantSpend } from '../src/assistant/access.js'
 import { callCostUsd, modelPrice } from '../src/assistant/pricing.js'
 
 const d = (s: string) => new Date(s)
@@ -152,6 +152,14 @@ describe('assistantAccess', () => {
     expect(a).toMatchObject({ state: 'ok', budgetUsd: 20, budget: { resetsAt: '2026-12-01T00:00:00.000Z' } })
   })
 
+  it('has 0% left, not NaN, with a zero budget', async () => {
+    const admin = await createUser({ role: 'admin' })
+    set('assistantAdminBudgetUsd', 0)
+    const a = await assistantAccess(authUser(admin), NOW)
+    expect(a.state === 'ok' && a.budget.percentLeft).toBe(0)
+    expect(affordable(a, 0.001)).toBe(false)
+  })
+
   it('has no cap without billing', async () => {
     set('billingEnabled', false)
     const u = await createUser()
@@ -178,5 +186,22 @@ describe('assistantAccess', () => {
     const rows = await db.select().from(assistantUsage)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ day: '2026-11-20', messages: 1, tokensIn: 111, tokensOut: 7, costUsd: 0.75 })
+  })
+
+  it('reserves a call before it runs, sees it on a fresh read, and settles it to the real cost', async () => {
+    const admin = await createUser({ role: 'admin' })
+    set('assistantAdminBudgetUsd', 1)
+    const before = await assistantAccess(authUser(admin), NOW)
+    await reserveAssistantSpend(admin.id, NOW, 0.6, true)
+    // The stale read doesn't know; a fresh one does
+    expect(affordable(before, 0.6)).toBe(true)
+    const fresh = await refreshSpend(admin.id, before)
+    expect(fresh.spentUsd).toBeCloseTo(0.6, 9)
+    expect(affordable(fresh, 0.6)).toBe(false)
+    await settleAssistantSpend(admin.id, NOW, { input_tokens: 10, output_tokens: 5 }, 0.1, 0.6)
+    const { assistantUsage } = await import('../src/db/schema.js')
+    const [row] = await db.select().from(assistantUsage)
+    expect(row).toMatchObject({ messages: 1, tokensIn: 10, tokensOut: 5 })
+    expect(row.costUsd).toBeCloseTo(0.1, 9)
   })
 })
