@@ -1042,6 +1042,16 @@ function useRealApi() {
     broadcastToEvent: (eventId: string, data: { action: Record<string, unknown>; targetScenes?: string[] | 'all' }) =>
       apiFetch<{ dispatched: number; sceneIds: string[] }>(`/api/command-center/${eventId}/broadcast`, { method: 'POST', body: JSON.stringify(data) }),
 
+    // Assistant (LIV-155). The streaming calls (send a message, approve a plan) go through assistant/sse.ts instead.
+    getAssistantStatus: () => apiFetch<import('@virvixr/shared').AssistantAccess>('/api/assistant/status'),
+    listAssistantConversations: () => apiFetch<import('@virvixr/shared').AssistantConversationSummary[]>('/api/assistant/conversations'),
+    createAssistantConversation: () => apiFetch<import('@virvixr/shared').AssistantConversationSummary>('/api/assistant/conversations', { method: 'POST' }),
+    deleteAssistantConversation: (id: string) => apiFetch<void>(`/api/assistant/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    getAssistantMessages: (id: string) => apiFetch<import('@virvixr/shared').AssistantMessageView[]>(`/api/assistant/conversations/${encodeURIComponent(id)}/messages`),
+    cancelAssistantPlan: (planId: string) => apiFetch<void>(`/api/assistant/plans/${encodeURIComponent(planId)}/cancel`, { method: 'POST' }),
+    undoAssistantAction: (id: string) => apiFetch<import('@virvixr/shared').AssistantActionView>(`/api/assistant/actions/${encodeURIComponent(id)}/undo`, { method: 'POST' }),
+    undoAssistantPlan: (planId: string) => apiFetch<import('@virvixr/shared').AssistantActionView[]>(`/api/assistant/plans/${encodeURIComponent(planId)}/undo`, { method: 'POST' }),
+
     // Events
     getEvents: () => apiFetch<{ events: any[] }>('/api/events'),
     getEventAttendance: (id: string) => apiFetch<EventAttendanceReport>(`/api/events/${encodeURIComponent(id)}/attendance`),
