@@ -52,6 +52,11 @@ export interface ToolDef<A> {
   call(args: A, ctx: ToolCtx): Promise<Call | Call[]> | Call | Call[]
   /** Read the current values before a write; returns the undo call and the org label. Required for every write. */
   before?(args: A, ctx: ToolCtx): Promise<Before>
+  /**
+   * For a create: the created row as it is now (re-read through the user's own GET routes by `after`'s id), shaped
+   * like `after`, or null when it's gone. Undo refuses when it no longer matches `after`.
+   */
+  currentOf?(after: unknown, args: A, ctx: ToolCtx): Promise<unknown | null>
   /** e.g. 'Rename scene to "Test Lounge"': server-side text for action rows and plan steps. */
   label(args: A): string
   /** The trimmed object the model sees, before redact(). */

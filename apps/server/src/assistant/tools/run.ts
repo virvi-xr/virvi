@@ -3,13 +3,14 @@ import { config } from '../../config.js'
 import { redact } from '../redact.js'
 import { TOOLS } from './index.js'
 import { inject, routeError } from './http.js'
-import { ToolError, type Call, type ToolCtx } from './types.js'
+import { ToolError, type Before, type Call, type ToolCtx } from './types.js'
 
 export { inject, routeError }
 
 export type ToolResult =
   | { ok: true; status: number; summary: unknown; undo: Call | null; after: unknown; orgName: string | null; label: string }
-  | { ok: false; status: number; error: string; label: string }
+  /** orgName is set when the write's `before` ran (the target was the user's) and the route then refused. */
+  | { ok: false; status: number; error: string; label: string; orgName?: string | null }
 
 function enabled(name: string) {
   const def = Object.hasOwn(TOOLS, name) ? TOOLS[name] : undefined
@@ -29,6 +30,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
   }
   const args = parsed.data
   const label = def.label(args)
+  let before: Before | null = null
 
   try {
     if (def.local) {
@@ -36,7 +38,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
       return { ok: true, status: 200, summary: redact(def.summarize(out, args), ctx.self, def.redactKeys), undo: null, after: null, orgName: null, label }
     }
     if (def.effect === 'write' && !def.before) throw new Error(`assistant tool ${name} is a write without before()`)
-    const before = def.before ? await def.before(args, ctx) : null
+    before = def.before ? await def.before(args, ctx) : null
 
     const planned = await def.call(args, ctx)
     const calls = Array.isArray(planned) ? planned : [planned]
@@ -44,7 +46,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
     let status = 200
     for (const call of calls) {
       const res = await inject(ctx, call)
-      if (res.status >= 400) return { ok: false, status: res.status, error: safe(routeError(res.status, res.json)), label }
+      if (res.status >= 400) return { ok: false, status: res.status, error: safe(routeError(res.status, res.json)), label, orgName: before?.orgName ?? null }
       status = res.status
       results.push(res.json)
     }
@@ -61,7 +63,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
       label,
     }
   } catch (err) {
-    if (err instanceof ToolError) return { ok: false, status: err.status, error: safe(err.message), label }
+    if (err instanceof ToolError) return { ok: false, status: err.status, error: safe(err.message), label, ...(before ? { orgName: before.orgName } : {}) }
     throw err
   }
 }

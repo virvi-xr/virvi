@@ -4,7 +4,7 @@ import { createHash, createHmac } from 'node:crypto'
 import { eq, and } from 'drizzle-orm'
 import type { AssistantActionView, AssistantPlanView } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
-import { assistantActions, sceneElements, scenePresets, scenes } from '../src/db/schema.js'
+import { assistantActions, mediaAssets, organizations, sceneElements, scenePresetSchedules, scenePresets, scenes } from '../src/db/schema.js'
 import { approvePlan, cancelPlan, proposePlan, recordDirect, undoAction, undoPlan } from '../src/assistant/actions.js'
 import { inject } from '../src/assistant/tools/run.js'
 import type { ToolCtx } from '../src/assistant/tools/types.js'
@@ -80,6 +80,13 @@ describe('assistant action log, plans and undo', () => {
       expect(await undoAction(ctx, a.id)).toEqual({ error: 'not_undoable' })
     })
 
+    it("names the organization on a write the route refused after its target checked out", async () => {
+      const [org] = await db.insert(organizations).values({ name: 'Acme', slug: `acme-${owner.id.slice(0, 8)}`, billingOwnerId: owner.id }).returning()
+      await db.update(scenes).set({ orgId: org.id }).where(eq(scenes.id, sceneId))
+      const a = await recordDirect(ctx, null, 'create_preset', { sceneId, name: 'Copy', fromPresetId: '00000000-0000-4000-8000-000000000000' })
+      expect(a).toMatchObject({ status: 'failed', orgName: 'Acme' })
+    })
+
     it("stores a refused write as failed, with the route's reason", async () => {
       const other = await createUser()
       const { scene } = await createScene(other, 'Not Yours')
@@ -116,6 +123,55 @@ describe('assistant action log, plans and undo', () => {
       expect(await undoAction(ctx, i.id)).toMatchObject({ status: 'undone' })
       expect(await undoAction(ctx, e.id)).toMatchObject({ status: 'undone' })
       expect((await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, el.id) }))!.properties).toEqual({ liveSrc: 'https://old.example/live.m3u8', volume: 0.5 })
+    })
+
+    it("undoing a property change keeps a later hand rename, and restores the property", async () => {
+      const el = await createElement(presetId, { properties: { liveSrc: 'https://old.example/live.m3u8' } })
+      const a = await recordDirect(ctx, null, 'update_element', { sceneId, elementId: el.id, properties: { liveSrc: 'https://new.example/live.m3u8' } })
+      expect((await inject(ctx, { method: 'PUT', url: `/api/elements/${el.id}`, body: { name: 'Hand Named' } })).status).toBe(200)
+      expect(await undoAction(ctx, a.id)).toMatchObject({ status: 'undone' })
+      const now = (await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, el.id) }))!
+      expect(now.name).toBe('Hand Named')
+      expect(now.properties).toEqual({ liveSrc: 'https://old.example/live.m3u8' })
+    })
+
+    it('undoes a schedule time and duration change that nobody touched since', async () => {
+      const [schedule] = await db.insert(scenePresetSchedules).values({ sceneId, presetId, recurrence: 'daily', startDate: '2030-01-01', startTime: '20:00', timezone: 'UTC', durationMinutes: 60 }).returning()
+      const a = await recordDirect(ctx, null, 'update_preset_schedule', { sceneId, scheduleId: schedule.id, startTime: '21:30', durationMinutes: 45 })
+      expect(a.status).toBe('done')
+      expect(await undoAction(ctx, a.id)).toMatchObject({ status: 'undone' })
+      const now = (await db.query.scenePresetSchedules.findFirst({ where: eq(scenePresetSchedules.id, schedule.id) }))!
+      expect([now.startTime, now.durationMinutes]).toEqual(['20:00', 60])
+    })
+
+    it('refuses to undo a create that was edited by hand since, and keeps it', async () => {
+      const a = await recordDirect(ctx, null, 'create_element', { sceneId, presetId, type: 'image', name: 'Poster' })
+      const [el] = await db.select().from(sceneElements).where(eq(sceneElements.presetId, presetId))
+      expect((await inject(ctx, { method: 'PUT', url: `/api/elements/${el.id}`, body: { name: 'Hand Named' } })).status).toBe(200)
+      expect(await undoAction(ctx, a.id)).toEqual({ error: 'changed' })
+      expect(await db.select().from(sceneElements).where(eq(sceneElements.id, el.id))).toHaveLength(1)
+    })
+
+    it('undoes every kind of create nobody touched since', async () => {
+      const el = await createElement(presetId)
+      const [media] = await db.insert(mediaAssets).values({ ownerId: owner.id, filename: 'a.png', contentType: 'image/png', sizeBytes: 1, storageKey: 'media/a.png', publicUrl: 'https://cdn.example/a.png', status: 'ready' }).returning()
+      const when = { recurrence: 'daily', startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC' }
+      const cases: Array<[string, Record<string, unknown>]> = [
+        ['create_element', { sceneId, presetId, type: 'image', name: 'Poster', properties: { textureSrc: 'https://cdn.example/p.png' } }],
+        ['create_preset', { sceneId, name: 'Copy', fromPresetId: presetId }],
+        ['add_instance', { sceneId, elementId: el.id, position: { x: 1.1, y: 0.3, z: -2.7 } }],
+        ['create_preset_schedule', { sceneId, presetId, ...when, durationMinutes: 30 }],
+        ['add_to_library', { sceneId, mediaAssetId: media.id }],
+        ['create_showing', { sceneId, elementId: el.id, title: 'Matinee', items: [{ url: 'https://cdn.example/m.mp4', duration: 60 }], ...when }],
+      ]
+      for (const [name, args] of cases) {
+        const a = await recordDirect(ctx, null, name, args)
+        expect(a.status, `${name}: ${a.error}`).toBe('done')
+        expect(await undoAction(ctx, a.id), name).toMatchObject({ status: 'undone' })
+      }
+      expect(await db.select().from(sceneElements).where(eq(sceneElements.presetId, presetId))).toHaveLength(1)
+      expect(await db.select().from(scenePresets).where(eq(scenePresets.sceneId, sceneId))).toHaveLength(1)
+      expect(await db.select().from(scenePresetSchedules).where(eq(scenePresetSchedules.sceneId, sceneId))).toHaveLength(0)
     })
 
     it('refuses after 7 days', async () => {
@@ -171,6 +227,13 @@ describe('assistant action log, plans and undo', () => {
       const plan = await propose()
       expect(await approvePlan(ctx, plan.planId, plan.token, () => {})).toEqual({ done: 2, failed: null })
       expect(await approvePlan(ctx, plan.planId, plan.token, () => {})).toEqual({ error: 'used' })
+      expect(await db.select().from(sceneElements).where(eq(sceneElements.presetId, presetId))).toHaveLength(1)
+    })
+
+    it('of two approvals at once, one runs the plan and the other is used', async () => {
+      const plan = await propose()
+      const both = await Promise.all([approvePlan(ctx, plan.planId, plan.token, () => {}), approvePlan(ctx, plan.planId, plan.token, () => {})])
+      expect(both).toEqual(expect.arrayContaining([{ done: 2, failed: null }, { error: 'used' }]))
       expect(await db.select().from(sceneElements).where(eq(sceneElements.presetId, presetId))).toHaveLength(1)
     })
 

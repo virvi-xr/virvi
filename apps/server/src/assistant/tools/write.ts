@@ -47,6 +47,15 @@ const instanceIn = (scene: Obj, instanceId: string): Obj => {
   throw new ToolError(404, "That instance isn't in this scene.")
 }
 
+const elementsOf = (scene: Obj): Obj[] => list(scene.presets).flatMap((p) => list(p.elements))
+const instancesOf = (scene: Obj): Obj[] => elementsOf(scene).flatMap((e) => list(e.instances))
+/** The created row's current values for `after`'s keys, found by `after`'s id; null when it's gone. */
+const createdNow = (rows: Obj[], after: unknown): Obj | null => {
+  const a = (after ?? {}) as Obj
+  const row = a.id ? rows.find((r) => r.id === a.id) : undefined
+  return row ? pick(row, Object.keys(a)) : null
+}
+
 /** The keys of `args` a write sets (everything but the ids that address it). */
 const setKeys = (args: Obj, ids: string[]) => Object.keys(args).filter((k) => !ids.includes(k) && args[k] !== undefined)
 /** `prev`'s values for `keys`, null where it had none: the body that puts them back. */
@@ -104,6 +113,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
       const { orgName } = await sceneState(ctx, a.sceneId)
       return { undo: (res) => ({ method: 'DELETE', url: `/api/presets/${created(res, 'preset').id}` }), after: (res) => fields(created(res, 'preset'), ['id', 'name']), orgName }
     },
+    currentOf: async (after, a, ctx) => createdNow(list((await sceneState(ctx, a.sceneId)).scene.presets), after),
     label: (a) => `Add preset "${a.name}"`,
     summarize: (res) => fields(created(res, 'preset'), ['id', 'name', 'sceneId']),
   }),
@@ -152,6 +162,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
         orgName,
       }
     },
+    currentOf: async (after, a, ctx) => createdNow(elementsOf((await sceneState(ctx, a.sceneId)).scene), after),
     label: (a) => `Add ${a.type.replace('_', ' ')} "${a.name}"`,
     summarize: (res) => fields(created(res, 'element'), ['id', 'type', 'name', 'enabled', 'properties']),
   }),
@@ -169,10 +180,12 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
     before: async (a, ctx) => {
       const { scene, orgName } = await sceneState(ctx, a.sceneId)
       const el = elementIn(scene, a.elementId)
+      const keys = setKeys(a, ['sceneId', 'elementId'])
       return {
-        undo: { method: 'PUT', url: `/api/elements/${a.elementId}`, body: { name: el.name, enabled: el.enabled, properties: el.properties ?? {} } },
-        after: (res) => fields(created(res, 'element'), setKeys(a, ['sceneId', 'elementId'])),
-        current: fields(el, setKeys(a, ['sceneId', 'elementId'])),
+        // Only what this write set: a newer hand edit of another field is left alone (and isn't compared)
+        undo: { method: 'PUT', url: `/api/elements/${a.elementId}`, body: { ...previous(el, keys), ...(a.properties ? { properties: el.properties ?? {} } : {}) } },
+        after: (res) => fields(created(res, 'element'), keys),
+        current: fields(el, keys),
         orgName,
       }
     },
@@ -215,6 +228,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
         orgName,
       }
     },
+    currentOf: async (after, a, ctx) => createdNow(instancesOf((await sceneState(ctx, a.sceneId)).scene), after),
     label: () => 'Place the element',
     summarize: (res) => fields(created(res, 'instance'), ['id', 'elementId', ...INSTANCE_FIELDS]),
   }),
@@ -247,6 +261,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
         orgName,
       }
     },
+    currentOf: async (after, a, ctx) => createdNow(list((await get(ctx, `/api/scenes/${a.sceneId}/preset-schedules`)).schedules), after),
     label: (a) => `Schedule a preset (${a.recurrence}, from ${a.startDate} at ${a.startTime} ${a.timezone})`,
     summarize: (res) => fields(created(res, 'schedule'), ['id', ...SCHEDULE_FIELDS, 'nextRuns']),
   }),
@@ -283,6 +298,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
         orgName,
       }
     },
+    currentOf: async (after, a, ctx) => createdNow(list((await get(ctx, `/api/scenes/${a.sceneId}/library`)).items), after),
     label: () => "Add a file to the scene's library",
     summarize: (res) => res,
   }),
@@ -328,6 +344,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
         orgName,
       }
     },
+    currentOf: async (after, a, ctx) => createdNow(list((await get(ctx, `/api/elements/${a.elementId}/showings`)).showings), after),
     label: (a) => `Schedule showing "${a.title ?? 'Untitled'}"`,
     summarize: (res) => fields(created(res, 'showing'), [...SHOWING_FIELDS, 'lengthSeconds', 'nextStarts']),
   }),

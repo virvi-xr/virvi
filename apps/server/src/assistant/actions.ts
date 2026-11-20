@@ -60,7 +60,7 @@ export function actionView(row: Row): AssistantActionView {
 function finished(r: ToolResult) {
   return r.ok
     ? { status: 'done' as const, resultSummary: JSON.stringify(r.summary ?? null), error: null, undo: r.undo, after: r.after ?? null, orgName: r.orgName, finishedAt: new Date() }
-    : { status: 'failed' as const, error: r.error, finishedAt: new Date() }
+    : { status: 'failed' as const, error: r.error, finishedAt: new Date(), ...(r.orgName != null ? { orgName: r.orgName } : {}) }
 }
 
 /** Runs a tool, logs it, and gives back the run's result as well (Task 7 hands its summary to the model). */
@@ -201,7 +201,11 @@ export async function approvePlan(
       ),
     )
     .returning({ id: assistantActions.id })
-  if (!claimed.length) return { error: rows.some((r) => r.status === 'awaiting_confirmation') ? 'expired' : 'used' }
+  if (!claimed.length) {
+    // Read again: a concurrent approval may have claimed the rows since the read above
+    const now = await db.select({ status: assistantActions.status }).from(assistantActions).where(and(eq(assistantActions.planId, planId), eq(assistantActions.userId, userId)))
+    return { error: now.some((r) => r.status === 'awaiting_confirmation') ? 'expired' : 'used' }
+  }
 
   const ids = new Set(claimed.map((c) => c.id))
   const todo = rows.filter((r) => ids.has(r.id))
@@ -261,10 +265,16 @@ export async function undoAction(ctx: ToolCtx, actionId: string): Promise<Assist
 
   // Read the target again: a newer edit (by hand, or elsewhere) is never overwritten. A target that's gone is changed too.
   const def = Object.hasOwn(TOOLS, row.tool) ? TOOLS[row.tool] : undefined
-  if (def?.before && row.args != null) {
+  if (def && row.args != null) {
     try {
-      const now = await def.before(row.args, ctx)
-      if (now.current !== undefined && !unchanged(now.current, row.after)) return { error: 'changed' }
+      if (def.currentOf) {
+        // A create: the created row, re-read by its id; gone or edited since is changed
+        const now = await def.currentOf(row.after, row.args, ctx)
+        if (now == null || !unchanged(now, row.after)) return { error: 'changed' }
+      } else if (def.before) {
+        const now = await def.before(row.args, ctx)
+        if (now.current !== undefined && !unchanged(now.current, row.after)) return { error: 'changed' }
+      }
     } catch (err) {
       if (err instanceof ToolError) return { error: err.status === 404 ? 'changed' : 'not_undoable' }
       throw err

@@ -72,7 +72,7 @@ describe('assistant tools, run as the owner', () => {
     if (!r.ok) throw new Error('failed')
     const now = await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, el.id) })
     expect(now!.properties).toEqual({ ...props, liveSrc: 'https://x/live.m3u8' })
-    expect(r.undo).toEqual({ method: 'PUT', url: `/api/elements/${el.id}`, body: { name: 'Main Screen', enabled: true, properties: props } })
+    expect(r.undo).toEqual({ method: 'PUT', url: `/api/elements/${el.id}`, body: { properties: props } })
     expect(r.after).toEqual({ properties: { ...props, liveSrc: 'https://x/live.m3u8' } })
     await inject(ctx, r.undo!)
     expect((await db.query.sceneElements.findFirst({ where: eq(sceneElements.id, el.id) }))!.properties).toEqual(props)
