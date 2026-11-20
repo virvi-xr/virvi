@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin, approveRefused, isExpiredCode } from './copy'
+import { budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin, approveRefused, isExpiredCode, needsReapproval, REAPPROVE } from './copy'
 
 describe('budgetLine', () => {
   it('shows what is left when not warning', () => {
@@ -50,5 +50,14 @@ describe('approveRefused', () => {
     expect(isExpiredCode('http_410')).toBe(true)
     expect(isExpiredCode('invalid_token')).toBe(false)
     expect(isExpiredCode(null)).toBe(false)
+  })
+})
+
+describe('needsReapproval', () => {
+  it('asks again for steps still waiting after a reload, and not for anything else', () => {
+    expect(REAPPROVE).toBe('Ask again to approve this plan.')
+    expect(needsReapproval([{ status: 'done' }, { status: 'awaiting_confirmation' }])).toBe(true)
+    expect(needsReapproval([{ status: 'done' }, { status: 'cancelled' }])).toBe(false)
+    expect(needsReapproval([])).toBe(false)
   })
 })

@@ -28,7 +28,7 @@ It can also give you "open" links that take you straight to the dashboard page y
 
 - A scene's name and description.
 - Presets: create one, rename one, or switch the active one.
-- Elements: add them, edit them (including what a video screen plays) and turn them live or off.
+- Elements: add them, edit them (including what a video screen plays), show or hide them, and turn a video screen's live stream on or off.
 - Element positions in a scene.
 - Preset schedules: create and edit them.
 - Library items: add them and rename them.

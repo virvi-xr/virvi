@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { AssistantActionView, AssistantStreamEvent } from '@virvixr/shared'
-import { reduce, safeHref, type PanelState } from './state'
+import { reduce, safeHref, startReply, type PanelState } from './state'
 
 const empty: PanelState = { messages: [], streaming: true, plan: null, budget: null, error: null }
 const act = (o: Partial<AssistantActionView> = {}): AssistantActionView => ({ id: 'a1', tool: 't', label: 'L', orgName: null, status: 'running', canUndo: false, error: null, planId: null, step: null, ...o })
@@ -34,6 +34,14 @@ describe('reduce', () => {
     const user = { id: 'u', role: 'user' as const, text: 'hi', actions: [], links: [], createdAt: '' }
     const s = run([{ type: 'text', delta: 'a' }], { ...empty, messages: [user] })
     expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant'])
+  })
+})
+
+describe('startReply', () => {
+  it('puts the text that follows into a new message, not the one before it', () => {
+    const proposed = run([{ type: 'text', delta: 'Approve the plan to go ahead.' }])
+    const s = run([{ type: 'text', delta: 'Both changes are done.' }], startReply(proposed))
+    expect(s.messages.map((m) => m.text)).toEqual(['Approve the plan to go ahead.', 'Both changes are done.'])
   })
 })
 

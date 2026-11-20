@@ -34,6 +34,13 @@ export function tokenExpiresWithin(token: string, ms: number, now = Date.now()):
   }
 }
 
+export const REAPPROVE = 'Ask again to approve this plan.'
+
+/** Steps still waiting for an approval this panel can no longer give (the plan's token only lives in its stream). */
+export function needsReapproval(actions: Array<{ status: string }>): boolean {
+  return actions.some((a) => a.status === 'awaiting_confirmation')
+}
+
 /** Whether an approve run ended refused: an error and no step that got as far as running. */
 export function approveRefused(run: { error: string | null; ran: boolean }): boolean {
   return run.error !== null && !run.ran

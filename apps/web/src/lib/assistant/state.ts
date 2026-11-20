@@ -23,6 +23,11 @@ export function safeHref(href: string): boolean {
 
 const blankAssistant = (): AssistantMessageView => ({ id: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`, role: 'assistant', text: '', actions: [], links: [], createdAt: new Date().toISOString() })
 
+/** A fresh, empty assistant message at the end: what streams next lands there, not in the message before it. */
+export function startReply(state: PanelState): PanelState {
+  return { ...state, messages: [...state.messages, blankAssistant()] }
+}
+
 /** The last message when it is the assistant's, else a new one; `update` returns it changed. */
 function withAssistant(state: PanelState, update: (m: AssistantMessageView) => AssistantMessageView): PanelState {
   const last = state.messages[state.messages.length - 1]

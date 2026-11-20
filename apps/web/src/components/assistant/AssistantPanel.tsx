@@ -7,11 +7,11 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useDialog } from '@/lib/use-dialog'
 import { pageContext } from '@/lib/assistant/context'
-import { reduce, type PanelState } from '@/lib/assistant/state'
+import { reduce, startReply, type PanelState } from '@/lib/assistant/state'
 import { streamAssistant } from '@/lib/assistant/sse'
 import { ActionRow, refusalMessage } from './ActionRow'
 import { PlanCard, type PlanPhase } from './PlanCard'
-import { approveRefused, budgetLine, isExpiredCode, lockedCopy, tokenExpiresWithin } from './copy'
+import { approveRefused, budgetLine, isExpiredCode, lockedCopy, needsReapproval, REAPPROVE, tokenExpiresWithin } from './copy'
 
 const EMPTY: PanelState = { messages: [], streaming: false, plan: null, budget: null, error: null }
 
@@ -20,7 +20,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
   const api = useApi()
   const router = useRouter()
   const { token, renew } = useAuth()
-  const ref = useDialog<HTMLDivElement>(open, onClose)
+  const ref = useDialog(open, onClose)
   const [state, setState] = useState<PanelState>(EMPTY)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<AssistantConversationSummary[] | null>(null)
@@ -28,6 +28,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
   const [phase, setPhase] = useState<PlanPhase>('pending')
   const [draft, setDraft] = useState('')
   const [refusedExpired, setRefusedExpired] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
   const sending = useRef(false)
   const composer = useRef<HTMLTextAreaElement>(null)
   const abort = useRef<AbortController | null>(null)
@@ -65,6 +66,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
     setShowList(false)
     setConversationId(id)
     setPhase('pending')
+    setCancelError(null)
     setState((s) => ({ ...EMPTY, budget: s.budget }))
     try {
       const messages = await api.getAssistantMessages(id)
@@ -79,6 +81,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
     setShowList(false)
     setConversationId(null)
     setPhase('pending')
+    setCancelError(null)
     setState((s) => ({ ...EMPTY, budget: s.budget }))
   }
 
@@ -148,6 +151,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
     }
     await run(`/api/assistant/conversations/${encodeURIComponent(id)}/messages`, (page) => ({ text, page }), () => {
       setPhase('pending')
+      setCancelError(null)
       setState((s) => ({
         ...s,
         plan: null,
@@ -162,7 +166,12 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
 
   const approve = async (plan: AssistantPlanView) => {
     setRefusedExpired(false)
-    const r = await run(`/api/assistant/plans/${encodeURIComponent(plan.planId)}/approve`, (page) => ({ token: plan.token, page }), () => setPhase('approved'))
+    setCancelError(null)
+    // The results reply starts its own message, after the one that proposed the plan
+    const r = await run(`/api/assistant/plans/${encodeURIComponent(plan.planId)}/approve`, (page) => ({ token: plan.token, page }), () => {
+      setPhase('approved')
+      setState(startReply)
+    })
     if (approveRefused(r)) {
       setRefusedExpired(isExpiredCode(r.error))
       setPhase('refused')
@@ -170,11 +179,13 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
   }
 
   const cancelPlan = async (plan: AssistantPlanView) => {
+    setCancelError(null)
     try {
       await api.cancelAssistantPlan(plan.planId)
       setPhase('cancelled')
     } catch (err) {
-      setState((s) => ({ ...s, error: refusalMessage(err) }))
+      // Shown on the plan card, next to the button that failed
+      setCancelError(refusalMessage(err))
     }
   }
 
@@ -217,7 +228,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
   const locks = access.state === 'locked' ? lockedCopy(access.reason) : null
 
   return (
-    <div ref={ref} role="dialog" aria-label="Assistant" data-assistant-panel
+    <div ref={ref} role="dialog" aria-modal="true" aria-label="Assistant" data-assistant-panel
       className="fixed inset-0 z-50 flex flex-col border-gray-800 bg-gray-950 shadow-2xl md:left-auto md:w-[420px] md:border-l">
       <header className="border-b border-gray-800 px-4 py-3">
         <div className="flex items-center justify-between gap-3">
@@ -272,6 +283,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
                   <div className={m.role === 'user' ? 'max-w-[85%] rounded-lg bg-gray-800 px-3 py-2 text-sm text-gray-100' : 'w-full space-y-2'}>
                     {m.text && <p className={`whitespace-pre-wrap break-words text-sm ${m.role === 'user' ? '' : 'text-gray-200'}`}>{m.text}</p>}
                     {actions.length > 0 && <ul className="space-y-1.5">{actions.map((a) => <ActionRow key={a.id} action={a} onUndo={undoOne} />)}</ul>}
+                    {needsReapproval(actions) && <p className="text-xs text-gray-400">{REAPPROVE}</p>}
                     {m.links.length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {m.links.map((l) => (
@@ -285,7 +297,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
             })}
             {state.streaming && <p className="text-xs text-gray-500" role="status">Working…</p>}
             {state.plan && (
-              <PlanCard plan={state.plan} steps={planSteps} phase={phase} expired={refusedExpired} busy={state.streaming} error={phase === 'refused' && !refusedExpired ? state.error : null}
+              <PlanCard plan={state.plan} steps={planSteps} phase={phase} expired={refusedExpired} busy={state.streaming} error={cancelError ?? (phase === 'refused' && !refusedExpired ? state.error : null)}
                 onApprove={() => approve(state.plan!)} onCancel={() => cancelPlan(state.plan!)} onUndoStep={undoOne} onUndoAll={() => undoPlan(state.plan!)} />
             )}
             {state.error && !(phase === 'refused' && state.plan) && <p className="text-sm text-red-300" role="alert">{state.error}</p>}
