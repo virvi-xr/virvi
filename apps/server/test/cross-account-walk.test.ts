@@ -695,7 +695,7 @@ describe('cross-account route walk', () => {
 
   it("A's account token cannot read or change any of B's resources", async () => {
     expect(await walk(tokenFor(f.a))).toEqual([])
-  })
+  }, 30_000) // every route, each with a table snapshot: past 15 s on a loaded machine
 
   it("an API key for A cannot read or change any of B's resources", async () => {
     const res = await app.inject({ method: 'POST', url: '/api/keys', headers: { authorization: `Bearer ${tokenFor(f.a)}` }, payload: { name: 'A key' } })
