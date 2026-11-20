@@ -55,6 +55,22 @@ export function trialsEnabledFrom(raw: string | undefined, m: VirviMode): boolea
   throw new Error(`TRIALS_ENABLED must be true or false, not ${raw}`)
 }
 
+/** ASSISTANT_ENABLED: strict true/false, on when unset. Another value refuses to start rather than guess. */
+export function assistantEnabledFrom(raw: string | undefined): boolean {
+  if (raw === undefined || raw === '') return true
+  if (raw === 'true' || raw === 'false') return raw === 'true'
+  throw new Error(`ASSISTANT_ENABLED must be true or false, not ${raw}`)
+}
+
+export type AssistantAudience = 'admins' | 'paid'
+
+/** ASSISTANT_AUDIENCE: `admins` (default) or `paid`; a value other than the two refuses to start. */
+export function assistantAudienceFrom(raw: string | undefined): AssistantAudience {
+  if (raw === undefined || raw === '') return 'admins'
+  if (raw === 'admins' || raw === 'paid') return raw
+  throw new Error(`ASSISTANT_AUDIENCE must be admins or paid, not ${raw}`)
+}
+
 export type SceneBuildRunner = 'fly' | 'local' | 'off'
 
 /** SCENE_BUILD_RUNNER; a value other than the three refuses to start rather than silently turning builds off. */
@@ -462,6 +478,14 @@ export const config = {
   // Drafting agent lessons from a batch of 👎s on the Studio admin page (LIV-142, src/studio/lesson-drafts.ts). Unset,
   // there is no Draft button and admins write lessons by hand. The workers' keys stay behind their key proxy
   anthropicApiKey: env('ANTHROPIC_API_KEY') || null,
+  // Virvi Assistant (LIV-155): who gets it, its model, tools switched off, per-message and per-minute limits, and the monthly model-cost budget for admins (USD)
+  assistantEnabled: assistantEnabledFrom(env('ASSISTANT_ENABLED')),
+  assistantAudience: assistantAudienceFrom(env('ASSISTANT_AUDIENCE')),
+  assistantModel: env('ASSISTANT_MODEL') || 'claude-sonnet-5-5',
+  assistantDisabledTools: (env('ASSISTANT_DISABLED_TOOLS') ?? '').split(',').map((t) => t.trim()).filter(Boolean),
+  assistantToolCallsPerMessage: positiveInt(env('ASSISTANT_TOOL_CALLS_PER_MESSAGE'), 12),
+  assistantMessagesPerMinute: positiveInt(env('ASSISTANT_MESSAGES_PER_MINUTE'), 10),
+  assistantAdminBudgetUsd: numEnv('ASSISTANT_ADMIN_BUDGET_USD', 20),
   studioLessonModel: env('STUDIO_LESSON_MODEL') || 'claude-sonnet-5-5',
   // "Improve my prompt" on a design's message box (src/studio/prompt-help.ts): its model, and how many a day per account
   studioPromptHelpModel: env('STUDIO_PROMPT_HELP_MODEL') || 'claude-haiku-5-5',

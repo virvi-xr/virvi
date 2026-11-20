@@ -2991,3 +2991,70 @@ export const accountWalletEvents = pgTable('account_wallet_events', {
 }, (t) => ({
   userIdx: index('account_wallet_events_user_idx').on(t.userId, t.at),
 }))
+
+// ── Virvi Assistant (LIV-155) ────────────────────────────────────────────────
+
+export const assistantConversations = pgTable('assistant_conversations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id'),
+  title: text('title').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  userIdx: index('assistant_conversations_user_idx').on(t.userId, t.updatedAt),
+}))
+
+// `content` is Anthropic content blocks, already redacted
+export const assistantMessages = pgTable('assistant_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  conversationId: uuid('conversation_id').notNull().references(() => assistantConversations.id, { onDelete: 'cascade' }),
+  role: text('role').$type<'user' | 'assistant'>().notNull(),
+  content: jsonb('content').notNull(),
+  tokensIn: integer('tokens_in').notNull().default(0),
+  tokensOut: integer('tokens_out').notNull().default(0),
+  model: text('model'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  conversationIdx: index('assistant_messages_conversation_idx').on(t.conversationId, t.createdAt),
+}))
+
+// The action log: it outlives a deleted conversation (set null)
+export const assistantActions = pgTable('assistant_actions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  conversationId: uuid('conversation_id').references(() => assistantConversations.id, { onDelete: 'set null' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id'),
+  planId: uuid('plan_id'),
+  step: integer('step'),
+  tool: text('tool').notNull(),
+  effect: text('effect').$type<'read' | 'write'>().notNull(),
+  argsRedacted: jsonb('args_redacted').notNull(),
+  argsHash: text('args_hash').notNull(),
+  label: text('label').notNull(),
+  orgName: text('org_name'),
+  status: text('status').$type<'planned' | 'awaiting_confirmation' | 'running' | 'done' | 'failed' | 'undone' | 'cancelled'>().notNull(),
+  resultSummary: text('result_summary'),
+  error: text('error'),
+  undo: jsonb('undo'),
+  after: jsonb('after'),
+  confirmationTokenHash: text('confirmation_token_hash'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (t) => ({
+  userIdx: index('assistant_actions_user_idx').on(t.userId, t.createdAt),
+  planIdx: index('assistant_actions_plan_idx').on(t.planId),
+}))
+
+// One row per user per UTC day; the monthly budget sums these
+export const assistantUsage = pgTable('assistant_usage', {
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  day: text('day').notNull(), // UTC YYYY-MM-DD
+  messages: integer('messages').notNull().default(0),
+  tokensIn: integer('tokens_in').notNull().default(0),
+  tokensOut: integer('tokens_out').notNull().default(0),
+  costUsd: doublePrecision('cost_usd').notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.userId, t.day] }),
+}))

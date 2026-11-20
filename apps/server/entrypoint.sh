@@ -571,6 +571,18 @@ if [ -n "$DATABASE_URL" ]; then
         await sql\`ALTER TYPE analytics_scene_kind ADD VALUE IF NOT EXISTS 'hyperfy'\`;
         console.log('[virvi-server] hyperfy analytics kind ensured');
       } catch(e) { console.log('[virvi-server] hyperfy analytics kind:', e.message); }
+      // assistant (LIV-155); matches assistantConversations, assistantMessages, assistantActions and assistantUsage in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS assistant_conversations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT assistant_conversations_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, org_id UUID, title TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS assistant_conversations_user_idx ON assistant_conversations (user_id, updated_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS assistant_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id UUID NOT NULL CONSTRAINT assistant_messages_conversation_id_assistant_conversations_id_fk REFERENCES assistant_conversations(id) ON DELETE CASCADE, role TEXT NOT NULL, content JSONB NOT NULL, tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, model TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`CREATE INDEX IF NOT EXISTS assistant_messages_conversation_idx ON assistant_messages (conversation_id, created_at)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS assistant_actions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id UUID CONSTRAINT assistant_actions_conversation_id_assistant_conversations_id_fk REFERENCES assistant_conversations(id) ON DELETE SET NULL, user_id UUID NOT NULL CONSTRAINT assistant_actions_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, org_id UUID, plan_id UUID, step INTEGER, tool TEXT NOT NULL, effect TEXT NOT NULL, args_redacted JSONB NOT NULL, args_hash TEXT NOT NULL, label TEXT NOT NULL, org_name TEXT, status TEXT NOT NULL, result_summary TEXT, error TEXT, undo JSONB, after JSONB, confirmation_token_hash TEXT, expires_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), finished_at TIMESTAMPTZ)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS assistant_actions_user_idx ON assistant_actions (user_id, created_at)\`;
+        await sql\`CREATE INDEX IF NOT EXISTS assistant_actions_plan_idx ON assistant_actions (plan_id)\`;
+        await sql\`CREATE TABLE IF NOT EXISTS assistant_usage (user_id UUID NOT NULL CONSTRAINT assistant_usage_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, day TEXT NOT NULL, messages INTEGER NOT NULL DEFAULT 0, tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0, CONSTRAINT assistant_usage_user_id_day_pk PRIMARY KEY (user_id, day))\`;
+        console.log('[virvi-server] assistant tables ensured');
+      } catch(e) { console.log('[virvi-server] assistant tables:', e.message); }
       await sql.end();
     })();
   " 2>&1 || echo "[virvi-server] SQL fallback had errors"
