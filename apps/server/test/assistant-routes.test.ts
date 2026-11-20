@@ -92,6 +92,13 @@ describe('assistant routes', () => {
       expect(list.statusCode).toBe(403)
     })
 
+    it('reports hidden when switched off', async () => {
+      set('assistantEnabled', false)
+      const res = await app.inject({ method: 'GET', url: '/api/assistant/status', headers: auth(owner) })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ state: 'hidden' })
+    })
+
     it('is 404 everywhere when switched off', async () => {
       const id = await newConversation()
       set('assistantEnabled', false)

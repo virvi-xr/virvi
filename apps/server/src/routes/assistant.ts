@@ -103,7 +103,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
   app.get<{ Params: { conversationId: string } }>('/api/assistant/conversations/:conversationId/messages', auth, async (request, reply) => {
     const conv = await ownConversation(request.user.id, request.params.conversationId)
     if (!conv) return reply.status(404).send({ error: 'not_found' })
-    return messageViews(conv.id, request.user.id)
+    return messageViews(conv.id, request.user.id, (await toolCtx(app, request)).self)
   })
 
   app.post<{ Params: { conversationId: string } }>('/api/assistant/conversations/:conversationId/messages', {
@@ -164,7 +164,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
           result: s.resultSummary ? (JSON.parse(s.resultSummary) as unknown) : null,
         }))
         const page = pageFrom(body.page) ?? { path: '/scenes' }
-        await runTurn(ctx, conversationId, `${APPROVAL_TEXT}\n${untrusted('plan_results', results)}`, page, stream.send, stream.signal)
+        await runTurn(ctx, conversationId, `${APPROVAL_TEXT}\n${untrusted('plan_results', results)}`, page, stream.send, stream.signal, { approval: true })
       } else {
         stream.send({ type: 'done', messageId: null })
       }

@@ -21,6 +21,13 @@ import { DEFAULT_TITLE, loadHistory, storeMessage, titleFrom, type Block, type S
 export const SECOND_WRITE = 'Use propose_plan for more than one change.'
 const STOPPED = 'Not run: the turn was stopped.'
 const AFTER_PLAN = 'Not run: wait for the user to approve the plan.'
+export const APPROVAL_WRITE = 'Ask the user before making more changes.'
+export const CUT_OFF = 'The reply was cut off. Try again, or ask for less at once.'
+
+export interface TurnOptions {
+  /** The continuation after a plan's approval: it reports results, and makes no change the user hasn't seen. */
+  approval?: boolean
+}
 
 const PROPOSE_PLAN = {
   name: 'propose_plan',
@@ -73,6 +80,7 @@ export async function runTurn(
   page: AssistantPageContext,
   emit: (e: AssistantStreamEvent) => void,
   signal: AbortSignal,
+  opts: TurnOptions = {},
 ): Promise<void> {
   const userId = ctx.user.id
   let orgId: string | null = null
@@ -107,6 +115,7 @@ export async function runTurn(
 
     let wrote = false
     let planned = false
+    let streamed = false
     for (let calls = 0; calls < config.assistantToolCallsPerMessage; calls++) {
       if (signal.aborted) break
       const estimate = ((fixedChars + JSON.stringify(messages).length) / 3) * price.inPerMTok / 1e6 + MAX_TOKENS * price.outPerMTok / 1e6
@@ -119,6 +128,7 @@ export async function runTurn(
       let result: ModelResult
       try {
         result = await turn({ model, system, tools, messages: withCachedTail(messages), max_tokens: MAX_TOKENS, signal }, (delta) => {
+          streamed = true
           if (!signal.aborted) emit({ type: 'text', delta })
         })
       } catch (err) {
@@ -129,13 +139,14 @@ export async function runTurn(
       await recordAssistantUsage(userId, new Date(), result.usage, cost, calls === 0)
       if (access.spentUsd !== undefined) access = { ...access, spentUsd: access.spentUsd + cost }
 
-      const content: Block[] = result.content.map((b) =>
-        b.type === 'tool_use' ? { type: 'tool_use', id: b.id, name: b.name, input: redact(b.input ?? {}, ctx.self) } : { type: 'text', text: redact(b.text, ctx.self) as string },
-      )
+      // Verbatim, so thinking signatures stay valid when the history is replayed; only what's shown is redacted. A call
+      // whose input wasn't valid JSON goes back with {} (it never runs).
+      const content = result.content.map((b) => (b.type === 'tool_use' ? { type: 'tool_use', id: b.id, name: b.name, input: b.invalidJson === undefined ? b.input : {} } : { ...b })) as Block[]
       const assistant: StoredMessage = { role: 'assistant', content }
       lastAssistantId = await storeMessage(conversationId, assistant, { tokensIn: result.usage.input_tokens, tokensOut: result.usage.output_tokens, model })
       messages.push(assistant)
 
+      if (result.stopReason === 'max_tokens' && !streamed) emit({ type: 'error', code: 'assistant_cut_off', message: CUT_OFF })
       const uses = result.content.filter((b): b is Extract<ModelResult['content'][number], { type: 'tool_use' }> => b.type === 'tool_use')
       if (!uses.length) break
       // A cut-off or refused reply may carry a half-written call: none of its tools run
@@ -148,6 +159,7 @@ export async function runTurn(
         const reply = (data: unknown, isError = false) => results.push({ type: 'tool_result', tool_use_id: use.id, content: untrusted(name, data), ...(isError ? { is_error: true } : {}) })
         if (signal.aborted || !runnable) { reply({ error: STOPPED }, true); continue }
         if (planned) { reply({ error: AFTER_PLAN }, true); continue }
+        if (use.invalidJson !== undefined) { reply({ INVALID_JSON: use.invalidJson }, true); continue }
 
         if (use.name === 'propose_plan') {
           const steps = (use.input as { steps?: unknown } | null)?.steps
@@ -161,6 +173,7 @@ export async function runTurn(
 
         const def = Object.hasOwn(TOOLS, use.name) ? TOOLS[use.name] : undefined
         const isWrite = def?.effect === 'write'
+        if (isWrite && opts.approval) { reply({ error: APPROVAL_WRITE }, true); continue }
         if (isWrite && wrote) { reply({ error: SECOND_WRITE }, true); continue }
         const { action, result: r } = await runAndRecord(ctx, conversationId, use.name, use.input)
         if (isWrite) {

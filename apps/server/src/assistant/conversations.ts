@@ -7,6 +7,7 @@ import { db } from '../db/connection.js'
 import { assistantActions, assistantConversations, assistantMessages } from '../db/schema.js'
 import { actionView } from './actions.js'
 import { isDashboardPath } from './tools/local.js'
+import { redact, type RedactSelf } from './redact.js'
 
 export const DEFAULT_TITLE = 'New conversation'
 export const TITLE_MAX = 60
@@ -59,8 +60,10 @@ export function titleFrom(text: string): string {
  * What the panel shows: one view per message the user typed, and one per assistant reply (every model call and the
  * approval continuation up to the next typed message, merged). Tool results and the approval text stay hidden. A
  * reply's actions are the writes logged between its user message and the next one; its links are its open_page calls.
+ * The model's blocks are stored verbatim (thinking signatures cover them), so what's shown is redacted here.
  */
-export async function messageViews(conversationId: string, userId: string): Promise<AssistantMessageView[]> {
+export async function messageViews(conversationId: string, userId: string, self: RedactSelf): Promise<AssistantMessageView[]> {
+  const shown = (t: string) => redact(t, self) as string
   const rows = await db.select().from(assistantMessages).where(eq(assistantMessages.conversationId, conversationId))
     .orderBy(asc(assistantMessages.createdAt), asc(assistantMessages.id))
   const actions = await db.select().from(assistantActions)
@@ -87,12 +90,12 @@ export async function messageViews(conversationId: string, userId: string): Prom
         .map(actionView)
       views.push(reply)
     }
-    const text = textOf(r.content)
+    const text = shown(textOf(r.content))
     if (text) reply.text = reply.text ? `${reply.text}\n\n${text}` : text
     for (const b of blocks(r.content)) {
       const input = (b.input ?? {}) as { path?: unknown; label?: unknown }
       if (b.type === 'tool_use' && b.name === 'open_page' && typeof input.path === 'string' && typeof input.label === 'string' && isDashboardPath(input.path)) {
-        reply.links.push({ label: input.label, href: input.path })
+        reply.links.push({ label: shown(input.label), href: input.path })
       }
     }
   }
