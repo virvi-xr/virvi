@@ -1368,6 +1368,16 @@ export default function SceneEditorPage() {
     api.getScene(sceneId).then(data => setScene(data.scene)).catch(() => {})
   }, [api, sceneId])
 
+  // The assistant changed something (LIV-155): reload when it was this scene, or it couldn't say which
+  useEffect(() => {
+    const onChanged = (e: Event) => {
+      const id = (e as CustomEvent<{ sceneId?: string | null }>).detail?.sceneId
+      if (!id || id === sceneId) reloadScene()
+    }
+    window.addEventListener('virvi:assistant-changed', onChanged)
+    return () => window.removeEventListener('virvi:assistant-changed', onChanged)
+  }, [sceneId, reloadScene])
+
   const sceneRef = useRef<Scene | null>(null)
   sceneRef.current = scene
 

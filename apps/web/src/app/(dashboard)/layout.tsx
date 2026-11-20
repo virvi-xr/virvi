@@ -1,7 +1,7 @@
 'use client'
 import { useAuth } from '@/lib/auth'
 import { useRouter, usePathname } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useApi } from '@/lib/api'
 import { scenePassAllows, trialAllows } from '@/lib/session'
 import { openSignUp, signedInNote, takeMovedHeadsetNotice, trialNav } from '@/lib/trial'
@@ -16,6 +16,8 @@ import { TermsGate } from '@/components/TermsGate'
 import Link from 'next/link'
 import { BrandMark } from '@/components/BrandMark'
 import { NotificationBell } from '@/components/NotificationBell'
+import { AssistantButton, useAssistantAccess, useAssistantShortcut } from '@/components/assistant/AssistantButton'
+import { AssistantPanel } from '@/components/assistant/AssistantPanel'
 import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
 import {
   BroadcastIcon, CalendarIcon, ChartIcon, CubeIcon, GearIcon, GiftIcon, HomeIcon, LayersIcon, LockIcon, LogoutIcon, MediaIcon,
@@ -71,6 +73,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // but locked. It calls no account-only route from here (no scene title, org or notification fetches), and the studio probe
   // is on a route trials may use.
   const trial = !!user?.trial
+  const assistantAccess = useAssistantAccess(!!user && !trial && !scenePass)
+  const [assistantOpen, setAssistantOpen] = useState(false)
+  const toggleAssistant = useCallback(() => setAssistantOpen((v) => !v), [])
+  useAssistantShortcut(assistantAccess.state !== 'hidden', toggleAssistant)
   const studioOn = useStudioAvailable()
   const beatsOn = beatsNavVisible(useBeatAvailability(), { trial, scenePass: !!scenePass })
   const navSections = useMemo(() => {
@@ -147,7 +153,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="flex items-center justify-between gap-3 px-4 pt-4 md:px-6 md:pt-7">
           <BrandMark href={trial ? '/studio' : '/scenes'} />
           {/* The bell: signed-in accounts only (a trial has no notifications, and a scene pass may call nothing else) */}
-          {!trial && !scenePass && <NotificationBell />}
+          {!trial && !scenePass && (
+            <div className="flex items-center gap-1">
+              <AssistantButton access={assistantAccess} open={assistantOpen} onToggle={toggleAssistant} />
+              <NotificationBell />
+            </div>
+          )}
         </div>
         <nav className="flex gap-1 overflow-x-auto px-3 py-3 md:block md:flex-1 md:overflow-y-auto md:px-3 md:py-6">
           {navSections.map((section, i) => (
@@ -217,6 +228,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </div>
       </aside>
+      <AssistantPanel access={assistantAccess} open={assistantOpen} onClose={() => setAssistantOpen(false)} />
       <main className="min-w-0 flex-1 px-4 py-5 md:px-10 md:py-8">
         {scenePass && (
           <div className="mb-4 rounded-md border border-gray-800 bg-gray-900 px-4 py-2 text-sm text-gray-300">
