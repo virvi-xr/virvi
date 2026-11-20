@@ -29,6 +29,11 @@ export interface Before {
   undo: UndoSpec
   /** The fields the write set, taken from its response; Undo compares the current state against them first. */
   after: (res: unknown) => unknown
+  /**
+   * The same fields as they are now, shaped like `after`: Undo re-runs `before` and refuses when these no longer
+   * match what the write left. Absent for creates, whose new row `before` can't address.
+   */
+  current?: unknown
   /** The organization the write's scene belongs to (every action row names it); null when the scene has none. */
   orgName: string | null
 }

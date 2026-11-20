@@ -3030,6 +3030,8 @@ export const assistantActions = pgTable('assistant_actions', {
   tool: text('tool').notNull(),
   effect: text('effect').$type<'read' | 'write'>().notNull(),
   argsRedacted: jsonb('args_redacted').notNull(),
+  // The exact args a write ran (or a plan step will run) with: never shown to anyone, only re-run by the server
+  args: jsonb('args'),
   argsHash: text('args_hash').notNull(),
   label: text('label').notNull(),
   orgName: text('org_name'),

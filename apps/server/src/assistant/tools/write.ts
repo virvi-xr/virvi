@@ -90,7 +90,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
     before: async (a, ctx): Promise<Before> => {
       const { scene, orgName } = await sceneState(ctx, a.sceneId)
       const keys = setKeys(a, ['sceneId'])
-      return { undo: { method: 'PUT', url: `/api/scenes/${a.sceneId}`, body: previous(scene, keys) }, after: (res) => fields(created(res, 'scene'), keys), orgName }
+      return { undo: { method: 'PUT', url: `/api/scenes/${a.sceneId}`, body: previous(scene, keys) }, after: (res) => fields(created(res, 'scene'), keys), current: fields(scene, keys), orgName }
     },
     label: (a) => (a.name !== undefined ? `Rename scene to "${a.name}"${a.description !== undefined ? ' and change its description' : ''}` : "Change the scene's description"),
     summarize: (res) => fields(created(res, 'scene'), ['id', 'name', 'description']),
@@ -115,7 +115,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
     before: async (a, ctx) => {
       const { scene, orgName } = await sceneState(ctx, a.sceneId)
       const preset = presetIn(scene, a.presetId)
-      return { undo: { method: 'PATCH', url: `/api/presets/${a.presetId}`, body: { name: preset.name } }, after: (res) => fields(created(res, 'preset'), ['name']), orgName }
+      return { undo: { method: 'PATCH', url: `/api/presets/${a.presetId}`, body: { name: preset.name } }, after: (res) => fields(created(res, 'preset'), ['name']), current: fields(preset, ['name']), orgName }
     },
     label: (a) => `Rename preset to "${a.name}"`,
     summarize: (res) => fields(created(res, 'preset'), ['id', 'name']),
@@ -133,7 +133,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
         prev === a.presetId ? null
         : prev ? { method: 'POST', url: `/api/presets/${prev}/activate` }
         : { method: 'PUT', url: `/api/scenes/${a.sceneId}`, body: { activePresetId: null } }
-      return { undo, after: (res) => fields(res, ['activePresetId']), orgName }
+      return { undo, after: (res) => fields(res, ['activePresetId']), current: { activePresetId: prev }, orgName }
     },
     label: () => 'Switch the live preset',
     summarize: (res) => res,
@@ -172,6 +172,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
       return {
         undo: { method: 'PUT', url: `/api/elements/${a.elementId}`, body: { name: el.name, enabled: el.enabled, properties: el.properties ?? {} } },
         after: (res) => fields(created(res, 'element'), setKeys(a, ['sceneId', 'elementId'])),
+        current: fields(el, setKeys(a, ['sceneId', 'elementId'])),
         orgName,
       }
     },
@@ -193,6 +194,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
       return {
         undo: { method: 'POST', url: `/api/elements/${a.elementId}/live`, body: { enabled: !!el.properties?.enableLiveStream } },
         after: (res) => ({ enableLiveStream: created(res, 'element').properties?.enableLiveStream ?? null }),
+        current: { enableLiveStream: el.properties?.enableLiveStream ?? null },
         orgName,
       }
     },
@@ -225,7 +227,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
       const { scene, orgName } = await sceneState(ctx, a.sceneId)
       const inst = instanceIn(scene, a.instanceId)
       const keys = setKeys(a, ['sceneId', 'instanceId'])
-      return { undo: { method: 'PUT', url: `/api/instances/${a.instanceId}`, body: previous(inst, keys) }, after: (res) => fields(created(res, 'instance'), keys), orgName }
+      return { undo: { method: 'PUT', url: `/api/instances/${a.instanceId}`, body: previous(inst, keys) }, after: (res) => fields(created(res, 'instance'), keys), current: fields(inst, keys), orgName }
     },
     label: () => 'Update a placement',
     summarize: (res) => fields(created(res, 'instance'), ['id', 'elementId', ...INSTANCE_FIELDS]),
@@ -260,7 +262,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
       const schedule = list((await get(ctx, `/api/scenes/${a.sceneId}/preset-schedules`)).schedules).find((s) => s.id === a.scheduleId)
       if (!schedule) throw new ToolError(404, "That schedule isn't in this scene.")
       const keys = setKeys(a, ['sceneId', 'scheduleId'])
-      return { undo: { method: 'PATCH', url: `/api/preset-schedules/${a.scheduleId}`, body: previous(schedule, keys) }, after: (res) => fields(created(res, 'schedule'), keys), orgName }
+      return { undo: { method: 'PATCH', url: `/api/preset-schedules/${a.scheduleId}`, body: previous(schedule, keys) }, after: (res) => fields(created(res, 'schedule'), keys), current: fields(schedule, keys), orgName }
     },
     label: (a: Obj) => (a.enabled === false && setKeys(a, ['sceneId', 'scheduleId']).length === 1 ? 'Pause a preset schedule' : 'Change a preset schedule'),
     summarize: (res) => fields(created(res, 'schedule'), ['id', ...SCHEDULE_FIELDS, 'nextRuns']),
@@ -293,7 +295,7 @@ export const WRITE_TOOLS: ToolDef<any>[] = [
       const { orgName } = await sceneState(ctx, a.sceneId)
       const item = list((await get(ctx, `/api/scenes/${a.sceneId}/library`)).items).find((i) => i.id === a.itemId)
       if (!item) throw new ToolError(404, "That file isn't in this scene's library.")
-      return { undo: { method: 'PATCH', url: `/api/scenes/${a.sceneId}/library/${a.itemId}`, body: { name: item.name } }, after: (res) => fields(created(res, 'item'), ['name']), orgName }
+      return { undo: { method: 'PATCH', url: `/api/scenes/${a.sceneId}/library/${a.itemId}`, body: { name: item.name } }, after: (res) => fields(created(res, 'item'), ['name']), current: fields(item, ['name']), orgName }
     },
     label: (a) => `Rename file to "${a.name}"`,
     summarize: (res) => fields(created(res, 'item'), ['id', 'kind', 'name', 'url']),
