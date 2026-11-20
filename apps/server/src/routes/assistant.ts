@@ -35,11 +35,28 @@ function publicAccess(a: AssistantAccessResult): AssistantAccess {
   return { state: 'hidden' }
 }
 
-/** Every route but /status: hidden is 404, locked is 403. */
+const SESSION_ONLY = { error: 'assistant_session_only', message: 'The assistant works only when you are signed in to the dashboard.' }
+const APPROVE_ERRORS = {
+  invalid_token: { status: 403, message: "This approval isn't valid. Ask the assistant to propose the plan again." },
+  expired: { status: 410, message: 'This plan expired. Ask again to get a fresh one.' },
+  used: { status: 409, message: 'This plan already ran.' },
+} as const
+
+/** Every route but /status: an API key is 403, hidden is 404, locked is 403. */
 async function guard(request: FastifyRequest, reply: FastifyReply) {
+  if (request.user.viaApiKey) return reply.status(403).send(SESSION_ONLY)
   const a = await assistantAccess(request.user)
   if (a.state === 'hidden') return reply.status(404).send({ error: 'assistant_unavailable' })
   if (a.state === 'locked') return reply.status(403).send({ error: 'assistant_locked', reason: a.reason })
+}
+
+/**
+ * Undo only: the caller's own changes can still be undone after a downgrade or with the audience narrowed. The kill
+ * switch and API keys still refuse; undoAction and undoPlan only ever find the caller's own rows.
+ */
+async function undoGuard(request: FastifyRequest, reply: FastifyReply) {
+  if (request.user.viaApiKey) return reply.status(403).send(SESSION_ONLY)
+  if (!config.assistantEnabled) return reply.status(404).send({ error: 'assistant_unavailable' })
 }
 
 /** The caller as the tools run them: their own email and wallets are theirs to see (redaction keeps them). */
@@ -71,10 +88,14 @@ async function planRows(userId: string, planId: string) {
 
 export default async function assistantRoutes(app: FastifyInstance) {
   const auth = { preHandler: [authenticate, guard] }
+  const undoAuth = { preHandler: [authenticate, undoGuard] }
+  // Per account, after sign-in; each route counts on its own. A route with a limit gets its own preHandler array: the
+  // plugin adds its hook to that array, and a shared one would carry the limit onto every route using it.
+  const perUser = (route: string) => ({ rateLimit: { max: config.assistantMessagesPerMinute, timeWindow: '1 minute', hook: 'preHandler' as const, keyGenerator: (r: FastifyRequest) => `${route}:${r.user.id}` } })
 
   // A trial gets 'hidden' (200), so the panel stays quiet instead of erroring
   app.get('/api/assistant/status', { preHandler: [authenticate], config: { trial: true } }, async (request) => {
-    if (request.user.kind === 'trial' || request.user.trial) return { state: 'hidden' } satisfies AssistantAccess
+    if (request.user.kind === 'trial' || request.user.trial || request.user.viaApiKey) return { state: 'hidden' } satisfies AssistantAccess
     return publicAccess(await assistantAccess(request.user))
   })
 
@@ -84,7 +105,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
     return rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt.toISOString() }))
   })
 
-  app.post('/api/assistant/conversations', auth, async (request, reply) => {
+  app.post('/api/assistant/conversations', { preHandler: [authenticate, guard], config: perUser('assistant-conversation') }, async (request, reply) => {
     const [me] = await db.select({ activeOrgId: users.activeOrgId }).from(users).where(eq(users.id, request.user.id))
     const [row] = await db.insert(assistantConversations)
       .values({ userId: request.user.id, orgId: request.user.orgId ?? me?.activeOrgId ?? null, title: DEFAULT_TITLE }).returning()
@@ -108,7 +129,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { conversationId: string } }>('/api/assistant/conversations/:conversationId/messages', {
     preHandler: [authenticate, guard],
-    config: { rateLimit: { max: config.assistantMessagesPerMinute, timeWindow: '1 minute', hook: 'preHandler', keyGenerator: (r: FastifyRequest) => r.user.id } },
+    config: perUser('assistant-message'),
   }, async (request, reply) => {
     const conv = await ownConversation(request.user.id, request.params.conversationId)
     if (!conv) return reply.status(404).send({ error: 'not_found' })
@@ -153,8 +174,8 @@ export default async function assistantRoutes(app: FastifyInstance) {
       }
       const r = await approvePlan(ctx, planId, body.token, (action) => send({ type: 'action', action }))
       if ('error' in r && !sse) {
-        const status = r.error === 'invalid_token' ? 403 : r.error === 'expired' ? 410 : 409
-        return reply.status(status).send({ error: r.error })
+        const e = APPROVE_ERRORS[r.error]
+        return reply.status(e.status).send({ error: r.error, message: e.message })
       }
       const stream = sse ?? openSse(request, reply)
       sse = stream
@@ -182,7 +203,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  app.post<{ Params: { actionId: string } }>('/api/assistant/actions/:actionId/undo', auth, async (request, reply) => {
+  app.post<{ Params: { actionId: string } }>('/api/assistant/actions/:actionId/undo', undoAuth, async (request, reply) => {
     const r = await undoAction(await toolCtx(app, request), request.params.actionId)
     // An action view has an `error` field of its own: tell the two apart by `id`
     if ('id' in r) return r
@@ -190,7 +211,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
     return reply.status(e.status).send({ error: r.error, message: e.message })
   })
 
-  app.post<{ Params: { planId: string } }>('/api/assistant/plans/:planId/undo', auth, async (request, reply) => {
+  app.post<{ Params: { planId: string } }>('/api/assistant/plans/:planId/undo', undoAuth, async (request, reply) => {
     const r = await undoPlan(await toolCtx(app, request), request.params.planId)
     if ('error' in r) return reply.status(404).send({ error: 'not_found' })
     if (r.refused) {

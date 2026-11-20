@@ -5,6 +5,15 @@ import { config } from '../config.js'
 /** Room for adaptive thinking as well as the reply; the budget estimate assumes all of it is used. */
 export const MAX_TOKENS = 4096
 export const EFFORT = 'medium' as const
+/**
+ * Preserved thinking: a replayed thinking block that no longer matches its conversation's prefix is dropped instead of
+ * failing the request with a 400 (claude-api skill, preserved-thinking-migration). The system prompt never changes and
+ * history is append-only, so a drop should only follow the 40-row window or a broken tool input sent back as {}.
+ */
+export const THINKING_BETA = 'thinking-binding-controls-2026-08-01'
+export const THINKING: Anthropic.Beta.Messages.BetaThinkingConfigAdaptive = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
+/** The stop reason of a stream the SDK ended on a tool input it couldn't parse: only the INVALID_JSON answer runs. */
+export const INVALID_TOOL_JSON = 'invalid_tool_json'
 
 export type ModelBlock =
   | { type: 'text'; text: string }
@@ -60,7 +69,7 @@ const validJson = (raw: string) => {
 function tracker() {
   const blocks: Array<ModelBlock & { raw?: string }> = []
   let usage: ModelResult['usage'] = { input_tokens: 0, output_tokens: 0 }
-  const onEvent = (e: Anthropic.Messages.RawMessageStreamEvent) => {
+  const onEvent = (e: Anthropic.Beta.Messages.BetaRawMessageStreamEvent) => {
     if (e.type === 'message_start') usage = { ...e.message.usage }
     else if (e.type === 'message_delta') usage = { ...usage, output_tokens: e.usage.output_tokens }
     else if (e.type === 'content_block_start') {
@@ -80,46 +89,58 @@ function tracker() {
   }
   /** The tool calls whose input arrived as text JSON.parse refuses. */
   const broken = () => blocks.filter((b) => b?.type === 'tool_use' && b.raw && !validJson(b.raw))
-  /** What arrived, the broken calls marked so they never run (their input is sent back as {}). */
+  /** What arrived, the broken calls marked so they never run (their input is sent back as {}); nothing else runs either. */
   const partial = (): ModelResult => ({
     content: blocks.filter(Boolean).map((b) => {
       if (b.type !== 'tool_use') return b
       const { raw, ...rest } = b
       return raw && !validJson(raw) ? { ...rest, input: {}, invalidJson: raw } : { ...rest, input: raw ? JSON.parse(raw) : {} }
     }),
-    stopReason: 'tool_use',
+    stopReason: INVALID_TOOL_JSON,
     usage,
   })
   return { onEvent, broken, partial }
 }
 
 /**
- * The real turn: messages.stream with text deltas passed on as they come, then the final message. The request's
- * signal aborts the HTTP call when the browser goes away. With eager input streaming a tool input can arrive as
- * broken JSON, which makes the SDK reject: only that case becomes a result (the broken call marked, for the loop to
- * answer with an error the model can retry from); API errors, aborts and anything else are thrown.
+ * The SDK's error for a tool input it couldn't parse at all (eager input streaming). The beta stream raises an
+ * AnthropicError with this message and no cause; the plain stream wraps the parser's SyntaxError as the cause. The SDK
+ * has no class of its own for it, so the message is the only mark. Network failures, aborts and API errors don't match.
+ */
+export function isToolJsonError(err: unknown): boolean {
+  if (!(err instanceof Anthropic.AnthropicError) || err instanceof Anthropic.APIError) return false
+  return (err as { cause?: unknown }).cause instanceof SyntaxError || err.message.startsWith('Unable to parse tool parameter JSON')
+}
+
+/**
+ * The real turn: beta messages.stream (for the thinking-binding control) with text deltas passed on as they come, then
+ * the final message. The request's signal aborts the HTTP call when the browser goes away. With eager input streaming a
+ * tool input can arrive as broken JSON, which makes the SDK reject: only that case becomes a result (the broken call
+ * marked, for the loop to answer with an error the model can retry from, and no other call run); everything else throws.
  */
 const claudeTurn: ModelTurn = async (p, onText) => {
   const client = new Anthropic({ apiKey: config.anthropicApiKey!, maxRetries: 1, ...(fetchOverride ? { fetch: fetchOverride } : {}) })
-  const stream = client.messages.stream(
+  const stream = client.beta.messages.stream(
     {
       model: p.model,
       max_tokens: p.max_tokens,
+      betas: [THINKING_BETA],
+      thinking: THINKING,
       output_config: { effort: EFFORT },
       system: p.system,
-      tools: p.tools as Anthropic.Messages.ToolUnion[],
-      messages: p.messages as Anthropic.Messages.MessageParam[],
+      tools: p.tools as Anthropic.Beta.Messages.BetaToolUnion[],
+      messages: p.messages as Anthropic.Beta.Messages.BetaMessageParam[],
     },
     { signal: p.signal },
   )
   const seen = tracker()
   stream.on('streamEvent', (e) => seen.onEvent(e))
   stream.on('text', (delta) => onText(delta))
-  let message: Anthropic.Messages.Message
+  let message: Anthropic.Beta.Messages.BetaMessage
   try {
     message = await stream.finalMessage()
   } catch (err) {
-    if (err instanceof Anthropic.APIError || p.signal.aborted || !seen.broken().length) throw err
+    if (p.signal.aborted || !isToolJsonError(err) || !seen.broken().length) throw err
     return seen.partial()
   }
   // The SDK's parser is tolerant: input it read without throwing can still be broken JSON, silently cut short

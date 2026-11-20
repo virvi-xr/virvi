@@ -7,14 +7,14 @@ import { db } from '../db/connection.js'
 import { assistantConversations, organizations, orgMembers, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { recordJobFailure } from '../errors/record.js'
-import { affordable, assistantAccess, recordAssistantUsage } from './access.js'
+import { affordable, assistantAccess, refreshSpend, reserveAssistantSpend, settleAssistantSpend } from './access.js'
 import { runAndRecord, proposePlan } from './actions.js'
 import { callCostUsd, modelPrice } from './pricing.js'
 import { redact, untrusted } from './redact.js'
 import { TOOLS } from './tools/index.js'
 import { toolsForModel } from './tools/run.js'
 import type { ToolCtx } from './tools/types.js'
-import { assistantModel, MAX_TOKENS, type ModelParams, type ModelResult } from './model.js'
+import { assistantModel, INVALID_TOOL_JSON, MAX_TOKENS, type ModelParams, type ModelResult } from './model.js'
 import { contextPrompt, RULES } from './prompt.js'
 import { DEFAULT_TITLE, loadHistory, storeMessage, titleFrom, type Block, type StoredMessage } from './conversations.js'
 
@@ -23,6 +23,7 @@ const STOPPED = 'Not run: the turn was stopped.'
 const AFTER_PLAN = 'Not run: wait for the user to approve the plan.'
 export const APPROVAL_WRITE = 'Ask the user before making more changes.'
 export const CUT_OFF = 'The reply was cut off. Try again, or ask for less at once.'
+export const REFUSED = "The assistant can't help with that request. Try asking differently."
 
 export interface TurnOptions {
   /** The continuation after a plan's approval: it reports results, and makes no change the user hasn't seen. */
@@ -96,7 +97,9 @@ export async function runTurn(
 
     const history = await loadHistory(conversationId)
     const text = redact(userText, ctx.self) as string
-    const userMessage: StoredMessage = { role: 'user', content: [{ type: 'text', text }] }
+    // The context opens the message (not the system prompt), so earlier turns' history and thinking stay byte-stable
+    const context = contextPrompt(await promptUser(userId), page, new Date())
+    const userMessage: StoredMessage = { role: 'user', content: [{ type: 'text', text: context }, { type: 'text', text }] }
     await storeMessage(conversationId, userMessage)
     if (conv?.title === DEFAULT_TITLE) {
       await db.update(assistantConversations).set({ title: titleFrom(text) }).where(eq(assistantConversations.id, conversationId))
@@ -105,26 +108,29 @@ export async function runTurn(
 
     const model = config.assistantModel
     const price = modelPrice(model)
-    const system: ModelParams['system'] = [
-      { type: 'text', text: RULES, cache_control: { type: 'ephemeral' } },
-      { type: 'text', text: contextPrompt(await promptUser(userId), page, new Date()) },
-    ]
+    const system: ModelParams['system'] = [{ type: 'text', text: RULES, cache_control: { type: 'ephemeral' } }]
     const tools = modelTools()
     const fixedChars = JSON.stringify(system).length + JSON.stringify(tools).length
     const turn = assistantModel()
 
     let wrote = false
     let planned = false
-    let streamed = false
     for (let calls = 0; calls < config.assistantToolCallsPerMessage; calls++) {
       if (signal.aborted) break
-      const estimate = ((fixedChars + JSON.stringify(messages).length) / 3) * price.inPerMTok / 1e6 + MAX_TOKENS * price.outPerMTok / 1e6
+      // Worst case: every input token a cache write, every output token used
+      const estimate = ((fixedChars + JSON.stringify(messages).length) / 3) * price.cacheWritePerMTok / 1e6 + MAX_TOKENS * price.outPerMTok / 1e6
+      // Spent is read again before every call: this turn's earlier calls, and what other turns have reserved
+      access = await refreshSpend(userId, access)
       if (!affordable(access, estimate)) {
         const resets = access.state === 'ok' && access.budget.resetsAt ? access.budget.resetsAt.slice(0, 10) : 'the next billing date'
         emit({ type: 'error', code: 'assistant_budget', message: `You've used this month's assistant budget. It comes back on ${resets}.` })
         break
       }
+      // Booked before the call: one that is aborted or throws after it was sent keeps its reservation
+      const reservedAt = new Date()
+      await reserveAssistantSpend(userId, reservedAt, estimate, calls === 0)
 
+      let streamed = false
       let result: ModelResult
       try {
         result = await turn({ model, system, tools, messages: withCachedTail(messages), max_tokens: MAX_TOKENS, signal }, (delta) => {
@@ -135,31 +141,38 @@ export async function runTurn(
         if (signal.aborted) break
         throw err
       }
-      const cost = callCostUsd(model, result.usage)
-      await recordAssistantUsage(userId, new Date(), result.usage, cost, calls === 0)
-      if (access.spentUsd !== undefined) access = { ...access, spentUsd: access.spentUsd + cost }
+      // A stream cut short on broken tool JSON may under-report its usage: it costs at least what was reserved
+      const real = callCostUsd(model, result.usage)
+      await settleAssistantSpend(userId, reservedAt, result.usage, result.stopReason === INVALID_TOOL_JSON ? Math.max(real, estimate) : real, estimate)
 
-      // Verbatim, so thinking signatures stay valid when the history is replayed; only what's shown is redacted. A call
-      // whose input wasn't valid JSON goes back with {} (it never runs).
-      const content = result.content.map((b) => (b.type === 'tool_use' ? { type: 'tool_use', id: b.id, name: b.name, input: b.invalidJson === undefined ? b.input : {} } : { ...b })) as Block[]
-      const assistant: StoredMessage = { role: 'assistant', content }
-      lastAssistantId = await storeMessage(conversationId, assistant, { tokensIn: result.usage.input_tokens, tokensOut: result.usage.output_tokens, model })
-      messages.push(assistant)
+      const uses = result.content.filter((b): b is Extract<ModelResult['content'][number], { type: 'tool_use' }> => b.type === 'tool_use')
+      const hasText = result.content.some((b) => b.type === 'text' && b.text)
+      // A reply with no text and no call (empty, or thinking only) is never stored: replayed, the API refuses it
+      if (uses.length || hasText) {
+        // Verbatim, so thinking signatures stay valid when the history is replayed; only what's shown is redacted. A call
+        // whose input wasn't valid JSON goes back with {} (it never runs).
+        const content = result.content.map((b) => (b.type === 'tool_use' ? { type: 'tool_use', id: b.id, name: b.name, input: b.invalidJson === undefined ? b.input : {} } : { ...b })) as Block[]
+        const assistant: StoredMessage = { role: 'assistant', content }
+        lastAssistantId = await storeMessage(conversationId, assistant, { tokensIn: result.usage.input_tokens, tokensOut: result.usage.output_tokens, model })
+        messages.push(assistant)
+      }
 
       if (result.stopReason === 'max_tokens' && !streamed) emit({ type: 'error', code: 'assistant_cut_off', message: CUT_OFF })
-      const uses = result.content.filter((b): b is Extract<ModelResult['content'][number], { type: 'tool_use' }> => b.type === 'tool_use')
+      if (result.stopReason === 'refusal' && !hasText) emit({ type: 'error', code: 'assistant_refused', message: REFUSED })
       if (!uses.length) break
-      // A cut-off or refused reply may carry a half-written call: none of its tools run
-      const runnable = result.stopReason !== 'max_tokens' && result.stopReason !== 'refusal'
-      const endAfter = planned || !runnable
+      // A cut-off, refused or broken-JSON reply may carry a half-written call: none of its tools run. Broken JSON alone
+      // gets an answer the model can retry from, so the turn goes on.
+      const runnable = result.stopReason !== 'max_tokens' && result.stopReason !== 'refusal' && result.stopReason !== INVALID_TOOL_JSON
+      const endAfter = planned || (!runnable && result.stopReason !== INVALID_TOOL_JSON)
 
       const results: Block[] = []
       for (const use of uses) {
         const name = tag(use.name)
         const reply = (data: unknown, isError = false) => results.push({ type: 'tool_result', tool_use_id: use.id, content: untrusted(name, data), ...(isError ? { is_error: true } : {}) })
-        if (signal.aborted || !runnable) { reply({ error: STOPPED }, true); continue }
-        if (planned) { reply({ error: AFTER_PLAN }, true); continue }
+        if (signal.aborted) { reply({ error: STOPPED }, true); continue }
         if (use.invalidJson !== undefined) { reply({ INVALID_JSON: use.invalidJson }, true); continue }
+        if (!runnable) { reply({ error: STOPPED }, true); continue }
+        if (planned) { reply({ error: AFTER_PLAN }, true); continue }
 
         if (use.name === 'propose_plan') {
           const steps = (use.input as { steps?: unknown } | null)?.steps

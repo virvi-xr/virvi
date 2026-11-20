@@ -3005,7 +3005,7 @@ export const assistantConversations = pgTable('assistant_conversations', {
   userIdx: index('assistant_conversations_user_idx').on(t.userId, t.updatedAt),
 }))
 
-// `content` is Anthropic content blocks, already redacted
+// `content` is Anthropic content blocks. The model's blocks are stored verbatim (thinking signatures cover them) and redacted when shown
 export const assistantMessages = pgTable('assistant_messages', {
   id: uuid('id').primaryKey().defaultRandom(),
   conversationId: uuid('conversation_id').notNull().references(() => assistantConversations.id, { onDelete: 'cascade' }),

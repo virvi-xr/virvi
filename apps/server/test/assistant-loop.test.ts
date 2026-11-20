@@ -9,9 +9,10 @@ import { recordJobFailure } from '../src/errors/record.js'
 import { db } from '../src/db/connection.js'
 import { assistantActions, assistantConversations, assistantMessages, assistantUsage, organizations, orgMembers, scenes } from '../src/db/schema.js'
 import { config } from '../src/config.js'
-import { APPROVAL_WRITE, CUT_OFF, runTurn, SECOND_WRITE, type TurnOptions } from '../src/assistant/loop.js'
-import { setAssistantModel, type ModelParams, type ModelResult } from '../src/assistant/model.js'
+import { APPROVAL_WRITE, CUT_OFF, REFUSED, runTurn, SECOND_WRITE, type TurnOptions } from '../src/assistant/loop.js'
+import { INVALID_TOOL_JSON, setAssistantFetch, setAssistantModel, type ModelParams, type ModelResult } from '../src/assistant/model.js'
 import { recordAssistantUsage } from '../src/assistant/access.js'
+import { callCostUsd } from '../src/assistant/pricing.js'
 import type { ToolCtx } from '../src/assistant/tools/types.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, tokenFor, type TestUser } from './helpers/factories.js'
@@ -81,11 +82,13 @@ describe('assistant turn loop', () => {
     set('assistantToolCallsPerMessage', prev.calls); set('assistantAdminBudgetUsd', prev.adminBudget)
   })
 
-  async function turn(userText = 'Hello', signal = new AbortController().signal, opts: TurnOptions = {}, onEvent?: (e: AssistantStreamEvent) => void) {
+  async function turn(userText = 'Hello', signal = new AbortController().signal, opts: TurnOptions = {}, onEvent?: (e: AssistantStreamEvent) => void, path = '/scenes', conv = conversationId) {
     const events: AssistantStreamEvent[] = []
-    await runTurn(ctx, conversationId, userText, { path: '/scenes', sceneId }, (e) => { events.push(e); onEvent?.(e) }, signal, opts)
+    await runTurn(ctx, conv, userText, { path, sceneId }, (e) => { events.push(e); onEvent?.(e) }, signal, opts)
     return events
   }
+  const spent = async () => (await db.select().from(assistantUsage)).reduce((t, r) => t + r.costUsd, 0)
+  const noCache = (m: any) => ({ ...m, content: m.content.map(({ cache_control: _c, ...b }: any) => b) })
   const untrustedInner = (s: string, toolName: string) => {
     const open = `<untrusted_data tool="${toolName}">\n`
     const start = s.indexOf(open)
@@ -197,6 +200,51 @@ describe('assistant turn loop', () => {
       expect(events.at(-1)?.type).toBe('done')
     })
 
+    it('keeps the reservation of a call that was aborted after it was sent', async () => {
+      const controller = new AbortController()
+      script([() => { controller.abort(); throw new Error('Request was aborted.') }])
+      await turn('Hello', controller.signal)
+      const [row] = await db.select().from(assistantUsage)
+      expect(row.messages).toBe(1)
+      // The worst case: MAX_TOKENS of output alone is 4096 x $10/MTok on the default model
+      expect(row.costUsd).toBeGreaterThan(0.04)
+    })
+
+    it('settles a call to what it really cost', async () => {
+      script([text('Hi')])
+      await turn()
+      const [row] = await db.select().from(assistantUsage)
+      expect(row.costUsd).toBeCloseTo(callCostUsd(config.assistantModel, usage), 9)
+      expect(row).toMatchObject({ messages: 1, tokensIn: 100, tokensOut: 20 })
+    })
+
+    it('charges a stream cut short on broken tool JSON at least its reservation', async () => {
+      const broken: ModelResult = { content: [{ type: 'tool_use', id: 'toolu_j', name: 'get_scene', input: {}, invalidJson: '{"a": }' }], stopReason: INVALID_TOOL_JSON, usage }
+      script([broken, text('Retrying.')])
+      await turn()
+      expect(await spent()).toBeGreaterThan(0.04)
+    })
+
+    it("refuses a turn that would pass the cap with another turn's call still running", async () => {
+      await recordAssistantUsage(owner.id, new Date(), { input_tokens: 1, output_tokens: 1 }, 5, true)
+      let release!: () => void
+      let started!: () => void
+      const running = new Promise<void>((r) => { started = r })
+      const held = new Promise<void>((r) => { release = r })
+      const calls = script([async () => { started(); await held; return text('first') }])
+      const first = turn('One')
+      await running
+      // Room for one more call's worst case, not two: the running call's reservation must count
+      const reserved = (await spent()) - 5
+      set('assistantAdminBudgetUsd', 5 + reserved * 1.5)
+      const [conv2] = await db.insert(assistantConversations).values({ userId: owner.id, orgId, title: 'New conversation' }).returning()
+      const second = await turn('Two', undefined, {}, undefined, '/scenes', conv2.id)
+      expect(second.find((e) => e.type === 'error')).toMatchObject({ code: 'assistant_budget' })
+      expect(calls).toHaveLength(1)
+      release()
+      await first
+    })
+
     it('warns at 80%', async () => {
       await recordAssistantUsage(owner.id, new Date(), { input_tokens: 1, output_tokens: 1 }, 8.2, true)
       script([text('Hi')])
@@ -257,12 +305,32 @@ describe('assistant turn loop', () => {
     await turn()
     const sent = JSON.stringify(inputs[0])
     expect(sent.split(evil).length - 1).toBe(1)
-    const context = inputs[0].system.map((b: any) => b.text).join('\n')
+    const context = inputs[0].messages.at(-1).content[0].text
     const { before, inner, after } = untrustedInner(context, 'context')
     expect(inner).toContain(evil)
     expect(inner).not.toContain('<')
     expect(before + after).not.toContain(evil)
-    expect(inputs[0].system[0].text).toMatch(/context below/)
+    expect(inputs[0].system[0].text).toMatch(/context at the start of each user message/)
+  })
+
+  it('keeps the system prompt the same across turns and pages, with the context opening each user message', async () => {
+    const first = script([text('Hi')])
+    await turn('Hello', undefined, {}, undefined, '/scenes')
+    const second = script([text('Hi again')])
+    await turn('And now?', undefined, {}, undefined, '/events')
+    expect(second[0].system).toEqual(first[0].system)
+    expect(first[0].system).toHaveLength(1)
+    expect(JSON.stringify(first[0].system)).not.toContain('tool=\\"context')
+    const [ctxBlock, typed] = second[0].messages.at(-1).content
+    expect(untrustedInner(ctxBlock.text, 'context').inner).toContain('"path":"/events"')
+    expect(typed.text).toBe('And now?')
+    // History only grows at the end: the first turn's messages go back exactly as they were sent
+    expect(noCache(second[0].messages[0])).toEqual(noCache(first[0].messages[0]))
+    expect(untrustedInner(second[0].messages[0].content[0].text, 'context').inner).toContain('"path":"/scenes"')
+    // The panel shows the typed text only
+    const { messageViews } = await import('../src/assistant/conversations.js')
+    const views = await messageViews(conversationId, owner.id, ctx.self)
+    expect(views.filter((v) => v.role === 'user').map((v) => v.text)).toEqual(['Hello', 'And now?'])
   })
 
   it('says a reply was cut off when it stopped at max_tokens before any text', async () => {
@@ -271,11 +339,40 @@ describe('assistant turn loop', () => {
     expect(events.slice(-3)).toEqual([
       { type: 'error', code: 'assistant_cut_off', message: CUT_OFF },
       expect.objectContaining({ type: 'budget' }),
-      { type: 'done', messageId: expect.any(String) },
+      { type: 'done', messageId: null },
     ])
     // With text already streamed, the user saw the reply: no error
     script([{ content: [{ type: 'text', text: 'Partly' }], stopReason: 'max_tokens', usage }])
     expect((await turn()).some((e) => e.type === 'error')).toBe(false)
+  })
+
+  it('says so when a later call in the turn is cut off, even after earlier text', async () => {
+    script([{ content: [{ type: 'text', text: 'Looking.' }, { type: 'tool_use', id: 'toolu_c1', name: 'get_scene', input: { sceneId } }], stopReason: 'tool_use', usage }, { content: [], stopReason: 'max_tokens', usage }])
+    const events = await turn()
+    expect(events).toContainEqual({ type: 'error', code: 'assistant_cut_off', message: CUT_OFF })
+  })
+
+  it('never stores an empty or thinking-only reply, so the next turn replays cleanly', async () => {
+    const thinkingOnly: ModelResult = { content: [{ type: 'thinking', thinking: '', signature: 'sig==' }], stopReason: 'end_turn', usage }
+    script([thinkingOnly])
+    const events = await turn()
+    expect(events.at(-1)).toEqual({ type: 'done', messageId: null })
+    const rows = await db.select().from(assistantMessages).where(eq(assistantMessages.conversationId, conversationId))
+    expect(rows.map((r) => r.role)).toEqual(['user'])
+    const next = script([text('ok')])
+    await turn('Again')
+    expect(next[0].messages.map((m: any) => m.role)).toEqual(['user', 'user'])
+  })
+
+  it('tells the user when the model refuses with no text, and stores nothing for it', async () => {
+    script([{ content: [{ type: 'thinking', thinking: '', signature: 's' }], stopReason: 'refusal', usage }])
+    const events = await turn()
+    expect(events.slice(-3)).toEqual([
+      { type: 'error', code: 'assistant_refused', message: REFUSED },
+      expect.objectContaining({ type: 'budget' }),
+      { type: 'done', messageId: null },
+    ])
+    expect((await db.select().from(assistantMessages)).map((r) => r.role)).toEqual(['user'])
   })
 
   it('sends thinking blocks back unchanged, in the turn and in later turns', async () => {
@@ -304,6 +401,36 @@ describe('assistant turn loop', () => {
     expect(sentCall).toEqual({ type: 'tool_use', id: 'toolu_bad', name: 'update_scene', input: {} })
     expect(await db.select().from(assistantActions)).toHaveLength(0)
     expect(await sceneName()).toBe('Old Lounge')
+  })
+
+  it('runs nothing when the real stream dies after a complete write call, and says the turn failed', async () => {
+    const prevKey = config.anthropicApiKey
+    set('anthropicApiKey', 'sk-test')
+    setAssistantModel(null)
+    const ev = (e: object) => `event: ${(e as { type: string }).type}\ndata: ${JSON.stringify(e)}\n\n`
+    const body = [
+      { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_w', name: 'update_scene', input: {} } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ sceneId, name: 'Half sent' }) } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'toolu_b', name: 'get_scene', input: {} } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"sceneId": }' } },
+    ].map(ev).join('')
+    setAssistantFetch((async () => new Response(new ReadableStream({
+      start(c) { c.enqueue(new TextEncoder().encode(body)); c.error(new TypeError('terminated')) },
+    }), { status: 200, headers: { 'content-type': 'text/event-stream' } })) as typeof fetch)
+    try {
+      const events = await turn('Rename it')
+      expect(events.slice(-2)).toEqual([
+        { type: 'error', code: 'assistant_failed', message: 'The assistant hit an error. Try again.' },
+        { type: 'done', messageId: null },
+      ])
+      expect(await sceneName()).toBe('Old Lounge')
+      expect(await db.select().from(assistantActions)).toHaveLength(0)
+    } finally {
+      setAssistantFetch(null)
+      set('anthropicApiKey', prevKey)
+    }
   })
 
   it('makes no change in the approval continuation', async () => {

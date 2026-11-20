@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { eq } from 'drizzle-orm'
+import { createHash } from 'node:crypto'
 import type { AssistantStreamEvent } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
-import { assistantActions, assistantConversations, assistantMessages, users, scenes } from '../src/db/schema.js'
+import { apiKeys, assistantActions, assistantConversations, assistantMessages, users, scenes } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { buildApp } from '../src/app.js'
 import { issueTrialSession } from '../src/auth/trial.js'
@@ -115,6 +116,30 @@ describe('assistant routes', () => {
       expect(res.json()).toEqual({ error: 'assistant_locked', reason: 'plan' })
     })
 
+    it('refuses an API key on every route, and reports hidden on status', async () => {
+      const id = await newConversation()
+      const key = 'virvi_' + 'b'.repeat(40)
+      await db.insert(apiKeys).values({ userId: owner.id, name: 't', keyHash: createHash('sha256').update(key).digest('hex'), keyPrefix: key.slice(0, 8) } as any)
+      const headers = { authorization: `Bearer ${key}` }
+      script([text('never')])
+      const status = await app.inject({ method: 'GET', url: '/api/assistant/status', headers })
+      expect(status.json()).toEqual({ state: 'hidden' })
+      const id0 = '00000000-0000-4000-8000-000000000000'
+      for (const [method, url] of [
+        ['GET', '/api/assistant/conversations'],
+        ['POST', '/api/assistant/conversations'],
+        ['POST', `/api/assistant/conversations/${id}/messages`],
+        ['POST', `/api/assistant/plans/${id0}/approve`],
+        ['POST', `/api/assistant/actions/${id0}/undo`],
+        ['POST', `/api/assistant/plans/${id0}/undo`],
+      ] as const) {
+        const res = await app.inject({ method, url, headers, payload: { text: 'Hi', page: { path: '/scenes' } } })
+        expect(res.statusCode, `${method} ${url}`).toBe(403)
+        expect(res.json()).toEqual({ error: 'assistant_session_only', message: 'The assistant works only when you are signed in to the dashboard.' })
+      }
+      expect(await db.select().from(assistantMessages)).toHaveLength(0)
+    })
+
     it('is 503 when no model is configured', async () => {
       const prevKey = config.anthropicApiKey
       set('anthropicApiKey', null)
@@ -194,6 +219,20 @@ describe('assistant routes', () => {
       expect((await send(id, 'Three')).statusCode).toBe(200)
     })
 
+    it('rate-limits new conversations per account', async () => {
+      set('assistantMessagesPerMinute', 2)
+      const limited = await buildApp({ rateLimit: true, logger: false, backfill: false })
+      await limited.ready()
+      try {
+        const hit = () => limited.inject({ method: 'POST', url: '/api/assistant/conversations', headers: auth(owner) })
+        expect((await hit()).statusCode).toBe(201)
+        expect((await hit()).statusCode).toBe(201)
+        expect((await hit()).statusCode).toBe(429)
+      } finally {
+        await limited.close()
+      }
+    })
+
     it('rate-limits messages per account', async () => {
       set('assistantMessagesPerMinute', 2)
       const limited = await buildApp({ rateLimit: true, logger: false, backfill: false })
@@ -235,7 +274,10 @@ describe('assistant routes', () => {
 
       const again = await approve()
       expect(again.statusCode).toBe(409)
-      expect(again.json()).toEqual({ error: 'used' })
+      expect(again.json()).toEqual({ error: 'used', message: 'This plan already ran.' })
+      const forged = await app.inject({ method: 'POST', url: `/api/assistant/plans/${plan.planId}/approve`, headers: auth(owner), payload: { token: 'nope' } })
+      expect(forged.statusCode).toBe(403)
+      expect(forged.json()).toEqual({ error: 'invalid_token', message: "This approval isn't valid. Ask the assistant to propose the plan again." })
 
       // The approval text is hidden in the history
       const views = (await app.inject({ method: 'GET', url: `/api/assistant/conversations/${id}/messages`, headers: auth(owner) })).json()
@@ -277,6 +319,34 @@ describe('assistant routes', () => {
       expect(refused.statusCode).toBe(409)
       expect(refused.json()).toEqual({ error: 'changed', message: "This changed after the assistant's edit, so Undo would overwrite it." })
       expect(await sceneName()).toBe('Hand Edit')
+    })
+
+    it('still undoes your own change after a downgrade or with the audience narrowed, but not when switched off', async () => {
+      const id = await newConversation()
+      const undo = (actionId: string) => app.inject({ method: 'POST', url: `/api/assistant/actions/${actionId}/undo`, headers: auth(owner) })
+      const write = async (name: string) => {
+        script([tool('update_scene', { sceneId, name }), text('Renamed.')])
+        return (events((await send(id, 'Rename it')).body).find((e) => e.type === 'action') as any).action.id as string
+      }
+      const a = await write('First')
+      set('billingEnabled', true) // a free account now: locked
+      expect((await app.inject({ method: 'GET', url: '/api/assistant/conversations', headers: auth(owner) })).statusCode).toBe(403)
+      expect((await undo(a)).statusCode).toBe(200)
+      expect(await sceneName()).toBe('Old Lounge')
+
+      set('billingEnabled', false)
+      const b = await write('Second')
+      set('assistantAudience', 'admins') // hidden for this account
+      expect((await undo(b)).statusCode).toBe(200)
+      // Someone else's action is still not found
+      set('assistantAudience', 'paid')
+      const c = await write('Third')
+      set('assistantAudience', 'admins')
+      const other = await createUser()
+      expect((await app.inject({ method: 'POST', url: `/api/assistant/actions/${c}/undo`, headers: auth(other) })).statusCode).toBe(404)
+      set('assistantEnabled', false)
+      expect((await undo(c)).statusCode).toBe(404)
+      expect(await sceneName()).toBe('Third')
     })
 
     it("is 404 for someone else's conversation, plan or action", async () => {

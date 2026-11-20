@@ -1,6 +1,7 @@
-// Virvi Assistant (LIV-155): stored conversations. A message row holds Anthropic content blocks, already redacted:
-// the user's text, the model's text and tool_use blocks, and the tool_result blocks the model was sent (as their own
-// user-role rows), so the next turn can replay a valid tool_use/tool_result sequence.
+// Virvi Assistant (LIV-155): stored conversations. A message row holds Anthropic content blocks: the user's text (redacted,
+// after the account and page context block), the model's blocks verbatim (thinking signatures cover them; redacted when
+// shown), and the tool_result blocks the model was sent (as their own user-role rows), so the next turn can replay a
+// valid tool_use/tool_result sequence. Rows are only ever appended.
 import { and, asc, desc, eq } from 'drizzle-orm'
 import type { AssistantMessageView } from '@virvixr/shared'
 import { db } from '../db/connection.js'
@@ -8,6 +9,7 @@ import { assistantActions, assistantConversations, assistantMessages } from '../
 import { actionView } from './actions.js'
 import { isDashboardPath } from './tools/local.js'
 import { redact, type RedactSelf } from './redact.js'
+import { CONTEXT_INTRO } from './prompt.js'
 
 export const DEFAULT_TITLE = 'New conversation'
 export const TITLE_MAX = 60
@@ -26,7 +28,9 @@ const blocks = (content: unknown): Block[] => (Array.isArray(content) ? (content
 /** A row the user typed (or the synthetic approval text): text, and no tool_result. */
 export const isUserText = (r: { role: string; content: unknown }) =>
   r.role === 'user' && blocks(r.content).some((b) => b.type === 'text') && !blocks(r.content).some((b) => b.type === 'tool_result')
-const textOf = (content: unknown) => blocks(content).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('')
+/** The context block that opens a user message: for the model only, never shown. */
+const isContext = (b: Block, i: number, all: Block[]) => i === 0 && all.length > 1 && b.type === 'text' && (b.text ?? '').startsWith(CONTEXT_INTRO)
+const textOf = (content: unknown) => blocks(content).filter((b, i, all) => b.type === 'text' && !isContext(b, i, all)).map((b) => b.text ?? '').join('')
 const isApproval = (r: Row) => r.role === 'user' && textOf(r.content).startsWith(APPROVAL_TEXT)
 
 export async function ownConversation(userId: string, conversationId: unknown) {
