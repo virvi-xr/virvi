@@ -1714,7 +1714,7 @@ export const studioDesigns = pgTable('studio_designs', {
   id: uuid('id').primaryKey().defaultRandom(),
   ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
-  kind: text('kind').notNull(), // wearable | emote
+  kind: text('kind').notNull(), // wearable | emote | scene (buildings and furniture)
   agent: text('agent').notNull(), // claude | codex | grok
   status: text('status').notNull().default('idle'), // idle | building
   archivedAt: timestamp('archived_at', { withTimezone: true }),
