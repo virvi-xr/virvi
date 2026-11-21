@@ -52,6 +52,7 @@ async function runFallback(statements: string[]) {
 describe('entrypoint schema fallback: assistant', () => {
   it('creates the assistant tables exactly as schema.ts does, and runs again harmlessly', async () => {
     const statements = fallbackBlocks('assistant')
+    expect(statements).toContain('ALTER TABLE assistant_actions ADD COLUMN IF NOT EXISTS detail TEXT')
     await db.execute(sql.raw(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`))
     await db.execute(sql.raw(`CREATE SCHEMA ${SCHEMA}`))
     try {

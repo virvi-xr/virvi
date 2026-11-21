@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { db } from '../src/db/connection.js'
 import { sceneElements, scenes } from '../src/db/schema.js'
 import { config } from '../src/config.js'
@@ -51,6 +52,18 @@ describe('assistant tools, run as the owner', () => {
 
   it('every write reads its before state', () => {
     for (const [name, def] of Object.entries(TOOLS)) if (def.effect === 'write') expect(def.before, name).toBeTypeOf('function')
+  })
+
+  it('a paid tool without before() is a programming error', async () => {
+    ;(TOOLS as any).test_paid = {
+      name: 'test_paid', description: 'x', input: z.object({}), effect: 'paid',
+      call: () => ({ method: 'GET', url: '/api/health' }), label: () => 'Paid', summarize: () => ({}),
+    }
+    try {
+      await expect(runTool(ctx, 'test_paid', {})).rejects.toThrow(/is paid without before\(\)/)
+    } finally {
+      delete (TOOLS as any).test_paid
+    }
   })
 
   it('update_scene renames, and its undo call restores the name', async () => {

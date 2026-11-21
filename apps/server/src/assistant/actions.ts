@@ -162,7 +162,7 @@ export async function proposePlan(ctx: ToolCtx, conversationId: string | null, s
     )
     .returning()
   rows.sort((a, b) => a.step! - b.step!)
-  return { planId, steps: rows.map(actionView), token, expiresAt: new Date(expiresAtMs).toISOString() }
+  return { planId, kind: 'plan', detail: null, steps: rows.map(actionView), token, expiresAt: new Date(expiresAtMs).toISOString() }
 }
 
 /** True when `token` is this server's signature over the plan's stored steps for this user. */

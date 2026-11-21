@@ -57,6 +57,11 @@ export interface ToolDef<A> {
    * like `after`, or null when it's gone. Undo refuses when it no longer matches `after`.
    */
   currentOf?(after: unknown, args: A, ctx: ToolCtx): Promise<unknown | null>
+  /**
+   * Required for every paid tool: runs before a card is offered. Returns the card's cost line, or a refusal with
+   * the link the user needs (nothing left to spend).
+   */
+  preview?(args: A, ctx: ToolCtx): Promise<{ detail: string } | { blocked: string; link: { label: string; href: string } }>
   /** e.g. 'Rename scene to "Test Lounge"': server-side text for action rows and plan steps. */
   label(args: A): string
   /** The trimmed object the model sees, before redact(). */

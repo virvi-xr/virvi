@@ -3028,12 +3028,14 @@ export const assistantActions = pgTable('assistant_actions', {
   planId: uuid('plan_id'),
   step: integer('step'),
   tool: text('tool').notNull(),
-  effect: text('effect').$type<'read' | 'write'>().notNull(),
+  effect: text('effect').$type<'read' | 'write' | 'paid'>().notNull(),
   argsRedacted: jsonb('args_redacted').notNull(),
   // The exact args a write ran (or a plan step will run) with: never shown to anyone, only re-run by the server
   args: jsonb('args'),
   argsHash: text('args_hash').notNull(),
   label: text('label').notNull(),
+  // A paid card's cost line ("Uses 1 of your 5 prompts left today."); null for reads and plan steps
+  detail: text('detail'),
   orgName: text('org_name'),
   status: text('status').$type<'planned' | 'awaiting_confirmation' | 'running' | 'done' | 'failed' | 'undone' | 'cancelled'>().notNull(),
   resultSummary: text('result_summary'),

@@ -38,6 +38,7 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
       return { ok: true, status: 200, summary: redact(def.summarize(out, args), ctx.self, def.redactKeys), undo: null, after: null, orgName: null, label }
     }
     if (def.effect === 'write' && !def.before) throw new Error(`assistant tool ${name} is a write without before()`)
+    if (def.effect === 'paid' && !def.before) throw new Error(`assistant tool ${name} is paid without before()`)
     before = def.before ? await def.before(args, ctx) : null
 
     const planned = await def.call(args, ctx)

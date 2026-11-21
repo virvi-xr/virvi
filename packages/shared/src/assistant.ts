@@ -1,6 +1,6 @@
 // Virvi Assistant (LIV-155): types shared by the server and the dashboard.
 
-export type AssistantEffect = 'read' | 'write'
+export type AssistantEffect = 'read' | 'write' | 'paid'
 export type AssistantActionStatus = 'planned' | 'awaiting_confirmation' | 'running' | 'done' | 'failed' | 'undone' | 'cancelled'
 
 export interface AssistantActionView {
@@ -17,6 +17,10 @@ export interface AssistantActionView {
 
 export interface AssistantPlanView {
   planId: string
+  /** A plan is one or more write steps; a card is one paid step, shown with its `detail` line. */
+  kind: 'plan' | 'card'
+  /** The card's cost line; null for plans. */
+  detail: string | null
   steps: AssistantActionView[]
   token: string
   expiresAt: string
@@ -45,7 +49,7 @@ export type AssistantStreamEvent =
   | { type: 'text'; delta: string }
   | { type: 'action'; action: AssistantActionView }
   | { type: 'plan'; plan: AssistantPlanView }
-  | { type: 'link'; label: string; href: string }
+  | { type: 'link'; label: string; href: string; detail?: string }
   | { type: 'budget'; budget: AssistantBudget }
   | { type: 'error'; code: string; message: string }
   | { type: 'done'; messageId: string | null }

@@ -24,7 +24,7 @@ describe('reduce', () => {
   })
 
   it('sets plan, budget and error, and done clears streaming', () => {
-    const plan = { planId: 'p', steps: [], token: 't', expiresAt: 'x' }
+    const plan = { planId: 'p', kind: 'plan' as const, detail: null, steps: [], token: 't', expiresAt: 'x' }
     const budget = { percentLeft: 50, warn: false, resetsAt: null }
     const s = run([{ type: 'plan', plan }, { type: 'budget', budget }, { type: 'error', code: 'c', message: 'm' }, { type: 'done', messageId: null }])
     expect(s).toMatchObject({ plan, budget, error: 'm', streaming: false })
