@@ -1,8 +1,9 @@
 import Foundation
 
 // The words of apps/quest/app/src/main/java/io/virvi/ar/visitor/VisitorFlow.kt's `VisitorCopy`, word for word (the
-// plan's Global Constraints), except `OFFLINE`, which names the phone. The headset-only strings (room scan, spatial
-// data and its permission rationale, keep loaded, builder, sign out, the headset's occlusion modes) aren't used here.
+// plan's Global Constraints), except `OFFLINE` and `NO_WALL`, which name the phone (controller ruling for NO_WALL). The
+// headset-only strings (room scan, spatial data and its permission rationale, keep loaded, builder, sign out, the
+// headset's occlusion modes) aren't used here.
 
 /// The visitor's words, and the plain words for failures.
 public enum VisitorCopy {
@@ -39,7 +40,7 @@ public enum VisitorCopy {
     public static let BAD_DATA = "Something's wrong with this space's data."
 
     public static let NO_CAMERA = "Virvi AR needs camera access to find rings. Allow it in Settings → Apps → Virvi AR."
-    public static let NO_WALL = "Can't see the wall behind this ring. Look around the room so the headset can map it."
+    public static let NO_WALL = "Can't see the wall behind this ring. Look around the room so the phone can map it."
 }
 
 /// The line the menu shows once a report has been tried.

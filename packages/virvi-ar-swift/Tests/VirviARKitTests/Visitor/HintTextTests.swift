@@ -40,7 +40,7 @@ final class HintTextTests: XCTestCase {
 
     func testTheNewDeviceAndWallCopy() {
         XCTAssertEqual(VisitorCopy.NO_CAMERA, "Virvi AR needs camera access to find rings. Allow it in Settings → Apps → Virvi AR.")
-        XCTAssertEqual(VisitorCopy.NO_WALL, "Can't see the wall behind this ring. Look around the room so the headset can map it.")
+        XCTAssertEqual(VisitorCopy.NO_WALL, "Can't see the wall behind this ring. Look around the room so the phone can map it.")
     }
 
     func testARingSeenTooSteeplySaysStandInFront() {
