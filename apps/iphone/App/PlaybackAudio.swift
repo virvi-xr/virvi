@@ -9,8 +9,8 @@ protocol PlaybackAudioSession: AnyObject {
 
 extension AVAudioSession: PlaybackAudioSession {}
 
-/// Once the visitor has tapped for sound: the playback category, so the scene's video and sounds are heard with the
-/// phone on silent, mixed with whatever else is playing. Never before the tap. False (logged) if the session refused;
+/// Once the scene first shows: the playback category, so the scene's video and sounds are heard with the
+/// phone on silent, mixed with whatever else is playing. Never before the scene shows. False (logged) if the session refused;
 /// the scene then plays as the default session allows.
 @discardableResult
 func activatePlaybackAudio(_ session: PlaybackAudioSession) -> Bool {

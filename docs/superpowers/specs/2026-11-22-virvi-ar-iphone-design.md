@@ -95,7 +95,7 @@ finds a scene at a venue may visit the same scene in Decentraland or Hyperfy fro
 3. **Reading a ring:** it looks the ring up, says "Opening <space name>…", then "Hold still…" while it settles
    the ring's position and the wall's heading.
 4. **Locked:** the scene fades in (400 ms) placed from the ring's saved pose, with a brief cyan outline on the
-   ring. Images, videos (with sound only after a tap, iOS's autoplay rule) **(call)**, 3D models, sounds, live
+   ring. Images, videos (with sound from the start; owner, 2026-11-22: the tap rule was a web autoplay rule a native app doesn't have), 3D models, sounds, live
    streams and scheduled showings play. Edits arrive live.
 5. **Walking around:** ARKit world tracking keeps the scene in place. Seeing any of the space's rings again
    re-anchors it. A tracking jump (ARKit's tracking state goes limited, or the pose jumps) hides the scene until a

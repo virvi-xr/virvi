@@ -78,7 +78,7 @@ final class RealitySceneView: SceneView {
     }
 
     func setServerOffset(_ ms: Int64) { renderer.serverOffsetMs = ms }
-    /// Turned on by the visitor's tap only: the audio session is left alone until then.
+    /// Turned on when the scene first shows: the audio session is left alone until then.
     func setSoundOn(_ on: Bool) {
         if on && !renderer.soundOn { activatePlaybackAudio(AVAudioSession.sharedInstance()) }
         renderer.soundOn = on
@@ -124,11 +124,7 @@ final class ArSessionDriver: NSObject, ARSessionDelegate {
         self.controller = controller
         super.init()
         arView.session.delegate = self
-        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
-        arView.addGestureRecognizer(tap)
     }
-
-    @objc private func tapped() { controller.unmute() }
 
     func start() {
         guard ARWorldTrackingConfiguration.isSupported else { return } // the simulator

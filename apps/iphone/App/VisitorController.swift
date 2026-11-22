@@ -257,8 +257,9 @@ final class VisitorController {
         refreshUi()
     }
 
-    /// Video and sound start muted (iOS's autoplay rule); a tap on the scene turns them on.
-    func unmute() {
+    /// Video and sound play with sound from the moment the scene first shows (owner, 2026-11-22: a native app has
+    /// no autoplay rule). The audio session isn't touched before that.
+    private func turnSoundOn() {
         if soundOn { return }
         soundOn = true
         view.setSoundOn(true)
@@ -465,6 +466,7 @@ final class VisitorController {
         case .showScene(let root):
             if let s = snapshot?.space { analytics.shown(spaceId: s.id) }
             view.setRoot(root)
+            turnSoundOn()
             view.setVisible(true, nowMs: clock())
         case .reanchor(let root): view.setRoot(root)
         case .hideScene:

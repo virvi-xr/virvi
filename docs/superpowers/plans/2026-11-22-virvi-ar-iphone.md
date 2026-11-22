@@ -18,7 +18,7 @@
 - The printed rings depend on the codec's mask seed `"VLM ring marker v0"`: never change it.
 - Visitor words are the Quest's `VisitorCopy` strings, word for word, except the connection failure, which on iPhone reads `Can't reach Virvi. Check the phone's connection.` Headset-only strings (room scan, keep loaded, builder, sign out, spatial data) are not used.
 - Tuning values are the Quest's `VisitorTuning` values (1.5 m, 5/15 frames, 0.01 m, 1.0°, 30°, 0.25 m, 25°, 2.5 m/s, 300°/s, 0.5 s, 600000 ms, 3000 ms, 1500 ms, 2000–30000 ms).
-- Scene fade-in 400 ms. Video sound starts only after a tap. "Hide behind people and things" appears only when `ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)` is true.
+- Scene fade-in 400 ms. Video sound starts with the scene (owner, 2026-11-22; was: only after a tap). "Hide behind people and things" appears only when `ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)` is true.
 - Camera frames never leave the phone. No account, no extra identifiers.
 - Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; subjects become public release notes, so they're written for players.
 - The Vision Pro app's behaviour must not change; its full test suite passes after it moves onto the package.
@@ -194,7 +194,7 @@
   - Info.plist: `CFBundleDisplayName Virvi AR`; `NSCameraUsageDescription "Virvi AR uses the camera to find rings and to show the space in this room."`; `UIRequiredDeviceCapabilities [arkit]`; portrait only; `NSAllowsArbitraryLoadsForMedia true`.
   - Links: `onOpenURL`, universal links only — a `https://virvi.io/s/<code>` URL feeds `openSpace(code)`, parsed with `RingCodec.parseCode`; anything else is ignored.
   - Menu: "Look at the ring again", the occlusion switch (LiDAR phones only), "Report this space" (reasons Offensive/Unsafe/Spam/Something else, the Quest's words and results), "Close".
-  - Video sound starts muted; tapping the scene unmutes (iOS autoplay rule).
+  - Video sound starts with the scene (owner, 2026-11-22).
 
 - [ ] **Step 1: Failing tests:**
   - **Review Focus 1:** `FramePipelineTests` feeds a 1920×1440 luma buffer containing the testset's `range-RING140-0.6-0` image upscaled 1.5× in sensor orientation, and gets RING140 with its centre at the manifest's `center_px` (±2 px after scaling), and intrinsics scaled from the full-resolution fx 1300.5 back to 867;

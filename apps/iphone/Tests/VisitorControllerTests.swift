@@ -147,6 +147,7 @@ final class VisitorControllerTests: XCTestCase {
         XCTAssertEqual(angleDiffDeg(root.yawDeg, want.yawDeg), 0, accuracy: 0.1)
         XCTAssertEqual(view.visible, [true], "the fade started once")
         XCTAssertTrue(controller.sceneShown)
+        XCTAssertTrue(view.soundOn, "sound starts with the scene, no tap needed")
         XCTAssertNil(controller.hint)
         XCTAssertEqual(outline.flashes.count, 1)
         XCTAssertEqual(outline.flashes.first?.diameterM ?? 0, 0.14, accuracy: 1e-9)
@@ -207,10 +208,11 @@ final class VisitorControllerTests: XCTestCase {
         XCTAssertNil(controller.registeredRings)
     }
 
-    func testTappingTheSceneTurnsTheSoundOn() {
+    func testSoundStaysOffUntilTheSceneIsShown() async throws {
         XCTAssertFalse(view.soundOn)
-        controller.unmute()
-        XCTAssertTrue(view.soundOn)
+        try await seeRing(frames: 2)
+        XCTAssertFalse(controller.sceneShown)
+        XCTAssertFalse(view.soundOn, "no audio session before the scene shows")
     }
 }
 
