@@ -23,7 +23,7 @@ import type { InviteLinkView, InviteRole, InviteTarget, MyInvite, PastPackage, S
 import type { AdminIdeaCounts, PromptIdeas } from './studio-ideas'
 import type { FirstReplyStats } from './studio-wait'
 import type { SceneImportMove, SceneImportView } from '@virvixr/shared'
-import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, OwnerAdSpaceReport, EventAttendanceReport, AdminAdvertiserLead, AdReport, AdShape, BeatChain, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
+import type { ArDeviceKind, ArDeviceSummary, ArPairApprovalInfo, ArFloorView, ArMarkerView, ArSpaceView, AdContent, AdAudience, AdminAd, AdminAdSpace, OwnerAdSpace, OwnerAdSpaceReport, EventAttendanceReport, AdminAdvertiserLead, AdminSummitSignup, AdminSummitSignups, SummitInPersonStatus, AdReport, AdShape, BeatChain, CatalogPack, HyperfyPairingSummary, HyperfyWorldSummary } from '@virvixr/shared'
 import { overlayDemoApi, type DemoApi } from './demo/store'
 import type { DeletePlan, DeletedScene, DeleteResult, Removal, RemovalSignRequest } from './scene-delete'
 import type { AnalyticsLocation, AnalyticsRangeQuery, AnalyticsSession, AnalyticsSummary, HeatCell, HeatmapData, LayoutItem, LiveData, TimeseriesPoint } from './analytics/types'
@@ -976,6 +976,11 @@ function useRealApi() {
 
     // Ads (admin)
     getAdminAdvertiserLeads: () => apiFetch<{ leads: AdminAdvertiserLead[] }>('/api/admin/advertiser-leads'),
+
+    // Virvi Summit sign-ups (admin)
+    getAdminSummitSignups: () => apiFetch<AdminSummitSignups>('/api/admin/summit/signups'),
+    setAdminSummitInPerson: (id: string, status: SummitInPersonStatus) =>
+      apiFetch<{ signup: AdminSummitSignup }>(`/api/admin/summit/signups/${encodeURIComponent(id)}/in-person`, { method: 'PUT', body: JSON.stringify({ status }), userAction: true }),
     getAdminAds: (review?: 'pending') => apiFetch<{ ads: AdminAd[] }>(`/api/admin/ads${review ? `?review=${review}` : ''}`),
     reviewAdminAd: (id: string, body: { decision: 'approved'; audience: AdAudience } | { decision: 'rejected'; reason: string }) =>
       apiFetch<{ ad: AdminAd }>(`/api/admin/ads/${id}/review`, { method: 'POST', body: JSON.stringify(body) }),
