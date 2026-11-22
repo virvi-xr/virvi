@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
 import type { AssistantStreamEvent } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
-import { apiKeys, assistantActions, assistantConversations, assistantMessages, users, scenes } from '../src/db/schema.js'
+import { apiKeys, assistantActions, assistantConversations, assistantMessages, sceneRoles, users, scenes } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { buildApp } from '../src/app.js'
 import { issueTrialSession } from '../src/auth/trial.js'
@@ -15,7 +15,7 @@ import type { FastifyRequest } from 'fastify'
 import { proposeCard } from '../src/assistant/actions.js'
 import { TOOLS } from '../src/assistant/tools/index.js'
 import type { ToolCtx, ToolDef } from '../src/assistant/tools/types.js'
-import { testApp, createUser, createScene, tokenFor, type TestUser } from './helpers/factories.js'
+import { testApp, createUser, createScene, randomWallet, tokenFor, type TestUser } from './helpers/factories.js'
 
 const usage = { input_tokens: 50, output_tokens: 10 }
 const text = (t: string): ModelResult => ({ content: [{ type: 'text', text: t }], stopReason: 'end_turn', usage })
@@ -325,6 +325,55 @@ describe('assistant routes', () => {
       } finally {
         delete (TOOLS as Record<string, unknown>).stub_card
       }
+    })
+
+    it("adds a collaborator from a pasted wallet's card and undoes it through the routes, with no conversation refs at undo", async () => {
+      const rolesOf = async () => (await db.select().from(sceneRoles)).filter((r) => !r.revokedAt).map((r) => ({ wallet: r.walletAddress, role: r.role }))
+      const w = randomWallet()
+      const id = await newConversation()
+      script([tool('add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'viewer' }), text('Confirm the card.')])
+      const card = (events((await send(id, `add ${w.toUpperCase().replace('0X', '0x')} as a viewer`)).body).find((e) => e.type === 'plan') as any).plan
+      expect(card).toMatchObject({ kind: 'card', steps: [{ status: 'awaiting_confirmation' }] })
+
+      // The approve route loads this conversation's refs, so [wallet 1] reaches the tool as the pasted wallet
+      script([text('Added.')])
+      const approved = await app.inject({ method: 'POST', url: `/api/assistant/plans/${card.planId}/approve`, headers: auth(owner), payload: { token: card.token } })
+      expect(approved.statusCode).toBe(200)
+      expect(events(approved.body).filter((e) => e.type === 'action').map((e: any) => e.action.status)).toEqual(['done'])
+      expect(await rolesOf()).toEqual([{ wallet: w.toLowerCase(), role: 'viewer' }])
+
+      const undo = await app.inject({ method: 'POST', url: `/api/assistant/actions/${card.steps[0].id}/undo`, headers: auth(owner) })
+      expect(undo.statusCode).toBe(200)
+      expect(undo.json()).toMatchObject({ id: card.steps[0].id, status: 'undone' })
+      expect(await rolesOf()).toEqual([])
+    })
+
+    it("undoes a collaborator's role change through the plan undo route, and refuses once the role changed since", async () => {
+      const rolesOf = async () => (await db.select().from(sceneRoles)).filter((r) => !r.revokedAt).map((r) => ({ wallet: r.walletAddress, role: r.role }))
+      const w = randomWallet()
+      await db.insert(sceneRoles).values({ sceneId, walletAddress: w, role: 'viewer', grantedByUserId: owner.id })
+      const id = await newConversation()
+      const cardFor = async (role: string) => {
+        script([tool('add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role }), text('Confirm the card.')])
+        const card = (events((await send(id, `make ${w} ${role}`)).body).find((e) => e.type === 'plan') as any).plan
+        script([text('Done.')])
+        const approved = await app.inject({ method: 'POST', url: `/api/assistant/plans/${card.planId}/approve`, headers: auth(owner), payload: { token: card.token } })
+        expect(events(approved.body).filter((e) => e.type === 'action').map((e: any) => e.action.status)).toEqual(['done'])
+        return card
+      }
+      const first = await cardFor('editor')
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'editor' }])
+      const undo = await app.inject({ method: 'POST', url: `/api/assistant/plans/${first.planId}/undo`, headers: auth(owner) })
+      expect(undo.statusCode).toBe(200)
+      expect(undo.json().map((a: any) => a.status)).toEqual(['undone'])
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'viewer' }])
+
+      const second = await cardFor('cohost')
+      await db.update(sceneRoles).set({ role: 'editor' }).where(eq(sceneRoles.walletAddress, w))
+      const refused = await app.inject({ method: 'POST', url: `/api/assistant/actions/${second.steps[0].id}/undo`, headers: auth(owner) })
+      expect(refused.statusCode).toBe(409)
+      expect(refused.json()).toMatchObject({ error: 'changed' })
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'editor' }])
     })
 
     it('cancels a plan', async () => {

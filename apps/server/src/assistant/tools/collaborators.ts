@@ -53,7 +53,7 @@ export const COLLABORATOR_TOOLS: ToolDef<any>[] = [
   {
     name: 'add_scene_collaborator',
     description:
-      "Give someone a role on a scene (cohost, editor or viewer), or change the role they have. Pass wallet as the `[wallet N]` reference from the user's message, exactly as it appears there (or a full 0x address). Giving access is public, so the user confirms it on a card. Removing someone isn't something you can do: send the user to the scene's Roles tab (open_page /scenes/<id>).",
+      "Give someone a role on a scene (cohost, editor or viewer), or change the role they have. Pass wallet as the `[wallet N]` reference from the user's message, exactly as it appears there. Giving access is public, so the user confirms it on a card. Removing someone isn't something you can do: send the user to the scene's Roles tab (open_page /scenes/<id>).",
     input: z.object({ sceneId: id(), wallet: z.string().trim().min(1).max(50), role: z.enum(ROLES) }),
     effect: 'public',
     refusals: { is_host: IS_HOST },
@@ -68,6 +68,14 @@ export const COLLABORATOR_TOOLS: ToolDef<any>[] = [
         ? { method: 'POST' as const, url: rolesUrl(a.sceneId), body: { wallet, role: existing } }
         : { method: 'DELETE' as const, url: `${rolesUrl(a.sceneId)}/${wallet}` }
       return { undo, after: () => ({ wallet, role: a.role }), current: { wallet, role: existing }, orgName }
+    },
+    // Undo re-reads the role by the stored full wallet, not the `[wallet N]` arg: the undo routes have no conversation
+    currentOf: async (after, a, ctx) => {
+      const wallet = String((after as Obj | null)?.wallet ?? '').toLowerCase()
+      if (!wallet) return null
+      const roles = await get(ctx, rolesUrl(a.sceneId))
+      const now = list(roles.roles).find((r) => String(r.wallet).toLowerCase() === wallet)
+      return { wallet, role: (now?.role as Role | undefined) ?? null }
     },
     preview: async (a, ctx) => {
       const { wallet, existing, scene } = await state(ctx, a.sceneId, a.wallet)
