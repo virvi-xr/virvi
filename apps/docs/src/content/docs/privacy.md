@@ -46,9 +46,9 @@ A BEAT is a free token that shows you were at an event. Nothing about you is sto
 
 ## Virvi Spaces on Quest
 Virvi Spaces is the Meta Quest app that shows a Virvi space in your room. It talks to virvi.io. Pictures, videos and 3D models in a space load from wherever its owner hosts them, which may be outside virvi.io; those hosts see the headset's network address like any website would.
-- **Every visitor sends:** the code of the ring you look at, to find its space; a request for the space's contents (the space feed); and anonymous visit events: when you arrive and leave, and where your head is (every few seconds), in the space's own coordinates rather than your room's. Each visit uses a fresh random id that is never stored, so visits can't be linked to you or to each other.
-- **Builders also send:** the edits they make to a space, the alignment of a ring, and the pairing of their headset (including the headset model) with a Virvi account. The headset proves who it is with a secret kept in its encrypted storage; the server stores only a hash of it.
-- **Never sent:** camera images and room scans. The headset's cameras are used on the headset to find rings, and your room's walls and surfaces are used on the headset to hide virtual things behind real ones and to snap items to walls. Neither leaves the headset.
+- **Every visitor sends:** the code of the ARC you look at, to find its space; a request for the space's contents (the space feed); and anonymous visit events: when you arrive and leave, and where your head is (every few seconds), in the space's own coordinates rather than your room's. Each visit uses a fresh random id that is never stored, so visits can't be linked to you or to each other.
+- **Builders also send:** the edits they make to a space, the alignment of an ARC, and the pairing of their headset (including the headset model) with a Virvi account. The headset proves who it is with a secret kept in its encrypted storage; the server stores only a hash of it.
+- **Never sent:** camera images and room scans. The headset's cameras are used on the headset to find ARCs, and your room's walls and surfaces are used on the headset to hide virtual things behind real ones and to snap items to walls. Neither leaves the headset.
 
 Visit events follow the same retention as the rest of Virvi analytics, above. They carry no identity, so there is nothing to look up or delete for a single visitor. A builder can revoke a paired headset on virvi.io, which stops it from editing.
 

@@ -2,29 +2,29 @@
 
 Virvi AR is one app on three platforms: Meta Quest (this app), Apple Vision Pro (`apps/vision-pro`) and iPhone (planned, from `apps/ar-spike`).
 
-The Quest app (`io.virvi.ar`), promoted from the spike that lived in `apps/quest-spike` (sibling of `apps/ar-spike`, iPhone and Vision Pro). It shows a Virvi space life-size in passthrough on a **Meta Quest 3 or 3S**, placed from the ring marker the visitor looks at. Debug builds also run the marker detection-range test. Built with Meta's [Spatial SDK](https://developers.meta.com/horizon/documentation/spatial-sdk/spatial-sdk-explainer) (Kotlin, Android, no Unity).
+The Quest app (`io.virvi.ar`), promoted from the spike that lived in `apps/quest-spike` (sibling of `apps/ar-spike`, iPhone and Vision Pro). It shows a Virvi space life-size in passthrough on a **Meta Quest 3 or 3S**, placed from the ARC (Augmented Reality Code) the visitor looks at. Debug builds also run the ARC detection-range test. Built with Meta's [Spatial SDK](https://developers.meta.com/horizon/documentation/spatial-sdk/spatial-sdk-explainer) (Kotlin, Android, no Unity).
 
 **Get the app:** Virvi AR isn’t in the Meta Horizon Store yet. Build it from source and install it on your headset as described below ([Build](#build), [Run it on your Quest](#run-it-on-your-quest)). The public page is [virvi.io/ar](https://virvi.io/ar). `STORE.md` has the Store notes.
 
-Devices: Meta Quest 3 and 3S only (`com.oculus.supportedDevices` is `quest3|quest3s`). Horizon OS is Android 14, so `minSdk` and `targetSdk` are 34; the passthrough camera that finds rings needs Horizon OS v74 or later.
+Devices: Meta Quest 3 and 3S only (`com.oculus.supportedDevices` is `quest3|quest3s`). Horizon OS is Android 14, so `minSdk` and `targetSdk` are 34; the passthrough camera that finds ARCs needs Horizon OS v74 or later.
 
 What it does:
 
-- **Visitor mode.** A hint card (1 m ahead, a little below the eyes, following the head lazily) shows a drawing of a ring and says "Look for a ring like this, at eye level near the entrance." A ring seen but not readable turns it into "Step closer to the ring". A readable ring is looked up (`GET /api/ar/markers/by-code/:code`), the space's feed is long-polled (`GET /api/ar/spaces/:id/feed`), and once the ring is within 1.5 m and its averaged position and wall heading hold still, the scene fades in (400 ms) placed from the ring's saved pose, with a cyan outline flashing on the ring. While it waits the card says "Hold still…" only while one of the space's rings is actually being gathered; with none in view (after a tracking jump, the headset back on, or a space opened from a link before arriving) it shows the standard hint, and a ring too far away or unreadable says "Step closer to the ring". The wall heading must agree with the ring's own tilt (within 20°), so near a corner or a door frame the perpendicular wall isn't taken; when two walls facing different ways agree about as well (within 15° of each other, as at an inside corner seen at about 45°) there is no heading until the visitor moves. A heading counts only within 30° of head-on, by both the wall it picks and the ring's own tilt, so a perpendicular wall can't stand in for an unscanned one; a steeper view says "Stand in front of the ring". Any other ring of the same space re-anchors it, and so does a newer snapshot that moves the saved pose of the ring the scene was placed from (if that ring isn't steady in view, or its printed size changed, the scene hides until it locks again); a tracking jump (the head moving faster than 2.5 m/s or turning faster than 300°/s) hides it until a ring is seen again. Taking the headset off ends the visit (back to the hint card, nothing loaded). The code is in `visitor/`: `VisitorFlow` (the state machine), `VisitorController` (the glue to the headset), `HintCard`, `VisitorMenu`, `RingOutline`; the space itself (feed, scene, ring locks, outline, placement), which builder mode will share, is `space/SpaceSession`.
-- **Menu:** the left controller's menu button at any time, or the small "⋯" button below the hint card's place whenever a space is up (shown, locking, not set up, or failed after its lookup; not on the plain hint card). **Look at the ring again**, occlusion (**Hide behind walls** / **Live depth** / **Off**), **Spaces** and **Builder** (builder mode, below). Whenever a space is up and builder mode is off, **Report this space** asks for a reason (**Offensive**, **Unsafe**, **Spam**, **Something else**, or **Cancel**) and sends it. While builder mode is on, or whenever the headset is paired, the menu also has the owner's **Keep the scene loaded between visitors** switch (`AppPrefs.keepLoadedBetweenVisitors`) and **Sign out**. Debug builds add **Developer**: the old control panel, with the feed status, occlusion and the marker readings.
-- **Builder mode** (`builder/BuilderController`, the counterpart of `VisitorController`). The menu's **Builder** pairs a signed-out headset first (the pairing panel: the code, a QR of the approval page, **Cancel**), then finds the space: the one whose ring is in view (its code matched against `POST /api/ar/devices/:id/spaces`), otherwise a pick list of the account's spaces. Entering pauses visitor mode and follows the space's feed on the same space session with the space's AR pass (re-asked for every 30 s, so a pass about to run out is minted again). The scene is placed from a steady ring with a saved pose; a ring on a floor with no saved pose opens the **Align** panel first (sticks nudge the scene, one step every 100 ms while held; **Save alignment**, then **Done**). Then the HUD (banner, booking and several-places warnings, the Layout and Models tabs and, on a personal headset, Stream, Save / Revert / Done), the pointer, gizmo and carries, and a ring panel for the floor's other rings (check, **Record** / **Re-record**). Builder mode doesn't re-anchor from other rings, so the ring check measures them against where the scene was placed. Taking the headset off hides the scene; back on, it is placed afresh from a ring, with the drafts kept (a personal headset off for over 10 minutes drops them; a shared one off for over 2 minutes signs out, back at the hint card with nothing loaded, even while still off). **Done** returns to visitor mode with a published space still shown, as a visit, following its published feed as a visitor would; an unpublished one goes back to the hint card with nothing loaded. **Sign out** and a headset revoked on the website return to the hint card with nothing loaded; a revoked headset is asked to pair again straight away. **A shared headset signs out whenever builder mode closes**, for any reason (Done, Cancel, a refused pass, the space gone, the headset off), and a shared pairing never outlives the app: one restored at startup is ended at once. A space link (or the Spaces list) while building says "Finish building first (Done) to open another space".
+- **Visitor mode.** A hint card (1 m ahead, a little below the eyes, following the head lazily) shows a drawing of an ARC and says "Look for an ARC like this, at eye level near the entrance." An ARC seen but not readable turns it into "Step closer to the ARC". A readable ARC is looked up (`GET /api/ar/markers/by-code/:code`), the space's feed is long-polled (`GET /api/ar/spaces/:id/feed`), and once the ARC is within 1.5 m and its averaged position and wall heading hold still, the scene fades in (400 ms) placed from the ARC's saved pose, with a cyan outline flashing on the ARC. While it waits the card says "Hold still…" only while one of the space's ARCs is actually being gathered; with none in view (after a tracking jump, the headset back on, or a space opened from a link before arriving) it shows the standard hint, and an ARC too far away or unreadable says "Step closer to the ARC". The wall heading must agree with the ARC's own tilt (within 20°), so near a corner or a door frame the perpendicular wall isn't taken; when two walls facing different ways agree about as well (within 15° of each other, as at an inside corner seen at about 45°) there is no heading until the visitor moves. A heading counts only within 30° of head-on, by both the wall it picks and the ARC's own tilt, so a perpendicular wall can't stand in for an unscanned one; a steeper view says "Stand in front of the ARC". Any other ARC of the same space re-anchors it, and so does a newer snapshot that moves the saved pose of the ARC the scene was placed from (if that ARC isn't steady in view, or its printed size changed, the scene hides until it locks again); a tracking jump (the head moving faster than 2.5 m/s or turning faster than 300°/s) hides it until an ARC is seen again. Taking the headset off ends the visit (back to the hint card, nothing loaded). The code is in `visitor/`: `VisitorFlow` (the state machine), `VisitorController` (the glue to the headset), `HintCard`, `VisitorMenu`, `RingOutline`; the space itself (feed, scene, ARC locks, outline, placement), which builder mode will share, is `space/SpaceSession`.
+- **Menu:** the left controller's menu button at any time, or the small "⋯" button below the hint card's place whenever a space is up (shown, locking, not set up, or failed after its lookup; not on the plain hint card). **Look at the ARC again**, occlusion (**Hide behind walls** / **Live depth** / **Off**), **Spaces** and **Builder** (builder mode, below). Whenever a space is up and builder mode is off, **Report this space** asks for a reason (**Offensive**, **Unsafe**, **Spam**, **Something else**, or **Cancel**) and sends it. While builder mode is on, or whenever the headset is paired, the menu also has the owner's **Keep the scene loaded between visitors** switch (`AppPrefs.keepLoadedBetweenVisitors`) and **Sign out**. Debug builds add **Developer**: the old control panel, with the feed status, occlusion and the ARC readings.
+- **Builder mode** (`builder/BuilderController`, the counterpart of `VisitorController`). The menu's **Builder** pairs a signed-out headset first (the pairing panel: the code, a QR of the approval page, **Cancel**), then finds the space: the one whose ARC is in view (its code matched against `POST /api/ar/devices/:id/spaces`), otherwise a pick list of the account's spaces. Entering pauses visitor mode and follows the space's feed on the same space session with the space's AR pass (re-asked for every 30 s, so a pass about to run out is minted again). The scene is placed from a steady ARC with a saved pose; an ARC on a floor with no saved pose opens the **Align** panel first (sticks nudge the scene, one step every 100 ms while held; **Save alignment**, then **Done**). Then the HUD (banner, booking and several-places warnings, the Layout and Models tabs and, on a personal headset, Stream, Save / Revert / Done), the pointer, gizmo and carries, and an ARC panel for the floor's other ARCs (check, **Record** / **Re-record**). Builder mode doesn't re-anchor from other ARCs, so the ARC check measures them against where the scene was placed. Taking the headset off hides the scene; back on, it is placed afresh from an ARC, with the drafts kept (a personal headset off for over 10 minutes drops them; a shared one off for over 2 minutes signs out, back at the hint card with nothing loaded, even while still off). **Done** returns to visitor mode with a published space still shown, as a visit, following its published feed as a visitor would; an unpublished one goes back to the hint card with nothing loaded. **Sign out** and a headset revoked on the website return to the hint card with nothing loaded; a revoked headset is asked to pair again straight away. **A shared headset signs out whenever builder mode closes**, for any reason (Done, Cancel, a refused pass, the space gone, the headset off), and a shared pairing never outlives the app: one restored at startup is ended at once. A space link (or the Spaces list) while building says "Finish building first (Done) to open another space".
 - **In the HUD:** the **Models** tab is the scene’s library (images, videos and models) with **Place**. A picked item’s bar offers **Clear all N copies** when nothing is unsaved: it asks first, then removes every copy of that object. A personal headset also gets a **Stream** tab, like the Decentraland HUD’s Stream panel: each video screen of the live preset, with **Choose stream** (the scene’s streams), **Turn live on** / **off**, and **Change** for its off image (up to 8 of the library’s images, or **No off image**). A shared headset has no Stream tab.
 - **Scheduled showings and playlists:** a screen in Schedule mode shows its holding image between shows and plays the programme’s video from where the show is, at the same moment as Decentraland (drift past 2 s is corrected). A playlist plays each video in turn. (`Showings.kt`.)
 - **Scan this room** (`roomscan/`): a personal headset can upload its room scan (from Space Setup) to virvi.io, to build a room set from it in the wizard. It’s on the HUD’s Layout tab while building, and on the builder panel’s space list, even with no spaces (this is how a trial scans). A shared headset can’t.
 - **Server:** always `https://virvi.io` in release builds. Debug builds take a `baseUrl` intent extra and remember it.
 - **Images** are unlit, double-sided textured quads. **Videos** are video panels (ExoPlayer, muted, mp4 and HLS). **Models** load straight from their URL; only `.glb` works, anything else shows a pink box. **Sounds** aren't played yet.
 - **Hide behind real things:** a menu choice. **Walls** draws the room scan's wall faces and ceiling (MRUK `AnchorProceduralMesh`) with the hole-punch material (`AlphaMode.HOLE_PUNCH`, `HOLE_PUNCH_SHADER`; `SceneMaterial.passthrough()` showed the room but didn't hide what was behind it), so they show the real room and hide anything virtual behind them. **Live depth** turns on Spatial SDK's environment depth occlusion (`EnvironmentDepthMode.OCCLUSION`), which also hides behind furniture and people; it's the default, and looked better on the headset. The choice is remembered. **Show scanned walls** tints the same surfaces, to check the room scan against the real walls.
-- **Marker test:** Virvi's ring markers (`../ring-marker`) are found in the left passthrough camera's frames (Camera2, 1280 × 960, Horizon OS v74+). The distance comes from the ring's size in the image, the position from that and the head pose, and the heading from the scanned wall the marker is on. The panel shows, per test marker, where tracking started ("found at"), where it stopped, the current distance, the position and the wall heading.
+- **ARC test:** Virvi's ARCs (`../ring-marker`) are found in the left passthrough camera's frames (Camera2, 1280 × 960, Horizon OS v74+). The distance comes from the ARC's size in the image, the position from that and the head pose, and the heading from the scanned wall the ARC is on. The panel shows, per test ARC, where tracking started ("found at"), where it stopped, the current distance, the position and the wall heading.
 
 Code:
 
 - `ScenePlan.kt` ports `packages/hyperfy-app/src/plan.ts` (via the Swift spike). `Mapping.kt` is the transform. Spatial SDK is left-handed, Y up, +Z forward, the same frame as Decentraland, so positions and scales carry over unchanged and rotations are Decentraland's Euler degrees in YXZ order. `MappingTest` checks that Spatial SDK's own `Quaternion` agrees.
-- `api/` (`ArApi`, `ArFeed`), `space/SpaceAlignment.kt` (scene root from a ring's saved pose), `SceneRenderer.kt`, `MainActivity.kt` (lifecycle, camera, room scan, panels), `AppPrefs.kt`, `ControlPanel.kt` (the Developer panel), `MarkerReadings.kt`, `Showings.kt` (scheduled showings).
+- `api/` (`ArApi`, `ArFeed`), `space/SpaceAlignment.kt` (scene root from an ARC's saved pose), `SceneRenderer.kt`, `MainActivity.kt` (lifecycle, camera, room scan, panels), `AppPrefs.kt`, `ControlPanel.kt` (the Developer panel), `MarkerReadings.kt`, `Showings.kt` (scheduled showings).
 - `builder/`: builder mode (pairing, align, HUD, picking, gizmo, carries, the Stream tab). `roomscan/`: **Scan this room**.
 - `ring/`: `RingCodec.kt` and `RingDetector.kt` port `../ring-marker/ringmarker/codec.py` and `detect.py`, and their tests run against that folder's vectors and synthetic test set. `RingTracker.kt` trusts an ID after 3 frames in a row. `PassthroughCamera.kt` is the camera. `RingPose.kt` turns a detection into a position and finds the wall heading.
 
@@ -35,7 +35,7 @@ Shortcuts and open questions:
 - **The lens pose** is read as Android defines it, relative to the head pose Spatial SDK reports. On a Quest 3 (2026-10-22) `LENS_POSE_REFERENCE` is `GYROSCOPE`, and the 1.0 m distance and Align checks passed with it as is.
 - The camera's intrinsics are scaled from the sensor's pre-correction active array to the 1280 × 960 stream (centre crop, then scale, as in Meta's passthrough samples). On a Quest 3 the array is 1280 × 1280 and fx = fy = 866.9 px, so the stream is the middle 960 rows at unchanged scale. The synthetic test set (`ringmarker/testset.py`, `FOCAL_PX`) is rendered at fx = 867 px to match, and writes it to `manifest.json` as `focal_px`, which the Kotlin tests read.
 - The room scan sometimes fails to load right after the headset wakes, while tracking recovers (`ERROR_UNKNOWN`, sometimes `ERROR_NO_ROOMS_FOUND`). The app retries it 5 times, 3 s apart, and again each time it comes back to the foreground without one.
-- The marker's world position uses the head pose at the tick after the frame, not at the frame's capture time, so it lags while you move your head. Averaging over 15 frames smooths noise but not lag, which is why the scene waits for the ring to hold still.
+- The ARC's world position uses the head pose at the tick after the frame, not at the frame's capture time, so it lags while you move your head. Averaging over 15 frames smooths noise but not lag, which is why the scene waits for the ARC to hold still.
 - Clicks and sounds aren't implemented. Videos pause while the scene is hidden or the app is in the background.
 
 ### New visitor copy (the owner may reword)
@@ -43,14 +43,14 @@ Shortcuts and open questions:
 Added in the whole-branch review fixes, so a visitor is never left without an instruction. They show on the hint card, and on the space page when it is open. The camera, spatial data and room scan lines take precedence over everything but a shown scene.
 
 - Room scan missing, or failed to load after its retries: "Set up your space on this headset first: Settings → Physical space → Space setup."
-- Camera permission denied: "Virvi AR needs camera access to find rings. Allow it in Settings → Apps → Virvi AR."
+- Camera permission denied: "Virvi AR needs camera access to find ARCs. Allow it in Settings → Apps → Virvi AR."
 - Spatial data permission denied (the room scan can't be read): "Virvi AR needs spatial data access to line spaces up with the room. Allow it in Settings → Apps → Virvi AR."
-- A ring that holds still with its wall found, but seen more than 30° from head-on (one ring's outline can't tell its own wall from a perpendicular one that steeply): "Stand in front of the ring"
-- A ring that holds still but has had no wall heading for over 3 s (the scan missed its wall, or the wall disagrees with the ring's tilt): "Can't see the wall behind this ring. Look around the room so the headset can map it."
+- An ARC that holds still with its wall found, but seen more than 30° from head-on (one ARC's outline can't tell its own wall from a perpendicular one that steeply): "Stand in front of the ARC"
+- An ARC that holds still but has had no wall heading for over 3 s (the scan missed its wall, or the wall disagrees with the ARC's tilt): "Can't see the wall behind this ARC. Look around the room so the headset can map it."
 
 ### New builder copy (the owner may reword)
 
-The align panel's refusals (`AlignCopy` in `builder/Alignment.kt`). "Step closer to the ring to save" and "This account can't edit this scene" are the plan's copy.
+The align panel's refusals (`AlignCopy` in `builder/Alignment.kt`). "Step closer to the ARC to save" and "This account can't edit this scene" are the plan's copy.
 
 - Save failed because the headset is offline: "Can't reach virvi.io: check the connection and save again"
 - Save failed for any other reason: "Couldn't save the alignment: try again"
@@ -61,7 +61,7 @@ Builder mode's own panels (`BuilderCopy` in `builder/BuilderController.kt`) and 
 - Offline: "Can't reach virvi.io: check the connection and try again"; any other failure: "Couldn't load your spaces: try again"; the space's pass refused for another reason: "Couldn't open this space for building: try again"
 - Pairing ended without an approval (code expired or refused): "Pairing didn't finish: tap Builder to try again"
 - These notices, and "This account can't edit this scene" when the space's pass is refused, show on the builder panel with a **Close** button
-- Waiting to place the scene: "Look at a ring of <space>"; a ring with no saved pose on a floor that already has one: "Look at a ring that is already lined up on this floor"
+- Waiting to place the scene: "Look at an ARC of <space>"; an ARC with no saved pose on a floor that already has one: "Look at an ARC that is already lined up on this floor"
 - A space link while building: "Finish building first (Done) to open another space"
 - The menu's owner items: "Keep the scene loaded between visitors" and "Sign out" (the brief's names)
 
@@ -107,8 +107,8 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties   # once
    adb shell am start -n io.virvi.ar/.MainActivity
    ```
    The app is also listed in the headset's library under **Unknown sources**, as "Virvi AR". If an older build is still installed under its old id (the spike, `gg.vlm.spaces.quest`, or the app before the rename, `gg.vlm.spaces`), remove it with `adb uninstall gg.vlm.spaces.quest` or `adb uninstall gg.vlm.spaces`.
-4. On first launch, allow the **camera** (marker detection) and **spatial data** (the room's walls, for heading). Heading also needs a room scan: if the panel says "No room scan", set up your space in the Quest settings (**Physical space** → **Space setup**) and restart the app.
-5. **Look at a ring** of a published, aligned space. A debug build can point at another server (saved for next launches; pass `https://virvi.io` to go back):
+4. On first launch, allow the **camera** (ARC detection) and **spatial data** (the room's walls, for heading). Heading also needs a room scan: if the panel says "No room scan", set up your space in the Quest settings (**Physical space** → **Space setup**) and restart the app.
+5. **Look at an ARC** of a published, aligned space. A debug build can point at another server (saved for next launches; pass `https://virvi.io` to go back):
    ```sh
    adb shell am start -n io.virvi.ar/.MainActivity --es baseUrl http://192.168.1.20:3000
    ```
@@ -116,16 +116,16 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties   # once
 
 Logs: `adb logcat -s VirviAR`.
 
-## Ring marker test
+## ARC test
 
-Print the test markers from `../ring-marker` (see its README: print at actual size, check the 100 mm bar, matte filament). There are three sizes: `RING120`, `RING140` and `RING170`. The Developer panel’s readings cover only these IDs. (The app itself reads any ring of format version 0 and, once a space is open, only that space’s rings.) An ID counts only after 3 frames in a row agree.
+Print the test ARCs from `../ring-marker` (see its README: print at actual size, check the 100 mm bar, matte filament). There are three sizes: `RING120`, `RING140` and `RING170`. The Developer panel’s readings cover only these IDs. (The app itself reads any ARC of format version 0 and, once a space is open, only that space’s ARCs.) An ID counts only after 3 frames in a row agree.
 
-In a debug build, the Developer panel (menu → **Developer**) shows, per marker:
+In a debug build, the Developer panel (menu → **Developer**) shows, per ARC:
 
 - **found at / lost at:** the distance when tracking started and stopped. **Reset readings** clears them.
-- **tracking at:** the current distance from the camera, from the ring's size in the image (`fx × radius / semi-major axis`).
-- **at (x, y, z) m ±N cm over K:** the marker's world position, averaged over its last 15 camera frames, and the spread (the largest distance of one frame's position from that mean). It clears when the marker is lost.
-- **wall faces …° / no wall:** the heading of the scanned wall within 10 cm of the marker, or "no wall".
+- **tracking at:** the current distance from the camera, from the ARC's size in the image (`fx × radius / semi-major axis`).
+- **at (x, y, z) m ±N cm over K:** the ARC's world position, averaged over its last 15 camera frames, and the spread (the largest distance of one frame's position from that mean). It clears when the ARC is lost.
+- **wall faces …° / no wall:** the heading of the scanned wall within 10 cm of the ARC, or "no wall".
 
 Logs worth checking (`adb logcat -s VirviAR`): the camera's raw and scaled intrinsics, the lens pose and its reference, the room scan's wall count, tracking jumps.
 
@@ -137,11 +137,11 @@ Logs worth checking (`adb logcat -s VirviAR`): the camera's raw and scaled intri
 
 ### Range test
 
-For each size, walk back from the marker head-on, at 30° and at 45° off its face. Record "found at" (walking in) and "lost at" (walking out). The targets are found from 0.6–1.8 m, up to 45° off the face, with heading within 1° and position within 2 cm at 1.8 m.
+For each size, walk back from the ARC head-on, at 30° and at 45° off its face. Record "found at" (walking in) and "lost at" (walking out). The targets are found from 0.6–1.8 m, up to 45° off the face, with heading within 1° and position within 2 cm at 1.8 m.
 
 The table is filled in from the range test on the headset; it hasn't been run yet.
 
-| Marker | Angle | Found at | Lost at |
+| ARC | Angle | Found at | Lost at |
 |---|---|---|---|
 | `RING120` (120 mm) | 0° | — | — |
 | `RING120` (120 mm) | 30° | — | — |
@@ -162,22 +162,22 @@ Not yet run (no headset was connected when visitor mode was built). Record the r
 Prepare a published test space with plan 1's dashboard, or with a direct API call on a local or staging server (never the shared dev database `virvi`): one floor, `RING140`, and an alignment set with a temporary admin call or by hand-entering a pose that matches the room. Tape `RING140` at eye level on a scanned wall. For a local server, start the app with `--es baseUrl http://<mac's address>:<port>` (debug build).
 
 - [ ] Opening the app shows only the hint card.
-- [ ] Far away (about 3 m), the hint changes to "Step closer to the ring". (The unreadable band is narrow, so it may read the ring instead: then "Opening …" and "Step closer to the ring" while it's beyond 1.5 m.)
-- [ ] At about 1 m, "Hold still…", then the scene fades in with the outline flashing on the ring.
+- [ ] Far away (about 3 m), the hint changes to "Step closer to the ARC". (The unreadable band is narrow, so it may read the ARC instead: then "Opening …" and "Step closer to the ARC" while it's beyond 1.5 m.)
+- [ ] At about 1 m, "Hold still…", then the scene fades in with the outline flashing on the ARC.
 - [ ] Live depth hides the scene behind a hand and furniture.
-- [ ] Taking the headset off and on hides the scene; looking at the ring shows it again.
-- [ ] Menu → **Look at the ring again** clears it and returns to the hint.
-- [ ] Open a space from a link. A verified link from the browser needs plan 3's `assetlinks.json` with the release key's fingerprint, so until then use the intent: `adb shell am start -a android.intent.action.VIEW -d "https://virvi.io/s/<code>"`. The app opens on the space page: the space's name, where to find it, "Look at the ring when you get there" and **Close**. Looking at that space's ring then shows the scene. Sent while the app is already open, it replaces the current space.
+- [ ] Taking the headset off and on hides the scene; looking at the ARC shows it again.
+- [ ] Menu → **Look at the ARC again** clears it and returns to the hint.
+- [ ] Open a space from a link. A verified link from the browser needs plan 3's `assetlinks.json` with the release key's fingerprint, so until then use the intent: `adb shell am start -a android.intent.action.VIEW -d "https://virvi.io/s/<code>"`. The app opens on the space page: the space's name, where to find it, "Look at the ARC when you get there" and **Close**. Looking at that space's ARC then shows the scene. Sent while the app is already open, it replaces the current space.
 - [ ] Menu → **Spaces** lists the spaces opened or visited, newest first; picking one opens its page.
-- [ ] Analytics: after a visit (scene shown, walk around for 30 s, take the headset off), the space's analytics on plan 1's dashboard show one visit on platform `ar-quest` with a path of positions in scene coordinates. A tracking-jump re-show within the visit does not count a second visit; looking at the ring again afterwards, or putting the headset back on, does. Nothing identifying the device is sent.
+- [ ] Analytics: after a visit (scene shown, walk around for 30 s, take the headset off), the space's analytics on plan 1's dashboard show one visit on platform `ar-quest` with a path of positions in scene coordinates. A tracking-jump re-show within the visit does not count a second visit; looking at the ARC again afterwards, or putting the headset back on, does. Nothing identifying the device is sent.
 
 Also worth noting while there:
 
 - Whether the left controller's menu button opens the menu (Horizon OS may keep it for itself; the "⋯" button works while the scene is shown).
 - Whether images and videos visibly fade, or snap (the fade sets material alpha at runtime; if the unlit shader ignores it they snap at the end of the fade).
 - Whether opening the Quest's system menu pauses the app (it would end the visit, as taking the headset off does). If it does, the headset-off trigger moves from `onPause` to an XR session state or the proximity sensor.
-- A ring on a wall the room scan missed never locks: heading comes from the wall. After 3 s of holding still the card says "Can't see the wall behind this ring…".
-- A ring 5 cm from an inside corner, seen at about 30°, places the scene square to its own wall, not turned 90°.
+- An ARC on a wall the room scan missed never locks: heading comes from the wall. After 3 s of holding still the card says "Can't see the wall behind this ARC…".
+- An ARC 5 cm from an inside corner, seen at about 30°, places the scene square to its own wall, not turned 90°.
 - First launch from a link: the permission dialog doesn't drop the space; its page is still up after allowing.
 
 ## Builder checks
@@ -243,33 +243,33 @@ Do these on the Quest 3 with a debug build when convenient. Each says what resul
 3. **Wrist pose.** Log `scene.getControllerPoseAtTime(true, time)` with hands only and with a controller, and `JointType.LEFT_HAND_WRIST` after `setBodyTrackingJointSet(JointSet.DEFAULT)`. Is `pose` valid and tracked, and does it follow the wrist? If yes, "⋯" can move to the left wrist.
 4. **Mesh without a grabbable.** Does a plain entity with a mesh (no `Grabbable`) produce `Select` events with hit points, or does it need a collider component?
 
-### Setting up rings (builders)
+### Setting up ARCs (builders)
 
-- Tape rings flat on a wall the headset has scanned. A sign standing in front of a wall, turned 25–60° from it, can line up wrong.
+- Tape ARCs flat on a wall the headset has scanned. A sign standing in front of a wall, turned 25–60° from it, can line up wrong.
 - The printed-size check covers prints from 75% to 125% of the recorded size.
-- Record a floor's other rings within 4 m of the ring the scene was last anchored from; further away, align from that ring instead.
+- Record a floor's other ARCs within 4 m of the ARC the scene was last anchored from; further away, align from that ARC instead.
 
 ### Owner checks (alignment, plan 3 Task 5)
 
-Not yet run (no headset was connected). Reach the align panel from the menu's **Builder** (see the full run below). Use a test space on a local or staging server, with a floor whose ring has no saved pose.
+Not yet run (no headset was connected). Reach the align panel from the menu's **Builder** (see the full run below). Use a test space on a local or staging server, with a floor whose ARC has no saved pose.
 
-- [ ] Look at the ring from under 1.5 m: the scene appears with the ring at the middle of its north wall, facing into the scene.
-- [ ] Left stick moves the scene, right stick turns it, about the ring (the ring stays put as the scene turns); with the grip held, steps are 1 cm and 0.5°. (Without the grip they are 5 cm and 2.5°: confirm that feels right.)
-- [ ] **Save alignment** from over 1.5 m is refused with "Step closer to the ring to save"; from under it saves.
-- [ ] Reload as a visitor and look at the same ring: the scene lines up with where it was aligned.
-- [ ] A floor whose recorded height doesn't match the ring's height above the real floor shows "Floor height doesn't match <floor> (<h> m): check the floor".
-- [ ] A ring printed at 92% (or any size off by over 3%) says "This ring looks about 8% smaller than its recorded size: was it printed at 100%?"; one at 100% says nothing. Check the depth range against a tape measure from the headset to the wall.
+- [ ] Look at the ARC from under 1.5 m: the scene appears with the ARC at the middle of its north wall, facing into the scene.
+- [ ] Left stick moves the scene, right stick turns it, about the ARC (the ARC stays put as the scene turns); with the grip held, steps are 1 cm and 0.5°. (Without the grip they are 5 cm and 2.5°: confirm that feels right.)
+- [ ] **Save alignment** from over 1.5 m is refused with "Step closer to the ARC to save"; from under it saves.
+- [ ] Reload as a visitor and look at the same ARC: the scene lines up with where it was aligned.
+- [ ] A floor whose recorded height doesn't match the ARC's height above the real floor shows "Floor height doesn't match <floor> (<h> m): check the floor".
+- [ ] An ARC printed at 92% (or any size off by over 3%) says "This ARC looks about 8% smaller than its recorded size: was it printed at 100%?"; one at 100% says nothing. Check the depth range against a tape measure from the headset to the wall.
 
-### Owner checks (record, check and re-record rings, plan 3 Task 6)
+### Owner checks (record, check and re-record ARCs, plan 3 Task 6)
 
-Not yet run (no headset was connected). The ring panel shows while building whenever a ring of the floor is steady in view. Use a floor that has been aligned from its first ring, with a second printed ring on the same floor that has no saved pose.
+Not yet run (no headset was connected). The ARC panel shows while building whenever an ARC of the floor is steady in view. Use a floor that has been aligned from its first ARC, with a second printed ARC on the same floor that has no saved pose.
 
-- [ ] Look at the second ring from under 4 m of the first: **Record this ring** shows. Press it: "Ring saved".
-- [ ] Look at the second ring again: "This ring is <d> cm and <a>° from where it should be" reads a few cm and under 1°, and no **Re-record this ring** button shows.
-- [ ] Look at the second ring from the first: the check line reads the same few cm.
-- [ ] Move the printed ring 6 cm (or turn it over 1°): the line shows as a warning with **Re-record this ring**. Press it: only that ring's pose changes.
-- [ ] A ring with no pose more than 4 m (straight line) from the last anchor shows "Too far from the last ring to record accurately: walk back, or align from this ring instead" and no Record button.
-- [ ] A floor with a single ring shows "Add a second ring on this floor so visitors stay lined up".
+- [ ] Look at the second ARC from under 4 m of the first: **Record this ARC** shows. Press it: "ARC saved".
+- [ ] Look at the second ARC again: "This ARC is <d> cm and <a>° from where it should be" reads a few cm and under 1°, and no **Re-record this ARC** button shows.
+- [ ] Look at the second ARC from the first: the check line reads the same few cm.
+- [ ] Move the printed ARC 6 cm (or turn it over 1°): the line shows as a warning with **Re-record this ARC**. Press it: only that ARC's pose changes.
+- [ ] An ARC with no pose more than 4 m (straight line) from the last anchor shows "Too far from the last ARC to record accurately: walk back, or align from this ARC instead" and no Record button.
+- [ ] A floor with a single ARC shows "Add a second ARC on this floor so visitors stay lined up".
 
 ### Owner checks (builder HUD, picking and the transform bar, plan 3 Task 7)
 
@@ -309,44 +309,44 @@ Not yet run (no headset was connected). `AssetsTab`, `placeAhead`, `BuilderApi.p
 - [ ] **Scheduled showings (LIV-87).** Put a screen in Schedule mode on virvi.io with a showing a few minutes ahead and a holding image. The holding image shows until the start, then the video plays from the start; walk in mid-show (or take the headset off and on) and it joins at the same moment as Decentraland, within a couple of seconds. After the show the holding image comes back.
 - [ ] **Stream tab (LIV-53, LIV-54).** On a personal headset, the HUD has a Stream tab listing the live preset's video screens. Choose stream lists the scene's streams; picking one sets the screen's stream (check Decentraland plays it). Turn live on / off switches it. Change lists the library's images; picking one sets the off image shown when nothing plays, and No off image clears it. A shared headset has no Stream tab.
 - [ ] **Clear copies (LIV-12).** Pick an item whose object has several copies: the bar offers Clear all N copies. It asks first; Remove takes every copy away (here and in Decentraland), the object stays in the dashboard's library, and the HUD says how many went. With unsaved changes there's no Clear.
-- [ ] **In a turned room.** After aligning to a ring so the scene is turned (root yaw not 0), a placed item still lands 1 m in front of you and faces you.
+- [ ] **In a turned room.** After aligning to an ARC so the scene is turned (root yaw not 0), a placed item still lands 1 m in front of you and faces you.
 - [ ] **Shared.** With the switch on Just this place, Place still adds the item to the shared scene (it shows at Decentraland and at other places); the switch applies to its later edits.
 - [ ] **Failure.** Offline, Place leaves nothing behind (no empty element in the scene's Layout).
 
 ### Owner checks (builder mode end to end, plan 3 Task 10)
 
-Not yet run: no headset was connected, so nothing was installed. The wiring is unit tested (`BuilderControllerTest`: entering with a ring in view and from the pick list, Align for an unaligned floor, a shared headset off over 2 minutes, a personal one off for a minute, Done, a revoked headset, Assets place and pick); what follows is the whole run on the headset, with a debug build against a test space, as plan 3 Task 10 Step 2 lays out. Tick each step and note anything that went wrong.
+Not yet run: no headset was connected, so nothing was installed. The wiring is unit tested (`BuilderControllerTest`: entering with an ARC in view and from the pick list, Align for an unaligned floor, a shared headset off over 2 minutes, a personal one off for a minute, Done, a revoked headset, Assets place and pick); what follows is the whole run on the headset, with a debug build against a test space, as plan 3 Task 10 Step 2 lays out. Tick each step and note anything that went wrong.
 
-Before you start: a scene you can edit with one AR space (a floor with two printed rings, the first with no saved pose), the same scene open in Decentraland, and the website signed in on your phone.
+Before you start: a scene you can edit with one AR space (a floor with two printed ARCs, the first with no saved pose), the same scene open in Decentraland, and the website signed in on your phone.
 
 1. **Pair as personal.**
    - [ ] Open the menu, tap **Builder**: the pairing panel shows a code (ABC-123 style) and a QR code.
    - [ ] Scan the QR (or type the code on virvi.io), choose **This is my headset** and approve: the panel closes by itself within a few seconds.
-   - [ ] With the first ring in view, the space opens straight away; with no ring in view, a list of your spaces shows (pick yours). The banner "Builder: visitors don't see your changes until you save" isn't up yet; the builder panel says "Look at a ring of <space>".
+   - [ ] With the first ARC in view, the space opens straight away; with no ARC in view, a list of your spaces shows (pick yours). The banner "Builder: visitors don't see your changes until you save" isn't up yet; the builder panel says "Look at an ARC of <space>".
    - [ ] **Cancel** on the pairing panel (try it once before approving) closes it; approving that code on the website afterwards pairs nothing (the headset stopped asking).
 2. **Align a floor.**
-   - [ ] Look at the first ring from under 1.5 m: the Align panel opens and the scene appears with the ring at its default spot.
+   - [ ] Look at the first ARC from under 1.5 m: the Align panel opens and the scene appears with the ARC at its default spot.
    - [ ] Nudge with the sticks (left moves, right turns; hold a grip for fine steps). Holding a stick keeps stepping: about 50 cm/s, 25°/s, or a fifth of that with the grip. Say if that's too fast or slow.
-   - [ ] If the ring was printed off size, the size warning shows. **Save alignment**, then **Done**: the HUD opens to your left, showing the banner, and items can be picked.
-3. **Record a second ring.**
-   - [ ] Walk to the second ring (within 4 m of the first) and look at it: the ring panel (to the right) shows **Record this ring**. Press it: "Ring saved", then the check line reads a few cm and under 1°.
+   - [ ] If the ARC was printed off size, the size warning shows. **Save alignment**, then **Done**: the HUD opens to your left, showing the banner, and items can be picked.
+3. **Record a second ARC.**
+   - [ ] Walk to the second ARC (within 4 m of the first) and look at it: the ARC panel (to the right) shows **Record this ARC**. Press it: "ARC saved", then the check line reads a few cm and under 1°.
 4. **Move two images.**
    - [ ] Pick an image, set **Everywhere**, move it; pick another, set **Just this place**, move it. Decentraland shows the first moving live (drafts), not the second.
 5. **Headset off for 1 minute.**
-   - [ ] Take the headset off for about a minute and put it back on: the scene is hidden and the builder panel asks to look at a ring. Look at a ring: the scene comes back with both moves still unsaved (the Layout rows marked •, **Save** enabled).
+   - [ ] Take the headset off for about a minute and put it back on: the scene is hidden and the builder panel asks to look at an ARC. Look at an ARC: the scene comes back with both moves still unsaved (the Layout rows marked •, **Save** enabled).
 6. **Save.**
    - [ ] **Save**: Decentraland shows the Everywhere move where you left it, and not the Just this place one. The Layout row of the second image gets the dot.
    - [ ] **Done**: the HUD closes and the space stays shown, as a visitor sees it (the first image moved, the second moved here only).
 7. **Check the AR feed as a visitor.**
-   - [ ] Menu → **Look at the ring again**, then look at a ring: the space shows with both saved moves.
+   - [ ] Menu → **Look at the ARC again**, then look at an ARC: the space shows with both saved moves.
 8. **Pair a second time as shared.**
    - [ ] Menu → **Sign out** (the menu loses **Sign out** and the switch). **Builder** again: a new code. Approve it as **Shared headset**.
-   - [ ] Build, then take the headset off for 3 minutes. Put it back on: it's at the hint card ("Look for a ring like this…") with nothing loaded, the menu has no **Sign out**, and **Builder** asks for a new code. The website no longer lists the shared headset.
+   - [ ] Build, then take the headset off for 3 minutes. Put it back on: it's at the hint card ("Look for an ARC like this…") with nothing loaded, the menu has no **Sign out**, and **Builder** asks for a new code. The website no longer lists the shared headset.
    - [ ] While shared, **Done**, **Cancel** on the pick list, and taking the headset off at the pick list each sign out (the next **Builder** asks for a new code). Force-stop and reopen the app while shared: it starts signed out.
 9. **Revoke the personal headset.**
    - [ ] Pair as personal again and start building. On the website, revoke this headset. Move an item (its live draft is the first call to fail) or **Save**: builder mode closes to the hint card with nothing loaded, and the pairing panel asks to pair again.
 10. **The switch.**
-    - [ ] With **Keep the scene loaded between visitors** on, a visitor's scene hides when the headset comes off and comes back after looking at a ring without loading again; off (the default), the next person starts at the hint card.
+    - [ ] With **Keep the scene loaded between visitors** on, a visitor's scene hides when the headset comes off and comes back after looking at an ARC without loading again; off (the default), the next person starts at the hint card.
 
 Also worth a look on the way: the HUD and the Align panel can be grabbed and moved; leaving builder mode with **Done** doesn't flash the scene (the renderer rebuilds its items when picking is turned off).
 

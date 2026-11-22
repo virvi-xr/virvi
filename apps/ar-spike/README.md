@@ -94,7 +94,7 @@ See `docs/visionos-controls.png` for the window in the simulator.
 
 ## Marker detection-range test
 
-Checks how far away each device can spot a registration marker. It was run before Virvi’s own ring markers (`apps/ring-marker`) were built; the Quest app uses those, and this spike still tracks these QR-code test markers. Two test markers, both laid out as the AR spaces design describes (QR code, 2-module quiet zone, hashed border ring; the ring's outer square is the tracked image):
+Checks how far away each device can spot a registration marker. It was run before Virvi’s own ARCs (Augmented Reality Codes, `apps/ring-marker`) were built; the Quest app uses those, and this spike still tracks these QR-code test markers. Two test markers, both laid out as the AR spaces design describes (QR code, 2-module quiet zone, hashed border ring; the ring's outer square is the tracked image):
 
 | Marker | Tracked square | Plaque |
 |---|---|---|

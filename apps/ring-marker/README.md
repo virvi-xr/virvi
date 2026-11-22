@@ -12,7 +12,7 @@ At the 140 mm reference size (every length scales by `diameter / 140`):
 
 The detector reads an ARC either way round: dark marks on a light plaque, or light marks on a dark plaque (same layout, same ID).
 
-A ring the detector can see but not read is reported as unreadable (the apps show "step closer"); one lying anywhere inside a read ARC's finder ring is now dropped, so there are fewer stray "step closer" hints.
+An ARC the detector can see but not read is reported as unreadable (the apps show "step closer"); one lying anywhere inside a read ARC's finder ring is now dropped, so there are fewer stray "step closer" hints.
 
 The ID appears in URLs as `virvi.io/s/<code>`, the 32-bit ID in 7 characters of Crockford base32. ARCs are never more than 256 mm across.
 
@@ -26,7 +26,7 @@ Code: `ringmarker/codec.py` (the code), `layout.py` (geometry), `render.py`, `pr
 | `RING140` | 140 mm | `0x2E3D4C5B` |
 | `RING170` | 170 mm | `0x3F4E5D6C` |
 
-The Quest app’s Developer panel shows readings for these IDs. The app itself reads any ring (once a space is open, only that space’s rings), and only once 3 frames in a row agree.
+The Quest app’s Developer panel shows readings for these IDs. The app itself reads any ARC (once a space is open, only that space’s ARCs), and only once 3 frames in a row agree.
 
 ## Regenerate the files
 

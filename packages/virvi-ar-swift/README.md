@@ -8,9 +8,9 @@ What's in `Sources/VirviARKit`:
 
 - `Scene`: the Virvi-to-RealityKit mapping, the scene plan and its diff, scheduled showings, the RealityKit scene renderer, and floor and collider helpers.
 - `Api`: the HTTP transport and the AR Spaces API client.
-- `Ring`: the ring detector and the ring maths.
-- `Space`: lining a space up with the room: the ARKit boundary (camera intrinsics, camera-to-world, wall planes; iOS only) and placing the scene from a ring's saved pose (`rootFromMarker`, `realityKitRootTransform`).
-- `Visitor`: the visitor flow (find the ring, line the scene up, hints).
+- `Ring`: the ARC (Augmented Reality Code) detector and the ARC maths.
+- `Space`: lining a space up with the room: the ARKit boundary (camera intrinsics, camera-to-world, wall planes; iOS only) and placing the scene from an ARC's saved pose (`rootFromMarker`, `realityKitRootTransform`).
+- `Visitor`: the visitor flow (find the ARC, line the scene up, hints).
 - `Config.swift`: shared settings.
 
 ## Test
@@ -30,4 +30,4 @@ The package also has to build for visionOS, since the Vision Pro app uses it:
 xcodebuild -scheme VirviARKit -destination 'generic/platform=visionOS Simulator' build
 ```
 
-The ring tests need the detector's test images: `cd apps/ring-marker && python3 -m ringmarker.testset testset`.
+The ARC tests need the detector's test images: `cd apps/ring-marker && python3 -m ringmarker.testset testset`.

@@ -58,7 +58,7 @@ From Meta's published list, https://developers.meta.com/horizon/distribute/publi
 
 **Functional**
 - [ ] R Functional.1 Installs and runs without crashes or freezes, including leaving a space, taking the headset off and on, and builder mode.
-- [ ] R Functional.3 Never stuck: Close on the space page, Look at the ring again, and Done in builder mode all work.
+- [ ] R Functional.3 Never stuck: Close on the space page, Look at the ARC again, and Done in builder mode all work.
 - [ ] R Functional.4 No lost user data: unsaved builder drafts survive a short break (10 minutes).
 - [ ] R Functional.5 Positional tracking responds.
 - [ ] R Functional.12 Works for several users on the headset.
@@ -67,11 +67,11 @@ From Meta's published list, https://developers.meta.com/horizon/distribute/publi
 - [ ] r Functional.10 Avoid headlocked UI (hint card and menus are world or wrist placed).
 
 **Security and permissions**
-- [ ] R Security.2 Minimum permissions. Requested: `INTERNET`, `CAMERA` and `HEADSET_CAMERA` (read the passthrough camera to find rings), `USE_SCENE` and `USE_ANCHOR_API` (room geometry for occlusion and snapping), `HAND_TRACKING`, `RENDER_MODEL` (controller models). Confirm each is used; remove any that isn't. Rationale wording is in `res/values/strings.xml`.
+- [ ] R Security.2 Minimum permissions. Requested: `INTERNET`, `CAMERA` and `HEADSET_CAMERA` (read the passthrough camera to find ARCs), `USE_SCENE` and `USE_ANCHOR_API` (room geometry for occlusion and snapping), `HAND_TRACKING`, `RENDER_MODEL` (controller models). Confirm each is used; remove any that isn't. Rationale wording is in `res/values/strings.xml`.
 - [x] r Security.1 Platform entitlement check within 10 s of launch: decided not to add it. The app is free and the check is only recommended.
 
 **Performance**
-- [ ] R Performance.1 Runs at the declared refresh rate with the scene, occlusion and ring detection on.
+- [ ] R Performance.1 Runs at the declared refresh rate with the scene, occlusion and ARC detection on.
 - [ ] R Performance.3 Head-tracked graphics within 4 s of launch.
 - [ ] r Performance.4 Render scaling 85% or higher.
 
@@ -99,15 +99,15 @@ From Meta's published list, https://developers.meta.com/horizon/distribute/publi
 
 **Name:** Virvi AR
 
-**Short description:** See a Virvi scene in a real room. Look at a ring and the space lines up around you.
+**Short description:** See a Virvi scene in a real room. Look at an ARC and the space lines up around you.
 
 **Long description:**
 
 Virvi AR shows a Virvi scene life-size in your real surroundings, in passthrough on Meta Quest 3 and 3S.
 
-Walk into a place that has a space, look at its Virvi ring at eye level near the entrance, and the scene appears lined up with the room. Virtual things hide behind real walls and furniture. There's nothing to sign in to and nothing to set up.
+Walk into a place that has a space, look at its ARC (Augmented Reality Code) at eye level near the entrance, and the scene appears lined up with the room. Virtual things hide behind real walls and furniture. There's nothing to sign in to and nothing to set up.
 
-If something moves your headset's tracking, the scene fades out rather than show up in the wrong place, and the app asks you to look at a ring again.
+If something moves your headset's tracking, the scene fades out rather than show up in the wrong place, and the app asks you to look at an ARC again.
 
 For owners and editors: sign in once by approving a pairing code on virvi.io, then move things around and place items from your asset library while standing in the room. Your changes are the same ones you'd make in Decentraland, so they show there too.
 
@@ -133,13 +133,13 @@ Needs a Meta Quest 3 or 3S and an internet connection.
 Based on `docs/superpowers/specs/2026-10-22-ar-builder-and-visitor-modes-design.md`, `2026-10-22-ring-marker-design.md` and the code (`api/ArApi.kt`, `builder/BuilderApi.kt`, `api/VisitAnalytics.kt`).
 
 - **Collected from every user:**
-  - Ring code, to look up the space (`GET /api/ar/markers/by-code/:code`).
+  - ARC code, to look up the space (`GET /api/ar/markers/by-code/:code`).
   - Space contents (`GET /api/ar/spaces/:id/feed`).
   - Anonymous visit events: arrive, leave and head position in scene coordinates, at most one every 5 s (`POST /api/ar/spaces/:id/analytics`). A fresh random id per visit, never stored. Not linked to the user, no token sent. Purpose: analytics for the space's owner.
   - A report, only if the visitor sends one from the menu (`POST /api/ar/spaces/:id/report`): the space, the chosen reason, the app name (`ar-quest`) and the time. Nothing that identifies the visitor is sent or stored (the network address only limits repeated reports and is not kept). Purpose: content moderation.
-- **Collected from builders only:** pairing (`/api/ar/pair...`, the headset model as the device name, and a SHA-256 hash of the device secret; the headset proves who it is with a secret kept in its encrypted storage, sent over HTTPS to the pairing, pass and spaces calls, and the server stores only a hash of it), edits to the scene, ring alignments, and draft previews.
+- **Collected from builders only:** pairing (`/api/ar/pair...`, the headset model as the device name, and a SHA-256 hash of the device secret; the headset proves who it is with a secret kept in its encrypted storage, sent over HTTPS to the pairing, pass and spaces calls, and the server stores only a hash of it), edits to the scene, ARC alignments, and draft previews.
 - **Not collected:** camera images, room scans or room geometry, microphone, location, contacts, name, email, Meta account id, advertising id.
-- **Camera and spatial data** are processed on the headset only: rings are found from the passthrough camera, and walls and surfaces are used for occlusion and snapping.
+- **Camera and spatial data** are processed on the headset only: ARCs are found from the passthrough camera, and walls and surfaces are used for occlusion and snapping.
 - **Media hosts:** Pictures, videos and 3D models in a space load from wherever its owner hosts them, which may be outside virvi.io; those hosts see the headset's network address like any website would. The app sends them no account, token or visit data.
 - **Shared with third parties:** no user data. The media hosts above get the headset's network address with each request, as any website does.
 - **Encrypted in transit:** yes (release builds have no cleartext).

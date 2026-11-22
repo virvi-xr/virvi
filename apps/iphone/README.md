@@ -1,8 +1,8 @@
 # Virvi AR for iPhone
 
-Visitor mode on iPhone (phase 1; iOS 18+, iPhone only, portrait): point the camera at a ring marker and the space appears,
-placed from the ring's saved pose. Built on the shared Swift package `packages/virvi-ar-swift` (module `VirviARKit`):
-the ring detector and maths, the visitor flow, the AR Spaces API and the RealityKit scene renderer. This app is the
+Visitor mode on iPhone (phase 1; iOS 18+, iPhone only, portrait): point the camera at an ARC (Augmented Reality Code) and the space appears,
+placed from the ARC's saved pose. Built on the shared Swift package `packages/virvi-ar-swift` (module `VirviARKit`):
+the ARC detector and maths, the visitor flow, the AR Spaces API and the RealityKit scene renderer. This app is the
 ARKit, RealityKit and SwiftUI glue around it. The design is `docs/superpowers/specs/2026-11-22-virvi-ar-iphone-design.md`.
 
 **Get the app:** it isn't in the App Store yet. For now, build it from source as described below. The public page is
@@ -29,8 +29,8 @@ open VirviAR.xcodeproj
 2. Pick your phone as the destination. Signing is automatic with team `P22YGT64VU`.
 3. Press Run.
 
-The scheme's **Run and Profile use the Release configuration**: the ring detector is about 60 times slower without
-optimisation (1.3 s a frame in Debug against 21 ms in Release), so a Debug build can't find rings in practice. Tests
+The scheme's **Run and Profile use the Release configuration**: the ARC detector is about 60 times slower without
+optimisation (1.3 s a frame in Debug against 21 ms in Release), so a Debug build can't find ARCs in practice. Tests
 still run in Debug. Don't switch Run to Debug unless you need a local server.
 
 Release builds talk to `https://virvi.io`. Debug builds take `-baseUrl <url>` as a launch argument (see
@@ -56,6 +56,6 @@ checked on a phone.
 - `App/VirviARApp.swift`: the app, link parsing (`spaceCode(fromLink:)`), and the screen.
 - `App/ArSessionView.swift`: the ARKit session and its delegate, the RealityKit scene view and its 400 ms fade.
 - `App/FramePipeline.swift`: the captured image's luma plane, kept in sensor orientation, scaled to 1280 wide and run
-  through the ring detector on a background queue, about 8 frames a second.
+  through the ARC detector on a background queue, about 8 frames a second.
 - `App/VisitorController.swift`: the visitor flow wired to the camera, the feed, the scene and the UI.
 - `App/HintCard.swift`, `VisitorMenu.swift`, `ReportSheet.swift`, `RingOutline.swift`: what the visitor sees.
