@@ -2649,6 +2649,10 @@ export const raffles = pgTable('raffles', {
   lastDrawnAt: timestamp('last_drawn_at', { withTimezone: true }),
   endedAt: timestamp('ended_at', { withTimezone: true }),
   nextAutoSnapshotAt: timestamp('next_auto_snapshot_at', { withTimezone: true }),
+  /** A draft opens by itself at this time (the raffle sweep); null when not scheduled. */
+  opensAt: timestamp('opens_at', { withTimezone: true }),
+  /** Why the scheduled opening didn't happen, for the host; cleared when they reschedule or open it. */
+  openError: text('open_error'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

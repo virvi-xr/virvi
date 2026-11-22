@@ -78,9 +78,38 @@ describe('raffle sweeps, retention and delete-my-data (LIV-55)', () => {
     const now = new Date()
     const r = await raffle({ autoSnapshotMinutes: 5, nextAutoSnapshotAt: new Date(now.getTime() + MIN) })
     const none = await raffle({ sceneId: (await createScene(host)).scene.id })
-    expect(await runRaffleSweep(now)).toEqual({ snapshots: 0, closed: 0 })
+    expect(await runRaffleSweep(now)).toEqual({ opened: 0, snapshots: 0, closed: 0 })
     expect(await snaps(r.id)).toHaveLength(0)
     expect(await snaps(none.id)).toHaveLength(0)
+  })
+
+  it('opens a due draft at its time; with another raffle running it stays a draft with the reason', async () => {
+    const now = new Date()
+    const due = await raffle({ status: 'draft', openedAt: null, opensAt: new Date(now.getTime() - 1000) })
+    const later = await raffle({ sceneId: (await createScene(host)).scene.id, status: 'draft', openedAt: null, opensAt: new Date(now.getTime() + MIN) })
+    expect(await runRaffleSweep(now)).toEqual({ opened: 1, snapshots: 0, closed: 0 })
+    const r = await row(due.id)
+    expect(r.status).toBe('open')
+    expect(r.openedAt!.getTime()).toBe(now.getTime())
+    expect(r.opensAt).toBeNull()
+    expect((await row(later.id)).status).toBe('draft')
+
+    const s2 = (await createScene(host)).scene.id
+    await raffle({ sceneId: s2, status: 'open' })
+    const blocked = await raffle({ sceneId: s2, status: 'draft', openedAt: null, opensAt: new Date(now.getTime() - 1000) })
+    expect(await runRaffleSweep(now)).toMatchObject({ opened: 0 })
+    const b = await row(blocked.id)
+    expect(b.status).toBe('draft')
+    expect(b.opensAt).toBeNull()
+    expect(b.openError).toBe('This scene already has a raffle running. Close it first.')
+  })
+
+  it('two sweeps at once open a due draft once', async () => {
+    const now = new Date()
+    const r = await raffle({ status: 'draft', openedAt: null, opensAt: new Date(now.getTime() - 1000) })
+    const [a, b] = await Promise.all([runRaffleSweep(now), runRaffleSweep(now)])
+    expect(a.opened + b.opened).toBe(1)
+    expect((await row(r.id)).status).toBe('open')
   })
 
   it('closes 7 days after the last draw, and 30 days after opening', async () => {
@@ -91,7 +120,7 @@ describe('raffle sweeps, retention and delete-my-data (LIV-55)', () => {
     const old = await raffle({ sceneId: s2, openedAt: new Date(now.getTime() - 30 * DAY) })
     const fresh = await raffle({ sceneId: s3, status: 'drawn', openedAt: new Date(now.getTime() - 20 * DAY), lastDrawnAt: new Date(now.getTime() - 6 * DAY) })
     const res = await runRaffleSweep(now)
-    expect(res).toEqual({ snapshots: 0, closed: 2 })
+    expect(res).toEqual({ opened: 0, snapshots: 0, closed: 2 })
     for (const id of [drawn.id, old.id]) {
       const r = await row(id)
       expect(r.status).toBe('closed')
@@ -140,7 +169,7 @@ describe('raffle sweeps, retention and delete-my-data (LIV-55)', () => {
     failSnapshotFor.add(bad.id)
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
-      expect(await runRaffleSweep(now)).toEqual({ snapshots: 1, closed: 0 })
+      expect(await runRaffleSweep(now)).toEqual({ opened: 0, snapshots: 1, closed: 0 })
       expect(await snaps(good.id)).toHaveLength(1)
       expect(logged.mock.calls).toEqual([['[raffles] auto snapshot failed:', bad.id, 'snapshot exploded']])
     } finally {

@@ -78,6 +78,15 @@ export function parseRaffleInput(body: Record<string, unknown>, current?: Raffle
   return { name: name.trim(), prize: prize.trim(), rules, winnersCount, mode: mode as RaffleMode, minPresentSeconds, autoSnapshotMinutes: auto as number | null }
 }
 
+/** A scheduled opening time from a body: an ISO time in the future, or null to clear. */
+function parseOpensAt(value: unknown, now: Date): Date | null {
+  if (value === null) return null
+  const at = typeof value === 'string' ? new Date(value) : null
+  if (!at || Number.isNaN(at.getTime())) throw new RaffleError(400, 'bad_opens_at', 'Give the opening time as a date and time, or leave it empty.')
+  if (at.getTime() <= now.getTime()) throw new RaffleError(400, 'opens_at_past', 'Pick a time in the future.')
+  return at
+}
+
 /** What the host sees of a raffle. */
 export function hostRaffle(row: RaffleRow, entryCount: number) {
   return {
@@ -97,6 +106,8 @@ export function hostRaffle(row: RaffleRow, entryCount: number) {
     lastDrawnAt: row.lastDrawnAt,
     endedAt: row.endedAt,
     nextAutoSnapshotAt: row.nextAutoSnapshotAt,
+    opensAt: row.opensAt,
+    openError: row.openError,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -153,8 +164,9 @@ export async function listRaffles(sceneId: string) {
 
 export async function createRaffle(sceneId: string, userId: string, body: Record<string, unknown>, now = new Date()) {
   const input = parseRaffleInput(body)
+  const opensAt = has(body, 'opensAt') ? parseOpensAt(body.opensAt, now) : null
   if (body.acceptHostTerms !== true) throw new RaffleError(400, 'host_terms_required', 'Accept the host terms to run a raffle.')
-  const [row] = await db.insert(raffles).values({ sceneId, createdBy: userId, ...input, hostTermsAcceptedAt: now, createdAt: now, updatedAt: now }).returning()
+  const [row] = await db.insert(raffles).values({ sceneId, createdBy: userId, ...input, opensAt, hostTermsAcceptedAt: now, createdAt: now, updatedAt: now }).returning()
   return hostRaffle(row, 0)
 }
 
@@ -165,12 +177,18 @@ const isUniqueViolation = (err: unknown) =>
 
 export async function updateRaffle(row: RaffleRow, body: Record<string, unknown>, now = new Date()) {
   if (row.status !== 'draft' && row.status !== 'open') throw badStatus(row, 'edited')
+  if (has(body, 'opensAt') && row.status !== 'draft') throw new RaffleError(400, 'not_draft', "Only a raffle that hasn't opened can be scheduled.")
   const input = parseRaffleInput(body, row)
+  const opensAt = has(body, 'opensAt') ? parseOpensAt(body.opensAt, now) : undefined
   if (input.mode !== row.mode) {
     const [snap] = await db.select({ id: raffleSnapshots.id }).from(raffleSnapshots).where(eq(raffleSnapshots.raffleId, row.id)).limit(1)
     if (snap) throw new RaffleError(409, 'mode_locked', "The draw mode can't change after a snapshot.")
   }
   const set: Partial<typeof raffles.$inferInsert> = { ...input, updatedAt: now }
+  if (opensAt !== undefined) {
+    set.opensAt = opensAt
+    set.openError = null
+  }
   if (row.status === 'open' && input.autoSnapshotMinutes !== row.autoSnapshotMinutes) set.nextAutoSnapshotAt = nextAuto(input.autoSnapshotMinutes, now)
   const [updated] = await db.update(raffles).set(set).where(and(eq(raffles.id, row.id), inArray(raffles.status, ['draft', 'open']))).returning()
   if (!updated) throw badStatus(row, 'edited')
@@ -183,7 +201,7 @@ export async function openRaffle(row: RaffleRow, now = new Date()) {
   let updated: RaffleRow | undefined
   try {
     ;[updated] = await db.update(raffles)
-      .set({ status: 'open', openedAt: now, nextAutoSnapshotAt: nextAuto(row.autoSnapshotMinutes, now), updatedAt: now })
+      .set({ status: 'open', openedAt: now, nextAutoSnapshotAt: nextAuto(row.autoSnapshotMinutes, now), opensAt: null, openError: null, updatedAt: now })
       .where(and(eq(raffles.id, row.id), eq(raffles.status, 'draft'))).returning()
   } catch (err) {
     if (isUniqueViolation(err)) throw new RaffleError(409, 'raffle_already_active', 'This scene already has a raffle running. Close it first.')

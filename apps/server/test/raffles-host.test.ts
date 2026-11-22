@@ -460,3 +460,69 @@ describe('raffle host API (LIV-55)', () => {
     expect((await call('GET', '/api/scenes/not-a-uuid/raffles')).statusCode).toBe(404)
   })
 })
+
+describe('scheduled opening (opensAt)', () => {
+  let app: Awaited<ReturnType<typeof testApp>>
+  let host: TestUser
+  let sceneId: string
+  beforeEach(async () => {
+    await resetDb()
+    initBus({ publish: () => {}, subscribe: () => {}, unsubscribe: () => {} })
+    app = await testApp()
+    host = await createUser({ wallet: randomWallet() })
+    sceneId = (await createScene(host)).scene.id
+  })
+  afterEach(async () => {
+    initBus(null as any)
+    await app.close()
+  })
+  const call = (method: string, url: string, payload?: unknown) => app.inject({ method: method as any, url, headers: as(host), payload: payload as any })
+  const soon = () => new Date(Date.now() + 3_600_000).toISOString()
+  const make = async (extra: Record<string, unknown> = {}) => {
+    const res = await call('POST', `/api/scenes/${sceneId}/raffles`, { ...VALID, ...extra })
+    expect(res.statusCode, res.body).toBe(201)
+    return res.json().raffle
+  }
+
+  it('create stores opensAt; PATCH sets and clears it, clearing the open error', async () => {
+    const at = soon()
+    const r = await make({ opensAt: at })
+    expect(r.opensAt).toBe(at)
+    expect(r.openError).toBeNull()
+    await db.update(raffles).set({ openError: 'old' }).where(eq(raffles.id, r.id))
+    const at2 = new Date(Date.now() + 7_200_000).toISOString()
+    const set = await call('PATCH', `/api/raffles/${r.id}`, { opensAt: at2 })
+    expect(set.statusCode, set.body).toBe(200)
+    expect(set.json().raffle.opensAt).toBe(at2)
+    expect(set.json().raffle.openError).toBeNull()
+    const cleared = await call('PATCH', `/api/raffles/${r.id}`, { opensAt: null })
+    expect(cleared.json().raffle.opensAt).toBeNull()
+    const plain = await call('PATCH', `/api/raffles/${r.id}`, { name: 'Renamed' })
+    expect(plain.json().raffle.opensAt).toBeNull()
+  })
+
+  it('a past or invalid time is refused', async () => {
+    const res = await call('POST', `/api/scenes/${sceneId}/raffles`, { ...VALID, opensAt: new Date(Date.now() - 60_000).toISOString() })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().code ?? res.json().error).toBe('opens_at_past')
+    expect(res.body).toContain('Pick a time in the future.')
+    const bad = await call('POST', `/api/scenes/${sceneId}/raffles`, { ...VALID, opensAt: 'soon' })
+    expect(bad.statusCode).toBe(400)
+  })
+
+  it('PATCH with opensAt on a raffle that has opened is refused', async () => {
+    const r = await make()
+    expect((await call('POST', `/api/raffles/${r.id}/open`)).statusCode).toBe(200)
+    const res = await call('PATCH', `/api/raffles/${r.id}`, { opensAt: soon() })
+    expect(res.statusCode).toBe(400)
+    expect(res.body).toContain('not_draft')
+    expect(res.body).toContain("Only a raffle that hasn't opened can be scheduled.")
+  })
+
+  it('opening by hand clears opensAt', async () => {
+    const r = await make({ opensAt: soon() })
+    const res = await call('POST', `/api/raffles/${r.id}/open`)
+    expect(res.statusCode, res.body).toBe(200)
+    expect(res.json().raffle.opensAt).toBeNull()
+  })
+})
