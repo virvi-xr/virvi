@@ -25,6 +25,8 @@ The assistant is part of paid plans, and it is rolling out to admin accounts fir
 
 It can also give you "open" links that take you straight to the dashboard page you need.
 
+Replies are formatted, with headings, lists, tables and code where they help. Links to Virvi pages and virvi.io are clickable. Any other web address shows as plain text, so copy it into your browser yourself.
+
 ## What it can change
 
 - A scene's name and description.
@@ -35,11 +37,15 @@ It can also give you "open" links that take you straight to the dashboard page y
 - Library items: add them and rename them.
 - Scheduled showings: create them.
 - Scenes: create a new, empty one in your personal account.
+- Events: create them, edit them and link scenes to them.
+- Raffles: create a draft, schedule when it opens and change its prize. See [Setting up a show](#setting-up-a-show).
+- BEAT drafts: create one. Paying for it is your step.
+- Shows: a saved checklist for an event. See [Setting up a show](#setting-up-a-show).
 - Studio designs: start one, and send it prompts. See [Making things](#making-things).
 
 ## What it can't do yet
 
-Deploying, publishing, editing events, giveaways, invites, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page.
+Deploying, publishing, giveaways, invites, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page.
 
 ## Making things
 
@@ -66,6 +72,47 @@ These prompts come out of your Studio allowance, not the assistant budget.
 **No prompts left.** There is no card. The assistant tells you your Studio prompts are used up and gives you a **Buy Studio prompts** link to the Studio page. Daily prompts reset at midnight UTC.
 
 **Finalizing.** The assistant never finalizes a design or takes payment. It can tell you the price and give you a **Finalize** link with the total, for example "Total $12". The link opens the normal finalize dialog in Studio, where you check the price and pay.
+
+## Setting up a show
+
+Ask for a whole show in one request, for example "set up a launch event on Friday at 8pm with a raffle and a BEAT". The assistant works out what the show needs and saves it as a **checklist**. A checklist can hold an event, scene links, showings, a raffle, the raffle's scheduled opening, a BEAT draft and its payment, a new wearable design and its Decentraland publishing. Then it makes the things one at a time, ticking them off the list.
+
+**Approving changes.** Private changes, such as the event, scene links and showings, are approved the usual way, as a numbered plan (see [Changes, plans and Undo](#changes-plans-and-undo)). Raffles and anything that goes public get their own cards, described below.
+
+### The checklist
+
+The checklist shows on the event's page, under **Show checklist**, with an **Ask the assistant** button that opens the panel. Each item has one of four states:
+
+- **To do:** not made yet.
+- **Waiting:** made, and something else has to happen first. For example, a raffle that is scheduled but hasn't opened, a BEAT that hasn't been paid for ("Waiting for payment."), a wearable design still being worked on in Studio, or a wearable that isn't published yet ("Publish it on Decentraland, then paste its Marketplace link.").
+- **Done:** it exists and is where it should be.
+- **Skipped:** it was deleted, so the item is left alone with a note ("This was deleted."). A cancelled raffle or BEAT is also Skipped, with "This raffle was cancelled." or "This BEAT was cancelled."
+
+The states are read from your real events, raffles, BEATs and designs each time, never from what the assistant remembers. If you change something by hand, the checklist follows.
+
+### Raffles instead of giveaways
+
+The assistant can't run giveaways, so a show uses a [raffle](/docs/dashboard/raffles/). Winners are picked by the draw, and **you send the prizes** to them yourself. See Delivering prizes on that page.
+
+**The host terms card.** Creating a raffle is its own card, never part of a plan. It shows the raffle's details and Virvi's raffle host terms word for word: the raffle is free to enter and needs no purchase, you are responsible for following the giveaway and sweepstakes rules where you and your entrants live, and for delivering prizes. The card says "Confirming accepts these terms for this raffle." Pressing **Confirm** is you accepting them for that raffle. The assistant never accepts them for you.
+
+**Scheduled opening.** A new raffle is a draft. To have it open by itself, the assistant offers a separate card, for example Open "Launch raffle" by itself at 2031-03-04 20:30 UTC. Times on the card are UTC. Confirm it to schedule the opening, or ask it to stop the raffle opening by itself. Only a raffle that hasn't opened can be scheduled. See [Scheduling a raffle](/docs/dashboard/raffles/#scheduling-a-raffle) for how opening works, including what happens if another raffle is running. Until then the checklist item reads Waiting.
+
+### A BEAT draft and paying for it
+
+The assistant makes a BEAT only as a **draft**: its name, dates, scenes, image and supply. It never pays. Instead it gives you a **Pay** link to the BEAT's page with the price, for example "Total $12.00", and you pay there the normal way. The checklist item reads Waiting until the BEAT is paid, then Done. See [BEATs](/docs/dashboard/beats/) for the price and what happens after paying. A draft BEAT can't be undone from the assistant: cancel it on its page.
+
+### A new wearable
+
+If the show includes a wearable that doesn't exist yet, the assistant tells you the timeline before you approve anything: making the wearable takes a few days in Studio, then Decentraland curation, so it can't be named as the raffle's prize until it's published. It keeps the wearable on the checklist meanwhile.
+
+If the event starts in fewer than 7 days, you also get a warning: a new wearable may not be through Decentraland curation by then, and a wearable you've already published would be safer. The warning shows on the checklist too, until the wearable design is done.
+
+**Pasting the Marketplace link.** Once the wearable is published on Decentraland, paste its Marketplace link into the conversation, like `https://decentraland.org/marketplace/contracts/0x…/items/0`. The assistant adds it to the checklist and the item turns Done. It only accepts a Decentraland Marketplace item link.
+
+### Picking a show up later
+
+A show is saved to your account, not to one conversation. Open the assistant from the event's page, or start any new conversation, and ask it to carry on with the show. It reads the checklist as it stands and continues from there. When a show is finished or you no longer want it, ask the assistant to close it. A closed show drops off your list, and a closed show can't be reopened.
 
 ## Assistant activity
 
