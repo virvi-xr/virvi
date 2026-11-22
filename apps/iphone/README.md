@@ -30,9 +30,8 @@ open VirviAR.xcodeproj
 3. Press Run.
 
 The scheme's **Run and Profile use the Release configuration**: the ring detector is about 60 times slower without
-optimisation (1.3 s a frame in Debug against 21 ms in Release), so a Debug build can't find rings in practice. Signing
-is automatic with the owner's team (`P22YGT64VU`); pick the phone in Xcode and run. Tests still run in Debug. The ring detector is slow in Debug, so don't switch Run to Debug unless you
-need a local server.
+optimisation (1.3 s a frame in Debug against 21 ms in Release), so a Debug build can't find rings in practice. Tests
+still run in Debug. Don't switch Run to Debug unless you need a local server.
 
 Release builds talk to `https://virvi.io`. Debug builds take `-baseUrl <url>` as a launch argument (see
 `AppConfig`), so use it from a Debug test run or switch the scheme's Run configuration to Debug for a local server.
