@@ -139,6 +139,8 @@ If the event starts in fewer than 7 days, you also get a warning: a new wearable
 
 **Pasting the Marketplace link.** Once the wearable is published on Decentraland, paste its Marketplace link into the conversation, like `https://decentraland.org/marketplace/contracts/0x…/items/0`. The assistant adds it to the checklist and the item turns Done. It accepts a Decentraland Marketplace item link, or the wearable's contract address and item id.
 
+**Found by itself.** You often don't need to paste it. About every 10 minutes Virvi checks the Marketplace for wearables your verified wallets have published since the show began. If one is clearly the show's, the item turns Done by itself, with a note such as Found on Decentraland: "Neon Cap". That means it's named like the show's Studio design, or it's the only new one. If you published several and none matches the design's name, paste the right link. If it found the wrong one, paste the right link and it replaces it. Finding it only fills in the checklist: the raffle's prize changes only when you confirm the assistant's card. Shows older than 90 days aren't checked.
+
 ### Picking a show up later
 
 A show is saved to your account, not to one conversation. Open the assistant from the event's page, or start any new conversation, and ask it to carry on with the show. It reads the checklist as it stands and continues from there. When a show is finished or you no longer want it, ask the assistant to close it. A closed show drops off your list, and a closed show can't be reopened.

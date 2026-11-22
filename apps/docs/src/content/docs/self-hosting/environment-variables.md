@@ -185,6 +185,8 @@ These connect the server to the [streaming media server](/docs/self-hosting/dock
 | `VIRVI_DCL_PARCEL_DEPLOY_KEY` | none | A separate wallet's private key for Genesis City parcels. Unset hides the "Make Virvi an operator" option; browser signing still works. A malformed key stops the server at boot. |
 | `DCL_REDEPLOY_SWEEP_MS` | `30000` | How often pending redeploys are checked (`0` disables). |
 | `DCL_MAP_SWEEP_MS` | `60000` | How often to check whether Decentraland built a map snapshot for a new deploy (`0` disables). |
+| `SHOW_WEARABLE_SWEEP_MS` | `600000` | How often an assistant show waiting on a published wearable looks for it on the Decentraland Marketplace (`0` disables). |
+| `DCL_MARKETPLACE_API_URL` | `https://marketplace-api.decentraland.org` | Marketplace API that show wearables are looked up in. |
 | `DCL_CATALYST_URL` | `https://peer.decentraland.org` | Catalyst for Genesis City deploys and parcel permissions. |
 | `DCL_LAND_SUBGRAPH_URL` | `https://subgraph.decentraland.org/land-manager` | LAND subgraph, used to find a parcel's estate. |
 | `DCL_WORLDS_URL` | `https://worlds-content-server.decentraland.org` | Worlds content server. |

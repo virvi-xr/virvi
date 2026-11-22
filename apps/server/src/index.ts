@@ -10,6 +10,7 @@ import { buildApp } from './app.js'
 import { startLifecycleSweep } from './venues/lifecycle.js'
 import { startDclRedeploySweep } from './services/dcl/redeploy-sweep.js'
 import { startDclMapSweep } from './services/dcl/map-status.js'
+import { startShowWearableSweep } from './assistant/show-wearables.js'
 import { startHostedWorldSweep, SWEEP_INTERVAL_MS } from './hyperfy/sweep.js'
 import { startStudioSweep, STUDIO_SWEEP_MS } from './studio/sweep.js'
 import { startBuildSweep, BUILD_SWEEP_MS } from './services/import/build-sweep.js'
@@ -97,6 +98,10 @@ async function main() {
   if (config.dclMapSweepMs > 0) {
     startDclMapSweep(config.dclMapSweepMs)
     console.log(`[virvi-server] Decentraland map data sweep every ${config.dclMapSweepMs}ms`)
+  }
+  if (config.showWearableSweepMs > 0) {
+    startShowWearableSweep(config.showWearableSweepMs)
+    console.log(`[virvi-server] Show wearable sweep every ${config.showWearableSweepMs}ms`)
   }
   if (hyperfyHosting().available) {
     startHostedWorldSweep(SWEEP_INTERVAL_MS)

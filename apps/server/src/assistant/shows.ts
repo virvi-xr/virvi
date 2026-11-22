@@ -33,6 +33,8 @@ export const PUBLISH_THEN_PASTE = 'Publish it on Decentraland, then paste its Ma
 export const NOT_YOURS = "That isn't yours, or it's gone."
 export const RAFFLE_CANCELLED = 'This raffle was cancelled.'
 export const BEAT_CANCELLED = 'This BEAT was cancelled.'
+/** A wearable Virvi found by itself: say which, so a wrong pick is easy to replace. */
+export const foundNote = (name: string) => `Found on Decentraland: "${name}". If it isn't the one, paste the right Marketplace link.`
 export const WEARABLE_EXAMPLE = "Paste the wearable's Marketplace link, like https://decentraland.org/marketplace/contracts/0x…/items/0."
 
 /**
@@ -215,6 +217,7 @@ async function stateOf(request: FastifyRequest, show: ShowRow, item: ShowItem): 
       return job ? waiting() : todo
     }
     case 'wearable_published':
+      if (item.wearable?.found) return { state: 'done', note: foundNote(item.wearable.found.name) }
       return item.wearable ? done : waiting(PUBLISH_THEN_PASTE)
   }
 }
