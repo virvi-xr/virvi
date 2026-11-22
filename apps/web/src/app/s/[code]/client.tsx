@@ -57,7 +57,7 @@ export default function SpaceClient() {
         )}
         <p style={styles.body}>Look at the ring when you get there</p>
         <a href={shareUrl(code)} style={styles.button}>Open in the Virvi app on Quest</a>
-        <p style={styles.hint}>iPhone and Vision Pro apps are coming.</p>
+        <p style={styles.hint}>No app yet? <a href="/ar/" style={styles.link}>Get the Virvi apps</a> for Quest, Vision Pro and iPhone.</p>
       </div>
     </div>
   )
@@ -72,4 +72,5 @@ const styles: Record<string, React.CSSProperties> = {
   body: { fontSize: '1rem', color: '#e0e0e0', marginBottom: '1.25rem' },
   button: { display: 'inline-block', padding: '0.75rem 1.5rem', background: '#6366f1', color: '#fff', borderRadius: '8px', fontSize: '1rem', fontWeight: 600, textDecoration: 'none' },
   hint: { fontSize: '0.8rem', color: '#666', marginTop: '0.75rem' },
+  link: { color: '#a5b4fc', textDecoration: 'underline' },
 }

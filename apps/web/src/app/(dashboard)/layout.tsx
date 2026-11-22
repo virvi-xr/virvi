@@ -38,6 +38,7 @@ const baseNavSections: NavSection[] = [
       { href: '/scenes', label: 'Scenes', icon: ScenesIcon },
       { href: '/events', label: 'Events', icon: CalendarIcon },
       { href: '/giveaways', label: 'Giveaways', icon: GiftIcon },
+      { href: '/ar-apps', label: 'AR', icon: CubeIcon, description: 'AR Spaces and the Virvi AR apps' },
     ],
   },
   {
