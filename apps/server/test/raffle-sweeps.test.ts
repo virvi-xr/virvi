@@ -102,6 +102,7 @@ describe('raffle sweeps, retention and delete-my-data (LIV-55)', () => {
     expect(b.status).toBe('draft')
     expect(b.opensAt).toBeNull()
     expect(b.openError).toBe('This scene already has a raffle running. Close it first.')
+    expect(b.openErrorAt).toEqual(now)
   })
 
   it('two sweeps at once open a due draft once', async () => {

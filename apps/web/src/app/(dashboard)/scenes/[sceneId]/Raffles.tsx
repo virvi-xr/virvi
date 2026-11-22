@@ -101,7 +101,7 @@ function RaffleForm({ sceneId, sceneName, editing, onCancel, onCreated }: {
     const next = { ...cur, ...patch }
     return rulesEdited || patch.rules !== undefined ? next : { ...next, rules: fillRules(next.prize, next.winnersCount, host) }
   })
-  const blocked = raffleFormError(f, { editing: !!editing })
+  const blocked = raffleFormError(f, { editing: !!editing, original: editing })
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()

@@ -21,7 +21,8 @@ async function openDueRaffles(now: Date): Promise<number> {
       opened++
     } catch (err) {
       if (err instanceof RaffleError && err.code === 'raffle_already_active') {
-        await db.update(raffles).set({ opensAt: null, openError: err.message, updatedAt: now }).where(and(eq(raffles.id, row.id), eq(raffles.status, 'draft')))
+        await db.update(raffles).set({ opensAt: null, openError: err.message, openErrorAt: now, updatedAt: now })
+          .where(and(eq(raffles.id, row.id), eq(raffles.status, 'draft'), lte(raffles.opensAt, now)))
       } else if (!(err instanceof RaffleError && err.code === 'bad_status')) {
         // bad_status: another instance opened it first
         console.error('[raffles] scheduled open failed:', row.id, (err as Error)?.message)

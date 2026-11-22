@@ -2653,6 +2653,8 @@ export const raffles = pgTable('raffles', {
   opensAt: timestamp('opens_at', { withTimezone: true }),
   /** Why the scheduled opening didn't happen, for the host; cleared when they reschedule or open it. */
   openError: text('open_error'),
+  /** When that opening was tried; set and cleared with `openError`. */
+  openErrorAt: timestamp('open_error_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

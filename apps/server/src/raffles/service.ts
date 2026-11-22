@@ -108,6 +108,7 @@ export function hostRaffle(row: RaffleRow, entryCount: number) {
     nextAutoSnapshotAt: row.nextAutoSnapshotAt,
     opensAt: row.opensAt,
     openError: row.openError,
+    openErrorAt: row.openErrorAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -188,6 +189,7 @@ export async function updateRaffle(row: RaffleRow, body: Record<string, unknown>
   if (opensAt !== undefined) {
     set.opensAt = opensAt
     set.openError = null
+    set.openErrorAt = null
   }
   if (row.status === 'open' && input.autoSnapshotMinutes !== row.autoSnapshotMinutes) set.nextAutoSnapshotAt = nextAuto(input.autoSnapshotMinutes, now)
   const [updated] = await db.update(raffles).set(set).where(and(eq(raffles.id, row.id), inArray(raffles.status, ['draft', 'open']))).returning()
@@ -201,7 +203,7 @@ export async function openRaffle(row: RaffleRow, now = new Date()) {
   let updated: RaffleRow | undefined
   try {
     ;[updated] = await db.update(raffles)
-      .set({ status: 'open', openedAt: now, nextAutoSnapshotAt: nextAuto(row.autoSnapshotMinutes, now), opensAt: null, openError: null, updatedAt: now })
+      .set({ status: 'open', openedAt: now, nextAutoSnapshotAt: nextAuto(row.autoSnapshotMinutes, now), opensAt: null, openError: null, openErrorAt: null, updatedAt: now })
       .where(and(eq(raffles.id, row.id), eq(raffles.status, 'draft'))).returning()
   } catch (err) {
     if (isUniqueViolation(err)) throw new RaffleError(409, 'raffle_already_active', 'This scene already has a raffle running. Close it first.')

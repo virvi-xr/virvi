@@ -25,8 +25,8 @@ export interface HostRaffle {
   opensAt: string | null
   /** Why a scheduled opening didn't happen, on a draft; null otherwise. */
   openError: string | null
-  /** Last change; for a draft with `openError`, when the opening was tried. */
-  updatedAt: string
+  /** When that opening was tried. */
+  openErrorAt: string | null
 }
 
 /** An entry; a removed entrant has no name or wallet. */
@@ -83,17 +83,18 @@ export function localInputValue(iso: string): string {
 export function scheduleLine(r: HostRaffle, format: (iso: string) => string): string | null {
   if (r.status !== 'draft') return null
   if (r.opensAt) return `Opens ${format(r.opensAt)}`
-  if (r.openError) return `Didn't open at ${format(r.updatedAt)}: ${r.openError}`
+  if (r.openError && r.openErrorAt) return `Didn't open at ${format(r.openErrorAt)}: ${r.openError}`
   return null
 }
 
 /** Why the form can't be sent yet, or null. A new raffle needs the terms ticked; an edit doesn't. */
-export function raffleFormError(f: RaffleInput, opts: { editing?: boolean; now?: Date } = {}): string | null {
+export function raffleFormError(f: RaffleInput, opts: { editing?: boolean; now?: Date; original?: HostRaffle } = {}): string | null {
   if (!f.name.trim()) return 'Give the raffle a name.'
   if (!f.prize.trim()) return 'Say what the prize is.'
   if (!Number.isInteger(f.winnersCount) || f.winnersCount < 1 || f.winnersCount > RAFFLE_WINNERS_MAX) return `Pick 1 to ${RAFFLE_WINNERS_MAX} winners.`
   if (!opts.editing && !f.acceptHostTerms) return 'Accept the host terms to run a raffle.'
-  if (f.opensAt && !(new Date(f.opensAt).getTime() > (opts.now ?? new Date()).getTime())) return 'Pick a time in the future.'
+  const unchanged = opts.original !== undefined && f.opensAt === (opts.original.opensAt ? localInputValue(opts.original.opensAt) : '')
+  if (f.opensAt && !unchanged && !(new Date(f.opensAt).getTime() > (opts.now ?? new Date()).getTime())) return 'Pick a time in the future.'
   return null
 }
 

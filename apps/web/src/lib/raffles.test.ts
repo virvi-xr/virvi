@@ -83,7 +83,7 @@ describe('spinning', () => {
 describe('editing a raffle', () => {
   const r: HostRaffle = {
     id: 'r1', sceneId: 's1', name: 'Friday', prize: 'Hat', rules: null, winnersCount: 2, mode: 'weighted', minPresentMinutes: 3,
-    autoSnapshotMinutes: 10, status: 'open', entryCount: 0, openedAt: null, endedAt: null, opensAt: null, openError: null, updatedAt: '2026-11-22T10:00:00.000Z',
+    autoSnapshotMinutes: 10, status: 'open', entryCount: 0, openedAt: null, endedAt: null, opensAt: null, openError: null, openErrorAt: null,
   }
   it('fills the form from the raffle, terms not needed', () => {
     const f = raffleToInput(r)
@@ -138,7 +138,7 @@ describe('scheduled opening', () => {
   const future = local(new Date('2026-11-23T18:30:00Z'))
   const draft: HostRaffle = {
     id: 'r1', sceneId: 's1', name: 'Friday', prize: 'Hat', rules: null, winnersCount: 1, mode: 'one_per_person', minPresentMinutes: 5,
-    autoSnapshotMinutes: null, status: 'draft', entryCount: 0, openedAt: null, endedAt: null, opensAt: null, openError: null, updatedAt: '2026-11-22T10:00:00.000Z',
+    autoSnapshotMinutes: null, status: 'draft', entryCount: 0, openedAt: null, endedAt: null, opensAt: null, openError: null, openErrorAt: null,
   }
   it('starts empty and leaves opensAt out of a create body when empty', () => {
     expect(blankRaffle().opensAt).toBe('')
@@ -167,6 +167,11 @@ describe('scheduled opening', () => {
     const open = { ...draft, status: 'open' as const }
     expect('opensAt' in editBody({ ...raffleToInput(open), opensAt: future }, open)).toBe(false)
   })
+  it('does not block an unchanged time that has just passed, only a changed one', () => {
+    const sched = { ...draft, opensAt: '2026-11-22T11:59:30.000Z' }
+    expect(raffleFormError(raffleToInput(sched), { editing: true, now, original: sched })).toBeNull()
+    expect(raffleFormError({ ...raffleToInput(sched), opensAt: local(new Date('2026-11-22T11:00:00Z')) }, { editing: true, now, original: sched })).toBe('Pick a time in the future.')
+  })
   it('maps the server refusals', () => {
     expect(raffleErrorMessage(new Error('opens_at_past'))).toBe('Pick a time in the future.')
     expect(raffleErrorMessage(new Error('not_draft'))).toBe("Only a raffle that hasn't opened can be scheduled.")
@@ -175,7 +180,7 @@ describe('scheduled opening', () => {
     const fmt = (iso: string) => `<${iso}>`
     expect(scheduleLine({ ...draft, opensAt: '2026-11-23T18:30:00.000Z' }, fmt)).toBe('Opens <2026-11-23T18:30:00.000Z>')
     expect(scheduleLine(draft, fmt)).toBeNull()
-    expect(scheduleLine({ ...draft, openError: 'This scene already has a raffle running. Close it first.', updatedAt: '2026-11-23T18:30:00.000Z' }, fmt))
+    expect(scheduleLine({ ...draft, openError: 'This scene already has a raffle running. Close it first.', openErrorAt: '2026-11-23T18:30:00.000Z' }, fmt))
       .toBe("Didn't open at <2026-11-23T18:30:00.000Z>: This scene already has a raffle running. Close it first.")
     expect(scheduleLine({ ...draft, status: 'open', opensAt: '2026-11-23T18:30:00.000Z' }, fmt)).toBeNull()
   })
