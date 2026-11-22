@@ -381,8 +381,8 @@ describe('assistant Studio tools', () => {
     const c = await proposeCard(withUsage({ promptsLeft: 3 }), null, 'send_studio_prompt', { designId: d.id, text: long, selectedSlots: ['hat', 'eyewear'] })
     if (!('kind' in c)) throw new Error('no card')
     const label = c.steps[0].label
-    const masked = long.replace('bob@example.com', '[email]')
-    expect(label).toBe(`Send "${long.slice(0, LABEL_TEXT_MAX - 1).trimEnd()}…"`)
+    const masked = long.trim().replace('bob@example.com', '[email]')
+    expect(label).toBe(`Send "${long.trim().slice(0, LABEL_TEXT_MAX - 1).trimEnd()}…"`)
     expect(c.detail).toBe(`"Neon cap": Uses 1 of your 3 prompts left today.\nSlots: hat, eyewear\n${masked}`)
     expect(c.detail).toContain(owner.email)
     expect(c.detail).not.toContain('bob@example.com')
@@ -693,9 +693,23 @@ describe('assistant event, raffle and BEAT tools', () => {
       expect(await rolesOf()).toEqual([{ wallet: w, role: 'viewer' }])
     })
 
+    it('a role-change card keeps to its person: a different wallet with the same short form is refused at the press', async () => {
+      const a = '0x5678' + '0'.repeat(32) + 'beef'
+      const b = '0x5678' + '2'.repeat(32) + 'beef'
+      await give(a, 'viewer')
+      const card = await proposeCard(ctx, null, 'add_scene_collaborator', { sceneId, wallet: '0x5678...beef', role: 'cohost' })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      await db.update(sceneRoles).set({ revokedAt: new Date() }).where(eq(sceneRoles.walletAddress, a))
+      await give(b, 'viewer')
+      expect(await approvePlan(ctx, card.planId, card.token, () => {})).toMatchObject({ done: 0 })
+      const [row] = await db.select().from(assistantActions)
+      expect(row.error).toBe('The collaborators changed since the card. Ask again.')
+      expect(await rolesOf()).toEqual([{ wallet: b, role: 'viewer' }])
+    })
+
     it("a short wallet never adds someone who isn't on the scene, and two matches are refused", async () => {
       const w = randomWallet()
-      expect(await proposeCard(ctx, null, 'add_scene_collaborator', { sceneId, wallet: short(w), role: 'editor' })).toEqual({ error: "I don't have that wallet. Ask the user to paste it again." })
+      expect(await proposeCard(ctx, null, 'add_scene_collaborator', { sceneId, wallet: short(w), role: 'editor' })).toEqual({ error: "That wallet doesn't have a role on this scene now. Ask the user to paste it." })
       const a = '0x1234' + '0'.repeat(32) + 'abcd'
       const b = '0x1234' + '1'.repeat(32) + 'abcd'
       await give(a, 'viewer')

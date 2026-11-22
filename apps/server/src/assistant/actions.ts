@@ -195,7 +195,10 @@ export async function proposeCard(
   }
   if ('blocked' in preview) return preview
   // What the card showed and the press must keep to (redeploy_scene's deploy list), written into the stored args
-  const bound = preview.bind ? def.input.parse({ ...(parsed.data as object), ...preview.bind }) : parsed.data
+  const rebound = preview.bind ? def.input.safeParse({ ...(parsed.data as object), ...preview.bind }) : parsed
+  // Only when the target changed between before() and preview(), e.g. every destination switched to signing
+  if (!rebound.success) return { error: 'That changed while the card was being made. Ask again.' }
+  const bound = rebound.data
   // The card shows what will be sent, whole: masked like every shown string, never shortened
   const label = redactText(def.label(bound), ctx.self)
   const detail = redactText(preview.detail, ctx.self)
