@@ -59,8 +59,11 @@ export default function StudioDesignPage() {
     const id = designIdFromPath(window.location.pathname, params.designId as string | undefined)
     if (id) setDesignId(id)
     else setMissing(true)
-    const paid = new URLSearchParams(window.location.search).get('payment')
+    const search = new URLSearchParams(window.location.search)
+    const paid = search.get('payment')
     if (paid) setPayment({ id: paid, startedAt: Date.now() })
+    // The assistant's Finalize link opens the design on its Finalize step
+    if (search.get('step') === 'finalize') setStep('finalize')
   }, [params.designId])
 
   /** Re-read the design (with fresh frame URLs) and the prompts left. */

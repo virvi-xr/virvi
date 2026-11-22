@@ -7,10 +7,11 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useDialog } from '@/lib/use-dialog'
 import { pageContext } from '@/lib/assistant/context'
-import { reduce, startReply, type PanelState } from '@/lib/assistant/state'
+import { planSteps as stepsOfPlan, reduce, startReply, type PanelState } from '@/lib/assistant/state'
 import { streamAssistant } from '@/lib/assistant/sse'
 import { ActionRow, refusalMessage } from './ActionRow'
 import { PlanCard, type PlanPhase } from './PlanCard'
+import { MessageLinks } from './MessageLinks'
 import { approveRefused, budgetLine, isExpiredCode, lockedCopy, needsReapproval, REAPPROVE, tokenExpiresWithin } from './copy'
 
 const EMPTY: PanelState = { messages: [], streaming: false, plan: null, budget: null, error: null }
@@ -222,8 +223,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
   if (!open || access.state === 'hidden') return null
 
   const planId = state.plan?.planId ?? null
-  const latest = new Map(state.messages.flatMap((m) => m.actions).map((a) => [a.id, a]))
-  const planSteps = state.plan ? state.plan.steps.map((s) => latest.get(s.id) ?? s) : []
+  const planSteps = stepsOfPlan(state)
   const line = budgetLine(budget)
   const locks = access.state === 'locked' ? lockedCopy(access.reason) : null
 
@@ -284,13 +284,7 @@ export function AssistantPanel({ access, open, onClose, onRefresh }: { access: A
                     {m.text && <p className={`whitespace-pre-wrap break-words text-sm ${m.role === 'user' ? '' : 'text-gray-200'}`}>{m.text}</p>}
                     {actions.length > 0 && <ul className="space-y-1.5">{actions.map((a) => <ActionRow key={a.id} action={a} onUndo={undoOne} />)}</ul>}
                     {needsReapproval(actions) && <p className="text-xs text-gray-400">{REAPPROVE}</p>}
-                    {m.links.length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {m.links.map((l) => (
-                          <button key={l.href + l.label} type="button" onClick={() => go(l.href)} className="rounded border border-gray-700 px-2.5 py-1 text-xs text-blue-400 underline hover:text-blue-300">{l.label}</button>
-                        ))}
-                      </div>
-                    )}
+                    <MessageLinks links={m.links} onOpen={go} />
                   </div>
                 </div>
               )

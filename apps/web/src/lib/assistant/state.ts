@@ -1,4 +1,4 @@
-import type { AssistantActionView, AssistantBudget, AssistantMessageView, AssistantPlanView, AssistantStreamEvent } from '@virvixr/shared'
+import type { AssistantActionView, AssistantActivityItem, AssistantBudget, AssistantMessageView, AssistantPlanView, AssistantStreamEvent } from '@virvixr/shared'
 
 export type PanelState = {
   messages: AssistantMessageView[]
@@ -48,7 +48,7 @@ export function reduce(state: PanelState, e: AssistantStreamEvent): PanelState {
     case 'plan':
       return { ...state, plan: e.plan }
     case 'link':
-      return safeHref(e.href) ? withAssistant(state, (m) => ({ ...m, links: [...m.links, { label: e.label, href: e.href }] })) : state
+      return safeHref(e.href) ? withAssistant(state, (m) => ({ ...m, links: [...m.links, { label: e.label, href: e.href, ...(e.detail ? { detail: e.detail } : {}) }] })) : state
     case 'budget':
       return { ...state, budget: e.budget }
     case 'error':
@@ -56,4 +56,25 @@ export function reduce(state: PanelState, e: AssistantStreamEvent): PanelState {
     case 'done':
       return { ...state, streaming: false }
   }
+}
+
+/** The plan's (or card's) steps, each with its latest status from the `action` events, in plan order. */
+export function planSteps(state: PanelState): AssistantActionView[] {
+  if (!state.plan) return []
+  const latest = new Map(state.messages.flatMap((m) => m.actions).map((a) => [a.id, a]))
+  return state.plan.steps.map((s) => latest.get(s.id) ?? s)
+}
+
+/** The Settings activity list: the rows loaded so far, newest first, and the cursor for the next page (null: no more). */
+export type ActivityState = { items: AssistantActivityItem[]; next: string | null }
+
+/** Adds a page under the rows already loaded, skipping any row already there. */
+export function appendActivity(list: ActivityState | null, page: ActivityState): ActivityState {
+  const have = new Set(list?.items.map((i) => i.id))
+  return { items: [...(list?.items ?? []), ...page.items.filter((i) => !have.has(i.id))], next: page.next }
+}
+
+/** Swaps in a newer copy of an action (after an undo), keeping the row's date, conversation and kind. */
+export function replaceActivity(list: ActivityState, view: AssistantActionView): ActivityState {
+  return { ...list, items: list.items.map((i) => (i.id === view.id ? { ...i, ...view } : i)) }
 }

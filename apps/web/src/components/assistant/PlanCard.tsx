@@ -2,12 +2,15 @@
 import { useEffect, useState } from 'react'
 import type { AssistantActionView, AssistantPlanView } from '@virvixr/shared'
 import { ActionRow, refusalMessage } from './ActionRow'
-import { planButtonLabel } from './copy'
+import { approveLabel } from './copy'
 
 /** `refused`: the approve call was turned away before any step ran (the plan card shows why). */
 export type PlanPhase = 'pending' | 'approved' | 'cancelled' | 'refused'
 
-/** The plan the assistant proposes: numbered steps, then "Do these n changes" / Cancel; after approval, the steps' statuses and "Undo all". */
+/**
+ * The plan the assistant proposes: numbered steps, then "Do these n changes" / Cancel; after approval, the steps' statuses and "Undo all".
+ * A card (`kind: 'card'`, one paid action) is one row with its cost line, then Confirm / Cancel; after approval, just the step's row.
+ */
 export function PlanCard({ plan, steps, phase, expired: refusedExpired, busy, error, onApprove, onCancel, onUndoStep, onUndoAll }: {
   plan: AssistantPlanView
   /** The steps with their latest status (from `action` events), in plan order */
@@ -36,7 +39,8 @@ export function PlanCard({ plan, steps, phase, expired: refusedExpired, busy, er
   }, [phase, expiresAt])
 
   const expired = (phase === 'pending' && now >= expiresAt) || (phase === 'refused' && !!refusedExpired)
-  const canUndoAll = phase === 'approved' && !busy && steps.some((s) => s.status === 'done')
+  const card = plan.kind === 'card'
+  const canUndoAll = !card && phase === 'approved' && !busy && steps.some((s) => s.status === 'done')
 
   const undoAll = async () => {
     setUndoing(true)
@@ -51,14 +55,17 @@ export function PlanCard({ plan, steps, phase, expired: refusedExpired, busy, er
   }
 
   return (
-    <section aria-label="Plan" className="rounded-lg border border-gray-700 bg-gray-950 p-3">
+    <section aria-label={card ? 'Confirm' : 'Plan'} className="rounded-lg border border-gray-700 bg-gray-950 p-3">
       <ol className="space-y-1.5">
-        {steps.map((s, i) => <ActionRow key={s.id} action={s} number={i + 1} onUndo={phase === 'approved' ? onUndoStep : undefined} />)}
+        {steps.map((s, i) => (
+          <ActionRow key={s.id} action={s} number={card ? undefined : i + 1} detail={card && phase !== 'approved' ? plan.detail : null}
+            onUndo={phase === 'approved' ? onUndoStep : undefined} />
+        ))}
       </ol>
       {expired ? (
         <p className="mt-3 text-sm text-yellow-300" role="status">This plan expired. Ask again to get a fresh one.</p>
       ) : phase === 'cancelled' ? (
-        <p className="mt-3 text-sm text-gray-400" role="status">Plan cancelled.</p>
+        <p className="mt-3 text-sm text-gray-400" role="status">{card ? 'Cancelled.' : 'Plan cancelled.'}</p>
       ) : phase === 'refused' ? (
         <div className="mt-3">
           <button type="button" onClick={onCancel} disabled={busy}
@@ -67,7 +74,7 @@ export function PlanCard({ plan, steps, phase, expired: refusedExpired, busy, er
       ) : phase === 'pending' ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" onClick={onApprove} disabled={busy}
-            className="clip-corner bg-accent px-3 py-1.5 text-sm font-semibold text-accent-ink hover:bg-accent-hover disabled:opacity-50">{planButtonLabel(steps.length)}</button>
+            className="clip-corner bg-accent px-3 py-1.5 text-sm font-semibold text-accent-ink hover:bg-accent-hover disabled:opacity-50">{approveLabel(plan)}</button>
           <button type="button" onClick={onCancel} disabled={busy}
             className="rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-300 hover:text-white disabled:opacity-50">Cancel</button>
         </div>

@@ -72,6 +72,7 @@ export interface AssistantMessageView {
   role: 'user' | 'assistant'
   text: string
   actions: AssistantActionView[]
-  links: { label: string; href: string }[]
+  /** `detail`: a line under the link (a Finalize total, why prompts ran out); only on links streamed live. */
+  links: { label: string; href: string; detail?: string }[]
   createdAt: string
 }

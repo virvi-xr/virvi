@@ -1,4 +1,4 @@
-import type { AssistantBudget } from '@virvixr/shared'
+import type { AssistantBudget, AssistantPlanView } from '@virvixr/shared'
 
 /** The budget line under the panel title; null when there is nothing to say (no cap, or not loaded yet). */
 export function budgetLine(b: AssistantBudget | null): { text: string; upgrade: boolean } | null {
@@ -20,6 +20,19 @@ export function lockedCopy(reason: 'plan' | 'trial'): { text: string; link: { la
 
 export function planButtonLabel(n: number): string {
   return n === 1 ? 'Do this change' : `Do these ${n} changes`
+}
+
+/** The approve button: a card (one paid action) is confirmed; a plan says how many changes it makes. */
+export function approveLabel(plan: Pick<AssistantPlanView, 'kind' | 'steps'>): string {
+  return plan.kind === 'card' ? 'Confirm' : planButtonLabel(plan.steps.length)
+}
+
+/** When an action happened, for the activity list: "20 Nov 2026, 09:05" in the viewer's time zone. */
+export function activityDate(iso: string, timeZone?: string): string {
+  const d = new Date(iso)
+  const day = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone })
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone })
+  return `${day}, ${time}`
 }
 
 /** True when the JWT's `exp` is within `ms` of `now`, or can't be read (renew to be safe). */

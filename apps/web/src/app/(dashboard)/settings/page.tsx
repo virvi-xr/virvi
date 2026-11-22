@@ -1,6 +1,7 @@
 'use client'
 import { useApi } from '@/lib/api'
 import { ErrorPromptSetting } from './ErrorPromptSetting'
+import { AssistantActivity } from './AssistantActivity'
 import { memberLabel, type OrgMember, type OrgSummary } from '@/lib/orgs'
 import { useAuth } from '@/lib/auth'
 import { useEffect, useState } from 'react'
@@ -327,6 +328,8 @@ export default function SettingsPage() {
           <MoveBeats />
 
           <ErrorPromptSetting />
+
+          <AssistantActivity />
 
           <LinkedHyperfySessions />
 
