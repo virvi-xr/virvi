@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { sql } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
 
-/** The assistant part of entrypoint.sh's schema fallback: in a scratch schema it makes the four assistant tables exactly as schema.ts does, and runs again harmlessly. */
+/** The assistant part of entrypoint.sh's schema fallback: in a scratch schema it makes the five assistant tables exactly as schema.ts does, and runs again harmlessly. */
 
 function fallbackScript(): string {
   const sh = readFileSync(new URL('../entrypoint.sh', import.meta.url), 'utf8')
@@ -28,7 +28,7 @@ function fallbackBlocks(label: string): string[] {
 }
 
 const SCHEMA = 'fallback_assistant'
-const TABLES = ['assistant_conversations', 'assistant_messages', 'assistant_actions', 'assistant_usage']
+const TABLES = ['assistant_conversations', 'assistant_messages', 'assistant_actions', 'assistant_usage', 'assistant_shows']
 
 type Col = { column_name: string; data_type: string; udt_name: string; is_nullable: string; column_default: string | null }
 const columns = async (schema: string, table: string) => (await db.execute(sql`

@@ -23,7 +23,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
-import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, SignInMethod } from '@virvixr/shared'
+import type { VenueRules, Vec3, RoomScanLayout, Plot, RaffleMode, RaffleStatus, BeatChain, BeatLocationType, BeatStatus, BeatClaimStatus, BeatReissueStatus, BeatReissueLoss, BeatReissueItemState, BeatReissueFileStatus, SignInMethod, ShowItem } from '@virvixr/shared'
 import type { PoolEntry } from '../raffles/draw.js'
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -3055,6 +3055,26 @@ export const assistantActions = pgTable('assistant_actions', {
 }, (t) => ({
   userIdx: index('assistant_actions_user_idx').on(t.userId, t.createdAt),
   planIdx: index('assistant_actions_plan_idx').on(t.planId),
+}))
+
+// A show (phase 2b): one user's checklist for an event. `items` holds each item's kind, label and what it points at;
+// item states are computed from those rows on every read (assistant/shows.ts), never stored.
+export const assistantShows = pgTable('assistant_shows', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  orgId: uuid('org_id'),
+  conversationId: uuid('conversation_id').references(() => assistantConversations.id, { onDelete: 'set null' }),
+  eventId: uuid('event_id').references(() => events.id, { onDelete: 'set null' }),
+  title: text('title').notNull(),
+  // The start the user gave before the event exists: the curation warning reads it until the event is attached
+  startTime: timestamp('start_time', { withTimezone: true }),
+  items: jsonb('items').$type<ShowItem[]>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
+}, (t) => ({
+  userIdx: index('assistant_shows_user_idx').on(t.userId, t.updatedAt),
+  eventIdx: index('assistant_shows_event_idx').on(t.eventId),
 }))
 
 // One row per user per UTC day; the monthly budget sums these

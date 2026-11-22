@@ -14,6 +14,12 @@ import beatMetadataRoutes, { BEAT_METADATA_ROUTE } from './metadata.js'
 import { cancelMyReissueRequest, createReissueRequest, listMyReissueRequests, type ReissueCaller } from './reissue.js'
 import { signInOf } from '../auth/wallet-blocks.js'
 
+/** The request as the BEAT service sees it: the read and write rules live there (the creator, or `events.run`). */
+export const beatCaller = async (request: FastifyRequest): Promise<BeatCaller> => ({
+  userId: request.user.id, actor: actorFromClaims(request.user), admin: await isAdminRequest(request),
+  passSceneId: request.user.kind === 'scene' ? request.user.sceneId ?? null : null,
+})
+
 /**
  * BEAT host routes (LIV-11). Dark unless BEAT_ENABLED: every route but availability answers 404.
  * Who may do what is decided in the service (the creator, or `events.run` on the BEAT's scenes). Only the read routes take
@@ -43,10 +49,7 @@ export default async function beatRoutes(app: FastifyInstance) {
   const beatRead = { config: { scenePass: { sceneFrom: boundScene } } }
   const sceneScoped = { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }
 
-  const caller = async (request: FastifyRequest): Promise<BeatCaller> => ({
-    userId: request.user.id, actor: actorFromClaims(request.user), admin: await isAdminRequest(request),
-    passSceneId: request.user.kind === 'scene' ? request.user.sceneId ?? null : null,
-  })
+  const caller = beatCaller
   const body = (request: FastifyRequest) => (request.body && typeof request.body === 'object' ? request.body : {}) as Record<string, unknown>
   const fail = (reply: FastifyReply, e: unknown) => {
     if (e instanceof BeatError) return reply.status(e.status).send({ ...e.details, error: e.code, message: e.message })

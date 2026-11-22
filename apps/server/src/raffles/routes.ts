@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { eq } from 'drizzle-orm'
 import { db } from '../db/connection.js'
 import { scenes } from '../db/schema.js'
-import { authenticate } from '../middleware/auth.js'
+import { authenticate, type AuthUser } from '../middleware/auth.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, hasScope } from '../auth/permissions.js'
 import { fromParam, fromRaffle, isUuid } from '../auth/scene-from.js'
@@ -10,6 +10,9 @@ import {
   RaffleError, checkInRaffle, createRaffle, currentRaffle, drawRaffle, drawRecord, endRaffle, enterRaffle, getDraw, getRaffle, listRaffles,
   myRaffleEntries, openRaffle, raffleDetail, snapshotOut, takeSnapshot, updateRaffle, withdrawEntry, type RaffleRow,
 } from './service.js'
+
+/** Whether the user may run raffles in the scene (`events.run`): every host route's rule. */
+export const mayRunRaffles = async (user: AuthUser, sceneId: string) => hasScope(await getSceneAccess(actorFromClaims(user), sceneId), 'events.run')
 
 /**
  * Raffles (LIV-55).
@@ -25,7 +28,7 @@ export default async function raffleRoutes(app: FastifyInstance) {
   const sceneScoped = { config: { scenePass: { sceneFrom: fromParam('sceneId') } } }
   const raffleScoped = { config: { scenePass: { sceneFrom: fromRaffle } } }
 
-  const mayRun = async (request: FastifyRequest, sceneId: string) => hasScope(await getSceneAccess(actorFromClaims(request.user), sceneId), 'events.run')
+  const mayRun = (request: FastifyRequest, sceneId: string) => mayRunRaffles(request.user, sceneId)
   const forbidden = (reply: FastifyReply) => reply.status(403).send({ error: 'forbidden', message: "You can't run raffles in this scene." })
 
   const fail = (reply: FastifyReply, e: unknown) => {

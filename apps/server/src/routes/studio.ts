@@ -93,7 +93,7 @@ const DOWNLOAD_ALL_MAX_BYTES = 500 * 1024 * 1024
  */
 type Access = { d: Design; role: DesignRole | null; support: boolean }
 /** What a route needs: to see the design (any role), to work on it (owner, collaborator) or to own it. */
-type Need = 'view' | 'work' | 'own'
+export type Need = 'view' | 'work' | 'own'
 /** A viewer on a work route: refused 403 viewer, not hidden. */
 const VIEWER = 'viewer' as const
 /** The routes a Virvi admin may use on anyone's design: reading it, prompting, renders and checks, finalizing, packages. */
@@ -109,7 +109,11 @@ const canSupport = isAdminRequest
  * VIEWER (a viewer on a work route) or null (404: no such design, no role, or an own route).
  */
 async function designAccess(request: FastifyRequest, opts: { need: Need; allowAdmin?: boolean }): Promise<Access | typeof VIEWER | null> {
-  const id = (request.params as { id: string }).id
+  return designAccessTo(request, (request.params as { id: string }).id, opts)
+}
+
+/** designAccess for a design named elsewhere than the route's :id (an assistant show's item). */
+export async function designAccessTo(request: FastifyRequest, id: string, opts: { need: Need; allowAdmin?: boolean }): Promise<Access | typeof VIEWER | null> {
   if (!UUID.test(id)) return null
   const [d] = await db.select().from(studioDesigns).where(eq(studioDesigns.id, id))
   if (!d) return null

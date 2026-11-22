@@ -12,7 +12,7 @@ import {
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
   studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
   beatReissueRequests, beatReissueItems, beatReissueFiles, walletBlocks, accountWalletEvents,
-  assistantConversations, assistantMessages, assistantActions, assistantUsage, subscriptions,
+  assistantConversations, assistantMessages, assistantActions, assistantUsage, assistantShows, subscriptions,
 } from '../src/db/schema.js'
 import { clearPlanPrices, setStripe } from '../src/integrations/stripe.js'
 import { config } from '../src/config.js'
@@ -214,10 +214,16 @@ async function fixtures() {
   }).returning()
   const aScene = (await createScene(a, 'A scene')).scene
   const [aEvent] = await db.insert(events).values({ ownerId: a.id, name: 'A event' }).returning()
+  // B's show for B's event, with B's raffle attached; A's own show, to reach for B's raffle in a body
+  const [show] = await db.insert(assistantShows).values({
+    userId: b.id, orgId: org.id, conversationId: conversation.id, eventId: event.id, title: 'B show',
+    items: [{ id: crypto.randomUUID(), kind: 'event', label: 'Event', ref: { eventId: event.id } }, { id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: { raffleId: raffle.id } }],
+  }).returning()
+  const [aShow] = await db.insert(assistantShows).values({ userId: a.id, title: 'A show', items: [{ id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: {} }] }).returning()
   return {
     a, b, collaborator, scene, preset, presetSchedule, showing, element, adSpace, instance, roleWallet, dcl, hyperfy, stream, event, giveaway, item,
     asset, media, libraryItem, org, venue, booking, grant, hook, location, bKey, destination, parcelsDestination, signDeploy, liveDeploy, sceneImport, world, pairing, arSpace, arFloor, arMarker, arDevice, roomScan, roomSet, design, designJob, designRating, designUpload, designPayment, designInvite, pastPackage, notification, raffle, raffleSnapshot, raffleDraw, beat, reissueRequest, reissueFile, aScene, aEvent, deletedScene, removal,
-    conversation, planId, doneAction,
+    conversation, planId, doneAction, show, aShow,
   }
 }
 type F = Awaited<ReturnType<typeof fixtures>>
@@ -255,6 +261,10 @@ const CASES: Case[] = [
   { route: 'POST /api/assistant/plans/:planId/cancel', url: (f) => `/api/assistant/plans/${f.planId}/cancel` },
   { route: 'POST /api/assistant/plans/:planId/undo', url: (f) => `/api/assistant/plans/${f.planId}/undo` },
   { route: 'POST /api/assistant/actions/:actionId/undo', url: (f) => `/api/assistant/actions/${f.doneAction.id}/undo` },
+  { route: 'GET /api/assistant/shows/:showId', url: (f) => `/api/assistant/shows/${f.show.id}` },
+  { route: 'PATCH /api/assistant/shows/:showId/items/:itemId', url: (f) => `/api/assistant/shows/${f.show.id}/items/${f.show.items[1].id}`, body: () => ({ ref: {} }) },
+  { route: 'PATCH /api/assistant/shows/:showId/items/:itemId', url: (f) => `/api/assistant/shows/${f.aShow.id}/items/${f.aShow.items[0].id}`, body: (f) => ({ ref: { raffleId: f.raffle.id } }) },
+  { route: 'POST /api/assistant/shows/:showId/close', url: (f) => `/api/assistant/shows/${f.show.id}/close` },
   // BEATs (LIV-11)
   { route: 'GET /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}` },
   { route: 'PATCH /api/beats/:beatId', url: (f) => `/api/beats/${f.beat.id}`, body: () => ({ name: 'pwned' }) },
@@ -600,7 +610,7 @@ const TABLES = [
   studioPayments, studioEntitlements, studioMistakeReports, studioPromptCredits, studioUploads, studioScopeEvents, studioFlags, studioPauses,
   studioRatings, studioIdeaUses, studioDesignMembers, studioDesignInvites, notifications, raffles, raffleEntries, raffleSnapshots, raffleDraws, beats, beatScenes, beatClaims, beatPayments,
   beatReissueRequests, beatReissueItems, beatReissueFiles, walletBlocks, accountWalletEvents,
-  assistantConversations, assistantMessages, assistantActions, assistantUsage,
+  assistantConversations, assistantMessages, assistantActions, assistantUsage, assistantShows,
 ]
 async function snapshot(f: F) {
   const all = await Promise.all(TABLES.map((t) => db.select().from(t as any)))

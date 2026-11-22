@@ -213,8 +213,8 @@ describe('assistant tools, run as the owner', () => {
       ['create_showing', { sceneId, elementId: el.id, title: 'Matinee', items: [{ url: 'https://cdn.example/m.mp4', duration: 60 }], ...when }],
     ]
     // create_scene and create_design can't be undone (their own tests)
-    // The event, raffle and BEAT writes have their own tests
-    const covered = new Set([...cases.map(([n]) => n), 'update_scene', 'update_element', 'create_element', 'create_scene', 'create_design', 'create_event', 'update_event', 'link_event_scene', 'update_raffle_prize', 'create_beat_draft'])
+    // The event, raffle, BEAT and show writes have their own tests (show writes in assistant-shows.test.ts)
+    const covered = new Set([...cases.map(([n]) => n), 'update_scene', 'update_element', 'create_element', 'create_scene', 'create_design', 'create_event', 'update_event', 'link_event_scene', 'update_raffle_prize', 'create_beat_draft', 'start_show', 'attach_to_show', 'close_show'])
     expect([...covered].sort()).toEqual(Object.values(TOOLS).filter((t) => t.effect === 'write').map((t) => t.name).sort())
     for (const [name, args] of cases) {
       const r = await runTool(ctx, name, args)

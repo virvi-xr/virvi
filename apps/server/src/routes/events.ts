@@ -26,6 +26,9 @@ interface UpdateEventBody {
   timezone?: string
 }
 
+/** Who may read and change an event: its owner, or an admin (the rule every event route uses). */
+export const mayUseEvent = (event: { ownerId: string }, user: { id: string; role: string }) => event.ownerId === user.id || user.role === 'admin'
+
 export default async function eventRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate)
 
@@ -84,7 +87,7 @@ export default async function eventRoutes(app: FastifyInstance) {
       })
 
       if (!event) return reply.status(404).send({ error: 'Event not found' })
-      if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+      if (!mayUseEvent(event, request.user)) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
@@ -106,7 +109,7 @@ export default async function eventRoutes(app: FastifyInstance) {
     if (!isUuid(eventId)) return reply.status(404).send({ error: 'Event not found' })
     const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
     if (!event) return reply.status(404).send({ error: 'Event not found' })
-    if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+    if (!mayUseEvent(event, request.user)) {
       return reply.status(403).send({ error: 'Forbidden' })
     }
     if (!event.startTime || !event.endTime) {
@@ -176,7 +179,7 @@ export default async function eventRoutes(app: FastifyInstance) {
 
       const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
       if (!event) return reply.status(404).send({ error: 'Event not found' })
-      if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+      if (!mayUseEvent(event, request.user)) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
@@ -205,7 +208,7 @@ export default async function eventRoutes(app: FastifyInstance) {
 
       const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
       if (!event) return reply.status(404).send({ error: 'Event not found' })
-      if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+      if (!mayUseEvent(event, request.user)) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
@@ -229,7 +232,7 @@ export default async function eventRoutes(app: FastifyInstance) {
 
       const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
       if (!event) return reply.status(404).send({ error: 'Event not found' })
-      if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+      if (!mayUseEvent(event, request.user)) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
@@ -263,7 +266,7 @@ export default async function eventRoutes(app: FastifyInstance) {
 
       const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
       if (!event) return reply.status(404).send({ error: 'Event not found' })
-      if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+      if (!mayUseEvent(event, request.user)) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
@@ -292,7 +295,7 @@ export default async function eventRoutes(app: FastifyInstance) {
 
       const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
       if (!event) return reply.status(404).send({ error: 'Event not found' })
-      if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+      if (!mayUseEvent(event, request.user)) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
@@ -322,7 +325,7 @@ export default async function eventRoutes(app: FastifyInstance) {
 
       const event = await db.query.events.findFirst({ where: eq(events.id, eventId) })
       if (!event) return reply.status(404).send({ error: 'Event not found' })
-      if (event.ownerId !== request.user.id && request.user.role !== 'admin') {
+      if (!mayUseEvent(event, request.user)) {
         return reply.status(403).send({ error: 'Forbidden' })
       }
 

@@ -51,8 +51,8 @@ const CARD_APPROVE_ERRORS = {
   used: { status: 409, message: 'This was already sent.' },
 } as const
 
-/** Every route but /status: an API key is 403, hidden is 404, locked is 403. */
-async function guard(request: FastifyRequest, reply: FastifyReply) {
+/** Every route but /status (and the show routes, routes/assistant-shows.ts): an API key is 403, hidden is 404, locked is 403. */
+export async function guard(request: FastifyRequest, reply: FastifyReply) {
   if (request.user.viaApiKey) return reply.status(403).send(SESSION_ONLY)
   const a = await assistantAccess(request.user)
   if (a.state === 'hidden') return reply.status(404).send({ error: 'assistant_unavailable' })

@@ -3,10 +3,12 @@
 // Scheduling a raffle to open is public too (it opens to visitors by itself). A BEAT is only ever made as a draft; paying
 // for it is the user's own step on its page (open_beat_pay in local.ts links there with the server's price).
 import { z } from 'zod'
-import { BEAT_DESCRIPTION_MAX, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_MAX, MIN_PRESENT_MAX_MINUTES, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX, type RaffleMode } from '@virvixr/shared'
+import { BEAT_DESCRIPTION_MAX, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_MAX, MIN_PRESENT_MAX_MINUTES, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX, SHOW_ITEM_KINDS, type RaffleMode } from '@virvixr/shared'
 import { id, pick } from './read.js'
 import { atLeastOne, created, fields, get, orgNameOf, previous, sceneState, setKeys } from './write.js'
 import { ToolError, type Before, type ToolCtx, type ToolDef } from './types.js'
+import { isUuid } from '../conversations.js'
+import { SHOW_ITEMS_MAX, showOrgId } from '../shows.js'
 
 type Obj = Record<string, any>
 const list = (v: unknown): Obj[] => (Array.isArray(v) ? v : [])
@@ -58,6 +60,109 @@ async function raffleState(ctx: ToolCtx, raffleId: string): Promise<{ raffle: Ob
 }
 
 const winners = (n: number) => `${n} winner${n === 1 ? '' : 's'}`
+
+// ── Shows: a saved checklist for one event (assistant/shows.ts computes each item's state from the real rows) ──
+
+const SHOW_KINDS_HELP =
+  'event (make the event), scene_link (link a scene to it), showing (a screening on a screen), raffle (make the raffle), raffle_scheduled (schedule it to open), beat (draft the BEAT), beat_paid (the user pays for it), wearable_design (design the wearable in Studio and finalize it), wearable_published (the user publishes it on Decentraland and pastes its Marketplace link)'
+const SHOW_ITEM_KEYS = ['id', 'kind', 'label', 'state', 'note', 'ref', 'wearable'] as const
+const showSummary = (v: unknown) => {
+  const s = (v ?? {}) as Obj
+  return { ...pick(s, ['id', 'title', 'eventId', 'closedAt', 'timeline', 'warning']), items: list(s.items).map((i) => pick(i, SHOW_ITEM_KEYS)) }
+}
+const showUrl = (showId: string) => `/api/assistant/shows/${showId}`
+/** The conversation the tool runs in, when the route has one: a new show remembers where it started. */
+const conversationOf = (ctx: ToolCtx) => {
+  const c = (ctx.request.params as Obj | undefined)?.conversationId
+  return isUuid(c) ? c : undefined
+}
+const refArgs = z.object({ eventId: id().optional(), sceneId: id().optional(), showingId: id().optional(), raffleId: id().optional(), beatId: id().optional(), designId: id().optional() })
+const wearableArg = z.union([z.string().max(300), z.object({ contract: z.string().max(64), itemId: z.string().max(40) }), z.null()])
+/** The item's ref and wearable (only the keys the write set), as the show's view has them. */
+const itemFields = (view: unknown, itemId: string, keys: string[]) => {
+  const item = list((view as Obj)?.items).find((i) => i.id === itemId)
+  return item ? fields(item, keys) : null
+}
+
+const SHOW_TOOLS: ToolDef<any>[] = [
+  {
+    name: 'start_show',
+    description:
+      `Start a show: a saved checklist for one event, kept with the user's account, so any conversation can pick it up. List every item it needs, in order, each a kind and a short label. Kinds: ${SHOW_KINDS_HELP}. Pass the event's start (startTime, ISO) whenever the user gave one. It returns timeline and warning: say them to the user, in those words, before going further. Then make each thing and attach_to_show it.`,
+    input: z.object({
+      title: z.string().trim().min(1).max(120),
+      startTime: iso().optional(),
+      items: z.array(z.object({ kind: z.enum(SHOW_ITEM_KINDS), label: z.string().trim().min(1).max(120) })).min(1).max(SHOW_ITEMS_MAX),
+    }),
+    effect: 'write',
+    call: (a, ctx) => ({ method: 'POST', url: '/api/assistant/shows', body: { ...pick(a, ['title', 'startTime', 'items']), ...(conversationOf(ctx) ? { conversationId: conversationOf(ctx) } : {}) } }),
+    // Undo closes it; a closed show is left alone (closed since is changed)
+    before: async (_a, ctx): Promise<Before> => ({
+      undo: (res) => ({ method: 'POST', url: `${showUrl((res as Obj).id)}/close` }),
+      after: (res) => ({ id: (res as Obj).id, closedAt: null }),
+      orgName: await orgNameOf(await showOrgId(ctx.user)),
+    }),
+    currentOf: async (after, _a, ctx) => fields(await get(ctx, showUrl((after as Obj)?.id)), ['id', 'closedAt']),
+    label: (a) => `Start the show "${a.title}"`,
+    summarize: showSummary,
+  },
+  {
+    name: 'get_show',
+    description: "One show: its event, the timeline and warning, and each item's state (todo, waiting, done, skipped), note and what is attached (ref, wearable).",
+    input: z.object({ showId: id() }),
+    effect: 'read',
+    call: (a) => ({ method: 'GET', url: showUrl(a.showId) }),
+    label: () => 'Read the show',
+    summarize: showSummary,
+  },
+  {
+    name: 'list_shows',
+    description: "The user's open shows, newest first, or only an event's (eventId).",
+    input: z.object({ eventId: id().optional() }),
+    effect: 'read',
+    call: (a) => ({ method: 'GET', url: a.eventId ? `/api/assistant/shows?eventId=${a.eventId}` : '/api/assistant/shows' }),
+    label: () => 'List your shows',
+    summarize: (res) => list((res as Obj)?.shows).map(showSummary),
+  },
+  {
+    name: 'attach_to_show',
+    description:
+      "Attach what was made to a show's item, by its id (ref): eventId for event, sceneId for scene_link, showingId, raffleId (raffle, raffle_scheduled), beatId (beat, beat_paid), designId (wearable_design). An empty ref clears it. For wearable_published, wearable is the Marketplace link the user pasted (or { contract, itemId }); null clears it. raffle_scheduled and beat_paid read the show's raffle and BEAT when given none.",
+    input: z
+      .object({ showId: id(), itemId: id(), ref: refArgs.optional(), wearable: wearableArg.optional() })
+      .refine((a) => a.ref !== undefined || a.wearable !== undefined, 'Give a ref or a wearable.'),
+    effect: 'write',
+    call: (a) => ({ method: 'PATCH', url: `${showUrl(a.showId)}/items/${a.itemId}`, body: pick(a, setKeys(a, ['showId', 'itemId'])) }),
+    before: async (a, ctx): Promise<Before> => {
+      const view = await get(ctx, showUrl(a.showId))
+      const keys = setKeys(a, ['showId', 'itemId'])
+      const now = itemFields(view, a.itemId, ['ref', 'wearable'])
+      if (!now) throw new ToolError(404, "That item isn't in this show.")
+      return {
+        undo: { method: 'PATCH', url: `${showUrl(a.showId)}/items/${a.itemId}`, body: previous(now, keys) },
+        after: (res) => itemFields(res, a.itemId, keys),
+        current: fields(now, keys),
+        orgName: (view.orgName ?? null) as string | null,
+      }
+    },
+    label: (a) => (a.wearable !== undefined && a.ref === undefined ? "Add the wearable's link to the show" : 'Attach it to the show'),
+    summarize: showSummary,
+  },
+  {
+    name: 'close_show',
+    description: "Close a show once it's finished or no longer wanted: it drops out of list_shows.",
+    input: z.object({ showId: id() }),
+    effect: 'write',
+    call: (a) => ({ method: 'POST', url: `${showUrl(a.showId)}/close` }),
+    // There is no reopening a show, so no undo
+    before: async (a, ctx): Promise<Before> => {
+      const view = await get(ctx, showUrl(a.showId))
+      return { undo: null, after: (res) => fields(res, ['closedAt']), current: fields(view, ['closedAt']), orgName: (view.orgName ?? null) as string | null }
+    },
+    label: () => 'Close the show',
+    summarize: showSummary,
+  },
+]
 
 export const SHOWS_TOOLS: ToolDef<any>[] = [
   {
@@ -231,4 +336,5 @@ export const SHOWS_TOOLS: ToolDef<any>[] = [
     label: () => 'Read the BEAT',
     summarize: (res) => pick(res as Obj, BEAT_KEYS),
   },
+  ...SHOW_TOOLS,
 ]

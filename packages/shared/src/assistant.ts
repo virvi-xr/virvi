@@ -78,3 +78,59 @@ export interface AssistantMessageView {
   links: { label: string; href: string; detail?: string }[]
   createdAt: string
 }
+
+// ── Shows (phase 2b): a saved checklist for one event ──
+
+export const SHOW_ITEM_KINDS = ['event', 'scene_link', 'showing', 'raffle', 'raffle_scheduled', 'beat', 'beat_paid', 'wearable_design', 'wearable_published'] as const
+export type ShowItemKind = (typeof SHOW_ITEM_KINDS)[number]
+export type ShowItemState = 'todo' | 'waiting' | 'done' | 'skipped'
+
+/** What an item points at: the rows the assistant made or found for it. */
+export interface ShowItemRef {
+  eventId?: string
+  sceneId?: string
+  showingId?: string
+  raffleId?: string
+  beatId?: string
+  designId?: string
+}
+
+/** A published wearable, pasted as its Decentraland Marketplace link. */
+export interface ShowWearable {
+  contract: string
+  itemId: string
+  url: string
+}
+
+/** An item as stored: its state is never stored, it is computed from the rows `ref` points at on every read. */
+export interface ShowItem {
+  id: string
+  kind: ShowItemKind
+  label: string
+  ref: ShowItemRef
+  wearable?: ShowWearable
+}
+
+export interface ShowItemView {
+  id: string
+  kind: ShowItemKind
+  label: string
+  state: ShowItemState
+  note: string | null
+  ref: ShowItemRef
+  wearable: ShowWearable | null
+}
+
+export interface ShowView {
+  id: string
+  title: string
+  eventId: string | null
+  orgName: string | null
+  createdAt: string
+  closedAt: string | null
+  /** How long a new wearable takes; set when the show has a wearable to design. */
+  timeline: string | null
+  /** Set when the event starts too soon for a wearable still to be designed to get through curation. */
+  warning: string | null
+  items: ShowItemView[]
+}
