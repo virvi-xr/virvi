@@ -14,7 +14,7 @@ import type { RoomNudge } from './room-set'
 import type { MediaNames } from './media-names'
 import type { AuthChain } from '@dcl/crypto'
 import type { ParcelGrant, ParcelRevoke } from './parcel-grant'
-import type { ArFileFormat, ArMounting } from './ar'
+import type { ArFileFormat, ArMarkerStyle, ArMounting } from './ar'
 import { adminDesignsQuery, type AdminDesign } from './studio-support'
 import type { AdminWallEntry, WallState, AdminManaRefund, AdminManaRefundQuote, AdminManaTransfer, AdminGiftCode, AdminMistakeReport, AdminHelpRequest, AdminStudioFlag, CheckoutMethod, CheckoutResult, Quote, RenderView, StudioDesign, StudioDetail, StudioKind, StudioMember, StudioMessage, StudioSet, StudioUpload, StudioUsage } from './studio'
 import type { PromptHelp } from './studio-prompt'
@@ -434,11 +434,11 @@ function useRealApi() {
     updateArMarker: (id: string, patch: { diameterMm?: number; whereText?: string | null }) =>
       apiFetch<ArMarkerView>(`/api/ar/markers/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
     deleteArMarker: (id: string) => apiFetch(`/api/ar/markers/${id}`, { method: 'DELETE' }),
-    arMarkerFileUrl: (id: string, format: ArFileFormat, mounting: ArMounting = 'none') =>
-      `${API_URL}/api/ar/markers/${id}/files?format=${format}&mounting=${mounting}`,
+    arMarkerFileUrl: (id: string, format: ArFileFormat, mounting: ArMounting = 'none', style: ArMarkerStyle = 'normal') =>
+      `${API_URL}/api/ar/markers/${id}/files?format=${format}&mounting=${mounting}&style=${style}`,
     /** Authenticated download (a plain link can't send the bearer header). Filename comes from Content-Disposition. */
-    downloadArMarkerFile: async (id: string, format: ArFileFormat, mounting: ArMounting = 'none'): Promise<{ blob: Blob; filename: string }> => {
-      const res = await fetch(`${API_URL}/api/ar/markers/${id}/files?format=${format}&mounting=${mounting}`, { headers: requestHeaders(token, {}) })
+    downloadArMarkerFile: async (id: string, format: ArFileFormat, mounting: ArMounting = 'none', style: ArMarkerStyle = 'normal'): Promise<{ blob: Blob; filename: string }> => {
+      const res = await fetch(`${API_URL}/api/ar/markers/${id}/files?format=${format}&mounting=${mounting}&style=${style}`, { headers: requestHeaders(token, {}) })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
         dropDeadSession(res.status, err)

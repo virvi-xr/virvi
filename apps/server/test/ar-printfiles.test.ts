@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { inflateRawSync } from 'node:zlib'
 import { ringCodeOf, ringPlaqueSizeMm, ringShapes } from '@virvixr/shared'
-import { buildMarkerMeshes, distanceToShape, paperPdf, screwSpots, stl, threeMf, type Mesh, type Mounting } from '../src/ar/printfiles.js'
+import { buildMarkerMeshes, distanceToShape, paperPdf, MARKER_STYLES, screwSpots, stl, threeMf, type Mesh, type Mounting } from '../src/ar/printfiles.js'
 import { crc32 } from '../src/ar/zip.js'
 import { eq } from 'drizzle-orm'
 import { db } from '../src/db/connection.js'
@@ -212,7 +212,70 @@ describe('3MF', () => {
   })
 })
 
+describe('3MF marker styles', () => {
+  const model = (style?: 'normal' | 'inverted') => {
+    const { base, raised } = buildMarkerMeshes(ID, 140, 'tape')
+    return unzip(style ? threeMf(base, raised, style) : threeMf(base, raised)).get('3D/3dmodel.model')!.toString('utf8')
+  }
+
+  it('normal is byte-identical to the call without a style', () => {
+    const { base, raised } = buildMarkerMeshes(ID, 140, 'tape')
+    expect(threeMf(base, raised, 'normal').equals(threeMf(base, raised))).toBe(true)
+    expect(model()).toContain('<base name="base (light)" displaycolor="#F2F2F2"/><base name="raised (dark)" displaycolor="#1A1A1A"/>')
+  })
+
+  it('inverted swaps the colours and part names, base dark and raised light', () => {
+    const m = model('inverted')
+    expect(m).toContain('<base name="base (dark)" displaycolor="#1A1A1A"/><base name="raised (light)" displaycolor="#F2F2F2"/>')
+    expect(m).toContain('<object id="2" name="base (dark)"')
+    expect(m).toContain('<object id="3" name="raised (light)"')
+    expect(m).not.toContain('base (light)')
+    expect(m).not.toContain('raised (dark)')
+  })
+
+  it('inverted has the same meshes as normal', () => {
+    const strip = (x: string) => x.replace(/<basematerials.*<\/basematerials>/, '').replace(/name="[^"]*"/g, '')
+    expect(strip(model('inverted'))).toBe(strip(model('normal')))
+  })
+
+  it('exports the style list', () => {
+    expect(MARKER_STYLES).toEqual(['normal', 'inverted'])
+  })
+})
+
 describe('paper PDF', () => {
+  it('normal is byte-identical to the call without a style', () => {
+    expect(paperPdf(ID, 140, 'normal').equals(paperPdf(ID, 140))).toBe(true)
+  })
+
+  it('inverted fills the plaque black and draws the marks in white', () => {
+    const normal = paperPdf(ID, 140).toString('latin1')
+    const inverted = paperPdf(ID, 140, 'inverted').toString('latin1')
+    const side = ringPlaqueSizeMm(140)
+    const k = 72 / 25.4
+    const left = (215.9 - side) / 2
+    const pageH = 279.4 * k
+    const n = (v: number) => String(Math.round(v * 1000) / 1000)
+    const fill = `0 g\n${n(left * k)} ${n(pageH - (25 + side) * k)} ${n(side * k)} ${n(side * k)} re f\n1 g`
+    expect(inverted).toContain(fill)
+    expect(normal).not.toContain('1 g')
+    // the marks are the same shapes, after the white colour switch
+    const marks = (t: string) => t.slice(t.indexOf('re S'))
+    expect(inverted.indexOf('1 g')).toBeGreaterThan(inverted.indexOf('re S'))
+    // text and the check bar go back to black
+    const afterMarks = inverted.slice(inverted.lastIndexOf('1 g'))
+    expect(afterMarks).toContain('0 g')
+    expect(afterMarks).toContain('(100 mm) Tj')
+    expect(afterMarks).toContain('Do not use "fit to page"')
+    expect(marks(inverted).length).toBeGreaterThan(marks(normal).length)
+  })
+
+  it('inverted keeps a valid cross-reference table', () => {
+    const text = paperPdf(ID, 140, 'inverted').toString('latin1')
+    const startxref = Number(/startxref\n(\d+)\n%%EOF/.exec(text)![1])
+    expect(text.slice(startxref, startxref + 4)).toBe('xref')
+  })
+
   it('says to print at 100% and carries the code', () => {
     const pdf = paperPdf(ID, 140)
     const text = pdf.toString('latin1')
@@ -283,6 +346,29 @@ describe('print file download route', () => {
     const keyhole = await get('format=stl-base&mounting=keyhole')
     expect(parseStl(keyhole.rawPayload).count).toBeGreaterThan(12)
     expect(parseStl(keyhole.rawPayload).z[0]).toBeCloseTo(-2, 4)
+  })
+
+  it('style: inverted adds -inverted to the filename, normal and missing do not, STLs are identical', async () => {
+    const s = await setup()
+    const get = (q: string) => app.inject({ method: 'GET', url: `/api/ar/markers/${s.marker.id}/files?${q}`, headers: as(s.owner) })
+    const code = s.marker.code
+    for (const [format, suffix, ext] of [['pdf', '', 'pdf'], ['3mf', '', '3mf'], ['stl-base', '-base', 'stl'], ['stl-raised', '-raised', 'stl']] as const) {
+      const inv = await get(`format=${format}&style=inverted`)
+      expect(inv.statusCode, format).toBe(200)
+      expect(inv.headers['content-disposition']).toBe(`attachment; filename="virvi-ring-${code}-140mm${suffix}-inverted.${ext}"`)
+      const normal = await get(`format=${format}&style=normal`)
+      const missing = await get(`format=${format}`)
+      expect(normal.headers['content-disposition']).toBe(`attachment; filename="virvi-ring-${code}-140mm${suffix}.${ext}"`)
+      expect(normal.rawPayload.equals(missing.rawPayload), format).toBe(true)
+      if (format.startsWith('stl')) expect(inv.rawPayload.equals(normal.rawPayload), format).toBe(true)
+      else expect(inv.rawPayload.equals(normal.rawPayload), format).toBe(false)
+    }
+  })
+
+  it('rejects an unknown style', async () => {
+    const s = await setup()
+    const res = await app.inject({ method: 'GET', url: `/api/ar/markers/${s.marker.id}/files?format=pdf&style=bogus`, headers: as(s.owner) })
+    expect(res.statusCode).toBe(400)
   })
 
   it('rejects an unknown format or mounting', async () => {

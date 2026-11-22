@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ArMarkerView, ArSpaceView } from '@virvixr/shared'
-import { alignmentStatus, friendlyArError, reportReasonLabel, resizeNote, shareUrl, spaceCodeFromPath, spaceReadiness } from './ar'
+import { alignmentStatus, friendlyArError, printHint, reportReasonLabel, resizeNote, shareUrl, spaceCodeFromPath, spaceReadiness } from './ar'
 
 const marker = (pose: ArMarkerView['pose']): ArMarkerView => ({ id: 'm', ringId: 1, code: '2E3D4C5', diameterMm: 140, whereText: null, pose })
 const space = (markers: ArMarkerView[]): ArSpaceView => ({
@@ -69,5 +69,12 @@ describe('reportReasonLabel', () => {
   it('names the four reasons and passes an unknown one through', () => {
     expect(['offensive', 'unsafe', 'spam', 'other'].map(reportReasonLabel)).toEqual(['Offensive', 'Unsafe', 'Spam', 'Something else'])
     expect(reportReasonLabel('new-reason')).toBe('new-reason')
+  })
+})
+
+describe('printHint', () => {
+  it('names the filament to start with for each marker style', () => {
+    expect(printHint('normal')).toBe('Print at 100%. Start with light filament and change to dark at 4.0 mm. Matte filament works best.')
+    expect(printHint('inverted')).toBe('Print at 100%. Start with dark filament and change to light at 4.0 mm. Matte filament works best.')
   })
 })

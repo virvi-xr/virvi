@@ -10,6 +10,10 @@ import { zip } from './zip.js'
 export type Mounting = 'none' | 'tape' | 'magnets' | 'screws' | 'keyhole'
 export const MOUNTINGS: readonly Mounting[] = ['none', 'tape', 'magnets', 'screws', 'keyhole']
 
+/** Normal is dark marks on a light plaque; inverted is light marks on a dark plaque. */
+export type MarkerStyle = 'normal' | 'inverted'
+export const MARKER_STYLES: readonly MarkerStyle[] = ['normal', 'inverted']
+
 const BASE_MM = 4.0
 const RAISED_MM = 0.6
 const ARC_STEP_DEG = 1
@@ -420,8 +424,10 @@ export function stl(mesh: Mesh, name = 'Virvi ring marker'): Buffer {
  * A 3MF with the two meshes as parts of one object, each with its own base material, so slicers
  * (Bambu Studio, PrusaSlicer) load two parts and let you give each a filament.
  */
-export function threeMf(base: Mesh, raised: Mesh): Buffer {
-  const parts: [string, Mesh, string][] = [['base (light)', base, '#F2F2F2'], ['raised (dark)', raised, '#1A1A1A']]
+export function threeMf(base: Mesh, raised: Mesh, style: MarkerStyle = 'normal'): Buffer {
+  const parts: [string, Mesh, string][] = style === 'inverted'
+    ? [['base (dark)', base, '#1A1A1A'], ['raised (light)', raised, '#F2F2F2']]
+    : [['base (light)', base, '#F2F2F2'], ['raised (dark)', raised, '#1A1A1A']]
   const mats = parts.map(([n, , c]) => `<base name="${n}" displaycolor="${c}"/>`).join('')
   const objects = parts.map(([name, m], i) => {
     const vs = m.verts.map(([x, y, z]) => `<vertex x="${x}" y="${y}" z="${z}"/>`).join('')
@@ -464,7 +470,7 @@ const MAX_PLAQUE_ON_LETTER_MM = 196 // 10 mm margins each side; leaves room for 
 const num = (n: number) => String(Math.round(n * 1000) / 1000)
 const pdfText = (s: string) => s.replace(/[\\()]/g, (c) => `\\${c}`)
 
-export function paperPdf(markerId: number, diameterMm: number): Buffer {
+export function paperPdf(markerId: number, diameterMm: number, style: MarkerStyle = 'normal'): Buffer {
   const side = ringPlaqueSizeMm(diameterMm)
   if (side > MAX_PLAQUE_ON_LETTER_MM) throw new Error('too_large_for_paper')
   const code = ringCodeOf(markerId)
@@ -485,6 +491,7 @@ export function paperPdf(markerId: number, diameterMm: number): Buffer {
   text(15, 14, 16, `Virvi ring marker  ${code}`, 'F2')
   ops.push('0 G 0.6 w', `${X(left)} ${Y(top + side)} ${num(side * k)} ${num(side * k)} re S`)
   ops.push('0 g')
+  if (style === 'inverted') ops.push(`${X(left)} ${Y(top + side)} ${num(side * k)} ${num(side * k)} re f`, '1 g')
   for (const s of ringShapes(markerId, diameterMm)) {
     if (s.kind === 'rect') {
       ops.push(`${num(cx + s.x0 * k)} ${num(cy + s.y0 * k)} ${num((s.x1 - s.x0) * k)} ${num((s.y1 - s.y0) * k)} re f`)
@@ -500,6 +507,7 @@ export function paperPdf(markerId: number, diameterMm: number): Buffer {
       ops.push(`${poly([...outer, ...inner])} f`)
     }
   }
+  if (style === 'inverted') ops.push('0 g') // the text and check bar stay black on the white page
   const below = top + side
   text(15, below + 10, 11, `Plaque ${num(side)} mm square, ring ${num(diameterMm)} mm.`)
   text(15, below + 16, 11, 'Print at 100% (actual size). Do not use "fit to page".', 'F2')

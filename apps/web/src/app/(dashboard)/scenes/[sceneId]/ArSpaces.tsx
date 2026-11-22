@@ -5,7 +5,7 @@ import { useApi } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import {
   AR_DEFAULT_DIAMETER_MM, AR_MAX_DIAMETER_MM, AR_MIN_DIAMETER_MM, alignmentStatus, friendlyArError, resizeNote, shareUrl, spaceReadiness,
-  type ArFileFormat, type ArMounting,
+  type ArFileFormat, type ArMarkerStyle, type ArMounting, printHint,
 } from '@/lib/ar'
 
 const friendly = (err: any): string => friendlyArError(err?.message)
@@ -23,6 +23,10 @@ const MOUNTINGS: { value: ArMounting; label: string }[] = [
   { value: 'magnets', label: 'Magnets' },
   { value: 'screws', label: 'Screws' },
   { value: 'keyhole', label: 'Keyhole (hang on a screw)' },
+]
+const STYLES: { value: ArMarkerStyle; label: string }[] = [
+  { value: 'normal', label: 'Black on white' },
+  { value: 'inverted', label: 'White on black' },
 ]
 const DOWNLOADS: { format: ArFileFormat; label: string }[] = [
   { format: 'pdf', label: 'Paper (PDF)' },
@@ -59,6 +63,7 @@ function BlurField({ value, onSave, className = input, wrap = '', ...rest }: { v
 function MarkerCard({ marker, busy, run }: { marker: ArMarkerView; busy: boolean; run: Run }) {
   const api = useApi()
   const [mounting, setMounting] = useState<ArMounting>('none')
+  const [style, setStyle] = useState<ArMarkerStyle>('normal')
   const [diameter, setDiameter] = useState(String(marker.diameterMm))
   const [diameterErr, setDiameterErr] = useState<string | null>(null)
   const [resized, setResized] = useState(false)
@@ -82,7 +87,7 @@ function MarkerCard({ marker, busy, run }: { marker: ArMarkerView; busy: boolean
   const download = async (format: ArFileFormat) => {
     setDlError(null)
     try {
-      const { blob, filename } = await api.downloadArMarkerFile(marker.id, format, mounting)
+      const { blob, filename } = await api.downloadArMarkerFile(marker.id, format, mounting, style)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -123,12 +128,16 @@ function MarkerCard({ marker, busy, run }: { marker: ArMarkerView; busy: boolean
           <select aria-label="Mounting (3D files)" value={mounting} onChange={(e) => setMounting(e.target.value as ArMounting)} className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-white">
             {MOUNTINGS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
+          <label className="text-xs text-gray-400">Marker style</label>
+          <select aria-label="Marker style" value={style} onChange={(e) => setStyle(e.target.value as ArMarkerStyle)} className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-white">
+            {STYLES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
         </div>
         <div className="flex flex-wrap gap-2">
           {DOWNLOADS.map((d) => <button key={d.format} className={smallBtn} onClick={() => download(d.format)}>{d.label}</button>)}
         </div>
         {dlError && <p className="text-xs text-red-400">{dlError}</p>}
-        <p className="text-xs text-gray-500">Print at 100%. Change filament at 4.0 mm. Matte filament works best.</p>
+        <p className="text-xs text-gray-500">{printHint(style)}</p>
         <div className="flex items-center gap-2">
           <button disabled className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-gray-500 cursor-not-allowed">Order a printed marker</button>
           <span className="text-xs text-gray-500">Coming later</span>

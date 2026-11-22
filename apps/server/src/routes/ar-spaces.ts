@@ -5,7 +5,7 @@ import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess } from '../auth/permissions.js'
 import { fromParam, type SceneFrom } from '../auth/scene-from.js'
 import { fromFloor, fromMarker, fromSpace, mayBuild } from '../ar/access.js'
-import { buildMarkerMeshes, MOUNTINGS, paperPdf, stl, threeMf, type Mounting } from '../ar/printfiles.js'
+import { buildMarkerMeshes, MARKER_STYLES, MOUNTINGS, paperPdf, stl, threeMf, type MarkerStyle, type Mounting } from '../ar/printfiles.js'
 import { addFloor, addMarker, getMarker, createSpace, deleteFloor, deleteMarker, deleteSpace, listSpaces, updateFloor, updateMarker, updateSpace } from '../ar/spaces.js'
 
 const MIN_DIAMETER_MM = 60
@@ -134,18 +134,18 @@ export default async function arSpaceRoutes(app: FastifyInstance) {
     return (await deleteMarker(request.params.id)) ? reply.status(204).send() : missing(reply)
   })
 
-  /** Print files for a marker: STL parts, the two-filament 3MF, the paper PDF or the SVG. Mounting shapes the base (STL base and 3MF). */
-  app.get<{ Params: { id: string }; Querystring: { format?: unknown; mounting?: unknown } }>('/api/ar/markers/:id/files', cfg(fromMarker), async (request, reply) => {
+  /** Print files for a marker: STL parts, the two-filament 3MF, the paper PDF or the SVG. Mounting shapes the base (STL base and 3MF). Style (normal or inverted) recolours the PDF and 3MF; the SVG and STLs are the same either way. */
+  app.get<{ Params: { id: string }; Querystring: { format?: unknown; mounting?: unknown; style?: unknown } }>('/api/ar/markers/:id/files', cfg(fromMarker), async (request, reply) => {
     if (!(await guard(request, reply, fromMarker))) return
-    const { format, mounting = 'none' } = request.query
-    if (!isFileFormat(format) || !MOUNTINGS.includes(mounting as Mounting)) return bad(reply)
+    const { format, mounting = 'none', style = 'normal' } = request.query
+    if (!isFileFormat(format) || !MOUNTINGS.includes(mounting as Mounting) || !MARKER_STYLES.includes(style as MarkerStyle)) return bad(reply)
     const marker = await getMarker(request.params.id)
     if (!marker) return missing(reply)
     const { ringId, diameterMm } = marker
     let body: Buffer | string
     if (format === 'svg') body = ringMarkerSvg(ringId, diameterMm)
     else if (format === 'pdf') {
-      try { body = paperPdf(ringId, diameterMm) } catch (err) {
+      try { body = paperPdf(ringId, diameterMm, style as MarkerStyle) } catch (err) {
         if (err instanceof Error && err.message === 'too_large_for_paper') return bad(reply, 'too_large_for_paper')
         throw err
       }
@@ -156,10 +156,10 @@ export default async function arSpaceRoutes(app: FastifyInstance) {
         throw err
       }
       const { base, raised } = meshes
-      body = format === '3mf' ? threeMf(base, raised) : stl(format === 'stl-base' ? base : raised, `Virvi ring marker ${marker.code} ${format === 'stl-base' ? 'base' : 'raised'}`)
+      body = format === '3mf' ? threeMf(base, raised, style as MarkerStyle) : stl(format === 'stl-base' ? base : raised, `Virvi ring marker ${marker.code} ${format === 'stl-base' ? 'base' : 'raised'}`)
     }
     const { ext, type } = FILE_FORMATS[format]
-    const suffix = format === 'stl-base' ? '-base' : format === 'stl-raised' ? '-raised' : ''
+    const suffix = (format === 'stl-base' ? '-base' : format === 'stl-raised' ? '-raised' : '') + (style === 'inverted' && format !== 'svg' ? '-inverted' : '')
     return reply
       .header('content-type', type)
       .header('content-disposition', `attachment; filename="virvi-ring-${marker.code}-${diameterMm}mm${suffix}.${ext}"`)

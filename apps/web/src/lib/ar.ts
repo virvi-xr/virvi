@@ -7,6 +7,14 @@ export const AR_DEFAULT_DIAMETER_MM = 140
 
 export type ArFileFormat = 'stl-base' | 'stl-raised' | '3mf' | 'pdf' | 'svg'
 export type ArMounting = 'none' | 'tape' | 'magnets' | 'screws' | 'keyhole'
+/** Black marks on a white plaque, or white marks on a black one (print files only). */
+export type ArMarkerStyle = 'normal' | 'inverted'
+
+/** The line under the download buttons: which filament goes first depends on the marker style. */
+export function printHint(style: ArMarkerStyle): string {
+  const order = style === 'inverted' ? 'Start with dark filament and change to light at 4.0 mm.' : 'Start with light filament and change to dark at 4.0 mm.'
+  return `Print at 100%. ${order} Matte filament works best.`
+}
 
 /** A marker is aligned once the headset has stored its pose. */
 export function alignmentStatus(m: ArMarkerView): 'not_aligned' | 'aligned' {
