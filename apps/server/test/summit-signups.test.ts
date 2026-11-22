@@ -21,13 +21,13 @@ describe('Virvi Summit sign-ups', () => {
   const asAdmin = async () => `Bearer ${tokenFor(await createUser({ role: 'admin' }))}`
 
   it('stores an online sign-up with its interests, ref and consent time', async () => {
-    const res = await submit({ ...base, email: ' Ana@Example.COM ', name: '  Ana  ', joinAs: 'online', interests: ['drops', 'studio', 'drops'], ref: 'Discord_1' })
+    const res = await submit({ ...base, email: ' Ana@Example.COM ', name: '  Ana  ', joinAs: 'online', interests: ['beat', 'drops', 'studio', 'ar', 'drops'], ref: 'Discord_1' })
     expect(res.statusCode).toBe(201)
     expect(res.json()).toEqual({ ok: true })
     const [row] = await rows()
     expect(row).toMatchObject({
       email: 'ana@example.com', name: 'Ana', joinAs: 'online', partySize: null, city: null, expectedGuests: null,
-      interests: ['studio', 'drops'], source: 'discord_1', inPersonStatus: null,
+      interests: ['studio', 'ar', 'drops', 'beat'], source: 'discord_1', inPersonStatus: null,
     })
     expect(Math.abs(row.consentAt.getTime() - Date.now())).toBeLessThan(5000)
   })
@@ -76,6 +76,7 @@ describe('Virvi Summit sign-ups', () => {
       [{ ...base, joinAs: 'watch_party', city: 'Lisbon', expectedGuests: 12.5 }, 'invalid_guests'],
       [{ ...base, joinAs: 'online', interests: ['studio', 'karaoke'] }, 'invalid_interest'],
       [{ ...base, joinAs: 'online', interests: 'studio' }, 'invalid_interest'],
+      [{ ...base, joinAs: 'online', interests: ['os'] }, 'invalid_interest'], // Virvi OS is not part of the Summit
       [{ ...base, joinAs: 'online', consent: false }, 'consent_required'],
       [{ ...base, joinAs: 'online', consent: undefined }, 'consent_required'],
     ]
@@ -96,12 +97,12 @@ describe('Virvi Summit sign-ups', () => {
 
   it('a resubmit updates the same row, replacing the answers', async () => {
     await submit({ ...base, joinAs: 'watch_party', city: 'Lisbon', expectedGuests: 30, interests: ['ar'], ref: 'x' })
-    const res = await submit({ ...base, email: 'ANA@example.com', name: 'Ana B', joinAs: 'online', interests: ['os'] })
+    const res = await submit({ ...base, email: 'ANA@example.com', name: 'Ana B', joinAs: 'online', interests: ['beat'] })
     expect(res.statusCode).toBe(201)
     const all = await rows()
     expect(all).toHaveLength(1)
     // No ref this time keeps where they first came from
-    expect(all[0]).toMatchObject({ name: 'Ana B', joinAs: 'online', city: null, expectedGuests: null, interests: ['os'], source: 'x' })
+    expect(all[0]).toMatchObject({ name: 'Ana B', joinAs: 'online', city: null, expectedGuests: null, interests: ['beat'], source: 'x' })
     expect(all[0].updatedAt.getTime()).toBeGreaterThan(all[0].createdAt.getTime())
   })
 
@@ -154,7 +155,7 @@ describe('Virvi Summit sign-ups', () => {
     expect(signups[0].createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/)
     expect(totals).toEqual({
       byJoinAs: { online: 1, in_person: 3, watch_party: 1 },
-      byInterest: { studio: 1, sync: 0, events: 0, drops: 2, ar: 0, cities: 0, os: 0 },
+      byInterest: { studio: 1, sync: 0, ar: 0, events: 0, drops: 2, beat: 0, cities: 0 },
       bySource: { discord: 2, x: 1, '(direct)': 2 },
       inPersonPeople: 5, // 3 requested + 2 confirmed; the declined 4 don't count
     })

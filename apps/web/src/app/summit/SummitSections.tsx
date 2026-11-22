@@ -1,4 +1,4 @@
-import { SUMMIT_AGENDA, SUMMIT_OFFERINGS } from '@/lib/summit'
+import { SUMMIT_TRACKS } from '@/lib/summit'
 
 const WAYS = [
   {
@@ -27,6 +27,7 @@ export function SummitSections() {
           <p className={eyebrow}>Wednesday 3 – Thursday 4 February 2027</p>
           <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-6xl">Virvi Launch Summit</h1>
           <p className="mt-4 text-2xl font-medium text-blue-200 sm:text-3xl">Create once. Live everywhere.</p>
+          <p className="mt-3 font-medium text-white">Two days, two tracks: Creator on Wednesday, Community on Thursday.</p>
           <p className="mt-6 max-w-xl leading-relaxed text-gray-300">
             Two days of live launches from Livication Studios, Melbourne, Florida, and live in every Virvi world at the same time. Plus watch
             parties run by the community, wherever you are.
@@ -38,17 +39,27 @@ export function SummitSections() {
       <section aria-labelledby="summit-offerings" className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
         <p className={eyebrow}>What launches</p>
         <h2 id="summit-offerings" className={`mt-2 ${h2}`}>Seven things, shown live</h2>
-        <ul className="mt-8 grid gap-x-12 border-t border-gray-800 md:grid-cols-2">
-          {SUMMIT_OFFERINGS.map((o) => (
-            <li key={o.id} className="border-b border-gray-800 py-5">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <h3 className="font-semibold text-white">{o.name}</h3>
-                <span className="text-sm text-gray-400">{o.session} EST</span>
-              </div>
-              <p className="mt-1 max-w-md text-gray-400">{o.blurb}</p>
-            </li>
+        <div className="mt-8 grid gap-10 md:grid-cols-2 md:gap-12">
+          {SUMMIT_TRACKS.map((t) => (
+            <div key={t.id}>
+              <h3 className="text-xl font-semibold text-white">
+                {t.name} <span className="font-normal text-accent">· {t.shortDay}</span>
+              </h3>
+              <p className="mt-1 text-gray-300">{t.description}</p>
+              <ul className="mt-4 border-t border-gray-800">
+                {t.offerings.map((o) => (
+                  <li key={o.id} className="border-b border-gray-800 py-5">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                      <h4 className="font-semibold text-white">{o.name}</h4>
+                      <span className="text-sm text-gray-400">{o.session} EST</span>
+                    </div>
+                    <p className="mt-1 max-w-md text-gray-400">{o.blurb}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
-        </ul>
+        </div>
       </section>
 
       <section aria-labelledby="summit-ways" className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
@@ -69,11 +80,11 @@ export function SummitSections() {
         <h2 id="summit-agenda" className={`mt-2 ${h2}`}>Two days</h2>
         <p className="mt-2 text-sm text-gray-400">All times Eastern (EST). Agenda may change.</p>
         <div className="mt-8 grid gap-8 md:grid-cols-2">
-          {SUMMIT_AGENDA.map((d) => (
-            <div key={d.day}>
-              <h3 className="font-semibold text-white">{d.day}</h3>
+          {SUMMIT_TRACKS.map((t) => (
+            <div key={t.id}>
+              <h3 className="font-semibold text-white">{`${t.day} · ${t.name}`}</h3>
               <ol className="mt-3 border-t border-gray-800">
-                {d.items.map((i) => (
+                {t.agenda.map((i) => (
                   <li key={i.time} className="flex gap-4 border-b border-gray-800 py-3">
                     <span className="w-12 shrink-0 font-mono text-sm leading-6 text-accent">{i.time}</span>
                     <span className="min-w-0 text-gray-300">{i.title}</span>

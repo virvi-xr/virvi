@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import type { SummitInterest, SummitJoinAs } from '@virvixr/shared'
-import { EMPTY_SUMMIT_FORM, SUMMIT_OFFERINGS, signupFromForm, submitSummitSignup, summitDoneLine, summitRefFromSearch, type SummitFormState } from '@/lib/summit'
+import { EMPTY_SUMMIT_FORM, SUMMIT_TRACKS, signupFromForm, submitSummitSignup, summitDoneLine, summitRefFromSearch, type SummitFormState } from '@/lib/summit'
 import { siteLinks } from '@/lib/site'
 
 const inputClass = 'w-full rounded-lg bg-gray-800 px-4 py-2 text-white outline-none focus:ring-2 focus:ring-accent'
@@ -126,19 +126,26 @@ export function SummitForm() {
 
             <fieldset>
               <legend className={labelClass}>What are you most interested in? (optional)</legend>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {SUMMIT_OFFERINGS.map((o) => (
-                  <label key={o.id} className="flex cursor-pointer items-center gap-3 text-gray-300">
-                    <input
-                      type="checkbox"
-                      name="interests"
-                      value={o.id}
-                      checked={form.interests.includes(o.id)}
-                      onChange={() => toggleInterest(o.id)}
-                      className="accent-cyan-400"
-                    />
-                    {o.name}
-                  </label>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {SUMMIT_TRACKS.map((t) => (
+                  <div key={t.id}>
+                    <p className="mb-2 text-sm font-medium text-white">{`${t.name} · ${t.shortDay}`}</p>
+                    <div className="grid gap-2">
+                      {t.offerings.map((o) => (
+                        <label key={o.id} className="flex cursor-pointer items-center gap-3 text-gray-300">
+                          <input
+                            type="checkbox"
+                            name="interests"
+                            value={o.id}
+                            checked={form.interests.includes(o.id)}
+                            onChange={() => toggleInterest(o.id)}
+                            className="accent-cyan-400"
+                          />
+                          {o.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </fieldset>

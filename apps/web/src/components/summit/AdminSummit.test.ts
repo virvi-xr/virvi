@@ -10,7 +10,7 @@ const s = (over: Partial<AdminSummitSignup>): AdminSummitSignup => ({
 })
 const totals: AdminSummitTotals = {
   byJoinAs: { online: 4, in_person: 3, watch_party: 2 },
-  byInterest: { studio: 5, sync: 0, events: 1, drops: 2, ar: 0, cities: 0, os: 0 },
+  byInterest: { studio: 5, sync: 0, ar: 0, events: 1, drops: 2, beat: 4, cities: 0 },
   bySource: { discord: 6, '(direct)': 3 },
   inPersonPeople: 7,
 }
@@ -30,6 +30,8 @@ describe('AdminSummit', () => {
     expect(html).toContain('Watch parties')
     expect(html).toContain('Virvi Studio: 5')
     expect(html).toContain('Virvi Drops: 2')
+    expect(html).toContain('Virvi BEAT: 4')
+    expect(html).not.toContain('Virvi OS')
     expect(html).toContain('discord: 6')
     expect(html).toContain('No ref: 3')
   })

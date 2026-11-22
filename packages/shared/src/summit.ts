@@ -3,9 +3,9 @@
 export type SummitJoinAs = 'online' | 'in_person' | 'watch_party'
 export const SUMMIT_JOIN_AS: readonly SummitJoinAs[] = ['online', 'in_person', 'watch_party']
 
-/** The seven offerings, in agenda order. */
-export type SummitInterest = 'studio' | 'sync' | 'events' | 'drops' | 'ar' | 'cities' | 'os'
-export const SUMMIT_INTERESTS: readonly SummitInterest[] = ['studio', 'sync', 'events', 'drops', 'ar', 'cities', 'os']
+/** The seven offerings, in agenda order: the Creator track (Wednesday), then the Community track (Thursday). */
+export type SummitInterest = 'studio' | 'sync' | 'ar' | 'events' | 'drops' | 'beat' | 'cities'
+export const SUMMIT_INTERESTS: readonly SummitInterest[] = ['studio', 'sync', 'ar', 'events', 'drops', 'beat', 'cities']
 
 export type SummitInPersonStatus = 'requested' | 'confirmed' | 'declined'
 export const SUMMIT_IN_PERSON_STATUSES: readonly SummitInPersonStatus[] = ['requested', 'confirmed', 'declined']
