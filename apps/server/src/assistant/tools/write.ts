@@ -22,15 +22,17 @@ export async function get(ctx: ToolCtx, url: string, words?: Record<string, stri
   return (res.json ?? {}) as Obj
 }
 
+/** An organization's name; null for none (a personal account). */
+export async function orgNameOf(orgId: unknown): Promise<string | null> {
+  if (typeof orgId !== 'string' || !orgId) return null
+  const [org] = await db.select({ name: organizations.name }).from(organizations).where(eq(organizations.id, orgId))
+  return org?.name ?? null
+}
+
 /** The scene as the user sees it (presets → elements → instances), and its organization's name. */
-async function sceneState(ctx: ToolCtx, sceneId: string): Promise<{ scene: Obj; orgName: string | null }> {
+export async function sceneState(ctx: ToolCtx, sceneId: string): Promise<{ scene: Obj; orgName: string | null }> {
   const scene = ((await get(ctx, `/api/scenes/${sceneId}`)).scene ?? {}) as Obj
-  let orgName: string | null = null
-  if (scene.orgId) {
-    const [org] = await db.select({ name: organizations.name }).from(organizations).where(eq(organizations.id, scene.orgId))
-    orgName = org?.name ?? null
-  }
-  return { scene, orgName }
+  return { scene, orgName: await orgNameOf(scene.orgId) }
 }
 
 const presetIn = (scene: Obj, presetId: string): Obj => {
@@ -50,19 +52,19 @@ const instanceIn = (scene: Obj, instanceId: string): Obj => {
 const elementsOf = (scene: Obj): Obj[] => list(scene.presets).flatMap((p) => list(p.elements))
 const instancesOf = (scene: Obj): Obj[] => elementsOf(scene).flatMap((e) => list(e.instances))
 /** The created row's current values for `after`'s keys, found by `after`'s id; null when it's gone. */
-const createdNow = (rows: Obj[], after: unknown): Obj | null => {
+export const createdNow = (rows: Obj[], after: unknown): Obj | null => {
   const a = (after ?? {}) as Obj
   const row = a.id ? rows.find((r) => r.id === a.id) : undefined
   return row ? pick(row, Object.keys(a)) : null
 }
 
 /** The keys of `args` a write sets (everything but the ids that address it). */
-const setKeys = (args: Obj, ids: string[]) => Object.keys(args).filter((k) => !ids.includes(k) && args[k] !== undefined)
+export const setKeys = (args: Obj, ids: string[]) => Object.keys(args).filter((k) => !ids.includes(k) && args[k] !== undefined)
 /** `prev`'s values for `keys`, null where it had none: the body that puts them back. */
-const previous = (prev: Obj, keys: string[]) => Object.fromEntries(keys.map((k) => [k, prev[k] ?? null]))
-const fields = (o: unknown, keys: readonly string[]) => pick((o ?? {}) as Obj, keys)
-const created = (res: unknown, key: string): Obj => (((res ?? {}) as Obj)[key] ?? {}) as Obj
-const atLeastOne = (ids: string[]) => (a: Obj) => setKeys(a, ids).length > 0
+export const previous = (prev: Obj, keys: string[]) => Object.fromEntries(keys.map((k) => [k, prev[k] ?? null]))
+export const fields = (o: unknown, keys: readonly string[]) => pick((o ?? {}) as Obj, keys)
+export const created = (res: unknown, key: string): Obj => (((res ?? {}) as Obj)[key] ?? {}) as Obj
+export const atLeastOne = (ids: string[]) => (a: Obj) => setKeys(a, ids).length > 0
 
 const vec = z.object({ x: z.number(), y: z.number(), z: z.number() })
 const props = z.record(z.string(), z.unknown())

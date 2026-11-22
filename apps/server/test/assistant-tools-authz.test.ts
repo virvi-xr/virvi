@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { db } from '../src/db/connection.js'
-import { events, eventSceneLinks, mediaAssets, sceneLibrary, scenePresetSchedules, screenShowings } from '../src/db/schema.js'
+import { beats, beatScenes, events, eventSceneLinks, mediaAssets, raffles, sceneLibrary, scenePresetSchedules, screenShowings } from '../src/db/schema.js'
 import { TOOLS } from '../src/assistant/tools/index.js'
 import { runTool } from '../src/assistant/tools/run.js'
 import type { ToolCtx } from '../src/assistant/tools/types.js'
@@ -11,9 +11,11 @@ import { createSetup } from './helpers/setups.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, type TestUser } from './helpers/factories.js'
 import { addRevision, createDesign } from './helpers/studio.js'
 import { config } from '../src/config.js'
+import { setImageSizeReader } from '../src/beats/image.js'
+import { BEATS_READY } from './helpers/beats-ready.js'
 
 /** Tools that read only the caller's own account: they take no ids, so A can't even name B's data. */
-const ACCOUNT_SCOPED = ['get_plan', 'list_orgs', 'list_scenes', 'list_events', 'list_media', 'list_analytics_locations', 'search_help', 'open_page', 'list_designs', 'get_studio_usage', 'create_scene', 'create_design']
+const ACCOUNT_SCOPED = ['get_plan', 'list_orgs', 'list_scenes', 'list_events', 'list_media', 'list_analytics_locations', 'search_help', 'open_page', 'list_designs', 'get_studio_usage', 'create_scene', 'create_design', 'create_event']
 
 type Fixtures = Awaited<ReturnType<typeof fixtures>>
 
@@ -35,7 +37,10 @@ async function fixtures() {
   await createSetup(location.id, scene.id)
   const design = await createDesign(b, { name: 'B design' })
   await addRevision(design, 'hat')
-  return { a, b, aScene, scene, preset, element, instance, schedule, media, libraryItem, showing, event, location, design }
+  const [raffle] = await db.insert(raffles).values({ sceneId: scene.id, createdBy: b.id, name: 'B raffle', prize: 'B prize', winnersCount: 1, mode: 'one_per_person', minPresentSeconds: 0, hostTermsAcceptedAt: new Date() }).returning()
+  const [beat] = await db.insert(beats).values({ chain: 'polygon', ownerUserId: b.id, name: 'B beat', description: '', imageMediaId: media.id, startsAt: new Date(Date.now() + 2 * 3600_000), endsAt: new Date(Date.now() + 4 * 3600_000) }).returning()
+  await db.insert(beatScenes).values({ beatId: beat.id, sceneId: scene.id })
+  return { a, b, aScene, scene, preset, element, instance, schedule, media, libraryItem, showing, event, location, design, raffle, beat }
 }
 
 const when = { recurrence: 'daily' as const, startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC' }
@@ -69,6 +74,15 @@ const SAMPLE: Record<string, (f: Fixtures) => unknown> = {
   send_studio_prompt: (f) => ({ designId: f.design.id, text: 'make it mine' }),
   get_finalize_quote: (f) => ({ designId: f.design.id }),
   open_finalize: (f) => ({ designId: f.design.id }),
+  update_event: (f) => ({ eventId: f.event.id, name: 'Taken' }),
+  link_event_scene: (f) => ({ eventId: f.event.id, sceneId: f.aScene.id }),
+  list_scene_raffles: (f) => ({ sceneId: f.scene.id }),
+  create_raffle: (f) => ({ sceneId: f.scene.id, name: 'A raffle', prize: 'A prize', winnersCount: 1, mode: 'one_per_person' }),
+  schedule_raffle_open: (f) => ({ raffleId: f.raffle.id, opensAt: '2031-01-01T20:00:00Z' }),
+  update_raffle_prize: (f) => ({ raffleId: f.raffle.id, prize: 'Taken' }),
+  create_beat_draft: (f) => ({ name: 'A beat', startsAt: new Date(Date.now() + 5 * 3600_000).toISOString(), endsAt: new Date(Date.now() + 6 * 3600_000).toISOString(), sceneIds: [f.scene.id], imageMediaId: f.media.id }),
+  get_beat: (f) => ({ beatId: f.beat.id }),
+  open_beat_pay: (f) => ({ beatId: f.beat.id }),
 }
 
 function ctxFor(app: FastifyInstance, user: TestUser): ToolCtx {
@@ -92,6 +106,10 @@ async function snapshot(app: FastifyInstance, f: Fixtures) {
     library: await get(`/api/scenes/${f.scene.id}/library`),
     showings: (await get(`/api/elements/${f.element.id}/showings`)).showings.map((s: any) => ({ id: s.id, title: s.title, startTime: s.startTime })),
     design: await get(`/api/studio/designs/${f.design.id}`),
+    event: await get(`/api/events/${f.event.id}`),
+    raffle: await get(`/api/raffles/${f.raffle.id}`),
+    beat: await get(`/api/beats/${f.beat.id}`),
+    beats: await get('/api/beats'),
   }
 }
 
@@ -100,12 +118,17 @@ describe('assistant tools: authorization is the route\'s own', () => {
   let f: Fixtures
 
   const prevStudio = config.studioEnabled
+  const prevBeats = config.beats
   beforeAll(async () => {
     ;(config as any).studioEnabled = true
+    ;(config as any).beats = { ...prevBeats, enabled: true, chain: 'polygon', ...BEATS_READY }
+    setImageSizeReader(async () => ({ width: 1024, height: 1024 }))
     app = await testApp()
   })
   afterAll(async () => {
     ;(config as any).studioEnabled = prevStudio
+    ;(config as any).beats = prevBeats
+    setImageSizeReader(null)
     await app.close()
   })
   beforeEach(async () => {
@@ -138,10 +161,10 @@ describe('assistant tools: authorization is the route\'s own', () => {
 
   it('account-scoped tools show A none of B\'s ids', async () => {
     const ctx = ctxFor(app, f.a)
-    const bIds = [f.scene.id, f.preset.id, f.element.id, f.instance.id, f.schedule.id, f.media.id, f.libraryItem.id, f.showing.id, f.event.id, f.location.id, f.design.id]
+    const bIds = [f.scene.id, f.preset.id, f.element.id, f.instance.id, f.schedule.id, f.media.id, f.libraryItem.id, f.showing.id, f.event.id, f.location.id, f.design.id, f.raffle.id, f.beat.id]
     const args: Record<string, unknown> = {
       search_help: { query: 'scene' }, open_page: { path: '/scenes', label: 'Scenes' },
-      create_scene: { name: 'A new scene' }, create_design: { kind: 'wearable', name: 'A design', agent: 'claude' },
+      create_scene: { name: 'A new scene' }, create_event: { name: 'A event', startTime: '2031-01-01T20:00:00Z', endTime: '2031-01-01T22:00:00Z' }, create_design: { kind: 'wearable', name: 'A design', agent: 'claude' },
     }
     for (const name of ACCOUNT_SCOPED) {
       const r = await runTool(ctx, name, args[name] ?? {})

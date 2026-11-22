@@ -12,12 +12,15 @@ import { TOOLS } from '../src/assistant/tools/index.js'
 import { inject, runTool, toolsForModel } from '../src/assistant/tools/run.js'
 import type { ToolCtx } from '../src/assistant/tools/types.js'
 import { resetDb } from './helpers/db.js'
-import { testApp, createUser, createScene, createElement, createInstance, tokenFor, type TestUser } from './helpers/factories.js'
+import { testApp, createUser, createScene, createElement, createInstance, randomWallet, tokenFor, type TestUser } from './helpers/factories.js'
 import { addRevision, createDesign } from './helpers/studio.js'
-import { proposeCard } from '../src/assistant/actions.js'
+import { proposeCard, recordDirect, undoAction } from '../src/assistant/actions.js'
 import { routeError } from '../src/assistant/tools/http.js'
 import { LABEL_TEXT_MAX, STUDIO_PAUSED, STUDIO_REFUSALS } from '../src/assistant/tools/studio.js'
-import { assistantActions, studioDesigns, studioKindDefaults } from '../src/db/schema.js'
+import { assistantActions, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, studioDesigns, studioKindDefaults } from '../src/db/schema.js'
+import { RAFFLE_HOST_TERMS } from '@virvixr/shared'
+import { setImageSizeReader } from '../src/beats/image.js'
+import { BEATS_READY } from './helpers/beats-ready.js'
 
 const IP = '198.51.100.23'
 
@@ -210,7 +213,8 @@ describe('assistant tools, run as the owner', () => {
       ['create_showing', { sceneId, elementId: el.id, title: 'Matinee', items: [{ url: 'https://cdn.example/m.mp4', duration: 60 }], ...when }],
     ]
     // create_scene and create_design can't be undone (their own tests)
-    const covered = new Set([...cases.map(([n]) => n), 'update_scene', 'update_element', 'create_element', 'create_scene', 'create_design'])
+    // The event, raffle and BEAT writes have their own tests
+    const covered = new Set([...cases.map(([n]) => n), 'update_scene', 'update_element', 'create_element', 'create_scene', 'create_design', 'create_event', 'update_event', 'link_event_scene', 'update_raffle_prize', 'create_beat_draft'])
     expect([...covered].sort()).toEqual(Object.values(TOOLS).filter((t) => t.effect === 'write').map((t) => t.name).sort())
     for (const [name, args] of cases) {
       const r = await runTool(ctx, name, args)
@@ -437,5 +441,181 @@ describe('assistant Studio tools', () => {
     // A design read with no name never shows as "undefined"
     const nameless = await runTool(withUsage({}, { [`/api/studio/designs/${d.id}`]: { design: { id: d.id } } }), 'open_finalize', { designId: d.id })
     expect(nameless).toMatchObject({ ok: true, summary: { label: 'Finalize the design' } })
+  })
+})
+
+describe('assistant event, raffle and BEAT tools', () => {
+  let app: FastifyInstance
+  let owner: TestUser
+  let ctx: ToolCtx
+  let sceneId: string
+  const prevBeats = config.beats
+  const H = 3_600_000
+  const later = (ms: number) => new Date(Date.now() + ms).toISOString()
+
+  beforeAll(async () => {
+    app = await testApp()
+  })
+  afterAll(async () => {
+    await app.close()
+  })
+  beforeEach(async () => {
+    await resetDb()
+    ;(config as any).beats = { ...prevBeats, enabled: true, chain: 'polygon', ...BEATS_READY }
+    setImageSizeReader(async () => ({ width: 1024, height: 1024 }))
+    owner = await createUser({ wallet: randomWallet() })
+    sceneId = (await createScene(owner, 'Old Lounge')).scene.id
+    ctx = ctxFor(app, owner)
+  })
+  afterEach(() => {
+    ;(config as any).beats = prevBeats
+    setImageSizeReader(null)
+  })
+
+  const raffleArgs = (over: Record<string, unknown> = {}) => ({ sceneId, name: 'Friday raffle', prize: 'A neon cap', winnersCount: 2, mode: 'one_per_person', ...over })
+  async function draftRaffle(over: Record<string, unknown> = {}) {
+    const res = await app.inject({ method: 'POST', url: `/api/scenes/${sceneId}/raffles`, headers: { authorization: `Bearer ${tokenFor(owner)}` }, payload: { ...raffleArgs(), acceptHostTerms: true, ...over } })
+    expect(res.statusCode, res.body).toBe(201)
+    return res.json().raffle as { id: string; name: string; prize: string }
+  }
+  async function image() {
+    const [m] = await db.insert(mediaAssets).values({ ownerId: owner.id, filename: 'beat.png', contentType: 'image/png', sizeBytes: 1, storageKey: 'k', publicUrl: `https://cdn.example/${Math.random().toString(36).slice(2)}.png`, status: 'ready' }).returning()
+    return m
+  }
+  const beatArgs = async (over: Record<string, unknown> = {}) => ({ name: 'Opening night', startsAt: later(2 * H), endsAt: later(4 * H), sceneIds: [sceneId], imageMediaId: (await image()).id, ...over })
+
+  it('create_raffle always sends acceptHostTerms: true, and its card shows the host terms verbatim', async () => {
+    const args = raffleArgs({ acceptHostTerms: false, opensAt: '2031-03-04T20:30:00Z' })
+    const card = await proposeCard(ctx, null, 'create_raffle', args)
+    if (!('kind' in card)) throw new Error(JSON.stringify(card))
+    expect(card.detail).toBe(
+      `"Old Lounge": Friday raffle, prize "A neon cap", 2 winners, opens 2031-03-04 20:30 UTC\n\n${RAFFLE_HOST_TERMS}\nConfirming accepts these terms for this raffle.`,
+    )
+    expect(card.detail).toContain(RAFFLE_HOST_TERMS)
+    expect(card.steps[0]).toMatchObject({ label: 'Create raffle "Friday raffle"', orgName: null })
+    // The model's acceptHostTerms never reaches the route: the tool's own call sets it
+    const def = TOOLS.create_raffle
+    expect(def.effect).toBe('public')
+    const planned = (await def.call(def.input.parse(args), ctx)) as { body: Record<string, unknown> }
+    expect(planned.body.acceptHostTerms).toBe(true)
+    const r = await runTool(ctx, 'create_raffle', args)
+    expect(r, JSON.stringify(r)).toMatchObject({ ok: true, status: 201 })
+    const [row] = await db.select().from(raffles)
+    expect(row).toMatchObject({ name: 'Friday raffle', prize: 'A neon cap', winnersCount: 2, status: 'draft' })
+    expect(row.hostTermsAcceptedAt).toBeInstanceOf(Date)
+    expect(row.opensAt!.toISOString()).toBe('2031-03-04T20:30:00.000Z')
+    // One winner, no opening time
+    const one = await proposeCard(ctx, null, 'create_raffle', raffleArgs({ winnersCount: 1 }))
+    expect(one).toMatchObject({ detail: expect.stringMatching(/^"Old Lounge": Friday raffle, prize "A neon cap", 1 winner\n\n/) })
+  })
+
+  it("create_raffle for someone else's scene is refused, with no card", async () => {
+    const other = await createUser()
+    const theirs = (await createScene(other, 'Not mine')).scene.id
+    const card = await proposeCard(ctx, null, 'create_raffle', raffleArgs({ sceneId: theirs }))
+    expect(card).toHaveProperty('error')
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+    // A viewer of the scene can read it but not run raffles: refused before a card too
+    const { sceneCollaborators } = await import('../src/db/schema.js')
+    await db.insert(sceneCollaborators).values({ sceneId: theirs, userId: owner.id, role: 'viewer' })
+    expect(await proposeCard(ctx, null, 'create_raffle', raffleArgs({ sceneId: theirs }))).toEqual({ error: "You can't run raffles in this scene." })
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+    expect(await db.select().from(raffles)).toHaveLength(0)
+  })
+
+  it('list_scene_raffles lists the scene\'s raffles', async () => {
+    const r = await draftRaffle()
+    expect(await runTool(ctx, 'list_scene_raffles', { sceneId })).toMatchObject({ ok: true, summary: [{ id: r.id, name: 'Friday raffle', prize: 'A neon cap', status: 'draft', opensAt: null }] })
+  })
+
+  it('schedule_raffle_open cards say when it opens, or that it stops opening by itself', async () => {
+    const r = await draftRaffle()
+    const on = await proposeCard(ctx, null, 'schedule_raffle_open', { raffleId: r.id, opensAt: '2031-03-04T20:30:00Z' })
+    expect(on).toMatchObject({ kind: 'card', detail: 'Open "Friday raffle" by itself at 2031-03-04 20:30 UTC' })
+    const off = await proposeCard(ctx, null, 'schedule_raffle_open', { raffleId: r.id, opensAt: null })
+    expect(off).toMatchObject({ kind: 'card', detail: 'Stop "Friday raffle" opening by itself' })
+    expect(await runTool(ctx, 'schedule_raffle_open', { raffleId: r.id, opensAt: '2031-03-04T20:30:00Z' })).toMatchObject({ ok: true })
+    expect((await db.select().from(raffles))[0].opensAt!.toISOString()).toBe('2031-03-04T20:30:00.000Z')
+  })
+
+  it("update_raffle_prize's undo restores the prize, and refuses once the prize was edited by hand", async () => {
+    const r = await draftRaffle()
+    const a = await recordDirect(ctx, null, 'update_raffle_prize', { raffleId: r.id, prize: 'Two neon caps' })
+    expect(a).toMatchObject({ status: 'done', canUndo: true, label: 'Change the raffle prize to "Two neon caps"' })
+    expect((await db.select().from(raffles))[0].prize).toBe('Two neon caps')
+    expect(await undoAction(ctx, a.id)).toMatchObject({ status: 'undone' })
+    expect((await db.select().from(raffles))[0].prize).toBe('A neon cap')
+
+    const b = await recordDirect(ctx, null, 'update_raffle_prize', { raffleId: r.id, prize: 'Three caps' })
+    await db.update(raffles).set({ prize: 'A hand-picked prize' }).where(eq(raffles.id, r.id))
+    expect(await undoAction(ctx, b.id)).toEqual({ error: 'changed' })
+    expect((await db.select().from(raffles))[0].prize).toBe('A hand-picked prize')
+  })
+
+  it('create_event names the organization, and its undo deletes only an event nobody changed', async () => {
+    const [org] = await db.insert(organizations).values({ name: 'Acme', slug: `acme-${owner.id.slice(0, 8)}`, billingOwnerId: owner.id }).returning()
+    await db.insert(orgMembers).values({ orgId: org.id, userId: owner.id, role: 'owner' })
+    const request = { headers: { authorization: `Bearer ${tokenFor(owner, { orgId: org.id })}` }, ip: IP } as unknown as FastifyRequest
+    const orgCtx: ToolCtx = { ...ctx, request, user: { ...ctx.user, orgId: org.id } }
+    const args = { name: 'Launch party', startTime: '2031-01-01T20:00:00Z', endTime: '2031-01-01T22:00:00Z', timezone: 'Europe/London' }
+    const a = await recordDirect(orgCtx, null, 'create_event', args)
+    expect(a).toMatchObject({ status: 'done', canUndo: true, label: 'Create event "Launch party"', orgName: 'Acme' })
+    const [made] = await db.select().from(events)
+    expect(made).toMatchObject({ ownerId: owner.id, orgId: org.id, name: 'Launch party', timezone: 'Europe/London' })
+    expect(await undoAction(orgCtx, a.id)).toMatchObject({ status: 'undone' })
+    expect(await db.select().from(events)).toHaveLength(0)
+
+    const b = await recordDirect(ctx, null, 'create_event', args)
+    const [again] = await db.select().from(events)
+    await db.update(events).set({ name: 'Renamed by hand' }).where(eq(events.id, again.id))
+    expect(await undoAction(ctx, b.id)).toEqual({ error: 'changed' })
+    expect(await db.select().from(events)).toHaveLength(1)
+  })
+
+  it('update_event changes only the fields given, and its undo puts them back', async () => {
+    const [e] = await db.insert(events).values({ ownerId: owner.id, name: 'Launch', description: 'Old words', startTime: new Date('2031-01-01T20:00:00Z'), endTime: new Date('2031-01-01T22:00:00Z') }).returning()
+    const a = await recordDirect(ctx, null, 'update_event', { eventId: e.id, name: 'Launch party', endTime: '2031-01-01T23:00:00Z' })
+    expect(a).toMatchObject({ status: 'done', canUndo: true })
+    const now = (await db.select().from(events))[0]
+    expect(now).toMatchObject({ name: 'Launch party', description: 'Old words' })
+    expect(now.endTime!.toISOString()).toBe('2031-01-01T23:00:00.000Z')
+    expect(await undoAction(ctx, a.id)).toMatchObject({ status: 'undone' })
+    const back = (await db.select().from(events))[0]
+    expect(back.name).toBe('Launch')
+    expect(back.endTime!.toISOString()).toBe('2031-01-01T22:00:00.000Z')
+  })
+
+  it('link_event_scene links the scene, and its undo unlinks it; a scene already linked has nothing to undo', async () => {
+    const [e] = await db.insert(events).values({ ownerId: owner.id, name: 'Launch' }).returning()
+    const a = await recordDirect(ctx, null, 'link_event_scene', { eventId: e.id, sceneId })
+    expect(a).toMatchObject({ status: 'done', canUndo: true })
+    expect(await db.select().from(eventSceneLinks)).toMatchObject([{ eventId: e.id, sceneId }])
+    expect(await undoAction(ctx, a.id)).toMatchObject({ status: 'undone' })
+    expect(await db.select().from(eventSceneLinks)).toHaveLength(0)
+    await db.insert(eventSceneLinks).values({ eventId: e.id, sceneId })
+    expect(await runTool(ctx, 'link_event_scene', { eventId: e.id, sceneId })).toMatchObject({ ok: true, undo: null })
+  })
+
+  it('create_beat_draft creates a draft, with no undo; get_beat reads it', async () => {
+    const r = await runTool(ctx, 'create_beat_draft', await beatArgs({ supplyCap: 50, tradeable: true }))
+    expect(r, JSON.stringify(r)).toMatchObject({ ok: true, status: 201, undo: null, label: 'Create a BEAT draft "Opening night"', summary: { status: 'draft', name: 'Opening night', supplyCap: 50 } })
+    const [row] = await db.select().from(beats)
+    expect(row).toMatchObject({ status: 'draft', ownerUserId: owner.id, supplyCap: 50, tradeable: true, locationType: 'scene' })
+    const g = await runTool(ctx, 'get_beat', { beatId: row.id })
+    expect(g).toMatchObject({ ok: true, summary: { id: row.id, name: 'Opening night', status: 'draft', supplyCap: 50, sceneIds: [sceneId] } })
+    if (!g.ok) throw new Error('failed')
+    expect(Object.keys(g.summary as object).sort()).toEqual(['endsAt', 'id', 'name', 'sceneIds', 'startsAt', 'status', 'supplyCap'])
+  })
+
+  it("open_beat_pay links a draft to its page with the server's total, and refuses a paid BEAT", async () => {
+    const made = await runTool(ctx, 'create_beat_draft', await beatArgs())
+    if (!made.ok) throw new Error(made.error)
+    const beatId = (made.summary as { id: string }).id
+    const quote = await app.inject({ method: 'GET', url: `/api/beats/${beatId}/quote?method=credit`, headers: { authorization: `Bearer ${tokenFor(owner)}` } })
+    const cents = quote.json().cents as number
+    const o = await runTool(ctx, 'open_beat_pay', { beatId })
+    expect(o).toMatchObject({ ok: true, summary: { href: `/beats/${beatId}`, label: 'Pay for "Opening night"', detail: `Total $${(cents / 100).toFixed(2)}` } })
+    await db.update(beats).set({ status: 'paid' }).where(eq(beats.id, beatId))
+    expect(await runTool(ctx, 'open_beat_pay', { beatId })).toMatchObject({ ok: false, error: 'This BEAT is already paid for.' })
   })
 })

@@ -7,7 +7,7 @@ import type { AssistantMessageView } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { assistantActions, assistantConversations, assistantMessages } from '../db/schema.js'
 import { actionView } from './actions.js'
-import { isDashboardPath } from './tools/local.js'
+import { isDashboardPath, LINK_TOOLS } from './tools/local.js'
 import { BUY_PROMPTS, NO_PROMPTS } from './tools/studio.js'
 import { TOOLS } from './tools/index.js'
 import { redact, type RedactSelf } from './redact.js'
@@ -62,8 +62,8 @@ export function titleFrom(text: string): string {
   return t.length <= TITLE_MAX ? t : t.slice(0, TITLE_MAX - 1).trimEnd() + '…'
 }
 
-/** An open_finalize row's stored result, when it is a dashboard link. */
-function finalizeLink(summary: string | null): { href: string; label: string; detail?: string } | null {
+/** A link tool's (open_finalize, open_beat_pay) stored result, when it is a dashboard link. */
+function storedLink(summary: string | null): { href: string; label: string; detail?: string } | null {
   try {
     const o = JSON.parse(summary ?? 'null') as { href?: unknown; label?: unknown; detail?: unknown } | null
     if (!o || typeof o.href !== 'string' || typeof o.label !== 'string' || !isDashboardPath(o.href)) return null
@@ -77,9 +77,9 @@ function finalizeLink(summary: string | null): { href: string; label: string; de
  * What the panel shows: one view per message the user typed, and one per assistant reply (every model call and the
  * approval continuation up to the next typed message, merged). Tool results and the approval text stay hidden. A
  * reply's actions are the writes and cards logged between its user message and the next one. Its links are rebuilt
- * as they were streamed: its open_page calls, its open_finalize results (from their action rows), and the "Buy Studio
- * prompts" link for a paid call refused for having no prompts left. The model's blocks are stored verbatim (thinking
- * signatures cover them), so what's shown is redacted here.
+ * as they were streamed: its open_page calls, its open_finalize and open_beat_pay results (from their action rows),
+ * and the "Buy Studio prompts" link for a paid call refused for having no prompts left. The model's blocks are stored
+ * verbatim (thinking signatures cover them), so what's shown is redacted here.
  */
 export async function messageViews(conversationId: string, userId: string, self: RedactSelf): Promise<AssistantMessageView[]> {
   const shown = (t: string) => redact(t, self) as string
@@ -89,11 +89,11 @@ export async function messageViews(conversationId: string, userId: string, self:
     .where(and(
       eq(assistantActions.conversationId, conversationId),
       eq(assistantActions.userId, userId),
-      or(inArray(assistantActions.effect, ['write', 'paid', 'public']), and(eq(assistantActions.tool, 'open_finalize'), eq(assistantActions.status, 'done'))),
+      or(inArray(assistantActions.effect, ['write', 'paid', 'public']), and(inArray(assistantActions.tool, Object.keys(LINK_TOOLS)), eq(assistantActions.status, 'done'))),
     ))
     .orderBy(asc(assistantActions.createdAt), asc(assistantActions.step))
   const actions = logged.filter((a) => a.effect !== 'read')
-  const finalizes = logged.filter((a) => a.effect === 'read')
+  const linkRows = logged.filter((a) => a.effect === 'read')
   // The answers the model got, by call: a refused paid call's answer says why
   const answers = new Map<string, Block>()
   for (const r of rows) for (const b of blocks(r.content)) if (b.type === 'tool_result' && b.tool_use_id) answers.set(b.tool_use_id, b)
@@ -102,7 +102,7 @@ export async function messageViews(conversationId: string, userId: string, self:
   const views: AssistantMessageView[] = []
   let reply: AssistantMessageView | null = null
   let turnStart: Date | null = null
-  let turnFinalizes: typeof finalizes = []
+  let turnLinks: typeof linkRows = []
   const typed = rows.filter((r) => isUserText(r) && !isApproval(r))
   for (const r of rows) {
     if (isUserText(r) && !isApproval(r)) {
@@ -117,7 +117,7 @@ export async function messageViews(conversationId: string, userId: string, self:
       const next = typed.find((t) => turnStart && t.createdAt > turnStart)
       const inTurn = (a: { createdAt: Date }) => (!turnStart || a.createdAt >= turnStart) && (!next || a.createdAt < next.createdAt)
       reply.actions = actions.filter(inTurn).map(actionView)
-      turnFinalizes = finalizes.filter(inTurn)
+      turnLinks = linkRows.filter(inTurn)
       views.push(reply)
     }
     const text = shown(textOf(r.content))
@@ -127,11 +127,12 @@ export async function messageViews(conversationId: string, userId: string, self:
       if (b.type !== 'tool_use') continue
       if (b.name === 'open_page' && typeof input.path === 'string' && typeof input.label === 'string' && isDashboardPath(input.path)) {
         reply.links.push({ label: shown(input.label), href: input.path })
-      } else if (b.name === 'open_finalize') {
-        // Its done row for the same design, in call order (a refused call has none): the link it returned
-        const designId = (b.input as { designId?: unknown } | null)?.designId
-        const i = turnFinalizes.findIndex((a) => (a.argsRedacted as { designId?: unknown } | null)?.designId === designId)
-        const link = i === -1 ? null : finalizeLink(turnFinalizes.splice(i, 1)[0].resultSummary)
+      } else if (b.name && Object.hasOwn(LINK_TOOLS, b.name)) {
+        // Its done row for the same tool and target, in call order (a refused call has none): the link it returned
+        const key = LINK_TOOLS[b.name]
+        const target = ((b.input ?? null) as Record<string, unknown> | null)?.[key]
+        const i = turnLinks.findIndex((a) => a.tool === b.name && ((a.argsRedacted ?? null) as Record<string, unknown> | null)?.[key] === target)
+        const link = i === -1 ? null : storedLink(turnLinks.splice(i, 1)[0].resultSummary)
         if (link) reply.links.push({ label: shown(link.label), href: link.href, ...(link.detail ? { detail: shown(link.detail) } : {}) })
       } else if (b.name && Object.hasOwn(TOOLS, b.name) && TOOLS[b.name].effect === 'paid') {
         const answer = b.id ? answers.get(b.id) : undefined

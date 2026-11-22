@@ -14,6 +14,7 @@ import { redact, untrusted } from './redact.js'
 import { TOOLS } from './tools/index.js'
 import { toolsForModel } from './tools/run.js'
 import { needsCard, type ToolCtx } from './tools/types.js'
+import { LINK_TOOLS } from './tools/local.js'
 import { assistantModel, INVALID_TOOL_JSON, MAX_TOKENS, type ModelParams, type ModelResult } from './model.js'
 import { contextPrompt, RULES } from './prompt.js'
 import { DEFAULT_TITLE, loadHistory, storeMessage, titleFrom, type Block, type StoredMessage } from './conversations.js'
@@ -209,7 +210,7 @@ export async function runTurn(
           if (r.ok) wrote = true
           emit({ type: 'action', action })
         }
-        if (r.ok && (use.name === 'open_page' || use.name === 'open_finalize')) {
+        if (r.ok && (use.name === 'open_page' || Object.hasOwn(LINK_TOOLS, use.name))) {
           const link = r.summary as { href: string; label: string; detail?: string }
           emit({ type: 'link', label: link.label, href: link.href, ...(link.detail ? { detail: link.detail } : {}) })
         }

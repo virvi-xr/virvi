@@ -651,4 +651,41 @@ describe('assistant turn loop', () => {
       set('studioEnabled', prevStudio)
     }
   })
+  it('open_beat_pay emits a link with the quote as its detail, and history rebuilds it', async () => {
+    const { BEATS_READY } = await import('./helpers/beats-ready.js')
+    const { beats, beatScenes, mediaAssets } = await import('../src/db/schema.js')
+    const prevBeats = config.beats
+    set('beats', { ...prevBeats, enabled: true, chain: 'polygon', ...BEATS_READY })
+    try {
+      const [m] = await db.insert(mediaAssets).values({ ownerId: owner.id, filename: 'b.png', contentType: 'image/png', sizeBytes: 1, storageKey: 'k', publicUrl: 'https://cdn.example/b.png', status: 'ready' }).returning()
+      const seed = async (ownerUserId: string, name: string) => {
+        const [b] = await db.insert(beats).values({ chain: 'polygon', ownerUserId, name, description: '', imageMediaId: m.id, startsAt: new Date(Date.now() + 7_200_000), endsAt: new Date(Date.now() + 14_400_000) }).returning()
+        await db.insert(beatScenes).values({ beatId: b.id, sceneId })
+        return b
+      }
+      const mine = await seed(owner.id, 'Opening night')
+      script([tool('open_beat_pay', { beatId: mine.id }), text('Pay for it there.')])
+      const events = await turn('Pay for my BEAT')
+      const link = events.find((e) => e.type === 'link')
+      expect(link).toEqual({ type: 'link', label: 'Pay for "Opening night"', href: `/beats/${mine.id}`, detail: expect.stringMatching(/^Total \$\d+\.\d{2}$/) })
+      // After a reload: the same link from its action row; a refused call (someone else's BEAT) adds none
+      const other = await createUser()
+      const { scene: theirScene } = await createScene(other, 'Theirs')
+      const [tb] = await db.insert(beats).values({ chain: 'polygon', ownerUserId: other.id, name: 'Not mine', description: '', imageMediaId: m.id, startsAt: new Date(Date.now() + 7_200_000), endsAt: new Date(Date.now() + 14_400_000) }).returning()
+      await db.insert(beatScenes).values({ beatId: tb.id, sceneId: theirScene.id })
+      script([tools(['open_beat_pay', { beatId: tb.id }], ['open_beat_pay', { beatId: mine.id }]), text('There.')])
+      await turn('Again')
+      const views = await messageViews(conversationId, owner.id, ctx.self)
+      const { type: _t, ...shown } = link as Extract<AssistantStreamEvent, { type: 'link' }>
+      expect(views.map((v) => v.links)).toEqual([[], [shown], [], [shown]])
+    } finally {
+      set('beats', prevBeats)
+    }
+  })
+
+  it('tells the model raffles accept the host terms only through their card, that it never pays for a BEAT, and to start a show with start_show', () => {
+    expect(RULES).toContain('Raffles: creating one accepts the host terms on the user\'s behalf only through its card.')
+    expect(RULES).toContain('Pay for a BEAT with open_beat_pay; you never pay.')
+    expect(RULES).toContain('For a show, call start_show first (see its description).')
+  })
 })

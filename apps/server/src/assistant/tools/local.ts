@@ -1,5 +1,6 @@
 // Local tools: they run here, not through a route. search_help reads the public docs; open_page only returns a link;
-// open_finalize reads the design and its quote as the user, then returns a link to the page that finalizes it.
+// open_finalize reads the design and its quote as the user, then returns a link to the page that finalizes it;
+// open_beat_pay does the same for a draft BEAT and the page that pays for it.
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
@@ -81,6 +82,13 @@ export function searchHelp(query: string, dir = config.docsDir): HelpResult[] {
     .map(({ score: _score, ...r }) => r)
 }
 
+/** The local tools whose result is a link (with a price) the loop shows, by the id arg its history row is matched on. */
+export const LINK_TOOLS: Record<string, string> = { open_finalize: 'designId', open_beat_pay: 'beatId' }
+
+export const BEAT_ALREADY_PAID = 'This BEAT is already paid for.'
+/** A price as the BEAT page shows it ($12.00). */
+const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`
+
 export const LOCAL_TOOLS: ToolDef<any>[] = [
   {
     name: 'search_help',
@@ -124,6 +132,25 @@ export const LOCAL_TOOLS: ToolDef<any>[] = [
       return { href: `/studio/${a.designId}?step=finalize`, label, detail: `Total ${dollars(Number(quote.totalCents) || 0)}` }
     },
     label: () => 'Link to finalize a design',
+    summarize: (res) => res,
+  },
+  {
+    name: 'open_beat_pay',
+    description: "Offer the user a link to pay for a draft BEAT on its page, with the price now. The user pays there; the assistant can't.",
+    input: z.object({ beatId: id() }),
+    effect: 'read',
+    call: () => {
+      throw new Error('open_beat_pay runs locally')
+    },
+    local: async (a, ctx) => {
+      const beat = await get(ctx, `/api/beats/${a.beatId}`)
+      if (beat.status !== 'draft') throw new ToolError(409, BEAT_ALREADY_PAID)
+      // The price is the same by card or credit; credit is asked for so a price under the card minimum still quotes
+      const quote = await get(ctx, `/api/beats/${a.beatId}/quote?method=credit`)
+      const label = typeof beat.name === 'string' && beat.name.trim() ? `Pay for "${beat.name}"` : 'Pay for the BEAT'
+      return { href: `/beats/${a.beatId}`, label, detail: `Total ${usd(Number(quote.cents) || 0)}` }
+    },
+    label: () => 'Link to pay for a BEAT',
     summarize: (res) => res,
   },
 ]
