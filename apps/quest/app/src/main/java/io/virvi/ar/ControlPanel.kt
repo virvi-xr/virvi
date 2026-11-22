@@ -61,7 +61,7 @@ fun ControlPanel(s: AppState, act: DeveloperActions) {
         Line("Show scanned walls (check they match the real ones)")
       }
 
-      Section("Marker test")
+      Section("ARC test")
       Line(s.markerStatus)
       val cam = s.cameraStatus
       if (cam != null) Line(cameraStatusText(cam), if (cam == CameraStatus.STARTING || cam == CameraStatus.RUNNING) Color(0xFFE0E0E0) else Color(0xFFFF8A80))

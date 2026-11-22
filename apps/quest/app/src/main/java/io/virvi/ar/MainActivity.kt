@@ -557,7 +557,7 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
     }
     readings.values.forEach { r -> if (r.tracked) r.observe(false, 0.0) }
     markerPositions.values.forEach { it.clear() }
-    state.lastRing = "No ring marker read yet"
+    state.lastRing = "No ARC read yet"
     lastUiUpdate = 0
   }
 
@@ -606,7 +606,7 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
     }
     frame?.last?.let { d ->
       state.lastRing =
-          "Last raw ring (one frame, not yet trusted): ${nameOf(d.id)} at (${"%.0f".format(d.cx)}, ${"%.0f".format(d.cy)}) px, " +
+          "Last raw ARC (one frame, not yet trusted): ${nameOf(d.id)} at (${"%.0f".format(d.cx)}, ${"%.0f".format(d.cy)}) px, " +
               "${"%.0f".format(2 * d.semiMajor)} px across, turned ${"%.0f".format(d.rotationDeg)}°, " +
               "${d.corrected} fixed"
     }
@@ -882,7 +882,7 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
   }
 
   private fun nameOf(id: Long): String =
-      RING_TEST_MARKERS.firstOrNull { it.id == id }?.name ?: "id %08X (not a test marker)".format(id)
+      RING_TEST_MARKERS.firstOrNull { it.id == id }?.name ?: "id %08X (not a test ARC)".format(id)
 
   override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -944,6 +944,6 @@ class MainActivity : AppSystemActivity(), MenuActions, DeveloperActions {
     private val STRUCTURE_LABELS =
         setOf(MRUKLabel.FLOOR, MRUKLabel.CEILING, MRUKLabel.WALL_FACE, MRUKLabel.INVISIBLE_WALL_FACE, MRUKLabel.INNER_WALL_FACE, MRUKLabel.DOOR_FRAME, MRUKLabel.WINDOW_FRAME, MRUKLabel.GLOBAL_MESH)
     private const val NO_ROOM_SCAN = "No room scan: set up your space in Quest settings to get wall heading"
-    private const val HOLD_MARKER = "Hold a printed ring marker in view, then walk away and back"
+    private const val HOLD_MARKER = "Hold a printed ARC in view, then walk away and back"
   }
 }

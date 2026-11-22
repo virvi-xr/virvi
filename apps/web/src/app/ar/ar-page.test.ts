@@ -13,7 +13,7 @@ describe('the AR page', () => {
   it('says what AR Spaces are', () => {
     expect(html).toContain('AR Spaces')
     expect(html).toContain('life-size')
-    expect(html).toContain('ring by the door')
+    expect(html).toContain('ARC by the door')
     expect(html).toContain('Decentraland')
     expect(html).toContain('Hyperfy')
   })

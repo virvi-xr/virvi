@@ -76,8 +76,8 @@ fun RingCheckPanel(ring: RingCheckUi, onRecord: () -> Unit) {
         Text(it, color = if (it == view.line && view.warn) Color(0xFFFFB74D) else Color(0xFFE0E0E0), fontSize = 15.sp)
       }
       when (view.button) {
-        RingButton.Record -> Button(onClick = onRecord) { Text("Record this ring") }
-        RingButton.ReRecord -> Button(onClick = onRecord) { Text("Re-record this ring") }
+        RingButton.Record -> Button(onClick = onRecord) { Text("Record this ARC") }
+        RingButton.ReRecord -> Button(onClick = onRecord) { Text("Re-record this ARC") }
         RingButton.None -> Unit
       }
     }

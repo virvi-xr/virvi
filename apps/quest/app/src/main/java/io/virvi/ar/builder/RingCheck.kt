@@ -37,7 +37,7 @@ fun mayRecord(ringWorld: Vec3, lastAnchorWorld: Vec3): Boolean =
 fun checkLine(result: CheckResult): String {
   val cm = (result.distanceM * 100).roundToInt()
   val deg = String.format(Locale.ROOT, "%.1f", result.headingDeg)
-  return "This ring is $cm cm and $deg° from where it should be"
+  return "This ARC is $cm cm and $deg° from where it should be"
 }
 
 /** A steady ring of the current floor in view: which one, its averaged world position and wall heading. */
@@ -64,7 +64,7 @@ data class RingCheckView(
  * the feed's newer floor, passing the old [status] on. Main thread only.
  */
 class RingCheckFlow(private val floor: ArFloor, status: String? = null) {
-  /** The save's progress copy, or null: "Saving…", "Ring saved" or a refusal. */
+  /** The save's progress copy, or null: "Saving…", "ARC saved" or a refusal. */
   var status: String? = status
     private set
 
@@ -111,9 +111,9 @@ class RingCheckFlow(private val floor: ArFloor, status: String? = null) {
 }
 
 object RingCheckCopy {
-  const val TOO_FAR = "Too far from the last ring to record accurately: walk back, or align from this ring instead"
-  const val ADD_SECOND_RING = "Add a second ring on this floor so visitors stay lined up"
+  const val TOO_FAR = "Too far from the last ARC to record accurately: walk back, or align from this ARC instead"
+  const val ADD_SECOND_RING = "Add a second ARC on this floor so visitors stay lined up"
   const val SAVING = "Saving…"
-  const val SAVED = "Ring saved"
-  const val SAVE_FAILED = "Couldn't save the ring: try again"
+  const val SAVED = "ARC saved"
+  const val SAVE_FAILED = "Couldn't save the ARC: try again"
 }

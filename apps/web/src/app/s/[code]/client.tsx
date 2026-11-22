@@ -51,11 +51,11 @@ export default function SpaceClient() {
         <h1 style={styles.title}>{space.spaceName}</h1>
         {space.whereText && (
           <>
-            <h2 style={styles.label}>Where to find the ring</h2>
+            <h2 style={styles.label}>Where to find the ARC</h2>
             <p style={styles.body}>{space.whereText}</p>
           </>
         )}
-        <p style={styles.body}>Look at the ring when you get there</p>
+        <p style={styles.body}>Look at the ARC when you get there</p>
         <a href={shareUrl(code)} style={styles.button}>Open in the Virvi app on Quest</a>
         <p style={styles.hint}>No app yet? <a href="/ar/" style={styles.link}>Get the Virvi apps</a> for Quest, Vision Pro and iPhone.</p>
       </div>

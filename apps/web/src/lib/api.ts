@@ -445,7 +445,7 @@ function useRealApi() {
         throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status, body: err })
       }
       const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')
-      return { blob: await res.blob(), filename: m?.[1] ?? `virvi-ring-${id}.${format}` }
+      return { blob: await res.blob(), filename: m?.[1] ?? `virvi-arc-${id}.${format}` }
     },
 
     // Raffles (LIV-55)

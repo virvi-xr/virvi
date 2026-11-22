@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <resources>
   <!-- Shown while the system asks for the camera and spatial data permissions. -->
-  <string name="permission_rationale_camera">Virvi AR looks for Virvi rings through the headset\'s cameras to line a space up with the room. Camera images stay on the headset.</string>
+  <string name="permission_rationale_camera">Virvi AR looks for ARCs through the headset\'s cameras to line a space up with the room. Camera images stay on the headset.</string>
   <string name="permission_rationale_spatial">Your room\'s walls and surfaces are used on the headset to hide virtual things behind real ones and to snap items to walls. They aren\'t uploaded.</string>
 </resources>

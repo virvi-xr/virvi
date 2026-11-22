@@ -18,8 +18,8 @@ describe('alignmentStatus', () => {
 
 describe('resizeNote', () => {
   it('asks for a reprint, and a new alignment when the ring was aligned', () => {
-    expect(resizeNote(marker(null))).toBe('Changing the size means reprinting this ring.')
-    expect(resizeNote(marker(pose))).toBe('Changing the size means reprinting this ring and aligning it again.')
+    expect(resizeNote(marker(null))).toBe('Changing the size means reprinting this ARC.')
+    expect(resizeNote(marker(pose))).toBe('Changing the size means reprinting this ARC and aligning it again.')
   })
 })
 

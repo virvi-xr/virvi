@@ -14,18 +14,18 @@ import io.virvi.ar.space.rootFromMarker
 
 /** The visitor's words, kept word for word (the plan's Global Constraints), and the plain words for failures. */
 object VisitorCopy {
-  const val HINT = "Look for a ring like this, at eye level near the entrance."
-  const val TOO_FAR = "Step closer to the ring"
+  const val HINT = "Look for an ARC like this, at eye level near the entrance."
+  const val TOO_FAR = "Step closer to the ARC"
   const val HOLD_STILL = "Hold still…"
-  const val STAND_IN_FRONT = "Stand in front of the ring"
+  const val STAND_IN_FRONT = "Stand in front of the ARC"
   const val NOT_SET_UP = "This space isn't set up yet"
-  const val LOOK_AGAIN = "Look at the ring again"
+  const val LOOK_AGAIN = "Look at the ARC again"
   const val HIDE_BEHIND_WALLS = "Hide behind walls"
   const val LIVE_DEPTH = "Live depth"
   const val OCCLUSION_OFF = "Off"
   const val SPACES = "Spaces"
   const val NO_SPACES = "No spaces yet"
-  const val LOOK_AT_RING = "Look at the ring when you get there"
+  const val LOOK_AT_RING = "Look at the ARC when you get there"
   const val CLOSE = "Close"
   const val BUILDER = "Builder"
   /** Owner-only menu items (builder mode active, or the headset paired). */
@@ -53,16 +53,16 @@ object VisitorCopy {
 
   // New copy from the whole-branch review (the owner may reword these; see the README).
   const val NO_ROOM_SCAN = "Set up your space on this headset first: Settings → Physical space → Space setup."
-  const val NO_CAMERA = "Virvi AR needs camera access to find rings. Allow it in Settings → Apps → Virvi AR."
+  const val NO_CAMERA = "Virvi AR needs camera access to find ARCs. Allow it in Settings → Apps → Virvi AR."
   const val NO_SPATIAL_DATA =
       "Virvi AR needs spatial data access to line spaces up with the room. Allow it in Settings → Apps → Virvi AR."
   /** Camera and spatial data wording; the same text is in res/values/strings.xml (a test keeps them equal). */
   const val PERMISSION_RATIONALE_CAMERA =
-      "Virvi AR looks for Virvi rings through the headset's cameras to line a space up with the room. Camera images stay on the headset."
+      "Virvi AR looks for ARCs through the headset's cameras to line a space up with the room. Camera images stay on the headset."
   const val PERMISSION_RATIONALE_SPATIAL =
       "Your room's walls and surfaces are used on the headset to hide virtual things behind real ones and to snap items to walls. They aren't uploaded."
   const val PERMISSION_RATIONALE = "$PERMISSION_RATIONALE_CAMERA $PERMISSION_RATIONALE_SPATIAL"
-  const val NO_WALL = "Can't see the wall behind this ring. Look around the room so the headset can map it."
+  const val NO_WALL = "Can't see the wall behind this ARC. Look around the room so the headset can map it."
 }
 
 /** The line the menu shows once a report has been tried. */

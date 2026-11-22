@@ -133,7 +133,7 @@ export default function PrivacyPage() {
         </p>
         <ul className="list-disc pl-5">
           <li>
-            <strong>Every visitor sends:</strong> the code of the ring you look at, to find its space; a request for the space's contents
+            <strong>Every visitor sends:</strong> the code of the ARC you look at, to find its space; a request for the space's contents
             (the space feed); and anonymous visit events: when you arrive and leave, and where your head is (every few seconds), in the space's own
             coordinates rather than your room's. Each visit uses a fresh random id that is never stored, so visits can't be linked to you
             or to each other.
@@ -143,11 +143,11 @@ export default function PrivacyPage() {
             chose, the app name and the time. Nothing that identifies you is sent or stored with it.
           </li>
           <li>
-            <strong>Builders also send:</strong> the edits they make to a space, the alignment of a ring, and the pairing of their headset (including the headset model)
+            <strong>Builders also send:</strong> the edits they make to a space, the alignment of an ARC, and the pairing of their headset (including the headset model)
             with a Virvi account. The headset proves who it is with a secret kept in its encrypted storage; the server stores only a hash of it.
           </li>
           <li>
-            <strong>Never sent:</strong> camera images and room scans. The headset's cameras are used on the headset to find rings, and
+            <strong>Never sent:</strong> camera images and room scans. The headset's cameras are used on the headset to find ARCs, and
             your room's walls and surfaces are used on the headset to hide virtual things behind real ones and to snap items to walls.
             Neither leaves the headset.
           </li>

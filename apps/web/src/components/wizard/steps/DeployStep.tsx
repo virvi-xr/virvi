@@ -447,7 +447,7 @@ export function DeployStep({ state, dispatch, options, memory, onRunning, names 
       )}
       {(done || view.status === 'failed') && ar && (
         memory.ar ? (
-          <p className="text-gray-300">Virvi AR space &ldquo;{memory.ar.name}&rdquo; is ready. Print and align its rings in the scene&apos;s AR tab.</p>
+          <p className="text-gray-300">Virvi AR space &ldquo;{memory.ar.name}&rdquo; is ready. Print and align its ARCs in the scene&apos;s AR tab.</p>
         ) : view.arError ? (
           <p className="text-red-300">Virvi AR: {view.arError}</p>
         ) : null

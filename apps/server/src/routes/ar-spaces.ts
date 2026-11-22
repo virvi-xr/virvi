@@ -156,13 +156,13 @@ export default async function arSpaceRoutes(app: FastifyInstance) {
         throw err
       }
       const { base, raised } = meshes
-      body = format === '3mf' ? threeMf(base, raised, style as MarkerStyle) : stl(format === 'stl-base' ? base : raised, `Virvi ring marker ${marker.code} ${format === 'stl-base' ? 'base' : 'raised'}`)
+      body = format === '3mf' ? threeMf(base, raised, style as MarkerStyle) : stl(format === 'stl-base' ? base : raised, `Virvi ARC ${marker.code} ${format === 'stl-base' ? 'base' : 'raised'}`)
     }
     const { ext, type } = FILE_FORMATS[format]
     const suffix = (format === 'stl-base' ? '-base' : format === 'stl-raised' ? '-raised' : '') + (style === 'inverted' && format !== 'svg' ? '-inverted' : '')
     return reply
       .header('content-type', type)
-      .header('content-disposition', `attachment; filename="virvi-ring-${marker.code}-${diameterMm}mm${suffix}.${ext}"`)
+      .header('content-disposition', `attachment; filename="virvi-arc-${marker.code}-${diameterMm}mm${suffix}.${ext}"`)
       .send(body)
   })
 }

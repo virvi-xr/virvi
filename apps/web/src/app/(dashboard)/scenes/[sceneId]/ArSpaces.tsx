@@ -111,7 +111,7 @@ function MarkerCard({ marker, busy, run }: { marker: ArMarkerView; busy: boolean
           {diameterErr && <span className="text-xs text-red-400">{diameterErr}</span>}
           {!diameterErr && (resized || diameter !== String(marker.diameterMm)) && <span className="text-xs text-yellow-400">{resizeNote(marker)}</span>}
           <span className={`text-xs ${aligned ? 'text-green-400' : 'text-yellow-400'}`}>{aligned ? 'Aligned' : 'Not aligned yet: align it with the Quest app'}</span>
-          <button disabled={busy} onClick={() => { if (confirm('Remove this marker?')) run(() => api.deleteArMarker(marker.id), { lock: true }) }} className="ml-auto text-xs text-red-400 hover:underline">Remove</button>
+          <button disabled={busy} onClick={() => { if (confirm('Remove this ARC?')) run(() => api.deleteArMarker(marker.id), { lock: true }) }} className="ml-auto text-xs text-red-400 hover:underline">Remove</button>
         </div>
         <div>
           <label className="block text-xs text-gray-400 mb-1">Where to find it</label>
@@ -128,8 +128,8 @@ function MarkerCard({ marker, busy, run }: { marker: ArMarkerView; busy: boolean
           <select aria-label="Mounting (3D files)" value={mounting} onChange={(e) => setMounting(e.target.value as ArMounting)} className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-white">
             {MOUNTINGS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
-          <label className="text-xs text-gray-400">Marker style</label>
-          <select aria-label="Marker style" value={style} onChange={(e) => setStyle(e.target.value as ArMarkerStyle)} className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-white">
+          <label className="text-xs text-gray-400">ARC style</label>
+          <select aria-label="ARC style" value={style} onChange={(e) => setStyle(e.target.value as ArMarkerStyle)} className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-white">
             {STYLES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
         </div>
@@ -139,7 +139,7 @@ function MarkerCard({ marker, busy, run }: { marker: ArMarkerView; busy: boolean
         {dlError && <p className="text-xs text-red-400">{dlError}</p>}
         <p className="text-xs text-gray-500">{printHint(style)}</p>
         <div className="flex items-center gap-2">
-          <button disabled className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-gray-500 cursor-not-allowed">Order a printed marker</button>
+          <button disabled className="rounded-lg bg-gray-800 px-3 py-1.5 text-xs text-gray-500 cursor-not-allowed">Order a printed ARC</button>
           <span className="text-xs text-gray-500">Coming later</span>
         </div>
       </div>
@@ -156,10 +156,10 @@ function FloorCard({ floor, busy, run }: { floor: ArFloorView; busy: boolean; ru
         <label className="text-xs text-gray-400">Height (m)</label>
         <BlurField type="number" step="0.1" value={String(floor.heightM)} aria-label="Floor height in metres" className={`${input} w-full`} wrap="w-24"
           onSave={(v) => Number.isFinite(Number(v)) && v.trim() !== '' ? run(() => api.updateArFloor(floor.id, { heightM: Number(v) }), { quiet: true }) : 'Height must be a number.'} />
-        <button disabled={busy} onClick={() => { if (confirm(`Remove floor "${floor.name}" and its markers?`)) run(() => api.deleteArFloor(floor.id), { lock: true }) }} className="ml-auto text-xs text-red-400 hover:underline">Remove floor</button>
+        <button disabled={busy} onClick={() => { if (confirm(`Remove floor "${floor.name}" and its ARCs?`)) run(() => api.deleteArFloor(floor.id), { lock: true }) }} className="ml-auto text-xs text-red-400 hover:underline">Remove floor</button>
       </div>
       {floor.markers.map((m) => <MarkerCard key={m.id} marker={m} busy={busy} run={run} />)}
-      <button disabled={busy} onClick={() => run(() => api.addArMarker(floor.id, { diameterMm: AR_DEFAULT_DIAMETER_MM }), { lock: true })} className={smallBtn}>+ Add marker</button>
+      <button disabled={busy} onClick={() => run(() => api.addArMarker(floor.id, { diameterMm: AR_DEFAULT_DIAMETER_MM }), { lock: true })} className={smallBtn}>+ Add ARC</button>
     </div>
   )
 }
@@ -170,8 +170,8 @@ function SpaceCard({ space, busy, run }: { space: ArSpaceView; busy: boolean; ru
   const [floorHeight, setFloorHeight] = useState('0')
   const readiness = spaceReadiness(space)
   const note = readiness.ok
-    ? 'Ready: every marker is aligned.'
-    : `Still missing: ${readiness.missing.map((m) => (m === 'marker' ? 'a marker' : 'aligned markers')).join(' and ')}. You can publish anyway.`
+    ? 'Ready: every ARC is aligned.'
+    : `Still missing: ${readiness.missing.map((m) => (m === 'marker' ? 'an ARC' : 'aligned ARCs')).join(' and ')}. You can publish anyway.`
 
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900 p-6 space-y-4">
@@ -234,7 +234,7 @@ export function ArSpaces({ sceneId }: { sceneId: string }) {
     <div className="space-y-4">
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-6">
         <h3 className="text-sm font-medium text-gray-300 mb-1">AR spaces</h3>
-        <p className="text-xs text-gray-500 mb-4">Real places that visitors can enter with a headset. Each floor has ring markers you print and mount.</p>
+        <p className="text-xs text-gray-500 mb-4">Real places that visitors can enter with a headset. Each floor has ARCs you print and mount.</p>
         {error && <div className="mb-3 rounded-lg bg-red-900/50 border border-red-700 px-4 py-2 text-sm text-red-300">{error}</div>}
         <form className="flex flex-wrap gap-2" onSubmit={(e) => {
           e.preventDefault()

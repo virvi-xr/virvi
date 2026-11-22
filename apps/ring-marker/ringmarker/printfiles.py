@@ -118,7 +118,7 @@ def write_3mf(parts: list[tuple[str, Mesh, str]], path: Path) -> None:
         objs.append(f'<object id="{i + 2}" name="{name}" type="model" pid="1" pindex="{i}"><mesh><vertices>{vs}</vertices><triangles>{ts}</triangles></mesh></object>')
     comps = "".join(f'<component objectid="{i + 2}"/>' for i in range(len(parts)))
     pid = len(parts) + 2
-    objs.append(f'<object id="{pid}" name="marker" type="model"><components>{comps}</components></object>')
+    objs.append(f'<object id="{pid}" name="ARC" type="model"><components>{comps}</components></object>')
     items.append(f'<item objectid="{pid}"/>')
     model = (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -199,8 +199,8 @@ def paper_pdf(marker_id: int, diameter_mm: float, name: str, path: Path) -> None
     big, small = _font(mm(5)), _font(mm(3.5))
     d.text((mm(15), mm(10)), f"{name}  -  code {code_of(marker_id)}", font=big, fill=0)
     y = top + plaque.height + mm(10)
-    d.text((mm(15), y), f"Plaque {side:.0f} mm square, ring {diameter_mm:.0f} mm. Print at 100% / Actual size (no 'fit to page').", font=small, fill=0)
-    d.text((mm(15), y + mm(5)), "The bar below must measure 100 mm; if it doesn't, the marker is the wrong size.", font=small, fill=0)
+    d.text((mm(15), y), f"Plaque {side:.0f} mm square, ARC {diameter_mm:.0f} mm. Print at 100% / Actual size (no 'fit to page').", font=small, fill=0)
+    d.text((mm(15), y + mm(5)), "The bar below must measure 100 mm; if it doesn't, the ARC is the wrong size.", font=small, fill=0)
     bar_y = y + mm(14)
     d.rectangle([mm(15), bar_y, mm(15) + mm(100) - 1, bar_y + mm(3)], fill=0)
     for t in range(0, 101, 10):
@@ -218,7 +218,7 @@ def write_print_files(marker_id: int, diameter_mm: float, out_dir: Path, name: s
     render(marker_id, diameter_mm, REFERENCE_PX_PER_MM).save(ref)
     paper_pdf(marker_id, diameter_mm, name, pdf)
     base, raised = build_meshes(marker_id, diameter_mm)
-    write_stl(base, base_p, f"Virvi ring marker {name} base")
-    write_stl(raised, raised_p, f"Virvi ring marker {name} raised")
+    write_stl(base, base_p, f"Virvi ARC {name} base")
+    write_stl(raised, raised_p, f"Virvi ARC {name} raised")
     write_3mf([("base (light)", base, "#F2F2F2"), ("raised (dark)", raised, "#1A1A1A")], mf)
     return [ref, pdf, base_p, raised_p, mf]

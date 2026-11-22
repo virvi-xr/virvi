@@ -54,8 +54,8 @@ class AlignmentTest {
     assertNull(sizeWarning(1.02))
     assertNull(sizeWarning(0.98))
     assertNull(sizeWarning(1.0))
-    assertEquals("This ring looks about 8% smaller than its recorded size: was it printed at 100%?", sizeWarning(1.087))
-    assertEquals("This ring looks about 5% larger than its recorded size: was it printed at 100%?", sizeWarning(0.95))
+    assertEquals("This ARC looks about 8% smaller than its recorded size: was it printed at 100%?", sizeWarning(1.087))
+    assertEquals("This ARC looks about 5% larger than its recorded size: was it printed at 100%?", sizeWarning(0.95))
   }
 
   @Test fun `sizeWarning ignores a ratio that is not a number`() {
@@ -158,7 +158,7 @@ class AlignmentTest {
   @Test fun `save beyond 1_5 m is refused and the scene stays adjustable`() {
     val f = placed()
     assertNull(f.requestSave(head(1.51)))
-    assertEquals(AlignState.Refused("Step closer to the ring to save"), f.state)
+    assertEquals(AlignState.Refused("Step closer to the ARC to save"), f.state)
     f.nudge(0.01, 0.0, 0.0)
     assertTrue(f.state is AlignState.Placed)
     assertNotNull(f.requestSave(head(1.5)))
@@ -200,7 +200,7 @@ class AlignmentTest {
     val f = placed()
     assertNull(f.sizeMessage)
     f.checkSize(1.087, 1.0)
-    assertEquals("This ring looks about 8% smaller than its recorded size: was it printed at 100%?", f.sizeMessage)
+    assertEquals("This ARC looks about 8% smaller than its recorded size: was it printed at 100%?", f.sizeMessage)
     f.checkSize(1.0, 1.0)
     assertNotNull(f.sizeMessage)
   }

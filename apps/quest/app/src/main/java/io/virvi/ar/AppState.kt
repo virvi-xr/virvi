@@ -80,7 +80,7 @@ class AppState {
   /** One line per test marker, after its [markerLines] entry: its world position and wall heading. */
   var poseLines by mutableStateOf(RING_TEST_MARKERS.map { "  not in view" })
   var wallStatus by mutableStateOf("Room scan not loaded yet")
-  var lastRing by mutableStateOf("No ring marker read yet")
+  var lastRing by mutableStateOf("No ARC read yet")
   var occlusionStatus by mutableStateOf("Hidden behind anything real the headset's depth sees")
   /** Tints the room scan's walls and ceiling, to check they line up with the real ones. */
   var showWalls by mutableStateOf(false)

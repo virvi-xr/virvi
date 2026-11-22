@@ -278,7 +278,7 @@ export function WhereStep({ state, dispatch, names, reloadNames, options, replac
             <div className="ml-6 space-y-1">
               <input value={ar.name} onChange={(e) => dispatch({ type: 'setArName', name: e.target.value })}
                 placeholder="Name for the AR space" aria-label="AR space name" maxLength={100} className={inputClass} />
-              <p className="text-xs text-gray-500">Printing and aligning its rings happens later, in the scene&apos;s AR tab.</p>
+              <p className="text-xs text-gray-500">Printing and aligning its ARCs happens later, in the scene&apos;s AR tab.</p>
             </div>
           )}
         </div>

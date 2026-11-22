@@ -33,8 +33,8 @@ export function spaceReadiness(s: ArSpaceView): { ok: boolean; missing: Array<'m
 /** What a size change costs: the ring must be printed again, and aligned again if it already was. */
 export function resizeNote(m: ArMarkerView): string {
   return alignmentStatus(m) === 'aligned'
-    ? 'Changing the size means reprinting this ring and aligning it again.'
-    : 'Changing the size means reprinting this ring.'
+    ? 'Changing the size means reprinting this ARC and aligning it again.'
+    : 'Changing the size means reprinting this ARC.'
 }
 
 export const shareUrl = (code: string): string => `https://virvi.io/s/${code}`

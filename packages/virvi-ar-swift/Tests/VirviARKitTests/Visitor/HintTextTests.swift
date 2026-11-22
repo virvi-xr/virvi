@@ -10,8 +10,8 @@ final class HintTextTests: XCTestCase {
     private var shown: VisitorState { .shown(space: space, root: RootPose(position: Vec3(x: 0, y: 0, z: 0), yawDeg: 0)) }
 
     func testTheVisitorCopyWordForWord() {
-        XCTAssertEqual(hintText(.hint), "Look for a ring like this, at eye level near the entrance.")
-        XCTAssertEqual(hintText(.stepCloser), "Step closer to the ring")
+        XCTAssertEqual(hintText(.hint), "Look for an ARC like this, at eye level near the entrance.")
+        XCTAssertEqual(hintText(.stepCloser), "Step closer to the ARC")
         XCTAssertEqual(hintText(.loading(code: "ABC", spaceName: "Cafe")), "Opening Cafe…")
         XCTAssertEqual(hintText(.loading(code: "ABC", spaceName: nil)), "Opening…")
         XCTAssertEqual(hintText(locking, gather: .gathering), "Hold still…")
@@ -25,8 +25,8 @@ final class HintTextTests: XCTestCase {
         XCTAssertEqual(VisitorCopy.BUSY, "Virvi is busy. Trying again…")
         XCTAssertEqual(VisitorCopy.COULDNT_OPEN, "Couldn't open this space. Try again in a moment.")
         XCTAssertEqual(VisitorCopy.BAD_DATA, "Something's wrong with this space's data.")
-        XCTAssertEqual(VisitorCopy.LOOK_AGAIN, "Look at the ring again")
-        XCTAssertEqual(VisitorCopy.LOOK_AT_RING, "Look at the ring when you get there")
+        XCTAssertEqual(VisitorCopy.LOOK_AGAIN, "Look at the ARC again")
+        XCTAssertEqual(VisitorCopy.LOOK_AT_RING, "Look at the ARC when you get there")
         XCTAssertEqual(VisitorCopy.SPACES, "Spaces")
         XCTAssertEqual(VisitorCopy.NO_SPACES, "No spaces yet")
         XCTAssertEqual(VisitorCopy.CLOSE, "Close")
@@ -39,12 +39,12 @@ final class HintTextTests: XCTestCase {
     }
 
     func testTheNewDeviceAndWallCopy() {
-        XCTAssertEqual(VisitorCopy.NO_CAMERA, "Virvi AR needs camera access to find rings. Allow it in Settings → Apps → Virvi AR.")
-        XCTAssertEqual(VisitorCopy.NO_WALL, "Can't see the wall behind this ring. Look around the room so the phone can map it.")
+        XCTAssertEqual(VisitorCopy.NO_CAMERA, "Virvi AR needs camera access to find ARCs. Allow it in Settings → Apps → Virvi AR.")
+        XCTAssertEqual(VisitorCopy.NO_WALL, "Can't see the wall behind this ARC. Look around the room so the phone can map it.")
     }
 
     func testARingSeenTooSteeplySaysStandInFront() {
-        XCTAssertEqual(VisitorCopy.STAND_IN_FRONT, "Stand in front of the ring")
+        XCTAssertEqual(VisitorCopy.STAND_IN_FRONT, "Stand in front of the ARC")
         XCTAssertEqual(lockingHint(.tooSteep, unreadableForMs: 0), VisitorCopy.STAND_IN_FRONT)
         XCTAssertEqual(hintText(locking, gather: .tooSteep), VisitorCopy.STAND_IN_FRONT)
     }

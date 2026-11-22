@@ -2,7 +2,7 @@ import SwiftUI
 import VirviARKit
 
 /// The card at the bottom of the camera view: a drawing of a ring marker and what to do (`VisitorController.hint`), or,
-/// when a link has opened a space, the space page (its name, where its ring is, "Look at the ring when you get there").
+/// when a link has opened a space, the space page (its name, where its ring is, "Look at the ARC when you get there").
 struct HintCard: View {
     let controller: VisitorController
 

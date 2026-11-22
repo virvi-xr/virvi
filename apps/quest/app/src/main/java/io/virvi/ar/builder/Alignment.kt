@@ -53,7 +53,7 @@ fun sizeWarning(ratio: Double): String? {
   if (off <= SIZE_TOLERANCE) return null
   val n = (off * 100).roundToInt()
   val how = if (ratio > 1.0) "smaller" else "larger"
-  return "This ring looks about $n% $how than its recorded size: was it printed at 100%?"
+  return "This ARC looks about $n% $how than its recorded size: was it printed at 100%?"
 }
 
 /**
@@ -206,7 +206,7 @@ class AlignFlow(private val floorName: String, private val floorHeightM: Double)
 
 /** The align flow's refusal copy in one place. [OFFLINE] and [SAVE_FAILED] are new (the owner may reword them). */
 object AlignCopy {
-  const val STEP_CLOSER = "Step closer to the ring to save"
+  const val STEP_CLOSER = "Step closer to the ARC to save"
   const val NO_ACCESS = "This account can't edit this scene"
   const val OFFLINE = "Can't reach virvi.io: check the connection and save again"
   const val SAVE_FAILED = "Couldn't save the alignment: try again"

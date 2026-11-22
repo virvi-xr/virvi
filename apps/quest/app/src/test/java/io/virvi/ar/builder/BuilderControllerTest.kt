@@ -515,6 +515,7 @@ class BuilderControllerTest {
     assertEquals("sp-b" to "jwt", feed.started.last())
     assertTrue(ui.builderActive)
     assertEquals(BuilderCopy.lookAtRing("Gallery"), ui.builderPrompt?.text)
+    assertEquals("Look at an ARC of Gallery", ui.builderPrompt?.text)
   }
 
   @Test fun `a ring of another space in view still gives the pick list`() {

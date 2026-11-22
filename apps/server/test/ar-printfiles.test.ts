@@ -89,6 +89,11 @@ describe('ring marker meshes and STL', () => {
     expect(buildMarkerMeshes(ID, 140, 'none').base.tris.length).toBe(12)
   })
 
+  it('names the STL object after the ARC', () => {
+    const { base } = buildMarkerMeshes(ID, 140, 'none')
+    expect(stl(base).subarray(0, 80).toString('ascii').replace(/\0+$/, '')).toBe('Virvi ARC')
+  })
+
   it('the base is 4 mm thick and the raised parts end at 4.6 mm', () => {
     const { base, raised } = buildMarkerMeshes(ID, 140, 'none')
     const b = parseStl(stl(base))
@@ -209,6 +214,7 @@ describe('3MF', () => {
     expect(model).toContain('pindex="1"')
     expect(model.match(/<vertex /g)!.length).toBe(base.verts.length + raised.verts.length)
     expect(model.match(/<triangle /g)!.length).toBe(base.tris.length + raised.tris.length)
+    expect(model).toContain('name="ARC" type="model"><components>')
   })
 })
 
@@ -284,6 +290,10 @@ describe('paper PDF', () => {
     expect(text).toContain(ringCodeOf(ID))
     expect(text).toContain(`virvi.io/s/${ringCodeOf(ID)}`)
     expect(text).toContain('100%')
+    expect(text).toContain(`(Virvi ARC ${ringCodeOf(ID)})`)
+    expect(text).toContain('ARC 140 mm.')
+    expect(text).toContain('the ARC is the wrong size.')
+    expect(text).not.toMatch(/ring/i)
     expect(text).toContain('/MediaBox [0 0 612 792]')
     expect(text).not.toContain('/Image')
   })
@@ -321,9 +331,10 @@ describe('print file download route', () => {
     const s = await setup()
     const res = await app.inject({ method: 'GET', url: `/api/ar/markers/${s.marker.id}/files?format=stl-base`, headers: as(s.owner) })
     expect(res.statusCode).toBe(200)
-    expect(res.headers['content-disposition']).toBe(`attachment; filename="virvi-ring-${s.marker.code}-140mm-base.stl"`)
+    expect(res.headers['content-disposition']).toBe(`attachment; filename="virvi-arc-${s.marker.code}-140mm-base.stl"`)
     expect(res.headers['content-type']).toBe('model/stl')
     expect(parseStl(res.rawPayload).count).toBe(12)
+    expect(res.rawPayload.subarray(0, 80).toString('ascii').replace(/\0+$/, '')).toBe(`Virvi ARC ${s.marker.code} base`)
   })
 
   it('serves every format, and mounting changes the base', async () => {
@@ -340,7 +351,7 @@ describe('print file download route', () => {
       expect(res.statusCode, format).toBe(200)
       expect(res.headers['content-type']).toContain(type)
       const suffix = format === 'stl-raised' ? '-raised' : ''
-      expect(res.headers['content-disposition']).toContain(`virvi-ring-${s.marker.code}-140mm${suffix}.${ext}`)
+      expect(res.headers['content-disposition']).toContain(`virvi-arc-${s.marker.code}-140mm${suffix}.${ext}`)
     }
     expect((await get('format=svg')).body).toContain('<svg')
     const keyhole = await get('format=stl-base&mounting=keyhole')
@@ -355,10 +366,10 @@ describe('print file download route', () => {
     for (const [format, suffix, ext] of [['pdf', '', 'pdf'], ['3mf', '', '3mf'], ['stl-base', '-base', 'stl'], ['stl-raised', '-raised', 'stl']] as const) {
       const inv = await get(`format=${format}&style=inverted`)
       expect(inv.statusCode, format).toBe(200)
-      expect(inv.headers['content-disposition']).toBe(`attachment; filename="virvi-ring-${code}-140mm${suffix}-inverted.${ext}"`)
+      expect(inv.headers['content-disposition']).toBe(`attachment; filename="virvi-arc-${code}-140mm${suffix}-inverted.${ext}"`)
       const normal = await get(`format=${format}&style=normal`)
       const missing = await get(`format=${format}`)
-      expect(normal.headers['content-disposition']).toBe(`attachment; filename="virvi-ring-${code}-140mm${suffix}.${ext}"`)
+      expect(normal.headers['content-disposition']).toBe(`attachment; filename="virvi-arc-${code}-140mm${suffix}.${ext}"`)
       expect(normal.rawPayload.equals(missing.rawPayload), format).toBe(true)
       if (format.startsWith('stl')) expect(inv.rawPayload.equals(normal.rawPayload), format).toBe(true)
       else expect(inv.rawPayload.equals(normal.rawPayload), format).toBe(false)

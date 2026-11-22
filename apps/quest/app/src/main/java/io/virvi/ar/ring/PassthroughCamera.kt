@@ -23,11 +23,11 @@ enum class CameraStatus { NO_PERMISSION, NO_CAMERA, STARTING, RUNNING, ERROR }
 /** The panel line for [s]: says why detection is off when it is. */
 fun cameraStatusText(s: CameraStatus): String =
     when (s) {
-      CameraStatus.NO_PERMISSION -> "Camera permission denied: marker detection is off"
+      CameraStatus.NO_PERMISSION -> "Camera permission denied: ARC detection is off"
       CameraStatus.NO_CAMERA -> "No passthrough camera found (needs Quest 3/3S, Horizon OS v74+)"
       CameraStatus.STARTING -> "Starting the passthrough camera…"
-      CameraStatus.RUNNING -> "Camera running: look at a printed ring marker"
-      CameraStatus.ERROR -> "Camera error: marker detection is off (see logcat VirviAR)"
+      CameraStatus.RUNNING -> "Camera running: look at a printed ARC"
+      CameraStatus.ERROR -> "Camera error: ARC detection is off (see logcat VirviAR)"
     }
 
 /**

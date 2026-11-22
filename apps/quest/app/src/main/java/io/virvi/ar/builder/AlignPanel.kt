@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.sp
 /** The lines the panel shows for [state], top to bottom: the instruction, then [extra] notes (size and floor warnings). */
 fun alignLines(state: AlignState, extra: List<String>): List<String> =
     when (state) {
-      AlignState.LookAtRing -> listOf("Look at the ring")
+      AlignState.LookAtRing -> listOf("Look at the ARC")
       is AlignState.Placed -> listOf("Left stick moves the scene, right stick turns it. Hold the grip for fine steps.") + extra
       AlignState.Saving -> listOf("Saving…")
       is AlignState.Saved -> listOf("Alignment saved") + extra
@@ -66,8 +66,8 @@ fun AlignPanel(
         val lines = ringCheckLines(ring, ringStatus)
         lines.forEach { Text(it, color = if (it == ring.line) warnColor else Color(0xFFE0E0E0), fontSize = 15.sp) }
         when (ring.button) {
-          RingButton.Record -> Button(onClick = onRecordRing) { Text("Record this ring") }
-          RingButton.ReRecord -> Button(onClick = onRecordRing) { Text("Re-record this ring") }
+          RingButton.Record -> Button(onClick = onRecordRing) { Text("Record this ARC") }
+          RingButton.ReRecord -> Button(onClick = onRecordRing) { Text("Re-record this ARC") }
           RingButton.None -> Unit
         }
       }

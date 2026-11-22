@@ -112,10 +112,10 @@ object BuilderCopy {
   const val SPACES_FAILED = "Couldn't load your spaces: try again"
   const val COULDNT_OPEN = "Couldn't open this space for building: try again"
   const val PAIRING_ENDED = "Pairing didn't finish: tap Builder to try again"
-  const val LOOK_AT_LINED_UP_RING = "Look at a ring that is already lined up on this floor"
+  const val LOOK_AT_LINED_UP_RING = "Look at an ARC that is already lined up on this floor"
   const val FINISH_FIRST = "Finish building first (Done) to open another space"
 
-  fun lookAtRing(spaceName: String) = "Look at a ring of $spaceName"
+  fun lookAtRing(spaceName: String) = "Look at an ARC of $spaceName"
 }
 
 /** The HUD's controls on [editor] (null: nothing to act on, the controls do nothing); [onTab] keeps the tab. */

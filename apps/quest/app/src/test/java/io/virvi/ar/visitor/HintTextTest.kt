@@ -13,8 +13,8 @@ class HintTextTest {
   private val locking = VisitorState.Locking(space)
 
   @Test fun `the visitor copy word for word`() {
-    assertEquals("Look for a ring like this, at eye level near the entrance.", hintText(VisitorState.Hint))
-    assertEquals("Step closer to the ring", hintText(VisitorState.StepCloser))
+    assertEquals("Look for an ARC like this, at eye level near the entrance.", hintText(VisitorState.Hint))
+    assertEquals("Step closer to the ARC", hintText(VisitorState.StepCloser))
     assertEquals("Opening Cafe…", hintText(VisitorState.Loading("ABC", "Cafe")))
     assertEquals("Opening…", hintText(VisitorState.Loading("ABC", null)))
     assertEquals("Hold still…", hintText(locking, GatherStatus.GATHERING))
@@ -28,7 +28,7 @@ class HintTextTest {
         VisitorCopy.NO_ROOM_SCAN,
     )
     assertEquals(
-        "Virvi AR needs camera access to find rings. Allow it in Settings → Apps → Virvi AR.",
+        "Virvi AR needs camera access to find ARCs. Allow it in Settings → Apps → Virvi AR.",
         VisitorCopy.NO_CAMERA,
     )
     assertEquals(
@@ -36,13 +36,15 @@ class HintTextTest {
         VisitorCopy.NO_SPATIAL_DATA,
     )
     assertEquals(
-        "Can't see the wall behind this ring. Look around the room so the headset can map it.",
+        "Can't see the wall behind this ARC. Look around the room so the headset can map it.",
         VisitorCopy.NO_WALL,
     )
   }
 
   @Test fun `a ring seen too steeply says stand in front`() {
-    assertEquals("Stand in front of the ring", VisitorCopy.STAND_IN_FRONT)
+    assertEquals("Stand in front of the ARC", VisitorCopy.STAND_IN_FRONT)
+    assertEquals("Look at the ARC again", VisitorCopy.LOOK_AGAIN)
+    assertEquals("Look at the ARC when you get there", VisitorCopy.LOOK_AT_RING)
     assertEquals(VisitorCopy.STAND_IN_FRONT, lockingHint(GatherStatus.TOO_STEEP, 0))
     assertEquals(VisitorCopy.STAND_IN_FRONT, hintText(locking, GatherStatus.TOO_STEEP))
   }
@@ -85,6 +87,10 @@ class HintTextTest {
 
   @Test fun `the rationale wording is the same as the string resources`() {
     val xml = java.io.File("src/main/res/values/strings.xml").readText().replace("\\'", "'")
+    assertEquals(
+        "Virvi AR looks for ARCs through the headset's cameras to line a space up with the room. Camera images stay on the headset.",
+        VisitorCopy.PERMISSION_RATIONALE_CAMERA,
+    )
     assertTrue(xml.contains(">${VisitorCopy.PERMISSION_RATIONALE_CAMERA}<"))
     assertTrue(xml.contains(">${VisitorCopy.PERMISSION_RATIONALE_SPATIAL}<"))
   }

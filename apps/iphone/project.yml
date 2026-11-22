@@ -37,7 +37,7 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Virvi AR
-        NSCameraUsageDescription: Virvi AR uses the camera to find rings and to show the space in this room.
+        NSCameraUsageDescription: Virvi AR uses the camera to find ARCs and to show the space in this room.
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

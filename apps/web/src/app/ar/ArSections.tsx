@@ -14,7 +14,7 @@ export function ArSections() {
         <h1 className="mt-3 max-w-3xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">Your scene, in a real place</h1>
         <div className="mt-6 max-w-2xl space-y-3 text-lg leading-relaxed text-gray-300">
           <p>AR Spaces put your Virvi scene in a real room, life-size.</p>
-          <p>Look at the ring by the door, and the scene is there: the screens, the art, the models, where you put them.</p>
+          <p>Look at the ARC by the door, and the scene is there: the screens, the art, the models, where you put them.</p>
           <p>It stays in sync with Decentraland and Hyperfy. Change something in the dashboard, and it changes everywhere at once.</p>
         </div>
       </section>
@@ -29,9 +29,9 @@ export function ArSections() {
         <h2 id="ar-setup" className="text-2xl font-semibold tracking-tight text-white">Set up your own space</h2>
         <p className="mt-2 max-w-2xl text-gray-400">For venue owners. It takes three steps, all from the dashboard.</p>
         <ol className="mt-6 grid gap-4 sm:grid-cols-3">
-          <Step n="1" title="Mount a ring by the door">Print the ring from your scene’s AR spaces tab, and put it up at eye level near the entrance.</Step>
-          <Step n="2" title="Line the scene up once">Stand at the ring with a headset, and nudge the scene until it sits right in the room.</Step>
-          <Step n="3" title="Publish">Publish the space. Anyone who looks at the ring sees your scene.</Step>
+          <Step n="1" title="Mount an ARC by the door">Print the ARC from your scene’s AR spaces tab, and put it up at eye level near the entrance.</Step>
+          <Step n="2" title="Line the scene up once">Stand at the ARC with a headset, and nudge the scene until it sits right in the room.</Step>
+          <Step n="3" title="Publish">Publish the space. Anyone who looks at the ARC sees your scene.</Step>
         </ol>
         <p className="mt-6"><a href={docs} className={link}>Read the docs</a></p>
       </section>

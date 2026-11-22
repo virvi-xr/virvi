@@ -7,7 +7,8 @@ import org.junit.Test
 class CameraStatusTest {
   @Test
   fun cameraStatusText() {
-    assertEquals("Camera permission denied: marker detection is off", cameraStatusText(CameraStatus.NO_PERMISSION))
+    assertEquals("Camera permission denied: ARC detection is off", cameraStatusText(CameraStatus.NO_PERMISSION))
+    assertEquals("Camera running: look at a printed ARC", cameraStatusText(CameraStatus.RUNNING))
     assertEquals(
         "No passthrough camera found (needs Quest 3/3S, Horizon OS v74+)",
         cameraStatusText(CameraStatus.NO_CAMERA),

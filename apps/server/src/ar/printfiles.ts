@@ -401,7 +401,7 @@ export function buildMarkerMeshes(markerId: number, diameterMm: number, mounting
 // File formats
 
 /** Binary STL. */
-export function stl(mesh: Mesh, name = 'Virvi ring marker'): Buffer {
+export function stl(mesh: Mesh, name = 'Virvi ARC'): Buffer {
   const buf = Buffer.alloc(84 + 50 * mesh.tris.length)
   buf.write(name.slice(0, 80), 0, 'latin1')
   buf.writeUInt32LE(mesh.tris.length, 80)
@@ -436,7 +436,7 @@ export function threeMf(base: Mesh, raised: Mesh, style: MarkerStyle = 'normal')
   })
   const wrapperId = parts.length + 2
   const comps = parts.map((_, i) => `<component objectid="${i + 2}"/>`).join('')
-  objects.push(`<object id="${wrapperId}" name="marker" type="model"><components>${comps}</components></object>`)
+  objects.push(`<object id="${wrapperId}" name="ARC" type="model"><components>${comps}</components></object>`)
   const model =
     '<?xml version="1.0" encoding="UTF-8"?>' +
     '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">' +
@@ -488,7 +488,7 @@ export function paperPdf(markerId: number, diameterMm: number, style: MarkerStyl
   const cy = pageH - (top + side / 2) * k
   const poly = (pts: P[]) => pts.map(([x, y], i) => `${num(cx + x * k)} ${num(cy + y * k)} ${i ? 'l' : 'm'}`).join(' ') + ' h'
 
-  text(15, 14, 16, `Virvi ring marker  ${code}`, 'F2')
+  text(15, 14, 16, `Virvi ARC ${code}`, 'F2')
   ops.push('0 G 0.6 w', `${X(left)} ${Y(top + side)} ${num(side * k)} ${num(side * k)} re S`)
   ops.push('0 g')
   if (style === 'inverted') ops.push(`${X(left)} ${Y(top + side)} ${num(side * k)} ${num(side * k)} re f`, '1 g')
@@ -509,9 +509,9 @@ export function paperPdf(markerId: number, diameterMm: number, style: MarkerStyl
   }
   if (style === 'inverted') ops.push('0 g') // the text and check bar stay black on the white page
   const below = top + side
-  text(15, below + 10, 11, `Plaque ${num(side)} mm square, ring ${num(diameterMm)} mm.`)
+  text(15, below + 10, 11, `Plaque ${num(side)} mm square, ARC ${num(diameterMm)} mm.`)
   text(15, below + 16, 11, 'Print at 100% (actual size). Do not use "fit to page".', 'F2')
-  text(15, below + 22, 11, 'The bar below must measure 100 mm; if it does not, the marker is the wrong size.')
+  text(15, below + 22, 11, 'The bar below must measure 100 mm; if it does not, the ARC is the wrong size.')
   const barY = below + 28
   ops.push('0 g', `${X(15)} ${Y(barY + 3)} ${num(100 * k)} ${num(3 * k)} re f`)
   for (let t = 0; t <= 100; t += 10) ops.push(`${X(15 + t)} ${Y(barY)} m ${X(15 + t)} ${Y(barY - 2)} l S`)

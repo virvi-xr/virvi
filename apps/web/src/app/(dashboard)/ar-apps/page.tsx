@@ -26,7 +26,7 @@ export default function ArAppsPage() {
 
   return (
     <div className="max-w-5xl">
-      <PageHeader title="AR" subtitle="Put your scene in a real place, life-size, with a ring by the door." />
+      <PageHeader title="AR" subtitle="Put your scene in a real place, life-size, with an ARC by the door." />
 
       <section aria-labelledby="ar-apps">
         <h2 id="ar-apps" className="mb-3 text-lg font-semibold">Virvi AR: one app, three platforms</h2>
@@ -36,7 +36,7 @@ export default function ArAppsPage() {
 
       <section aria-labelledby="ar-setup" className="mt-10">
         <h2 id="ar-setup" className="mb-1 text-lg font-semibold">Set up an AR Space</h2>
-        <p className="mb-3 text-sm text-gray-400">Open a scene and go to its AR spaces tab: add a space, print its ring, then line it up and publish from a headset.</p>
+        <p className="mb-3 text-sm text-gray-400">Open a scene and go to its AR spaces tab: add a space, print its ARC, then line it up and publish from a headset.</p>
         {scenes === null ? (
           <p className="text-sm text-gray-500">Loading your scenes…</p>
         ) : scenes.length === 0 ? (

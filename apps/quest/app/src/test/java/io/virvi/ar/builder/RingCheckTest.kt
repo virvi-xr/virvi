@@ -55,10 +55,10 @@ class RingCheckTest {
   }
 
   @Test fun `check line copy rounds cm to whole and degrees to one decimal`() {
-    assertEquals("This ring is 6 cm and 1.2° from where it should be", checkLine(CheckResult(0.0649, 1.24, true)))
-    assertEquals("This ring is 7 cm and 0.0° from where it should be", checkLine(CheckResult(0.065, 0.0, true)))
-    assertEquals("This ring is 3 cm and 0.5° from where it should be", checkLine(CheckResult(0.03, 0.5, false)))
-    assertEquals("This ring is 0 cm and 12.0° from where it should be", checkLine(CheckResult(0.004, 11.96, true)))
+    assertEquals("This ARC is 6 cm and 1.2° from where it should be", checkLine(CheckResult(0.0649, 1.24, true)))
+    assertEquals("This ARC is 7 cm and 0.0° from where it should be", checkLine(CheckResult(0.065, 0.0, true)))
+    assertEquals("This ARC is 3 cm and 0.5° from where it should be", checkLine(CheckResult(0.03, 0.5, false)))
+    assertEquals("This ARC is 0 cm and 12.0° from where it should be", checkLine(CheckResult(0.004, 11.96, true)))
   }
 
   // --- the flow ---
@@ -94,7 +94,7 @@ class RingCheckTest {
     val flow = RingCheckFlow(f)
     val v = flow.view(root, anchor, ring)
     assertEquals(RingButton.None, v.button)
-    assertEquals("Too far from the last ring to record accurately: walk back, or align from this ring instead", v.line)
+    assertEquals("Too far from the last ARC to record accurately: walk back, or align from this ARC instead", v.line)
     assertNull(flow.requestSave(root, anchor, ring))
     assertEquals(RingCheckCopy.TOO_FAR, flow.status)
   }
@@ -103,7 +103,7 @@ class RingCheckTest {
     val f = floor(marker(1, expected), marker(2, expected.copy(x = 5.0)))
     val v = RingCheckFlow(f).view(root, anchor, seen(1, expected, dx = 0.03))
     assertEquals(RingButton.None, v.button)
-    assertEquals("This ring is 3 cm and 0.0° from where it should be", v.line)
+    assertEquals("This ARC is 3 cm and 0.0° from where it should be", v.line)
     assertFalse(v.warn)
   }
 
@@ -111,7 +111,7 @@ class RingCheckTest {
     val f = floor(marker(1, expected), marker(2, expected.copy(x = 5.0)))
     val v = RingCheckFlow(f).view(root, anchor, seen(1, expected, dx = 0.06))
     assertEquals(RingButton.ReRecord, v.button)
-    assertEquals("This ring is 6 cm and 0.0° from where it should be", v.line)
+    assertEquals("This ARC is 6 cm and 0.0° from where it should be", v.line)
     assertTrue(v.warn)
   }
 
@@ -126,7 +126,7 @@ class RingCheckTest {
     assertEquals(RingCheckCopy.SAVING, flow.status)
     assertNull(flow.requestSave(root, ring.world, ring))
     flow.saved(BuilderCall.Ok(emptyList()))
-    assertEquals("Ring saved", flow.status)
+    assertEquals("ARC saved", flow.status)
   }
 
   @Test fun `re-record past the radius is refused with Record's copy`() {
@@ -136,9 +136,9 @@ class RingCheckTest {
     val flow = RingCheckFlow(f)
     val v = flow.view(root, far, ring)
     assertEquals(RingButton.None, v.button)
-    assertEquals("This ring is 6 cm and 0.0° from where it should be", v.line)
+    assertEquals("This ARC is 6 cm and 0.0° from where it should be", v.line)
     assertTrue(v.warn)
-    assertEquals("Too far from the last ring to record accurately: walk back, or align from this ring instead", v.refusal)
+    assertEquals("Too far from the last ARC to record accurately: walk back, or align from this ARC instead", v.refusal)
     assertEquals(listOf(v.line, RingCheckCopy.TOO_FAR), ringCheckLines(v, null))
     assertNull(flow.requestSave(root, far, ring))
     assertEquals(RingCheckCopy.TOO_FAR, flow.status)
@@ -150,7 +150,7 @@ class RingCheckTest {
 
   @Test fun `a floor with one ring suggests a second`() {
     val v = RingCheckFlow(floor(marker(1, expected))).view(root, anchor, seen(1, expected))
-    assertEquals("Add a second ring on this floor so visitors stay lined up", v.suggestion)
+    assertEquals("Add a second ARC on this floor so visitors stay lined up", v.suggestion)
   }
 
   @Test fun `a ring from another floor shows nothing`() {
@@ -179,6 +179,6 @@ class RingCheckTest {
     assertEquals(RingCheckCopy.SAVED, next.status)
     val v = next.view(root, anchor, ring)
     assertEquals(RingButton.None, v.button)
-    assertEquals("This ring is 0 cm and 0.0° from where it should be", v.line)
+    assertEquals("This ARC is 0 cm and 0.0° from where it should be", v.line)
   }
 }

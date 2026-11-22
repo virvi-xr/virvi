@@ -32,13 +32,19 @@ describe('ring marker print file api', () => {
   })
 
   it('a download asks for the chosen style and returns the server filename', async () => {
-    const fetchMock = vi.fn(async () => new Response('x', { headers: { 'content-disposition': 'attachment; filename="virvi-ring-ABC-140mm-inverted.pdf"' } }))
+    const fetchMock = vi.fn(async () => new Response('x', { headers: { 'content-disposition': 'attachment; filename="virvi-arc-ABC-140mm-inverted.pdf"' } }))
     vi.stubGlobal('fetch', fetchMock)
     const api = render()
     const out = await api.downloadArMarkerFile('m1', 'pdf', 'none', 'inverted')
     expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toMatch(/format=pdf&mounting=none&style=inverted$/)
-    expect(out.filename).toBe('virvi-ring-ABC-140mm-inverted.pdf')
+    expect(out.filename).toBe('virvi-arc-ABC-140mm-inverted.pdf')
     await api.downloadArMarkerFile('m1', 'pdf')
     expect(String((fetchMock.mock.calls[1] as unknown[])[0])).toMatch(/style=normal$/)
+  })
+
+  it('names a download with no server filename after the ARC', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('x')))
+    const out = await render().downloadArMarkerFile('m1', 'pdf')
+    expect(out.filename).toBe('virvi-arc-m1.pdf')
   })
 })
