@@ -17,6 +17,7 @@ const CAN: Record<Role, string> = {
   editor: 'they can change the scene',
   viewer: "they can see the scene's analytics",
 }
+const ARTICLE: Record<Role, string> = { cohost: 'a', editor: 'an', viewer: 'a' }
 const UNKNOWN_WALLET = "I don't have that wallet. Ask the user to paste it again."
 const IS_HOST = "That wallet is the scene's host."
 
@@ -66,13 +67,13 @@ export const COLLABORATOR_TOOLS: ToolDef<any>[] = [
       const undo = existing
         ? { method: 'POST' as const, url: rolesUrl(a.sceneId), body: { wallet, role: existing } }
         : { method: 'DELETE' as const, url: `${rolesUrl(a.sceneId)}/${wallet}` }
-      return { undo, after: () => ({ wallet, role: a.role }), current: { wallet, role: a.role }, orgName }
+      return { undo, after: () => ({ wallet, role: a.role }), current: { wallet, role: existing }, orgName }
     },
     preview: async (a, ctx) => {
       const { wallet, existing, scene } = await state(ctx, a.sceneId, a.wallet)
       const who = shortWallet(wallet)
       const name = `"${scene.name}"`
-      if (existing) return { detail: `${who} is ${existing === 'editor' ? 'an' : 'a'} ${existing} on ${name}. They become ${a.role}: ${CAN[a.role as Role]}.` }
+      if (existing) return { detail: `${who} is ${ARTICLE[existing]} ${existing} on ${name}. They become ${a.role}: ${CAN[a.role as Role]}.` }
       return { detail: `Add ${who} to ${name} as ${a.role}: ${CAN[a.role as Role]}.` }
     },
     label: (a) => `Add a collaborator as ${a.role}`,

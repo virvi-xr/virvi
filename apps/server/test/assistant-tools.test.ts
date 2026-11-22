@@ -704,6 +704,29 @@ describe('assistant event, raffle and BEAT tools', () => {
       expect(await rolesOf()).toEqual([{ wallet: w, role: 'viewer' }])
     })
 
+    it('add_scene_collaborator undo of a role change refuses once the role was changed since', async () => {
+      const w = randomWallet()
+      await give(w, 'viewer')
+      const c = withRefs(w)
+      const card = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'editor' })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      await approvePlan(c, card.planId, card.token, () => {})
+      await db.update(sceneRoles).set({ role: 'cohost' }).where(eq(sceneRoles.walletAddress, w))
+      expect(await undoAction(c, card.steps[0].id)).toEqual({ error: 'changed' })
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'cohost' }])
+    })
+
+    it('add_scene_collaborator undo of a new collaborator refuses once they were revoked since', async () => {
+      const w = randomWallet()
+      const c = withRefs(w)
+      const card = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'viewer' })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      await approvePlan(c, card.planId, card.token, () => {})
+      await db.update(sceneRoles).set({ revokedAt: new Date() }).where(eq(sceneRoles.walletAddress, w))
+      expect(await undoAction(c, card.steps[0].id)).toEqual({ error: 'changed' })
+      expect(await rolesOf()).toEqual([])
+    })
+
     it('add_scene_collaborator for a new collaborator is undone by removing them', async () => {
       const w = randomWallet()
       const c = withRefs(w)
