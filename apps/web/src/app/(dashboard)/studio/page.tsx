@@ -14,7 +14,7 @@ import { StudioTabs } from '@/components/studio/StudioTabs'
 import { acceptRefusal, peopleRefusal, roleLabel, splitDesigns, type MyInvite, type PastPackage } from '@/lib/studio-people'
 import { saveBlob } from './[designId]/PaidRevisions'
 import {
-  DEFAULT_AGENT, agentLabel, categoryLabel, choiceBody, choiceKind, designBadge, designKindLabel, designTabFor, designTabNoun, designTabTitle,
+  DEFAULT_AGENT, agentLabel, categoryLabel, pieceLabel, choiceBody, choiceKind, designBadge, designKindLabel, designTabFor, designTabNoun, designTabTitle,
   filterDesigns, giftRedeemMessage, giftRedeemSuccess, refusalMessage, relativeTime, usageLine,
   type DesignChoice, type DesignTab, type Refusal, type StudioDesign, type StudioKind, type StudioUsage,
 } from '@/lib/studio'
@@ -262,7 +262,7 @@ function PastPackages() {
           <li key={p.entitlementId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
             <div className="min-w-0">
               <p className="truncate font-medium">{p.designName}</p>
-              <p className="text-xs text-gray-500"><span className="capitalize">{categoryLabel(p.category)}</span> · Revision {p.revisionNumber} · finalized {new Date(p.finalizedAt).toLocaleDateString()}</p>
+              <p className="text-xs text-gray-500"><span>{pieceLabel(p.category)}</span> · Revision {p.revisionNumber} · finalized {new Date(p.finalizedAt).toLocaleDateString()}</p>
             </div>
             <PrimaryButton type="button" disabled={busy === p.entitlementId} onClick={() => download(p)}>Download</PrimaryButton>
           </li>

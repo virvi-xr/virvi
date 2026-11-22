@@ -1,4 +1,7 @@
-import { categoryLabel } from './studio'
+import { categoryLabel, pieceLabel } from './studio'
+
+/** A finished package's piece in a sentence: a scene piece by its own name ("round table"), never its folder. */
+const packageWord = (category: string) => (category === 'building' || category.startsWith('furniture_') ? pieceLabel(category).toLowerCase() : categoryLabel(category))
 
 /**
  * The bell (LIV-159): the server's notification shapes (apps/server/src/notifications/notifications.ts) and their copy.
@@ -57,7 +60,7 @@ export function notificationText(item: Pick<NotificationItem, 'kind' | 'data' | 
       return { text: `${senderNames(senders.slice(0, 1))} sent a prompt on ${design}`, href }
     }
     case 'studio_package_ready':
-      return { text: `The ${categoryLabel(str(d.category, 'piece'))} package for ${design} is ready to download`, href }
+      return { text: `The ${packageWord(str(d.category, 'piece'))} package for ${design} is ready to download`, href }
     case 'studio_owner':
       return { text: `You're now the owner of ${design}`, href }
     case 'studio_support_note': {

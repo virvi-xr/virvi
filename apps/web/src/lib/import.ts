@@ -122,7 +122,7 @@ const CODE_MESSAGES: Record<string, string> = {
   import_files_missing: "This import's built files are no longer stored. Upload the scene again.",
   virvi_deploys_unavailable: "Virvi can't deploy for you right now. Try again in a few minutes.",
   expired: 'The signature came too late. Deploy again and sign straight away.',
-  needs_review: 'This place changed outside Virvi. Open Deploy to look at it before deploying.',
+  needs_review: 'This place changed outside Virvi. Open Sync to look at it before deploying.',
   over_budget: "The scene is past Decentraland's limits for its parcels. Remove something, then upload again.",
   nothing_to_deploy: 'This place already has exactly this scene, so there was nothing to deploy.',
   no_live_scene: 'There is no live scene here to add models to.',

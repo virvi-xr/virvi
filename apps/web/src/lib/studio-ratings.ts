@@ -189,7 +189,9 @@ export function lessonFits(list: Pick<LessonsList, 'used' | 'limit'>, l: Pick<Ad
 }
 
 /** "Copy as skill lesson": the markdown bullet for dcl-avatar-skills' lessons.md. */
-export const skillLesson = (kind: string, text: string) => `- **${kindLabel(kind)}:** ${text.trim()}`
+// The skills repo's own words for each kind (agents read it), not the dashboard's
+const SKILL_KIND: Record<string, string> = { wearable: 'Wearable', emote: 'Emote', scene: 'Building or furniture' }
+export const skillLesson = (kind: string, text: string) => `- **${SKILL_KIND[kind] ?? kindLabel(kind)}:** ${text.trim()}`
 
 export type KindDefault = { agent: string; model: string; updatedBy: string | null; updatedAt: string } | null
 export type KindDefaults = { defaults: Record<string, KindDefault>; rates: KindRates[]; ratesDays: number; minSample: number; agents: string[] }

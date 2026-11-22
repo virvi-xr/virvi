@@ -84,7 +84,7 @@ describe('disconnect copy', () => {
     expect(disconnectFromCardPrompt('cafe.dcl.eth', "Remove Virvi's permission")).toContain("use “Remove Virvi's permission” first")
   })
 
-  it('the Deploy page offers the disconnect to owners and co-hosts only', () => {
+  it('the Sync page offers the disconnect to owners and co-hosts only', () => {
     expect([undefined, null, 'owner', 'cohost', 'editor', 'viewer'].map(canDisconnectScene)).toEqual([true, true, true, true, false, false])
   })
 

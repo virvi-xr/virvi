@@ -55,7 +55,7 @@ async function claudeDrafter(kind: LessonKind, sources: DraftSource[]): Promise<
     // A safety decline is retried on a fallback model chosen by the API
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    system: system(kind === 'scene' ? 'building and decor piece' : kind),
+    system: system(kind === 'scene' ? 'building and furniture piece' : kind),
     messages: [{ role: 'user', content: `Thumbs-down feedback on ${sources.length} ${kind} changes:\n\n${batchText(sources)}` }],
   })
   if (response.stop_reason === 'refusal') throw new LessonError(502, 'draft_failed')
