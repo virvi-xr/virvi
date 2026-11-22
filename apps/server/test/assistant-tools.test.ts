@@ -336,6 +336,10 @@ describe('assistant Studio tools', () => {
     expect(r3).toMatchObject({ ok: true, label: 'Start a building design "Club"' })
     const rows = await db.select().from(studioDesigns).where(eq(studioDesigns.ownerId, owner.id))
     expect(Object.fromEntries(rows.map((d) => [d.name, d.agent]))).toEqual({ 'Neon cap': 'claude', Spin: 'codex', Club: 'grok' })
+    await archiveAll()
+    const r4 = await runTool(ctx, 'create_design', { kind: 'scene', name: 'Lamps', sceneShape: 'decor' })
+    expect(r4).toMatchObject({ ok: true, label: 'Start a decor design "Lamps"', summary: { sceneShape: 'decor' } })
+    expect(await runTool(ctx, 'create_design', { kind: 'wearable', name: 'X', sceneShape: 'decor' })).toMatchObject({ ok: false, status: 400 })
     if (!r.ok) throw new Error('failed')
     const made = rows.find((d) => d.name === 'Neon cap')!
     expect(r.after).toEqual({ id: made.id, name: 'Neon cap' })
