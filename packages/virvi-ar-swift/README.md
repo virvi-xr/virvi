@@ -9,7 +9,7 @@ What's in `Sources/VirviARKit`:
 - `Scene`: the Virvi-to-RealityKit mapping, the scene plan and its diff, scheduled showings, the RealityKit scene renderer, and floor and collider helpers.
 - `Api`: the HTTP transport and the AR Spaces API client.
 - `Ring`: the ring detector and the ring maths.
-- `Space`: the space model and where a space sits relative to its ring.
+- `Space`: lining a space up with the room: the ARKit boundary (camera intrinsics, camera-to-world, wall planes; iOS only) and placing the scene from a ring's saved pose (`rootFromMarker`, `realityKitRootTransform`).
 - `Visitor`: the visitor flow (find the ring, line the scene up, hints).
 - `Config.swift`: shared settings.
 
