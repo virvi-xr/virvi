@@ -45,13 +45,22 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
     const calls = Array.isArray(planned) ? planned : [planned]
     const results: unknown[] = []
     let status = 200
+    const all: Array<{ status: number; json: unknown }> = []
     for (const call of calls) {
       const res = await inject(ctx, call)
+      if (def.keepGoing) {
+        all.push(res)
+        if (res.status < 400) status = res.status
+        continue
+      }
       if (res.status >= 400) return { ok: false, status: res.status, error: safe(routeError(res.status, res.json, def.refusals)), label, orgName: before?.orgName ?? null }
       status = res.status
       results.push(res.json)
     }
-    const res = Array.isArray(planned) ? results : results[0]
+    if (def.keepGoing && all.length && all.every((r) => r.status >= 400)) {
+      return { ok: false, status: all[0].status, error: safe(routeError(all[0].status, all[0].json, def.refusals)), label, orgName: before?.orgName ?? null }
+    }
+    const res = def.keepGoing ? all : Array.isArray(planned) ? results : results[0]
 
     const undo = before ? (typeof before.undo === 'function' ? before.undo(res) : before.undo) : null
     return {

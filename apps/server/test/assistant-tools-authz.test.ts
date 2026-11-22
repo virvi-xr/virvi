@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { db } from '../src/db/connection.js'
-import { sceneDeployments, assistantShows, beats, beatScenes, events, eventSceneLinks, mediaAssets, raffles, sceneLibrary, scenePresetSchedules, screenShowings } from '../src/db/schema.js'
+import { dclWorldDestinations, sceneDeployments, assistantShows, beats, beatScenes, events, eventSceneLinks, mediaAssets, raffles, sceneLibrary, scenePresetSchedules, screenShowings } from '../src/db/schema.js'
 import { TOOLS } from '../src/assistant/tools/index.js'
 import { runTool } from '../src/assistant/tools/run.js'
 import type { ToolCtx } from '../src/assistant/tools/types.js'
@@ -43,7 +43,8 @@ async function fixtures() {
   const [show] = await db.insert(assistantShows).values({ userId: b.id, eventId: event.id, title: 'B show', items: [{ id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: { raffleId: raffle.id } }] }).returning()
   const [aShow] = await db.insert(assistantShows).values({ userId: a.id, title: 'A show', items: [{ id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: {} }] }).returning()
   const [deployment] = await db.insert(sceneDeployments).values({ sceneId: scene.id, platform: 'decentraland', status: 'failed', deploymentType: 'world', target: {}, errorMessage: 'x' }).returning()
-  return { deployment, a, b, aScene, scene, preset, element, instance, schedule, media, libraryItem, showing, event, location, design, raffle, beat, show, aShow }
+  const [destination] = await db.insert(dclWorldDestinations).values({ sceneId: scene.id, ownerUserId: b.id, ownerWallet: '0xb', worldName: 'b-world.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'virvi' }).returning()
+  return { deployment, destination, a, b, aScene, scene, preset, element, instance, schedule, media, libraryItem, showing, event, location, design, raffle, beat, show, aShow }
 }
 
 const when = { recurrence: 'daily' as const, startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC' }
@@ -91,6 +92,7 @@ const SAMPLE: Record<string, (f: Fixtures) => unknown> = {
   close_show: (f) => ({ showId: f.show.id }),
   get_deploy_status: (f) => ({ deploymentId: f.deployment.id }),
   explain_deploy_failure: (f) => ({ sceneId: f.scene.id }),
+  redeploy_scene: (f) => ({ sceneId: f.scene.id, destinationIds: [f.destination.id] }),
 }
 
 function ctxFor(app: FastifyInstance, user: TestUser): ToolCtx {

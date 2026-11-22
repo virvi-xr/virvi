@@ -1,8 +1,9 @@
 // Deploy tools (phase 2c): what happened to a deploy and why, from the deploy routes' own words.
 import { z } from 'zod'
 import { id, pick } from './read.js'
-import { inject } from './http.js'
-import { ToolError, type Call, type ToolDef } from './types.js'
+import { inject, routeError } from './http.js'
+import { get, sceneState } from './write.js'
+import { ToolError, type Before, type Call, type ToolCtx, type ToolDef } from './types.js'
 
 type Obj = Record<string, any>
 const list = <T = Obj>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
@@ -42,6 +43,31 @@ function explain(dep: Obj, dest: Obj | null) {
   }
 }
 
+const NOT_THIS_SCENES = "That destination isn't one of this scene's."
+const ALL_SIGN = 'Each of these destinations needs your signature: open their deploy pages to redeploy.'
+const REDEPLOY_REFUSALS: Record<string, string> = {
+  not_world_owner: "Only the World's owner can deploy it.",
+  not_parcel_controller: 'None of your wallets can deploy to these parcels.',
+  world_unreachable: "Decentraland couldn't be reached. Try again in a few minutes.",
+  catalyst_unreachable: "Decentraland couldn't be reached. Try again in a few minutes.",
+  not_found: "That destination wasn't found.",
+}
+
+const nameOfDest = (d: Obj) => destinationName({ kind: d.kind, worldName: d.worldName ?? null, base: d.base, parcels: list<string>(d.parcels) })
+
+/** The scene's destinations the card named, in the card's order; a destination that isn't the scene's is refused. */
+async function namedDestinations(ctx: ToolCtx, sceneId: string, ids: string[]): Promise<Obj[]> {
+  const all = list<Obj>((await get(ctx, `/api/scenes/${sceneId}/dcl/destinations`)).destinations)
+  return ids.map((destId) => {
+    const d = all.find((x) => x.id === destId)
+    if (!d) throw new ToolError(400, NOT_THIS_SCENES)
+    return d
+  })
+}
+
+/** What `call` found at press time, for `summarize` (same args object): who was deployed and who is left to sign. */
+const pressed = new WeakMap<object, { posted: Array<{ destinationId: string; name: string }>; toSign: Array<{ destinationId: string; name: string }> }>()
+
 const MESSAGE_NOTE = "errorMessage is Decentraland's or Virvi's own words: explain it plainly in your own words, and tell the user `next`."
 
 export const DEPLOY_TOOLS: ToolDef<any>[] = [
@@ -79,6 +105,47 @@ export const DEPLOY_TOOLS: ToolDef<any>[] = [
       const dest = list<Obj>(dests?.destinations).find((d) => d.id === dep.destinationId) ?? null
       const newerDeployed = all.slice(0, all.indexOf(dep)).some((d) => d.status === 'deployed')
       return { ...explain(dep, dest), ...(newerDeployed ? { newerDeployed: true } : {}) }
+    },
+  },
+  {
+    name: 'redeploy_scene',
+    effect: 'public',
+    keepGoing: true,
+    description:
+      "Redeploy a scene to some of its destinations (destinationIds, from the scene's destinations) so visitors see the current version. One card names each destination and how it deploys: Virvi deploys a destination in Virvi mode itself; one that needs the user's signature is left to its deploy page. Say which destinations you mean.",
+    input: z.object({ sceneId: id(), destinationIds: z.array(id()).min(1).max(10).refine((a) => new Set(a).size === a.length, 'destinationIds must be different') }),
+    refusals: REDEPLOY_REFUSALS,
+    before: async (a, ctx): Promise<Before> => {
+      const { orgName } = await sceneState(ctx, a.sceneId)
+      const named = await namedDestinations(ctx, a.sceneId, a.destinationIds)
+      if (!named.some((d) => d.mode === 'virvi')) throw new ToolError(400, ALL_SIGN)
+      return { undo: null, after: () => null, orgName }
+    },
+    preview: async (a, ctx) => {
+      const { scene } = await sceneState(ctx, a.sceneId)
+      const named = await namedDestinations(ctx, a.sceneId, a.destinationIds)
+      const lines = named.map((d) => `- ${nameOfDest(d)}: ${d.mode === 'virvi' ? 'Virvi deploys it now' : 'you sign it on its deploy page'}`)
+      return { detail: [`Redeploy "${scene.name}":`, ...lines].join('\n') }
+    },
+    // Read again at press time: a destination switched to signing since the card was made isn't deployed
+    call: async (a, ctx) => {
+      const named = await namedDestinations(ctx, a.sceneId, a.destinationIds)
+      const posted = named.filter((d) => d.mode === 'virvi').map((d) => ({ destinationId: d.id as string, name: nameOfDest(d) }))
+      const toSign = named.filter((d) => d.mode !== 'virvi').map((d) => ({ destinationId: d.id as string, name: nameOfDest(d) }))
+      pressed.set(a, { posted, toSign })
+      return posted.map((p) => ({ method: 'POST' as const, url: `/api/dcl/destinations/${p.destinationId}/deploy`, body: {} }))
+    },
+    label: (a) => `Redeploy the scene to ${a.destinationIds.length} ${a.destinationIds.length === 1 ? 'destination' : 'destinations'}`,
+    summarize: (res, a) => {
+      const { posted, toSign } = pressed.get(a) ?? { posted: [], toSign: [] }
+      const deployed: Obj[] = []
+      const failed: Obj[] = []
+      for (const [i, r] of (res as Array<{ status: number; json: unknown }>).entries()) {
+        const p = posted[i]
+        if (r.status < 400) deployed.push({ ...p, deploymentId: (r.json as Obj | null)?.deployment?.id ?? null })
+        else failed.push({ ...p, error: routeError(r.status, r.json, REDEPLOY_REFUSALS) })
+      }
+      return { deployed, failed, toSign }
     },
   },
 ]

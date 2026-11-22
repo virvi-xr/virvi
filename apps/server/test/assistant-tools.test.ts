@@ -14,6 +14,9 @@ import type { ToolCtx } from '../src/assistant/tools/types.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, randomWallet, tokenFor, type TestUser } from './helpers/factories.js'
 import { addRevision, createDesign } from './helpers/studio.js'
+import { DeployerError } from '../src/services/dcl/world-deployer.js'
+import { FakeWorldsClient } from './helpers/fake-worlds.js'
+import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
 import { approvePlan, proposeCard, recordDirect, undoAction } from '../src/assistant/actions.js'
 import { destinationName, nextStep } from '../src/assistant/tools/deploy.js'
 import { routeError } from '../src/assistant/tools/http.js'
@@ -23,6 +26,13 @@ import { RAFFLE_HOST_TERMS, fillRules } from '@virvixr/shared'
 import { RAFFLE_RULES_INCLUDED, RAFFLE_SEND_WEARABLE, cardTime } from '../src/assistant/tools/shows-tools.js'
 import { setImageSizeReader } from '../src/beats/image.js'
 import { BEATS_READY } from './helpers/beats-ready.js'
+
+// The deployer is stubbed: a virvi destination's deploy route records a deployment row (or refuses), nothing is built
+const deployer = vi.hoisted(() => ({ start: undefined as undefined | ((destinationId: string) => Promise<{ id: string }>) }))
+vi.mock('../src/services/dcl/world-deployer.js', async (orig) => ({
+  ...(await orig<typeof import('../src/services/dcl/world-deployer.js')>()),
+  startVirviDeploy: (destinationId: string) => deployer.start!(destinationId),
+}))
 
 const IP = '198.51.100.23'
 
@@ -794,6 +804,98 @@ describe('assistant event, raffle and BEAT tools', () => {
     expect(destinationName({ kind: 'world', worldName: 'sun.dcl.eth', base: '0,0', parcels: ['0,0'] })).toBe('World "sun.dcl.eth"')
     expect(destinationName({ kind: 'parcels', worldName: null, base: '4,5', parcels: ['4,5'] })).toBe('Genesis City parcels at 4,5 (1 parcel)')
     expect(destinationName({ kind: 'parcels', worldName: null, base: '4,5', parcels: ['4,5', '4,6'] })).toBe('Genesis City parcels at 4,5 (2 parcels)')
+  })
+
+  describe('redeploy_scene', () => {
+    const WALLET = '0x' + 'ab'.repeat(20)
+    let worlds: FakeWorldsClient
+    beforeEach(async () => {
+      worlds = new FakeWorldsClient()
+      setWorldsClient(worlds)
+      deployer.start = async (destinationId) => {
+        const [row] = await db.insert(sceneDeployments).values({ sceneId, platform: 'decentraland', status: 'building', deploymentType: 'world', target: {}, destinationId }).returning()
+        return row
+      }
+      // The owner's verified wallet, so the deploy route's own owner check passes
+      await db.insert((await import('../src/db/schema.js')).userAuthMethods).values({ userId: owner.id, type: 'wallet', identifier: WALLET, metadata: { verified: true } })
+    })
+    afterEach(() => setWorldsClient(null))
+
+    const dest = async (o: Partial<typeof dclWorldDestinations.$inferInsert>) => {
+      const [d] = await db.insert(dclWorldDestinations).values({ sceneId, ownerUserId: owner.id, ownerWallet: WALLET, worldName: null, base: '0,0', parcels: ['0,0'], mode: 'virvi', grantedAt: new Date(), ...o }).returning()
+      if (d.worldName) worlds.deployers.set(d.worldName, { owner: WALLET, deployers: [] })
+      return d
+    }
+
+    it('is a public card naming each destination and how it deploys', async () => {
+      expect(TOOLS.redeploy_scene.effect).toBe('public')
+      const w = await dest({ worldName: 'sun.dcl.eth' })
+      const p = await dest({ kind: 'parcels', mode: 'sign', grantedAt: null })
+      const card = await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [w.id, p.id] })
+      expect(card).toMatchObject({
+        kind: 'card',
+        detail: 'Redeploy "Old Lounge":\n- World "sun.dcl.eth": Virvi deploys it now\n- Genesis City parcels at 0,0 (1 parcel): you sign it on its deploy page',
+        steps: [{ label: 'Redeploy the scene to 2 destinations' }],
+      })
+      const one = await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [w.id] })
+      expect(one).toMatchObject({ steps: [{ label: 'Redeploy the scene to 1 destination' }] })
+    })
+
+    it('deploys only the destinations the card named', async () => {
+      const w = await dest({ worldName: 'sun.dcl.eth' })
+      await dest({ worldName: 'moon.dcl.eth', base: '5,5', parcels: ['5,5'] })
+      await confirmCard('redeploy_scene', { sceneId, destinationIds: [w.id] })
+      const rows = await db.select().from(sceneDeployments)
+      expect(rows.map((r) => r.destinationId)).toEqual([w.id])
+    })
+
+    it("reports each destination, and one failing doesn't stop the rest", async () => {
+      const w1 = await dest({ worldName: 'sun.dcl.eth' })
+      const w2 = await dest({ worldName: 'moon.dcl.eth', base: '5,5', parcels: ['5,5'] })
+      const card = await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [w1.id, w2.id] })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      const start = deployer.start!
+      deployer.start = async (id) => {
+        if (id === w1.id) throw new DeployerError(409, 'deploy_in_progress', 'A deploy is already running.')
+        return start(id)
+      }
+      expect(await approvePlan(ctx, card.planId, card.token, () => {})).toMatchObject({ done: 1, failed: null })
+      const [row] = await db.select().from(assistantActions)
+      const [dep] = await db.select().from(sceneDeployments)
+      expect(row.status).toBe('done')
+      expect(JSON.parse(row.resultSummary!)).toEqual({
+        deployed: [{ destinationId: w2.id, name: 'World "moon.dcl.eth"', deploymentId: dep.id }],
+        failed: [{ destinationId: w1.id, name: 'World "sun.dcl.eth"', error: 'A deploy is already running.' }],
+        toSign: [],
+      })
+    })
+
+    it('reports a named destination switched to signing since the card, and fails only when every deploy failed', async () => {
+      const w1 = await dest({ worldName: 'sun.dcl.eth' })
+      const w2 = await dest({ worldName: 'moon.dcl.eth', base: '5,5', parcels: ['5,5'] })
+      const card = await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [w1.id, w2.id] })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      await db.update(dclWorldDestinations).set({ mode: 'sign' }).where(eq(dclWorldDestinations.id, w2.id))
+      expect(await approvePlan(ctx, card.planId, card.token, () => {})).toMatchObject({ done: 1 })
+      const [row] = await db.select().from(assistantActions)
+      expect(JSON.parse(row.resultSummary!)).toMatchObject({ failed: [], toSign: [{ destinationId: w2.id, name: 'World "moon.dcl.eth"' }] })
+
+      deployer.start = async () => {
+        throw new DeployerError(409, 'deploy_in_progress', 'A deploy is already running.')
+      }
+      expect(await runTool(ctx, 'redeploy_scene', { sceneId, destinationIds: [w1.id] })).toMatchObject({ ok: false, status: 409, error: 'A deploy is already running.' })
+    })
+
+    it('with only signing destinations offers no card', async () => {
+      const p = await dest({ kind: 'parcels', mode: 'sign', grantedAt: null })
+      expect(await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [p.id] })).toEqual({ error: 'Each of these destinations needs your signature: open their deploy pages to redeploy.' })
+    })
+
+    it("refuses a destination that isn't the scene's", async () => {
+      const other = (await createScene(owner, 'Other')).scene
+      const [d] = await db.insert(dclWorldDestinations).values({ sceneId: other.id, ownerUserId: owner.id, ownerWallet: WALLET, worldName: 'other.dcl.eth', base: '9,9', parcels: ['9,9'], mode: 'virvi' }).returning()
+      expect(await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [d.id] })).toEqual({ error: "That destination isn't one of this scene's." })
+    })
   })
 
   async function seedDeploys() {

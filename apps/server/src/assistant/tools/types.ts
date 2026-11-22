@@ -59,6 +59,12 @@ export interface ToolDef<A> {
    * `summarize` gets their responses as an array, in order.
    */
   call(args: A, ctx: ToolCtx): Promise<Call | Call[]> | Call | Call[]
+  /**
+   * Every call runs even when one is refused (one card, several targets). `summarize` then gets
+   * `Array<{ status: number; json: unknown }>` in call order, and the tool fails only when every call failed, with
+   * the first call's refusal.
+   */
+  keepGoing?: boolean
   /** Read the current values before a write; returns the undo call and the org label. Required for every write. */
   before?(args: A, ctx: ToolCtx): Promise<Before>
   /**
