@@ -47,13 +47,19 @@ Deploying, publishing, editing events, giveaways, invites, deleting things, fina
 
 **Studio designs.** Ask it to start a design and it creates one of three kinds: a **wearable**, an **emote**, or a **scene**, which means a building with its furniture. It uses your default agent for that kind unless you name one (Claude, Codex or Grok). A new design is empty until a prompt is sent.
 
-**Prompts.** Sending a Studio prompt uses your Studio prompts, so the assistant never sends one on its own. It shows a card first, and the prompt goes only after you press **Confirm**. The card says which prompts it uses:
+**Prompts.** Sending a Studio prompt uses your Studio prompts, so the assistant never sends one on its own. It shows a card first, and the prompt goes only after you press **Confirm**. The card shows exactly what will be sent: the start of the prompt (for example, Send "a neon cap with rivets"), and under it the design's name and which prompts it uses, then the wearable slots it works on and, for a long prompt, its whole text. The cost line is one of:
 
-- "Uses 1 of your {n} prompts left today."
-- "Uses 1 gifted prompt ({n} left)."
-- "Uses 1 bought prompt ({n} left)."
+- "Neon cap": Uses 1 of your {n} prompts left today.
+- "Neon cap": Uses 1 gifted prompt ({n} left).
+- "Neon cap": Uses 1 bought prompt ({n} left).
 
-Asking it to fix what the checker found is free. The card says so: "This one is free: fixing what the checker found doesn't use your prompts." A prompt that ends in an error is given back.
+Asking it to fix what the checker found is free. The card says Fix what the checker found, and under it: "Neon cap": This one is free: fixing what the checker found doesn't use your prompts. A prompt that ends in an error is given back.
+
+Confirming a card needs the assistant to be available on your account. If your plan no longer includes the assistant, **Confirm** is refused: send the prompt from Studio instead.
+
+A card lasts 10 minutes. If it expires, or you reload the page before confirming it, ask the assistant again for a fresh one.
+
+If your Studio access is paused, the assistant says so and shows no card.
 
 These prompts come out of your Studio allowance, not the assistant budget.
 
