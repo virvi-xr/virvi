@@ -93,13 +93,13 @@ const SAMPLE: Record<string, (f: Fixtures) => unknown> = {
   get_deploy_status: (f) => ({ deploymentId: f.deployment.id }),
   explain_deploy_failure: (f) => ({ sceneId: f.scene.id }),
   list_scene_collaborators: (f) => ({ sceneId: f.scene.id }),
-  add_scene_collaborator: (f) => ({ sceneId: f.scene.id, wallet: '0x00000000000000000000000000000000000000aa', role: 'editor' }),
+  add_scene_collaborator: (f) => ({ sceneId: f.scene.id, wallet: '[wallet 1]', role: 'editor' }),
   redeploy_scene: (f) => ({ sceneId: f.scene.id, destinationIds: [f.destination.id] }),
 }
 
 function ctxFor(app: FastifyInstance, user: TestUser): ToolCtx {
   const request = { headers: { authorization: `Bearer ${tokenFor(user)}` }, ip: '203.0.113.9' } as unknown as FastifyRequest
-  return { app, request, user: { id: user.id, email: user.email, role: user.role, orgId: null }, self: { email: user.email, wallets: [] }, walletRefs: [] }
+  return { app, request, user: { id: user.id, email: user.email, role: user.role, orgId: null }, self: { email: user.email, wallets: [] }, walletRefs: ['0x00000000000000000000000000000000000000aa'] }
 }
 
 /** Everything B can see about the scene, read as B. */

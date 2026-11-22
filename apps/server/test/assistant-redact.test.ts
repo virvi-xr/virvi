@@ -101,13 +101,18 @@ describe('wallet references', () => {
     const r = maskUserText('tx 0x' + 'e'.repeat(64), { email: null, wallets: [] }, []);
     expect(r).toEqual({ text: 'tx [wallet]', refs: [] });
   });
-  it('resolveWallet takes a reference or a full wallet, and shortWallet is never masked', () => {
+  it("resolveWallet takes a reference or the user's own wallet, never another full address, and shortWallet is never masked", () => {
     const w = '0x' + '1'.repeat(38) + 'ab';
-    const ctx = { walletRefs: [w] } as ToolCtx;
+    const own = '0x' + '2'.repeat(38) + 'CD';
+    const ctx = { walletRefs: [w], self: { email: null, wallets: [own] } } as unknown as ToolCtx;
     expect(resolveWallet('[wallet 1]', ctx)).toBe(w);
     expect(resolveWallet('wallet 1', ctx)).toBe(w);
     expect(resolveWallet('[wallet 2]', ctx)).toBeNull();
-    expect(resolveWallet(w.toUpperCase().replace('0X', '0x'), ctx)).toBe(w);
+    // A full address the model saw is refused, even one in this conversation's refs: it only ever had the reference
+    expect(resolveWallet(w, ctx)).toBeNull();
+    expect(resolveWallet('0x' + '3'.repeat(40), ctx)).toBeNull();
+    expect(resolveWallet(own.toLowerCase(), ctx)).toBe(own.toLowerCase());
+    expect(resolveWallet(own.toUpperCase().replace('0X', '0x'), ctx)).toBe(own.toLowerCase());
     expect(resolveWallet('0x123', ctx)).toBeNull();
     expect(shortWallet(w)).toBe('0x1111…11ab');
     expect(redactText(shortWallet(w), { email: null, wallets: [] })).toBe('0x1111…11ab');
