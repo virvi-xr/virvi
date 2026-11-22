@@ -4,7 +4,7 @@ import Foundation
 /// (i, j) covers [i, i+1) x [j, j+1)); `semiMajor`, `semiMinor` and `angleDeg` (major axis, degrees
 /// in [0, 180) from +x toward +y, image y down) describe the finder ring's fitted outer edge;
 /// `rotationDeg` is the finder gap's angle clockwise from image-up, in [0, 360).
-public struct RingDetection: Equatable {
+public struct RingDetection: Equatable, Sendable {
     public let id: UInt32
     public let version: Int
     public let corrected: Int
@@ -32,7 +32,7 @@ public struct RingDetection: Equatable {
 /// A ring the detector can see (a dot inside a finder ring) but could not read or decode, typically
 /// because it is too small or too oblique. (`cx`, `cy`) is the centre dot, `semiMajor` the finder
 /// ring's fitted outer semi-major axis in pixels.
-public struct UnreadableRing: Equatable {
+public struct UnreadableRing: Equatable, Sendable {
     public let cx: Double
     public let cy: Double
     public let semiMajor: Double
@@ -45,7 +45,7 @@ public struct UnreadableRing: Equatable {
 }
 
 /// Result of one frame: decoded rings plus rings seen but not readable.
-public struct RingFrame: Equatable {
+public struct RingFrame: Equatable, Sendable {
     public let detections: [RingDetection]
     public let unreadable: [UnreadableRing]
 
