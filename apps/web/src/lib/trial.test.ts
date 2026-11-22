@@ -273,9 +273,10 @@ describe('blockedCopy for scenes, imports, scans and demos', () => {
 })
 
 describe('trialNav', () => {
-  it('opens the Studio and Scenes, sends Analytics, Events and Giveaways to their demos, and locks the rest', () => {
+  it('opens the Studio, Scenes and Cities, sends Analytics, Events and Giveaways to their demos, and locks the rest', () => {
     expect(trialNav('/studio')).toEqual({ href: '/studio', demo: false })
     expect(trialNav('/scenes')).toEqual({ href: '/scenes', demo: false })
+    expect(trialNav('/virvi-cities')).toEqual({ href: '/virvi-cities', demo: false })
     expect(trialNav('/analytics')).toEqual({ href: '/demo/analytics', demo: true })
     expect(trialNav('/events')).toEqual({ href: '/demo/events', demo: true })
     expect(trialNav('/drops')).toEqual({ href: '/demo/drops', demo: true })

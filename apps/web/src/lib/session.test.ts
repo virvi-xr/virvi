@@ -32,17 +32,18 @@ describe('scenePassAllows', () => {
     expect(scenePassAllows('/analytics-admin/', '?scene=s1', pass)).toBe(false)
     expect(scenePassAllows('/scenes/', '', pass)).toBe(false)
     expect(scenePassAllows('/settings/', '', pass)).toBe(false)
+    expect(scenePassAllows('/virvi-cities', '', pass)).toBe(false)
   })
 })
 
 describe('trialAllows', () => {
   it('lets a trial open the Design Studio, its scenes, the wizard, imports and demos', () => {
-    for (const p of ['/studio', '/studio/', '/studio/abc', '/scenes', '/scenes/', '/scenes/new', '/scenes/new/', '/scenes/abc', '/import', '/import/', '/demo/analytics', '/demo/events/', '/demo/drops']) {
+    for (const p of ['/studio', '/studio/', '/studio/abc', '/scenes', '/scenes/', '/scenes/new', '/scenes/new/', '/scenes/abc', '/import', '/import/', '/virvi-cities', '/virvi-cities/', '/demo/analytics', '/demo/events/', '/demo/drops']) {
       expect(trialAllows(p), p).toBe(true)
     }
   })
   it('keeps everything else locked', () => {
-    for (const p of ['/settings', '/sync', '/deploy', '/drops', '/giveaways', '/scenes-x', '/studio-x', '/scenes/a/b', '/imports', '/demo', '/analytics', '/events']) {
+    for (const p of ['/settings', '/sync', '/deploy', '/drops', '/giveaways', '/scenes-x', '/studio-x', '/scenes/a/b', '/imports', '/demo', '/analytics', '/events', '/virvi-cities-x', '/cities']) {
       expect(trialAllows(p), p).toBe(false)
     }
   })

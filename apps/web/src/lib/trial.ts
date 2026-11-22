@@ -202,7 +202,7 @@ export function renewedTrialBearer(fresh: string | null, sessionKept: boolean): 
 export type TrialEntry = 'studio' | 'scene'
 
 /** Where a dashboard nav item goes for a trial: open as is, to its demo (badged "Demo"), or locked (null). */
-const TRIAL_OPEN = new Set(['/studio', '/scenes'])
+const TRIAL_OPEN = new Set(['/studio', '/scenes', '/virvi-cities'])
 const TRIAL_DEMOS = new Set(['/analytics', '/events', '/drops', '/giveaways'])
 export function trialNav(href: string): { href: string; demo: boolean } | null {
   if (TRIAL_OPEN.has(href)) return { href, demo: false }
