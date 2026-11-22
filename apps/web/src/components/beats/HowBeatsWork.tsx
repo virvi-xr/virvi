@@ -39,6 +39,7 @@ export function HowBeatsWork() {
         <Section title="Given out where people gather">
           <ul className="space-y-3">
             <li><strong>In the metaverse, automatically.</strong> In a Virvi scene, an attendee chooses to track their attendance, stays as long as the host asks, and claims. Live today in Decentraland.</li>
+            <li><strong>In Hyperfy.</strong> The same tracking and claiming in Hyperfy worlds that run the Virvi app. Planned.</li>
             <li><strong>In AR experiences.</strong> The same tracking and claiming in Virvi’s AR spaces. Planned.</li>
             <li><strong>At in-person events.</strong> The host scans attendees’ wallet codes at the door, or shows a code that changes every 30 seconds for attendees to scan. Planned.</li>
           </ul>
