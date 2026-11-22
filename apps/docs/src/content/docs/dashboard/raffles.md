@@ -16,9 +16,19 @@ A **raffle** lets visitors in your scene enter for a prize, then picks winners o
    - **Auto-snapshot**: off, or every 5, 10, 15 or 30 minutes.
    - **Rules**: a template is filled in for you. Edit it to match your giveaway.
 3. Tick the host terms: *This raffle is free to enter and needs no purchase. I'm responsible for following the giveaway and sweepstakes rules where I and my entrants live, and for delivering prizes.*
-4. Create the raffle, then press **Open**. A scene can have one running raffle (open or drawn) at a time; close it before opening another.
+4. Create the raffle, then press **Open**, or [schedule it to open later](#scheduling-a-raffle). A scene can have one running raffle (open or drawn) at a time; close it before opening another.
 
 You can edit a raffle while it is a draft or open: open it and press **Edit**. The fields are the same as when you created it. The mode can't change once a snapshot exists.
+
+### Scheduling a raffle
+
+Instead of pressing **Open** yourself, you can set a time for a draft to open by itself.
+
+- **Open at:** an optional date and time on the create and edit forms, in your own local time. It is empty by default. **Clear** takes it off again. Only a raffle that hasn't opened can be scheduled, and the time has to be in the future ("Pick a time in the future.").
+- **At the time:** the raffle opens within a minute of the time you chose (the check runs about every 30 seconds), exactly as if you had pressed **Open**. A scheduled draft shows "Opens" and the time next to its status.
+- **Opening early:** press **Open** whenever you like. The raffle opens at once and the schedule is dropped.
+- **Changing or clearing it:** edit the draft and pick a new time, or press **Clear** and save. Cancelling the draft also cancels the schedule.
+- **If another raffle is running:** a scene can have one running raffle at a time. If one is still open or drawn when your time comes, the draft is left as it is, the schedule is cleared, and the draft shows "Didn't open at" the time with the reason. Close the other raffle, then press **Open** or set a new time.
 
 ### Snapshots and the minimum time
 

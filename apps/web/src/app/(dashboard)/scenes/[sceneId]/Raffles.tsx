@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { CopyWallet } from '@/components/CopyWallet'
 import {
   AUTO_SNAPSHOT_CHOICES, MODE_LABELS, STATUS_LABELS, blankRaffle, confirmAction, drawBody, editBody, entryLabel, fillRules, minutesPresent,
-  raffleActions, raffleBody, raffleErrorMessage, raffleFormError, raffleToInput, rulesHost, spinCountDefault, winnerLabel,
+  raffleActions, raffleBody, raffleErrorMessage, raffleFormError, raffleToInput, rulesHost, scheduleLine, spinCountDefault, winnerLabel,
 } from '@/lib/raffles'
 import type { HostRaffle, RaffleDetail, RaffleInput, RaffleMode, RaffleStatus, RaffleWinner } from '@/lib/raffles'
 
@@ -30,6 +30,13 @@ function Winner({ w }: { w: RaffleWinner }) {
       {wallet && <CopyWallet wallet={wallet} />}
     </li>
   )
+}
+
+/** "Opens {time}" or "Didn't open at {time}: {reason}" beside a draft's status. */
+function ScheduleNote({ raffle }: { raffle: HostRaffle }) {
+  const line = scheduleLine(raffle, when)
+  if (!line) return null
+  return <span className={`text-xs ${raffle.opensAt ? 'text-gray-400' : 'text-amber-300'}`}>{line}</span>
 }
 
 /** Host-side raffles for one scene: a list, a create form and a page to run each raffle. */
@@ -66,6 +73,7 @@ export function Raffles({ sceneId, sceneName }: { sceneId: string; sceneName: st
               <span className="text-gray-100">{r.name}</span>
               <span className="flex items-center gap-3">
                 <StatusChip status={r.status} />
+                <ScheduleNote raffle={r} />
                 <span className="text-xs text-gray-400">{r.entryCount} {r.entryCount === 1 ? 'entry' : 'entries'}</span>
               </span>
             </button>
@@ -100,7 +108,7 @@ function RaffleForm({ sceneId, sceneName, editing, onCancel, onCreated }: {
     if (blocked) { setError(blocked); return }
     setBusy(true)
     try {
-      onCreated(editing ? (await api.updateRaffle(editing.id, editBody(f))).raffle : (await api.createRaffle(sceneId, raffleBody(f))).raffle)
+      onCreated(editing ? (await api.updateRaffle(editing.id, editBody(f, editing))).raffle : (await api.createRaffle(sceneId, raffleBody(f))).raffle)
     } catch (err) { setError(raffleErrorMessage(err)) } finally { setBusy(false) }
   }
 
@@ -137,6 +145,15 @@ function RaffleForm({ sceneId, sceneName, editing, onCancel, onCreated }: {
       <label className="block text-xs text-gray-400">Rules
         <textarea className={`${INPUT} mt-1 w-full font-mono`} rows={8} value={f.rules} onChange={(e) => { setRulesEdited(true); set({ rules: e.target.value }) }} />
       </label>
+      {(!editing || editing.status === 'draft') && (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-xs text-gray-400">Open at (optional)
+            <input type="datetime-local" className={`${INPUT} mt-1 block`} value={f.opensAt} onChange={(e) => set({ opensAt: e.target.value })} />
+          </label>
+          {f.opensAt && <button type="button" onClick={() => set({ opensAt: '' })} className="rounded-md bg-gray-800 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700">Clear</button>}
+          <p className="basis-full text-xs text-gray-500">Your local time. The raffle opens within a minute of then, as if you pressed Open.</p>
+        </div>
+      )}
       {!editing && (
         <label className="flex items-start gap-2 text-xs text-gray-300">
           <input type="checkbox" className="mt-0.5" checked={f.acceptHostTerms} onChange={(e) => set({ acceptHostTerms: e.target.checked })} />
@@ -217,6 +234,7 @@ function RafflePage({ raffleId, sceneId, sceneName, onBack }: { raffleId: string
             </div>
             <div className="flex items-center gap-2">
               <StatusChip status={r.status} />
+              <ScheduleNote raffle={r} />
               {(r.status === 'draft' || r.status === 'open') && (
                 <button type="button" disabled={busy} onClick={() => { setSpun(null); setEditing(true) }}
                   className="rounded-md bg-gray-800 px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-50">Edit</button>

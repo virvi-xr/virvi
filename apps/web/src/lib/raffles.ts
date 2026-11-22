@@ -21,6 +21,12 @@ export interface HostRaffle {
   entryCount: number
   openedAt: string | null
   endedAt: string | null
+  /** When a draft will open by itself; null when not scheduled. */
+  opensAt: string | null
+  /** Why a scheduled opening didn't happen, on a draft; null otherwise. */
+  openError: string | null
+  /** Last change; for a draft with `openError`, when the opening was tried. */
+  updatedAt: string
 }
 
 /** An entry; a removed entrant has no name or wallet. */
@@ -40,6 +46,8 @@ export interface RaffleInput {
   autoSnapshotMinutes: number | null
   rules: string
   acceptHostTerms: boolean
+  /** The Open at field: a local date-time as the input holds it ("YYYY-MM-DDTHH:mm"), or '' for none. */
+  opensAt: string
 }
 
 export const AUTO_SNAPSHOT_CHOICES: readonly (number | null)[] = [null, ...AUTO_SNAPSHOT_MINUTES]
@@ -47,7 +55,7 @@ export const MODE_LABELS: Record<RaffleMode, string> = { one_per_person: 'One en
 export const STATUS_LABELS: Record<RaffleStatus, string> = { draft: 'Draft', open: 'Open', drawn: 'Drawn', closed: 'Closed', cancelled: 'Cancelled' }
 
 export function blankRaffle(): RaffleInput {
-  return { name: '', prize: '', winnersCount: 1, mode: 'one_per_person', minPresentMinutes: MIN_PRESENT_DEFAULT_MINUTES, autoSnapshotMinutes: null, rules: '', acceptHostTerms: false }
+  return { name: '', prize: '', winnersCount: 1, mode: 'one_per_person', minPresentMinutes: MIN_PRESENT_DEFAULT_MINUTES, autoSnapshotMinutes: null, rules: '', acceptHostTerms: false, opensAt: '' }
 }
 
 /** The rules template with the prize, winners and host filled in. */
@@ -63,20 +71,43 @@ export function rulesHost(displayName: string | null | undefined, sceneName: str
   return displayName?.trim() || sceneName
 }
 
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/** An ISO time as the date-time input holds it: the viewer's local time to the minute. */
+export function localInputValue(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** "Opens {time}" for a scheduled draft, "Didn't open at {time}: {reason}" for one whose opening was refused, else null. */
+export function scheduleLine(r: HostRaffle, format: (iso: string) => string): string | null {
+  if (r.status !== 'draft') return null
+  if (r.opensAt) return `Opens ${format(r.opensAt)}`
+  if (r.openError) return `Didn't open at ${format(r.updatedAt)}: ${r.openError}`
+  return null
+}
+
 /** Why the form can't be sent yet, or null. A new raffle needs the terms ticked; an edit doesn't. */
-export function raffleFormError(f: RaffleInput, opts: { editing?: boolean } = {}): string | null {
+export function raffleFormError(f: RaffleInput, opts: { editing?: boolean; now?: Date } = {}): string | null {
   if (!f.name.trim()) return 'Give the raffle a name.'
   if (!f.prize.trim()) return 'Say what the prize is.'
   if (!Number.isInteger(f.winnersCount) || f.winnersCount < 1 || f.winnersCount > RAFFLE_WINNERS_MAX) return `Pick 1 to ${RAFFLE_WINNERS_MAX} winners.`
   if (!opts.editing && !f.acceptHostTerms) return 'Accept the host terms to run a raffle.'
+  if (f.opensAt && !(new Date(f.opensAt).getTime() > (opts.now ?? new Date()).getTime())) return 'Pick a time in the future.'
   return null
 }
 
-/** The body POST /api/scenes/:sceneId/raffles takes. */
-export function raffleBody(f: RaffleInput) {
+export interface RaffleBody {
+  name: string; prize: string; winnersCount: number; mode: RaffleMode; minPresentMinutes: number
+  autoSnapshotMinutes: number | null; rules: string | null; acceptHostTerms: boolean; opensAt?: string
+}
+
+/** The body POST /api/scenes/:sceneId/raffles takes; `opensAt` (ISO) goes only when a time is chosen. */
+export function raffleBody(f: RaffleInput): RaffleBody {
   return {
     name: f.name.trim(), prize: f.prize.trim(), winnersCount: f.winnersCount, mode: f.mode, minPresentMinutes: f.minPresentMinutes,
     autoSnapshotMinutes: f.autoSnapshotMinutes, rules: f.rules.trim() || null, acceptHostTerms: f.acceptHostTerms,
+    ...(f.opensAt ? { opensAt: new Date(f.opensAt).toISOString() } : {}),
   }
 }
 
@@ -84,14 +115,19 @@ export function raffleBody(f: RaffleInput) {
 export function raffleToInput(r: HostRaffle): RaffleInput {
   return {
     name: r.name, prize: r.prize, winnersCount: r.winnersCount, mode: r.mode, minPresentMinutes: r.minPresentMinutes,
-    autoSnapshotMinutes: r.autoSnapshotMinutes, rules: r.rules ?? '', acceptHostTerms: true,
+    autoSnapshotMinutes: r.autoSnapshotMinutes, rules: r.rules ?? '', acceptHostTerms: true, opensAt: r.opensAt ? localInputValue(r.opensAt) : '',
   }
 }
 
-/** The body PATCH /api/raffles/:raffleId takes: the create fields, less the host terms. */
-export function editBody(f: RaffleInput) {
-  const { acceptHostTerms: _terms, ...body } = raffleBody(f)
-  return body
+/**
+ * The body PATCH /api/raffles/:raffleId takes: the create fields, less the host terms. `opensAt` goes only for a draft
+ * whose time was changed (null when cleared); the server refuses it on a raffle that has opened.
+ */
+export function editBody(f: RaffleInput, original: HostRaffle): Omit<RaffleBody, 'acceptHostTerms' | 'opensAt'> & { opensAt?: string | null } {
+  const { acceptHostTerms: _terms, opensAt: _opensAt, ...body } = raffleBody(f)
+  const before = original.opensAt ? localInputValue(original.opensAt) : ''
+  if (original.status !== 'draft' || f.opensAt === before) return body
+  return { ...body, opensAt: f.opensAt ? new Date(f.opensAt).toISOString() : null }
 }
 
 /** How many winners a spin picks unless the host changes it: all of them first, then one replacement per re-spin. */
@@ -139,6 +175,9 @@ const ERRORS: Record<string, string> = {
   bad_mode: 'Pick one entry per person or weighted by time present.',
   min_present_out_of_range: 'The minimum time present is 0 to 120 minutes.',
   bad_auto_snapshot: `Automatic snapshots are off or every ${AUTO_SNAPSHOT_MINUTES.join(', ')} minutes.`,
+  opens_at_past: 'Pick a time in the future.',
+  not_draft: "Only a raffle that hasn't opened can be scheduled.",
+  bad_opens_at: 'Give the opening time as a date and time, or leave it empty.',
   forbidden: "You can't run raffles in this scene.",
 }
 
