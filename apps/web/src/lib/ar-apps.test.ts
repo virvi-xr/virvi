@@ -6,7 +6,9 @@ const quest = AR_APPS.find((a) => a.id === 'quest')!
 describe('AR_APPS', () => {
   it('lists the Quest, Vision Pro and iPhone apps, each with its source on GitHub', () => {
     expect(AR_APPS.map((a) => a.id)).toEqual(['quest', 'vision-pro', 'iphone'])
-    expect(AR_APPS.map((a) => a.name)).toEqual(['Virvi AR', 'Virvi Builder', 'Virvi for iPhone'])
+    // One app, Virvi AR, on three platforms
+    expect(AR_APPS.map((a) => a.name)).toEqual(['Virvi AR', 'Virvi AR', 'Virvi AR'])
+    expect(AR_APPS.map((a) => a.platform)).toEqual(['Meta Quest', 'Apple Vision Pro', 'iPhone'])
     for (const app of AR_APPS) expect(app.sourceUrl.startsWith(`${AR_APPS_REPO}/tree/main/apps/`)).toBe(true)
     expect(AR_APPS.find((a) => a.id === 'iphone')!.sourceUrl).toBe('https://github.com/virvi-xr/virvi/tree/main/apps/ar-spike')
   })

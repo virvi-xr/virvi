@@ -1,8 +1,10 @@
-# Virvi Builder (Apple Vision Pro)
+# Virvi AR for Apple Vision Pro
+
+Virvi AR is one app on three platforms: Meta Quest (`apps/quest`), Apple Vision Pro (this app) and iPhone (planned, from `apps/ar-spike`). This app was first called Virvi Builder, and its Xcode project, target and bundle id (`VirviBuilder`, `io.virvi.builder.visionos`) still carry that name; what people see on the headset is Virvi AR.
 
 A visionOS app for building a Virvi scene in place, life-size, on a Vision Pro. You pair the headset, pick a scene from a list, set the scene down on the detected floor (and pin it to the room), then pick, move, turn and resize its items with a gizmo and save, with the Decentraland HUD’s tabs in a window beside it. Its scene core (`Core/Scene`: Mapping, ScenePlan, SceneRenderer) started as the AR spike’s. See `docs/superpowers/specs/2026-10-31-vision-pro-builder-design.md` for the design.
 
-**Get the app:** Virvi Builder isn’t in the App Store yet. Build it from source and run it on your headset as described below ([Run on a device](#run-on-a-device)). The public page is [virvi.io/ar](https://virvi.io/ar).
+**Get the app:** Virvi AR for Apple Vision Pro isn’t in the App Store yet. Build it from source and run it on your headset as described below ([Run on a device](#run-on-a-device)). The public page is [virvi.io/ar](https://virvi.io/ar).
 
 Bundle id `io.virvi.builder.visionos`, Apple Vision Pro only (`TARGETED_DEVICE_FAMILY` 7), visionOS 2.0+ (on visionOS 26 an item lights up as a whole when you look at it; before that each part lights on its own), GLTFKit2 0.5.15.
 

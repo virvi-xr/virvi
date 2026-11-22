@@ -55,7 +55,7 @@ struct RootView: View {
 
     private var unpaired: some View {
         VStack(spacing: 16) {
-            Text("Virvi Builder").font(.system(size: 34, weight: .semibold)).foregroundStyle(Hud.text)
+            Text("Virvi AR").font(.system(size: 34, weight: .semibold)).foregroundStyle(Hud.text)
             if auth.state == .refused {
                 Text("Pairing was refused on virvi.io").font(.system(size: 17)).foregroundStyle(Hud.danger)
             } else if let offline = auth.pairingMessage {

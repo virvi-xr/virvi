@@ -1,5 +1,7 @@
 # Virvi AR for Meta Quest
 
+Virvi AR is one app on three platforms: Meta Quest (this app), Apple Vision Pro (`apps/vision-pro`) and iPhone (planned, from `apps/ar-spike`).
+
 The Quest app (`io.virvi.ar`), promoted from the spike that lived in `apps/quest-spike` (sibling of `apps/ar-spike`, iPhone and Vision Pro). It shows a Virvi space life-size in passthrough on a **Meta Quest 3 or 3S**, placed from the ring marker the visitor looks at. Debug builds also run the marker detection-range test. Built with Meta's [Spatial SDK](https://developers.meta.com/horizon/documentation/spatial-sdk/spatial-sdk-explainer) (Kotlin, Android, no Unity).
 
 **Get the app:** Virvi AR isn’t in the Meta Horizon Store yet. Build it from source and install it on your headset as described below ([Build](#build), [Run it on your Quest](#run-it-on-your-quest)). The public page is [virvi.io/ar](https://virvi.io/ar). `STORE.md` has the Store notes.

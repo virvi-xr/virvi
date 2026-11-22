@@ -1,5 +1,5 @@
 'use client'
-// The Virvi AR apps as cards, from AR_APPS (packages/shared/src/ar-apps.ts): virvi.io/ar and the dashboard's AR tab.
+// Virvi AR on each platform, as cards, from AR_APPS (packages/shared/src/ar-apps.ts): virvi.io/ar and the dashboard's AR tab.
 import { useEffect, useState } from 'react'
 import { AR_APPS, arAppLink, arAppStatusLabel, arAppsForDevice, type ArApp, type ArAppStatus } from '@virvixr/shared'
 
@@ -16,7 +16,7 @@ export function ArAppCard({ app }: { app: ArApp }) {
     <li className="flex min-w-0 flex-col rounded-lg border border-gray-800 bg-gray-900 p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-lg font-semibold text-white">{app.name}</h3>
+          <h3 className="text-lg font-semibold text-white">{app.name} for {app.platform}</h3>
           <p className="text-sm text-gray-400">{app.device}</p>
         </div>
         <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium ${BADGE[app.status]}`}>{arAppStatusLabel(app.status)}</span>

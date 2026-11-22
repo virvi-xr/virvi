@@ -1,12 +1,15 @@
 /**
- * The Virvi AR apps, in one place: virvi.io/ar, the dashboard's AR tab, the ring's fallback page (/s/<code>) and the
+ * Virvi AR, one app on three platforms, in one place: virvi.io/ar, the dashboard's AR tab, the ring's fallback page (/s/<code>) and the
  * docs read these. When an app reaches a store, set its `storeUrl` and `status: 'store'`, and every page links there.
  */
 export type ArAppStatus = 'store' | 'preview' | 'prototype' | 'coming'
 
 export interface ArApp {
   id: 'quest' | 'vision-pro' | 'iphone'
+  /** Always 'Virvi AR': the same app on every platform. */
   name: string
+  /** The platform, as cards title it: "Virvi AR for Meta Quest". */
+  platform: string
   device: string
   role: string
   status: ArAppStatus
@@ -20,6 +23,7 @@ export const AR_APPS: readonly ArApp[] = [
   {
     id: 'quest',
     name: 'Virvi AR',
+    platform: 'Meta Quest',
     device: 'Meta Quest 3 and 3S',
     role: 'Visit AR Spaces, and build them in the room',
     status: 'preview',
@@ -28,7 +32,8 @@ export const AR_APPS: readonly ArApp[] = [
   },
   {
     id: 'vision-pro',
-    name: 'Virvi Builder',
+    name: 'Virvi AR',
+    platform: 'Apple Vision Pro',
     device: 'Apple Vision Pro',
     role: 'Build your scene life-size, on the floor',
     status: 'preview',
@@ -38,8 +43,9 @@ export const AR_APPS: readonly ArApp[] = [
   {
     // apps/ar-spike is the prototype the iPhone app grows from (LIV-197)
     id: 'iphone',
-    name: 'Virvi for iPhone',
-    device: 'iPhone',
+    name: 'Virvi AR',
+    platform: 'iPhone',
+    device: 'iPhone, iOS 18 or later',
     role: 'See AR Spaces, and earn BEATs by being there',
     status: 'prototype',
     storeUrl: null,

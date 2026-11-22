@@ -1,10 +1,10 @@
-# Virvi AR (AR spike)
+# Virvi AR prototype (AR spike)
 
-This is the prototype the iPhone app, Virvi for iPhone, grows from. The real iPhone app is planned; see the AR page at virvi.io/ar.
+This is the prototype that Virvi AR for iPhone grows from. Virvi AR is one app on three platforms: Meta Quest (`apps/quest`), Apple Vision Pro (`apps/vision-pro`) and iPhone. The real iPhone app is planned; see the AR page at virvi.io/ar.
 
-**Get the app:** there’s nothing to download. Virvi for iPhone isn’t in the App Store, and this prototype is built from source and run from Xcode as described below ([Build](#build-simulators), [Run on your Apple Vision Pro (or iPhone)](#run-on-your-apple-vision-pro-or-iphone)). The public page is [virvi.io/ar](https://virvi.io/ar).
+**Get the app:** there’s nothing to download. Virvi AR for iPhone isn’t in the App Store, and this prototype is built from source and run from Xcode as described below ([Build](#build-simulators), [Run on your Apple Vision Pro (or iPhone)](#run-on-your-apple-vision-pro-or-iphone)). The public page is [virvi.io/ar](https://virvi.io/ar).
 
-A spike for checking how Virvi scenes load and look in AR, life-size. Its visionOS half has been taken over by Virvi Builder (`apps/vision-pro`), whose scene core started from this one, and the Quest app (`apps/quest`) is its sibling. It has two apps that share one Swift source folder:
+A spike for checking how Virvi scenes load and look in AR, life-size. Its visionOS half has been taken over by Virvi AR for Apple Vision Pro (`apps/vision-pro`), whose scene core started from this one, and the Quest app (`apps/quest`) is its sibling. It has two apps that share one Swift source folder:
 
 - **VirviAR-iOS** (iPhone only, iOS 18+, a device with ARKit): an ARKit/RealityKit `ARView` with horizontal plane detection. Tap the floor and the scene's centre, Virvi (8, 0, 8), lands on that spot, with Virvi north pointing away from you. The **Tabletop 1:20** toggle shrinks the scene.
 - **VirviAR-visionOS** (visionOS 2+): a settings window and an **Enter space** button. The button opens a mixed `ImmersiveSpace` that puts the scene life-size on the floor, with its centre 2 m in front of you.
