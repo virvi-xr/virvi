@@ -165,3 +165,58 @@ def test_blob_order_is_raster_order():
     dark, _ = D.threshold(img, 15)
     order = D.dot_candidates(dark, with_order=True)
     assert [o[0] for o in order] == sorted(o[0] for o in order) and order[0][1][1] < 30
+
+
+# ---- polarity: light-on-dark markers ----------------------------------------------------------------------------
+
+def test_clean_render_inverted():
+    mid, dia = TEST_MARKERS["RING140"]
+    found = detect(np.array(render(mid, dia, 2.0, inverted=True)))
+    assert len(found) == 1
+    assert found[0].marker_id == mid and found[0].version == 0 and found[0].inverted
+    assert abs(found[0].center_px[0] - 150) < 1 and abs(found[0].center_px[1] - 150) < 1
+
+
+def test_inverted_cases_read_light_on_dark(testset, detections):
+    manifest, _ = testset
+    inverted = [e for e in manifest if e["case"] == "inverted"]
+    assert len(inverted) >= 8 and any(e["expect"] == "none" for e in inverted)
+    for e in inverted:
+        if e["expect"] == "none":
+            assert detections[e["name"]] == [], e["name"]
+    for name in ("inverted-RING120-1.2-0", "inverted-RING140-1.2-45", "inverted-RING120-1.8-30", "inverted-glare"):
+        (d,) = detections[name]
+        assert d.inverted, name
+    (d,) = detections["inverted-rotated_73"]
+    assert abs((d.rotation_deg - 73 + 180) % 360 - 180) <= 2, d.rotation_deg
+
+
+def test_normal_markers_read_in_the_normal_pass(detections):
+    for name in ("range-RING140-1.2-0", "rotated_73", "glare", "two_markers"):
+        assert detections[name] and not any(d.inverted for d in detections[name]), name
+
+
+def test_one_frame_reads_both_polarities(testset, detections):
+    manifest, _ = testset
+    (e,) = [e for e in manifest if e["name"] == "inverted-two_markers"]
+    found = {d.marker_id: d for d in detections[e["name"]]}
+    normal_id, inverted_id = (m["id"] for m in e["markers"])
+    assert set(found) == {normal_id, inverted_id}
+    assert not found[normal_id].inverted and found[inverted_id].inverted
+
+
+def test_polarity_merge_keeps_one_per_marker():
+    """A detection found in both passes is kept once, the normal pass's; different ids are both kept."""
+    a = D.Detection(1, 0, 0, (100.0, 100.0), (100.0, 100.0, 30.0, 25.0, 0.0), 0.0)
+    b = D.Detection(1, 0, 0, (110.0, 100.0), (110.0, 100.0, 20.0, 18.0, 0.0), 0.0, inverted=True)
+    c = D.Detection(1, 0, 0, (125.0, 100.0), (125.0, 100.0, 20.0, 18.0, 0.0), 0.0, inverted=True)
+    other = D.Detection(2, 0, 0, (100.0, 100.0), (100.0, 100.0, 30.0, 25.0, 0.0), 0.0, inverted=True)
+    assert D.merge_polarities([a], [b, c, other]) == [a, c, other]
+
+
+def test_glare_costs_a_correction_in_both_polarities(detections):
+    """The glare blob turns a cell falsely light: an "on" cell on a dark-on-light ARC, an "off" one on a light-on-dark
+    ARC. Either way the code corrects it."""
+    for name in ("glare", "inverted-glare"):
+        (d,) = detections[name]
+        assert d.corrected >= 1, (name, d.corrected)

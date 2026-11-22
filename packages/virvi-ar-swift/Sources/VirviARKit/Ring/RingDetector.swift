@@ -3,7 +3,8 @@ import Foundation
 /// One decoded ring marker. (`cx`, `cy`) is the centre dot in continuous pixel coordinates (pixel
 /// (i, j) covers [i, i+1) x [j, j+1)); `semiMajor`, `semiMinor` and `angleDeg` (major axis, degrees
 /// in [0, 180) from +x toward +y, image y down) describe the finder ring's fitted outer edge;
-/// `rotationDeg` is the finder gap's angle clockwise from image-up, in [0, 360).
+/// `rotationDeg` is the finder gap's angle clockwise from image-up, in [0, 360). `inverted` is set when the
+/// marker was read light-on-dark (the inverted pass, step 9).
 public struct RingDetection: Equatable, Sendable {
     public let id: UInt32
     public let version: Int
@@ -14,9 +15,10 @@ public struct RingDetection: Equatable, Sendable {
     public let semiMinor: Double
     public let angleDeg: Double
     public let rotationDeg: Double
+    public let inverted: Bool
 
     public init(id: UInt32, version: Int, corrected: Int, cx: Double, cy: Double,
-                semiMajor: Double, semiMinor: Double, angleDeg: Double, rotationDeg: Double) {
+                semiMajor: Double, semiMinor: Double, angleDeg: Double, rotationDeg: Double, inverted: Bool = false) {
         self.id = id
         self.version = version
         self.corrected = corrected
@@ -26,6 +28,7 @@ public struct RingDetection: Equatable, Sendable {
         self.semiMinor = semiMinor
         self.angleDeg = angleDeg
         self.rotationDeg = rotationDeg
+        self.inverted = inverted
     }
 }
 
@@ -56,8 +59,9 @@ public struct RingFrame: Equatable, Sendable {
 }
 
 /// Ring-marker detector: a step-for-step port of apps/quest/.../ring/RingDetector.kt, itself a port
-/// of apps/ring-marker/ringmarker/detect.py, whose module docstring is the spec (steps 1-8 below
-/// follow its numbering).
+/// of apps/ring-marker/ringmarker/detect.py, whose module docstring is the spec (steps 1-9 below
+/// follow its numbering). It reads both polarities: dark marks on a light plaque and light marks on a
+/// dark plaque (step 9).
 ///
 /// Not thread-safe: an instance reuses its buffers between calls, since `detectFrame` runs on every
 /// camera frame. Use one instance per camera queue.
@@ -183,6 +187,8 @@ public final class RingDetector {
     private var w = 0
     private var h = 0
     private var stride = 0
+    /// The pass's polarity (step 9): true reads the masks swapped and grey values as 255 - v.
+    private var inv = false
     private var integral = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
     private var integralCap = 1
     private var state = UnsafeMutablePointer<Int8>.allocate(capacity: 1) // dark, light or 0 (undecided)
@@ -227,14 +233,35 @@ public final class RingDetector {
 
     /// Detects ring markers in an 8-bit grey image (row j starts at j * `rowStride`), and reports
     /// candidates whose dot and finder ring were found (step 4) but whose cells could not be read or
-    /// decoded. Detections are ordered by (corrected, first-pixel raster index), with duplicates of
-    /// the same marker dropped; unreadable entries that coincide with a detection or with each other
-    /// are dropped.
+    /// decoded. Detections are the normal pass's, ordered by (corrected, first-pixel raster index)
+    /// with duplicates of the same marker dropped, then the inverted pass's likewise, less those the
+    /// normal pass already read (step 9); unreadable entries within the finder radius of a detection,
+    /// or that coincide with each other, are dropped.
     public func detectFrame(gray: UnsafeBufferPointer<UInt8>, width: Int, height: Int, rowStride: Int) -> RingFrame {
         defer { self.gray = nil }
-        var found: [Found] = []
+        prepare(gray: gray, width: width, height: height, rowStride: rowStride, win: Self.windowSize(width))
         var unseen: [(Dot, [Double])] = []
-        for dot in dotCandidates(gray: gray, width: width, height: height, rowStride: rowStride, win: Self.windowSize(width)) {
+        // 9. polarity: the normal pass, then the inverted pass on the same masks
+        let normal = detectPass(inverted: false, unseen: &unseen)
+        let detections = Self.mergePolarities(normal, detectPass(inverted: true, unseen: &unseen))
+        var unreadable: [UnreadableRing] = []
+        for (dot, conic) in unseen {
+            let x = dot.cx + 0.5
+            let y = dot.cy + 0.5
+            let r = 0.5 * sqrt(dot.a * dot.b)
+            if detections.contains(where: { hypot(x - $0.cx, y - $0.cy) < $0.semiMajor }) { continue }
+            if unreadable.contains(where: { hypot(x - $0.cx, y - $0.cy) < r }) { continue }
+            unreadable.append(UnreadableRing(cx: x, cy: y, semiMajor: Self.conicEllipse(conic).0))
+        }
+        return RingFrame(detections: detections, unreadable: unreadable)
+    }
+
+    /// Steps 2-8 for one polarity on the thresholded image; candidates seen but not decoded are added
+    /// to `unseen`.
+    private func detectPass(inverted: Bool, unseen: inout [(Dot, [Double])]) -> [RingDetection] {
+        inv = inverted
+        var found: [Found] = []
+        for dot in candidates() {
             seenConic = nil
             let got = readCells(dot)
             guard let got, let d = RingCodec.decode(got.cells) else {
@@ -244,7 +271,8 @@ public final class RingDetector {
             let e = Self.conicEllipse(got.conic)
             let det = RingDetection(id: d.id, version: d.version, corrected: d.corrected,
                                     cx: dot.cx + 0.5, cy: dot.cy + 0.5,
-                                    semiMajor: e.0, semiMinor: e.1, angleDeg: e.2, rotationDeg: got.rotation)
+                                    semiMajor: e.0, semiMinor: e.1, angleDeg: e.2, rotationDeg: got.rotation,
+                                    inverted: inverted)
             found.append(Found(det: det, dotRadius: sqrt(dot.a * dot.b), first: dot.first))
         }
         // 8. duplicates (first is unique per dot, so this order is total and the sort's stability moot)
@@ -253,16 +281,19 @@ public final class RingDetector {
         for f in found where kept.allSatisfy({ k in hypot(f.det.cx - k.det.cx, f.det.cy - k.det.cy) >= 0.5 * k.dotRadius }) {
             kept.append(f)
         }
-        var unreadable: [UnreadableRing] = []
-        for (dot, conic) in unseen {
-            let x = dot.cx + 0.5
-            let y = dot.cy + 0.5
-            let r = 0.5 * sqrt(dot.a * dot.b)
-            if kept.contains(where: { hypot(x - $0.det.cx, y - $0.det.cy) < r }) { continue }
-            if unreadable.contains(where: { hypot(x - $0.cx, y - $0.cy) < r }) { continue }
-            unreadable.append(UnreadableRing(cx: x, cy: y, semiMajor: Self.conicEllipse(conic).0))
+        return kept.map(\.det)
+    }
+
+    /// Step 9's merge: the normal pass's detections, then the inverted pass's that no normal one
+    /// duplicates (same id, centres closer than the smaller finder radius).
+    static func mergePolarities(_ normal: [RingDetection], _ inverted: [RingDetection]) -> [RingDetection] {
+        var out = normal
+        for d in inverted where !normal.contains(where: {
+            $0.id == d.id && hypot($0.cx - d.cx, $0.cy - d.cy) < min($0.semiMajor, d.semiMajor)
+        }) {
+            out.append(d)
         }
-        return RingFrame(detections: kept.map(\.det), unreadable: unreadable)
+        return out
     }
 
     /// Test hook: the cells read for the dot candidate nearest (x, y) (pixel-index coordinates).
@@ -276,8 +307,16 @@ public final class RingDetector {
 
     // MARK: - 1-3. threshold, blobs, dot candidates
 
-    /// Thresholds and labels the image, then returns the dot candidates in first-pixel order.
+    /// Thresholds and labels the image, then returns the normal pass's dot candidates in first-pixel
+    /// order.
     func dotCandidates(gray: UnsafeBufferPointer<UInt8>, width: Int, height: Int, rowStride: Int, win: Int) -> [Dot] {
+        prepare(gray: gray, width: width, height: height, rowStride: rowStride, win: win)
+        inv = false
+        return candidates()
+    }
+
+    /// Takes the frame and thresholds it (step 1), once for both passes.
+    private func prepare(gray: UnsafeBufferPointer<UInt8>, width: Int, height: Int, rowStride: Int, win: Int) {
         precondition(width > 0 && height > 0 && rowStride >= width, "bad image size")
         precondition(gray.count >= (height - 1) * rowStride + width, "image buffer too small")
         self.gray = gray.baseAddress!
@@ -285,6 +324,10 @@ public final class RingDetector {
         h = height
         stride = rowStride
         threshold(win)
+    }
+
+    /// Steps 2-3 for the current pass: labels its dark, then returns the dot candidates.
+    private func candidates() -> [Dot] {
         let n = label()
         var out: [Dot] = []
         for i in 0..<n {
@@ -358,9 +401,10 @@ public final class RingDetector {
         }
     }
 
-    /// Step 2. 8-connected components of dark by two-pass union-find. Roots are always the smallest
-    /// label, so a component's root is the label of its first pixel and components are numbered in
-    /// first-pixel raster order. Moments are summed in raster order, as numpy's bincount does.
+    /// Step 2. 8-connected components of dark (light in the inverted pass) by two-pass union-find.
+    /// Roots are always the smallest label, so a component's root is the label of its first pixel
+    /// and components are numbered in first-pixel raster order. Moments are summed in raster order,
+    /// as numpy's bincount does.
     /// Returns the component count; stats are in `moments` and `cFirst`.
     private func label() -> Int {
         Self.ensure(&labels, &labelsCap, w * h)
@@ -377,6 +421,7 @@ public final class RingDetector {
             comp.initialize(repeating: 0, count: unionCap)
         }
         let lab = labels, st = state, par = parent, fo = firstOf, w = self.w, h = self.h
+        let target = inv ? Self.light : Self.dark
         func find(_ x: Int32) -> Int32 {
             var a = Int(x)
             while par[a] != Int32(a) {
@@ -400,7 +445,7 @@ public final class RingDetector {
             let row = y * w
             for x in 0..<w {
                 let i = row + x
-                if st[i] != Self.dark {
+                if st[i] != target {
                     lab[i] = 0
                     continue
                 }
@@ -470,15 +515,18 @@ public final class RingDetector {
 
     // MARK: - sampling
 
-    /// Mask state at the nearest pixel; undecided (0) off the image or at non-finite coordinates.
+    /// Mask state at the nearest pixel, dark and light swapped in the inverted pass; undecided (0) off
+    /// the image or at non-finite coordinates.
     private func nearest(_ x: Double, _ y: Double) -> Int8 {
         let i = Self.nearestIndex(x, y, w, h)
-        return i < 0 ? 0 : state[i]
+        if i < 0 { return 0 }
+        return inv ? -state[i] : state[i]
     }
 
     private func px(_ x: Int, _ y: Int) -> Double { Double(gray![y * stride + x]) }
 
-    /// Only ever called with finite coordinates (nearest/inside filter the rest).
+    /// Bilinear grey value, read as 255 - v in the inverted pass. Only ever called with finite
+    /// coordinates (nearest/inside filter the rest).
     private func bilinear(_ xIn: Double, _ yIn: Double) -> Double {
         let x = min(max(xIn, 0.0), Double(w - 1) - 1e-6)
         let y = min(max(yIn, 0.0), Double(h - 1) - 1e-6)
@@ -490,7 +538,8 @@ public final class RingDetector {
         let yi = Int(y0)
         let top = px(xi, yi) * (1 - fx) + px(xi + 1, yi) * fx
         let bottom = px(xi, yi + 1) * (1 - fx) + px(xi + 1, yi + 1) * fx
-        return top * (1 - fy) + bottom * fy
+        let v = top * (1 - fy) + bottom * fy
+        return inv ? 255.0 - v : v
     }
 
     // MARK: - 4. finder ring

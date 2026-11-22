@@ -1,4 +1,7 @@
-"""Reference ring-marker detector. The Kotlin port (Task 6) copies this step for step.
+"""Reference ring-marker detector. The Kotlin and Swift ports copy this step for step.
+
+It reads both polarities: dark marks on a light plaque (the normal pass) and light marks on a dark plaque (the
+inverted pass, step 9). Steps 1-8 describe the normal pass.
 
 Coordinates. Internally a pixel (i, j) (column i, row j) sits at (x, y) = (i, j); x right, y down. Outputs
 (`center_px`, the ellipse centre) are in the test-set manifest's continuous convention, where pixel (i, j) covers
@@ -60,6 +63,20 @@ marker; 1 "ref mm" is a millimetre at the 140 mm reference size (layout.py), so 
 7. Decode with codec.decode; drop the candidate unless it decodes.
 8. Duplicates. Sort the detections by (`corrected`, first-pixel raster index from step 2) and keep one unless its
    centre is within 0.5 sqrt(a b) of an already kept detection, sqrt(a b) being that kept detection's dot radius.
+9. Polarity. Steps 2-8 run twice on the masks of step 1: the normal pass as above (dark marks on a light plaque),
+   then the inverted pass (light marks on a dark plaque), which is exactly the normal pass on the negative image
+   v' = 255 - v. The negative needs no new threshold: its window sum is S' = 255n - S, so
+   v'n < S' - 7n  <=>  255n - vn < 255n - S - 7n  <=>  vn > S + 7n, i.e. DARK of the negative is LIGHT of the image,
+   and likewise LIGHT of the negative is DARK (the offset is symmetric; integer arithmetic, so exact). The inverted
+   pass therefore uses (LIGHT, DARK) wherever the normal pass uses (DARK, LIGHT) -- blobs in step 2, ray edges in
+   step 4, the gap in step 5 -- and reads every grey value as 255 - v (bilinear in steps 5-6, applied to the
+   sampled value; the frame is not copied). Its detections carry `inverted = True`.
+   Merge: all the normal pass's detections in their step-8 order, then each inverted-pass detection (in its step-8
+   order) unless a normal-pass detection has the same id and a centre closer than the smaller of the two finder
+   radii (the `ellipse` semi-majors); the normal pass's detection is kept. (The ports' unreadable rings -- a dot
+   and finder found in step 4 but no decode -- are collected from both passes; one is dropped if its centre lies
+   within the finder radius of any merged detection, or within half its own dot radius of an unreadable ring
+   already kept.)
 
 Tuning (brief step 3), in the brief's order:
 - Threshold window: changed from max(15, W // 40) | 1 to max(51, W // 25) | 1. With 15 px, the noise-free
@@ -121,6 +138,7 @@ class Detection:
     center_px: tuple[float, float]
     ellipse: tuple[float, float, float, float, float]  # finder outer edge: cx, cy, semi-major, semi-minor, angle deg
     rotation_deg: float
+    inverted: bool = False  # found by the inverted pass (step 9): light marks on a dark plaque
 
 
 def window_size(width: int) -> int:
@@ -202,6 +220,12 @@ def _nearest(mask: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
 def _inside(xs: np.ndarray, ys: np.ndarray, w: int, h: int) -> np.ndarray:
     """Sample points within [0, W - 1] x [0, H - 1]; non-finite coordinates are outside."""
     return np.isfinite(xs) & np.isfinite(ys) & (xs >= 0) & (xs <= w - 1) & (ys >= 0) & (ys <= h - 1)
+
+
+def _grey(gray: np.ndarray, xs: np.ndarray, ys: np.ndarray, inverted: bool) -> np.ndarray:
+    """Bilinear grey value, read as 255 - v in the inverted pass (step 9)."""
+    v = _bilinear(gray, xs, ys)
+    return 255.0 - v if inverted else v
 
 
 def _bilinear(gray: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
@@ -366,8 +390,9 @@ def light_runs(light: np.ndarray) -> list[tuple[int, int]]:
 
 # ---- per candidate ---------------------------------------------------------------------------------------------
 
-def read_cells(gray, masks, dot):
-    """Steps 4-6 for one dot: (cells, conic, rotation_deg), or None if the candidate is rejected."""
+def read_cells(gray, masks, dot, inverted=False):
+    """Steps 4-6 for one dot: (cells, conic, rotation_deg), or None if the candidate is rejected. `masks` is
+    (DARK, LIGHT) as the pass sees them: swapped, with `inverted`, for the inverted pass (step 9)."""
     fr, conic = finder(masks, dot)
     if fr is None:
         return None
@@ -384,7 +409,7 @@ def read_cells(gray, masks, dot):
         return None
     if any(r[1] * GAP_STEP_DEG > OTHER_LIGHT_MAX_DEG for i, r in enumerate(runs) if i != best):
         return None
-    vals = _bilinear(gray, xs, ys)
+    vals = _grey(gray, xs, ys, inverted)
     dark = vals[is_dark].mean()
     light = vals[(start + np.arange(length)) % nb].mean()
     if light - dark < MIN_CONTRAST:
@@ -405,13 +430,13 @@ def read_cells(gray, masks, dot):
             if not _inside(sx, sy, w, h).all():
                 cells.append(None)  # can't be judged: erasure
                 continue
-            t = (_bilinear(gray, sx, sy).mean() - dark) / (light - dark)
+            t = (_grey(gray, sx, sy, inverted).mean() - dark) / (light - dark)
             cells.append(True if t < T_ON else False if t > T_OFF else None)
     return cells, conic, rotation
 
 
-def read_candidate(gray, masks, dot) -> Detection | None:
-    got = read_cells(gray, masks, dot)
+def read_candidate(gray, masks, dot, inverted=False) -> Detection | None:
+    got = read_cells(gray, masks, dot, inverted)
     if got is None:
         return None
     cells, conic, rotation = got
@@ -419,17 +444,22 @@ def read_candidate(gray, masks, dot) -> Detection | None:
     if d is None:
         return None
     return Detection(d.marker_id, d.version, d.corrected, (dot[0] + 0.5, dot[1] + 0.5),
-                     conic_ellipse(conic, dot[0], dot[1]), rotation)
+                     conic_ellipse(conic, dot[0], dot[1]), rotation, inverted)
 
 
 def detect(gray: np.ndarray) -> list[Detection]:
     gray = np.asarray(gray)
     if gray.ndim != 2 or gray.dtype != np.uint8:
         raise ValueError("detect expects a 2-D uint8 grey image")
-    masks = threshold(gray, window_size(gray.shape[1]))
+    dark, light = threshold(gray, window_size(gray.shape[1]))
+    return merge_polarities(detect_pass(gray, (dark, light), False), detect_pass(gray, (light, dark), True))
+
+
+def detect_pass(gray: np.ndarray, masks, inverted: bool) -> list[Detection]:
+    """Steps 2-8 for one polarity; `masks` is (DARK, LIGHT) as this pass sees them (step 9)."""
     found = []
     for first, dot in dot_candidates(masks[0], with_order=True):
-        det = read_candidate(gray, masks, dot)
+        det = read_candidate(gray, masks, dot, inverted)
         if det is not None:
             found.append((det, math.sqrt(dot[2] * dot[3]), first))
     found.sort(key=lambda f: (f[0].corrected, f[2]))
@@ -438,3 +468,14 @@ def detect(gray: np.ndarray) -> list[Detection]:
         if all(math.dist(det.center_px, k.center_px) >= 0.5 * kr for k, kr in kept):
             kept.append((det, r))
     return [k for k, _ in kept]
+
+
+def merge_polarities(normal: list[Detection], inverted: list[Detection]) -> list[Detection]:
+    """Step 9's merge: the normal pass's detections, then the inverted pass's that no normal one duplicates (same id,
+    centres closer than the smaller finder radius)."""
+    out = list(normal)
+    for d in inverted:
+        if not any(n.marker_id == d.marker_id
+                   and math.dist(n.center_px, d.center_px) < min(n.ellipse[2], d.ellipse[2]) for n in normal):
+            out.append(d)
+    return out

@@ -15,7 +15,8 @@ import kotlin.math.sqrt
  * One decoded ring marker. ([cx], [cy]) is the centre dot in continuous pixel coordinates
  * (pixel (i, j) covers [i, i+1) x [j, j+1)); [semiMajor], [semiMinor] and [angleDeg] (major axis,
  * degrees in [0, 180) from +x toward +y, image y down) describe the finder ring's fitted outer
- * edge; [rotationDeg] is the finder gap's angle clockwise from image-up, in [0, 360).
+ * edge; [rotationDeg] is the finder gap's angle clockwise from image-up, in [0, 360). [inverted] is
+ * set when the marker was read light-on-dark (the inverted pass, step 9).
  */
 data class RingDetection(
     val id: Long,
@@ -27,6 +28,7 @@ data class RingDetection(
     val semiMinor: Double,
     val angleDeg: Double,
     val rotationDeg: Double,
+    val inverted: Boolean = false,
 )
 
 /**
@@ -41,8 +43,9 @@ data class RingFrame(val detections: List<RingDetection>, val unreadable: List<U
 
 /**
  * Ring-marker detector: a step-for-step port of apps/ring-marker/ringmarker/detect.py, whose module
- * docstring is the spec (steps 1-8 below follow its numbering). Results on the synthetic test set
- * match the Python (same ids and corrected counts, centres to well under 0.1 px).
+ * docstring is the spec (steps 1-9 below follow its numbering). Results on the synthetic test set
+ * match the Python (same ids and corrected counts, centres to well under 0.1 px). It reads both
+ * polarities: dark marks on a light plaque and light marks on a dark plaque (step 9).
  *
  * Not thread-safe: an instance reuses its buffers between calls, since [detect] runs on every
  * camera frame. Use one instance per camera thread.
@@ -182,6 +185,8 @@ class RingDetector {
   private var w = 0
   private var h = 0
   private var stride = 0
+  /** The pass's polarity (step 9): true reads the masks swapped and grey values as 255 - v. */
+  private var inv = false
   private var integral = IntArray(0)
   private var state = ByteArray(0) // DARK, LIGHT or 0 (undecided)
   private var labels = IntArray(0)
@@ -224,8 +229,8 @@ class RingDetector {
 
   /**
    * As [detect], also reporting candidates whose dot and finder ring were found (step 4) but whose
-   * cells could not be read or decoded. Unreadable entries that coincide with a detection or with
-   * each other are dropped.
+   * cells could not be read or decoded. Unreadable entries within the finder radius of a detection,
+   * or that coincide with each other, are dropped.
    */
   fun detectFrame(
       gray: ByteArray,
@@ -233,9 +238,33 @@ class RingDetector {
       height: Int,
       rowStride: Int = width,
   ): RingFrame {
-    val found = ArrayList<Found>()
+    prepare(gray, width, height, rowStride, windowSize(width))
     val unseen = ArrayList<Pair<Dot, DoubleArray>>()
-    for (dot in dotCandidates(gray, width, height, rowStride, windowSize(width))) {
+    // 9. polarity: the normal pass, then the inverted pass on the same masks
+    val detections = mergePolarities(detectPass(false, unseen), detectPass(true, unseen))
+    val unreadable = ArrayList<UnreadableRing>()
+    for ((dot, conic) in unseen) {
+      val x = dot.cx + 0.5
+      val y = dot.cy + 0.5
+      val r = 0.5 * sqrt(dot.a * dot.b)
+      if (detections.any { hypot(x - it.cx, y - it.cy) < it.semiMajor }) continue
+      if (unreadable.any { hypot(x - it.cx, y - it.cy) < r }) continue
+      unreadable.add(UnreadableRing(x, y, conicEllipse(conic)[0]))
+    }
+    return RingFrame(detections, unreadable)
+  }
+
+  /**
+   * Steps 2-8 for one polarity on the thresholded image; candidates seen but not decoded are added
+   * to [unseen].
+   */
+  private fun detectPass(
+      inverted: Boolean,
+      unseen: MutableList<Pair<Dot, DoubleArray>>,
+  ): List<RingDetection> {
+    inv = inverted
+    val found = ArrayList<Found>()
+    for (dot in candidates()) {
       seenConic = null
       val got = readCells(dot)
       val d = got?.let { RingCodec.decode(it.cells) }
@@ -255,6 +284,7 @@ class RingDetector {
               e[1],
               e[2],
               got.rotation,
+              inverted,
           )
       found.add(Found(det, sqrt(dot.a * dot.b), dot.first))
     }
@@ -266,16 +296,7 @@ class RingDetector {
         kept.add(f)
       }
     }
-    val unreadable = ArrayList<UnreadableRing>()
-    for ((dot, conic) in unseen) {
-      val x = dot.cx + 0.5
-      val y = dot.cy + 0.5
-      val r = 0.5 * sqrt(dot.a * dot.b)
-      if (kept.any { hypot(x - it.det.cx, y - it.det.cy) < r }) continue
-      if (unreadable.any { hypot(x - it.cx, y - it.cy) < r }) continue
-      unreadable.add(UnreadableRing(x, y, conicEllipse(conic)[0]))
-    }
-    return RingFrame(kept.map { it.det }, unreadable)
+    return kept.map { it.det }
   }
 
   /** Test hook: the cells read for the dot candidate nearest (x, y) (pixel-index coordinates). */
@@ -294,7 +315,10 @@ class RingDetector {
 
   // ---- 1-3. threshold, blobs, dot candidates ----------------------------------------------------
 
-  /** Thresholds and labels the image, then returns the dot candidates in first-pixel order. */
+  /**
+   * Thresholds and labels the image, then returns the normal pass's dot candidates in first-pixel
+   * order.
+   */
   internal fun dotCandidates(
       gray: ByteArray,
       width: Int,
@@ -302,6 +326,13 @@ class RingDetector {
       rowStride: Int,
       win: Int,
   ): List<Dot> {
+    prepare(gray, width, height, rowStride, win)
+    inv = false
+    return candidates()
+  }
+
+  /** Takes the frame and thresholds it (step 1), once for both passes. */
+  private fun prepare(gray: ByteArray, width: Int, height: Int, rowStride: Int, win: Int) {
     require(width > 0 && height > 0 && rowStride >= width) { "bad image size" }
     require(gray.size >= (height - 1) * rowStride + width) { "image buffer too small" }
     this.gray = gray
@@ -309,6 +340,10 @@ class RingDetector {
     h = height
     stride = rowStride
     threshold(win)
+  }
+
+  /** Steps 2-3 for the current pass: labels its DARK, then returns the dot candidates. */
+  private fun candidates(): List<Dot> {
     val n = label()
     val out = ArrayList<Dot>()
     for (i in 0 until n) {
@@ -375,20 +410,22 @@ class RingDetector {
   }
 
   /**
-   * Step 2. 8-connected components of DARK by two-pass union-find. Roots are always the smallest
-   * label, so a component's root is the label of its first pixel and components are numbered in
-   * first-pixel raster order. Moments are summed in raster order, as numpy's bincount does.
+   * Step 2. 8-connected components of DARK (LIGHT in the inverted pass) by two-pass union-find.
+   * Roots are always the smallest label, so a component's root is the label of its first pixel and
+   * components are numbered in first-pixel raster order. Moments are summed in raster order, as
+   * numpy's bincount does.
    * Returns the component count; stats are in cnt, cFirst, sx.. sxy.
    */
   private fun label(): Int {
     if (labels.size < w * h) labels = IntArray(w * h)
     val lab = labels
+    val target = if (inv) LIGHT else DARK
     var next = 1
     for (y in 0 until h) {
       val row = y * w
       for (x in 0 until w) {
         val i = row + x
-        if (state[i] != DARK) {
+        if (state[i] != target) {
           lab[i] = 0
           continue
         }
@@ -488,14 +525,19 @@ class RingDetector {
 
   // ---- sampling ---------------------------------------------------------------------------------
 
-  /** Mask state at the nearest pixel; undecided (0) off the image or at non-finite coordinates. */
+  /**
+   * Mask state at the nearest pixel, DARK and LIGHT swapped in the inverted pass; undecided (0) off
+   * the image or at non-finite coordinates.
+   */
   private fun nearest(x: Double, y: Double): Byte {
     val i = nearestIndex(x, y, w, h)
-    return if (i < 0) 0 else state[i]
+    if (i < 0) return 0
+    return if (inv) (-state[i]).toByte() else state[i]
   }
 
   private fun px(x: Int, y: Int): Double = (gray[y * stride + x].toInt() and 0xFF).toDouble()
 
+  /** Bilinear grey value, read as 255 - v in the inverted pass. */
   private fun bilinear(xIn: Double, yIn: Double): Double {
     val x = min(max(xIn, 0.0), w - 1 - 1e-6)
     val y = min(max(yIn, 0.0), h - 1 - 1e-6)
@@ -507,7 +549,8 @@ class RingDetector {
     val yi = y0.toInt()
     val top = px(xi, yi) * (1 - fx) + px(xi + 1, yi) * fx
     val bottom = px(xi, yi + 1) * (1 - fx) + px(xi + 1, yi + 1) * fx
-    return top * (1 - fy) + bottom * fy
+    val v = top * (1 - fy) + bottom * fy
+    return if (inv) 255.0 - v else v
   }
 
   // ---- 4. finder ring ---------------------------------------------------------------------------
@@ -729,6 +772,25 @@ class RingDetector {
         arrayOf(doubleArrayOf(51.0, 59.0), doubleArrayOf(40.0, 48.0), doubleArrayOf(29.0, 37.0))
 
     fun windowSize(width: Int): Int = max(51, width / 25) or 1
+
+    /**
+     * Step 9's merge: the normal pass's detections, then the inverted pass's that no normal one
+     * duplicates (same id, centres closer than the smaller finder radius).
+     */
+    fun mergePolarities(
+        normal: List<RingDetection>,
+        inverted: List<RingDetection>,
+    ): List<RingDetection> {
+      val out = ArrayList(normal)
+      for (d in inverted) {
+        val dup =
+            normal.any {
+              it.id == d.id && hypot(it.cx - d.cx, it.cy - d.cy) < min(it.semiMajor, d.semiMajor)
+            }
+        if (!dup) out.add(d)
+      }
+      return out
+    }
 
     private fun mod(a: Double, m: Double): Double {
       val r = a % m

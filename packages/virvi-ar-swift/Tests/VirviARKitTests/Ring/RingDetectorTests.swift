@@ -51,7 +51,7 @@ final class RingDetectorTests: XCTestCase {
             throw NSError(domain: "RingDetectorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: Self.missingMessage])
         }
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [[String: Any]])
-        XCTAssertEqual(root.count, 38)
+        XCTAssertEqual(root.count, 47)
         var focals = Set<Double>()
         let entries: [Entry] = try root.map { o in
             focals.insert((o["focal_px"] as! NSNumber).doubleValue)
@@ -163,7 +163,7 @@ final class RingDetectorTests: XCTestCase {
     }
 
     func testRotationReported() throws {
-        for (name, want) in [("rotated_73", 73.0), ("rotated_180", 180.0)] {
+        for (name, want) in [("rotated_73", 73.0), ("rotated_180", 180.0), ("inverted-rotated_73", 73.0)] {
             let found = try detections(name)
             XCTAssertEqual(found.count, 1, name)
             guard let d = found.first else { continue }
@@ -315,6 +315,72 @@ final class RingDetectorTests: XCTestCase {
             let f = frame(detector, e.image)
             XCTAssertTrue(f.unreadable.isEmpty, "\(e.name): \(f.unreadable)")
         }
+    }
+
+    // MARK: - polarity
+
+    /// The light-on-dark cases read through the inverted pass, the dark-on-light ones through the normal pass.
+    func testEachPolarityIsReadByItsOwnPass() throws {
+        let inverted = try manifest().filter { $0.kind == "inverted" && !$0.expectNone && $0.name != "inverted-two_markers" }
+        XCTAssertEqual(inverted.count, 7)
+        for e in inverted {
+            let found = try detections(e.name)
+            XCTAssertEqual(found.count, 1, e.name)
+            XCTAssertTrue(found.allSatisfy(\.inverted), e.name)
+        }
+        for name in ["range-RING140-1.2-0", "rotated_73", "glare", "two_markers"] {
+            XCTAssertFalse(try detections(name).contains { $0.inverted }, name)
+        }
+    }
+
+    /// The glare blob turns a cell falsely light: an "on" cell on a dark-on-light ARC, an "off" one on a
+    /// light-on-dark ARC. Either way the code corrects it.
+    func testGlareCostsACorrectionInBothPolarities() throws {
+        for name in ["glare", "inverted-glare"] {
+            let found = try detections(name)
+            XCTAssertEqual(found.count, 1, name)
+            XCTAssertGreaterThanOrEqual(found.first?.corrected ?? 0, 1, name)
+        }
+    }
+
+    /// One dark-on-light and one light-on-dark marker in the same frame: both are read, and neither is also
+    /// reported unreadable.
+    func testOneFrameReadsBothPolarities() throws {
+        let e = try entry("inverted-two_markers")
+        let normalId = e.markers[0].id, invertedId = e.markers[1].id
+        let f = frame(RingDetector(), e.image)
+        XCTAssertEqual(f.detections.count, 2, "\(hex(f.detections))")
+        XCTAssertEqual(Set(f.detections.map(\.id)), [normalId, invertedId])
+        XCTAssertEqual(f.detections.first { $0.id == normalId }?.inverted, false)
+        XCTAssertEqual(f.detections.first { $0.id == invertedId }?.inverted, true)
+        for u in f.unreadable {
+            XCTAssertFalse(f.detections.contains { hypot(u.cx - $0.cx, u.cy - $0.cy) < $0.semiMajor }, "\(u)")
+        }
+    }
+
+    /// The unreadable list never repeats a ring that was read, whichever pass read it and whichever pass saw
+    /// the unreadable candidate: none lies within a detection's finder radius.
+    func testUnreadableDoesNotDuplicateADetectedRing() throws {
+        for name in ["inverted-RING140-1.2-0", "inverted-two_markers", "range-RING170-0.6-0", "two_markers"] {
+            let e = try entry(name)
+            let f = frame(RingDetector(), e.image)
+            XCTAssertFalse(f.detections.isEmpty, name)
+            for u in f.unreadable {
+                XCTAssertFalse(f.detections.contains { hypot(u.cx - $0.cx, u.cy - $0.cy) < $0.semiMajor }, "\(name): \(u)")
+            }
+        }
+    }
+
+    func testADetectionFoundInBothPassesIsKeptOnce() {
+        func det(_ id: UInt32, _ cx: Double, _ semiMajor: Double, inverted: Bool) -> RingDetection {
+            RingDetection(id: id, version: 0, corrected: 0, cx: cx, cy: 100, semiMajor: semiMajor,
+                          semiMinor: semiMajor * 0.9, angleDeg: 0, rotationDeg: 0, inverted: inverted)
+        }
+        let a = det(1, 100, 30, inverted: false)
+        let b = det(1, 110, 20, inverted: true) // within the smaller finder radius of a: dropped
+        let c = det(1, 125, 20, inverted: true) // beyond it: kept
+        let other = det(2, 100, 30, inverted: true) // another id: kept
+        XCTAssertEqual(RingDetector.mergePolarities([a], [b, c, other]), [a, c, other])
     }
 
     // MARK: - image helpers

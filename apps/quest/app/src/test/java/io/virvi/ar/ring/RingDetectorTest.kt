@@ -68,7 +68,8 @@ class RingDetectorTest {
 
   @Test
   fun rotationReported() {
-    for ((name, want) in listOf("rotated_73" to 73.0, "rotated_180" to 180.0)) {
+    for ((name, want) in
+        listOf("rotated_73" to 73.0, "rotated_180" to 180.0, "inverted-rotated_73" to 73.0)) {
       val d = detections.getValue(name).single()
       val diff = ((d.rotationDeg - want + 180) % 360 + 360) % 360 - 180
       assertTrue("$name: ${d.rotationDeg}", kotlin.math.abs(diff) <= 2)
@@ -91,7 +92,8 @@ class RingDetectorTest {
             .sorted()
     val median = times[times.size / 2]
     println("RingDetector median over ${times.size} range images: %.2f ms".format(median))
-    assertTrue("median $median ms", median < 40.0)
+    // The budget covers two passes per frame: the normal one and the inverted (light-on-dark) one.
+    assertTrue("median $median ms", median < 60.0)
   }
 
   /**
@@ -247,6 +249,61 @@ class RingDetectorTest {
     }
   }
 
+  /**
+   * The light-on-dark cases read through the inverted pass, the dark-on-light ones through the
+   * normal pass.
+   */
+  @Test
+  fun eachPolarityIsReadByItsOwnPass() {
+    val inverted =
+        manifest.filter {
+          it.case == "inverted" && !it.expectNone && it.name != "inverted-two_markers"
+        }
+    assertEquals(7, inverted.size)
+    for (e in inverted) {
+      val d = detections.getValue(e.name).single()
+      assertTrue(e.name, d.inverted)
+    }
+    for (name in listOf("range-RING140-1.2-0", "rotated_73", "glare", "two_markers")) {
+      assertTrue(name, detections.getValue(name).none { it.inverted })
+    }
+  }
+
+  /**
+   * The glare blob turns a cell falsely light: an "on" cell on a dark-on-light ARC, an "off" one on
+   * a light-on-dark ARC. Either way the code corrects it.
+   */
+  @Test
+  fun glareCostsACorrectionInBothPolarities() {
+    for (name in listOf("glare", "inverted-glare")) {
+      val d = detections.getValue(name).single()
+      assertTrue("$name: corrected ${d.corrected}", d.corrected >= 1)
+    }
+  }
+
+  @Test
+  fun oneFrameReadsBothPolarities() {
+    val e = manifest.single { it.name == "inverted-two_markers" }
+    val (normalId, invertedId) = e.markers.map { it["id"]!!.jsonPrimitive.long }
+    val frame = RingDetector().detectFrame(e.image.gray, e.image.width, e.image.height)
+    assertEquals(setOf(normalId, invertedId), frame.detections.map { it.id }.toSet())
+    assertEquals(2, frame.detections.size)
+    assertTrue(!frame.detections.single { it.id == normalId }.inverted)
+    assertTrue(frame.detections.single { it.id == invertedId }.inverted)
+    for (u in frame.unreadable) {
+      assertTrue("$u", frame.detections.none { hypot(u.cx - it.cx, u.cy - it.cy) < it.semiMajor })
+    }
+  }
+
+  @Test
+  fun aDetectionFoundInBothPassesIsKeptOnce() {
+    val a = RingDetection(1, 0, 0, 100.0, 100.0, 30.0, 25.0, 0.0, 0.0)
+    val b = RingDetection(1, 0, 0, 110.0, 100.0, 20.0, 18.0, 0.0, 0.0, inverted = true)
+    val c = RingDetection(1, 0, 0, 125.0, 100.0, 20.0, 18.0, 0.0, 0.0, inverted = true)
+    val other = RingDetection(2, 0, 0, 100.0, 100.0, 30.0, 25.0, 0.0, 0.0, inverted = true)
+    assertEquals(listOf(a, c, other), RingDetector.mergePolarities(listOf(a), listOf(b, c, other)))
+  }
+
   private fun crop(img: TestsetImage, side: String, cut: Int): TestsetImage {
     val (x0, y0, x1, y1) =
         when (side) {
@@ -266,7 +323,7 @@ class RingDetectorTest {
 
     private val manifest: List<Entry> by lazy {
       val root = Json.parseToJsonElement(File(dir, "manifest.json").readText()).jsonArray
-      assertEquals(38, root.size)
+      assertEquals(47, root.size)
       root.map { v ->
         val o = v.jsonObject
         Entry(
