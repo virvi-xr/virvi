@@ -49,13 +49,12 @@ struct VirviARApp: App {
 
     var body: some SwiftUI.Scene {
         WindowGroup {
+            // SwiftUI hands universal links to `onOpenURL` too; one handler, so a link is looked up once.
             VisitorScreen(model: model)
                 .onOpenURL { model.open($0) }
-                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { a in
-                    if let url = a.webpageURL { model.open(url) }
-                }
         }
-        .onChange(of: phase) { _, p in
+        // `initial`: the phase may already be active when the scene appears. Starting twice is harmless.
+        .onChange(of: phase, initial: true) { _, p in
             switch p {
             case .active: model.driver.start()
             case .background:
@@ -72,6 +71,8 @@ struct VisitorScreen: View {
     let model: AppModel
     @State private var menuOpen = false
     @State private var occlusionOn = false
+    /// The menu's own height, so its sheet fits it.
+    @State private var menuHeight: CGFloat = 320
 
     var body: some View {
         let controller = model.controller
@@ -91,7 +92,9 @@ struct VisitorScreen: View {
         .sheet(isPresented: $menuOpen) {
             VisitorMenu(controller: controller, occlusionSupported: ArSessionDriver.supportsOcclusion,
                         occlusionOn: $occlusionOn) { menuOpen = false }
-                .presentationDetents([.height(320)])
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { menuHeight = $0 }
+                .presentationDetents([.height(menuHeight)])
         }
         .onChange(of: occlusionOn) { _, on in model.driver.setOcclusion(on) }
         .onChange(of: controller.menuButtonShown) { _, shown in if !shown { menuOpen = false } }
