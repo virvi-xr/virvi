@@ -21,7 +21,7 @@ import { approvePlan, proposeCard, recordDirect, undoAction } from '../src/assis
 import { destinationName, nextStep } from '../src/assistant/tools/deploy.js'
 import { routeError } from '../src/assistant/tools/http.js'
 import { LABEL_TEXT_MAX, STUDIO_PAUSED, STUDIO_REFUSALS } from '../src/assistant/tools/studio.js'
-import { dclWorldDestinations, sceneDeployments, assistantActions, assistantShows, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults, users } from '../src/db/schema.js'
+import { userAuthMethods, dclWorldDestinations, sceneDeployments, assistantActions, assistantShows, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults, users } from '../src/db/schema.js'
 import { RAFFLE_HOST_TERMS, fillRules } from '@virvixr/shared'
 import { RAFFLE_RULES_INCLUDED, RAFFLE_SEND_WEARABLE, cardTime } from '../src/assistant/tools/shows-tools.js'
 import { setImageSizeReader } from '../src/beats/image.js'
@@ -817,7 +817,7 @@ describe('assistant event, raffle and BEAT tools', () => {
         return row
       }
       // The owner's verified wallet, so the deploy route's own owner check passes
-      await db.insert((await import('../src/db/schema.js')).userAuthMethods).values({ userId: owner.id, type: 'wallet', identifier: WALLET, metadata: { verified: true } })
+      await db.insert(userAuthMethods).values({ userId: owner.id, type: 'wallet', identifier: WALLET, metadata: { verified: true } })
     })
     afterEach(() => setWorldsClient(null))
 
@@ -870,7 +870,7 @@ describe('assistant event, raffle and BEAT tools', () => {
       })
     })
 
-    it('reports a named destination switched to signing since the card, and fails only when every deploy failed', async () => {
+    it('reports a named destination switched to signing since the card', async () => {
       const w1 = await dest({ worldName: 'sun.dcl.eth' })
       const w2 = await dest({ worldName: 'moon.dcl.eth', base: '5,5', parcels: ['5,5'] })
       const card = await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [w1.id, w2.id] })
@@ -879,7 +879,28 @@ describe('assistant event, raffle and BEAT tools', () => {
       expect(await approvePlan(ctx, card.planId, card.token, () => {})).toMatchObject({ done: 1 })
       const [row] = await db.select().from(assistantActions)
       expect(JSON.parse(row.resultSummary!)).toMatchObject({ failed: [], toSign: [{ destinationId: w2.id, name: 'World "moon.dcl.eth"' }] })
+      expect((await db.select().from(sceneDeployments)).map((r) => r.destinationId)).toEqual([w1.id])
+    })
 
+    it('a destination removed since the card is reported and the rest still deploy', async () => {
+      const w1 = await dest({ worldName: 'sun.dcl.eth' })
+      const w2 = await dest({ worldName: 'moon.dcl.eth', base: '5,5', parcels: ['5,5'] })
+      const card = await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [w1.id, w2.id] })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      await db.delete(dclWorldDestinations).where(eq(dclWorldDestinations.id, w1.id))
+      expect(await approvePlan(ctx, card.planId, card.token, () => {})).toMatchObject({ done: 1, failed: null })
+      const [row] = await db.select().from(assistantActions)
+      const [dep] = await db.select().from(sceneDeployments)
+      expect(dep.destinationId).toBe(w2.id)
+      expect(JSON.parse(row.resultSummary!)).toMatchObject({
+        deployed: [{ destinationId: w2.id, deploymentId: dep.id }],
+        failed: [{ destinationId: w1.id, error: "That destination wasn't found." }],
+        toSign: [],
+      })
+    })
+
+    it('fails only when every deploy failed', async () => {
+      const w1 = await dest({ worldName: 'sun.dcl.eth' })
       deployer.start = async () => {
         throw new DeployerError(409, 'deploy_in_progress', 'A deploy is already running.')
       }

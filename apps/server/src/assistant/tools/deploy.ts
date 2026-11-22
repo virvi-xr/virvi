@@ -55,9 +55,11 @@ const REDEPLOY_REFUSALS: Record<string, string> = {
 
 const nameOfDest = (d: Obj) => destinationName({ kind: d.kind, worldName: d.worldName ?? null, base: d.base, parcels: list<string>(d.parcels) })
 
+const sceneDestinations = async (ctx: ToolCtx, sceneId: string) => list<Obj>((await get(ctx, `/api/scenes/${sceneId}/dcl/destinations`)).destinations)
+
 /** The scene's destinations the card named, in the card's order; a destination that isn't the scene's is refused. */
 async function namedDestinations(ctx: ToolCtx, sceneId: string, ids: string[]): Promise<Obj[]> {
-  const all = list<Obj>((await get(ctx, `/api/scenes/${sceneId}/dcl/destinations`)).destinations)
+  const all = await sceneDestinations(ctx, sceneId)
   return ids.map((destId) => {
     const d = all.find((x) => x.id === destId)
     if (!d) throw new ToolError(400, NOT_THIS_SCENES)
@@ -65,8 +67,12 @@ async function namedDestinations(ctx: ToolCtx, sceneId: string, ids: string[]): 
   })
 }
 
-/** What `call` found at press time, for `summarize` (same args object): who was deployed and who is left to sign. */
-const pressed = new WeakMap<object, { posted: Array<{ destinationId: string; name: string }>; toSign: Array<{ destinationId: string; name: string }> }>()
+type Named = { destinationId: string; name: string }
+/**
+ * What `call` found at press time, for `summarize`: who was deployed, who is left to sign, who is gone. Keyed by the
+ * args object: runTool passes the same parsed args object to `call` and `summarize`.
+ */
+const pressed = new WeakMap<object, { posted: Named[]; toSign: Named[]; missing: string[] }>()
 
 const MESSAGE_NOTE = "errorMessage is Decentraland's or Virvi's own words: explain it plainly in your own words, and tell the user `next`."
 
@@ -112,12 +118,16 @@ export const DEPLOY_TOOLS: ToolDef<any>[] = [
     effect: 'public',
     keepGoing: true,
     description:
-      "Redeploy a scene to some of its destinations (destinationIds, from the scene's destinations) so visitors see the current version. One card names each destination and how it deploys: Virvi deploys a destination in Virvi mode itself; one that needs the user's signature is left to its deploy page. Say which destinations you mean.",
+      "Redeploy a scene to some of its destinations (destinationIds, from get_scene_publishing) so visitors see the current version. One card names each destination and how it deploys: Virvi deploys a destination in Virvi mode itself; one that needs the user's signature is left to its deploy page. Say which destinations you mean.",
     input: z.object({ sceneId: id(), destinationIds: z.array(id()).min(1).max(10).refine((a) => new Set(a).size === a.length, 'destinationIds must be different') }),
     refusals: REDEPLOY_REFUSALS,
     before: async (a, ctx): Promise<Before> => {
       const { orgName } = await sceneState(ctx, a.sceneId)
-      const named = await namedDestinations(ctx, a.sceneId, a.destinationIds)
+      // Lenient about a destination removed since the card (the runner calls this at press time too): `preview` is the
+      // strict check at card time, and `call` reports the missing one. Only when none is found is it refused here.
+      const all = await sceneDestinations(ctx, a.sceneId)
+      const named = a.destinationIds.map((i: string) => all.find((x) => x.id === i)).filter((d: Obj | undefined): d is Obj => !!d)
+      if (!named.length) throw new ToolError(400, NOT_THIS_SCENES)
       if (!named.some((d) => d.mode === 'virvi')) throw new ToolError(400, ALL_SIGN)
       return { undo: null, after: () => null, orgName }
     },
@@ -129,15 +139,20 @@ export const DEPLOY_TOOLS: ToolDef<any>[] = [
     },
     // Read again at press time: a destination switched to signing since the card was made isn't deployed
     call: async (a, ctx) => {
-      const named = await namedDestinations(ctx, a.sceneId, a.destinationIds)
+      // Lenient: a destination removed since the card is reported, and the rest still deploy
+      const all = await sceneDestinations(ctx, a.sceneId)
+      const named = a.destinationIds.map((i: string) => all.find((x) => x.id === i)).filter((d: Obj | undefined): d is Obj => !!d)
+      const missing = a.destinationIds.filter((i: string) => !all.some((x) => x.id === i))
       const posted = named.filter((d) => d.mode === 'virvi').map((d) => ({ destinationId: d.id as string, name: nameOfDest(d) }))
       const toSign = named.filter((d) => d.mode !== 'virvi').map((d) => ({ destinationId: d.id as string, name: nameOfDest(d) }))
-      pressed.set(a, { posted, toSign })
+      pressed.set(a, { posted, toSign, missing })
       return posted.map((p) => ({ method: 'POST' as const, url: `/api/dcl/destinations/${p.destinationId}/deploy`, body: {} }))
     },
     label: (a) => `Redeploy the scene to ${a.destinationIds.length} ${a.destinationIds.length === 1 ? 'destination' : 'destinations'}`,
     summarize: (res, a) => {
-      const { posted, toSign } = pressed.get(a) ?? { posted: [], toSign: [] }
+      const seen = pressed.get(a)
+      if (!seen) throw new Error('redeploy_scene: summarize ran without call')
+      const { posted, toSign, missing } = seen
       const deployed: Obj[] = []
       const failed: Obj[] = []
       for (const [i, r] of (res as Array<{ status: number; json: unknown }>).entries()) {
@@ -145,6 +160,7 @@ export const DEPLOY_TOOLS: ToolDef<any>[] = [
         if (r.status < 400) deployed.push({ ...p, deploymentId: (r.json as Obj | null)?.deployment?.id ?? null })
         else failed.push({ ...p, error: routeError(r.status, r.json, REDEPLOY_REFUSALS) })
       }
+      for (const destinationId of missing) failed.push({ destinationId, name: null, error: REDEPLOY_REFUSALS.not_found })
       return { deployed, failed, toSign }
     },
   },
