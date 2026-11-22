@@ -174,6 +174,21 @@ describe('assistant tools: authorization is the route\'s own', () => {
     expect(await snapshot(app, f)).toEqual(before)
   })
 
+  it("B's image in A's own BEAT draft, and B's scene linked to A's own event, are refused", async () => {
+    const before = await snapshot(app, f)
+    const ctx = ctxFor(app, f.a)
+    const beat = await runTool(ctx, 'create_beat_draft', { name: 'A beat', startsAt: new Date(Date.now() + 5 * 3600_000).toISOString(), endsAt: new Date(Date.now() + 6 * 3600_000).toISOString(), sceneIds: [f.aScene.id], imageMediaId: f.media.id })
+    // The route's own refusal: the same words as for an image that doesn't exist, so nothing about B's leaks
+    expect(beat).toMatchObject({ ok: false, status: 400, error: 'Pick an image from your library.' })
+    expect(await db.select().from(beats)).toHaveLength(1)
+    const [aEvent] = await db.insert(events).values({ ownerId: f.a.id, name: 'A event', startTime: new Date(Date.now() + 3600_000), endTime: new Date(Date.now() + 2 * 3600_000) }).returning()
+    const link = await runTool(ctx, 'link_event_scene', { eventId: aEvent.id, sceneId: f.scene.id })
+    expect(link.ok).toBe(false)
+    expect([403, 404], `link_event_scene gave ${link.status}`).toContain(link.status)
+    expect(await db.select().from(eventSceneLinks)).toEqual([expect.objectContaining({ eventId: f.event.id, sceneId: f.scene.id })])
+    expect(await snapshot(app, f)).toEqual(before)
+  })
+
   it("B's raffle attached to A's own show is refused", async () => {
     const before = await snapshot(app, f)
     const r = await runTool(ctxFor(app, f.a), 'attach_to_show', { showId: f.aShow.id, itemId: f.aShow.items[0].id, ref: { raffleId: f.raffle.id } })

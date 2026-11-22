@@ -135,6 +135,7 @@ export async function messageViews(conversationId: string, userId: string, self:
         const link = i === -1 ? null : storedLink(turnLinks.splice(i, 1)[0].resultSummary)
         if (link) reply.links.push({ label: shown(link.label), href: link.href, ...(link.detail ? { detail: shown(link.detail) } : {}) })
       } else if (b.name && Object.hasOwn(TOOLS, b.name) && TOOLS[b.name].effect === 'paid') {
+        // Paid only, on purpose: a public card (a raffle, a prize) spends no Studio prompts, so it never needs this link
         const answer = b.id ? answers.get(b.id) : undefined
         if (answer?.is_error && typeof answer.content === 'string' && answer.content.includes(noPrompts)) {
           reply.links.push({ ...BUY_PROMPTS, detail: NO_PROMPTS })

@@ -1,6 +1,6 @@
 // Virvi Assistant shows (phase 2b): a user's saved checklists, one per event. Only ever the caller's own: another
 // user's show id is 404 on every route. Item states are computed on each read (assistant/shows.ts).
-import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { and, desc, eq, isNull } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
@@ -8,7 +8,8 @@ import { SHOW_ITEM_KINDS, type ShowItem, type ShowItemRef, type ShowView } from 
 import { db } from '../db/connection.js'
 import { assistantShows } from '../db/schema.js'
 import { authenticate } from '../middleware/auth.js'
-import { guard } from './assistant.js'
+import { guard, SESSION_ONLY } from './assistant.js'
+import { assistantAccess } from '../assistant/access.js'
 import { isUuid, ownConversation } from '../assistant/conversations.js'
 import { NOT_YOURS, REF_KEYS, SHOW_ITEMS_MAX, WEARABLE_EXAMPLE, computeShow, mayAttach, ownShow, parseWearable, showOrgId } from '../assistant/shows.js'
 
@@ -26,11 +27,21 @@ const SHOW_NOT_FOUND = { error: 'not_found', message: 'Show not found.' }
 const bad = (reply: FastifyReply, message: string) => reply.status(400).send({ error: 'invalid_body', message })
 const issues = (e: z.ZodError) => e.issues.map((i) => (i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ')
 
-export default async function assistantShowRoutes(app: FastifyInstance) {
-  // The same access as the conversations: an account session with the assistant available to it
-  const auth = { preHandler: [authenticate, guard] }
+/**
+ * Reading shows: the user's own checklist stays readable after a downgrade or a lock, while a payment or a wearable may
+ * still be pending (as Undo and the activity list stay). An API key is still 403 and a hidden assistant 404.
+ */
+async function readGuard(request: FastifyRequest, reply: FastifyReply) {
+  if (request.user.viaApiKey) return reply.status(403).send(SESSION_ONLY)
+  if ((await assistantAccess(request.user)).state === 'hidden') return reply.status(404).send({ error: 'assistant_unavailable' })
+}
 
-  app.get<{ Querystring: { eventId?: string } }>('/api/assistant/shows', auth, async (request, reply) => {
+export default async function assistantShowRoutes(app: FastifyInstance) {
+  // Changes take the same access as the conversations: an account session with the assistant available to it
+  const auth = { preHandler: [authenticate, guard] }
+  const readAuth = { preHandler: [authenticate, readGuard] }
+
+  app.get<{ Querystring: { eventId?: string } }>('/api/assistant/shows', readAuth, async (request, reply) => {
     const { eventId } = request.query
     if (eventId !== undefined && !isUuid(eventId)) return bad(reply, 'eventId must be an id.')
     const rows = await db.select().from(assistantShows)
@@ -41,7 +52,7 @@ export default async function assistantShowRoutes(app: FastifyInstance) {
     return { shows }
   })
 
-  app.get<{ Params: { showId: string } }>('/api/assistant/shows/:showId', auth, async (request, reply) => {
+  app.get<{ Params: { showId: string } }>('/api/assistant/shows/:showId', readAuth, async (request, reply) => {
     const show = await ownShow(request.user.id, request.params.showId)
     if (!show) return reply.status(404).send(SHOW_NOT_FOUND)
     return computeShow(request, show)

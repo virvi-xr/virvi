@@ -7,12 +7,13 @@ vi.mock('../src/errors/record.js', async (orig) => ({ ...(await orig<typeof impo
 
 import { recordJobFailure } from '../src/errors/record.js'
 import { db } from '../src/db/connection.js'
-import { assistantActions, assistantConversations, assistantMessages, assistantUsage, organizations, orgMembers, scenes } from '../src/db/schema.js'
+import { assistantActions, assistantConversations, assistantMessages, assistantShows, assistantUsage, events as eventsTable, organizations, orgMembers, raffles, scenes } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { z } from 'zod'
 import { APPROVAL_WRITE, CUT_OFF, REFUSED, runTurn, SECOND_WRITE, type TurnOptions } from '../src/assistant/loop.js'
 import { INVALID_TOOL_JSON, setAssistantFetch, setAssistantModel, type ModelParams, type ModelResult } from '../src/assistant/model.js'
 import { recordAssistantUsage } from '../src/assistant/access.js'
+import { approvePlan } from '../src/assistant/actions.js'
 import { callCostUsd } from '../src/assistant/pricing.js'
 import { TOOLS } from '../src/assistant/tools/index.js'
 import { ToolError, type ToolCtx, type ToolDef } from '../src/assistant/tools/types.js'
@@ -446,6 +447,66 @@ describe('assistant turn loop', () => {
     expect(await writeRows()).toHaveLength(0)
   })
 
+  describe('filling a show in as things are made', () => {
+    const raffleItem = crypto.randomUUID()
+    const eventItem = crypto.randomUUID()
+    const newShow = async () => (await db.insert(assistantShows).values({
+      userId: owner.id, title: 'Friday', items: [{ id: eventItem, kind: 'event', label: 'Event', ref: {} }, { id: raffleItem, kind: 'raffle', label: 'Raffle', ref: {} }],
+    }).returning())[0]
+    const refsOf = async (showId: string) => (await db.select().from(assistantShows).where(eq(assistantShows.id, showId)))[0].items.map((i) => i.ref)
+
+    it('attaches in the approval continuation after a card is confirmed, and that is not a change the user has not seen', async () => {
+      const show = await newShow()
+      script([tool('create_raffle', { sceneId, name: 'Friday raffle', prize: 'A cap', winnersCount: 1, mode: 'one_per_person', showId: show.id }), text('Confirm it above.')])
+      const first = await turn('Make the raffle for the show')
+      const card = first.find((e): e is Extract<AssistantStreamEvent, { type: 'plan' }> => e.type === 'plan')!.plan
+      expect(await approvePlan(ctx, card.planId, card.token, () => {})).toMatchObject({ done: 1, failed: null })
+      const [raffle] = await db.select().from(raffles)
+
+      // Two attaches run; any other write is still refused there
+      const inputs = script([
+        tools(['attach_to_show', { showId: show.id, itemId: raffleItem, ref: { raffleId: raffle.id } }], ['update_scene', { sceneId, name: 'Sneaky' }]),
+        text('Attached.'),
+      ])
+      const events = await turn('(The user approved the plan. Results follow.)', undefined, { approval: true })
+      const results = lastResults(inputs[1])
+      expect(results[0].is_error).toBeUndefined()
+      expect(results[1].content).toContain(APPROVAL_WRITE)
+      expect(await sceneName()).toBe('Old Lounge')
+      expect(await refsOf(show.id)).toEqual([{}, { raffleId: raffle.id }])
+      const actions = events.filter((e): e is Extract<AssistantStreamEvent, { type: 'action' }> => e.type === 'action')
+      expect(actions.map((a) => [a.action.tool, a.action.status, a.action.canUndo])).toEqual([['attach_to_show', 'done', true]])
+    })
+
+    it('attaches in the approval continuation after a plan runs', async () => {
+      const show = await newShow()
+      const [ev] = await db.insert(eventsTable).values({ ownerId: owner.id, name: 'Friday', startTime: new Date('2031-01-01T20:00:00Z'), endTime: new Date('2031-01-01T22:00:00Z') }).returning()
+      const inputs = script([
+        tools(['attach_to_show', { showId: show.id, itemId: eventItem, ref: { eventId: ev.id } }], ['attach_to_show', { showId: show.id, itemId: raffleItem, ref: {} }]),
+        text('Done.'),
+      ])
+      await turn('(The user approved the plan. Results follow.)', undefined, { approval: true })
+      expect(lastResults(inputs[1]).map((r: any) => r.is_error)).toEqual([undefined, undefined])
+      expect(await refsOf(show.id)).toEqual([{ eventId: ev.id }, {}])
+    })
+
+    it("attaching in the same turn as a direct change doesn't use up the turn's one change", async () => {
+      const show = await newShow()
+      const [ev] = await db.insert(eventsTable).values({ ownerId: owner.id, name: 'Friday', startTime: new Date('2031-01-01T20:00:00Z'), endTime: new Date('2031-01-01T22:00:00Z') }).returning()
+      const inputs = script([
+        tools(['attach_to_show', { showId: show.id, itemId: eventItem, ref: { eventId: ev.id } }], ['update_scene', { sceneId, name: 'First' }], ['update_scene', { sceneId, name: 'Second' }]),
+        text('Done.'),
+      ])
+      await turn('Attach the event and rename')
+      const results = lastResults(inputs[1])
+      expect(results[0].is_error).toBeUndefined()
+      expect(results[1].is_error).toBeUndefined()
+      expect(results[2].content).toContain(SECOND_WRITE)
+      expect(await sceneName()).toBe('First')
+      expect(await refsOf(show.id)).toEqual([{ eventId: ev.id }, {}])
+    })
+  })
+
   it('reports nothing when the model call fails because the browser went away', async () => {
     const controller = new AbortController()
     script([() => { controller.abort(); throw new Error('Request was aborted.') }])
@@ -683,9 +744,17 @@ describe('assistant turn loop', () => {
     }
   })
 
-  it('tells the model raffles accept the host terms only through their card, that it never pays for a BEAT, and to start a show with start_show', () => {
+  it('tells the model raffles accept the host terms only through their card, that it never pays for a BEAT, and to look for a show before starting one', () => {
     expect(RULES).toContain('Raffles: creating one accepts the host terms on the user\'s behalf only through its card.')
     expect(RULES).toContain('Pay for a BEAT with open_beat_pay; you never pay.')
-    expect(RULES).toContain('For a show, call start_show first (see its description).')
+    expect(RULES).toContain('To set up a show, first check list_shows (with eventId when known); call start_show only when there is none. To pick a show up, use list_shows then get_show. If the event has several scenes, ask which one holds the raffle.')
+    expect(RULES).not.toContain('call start_show first')
+  })
+
+  it('tells the model to attach each thing to the show as soon as it is made, and to offer the prize change after a wearable paste', () => {
+    const attachNow = 'attach each thing to the show as soon as its result comes back, including right after a card is confirmed or a plan runs'
+    expect(TOOLS.start_show.description).toContain(attachNow)
+    expect(TOOLS.attach_to_show.description.toLowerCase()).toContain(attachNow)
+    expect(TOOLS.attach_to_show.description).toContain('After a wearable_published paste, offer update_raffle_prize')
   })
 })

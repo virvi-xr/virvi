@@ -25,9 +25,14 @@ const AFTER_PLAN = 'Not run: wait for the user to approve the plan.'
 export const APPROVAL_WRITE = 'Ask the user before making more changes.'
 export const CUT_OFF = 'The reply was cut off. Try again, or ask for less at once.'
 export const REFUSED = "The assistant can't help with that request. Try asking differently."
+/**
+ * Writes that only keep the user's own show checklist up to date: private, undoable, and never the turn's one direct
+ * change, so a show is filled in as things are made, including in the approval continuation.
+ */
+export const BOOKKEEPING_TOOLS: ReadonlySet<string> = new Set(['attach_to_show'])
 
 export interface TurnOptions {
-  /** The continuation after a plan's approval: it reports results, and makes no change the user hasn't seen. */
+  /** The continuation after a plan's approval: it reports results, and makes no change the user hasn't seen (bar BOOKKEEPING_TOOLS). */
   approval?: boolean
 }
 
@@ -187,6 +192,7 @@ export async function runTurn(
 
         const def = Object.hasOwn(TOOLS, use.name) ? TOOLS[use.name] : undefined
         const isWrite = def?.effect === 'write'
+        const bookkeeping = isWrite && BOOKKEEPING_TOOLS.has(use.name)
         if (def && needsCard(def.effect)) {
           // A paid or public call is its own confirmation card: never run here, never the turn's one direct write
           if (opts.approval) { reply({ error: APPROVAL_WRITE }, true); continue }
@@ -202,12 +208,12 @@ export async function runTurn(
           reply({ shown_to_user: true, waiting_for: 'the user to confirm' })
           continue
         }
-        if (isWrite && opts.approval) { reply({ error: APPROVAL_WRITE }, true); continue }
-        if (isWrite && wrote) { reply({ error: SECOND_WRITE }, true); continue }
+        if (isWrite && !bookkeeping && opts.approval) { reply({ error: APPROVAL_WRITE }, true); continue }
+        if (isWrite && !bookkeeping && wrote) { reply({ error: SECOND_WRITE }, true); continue }
         const { action, result: r } = await runAndRecord(ctx, conversationId, use.name, use.input)
         if (isWrite) {
           // Only a change that happened counts: a refused write changed nothing
-          if (r.ok) wrote = true
+          if (r.ok && !bookkeeping) wrote = true
           emit({ type: 'action', action })
         }
         if (r.ok && (use.name === 'open_page' || Object.hasOwn(LINK_TOOLS, use.name))) {

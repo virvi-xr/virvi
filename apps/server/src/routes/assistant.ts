@@ -38,7 +38,7 @@ function publicAccess(a: AssistantAccessResult): AssistantAccess {
   return { state: 'hidden' }
 }
 
-const SESSION_ONLY = { error: 'assistant_session_only', message: 'The assistant works only when you are signed in to the dashboard.' }
+export const SESSION_ONLY = { error: 'assistant_session_only', message: 'The assistant works only when you are signed in to the dashboard.' }
 const APPROVE_ERRORS = {
   invalid_token: { status: 403, message: "This approval isn't valid. Ask the assistant to propose the plan again." },
   expired: { status: 410, message: 'This plan expired. Ask again to get a fresh one.' },
@@ -51,7 +51,7 @@ const CARD_APPROVE_ERRORS = {
   used: { status: 409, message: 'This was already sent.' },
 } as const
 
-/** Every route but /status (and the show routes, routes/assistant-shows.ts): an API key is 403, hidden is 404, locked is 403. */
+/** Every route but /status, Undo and the activity list, and the show routes' changes (not their reads, routes/assistant-shows.ts): an API key is 403, hidden is 404, locked is 403. */
 export async function guard(request: FastifyRequest, reply: FastifyReply) {
   if (request.user.viaApiKey) return reply.status(403).send(SESSION_ONLY)
   const a = await assistantAccess(request.user)

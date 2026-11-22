@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { eq } from 'drizzle-orm'
+import { createHash } from 'node:crypto'
 import type { ShowItemKind, ShowView } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
-import { assistantConversations, assistantShows, beats, beatScenes, eventSceneLinks, events, mediaAssets, raffles, scenes, screenShowings, studioDesigns, studioJobs } from '../src/db/schema.js'
+import { apiKeys, assistantConversations, assistantShows, beats, beatScenes, eventSceneLinks, events, mediaAssets, raffles, scenes, screenShowings, studioDesigns, studioJobs } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { runTool } from '../src/assistant/tools/run.js'
 import { recordDirect, undoAction } from '../src/assistant/actions.js'
@@ -446,6 +447,30 @@ describe('assistant shows', () => {
     it('uses the assistant\'s own access: off means 404', async () => {
       set('assistantEnabled', false)
       expect((await call(owner, 'GET', '/api/assistant/shows')).status).toBe(404)
+    })
+
+    it('a locked account still reads its shows (a payment may be pending) but changes none; hidden is 404', async () => {
+      const s = await everything()
+      set('billingEnabled', true) // a free account now: locked
+      expect((await call(owner, 'GET', '/api/assistant/shows')).json.shows.map((x: ShowView) => x.id)).toEqual([s.id])
+      expect((await show(s.id)).id).toBe(s.id)
+      expect(await call(owner, 'POST', '/api/assistant/shows', { title: 'x', items: [{ kind: 'raffle', label: 'x' }] })).toEqual({ status: 403, json: { error: 'assistant_locked', reason: 'plan' } })
+      expect((await attach(s, 'raffle', { ref: {} })).status).toBe(403)
+      expect((await call(owner, 'POST', `/api/assistant/shows/${s.id}/close`)).status).toBe(403)
+      set('assistantAudience', 'admins') // hidden
+      expect((await call(owner, 'GET', `/api/assistant/shows/${s.id}`)).status).toBe(404)
+      expect((await call(owner, 'GET', '/api/assistant/shows')).status).toBe(404)
+    })
+
+    it('an API key reads no shows', async () => {
+      const s = await everything()
+      const key = 'virvi_' + 'c'.repeat(40)
+      await db.insert(apiKeys).values({ userId: owner.id, name: 't', keyHash: createHash('sha256').update(key).digest('hex'), keyPrefix: key.slice(0, 8) } as any)
+      for (const url of ['/api/assistant/shows', `/api/assistant/shows/${s.id}`]) {
+        const res = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${key}` } })
+        expect(res.statusCode, url).toBe(403)
+        expect(res.json().error).toBe('assistant_session_only')
+      }
     })
   })
 
