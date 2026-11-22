@@ -127,7 +127,7 @@ const SHOW_TOOLS: ToolDef<any>[] = [
   {
     name: 'attach_to_show',
     description:
-      "Attach what was made to a show's item, by its id (ref): eventId for event, sceneId for scene_link, showingId, raffleId (raffle, raffle_scheduled), beatId (beat, beat_paid), designId (wearable_design). An empty ref clears it. For wearable_published, wearable is the Marketplace link the user pasted (or { contract, itemId }); null clears it. raffle_scheduled and beat_paid read the show's raffle and BEAT when given none.",
+      "Attach what was made to a show's item, by its id (ref): eventId for event, sceneId for scene_link (linked to the show's event), showingId for showing, raffleId for raffle, beatId for beat, designId for wearable_design. An empty ref clears it. raffle_scheduled and beat_paid take nothing: they follow the show's raffle and BEAT. For wearable_published, wearable is the Marketplace link the user pasted (or { contract, itemId }); null clears it.",
     input: z
       .object({ showId: id(), itemId: id(), ref: refArgs.optional(), wearable: wearableArg.optional() })
       .refine((a) => a.ref !== undefined || a.wearable !== undefined, 'Give a ref or a wearable.'),

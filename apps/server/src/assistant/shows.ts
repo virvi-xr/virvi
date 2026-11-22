@@ -5,6 +5,7 @@ import type { FastifyRequest } from 'fastify'
 import { and, eq, inArray } from 'drizzle-orm'
 import type { ShowItem, ShowItemKind, ShowItemRef, ShowItemState, ShowItemView, ShowView, ShowWearable } from '@virvixr/shared'
 import { db } from '../db/connection.js'
+import { config } from '../config.js'
 import { assistantShows, eventSceneLinks, events, studioJobs, users } from '../db/schema.js'
 import { actorFromClaims } from '../auth/actor.js'
 import { getSceneAccess, isFullAccess } from '../auth/permissions.js'
@@ -30,17 +31,22 @@ export const DELETED = 'This was deleted.'
 export const WAITING_FOR_PAYMENT = 'Waiting for payment.'
 export const PUBLISH_THEN_PASTE = 'Publish it on Decentraland, then paste its Marketplace link.'
 export const NOT_YOURS = "That isn't yours, or it's gone."
+export const RAFFLE_CANCELLED = 'This raffle was cancelled.'
+export const BEAT_CANCELLED = 'This BEAT was cancelled.'
 export const WEARABLE_EXAMPLE = "Paste the wearable's Marketplace link, like https://decentraland.org/marketplace/contracts/0x…/items/0."
 
-/** The ref key each kind of item takes (scene_link also takes the event, else it uses the show's). */
+/**
+ * The ref key each kind of item takes. The followers take none of their own: raffle_scheduled and beat_paid always read
+ * the show's raffle and BEAT items, and scene_link's event is always the show's event.
+ */
 export const REF_KEYS: Record<ShowItemKind, ReadonlyArray<keyof ShowItemRef>> = {
   event: ['eventId'],
-  scene_link: ['sceneId', 'eventId'],
+  scene_link: ['sceneId'],
   showing: ['showingId'],
   raffle: ['raffleId'],
-  raffle_scheduled: ['raffleId'],
+  raffle_scheduled: [],
   beat: ['beatId'],
-  beat_paid: ['beatId'],
+  beat_paid: [],
   wearable_design: ['designId'],
   wearable_published: [],
 }
@@ -109,8 +115,9 @@ async function seenRaffle(user: AuthUser, id: string): Promise<Seen<RaffleRow>> 
   return row && (await mayRunRaffles(user, row.sceneId)) ? row : null
 }
 
-/** The BEAT, when the user may read it (GET /api/beats/:beatId). */
+/** The BEAT, when the user may read it (GET /api/beats/:beatId, which is 404 while BEATs are off). */
 async function seenBeat(request: FastifyRequest, id: string): Promise<Seen<{ status: string }>> {
+  if (!config.beats.enabled) return null
   try {
     return await getBeat(await beatCaller(request), id)
   } catch (e) {
@@ -119,10 +126,11 @@ async function seenBeat(request: FastifyRequest, id: string): Promise<Seen<{ sta
   }
 }
 
-/** The design, when the user may see it (GET /api/studio/designs/:id). */
+/** The design, when the user may see it (GET /api/studio/designs/:id, which is 404 while Studio is off). */
 async function seenDesign(request: FastifyRequest, id: string): Promise<boolean> {
-  const a = await designAccessTo(request, id, { need: 'view', allowAdmin: true })
-  return !!a && a !== 'viewer'
+  if (!config.studioEnabled) return false
+  // `need: 'view'` never answers VIEWER (that is a work route's refusal): a design or null
+  return !!(await designAccessTo(request, id, { need: 'view', allowAdmin: true }))
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -148,8 +156,9 @@ const done: State = { state: 'done', note: null }
 const todo: State = { state: 'todo', note: null }
 const waiting = (note: string | null = null): State => ({ state: 'waiting', note })
 const skipped: State = { state: 'skipped', note: DELETED }
+const cancelled = (note: string): State => ({ state: 'skipped', note })
 
-/** The show's first item of a kind's ref value: raffle_scheduled and beat_paid read the show's raffle and BEAT by default. */
+/** The show's first item of a kind's ref value: raffle_scheduled and beat_paid read the show's raffle and BEAT. */
 const shared = (items: ShowItem[], kind: ShowItemKind, key: keyof ShowItemRef) => items.find((i) => i.kind === kind && i.ref?.[key])?.ref[key]
 
 async function stateOf(request: FastifyRequest, show: ShowRow, item: ShowItem): Promise<State> {
@@ -162,34 +171,40 @@ async function stateOf(request: FastifyRequest, show: ShowRow, item: ShowItem): 
     case 'scene_link': {
       if (!ref.sceneId) return todo
       if (!(await seenScene(user, ref.sceneId))) return skipped
-      const eventId = ref.eventId ?? show.eventId
-      if (!eventId) return todo
-      if (!(await seenEvent(user, eventId))) return ref.eventId ? skipped : todo
-      const [link] = await db.select().from(eventSceneLinks).where(and(eq(eventSceneLinks.eventId, eventId), eq(eventSceneLinks.sceneId, ref.sceneId)))
+      // Linked to the show's event: none yet (or it's gone, which the event item shows) is still to do
+      if (!show.eventId || !(await seenEvent(user, show.eventId))) return todo
+      const [link] = await db.select().from(eventSceneLinks).where(and(eq(eventSceneLinks.eventId, show.eventId), eq(eventSceneLinks.sceneId, ref.sceneId)))
       return link ? done : todo
     }
     case 'showing':
       if (!ref.showingId) return todo
       return (await seenShowing(user, ref.showingId)) ? done : skipped
-    case 'raffle':
+    case 'raffle': {
       if (!ref.raffleId) return todo
-      return (await seenRaffle(user, ref.raffleId)) ? done : skipped
+      const r = await seenRaffle(user, ref.raffleId)
+      if (!r) return skipped
+      return r.status === 'cancelled' ? cancelled(RAFFLE_CANCELLED) : done
+    }
     case 'raffle_scheduled': {
-      const id = ref.raffleId ?? shared(show.items, 'raffle', 'raffleId')
+      const id = shared(show.items, 'raffle', 'raffleId')
       if (!id) return todo
       const r = await seenRaffle(user, id)
       if (!r) return skipped
+      // A cancelled draft keeps its opens_at: cancelled comes first
+      if (r.status === 'cancelled') return cancelled(RAFFLE_CANCELLED)
       return r.opensAt || ['open', 'drawn', 'closed'].includes(r.status) ? done : waiting(r.openError ?? null)
     }
     case 'beat':
       if (!ref.beatId) return todo
       return (await seenBeat(request, ref.beatId)) ? done : skipped
     case 'beat_paid': {
-      const id = ref.beatId ?? shared(show.items, 'beat', 'beatId')
+      const id = shared(show.items, 'beat', 'beatId')
       if (!id) return todo
       const b = await seenBeat(request, id)
       if (!b) return skipped
-      return b.status !== 'draft' ? done : waiting(WAITING_FOR_PAYMENT)
+      // A draft never paid for, or a paid one refunded, is cancelled: neither is paid
+      if (b.status === 'cancelled') return cancelled(BEAT_CANCELLED)
+      return ['paid', 'live', 'ended'].includes(b.status) ? done : waiting(WAITING_FOR_PAYMENT)
     }
     case 'wearable_design': {
       if (!ref.designId) return todo

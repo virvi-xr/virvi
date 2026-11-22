@@ -153,13 +153,30 @@ describe('assistant shows', () => {
       expect(item(now, 'raffle_scheduled')).toEqual({ state: 'skipped', note: 'This was deleted.' })
     })
 
-    it('raffle_scheduled attached on its own reads its own raffle', async () => {
+    it('raffle_scheduled, beat_paid and scene_link follow the show\'s raffle, BEAT and event: they take no ref of their own for those', async () => {
       const s = await everything()
       const r = await newRaffle(sceneId, { opensAt: new Date(Date.now() + DAY) })
-      expect((await attach(s, 'raffle_scheduled', { ref: { raffleId: r.id } })).status).toBe(200)
+      const b = await newBeat()
+      const ev = await newEvent()
+      const before = await db.select().from(assistantShows)
+      expect(await attach(s, 'raffle_scheduled', { ref: { raffleId: r.id } })).toMatchObject({ status: 400, json: { message: "This item doesn't take a ref." } })
+      expect(await attach(s, 'beat_paid', { ref: { beatId: b.id } })).toMatchObject({ status: 400, json: { message: "This item doesn't take a ref." } })
+      expect(await attach(s, 'scene_link', { ref: { sceneId, eventId: ev.id } })).toMatchObject({ status: 400, json: { message: 'This item takes sceneId.' } })
+      expect(await db.select().from(assistantShows)).toEqual(before)
       const now = await show(s.id)
-      expect(item(now, 'raffle')).toEqual({ state: 'todo', note: null })
-      expect(item(now, 'raffle_scheduled')).toEqual({ state: 'done', note: null })
+      expect(item(now, 'raffle_scheduled')).toEqual({ state: 'todo', note: null })
+      expect(item(now, 'beat_paid')).toEqual({ state: 'todo', note: null })
+    })
+
+    it('a cancelled raffle: the raffle and its scheduling are skipped as cancelled, even with an opening time kept', async () => {
+      const s = await everything()
+      const r = await newRaffle(sceneId, { opensAt: new Date(Date.now() + DAY) })
+      await attach(s, 'raffle', { ref: { raffleId: r.id } })
+      expect(item(await show(s.id), 'raffle_scheduled')).toEqual({ state: 'done', note: null })
+      await db.update(raffles).set({ status: 'cancelled' }).where(eq(raffles.id, r.id))
+      const now = await show(s.id)
+      expect(item(now, 'raffle')).toEqual({ state: 'skipped', note: 'This raffle was cancelled.' })
+      expect(item(now, 'raffle_scheduled')).toEqual({ state: 'skipped', note: 'This raffle was cancelled.' })
     })
 
     it('a raffle in a scene the user no longer runs is skipped', async () => {
@@ -177,12 +194,43 @@ describe('assistant shows', () => {
       let now = await show(s.id)
       expect(item(now, 'beat')).toEqual({ state: 'done', note: null })
       expect(item(now, 'beat_paid')).toEqual({ state: 'waiting', note: 'Waiting for payment.' })
-      await db.update(beats).set({ status: 'paid' }).where(eq(beats.id, b.id))
-      expect(item(await show(s.id), 'beat_paid')).toEqual({ state: 'done', note: null })
+      for (const status of ['paid', 'live', 'ended'] as const) {
+        await db.update(beats).set({ status }).where(eq(beats.id, b.id))
+        expect(item(await show(s.id), 'beat_paid'), status).toEqual({ state: 'done', note: null })
+      }
       await db.delete(beats).where(eq(beats.id, b.id))
       now = await show(s.id)
       expect(item(now, 'beat')).toEqual({ state: 'skipped', note: 'This was deleted.' })
       expect(item(now, 'beat_paid')).toEqual({ state: 'skipped', note: 'This was deleted.' })
+    })
+
+    it('a cancelled BEAT is never paid: a draft cancelled before paying, or a paid one cancelled and refunded', async () => {
+      const s = await everything()
+      const unpaid = await newBeat()
+      await attach(s, 'beat', { ref: { beatId: unpaid.id } })
+      await db.update(beats).set({ status: 'cancelled' }).where(eq(beats.id, unpaid.id))
+      expect(item(await show(s.id), 'beat_paid')).toEqual({ state: 'skipped', note: 'This BEAT was cancelled.' })
+
+      const refunded = await newBeat({ status: 'paid' })
+      await attach(s, 'beat', { ref: { beatId: refunded.id } })
+      expect(item(await show(s.id), 'beat_paid')).toEqual({ state: 'done', note: null })
+      await db.update(beats).set({ status: 'cancelled' }).where(eq(beats.id, refunded.id))
+      expect(item(await show(s.id), 'beat_paid')).toEqual({ state: 'skipped', note: 'This BEAT was cancelled.' })
+    })
+
+    it('with BEATs or Studio switched off, their items read as skipped and attaching refuses like the route', async () => {
+      const s = await everything()
+      const b = await newBeat()
+      const d = await createDesign(owner)
+      await attach(s, 'beat', { ref: { beatId: b.id } })
+      await attach(s, 'wearable_design', { ref: { designId: d.id } })
+      set('beats', { ...config.beats, enabled: false })
+      set('studioEnabled', false)
+      const now = await show(s.id)
+      for (const kind of ['beat', 'beat_paid', 'wearable_design'] as const) expect(item(now, kind), kind).toEqual({ state: 'skipped', note: 'This was deleted.' })
+      const fresh = await everything()
+      expect(await attach(fresh, 'beat', { ref: { beatId: b.id } })).toEqual({ status: 404, json: { error: 'not_found', message: NOT_YOURS } })
+      expect(await attach(fresh, 'wearable_design', { ref: { designId: d.id } })).toEqual({ status: 404, json: { error: 'not_found', message: NOT_YOURS } })
     })
 
     it('wearable_design: to do, waiting while a job runs, done once a piece is finalized; skipped once deleted', async () => {
@@ -274,7 +322,7 @@ describe('assistant shows', () => {
       const before = await db.select().from(assistantShows)
       const tries: Array<[ShowItemKind, Record<string, string>]> = [
         ['event', { eventId: theirEvent.id }], ['scene_link', { sceneId: theirScene.id }], ['showing', { showingId: theirShowing.id }],
-        ['beat', { beatId: theirBeat.id }], ['beat_paid', { beatId: theirBeat.id }], ['wearable_design', { designId: theirDesign.id }],
+        ['beat', { beatId: theirBeat.id }], ['wearable_design', { designId: theirDesign.id }],
         ['raffle', { raffleId: crypto.randomUUID() }],
       ]
       for (const [kind, ref] of tries) expect(await attach(s, kind, { ref }), kind).toEqual({ status: 404, json: { error: 'not_found', message: NOT_YOURS } })
