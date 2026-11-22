@@ -17,6 +17,9 @@ Raw events are kept for the scene owner's plan (7–365 days, unlimited on the t
 ## Terms of Service agreements
 When you agree to the Terms of Service, Virvi records which version you agreed to, when, and whether you agreed when signing up or later. The record is kept while your account exists and is deleted with it.
 
+## Virvi Summit sign-ups
+When you sign up for the Virvi Launch Summit at virvi.io/summit, Virvi stores your email address, your name, how you’ll join (online, in person or with a watch party), your party size or your watch party’s city and expected guests, the sessions you’re interested in, where you came from (the ref in the link you followed, if it had one), and when you agreed to Summit emails. It’s used only to send you emails about the Summit and to plan the event, and only Virvi staff see it. If you sign up again with the same email, the new answers replace the old ones. Your IP address is used briefly to limit repeated sign-ups and is not stored. It’s all deleted by 31 August 2027. To have it deleted sooner, email support@virvi.io.
+
 ## Deleting your data
 Call `POST /api/analytics/me/delete` with your session token. A dashboard control for this is coming. This removes your sessions, events and positions from every scene, your raffle entries, and your BEAT data (see BEATs below for tokens already sent).
 
