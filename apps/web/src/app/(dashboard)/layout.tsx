@@ -16,7 +16,7 @@ import { TermsGate } from '@/components/TermsGate'
 import Link from 'next/link'
 import { BrandMark } from '@/components/BrandMark'
 import { NotificationBell } from '@/components/NotificationBell'
-import { AssistantButton, useAssistantAccess, useAssistantShortcut } from '@/components/assistant/AssistantButton'
+import { AssistantButton, useAssistantAccess, useAssistantOpenRequest, useAssistantShortcut } from '@/components/assistant/AssistantButton'
 import { AssistantPanel } from '@/components/assistant/AssistantPanel'
 import { ASSET_LIBRARY, MEDIA_LIBRARY } from '@/lib/libraries'
 import {
@@ -77,6 +77,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [assistantOpen, setAssistantOpen] = useState(false)
   const toggleAssistant = useCallback(() => setAssistantOpen((v) => !v), [])
   useAssistantShortcut(assistantAccess.state !== 'hidden', toggleAssistant)
+  useAssistantOpenRequest(assistantAccess.state !== 'hidden', useCallback(() => setAssistantOpen(true), []))
   const studioOn = useStudioAvailable()
   const beatsOn = beatsNavVisible(useBeatAvailability(), { trial, scenePass: !!scenePass })
   const navSections = useMemo(() => {

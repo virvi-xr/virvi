@@ -1051,6 +1051,7 @@ function useRealApi() {
     cancelAssistantPlan: (planId: string) => apiFetch<void>(`/api/assistant/plans/${encodeURIComponent(planId)}/cancel`, { method: 'POST' }),
     undoAssistantAction: (id: string) => apiFetch<import('@virvixr/shared').AssistantActionView>(`/api/assistant/actions/${encodeURIComponent(id)}/undo`, { method: 'POST' }),
     undoAssistantPlan: (planId: string) => apiFetch<import('@virvixr/shared').AssistantActionView[]>(`/api/assistant/plans/${encodeURIComponent(planId)}/undo`, { method: 'POST' }),
+    getAssistantShows: (eventId: string) => apiFetch<{ shows: import('@virvixr/shared').ShowView[] }>(`/api/assistant/shows?eventId=${encodeURIComponent(eventId)}`),
     getAssistantActivity: (before?: string) =>
       apiFetch<{ items: import('@virvixr/shared').AssistantActivityItem[]; next: string | null }>(`/api/assistant/activity?limit=25${before ? `&before=${encodeURIComponent(before)}` : ''}`),
 

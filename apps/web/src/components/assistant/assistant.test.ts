@@ -7,6 +7,8 @@ import { MessageLinks } from './MessageLinks'
 import { MessageText } from './MessageText'
 import { ActivityList } from '../../app/(dashboard)/settings/AssistantActivity'
 import { ActionRow } from './ActionRow'
+import { ShowChecklist } from './ShowChecklist'
+import type { ShowView } from '@virvixr/shared'
 import { activityDate, approveLabel, budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin, approveRefused, isExpiredCode, reapproveCopy, REAPPROVE, RECONFIRM } from './copy'
 
 describe('budgetLine', () => {
@@ -236,5 +238,38 @@ describe('MessageText', () => {
     const html = renderToStaticMarkup(createElement(MessageText, { role: 'user', text: '**x**', onOpen: () => {} }))
     expect(html).toContain('**x**')
     expect(html).not.toContain('<strong')
+  })
+})
+
+describe('ShowChecklist', () => {
+  const show = (over: Partial<ShowView> = {}): ShowView => ({
+    id: 's1', title: 'Launch party', eventId: 'e1', orgName: null, createdAt: '2026-11-20T00:00:00Z', closedAt: null,
+    timeline: null, warning: null,
+    items: [
+      { id: 'i1', kind: 'event', label: 'Create the event', state: 'done', note: 'Created for 3 Dec', ref: {}, wearable: null },
+      { id: 'i2', kind: 'wearable', label: 'Design the wearable', state: 'waiting', note: 'In <b>Studio</b>', ref: {}, wearable: null },
+      { id: 'i3', kind: 'raffle', label: 'Raffle', state: 'todo', note: null, ref: {}, wearable: null },
+      { id: 'i4', kind: 'beat', label: 'BEAT', state: 'skipped', note: null, ref: {}, wearable: null },
+    ] as ShowView['items'],
+    ...over,
+  })
+  const html = (shows: ShowView[]) => renderToStaticMarkup(createElement(ShowChecklist, { shows, onAsk: () => {} }))
+  it('shows each item with its state badge and note', () => {
+    const h = html([show()])
+    for (const t of ['Create the event', 'Done', 'Waiting', 'To do', 'Skipped', 'Created for 3 Dec']) expect(h).toContain(t)
+  })
+  it('renders notes as plain text', () => {
+    const h = html([show()])
+    expect(h).toContain('In &lt;b&gt;Studio&lt;/b&gt;')
+    expect(h).not.toContain('<b>')
+  })
+  it('shows the timeline and warning when set, and one Ask the assistant button', () => {
+    const h = html([show({ timeline: 'Takes a few days.', warning: 'Starts soon.' })])
+    expect(h).toContain('Takes a few days.')
+    expect(h).toContain('Starts soon.')
+    expect(h.match(/Ask the assistant/g)).toHaveLength(1)
+  })
+  it('renders nothing when there is no show', () => {
+    expect(html([])).toBe('')
   })
 })

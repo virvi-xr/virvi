@@ -22,6 +22,19 @@ export function useAssistantAccess(enabled: boolean): { access: AssistantAccess;
   return { access, refresh }
 }
 
+/** Anything on a dashboard page can ask the layout to open the panel; the layout owns the panel's state. */
+const OPEN_EVENT = 'virvi:open-assistant'
+export const openAssistant = () => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(OPEN_EVENT)) }
+
+/** Opens the panel when a page calls `openAssistant()`. */
+export function useAssistantOpenRequest(enabled: boolean, open: () => void) {
+  useEffect(() => {
+    if (!enabled) return
+    window.addEventListener(OPEN_EVENT, open)
+    return () => window.removeEventListener(OPEN_EVENT, open)
+  }, [enabled, open])
+}
+
 const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
 
 /** Cmd/Ctrl-K toggles the panel, unless focus is in a text field outside the panel (the panel's own composer is fine). */

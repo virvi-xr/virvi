@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
+import { EventShowChecklist } from '@/components/assistant/ShowChecklist'
 import EventAttendance from '@/components/EventAttendance'
 import { ArrowUpRightIcon, CalendarIcon, ChevronDownIcon, PlusIcon } from '@/components/icons'
 import { Badge, EmptyState, InlineDescription, PageHeader, PrimaryButton, RowMenu, SearchField, SelectField, Skeleton, type Tone } from '@/components/ui'
@@ -519,6 +520,8 @@ function EventDetail({ eventId, onDeleted }: { eventId: string; onDeleted: () =>
           </div>
         )}
       </div>
+
+      <EventShowChecklist eventId={eventId} />
 
       <EventAttendance event={event} api={api} />
 
