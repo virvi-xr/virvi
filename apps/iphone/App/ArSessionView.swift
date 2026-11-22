@@ -78,7 +78,11 @@ final class RealitySceneView: SceneView {
     }
 
     func setServerOffset(_ ms: Int64) { renderer.serverOffsetMs = ms }
-    func setSoundOn(_ on: Bool) { renderer.soundOn = on }
+    /// Turned on by the visitor's tap only: the audio session is left alone until then.
+    func setSoundOn(_ on: Bool) {
+        if on && !renderer.soundOn { activatePlaybackAudio(AVAudioSession.sharedInstance()) }
+        renderer.soundOn = on
+    }
 
     private func applyFade() {
         if fade.alpha == shownAlpha { return }
