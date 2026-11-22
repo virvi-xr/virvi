@@ -1,9 +1,12 @@
 // Event, raffle and BEAT tools. Creating a raffle accepts Virvi's raffle host terms, so it is public: only ever a card
 // whose detail shows the terms word for word, and `acceptHostTerms: true` is added here, never taken from the model.
-// Scheduling a raffle to open is public too (it opens to visitors by itself). A BEAT is only ever made as a draft; paying
+// Scheduling a raffle to open, and changing its prize, are public too (visitors see both). A BEAT is only ever made as a draft; paying
 // for it is the user's own step on its page (open_beat_pay in local.ts links there with the server's price).
 import { z } from 'zod'
-import { BEAT_DESCRIPTION_MAX, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_MAX, MIN_PRESENT_MAX_MINUTES, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX, SHOW_ITEM_KINDS, type RaffleMode } from '@virvixr/shared'
+import { eq } from 'drizzle-orm'
+import { BEAT_DESCRIPTION_MAX, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_MAX, MIN_PRESENT_MAX_MINUTES, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX, SHOW_ITEM_KINDS, fillRules, rulesHost, type RaffleMode } from '@virvixr/shared'
+import { db } from '../../db/connection.js'
+import { users } from '../../db/schema.js'
 import { id, pick } from './read.js'
 import { atLeastOne, created, fields, get, orgNameOf, previous, sceneState, setKeys } from './write.js'
 import { ToolError, type Before, type ToolCtx, type ToolDef } from './types.js'
@@ -17,7 +20,30 @@ const iso = () => z.iso.datetime({ offset: true })
 /** An ISO time as the cards show it: `2031-03-04 20:30` (UTC). */
 const utc = (at: string) => new Date(at).toISOString().slice(0, 16).replace('T', ' ')
 
+/**
+ * An ISO time as a card shows it, naming the zone: in the event's timezone when there is one (`2031-03-04 21:30
+ * Europe/Paris`), else UTC (`2031-03-04 20:30 UTC`). A zone the runtime doesn't know falls back to UTC.
+ */
+export function cardTime(at: string, timezone?: string | null): string {
+  if (timezone && timezone !== 'UTC') {
+    try {
+      const parts = Object.fromEntries(
+        new Intl.DateTimeFormat('en-GB', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+          .formatToParts(new Date(at)).map((p) => [p.type, p.value]),
+      )
+      return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${timezone}`
+    } catch {
+      // An unknown zone: UTC below
+    }
+  }
+  return `${utc(at)} UTC`
+}
+
 export const RAFFLE_TERMS_CONFIRM = 'Confirming accepts these terms for this raffle.'
+/** The card's line for the official rules create_raffle fills in from the template. */
+export const RAFFLE_RULES_INCLUDED = "Official rules: included, from Virvi's template."
+/** On a raffle made for a show: its wearable prize is the host's to send. */
+export const RAFFLE_SEND_WEARABLE = "You'll send the wearable to the winners yourself, from the raffle's winners list."
 /** The raffle draw modes (MODES in raffles/service.ts). */
 const RAFFLE_MODES = ['one_per_person', 'weighted'] as const satisfies readonly RaffleMode[]
 const RAFFLE_KEYS = ['id', 'sceneId', 'name', 'prize', 'winnersCount', 'mode', 'minPresentMinutes', 'status', 'entryCount', 'opensAt', 'openError'] as const
@@ -53,10 +79,49 @@ async function eventState(ctx: ToolCtx, eventId: string): Promise<{ event: Obj; 
   return { event, orgName: await orgNameOf(event.orgId) }
 }
 
-/** The raffle as its host sees it (the route's refusal otherwise), and its scene's organization's name. */
-async function raffleState(ctx: ToolCtx, raffleId: string): Promise<{ raffle: Obj; orgName: string | null }> {
+/** The raffle as its host sees it (the route's refusal otherwise), its scene, and the scene's organization's name. */
+async function raffleState(ctx: ToolCtx, raffleId: string): Promise<{ raffle: Obj; scene: Obj; orgName: string | null }> {
   const raffle = ((await get(ctx, `/api/raffles/${raffleId}`)).raffle ?? {}) as Obj
-  return { raffle, orgName: (await sceneState(ctx, raffle.sceneId)).orgName }
+  return { raffle, ...(await sceneState(ctx, raffle.sceneId)) }
+}
+
+/** The host the official rules name, as the Raffles tab fills them: the user's display name, else the scene's name. */
+async function rulesHostFor(ctx: ToolCtx, sceneName: unknown): Promise<string> {
+  const [me] = await db.select({ displayName: users.displayName }).from(users).where(eq(users.id, ctx.user.id))
+  return rulesHost(me?.displayName, typeof sceneName === 'string' ? sceneName : '')
+}
+
+/**
+ * A prize change, and the rules that go with it: the rules follow the new prize only while they are still the template
+ * filled for the old one (as the Raffles tab's form keeps them in step until the host edits them).
+ */
+async function prizeChange(ctx: ToolCtx, raffleId: string, prize: string) {
+  const { raffle, scene, orgName } = await raffleState(ctx, raffleId)
+  const host = await rulesHostFor(ctx, scene.name)
+  const templated = typeof raffle.rules === 'string' && raffle.rules === fillRules(raffle.prize ?? '', raffle.winnersCount, host)
+  return { raffle, orgName, rules: templated ? fillRules(prize, raffle.winnersCount, host) : undefined }
+}
+
+/** An event's timezone, or null when there's none or it can't be read. */
+async function eventZone(ctx: ToolCtx, eventId: unknown): Promise<string | null> {
+  if (!isUuid(eventId)) return null
+  try {
+    const tz = ((await get(ctx, `/api/events/${eventId}`)).event as Obj | undefined)?.timezone
+    return typeof tz === 'string' ? tz : null
+  } catch {
+    return null
+  }
+}
+
+/** The event of the user's open show that holds this raffle, if any: its times show in that event's timezone. */
+async function raffleShowZone(ctx: ToolCtx, raffleId: string): Promise<string | null> {
+  try {
+    const shows = list((await get(ctx, '/api/assistant/shows')).shows)
+    const show = shows.find((s) => list(s.items).some((i) => i.kind === 'raffle' && i.ref?.raffleId === raffleId))
+    return show ? eventZone(ctx, show.eventId) : null
+  } catch {
+    return null
+  }
 }
 
 const winners = (n: number) => `${n} winner${n === 1 ? '' : 's'}`
@@ -88,7 +153,7 @@ const SHOW_TOOLS: ToolDef<any>[] = [
   {
     name: 'start_show',
     description:
-      `Start a show: a saved checklist for one event, kept with the user's account, so any conversation can pick it up. List every item it needs, in order, each a kind and a short label. Kinds: ${SHOW_KINDS_HELP}. Pass the event's start (startTime, ISO) whenever the user gave one. It returns timeline and warning: say them to the user, in those words, before going further. Then make each thing and attach_to_show it.`,
+      `Start a show: a saved checklist for one event, kept with the user's account, so any conversation can pick it up. List every item it needs, in order, each a kind and a short label. Kinds: ${SHOW_KINDS_HELP}. Pass the event's start (startTime, ISO) whenever the user gave one. It returns timeline and warning: say them to the user, in those words, before going further. Then make each thing, and attach each thing to the show as soon as its result comes back, including right after a card is confirmed or a plan runs.`,
     input: z.object({
       title: z.string().trim().min(1).max(120),
       startTime: iso().optional(),
@@ -127,7 +192,7 @@ const SHOW_TOOLS: ToolDef<any>[] = [
   {
     name: 'attach_to_show',
     description:
-      "Attach what was made to a show's item, by its id (ref): eventId for event, sceneId for scene_link (linked to the show's event), showingId for showing, raffleId for raffle, beatId for beat, designId for wearable_design. An empty ref clears it. raffle_scheduled and beat_paid take nothing: they follow the show's raffle and BEAT. For wearable_published, wearable is the Marketplace link the user pasted (or { contract, itemId }); null clears it.",
+      "Attach what was made to a show's item, by its id (ref): eventId for event, sceneId for scene_link (linked to the show's event), showingId for showing, raffleId for raffle, beatId for beat, designId for wearable_design. An empty ref clears it. raffle_scheduled and beat_paid take nothing: they follow the show's raffle and BEAT. For wearable_published, wearable is the Marketplace link the user pasted (or { contract, itemId }); null clears it. Attach each thing to the show as soon as its result comes back, including right after a card is confirmed or a plan runs. After a wearable_published paste, offer update_raffle_prize for the show's raffle, naming the item.",
     input: z
       .object({ showId: id(), itemId: id(), ref: refArgs.optional(), wearable: wearableArg.optional() })
       .refine((a) => a.ref !== undefined || a.wearable !== undefined, 'Give a ref or a wearable.'),
@@ -247,7 +312,7 @@ export const SHOWS_TOOLS: ToolDef<any>[] = [
   {
     name: 'create_raffle',
     description:
-      "Create a draft raffle in a scene: its name, prize, number of winners, mode (one_per_person, or weighted by attendance), the minimum minutes present (optional) and when it opens by itself (opensAt, ISO, optional). Creating it accepts Virvi's raffle host terms, so the user sees a card with the terms and confirms it.",
+      "Create a draft raffle in a scene: its name, prize, number of winners, mode (one_per_person, or weighted by attendance), the minimum minutes present (optional), when it opens by itself (opensAt, ISO, optional) and the show it's for (showId, when it's for one). Its official rules are filled in from Virvi's template. Creating it accepts Virvi's raffle host terms, so the user sees a card with the terms and confirms it.",
     input: z.object({
       sceneId: id(),
       name: z.string().trim().min(1).max(80),
@@ -256,20 +321,31 @@ export const SHOWS_TOOLS: ToolDef<any>[] = [
       mode: z.enum(RAFFLE_MODES),
       minPresentMinutes: z.number().min(0).max(MIN_PRESENT_MAX_MINUTES).optional(),
       opensAt: iso().optional(),
+      showId: id().optional(),
     }),
     effect: 'public',
-    // The terms are accepted here, by the confirmed card: never from the model's args (the schema drops any it sends)
-    call: (a) => ({ method: 'POST', url: `/api/scenes/${a.sceneId}/raffles`, body: { ...pick(a, ['name', 'prize', 'winnersCount', 'mode', 'minPresentMinutes', 'opensAt']), acceptHostTerms: true } }),
-    // The scene must be one the user runs raffles in: the list route's refusal (a viewer can read the scene but not this)
+    // The terms are accepted here, by the confirmed card: never from the model's args (the schema drops any it sends).
+    // The official rules are the Raffles tab's template, filled the same way.
+    call: async (a, ctx) => {
+      const { scene } = await sceneState(ctx, a.sceneId)
+      const rules = fillRules(a.prize, a.winnersCount, await rulesHostFor(ctx, scene.name))
+      return { method: 'POST', url: `/api/scenes/${a.sceneId}/raffles`, body: { ...pick(a, ['name', 'prize', 'winnersCount', 'mode', 'minPresentMinutes', 'opensAt']), rules, acceptHostTerms: true } }
+    },
+    // The scene must be one the user runs raffles in: the list route's refusal (a viewer can read the scene but not this).
+    // A show named must be the user's own (its route's 404 otherwise).
     before: async (a, ctx): Promise<Before> => {
       const { orgName } = await sceneState(ctx, a.sceneId)
       await get(ctx, `/api/scenes/${a.sceneId}/raffles`)
+      if (a.showId) await get(ctx, showUrl(a.showId))
       return { undo: null, after: (res) => fields(created(res, 'raffle'), ['id', 'name']), orgName }
     },
     preview: async (a, ctx) => {
       const { scene } = await sceneState(ctx, a.sceneId)
-      const line = `"${scene.name ?? ''}": ${a.name}, prize "${a.prize}", ${winners(a.winnersCount)}${a.opensAt ? `, opens ${utc(a.opensAt)} UTC` : ''}`
-      return { detail: `${line}\n\n${RAFFLE_HOST_TERMS}\n${RAFFLE_TERMS_CONFIRM}` }
+      const show = a.showId ? await get(ctx, showUrl(a.showId)) : null
+      const zone = show ? await eventZone(ctx, show.eventId) : null
+      const line = `"${scene.name ?? ''}": ${a.name}, prize "${a.prize}", ${winners(a.winnersCount)}${a.opensAt ? `, opens ${cardTime(a.opensAt, zone)}` : ''}`
+      const lines = [line, RAFFLE_RULES_INCLUDED, ...(show ? [RAFFLE_SEND_WEARABLE] : [])]
+      return { detail: `${lines.join('\n')}\n\n${RAFFLE_HOST_TERMS}\n${RAFFLE_TERMS_CONFIRM}` }
     },
     label: (a) => `Create raffle "${a.name}"`,
     summarize: (res) => pick(created(res, 'raffle'), RAFFLE_KEYS),
@@ -285,22 +361,36 @@ export const SHOWS_TOOLS: ToolDef<any>[] = [
       if (raffle.status !== 'draft') throw new ToolError(400, NOT_DRAFT)
       return { undo: null, after: (res) => fields(created(res, 'raffle'), ['opensAt']), orgName }
     },
+    // The prize shows: opening puts it in front of visitors. A raffle in one of the user's shows shows its event's timezone.
     preview: async (a, ctx) => {
       const { raffle } = await raffleState(ctx, a.raffleId)
-      return { detail: a.opensAt ? `Open "${raffle.name}" by itself at ${utc(a.opensAt)} UTC` : `Stop "${raffle.name}" opening by itself` }
+      const what = `"${raffle.name}" (prize "${raffle.prize}")`
+      if (!a.opensAt) return { detail: `Stop ${what} opening by itself` }
+      return { detail: `Open ${what} by itself at ${cardTime(a.opensAt, await raffleShowZone(ctx, a.raffleId))}` }
     },
     label: (a) => (a.opensAt ? `Schedule the raffle to open at ${utc(a.opensAt)} UTC` : 'Stop the raffle opening by itself'),
     summarize: (res) => pick(created(res, 'raffle'), RAFFLE_KEYS),
   },
   {
     name: 'update_raffle_prize',
-    description: "Change what a raffle's prize is (while it is a draft or open).",
+    description:
+      "Change what a raffle's prize is (while it is a draft or open). Visitors see the prize, so the user confirms it on a card. Its official rules follow the new prize while they are still Virvi's template.",
     input: z.object({ raffleId: id(), prize: z.string().trim().min(1).max(200) }),
-    effect: 'write',
-    call: (a) => ({ method: 'PATCH', url: `/api/raffles/${a.raffleId}`, body: { prize: a.prize } }),
+    // Always a card, draft or open: simpler than telling them apart, and an open raffle's prize is in front of visitors
+    effect: 'public',
+    call: async (a, ctx) => {
+      const { rules } = await prizeChange(ctx, a.raffleId, a.prize)
+      return { method: 'PATCH', url: `/api/raffles/${a.raffleId}`, body: { prize: a.prize, ...(rules !== undefined ? { rules } : {}) } }
+    },
     before: async (a, ctx): Promise<Before> => {
-      const { raffle, orgName } = await raffleState(ctx, a.raffleId)
-      return { undo: { method: 'PATCH', url: `/api/raffles/${a.raffleId}`, body: { prize: raffle.prize } }, after: (res) => fields(created(res, 'raffle'), ['prize']), current: fields(raffle, ['prize']), orgName }
+      const { raffle, orgName, rules } = await prizeChange(ctx, a.raffleId, a.prize)
+      const keys = rules !== undefined ? ['prize', 'rules'] : ['prize']
+      return { undo: { method: 'PATCH', url: `/api/raffles/${a.raffleId}`, body: fields(raffle, keys) }, after: (res) => fields(created(res, 'raffle'), keys), current: fields(raffle, keys), orgName }
+    },
+    preview: async (a, ctx) => {
+      const { raffle, rules } = await prizeChange(ctx, a.raffleId, a.prize)
+      const seen = raffle.status === 'draft' ? '' : ' Visitors in the scene see the new prize straight away.'
+      return { detail: `"${raffle.name}": prize "${raffle.prize}" becomes "${a.prize}".${seen}${rules !== undefined ? ' The official rules name the new prize.' : ''}` }
     },
     label: (a) => `Change the raffle prize to "${a.prize}"`,
     summarize: (res) => pick(created(res, 'raffle'), RAFFLE_KEYS),

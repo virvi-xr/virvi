@@ -35,6 +35,19 @@ How winners are picked: a random draw among entrants who were present in the hos
 Prizes: the host delivers each prize to the winning wallet within 30 days.
 Withdrawal: you can withdraw your entry any time before the draw.`
 
+/** The rules template with the prize, winners and host filled in (the Raffles tab and the assistant both use it). */
+export function fillRules(prize: string, winners: number, host: string): string {
+  return RAFFLE_RULES_TEMPLATE
+    .replace('{prize}', () => prize.trim() || '…')
+    .replace('{winners}', () => String(winners))
+    .replace('{host}', () => host)
+}
+
+/** The host name the rules show: the signed-in user's display name, else the scene's name. */
+export function rulesHost(displayName: string | null | undefined, sceneName: string): string {
+  return displayName?.trim() || sceneName
+}
+
 /** 0x1234…abcd, lower-cased. */
 export function shortWallet(wallet: string): string {
   const w = wallet.toLowerCase()

@@ -4,7 +4,7 @@ import {
   RAFFLE_CONSENT_VERSION, CHECKIN_INTERVAL_MS, PRESENT_WINDOW_MS, CHECKIN_CAP_SECONDS, CHECKIN_MIN_GAP_MS,
   DRAW_COOLDOWN_MS, RAFFLE_WINNERS_MAX, MIN_PRESENT_DEFAULT_MINUTES, MIN_PRESENT_MAX_MINUTES,
   AUTO_SNAPSHOT_MINUTES, RAFFLE_RETENTION_DAYS, AUTO_CLOSE_AFTER_DRAW_DAYS, AUTO_CLOSE_AFTER_OPEN_DAYS,
-  WHEEL_MAX_NAMES, DRAW_ALGORITHM,
+  WHEEL_MAX_NAMES, DRAW_ALGORITHM, fillRules, rulesHost,
 } from '@virvixr/shared'
 
 /** Shared raffle constants and copy (LIV-55). The shared package has no runner of its own; its tests live here. */
@@ -70,5 +70,11 @@ describe('raffle copy', () => {
     expect(RAFFLE_RULES_TEMPLATE.split(/\s+/).filter(Boolean).length).toBeLessThanOrEqual(150)
     for (const p of ['{prize}', '{winners}', '{host}']) expect(RAFFLE_RULES_TEMPLATE).toContain(p)
     expect(RAFFLE_RULES_TEMPLATE).toContain('https://virvi.io/docs/dashboard/raffles/')
+  })
+  it('fills the rules template, for the Raffles tab and the assistant alike', () => {
+    const rules = fillRules(' A neon cap ', 2, rulesHost('  ', 'Moon Lounge'))
+    expect(rules.split('\n')[0]).toBe('Official rules. Prize: A neon cap. Winners: 2. Host: Moon Lounge.')
+    expect(rules).not.toMatch(/\{(prize|winners|host)\}/)
+    expect(rulesHost('Ana', 'Moon')).toBe('Ana')
   })
 })

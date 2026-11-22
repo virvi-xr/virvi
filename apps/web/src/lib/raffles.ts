@@ -1,10 +1,10 @@
 /** Dashboard Raffles tab (LIV-55): the shapes the host API returns, form rules and plain-language errors. */
-import {
-  AUTO_SNAPSHOT_MINUTES, MIN_PRESENT_DEFAULT_MINUTES, RAFFLE_RULES_TEMPLATE, RAFFLE_WINNERS_MAX,
-} from '@virvixr/shared'
+import { AUTO_SNAPSHOT_MINUTES, MIN_PRESENT_DEFAULT_MINUTES, RAFFLE_WINNERS_MAX } from '@virvixr/shared'
 import type { RaffleMode, RaffleStatus } from '@virvixr/shared'
 
 export type { RaffleMode, RaffleStatus }
+/** The rules filler lives in shared, so the assistant fills the same template. */
+export { fillRules, rulesHost } from '@virvixr/shared'
 
 /** One raffle as the host sees it (GET /api/scenes/:sceneId/raffles and /api/raffles/:id). */
 export interface HostRaffle {
@@ -56,19 +56,6 @@ export const STATUS_LABELS: Record<RaffleStatus, string> = { draft: 'Draft', ope
 
 export function blankRaffle(): RaffleInput {
   return { name: '', prize: '', winnersCount: 1, mode: 'one_per_person', minPresentMinutes: MIN_PRESENT_DEFAULT_MINUTES, autoSnapshotMinutes: null, rules: '', acceptHostTerms: false, opensAt: '' }
-}
-
-/** The rules template with the prize, winners and host filled in. */
-export function fillRules(prize: string, winners: number, host: string): string {
-  return RAFFLE_RULES_TEMPLATE
-    .replace('{prize}', () => prize.trim() || '…')
-    .replace('{winners}', () => String(winners))
-    .replace('{host}', () => host)
-}
-
-/** The host name the rules show: the signed-in user's display name, else the scene's name. */
-export function rulesHost(displayName: string | null | undefined, sceneName: string): string {
-  return displayName?.trim() || sceneName
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')

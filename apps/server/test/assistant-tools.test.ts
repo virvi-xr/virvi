@@ -14,11 +14,12 @@ import type { ToolCtx } from '../src/assistant/tools/types.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, randomWallet, tokenFor, type TestUser } from './helpers/factories.js'
 import { addRevision, createDesign } from './helpers/studio.js'
-import { proposeCard, recordDirect, undoAction } from '../src/assistant/actions.js'
+import { approvePlan, proposeCard, recordDirect, undoAction } from '../src/assistant/actions.js'
 import { routeError } from '../src/assistant/tools/http.js'
 import { LABEL_TEXT_MAX, STUDIO_PAUSED, STUDIO_REFUSALS } from '../src/assistant/tools/studio.js'
-import { assistantActions, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults } from '../src/db/schema.js'
-import { RAFFLE_HOST_TERMS } from '@virvixr/shared'
+import { assistantActions, assistantShows, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults, users } from '../src/db/schema.js'
+import { RAFFLE_HOST_TERMS, fillRules } from '@virvixr/shared'
+import { RAFFLE_RULES_INCLUDED, RAFFLE_SEND_WEARABLE, cardTime } from '../src/assistant/tools/shows-tools.js'
 import { setImageSizeReader } from '../src/beats/image.js'
 import { BEATS_READY } from './helpers/beats-ready.js'
 
@@ -214,7 +215,7 @@ describe('assistant tools, run as the owner', () => {
     ]
     // create_scene and create_design can't be undone (their own tests)
     // The event, raffle, BEAT and show writes have their own tests (show writes in assistant-shows.test.ts)
-    const covered = new Set([...cases.map(([n]) => n), 'update_scene', 'update_element', 'create_element', 'create_scene', 'create_design', 'create_event', 'update_event', 'link_event_scene', 'update_raffle_prize', 'create_beat_draft', 'start_show', 'attach_to_show', 'close_show'])
+    const covered = new Set([...cases.map(([n]) => n), 'update_scene', 'update_element', 'create_element', 'create_scene', 'create_design', 'create_event', 'update_event', 'link_event_scene', 'create_beat_draft', 'start_show', 'attach_to_show', 'close_show'])
     expect([...covered].sort()).toEqual(Object.values(TOOLS).filter((t) => t.effect === 'write').map((t) => t.name).sort())
     for (const [name, args] of cases) {
       const r = await runTool(ctx, name, args)
@@ -492,7 +493,7 @@ describe('assistant event, raffle and BEAT tools', () => {
     const card = await proposeCard(ctx, null, 'create_raffle', args)
     if (!('kind' in card)) throw new Error(JSON.stringify(card))
     expect(card.detail).toBe(
-      `"Old Lounge": Friday raffle, prize "A neon cap", 2 winners, opens 2031-03-04 20:30 UTC\n\n${RAFFLE_HOST_TERMS}\nConfirming accepts these terms for this raffle.`,
+      `"Old Lounge": Friday raffle, prize "A neon cap", 2 winners, opens 2031-03-04 20:30 UTC\n${RAFFLE_RULES_INCLUDED}\n\n${RAFFLE_HOST_TERMS}\nConfirming accepts these terms for this raffle.`,
     )
     expect(card.detail).toContain(RAFFLE_HOST_TERMS)
     expect(card.steps[0]).toMatchObject({ label: 'Create raffle "Friday raffle"', orgName: null })
@@ -507,9 +508,66 @@ describe('assistant event, raffle and BEAT tools', () => {
     expect(row).toMatchObject({ name: 'Friday raffle', prize: 'A neon cap', winnersCount: 2, status: 'draft' })
     expect(row.hostTermsAcceptedAt).toBeInstanceOf(Date)
     expect(row.opensAt!.toISOString()).toBe('2031-03-04T20:30:00.000Z')
+    // The official rules: the Raffles tab's template, filled with the prize, winners and the user's name
+    expect(row.rules).toBe(fillRules('A neon cap', 2, 'Test User'))
     // One winner, no opening time
     const one = await proposeCard(ctx, null, 'create_raffle', raffleArgs({ winnersCount: 1 }))
-    expect(one).toMatchObject({ detail: expect.stringMatching(/^"Old Lounge": Friday raffle, prize "A neon cap", 1 winner\n\n/) })
+    expect(one).toMatchObject({ detail: expect.stringMatching(/^"Old Lounge": Friday raffle, prize "A neon cap", 1 winner\nOfficial rules: included, from Virvi's template\.\n\n/) })
+  })
+
+  it("create_raffle's rules name the scene when the user's display name is blank", async () => {
+    await db.update(users).set({ displayName: '  ' }).where(eq(users.id, owner.id))
+    expect(await runTool(ctx, 'create_raffle', raffleArgs())).toMatchObject({ ok: true })
+    expect((await db.select().from(raffles))[0].rules!.split('\n')[0]).toBe('Official rules. Prize: A neon cap. Winners: 2. Host: Old Lounge.')
+  })
+
+  describe('raffle cards for a show', () => {
+    const prevAssistant = { enabled: config.assistantEnabled, audience: config.assistantAudience, billing: config.billingEnabled }
+    beforeEach(() => {
+      ;(config as any).assistantEnabled = true; (config as any).assistantAudience = 'paid'; (config as any).billingEnabled = false
+    })
+    afterEach(() => {
+      ;(config as any).assistantEnabled = prevAssistant.enabled; (config as any).assistantAudience = prevAssistant.audience; (config as any).billingEnabled = prevAssistant.billing
+    })
+    const parisShow = async (raffleId?: string) => {
+      const [event] = await db.insert(events).values({ ownerId: owner.id, name: 'Launch', startTime: new Date('2031-03-04T20:00:00Z'), endTime: new Date('2031-03-04T23:00:00Z'), timezone: 'Europe/Paris' }).returning()
+      const [show] = await db.insert(assistantShows).values({ userId: owner.id, eventId: event.id, title: 'Launch', items: [{ id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: raffleId ? { raffleId } : {} }] }).returning()
+      return show
+    }
+
+    it('create_raffle for a show: the time in the event\'s timezone, and the wearable is the host\'s to send', async () => {
+      const show = await parisShow()
+      const card = await proposeCard(ctx, null, 'create_raffle', raffleArgs({ opensAt: '2031-03-04T20:30:00Z', showId: show.id }))
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      expect(card.detail).toBe(
+        `"Old Lounge": Friday raffle, prize "A neon cap", 2 winners, opens 2031-03-04 21:30 Europe/Paris\n${RAFFLE_RULES_INCLUDED}\n${RAFFLE_SEND_WEARABLE}\n\n${RAFFLE_HOST_TERMS}\nConfirming accepts these terms for this raffle.`,
+      )
+      // The show id never reaches the raffle route
+      const def = TOOLS.create_raffle
+      const planned = (await def.call(def.input.parse(raffleArgs({ showId: show.id })), ctx)) as { body: Record<string, unknown> }
+      expect(planned.body).not.toHaveProperty('showId')
+    })
+
+    it("create_raffle naming someone else's show is refused, with no card", async () => {
+      const other = await createUser()
+      const [theirs] = await db.insert(assistantShows).values({ userId: other.id, title: 'Theirs', items: [{ id: crypto.randomUUID(), kind: 'raffle', label: 'Raffle', ref: {} }] }).returning()
+      expect(await proposeCard(ctx, null, 'create_raffle', raffleArgs({ showId: theirs.id }))).toEqual({ error: 'Show not found.' })
+      expect(await db.select().from(assistantActions)).toHaveLength(0)
+    })
+
+    it("schedule_raffle_open for a raffle in a show shows the event's timezone", async () => {
+      const r = await draftRaffle()
+      await parisShow(r.id)
+      expect(await proposeCard(ctx, null, 'schedule_raffle_open', { raffleId: r.id, opensAt: '2031-07-04T20:30:00Z' }))
+        .toMatchObject({ detail: 'Open "Friday raffle" (prize "A neon cap") by itself at 2031-07-04 22:30 Europe/Paris' })
+    })
+  })
+
+  it('card times name UTC, and an unknown zone falls back to UTC', () => {
+    expect(cardTime('2031-03-04T20:30:00Z')).toBe('2031-03-04 20:30 UTC')
+    expect(cardTime('2031-03-04T20:30:00Z', 'UTC')).toBe('2031-03-04 20:30 UTC')
+    expect(cardTime('2031-03-04T23:30:00Z', 'America/New_York')).toBe('2031-03-04 18:30 America/New_York')
+    expect(cardTime('2031-03-04T20:30:00Z', 'Not/AZone')).toBe('2031-03-04 20:30 UTC')
   })
 
   it("create_raffle for someone else's scene is refused, with no card", async () => {
@@ -534,24 +592,55 @@ describe('assistant event, raffle and BEAT tools', () => {
   it('schedule_raffle_open cards say when it opens, or that it stops opening by itself', async () => {
     const r = await draftRaffle()
     const on = await proposeCard(ctx, null, 'schedule_raffle_open', { raffleId: r.id, opensAt: '2031-03-04T20:30:00Z' })
-    expect(on).toMatchObject({ kind: 'card', detail: 'Open "Friday raffle" by itself at 2031-03-04 20:30 UTC' })
+    expect(on).toMatchObject({ kind: 'card', detail: 'Open "Friday raffle" (prize "A neon cap") by itself at 2031-03-04 20:30 UTC' })
     const off = await proposeCard(ctx, null, 'schedule_raffle_open', { raffleId: r.id, opensAt: null })
-    expect(off).toMatchObject({ kind: 'card', detail: 'Stop "Friday raffle" opening by itself' })
+    expect(off).toMatchObject({ kind: 'card', detail: 'Stop "Friday raffle" (prize "A neon cap") opening by itself' })
     expect(await runTool(ctx, 'schedule_raffle_open', { raffleId: r.id, opensAt: '2031-03-04T20:30:00Z' })).toMatchObject({ ok: true })
     expect((await db.select().from(raffles))[0].opensAt!.toISOString()).toBe('2031-03-04T20:30:00.000Z')
   })
 
-  it("update_raffle_prize's undo restores the prize, and refuses once the prize was edited by hand", async () => {
-    const r = await draftRaffle()
-    const a = await recordDirect(ctx, null, 'update_raffle_prize', { raffleId: r.id, prize: 'Two neon caps' })
-    expect(a).toMatchObject({ status: 'done', canUndo: true, label: 'Change the raffle prize to "Two neon caps"' })
-    expect((await db.select().from(raffles))[0].prize).toBe('Two neon caps')
-    expect(await undoAction(ctx, a.id)).toMatchObject({ status: 'undone' })
-    expect((await db.select().from(raffles))[0].prize).toBe('A neon cap')
+  /** Proposes the card and confirms it, as the user pressing Confirm. */
+  async function confirmCard(name: string, args: unknown) {
+    const card = await proposeCard(ctx, null, name, args)
+    if (!('kind' in card)) throw new Error(JSON.stringify(card))
+    const ran = await approvePlan(ctx, card.planId, card.token, () => {})
+    expect(ran).toMatchObject({ done: 1, failed: null })
+    return { card, actionId: card.steps[0].id }
+  }
 
-    const b = await recordDirect(ctx, null, 'update_raffle_prize', { raffleId: r.id, prize: 'Three caps' })
+  it('update_raffle_prize is a card that names the old and new prize, and says when visitors see it', async () => {
+    expect(TOOLS.update_raffle_prize.effect).toBe('public')
+    const r = await draftRaffle()
+    const draft = await proposeCard(ctx, null, 'update_raffle_prize', { raffleId: r.id, prize: 'Two neon caps' })
+    expect(draft).toMatchObject({ kind: 'card', detail: '"Friday raffle": prize "A neon cap" becomes "Two neon caps".', steps: [{ label: 'Change the raffle prize to "Two neon caps"' }] })
+    await db.update(raffles).set({ status: 'open', openedAt: new Date() }).where(eq(raffles.id, r.id))
+    const open = await proposeCard(ctx, null, 'update_raffle_prize', { raffleId: r.id, prize: 'Two neon caps' })
+    expect(open).toMatchObject({ detail: '"Friday raffle": prize "A neon cap" becomes "Two neon caps". Visitors in the scene see the new prize straight away.' })
+    expect((await db.select().from(raffles))[0].prize).toBe('A neon cap')
+  })
+
+  it('update_raffle_prize keeps template rules in step with the prize, and leaves rules the user wrote alone', async () => {
+    const templated = await draftRaffle({ rules: fillRules('A neon cap', 2, 'Test User') })
+    const { card } = await confirmCard('update_raffle_prize', { raffleId: templated.id, prize: 'Two neon caps' })
+    expect(card.detail).toContain('The official rules name the new prize.')
+    expect((await db.select().from(raffles).where(eq(raffles.id, templated.id)))[0]).toMatchObject({ prize: 'Two neon caps', rules: fillRules('Two neon caps', 2, 'Test User') })
+
+    const own = await draftRaffle({ rules: 'My own rules.' })
+    const { card: c2 } = await confirmCard('update_raffle_prize', { raffleId: own.id, prize: 'Two neon caps' })
+    expect(c2.detail).not.toContain('official rules')
+    expect((await db.select().from(raffles).where(eq(raffles.id, own.id)))[0]).toMatchObject({ prize: 'Two neon caps', rules: 'My own rules.' })
+  })
+
+  it("update_raffle_prize's undo restores the prize and rules, and refuses once the prize was edited by hand", async () => {
+    const r = await draftRaffle({ rules: fillRules('A neon cap', 2, 'Test User') })
+    const a = await confirmCard('update_raffle_prize', { raffleId: r.id, prize: 'Two neon caps' })
+    expect((await db.select().from(raffles))[0].prize).toBe('Two neon caps')
+    expect(await undoAction(ctx, a.actionId)).toMatchObject({ status: 'undone' })
+    expect((await db.select().from(raffles))[0]).toMatchObject({ prize: 'A neon cap', rules: fillRules('A neon cap', 2, 'Test User') })
+
+    const b = await confirmCard('update_raffle_prize', { raffleId: r.id, prize: 'Three caps' })
     await db.update(raffles).set({ prize: 'A hand-picked prize' }).where(eq(raffles.id, r.id))
-    expect(await undoAction(ctx, b.id)).toEqual({ error: 'changed' })
+    expect(await undoAction(ctx, b.actionId)).toEqual({ error: 'changed' })
     expect((await db.select().from(raffles))[0].prize).toBe('A hand-picked prize')
   })
 
