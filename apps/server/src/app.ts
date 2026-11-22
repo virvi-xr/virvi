@@ -408,6 +408,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     }])
   })
 
+  // Apple universal links: claims virvi.io/s/<code> for the iPhone app. Same placement as assetlinks.json.
+  app.get('/.well-known/apple-app-site-association', (_request, reply) => {
+    const appIDs = config.appleAppIds
+    return reply.type('application/json').send({
+      applinks: { details: appIDs.length === 0 ? [] : [{ appIDs, components: [{ '/': '/s/*' }] }] },
+    })
+  })
+
   // ── Docs (/docs, plus /llms.txt for agents) ───────────────────────────
   const docsServed = await registerDocsSite(app, config.docsDir, config.webAppUrl)
   console.log(`[virvi-server] Docs ${docsServed ? `served at /docs from ${resolve(config.docsDir)}` : `not built (${resolve(config.docsDir)})`}`)

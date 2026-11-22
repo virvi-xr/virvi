@@ -74,9 +74,16 @@ describe('POST /api/ar/spaces/:id/analytics', () => {
     expect([res.statusCode, res.json().error]).toEqual([404, 'not_found'])
   })
 
+  it('accepts the iPhone app as ar-ios', async () => {
+    await publish()
+    const res = await post(batch({ platform: 'ar-ios' }))
+    expect(res.statusCode).toBeLessThan(300)
+    expect((await db.select().from(analyticsSessions)).length).toBeGreaterThan(0)
+  })
+
   it('refuses other platforms', async () => {
     await publish()
-    for (const extra of [{ platform: 'hyperfy' }, { platform: 'ar-ios' }, {}]) {
+    for (const extra of [{ platform: 'hyperfy' }, { platform: 'ar-android' }, {}]) {
       const res = await post(batch(extra))
       expect(res.statusCode).toBe(400)
       expect(res.json()).toEqual({ error: 'bad_platform' })
