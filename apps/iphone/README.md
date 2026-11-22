@@ -1,9 +1,18 @@
 # Virvi AR for iPhone
 
-Visitor mode on iPhone (iOS 18+, iPhone only, portrait): point the camera at a ring marker and the space appears,
+Visitor mode on iPhone (phase 1; iOS 18+, iPhone only, portrait): point the camera at a ring marker and the space appears,
 placed from the ring's saved pose. Built on the shared Swift package `packages/virvi-ar-swift` (module `VirviARKit`):
 the ring detector and maths, the visitor flow, the AR Spaces API and the RealityKit scene renderer. This app is the
 ARKit, RealityKit and SwiftUI glue around it. The design is `docs/superpowers/specs/2026-11-22-virvi-ar-iphone-design.md`.
+
+**Get the app:** it isn't in the App Store yet. For now, build it from source as described below. The public page is
+[virvi.io/ar](https://virvi.io/ar).
+
+## Requirements
+
+- An iPhone with ARKit, on iOS 18 or later.
+- A Mac with Xcode, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+- The owner's Apple developer team, `P22YGT64VU`, to sign for a real phone.
 
 The Xcode project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen) from `project.yml` and isn't
 committed:
@@ -14,11 +23,16 @@ xcodegen generate
 open VirviAR.xcodeproj
 ```
 
-## Running on a phone
+## Build and run on a phone
+
+1. `cd apps/iphone && xcodegen generate`, then open `VirviAR.xcodeproj`.
+2. Pick your phone as the destination. Signing is automatic with team `P22YGT64VU`.
+3. Press Run.
 
 The scheme's **Run and Profile use the Release configuration**: the ring detector is about 60 times slower without
 optimisation (1.3 s a frame in Debug against 21 ms in Release), so a Debug build can't find rings in practice. Signing
-is automatic with the owner's team (`P22YGT64VU`); pick the phone in Xcode and run. Tests still run in Debug.
+is automatic with the owner's team (`P22YGT64VU`); pick the phone in Xcode and run. Tests still run in Debug. The ring detector is slow in Debug, so don't switch Run to Debug unless you
+need a local server.
 
 Release builds talk to `https://virvi.io`. Debug builds take `-baseUrl <url>` as a launch argument (see
 `AppConfig`), so use it from a Debug test run or switch the scheme's Run configuration to Debug for a local server.

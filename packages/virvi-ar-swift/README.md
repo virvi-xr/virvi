@@ -1,6 +1,17 @@
 # VirviARKit
 
-The Swift code Virvi AR shares between Apple Vision Pro (`apps/vision-pro`) and iPhone: the Virvi-to-RealityKit mapping, the scene plan and its diff, scheduled showings, the RealityKit scene renderer, floor and collider helpers, and the HTTP transport. Platforms iOS 18+ and visionOS 2+; GLTFKit2 0.5.15.
+The Swift code Virvi AR shares between Apple Vision Pro and iPhone. Platforms iOS 18+ and visionOS 2+; GLTFKit2 0.5.15.
+
+Used by `apps/vision-pro` and `apps/iphone`.
+
+What's in `Sources/VirviARKit`:
+
+- `Scene`: the Virvi-to-RealityKit mapping, the scene plan and its diff, scheduled showings, the RealityKit scene renderer, and floor and collider helpers.
+- `Api`: the HTTP transport and the AR Spaces API client.
+- `Ring`: the ring detector and the ring maths.
+- `Space`: the space model and where a space sits relative to its ring.
+- `Visitor`: the visitor flow (find the ring, line the scene up, hints).
+- `Config.swift`: shared settings.
 
 ## Test
 
@@ -12,3 +23,11 @@ xcodebuild -scheme VirviARKit -destination 'platform=iOS Simulator,name=iPhone 1
 ```
 
 `Tests/VirviARKitTests/FakeTransport.swift` is a copy of `apps/vision-pro/Tests/FakeTransport.swift`: test files can't be shared across a package boundary.
+
+The package also has to build for visionOS, since the Vision Pro app uses it:
+
+```sh
+xcodebuild -scheme VirviARKit -destination 'generic/platform=visionOS Simulator' build
+```
+
+The ring tests need the detector's test images: `cd apps/ring-marker && python3 -m ringmarker.testset testset`.
