@@ -13,7 +13,7 @@ The **Virvi app** is a small Hyperfy app (a `.hyp` file) that shows one of your 
 
 ## Connect a world
 
-1. In the dashboard, open **Deploy** and pick the scene.
+1. In the dashboard, open **Sync** and pick the scene.
 2. Under **Your Hyperfy worlds**, choose **Connect a world** and give it a name.
 3. A one-time panel shows the **world key**, a **Download Virvi app (.hyp)** link and the setup steps. Copy the key now: you won't see it again.
 
@@ -88,7 +88,7 @@ Visitors show up in [Virvi Analytics](/docs/dashboard/analytics) under a **Hyper
 
 ## Hosted worlds
 
-Don't want to run Hyperfy yourself? Virvi can host a world for you. Under **Create a hosted world** on the **Deploy** page, give it a name and, if you like, an end date. It is ready within a few minutes, with the Virvi app already installed and showing your scene. Hosted worlds appear only where Virvi has hosting turned on. A self-hosted install needs the Fly settings in [Hosted Hyperfy worlds](/docs/self-hosting/environment-variables/#hosted-hyperfy-worlds) for this.
+Don't want to run Hyperfy yourself? Virvi can host a world for you. Under **Create a hosted world** on the **Sync** page, give it a name and, if you like, an end date. It is ready within a few minutes, with the Virvi app already installed and showing your scene. Hosted worlds appear only where Virvi has hosting turned on. A self-hosted install needs the Fly settings in [Hosted Hyperfy worlds](/docs/self-hosting/environment-variables/#hosted-hyperfy-worlds) for this.
 
 ### How many you get
 

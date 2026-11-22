@@ -150,9 +150,9 @@ describe('scene designs', () => {
     expect(triangleWarning('Neon Chair', { pass: true, failures: 0, warnings: 0, triangles: null })).toBeNull()
     expect(triangleWarning('Neon Chair', null)).toBeNull()
   })
-  it('the new design picker offers buildings and furniture', () => {
-    expect(KIND_CHOICES).toEqual([['wearable', 'Wearable'], ['emote', 'Emote'], ['scene', 'Building or furniture']])
-    expect(kindLabel('scene')).toBe('Building or furniture')
+  it('the new design picker offers buildings and decor', () => {
+    expect(KIND_CHOICES).toEqual([['wearable', 'Wearable'], ['emote', 'Emote'], ['scene', 'Building or decor']])
+    expect(kindLabel('scene')).toBe('Building or decor')
   })
 })
 

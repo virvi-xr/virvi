@@ -29,6 +29,10 @@ There's no account to create and no sign-in page. Virvi runs a quick automatic b
 
 Your layout is kept in this browser while you work, so a reload doesn't lose it.
 
+### Cities
+
+- **Cities** opens as it does for an account: the Virvi-run [Cities](/docs/dashboard/cities/), with links to visit them.
+
 ### Your scenes
 
 - Open the scenes your trial holds (an import makes one), rename them and edit them: presets, and models, images, video and sound.
@@ -48,11 +52,11 @@ Your layout is kept in this browser while you work, so a reload doesn't lose it.
 
 ### Demos
 
-Analytics, Events and Giveaways open as demos, marked **Demo** in the sidebar:
+Analytics, Events and Drops open as demos, marked **Demo** in the sidebar:
 
 - **Analytics:** a week of visits to the sample World `virvi-sample.dcl.eth`, with its heatmap, visitors and sessions.
 - **Events:** a sample schedule on the sample scene.
-- **Giveaways:** a sample giveaway with items and claims.
+- **Drops:** a sample giveaway with items and claims.
 
 Demo with sample data. Changes stay in this browser and are never sent anywhere. You can create, edit and delete events and giveaways to see how they work; your changes are gone when the trial ends or you sign out.
 

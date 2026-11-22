@@ -49,13 +49,13 @@ Replies are formatted, with headings, lists, tables and code where they help. Li
 
 ## What it can't do yet
 
-Connecting a new destination, removing a collaborator, giveaways, deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page. It can't sign a deploy for you either: a destination that needs your signature is always finished on its deploy page.
+Connecting a new destination, removing a collaborator, Drops (giveaways), deleting things, finalizing or paying for Studio designs, billing and branding are not available in this release. For those, it points you to the right page. It can't sign a deploy for you either: a destination that needs your signature is always finished on its deploy page.
 
 ## Making things
 
 **Scenes.** Ask for a new scene and it creates an empty one in your personal account, with one preset (Default) that is live.
 
-**Studio designs.** Ask it to start a design and it creates one of three kinds: a **wearable**, an **emote**, or a **scene**, which means a building with its furniture. It uses your default agent for that kind unless you name one (Claude, Codex or Grok). A new design is empty until a prompt is sent.
+**Studio designs.** Ask it to start a design and it creates one of three kinds: a **wearable**, an **emote**, or a **scene**, which means a building or decor. It doesn't pick between the two, so the design shows under **Buildings** in Studio until its pieces show it's decor. It uses your default agent for that kind unless you name one (Claude, Codex or Grok). A new design is empty until a prompt is sent.
 
 **Prompts.** Sending a Studio prompt uses your Studio prompts, so the assistant never sends one on its own. It shows a card first, and the prompt goes only after you press **Confirm**. The card shows exactly what will be sent: the start of the prompt (for example, Send "a neon cap with rivets"), and under it the design's name and which prompts it uses, then the wearable slots it works on and, for a long prompt, its whole text. The cost line is one of:
 
@@ -115,9 +115,9 @@ The checklist shows on the event's page, under **Show checklist**, with an **Ask
 
 The states are read from your real events, raffles, BEATs and designs each time, never from what the assistant remembers. If you change something by hand, the checklist follows.
 
-### Raffles instead of giveaways
+### Raffles instead of Drops
 
-The assistant can't run giveaways, so a show uses a [raffle](/docs/dashboard/raffles/). Winners are picked by the draw, and **you send the prizes** to them yourself. See Delivering prizes on that page.
+The assistant can't run Drops (giveaways), so a show uses a [raffle](/docs/dashboard/raffles/). Winners are picked by the draw, and **you send the prizes** to them yourself. See Delivering prizes on that page.
 
 **The host terms card.** Creating a raffle is its own card, never part of a plan. It shows the raffle's details and Virvi's raffle host terms word for word: the raffle is free to enter and needs no purchase, you are responsible for following the giveaway and sweepstakes rules where you and your entrants live, and for delivering prizes. The card says "Confirming accepts these terms for this raffle." Pressing **Confirm** is you accepting them for that raffle. The assistant never accepts them for you.
 

@@ -11,7 +11,7 @@ import { VIEWER_NOTE, canAct } from './studio-people'
 export type StudioKind = 'wearable' | 'emote' | 'scene'
 
 /** What the new design picker offers, and what a design's kind is called. */
-export const KIND_CHOICES: [StudioKind, string][] = [['wearable', 'Wearable'], ['emote', 'Emote'], ['scene', 'Building or furniture']]
+export const KIND_CHOICES: [StudioKind, string][] = [['wearable', 'Wearable'], ['emote', 'Emote'], ['scene', 'Building or decor']]
 export const kindLabel = (kind: string) => KIND_CHOICES.find(([k]) => k === kind)?.[1] ?? 'Wearable'
 
 /** A scene design's shape (LIV-200): a building, or decor (furniture pieces). */

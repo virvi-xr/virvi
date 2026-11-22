@@ -66,8 +66,8 @@ function GiveawaysContent() {
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
-        crumbs={['Workspace', 'Giveaways']}
-        title="Giveaways"
+        crumbs={['Workspace', 'Drops']}
+        title="Drops"
         count={loading ? undefined : countLabel(giveaways.length)}
         subtitle="Set up rewards for the people who visit your scenes."
         actions={<PrimaryButton onClick={() => setShowCreate(!showCreate)}><PlusIcon size={16} /> Create Giveaway</PrimaryButton>}
@@ -247,7 +247,7 @@ function GiveawayDetail({ id, onDeleted }: { id: string; onDeleted: () => void }
   return (
     <div className="space-y-6">
       <PageHeader
-        crumbs={['Workspace', { label: 'Giveaways', href: `${prefix}/drops` }, giveaway.name]}
+        crumbs={['Workspace', { label: 'Drops', href: `${prefix}/drops` }, giveaway.name]}
         title={giveaway.name}
         subtitle={<span className="text-sm text-gray-500">Claims: {giveaway.claimCount ?? 0} &middot; Items: {giveaway.items?.length ?? 0} &middot; ID: {giveaway.id}</span>}
         actions={

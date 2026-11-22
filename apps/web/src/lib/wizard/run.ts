@@ -33,7 +33,7 @@ const CODE_MESSAGES: Record<string, string> = {
   grant_not_visible: "Decentraland took the permission but doesn't show it yet. Try again in a minute.",
   virvi_deploys_unavailable: "Virvi deploys aren't available right now. Choose \"I'll sign each deploy\" instead.",
   not_granted: "Virvi doesn't have deploy permission on this World yet. Try again to sign it.",
-  needs_review: "Your World changed outside Virvi. Open the scene's Deploy page to look at it before deploying.",
+  needs_review: "Your World changed outside Virvi. Open the scene on Sync to look at it before deploying.",
   no_live_scene: 'Your World has no scene to add models to.',
   not_connected: "That World's scene isn't set up for this Virvi scene any more. Set it up again in-world, then reload this page.",
   not_awaiting_signature: 'This deploy is no longer waiting for a signature. Try again.',

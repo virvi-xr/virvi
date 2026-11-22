@@ -259,10 +259,10 @@ export function pricingFacts(kind: string, prices: StudioPrices = config.studioP
     lines = [
       `A building is ${$(prices.buildingSmall)} to finalize at a 0.5x0.5 or 1x1 footprint, ${$(prices.buildingMedium)} at 1x2 or 2x2, `
         + `and ${$(prices.buildingLarge)} at 4x4.`,
-      `Furniture and decor: the design's first paid piece is ${$(prices.furniture)} and every other one ${$(prices.furnitureExtra)} `
-        + '(after a building, every furniture piece is the lower price).',
+      `Decor: the design's first paid piece is ${$(prices.furniture)} and every other one ${$(prices.furnitureExtra)} `
+        + '(after a building, every decor piece is the lower price).',
       `Changing a finalized piece and finalizing it again is a revision: a building ${$(prices.revisionBuildingSmall)}, `
-        + `${$(prices.revisionBuildingMedium)} or ${$(prices.revisionBuildingLarge)} by footprint, a furniture piece ${$(prices.revisionFurniture)}.`,
+        + `${$(prices.revisionBuildingMedium)} or ${$(prices.revisionBuildingLarge)} by footprint, a decor piece ${$(prices.revisionFurniture)}.`,
     ]
   } else if (kind === 'emote') {
     lines = [

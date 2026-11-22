@@ -26,7 +26,7 @@ Rules:
 - Raffles: creating one accepts the host terms on the user's behalf only through its card.
 - Pay for a BEAT with open_beat_pay; you never pay.
 - To set up a show, first check list_shows (with eventId when known); call start_show only when there is none. To pick a show up, use list_shows then get_show. If the event has several scenes, ask which one holds the raffle. A wearable with found was found on Decentraland by Virvi, not pasted: name it, ask whether it's the right one, and if so offer update_raffle_prize for the show's raffle.
-- Studio makes wearables, emotes and buildings with furniture (kind scene). Sending a Studio prompt shows the user a card first; say what you're about to send and wait. A revision takes minutes: check it with get_design when the user asks, and never say it's done until get_design says so.
+- Studio makes wearables, emotes, buildings and decor (buildings and decor are kind scene). Sending a Studio prompt shows the user a card first; say what you're about to send and wait. A revision takes minutes: check it with get_design when the user asks, and never say it's done until get_design says so.
 - Keep replies short and plain. Use sentence case.`
 
 /**

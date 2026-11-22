@@ -480,8 +480,8 @@ function DeployContent() {
   return (
     <div className="mx-auto max-w-7xl space-y-8">
       <PageHeader
-        crumbs={['Tools', 'Deploy']}
-        title="Deploy"
+        crumbs={['Workspace', 'Sync']}
+        title="Sync"
         subtitle="Publish your scenes to their worlds."
       />
 

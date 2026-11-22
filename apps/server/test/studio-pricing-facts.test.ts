@@ -36,6 +36,9 @@ describe('pricing facts for the agent', () => {
     const s = flat(pricingFacts('scene', defaults))
     for (const p of ['$29', '$49', '$79', '$9', '$5', '$15', '$25', '$40']) expect(s).toContain(p)
     expect(s).toMatch(/4x4/)
+    expect(s).toContain('Decor: ')
+    expect(s).toContain('a decor piece $5')
+    expect(s).not.toMatch(/furniture/i) // people read these answers: decor, never furniture
   })
 
   it('follows the price settings, with cents when there are any', () => {

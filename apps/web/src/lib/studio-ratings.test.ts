@@ -108,6 +108,6 @@ describe('the admin page', () => {
     expect(lessonFits(list, { kind: 'emote', live: true, text: 'y'.repeat(200) }, 'x'.repeat(300))).toBe(true)
     expect(lessonState({ status: 'draft', enabled: true })).toBe('Draft: not sent to the agent')
     expect(lessonState({ status: 'approved', enabled: false })).toBe('Off')
-    expect(skillLesson('scene', ' Keep doorways 2 m tall. ')).toBe('- **Building or furniture:** Keep doorways 2 m tall.')
+    expect(skillLesson('scene', ' Keep doorways 2 m tall. ')).toBe('- **Building or decor:** Keep doorways 2 m tall.')
   })
 })
