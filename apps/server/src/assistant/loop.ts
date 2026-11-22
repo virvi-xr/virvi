@@ -1,7 +1,7 @@
 // Virvi Assistant (LIV-155): one user turn. The model streams, calls tools (which run as the user through their own
 // routes), and every tool result goes back to it only as escaped untrusted data. The server, not the prompt, holds
 // the line on changes: one direct write per turn, anything more through propose_plan.
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { AssistantPageContext, AssistantStreamEvent } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { assistantConversations, organizations, orgMembers, users } from '../db/schema.js'
@@ -80,6 +80,29 @@ async function promptUser(userId: string) {
   return { displayName: me?.displayName ?? null, orgs: orgs.map((o) => ({ ...o, isActive: me?.activeOrgId === o.id })) }
 }
 
+/**
+ * Masks the user's text and appends any new wallets to the conversation's refs. The write only lands on the refs it
+ * read (append-only): if another request changed them since, they are read again and the text masked once more, so a
+ * `[wallet N]` on a pending card is never renumbered. Null when the refs keep changing.
+ */
+export async function maskAndStoreRefs(conversationId: string, userText: string, ctx: ToolCtx, refs: string[]): Promise<{ text: string; refs: string[] } | null> {
+  let old = refs
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const masked = maskUserText(userText, ctx.self, old)
+    if (masked.refs.length === old.length) return masked
+    const updated = await db
+      .update(assistantConversations)
+      .set({ walletRefs: masked.refs })
+      .where(and(eq(assistantConversations.id, conversationId), sql`${assistantConversations.walletRefs} = ${JSON.stringify(old)}::jsonb`))
+      .returning({ id: assistantConversations.id })
+    if (updated.length) return masked
+    const [now] = await db.select({ refs: assistantConversations.walletRefs }).from(assistantConversations).where(eq(assistantConversations.id, conversationId))
+    if (!now) return null
+    old = now.refs ?? []
+  }
+  return null
+}
+
 export async function runTurn(
   ctx: ToolCtx,
   conversationId: string,
@@ -102,11 +125,12 @@ export async function runTurn(
     }
 
     const history = await loadHistory(conversationId)
-    const masked = maskUserText(userText, ctx.self, conv?.walletRefs ?? [])
-    const text = masked.text
-    if (masked.refs.length !== (conv?.walletRefs ?? []).length) {
-      await db.update(assistantConversations).set({ walletRefs: masked.refs }).where(eq(assistantConversations.id, conversationId))
+    const masked = await maskAndStoreRefs(conversationId, userText, ctx, conv?.walletRefs ?? [])
+    if (!masked) {
+      emit({ type: 'error', code: 'assistant_busy', message: 'This conversation changed while your message was sent. Send it again.' })
+      return
     }
+    const text = masked.text
     ctx.walletRefs = masked.refs
     // The context opens the message (not the system prompt), so earlier turns' history and thinking stay byte-stable
     const context = contextPrompt(await promptUser(userId), page, new Date())

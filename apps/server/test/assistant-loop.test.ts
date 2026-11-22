@@ -10,7 +10,7 @@ import { db } from '../src/db/connection.js'
 import { assistantActions, assistantConversations, assistantMessages, assistantShows, assistantUsage, events as eventsTable, organizations, orgMembers, raffles, scenes } from '../src/db/schema.js'
 import { config } from '../src/config.js'
 import { z } from 'zod'
-import { APPROVAL_WRITE, CUT_OFF, REFUSED, runTurn, SECOND_WRITE, type TurnOptions } from '../src/assistant/loop.js'
+import { APPROVAL_WRITE, CUT_OFF, maskAndStoreRefs, REFUSED, runTurn, SECOND_WRITE, type TurnOptions } from '../src/assistant/loop.js'
 import { INVALID_TOOL_JSON, setAssistantFetch, setAssistantModel, type ModelParams, type ModelResult } from '../src/assistant/model.js'
 import { recordAssistantUsage } from '../src/assistant/access.js'
 import { approvePlan } from '../src/assistant/actions.js'
@@ -133,6 +133,23 @@ describe('assistant turn loop', () => {
     for (const u of users) expect(u.toLowerCase()).not.toContain(w.toLowerCase())
     const [conv] = await db.select().from(assistantConversations).where(eq(assistantConversations.id, conversationId))
     expect(conv.walletRefs).toEqual([w.toLowerCase()])
+  })
+
+  it('new wallets are appended to the refs as stored now, never renumbering a reference another request added', async () => {
+    const w1 = '0x' + '11'.repeat(20)
+    const w2 = '0x' + '22'.repeat(20)
+    // Another request stored w1 after this turn read the conversation (it still holds the stale [])
+    await db.update(assistantConversations).set({ walletRefs: [w1] }).where(eq(assistantConversations.id, conversationId))
+    const r = await maskAndStoreRefs(conversationId, `add ${w2} and ${w1}`, ctx, [])
+    expect(r).toEqual({ text: 'add [wallet 2] and [wallet 1]', refs: [w1, w2] })
+    const [conv] = await db.select().from(assistantConversations).where(eq(assistantConversations.id, conversationId))
+    expect(conv.walletRefs).toEqual([w1, w2])
+
+    // A stale read that only names a stored wallet writes nothing and still numbers it as stored
+    const again = await maskAndStoreRefs(conversationId, `and ${w2}`, ctx, [w1])
+    expect(again).toEqual({ text: 'and [wallet 2]', refs: [w1, w2] })
+    const [after] = await db.select().from(assistantConversations).where(eq(assistantConversations.id, conversationId))
+    expect(after.walletRefs).toEqual([w1, w2])
   })
 
   it('runs reads, then one write, naming the org, then replies', async () => {
