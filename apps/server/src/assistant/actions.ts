@@ -119,6 +119,7 @@ export async function proposePlan(ctx: ToolCtx, conversationId: string | null, s
     const n = `Step ${i + 1}`
     const def = typeof s?.tool === 'string' ? enabled(s.tool) : undefined
     if (!def) return { error: `${n}: there's no tool called ${safe(String(s?.tool))}.` }
+    if (def.effect === 'paid') return { error: `${n}: ${def.name} needs its own confirmation, so it can't be in a plan. Call it on its own.` }
     if (def.effect !== 'write' || !def.before) return { error: `${n}: ${def.name} only reads, so it doesn't belong in a plan. Call it directly.` }
     const parsed = def.input.safeParse(s.args ?? {})
     if (!parsed.success) {
@@ -163,6 +164,62 @@ export async function proposePlan(ctx: ToolCtx, conversationId: string | null, s
     .returning()
   rows.sort((a, b) => a.step! - b.step!)
   return { planId, kind: 'plan', detail: null, steps: rows.map(actionView), token, expiresAt: new Date(expiresAtMs).toISOString() }
+}
+
+/**
+ * A card: a one-row plan for one paid tool call, with its own token and a server-written cost line. A blocked preview
+ * (nothing left to spend) writes no row. approvePlan and cancelPlan work on it unchanged.
+ */
+export async function proposeCard(
+  ctx: ToolCtx,
+  conversationId: string | null,
+  name: string,
+  args: unknown,
+): Promise<AssistantPlanView | { error: string } | { blocked: string; link: { label: string; href: string } }> {
+  const safe = (text: string) => redact(text, ctx.self) as string
+  const def = enabled(name)
+  if (!def) return { error: `There's no tool called ${safe(String(name))}.` }
+  if (def.effect !== 'paid' || !def.before || !def.preview) return { error: `${def.name} isn't a paid tool, so it doesn't need a card. Call it directly.` }
+  const parsed = def.input.safeParse(args ?? {})
+  if (!parsed.success) return { error: safe(parsed.error.issues.map((x) => (x.path.length ? `${x.path.join('.')}: ${x.message}` : x.message)).join('; ')) }
+
+  let orgName: string | null
+  let preview: Awaited<ReturnType<NonNullable<typeof def.preview>>>
+  try {
+    orgName = (await def.before(parsed.data, ctx)).orgName
+    preview = await def.preview(parsed.data, ctx)
+  } catch (err) {
+    if (err instanceof ToolError) return { error: safe(err.message) }
+    throw err
+  }
+  if ('blocked' in preview) return preview
+
+  const planId = randomUUID()
+  const expiresAtMs = Date.now() + PLAN_TTL_MS
+  const hash = argsHash(parsed.data)
+  const token = `${sign(planId, ctx.user.id, [hash], expiresAtMs)}.${expiresAtMs}`
+  const [row] = await db
+    .insert(assistantActions)
+    .values({
+      conversationId,
+      userId: ctx.user.id,
+      orgId: ctx.user.orgId,
+      planId,
+      step: 1,
+      tool: def.name,
+      effect: 'paid',
+      argsRedacted: redact(parsed.data, ctx.self) as object,
+      args: parsed.data as object,
+      argsHash: hash,
+      label: def.label(parsed.data),
+      orgName,
+      detail: preview.detail,
+      status: 'awaiting_confirmation',
+      confirmationTokenHash: sha256(token),
+      expiresAt: new Date(expiresAtMs),
+    })
+    .returning()
+  return { planId, kind: 'card', detail: preview.detail, steps: [actionView(row)], token, expiresAt: new Date(expiresAtMs).toISOString() }
 }
 
 /** True when `token` is this server's signature over the plan's stored steps for this user. */

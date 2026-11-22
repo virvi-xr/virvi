@@ -5,9 +5,11 @@ import { eq, and } from 'drizzle-orm'
 import type { AssistantActionView, AssistantPlanView } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
 import { assistantActions, mediaAssets, organizations, sceneElements, scenePresetSchedules, scenePresets, scenes } from '../src/db/schema.js'
-import { approvePlan, cancelPlan, proposePlan, recordDirect, undoAction, undoPlan } from '../src/assistant/actions.js'
+import { approvePlan, cancelPlan, proposeCard, proposePlan, recordDirect, undoAction, undoPlan } from '../src/assistant/actions.js'
 import { inject } from '../src/assistant/tools/run.js'
-import type { ToolCtx } from '../src/assistant/tools/types.js'
+import { TOOLS } from '../src/assistant/tools/index.js'
+import { ToolError, type ToolCtx, type ToolDef } from '../src/assistant/tools/types.js'
+import { z } from 'zod'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -354,5 +356,117 @@ describe('assistant action log, plans and undo', () => {
       expect(u.refused).toMatchObject({ error: 'changed', action: { step: 2 } })
       expect(await sceneName(sceneId)).toBe('Test Lounge')
     })
+  })
+})
+
+describe('assistant confirmation cards', () => {
+  let app: FastifyInstance
+  let owner: TestUser
+  let ctx: ToolCtx
+  let calls = 0
+  let refuse = false
+  let mode: 'ok' | 'blocked' | 'before404' = 'ok'
+
+  const stub: ToolDef<{ prompt: string }> = {
+    name: 'stub_paid',
+    description: 'test',
+    input: z.object({ prompt: z.string().trim() }),
+    effect: 'paid',
+    before: async () => {
+      if (mode === 'before404') throw new ToolError(404, 'Design not found')
+      return { undo: null, after: () => null, orgName: 'Acme' }
+    },
+    preview: async () => (mode === 'blocked' ? { blocked: 'No prompts left', link: { label: 'Buy Studio prompts', href: '/studio' } } : { detail: 'Uses 1 of your 3 prompts left today.' }),
+    call: (a) => ({ method: 'POST', url: '/__stub_paid', body: a }),
+    label: (a) => `Run stub: ${a.prompt}`,
+    summarize: (r) => r,
+  }
+
+  beforeAll(async () => {
+    const { buildApp } = await import('../src/app.js')
+    app = await buildApp({ rateLimit: false, logger: false, backfill: false })
+    app.post('/__stub_paid', async (_req, reply) => {
+      calls++
+      if (refuse) return reply.code(403).send({ error: 'No prompts left today' })
+      return { ok: true }
+    })
+    await app.ready()
+    ;(TOOLS as Record<string, unknown>).stub_paid = stub
+  })
+  afterAll(async () => {
+    delete (TOOLS as Record<string, unknown>).stub_paid
+    await app.close()
+  })
+  beforeEach(async () => {
+    await resetDb()
+    owner = await createUser()
+    ctx = ctxFor(app, owner)
+    calls = 0
+    refuse = false
+    mode = 'ok'
+  })
+
+  const card = async () => {
+    const c = await proposeCard(ctx, null, 'stub_paid', { prompt: '  a hat ' })
+    if (!('kind' in c)) throw new Error(JSON.stringify(c))
+    return c
+  }
+
+  it('offers a one-step card with the detail, and stores a paid row with the exact args', async () => {
+    const c = await card()
+    expect(c).toMatchObject({ kind: 'card', detail: 'Uses 1 of your 3 prompts left today.' })
+    expect(c.steps).toHaveLength(1)
+    expect(c.steps[0]).toMatchObject({ status: 'awaiting_confirmation', step: 1, label: 'Run stub: a hat', orgName: 'Acme' })
+    const [row] = await rowsOf(c.planId)
+    expect(row).toMatchObject({ effect: 'paid', detail: 'Uses 1 of your 3 prompts left today.', args: { prompt: 'a hat' }, argsRedacted: { prompt: 'a hat' }, label: 'Run stub: a hat', orgName: 'Acme' })
+    expect(calls).toBe(0)
+  })
+
+  it('runs once on approval, then the token is used', async () => {
+    const c = await card()
+    expect(await approvePlan(ctx, c.planId, c.token, () => {})).toEqual({ done: 1, failed: null })
+    expect(calls).toBe(1)
+    expect(await approvePlan(ctx, c.planId, c.token, () => {})).toEqual({ error: 'used' })
+    expect(calls).toBe(1)
+  })
+
+  it('cancelPlan cancels a card', async () => {
+    const c = await card()
+    expect(await cancelPlan(owner.id, c.planId)).toBe(1)
+    expect(await approvePlan(ctx, c.planId, c.token, () => {})).toEqual({ error: 'used' })
+    expect(calls).toBe(0)
+  })
+
+  it('a blocked preview returns the link and writes no row', async () => {
+    mode = 'blocked'
+    expect(await proposeCard(ctx, null, 'stub_paid', { prompt: 'x' })).toEqual({ blocked: 'No prompts left', link: { label: 'Buy Studio prompts', href: '/studio' } })
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+  })
+
+  it('a before() that throws ToolError returns an error and writes no row', async () => {
+    mode = 'before404'
+    expect(await proposeCard(ctx, null, 'stub_paid', { prompt: 'x' })).toEqual({ error: 'Design not found' })
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+  })
+
+  it('refuses unknown tools, non-paid tools and bad args without a row', async () => {
+    expect(await proposeCard(ctx, null, 'nope', {})).toHaveProperty('error')
+    expect(await proposeCard(ctx, null, 'get_scene', {})).toHaveProperty('error')
+    expect(await proposeCard(ctx, null, 'stub_paid', { prompt: 5 })).toHaveProperty('error')
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+  })
+
+  it('proposePlan refuses a paid step', async () => {
+    const r = await proposePlan(ctx, null, [{ tool: 'stub_paid', args: { prompt: 'x' } }, { tool: 'stub_paid', args: { prompt: 'y' } }])
+    expect(r).toEqual({ error: "Step 1: stub_paid needs its own confirmation, so it can't be in a plan. Call it on its own." })
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+  })
+
+  it("marks the step failed with the route's own words when it refuses at approval", async () => {
+    const c = await card()
+    refuse = true
+    const r = await approvePlan(ctx, c.planId, c.token, () => {})
+    expect(r).toMatchObject({ done: 0, failed: { status: 'failed', error: 'No prompts left today' } })
+    expect((await rowsOf(c.planId))[0]).toMatchObject({ status: 'failed', error: 'No prompts left today' })
   })
 })
