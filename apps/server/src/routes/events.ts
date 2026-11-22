@@ -52,6 +52,7 @@ export default async function eventRoutes(app: FastifyInstance) {
       .insert(events)
       .values({
         ownerId: request.user.id,
+        orgId: request.user.orgId ?? null,
         name,
         description: description || null,
         startTime: startTime ? new Date(startTime) : null,
