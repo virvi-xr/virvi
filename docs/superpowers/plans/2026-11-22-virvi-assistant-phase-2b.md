@@ -218,3 +218,44 @@
   - picking a show up from any conversation
 - [ ] **Step 2: Docs build, expect success.**
 - [ ] **Step 3: Commit** `docs: assistant shows`.
+
+### Task 9: Markdown in the assistant's replies (owner request, 2026-11-22)
+
+The assistant's replies render markdown: headings, bold and italic, lists, links, inline code, code blocks and tables. Raw HTML is never rendered.
+
+**Files:**
+- Modify `apps/web/src/lib/markdown.ts` (parser) and `apps/web/src/lib/markdown.test.ts`.
+- Move `apps/web/src/app/(dashboard)/studio/[designId]/Markdown.tsx` to `apps/web/src/components/Markdown.tsx` and update the Studio import.
+- Modify `apps/web/src/components/assistant/AssistantPanel.tsx` (assistant message text only). Test: `apps/web/src/components/assistant/assistant.test.ts`.
+
+**Interfaces and decisions:**
+- **Reuse the existing parser.** It builds a tree and React renders the tree, so text from a reply never becomes HTML. Never use `dangerouslySetInnerHTML` or an HTML-producing library. A literal `<b>x</b>` in a reply shows as text.
+- **Tables (GFM pipes).** Add `Block` `{ type: 'table'; align: Array<'left' | 'center' | 'right' | null>; head: Inline[][]; rows: Inline[][][] }`.
+  - A table is a header row, a separator row (`---`, `:---`, `---:`, `:---:`), then body rows.
+  - Cells are inline-parsed.
+  - A row with fewer cells than the header is padded; extra cells are dropped.
+  - A pipe line with no separator row stays a paragraph.
+- **Headings.** Keep levels 1-3 (deeper levels clamp to 3, as today). The shared component renders level 1 as `h3`, 2 as `h4`, 3 as `h5`, sized for the panel, so they don't fight the page's own headings.
+- **Links.** The parser keeps `http(s)://` links and also accepts root-relative paths (`/…`). The component takes `links: 'external' | 'assistant'`:
+  - `external` (Studio, unchanged behaviour): http(s) open in a new tab with `rel="noopener noreferrer"`; a relative path renders as its label text.
+  - `assistant`: a path that passes `safeHref` (`lib/assistant/state.ts`, the dashboard allowlist) is an in-app link in the same tab. An `https://` link whose host is `virvi.io` or a subdomain of it opens in a new tab with `rel="noopener noreferrer"`. Any other URL renders as plain text, `label (url)`, with no link (ruling: model text can be steered by untrusted data, so only Virvi destinations are clickable, matching phase 1's link policy).
+- **Code.** Inline code and fenced code blocks; the fence's language tag is ignored. Blocks scroll sideways inside themselves.
+- **Width.** Tables sit in an `overflow-x-auto` wrapper so a wide table never makes the panel or page scroll sideways at 390 px.
+- **Scope.** Only assistant replies render markdown. The user's own messages stay plain text. Streaming text re-renders as it grows, and an unclosed marker shows as literal text until it closes.
+
+- [ ] **Step 1: Failing tests (parser):**
+  - a 2-column table with alignment
+  - a short row padded and a long row truncated
+  - a pipe line without a separator stays a paragraph
+  - `/scenes?id=x` kept as a link node
+  - `javascript:alert(1)` and `data:` never become links
+  - `<script>` stays text
+- [ ] **Step 1b: Failing tests (render, `renderToStaticMarkup`):**
+  - the assistant variant links `/scenes?id=x` and `https://docs.virvi.io/x`, but renders `https://evil.example` as `label (https://evil.example)` with no `<a>`
+  - a table renders `<table>` inside an overflow wrapper
+  - `<b>hi</b>` in the text appears escaped
+  - a user message with `**x**` renders the asterisks
+- [ ] **Step 2: Run, expect FAIL.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Web vitest, web tsc, `npx next build`, expect PASS. Studio's conversation still renders as before.**
+- [ ] **Step 5: Commit** `feat(web): assistant replies render markdown`.
