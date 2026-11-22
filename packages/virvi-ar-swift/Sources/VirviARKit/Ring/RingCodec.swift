@@ -78,7 +78,7 @@ public enum RingCodec {
 
     // --- layout and mask ---
     private static let mask: [Bool] = {
-        let d = Array(SHA256.hash(data: Data("VLM ring marker v0".utf8)))
+        let d = Array(SHA256.hash(data: Data("VLM ring marker v0".utf8))) // virvi-rename: keep (the printed rings depend on this seed)
         return (0..<cells).map { i in (d[i / 8] >> UInt8(7 - i % 8)) & 1 == 1 }
     }()
 
