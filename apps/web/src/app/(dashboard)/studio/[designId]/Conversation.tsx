@@ -21,7 +21,7 @@ import {
 import { IDEA_NONE, ideaIdToSend, ideaReducer } from '@/lib/studio-ideas'
 import { EmoteChips, HelpPanel, ImproveButton, PromptGuide, SlotChips } from './PromptHelper'
 import { AgentPicker } from '../AgentPicker'
-import Markdown from './Markdown'
+import Markdown from '@/components/Markdown'
 import Uploads from './Uploads'
 import WaitSteps from './WaitSteps'
 import { createWarmer, waitSteps } from '@/lib/studio-wait'

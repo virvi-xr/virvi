@@ -86,4 +86,48 @@ describe('parseMarkdown', () => {
       { type: 'link', href: 'https://en.wikipedia.org/wiki/Foo_(bar)', children: [t('Foo')] }, t('.'),
     ] }])
   })
+
+  it('reads a table with column alignment', () => {
+    expect(parseMarkdown('| Name | Count |\n| :--- | ---: |\n| **Hat** | 3 |\n| Cap | 12 |')).toEqual([{
+      type: 'table', align: ['left', 'right'],
+      head: [[t('Name')], [t('Count')]],
+      rows: [[[{ type: 'strong', children: [t('Hat')] }], [t('3')]], [[t('Cap')], [t('12')]]],
+    }])
+    expect(parseMarkdown('a | b\n:-:|---\n1 | 2')).toEqual([{ type: 'table', align: ['center', null], head: [[t('a')], [t('b')]], rows: [[[t('1')], [t('2')]]] }])
+  })
+
+  it('pads a short table row and drops extra cells', () => {
+    expect(parseMarkdown('| a | b |\n|---|---|\n| 1 |\n| 1 | 2 | 3 |')).toEqual([{
+      type: 'table', align: [null, null], head: [[t('a')], [t('b')]],
+      rows: [[[t('1')], []], [[t('1')], [t('2')]]],
+    }])
+  })
+
+  it('keeps pipe lines with no separator row as a paragraph', () => {
+    expect(parseMarkdown('| a | b |\n| 1 | 2 |')).toEqual([{ type: 'p', inlines: [t('| a | b |'), { type: 'br' }, t('| 1 | 2 |')] }])
+  })
+
+  it('ends a table at a blank line', () => {
+    expect(parseMarkdown('| a |\n|---|\n| 1 |\n\nafter')).toEqual([
+      { type: 'table', align: [null], head: [[t('a')]], rows: [[[t('1')]]] },
+      { type: 'p', inlines: [t('after')] },
+    ])
+  })
+
+  it('keeps a root-relative path as a link', () => {
+    expect(parseMarkdown('[Open it](/scenes?id=x)')).toEqual([{ type: 'p', inlines: [
+      { type: 'link', href: '/scenes?id=x', children: [t('Open it')] },
+    ] }])
+  })
+
+  it('never links javascript:, data: or protocol-relative addresses', () => {
+    for (const href of ['javascript:alert(1)', 'data:text/html,hi', '//evil.example/x', '/\\evil.example']) {
+      const [p] = parseMarkdown(`[x](${href})`)
+      expect(JSON.stringify(p)).not.toContain('"link"')
+    }
+  })
+
+  it('keeps a script tag as text', () => {
+    expect(parseMarkdown('<script>alert(1)</script>')).toEqual([{ type: 'p', inlines: [t('<script>alert(1)</script>')] }])
+  })
 })

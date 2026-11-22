@@ -1,7 +1,8 @@
 /**
- * The small Markdown the studio's agents write (paragraphs, headings, lists, fenced code, bold, italics, inline code
- * and links), parsed into a tree the page renders as React elements. Nothing is ever turned into HTML: tags in a
- * reply stay text, and only http(s) links become links.
+ * The small Markdown the studio's agents and the assistant write (paragraphs, headings, lists, fenced code, tables,
+ * bold, italics, inline code and links), parsed into a tree the page renders as React elements. Nothing is ever turned
+ * into HTML: tags in a reply stay text, and only http(s) addresses and root-relative paths become links (the renderer
+ * decides which of those it makes clickable).
  */
 
 export type Inline =
@@ -20,6 +21,7 @@ export type Block =
   | { type: 'ul'; items: ListItem[] }
   | { type: 'ol'; start: number; items: ListItem[] }
   | { type: 'code'; text: string }
+  | { type: 'table'; align: Array<'left' | 'center' | 'right' | null>; head: Inline[][]; rows: Inline[][][] }
 
 const FENCE = /^\s*```/
 const HEADING = /^(#{1,6})\s+(.*)$/
@@ -28,6 +30,39 @@ const NUMBERED = /^(\s*)(\d+)[.)]\s+(.*)$/
 
 const indentOf = (line: string) => /^\s*/.exec(line)![0].replace(/\t/g, '    ').length
 const listKindOf = (line: string) => (BULLET.test(line) ? 'ul' : NUMBERED.test(line) ? 'ol' : null)
+
+/** A table row's cells: the outer pipes dropped, split on each pipe that isn't escaped (`\\|` stays a pipe). */
+function cellsOf(line: string): string[] {
+  const cells: string[] = []
+  let cur = ''
+  const s = line.trim().replace(/^\|/, '')
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && s[i + 1] === '|') { cur += '|'; i++ }
+    else if (s[i] === '|') { cells.push(cur.trim()); cur = '' }
+    else cur += s[i]
+  }
+  if (cur.trim() || !/\|\s*$/.test(line)) cells.push(cur.trim())
+  return cells
+}
+
+const SEPARATOR_CELL = /^:?-+:?$/
+
+/** The table whose header is lines[i]: it needs a separator row under it with one cell per header cell. */
+function parseTable(lines: string[], i: number): [Block, number] | null {
+  if (!lines[i].includes('|') || !lines[i + 1]?.includes('|')) return null
+  const headCells = cellsOf(lines[i])
+  const sep = cellsOf(lines[i + 1])
+  if (sep.length !== headCells.length || !sep.every((c) => SEPARATOR_CELL.test(c))) return null
+  const align = sep.map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : null))
+  const rows: Inline[][][] = []
+  let j = i + 2
+  for (; j < lines.length && lines[j].trim() && lines[j].includes('|'); j++) {
+    const cells = cellsOf(lines[j]).slice(0, headCells.length)
+    while (cells.length < headCells.length) cells.push('')
+    rows.push(cells.map(parseInline))
+  }
+  return [{ type: 'table', align, head: headCells.map(parseInline), rows }, j]
+}
 
 /**
  * A list starting at lines[i]: items at its indent, each with its wrapped lines and anything indented under it (a
@@ -90,6 +125,13 @@ export function parseMarkdown(src: string): Block[] {
       blocks.push({ type: 'h', level: Math.min(h[1].length, 3) as 1 | 2 | 3, inlines: parseInline(h[2].trim()) })
       continue
     }
+    const table = parseTable(lines, i)
+    if (table) {
+      flush()
+      blocks.push(table[0])
+      i = table[1] - 1
+      continue
+    }
     if (listKindOf(line)) {
       flush()
       const [list, next] = parseList(lines, i)
@@ -108,7 +150,8 @@ function inlinesOfLines(lines: string[]): Inline[] {
   return lines.flatMap((l, i) => (i ? [{ type: 'br' } as Inline, ...parseInline(l)] : parseInline(l)))
 }
 
-const SAFE_HREF = /^https?:\/\/[^\s]+$/i
+// An http(s) address, or a path from the site's root (not `//host` or `/\\host`, which a browser reads as another site)
+const SAFE_HREF = /^(https?:\/\/\S+|\/(?![/\\])[^\s\\]*)$/i
 
 /** Inline spans. A marker only counts with a closing partner; anything unmatched stays as written. */
 export function parseInline(s: string): Inline[] {

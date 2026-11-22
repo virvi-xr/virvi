@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { AssistantActionView, AssistantActivityItem, AssistantPlanView } from '@virvixr/shared'
 import { PlanCard, type PlanPhase } from './PlanCard'
 import { MessageLinks } from './MessageLinks'
+import { MessageText } from './MessageText'
 import { ActivityList } from '../../app/(dashboard)/settings/AssistantActivity'
 import { ActionRow } from './ActionRow'
 import { activityDate, approveLabel, budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin, approveRefused, isExpiredCode, reapproveCopy, REAPPROVE, RECONFIRM } from './copy'
@@ -193,5 +194,47 @@ describe('ActivityList', () => {
 
   it('has no Load more on the last page', () => {
     expect(render({ list: { items: [item('a')], next: null } })).not.toContain('Load more')
+  })
+})
+
+describe('MessageText', () => {
+  const reply = (text: string) => renderToStaticMarkup(createElement(MessageText, { role: 'assistant', text, onOpen: () => {} }))
+
+  it('links dashboard paths and Virvi addresses, and shows any other address as text', () => {
+    const html = reply('[Your scene](/scenes?id=x), [docs](https://docs.virvi.io/x) and [bad](https://evil.example)')
+    expect(html).toContain('<a href="/scenes?id=x"')
+    expect(html).not.toMatch(/<a href="\/scenes\?id=x"[^>]*target=/)
+    expect(html).toMatch(/<a href="https:\/\/docs\.virvi\.io\/x" target="_blank" rel="noopener noreferrer"/)
+    expect(html).toContain('bad (https://evil.example)')
+    expect(html).not.toContain('href="https://evil.example"')
+  })
+
+  it('does not link a relative path outside the dashboard, or a look-alike host', () => {
+    const html = reply('[a](/admin/x) [b](https://virvi.io.evil.example/) [c](http://virvi.io/)')
+    expect(html).not.toContain('<a ')
+    expect(html).toContain('a (/admin/x)')
+  })
+
+  it('renders a table inside a sideways-scrolling wrapper', () => {
+    expect(reply('| a | b |\n|---|:-:|\n| 1 | 2 |')).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table/)
+  })
+
+  it('renders headings below the page’s own levels', () => {
+    const html = reply('# One\n## Two\n### Three')
+    expect(html).toContain('<h3')
+    expect(html).toContain('<h4')
+    expect(html).toContain('<h5')
+  })
+
+  it('escapes html in a reply', () => {
+    const html = reply('<b>hi</b>')
+    expect(html).toContain('&lt;b&gt;hi&lt;/b&gt;')
+    expect(html).not.toContain('<b>')
+  })
+
+  it('shows a user message as plain text', () => {
+    const html = renderToStaticMarkup(createElement(MessageText, { role: 'user', text: '**x**', onOpen: () => {} }))
+    expect(html).toContain('**x**')
+    expect(html).not.toContain('<strong')
   })
 })
