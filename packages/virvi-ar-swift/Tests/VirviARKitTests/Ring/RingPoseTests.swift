@@ -4,8 +4,7 @@ import XCTest
 @testable import VirviARKit
 
 /// Mirrors apps/quest/app/src/test/java/io/virvi/ar/ring/RingPoseTest.kt and PoseAveragerTest.kt, with the Quest's
-/// head/lens pose replaced by an ARKit camera transform. The cases that need the Quest's `lockHeading` keep only their
-/// `wallFix` assertions.
+/// head/lens pose replaced by an ARKit camera transform.
 final class RingPoseTests: XCTestCase {
     private let ring140 = RING_TEST_MARKERS.first { $0.name == "RING140" }!
 
@@ -291,6 +290,24 @@ final class RingPoseTests: XCTestCase {
             let (cam, d) = view(eye, onA, wallA)
             XCTAssertNil(wallHeading(onA, [walls[1]], viewer: eye, tilt: circleNormals(d, k, cameraTransform: cam)), "\(off)°")
         }
+        // At 40-50° it agrees with B, but B is then 40-50° from head-on: too steep to count.
+        for off in [40.0, 45.0, 50.0] {
+            let eye = eyeAt(onA, wallA, 1.2, off)
+            let (cam, d) = view(eye, onA, wallA)
+            XCTAssertNil(lockedHeading(onA, [walls[1]], eye, cam, d), "\(off)°")
+        }
+    }
+
+    /// The heading a lock takes from one frame: the picked wall, unless the view is too steep (see `lockHeading`).
+    private func lockedHeading(_ marker: Vec3, _ ws: [WallPlane], _ eye: Vec3, _ cam: simd_float4x4, _ d: RingDetection) -> Double? {
+        lockHeading(fix: wallFix(marker, ws, viewer: eye, tilt: circleNormals(d, k, cameraTransform: cam)), tiltDeg: circleTiltDeg(d)).headingDeg
+    }
+
+    /// `d` with its outline's tilt reading `lowDeg` less than it should (blur squashes the major axis less).
+    private func tiltReadsLow(_ d: RingDetection, _ lowDeg: Double) -> RingDetection {
+        RingDetection(id: d.id, version: d.version, corrected: d.corrected, cx: d.cx, cy: d.cy, semiMajor: d.semiMajor,
+                      semiMinor: d.semiMajor * cos((circleTiltDeg(d) - lowDeg) * .pi / 180), angleDeg: d.angleDeg,
+                      rotationDeg: d.rotationDeg)
     }
 
     func testTheMarkersOwnWallWithinHeadOnCounts() {
@@ -302,7 +319,43 @@ final class RingPoseTests: XCTestCase {
             XCTAssertEqual(fix.headingDeg!, 180, accuracy: 1e-4, "\(off)°")
             XCTAssertEqual(fix.viewAngleDeg, off, accuracy: 0.5, "\(off)°")
             XCTAssertEqual(circleTiltDeg(d), off, accuracy: 1.0, "\(off)°")
+            XCTAssertEqual(lockedHeading(onA, walls, eye, cam, d)!, 180, accuracy: 1e-4, "\(off)°")
         }
+    }
+
+    func testATiltReadingLowStillNeverTakesALonePerpendicularWall() {
+        // Wall A unscanned, wall B 5 cm away, the tilt reading 5° low: by B the view looks 32-35° from head-on, and the
+        // tilt itself says 50-53°.
+        let onA = Vec3(x: 1.95, y: 1.5, z: 3.0)
+        for off in [55.0, 56.0, 57.0, 58.0] {
+            let eye = eyeAt(onA, wallA, 1.2, off)
+            let (cam, d) = view(eye, onA, wallA)
+            XCTAssertNil(lockedHeading(onA, [walls[1]], eye, cam, tiltReadsLow(d, 5)), "\(off)°")
+        }
+    }
+
+    func testTheTiltTermAloneKeepsALonePerpendicularWallOut() {
+        // Wall A unscanned, wall B 5 cm away, seen at 60-62° with the tilt reading 10-15° low. Either the tilt gate drops B
+        // outright, or B passes it and looks under 30° from head-on, so the wall check alone would take B: the circle's own
+        // tilt (still over 30°) is what refuses it. Both ways there is no heading.
+        let onA = Vec3(x: 1.95, y: 1.5, z: 3.0)
+        var passedTiltGate = 0
+        for off in [60.0, 61.0, 62.0] {
+            for low in [10.0, 12.0, 15.0] {
+                let eye = eyeAt(onA, wallA, 1.2, off)
+                let (cam, d) = view(eye, onA, wallA)
+                let read = tiltReadsLow(d, low)
+                XCTAssertNil(lockedHeading(onA, [walls[1]], eye, cam, read), "\(off)° -\(low)°")
+                guard let found = wallFix(onA, [walls[1]], viewer: eye, tilt: circleNormals(read, k, cameraTransform: cam)) else { continue }
+                passedTiltGate += 1
+                // At 60° the view is 30° exactly, which Double reads as 30.000000000000004: round off that noise.
+                let fix = WallFix(headingDeg: found.headingDeg, viewAngleDeg: (found.viewAngleDeg * 1e9).rounded() / 1e9)
+                XCTAssertTrue(fix.headingDeg != nil && fix.viewAngleDeg <= 30, "\(off)° -\(low)°: B looks head-on enough")
+                XCTAssertGreaterThan(circleTiltDeg(read), 30, "\(off)° -\(low)°: the tilt is steep")
+                XCTAssertNotNil(lockHeading(fix: fix, tiltDeg: 0).headingDeg, "\(off)° -\(low)°: without the tilt term B would count")
+            }
+        }
+        XCTAssertGreaterThan(passedTiltGate, 0, "some case reaches the tilt term")
     }
 
     func testAMisprintedRingStillGetsItsWallsHeading() {
@@ -317,6 +370,25 @@ final class RingPoseTests: XCTestCase {
                 XCTAssertEqual(fix.headingDeg!, 180, accuracy: 1e-4, "\(off)° x\(scale)")
             }
         }
+    }
+
+    func testATiltReadingLowStillTakesTheMarkersOwnWall() {
+        let onA = Vec3(x: 1.95, y: 1.5, z: 3.0)
+        for off in [20.0, 28.0] {
+            let eye = eyeAt(onA, wallA, 1.2, off)
+            let (cam, d) = view(eye, onA, wallA)
+            XCTAssertEqual(lockedHeading(onA, walls, eye, cam, tiltReadsLow(d, 5))!, 180, accuracy: 1e-4, "\(off)°")
+        }
+    }
+
+    func testAnAmbiguousCornerSeenSteeplyIsTooSteep() {
+        // No heading at 45° from the corner, and the view says why: stand in front.
+        let onA = Vec3(x: 1.95, y: 1.5, z: 3.0)
+        let eye = eyeAt(onA, wallA, 1.2, 45)
+        let (cam, d) = view(eye, onA, wallA)
+        let fix = wallFix(onA, walls, viewer: eye, tilt: circleNormals(d, k, cameraTransform: cam))!
+        XCTAssertNil(fix.headingDeg)
+        XCTAssertTrue(lockHeading(fix: fix, tiltDeg: circleTiltDeg(d)).steep)
     }
 
     func testADetectedObliqueRingHasItsTrueNormalAmongTheCandidates() throws {

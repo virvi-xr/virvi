@@ -7,7 +7,7 @@ import simd
 /// the same frame as three.js/Hyperfy. Position z is mirrored; rotation goes degrees to radians with x and y
 /// negated (a z-mirror flips turns about x and y), applied in Decentraland's yaw-pitch-roll order, which is
 /// three.js 'YXZ'. Scale is unchanged.
-public struct Vec3: Equatable {
+public struct Vec3: Equatable, Sendable {
     public var x: Double
     public var y: Double
     public var z: Double

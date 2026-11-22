@@ -8,7 +8,7 @@ import simd
 /// The scene's origin in the Virvi world and its turn about +Y. A scene point `s` lands at `position + R_y(yawDeg)·s`,
 /// with `R_y(θ)·(x, y, z) = (x cos θ + z sin θ, y, −x sin θ + z cos θ)`: a heading h (degrees from +Z toward +X)
 /// becomes h + yawDeg.
-public struct RootPose: Equatable {
+public struct RootPose: Equatable, Sendable {
     public var position: Vec3
     public var yawDeg: Double
 
