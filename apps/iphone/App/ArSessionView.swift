@@ -145,7 +145,7 @@ final class ArSessionDriver: NSObject, ARSessionDelegate {
     /// The app went to the background: the scene hides at once, as for an interruption.
     func pause() {
         arView.session.pause()
-        controller.sessionInterrupted()
+        controller.sessionPaused()
     }
 
     func setOcclusion(_ on: Bool) {

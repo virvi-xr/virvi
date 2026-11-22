@@ -229,6 +229,13 @@ final class VisitorController {
         noRings(clock())
     }
 
+    /// The app paused the session (it went to the background): as an interruption, and tracking counts as limited
+    /// until ARKit reports it normal again, so frames between the next `run` and that report can't step a lock.
+    func sessionPaused() {
+        trackingNormal = false
+        sessionInterrupted()
+    }
+
     /// `sessionInterruptionEnded`.
     func sessionResumed() {
         if !interrupted { return }

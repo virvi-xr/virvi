@@ -176,6 +176,23 @@ final class VisitorControllerTests: XCTestCase {
         XCTAssertEqual(view.visible, [true, true])
     }
 
+    /// After a pause ARKit restarts tracking limited and only later reports it normal: frames in between (from the
+    /// new `run`, before that first report) mustn't step a lock.
+    func testAfterAPauseRingsCountOnlyOnceTrackingIsNormalAgain() async throws {
+        try await seeRing(frames: 15)
+        XCTAssertTrue(controller.sceneShown)
+
+        controller.sessionPaused()
+        controller.sessionResumed()
+        try await seeRing(frames: 15)
+        XCTAssertFalse(controller.sceneShown, "frames before tracking was normal counted")
+        XCTAssertEqual(view.visible, [true])
+
+        controller.trackingChanged(normal: true)
+        try await seeRing(frames: 15)
+        XCTAssertTrue(controller.sceneShown)
+    }
+
     func testARingTooFarAwayNeverPlacesTheScene() async throws {
         try await seeRing(frames: 15, distanceM: 2.5)
         XCTAssertTrue(view.roots.isEmpty)
