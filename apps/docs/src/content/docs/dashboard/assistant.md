@@ -84,7 +84,7 @@ Ask for a whole show in one request, for example "set up a launch event on Frida
 The checklist shows on the event's page, under **Show checklist**, with an **Ask the assistant** button that opens the panel. Each item has one of four states:
 
 - **To do:** not made yet.
-- **Waiting:** made, and something else has to happen first. For example, a raffle that is scheduled but hasn't opened, a BEAT that hasn't been paid for ("Waiting for payment."), a wearable design still being worked on in Studio, or a wearable that isn't published yet ("Publish it on Decentraland, then paste its Marketplace link.").
+- **Waiting:** made, and something else has to happen first. For example, a raffle with no opening time yet, or whose scheduled opening failed (the note says why), a BEAT that hasn't been paid for ("Waiting for payment."), a wearable design still being worked on in Studio, or a wearable that isn't published yet ("Publish it on Decentraland, then paste its Marketplace link.").
 - **Done:** it exists and is where it should be.
 - **Skipped:** it was deleted, so the item is left alone with a note ("This was deleted."). A cancelled raffle or BEAT is also Skipped, with "This raffle was cancelled." or "This BEAT was cancelled."
 
@@ -96,11 +96,11 @@ The assistant can't run giveaways, so a show uses a [raffle](/docs/dashboard/raf
 
 **The host terms card.** Creating a raffle is its own card, never part of a plan. It shows the raffle's details and Virvi's raffle host terms word for word: the raffle is free to enter and needs no purchase, you are responsible for following the giveaway and sweepstakes rules where you and your entrants live, and for delivering prizes. The card says "Confirming accepts these terms for this raffle." Pressing **Confirm** is you accepting them for that raffle. The assistant never accepts them for you.
 
-**Scheduled opening.** A new raffle is a draft. To have it open by itself, the assistant offers a separate card, for example Open "Launch raffle" by itself at 2031-03-04 20:30 UTC. Times on the card are UTC. Confirm it to schedule the opening, or ask it to stop the raffle opening by itself. Only a raffle that hasn't opened can be scheduled. See [Scheduling a raffle](/docs/dashboard/raffles/#scheduling-a-raffle) for how opening works, including what happens if another raffle is running. Until then the checklist item reads Waiting.
+**Scheduled opening.** A new raffle is a draft. To have it open by itself, the assistant offers a separate card, for example Open "Launch raffle" by itself at 2031-03-04 20:30 UTC. Times on the card are UTC. Confirm it to schedule the opening, or ask it to stop the raffle opening by itself. Only a raffle that hasn't opened can be scheduled. See [Scheduling a raffle](/docs/dashboard/raffles/#scheduling-a-raffle) for how opening works, including what happens if another raffle is running. The checklist's scheduling item reads Done once the raffle has an opening time (or has already opened); the raffle itself opens at that time.
 
 ### A BEAT draft and paying for it
 
-The assistant makes a BEAT only as a **draft**: its name, dates, scenes, image and supply. It never pays. Instead it gives you a **Pay** link to the BEAT's page with the price, for example "Total $12.00", and you pay there the normal way. The checklist item reads Waiting until the BEAT is paid, then Done. See [BEATs](/docs/dashboard/beats/) for the price and what happens after paying. A draft BEAT can't be undone from the assistant: cancel it on its page.
+The assistant makes a BEAT only as a **draft**: its name, dates, scenes, image and supply. It never pays. Instead it gives you a link to pay for it, on the BEAT's page, with the price, for example "Total $12.00", and you pay there the normal way. The checklist item reads Waiting until the BEAT is paid, then Done. See [BEATs](/docs/dashboard/beats/) for the price and what happens after paying. A draft BEAT can't be undone from the assistant: cancel it on its page.
 
 ### A new wearable
 
