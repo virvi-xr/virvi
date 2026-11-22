@@ -15,9 +15,10 @@ import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, randomWallet, tokenFor, type TestUser } from './helpers/factories.js'
 import { addRevision, createDesign } from './helpers/studio.js'
 import { approvePlan, proposeCard, recordDirect, undoAction } from '../src/assistant/actions.js'
+import { destinationName, nextStep } from '../src/assistant/tools/deploy.js'
 import { routeError } from '../src/assistant/tools/http.js'
 import { LABEL_TEXT_MAX, STUDIO_PAUSED, STUDIO_REFUSALS } from '../src/assistant/tools/studio.js'
-import { assistantActions, assistantShows, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults, users } from '../src/db/schema.js'
+import { dclWorldDestinations, sceneDeployments, assistantActions, assistantShows, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults, users } from '../src/db/schema.js'
 import { RAFFLE_HOST_TERMS, fillRules } from '@virvixr/shared'
 import { RAFFLE_RULES_INCLUDED, RAFFLE_SEND_WEARABLE, cardTime } from '../src/assistant/tools/shows-tools.js'
 import { setImageSizeReader } from '../src/beats/image.js'
@@ -768,5 +769,68 @@ describe('assistant event, raffle and BEAT tools', () => {
     expect(await runTool(ctx, 'open_beat_pay', { beatId })).toMatchObject({ ok: false, error: 'This BEAT is over.' })
     await db.update(beats).set({ status: 'cancelled' }).where(eq(beats.id, beatId))
     expect(await runTool(ctx, 'open_beat_pay', { beatId })).toMatchObject({ ok: false, error: 'This BEAT is cancelled.' })
+  })
+
+  it('nextStep gives the next thing to try for each way a deploy ends', () => {
+    expect(nextStep({ status: 'deployed', errorMessage: null }, null)).toBe("It's live. Nothing to do.")
+    expect(nextStep({ status: 'awaiting_signature', errorMessage: null }, null)).toBe('It is waiting for your signature on its deploy page.')
+    expect(nextStep({ status: 'building', errorMessage: null }, null)).toBe('It is still running. Check again in a minute.')
+    expect(nextStep({ status: 'failed', errorMessage: 'Cancelled by user' }, null)).toBe('It was cancelled. Redeploy when you are ready.')
+    expect(nextStep({ status: 'failed', errorMessage: 'x' }, { status: 'over_budget', statusDetail: 'Too many triangles' }))
+      .toBe('The scene is over the size limit: Too many triangles. Remove or shrink models, then redeploy.')
+    expect(nextStep({ status: 'failed', errorMessage: 'x' }, { status: 'needs_review', statusDetail: 'Two models failed' }))
+      .toBe('Two models failed. Check the models on the deploy page, then redeploy.')
+    expect(nextStep({ status: 'failed', errorMessage: "Couldn't reach Decentraland's servers. Try again in a minute." }, { status: 'ok', statusDetail: null }))
+      .toBe("Decentraland couldn't be reached. Redeploy in a few minutes.")
+    expect(nextStep({ status: 'failed', errorMessage: 'Decentraland rejected the deploy: bad parcels' }, { status: 'ok', statusDetail: null }))
+      .toBe('Decentraland refused it. Open the deploy page to check the destination, then redeploy.')
+    expect(nextStep({ status: 'failed', errorMessage: 'Something went wrong on our side while deploying. Try again in a few minutes.' }, null))
+      .toBe('Redeploy in a few minutes. If it fails again, ask for help with the Help button.')
+    expect(nextStep({ status: 'failed', errorMessage: 'x' }, { status: 'unreachable', statusDetail: null }))
+      .toBe("Decentraland couldn't be reached. Redeploy in a few minutes.")
+  })
+
+  it('destinationName names a World or the parcels', () => {
+    expect(destinationName({ kind: 'world', worldName: 'sun.dcl.eth', base: '0,0', parcels: ['0,0'] })).toBe('World "sun.dcl.eth"')
+    expect(destinationName({ kind: 'parcels', worldName: null, base: '4,5', parcels: ['4,5'] })).toBe('Genesis City parcels at 4,5 (1 parcel)')
+    expect(destinationName({ kind: 'parcels', worldName: null, base: '4,5', parcels: ['4,5', '4,6'] })).toBe('Genesis City parcels at 4,5 (2 parcels)')
+  })
+
+  async function seedDeploys() {
+    const [dest] = await db.insert(dclWorldDestinations).values({ sceneId, ownerUserId: owner.id, ownerWallet: owner.wallet ?? '0xabc', worldName: 'sun.dcl.eth', base: '0,0', parcels: ['0,0'], mode: 'virvi', status: 'over_budget', statusDetail: 'Too many triangles' }).returning()
+    const target = { parcels: ['0,0'], contentServer: 'https://x', adminCode: 'secret-code' }
+    const [failed] = await db.insert(sceneDeployments).values({ sceneId, platform: 'decentraland', status: 'failed', deploymentType: 'world', target, errorMessage: 'Decentraland rejected the deploy: too big', destinationId: dest.id, createdAt: new Date(Date.now() - 120_000) }).returning()
+    const [ok] = await db.insert(sceneDeployments).values({ sceneId, platform: 'decentraland', status: 'deployed', deploymentType: 'world', target, destinationId: dest.id, deployedAt: new Date(), createdAt: new Date(Date.now() - 60_000) }).returning()
+    return { dest, failed, ok }
+  }
+
+  it("get_deploy_status returns the deployment's status, message, destination name and next step", async () => {
+    const { failed } = await seedDeploys()
+    const r = await runTool(ctx, 'get_deploy_status', { deploymentId: failed.id })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const s = r.summary as Record<string, unknown>
+    expect(Object.keys(s).sort()).toEqual(['createdAt', 'deployedAt', 'destination', 'errorMessage', 'id', 'next', 'platform', 'status'].sort())
+    expect(s).toMatchObject({ status: 'failed', destination: 'World "sun.dcl.eth"', errorMessage: 'Decentraland rejected the deploy: too big', next: 'The scene is over the size limit: Too many triangles. Remove or shrink models, then redeploy.' })
+    expect(JSON.stringify(s)).not.toContain('secret-code')
+  })
+
+  it('get_deploy_status for a healthy destination has exactly the brief keys', async () => {
+    const { ok, dest } = await seedDeploys()
+    await db.update(dclWorldDestinations).set({ status: 'ok', statusDetail: null }).where(eq(dclWorldDestinations.id, dest.id))
+    const r = await runTool(ctx, 'get_deploy_status', { deploymentId: ok.id })
+    expect(r.ok && Object.keys(r.summary as object).sort()).toEqual(['createdAt', 'deployedAt', 'destination', 'errorMessage', 'id', 'next', 'platform', 'status'])
+  })
+
+  it("explain_deploy_failure picks the scene's latest failed deployment, or says none failed", async () => {
+    const empty = await runTool(ctx, 'explain_deploy_failure', { sceneId })
+    expect(empty).toMatchObject({ ok: true, summary: { failed: null, message: 'No deploy of this scene has failed recently.' } })
+    const { failed, ok } = await seedDeploys()
+    const r = await runTool(ctx, 'explain_deploy_failure', { sceneId })
+    expect(r).toMatchObject({ ok: true, summary: { id: failed.id, newerDeployed: true, destination: 'World "sun.dcl.eth"' } })
+    const named = await runTool(ctx, 'explain_deploy_failure', { sceneId, deploymentId: ok.id })
+    expect(named).toMatchObject({ ok: true, summary: { id: ok.id, next: "It's live. Nothing to do." } })
+    const missing = await runTool(ctx, 'explain_deploy_failure', { sceneId, deploymentId: crypto.randomUUID() })
+    expect(missing).toMatchObject({ ok: false, status: 404, error: "That deploy isn't one of this scene's recent deploys." })
   })
 })
