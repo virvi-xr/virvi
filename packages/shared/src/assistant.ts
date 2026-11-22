@@ -15,6 +15,13 @@ export interface AssistantActionView {
   step: number | null
 }
 
+/** One row of the Settings activity list: an action plus when it ran and where. */
+export type AssistantActivityItem = AssistantActionView & {
+  createdAt: string
+  conversationId: string | null
+  effect: AssistantEffect
+}
+
 export interface AssistantPlanView {
   planId: string
   /** A plan is one or more write steps; a card is one paid step, shown with its `detail` line. */

@@ -1,13 +1,13 @@
 // Virvi Assistant (LIV-155): conversations, the streamed turn, plan approval and undo.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { and, desc, eq } from 'drizzle-orm'
-import type { AssistantAccess, AssistantPageContext, AssistantStreamEvent } from '@virvixr/shared'
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm'
+import type { AssistantAccess, AssistantActivityItem, AssistantPageContext, AssistantStreamEvent } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { assistantActions, assistantConversations, userAuthMethods, users } from '../db/schema.js'
 import { config } from '../config.js'
 import { authenticate } from '../middleware/auth.js'
 import { assistantAccess, type AssistantAccessResult } from '../assistant/access.js'
-import { approvePlan, cancelPlan, undoAction, undoPlan } from '../assistant/actions.js'
+import { actionView, approvePlan, cancelPlan, undoAction, undoPlan } from '../assistant/actions.js'
 import { APPROVAL_TEXT, DEFAULT_TITLE, isUuid, messageViews, ownConversation } from '../assistant/conversations.js'
 import { runTurn } from '../assistant/loop.js'
 import { modelAvailable } from '../assistant/model.js'
@@ -17,6 +17,9 @@ import type { ToolCtx } from '../assistant/tools/types.js'
 
 const TEXT_MAX = 4000
 const CONVERSATIONS_LISTED = 50
+const ACTIVITY_DEFAULT = 50
+const ACTIVITY_MAX = 100
+const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 export const CHANGED_MESSAGE = "This changed after the assistant's edit, so Undo would overwrite it."
 const UNDO_ERRORS = {
   changed: { status: 409, message: CHANGED_MESSAGE },
@@ -103,6 +106,45 @@ export default async function assistantRoutes(app: FastifyInstance) {
     const rows = await db.select().from(assistantConversations).where(eq(assistantConversations.userId, request.user.id))
       .orderBy(desc(assistantConversations.updatedAt)).limit(CONVERSATIONS_LISTED)
     return rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt.toISOString() }))
+  })
+
+  // The user's own changes and paid runs, newest first. Rows are ordered by (created_at to the millisecond, id), the
+  // precision `next` carries, and `next` is "<createdAt>_<id>" so rows made in the same millisecond are never skipped.
+  // A plain ISO date also works for `before`. Same guard as Undo: a locked or hidden account can still see its history.
+  app.get<{ Querystring: { before?: string; limit?: string } }>('/api/assistant/activity', undoAuth, async (request, reply) => {
+    const { before, limit: limitRaw } = request.query
+    const bad = (message: string) => reply.status(400).send({ error: 'invalid_query', message })
+    let limit = ACTIVITY_DEFAULT
+    if (limitRaw !== undefined) {
+      if (!/^\d+$/.test(limitRaw) || +limitRaw < 1 || +limitRaw > ACTIVITY_MAX) return bad(`limit must be a whole number from 1 to ${ACTIVITY_MAX}.`)
+      limit = +limitRaw
+    }
+    let cursor: { at: string; id: string | null } | null = null
+    if (before !== undefined) {
+      const [at, id, ...extra] = typeof before === 'string' ? before.split('_') : ['']
+      const valid = !extra.length && (id === undefined ? /^\d{4}-\d{2}-\d{2}T/.test(at) && !Number.isNaN(Date.parse(at)) : ISO_MS.test(at) && isUuid(id))
+      if (!valid) return bad('before must be an ISO date, or the next value from the previous page.')
+      cursor = { at: id === undefined ? new Date(at).toISOString() : at, id: id ?? null }
+    }
+    const created = sql`date_trunc('milliseconds', ${assistantActions.createdAt})`
+    const rows = await db.select().from(assistantActions)
+      .where(and(
+        eq(assistantActions.userId, request.user.id),
+        inArray(assistantActions.effect, ['write', 'paid']),
+        ne(assistantActions.status, 'awaiting_confirmation'),
+        cursor
+          ? cursor.id
+            ? sql`(${created}, ${assistantActions.id}) < (${cursor.at}::timestamptz, ${cursor.id}::uuid)`
+            : sql`${created} < ${cursor.at}::timestamptz`
+          : undefined,
+      ))
+      .orderBy(desc(created), desc(assistantActions.id))
+      .limit(limit)
+    const items: AssistantActivityItem[] = rows.map((r) => ({
+      ...actionView(r), createdAt: r.createdAt.toISOString(), conversationId: r.conversationId, effect: r.effect,
+    }))
+    const last = items[items.length - 1]
+    return { items, next: items.length === limit && last ? `${last.createdAt}_${last.id}` : null }
   })
 
   app.post('/api/assistant/conversations', { preHandler: [authenticate, guard], config: perUser('assistant-conversation') }, async (request, reply) => {

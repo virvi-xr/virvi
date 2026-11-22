@@ -127,6 +127,7 @@ describe('assistant routes', () => {
       const id0 = '00000000-0000-4000-8000-000000000000'
       for (const [method, url] of [
         ['GET', '/api/assistant/conversations'],
+        ['GET', '/api/assistant/activity'],
         ['POST', '/api/assistant/conversations'],
         ['POST', `/api/assistant/conversations/${id}/messages`],
         ['POST', `/api/assistant/plans/${id0}/approve`],
@@ -364,6 +365,76 @@ describe('assistant routes', () => {
       }
       expect((await send(id, 'Hi', other)).statusCode).toBe(404)
       expect(await db.select().from(assistantConversations)).toHaveLength(1)
+    })
+  })
+
+  describe('activity', () => {
+    const row = (o: Partial<typeof assistantActions.$inferInsert> = {}) => ({
+      userId: owner.id, tool: 'update_scene', effect: 'write' as const, argsRedacted: {}, argsHash: 'h', label: 'Renamed a scene',
+      status: 'done' as const, undo: { x: 1 }, finishedAt: new Date(), ...o,
+    })
+    const activity = (qs = '', u = owner) => app.inject({ method: 'GET', url: `/api/assistant/activity${qs}`, headers: auth(u) })
+
+    it("lists only the caller's writes and paid runs, newest first, and leaves out reads and pending cards", async () => {
+      const other = await createUser()
+      const t = (n: number) => new Date(Date.UTC(2026, 10, 1, 0, 0, n))
+      const [w] = await db.insert(assistantActions).values(row({ createdAt: t(1) })).returning()
+      const [p] = await db.insert(assistantActions).values(row({ createdAt: t(2), effect: 'paid', tool: 'studio_prompt', undo: null })).returning()
+      await db.insert(assistantActions).values([
+        row({ createdAt: t(3), effect: 'read' }),
+        row({ createdAt: t(4), status: 'awaiting_confirmation', effect: 'paid' }),
+        row({ createdAt: t(5), userId: other.id }),
+      ])
+      const res = await activity()
+      expect(res.statusCode).toBe(200)
+      const body = res.json()
+      expect(body.items.map((i: any) => i.id)).toEqual([p.id, w.id])
+      expect(body.next).toBeNull()
+      expect(body.items[1]).toMatchObject({ canUndo: true, effect: 'write', conversationId: null, createdAt: t(1).toISOString(), status: 'done' })
+      expect(body.items[0]).toMatchObject({ canUndo: false, effect: 'paid' })
+      expect(body.items[0]).not.toHaveProperty('undo')
+    })
+
+    it('pages with next and before without repeats or gaps, even for rows made in the same millisecond', async () => {
+      const same = new Date(Date.UTC(2026, 10, 1, 0, 0, 0, 5))
+      const ids: string[] = []
+      for (let i = 0; i < 5; i++) ids.push((await db.insert(assistantActions).values(row({ createdAt: same })).returning())[0].id)
+      await db.insert(assistantActions).values(row({ createdAt: new Date(Date.UTC(2026, 10, 1, 0, 0, 1)) }))
+      const seen: string[] = []
+      let before = ''
+      for (let guard = 0; guard < 10; guard++) {
+        const body = (await activity(`?limit=2${before}`)).json()
+        seen.push(...body.items.map((i: any) => i.id))
+        if (!body.next) break
+        before = `&before=${encodeURIComponent(body.next)}`
+      }
+      expect(seen).toHaveLength(6)
+      expect(new Set(seen).size).toBe(6)
+      expect(new Set(seen.slice(1))).toEqual(new Set(ids))
+    })
+
+    it('accepts a plain ISO date for before', async () => {
+      await db.insert(assistantActions).values([row({ createdAt: new Date('2026-11-01T00:00:00Z') }), row({ createdAt: new Date('2026-11-03T00:00:00Z') })])
+      const body = (await activity('?before=2026-11-02T00:00:00.000Z')).json()
+      expect(body.items).toHaveLength(1)
+    })
+
+    it('rejects a bad before or limit with 400', async () => {
+      for (const qs of ['?before=yesterday', '?limit=0', '?limit=101', '?limit=abc', '?before=2026-11-01T00:00:00.000Z_nope']) {
+        const res = await activity(qs)
+        expect(res.statusCode, qs).toBe(400)
+        expect(typeof res.json().message).toBe('string')
+      }
+    })
+
+    it('works for a locked or hidden account like Undo, but not when switched off', async () => {
+      await db.insert(assistantActions).values(row())
+      set('billingEnabled', true)
+      expect((await activity()).statusCode).toBe(200)
+      set('assistantAudience', 'admins')
+      expect((await activity()).json().items).toHaveLength(1)
+      set('assistantEnabled', false)
+      expect((await activity()).statusCode).toBe(404)
     })
   })
 })
