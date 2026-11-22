@@ -8,7 +8,7 @@ import { assistantConversations, organizations, orgMembers, users } from '../db/
 import { config } from '../config.js'
 import { recordJobFailure } from '../errors/record.js'
 import { affordable, assistantAccess, refreshSpend, reserveAssistantSpend, settleAssistantSpend } from './access.js'
-import { runAndRecord, proposePlan } from './actions.js'
+import { runAndRecord, proposePlan, proposeCard } from './actions.js'
 import { callCostUsd, modelPrice } from './pricing.js'
 import { redact, untrusted } from './redact.js'
 import { TOOLS } from './tools/index.js'
@@ -186,6 +186,21 @@ export async function runTurn(
 
         const def = Object.hasOwn(TOOLS, use.name) ? TOOLS[use.name] : undefined
         const isWrite = def?.effect === 'write'
+        if (def?.effect === 'paid') {
+          // A paid call is its own confirmation card: never run here, never the turn's one direct write
+          if (opts.approval) { reply({ error: APPROVAL_WRITE }, true); continue }
+          const card = await proposeCard(ctx, conversationId, use.name, use.input)
+          if ('error' in card) { reply({ error: card.error }, true); continue }
+          if ('blocked' in card) {
+            emit({ type: 'link', label: card.link.label, href: card.link.href, detail: card.blocked })
+            reply({ error: card.blocked }, true)
+            continue
+          }
+          planned = true
+          emit({ type: 'plan', plan: card })
+          reply({ shown_to_user: true, waiting_for: 'the user to confirm' })
+          continue
+        }
         if (isWrite && opts.approval) { reply({ error: APPROVAL_WRITE }, true); continue }
         if (isWrite && wrote) { reply({ error: SECOND_WRITE }, true); continue }
         const { action, result: r } = await runAndRecord(ctx, conversationId, use.name, use.input)

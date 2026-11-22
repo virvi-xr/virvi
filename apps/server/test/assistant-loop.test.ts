@@ -9,11 +9,13 @@ import { recordJobFailure } from '../src/errors/record.js'
 import { db } from '../src/db/connection.js'
 import { assistantActions, assistantConversations, assistantMessages, assistantUsage, organizations, orgMembers, scenes } from '../src/db/schema.js'
 import { config } from '../src/config.js'
+import { z } from 'zod'
 import { APPROVAL_WRITE, CUT_OFF, REFUSED, runTurn, SECOND_WRITE, type TurnOptions } from '../src/assistant/loop.js'
 import { INVALID_TOOL_JSON, setAssistantFetch, setAssistantModel, type ModelParams, type ModelResult } from '../src/assistant/model.js'
 import { recordAssistantUsage } from '../src/assistant/access.js'
 import { callCostUsd } from '../src/assistant/pricing.js'
-import type { ToolCtx } from '../src/assistant/tools/types.js'
+import { TOOLS } from '../src/assistant/tools/index.js'
+import { ToolError, type ToolCtx, type ToolDef } from '../src/assistant/tools/types.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, tokenFor, type TestUser } from './helpers/factories.js'
 
@@ -463,5 +465,117 @@ describe('assistant turn loop', () => {
     expect(results).toHaveLength(2)
     expect(results[1].content).toContain('Not run: the turn was stopped.')
     expect(events.at(-1)?.type).toBe('done')
+  })
+
+  describe('paid tool cards', () => {
+    let paidApp: FastifyInstance
+    let paidCalls = 0
+    let mode: 'ok' | 'blocked' | 'before404' = 'ok'
+    const stub: ToolDef<{ prompt: string }> = {
+      name: 'stub_paid',
+      description: 'test',
+      input: z.object({ prompt: z.string().trim() }),
+      effect: 'paid',
+      before: async () => {
+        if (mode === 'before404') throw new ToolError(404, 'Design not found')
+        return { undo: null, after: () => null, orgName: 'Acme' }
+      },
+      preview: async () => (mode === 'blocked' ? { blocked: 'No prompts left', link: { label: 'Buy Studio prompts', href: '/studio' } } : { detail: 'Uses 1 of your 3 prompts left today.' }),
+      call: (a) => ({ method: 'POST', url: '/__stub_paid', body: a }),
+      label: (a) => `Run stub: ${a.prompt}`,
+      summarize: (r) => r,
+    }
+    const paidRows = async () => (await db.select().from(assistantActions)).filter((r) => r.effect === 'paid')
+
+    beforeAll(async () => {
+      const { buildApp } = await import('../src/app.js')
+      paidApp = await buildApp({ rateLimit: false, logger: false, backfill: false })
+      paidApp.post('/__stub_paid', async () => { paidCalls++; return { ok: true } })
+      await paidApp.ready()
+      ;(TOOLS as Record<string, unknown>).stub_paid = stub
+    })
+    afterAll(async () => {
+      delete (TOOLS as Record<string, unknown>).stub_paid
+      await paidApp.close()
+    })
+    beforeEach(() => {
+      paidCalls = 0
+      mode = 'ok'
+      ctx = { ...ctx, app: paidApp }
+    })
+
+    it('shows one card and runs nothing', async () => {
+      const inputs = script([tool('stub_paid', { prompt: 'a hat' }), text('Confirm it above.'), text('never reached')])
+      const events = await turn('Make a hat')
+      const plans = events.filter((e): e is Extract<AssistantStreamEvent, { type: 'plan' }> => e.type === 'plan')
+      expect(plans).toHaveLength(1)
+      expect(plans[0].plan.kind).toBe('card')
+      expect(plans[0].plan.steps).toHaveLength(1)
+      expect(events.some((e) => e.type === 'action')).toBe(false)
+      expect(paidCalls).toBe(0)
+      expect(inputs).toHaveLength(2)
+      expect(lastResults(inputs[1])[0].content).toContain('"shown_to_user":true')
+      expect(lastResults(inputs[1])[0].content).toContain('the user to confirm')
+      expect(JSON.stringify(inputs[1])).not.toContain(plans[0].plan.token)
+      const rows = await paidRows()
+      expect(rows).toHaveLength(1)
+      expect(rows[0].status).toBe('awaiting_confirmation')
+    })
+
+    it('refuses a paid call in the approval continuation', async () => {
+      const inputs = script([tool('stub_paid', { prompt: 'a hat' }), text('Done.')])
+      const events = await turn('(The user approved the plan. Results follow.)', undefined, { approval: true })
+      expect(lastResults(inputs[1])[0].content).toContain(APPROVAL_WRITE)
+      expect(events.some((e) => e.type === 'plan')).toBe(false)
+      expect(await paidRows()).toHaveLength(0)
+      expect(paidCalls).toBe(0)
+    })
+
+    it('refuses a paid call after propose_plan in the same response', async () => {
+      const steps = [{ tool: 'update_scene', args: { sceneId, name: 'Test Lounge' } }, { tool: 'create_element', args: { sceneId, presetId, type: 'image', name: 'Poster' } }]
+      const inputs = script([tools(['propose_plan', { steps }], ['stub_paid', { prompt: 'a hat' }]), text('Approve it.')])
+      const events = await turn('Do both')
+      const results = lastResults(inputs[1])
+      expect(results[1].content).toContain('wait for the user to approve the plan')
+      expect(results[1].is_error).toBe(true)
+      expect(events.filter((e) => e.type === 'plan')).toHaveLength(1)
+      expect(await paidRows()).toHaveLength(0)
+      expect(paidCalls).toBe(0)
+    })
+
+    it('allows a card after a direct write in the same turn, and the card does not use the write', async () => {
+      const inputs = script([tools(['update_scene', { sceneId, name: 'First' }], ['stub_paid', { prompt: 'a hat' }]), text('Confirm it.')])
+      const events = await turn('Rename then make a hat')
+      expect(await sceneName()).toBe('First')
+      expect(events.filter((e) => e.type === 'plan')).toHaveLength(1)
+      expect(lastResults(inputs[1])[1].content).toContain('shown_to_user')
+      expect(paidCalls).toBe(0)
+    })
+
+    it('runs no write that follows a card in the same response', async () => {
+      script([tools(['stub_paid', { prompt: 'a hat' }], ['update_scene', { sceneId, name: 'First' }]), text('ok')])
+      await turn('Make a hat then rename')
+      expect(await sceneName()).toBe('Old Lounge')
+    })
+
+    it('a blocked preview emits a link with detail and no plan, and the model gets an error', async () => {
+      mode = 'blocked'
+      const inputs = script([tool('stub_paid', { prompt: 'a hat' }), text('You are out of prompts.')])
+      const events = await turn('Make a hat')
+      expect(events.find((e) => e.type === 'link')).toEqual({ type: 'link', label: 'Buy Studio prompts', href: '/studio', detail: 'No prompts left' })
+      expect(events.some((e) => e.type === 'plan')).toBe(false)
+      expect(lastResults(inputs[1])[0].content).toContain('No prompts left')
+      expect(lastResults(inputs[1])[0].is_error).toBe(true)
+      expect(await paidRows()).toHaveLength(0)
+    })
+
+    it('passes on a route refusal as an error with no card', async () => {
+      mode = 'before404'
+      const inputs = script([tool('stub_paid', { prompt: 'a hat' }), text('Not found.')])
+      const events = await turn('Make a hat')
+      expect(events.some((e) => e.type === 'plan')).toBe(false)
+      expect(lastResults(inputs[1])[0].content).toContain('Design not found')
+      expect(lastResults(inputs[1])[0].is_error).toBe(true)
+    })
   })
 })
