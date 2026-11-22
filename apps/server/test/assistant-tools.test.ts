@@ -17,7 +17,7 @@ import { addRevision, createDesign } from './helpers/studio.js'
 import { proposeCard, recordDirect, undoAction } from '../src/assistant/actions.js'
 import { routeError } from '../src/assistant/tools/http.js'
 import { LABEL_TEXT_MAX, STUDIO_PAUSED, STUDIO_REFUSALS } from '../src/assistant/tools/studio.js'
-import { assistantActions, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, studioDesigns, studioKindDefaults } from '../src/db/schema.js'
+import { assistantActions, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults } from '../src/db/schema.js'
 import { RAFFLE_HOST_TERMS } from '@virvixr/shared'
 import { setImageSizeReader } from '../src/beats/image.js'
 import { BEATS_READY } from './helpers/beats-ready.js'
@@ -449,6 +449,7 @@ describe('assistant event, raffle and BEAT tools', () => {
   let owner: TestUser
   let ctx: ToolCtx
   let sceneId: string
+  let presetId: string
   const prevBeats = config.beats
   const H = 3_600_000
   const later = (ms: number) => new Date(Date.now() + ms).toISOString()
@@ -464,7 +465,9 @@ describe('assistant event, raffle and BEAT tools', () => {
     ;(config as any).beats = { ...prevBeats, enabled: true, chain: 'polygon', ...BEATS_READY }
     setImageSizeReader(async () => ({ width: 1024, height: 1024 }))
     owner = await createUser({ wallet: randomWallet() })
-    sceneId = (await createScene(owner, 'Old Lounge')).scene.id
+    const made = await createScene(owner, 'Old Lounge')
+    sceneId = made.scene.id
+    presetId = made.preset.id
     ctx = ctxFor(app, owner)
   })
   afterEach(() => {
@@ -572,6 +575,59 @@ describe('assistant event, raffle and BEAT tools', () => {
     expect(await db.select().from(events)).toHaveLength(1)
   })
 
+  /** A preset schedule of the owner's scene that follows `eventId`, made by hand. */
+  const followingSchedule = async (eventId: string) =>
+    (await db.insert(scenePresetSchedules).values({ sceneId, presetId, eventId, recurrence: 'once', startDate: '2031-01-01', startTime: '20:00', timezone: 'UTC' }).returning())[0]
+
+  it("create_event's undo refuses once something was attached to the event by hand, and keeps the event", async () => {
+    const args = { name: 'Launch party', startTime: '2031-01-01T20:00:00Z', endTime: '2031-01-01T22:00:00Z' }
+    // A scene linked by hand: deleting the event would drop the link
+    const a = await recordDirect(ctx, null, 'create_event', args)
+    const [e1] = await db.select().from(events)
+    await db.insert(eventSceneLinks).values({ eventId: e1.id, sceneId })
+    expect(await undoAction(ctx, a.id)).toEqual({ error: 'changed' })
+    expect(await db.select().from(events).where(eq(events.id, e1.id))).toHaveLength(1)
+    // A schedule that follows the event, added by hand
+    const b = await recordDirect(ctx, null, 'create_event', args)
+    const e2 = (await db.select().from(events)).find((e) => e.id !== e1.id)!
+    await db.insert(eventSceneLinks).values({ eventId: e2.id, sceneId })
+    await db.delete(eventSceneLinks).where(eq(eventSceneLinks.eventId, e2.id))
+    await followingSchedule(e2.id)
+    expect(await undoAction(ctx, b.id)).toEqual({ error: 'changed' })
+    expect(await db.select().from(events).where(eq(events.id, e2.id))).toHaveLength(1)
+    // Its description or timezone changed by hand
+    const c = await recordDirect(ctx, null, 'create_event', args)
+    const e3 = (await db.select().from(events)).find((e) => e.id !== e1.id && e.id !== e2.id)!
+    await db.update(events).set({ timezone: 'Europe/Paris' }).where(eq(events.id, e3.id))
+    expect(await undoAction(ctx, c.id)).toEqual({ error: 'changed' })
+    expect(await db.select().from(events)).toHaveLength(3)
+  })
+
+  it("link_event_scene's undo refuses once a schedule or showing follows the event in that scene", async () => {
+    const [e] = await db.insert(events).values({ ownerId: owner.id, name: 'Launch' }).returning()
+    const a = await recordDirect(ctx, null, 'link_event_scene', { eventId: e.id, sceneId })
+    const s = await followingSchedule(e.id)
+    expect(await undoAction(ctx, a.id)).toEqual({ error: 'changed' })
+    expect(await db.select().from(eventSceneLinks)).toHaveLength(1)
+    expect(await db.select().from(scenePresetSchedules).where(eq(scenePresetSchedules.id, s.id))).toHaveLength(1)
+    // A showing that follows it
+    await db.delete(scenePresetSchedules)
+    await db.delete(eventSceneLinks)
+    const b = await recordDirect(ctx, null, 'link_event_scene', { eventId: e.id, sceneId })
+    const el = await createElement(presetId)
+    await db.insert(screenShowings).values({ sceneId, elementId: el.id, eventId: e.id, title: 'Matinee', items: [{ url: 'https://cdn.example/m.mp4', duration: 60, kind: 'video' }], recurrence: 'once', startDate: '2031-01-01', startTime: '20:00', timezone: 'UTC' })
+    expect(await undoAction(ctx, b.id)).toEqual({ error: 'changed' })
+    expect((await db.select().from(screenShowings))[0]).toMatchObject({ eventId: e.id })
+  })
+
+  it('update_event refuses an end before the start, against the event as it is', async () => {
+    const [e] = await db.insert(events).values({ ownerId: owner.id, name: 'Launch', startTime: new Date('2031-01-01T20:00:00Z'), endTime: new Date('2031-01-01T22:00:00Z') }).returning()
+    expect(await runTool(ctx, 'update_event', { eventId: e.id, endTime: '2031-01-01T19:00:00Z' })).toMatchObject({ ok: false, status: 400, error: 'The event must end after it starts.' })
+    expect(await runTool(ctx, 'update_event', { eventId: e.id, startTime: '2031-01-01T23:00:00Z' })).toMatchObject({ ok: false, status: 400, error: 'The event must end after it starts.' })
+    expect((await db.select().from(events))[0].endTime!.toISOString()).toBe('2031-01-01T22:00:00.000Z')
+    expect(await runTool(ctx, 'update_event', { eventId: e.id, startTime: '2031-01-01T21:00:00Z' })).toMatchObject({ ok: true })
+  })
+
   it('update_event changes only the fields given, and its undo puts them back', async () => {
     const [e] = await db.insert(events).values({ ownerId: owner.id, name: 'Launch', description: 'Old words', startTime: new Date('2031-01-01T20:00:00Z'), endTime: new Date('2031-01-01T22:00:00Z') }).returning()
     const a = await recordDirect(ctx, null, 'update_event', { eventId: e.id, name: 'Launch party', endTime: '2031-01-01T23:00:00Z' })
@@ -617,5 +673,11 @@ describe('assistant event, raffle and BEAT tools', () => {
     expect(o).toMatchObject({ ok: true, summary: { href: `/beats/${beatId}`, label: 'Pay for "Opening night"', detail: `Total $${(cents / 100).toFixed(2)}` } })
     await db.update(beats).set({ status: 'paid' }).where(eq(beats.id, beatId))
     expect(await runTool(ctx, 'open_beat_pay', { beatId })).toMatchObject({ ok: false, error: 'This BEAT is already paid for.' })
+    await db.update(beats).set({ status: 'live' }).where(eq(beats.id, beatId))
+    expect(await runTool(ctx, 'open_beat_pay', { beatId })).toMatchObject({ ok: false, error: 'This BEAT is already paid for.' })
+    await db.update(beats).set({ status: 'ended' }).where(eq(beats.id, beatId))
+    expect(await runTool(ctx, 'open_beat_pay', { beatId })).toMatchObject({ ok: false, error: 'This BEAT is over.' })
+    await db.update(beats).set({ status: 'cancelled' }).where(eq(beats.id, beatId))
+    expect(await runTool(ctx, 'open_beat_pay', { beatId })).toMatchObject({ ok: false, error: 'This BEAT is cancelled.' })
   })
 })

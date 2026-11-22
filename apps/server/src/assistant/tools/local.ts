@@ -86,6 +86,8 @@ export function searchHelp(query: string, dir = config.docsDir): HelpResult[] {
 export const LINK_TOOLS: Record<string, string> = { open_finalize: 'designId', open_beat_pay: 'beatId' }
 
 export const BEAT_ALREADY_PAID = 'This BEAT is already paid for.'
+/** Why a BEAT that isn't a draft can't be paid for, in the payment routes' own words. */
+const NOT_PAYABLE: Record<string, string> = { cancelled: 'This BEAT is cancelled.', ended: 'This BEAT is over.' }
 /** A price as the BEAT page shows it ($12.00). */
 const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`
 
@@ -144,7 +146,7 @@ export const LOCAL_TOOLS: ToolDef<any>[] = [
     },
     local: async (a, ctx) => {
       const beat = await get(ctx, `/api/beats/${a.beatId}`)
-      if (beat.status !== 'draft') throw new ToolError(409, BEAT_ALREADY_PAID)
+      if (beat.status !== 'draft') throw new ToolError(409, NOT_PAYABLE[beat.status] ?? BEAT_ALREADY_PAID)
       // The price is the same by card or credit; credit is asked for so a price under the card minimum still quotes
       const quote = await get(ctx, `/api/beats/${a.beatId}/quote?method=credit`)
       const label = typeof beat.name === 'string' && beat.name.trim() ? `Pay for "${beat.name}"` : 'Pay for the BEAT'

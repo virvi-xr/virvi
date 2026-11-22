@@ -5,7 +5,7 @@
 import { z } from 'zod'
 import { BEAT_DESCRIPTION_MAX, BEAT_MIN_PRESENT_MAX_MINUTES, BEAT_NAME_MAX, BEAT_SUPPLY_CAP_MAX, MIN_PRESENT_MAX_MINUTES, RAFFLE_HOST_TERMS, RAFFLE_WINNERS_MAX, type RaffleMode } from '@virvixr/shared'
 import { id, pick } from './read.js'
-import { atLeastOne, created, createdNow, fields, get, orgNameOf, previous, sceneState, setKeys } from './write.js'
+import { atLeastOne, created, fields, get, orgNameOf, previous, sceneState, setKeys } from './write.js'
 import { ToolError, type Before, type ToolCtx, type ToolDef } from './types.js'
 
 type Obj = Record<string, any>
@@ -25,7 +25,25 @@ const EVENT_FIELDS = ['name', 'description', 'startTime', 'endTime', 'timezone']
 const BEAT_KEYS = ['id', 'name', 'status', 'startsAt', 'endsAt', 'supplyCap', 'sceneIds'] as const
 const BEAT_FIELDS = ['name', 'description', 'startsAt', 'endsAt', 'sceneIds', 'imageMediaId', 'supplyCap', 'minPresentMinutes', 'tradeable'] as const
 
-const endsAfterStart = (a: { startTime?: string; endTime?: string }) => !a.startTime || !a.endTime || new Date(a.endTime) > new Date(a.startTime)
+const ENDS_BEFORE_START = 'The event must end after it starts.'
+const endsAfterStart = (a: { startTime?: string | null; endTime?: string | null }) => !a.startTime || !a.endTime || new Date(a.endTime) > new Date(a.startTime)
+
+/** An event's fields, and how many things are attached to it: everything deleting it would lose. */
+const EVENT_KEPT = ['id', 'name', 'description', 'startTime', 'endTime', 'timezone'] as const
+function eventFootprint(r: Obj): Obj {
+  const event = (r.event ?? {}) as Obj
+  return {
+    ...fields(event, EVENT_KEPT),
+    sceneLinks: list(event.sceneLinks).length,
+    giveawayLinks: list(event.giveawayLinks).length,
+    presetSchedules: list(r.presetSchedules).length,
+    showings: list(r.showings).length,
+  }
+}
+
+/** The ids of a scene's preset schedules and showings that follow an event: what unlinking that scene drops or pauses. */
+const followingIn = (r: Obj, sceneId: string): string[] =>
+  [...list(r.presetSchedules), ...list(r.showings)].filter((x) => x.sceneId === sceneId).map((x) => String(x.id)).sort()
 
 /** The event as the user sees it (their own; the route's refusal otherwise), and its organization's name. */
 async function eventState(ctx: ToolCtx, eventId: string): Promise<{ event: Obj; orgName: string | null }> {
@@ -47,16 +65,21 @@ export const SHOWS_TOOLS: ToolDef<any>[] = [
     description: "Make an event in the user's active organization (or personal account): a name, start and end times (ISO), and its timezone (IANA, UTC when left out). Link scenes to it with link_event_scene.",
     input: z
       .object({ name: z.string().trim().min(1).max(120), description: z.string().max(2000).optional(), startTime: iso(), endTime: iso(), timezone: z.string().min(1).max(64).optional() })
-      .refine(endsAfterStart, 'The event must end after it starts.'),
+      .refine(endsAfterStart, ENDS_BEFORE_START),
     effect: 'write',
     call: (a) => ({ method: 'POST', url: '/api/events', body: pick(a, EVENT_FIELDS) }),
-    // The route records the event in the token's organization: the same one ctx.user carries
+    // The route records the event in the token's organization: the same one ctx.user carries. Deleting an event drops
+    // its links and the schedules that follow it, and pauses its showings, so Undo compares those too: a new event has
+    // none, and anything attached or edited since makes it refuse.
     before: async (_a, ctx): Promise<Before> => ({
       undo: (res) => ({ method: 'DELETE', url: `/api/events/${created(res, 'event').id}` }),
-      after: (res) => fields(created(res, 'event'), ['id', 'name', 'startTime', 'endTime']),
+      after: (res) => eventFootprint({ event: created(res, 'event') }),
       orgName: await orgNameOf(ctx.user.orgId),
     }),
-    currentOf: async (after, _a, ctx) => createdNow([(await get(ctx, `/api/events/${(after as Obj)?.id}`)).event ?? {}], after),
+    currentOf: async (after, _a, ctx) => {
+      const now = eventFootprint(await get(ctx, `/api/events/${(after as Obj)?.id}`))
+      return now.id === (after as Obj)?.id ? now : null
+    },
     label: (a) => `Create event "${a.name}"`,
     summarize: (res) => fields(created(res, 'event'), ['id', ...EVENT_FIELDS]),
   },
@@ -77,6 +100,8 @@ export const SHOWS_TOOLS: ToolDef<any>[] = [
     call: (a) => ({ method: 'PUT', url: `/api/events/${a.eventId}`, body: pick(a, setKeys(a, ['eventId'])) }),
     before: async (a, ctx): Promise<Before> => {
       const { event, orgName } = await eventState(ctx, a.eventId)
+      // Only one end given: it is checked against the event's other end as it is now
+      if (!endsAfterStart({ startTime: a.startTime ?? event.startTime, endTime: a.endTime ?? event.endTime })) throw new ToolError(400, ENDS_BEFORE_START)
       const keys = setKeys(a, ['eventId'])
       return { undo: { method: 'PUT', url: `/api/events/${a.eventId}`, body: previous(event, keys) }, after: (res) => fields(created(res, 'event'), keys), current: fields(event, keys), orgName }
     },
@@ -90,14 +115,16 @@ export const SHOWS_TOOLS: ToolDef<any>[] = [
     effect: 'write',
     call: (a) => ({ method: 'POST', url: `/api/events/${a.eventId}/link-scene`, body: { sceneId: a.sceneId } }),
     before: async (a, ctx): Promise<Before> => {
-      const { event, orgName } = await eventState(ctx, a.eventId)
-      const linked = list(event.sceneLinks).some((l) => l.sceneId === a.sceneId)
-      // A scene already linked stays linked: nothing to undo then
+      const r = await get(ctx, `/api/events/${a.eventId}`)
+      const linked = list(r.event?.sceneLinks).some((l) => l.sceneId === a.sceneId)
+      // Unlinking drops the scene's schedules that follow the event and pauses its showings: Undo refuses once any
+      // follow it that didn't at link time. A scene already linked, or with any already following, has nothing to undo.
+      const following = followingIn(r, a.sceneId)
       return {
-        undo: linked ? null : { method: 'DELETE', url: `/api/events/${a.eventId}/unlink-scene/${a.sceneId}` },
-        after: () => ({ linked: true }),
-        current: { linked },
-        orgName,
+        undo: linked || following.length ? null : { method: 'DELETE', url: `/api/events/${a.eventId}/unlink-scene/${a.sceneId}` },
+        after: () => ({ linked: true, following }),
+        current: { linked, following },
+        orgName: await orgNameOf(r.event?.orgId),
       }
     },
     label: () => 'Link a scene to the event',
