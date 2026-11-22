@@ -245,7 +245,7 @@ export async function quoteFinalize(
 
 type StudioPrices = typeof config.studioPrices
 
-const dollars = (cents: number) => `$${cents % 100 ? (cents / 100).toFixed(2) : cents / 100}`
+export const dollars = (cents: number) => `$${cents % 100 ? (cents / 100).toFixed(2) : cents / 100}`
 
 /**
  * What the agent is told about prices, paying and the buyer's rights, for a design of `kind`, from the price settings:

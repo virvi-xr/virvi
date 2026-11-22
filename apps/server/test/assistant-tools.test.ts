@@ -13,6 +13,9 @@ import { inject, runTool, toolsForModel } from '../src/assistant/tools/run.js'
 import type { ToolCtx } from '../src/assistant/tools/types.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, type TestUser } from './helpers/factories.js'
+import { addRevision, createDesign } from './helpers/studio.js'
+import { proposeCard } from '../src/assistant/actions.js'
+import { assistantActions, studioDesigns, studioKindDefaults } from '../src/db/schema.js'
 
 const IP = '198.51.100.23'
 
@@ -52,6 +55,12 @@ describe('assistant tools, run as the owner', () => {
 
   it('every write reads its before state', () => {
     for (const [name, def] of Object.entries(TOOLS)) if (def.effect === 'write') expect(def.before, name).toBeTypeOf('function')
+  })
+
+  it('every paid tool has preview()', () => {
+    const paid = Object.values(TOOLS).filter((t) => t.effect === 'paid')
+    expect(paid.map((t) => t.name)).toContain('send_studio_prompt')
+    for (const def of paid) expect(def.preview, def.name).toBeTypeOf('function')
   })
 
   it('a paid tool without before() is a programming error', async () => {
@@ -198,7 +207,8 @@ describe('assistant tools, run as the owner', () => {
       ['rename_library_item', { sceneId, itemId: item.id, name: 'Renamed' }],
       ['create_showing', { sceneId, elementId: el.id, title: 'Matinee', items: [{ url: 'https://cdn.example/m.mp4', duration: 60 }], ...when }],
     ]
-    const covered = new Set([...cases.map(([n]) => n), 'update_scene', 'update_element', 'create_element'])
+    // create_scene and create_design can't be undone (their own tests)
+    const covered = new Set([...cases.map(([n]) => n), 'update_scene', 'update_element', 'create_element', 'create_scene', 'create_design'])
     expect([...covered].sort()).toEqual(Object.values(TOOLS).filter((t) => t.effect === 'write').map((t) => t.name).sort())
     for (const [name, args] of cases) {
       const r = await runTool(ctx, name, args)
@@ -218,6 +228,16 @@ describe('assistant tools, run as the owner', () => {
     expect((await db.query.scenePresetSchedules.findFirst({ where: eq(scenePresetSchedules.id, schedule.id) }))!.startTime).toBe('20:00')
     expect((await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.id, linked.id) }))!.filename).toBe('linked.png')
     expect(await db.select().from(sceneLibrary).where(eq(sceneLibrary.sceneId, sceneId))).toHaveLength(1)
+  })
+
+  it('create_scene makes a scene in the personal account, with no undo', async () => {
+    const r = await runTool(ctx, 'create_scene', { name: 'New Club', description: 'Upstairs' })
+    expect(r).toMatchObject({ ok: true, status: 201, label: 'Create scene "New Club"', orgName: null, undo: null })
+    if (!r.ok) throw new Error('failed')
+    const made = await db.query.scenes.findFirst({ where: eq(scenes.name, 'New Club') })
+    expect(made).toMatchObject({ ownerId: owner.id, description: 'Upstairs' })
+    expect(r.after).toEqual({ id: made!.id, name: 'New Club' })
+    expect(r.summary).toEqual({ sceneId: made!.id, presetId: made!.activePresetId, name: 'New Club' })
   })
 
   it('adding a file already in the library has nothing to undo', async () => {
@@ -243,5 +263,133 @@ describe('assistant tools, run as the owner', () => {
     const t = toolsForModel().find((x) => x.name === 'update_scene')!
     expect(t.input_schema).toMatchObject({ type: 'object', properties: { sceneId: { type: 'string' } }, required: ['sceneId'] })
     expect(t.description.length).toBeGreaterThan(10)
+  })
+})
+
+describe('assistant Studio tools', () => {
+  let app: FastifyInstance
+  let owner: TestUser
+  let ctx: ToolCtx
+  const prevStudio = config.studioEnabled
+
+  beforeAll(async () => {
+    ;(config as any).studioEnabled = true
+    app = await testApp()
+  })
+  afterAll(async () => {
+    ;(config as any).studioEnabled = prevStudio
+    await app.close()
+  })
+  beforeEach(async () => {
+    await resetDb()
+    owner = await createUser()
+    ctx = ctxFor(app, owner)
+  })
+
+  /** The owner's ctx with GET /api/studio/usage answered by `usage` (or refused, to prove it isn't read). */
+  const withUsage = (usage: Record<string, unknown> | 'unread') => ({
+    ...ctx,
+    app: {
+      inject: async (opts: { url: string; method: string }) => {
+        if (opts.method === 'GET' && opts.url === '/api/studio/usage') {
+          if (usage === 'unread') throw new Error('usage was read')
+          return { statusCode: 200, body: JSON.stringify({ credits: 0, giftedPrompts: 0, ...usage }) }
+        }
+        return app.inject(opts as any)
+      },
+    } as unknown as FastifyInstance,
+  })
+
+  it('create_design uses the kind\'s default agent, else claude', async () => {
+    // The free plan's open-design limit: each one is archived before the next
+    const archiveAll = () => db.update(studioDesigns).set({ archivedAt: new Date() }).where(eq(studioDesigns.ownerId, owner.id))
+    const r = await runTool(ctx, 'create_design', { kind: 'wearable', name: 'Neon cap' })
+    expect(r).toMatchObject({ ok: true, status: 201, label: 'Start a wearable design "Neon cap"', undo: null, orgName: null })
+    await archiveAll()
+    await db.insert(studioKindDefaults).values({ kind: 'emote', agent: 'codex' })
+    const r2 = await runTool(ctx, 'create_design', { kind: 'emote', name: 'Spin' })
+    expect(r2).toMatchObject({ ok: true, label: 'Start an emote design "Spin"' })
+    await archiveAll()
+    const r3 = await runTool(ctx, 'create_design', { kind: 'scene', name: 'Club', agent: 'grok' })
+    expect(r3).toMatchObject({ ok: true, label: 'Start a building design "Club"' })
+    const rows = await db.select().from(studioDesigns).where(eq(studioDesigns.ownerId, owner.id))
+    expect(Object.fromEntries(rows.map((d) => [d.name, d.agent]))).toEqual({ 'Neon cap': 'claude', Spin: 'codex', Club: 'grok' })
+    if (!r.ok) throw new Error('failed')
+    const made = rows.find((d) => d.name === 'Neon cap')!
+    expect(r.after).toEqual({ id: made.id, name: 'Neon cap' })
+    expect(r.summary).toMatchObject({ id: made.id, name: 'Neon cap', kind: 'wearable' })
+  })
+
+  it('list_designs, get_design and get_studio_usage read the routes', async () => {
+    const d = await createDesign(owner, { name: 'Neon cap' })
+    await addRevision(d, 'hat')
+    expect(await runTool(ctx, 'list_designs', {})).toMatchObject({ ok: true, summary: [{ id: d.id, name: 'Neon cap', kind: 'wearable', status: 'idle' }] })
+    const g = await runTool(ctx, 'get_design', { designId: d.id })
+    expect(g).toMatchObject({ ok: true, summary: { id: d.id, name: 'Neon cap', kind: 'wearable', status: 'idle', activeJob: null } })
+    if (!g.ok) throw new Error('failed')
+    expect((g.summary as any).revisions).toHaveLength(1)
+    expect((g.summary as any).pieces).toMatchObject([{ category: 'hat', revision: { number: 1 } }])
+    const u = await runTool(ctx, 'get_studio_usage', {})
+    expect(u.ok).toBe(true)
+    if (!u.ok) throw new Error('failed')
+    expect(Object.keys(u.summary as object).sort()).toEqual(['credits', 'freeFinalizes', 'giftedPrompts', 'promptsLeft', 'resetsAt'])
+  })
+
+  it('send_studio_prompt cards name the allowance it uses, in order: daily, gifted, bought', async () => {
+    const d = await createDesign(owner, { name: 'Neon cap' })
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ promptsLeft: 5, credits: 2, giftedPrompts: 0 }, 'Uses 1 of your 3 prompts left today.'],
+      [{ promptsLeft: 2, credits: 0, giftedPrompts: 0 }, 'Uses 1 of your 2 prompts left today.'],
+      [{ promptsLeft: 1, credits: 0, giftedPrompts: 0 }, 'Uses 1 of your 1 prompt left today.'],
+      [{ promptsLeft: 1, credits: 0, giftedPrompts: 1 }, 'Uses 1 gifted prompt (1 left).'],
+      [{ promptsLeft: 2, credits: 2, giftedPrompts: 0 }, 'Uses 1 bought prompt (2 left).'],
+    ]
+    for (const [usage, line] of cases) {
+      const c = await proposeCard(withUsage(usage), null, 'send_studio_prompt', { designId: d.id, text: 'a neon cap' })
+      expect(c, line).toMatchObject({ kind: 'card', detail: `"Neon cap": ${line}` })
+      if (!('kind' in c)) throw new Error('no card')
+      expect(c.steps[0]).toMatchObject({ label: 'Send a Studio prompt', orgName: null })
+    }
+    const free = await proposeCard(withUsage('unread'), null, 'send_studio_prompt', { designId: d.id, fixChecks: true })
+    expect(free).toMatchObject({ kind: 'card', detail: `"Neon cap": This one is free: fixing what the checker found doesn't use your prompts.` })
+  })
+
+  it('send_studio_prompt with no prompts left is blocked, with a link to buy more and no row', async () => {
+    const d = await createDesign(owner)
+    await db.delete(assistantActions)
+    expect(await proposeCard(withUsage({ promptsLeft: 0 }), null, 'send_studio_prompt', { designId: d.id, text: 'a hat' })).toEqual({
+      blocked: 'No Studio prompts left. They reset at midnight UTC, or the user can buy more.',
+      link: { label: 'Buy Studio prompts', href: '/studio' },
+    })
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+  })
+
+  it("send_studio_prompt on someone else's design is the route's refusal, with no row", async () => {
+    const other = await createUser()
+    const d = await createDesign(other)
+    const c = await proposeCard(withUsage({ promptsLeft: 5 }), null, 'send_studio_prompt', { designId: d.id, text: 'a hat' })
+    expect(c).toEqual({ error: 'design_not_found' })
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+  })
+
+  it('send_studio_prompt takes exactly one of text or fixChecks', async () => {
+    const d = await createDesign(owner)
+    for (const args of [{ designId: d.id }, { designId: d.id, text: 'a hat', fixChecks: true }, { designId: d.id, fixChecks: false }, { designId: d.id, text: 'x'.repeat(4001) }]) {
+      const r = await proposeCard(withUsage({ promptsLeft: 5 }), null, 'send_studio_prompt', args)
+      expect(r, JSON.stringify(args).slice(0, 80)).toEqual({ error: expect.stringMatching(/text|fixChecks/) })
+    }
+    expect(await db.select().from(assistantActions)).toHaveLength(0)
+    expect(await proposeCard(withUsage({ promptsLeft: 5 }), null, 'send_studio_prompt', { designId: d.id, text: 'x'.repeat(4000) })).toHaveProperty('kind', 'card')
+  })
+
+  it('get_finalize_quote and open_finalize read the quote; open_finalize links to the finalize step', async () => {
+    const d = await createDesign(owner, { name: 'Neon cap' })
+    await addRevision(d, 'hat')
+    const q = await runTool(ctx, 'get_finalize_quote', { designId: d.id })
+    expect(q).toMatchObject({ ok: true, summary: { totalCents: expect.any(Number), dueCents: expect.any(Number), giftsUsed: 0 } })
+    if (!q.ok) throw new Error('failed')
+    expect((q.summary as any).lines).toMatchObject([{ category: 'hat', amountCents: expect.any(Number) }])
+    const o = await runTool(ctx, 'open_finalize', { designId: d.id })
+    expect(o).toMatchObject({ ok: true, summary: { href: `/studio/${d.id}?step=finalize`, label: 'Finalize "Neon cap"', detail: expect.stringMatching(/^Total \$\d/) } })
   })
 })

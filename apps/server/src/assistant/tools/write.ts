@@ -16,7 +16,7 @@ function write<A>(def: Omit<ToolDef<A>, 'effect'> & { before: NonNullable<ToolDe
 }
 
 /** GET `url` as the user; their refusal (403, 404) is the tool's. */
-async function get(ctx: ToolCtx, url: string): Promise<Obj> {
+export async function get(ctx: ToolCtx, url: string): Promise<Obj> {
   const res = await inject(ctx, { method: 'GET', url })
   if (res.status >= 400) throw new ToolError(res.status, routeError(res.status, res.json))
   return (res.json ?? {}) as Obj
@@ -91,6 +91,16 @@ const ELEMENT_TYPES = ['image', 'video', 'nft', 'sound', 'widget', 'model', 'cus
 const INSTANCE_FIELDS = ['position', 'rotation', 'scale', 'enabled'] as const
 
 export const WRITE_TOOLS: ToolDef<any>[] = [
+  write({
+    name: 'create_scene',
+    description: "Make a new, empty scene in the user's personal account, with one preset (Default) that is live.",
+    input: z.object({ name: name(100), description: z.string().max(500).optional() }),
+    call: (a) => ({ method: 'POST', url: '/api/scenes', body: pick(a, ['name', 'description']) }),
+    // Undoing a create would be a delete, which the assistant doesn't do
+    before: async () => ({ undo: null, after: (res) => fields(created(res, 'scene'), ['id', 'name']), orgName: null }),
+    label: (a) => `Create scene "${a.name}"`,
+    summarize: (res) => ({ sceneId: created(res, 'scene').id, presetId: created(res, 'preset').id, name: created(res, 'scene').name }),
+  }),
   write({
     name: 'update_scene',
     description: "Rename a scene or change its description.",

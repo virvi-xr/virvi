@@ -9,9 +9,11 @@ import { resetDb } from './helpers/db.js'
 import { createAnalyticsScene } from './helpers/analytics.js'
 import { createSetup } from './helpers/setups.js'
 import { testApp, createUser, createScene, createElement, createInstance, tokenFor, type TestUser } from './helpers/factories.js'
+import { addRevision, createDesign } from './helpers/studio.js'
+import { config } from '../src/config.js'
 
 /** Tools that read only the caller's own account: they take no ids, so A can't even name B's data. */
-const ACCOUNT_SCOPED = ['get_plan', 'list_orgs', 'list_scenes', 'list_events', 'list_media', 'list_analytics_locations', 'search_help', 'open_page']
+const ACCOUNT_SCOPED = ['get_plan', 'list_orgs', 'list_scenes', 'list_events', 'list_media', 'list_analytics_locations', 'search_help', 'open_page', 'list_designs', 'get_studio_usage', 'create_scene', 'create_design']
 
 type Fixtures = Awaited<ReturnType<typeof fixtures>>
 
@@ -31,7 +33,9 @@ async function fixtures() {
   await db.insert(eventSceneLinks).values({ eventId: event.id, sceneId: scene.id })
   const location = await createAnalyticsScene({ claimedByUserId: b.id, claimStatus: 'active' })
   await createSetup(location.id, scene.id)
-  return { a, b, aScene, scene, preset, element, instance, schedule, media, libraryItem, showing, event, location }
+  const design = await createDesign(b, { name: 'B design' })
+  await addRevision(design, 'hat')
+  return { a, b, aScene, scene, preset, element, instance, schedule, media, libraryItem, showing, event, location, design }
 }
 
 const when = { recurrence: 'daily' as const, startDate: '2031-01-01', startTime: '10:00', timezone: 'UTC' }
@@ -61,6 +65,10 @@ const SAMPLE: Record<string, (f: Fixtures) => unknown> = {
   add_to_library: (f) => ({ sceneId: f.scene.id, mediaAssetId: f.media.id }),
   rename_library_item: (f) => ({ sceneId: f.scene.id, itemId: f.libraryItem.id, name: 'Taken' }),
   create_showing: (f) => ({ sceneId: f.scene.id, elementId: f.element.id, title: 'A show', items: [{ url: 'https://cdn.example/a.mp4', duration: 60 }], ...when }),
+  get_design: (f) => ({ designId: f.design.id }),
+  send_studio_prompt: (f) => ({ designId: f.design.id, text: 'make it mine' }),
+  get_finalize_quote: (f) => ({ designId: f.design.id }),
+  open_finalize: (f) => ({ designId: f.design.id }),
 }
 
 function ctxFor(app: FastifyInstance, user: TestUser): ToolCtx {
@@ -83,6 +91,7 @@ async function snapshot(app: FastifyInstance, f: Fixtures) {
     schedules,
     library: await get(`/api/scenes/${f.scene.id}/library`),
     showings: (await get(`/api/elements/${f.element.id}/showings`)).showings.map((s: any) => ({ id: s.id, title: s.title, startTime: s.startTime })),
+    design: await get(`/api/studio/designs/${f.design.id}`),
   }
 }
 
@@ -90,10 +99,13 @@ describe('assistant tools: authorization is the route\'s own', () => {
   let app: FastifyInstance
   let f: Fixtures
 
+  const prevStudio = config.studioEnabled
   beforeAll(async () => {
+    ;(config as any).studioEnabled = true
     app = await testApp()
   })
   afterAll(async () => {
+    ;(config as any).studioEnabled = prevStudio
     await app.close()
   })
   beforeEach(async () => {
@@ -126,8 +138,11 @@ describe('assistant tools: authorization is the route\'s own', () => {
 
   it('account-scoped tools show A none of B\'s ids', async () => {
     const ctx = ctxFor(app, f.a)
-    const bIds = [f.scene.id, f.preset.id, f.element.id, f.instance.id, f.schedule.id, f.media.id, f.libraryItem.id, f.showing.id, f.event.id, f.location.id]
-    const args: Record<string, unknown> = { search_help: { query: 'scene' }, open_page: { path: '/scenes', label: 'Scenes' } }
+    const bIds = [f.scene.id, f.preset.id, f.element.id, f.instance.id, f.schedule.id, f.media.id, f.libraryItem.id, f.showing.id, f.event.id, f.location.id, f.design.id]
+    const args: Record<string, unknown> = {
+      search_help: { query: 'scene' }, open_page: { path: '/scenes', label: 'Scenes' },
+      create_scene: { name: 'A new scene' }, create_design: { kind: 'wearable', name: 'A design', agent: 'claude' },
+    }
     for (const name of ACCOUNT_SCOPED) {
       const r = await runTool(ctx, name, args[name] ?? {})
       expect(r.ok, `${name}: ${JSON.stringify(r)}`).toBe(true)

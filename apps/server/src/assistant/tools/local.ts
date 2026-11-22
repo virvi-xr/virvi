@@ -1,8 +1,12 @@
-// Local tools: they run here, not through a route. search_help reads the public docs; open_page only returns a link.
+// Local tools: they run here, not through a route. search_help reads the public docs; open_page only returns a link;
+// open_finalize reads the design and its quote as the user, then returns a link to the page that finalizes it.
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import { config } from '../../config.js'
+import { dollars } from '../../studio/pricing.js'
+import { id } from './read.js'
+import { get } from './write.js'
 import { ToolError, type ToolDef } from './types.js'
 
 const MAX_RESULTS = 3
@@ -102,6 +106,22 @@ export const LOCAL_TOOLS: ToolDef<any>[] = [
       return { href: a.path, label: a.label }
     },
     label: (a) => `Link to ${a.label}`,
+    summarize: (res) => res,
+  },
+  {
+    name: 'open_finalize',
+    description: "Offer the user a link to finalize a Studio design (pay for its pieces), with the price now. The user finalizes it there; the assistant can't.",
+    input: z.object({ designId: id() }),
+    effect: 'read',
+    call: () => {
+      throw new Error('open_finalize runs locally')
+    },
+    local: async (a, ctx) => {
+      const name = (await get(ctx, `/api/studio/designs/${a.designId}`)).design?.name
+      const quote = await get(ctx, `/api/studio/designs/${a.designId}/finalize`)
+      return { href: `/studio/${a.designId}?step=finalize`, label: `Finalize "${name}"`, detail: `Total ${dollars(Number(quote.totalCents) || 0)}` }
+    },
+    label: () => 'Link to finalize a design',
     summarize: (res) => res,
   },
 ]

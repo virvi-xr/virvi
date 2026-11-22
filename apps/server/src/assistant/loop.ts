@@ -209,9 +209,9 @@ export async function runTurn(
           if (r.ok) wrote = true
           emit({ type: 'action', action })
         }
-        if (r.ok && use.name === 'open_page') {
-          const link = r.summary as { href: string; label: string }
-          emit({ type: 'link', label: link.label, href: link.href })
+        if (r.ok && (use.name === 'open_page' || use.name === 'open_finalize')) {
+          const link = r.summary as { href: string; label: string; detail?: string }
+          emit({ type: 'link', label: link.label, href: link.href, ...(link.detail ? { detail: link.detail } : {}) })
         }
         if (r.ok) reply(r.summary)
         else reply({ error: r.error }, true)

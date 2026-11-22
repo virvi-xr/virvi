@@ -578,4 +578,19 @@ describe('assistant turn loop', () => {
       expect(lastResults(inputs[1])[0].is_error).toBe(true)
     })
   })
+
+  it('open_finalize emits a link with the price as its detail', async () => {
+    const { addRevision, createDesign } = await import('./helpers/studio.js')
+    const prevStudio = config.studioEnabled
+    set('studioEnabled', true)
+    try {
+      const d = await createDesign(owner, { name: 'Neon cap' })
+      await addRevision(d, 'hat')
+      script([tool('open_finalize', { designId: d.id }), text('Finalize it there.')])
+      const events = await turn('Finalize my cap')
+      expect(events.find((e) => e.type === 'link')).toEqual({ type: 'link', label: 'Finalize "Neon cap"', href: `/studio/${d.id}?step=finalize`, detail: expect.stringMatching(/^Total \$\d/) })
+    } finally {
+      set('studioEnabled', prevStudio)
+    }
+  })
 })
