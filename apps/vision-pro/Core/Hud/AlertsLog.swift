@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 struct AlertEntry: Equatable, Identifiable {
     enum Kind { case info, error }

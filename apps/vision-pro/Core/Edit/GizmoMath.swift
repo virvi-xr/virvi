@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 import simd
 
 /// The gizmo's drag math, in Virvi scene coordinates (Decentraland's scene-local frame), ported from

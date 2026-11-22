@@ -1,8 +1,8 @@
 import type { HyperfyAnalyticsBatch } from '@virvixr/shared'
 import { recordVisitBatch } from '../hyperfy/analytics.js'
 
-/** The headset apps that report visits. The Apple plan adds `ar-ios` and `ar-visionos`. */
-export const AR_ANALYTICS_PLATFORMS: ReadonlySet<string> = new Set(['ar-quest'])
+/** The headset apps that report visits. The Apple plan adds `ar-visionos`. */
+export const AR_ANALYTICS_PLATFORMS: ReadonlySet<string> = new Set(['ar-quest', 'ar-ios'])
 
 /**
  * Record an AR space's visitor events, as Hyperfy worlds do: an `ar` analytics location per space, and

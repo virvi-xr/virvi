@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 struct EventRow: Equatable, Decodable {
     let id: String

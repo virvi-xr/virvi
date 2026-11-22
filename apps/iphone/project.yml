@@ -1,0 +1,80 @@
+name: VirviAR
+options:
+  bundleIdPrefix: io.virvi
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    # The owner's Apple team, so `xcodegen generate` keeps device signing.
+    DEVELOPMENT_TEAM: P22YGT64VU
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  GLTFKit2:
+    url: https://github.com/warrenm/GLTFKit2
+    exactVersion: 0.5.15
+  VirviARKit:
+    path: ../../packages/virvi-ar-swift
+
+targets:
+  VirviAR:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - package: GLTFKit2
+      - package: VirviARKit
+    entitlements:
+      path: App/VirviAR.entitlements
+      properties:
+        com.apple.developer.associated-domains: [applinks:virvi.io]
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Virvi AR
+        NSCameraUsageDescription: Virvi AR uses the camera to find rings and to show the space in this room.
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIRequiredDeviceCapabilities: [arkit]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsForMedia: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.virvi.ar
+        TARGETED_DEVICE_FAMILY: "1"
+
+  VirviARTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: VirviAR
+      - package: VirviARKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.virvi.ar.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  VirviAR:
+    build:
+      targets:
+        VirviAR: all
+    # The ring detector is ~60x slower unoptimised (1.3 s a frame against 21 ms), so running and profiling from Xcode
+    # use Release. Tests stay in Debug.
+    run:
+      config: Release
+    profile:
+      config: Release
+    archive:
+      config: Release
+    test:
+      config: Debug
+      targets: [VirviARTests]

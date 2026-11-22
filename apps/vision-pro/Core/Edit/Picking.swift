@@ -1,5 +1,6 @@
 import Foundation
 import RealityKit
+import VirviARKit
 
 /// How an item catches a look-and-pinch in Edit layout.
 enum PickShape: Equatable {

@@ -17,6 +17,8 @@ packages:
   GLTFKit2:
     url: https://github.com/warrenm/GLTFKit2
     exactVersion: 0.5.15
+  VirviARKit:
+    path: ../../packages/virvi-ar-swift
 
 targets:
   VirviBuilder:
@@ -25,6 +27,7 @@ targets:
     sources: [Core, App]
     dependencies:
       - package: GLTFKit2
+      - package: VirviARKit
     info:
       path: App/Info.plist
       properties:
@@ -51,6 +54,7 @@ targets:
     dependencies:
       - target: VirviBuilder
       - package: GLTFKit2
+      - package: VirviARKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.virvi.builder.tests

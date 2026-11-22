@@ -40,6 +40,12 @@ describe('AR space reports', () => {
   const report = (body: Record<string, unknown> = { reason: 'spam', platform: 'ar-quest' }, id = spaceId) =>
     app.inject({ method: 'POST', url: `/api/ar/spaces/${id}/report`, payload: body })
 
+  it('accepts a report from the iPhone app', async () => {
+    await publish()
+    const res = await report({ reason: 'spam', platform: 'ar-ios' })
+    expect([res.statusCode, res.json()]).toEqual([201, { ok: true }])
+  })
+
   it('stores a report on a published space and emails support', async () => {
     await publish()
     const res = await report({ reason: 'unsafe', platform: 'ar-quest' })

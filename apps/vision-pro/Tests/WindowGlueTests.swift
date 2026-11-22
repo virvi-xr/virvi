@@ -1,3 +1,4 @@
+import VirviARKit
 import XCTest
 
 /// Core pieces the window (Task 11) binds to: the Stats URL, error wording, the upload link and Alerts wiring.

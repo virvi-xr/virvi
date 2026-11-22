@@ -1,5 +1,6 @@
 import RealityKit
 import UIKit
+import VirviARKit
 
 /// Marks a gizmo part that a pinch-drag can grab.
 struct GizmoHandleComponent: Component {

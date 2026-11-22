@@ -117,6 +117,28 @@ describe('AR static pages', () => {
     expect(redactPairingCode('/signin/?next=%2Fstudio%2F')).toBe('/signin/?next=%2Fstudio%2F')
   })
 
+  describe('/.well-known/apple-app-site-association', () => {
+    const prevIds = config.appleAppIds
+    afterEach(() => { ;(config as any).appleAppIds = prevIds })
+    const get = () => app.inject({ method: 'GET', url: '/.well-known/apple-app-site-association' })
+
+    it('claims /s/* for the iPhone app', async () => {
+      const res = await get()
+      expect(res.statusCode).toBe(200)
+      expect(res.headers['content-type']).toMatch(/^application\/json/)
+      expect(res.json()).toEqual({
+        applinks: { details: [{ appIDs: ['P22YGT64VU.io.virvi.ar'], components: [{ '/': '/s/*' }] }] },
+      })
+    })
+
+    it('serves no details when no app id is configured', async () => {
+      ;(config as any).appleAppIds = []
+      const res = await get()
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ applinks: { details: [] } })
+    })
+  })
+
   describe('/.well-known/assetlinks.json', () => {
     const prevLinks = { pkg: config.androidAppPackage, sha: config.androidCertSha256 }
     afterEach(() => {

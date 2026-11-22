@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 /// One entry of `GET /api/scenes/:id/library` (`items`).
 struct LibraryItem: Decodable, Equatable {

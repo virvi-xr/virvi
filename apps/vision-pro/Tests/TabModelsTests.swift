@@ -1,3 +1,4 @@
+import VirviARKit
 import XCTest
 
 final class TabModelsTests: XCTestCase {

@@ -4,6 +4,7 @@ import QuartzCore
 import RealityKit
 import SwiftUI
 import UIKit
+import VirviARKit
 
 /// Putting the scene down (the floor disc and outline move and turn it) or editing items (picking, the gizmo).
 /// Edit never moves the whole scene.

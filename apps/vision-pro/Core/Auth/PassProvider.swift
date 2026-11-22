@@ -1,4 +1,5 @@
 import Foundation
+import VirviARKit
 
 /// Mints and caches one scene pass per scene. A pass with under 30 s left is minted again.
 actor PassProvider {

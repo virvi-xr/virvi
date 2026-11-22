@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import VirviARKit
 
 /// Hands PassProvider's revoke callback to the app once it exists.
 private final class RevokeRelay: @unchecked Sendable {

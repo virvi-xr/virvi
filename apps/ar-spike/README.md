@@ -1,6 +1,8 @@
 # Virvi AR prototype (AR spike)
 
-This is the prototype that Virvi AR for iPhone grows from. Virvi AR is one app on three platforms: Meta Quest (`apps/quest`), Apple Vision Pro (`apps/vision-pro`) and iPhone. The real iPhone app is planned; see the AR page at virvi.io/ar.
+**The real iPhone app is now [`apps/iphone`](../iphone/README.md).** This folder is the old throwaway prototype. Use it for reference only.
+
+This is the prototype Virvi AR for iPhone started from. Virvi AR is one app on three platforms: Meta Quest (`apps/quest`), Apple Vision Pro (`apps/vision-pro`) and iPhone. The iPhone app lives in `apps/iphone`; see the AR page at virvi.io/ar.
 
 **Get the app:** there’s nothing to download. Virvi AR for iPhone isn’t in the App Store, and this prototype is built from source and run from Xcode as described below ([Build](#build-simulators), [Run on your Apple Vision Pro (or iPhone)](#run-on-your-apple-vision-pro-or-iphone)). The public page is [virvi.io/ar](https://virvi.io/ar).
 

@@ -41,7 +41,7 @@ export const AR_APPS: readonly ArApp[] = [
     sourceUrl: `${AR_APPS_REPO}/tree/main/apps/vision-pro`,
   },
   {
-    // apps/ar-spike is the prototype the iPhone app grows from (LIV-197)
+    // apps/iphone is the real app; apps/ar-spike is its old prototype (LIV-197)
     id: 'iphone',
     name: 'Virvi AR',
     platform: 'iPhone',
@@ -49,7 +49,7 @@ export const AR_APPS: readonly ArApp[] = [
     role: 'See AR Spaces, and earn BEATs by being there',
     status: 'prototype',
     storeUrl: null,
-    sourceUrl: `${AR_APPS_REPO}/tree/main/apps/ar-spike`,
+    sourceUrl: `${AR_APPS_REPO}/tree/main/apps/iphone`,
   },
 ]
 

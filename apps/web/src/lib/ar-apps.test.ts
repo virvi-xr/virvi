@@ -10,7 +10,7 @@ describe('AR_APPS', () => {
     expect(AR_APPS.map((a) => a.name)).toEqual(['Virvi AR', 'Virvi AR', 'Virvi AR'])
     expect(AR_APPS.map((a) => a.platform)).toEqual(['Meta Quest', 'Apple Vision Pro', 'iPhone'])
     for (const app of AR_APPS) expect(app.sourceUrl.startsWith(`${AR_APPS_REPO}/tree/main/apps/`)).toBe(true)
-    expect(AR_APPS.find((a) => a.id === 'iphone')!.sourceUrl).toBe('https://github.com/virvi-xr/virvi/tree/main/apps/ar-spike')
+    expect(AR_APPS.find((a) => a.id === 'iphone')!.sourceUrl).toBe('https://github.com/virvi-xr/virvi/tree/main/apps/iphone')
   })
 })
 

@@ -348,6 +348,10 @@ export const config = {
   // Release-key SHA-256 fingerprints, comma-separated; empty until the app is signed
   androidCertSha256: normalizeCertFingerprints(env('ANDROID_CERT_SHA256') || ''),
 
+  // ── Apple universal links (/.well-known/apple-app-site-association) ───────
+  // App IDs (TeamID.bundleId), comma-separated; empty claims nothing
+  appleAppIds: (env('APPLE_APP_IDS') ?? 'P22YGT64VU.io.virvi.ar').split(',').map((s) => s.trim()).filter(Boolean),
+
   // ── Virvi Spaces reports ───────────────────────────────────────────────────
   // Where a visitor's "Report this space" is emailed (best-effort; reports are always stored and shown on /admin)
   // Where AR space reports go: support@virvi.io on Virvi's own servers only, so a self-hosted install's reports never

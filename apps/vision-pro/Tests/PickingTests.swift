@@ -1,4 +1,5 @@
 import RealityKit
+import VirviARKit
 import XCTest
 
 final class PickingTests: XCTestCase {
