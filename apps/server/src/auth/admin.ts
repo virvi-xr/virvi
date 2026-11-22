@@ -7,7 +7,7 @@ import type { SessionClaims } from './tokens.js'
 
 /**
  * Who is a Virvi admin: the users row's role, read when asked, never a token's claim. One check for every admin
- * route (admin.ts, admin-ads.ts, admin-studio.ts, advertiser-leads.ts, branding.ts) and for Virvi support on
+ * route (admin.ts, admin-ads.ts, admin-studio.ts, advertiser-leads.ts, summit-signups.ts, branding.ts) and for Virvi support on
  * Design Studio designs, so a demotion takes effect at once and a promotion does too.
  */
 

@@ -197,6 +197,13 @@ if [ -n "$DATABASE_URL" ]; then
         console.log('[virvi-server] advertiser_leads table ensured');
       } catch(e) { console.log('[virvi-server] advertiser_leads:', e.message); }
 
+      // Virvi Summit sign-ups; matches summitSignups in src/db/schema.ts
+      try {
+        await sql\`CREATE TABLE IF NOT EXISTS summit_signups (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT NOT NULL, name TEXT NOT NULL, join_as TEXT NOT NULL, party_size INTEGER, city TEXT, expected_guests INTEGER, interests TEXT[] NOT NULL DEFAULT '{}'::text[], source TEXT, in_person_status TEXT, consent_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), CONSTRAINT summit_signups_email_unique UNIQUE (email))\`;
+        await sql\`CREATE INDEX IF NOT EXISTS summit_signups_created_idx ON summit_signups (created_at)\`;
+        console.log('[virvi-server] summit_signups table ensured');
+      } catch(e) { console.log('[virvi-server] summit_signups:', e.message); }
+
       // Room scans and the sets built from them; matches roomScans / roomSets in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS room_scans (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, org_id UUID, name TEXT NOT NULL, source TEXT NOT NULL, layout JSONB NOT NULL, captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;

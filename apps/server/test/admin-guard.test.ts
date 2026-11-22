@@ -40,6 +40,8 @@ describe('the admin role comes from the database', () => {
     ['PUT', `/api/admin/users/${f.admin.id}/role`, { role: 'admin' }],
     ['GET', '/api/admin/ads'],
     ['GET', '/api/admin/advertiser-leads'],
+    ['GET', '/api/admin/summit/signups'],
+    ['PUT', '/api/admin/summit/signups/00000000-0000-4000-8000-000000000000/in-person', { status: 'confirmed' }],
     ['GET', '/api/admin/studio/flags'],
     ['GET', '/api/admin/studio/designs'],
     ['GET', '/api/admin/errors'],

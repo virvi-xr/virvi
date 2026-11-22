@@ -536,6 +536,7 @@ const CASES: Case[] = [
   { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/settle', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/settle`, body: (f) => ({ paymentId: f.designPayment.id }) },
   { route: 'POST /api/admin/studio/mana-transfers/:txHash/:logIndex/returned', url: () => `/api/admin/studio/mana-transfers/0x${'ab'.repeat(32)}/0/returned`, body: () => ({ returnTxHash: '0x' + 'cd'.repeat(32) }) },
   { route: 'GET /api/admin/errors/:id', url: () => `/api/admin/errors/${AD_ID}` },
+  { route: 'PUT /api/admin/summit/signups/:id/in-person', url: () => `/api/admin/summit/signups/${AD_ID}/in-person`, body: () => ({ status: 'confirmed' }) },
   { route: 'POST /api/admin/beats/:id/give-up', url: (f) => `/api/admin/beats/${f.beat.id}/give-up`, body: () => ({}) },
   { route: 'POST /api/admin/beats/reissue-requests/:id/approve', url: (f) => `/api/admin/beats/reissue-requests/${f.reissueRequest.id}/approve`, body: () => ({}) },
   { route: 'POST /api/admin/beats/reissue-requests/:id/reject', url: (f) => `/api/admin/beats/reissue-requests/${f.reissueRequest.id}/reject`, body: () => ({ note: 'pwned' }) },

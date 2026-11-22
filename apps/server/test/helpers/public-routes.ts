@@ -50,6 +50,7 @@ export const PUBLIC_EXACT = [
   'GET /api/studio/wall', // public: the studio wall of fame (shown designs' names, creators and signed preview frames)
   'GET /api/catalog/packs', // public credits list (no bearer)
   'POST /api/advertiser-leads', // public: landing page early-access form (anonymous visitors, never reads a bearer)
+  'POST /api/summit/signups', // public: the virvi.io/summit sign-up form (anonymous visitors, never reads a bearer)
   'POST /api/errors', // public: error reports from guests, trials and accounts; an optional bearer only picks the user to count (hashed), never grants anything
   'POST /api/errors/reports', // public: a crash screen's Report; an optional bearer only names the sender
   'POST /api/errors/prompt', // public: "should I ask?" for an error; an optional account bearer applies that account's own prompt state, nothing else

@@ -1669,6 +1669,24 @@ export const advertiserLeads = pgTable('advertiser_leads', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// ── Virvi Summit ─────────────────────────────────────────────────────────────
+/** Sign-ups from virvi.io/summit: one row per lowercased email, a resubmit updates it. Admin-readable only; deleted by 31 August 2027. */
+export const summitSignups = pgTable('summit_signups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull().unique(),
+  name: text('name').notNull(),
+  joinAs: text('join_as').notNull(), // online | in_person | watch_party
+  partySize: integer('party_size'), // in_person only, 1–4
+  city: text('city'), // watch_party only
+  expectedGuests: integer('expected_guests'), // watch_party only, 1–500
+  interests: text('interests').array().notNull().default(sql`'{}'::text[]`),
+  source: text('source'), // the ?ref= they came from
+  inPersonStatus: text('in_person_status'), // requested | confirmed | declined; null unless join_as is in_person
+  consentAt: timestamp('consent_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('summit_signups_created_idx').on(t.createdAt)])
+
 // ── Room Scan ────────────────────────────────────────────────────────────────
 /** A room scan a personal headset uploaded: the normalised layout only (metres, Y up), never images or raw device output. Owner-readable only. */
 export const roomScans = pgTable('room_scans', {
