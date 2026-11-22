@@ -19,6 +19,7 @@ export * from './ads.js';
 export * from './ring-marker/codec.js';
 export * from './ring-marker/layout.js';
 export * from './ar.js'
+export * from './ar-apps.js'
 export * from './dcl-limits.js';
 export * from './room-scan.js'
 export * from './scene-import.js'
