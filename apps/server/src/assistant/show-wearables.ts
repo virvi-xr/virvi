@@ -2,7 +2,7 @@
 // item has none) is checked against the Marketplace for wearables the user's verified wallets created since the show
 // began, and one that clearly is the show's is filled in by itself. The checklist names what was found, and pasting a
 // link replaces it. Setting it changes only the user's own checklist: making it a raffle's prize is still a card.
-import { and, eq, gt, isNull } from 'drizzle-orm'
+import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import type { ShowItem, ShowWearable } from '@virvixr/shared'
 import { db } from '../db/connection.js'
 import { config } from '../config.js'
@@ -37,18 +37,39 @@ const norm = (s: string) => s.normalize('NFKC').toLowerCase().replace(/\s+/g, ' 
 /** A name from Decentraland as the checklist shows it: one line, no control characters, capped. */
 const cleanName = (s: string) => s.replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX)
 
+export const itemKey = (i: { contract: string; itemId: string }) => `${i.contract.toLowerCase()}:${i.itemId}`
+
 /**
- * The show's wearable among the user's new ones: approved, created since the show began, and then the one named like
- * the show's Studio design, else the only one. Several and none named like the design: null, the user pastes it.
+ * The show's wearable among the user's new ones: reviewed, created since the show began, not one the user cleared from
+ * this item or one another show already has. With a Studio design attached, only the one named like it; with none,
+ * the only new one. Anything else: null, and the user pastes it.
  */
-export function pickWearable(items: MarketItem[], since: Date, designName: string | null): MarketItem | null {
-  const fresh = items.filter((i) => i.reviewedAt && i.createdAt.getTime() >= since.getTime())
-  if (designName) {
+export function pickWearable(items: MarketItem[], since: Date, designName: string | null, skip: ReadonlySet<string> = new Set()): MarketItem | null {
+  const fresh = items.filter((i) => i.reviewedAt && i.createdAt.getTime() >= since.getTime() && !skip.has(itemKey(i)))
+  if (designName !== null) {
     const named = fresh.filter((i) => norm(i.name) === norm(designName))
-    if (named.length === 1) return named[0]
-    if (named.length > 1) return null
+    return named.length === 1 ? named[0] : null
   }
   return fresh.length === 1 ? fresh[0] : null
+}
+
+/** Read at most `max` bytes of the body; null when it is bigger. */
+async function readCapped(res: Response, max: number): Promise<string | null> {
+  const reader = res.body?.getReader()
+  if (!reader) return ''
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > max) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 const seconds = (v: unknown): Date | null => {
@@ -68,8 +89,8 @@ export function marketplaceFind(fetchImpl: typeof fetch = fetch): FindItems {
       await res.body?.cancel().catch(() => {})
       throw new Error(`Marketplace answered ${res.status}`)
     }
-    const text = await res.text()
-    if (text.length > MAX_BYTES) throw new Error('Marketplace answer too large')
+    const text = await readCapped(res, MAX_BYTES)
+    if (text === null) throw new Error('Marketplace answer too large')
     const data = (JSON.parse(text) as { data?: unknown })?.data
     if (!Array.isArray(data)) throw new Error('Marketplace answered without a data list')
     const out: MarketItem[] = []
@@ -89,10 +110,11 @@ const waitingItem = (show: ShowRow) => show.items.find((i) => i.kind === 'wearab
 /** Look once over the open shows waiting on a wearable; returns how many were checked and filled. */
 export async function sweepShowWearables(find: FindItems = marketplaceFind(), now = new Date()): Promise<{ checked: number; found: number }> {
   const since = new Date(now.getTime() - WATCH_DAYS * 86_400_000)
-  const open = await db.select().from(assistantShows)
-    .where(and(isNull(assistantShows.closedAt), gt(assistantShows.createdAt, since)))
-    .orderBy(assistantShows.updatedAt).limit(SWEEP_SHOWS_MAX * 5)
-  const shows = open.filter((s) => waitingItem(s)).slice(0, SWEEP_SHOWS_MAX)
+  // Only shows still waiting, picked in SQL so idle shows never crowd them out; least recently changed first
+  const waiting = sql`jsonb_path_exists(${assistantShows.items}, '$[*] ? (@.kind == "wearable_published" && !exists(@.wearable))')`
+  const shows = (await db.select().from(assistantShows)
+    .where(and(isNull(assistantShows.closedAt), gt(assistantShows.createdAt, since), waiting))
+    .orderBy(assistantShows.updatedAt).limit(SWEEP_SHOWS_MAX)).filter((s) => waitingItem(s))
 
   // One Marketplace call per user, whatever their number of shows
   const byUser = new Map<string, MarketItem[] | null>()
@@ -113,15 +135,24 @@ export async function sweepShowWearables(find: FindItems = marketplaceFind(), no
     const items = byUser.get(show.userId)
     if (!items?.length) continue
 
+    // The attached design was checked against the user's access when it was attached; a design that's gone names nothing
     const designId = show.items.find((i) => i.kind === 'wearable_design')?.ref?.designId
-    const [design] = designId
-      ? await db.select({ name: studioDesigns.name }).from(studioDesigns).where(and(eq(studioDesigns.id, designId), eq(studioDesigns.ownerId, show.userId)))
-      : []
-    const pick = pickWearable(items, show.createdAt, design?.name ?? null)
+    const [design] = designId ? await db.select({ name: studioDesigns.name }).from(studioDesigns).where(eq(studioDesigns.id, designId)) : []
+    const designName = designId ? (design?.name ?? '') : null
+    const skip = new Set([...(waitingItem(show)?.dismissed ?? []), ...(await takenBy(show.userId, show.id))])
+    const pick = pickWearable(items, show.createdAt, designName, skip)
     if (!pick) continue
     if (await fill(show.id, pick)) found++
   }
   return { checked: shows.length, found }
+}
+
+/** The wearables the user's other open shows already have: one wearable belongs to one show. */
+async function takenBy(userId: string, exceptShowId: string): Promise<string[]> {
+  const rows = await db.select({ id: assistantShows.id, items: assistantShows.items }).from(assistantShows)
+    .where(and(eq(assistantShows.userId, userId), isNull(assistantShows.closedAt)))
+  return rows.filter((r) => r.id !== exceptShowId)
+    .flatMap((r) => r.items.filter((i) => i.kind === 'wearable_published' && i.wearable).map((i) => itemKey(i.wearable!)))
 }
 
 /** Under the row's lock: only a show still open whose item still has no wearable (a paste always wins). */

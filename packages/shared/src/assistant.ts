@@ -111,6 +111,8 @@ export interface ShowItem {
   label: string
   ref: ShowItemRef
   wearable?: ShowWearable
+  /** wearable_published: Marketplace items (contract:itemId) Virvi found and the user cleared, never picked again. */
+  dismissed?: string[]
 }
 
 export interface ShowItemView {

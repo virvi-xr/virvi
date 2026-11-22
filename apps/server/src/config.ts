@@ -551,7 +551,7 @@ export const config = {
   dclMapSweepMs: parseInt(env('DCL_MAP_SWEEP_MS') || '60000'),
   dclMapManifestUrl: (env('DCL_MAP_MANIFEST_URL') || 'https://abgen-cdn.decentraland.org/LOD/lods-unity/manifests').replace(/\/+$/, ''),
   // Assistant shows: how often a show waiting on a published wearable looks for one on Decentraland (0 disables)
-  showWearableSweepMs: parseInt(env('SHOW_WEARABLE_SWEEP_MS') || '600000'),
+  showWearableSweepMs: intEnv('SHOW_WEARABLE_SWEEP_MS', 600_000),
   dclMarketplaceApiUrl: (env('DCL_MARKETPLACE_API_URL') || 'https://marketplace-api.decentraland.org').replace(/\/+$/, ''),
 
   // Analytics background jobs (session close, rollups, retention); disabled in tests

@@ -5,7 +5,7 @@ import type { ShowView } from '@virvixr/shared'
 import { db } from '../src/db/connection.js'
 import { assistantShows } from '../src/db/schema.js'
 import { config } from '../src/config.js'
-import { marketplaceFind, pickWearable, sweepShowWearables, type MarketItem } from '../src/assistant/show-wearables.js'
+import { itemKey, marketplaceFind, pickWearable, sweepShowWearables, type MarketItem } from '../src/assistant/show-wearables.js'
 import { resetDb } from './helpers/db.js'
 import { testApp, createUser, tokenFor, type TestUser } from './helpers/factories.js'
 import { createDesign } from './helpers/studio.js'
@@ -24,9 +24,13 @@ describe('pickWearable', () => {
     const items = [item({ name: 'Other hat', createdAt: after }), item({ name: '  neon   CAP ', itemId: '1', createdAt: after })]
     expect(pickWearable(items, since, 'Neon cap')?.itemId).toBe('1')
   })
-  it('takes the only new approved one when none is named like the design', () => {
-    expect(pickWearable([item({ name: 'Something', createdAt: after })], since, 'Neon cap')?.name).toBe('Something')
+  it('with no design, takes the only new one; with a design, only one named like it', () => {
     expect(pickWearable([item({ name: 'Something', createdAt: after })], since, null)?.name).toBe('Something')
+    expect(pickWearable([item({ name: 'Something', createdAt: after })], since, 'Neon cap')).toBeNull()
+  })
+  it('skips items the user cleared or another show has', () => {
+    const one = item({ name: 'Neon cap', createdAt: after })
+    expect(pickWearable([one], since, 'Neon cap', new Set([`${C1}:0`]))).toBeNull()
   })
   it('ignores ones made before the show and ones not approved', () => {
     expect(pickWearable([item({ name: 'Neon cap', createdAt: before })], since, 'Neon cap')).toBeNull()
@@ -134,6 +138,42 @@ describe('sweepShowWearables', () => {
     let asks = 0
     await sweepShowWearables(async () => { asks++; return [] })
     expect(asks).toBe(1)
+  })
+
+  it('a wearable cleared from the show is never found again, and one wearable fills only one show', async () => {
+    const a = await newShow()
+    const b = await newShow()
+    expect(await sweepShowWearables(async () => [later('Only one')])).toEqual({ checked: 2, found: 1 })
+    const rows = await db.select().from(assistantShows)
+    const withIt = rows.filter((r) => r.items.some((i) => i.kind === 'wearable_published' && i.wearable))
+    expect(withIt).toHaveLength(1)
+    // The user says it's the wrong one: cleared, and remembered
+    const s = withIt[0]
+    const it = s.items.find((i) => i.kind === 'wearable_published')!
+    expect((await call('PATCH', `/api/assistant/shows/${s.id}/items/${it.id}`, { wearable: null })).status).toBe(200)
+    const [after] = await db.select().from(assistantShows).where(eq(assistantShows.id, s.id))
+    expect(after.items.find((i) => i.id === it.id)!.dismissed).toEqual([itemKey({ contract: C1, itemId: '0' })])
+    // Next sweep: the other show takes it, this one doesn't get it back
+    await sweepShowWearables(async () => [later('Only one')])
+    const [again] = await db.select().from(assistantShows).where(eq(assistantShows.id, s.id))
+    expect(again.items.find((i) => i.id === it.id)!.wearable).toBeUndefined()
+  })
+
+  it('a show with a design waits for one named like it, and a design that is gone names nothing', async () => {
+    const s = await newShow()
+    const design = await createDesign(owner, { name: 'Neon cap' })
+    await call('PATCH', `/api/assistant/shows/${s.id}/items/${s.items[0].id}`, { ref: { designId: design.id } })
+    expect(await sweepShowWearables(async () => [later('Star boots')])).toEqual({ checked: 1, found: 0 })
+  })
+
+  it('shows already filled never crowd out one still waiting', async () => {
+    for (let i = 0; i < 3; i++) await newShow()
+    await sweepShowWearables(async () => [later('First')])
+    await sweepShowWearables(async () => [later('Second', '1')])
+    await sweepShowWearables(async () => [later('Third', '2')])
+    const waiting = await newShow()
+    await db.update(assistantShows).set({ updatedAt: new Date(Date.now() + 60 * MIN) }).where(eq(assistantShows.id, waiting.id))
+    expect(await sweepShowWearables(async () => [later('Fourth', '3')])).toEqual({ checked: 1, found: 1 })
   })
 
   it("leaves closed shows, old shows and a wearable made before the show alone", async () => {
