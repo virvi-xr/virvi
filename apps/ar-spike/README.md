@@ -1,8 +1,12 @@
 # Virvi AR (AR spike)
 
-A throwaway spike for checking how Virvi scenes load and look in AR, life-size. It has two apps that share one Swift source folder:
+This is the prototype the iPhone app, Virvi for iPhone, grows from. The real iPhone app is planned; see the AR page at virvi.io/ar.
 
-- **VirviAR-iOS** (iOS 18+): an ARKit/RealityKit `ARView` with horizontal plane detection. Tap the floor and the scene's centre, Virvi (8, 0, 8), lands on that spot, with Virvi north pointing away from you. The **Tabletop 1:20** toggle shrinks the scene.
+**Get the app:** there’s nothing to download. Virvi for iPhone isn’t in the App Store, and this prototype is built from source and run from Xcode as described below ([Build](#build-simulators), [Run on your Apple Vision Pro (or iPhone)](#run-on-your-apple-vision-pro-or-iphone)). The public page is [virvi.io/ar](https://virvi.io/ar).
+
+A spike for checking how Virvi scenes load and look in AR, life-size. Its visionOS half has been taken over by Virvi Builder (`apps/vision-pro`), whose scene core started from this one, and the Quest app (`apps/quest`) is its sibling. It has two apps that share one Swift source folder:
+
+- **VirviAR-iOS** (iPhone only, iOS 18+, a device with ARKit): an ARKit/RealityKit `ARView` with horizontal plane detection. Tap the floor and the scene's centre, Virvi (8, 0, 8), lands on that spot, with Virvi north pointing away from you. The **Tabletop 1:20** toggle shrinks the scene.
 - **VirviAR-visionOS** (visionOS 2+): a settings window and an **Enter space** button. The button opens a mixed `ImmersiveSpace` that puts the scene life-size on the floor, with its centre 2 m in front of you.
 
 Both apps long-poll `GET {feedUrl}/api/hyperfy/feed` with a world key, the same way the Hyperfy app does. Then they build RealityKit entities:
@@ -16,7 +20,7 @@ The code is organised like this:
 
 - `Shared/ScenePlan.swift` is a port of `packages/hyperfy-app/src/plan.ts`.
 - `Shared/Mapping.swift` is a port of `src/transform.ts`. It handles the left-handed to right-handed axes, YXZ Euler order and `MODEL_TURN`.
-- `Tests/` holds the transform test cases ported from `test/transform.test.ts`, plus two plan tests.
+- `Tests/` holds the transform test cases ported from `test/transform.test.ts`, two plan tests, and tests for the marker readings (`Shared/MarkerReadings.swift`).
 
 Spike shortcuts:
 
@@ -88,7 +92,7 @@ See `docs/visionos-controls.png` for the window in the simulator.
 
 ## Marker detection-range test
 
-Checks how far away each device can spot a registration marker before the real generator is built. Two test markers, both laid out as the AR spaces design describes (QR code, 2-module quiet zone, hashed border ring; the ring's outer square is the tracked image):
+Checks how far away each device can spot a registration marker. It was run before Virvi’s own ring markers (`apps/ring-marker`) were built; the Quest app uses those, and this spike still tracks these QR-code test markers. Two test markers, both laid out as the AR spaces design describes (QR code, 2-module quiet zone, hashed border ring; the ring's outer square is the tracked image):
 
 | Marker | Tracked square | Plaque |
 |---|---|---|

@@ -1,8 +1,10 @@
 # Virvi Builder (Apple Vision Pro)
 
-A visionOS app for building a Virvi scene in place, life-size, on a Vision Pro. This first cut is the project shell with the AR spike's scene core (`Core/Scene`: Mapping, ScenePlan, SceneRenderer) and its tests. See `docs/superpowers/specs/2026-10-31-vision-pro-builder-design.md` for the design.
+A visionOS app for building a Virvi scene in place, life-size, on a Vision Pro. You pair the headset, pick a scene from a list, set the scene down on the detected floor (and pin it to the room), then pick, move, turn and resize its items with a gizmo and save, with the Decentraland HUD’s tabs in a window beside it. Its scene core (`Core/Scene`: Mapping, ScenePlan, SceneRenderer) started as the AR spike’s. See `docs/superpowers/specs/2026-10-31-vision-pro-builder-design.md` for the design.
 
-Bundle id `io.virvi.builder.visionos`, visionOS 2.0+, GLTFKit2 0.5.15.
+**Get the app:** Virvi Builder isn’t in the App Store yet. Build it from source and run it on your headset as described below ([Run on a device](#run-on-a-device)). The public page is [virvi.io/ar](https://virvi.io/ar).
+
+Bundle id `io.virvi.builder.visionos`, Apple Vision Pro only (`TARGETED_DEVICE_FAMILY` 7), visionOS 2.0+ (on visionOS 26 an item lights up as a whole when you look at it; before that each part lights on its own), GLTFKit2 0.5.15.
 
 ## Build and test (simulator)
 
@@ -27,7 +29,7 @@ xcrun simctl launch <vision-sim-id> io.virvi.builder.visionos -baseUrl http://12
 
 ## Run on a device
 
-1. Set `DEVELOPMENT_TEAM` in `project.yml` (it is empty in the repo) to your Apple team id, or pick the team in Xcode's Signing & Capabilities tab after `xcodegen generate`.
+1. The `VirviBuilder` target in `project.yml` sets `DEVELOPMENT_TEAM` to the owner’s Apple team (`P22YGT64VU`), so `xcodegen generate` keeps device signing. Anyone else changes it to their own team id, or picks the team in Xcode’s Signing & Capabilities tab after `xcodegen generate` (lost on the next `xcodegen generate`). If the bundle id is taken, change it too.
 2. Put the Vision Pro in developer mode and connect it (Xcode, Window > Devices and Simulators).
 3. Choose the headset as the run destination and press Run. Trust the developer profile on the headset if asked.
 
@@ -82,6 +84,9 @@ The simulator has no world tracking. There the scene always goes down at a fixed
 - **Scene picker:** "Choose a scene to build", from the headset's scene list.
 - **HUD:** the Decentraland HUD's panel, with the same tab bar (Layout, Models, Events, Stream, Worlds, Alerts, Roles for hosts and co-hosts, Stats), panel titles, empty states and buttons, in Decentraland's colours.
   - **Edit layout** opens the `build` immersive space (below).
+  - **Layout** lists the active preset’s elements with **Select**, **Hide** / **Show** and **Delete**. An element with copies shows ×N and **Clear**, which asks first and then removes every copy.
+  - **Models** lists the library’s images and GLBs, with **Rename**, **Place** (below) and **Upload**.
+  - **Stream** lists the scene’s video screens with **Go Live** / **Go Offline**, **Choose stream** (the scene’s streams) and **Change** for the off image (up to 8 of the library’s images, or **No off image**).
   - **Upload**, **Publish** and **Stats** open their page in a browser window beside the HUD. Stats is the plain analytics link: the headset never gets a web hand-off.
   - Roles has no **Make host**: it says to use Roles on the dashboard.
   - Every edit failure or refusal, and every stream going live or offline, goes into Alerts and shows as a toast.
@@ -94,6 +99,7 @@ The simulator has no world tracking. There the scene always goes down at a fixed
 - **Picking:** looking at an item lights it up in cyan; pinch to select it. The selected item gets a cyan outline on its box's edges, a faint fill and its name above it. Items over 1.5 m on a side catch looks only on their own surfaces, so a building or floor doesn't block what's inside or behind it; smaller items get a box at least 15 cm on each side. The Layout tab's **Select** picks an element's first copy (not a sound) and opens the build space on it.
 - **Gizmo:** Move arrows, rotation rings and resize handles in the Decentraland gizmo's colours. Each handle's hit shape is at least 6 cm across and grows with distance (5 cm per metre), so it stays easy to hit 2–5 m away. Pinch-dragging a handle moves, turns or resizes the item under the edit bar's mode and lock. Pinch-dragging the item itself moves it freely in Move.
 - **Edit bar:** an ornament under the HUD window, as Decentraland's: Move | Rotate | Resize, the selected name (or how to pick one, which says when you are still placing), the lock (Free/X/Y/Z, which you pinch to change), **Snap**, **Exact**, **Save**, **Revert** and **Done**. It shows from **Edit layout** (or Select, or placing an asset) until **Done**, which stops editing and leaves the scene showing; items take pinches only while editing. Under it, whenever the scene is in the room, are Done placing / Move scene, Pin to this room and Re-place.
+- **What shows:** images, videos (muted; a playlist plays each video in turn) and `.glb` / `.gltf` models (a model that fails to load shows a placeholder). Screens in Schedule mode show the holding image between shows and play at the same moment as Decentraland. Sounds aren’t played (the renderer can, but nothing turns Sound on), and clicks aren’t implemented.
 - **Decentraland colliders:** model parts whose node or mesh name contains `_collider` are collision only in Decentraland and aren't drawn.
 - **Placing:** Models → **Place** takes the head pose from world tracking and puts the item 2 m ahead, facing you, then selects it. If the build space isn't open, Place opens it first. With no head pose, it says so and places nothing.
 - Leaving the scene (Change scene, revoking the headset, signing out) closes the build space and drops any unsaved change.

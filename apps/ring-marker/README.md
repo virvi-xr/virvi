@@ -1,6 +1,6 @@
 # Virvi ring markers
 
-Virvi's own marker: a round, printable plaque that a headset camera can find and read from across a room. It replaces the QR-code markers in `apps/ar-spike/markers/` for the AR spaces spikes. This folder is the reference implementation in Python: the code, the layout, print files, a synthetic camera test set and a reference detector. The Quest app (`apps/quest`) ports the codec and detector to Kotlin and checks them against the same vectors and images.
+Virvi's own marker: a round, printable plaque that a headset camera can find and read from across a room. It replaces the QR-code markers in `apps/ar-spike/markers/` for the AR spaces spikes. This folder is the reference implementation in Python: the code, the layout, print files, a synthetic camera test set and a reference detector. The Quest app (`apps/quest`) ports the codec and detector to Kotlin and checks them against the same vectors and images. `packages/shared/src/ring-marker` ports the codec’s encoder and the layout to TypeScript, so the server can make a space’s print files (`apps/server/src/ar/printfiles.ts`); `apps/server/test/ring-codec.test.ts` and `ring-layout.test.ts` check them against `vectors/codec.json` and `vectors/layout.json`.
 
 ## What a marker is
 
@@ -22,7 +22,7 @@ Code: `ringmarker/codec.py` (the code), `layout.py` (geometry), `render.py`, `pr
 | `RING140` | 140 mm | `0x2E3D4C5B` |
 | `RING170` | 170 mm | `0x3F4E5D6C` |
 
-The Quest app only accepts these IDs, and only once 3 frames in a row agree.
+The Quest app’s Developer panel shows readings for these IDs. The app itself reads any ring (once a space is open, only that space’s rings), and only once 3 frames in a row agree.
 
 ## Regenerate the files
 
