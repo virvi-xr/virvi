@@ -92,6 +92,8 @@ const SAMPLE: Record<string, (f: Fixtures) => unknown> = {
   close_show: (f) => ({ showId: f.show.id }),
   get_deploy_status: (f) => ({ deploymentId: f.deployment.id }),
   explain_deploy_failure: (f) => ({ sceneId: f.scene.id }),
+  list_scene_collaborators: (f) => ({ sceneId: f.scene.id }),
+  add_scene_collaborator: (f) => ({ sceneId: f.scene.id, wallet: '0x00000000000000000000000000000000000000aa', role: 'editor' }),
   redeploy_scene: (f) => ({ sceneId: f.scene.id, destinationIds: [f.destination.id] }),
 }
 
@@ -119,6 +121,7 @@ async function snapshot(app: FastifyInstance, f: Fixtures) {
     event: await get(`/api/events/${f.event.id}`),
     raffle: await get(`/api/raffles/${f.raffle.id}`),
     beat: await get(`/api/beats/${f.beat.id}`),
+    roles: await get(`/api/scenes/${f.scene.id}/roles`),
     beats: await get('/api/beats'),
     show: await get(`/api/assistant/shows/${f.show.id}`),
     shows: await db.select().from(assistantShows),

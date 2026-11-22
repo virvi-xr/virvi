@@ -21,7 +21,7 @@ import { approvePlan, proposeCard, recordDirect, undoAction } from '../src/assis
 import { destinationName, nextStep } from '../src/assistant/tools/deploy.js'
 import { routeError } from '../src/assistant/tools/http.js'
 import { LABEL_TEXT_MAX, STUDIO_PAUSED, STUDIO_REFUSALS } from '../src/assistant/tools/studio.js'
-import { userAuthMethods, dclWorldDestinations, sceneDeployments, assistantActions, assistantShows, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults, users } from '../src/db/schema.js'
+import { sceneRoles, userAuthMethods, dclWorldDestinations, sceneDeployments, assistantActions, assistantShows, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults, users } from '../src/db/schema.js'
 import { RAFFLE_HOST_TERMS, fillRules } from '@virvixr/shared'
 import { RAFFLE_RULES_INCLUDED, RAFFLE_SEND_WEARABLE, cardTime } from '../src/assistant/tools/shows-tools.js'
 import { setImageSizeReader } from '../src/beats/image.js'
@@ -653,6 +653,76 @@ describe('assistant event, raffle and BEAT tools', () => {
     await db.update(raffles).set({ prize: 'A hand-picked prize' }).where(eq(raffles.id, r.id))
     expect(await undoAction(ctx, b.actionId)).toEqual({ error: 'changed' })
     expect((await db.select().from(raffles))[0].prize).toBe('A hand-picked prize')
+  })
+
+  describe('scene collaborators', () => {
+    const short = (w: string) => `${w.slice(0, 6)}…${w.slice(-4)}`
+    const withRefs = (...w: string[]) => ({ ...ctx, walletRefs: w })
+    const rolesOf = async () => (await db.select().from(sceneRoles)).filter((r) => !r.revokedAt).map((r) => ({ wallet: r.walletAddress, role: r.role }))
+    const give = (wallet: string, role: 'viewer' | 'editor' | 'cohost', userId: string | null = null) =>
+      db.insert(sceneRoles).values({ sceneId, walletAddress: wallet, role, userId, grantedByUserId: owner.id })
+
+    it('list_scene_collaborators lists roles with masked wallets', async () => {
+      const w = randomWallet()
+      const friend = await createUser({ name: 'Friend', wallet: w })
+      await give(w, 'editor', friend.id)
+      await give(randomWallet(), 'viewer')
+      const r = await runTool(ctx, 'list_scene_collaborators', { sceneId })
+      expect(r).toMatchObject({ ok: true })
+      if (!r.ok) throw new Error('failed')
+      const s = r.summary as any
+      expect(s.host).toEqual({ displayName: 'Test User' })
+      expect(s.roles).toEqual([
+        { wallet: '[wallet]', role: 'editor', displayName: 'Friend', signedIn: true },
+        { wallet: '[wallet]', role: 'viewer', displayName: null, signedIn: false },
+      ])
+    })
+
+    it('add_scene_collaborator card names the short wallet, the role and what it can do', async () => {
+      expect(TOOLS.add_scene_collaborator.effect).toBe('public')
+      const w = randomWallet()
+      const c = withRefs(w)
+      const card = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'editor' })
+      expect(card).toMatchObject({ kind: 'card', detail: `Add ${short(w)} to "Old Lounge" as editor: they can change the scene.`, steps: [{ label: 'Add a collaborator as editor' }] })
+      const cohost = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'cohost' })
+      expect(cohost).toMatchObject({ detail: expect.stringContaining('they can run the scene with you, including deploying it and changing its roles.') })
+      const viewer = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'viewer' })
+      expect(viewer).toMatchObject({ detail: expect.stringContaining("they can see the scene's analytics.") })
+      expect(await rolesOf()).toEqual([])
+    })
+
+    it('add_scene_collaborator on an existing collaborator is a role change, undone to the old role', async () => {
+      const w = randomWallet()
+      await give(w, 'viewer')
+      const c = withRefs(w)
+      const card = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'editor' })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      expect(card.detail).toBe(`${short(w)} is a viewer on "Old Lounge". They become editor: they can change the scene.`)
+      expect(await approvePlan(c, card.planId, card.token, () => {})).toMatchObject({ done: 1, failed: null })
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'editor' }])
+      expect(await undoAction(c, card.steps[0].id)).toMatchObject({ status: 'undone' })
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'viewer' }])
+    })
+
+    it('add_scene_collaborator for a new collaborator is undone by removing them', async () => {
+      const w = randomWallet()
+      const c = withRefs(w)
+      const card = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'viewer' })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      expect(await approvePlan(c, card.planId, card.token, () => {})).toMatchObject({ done: 1, failed: null })
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'viewer' }])
+      expect(await undoAction(c, card.steps[0].id)).toMatchObject({ status: 'undone' })
+      expect(await rolesOf()).toEqual([])
+    })
+
+    it("add_scene_collaborator refuses an unknown reference and the host's wallet, with no card", async () => {
+      const hostWallet = randomWallet()
+      await db.insert(userAuthMethods).values({ userId: owner.id, type: 'wallet', identifier: hostWallet, metadata: { verified: true } })
+      const c = withRefs(hostWallet)
+      expect(await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 9]', role: 'editor' })).toEqual({ error: "I don't have that wallet. Ask the user to paste it again." })
+      expect(await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'editor' })).toEqual({ error: "That wallet is the scene's host." })
+      expect(await rolesOf()).toEqual([])
+    })
   })
 
   it('create_event names the organization, and its undo deletes only an event nobody changed', async () => {
