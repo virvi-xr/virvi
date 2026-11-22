@@ -3,6 +3,8 @@ import json
 import numpy as np
 from PIL import Image
 
+from ringmarker.codec import TEST_MARKERS
+from ringmarker.render import render
 from ringmarker.testset import FOCAL_PX, IMAGE, generate
 
 
@@ -35,3 +37,13 @@ def test_ground_truth_geometry(tmp_path):
         for mk in by[name]["markers"]:
             x, y = (int(round(v - 0.5)) for v in mk["center_px"])
             assert im[y - 1:y + 2, x - 1:x + 2].mean() < 90
+
+
+def test_render_inverted_swaps_dark_and_light():
+    mid, dia = TEST_MARKERS["RING140"]
+    normal = np.asarray(render(mid, dia, 2.0), np.int16)
+    inv = np.asarray(render(mid, dia, 2.0, inverted=True), np.int16)
+    assert normal.shape == inv.shape
+    # DARK + LIGHT = 255, so the inverted plaque is the photographic negative (to box-filter rounding)
+    assert np.abs(inv - (255 - normal)).max() <= 1
+    assert inv[0, 0] == normal[150, 150] and inv[150, 150] == normal[0, 0]  # plaque and dot swap

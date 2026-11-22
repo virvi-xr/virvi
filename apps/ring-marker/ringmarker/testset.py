@@ -8,6 +8,9 @@ Conventions in the manifest:
   rotation_deg  in-plane rotation, clockwise as seen in the image: angle of the finder gap's centre clockwise from
                 image-up, in [0, 360).
   angle_deg     the plaque is turned about the vertical axis by this much (rotation is applied in the plaque's plane first).
+
+Case "inverted" (names "inverted-..."): light-on-dark plaques (render(..., inverted=True)) mirroring a spread of the
+normal cases, plus a light-on-dark decoy.
 """
 import json
 import math
@@ -122,9 +125,9 @@ def _disc(image, px_per_mm, r, fill, cx=0.0, cy=0.0):
     d.ellipse([x - r * px_per_mm, y - r * px_per_mm, x + r * px_per_mm, y + r * px_per_mm], fill=fill)
 
 
-def _plain_plaque(diameter_mm, ppm):
+def _plain_plaque(diameter_mm, ppm, fill=LIGHT):
     w = round(plaque_side(diameter_mm) * ppm)
-    return Image.new("L", (w, w), LIGHT)
+    return Image.new("L", (w, w), fill)
 
 
 def generate(out_dir) -> list[dict]:
@@ -143,10 +146,10 @@ def generate(out_dir) -> list[dict]:
         manifest.append({"file": f"{name}.png", "name": name, "case": case, "markers": markers, "expect": expect,
                          "focal_px": FOCAL_PX})
 
-    def marker_case(name, case, label, d, angle=0.0, rot=0.0, damage=None, expect="ids"):
+    def marker_case(name, case, label, d, angle=0.0, rot=0.0, damage=None, expect="ids", inverted=False):
         mid, dia = TEST_MARKERS[label]
         ppm = _ppm(d)
-        im = render(mid, dia, ppm)
+        im = render(mid, dia, ppm, inverted=inverted)
         if damage:
             im = damage(im, ppm, dia)
         emit(name, case, [Plaque(im, dia, d, angle, rot)], expect, [(mid, d, angle, rot, dia)])
@@ -158,10 +161,10 @@ def generate(out_dir) -> list[dict]:
     marker_case("rotated_73", "rotated_73", "RING140", 1.2, rot=73)
     marker_case("rotated_180", "rotated_180", "RING140", 1.2, rot=180)
 
-    def glare(im, ppm, dia):  # one cell-sized white blob over the code rings (ring 1, cell 6)
+    def glare(im, ppm, dia, cell=6):  # one cell-sized white blob over the code rings (ring 1, `cell`)
         s = dia / 140.0
         r = 0.5 * (RING_RADII(dia)[1][0] + RING_RADII(dia)[1][1])
-        a = math.radians(6 * 15 + 7.5)
+        a = math.radians(cell * 15 + 7.5)
         big = im.copy()
         _disc(big, ppm, 6.0 * s, 255, r * math.sin(a), r * math.cos(a))
         return big
@@ -217,6 +220,33 @@ def generate(out_dir) -> list[dict]:
     emit("decoy_plain", "decoys", [], "none", [])
 
     marker_case("too_far", "too_far", "RING120", 4.0, expect="none")
+
+    # light-on-dark plaques: each test marker head-on at 1.2 m, steep, rotated, far and small, glare, one beside a
+    # dark-on-light marker; and a decoy
+    for label in TEST_MARKERS:
+        marker_case(f"inverted-{label}-1.2-0", "inverted", label, 1.2, inverted=True)
+    marker_case("inverted-RING140-1.2-45", "inverted", "RING140", 1.2, 45, inverted=True)
+    marker_case("inverted-rotated_73", "inverted", "RING140", 1.2, rot=73, inverted=True)
+    marker_case("inverted-RING120-1.8-30", "inverted", "RING120", 1.8, 30, inverted=True)
+    # on a light-on-dark ARC the glare must land on an "off" (dark) cell to do harm: RING140's ring 1 cell 7
+    marker_case("inverted-glare", "inverted", "RING140", 1.2, damage=lambda im, ppm, dia: glare(im, ppm, dia, cell=7),
+                inverted=True)
+    ppm = _ppm(1.2)
+    emit("inverted-two_markers", "inverted",
+         [Plaque(render(id_a, dia_a, ppm), dia_a, 1.2, x_mm=-120.0),
+          Plaque(render(id_b, dia_b, ppm, inverted=True), dia_b, 1.2, x_mm=120.0)],
+         "ids", [(id_a, 1.2, 0.0, 0.0, dia_a), (id_b, 1.2, 0.0, 0.0, dia_b)])
+    ppm, dia = _ppm(1.2), 140.0
+
+    def inverted_disc_in_ring(im):  # a light disc inside a light ring on dark, no code
+        f0, f1 = finder_radii(dia)
+        _disc(im, ppm, f1, LIGHT)
+        _disc(im, ppm, f0, DARK)
+        _disc(im, ppm, 12, LIGHT)
+
+    im = _plain_plaque(dia, ppm, DARK)
+    inverted_disc_in_ring(im)
+    emit("inverted-decoy_disc_in_ring", "inverted", [Plaque(im, dia, 1.2)], "none", [])
 
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
     return manifest
