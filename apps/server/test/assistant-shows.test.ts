@@ -478,7 +478,7 @@ describe('assistant shows', () => {
     let ctx: ToolCtx
     beforeEach(() => {
       const request = { headers: { authorization: `Bearer ${tokenFor(owner)}` }, ip: '198.51.100.7' } as unknown as FastifyRequest
-      ctx = { app, request, user: { id: owner.id, email: owner.email, role: owner.role, orgId: null }, self: { email: owner.email, wallets: [] } }
+      ctx = { app, request, user: { id: owner.id, email: owner.email, role: owner.role, orgId: null }, self: { email: owner.email, wallets: [] }, walletRefs: [] }
     })
 
     it('start_show returns the timeline and warning, and its undo closes the show', async () => {

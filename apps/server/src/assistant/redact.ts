@@ -19,6 +19,28 @@ function masker(self: RedactSelf): (s: string) => string {
       .replace(WALLET, (m) => (ownWallets.has(m.toLowerCase()) ? m : '[wallet]'));
 }
 
+/**
+ * The user's own typed text: like redactText, but another person's exact wallet (0x + 40 hex) becomes `[wallet N]`,
+ * N being its 1-based place in `refs` (known ones are reused, new ones appended). Longer runs (tx hashes, signatures)
+ * stay `[wallet]`. Returns the text and the possibly grown refs (lowercased).
+ */
+export function maskUserText(text: string, self: RedactSelf, refs: string[]): { text: string; refs: string[] } {
+  const ownEmail = self.email?.toLowerCase() ?? null;
+  const ownWallets = new Set(self.wallets.map((w) => w.toLowerCase()));
+  const out = [...refs];
+  const masked = text
+    .replace(EMAIL, (m) => (ownEmail && m.toLowerCase() === ownEmail ? m : '[email]'))
+    .replace(WALLET, (m) => {
+      const w = m.toLowerCase();
+      if (ownWallets.has(w)) return m;
+      if (m.length !== 42) return '[wallet]';
+      let i = out.indexOf(w);
+      if (i < 0) i = out.push(w) - 1;
+      return `[wallet ${i + 1}]`;
+    });
+  return { text: masked, refs: out };
+}
+
 /** One piece of text masked as redact() masks strings, but never shortened: for text the user must see whole (a card). */
 export function redactText(text: string, self: RedactSelf): string {
   return masker(self)(text);

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { redact, untrusted } from '../src/assistant/redact.js';
+import { redact, redactText, maskUserText, untrusted } from '../src/assistant/redact.js';
+import { resolveWallet, shortWallet } from '../src/assistant/tools/wallets.js';
+import type { ToolCtx } from '../src/assistant/tools/types.js';
 
 const W_SELF = '0x' + 'a'.repeat(40);
 const W_OTHER = '0x' + 'b'.repeat(40);
@@ -82,5 +84,32 @@ describe('untrusted', () => {
     expect(s.endsWith('\n</untrusted_data>')).toBe(true);
     expect(s).toContain('\\u003c/untrusted_data>');
     expect(s.startsWith('<untrusted_data tool="get_scene">\n')).toBe(true);
+  });
+});
+
+describe('wallet references', () => {
+  it('maskUserText numbers other wallets as references, reusing a known one, and keeps the own wallet', () => {
+    const own = '0x' + 'a'.repeat(40), w1 = '0x' + 'B'.repeat(40), w2 = '0x' + 'c'.repeat(40);
+    const r = maskUserText(`add ${w1} and ${w2}, not ${own}, again ${w1.toLowerCase()}`, { email: null, wallets: [own] }, ['0x' + 'd'.repeat(40)]);
+    expect(r.text).toBe(`add [wallet 2] and [wallet 3], not ${own}, again [wallet 2]`);
+    expect(r.refs).toEqual(['0x' + 'd'.repeat(40), w1.toLowerCase(), w2]);
+  });
+  it('maskUserText still masks other emails', () => {
+    expect(maskUserText('mail x@y.io', { email: null, wallets: [] }, []).text).toBe('mail [email]');
+  });
+  it('maskUserText leaves longer hex runs as an unnumbered [wallet]', () => {
+    const r = maskUserText('tx 0x' + 'e'.repeat(64), { email: null, wallets: [] }, []);
+    expect(r).toEqual({ text: 'tx [wallet]', refs: [] });
+  });
+  it('resolveWallet takes a reference or a full wallet, and shortWallet is never masked', () => {
+    const w = '0x' + '1'.repeat(38) + 'ab';
+    const ctx = { walletRefs: [w] } as ToolCtx;
+    expect(resolveWallet('[wallet 1]', ctx)).toBe(w);
+    expect(resolveWallet('wallet 1', ctx)).toBe(w);
+    expect(resolveWallet('[wallet 2]', ctx)).toBeNull();
+    expect(resolveWallet(w.toUpperCase().replace('0X', '0x'), ctx)).toBe(w);
+    expect(resolveWallet('0x123', ctx)).toBeNull();
+    expect(shortWallet(w)).toBe('0x1111…11ab');
+    expect(redactText(shortWallet(w), { email: null, wallets: [] })).toBe('0x1111…11ab');
   });
 });

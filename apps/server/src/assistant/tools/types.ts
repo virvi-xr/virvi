@@ -10,6 +10,8 @@ export interface ToolCtx {
   request: FastifyRequest
   user: AuthUser
   self: { email: string | null; wallets: string[] }
+  /** The conversation's `[wallet N]` references (lowercased wallets the user typed); N is the 1-based index. */
+  walletRefs: string[]
 }
 
 export interface Call {

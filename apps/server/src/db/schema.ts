@@ -3025,6 +3025,8 @@ export const assistantConversations = pgTable('assistant_conversations', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   orgId: uuid('org_id'),
   title: text('title').notNull(),
+  // Other people's wallets the user typed, lowercased, append-only: `[wallet N]` in the conversation is walletRefs[N - 1]
+  walletRefs: jsonb('wallet_refs').$type<string[]>().notNull().default([]),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({

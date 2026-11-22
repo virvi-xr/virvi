@@ -309,7 +309,7 @@ describe('assistant routes', () => {
       try {
         const id = await newConversation()
         const request = { headers: auth(owner), ip: '198.51.100.7' } as unknown as FastifyRequest
-        const ctx: ToolCtx = { app, request, user: { id: owner.id, email: owner.email, role: owner.role, orgId: null }, self: { email: owner.email, wallets: [] } }
+        const ctx: ToolCtx = { app, request, user: { id: owner.id, email: owner.email, role: owner.role, orgId: null }, self: { email: owner.email, wallets: [] }, walletRefs: [] }
         const card = await proposeCard(ctx, id, 'stub_card', { prompt: 'a hat' })
         if (!('kind' in card)) throw new Error('no card')
         const approve = (token: string) => app.inject({ method: 'POST', url: `/api/assistant/plans/${card.planId}/approve`, headers: auth(owner), payload: { token } })

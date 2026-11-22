@@ -69,11 +69,17 @@ async function undoGuard(request: FastifyRequest, reply: FastifyReply) {
 }
 
 /** The caller as the tools run them: their own email and wallets are theirs to see (redaction keeps them). */
-async function toolCtx(app: FastifyInstance, request: FastifyRequest): Promise<ToolCtx> {
+async function toolCtx(app: FastifyInstance, request: FastifyRequest, conversationId: string | null): Promise<ToolCtx> {
   const [me] = await db.select({ email: users.email }).from(users).where(eq(users.id, request.user.id))
   const wallets = await db.select({ w: userAuthMethods.identifier }).from(userAuthMethods)
     .where(and(eq(userAuthMethods.userId, request.user.id), eq(userAuthMethods.type, 'wallet')))
-  return { app, request, user: request.user, self: { email: me?.email ?? request.user.email ?? null, wallets: wallets.map((r) => r.w) } }
+  let walletRefs: string[] = []
+  if (conversationId) {
+    const [conv] = await db.select({ refs: assistantConversations.walletRefs }).from(assistantConversations)
+      .where(and(eq(assistantConversations.id, conversationId), eq(assistantConversations.userId, request.user.id)))
+    walletRefs = conv?.refs ?? []
+  }
+  return { app, request, user: request.user, self: { email: me?.email ?? request.user.email ?? null, wallets: wallets.map((r) => r.w) }, walletRefs }
 }
 
 const str = (v: unknown, max: number) => (typeof v === 'string' && v.length <= max ? v : undefined)
@@ -174,7 +180,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
   app.get<{ Params: { conversationId: string } }>('/api/assistant/conversations/:conversationId/messages', auth, async (request, reply) => {
     const conv = await ownConversation(request.user.id, request.params.conversationId)
     if (!conv) return reply.status(404).send({ error: 'not_found' })
-    return messageViews(conv.id, request.user.id, (await toolCtx(app, request)).self)
+    return messageViews(conv.id, request.user.id, (await toolCtx(app, request, null)).self)
   })
 
   app.post<{ Params: { conversationId: string } }>('/api/assistant/conversations/:conversationId/messages', {
@@ -194,7 +200,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
     busy.add(conv.id)
     let sse: Sse | null = null
     try {
-      const ctx = await toolCtx(app, request)
+      const ctx = await toolCtx(app, request, conv.id)
       sse = openSse(request, reply)
       await runTurn(ctx, conv.id, text, page, sse.send, sse.signal)
     } finally {
@@ -216,7 +222,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
     if (conversationId) busy.add(conversationId)
     let sse: Sse | null = null
     try {
-      const ctx = await toolCtx(app, request)
+      const ctx = await toolCtx(app, request, conversationId)
       // The stream opens with the first step, so a refused token is still an ordinary error response
       const send = (e: AssistantStreamEvent) => {
         sse ??= openSse(request, reply)
@@ -254,7 +260,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
   })
 
   app.post<{ Params: { actionId: string } }>('/api/assistant/actions/:actionId/undo', undoAuth, async (request, reply) => {
-    const r = await undoAction(await toolCtx(app, request), request.params.actionId)
+    const r = await undoAction(await toolCtx(app, request, null), request.params.actionId)
     // An action view has an `error` field of its own: tell the two apart by `id`
     if ('id' in r) return r
     const e = UNDO_ERRORS[r.error]
@@ -262,7 +268,7 @@ export default async function assistantRoutes(app: FastifyInstance) {
   })
 
   app.post<{ Params: { planId: string } }>('/api/assistant/plans/:planId/undo', undoAuth, async (request, reply) => {
-    const r = await undoPlan(await toolCtx(app, request), request.params.planId)
+    const r = await undoPlan(await toolCtx(app, request, null), request.params.planId)
     if ('error' in r) return reply.status(404).send({ error: 'not_found' })
     if (r.refused) {
       const e = UNDO_ERRORS[r.refused.error]

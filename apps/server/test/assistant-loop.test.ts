@@ -80,7 +80,7 @@ describe('assistant turn loop', () => {
     const [conv] = await db.insert(assistantConversations).values({ userId: owner.id, orgId, title: 'New conversation' }).returning()
     conversationId = conv.id
     const request = { headers: { authorization: `Bearer ${tokenFor(owner)}` }, ip: '198.51.100.42' } as unknown as FastifyRequest
-    ctx = { app, request, user: { id: owner.id, email: owner.email, role: owner.role, orgId, kind: 'account' }, self: { email: owner.email, wallets: [] } }
+    ctx = { app, request, user: { id: owner.id, email: owner.email, role: owner.role, orgId, kind: 'account' }, self: { email: owner.email, wallets: [] }, walletRefs: [] }
   })
   afterEach(() => {
     setAssistantModel(null)
@@ -118,6 +118,21 @@ describe('assistant turn loop', () => {
     expect(u).toMatchObject({ userId: owner.id, messages: 1, tokensIn: 100, tokensOut: 20 })
     const [conv] = await db.select().from(assistantConversations).where(eq(assistantConversations.id, conversationId))
     expect(conv.title).toBe('Hello')
+  })
+
+  it('a wallet the user types reaches the model as [wallet 1] and is stored on the conversation', async () => {
+    const w = '0x' + 'AbCdEf'.repeat(6) + '1234'
+    script([text('ok'), text('ok again')])
+    await turn(`add ${w} please`)
+    await turn(`and ${w.toLowerCase()} again`)
+    const msgs = await db.select().from(assistantMessages).where(eq(assistantMessages.conversationId, conversationId))
+    const users = msgs.filter((m) => m.role === 'user').map((m) => JSON.stringify(m.content))
+    expect(users).toHaveLength(2)
+    expect(users[0]).toContain('add [wallet 1] please')
+    expect(users[1]).toContain('and [wallet 1] again')
+    for (const u of users) expect(u.toLowerCase()).not.toContain(w.toLowerCase())
+    const [conv] = await db.select().from(assistantConversations).where(eq(assistantConversations.id, conversationId))
+    expect(conv.walletRefs).toEqual([w.toLowerCase()])
   })
 
   it('runs reads, then one write, naming the org, then replies', async () => {

@@ -15,7 +15,7 @@ import { testApp, createUser, createScene, createElement, createInstance, tokenF
 
 function ctxFor(app: FastifyInstance, user: TestUser): ToolCtx {
   const request = { headers: { authorization: `Bearer ${tokenFor(user)}` }, ip: '198.51.100.41' } as unknown as FastifyRequest
-  return { app, request, user: { id: user.id, email: user.email, role: user.role, orgId: null }, self: { email: user.email, wallets: [] } }
+  return { app, request, user: { id: user.id, email: user.email, role: user.role, orgId: null }, self: { email: user.email, wallets: [] }, walletRefs: [] }
 }
 
 const sceneName = async (id: string) => (await db.query.scenes.findFirst({ where: eq(scenes.id, id) }))!.name

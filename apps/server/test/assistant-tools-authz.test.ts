@@ -92,7 +92,7 @@ const SAMPLE: Record<string, (f: Fixtures) => unknown> = {
 
 function ctxFor(app: FastifyInstance, user: TestUser): ToolCtx {
   const request = { headers: { authorization: `Bearer ${tokenFor(user)}` }, ip: '203.0.113.9' } as unknown as FastifyRequest
-  return { app, request, user: { id: user.id, email: user.email, role: user.role, orgId: null }, self: { email: user.email, wallets: [] } }
+  return { app, request, user: { id: user.id, email: user.email, role: user.role, orgId: null }, self: { email: user.email, wallets: [] }, walletRefs: [] }
 }
 
 /** Everything B can see about the scene, read as B. */

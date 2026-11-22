@@ -10,7 +10,7 @@ import { recordJobFailure } from '../errors/record.js'
 import { affordable, assistantAccess, refreshSpend, reserveAssistantSpend, settleAssistantSpend } from './access.js'
 import { runAndRecord, proposePlan, proposeCard } from './actions.js'
 import { callCostUsd, modelPrice } from './pricing.js'
-import { redact, untrusted } from './redact.js'
+import { maskUserText, untrusted } from './redact.js'
 import { TOOLS } from './tools/index.js'
 import { toolsForModel } from './tools/run.js'
 import { needsCard, type ToolCtx } from './tools/types.js'
@@ -102,7 +102,12 @@ export async function runTurn(
     }
 
     const history = await loadHistory(conversationId)
-    const text = redact(userText, ctx.self) as string
+    const masked = maskUserText(userText, ctx.self, conv?.walletRefs ?? [])
+    const text = masked.text
+    if (masked.refs.length !== (conv?.walletRefs ?? []).length) {
+      await db.update(assistantConversations).set({ walletRefs: masked.refs }).where(eq(assistantConversations.id, conversationId))
+    }
+    ctx.walletRefs = masked.refs
     // The context opens the message (not the system prompt), so earlier turns' history and thinking stay byte-stable
     const context = contextPrompt(await promptUser(userId), page, new Date())
     const userMessage: StoredMessage = { role: 'user', content: [{ type: 'text', text: context }, { type: 'text', text }] }

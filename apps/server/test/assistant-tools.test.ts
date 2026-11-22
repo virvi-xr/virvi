@@ -27,7 +27,7 @@ const IP = '198.51.100.23'
 
 function ctxFor(app: FastifyInstance, user: TestUser): ToolCtx {
   const request = { headers: { authorization: `Bearer ${tokenFor(user)}` }, ip: IP } as unknown as FastifyRequest
-  return { app, request, user: { id: user.id, email: user.email, role: user.role, orgId: null }, self: { email: user.email, wallets: [] } }
+  return { app, request, user: { id: user.id, email: user.email, role: user.role, orgId: null }, self: { email: user.email, wallets: [] }, walletRefs: [] }
 }
 
 describe('assistant tools, run as the owner', () => {

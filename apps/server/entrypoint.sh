@@ -585,6 +585,7 @@ if [ -n "$DATABASE_URL" ]; then
       // assistant (LIV-155); matches assistantConversations, assistantMessages, assistantActions, assistantUsage and assistantShows in src/db/schema.ts
       try {
         await sql\`CREATE TABLE IF NOT EXISTS assistant_conversations (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL CONSTRAINT assistant_conversations_user_id_users_id_fk REFERENCES users(id) ON DELETE CASCADE, org_id UUID, title TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
+        await sql\`ALTER TABLE assistant_conversations ADD COLUMN IF NOT EXISTS wallet_refs JSONB NOT NULL DEFAULT '[]'::jsonb\`;
         await sql\`CREATE INDEX IF NOT EXISTS assistant_conversations_user_idx ON assistant_conversations (user_id, updated_at)\`;
         await sql\`CREATE TABLE IF NOT EXISTS assistant_messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id UUID NOT NULL CONSTRAINT assistant_messages_conversation_id_assistant_conversations_id_fk REFERENCES assistant_conversations(id) ON DELETE CASCADE, role TEXT NOT NULL, content JSONB NOT NULL, tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0, model TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())\`;
         await sql\`CREATE INDEX IF NOT EXISTS assistant_messages_conversation_idx ON assistant_messages (conversation_id, created_at)\`;
