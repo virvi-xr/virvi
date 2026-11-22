@@ -1734,6 +1734,9 @@ export const studioDesigns = pgTable('studio_designs', {
   name: text('name').notNull(),
   kind: text('kind').notNull(), // wearable | emote | scene (buildings and furniture)
   agent: text('agent').notNull(), // claude | codex | grok
+  // For a scene design: what the person chose at creation (building | decor). Only used until the design has pieces;
+  // after that its pieces say (studio/designs.ts sceneShapeOf). Null for other kinds and for older scenes.
+  sceneShape: text('scene_shape'),
   status: text('status').notNull().default('idle'), // idle | building
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   lastJobAt: timestamp('last_job_at', { withTimezone: true }),

@@ -159,13 +159,25 @@ export function revisionsKey(pieces: { latestRevisionId: string | null }[]): str
  * How far a design is finalized: `pieceCount` pieces have a revision, `finalizedPieces` of them have been paid for at
  * some revision (a later revision of a finalized piece keeps it finalized). `finalizedAt` is when the first was.
  */
-export type FinalizedCount = { finalizedPieces: number; pieceCount: number }
-const NONE: FinalizedCount = { finalizedPieces: 0, pieceCount: 0 }
+export type FinalizedCount = { finalizedPieces: number; pieceCount: number; categories: string[] }
+const NONE: FinalizedCount = { finalizedPieces: 0, pieceCount: 0, categories: [] }
+
+/**
+ * Whether a scene design is a building or decor. Its pieces decide once it has any (a `building` piece makes it a
+ * building; only `furniture_*` pieces make it decor, since the agent may build something other than what was chosen);
+ * before that, the shape chosen at creation; with neither, a building.
+ */
+export function sceneShapeOf(stored: string | null, categories: string[]): 'building' | 'decor' {
+  if (categories.includes('building')) return 'building'
+  if (categories.length > 0 && categories.every((c) => c.startsWith('furniture_'))) return 'decor'
+  return stored === 'decor' ? 'decor' : 'building'
+}
 
 export function publicDesign(d: Design, counts: FinalizedCount = NONE) {
   return {
     id: d.id, name: d.name, kind: d.kind, agent: d.agent, status: d.status, archivedAt: d.archivedAt, lastJobAt: d.lastJobAt,
     finalizedAt: d.finalizedAt, finalizedPieces: counts.finalizedPieces, pieceCount: counts.pieceCount, createdAt: d.createdAt,
+    sceneShape: d.kind === 'scene' ? sceneShapeOf(d.sceneShape, counts.categories) : null,
   }
 }
 
@@ -177,10 +189,11 @@ export async function finalizedCounts(designIds: string[], exec: Exec = db): Pro
     pieceCount: sql<number>`count(*)::int`,
     finalizedPieces: sql<number>`count(*) FILTER (WHERE EXISTS (SELECT 1 FROM studio_entitlements e
       WHERE e.design_id = studio_pieces.design_id AND e.category = studio_pieces.category))::int`,
+    categories: sql<string[]>`array_agg(${studioPieces.category})`,
   }).from(studioPieces)
     .where(and(inArray(studioPieces.designId, designIds), isNotNull(studioPieces.latestRevisionId)))
     .groupBy(studioPieces.designId)
-  return new Map(rows.map((r) => [r.designId, { finalizedPieces: r.finalizedPieces, pieceCount: r.pieceCount }]))
+  return new Map(rows.map((r) => [r.designId, { finalizedPieces: r.finalizedPieces, pieceCount: r.pieceCount, categories: r.categories }]))
 }
 
 /** publicDesign for each design, with how far it is finalized. */

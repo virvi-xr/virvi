@@ -352,6 +352,7 @@ if [ -n "$DATABASE_URL" ]; then
       try {
         await sql\`ALTER TABLE studio_jobs ADD COLUMN IF NOT EXISTS timings JSONB\`;
         await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS warmed_at TIMESTAMPTZ\`;
+        await sql\`ALTER TABLE studio_designs ADD COLUMN IF NOT EXISTS scene_shape TEXT\`;
         console.log('[virvi-server] studio timings and warmed_at ensured');
       } catch(e) { console.log('[virvi-server] studio timings and warmed_at:', e.message); }
 
