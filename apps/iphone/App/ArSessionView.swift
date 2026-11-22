@@ -88,6 +88,19 @@ final class RealitySceneView: SceneView {
     }
 }
 
+/// What the world-tracking configuration asks ARKit for, beyond plane detection: with occlusion on (LiDAR phones),
+/// scene depth and people for hiding behind people, and the scanned mesh for hiding behind things.
+struct SessionSetup: Equatable {
+    var frameSemantics: ARConfiguration.FrameSemantics = []
+    var sceneReconstruction: ARConfiguration.SceneReconstruction = []
+
+    init(occlusion: Bool, supportsDepth: Bool, supportsMesh: Bool) {
+        guard occlusion && supportsDepth else { return }
+        frameSemantics = [.sceneDepth, .personSegmentationWithDepth]
+        if supportsMesh { sceneReconstruction = .mesh }
+    }
+}
+
 /// The AR session: runs ARKit world tracking in the ARView and feeds the `VisitorController` (camera pose every frame,
 /// camera frames through the `FrameFeeder`, the scanned walls, tracking state, interruptions). ARKit calls the
 /// delegate on the main thread.
@@ -99,7 +112,7 @@ final class ArSessionDriver: NSObject, ARSessionDelegate {
     private var walls: [UUID: WallPlane] = [:]
     private(set) var occlusionOn = false
 
-    /// On phones with LiDAR: scene depth, so the scene hides behind people and things.
+    /// On phones with LiDAR: scene depth, so the scene can hide behind people and things (`SessionSetup`).
     static var supportsOcclusion: Bool { ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) }
 
     init(arView: ARView, controller: VisitorController) {
@@ -145,9 +158,10 @@ final class ArSessionDriver: NSObject, ARSessionDelegate {
     private func configuration() -> ARWorldTrackingConfiguration {
         let c = ARWorldTrackingConfiguration()
         c.planeDetection = [.vertical, .horizontal]
-        if occlusionOn && Self.supportsOcclusion {
-            c.frameSemantics = [.sceneDepth, .personSegmentationWithDepth]
-        }
+        let s = SessionSetup(occlusion: occlusionOn, supportsDepth: Self.supportsOcclusion,
+                             supportsMesh: ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh))
+        c.frameSemantics = s.frameSemantics
+        c.sceneReconstruction = s.sceneReconstruction
         return c
     }
 

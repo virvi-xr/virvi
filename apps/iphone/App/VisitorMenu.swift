@@ -28,7 +28,7 @@ struct VisitorMenu: View {
 
     @State private var reporting = false
 
-    /// The spec's words for the iPhone's one occlusion mode (ARKit scene depth and people occlusion).
+    /// The spec's words for the iPhone's one occlusion mode (ARKit scene depth, people occlusion and the scanned mesh).
     static let HIDE_BEHIND = "Hide behind people and things"
 
     var body: some View {
