@@ -37,12 +37,12 @@ describe('scenePassAllows', () => {
 
 describe('trialAllows', () => {
   it('lets a trial open the Design Studio, its scenes, the wizard, imports and demos', () => {
-    for (const p of ['/studio', '/studio/', '/studio/abc', '/scenes', '/scenes/', '/scenes/new', '/scenes/new/', '/scenes/abc', '/import', '/import/', '/demo/analytics', '/demo/events/']) {
+    for (const p of ['/studio', '/studio/', '/studio/abc', '/scenes', '/scenes/', '/scenes/new', '/scenes/new/', '/scenes/abc', '/import', '/import/', '/demo/analytics', '/demo/events/', '/demo/drops']) {
       expect(trialAllows(p), p).toBe(true)
     }
   })
   it('keeps everything else locked', () => {
-    for (const p of ['/settings', '/deploy', '/scenes-x', '/studio-x', '/scenes/a/b', '/imports', '/demo', '/analytics', '/events']) {
+    for (const p of ['/settings', '/sync', '/deploy', '/drops', '/giveaways', '/scenes-x', '/studio-x', '/scenes/a/b', '/imports', '/demo', '/analytics', '/events']) {
       expect(trialAllows(p), p).toBe(false)
     }
   })

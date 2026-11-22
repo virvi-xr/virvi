@@ -20,6 +20,7 @@ import { setWorldsClient } from '../src/services/dcl/worlds-client.js'
 import { approvePlan, proposeCard, recordDirect, undoAction } from '../src/assistant/actions.js'
 import { destinationName, nextStep } from '../src/assistant/tools/deploy.js'
 import { routeError } from '../src/assistant/tools/http.js'
+import { isDashboardPath } from '../src/assistant/tools/local.js'
 import { LABEL_TEXT_MAX, STUDIO_PAUSED, STUDIO_REFUSALS } from '../src/assistant/tools/studio.js'
 import { sceneRoles, userAuthMethods, dclWorldDestinations, sceneDeployments, assistantActions, assistantShows, beats, eventSceneLinks, events, mediaAssets, organizations, orgMembers, raffles, scenePresetSchedules, screenShowings, studioDesigns, studioKindDefaults, users } from '../src/db/schema.js'
 import { RAFFLE_HOST_TERMS, fillRules } from '@virvixr/shared'
@@ -162,6 +163,9 @@ describe('assistant tools, run as the owner', () => {
 
   it('open_page accepts dashboard paths only', async () => {
     expect(await runTool(ctx, 'open_page', { path: '/scenes?id=abc', label: 'Your scene' })).toMatchObject({ ok: true, summary: { href: '/scenes?id=abc', label: 'Your scene' } })
+    for (const path of ['/sync?scene=abc', '/drops', '/drops?id=g1', '/virvi-cities', '/cities', '/deploy', '/giveaways']) {
+      expect(isDashboardPath(path), path).toBe(true)
+    }
     for (const path of ['https://evil.example', 'javascript:alert(1)', '//evil.example', '/admin', '/scenes/../admin', '/scenes\\..\\admin', '/scenes/%2e%2e/admin']) {
       expect(await runTool(ctx, 'open_page', { path, label: 'x' }), path).toMatchObject({ ok: false, status: 400, error: 'Only Virvi dashboard pages can be opened.' })
     }

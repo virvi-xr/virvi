@@ -51,7 +51,7 @@ editors or viewers by wallet address.
   in-world go in the scene owner's 3D Models, private.
 - Images appear live for everyone.
 - Decentraland only loads 3D models that are deployed with your scene. By default Virvi deploys them
-  to your World for you (set it up at virvi.io/deploy); if you publish yourself, the HUD's Publish
+  to your World for you (set it up at virvi.io/sync); if you publish yourself, the HUD's Publish
   button opens the publish page. After that, moving, scaling and showing/hiding models is live.
 - `npx @virvixr/dcl sync` is optional, if you want the files locally: run it in your scene folder and it
   downloads your Virvi models into `models/virvi/`, then deploy as usual. The HUD tells you when models

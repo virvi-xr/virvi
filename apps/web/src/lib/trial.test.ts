@@ -278,8 +278,9 @@ describe('trialNav', () => {
     expect(trialNav('/scenes')).toEqual({ href: '/scenes', demo: false })
     expect(trialNav('/analytics')).toEqual({ href: '/demo/analytics', demo: true })
     expect(trialNav('/events')).toEqual({ href: '/demo/events', demo: true })
+    expect(trialNav('/drops')).toEqual({ href: '/demo/drops', demo: true })
     expect(trialNav('/giveaways')).toEqual({ href: '/demo/giveaways', demo: true })
-    for (const h of ['/command-center', '/media', '/assets', '/streaming', '/deploy', '/settings', '/admin']) expect(trialNav(h), h).toBeNull()
+    for (const h of ['/command-center', '/media', '/assets', '/streaming', '/sync', '/deploy', '/settings', '/admin']) expect(trialNav(h), h).toBeNull()
   })
 })
 

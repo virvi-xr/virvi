@@ -300,7 +300,7 @@ function ImportContent() {
                 </a>
                 {view.deploymentId && <DownloadLiveButton deploymentId={view.deploymentId} className={secondary} />}
                 <DownloadBackupButton sceneId={view.sceneId} className={secondary} />
-                <Link href={`/deploy?scene=${view.sceneId}`} className="text-blue-400 hover:text-blue-300">Open Deploy</Link>
+                <Link href={`/sync?scene=${view.sceneId}`} className="text-blue-400 hover:text-blue-300">Open Deploy</Link>
               </div>
             </>
           )}

@@ -17,7 +17,7 @@ export function pageContext(pathname: string, search: string): AssistantPageCont
     const scene = q.get('scene')
     if (location) ctx.locationId = location
     if (scene) ctx.sceneId = scene
-  } else if (section === 'deploy') {
+  } else if (section === 'sync' || section === 'deploy') {
     const scene = q.get('scene')
     if (scene) ctx.sceneId = scene
   }

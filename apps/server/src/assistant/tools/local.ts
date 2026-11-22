@@ -17,8 +17,10 @@ const EXCERPT_MAX = 1500
 const LEAD = 200
 
 /** The real top-level dashboard pages (apps/web/src/app/(dashboard)/), less admin and demo. */
-const PAGES = ['scenes', 'events', 'analytics', 'deploy', 'media', 'streaming', 'giveaways', 'beats', 'studio', 'settings', 'publish', 'assets', 'import', 'command-center']
-const PAGE_RE = new RegExp(`^/(${PAGES.join('|')})(/[^\\s?#\\\\]*)?(\\?[\\w=&%-]*)?$`)
+const PAGES = ['scenes', 'studio', 'sync', 'events', 'drops', 'virvi-cities', 'cities', 'analytics', 'media', 'streaming', 'beats', 'settings', 'publish', 'assets', 'import', 'command-center']
+/** Old paths that redirect (/deploy → /sync, /giveaways → /drops): still accepted, not offered. */
+const OLD_PAGES = ['deploy', 'giveaways']
+const PAGE_RE = new RegExp(`^/(${[...PAGES, ...OLD_PAGES].join('|')})(/[^\\s?#\\\\]*)?(\\?[\\w=&%-]*)?$`)
 const BAD_PAGE = 'Only Virvi dashboard pages can be opened.'
 
 /** A dashboard path, with no `.`/`..` segment (plain or percent-encoded) that a browser would resolve elsewhere. */
