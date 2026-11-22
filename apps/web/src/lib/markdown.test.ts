@@ -107,6 +107,10 @@ describe('parseMarkdown', () => {
     expect(parseMarkdown('| a | b |\n| 1 | 2 |')).toEqual([{ type: 'p', inlines: [t('| a | b |'), { type: 'br' }, t('| 1 | 2 |')] }])
   })
 
+  it('never reads bare pipe lines as a table', () => {
+    expect(parseMarkdown('|\n|').every((b) => b.type !== 'table')).toBe(true)
+  })
+
   it('ends a table at a blank line', () => {
     expect(parseMarkdown('| a |\n|---|\n| 1 |\n\nafter')).toEqual([
       { type: 'table', align: [null], head: [[t('a')]], rows: [[[t('1')]]] },

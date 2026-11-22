@@ -1,9 +1,10 @@
 'use client'
 import { useEffect, useState } from 'react'
-import type { ShowItemState, ShowView } from '@virvixr/shared'
-import { useApi } from '@/lib/api'
+import type { AssistantAccess, ShowItemState, ShowView } from '@virvixr/shared'
+import { useApi, useDemoPrefix } from '@/lib/api'
+import { useAuth } from '@/lib/auth'
 import { Badge } from '@/components/ui'
-import { openAssistant } from './AssistantButton'
+import { openAssistant, useAssistantAccess } from './AssistantButton'
 
 const STATE: Record<ShowItemState, { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' | 'info' }> = {
   todo: { label: 'To do', tone: 'neutral' },
@@ -47,16 +48,28 @@ export function ShowChecklist({ shows, onAsk }: { shows: ShowView[]; onAsk: () =
   )
 }
 
-/** Loads the event's shows. Any refusal or failure (assistant hidden, locked, off) means no checklist. */
+/** Whether the event page asks for its shows: never in the demo, and only once the assistant's status says it's there. */
+export function loadsShows(access: AssistantAccess, demo: boolean): boolean {
+  return !demo && access.state !== 'hidden'
+}
+
+/**
+ * Loads the event's shows. A trial, a scene pass or the demo never asks (nor asks for the assistant's status); any refusal
+ * or failure means no checklist.
+ */
 export function EventShowChecklist({ eventId }: { eventId: string }) {
   const api = useApi()
+  const demo = useDemoPrefix() !== ''
+  const { user, scenePass } = useAuth()
+  const { access } = useAssistantAccess(!!user && !user.trial && !scenePass && !demo)
+  const load = loadsShows(access, demo)
   const [shows, setShows] = useState<ShowView[]>([])
   useEffect(() => {
     let live = true
     setShows([])
-    api.getAssistantShows(eventId).then((d) => { if (live) setShows(d.shows) }).catch(() => {})
+    if (load) api.getAssistantShows(eventId).then((d) => { if (live) setShows(d.shows) }).catch(() => {})
     return () => { live = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventId])
+  }, [eventId, load])
   return <ShowChecklist shows={shows} onAsk={openAssistant} />
 }

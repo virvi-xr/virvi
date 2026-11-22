@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { AssistantActionView, AssistantActivityItem, AssistantPlanView } from '@virvixr/shared'
+import type { AssistantActionView, AssistantActivityItem, AssistantPlanView, ShowView } from '@virvixr/shared'
 import { PlanCard, type PlanPhase } from './PlanCard'
 import { MessageLinks } from './MessageLinks'
 import { MessageText } from './MessageText'
+import Markdown from '../Markdown'
 import { ActivityList } from '../../app/(dashboard)/settings/AssistantActivity'
 import { ActionRow } from './ActionRow'
-import { ShowChecklist } from './ShowChecklist'
-import type { ShowView } from '@virvixr/shared'
+import { ShowChecklist, loadsShows } from './ShowChecklist'
 import { activityDate, approveLabel, budgetLine, lockedCopy, planButtonLabel, tokenExpiresWithin, approveRefused, isExpiredCode, reapproveCopy, REAPPROVE, RECONFIRM } from './copy'
 
 describe('budgetLine', () => {
@@ -217,6 +217,13 @@ describe('MessageText', () => {
     expect(html).toContain('a (/admin/x)')
   })
 
+  it('shows virvi.io as user info, or a host that only ends in virvi.io, as text', () => {
+    const html = reply('[a](https://virvi.io@evil.example/x) and [b](https://evilvirvi.io/)')
+    expect(html).not.toContain('<a ')
+    expect(html).toContain('a (https://virvi.io@evil.example/x)')
+    expect(html).toContain('b (https://evilvirvi.io/)')
+  })
+
   it('renders a table inside a sideways-scrolling wrapper', () => {
     expect(reply('| a | b |\n|---|:-:|\n| 1 | 2 |')).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table/)
   })
@@ -238,6 +245,27 @@ describe('MessageText', () => {
     const html = renderToStaticMarkup(createElement(MessageText, { role: 'user', text: '**x**', onOpen: () => {} }))
     expect(html).toContain('**x**')
     expect(html).not.toContain('<strong')
+  })
+})
+
+describe('Markdown, external links (Studio)', () => {
+  const studio = (text: string) => renderToStaticMarkup(createElement(Markdown, { text }))
+
+  it('shows a path as its label only, and opens a web address in a new tab', () => {
+    const path = studio('[x](/scenes)')
+    expect(path).not.toContain('<a ')
+    expect(path).toContain('x')
+    expect(path).not.toContain('/scenes')
+    expect(studio('[x](https://e.com)')).toContain('<a href="https://e.com" target="_blank" rel="noopener noreferrer"')
+  })
+})
+
+describe('loadsShows', () => {
+  it('asks for the shows only outside the demo, once the assistant is there (locked still reads them)', () => {
+    expect(loadsShows({ state: 'hidden' }, false)).toBe(false)
+    expect(loadsShows({ state: 'locked', reason: 'plan' }, false)).toBe(true)
+    expect(loadsShows({ state: 'ok', budget: { percentLeft: 100, warn: false, resetsAt: null } }, false)).toBe(true)
+    expect(loadsShows({ state: 'ok', budget: { percentLeft: 100, warn: false, resetsAt: null } }, true)).toBe(false)
   })
 })
 

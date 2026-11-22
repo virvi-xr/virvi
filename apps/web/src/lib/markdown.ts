@@ -51,6 +51,8 @@ const SEPARATOR_CELL = /^:?-+:?$/
 function parseTable(lines: string[], i: number): [Block, number] | null {
   if (!lines[i].includes('|') || !lines[i + 1]?.includes('|')) return null
   const headCells = cellsOf(lines[i])
+  // A bare "|" has no header cells: not a table
+  if (!headCells.length) return null
   const sep = cellsOf(lines[i + 1])
   if (sep.length !== headCells.length || !sep.every((c) => SEPARATOR_CELL.test(c))) return null
   const align = sep.map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : c.startsWith(':') ? 'left' : null))

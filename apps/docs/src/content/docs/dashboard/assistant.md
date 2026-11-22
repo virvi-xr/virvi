@@ -96,7 +96,11 @@ The assistant can't run giveaways, so a show uses a [raffle](/docs/dashboard/raf
 
 **The host terms card.** Creating a raffle is its own card, never part of a plan. It shows the raffle's details and Virvi's raffle host terms word for word: the raffle is free to enter and needs no purchase, you are responsible for following the giveaway and sweepstakes rules where you and your entrants live, and for delivering prizes. The card says "Confirming accepts these terms for this raffle." Pressing **Confirm** is you accepting them for that raffle. The assistant never accepts them for you.
 
-**Scheduled opening.** A new raffle is a draft. To have it open by itself, the assistant offers a separate card, for example Open "Launch raffle" by itself at 2031-03-04 20:30 UTC. Times on the card are UTC. Confirm it to schedule the opening, or ask it to stop the raffle opening by itself. Only a raffle that hasn't opened can be scheduled. See [Scheduling a raffle](/docs/dashboard/raffles/#scheduling-a-raffle) for how opening works, including what happens if another raffle is running. The checklist's scheduling item reads Done once the raffle has an opening time (or has already opened); the raffle itself opens at that time.
+**Official rules.** The raffle gets the same official rules the Raffles tab fills in for you, with the prize, the number of winners and you as the host (your display name, or the scene's name if you have none). The card says "Official rules: included, from Virvi's template." You can edit the rules on the Raffles tab. When the raffle is part of a show, the card also says "You'll send the wearable to the winners yourself, from the raffle's winners list."
+
+**Changing the prize.** Visitors see a raffle's prize, so changing it is a card too, for example "Launch raffle": prize "A neon cap" becomes "The Neon Cap wearable". If the raffle is already open, the card says visitors see the new prize straight away. If the rules are still the template, they change to name the new prize; rules you edited yourself are left alone. Once you paste a published wearable's link, the assistant offers to make it the prize.
+
+**Scheduled opening.** A new raffle is a draft. To have it open by itself, the assistant offers a separate card that names the prize, for example Open "Launch raffle" (prize "A neon cap") by itself at 2031-03-04 20:30 UTC. When the raffle is part of a show whose event has a timezone, the card shows the time in that timezone and names it, for example 2031-03-04 21:30 Europe/Paris. Otherwise times on the card are UTC. Confirm it to schedule the opening, or ask it to stop the raffle opening by itself. Only a raffle that hasn't opened can be scheduled. See [Scheduling a raffle](/docs/dashboard/raffles/#scheduling-a-raffle) for how opening works, including what happens if another raffle is running. The checklist's scheduling item reads Done once the raffle has an opening time (or has already opened); the raffle itself opens at that time.
 
 ### A BEAT draft and paying for it
 
@@ -104,11 +108,11 @@ The assistant makes a BEAT only as a **draft**: its name, dates, scenes, image a
 
 ### A new wearable
 
-If the show includes a wearable that doesn't exist yet, the assistant tells you the timeline before you approve anything: making the wearable takes a few days in Studio, then Decentraland curation, so it can't be named as the raffle's prize until it's published. It keeps the wearable on the checklist meanwhile.
+If the show includes a wearable that doesn't exist yet, the assistant tells you the timeline before it goes further: making the wearable takes a few days in Studio, then Decentraland curation, so it can't be named as the raffle's prize until it's published. It keeps the wearable on the checklist meanwhile.
 
 If the event starts in fewer than 7 days, you also get a warning: a new wearable may not be through Decentraland curation by then, and a wearable you've already published would be safer. The warning shows on the checklist too, until the wearable design is done.
 
-**Pasting the Marketplace link.** Once the wearable is published on Decentraland, paste its Marketplace link into the conversation, like `https://decentraland.org/marketplace/contracts/0x…/items/0`. The assistant adds it to the checklist and the item turns Done. It only accepts a Decentraland Marketplace item link.
+**Pasting the Marketplace link.** Once the wearable is published on Decentraland, paste its Marketplace link into the conversation, like `https://decentraland.org/marketplace/contracts/0x…/items/0`. The assistant adds it to the checklist and the item turns Done. It accepts a Decentraland Marketplace item link, or the wearable's contract address and item id.
 
 ### Picking a show up later
 
