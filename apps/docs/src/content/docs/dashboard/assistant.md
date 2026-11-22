@@ -86,11 +86,13 @@ These prompts come out of your Studio allowance, not the assistant budget.
 
 Unless you name some destinations, it redeploys to all the scene's destinations. It can only redeploy to destinations the scene already has. To connect a new one, use the scene's publishing page. If every destination needs your signature, there is no card, and the assistant sends you to the deploy pages. See [Who can sign for parcels](/docs/dashboard/scene-import/#who-can-sign-for-parcels) for which wallets can sign.
 
-If one destination fails, for example because Decentraland can't be reached or you aren't the World's owner, the others still deploy. The result lists what was deployed, what failed and why, and what is left for you to sign.
+If one destination fails, for example because Decentraland can't be reached or you aren't the World's owner, the others still deploy. The result lists what was deployed, what failed and why, and what is left for you to sign. If they all fail, it tells you why for each one.
+
+Only the destinations the card said Virvi deploys go out when you press **Confirm**. If you switch a destination between Virvi and signing after the card appears, the assistant leaves that one alone and gives you its deploy page.
 
 **When a deploy fails.** Ask why, and the assistant reads the deploy and explains in plain words what went wrong and the next thing to try, such as shrinking a scene that is over the size limit, or redeploying in a few minutes when Decentraland couldn't be reached.
 
-**Collaborators.** Ask who has a role on a scene and it lists them with their roles (cohost, editor or viewer). Ask it to add someone, or to change their role, and it shows a card first, because this gives them access to the scene. The card says what the role allows. It adds one wallet at a time, and it can't change the scene's host. After you confirm there is an **Undo** button: it removes a collaborator it added, or puts back their old role. Undo refuses if the role was changed by hand since.
+**Collaborators.** Ask who has a role on a scene and it lists them with their roles (cohost, editor or viewer). Ask it to add someone, or to change their role, and it shows a card first, because this gives them access to the scene. The card says what the role allows. It adds one wallet at a time, and it can't change the scene's host. After you confirm there is an **Undo** button: it removes a collaborator it added, or puts back their old role. Undo refuses if the role was changed by hand since. To change the role of someone already on the scene you don't need to paste their wallet again: name them, or ask who's on the scene first.
 
 **Removing a collaborator.** The assistant can't do this. Use the scene's **Roles** tab.
 

@@ -62,9 +62,11 @@ export interface ToolDef<A> {
   /**
    * Every call runs even when one is refused (one card, several targets). `summarize` then gets
    * `Array<{ status: number; json: unknown }>` in call order, and the tool fails only when every call failed, with
-   * the first call's refusal.
+   * the first call's refusal, or `failure`'s words when the tool has it.
    */
   keepGoing?: boolean
+  /** keepGoing only: the error when every call failed, from all their responses (each target's own refusal). */
+  failure?(res: Array<{ status: number; json: unknown }>, args: A): string
   /** Read the current values before a write; returns the undo call and the org label. Required for every write. */
   before?(args: A, ctx: ToolCtx): Promise<Before>
   /**
@@ -74,9 +76,10 @@ export interface ToolDef<A> {
   currentOf?(after: unknown, args: A, ctx: ToolCtx): Promise<unknown | null>
   /**
    * Required for every paid tool: runs before a card is offered. Returns the card's cost line, or a refusal with
-   * the link the user needs (nothing left to spend).
+   * the link the user needs (nothing left to spend). `bind` is merged into the card's stored args: what the card
+   * showed, so the press keeps to it.
    */
-  preview?(args: A, ctx: ToolCtx): Promise<{ detail: string } | { blocked: string; link: { label: string; href: string } }>
+  preview?(args: A, ctx: ToolCtx): Promise<{ detail: string; bind?: Partial<A> } | { blocked: string; link: { label: string; href: string } }>
   /** e.g. 'Rename scene to "Test Lounge"': server-side text for action rows and plan steps. */
   label(args: A): string
   /** The trimmed object the model sees, before redact(). */

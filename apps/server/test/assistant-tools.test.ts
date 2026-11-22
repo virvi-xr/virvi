@@ -666,16 +666,42 @@ describe('assistant event, raffle and BEAT tools', () => {
       const w = randomWallet()
       const friend = await createUser({ name: 'Friend', wallet: w })
       await give(w, 'editor', friend.id)
-      await give(randomWallet(), 'viewer')
+      const other = randomWallet()
+      await give(other, 'viewer')
       const r = await runTool(ctx, 'list_scene_collaborators', { sceneId })
       expect(r).toMatchObject({ ok: true })
       if (!r.ok) throw new Error('failed')
       const s = r.summary as any
       expect(s.host).toEqual({ displayName: 'Test User' })
       expect(s.roles).toEqual([
-        { wallet: '[wallet]', role: 'editor', displayName: 'Friend', signedIn: true },
-        { wallet: '[wallet]', role: 'viewer', displayName: null, signedIn: false },
+        { wallet: short(w), role: 'editor', displayName: 'Friend', signedIn: true },
+        { wallet: short(other), role: 'viewer', displayName: null, signedIn: false },
       ])
+      expect(JSON.stringify(s)).not.toContain(w)
+    })
+
+    it('add_scene_collaborator changes the role of someone on the scene by their short wallet, without a paste', async () => {
+      const w = randomWallet()
+      await give(w, 'viewer')
+      const card = await proposeCard(ctx, null, 'add_scene_collaborator', { sceneId, wallet: short(w), role: 'editor' })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      expect(card.detail).toBe(`${short(w)} is a viewer on "Old Lounge". They become editor: they can change the scene.`)
+      expect(card.steps[0].label).toBe('Make a collaborator an editor')
+      expect(await approvePlan(ctx, card.planId, card.token, () => {})).toMatchObject({ done: 1, failed: null })
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'editor' }])
+      expect(await undoAction(ctx, card.steps[0].id)).toMatchObject({ status: 'undone' })
+      expect(await rolesOf()).toEqual([{ wallet: w, role: 'viewer' }])
+    })
+
+    it("a short wallet never adds someone who isn't on the scene, and two matches are refused", async () => {
+      const w = randomWallet()
+      expect(await proposeCard(ctx, null, 'add_scene_collaborator', { sceneId, wallet: short(w), role: 'editor' })).toEqual({ error: "I don't have that wallet. Ask the user to paste it again." })
+      const a = '0x1234' + '0'.repeat(32) + 'abcd'
+      const b = '0x1234' + '1'.repeat(32) + 'abcd'
+      await give(a, 'viewer')
+      await give(b, 'viewer')
+      expect(await proposeCard(ctx, null, 'add_scene_collaborator', { sceneId, wallet: '0x1234…abcd', role: 'editor' })).toEqual({ error: 'More than one collaborator has that short wallet. Ask the user to paste the wallet.' })
+      expect(await rolesOf()).toEqual([{ wallet: a, role: 'viewer' }, { wallet: b, role: 'viewer' }])
     })
 
     it('add_scene_collaborator card names the short wallet, the role and what it can do', async () => {
@@ -683,7 +709,7 @@ describe('assistant event, raffle and BEAT tools', () => {
       const w = randomWallet()
       const c = withRefs(w)
       const card = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'editor' })
-      expect(card).toMatchObject({ kind: 'card', detail: `Add ${short(w)} to "Old Lounge" as editor: they can change the scene.`, steps: [{ label: 'Add a collaborator as editor' }] })
+      expect(card).toMatchObject({ kind: 'card', detail: `Add ${short(w)} to "Old Lounge" as editor: they can change the scene.`, steps: [{ label: 'Make a collaborator an editor' }] })
       const cohost = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'cohost' })
       expect(cohost).toMatchObject({ detail: expect.stringContaining('they can run the scene with you, including deploying it and changing its roles.') })
       const viewer = await proposeCard(c, null, 'add_scene_collaborator', { sceneId, wallet: '[wallet 1]', role: 'viewer' })
@@ -975,6 +1001,39 @@ describe('assistant event, raffle and BEAT tools', () => {
       expect((await db.select().from(sceneDeployments)).map((r) => r.destinationId)).toEqual([w1.id])
     })
 
+    it('leaves a destination switched to Virvi since the card to its deploy page, as the card said', async () => {
+      const w = await dest({ worldName: 'sun.dcl.eth' })
+      const p = await dest({ worldName: 'moon.dcl.eth', base: '5,5', parcels: ['5,5'], mode: 'sign' })
+      const card = await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [w.id, p.id], deployIds: [w.id, p.id] })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      // The card decides what Virvi deploys, whatever the model passed
+      const [stored] = await db.select().from(assistantActions)
+      expect((stored.args as any).deployIds).toEqual([w.id])
+      await db.update(dclWorldDestinations).set({ mode: 'virvi', grantedAt: new Date() }).where(eq(dclWorldDestinations.id, p.id))
+      expect(await approvePlan(ctx, card.planId, card.token, () => {})).toMatchObject({ done: 1, failed: null })
+      const [row] = await db.select().from(assistantActions)
+      expect(JSON.parse(row.resultSummary!)).toMatchObject({ toSign: [{ destinationId: p.id, name: 'World "moon.dcl.eth"' }] })
+      expect((await db.select().from(sceneDeployments)).map((r) => r.destinationId)).toEqual([w.id])
+    })
+
+    it('when every deploy fails, names each destination with its own reason', async () => {
+      const w1 = await dest({ worldName: 'sun.dcl.eth' })
+      const w2 = await dest({ worldName: 'moon.dcl.eth', base: '5,5', parcels: ['5,5'] })
+      const p = await dest({ kind: 'parcels', base: '9,9', parcels: ['9,9'], mode: 'sign', grantedAt: null })
+      const card = await proposeCard(ctx, null, 'redeploy_scene', { sceneId, destinationIds: [w1.id, w2.id, p.id] })
+      if (!('kind' in card)) throw new Error(JSON.stringify(card))
+      deployer.start = async (id) => {
+        if (id === w1.id) throw new DeployerError(409, 'deploy_in_progress', 'A deploy is already running.')
+        throw new DeployerError(502, 'catalyst_unreachable', 'unreachable')
+      }
+      await approvePlan(ctx, card.planId, card.token, () => {})
+      const [row] = await db.select().from(assistantActions)
+      expect(row.status).toBe('failed')
+      expect(row.error).toBe(
+        'World "sun.dcl.eth": A deploy is already running.\nWorld "moon.dcl.eth": Decentraland couldn\'t be reached. Try again in a few minutes.\nStill to sign on their deploy pages: Genesis City parcels at 9,9 (1 parcel).',
+      )
+    })
+
     it('a destination removed since the card is reported and the rest still deploy', async () => {
       const w1 = await dest({ worldName: 'sun.dcl.eth' })
       const w2 = await dest({ worldName: 'moon.dcl.eth', base: '5,5', parcels: ['5,5'] })
@@ -997,7 +1056,7 @@ describe('assistant event, raffle and BEAT tools', () => {
       deployer.start = async () => {
         throw new DeployerError(409, 'deploy_in_progress', 'A deploy is already running.')
       }
-      expect(await runTool(ctx, 'redeploy_scene', { sceneId, destinationIds: [w1.id] })).toMatchObject({ ok: false, status: 409, error: 'A deploy is already running.' })
+      expect(await runTool(ctx, 'redeploy_scene', { sceneId, destinationIds: [w1.id] })).toMatchObject({ ok: false, status: 409, error: 'World "sun.dcl.eth": A deploy is already running.' })
     })
 
     it('with only signing destinations offers no card', async () => {

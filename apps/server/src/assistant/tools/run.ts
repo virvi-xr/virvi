@@ -58,7 +58,8 @@ export async function runTool(ctx: ToolCtx, name: string, rawArgs: unknown): Pro
       results.push(res.json)
     }
     if (def.keepGoing && all.length && all.every((r) => r.status >= 400)) {
-      return { ok: false, status: all[0].status, error: safe(routeError(all[0].status, all[0].json, def.refusals)), label, orgName: before?.orgName ?? null }
+      const error = def.failure ? def.failure(all, args) : routeError(all[0].status, all[0].json, def.refusals)
+      return { ok: false, status: all[0].status, error: safe(error), label, orgName: before?.orgName ?? null }
     }
     const res = def.keepGoing ? all : Array.isArray(planned) ? results : results[0]
 

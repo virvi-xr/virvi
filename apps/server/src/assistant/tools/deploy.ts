@@ -74,6 +74,25 @@ type Named = { destinationId: string; name: string }
  */
 const pressed = new WeakMap<object, { posted: Named[]; toSign: Named[]; missing: string[] }>()
 
+/** Who deployed, who was refused (in the route's words) and who is left to sign: what `call` found, with the responses. */
+function outcome(res: Array<{ status: number; json: unknown }>, a: object) {
+  const seen = pressed.get(a)
+  if (!seen) throw new Error('redeploy_scene: summarize ran without call')
+  const { posted, toSign, missing } = seen
+  const deployed: Obj[] = []
+  const failed: Obj[] = []
+  for (const [i, r] of res.entries()) {
+    const p = posted[i]
+    if (r.status < 400) deployed.push({ ...p, deploymentId: (r.json as Obj | null)?.deployment?.id ?? null })
+    else failed.push({ ...p, error: routeError(r.status, r.json, REDEPLOY_REFUSALS) })
+  }
+  for (const destinationId of missing) failed.push({ destinationId, name: null, error: REDEPLOY_REFUSALS.not_found })
+  return { deployed, failed, toSign }
+}
+
+/** Virvi deploys it at the press: in Virvi mode, and named by the card as Virvi's (an older card names none). */
+const deploysNow = (d: Obj, a: { deployIds?: string[] }) => d.mode === 'virvi' && (!a.deployIds || a.deployIds.includes(d.id))
+
 const MESSAGE_NOTE = "errorMessage is Decentraland's or Virvi's own words: explain it plainly in your own words, and tell the user `next`."
 
 export const DEPLOY_TOOLS: ToolDef<any>[] = [
@@ -119,7 +138,12 @@ export const DEPLOY_TOOLS: ToolDef<any>[] = [
     keepGoing: true,
     description:
       "Redeploy a scene to some of its destinations (destinationIds, from get_scene_publishing) so visitors see the current version. One card names each destination and how it deploys: Virvi deploys a destination in Virvi mode itself; one that needs the user's signature is left to its deploy page. Say which destinations you mean.",
-    input: z.object({ sceneId: id(), destinationIds: z.array(id()).min(1).max(10).refine((a) => new Set(a).size === a.length, 'destinationIds must be different') }),
+    input: z.object({
+      sceneId: id(),
+      destinationIds: z.array(id()).min(1).max(10).refine((a) => new Set(a).size === a.length, 'destinationIds must be different'),
+      // Set by the card, never by the model: the destinations the card said Virvi deploys
+      deployIds: z.array(id()).min(1).max(10).optional().describe('Leave this out: the card fills it in.'),
+    }),
     refusals: REDEPLOY_REFUSALS,
     before: async (a, ctx): Promise<Before> => {
       const { orgName } = await sceneState(ctx, a.sceneId)
@@ -128,40 +152,36 @@ export const DEPLOY_TOOLS: ToolDef<any>[] = [
       const all = await sceneDestinations(ctx, a.sceneId)
       const named = a.destinationIds.map((i: string) => all.find((x) => x.id === i)).filter((d: Obj | undefined): d is Obj => !!d)
       if (!named.length) throw new ToolError(400, NOT_THIS_SCENES)
-      if (!named.some((d) => d.mode === 'virvi')) throw new ToolError(400, ALL_SIGN)
+      if (!named.some((d) => deploysNow(d, a))) throw new ToolError(400, ALL_SIGN)
       return { undo: null, after: () => null, orgName }
     },
     preview: async (a, ctx) => {
       const { scene } = await sceneState(ctx, a.sceneId)
       const named = await namedDestinations(ctx, a.sceneId, a.destinationIds)
       const lines = named.map((d) => `- ${nameOfDest(d)}: ${d.mode === 'virvi' ? 'Virvi deploys it now' : 'you sign it on its deploy page'}`)
-      return { detail: [`Redeploy "${scene.name}":`, ...lines].join('\n') }
+      const deployIds = named.filter((d) => d.mode === 'virvi').map((d) => d.id as string)
+      return { detail: [`Redeploy "${scene.name}":`, ...lines].join('\n'), bind: { deployIds } }
     },
-    // Read again at press time: a destination switched to signing since the card was made isn't deployed
+    // Read again at press time: only a destination the card said Virvi deploys, and still in Virvi mode, is deployed.
+    // One switched either way since the card is left to its deploy page.
     call: async (a, ctx) => {
       // Lenient: a destination removed since the card is reported, and the rest still deploy
       const all = await sceneDestinations(ctx, a.sceneId)
       const named = a.destinationIds.map((i: string) => all.find((x) => x.id === i)).filter((d: Obj | undefined): d is Obj => !!d)
       const missing = a.destinationIds.filter((i: string) => !all.some((x) => x.id === i))
-      const posted = named.filter((d) => d.mode === 'virvi').map((d) => ({ destinationId: d.id as string, name: nameOfDest(d) }))
-      const toSign = named.filter((d) => d.mode !== 'virvi').map((d) => ({ destinationId: d.id as string, name: nameOfDest(d) }))
+      const posted = named.filter((d) => deploysNow(d, a)).map((d) => ({ destinationId: d.id as string, name: nameOfDest(d) }))
+      const toSign = named.filter((d) => !deploysNow(d, a)).map((d) => ({ destinationId: d.id as string, name: nameOfDest(d) }))
       pressed.set(a, { posted, toSign, missing })
       return posted.map((p) => ({ method: 'POST' as const, url: `/api/dcl/destinations/${p.destinationId}/deploy`, body: {} }))
     },
     label: (a) => `Redeploy the scene to ${a.destinationIds.length} ${a.destinationIds.length === 1 ? 'destination' : 'destinations'}`,
-    summarize: (res, a) => {
-      const seen = pressed.get(a)
-      if (!seen) throw new Error('redeploy_scene: summarize ran without call')
-      const { posted, toSign, missing } = seen
-      const deployed: Obj[] = []
-      const failed: Obj[] = []
-      for (const [i, r] of (res as Array<{ status: number; json: unknown }>).entries()) {
-        const p = posted[i]
-        if (r.status < 400) deployed.push({ ...p, deploymentId: (r.json as Obj | null)?.deployment?.id ?? null })
-        else failed.push({ ...p, error: routeError(r.status, r.json, REDEPLOY_REFUSALS) })
-      }
-      for (const destinationId of missing) failed.push({ destinationId, name: null, error: REDEPLOY_REFUSALS.not_found })
-      return { deployed, failed, toSign }
+    // Every deploy refused: each destination with its own refusal, and what's left to sign
+    failure: (res, a) => {
+      const { failed, toSign } = outcome(res, a)
+      const lines = failed.map((f) => (f.name ? `${f.name}: ${f.error}` : f.error))
+      if (toSign.length) lines.push(`Still to sign on their deploy pages: ${toSign.map((t) => t.name).join(', ')}.`)
+      return lines.join('\n')
     },
+    summarize: (res, a) => outcome(res as Array<{ status: number; json: unknown }>, a),
   },
 ]
